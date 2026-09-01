@@ -2,158 +2,134 @@
 
 ## Mission
 
-Build an AI-native software evolution platform that can understand Java/Spring Boot
-repositories, model software architecture, detect architecture violations, provide
-evidence-backed analysis, and support future verified software evolution.
-
-**[CONFIRMED]** — from AGENTS.md.
+Build a deterministic, evidence-first platform that understands Java and Spring Boot repositories, reconstructs architecture-relevant semantics, measures architecture structure and health, detects architecture violations, explains every assessment through evidence, and presents the results through a complete visual workbench with a stable foundation for later verified software evolution.
 
 ## Academic Context
 
-- Course: SE121 – Đồ án 1 (UIT)
-- Current phase: SE121 – Software Architecture Intelligence Platform
-- Future phases: SE122 (Đồ án 2), KLTN (Thesis)
-- Academic evaluation rubric: **[OPEN QUESTION]** — not yet available
+- Course phase: SE121 - Software Architecture Intelligence Platform
+- Intended SE121 North Star: Track A correctness foundation plus Track B architecture evolution
+- Future phases: SE122 and KLTN
+- Primary ecosystem: Java and Spring Boot
 
-**[CONFIRMED]** — from AGENTS.md and human decisions.
+## Human-Approved Priorities
 
-## Target Ecosystem
+1. Technical depth
+2. System correctness
+3. Architecture quality
+4. Engineering quality
+5. Product quality
+6. Empirical validation
+7. Paper/publication readiness later
 
-- Primary language: **Java**
-- Primary framework: **Spring Boot**
+Research discipline remains required for ground truth, benchmarks, evidence, reproducibility, and honest claims. Immediate work is not optimized around paper writing, venue selection, extensive publication packaging, defense scripting, or unnecessary statistical ceremony.
 
-**[CONFIRMED]** — from AGENTS.md.
+## SE121 Scope
 
-## SE121 Capabilities (In-Scope)
+- Semantic Java source analysis
+- Multi-module workspace intelligence
+- Safe Maven/build-model understanding
+- Spring semantic intelligence
+- Software Knowledge Graph construction
+- Dependency and architecture-policy modeling
+- Evidence-backed architecture violation detection
+- Basic, bounded impact analysis
+- Stable architecture query services
+- Detailed repository, semantic-quality, Spring, policy, and operational metrics
+- Versioned and explainable architecture health scoring, separate from analysis confidence
+- Focused interactive architecture visualization and evidence navigation
+- A usable dashboard/workbench with inventory, metrics, score, graph, violations, Spring, impact, and provenance views
+- Reproducible benchmark and evaluation infrastructure
+- Track B comparison of compatible repository snapshots and architecture evolution
 
-1. Semantic source analysis
-2. Software Knowledge Graph
-3. Dependency modeling
-4. Architecture rule modeling
-5. Architecture violation detection
-6. Evidence and provenance
-7. Basic impact analysis
-8. Architecture visualization (deferred until core pipeline works)
-9. Benchmarking and evaluation
+Architecture-mutation fixtures used to evaluate rule detection are part of SE121 benchmarking.
 
-**[CONFIRMED]** — from AGENTS.md + human decisions.
+## Explicit Non-Goals
 
-## Explicit Non-Goals (SE121)
+- AI diagnosis and graph-guided RAG
+- Automated refactoring, patch generation, or OpenRewrite execution
+- Sandbox verification of generated changes
+- Differential/mutation testing of generated patches
+- CI/CD verification and Verified Pull Requests
+- Another programming language
 
-Do NOT implement unless explicitly requested:
+These remain SE122/KLTN concerns unless a later explicit human decision changes scope.
 
-- Automated refactoring
-- Patch generation
-- OpenRewrite transformation pipeline
-- AI diagnosis
-- Graph-guided RAG
-- Sandbox verification
-- Differential testing
-- Mutation testing pipeline
-- CI/CD verification
-- Verified Pull Request generation
+## Durable Architectural Constraints
 
-**[CONFIRMED]** — from AGENTS.md. These belong to SE122/KLTN.
+1. Parser-specific objects do not cross the semantic frontend boundary.
+2. Graph storage does not define the canonical semantic domain.
+3. Backend and frontend use stable architecture query services rather than arbitrary storage queries.
+4. Every important semantic relationship and violation preserves inspectable evidence and provenance.
+5. Unresolved, ambiguous, partial, inferred, conditional, unsupported, and error outcomes remain explicit.
+6. Maven modules, source roots, dependency scopes, parent POMs, dependency management, and BOMs are represented where analysis needs them.
+7. Arbitrary untrusted Maven/Gradle lifecycle code is not executed during normal analysis.
+8. Analysis identity is content-addressed from stable inputs, enabling determinism, compatible evolution, and future caching/incrementality without implementing a cache prematurely.
+9. Bytecode validation remains optional until source-semantic evidence identifies a concrete insufficiency.
+10. The system remains a modular monolith unless measured requirements justify otherwise.
+11. Architecture health and analyzer confidence are separate outputs; incomplete evidence can qualify or withhold an assessment but cannot improve it.
+12. Metrics and scores are versioned, deterministic, scope-aware, and traceable to canonical inputs and limitations.
+13. The UI consumes bounded query projections and never depends on rendering the complete raw graph by default.
+14. Track A is not complete with a CLI or analyzer alone; the confirmed product outcome includes a usable visual workbench.
 
-## Engineering Principles
-
-1. Prefer deterministic analysis where possible.
-2. Every architecture violation must be backed by inspectable evidence.
-3. Every graph relationship should be traceable to source code.
-4. Separate parsing, semantic modeling, graph construction, rule evaluation, and presentation.
-5. Avoid premature microservices.
-6. Prefer a modular architecture with strong boundaries.
-7. Minimize unnecessary dependencies.
-8. Favor explicit domain models over implicit conventions.
-9. Write tests for core analysis behavior.
-10. Preserve reproducibility for all benchmark results.
-
-**[CONFIRMED]** — from AGENTS.md.
-
-## Technology Decisions
-
-| Decision | Value | Epistemic Status | Source |
-|---|---|---|---|
-| Java version | Java 21 | **CONFIRMED** | Human decision |
-| Build system | Maven | **CONFIRMED** | Human decision |
-| Repository structure | Single monorepo | **CONFIRMED** | Human decision |
-| Java parser | JavaParser + SymbolSolver | **HYPOTHESIS** — requires R1 PoC | Proposed candidate |
-| Graph database | Neo4j Community | **PROVISIONAL** — requires R2 validation | Proposed candidate |
-| Backend framework | Spring Boot 3.x | **PROVISIONAL** | Reasonable default |
-| Architecture rule format | TBD | **HYPOTHESIS** | Not yet designed |
-| Frontend framework | Deferred | **CONFIRMED** (deferral) | Human decision |
-
-## Test Targets
-
-| Target | Purpose | Status |
-|---|---|---|
-| Spring PetClinic | First PoC target for parser evaluation | **CONFIRMED** |
-| 2–4 additional repos | Validation against varied architectures | **CONFIRMED** (scope); **OPEN QUESTION** (which repos) |
-
-## Repository Structure
-
-```
-AI-native-verified-software-evolution/
-├── AGENTS.md                  # Root project contract
-├── CLAUDE.md                  # Portable AI adapter (Claude)
-├── GEMINI.md                  # Portable AI adapter (Gemini)
-├── .agents/                   # Portable AI agent configuration
-│   ├── agents/                # Agent definitions
-│   ├── rules/                 # Engineering rules
-│   ├── skills/                # Project-specific skills
-│   └── workflows/             # Workflow definitions
-├── analyzer/                  # Java semantic analysis engine (empty)
-├── backend/                   # API / orchestration server (empty)
-├── frontend/                  # Visualization UI (empty, deferred)
-├── benchmarks/                # Evaluation scripts & data (empty)
-├── tests/                     # Cross-cutting test fixtures (empty)
-└── docs/
-    ├── project-context.md     # This document
-    ├── current-state.md       # Living status
-    ├── roadmap.md             # Phased roadmap
-    ├── architecture/          # Architecture documentation
-    ├── decisions/             # Architecture Decision Records
-    ├── research/              # Research notes and candidate ideas
-    └── benchmarks/            # Benchmark methodology
-```
-
-## Source Hierarchy
-
-Information entering the project is classified by authority:
+## Source Authority
 
 1. Explicit human decisions
-2. Official project/academic documents provided by the human
-3. Verified official technical documentation and reproducible evidence
-4. Research literature
-5. AI-generated design proposals
+2. Official project/academic documents supplied by the human
+3. Verified repository evidence and reproducible experiments
+4. Official technical documentation/specifications
+5. Peer-reviewed research
+6. AI-generated proposals and assumptions
 
-Nothing from a lower-priority source may be promoted to CONFIRMED
-without evidence from a higher-priority source or human approval.
+Lower-authority claims cannot become confirmed without higher-authority evidence or human approval.
 
 ## Epistemic Classification
 
 | Status | Meaning |
 |---|---|
-| **CONFIRMED** | Verified fact or explicitly approved decision |
-| **PROVISIONAL** | Working decision, adopted pending validation |
-| **HYPOTHESIS** | Testable claim requiring experiment |
-| **ASSUMPTION** | Logical default, not yet validated |
-| **OPEN QUESTION** | Identified uncertainty requiring investigation |
-| **CANDIDATE IDEA** | Unvetted suggestion from any source |
+| CONFIRMED | Human-approved decision or directly verified fact |
+| PROVISIONAL | Adopted working decision with remaining validation gates |
+| HYPOTHESIS | Testable claim requiring evidence |
+| ASSUMPTION | Temporary default that has not been validated |
+| OPEN QUESTION | Explicit unresolved issue |
 
-## Phase Boundaries
+## Durable Technology Direction
 
-| Phase | Focus | Status |
-|---|---|---|
-| SE121 | Architecture intelligence platform | **Current** |
-| SE122 | AI diagnosis, graph-guided RAG, transformation | Future |
-| KLTN | Verified evolution, sandbox, CI/CD integration | Future |
+| Decision | Status |
+|---|---|
+| Java 21 compile baseline | CONFIRMED |
+| Maven and monorepo | CONFIRMED |
+| Track A + Track B SE121 target | CONFIRMED |
+| JavaParser + SymbolSolver behind an adapter | PROVISIONAL |
+| Storage-neutral canonical graph | CONFIRMED direction; detailed schema pending |
+| Neo4j Community adapter | PROVISIONAL/experimental |
+| Typed external policy representation | Approved direction; exact format pending |
+| CLI-first product path | Approved direction |
+| Spring Boot backend | PROVISIONAL |
+| Cytoscape.js workbench visualization | PROVISIONAL |
+| Complete visual architecture-intelligence workbench | CONFIRMED product outcome |
+| Explainable architecture score plus separate analysis confidence | CONFIRMED direction; exact formula PROVISIONAL |
+| Selective bytecode validation | ASSESS/HOLD |
+
+## Document Responsibilities
+
+- `AGENTS.md`: canonical project operating contract
+- `docs/project-context.md`: durable identity, scope, authority, and constraints
+- `docs/roadmap.md`: future milestones, gates, tracks, sequencing, and fallback
+- `docs/current-state.md`: concise operational truth now
+- `docs/decisions/`: rationale for consequential approved decisions
+- `docs/architecture/`: current contracts, semantics, boundaries, schemas, and invariants
+- `docs/architecture/product-outcome.md`: canonical product, metric, scoring, visualization, and acceptance contract
+- `docs/research/`: methods and evidence, not project progress
+- `roadmap_for_user.md` and `roadmap_for_user_vi.md`: explanatory human review companions; not the source of current status
 
 ## Related Documents
 
-- [Architecture Overview](architecture/architecture.md)
-- [Knowledge Graph Schema](architecture/knowledge-graph.md)
 - [Current State](current-state.md)
 - [Roadmap](roadmap.md)
+- [Human Review Roadmap](../roadmap_for_user.md)
+- [Architecture Overview](architecture/architecture.md)
+- [Knowledge Graph](architecture/knowledge-graph.md)
+- [Product Outcome and Workbench Contract](architecture/product-outcome.md)
+- [ADR-002: Complete Visual Product and Explainable Assessment](decisions/ADR-002-product-outcome-and-explainable-assessment.md)
 - [Research Questions](research/research-questions.md)
-- [Architecture Decision Records](decisions/)
+- [Architecture Decisions](decisions/)

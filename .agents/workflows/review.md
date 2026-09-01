@@ -1,164 +1,30 @@
-# Review
+# Review Workflow
 
-Description: Perform an independent adversarial review intended to discover correctness, architecture, security, testing, scope, and research-integrity failures.
+Purpose: independently attack correctness, architecture, security, scope, tests, data quality, and research claims.
 
----
+## Bootstrap Context
 
-# 1. Assume Defects Exist
+Run Tier 0. Read requirements, diff, relevant source/tests/fixtures, architecture, ADRs, and verification artifacts. Do not rely on the implementer's summary.
 
-Do not begin from the assumption that the implementation is correct.
+## Procedure
 
-Independently inspect:
+1. Attack assumptions and missing edge cases.
+2. Check responsibility and dependency boundaries.
+3. Check semantic status, identity, evidence, graph invariants, and false relationships where relevant.
+4. Check untrusted input, paths, commands, secrets, and sensitive logs.
+5. Check tests for false reassurance and missing negative cases.
+6. Check benchmark fairness, raw evidence, denominators, leakage, and claim strength.
+7. Check scope for later-phase or unrelated additions.
+8. Rank findings P0-P3; do not elevate style preferences.
 
-- task
-- diff
-- changed files
-- relevant code
-- tests
-- architecture
-- ADRs
+## Verification
 
----
+Reproduce blocking findings when practical and cite exact locations/criteria.
 
-# 2. Correctness Attack
+## State Update
 
-Look for:
+Remain read-only. Identify durable state that would become inaccurate if findings are accepted.
 
-- incorrect assumptions
-- missing edge cases
-- hidden state bugs
-- incorrect error handling
-- incorrect null/empty handling
-- broken caller behavior
-- regressions
+## Output and Handoff
 
----
-
-# 3. Architecture Attack
-
-Look for:
-
-- boundary violations
-- unexpected coupling
-- dependency inversion failures
-- misplaced responsibilities
-- unnecessary abstractions
-- premature infrastructure
-- duplicated logic
-
----
-
-# 4. Semantic Analysis Attack
-
-For analyzer/graph/rule changes inspect:
-
-- semantic completeness
-- source traceability
-- unresolved symbols
-- direct vs inferred relationships
-- graph consistency
-- evidence preservation
-- false positives
-- false negatives
-
----
-
-# 5. Test Attack
-
-Ask:
-
-- What important behavior is not tested?
-- Can the implementation pass tests while still being wrong?
-- Are tests too tightly coupled to implementation details?
-- Are negative cases tested?
-- Are regression cases present?
-
----
-
-# 6. Security Attack
-
-Check:
-
-- secret exposure
-- unsafe input
-- path traversal
-- command injection
-- dependency risks
-- logging sensitive information
-- unsafe repository handling
-
-Treat external repositories as untrusted input.
-
----
-
-# 7. Research Attack
-
-For research/benchmark code:
-
-- Is the metric valid?
-- Is the baseline fair?
-- Is the dataset contaminated?
-- Are unfavorable results preserved?
-- Are claims stronger than evidence?
-- Is the experiment reproducible?
-
----
-
-# 8. Scope Attack
-
-Check whether implementation silently added:
-
-- unrelated refactoring
-- infrastructure
-- dependency upgrades
-- later-phase functionality
-- unnecessary abstractions
-
-Reject scope creep.
-
----
-
-# 9. Severity
-
-P0 — catastrophic
-
-P1 — serious correctness/security/architecture issue
-
-P2 — meaningful problem
-
-P3 — improvement
-
-Do not label style preference as a defect.
-
----
-
-# 10. Verdict
-
-APPROVE
-
-or
-
-CHANGES REQUIRED
-
-or
-
-BLOCKED
-
----
-
-# 11. Review Report
-
-## Blocking Findings
-...
-
-## Non-Blocking Findings
-...
-
-## Verified Strengths
-...
-
-## Missing Verification
-...
-
-## Verdict
-...
+Return blocking findings first, non-blocking findings, verified strengths, missing verification, verdict, remediation, and mandatory handoff.

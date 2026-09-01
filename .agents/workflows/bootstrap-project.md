@@ -1,95 +1,24 @@
-# Bootstrap Project
+# Bootstrap Project Workflow
 
-Description: Initialize or re-evaluate the project's engineering and architecture foundation before substantial implementation begins.
+Purpose: initialize or re-baseline the project operating context before sustained implementation.
 
-## Steps
+## Bootstrap Context
 
-### 1. Establish Context
+Run Tier 0 fully. Read all current governance, relevant official project documents, build configuration, repository structure, architecture, ADRs, and research evidence required to establish reality.
 
-Read:
+## Procedure
 
-- AGENTS.md
-- docs/project-context.md
-- docs/current-state.md
-- docs/roadmap.md
-- docs/decisions/
-- README.md
+1. Inventory repository, Git state, source, tests, build, configuration, and evidence artifacts.
+2. Separate confirmed facts, provisional decisions, hypotheses, assumptions, and open questions.
+3. Identify current phase, milestone, blockers, architecture gaps, and next gate.
+4. Resolve only operating-system/foundation issues authorized by the task.
+5. Do not begin production features automatically.
+6. Verify document consistency, repository reality, and final diff.
 
-Do not modify production code yet.
+## State Update
 
-### 2. Inspect Repository
+Update project context only for durable identity/constraints, roadmap only for approved direction/gates, and current state for operational truth.
 
-Inspect:
+## Output and Handoff
 
-- repository structure
-- Git status
-- existing source
-- tests
-- build configuration
-- dependency manifests
-- environment configuration
-
-### 3. Identify Unknowns
-
-List:
-
-- architectural unknowns
-- technology decisions
-- missing tooling
-- missing documentation
-- risks
-- assumptions
-
-Separate facts from assumptions.
-
-### 4. Architecture Discovery
-
-Determine the minimal architecture required by the current project phase.
-
-Do not introduce later-phase implementation.
-
-### 5. Research
-
-For consequential unknowns:
-
-- research authoritative sources
-- compare alternatives
-- run focused experiments when useful
-
-Use /research when a dedicated research investigation is required.
-
-### 6. Architecture Decision
-
-Use /architect for major architectural decisions.
-
-### 7. Produce Durable State
-
-Update when justified:
-
-- docs/architecture/
-- docs/decisions/
-- docs/roadmap.md
-- docs/current-state.md
-
-### 8. Verification
-
-Run basic repository validation.
-
-Confirm:
-
-- project builds when buildable
-- configuration is coherent
-- documentation reflects current decisions
-- Git working tree changes are understood
-
-### 9. Stop Condition
-
-Do not start feature implementation automatically.
-
-End with:
-
-- current architecture
-- confirmed decisions
-- unresolved decisions
-- risks
-- recommended first implementation task
+Use the mandatory project handoff. End with the exact first implementation task and required human approval.

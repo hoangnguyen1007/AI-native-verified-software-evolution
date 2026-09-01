@@ -1,83 +1,288 @@
-# Roadmap
+# SE121 Technical Roadmap
 
-## SE121 – Software Architecture Intelligence Platform [CURRENT]
+## Status and Intent
 
-### Milestone 0: Foundation [IN PROGRESS]
+This is the canonical future-direction document. Operational status belongs in `docs/current-state.md`.
 
-- [x] Repository initialization
-- [x] AI instruction layer (AGENTS.md, agents, rules, skills)
-- [x] Foundation documentation
-- [x] Epistemic classification system
-- [x] Research questions quarantine
-- [ ] Maven multi-module skeleton
-- [ ] Human review and commit
+The approved SE121 North Star is **Track A + Track B**:
 
-### Milestone 1: Research & Validation
+- **Track A:** complete correctness foundation and usable architecture-intelligence product.
+- **Track B:** architecture evolution across compatible snapshots after Track A gates.
+- **Track C:** moonshot research; never required to make Track A + B credible.
 
-- [x] R1 PoC: JavaParser + SymbolSolver on PetClinic
-- [ ] R2: Schema validation against 3 core rules
-- [ ] R6: Classpath dependency impact test
-- [ ] Architecture rule catalog (research)
-- [ ] Identify 2–4 validation repositories
-- [x] ADR-001: Parser selection
-- [ ] ADR-002: Graph database selection
+The roadmap is tech-first. Ground truth, benchmarks, evidence, and reproducibility remain mandatory engineering verification. Publication and extensive defense packaging are later/optional activities.
 
-### Milestone 2: Core Analysis Pipeline
+## Protected Principles
 
-- [ ] Source ingestion module
-- [ ] Parser module (behind interface)
-- [ ] Semantic model domain objects
-- [ ] Spring inference module
-- [ ] Graph builder module
-- [ ] Independent verification
+1. Do not weaken Track A to reach Track B.
+2. Do not begin Track B until snapshot identity, semantic correctness, graph invariants, and policy evidence pass.
+3. Coverage and semantic correctness are separate metrics.
+4. Unknown/ambiguous/conditional semantics remain explicit.
+5. Canonical semantic and query contracts remain independent of parser and storage adapters.
+6. Multi-module workspace/build-model intelligence is a core capability.
+7. Analysis identity is content-addressed, but caching is deferred until a measured need.
+8. Bytecode validation remains optional until source evidence shows a concrete gap.
+9. Evaluation runs throughout implementation rather than at the end.
+10. No SE122/KLTN production features enter SE121 silently.
+11. Architecture health, analysis confidence, and semantic coverage remain separate outputs.
+12. Metrics and scores are versioned, deterministic, explainable, and withheld when required evidence is insufficient.
+13. Track A must deliver the required visual product workflow; an analyzer or CLI alone is not product completion.
 
-### Milestone 3: Rules & Violations
+## Tracks
 
-- [ ] Architecture rule engine
-- [ ] ≥3 architecture rules implemented
-- [ ] Evidence-backed violation reports
-- [ ] Adversarial review
+### Track A - Correctness Foundation and Complete Product
 
-### Milestone 4: Impact Analysis
+- Reproducible Java/Maven foundation
+- Parser-neutral semantic/identity/provenance contracts
+- Safe multi-module workspace and build-model intelligence
+- Expanded Java semantic frontend behind an adapter
+- Explicit uncertainty and diagnostics
+- Bounded Spring candidate/injection intelligence
+- Deterministic canonical Software Knowledge Graph
+- Storage-neutral architecture query layer
+- Typed architecture-policy engine
+- Evidence-first violations
+- Detailed inventory, semantic-quality, structural, policy, Spring, and operational metrics
+- Explainable architecture health score with separate analysis confidence
+- Bounded impact analysis
+- CLI-first workflow, API, and a complete evidence-oriented architecture workbench
+- Dashboard, structure explorer, focused graph, metrics/score, violations, Spring, impact, and provenance views
+- Multi-repository correctness, robustness, determinism, and performance evaluation
 
-- [ ] Basic impact analysis via graph traversal
-- [ ] "What changes if X changes?" queries
+### Track B - Architecture Evolution Target
 
-### Milestone 5: Evaluation
+- Compatible content-addressed snapshot identities
+- Entity, relationship, Spring-binding, policy, and metric diffs
+- Introduced, resolved, persisted, and reintroduced violations
+- Source-evidenced comparison queries and UI
+- Labeled historical/two-snapshot evaluation
+- Basic earliest-observed violation analysis only where history semantics are explicit
 
-- [ ] Benchmark methodology
-- [ ] Ground-truth dataset (PetClinic + additional repos)
-- [ ] Precision/recall/F1 measurement
-- [ ] Reproducibility verification
+### Track C - Moonshot
 
-### Milestone 6: Visualization
+- Correctness-preserving incremental analysis
+- Selective graph reconstruction
+- Selective rule re-evaluation
+- Architecture blame beyond basic Track B comparison
+- Large temporal histories
+- Advanced hotspot analysis
+- Optional selective bytecode validation
 
-- [ ] API data contract
-- [ ] Minimum viable visualization
-- [ ] Dependency graph rendering
-- [ ] Violation overlay
+## Milestones
 
-### Milestone 7: Documentation & Defense
+### M-1 - Project Operating System Hardening
 
-- [ ] Final documentation
-- [ ] Benchmark report
-- [ ] Architecture documentation
-- [ ] SE121 deliverable
+Purpose: establish one canonical session bootstrap, completion/handoff contract, normalized eight-role agent system, concise durable state, and tech-first roadmap.
 
-## SE122 / Đồ án 2
+Exit gate: human approves governance diff and authorizes M0. No production code begins inside M-1.
 
-Future phase. Scope includes:
+### M0 - Reproducible Foundation
 
-- AI diagnosis
-- Graph-guided RAG
-- Automated refactoring proposals
+Deliver:
 
-## KLTN / Thesis
+- Maven Wrapper with pinned distribution/checksum
+- Java/Maven enforcement and `maven.compiler.release`
+- repeatable clean build instructions
+- deterministic serialization/build foundations
+- root README and documented environment
 
-Future phase. Scope includes:
+Exit gate G0: clean build from at least two documented environments with exact tool versions and no unexplained artifacts.
 
-- Verified transformation
-- Sandbox verification
-- Differential testing
-- CI/CD integration
-- Verified Pull Request generation
+### M1 - Semantic, Identity, Uncertainty, and Provenance Contracts
+
+Deliver parser-neutral immutable contracts for repository snapshots, modules, source documents/spans, entities, relationships, diagnostics, uncertainty, derivation, analysis manifests, content-addressed analysis identity, metric envelopes, metric/score versions, score status, and analysis confidence.
+
+Exit gate G1: contract/invariant/golden tests define deterministic identity and serialization, including `COMPLETE`, `PARTIAL`, `WITHHELD`, and `NOT_APPLICABLE` assessment states; no JavaParser or graph-store type leaks.
+
+### M2 - Semantic Frontend and Ground-Truth Expansion
+
+Deliver the JavaParser adapter and architecture-relevant relationship set: declarations, inheritance, implementations, permits, type uses, calls, constructor calls, field access, method references, parameters, returns, fields, throws, annotations, generics, and relevant modern Java constructs.
+
+Ground truth distinguishes attempted, correct, incorrect, unresolved, ambiguous, omitted, unsupported, and error outcomes. JavaParser remains provisional until this gate.
+
+### M3 - Multi-Module Workspace and Build-Model Intelligence
+
+Deliver safe understanding of Maven parent POMs, modules, source/generated-source roots where safely discoverable, dependency management, BOMs, dependency scopes, module dependencies, and exact classpath manifests.
+
+Do not execute arbitrary target lifecycle plugins. Gradle initially accepts an explicit classpath unless a separately approved safe approach exists.
+
+Exit gate G2: pinned multi-module fixtures and a real repository reproduce module/source/classpath models without hidden dependency supersets.
+
+### M4 - Spring Semantic Intelligence
+
+Deliver direct/composed stereotypes, `@Bean` producer candidates, injection points, constructor rules, assignable candidate sets, qualifiers, primary/fallback, collection injection, and explicit conditional/profile states.
+
+Exit gate G3: pre-registered ground truth demonstrates bounded correctness. Do not claim Spring runtime-container equivalence.
+
+### M5 - Canonical Graph, Metrics, and Architecture Query Layer
+
+Deliver deterministic graph construction, stable entity/occurrence/relationship identities, graph invariants, storage port, structural metric computation, focused graph projections, and query services for summaries, inventory, metrics, symbol lookup, dependencies, dependents, paths, cycles, evidence, impact, and snapshot comparison preparation.
+
+Every metric exposes a stable ID/version, scope, value/unit, formula semantics, inputs, analysis/configuration identity, status, denominator where applicable, and uncertainty. Hand-computed micrographs and golden fixtures verify structural metrics.
+
+Neo4j is evaluated only as an adapter.
+
+Exit gate G4: idempotency, uniqueness, provenance, persistence round-trip, metric correctness, bounded projection, and query contract tests pass.
+
+### M6 - Policy, Evidence, and Explainable Architecture Assessment
+
+Deliver schema-validated external policy representation compiled to a typed internal model, initially covering forbidden dependency, layer/module/package boundary, and cycle rules.
+
+Each violation carries rule/version, source/target identities, supporting relationships, source spans, semantic status, graph path, configuration, and limitations.
+
+Deliver policy/violation metrics and a versioned explainable architecture health score with dimension breakdown, raw inputs, contributions, penalties, caps, and withheld reasons. Architecture health remains separate from analysis confidence. Exact weights and thresholds require labeled examples, sensitivity analysis, and human approval before being treated as confirmed.
+
+Exit gate G5: positive, negative, ambiguous, and controlled architecture-mutation cases pass; score golden cases, expected monotonicity properties, missing-evidence behavior, sensitivity analysis, and formula-version tests pass without hidden false certainty.
+
+### M7 - Impact, CLI, and Interoperability
+
+Deliver bounded direct/transitive/policy impact queries, a complete CLI workflow, and canonical exports for inventory, metrics, score explanations, violations, provenance, and limitations through JSON, SARIF, and GraphML where applicable. Impact remains potential structural impact, not guaranteed runtime behavior.
+
+Exit gate: the entire Track A analysis/evidence workflow runs locally without backend or Neo4j.
+
+### M8 - Backend API and Complete Architecture Workbench
+
+Deliver asynchronous cancellable analysis jobs and versioned query APIs plus the required workbench:
+
+- analysis setup/history and provenance;
+- overview dashboard with repository inventory, semantic coverage, confidence, violations, metrics, score, hotspots, duration, and limitations;
+- repository/module/package/type/member structure explorer;
+- focused interactive architecture graph with search, filters, grouping, expansion, path highlighting, legends, limits, and export;
+- metrics catalog, distributions, drill-down, score breakdown, and contribution/penalty evidence;
+- violation explorer with rule, severity, status, uncertainty, graph path, and exact source evidence;
+- Spring component, endpoint, injection-candidate, and conditional/ambiguous views;
+- bounded impact views; and
+- complete loading, empty, partial, error, canceled, and oversized-result states.
+
+The UI must use stable query services, bounded payloads, pagination/cancellation where applicable, progressive graph expansion, accessible status cues, and registered reference-environment performance budgets. It must not recompute canonical metrics or issue arbitrary graph-store queries.
+
+Exit gate: a user can complete the registered end-to-end product journey on a pinned external repository, drill from dashboard/score/violation/graph to exact evidence, and observe honest degraded behavior on a partial-evidence scenario. CLI, API, exports, and UI agree on canonical values.
+
+### M9 - Multi-Repository Evaluation and Hardening
+
+Deliver curated microfixtures, PetClinic, medium, multi-module, and larger repositories; controlled partial-classpath experiments; architecture mutations; metric golden cases; score sensitivity and missing-evidence experiments; graph/query/UI scale scenarios; accessibility/usability review of primary workflows; robustness matrix; repeated determinism/performance runs; and immutable raw results.
+
+Exit gate G6: independent review supports the exact bounded Track A claims, metric and score correctness boundaries, registered product performance/usability criteria, and a clean reproducible product workflow.
+
+### M10 - Track A Release Gate
+
+Freeze Track A contracts and claim language. Resolve all blocking semantic, Spring, graph, metric, score, policy, evidence, robustness, accessibility, and product defects before Track B. Track A cannot pass with an analyzer/CLI-only result.
+
+Human approval is mandatory to continue.
+
+### M11 - Track B Architecture Evolution
+
+Deliver compatible snapshot comparison, semantic/graph/policy/metric/score diffs, introduced/resolved/persisted/reintroduced violations, evidence-backed comparison queries and UI, and one labeled historical corpus. Reject or visibly qualify comparisons across incompatible analyzer, configuration, policy, metric, or score versions.
+
+Exit gate G7: known evolution events are reproduced and analyzer/configuration drift is distinguished from repository change.
+
+### M12 - Technical Integration and Final Reproducibility
+
+Deliver the Track A + B integrated visual product, clean-clone reproduction, current architecture documentation, benchmark evidence, known limitations, and a reliable local demonstration covering dashboard, metrics, score, graph, violations, evidence, impact, provenance, and compatible snapshot comparison. Publication packaging remains optional future work.
+
+## Milestone DAG
+
+```text
+M-1 Human approval
+  -> M0 Reproducible foundation
+  -> M1 Semantic/identity/provenance contracts
+       -> M2 Semantic frontend + ground truth
+       -> M3 Workspace/build model
+       -> M5 Canonical graph/metrics/query foundations
+  M2 + M3 -> M4 Spring intelligence
+  M4 + M5 -> M6 Policy/evidence/assessment
+  M6 -> M7 Impact/CLI/export
+  M7 -> M8 Backend/complete workbench
+  M2 + M3 + M4 + M6 -> M9 External evaluation
+  M8 + M9 -> M10 Track A gate
+  M10 human approval -> M11 Track B evolution
+  M11 -> M12 Technical integration
+  M12 -> optional Track C
+```
+
+## Approximate 24-Week Calendar
+
+| Weeks | Focus |
+|---|---|
+| 1 | M-1 governance approval and handoff |
+| 2-3 | M0 reproducible foundation |
+| 3-5 | M1 contracts and invariants |
+| 5-8 | M2 semantic frontend/ground truth and M3 build model |
+| 8-11 | M4 Spring intelligence and M5 graph/metrics/query layer |
+| 11-14 | M6 policy, Evidence Bundles, and explainable assessment |
+| 14-16 | M7 impact, CLI, and exports |
+| 16-19 | M8 complete workbench and continuous M9 evaluation |
+| 19-20 | Track A hardening and G6/M10 review |
+| 20-23 | M11 Track B evolution after approval |
+| 23-24 | M12 integration and reproducibility |
+
+Dates are guidance. Gates, not calendar pressure, authorize progression.
+
+## Parallel Workstreams
+
+| Workstream | Starts | Primary outputs |
+|---|---|---|
+| Infrastructure/reproducibility | M0 | Toolchain, clean builds, manifests |
+| Semantic intelligence | M1 | Contracts, frontend, diagnostics |
+| Workspace/build intelligence | M1/M3 | Modules, roots, dependencies/classpaths |
+| Benchmark/ground truth | M1 | Fixtures, labels, protocols, raw results |
+| Spring intelligence | M4 | Bean/injection candidates and uncertainty |
+| Graph/metrics/query | M5 | Canonical graph, invariants, structural metrics, projections, services |
+| Policy/evidence/assessment | M6 | Rules, violations, Evidence Bundles, explainable score |
+| Product | M7 | CLI, API, complete workbench, exports |
+| Evolution | M11 | Snapshot diffs and events |
+| Documentation | Continuous | Current contracts, decisions, state |
+
+## Stage Gates
+
+| Gate | Decision |
+|---|---|
+| G-1 | M-1 operating system approved; M0 authorized |
+| G0 | Foundation builds reproducibly |
+| G1 | Parser-neutral semantic/identity/metric/assessment contracts are stable |
+| G2 | Frontend and multi-module build model meet ground truth |
+| G3 | Bounded Spring inference meets approved evidence criteria |
+| G4 | Canonical graph/metric/query invariants pass |
+| G5 | Policy/evidence/score correctness passes mutations, negatives, and sensitivity checks |
+| G6 | Complete Track A visual product and multi-repository evidence are sufficient |
+| G7 | Track B evolution events are correct and reproducible |
+| G8 | Final Track A + B integration is reproducible |
+
+## Continuous Evaluation
+
+- Exhaustive microfixtures and contract tests on semantic changes
+- Parser/Spring ground truth at their gates
+- Rule mutation and negative-control tests on policy changes
+- Full corpus runs at major gates
+- Immutable versioned raw results
+- Repeated deterministic output comparison
+- End-to-end phase time and memory measurement
+- Golden inventory/metric counts and hand-computed micrograph checks
+- Score missing-evidence, sensitivity, versioning, and explanation checks
+- Registered graph/query/UI scale and primary-workflow accessibility checks
+- Traceability from dashboard and score values to canonical inputs/evidence
+- Independent review for parser promotion, Spring claims, Track A, and Track B
+
+## Fallback and Scope Cuts
+
+Cut in this order if time/evidence requires:
+
+1. Track C incremental analysis and large history
+2. Advanced architecture blame/hotspot analysis
+3. Optional bytecode validation
+4. Advanced comparison visualizations beyond the required Track B comparison flow
+5. Neo4j persistence, retaining canonical graph/file output
+6. Nonessential backend/workbench extras, retaining the required Track A dashboard, metrics, score, graph, violation, evidence, and provenance workflow
+
+Never cut semantic ground truth, uncertainty, provenance, graph/metric invariants, policy evidence, explainable score safeguards, the required Track A workbench, deterministic output, reproducibility, or honest limitations.
+
+## Publication and Defense
+
+Paper readiness, venue selection, extensive artifact badging, and elaborate defense scripting are future/optional. Preserve strong raw evidence and methodology now so those paths remain available without steering current engineering priorities.
+
+## Immediate Sequence
+
+1. Human reviews and approves M-1.
+2. Human commits M-1 if accepted.
+3. Begin M0 only.
+4. Do not begin production parser extraction, graph, Spring, backend, CLI, or frontend before their prerequisite gates.

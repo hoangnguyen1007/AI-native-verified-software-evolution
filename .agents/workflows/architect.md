@@ -1,198 +1,30 @@
-# Architect
+# Architect Workflow
 
-Description: Design, challenge, and document architecture for a consequential project change.
+Purpose: produce an implementation-ready decision for a consequential architectural change.
 
----
+## Bootstrap Context
 
-# 1. Load Reality
+Run Tier 0, then read relevant architecture, ADRs, research evidence, source, tests, schemas, and query/use-case requirements in full.
 
-Read:
+## Procedure
 
-- AGENTS.md
-- current-state
-- roadmap
-- architecture docs
-- relevant ADRs
+1. Define problem, constraints, non-goals, affected boundaries, and success evidence.
+2. List invariants that must remain true.
+3. Map inputs, outputs, dependency direction, owned data, failure and test boundaries.
+4. Compare the simple baseline, recommended design, and strongest alternative.
+5. Analyze trade-offs, lock-in, migration, reversibility, security, and phase fit.
+6. Attack the preferred design for semantic loss, coupling, scale, and hidden failure modes.
+7. Specify implementation boundary, tests, migration, and gate criteria.
+8. Request human approval when the decision is consequential.
 
-Inspect the actual repository.
+## Verification
 
-Never design against an imagined system.
+Check that the design answers actual repository requirements, can be tested, preserves evidence, and does not assume future-phase implementation.
 
----
+## State Update
 
-# 2. Define the Problem
+After approval, create/update an ADR and affected architecture contracts. Update current state and roadmap only if decision/gate status changed.
 
-State:
+## Output and Handoff
 
-- current state
-- desired state
-- problem
-- constraints
-- non-goals
-- affected boundaries
-- success criteria
-
----
-
-# 3. Identify Architectural Invariants
-
-List what must remain true.
-
-Examples:
-
-- analyzer independent from UI
-- source evidence preserved
-- graph relationships traceable
-- deterministic analysis remains testable
-- benchmark results reproducible
-
-Any proposed architecture violating an invariant must explicitly justify it.
-
----
-
-# 4. Map Dependencies
-
-Identify:
-
-- components
-- dependency direction
-- data flow
-- control flow
-- public interfaces
-- persistence
-- external systems
-- test boundaries
-
----
-
-# 5. Generate Options
-
-Produce:
-
-A. simplest viable design
-B. recommended design
-C. strongest alternative
-
-For each:
-
-- complexity
-- benefits
-- risks
-- migration cost
-- future flexibility
-
----
-
-# 6. Challenge the Recommendation
-
-Actively search for reasons the preferred architecture could fail.
-
-Ask:
-
-- What becomes tightly coupled?
-- What becomes hard to test?
-- What becomes expensive to replace?
-- Where can semantic information be lost?
-- What happens at repository scale?
-- What becomes difficult in later project phases?
-- What failure modes become invisible?
-
-Do not perform confirmation-only reasoning.
-
----
-
-# 7. Architecture Fitness
-
-Define measurable or testable properties where practical.
-
-Examples:
-
-- dependency boundaries
-- parser output completeness
-- graph consistency
-- evidence preservation
-- query latency
-- memory behavior
-- benchmark reproducibility
-
-An architecture should have observable qualities, not only diagrams.
-
----
-
-# 8. Reversibility
-
-Identify:
-
-- easy-to-reverse choices
-- expensive-to-reverse choices
-- irreversible choices
-
-For expensive choices, increase evidence requirements before implementation.
-
----
-
-# 9. Implementation Boundary
-
-Specify exactly:
-
-## Change
-
-...
-
-## Do Not Change
-
-...
-
-## Interfaces
-
-...
-
-## Data Model
-
-...
-
-## Tests
-
-...
-
-## Migration
-
-...
-
-## Risks
-
-...
-
----
-
-# 10. Decision Record
-
-Create/update ADR when the decision is consequential.
-
-Include:
-
-- context
-- problem
-- alternatives
-- decision
-- rationale
-- trade-offs
-- consequences
-- evidence
-- reversal conditions
-
----
-
-# 11. Final Architecture Review
-
-Before implementation, ask:
-
-- Is the design simpler than necessary?
-- Is any component premature?
-- Is any coupling unnecessary?
-- Can it be tested?
-- Can it be benchmarked?
-- Is it compatible with the current project phase?
-- Does it preserve future options?
-
-Return an implementation-ready architecture decision.
+Return decision, evidence, alternatives, trade-offs, confidence, reversal conditions, affected files, verification strategy, and mandatory handoff.

@@ -18,6 +18,7 @@ Java/Spring Boot repository as a labeled property graph. It must support:
 3. Impact analysis
 4. Evidence-backed violation reporting
 5. Source traceability
+6. Versioned structural metrics and bounded visualization projections
 
 **[CONFIRMED]** — from AGENTS.md.
 
@@ -157,6 +158,21 @@ Each relationship should be traceable to answer:
 4. **Where** in the source code is the evidence?
 5. **How** was it discovered? (DIRECT / DERIVED / INFERRED)
 
+## Metric and Product Query Boundary [CONFIRMED DIRECTION]
+
+The canonical graph supports metrics and visualization, but neither metric semantics nor UI behavior belongs to a Neo4j-specific query.
+
+- Structural metrics are versioned domain results derived from canonical graph/query contracts.
+- A metric records its scope, formula version, inputs, denominator where applicable, status, analysis identity, and uncertainty.
+- Inventory counters are not necessarily graph nodes.
+- Architecture score results are assessment-domain outputs, not intrinsic node properties.
+- Analysis confidence remains separate from architecture health.
+- The workbench requests focused, bounded projections by module, package, configured layer, type neighborhood, cycle, violation path, or impact path.
+- The UI must not request the complete repository graph by default.
+- Storage adapters must pass the same projection, path, cycle, and metric contract tests.
+
+See [Product Outcome, Metrics, Scoring, and Workbench Contract](product-outcome.md).
+
 ## Identity Strategy [HYPOTHESIS]
 
 - Use fully qualified names as stable identifiers
@@ -202,6 +218,8 @@ the schema must be revised before implementation.
 - Reflection-based dependencies: undetectable by static analysis
 - Conditional beans (`@ConditionalOn*`): may produce false INJECTS edges
 - AOP advice: may create invisible dependencies
+- Exact graph projections and aggregation identities for large workbench views
+- Exact structural metric formulas and score inputs pending M5/M6 validation
 
 ## Related Documents
 

@@ -1,149 +1,61 @@
-# Handoff
+# Handoff Workflow
 
-Description: Produce durable, machine-independent project state so another agent, machine, or coding tool can continue without relying on conversation history.
+Purpose: make a completed or blocked task continuable without hidden conversation context.
 
----
+## Bootstrap Context
 
-# 1. Inspect Reality
+Run Tier 0 and inspect the current diff, recent commits, relevant contracts, test evidence, and task exit criteria.
 
-Read:
+## Required Record
 
-- Git status
-- current diff
-- recent commits
-- current-state
-- roadmap
-- relevant architecture
-- relevant ADRs
+### STATE BEFORE
 
----
+Milestone, task, repository state, and relevant decisions at task start.
 
-# 2. Capture Context
+### WORK COMPLETED
 
-Record:
+Only work present in the repository or verified external artifacts.
 
-## Objective
-What was being solved?
+### FILES CHANGED
 
-## Phase
-Which project phase?
+Exact changed, added, and deleted files.
 
-## Current State
-What is complete?
+### TESTS / COMMANDS ACTUALLY RUN
 
-## Active Task
-What remains?
+Exact commands/checks; never infer unexecuted verification.
 
----
+### RESULTS
 
-# 3. Capture Decisions
+Passes, failures, exit codes, and key observations.
 
-Record:
+### NEW EVIDENCE
 
-- important technical decisions
-- architecture decisions
-- rejected alternatives
-- assumptions
-- unresolved questions
+Newly established facts and artifact locations.
 
----
+### DECISIONS MADE
 
-# 4. Capture Evidence
+Approved or low-risk reversible decisions, with rationale.
 
-Record:
+### DECISIONS STILL REQUIRING HUMAN APPROVAL
 
-- tests run
-- benchmark results
-- important observations
-- known failures
-- important source/documentation references
+Small explicit decision set.
 
----
+### LIMITATIONS
 
-# 5. Capture Files
+Known unsupported or unverified behavior.
 
-Record:
+### BLOCKERS
 
-- changed files
-- relevant modules
-- files that must be inspected next
+Concrete conditions preventing progress; `none` if there are none.
 
----
+### DURABLE STATE FILES UPDATED
 
-# 6. Capture Risks
+List and explain why each was updated.
 
-Record:
+### EXACT NEXT RECOMMENDED TASK
 
-- known bugs
-- verification gaps
-- architectural risks
-- research uncertainty
-- environment-specific issues
+One bounded next action with its entry condition.
 
----
+## Verification and State Update
 
-# 7. Define Next Action
-
-Choose the single highest-value next action.
-
-Do not create a giant ambiguous TODO list.
-
----
-
-# 8. Persist
-
-Update:
-
-docs/current-state.md
-
-Update architecture docs or ADRs when needed.
-
----
-
-# 9. Cross-Agent Compatibility
-
-The handoff must be understandable by:
-
-- Antigravity
-- Claude Code
-- Codex
-- Gemini
-- another human developer
-
-Do not rely on proprietary conversation terminology.
-
----
-
-# 10. Verification
-
-Ensure the handoff matches repository reality.
-
-Never record "implemented" unless the repository contains the implementation.
-
----
-
-# FINAL
-
-## Objective
-...
-
-## Completed
-...
-
-## Decisions
-...
-
-## Evidence
-...
-
-## Files
-...
-
-## Known Issues
-...
-
-## Risks
-...
-
-## Next Action
-...
+Ensure `docs/current-state.md` matches the handoff. Update other durable files only under `AGENTS.md` rules. Confirm no claim depends on chat history.

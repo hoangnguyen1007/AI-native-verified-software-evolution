@@ -1,194 +1,29 @@
-# Research
+# Research Workflow
 
-Description: Evidence-driven technical research and decision workflow for reducing consequential project uncertainty.
+Purpose: reduce one consequential uncertainty with evidence.
 
----
+## Bootstrap Context
 
-# 1. Define the Decision
+Run Tier 0, then inspect relevant architecture, ADRs, source/tests, existing experiments, and research documents. Research a repository decision, not an abstract trend.
 
-Write:
+## Procedure
 
-- Decision question
-- Why it matters
-- Current phase
-- Constraints
-- Success criteria
-- Cost of making the wrong decision
-- Reversibility
+1. Define decision question, phase, constraints, success evidence, and cost of error.
+2. Select the simple baseline, preferred candidate, and strongest alternative.
+3. Gather repository and authoritative external evidence.
+4. Label facts, observations, inferences, hypotheses, and unknowns.
+5. If needed, design the smallest controlled experiment with inputs, environment, procedure, metrics, and interpretation.
+6. Preserve raw outcomes, including failures.
+7. Stop when additional work is unlikely to change the decision.
 
-If the question is too broad, narrow it before researching.
+## Verification
 
----
+Check source authority, experiment reproducibility, fair comparisons, denominators, and claim strength.
 
-# 2. Repository Grounding
+## State Update
 
-Inspect:
+Update research evidence when knowledge changed. Update current state, roadmap, architecture, or ADR only when an approved decision or gate changed.
 
-- current architecture
-- relevant source
-- tests
-- dependencies
-- ADRs
-- roadmap
-- current-state
+## Output and Handoff
 
-Research must answer a project problem, not an abstract technology question.
-
----
-
-# 3. Build the Candidate Set
-
-Identify:
-
-- simplest viable baseline
-- preferred candidate
-- strongest alternative
-
-Do not create long technology lists without purpose.
-
----
-
-# 4. Evidence Collection
-
-Prefer:
-
-1. official documentation
-2. official specification
-3. official source repository
-4. maintainer material
-5. reproducible experiment
-6. high-quality technical literature
-
-For fast-changing technologies, verify current information.
-
-Classify every important statement:
-
-FACT
-OBSERVATION
-INFERENCE
-HYPOTHESIS
-
----
-
-# 5. Evaluate
-
-Use project-specific criteria.
-
-Examples:
-
-- correctness
-- semantic fidelity
-- performance
-- memory
-- implementation complexity
-- maintainability
-- ecosystem maturity
-- testability
-- reproducibility
-- research value
-- future compatibility
-- reversibility
-
-Do not invent precision that the evidence does not support.
-
----
-
-# 6. EXPERIMENT GATE
-
-If reasoning cannot resolve the decision:
-
-design the smallest possible experiment.
-
-The experiment must define:
-
-- hypothesis
-- inputs
-- environment
-- procedure
-- metrics
-- expected interpretation
-
-Prefer a focused PoC over speculative full implementation.
-
----
-
-# 7. Parallel Research
-
-When useful, delegate independent investigations.
-
-Example:
-
-Agent A:
-Parser semantic fidelity
-
-Agent B:
-Parser performance
-
-Agent C:
-Spring-specific capabilities
-
-Agent D:
-Migration/future compatibility
-
-Then synthesize results.
-
-Do not send duplicate research tasks.
-
----
-
-# 8. STOP CONDITION
-
-Stop researching when:
-
-- the decision is sufficiently supported
-- the remaining uncertainty is low-impact
-- additional research is unlikely to change the decision
-
-Do not continue research indefinitely.
-
----
-
-# 9. Decision Output
-
-Return:
-
-## Decision Question
-...
-
-## Evidence
-...
-
-## Alternatives
-...
-
-## Experiment
-...
-
-## Results
-...
-
-## Trade-offs
-...
-
-## Recommendation
-...
-
-## Confidence
-HIGH / MEDIUM / LOW
-
-## Remaining Unknowns
-...
-
----
-
-# 10. Durable State
-
-For consequential decisions:
-
-Create an ADR under:
-
-docs/decisions/
-
-Update research documentation when useful.
-
-Do not rely on chat history for important conclusions.
+Return question, evidence, alternatives, experiment/results, recommendation, confidence, unknowns, approval required, and mandatory handoff.

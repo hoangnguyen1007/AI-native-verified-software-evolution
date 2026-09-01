@@ -2,135 +2,226 @@
 
 ## Project Mission
 
-Build an AI-native software evolution platform that can understand Java/Spring Boot repositories, model software architecture, detect architecture violations, provide evidence-backed analysis, and support future verified software evolution.
+Build a deterministic, evidence-first software architecture intelligence platform that understands Java and Spring Boot repositories, reconstructs architecture-relevant semantics, detects architecture violations, explains their evidence, and supports later verified software evolution without redesigning the core.
 
-## Current Phase
+## Current Phase and North Star
 
-Current phase: SE121 – Đồ án 1
+Current phase: **SE121 - Software Architecture Intelligence Platform**.
 
-Current scope is limited to:
+The approved SE121 North Star is **Track A + Track B**:
 
-- Semantic source analysis
+- **Track A:** protected correctness foundation and complete architecture-intelligence product.
+- **Track B:** architecture evolution across compatible repository snapshots, after Track A correctness gates pass.
+- **Track C:** optional moonshot work; it must never weaken or delay a credible Track A + B result.
+
+Current operating priority:
+
+1. Technical depth
+2. System correctness
+3. Architecture quality
+4. Engineering quality
+5. Product quality
+6. Empirical validation
+7. Publication readiness later
+
+## SE121 Scope
+
+- Java semantic source analysis
+- Multi-module workspace and safe build-model intelligence
+- Spring semantic intelligence
 - Software Knowledge Graph
-- Dependency modeling
-- Architecture rule modeling
-- Architecture violation detection
-- Evidence and provenance
-- Basic impact analysis
-- Architecture visualization
-- Benchmarking and evaluation
+- Dependency and architecture-policy modeling
+- Evidence-backed architecture violation detection
+- Basic, explicitly bounded impact analysis
+- Architecture visualization and query services
+- Reproducible benchmarking and evaluation
+- Track B snapshot comparison and architecture evolution after prerequisite gates
 
-## Explicit Non-Goals for Current Phase
+## Explicit Non-Goals
 
-Do NOT implement the following unless explicitly requested:
+Do not implement these unless the human explicitly changes phase scope:
 
-- Automated refactoring
-- Patch generation
-- OpenRewrite transformation pipeline
-- AI diagnosis
-- Graph-guided RAG
-- Sandbox verification
-- Differential testing
-- Mutation testing pipeline
-- CI/CD verification
-- Verified Pull Request generation
+- AI diagnosis or graph-guided RAG
+- Automated refactoring or patch generation
+- OpenRewrite transformation pipelines
+- Sandbox verification of generated changes
+- Differential or mutation testing of generated patches
+- CI/CD verification or Verified Pull Requests
+- A second programming language
 
-Those belong to later project phases.
+Architecture-mutation fixtures used to evaluate SE121 rule detection are in scope; automated mutation testing of patches is not.
 
-## Target Ecosystem
+## Source Authority and Epistemic Status
 
-Primary target:
+Use this authority order:
 
-- Java
-- Spring Boot
+1. Explicit human decisions
+2. Official project or academic documents supplied by the human
+3. Verified repository evidence and reproducible experiments
+4. Official technical documentation and specifications
+5. Peer-reviewed research
+6. AI-generated proposals and assumptions
 
-## Engineering Principles
+Classify consequential claims as:
 
-1. Prefer deterministic analysis where possible.
-2. Every architecture violation must be backed by inspectable evidence.
-3. Every graph relationship should be traceable to source code.
-4. Separate parsing, semantic modeling, graph construction, rule evaluation, and presentation.
-5. Avoid premature microservices.
-6. Prefer a modular architecture with strong boundaries.
-7. Minimize unnecessary dependencies.
-8. Favor explicit domain models over implicit conventions.
-9. Write tests for core analysis behavior.
-10. Preserve reproducibility for all benchmark results.
+- **CONFIRMED:** human-approved or directly verified fact
+- **PROVISIONAL:** adopted working decision with remaining validation gates
+- **HYPOTHESIS:** testable claim awaiting evidence
+- **ASSUMPTION:** temporary default
+- **OPEN QUESTION:** unresolved decision
 
-## AI Agent Behavior
+Never promote a lower-authority claim without evidence or human approval.
 
-Before making architectural changes:
+## Mandatory Session Bootstrap
 
-1. Inspect the repository.
-2. Read relevant documentation.
-3. Identify affected modules.
-4. State assumptions.
-5. Propose a plan.
-6. Identify risks and alternatives.
+Every non-trivial new work session must reconstruct project state. Chat history is not authoritative.
 
-Do not silently make major architectural decisions.
+### Tier 0 - always read fully
 
-For implementation tasks:
+- `AGENTS.md`
+- `docs/project-context.md`
+- `docs/current-state.md`
+- `docs/roadmap.md`
+- `git status`, `git diff`, and recent `git log`
 
-1. Understand requirements.
-2. Inspect existing code and tests.
-3. Make the smallest coherent change.
-4. Add or update tests.
-5. Run relevant verification.
-6. Update documentation when behavior or architecture changes.
-7. Report changed files, verification results, and remaining risks.
+Identify the current milestone, active task, repository state, approved and provisional decisions, blockers, and next expected task.
 
-## Evidence First
+### Tier 1 - milestone context
 
-Architecture analysis should preserve:
+Read relevant architecture documents, ADRs, research evidence, and milestone specifications in full.
 
-- source file
-- source span
-- symbol
-- dependency
-- graph path
-- violated rule
-- rule provenance
-- analysis evidence
+### Tier 2 - task context
 
-A result without traceable evidence should not be treated as a verified architecture violation.
+Inspect all relevant production source, tests, schemas, fixtures, benchmark cases, and configuration before editing.
 
-## Repository Discipline
+### Tier 3 - extended context
 
-- Never commit secrets.
-- Never commit API keys.
-- Never modify generated files without understanding their source.
-- Never rewrite git history unless explicitly requested.
-- Never force-push without explicit approval.
-- Never change public APIs unnecessarily.
-- Never introduce a new framework merely because an agent prefers it.
+Load external research, historical experiments, and unrelated project areas only when the task needs them.
 
-## Documentation
+Before substantial modification, state concisely:
 
-Important project knowledge must be persisted in repository documentation rather than only in conversation history.
+- current milestone
+- current task
+- relevant contracts
+- known risks
+- planned change
+- verification plan
 
-Primary documents:
+## Engineering and Architecture Principles
 
-- docs/project-context.md
-- docs/architecture/architecture.md
-- docs/architecture/knowledge-graph.md
-- docs/decisions/
-- docs/current-state.md
-- docs/roadmap.md
+1. Correctness and evidence take precedence over feature count.
+2. Preserve deterministic behavior where practical.
+3. Every important relationship must expose its origin, semantic status, evidence, and provenance.
+4. Never replace uncertainty with invented certainty.
+5. Separate repository acquisition, build modeling, semantic extraction, Spring enrichment, graph construction, rule evaluation, storage, query services, and presentation.
+6. Do not leak parser AST objects or storage-specific queries across domain boundaries.
+7. Represent Maven modules, source roots, module dependencies, dependency management, BOMs, and scopes explicitly where architecture analysis needs them.
+8. Do not execute arbitrary untrusted Maven or Gradle lifecycle code.
+9. Analysis identity must be content-addressed from stable inputs: repository snapshot, source hashes, classpath manifest, configuration, rules, graph schema, and analyzer version.
+10. Backend and frontend domain behavior must use stable architecture query services, not arbitrary graph-store queries.
+11. Keep bytecode validation on ASSESS/HOLD until source-semantic evidence demonstrates a concrete need.
+12. Prefer a modular monolith and reversible adapters over premature distributed infrastructure.
+13. Write tests for semantic behavior, graph invariants, rules, evidence, and regressions.
+14. Preserve reproducibility and raw benchmark evidence.
 
-## Multi-Agent Rule
+## Standard Task Lifecycle
 
-Agents must treat Git, repository documentation, tests, and source code as the durable project state.
+For meaningful work:
 
-Conversation history is temporary context and must not be relied upon as the only source of project knowledge.
+1. Bootstrap context.
+2. Define scope, contracts, exit criteria, and non-goals.
+3. Complete a research gate when evidence is missing.
+4. Complete an architecture gate for consequential design choices.
+5. Implement the smallest coherent approved change.
+6. Verify with task-specific and proportional broader checks.
+7. Perform independent/adversarial review when risk warrants it.
+8. Update durable project state.
+9. Produce the mandatory handoff.
+10. Leave commit and push to the human unless explicitly requested.
 
-## Completion Standard
+## Evidence-First Contract
 
-Never claim a task is complete without reporting:
+Architecture facts and violations should preserve, as applicable:
 
-- what changed
-- which tests were executed
-- which verification passed
-- which verification was not available
-- known limitations
-- remaining follow-up work
+- repository and snapshot identity
+- analysis configuration and analyzer version
+- relationship category and semantic status
+- caller/source and target/candidate identities
+- source file and complete source span
+- derivation and uncertainty
+- dependency and graph path
+- rule ID/version and rule provenance
+- diagnostics and unresolved/error evidence
+
+A result without sufficient traceability must not be presented as verified.
+
+## Durable Project State
+
+- `docs/project-context.md`: durable identity, scope, authority, and constraints
+- `docs/roadmap.md`: future direction, milestone DAG, gates, and Track A/B/C status
+- `docs/current-state.md`: concise operational truth now
+- `docs/decisions/`: why consequential decisions were made
+- `docs/architecture/`: current contracts, boundaries, semantics, schemas, and invariants
+- `docs/research/`: methods and evidence, not operational progress
+
+Do not duplicate current status across documents.
+
+At the end of a meaningful task:
+
+- Always update `docs/current-state.md` if project state changed.
+- Update `docs/roadmap.md` only when milestone status, sequence, scope, gate state, track assignment, or evidence-backed direction changes.
+- Update architecture documents only when contracts, boundaries, schemas, semantics, or invariants change.
+- Create or update an ADR only for a significant approved decision with real alternatives.
+- Update research documents when experimental evidence changes project knowledge.
+
+## Mandatory Completion and Handoff
+
+No meaningful task is complete immediately after generation or editing. Before completion:
+
+1. Inspect the resulting diff.
+2. Run task-specific tests or validation.
+3. Run relevant integration/contract checks.
+4. Run a broader build/check proportional to impact.
+5. Check project and architecture rules.
+6. Compare work with exit criteria.
+7. Record limitations, open issues, and blockers.
+8. Update durable state.
+
+Every meaningful handoff must report:
+
+- STATE BEFORE
+- WORK COMPLETED
+- FILES CHANGED
+- TESTS / COMMANDS ACTUALLY RUN
+- RESULTS
+- NEW EVIDENCE
+- DECISIONS MADE
+- DECISIONS STILL REQUIRING HUMAN APPROVAL
+- LIMITATIONS
+- BLOCKERS
+- DURABLE STATE FILES UPDATED
+- EXACT NEXT RECOMMENDED TASK
+
+## Agent System
+
+The permanent roles are limited to:
+
+- lead-architect
+- researcher
+- semantic-analyst
+- graph-architect
+- implementer
+- verifier
+- red-team-reviewer
+- benchmark-engineer
+
+Use the smallest number of roles that materially improves the work. Independent agreement is not evidence; important decisions require repository evidence, experiments, or human approval.
+
+## Repository and Git Safety
+
+- Inspect and preserve existing user changes.
+- Never expose secrets or commit credentials.
+- Do not rewrite history, force-push, or perform destructive cleanup without explicit approval.
+- Do not edit generated evidence without understanding its generator.
+- Do not manually improve benchmark results.
+- Do not commit or push unless explicitly requested.
