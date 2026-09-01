@@ -8,33 +8,40 @@ SE121 - Software Architecture Intelligence Platform.
 
 ## CURRENT MILESTONE
 
-M-1 - Project Operating System Hardening.
+M0 - Reproducible Foundation (**AUTHORIZED, NOT STARTED**).
 
 ## ACTIVE TASK
 
-Human review of the completed M-1 governance, roadmap, and confirmed visual-product outcome contract.
+Documentation-only transition from completed M-1 into the M0 starting position. No M0 installation or implementation is part of this transition update.
 
 ## STATUS
 
-M-1 governance and confirmed product-outcome documentation are implemented and locally verified. They remain uncommitted and awaiting final human approval. The human has confirmed that the SE121 outcome must be a complete visual platform with detailed metrics, an explainable architecture score, violations, focused graph exploration, and evidence navigation. M0 production work has not started.
+M-1 is **COMPLETE, HUMAN-APPROVED, AND COMMITTED** at `86c4ca29fb747797df3e489d978804644a34f1ce` (`done setup`, 2026-09-01 19:37:07 +07:00). Gate G-1 passed and M0 is authorized. M0 installation and implementation have not started. This documentation-only milestone-transition update is not yet committed.
 
 ## LAST COMPLETED MILESTONE / TASK
 
 - R1 corrected JavaParser + SymbolSolver viability evidence package.
-- M-1 governance implementation and consistency verification.
+- M-1 governance, roadmap, architecture/product-outcome foundation, consistency verification, human approval, and baseline commit.
 
 ## NEXT EXPECTED TASK
 
-After explicit human approval of M-1: begin M0 with reproducible build/toolchain hardening and parser-neutral semantic/identity/provenance contracts. Do not begin parser production extraction first.
+After this documentation-only transition is reviewed and recorded cleanly, begin M0 with one bounded task: inspect the committed baseline and environment, then implement and verify the reproducible Maven/Java build foundation. Do not begin parser production extraction, graph, Spring inference, backend API, or frontend first.
+
+### M0 Kickoff Boundary
+
+- Preserve commit `86c4ca29fb747797df3e489d978804644a34f1ce` as the approved M-1 baseline.
+- Inspect the existing reactor and environment before choosing the smallest coherent module layout.
+- Limit the first implementation task to Maven Wrapper/checksum, Java 21 compiler/toolchain enforcement, pinned plugin/dependency controls, test boundaries, root build instructions, and reproducibility evidence.
+- Require a clean build from two documented environments before G0 passes.
+- Keep JavaParser PROVISIONAL and do not implement production semantic extraction inside the foundation task.
 
 ## BLOCKERS
 
-- Human review/approval of the M-1 diff.
-- Human commit remains pending.
+None for starting the bounded M0 foundation task. Open technical decisions remain milestone work, not permission to skip M0 gates.
 
 ## REPOSITORY REALITY
 
-- Last verified repository commit: `8a4e6e1bc6b8b29ee49ba37d78c9037ed8db3c90`.
+- Approved M-1 baseline and last verified repository commit: `86c4ca29fb747797df3e489d978804644a34f1ce`.
 - Root Maven reactor contains `analyzer` and `backend` modules.
 - Production Java source does not yet exist; tracked source trees contain placeholders.
 - `frontend/` and root `tests/` have no tracked implementation.
@@ -43,6 +50,7 @@ After explicit human approval of M-1: begin M0 with reproducible build/toolchain
 
 ## RECENT VERIFIED EVIDENCE
 
+- M-1 approval commit independently verified at `86c4ca29fb747797df3e489d978804644a34f1ce`; the worktree was clean before this documentation-only transition update.
 - R1 PetClinic target commit: `818c4136ea971c21674525f9053de0d9c7ad8cfe`.
 - Config A: 30 files, 456 attempts, 218 resolved, 238 unresolved, 0 relationship errors.
 - Config B: 30 files, 456 attempts, 456 resolved, 0 unresolved, 0 relationship errors.
@@ -96,7 +104,7 @@ After explicit human approval of M-1: begin M0 with reproducible build/toolchain
 
 | Gate | State | Required evidence |
 |---|---|---|
-| G-1 M-1 operating system | AWAITING HUMAN APPROVAL | Governance consistency, current-state accuracy, tech-first roadmap, no provider-specific role assumptions |
+| G-1 M-1 operating system | PASSED | Human approval and clean baseline commit `86c4ca29fb747797df3e489d978804644a34f1ce` |
 | G0 reproducible foundation | NOT STARTED | Wrapper/toolchain/enforcement and clean reproducible build |
 | G1 semantic/metric contract | NOT STARTED | Parser-neutral facts, identity, uncertainty, provenance, metric/assessment envelopes, deterministic serialization |
 | G2 frontend/build model | NOT STARTED | Expanded ground truth, safe multi-module/build-model support, parser gate |

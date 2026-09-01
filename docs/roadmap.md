@@ -72,11 +72,15 @@ The roadmap is tech-first. Ground truth, benchmarks, evidence, and reproducibili
 
 ### M-1 - Project Operating System Hardening
 
+**Status: COMPLETE.** Human-approved and committed at `86c4ca29fb747797df3e489d978804644a34f1ce` on 2026-09-01. Gate G-1 passed.
+
 Purpose: establish one canonical session bootstrap, completion/handoff contract, normalized eight-role agent system, concise durable state, and tech-first roadmap.
 
 Exit gate: human approves governance diff and authorizes M0. No production code begins inside M-1.
 
 ### M0 - Reproducible Foundation
+
+**Status: AUTHORIZED, NOT STARTED.** No installation or implementation was performed by the M-1 completion update.
 
 Deliver:
 
@@ -183,7 +187,7 @@ Deliver the Track A + B integrated visual product, clean-clone reproduction, cur
 ## Milestone DAG
 
 ```text
-M-1 Human approval
+M-1 Human approval [COMPLETE: 86c4ca2]
   -> M0 Reproducible foundation
   -> M1 Semantic/identity/provenance contracts
        -> M2 Semantic frontend + ground truth
@@ -237,7 +241,7 @@ Dates are guidance. Gates, not calendar pressure, authorize progression.
 
 | Gate | Decision |
 |---|---|
-| G-1 | M-1 operating system approved; M0 authorized |
+| G-1 — PASSED | M-1 operating system approved and committed; M0 authorized |
 | G0 | Foundation builds reproducibly |
 | G1 | Parser-neutral semantic/identity/metric/assessment contracts are stable |
 | G2 | Frontend and multi-module build model meet ground truth |
@@ -282,7 +286,7 @@ Paper readiness, venue selection, extensive artifact badging, and elaborate defe
 
 ## Immediate Sequence
 
-1. Human reviews and approves M-1.
-2. Human commits M-1 if accepted.
-3. Begin M0 only.
+1. ~~Human reviews and approves M-1.~~ Complete.
+2. ~~Human commits the approved M-1 baseline.~~ Complete at `86c4ca29fb747797df3e489d978804644a34f1ce`.
+3. Begin M0 only with the bounded reproducible Maven/Java foundation task.
 4. Do not begin production parser extraction, graph, Spring, backend, CLI, or frontend before their prerequisite gates.

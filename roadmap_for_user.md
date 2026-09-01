@@ -123,13 +123,13 @@ M-1 is the final operating-system/governance milestone before production work.
 
 ### M-1 Exit Decision
 
-Human must decide:
+Human decision record:
 
-- [ ] Approve M-1 as the final governance redesign.
-- [ ] Authorize M0 only.
-- [ ] Commit the M-1 changes or request corrections.
+- [x] Approve M-1 as the final governance redesign.
+- [x] Authorize M0 only.
+- [x] Commit the M-1 changes at `86c4ca29fb747797df3e489d978804644a34f1ce` (`done setup`, 2026-09-01 19:37:07 +07:00).
 
-After approval, redesign should stop unless new evidence forces a change.
+M-1 is complete. Governance redesign now stops unless new evidence forces a change.
 
 ---
 
@@ -363,6 +363,8 @@ Record:
 
 ## M-1 - Project Operating System Hardening
 
+Status: **COMPLETE — HUMAN-APPROVED — COMMITTED** at `86c4ca29fb747797df3e489d978804644a34f1ce`.
+
 Goal: make every future session reconstruct reality and finish with durable, verifiable state.
 
 Entry:
@@ -376,11 +378,11 @@ Work:
 
 Exit:
 
-- [ ] Human approves the diff.
-- [ ] No provider-specific model/tool requirement remains in durable role/workflow contracts.
-- [ ] Current state matches repository reality.
-- [ ] Roadmap shows Track A + B target.
-- [ ] No production M0 work occurred.
+- [x] Human approves the diff.
+- [x] No provider-specific model/tool requirement remains in durable role/workflow contracts.
+- [x] Current state matches repository reality.
+- [x] Roadmap shows Track A + B target.
+- [x] No production M0 work occurred.
 
 ## M0 - Reproducible Foundation
 
@@ -920,7 +922,7 @@ Do not invent a composite architecture health score.
 
 | Gate | Human/technical question | Minimum evidence |
 |---|---|---|
-| G-1 | Is governance stable enough to stop redesigning? | M-1 consistency verification and human approval |
+| G-1 — PASSED | Is governance stable enough to stop redesigning? | M-1 consistency verification, human approval, and baseline commit `86c4ca2` |
 | G0 | Can the project build reproducibly? | Pinned tools and two clean environments |
 | G1 | Are contracts stable and adapter-neutral? | Invariants and golden serialization |
 | G2 | Is Java/build-model extraction trustworthy enough? | Expanded ground truth and safe multi-module cases |
@@ -1049,17 +1051,17 @@ Never cut:
 
 ## 15. Human Decision Checklist
 
-### Now: M-1
+### Completed: M-1
 
-- [ ] Governance is concise enough to use repeatedly.
-- [ ] Bootstrap protocol provides sufficient context without blind full-repo reading.
-- [ ] Eight roles have clear non-overlapping boundaries.
-- [ ] Workflows share one lifecycle.
-- [ ] `current-state.md` reflects reality.
-- [ ] Track A + B is the intended North Star.
-- [ ] Publication work is appropriately de-emphasized.
-- [ ] No M0 production implementation was included.
-- [ ] Authorize M0.
+- [x] Governance is concise enough to use repeatedly.
+- [x] Bootstrap protocol provides sufficient context without blind full-repo reading.
+- [x] Eight roles have clear non-overlapping boundaries.
+- [x] Workflows share one lifecycle.
+- [x] `current-state.md` reflects reality.
+- [x] Track A + B is the intended North Star.
+- [x] Publication work is appropriately de-emphasized.
+- [x] No M0 production implementation was included.
+- [x] Authorize M0.
 - [x] Confirm the final outcome is a complete visual platform with detailed metrics, explainable architecture score, violations, focused graph, and evidence navigation.
 
 ### Before JavaParser Production Promotion
@@ -1093,10 +1095,7 @@ Never cut:
 
 ## 16. Exact Next Action After This Document
 
-1. Human reviews the M-1 diff and this checklist.
-2. Codex corrects any requested M-1 issues only.
-3. Human approves and commits M-1.
-4. Start M0 with a bounded task:
+M-1 review, approval, and baseline commit are complete. The next conversation starts M0 with one bounded task:
 
 > Add and verify the reproducible Maven/Java build foundation—Maven Wrapper with checksum, Java 21 release/enforcement, plugin/dependency controls, root build instructions, and two-environment verification—without implementing semantic production code.
 

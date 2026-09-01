@@ -25,14 +25,14 @@ JavaParser + SymbolSolver hiện chỉ nên giữ trạng thái **PROVISIONAL**.
 | Tài liệu trạng thái lõi | Hoàn tất kỹ thuật | `project-context.md`, `current-state.md`, `roadmap.md` đã phân tách đúng trách nhiệm |
 | Roadmap chi tiết cho người duyệt | Hoàn tất | Có bản đầy đủ và bản tiếng Việt này |
 | Bằng chứng R1 | Hoàn tất có giới hạn | Đủ để giữ JavaParser ở trạng thái PROVISIONAL; chưa đủ để xác nhận tuyệt đối |
-| Duyệt M-1 của con người | Chưa hoàn tất | Cần con người xác nhận bộ governance là baseline được chấp thuận |
-| Commit M-1 | Chưa thực hiện | Theo quy định, Codex không tự commit/push khi chưa được yêu cầu |
+| Duyệt M-1 của con người | Đã hoàn tất | Baseline governance và product outcome đã được chấp thuận |
+| Commit M-1 | Đã hoàn tất | Commit `86c4ca29fb747797df3e489d978804644a34f1ce` (`done setup`) |
 | Maven/build foundation M0 | Chưa bắt đầu | Đây là công việc triển khai đầu tiên tiếp theo |
 | Production analyzer | Chưa bắt đầu | Đúng với thứ tự milestone; không phải thiếu sót setup |
 
 ### Có thể bắt đầu công việc ngay chưa?
 
-**Có, sau khi con người chấp thuận M-1.** Công việc đầu tiên phải là M0 — nền tảng build tái lập. Việc chưa chốt một số chi tiết kỹ thuật tương lai là có chủ đích: các quyết định đó được đặt sau các cổng bằng chứng phù hợp, tránh khóa kiến trúc quá sớm.
+**Có.** M-1 đã được chấp thuận và commit; M0 đã được phép bắt đầu nhưng vẫn `NOT STARTED`. Công việc đầu tiên phải là nền tảng build tái lập. Việc chưa chốt một số chi tiết kỹ thuật tương lai là có chủ đích: các quyết định đó được đặt sau các cổng bằng chứng phù hợp, tránh khóa kiến trúc quá sớm.
 
 ## 3. Vì sao roadmap này đủ mạnh
 
@@ -117,13 +117,17 @@ Chi tiết chuẩn nằm tại [`docs/architecture/product-outcome.md`](docs/arc
 
 ### M-1 — Project Operating System Hardening
 
+**Trạng thái:** **HOÀN THÀNH — ĐÃ DUYỆT — ĐÃ COMMIT** tại `86c4ca29fb747797df3e489d978804644a34f1ce` ngày 2026-09-01.
+
 **Mục tiêu:** thiết lập governance để mọi công việc sau có thể kiểm tra và bàn giao.
 
 **Đã có:** hợp đồng `AGENTS.md`, 8 agent roles, 5 rules, 8 workflows, 4 skills và bộ tài liệu trạng thái.
 
-**Cổng thoát:** con người duyệt baseline; sau đó commit riêng M-1.
+**Cổng thoát:** đã đạt; G-1 đã qua.
 
 ### M0 — Reproducible Foundation
+
+**Trạng thái:** **ĐÃ ĐƯỢC PHÉP BẮT ĐẦU, CHƯA TRIỂN KHAI**.
 
 **Mục tiêu:** tạo nền build nhỏ nhất nhưng tái lập được.
 
@@ -254,7 +258,7 @@ Lịch này là khung quản lý, không phải cam kết cứng. Correctness ga
 
 | Cổng | Quyết định |
 |---|---|
-| G-1 | Con người chấp thuận M-1 governance baseline |
+| G-1 — ĐÃ ĐẠT | Con người đã chấp thuận và commit M-1 governance baseline tại `86c4ca2` |
 | G-2 | M0 build tái lập trên hai môi trường |
 | G-3 | Semantic/identity/provenance contracts đủ ổn định |
 | G-4 | JavaParser đạt ngưỡng R1 mở rộng và được phép dùng production ở trạng thái PROVISIONAL |
@@ -296,22 +300,21 @@ Các quyết định này phải được giải quyết ở M0–M6 bằng prot
 
 ## 11. Kế hoạch bắt đầu ngay
 
-1. Con người đọc và chấp thuận M-1 cùng roadmap này.
-2. Ghi nhận M-1 thành một commit sạch; không trộn production code.
-3. Bắt đầu M0 bằng việc kiểm kê JDK/Maven hiện có và chọn cấu trúc module tối thiểu.
-4. Thêm Maven Wrapper, toolchain/compiler release, Enforcer và test boundaries.
-5. Chạy clean build trên máy hiện tại và môi trường sạch thứ hai; ghi exact command/version.
-6. Chỉ sau khi G-2 đạt mới chuyển sang M1 contracts.
+1. M-1 đã được duyệt và commit sạch tại `86c4ca29fb747797df3e489d978804644a34f1ce`.
+2. Bắt đầu M0 bằng việc kiểm kê JDK/Maven hiện có và chọn cấu trúc module tối thiểu.
+3. Thêm Maven Wrapper, toolchain/compiler release, Enforcer và test boundaries.
+4. Chạy clean build trên máy hiện tại và môi trường sạch thứ hai; ghi exact command/version.
+5. Chỉ sau khi cổng G0 đạt mới chuyển sang M1 contracts.
 
 Không nên bắt đầu bằng Neo4j, UI hoặc analyzer production. Những phần đó phụ thuộc vào contract và correctness gates phía trước.
 
 ## 12. Quyết định con người cần đưa ra
 
-- [ ] Chấp thuận hướng **Track A + Track B**, Track C là tùy chọn có điều kiện.
-- [ ] Chấp thuận M-1 là governance baseline của dự án.
-- [ ] Cho phép tạo commit M-1 riêng biệt.
-- [ ] Cho phép bắt đầu M0 Reproducible Foundation.
-- [ ] Giữ JavaParser + SymbolSolver ở trạng thái **PROVISIONAL** cho tới G-4.
+- [x] Chấp thuận hướng **Track A + Track B**, Track C là tùy chọn có điều kiện.
+- [x] Chấp thuận M-1 là governance baseline của dự án.
+- [x] M-1 đã được commit riêng biệt tại `86c4ca29fb747797df3e489d978804644a34f1ce`.
+- [x] Cho phép bắt đầu M0 Reproducible Foundation.
+- [x] Giữ JavaParser + SymbolSolver ở trạng thái **PROVISIONAL** cho tới cổng parser tương ứng.
 - [ ] Không xác nhận Neo4j trước khi query contract và benchmark ở G-6 hoàn tất.
 - [x] Kết quả cuối là visual platform hoàn chỉnh với dashboard chi tiết, explainable architecture score, violations, focused graph và evidence navigation.
 
@@ -319,4 +322,4 @@ Không nên bắt đầu bằng Neo4j, UI hoặc analyzer production. Những ph
 
 Roadmap hiện tại đã bao phủ đủ các yếu tố để xây một hệ thống kỹ thuật cao nhưng vẫn thực tế: correctness, provenance, uncertainty, safe build modeling, semantic intelligence, Spring, graph, policy, product interface, benchmark, reproducibility và evolution.
 
-**Khuyến nghị:** chấp thuận M-1 và bắt đầu M0. Không cần tiếp tục mở rộng roadmap ở thời điểm này; giá trị tiếp theo phải đến từ implementation nhỏ, test được và bằng chứng thực nghiệm. Setup quản trị đã sẵn sàng, còn setup kỹ thuật của sản phẩm chính là nhiệm vụ M0 kế tiếp.
+**Khuyến nghị:** giữ commit `86c4ca29fb747797df3e489d978804644a34f1ce` làm baseline M-1 và bắt đầu M0 bằng một nhiệm vụ foundation có giới hạn. Không cần tiếp tục mở rộng roadmap ở thời điểm này; giá trị tiếp theo phải đến từ implementation nhỏ, test được và bằng chứng thực nghiệm. Setup quản trị đã hoàn tất, còn setup kỹ thuật của sản phẩm chính là nhiệm vụ M0 kế tiếp.
