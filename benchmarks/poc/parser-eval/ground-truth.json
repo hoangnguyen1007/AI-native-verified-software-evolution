@@ -1,0 +1,142 @@
+[
+  {
+    "id": "GT-STEREOTYPE-CONTROLLER",
+    "description": "Direct Spring @Controller stereotype on OwnerController",
+    "category": "ANNOTATED_WITH",
+    "sourceIdentity": "org.springframework.samples.petclinic.owner.OwnerController",
+    "sourceFile": "org/springframework/samples/petclinic/owner/OwnerController.java",
+    "sourceSpan": {"beginLine": 48, "beginColumn": 1, "endLine": 48, "endColumn": 11},
+    "expectedTargetIdentity": "org.springframework.stereotype.Controller",
+    "expectedResolutionByConfiguration": {"CONFIG_A": "UNRESOLVED", "CONFIG_B": "RESOLVED"}
+  },
+  {
+    "id": "GT-STEREOTYPE-COMPONENT",
+    "description": "Direct Spring @Component stereotype on PetTypeFormatter",
+    "category": "ANNOTATED_WITH",
+    "sourceIdentity": "org.springframework.samples.petclinic.owner.PetTypeFormatter",
+    "sourceFile": "org/springframework/samples/petclinic/owner/PetTypeFormatter.java",
+    "sourceSpan": {"beginLine": 36, "beginColumn": 1, "endLine": 36, "endColumn": 10},
+    "expectedTargetIdentity": "org.springframework.stereotype.Component",
+    "expectedResolutionByConfiguration": {"CONFIG_A": "UNRESOLVED", "CONFIG_B": "RESOLVED"}
+  },
+  {
+    "id": "GT-CONSTRUCTOR-INJECTION-EVIDENCE",
+    "description": "Single-constructor injection candidate preserves the OwnerRepository parameter type",
+    "category": "CONSTRUCTOR_PARAMETER",
+    "sourceIdentity": "org.springframework.samples.petclinic.owner.OwnerController#<init>(OwnerRepository)",
+    "sourceFile": "org/springframework/samples/petclinic/owner/OwnerController.java",
+    "sourceSpan": {"beginLine": 55, "beginColumn": 25, "endLine": 55, "endColumn": 46},
+    "expectedTargetIdentity": "org.springframework.samples.petclinic.owner.OwnerRepository",
+    "expectedResolutionByConfiguration": {"CONFIG_A": "RESOLVED", "CONFIG_B": "RESOLVED"}
+  },
+  {
+    "id": "GT-LOCAL-METHOD-CALL",
+    "description": "Unqualified call resolves to the declaring OwnerController method",
+    "category": "CALLS",
+    "sourceIdentity": "org.springframework.samples.petclinic.owner.OwnerController#processFindForm(int,Owner,BindingResult,Model)",
+    "sourceFile": "org/springframework/samples/petclinic/owner/OwnerController.java",
+    "sourceSpan": {"beginLine": 107, "beginColumn": 31, "endLine": 107, "endColumn": 76},
+    "expectedTargetIdentity": "org.springframework.samples.petclinic.owner.OwnerController.findPaginatedForOwnersLastName(int, java.lang.String)",
+    "expectedResolutionByConfiguration": {"CONFIG_A": "RESOLVED", "CONFIG_B": "RESOLVED"}
+  },
+  {
+    "id": "GT-LOCAL-REPOSITORY-CALL",
+    "description": "Field-scoped repository call resolves to the project-local repository declaration",
+    "category": "CALLS",
+    "sourceIdentity": "org.springframework.samples.petclinic.owner.OwnerController#findOwner(Integer)",
+    "sourceFile": "org/springframework/samples/petclinic/owner/OwnerController.java",
+    "sourceSpan": {"beginLine": 67, "beginColumn": 7, "endLine": 67, "endColumn": 35},
+    "expectedTargetIdentity": "org.springframework.samples.petclinic.owner.OwnerRepository.findById(java.lang.Integer)",
+    "expectedResolutionByConfiguration": {"CONFIG_A": "RESOLVED", "CONFIG_B": "RESOLVED"}
+  },
+  {
+    "id": "GT-OVERLOAD-STRING-BOOLEAN",
+    "description": "Overloaded getPet call selects the String/boolean overload",
+    "category": "CALLS",
+    "sourceIdentity": "org.springframework.samples.petclinic.owner.Owner#getPet(String)",
+    "sourceFile": "org/springframework/samples/petclinic/owner/Owner.java",
+    "sourceSpan": {"beginLine": 118, "beginColumn": 10, "endLine": 118, "endColumn": 28},
+    "expectedTargetIdentity": "org.springframework.samples.petclinic.owner.Owner.getPet(java.lang.String, boolean)",
+    "expectedResolutionByConfiguration": {"CONFIG_A": "RESOLVED", "CONFIG_B": "RESOLVED"}
+  },
+  {
+    "id": "GT-OVERLOAD-INTEGER",
+    "description": "Overloaded getPet call selects the Integer overload",
+    "category": "CALLS",
+    "sourceIdentity": "org.springframework.samples.petclinic.owner.Owner#addVisit(Integer,Visit)",
+    "sourceFile": "org/springframework/samples/petclinic/owner/Owner.java",
+    "sourceSpan": {"beginLine": 178, "beginColumn": 13, "endLine": 178, "endColumn": 25},
+    "expectedTargetIdentity": "org.springframework.samples.petclinic.owner.Owner.getPet(java.lang.Integer)",
+    "expectedResolutionByConfiguration": {"CONFIG_A": "RESOLVED", "CONFIG_B": "RESOLVED"}
+  },
+  {
+    "id": "GT-COLLISION-OWNER-CONTROLLER",
+    "description": "OwnerController.findOwner is distinguished from same-named methods in other files",
+    "category": "RETURNS",
+    "sourceIdentity": "org.springframework.samples.petclinic.owner.OwnerController#findOwner(Integer)",
+    "sourceFile": "org/springframework/samples/petclinic/owner/OwnerController.java",
+    "sourceSpan": {"beginLine": 65, "beginColumn": 9, "endLine": 65, "endColumn": 13},
+    "expectedTargetIdentity": "org.springframework.samples.petclinic.owner.Owner",
+    "expectedResolutionByConfiguration": {"CONFIG_A": "RESOLVED", "CONFIG_B": "RESOLVED"}
+  },
+  {
+    "id": "GT-COLLISION-PET-CONTROLLER",
+    "description": "PetController.findOwner is independently identified despite the simple-name collision",
+    "category": "RETURNS",
+    "sourceIdentity": "org.springframework.samples.petclinic.owner.PetController#findOwner(int)",
+    "sourceFile": "org/springframework/samples/petclinic/owner/PetController.java",
+    "sourceSpan": {"beginLine": 68, "beginColumn": 9, "endLine": 68, "endColumn": 13},
+    "expectedTargetIdentity": "org.springframework.samples.petclinic.owner.Owner",
+    "expectedResolutionByConfiguration": {"CONFIG_A": "RESOLVED", "CONFIG_B": "RESOLVED"}
+  },
+  {
+    "id": "GT-INHERITANCE-LOCAL",
+    "description": "Owner extends the project-local Person class",
+    "category": "EXTENDS",
+    "sourceIdentity": "org.springframework.samples.petclinic.owner.Owner",
+    "sourceFile": "org/springframework/samples/petclinic/owner/Owner.java",
+    "sourceSpan": {"beginLine": 49, "beginColumn": 28, "endLine": 49, "endColumn": 33},
+    "expectedTargetIdentity": "org.springframework.samples.petclinic.model.Person",
+    "expectedResolutionByConfiguration": {"CONFIG_A": "RESOLVED", "CONFIG_B": "RESOLVED"}
+  },
+  {
+    "id": "GT-INTERFACE-JDK",
+    "description": "BaseEntity implements the JDK Serializable interface",
+    "category": "IMPLEMENTS",
+    "sourceIdentity": "org.springframework.samples.petclinic.model.BaseEntity",
+    "sourceFile": "org/springframework/samples/petclinic/model/BaseEntity.java",
+    "sourceSpan": {"beginLine": 33, "beginColumn": 36, "endLine": 33, "endColumn": 47},
+    "expectedTargetIdentity": "java.io.Serializable",
+    "expectedResolutionByConfiguration": {"CONFIG_A": "RESOLVED", "CONFIG_B": "RESOLVED"}
+  },
+  {
+    "id": "GT-INTERFACE-EXTERNAL",
+    "description": "PetTypeFormatter implements the external Spring Formatter interface",
+    "category": "IMPLEMENTS",
+    "sourceIdentity": "org.springframework.samples.petclinic.owner.PetTypeFormatter",
+    "sourceFile": "org/springframework/samples/petclinic/owner/PetTypeFormatter.java",
+    "sourceSpan": {"beginLine": 37, "beginColumn": 42, "endLine": 37, "endColumn": 59},
+    "expectedTargetIdentity": "org.springframework.format.Formatter",
+    "expectedResolutionByConfiguration": {"CONFIG_A": "UNRESOLVED", "CONFIG_B": "RESOLVED"}
+  },
+  {
+    "id": "GT-EXTERNAL-CALL",
+    "description": "Spring WebDataBinder call is unresolved without dependencies and resolved with exact classpath",
+    "category": "CALLS",
+    "sourceIdentity": "org.springframework.samples.petclinic.owner.OwnerController#setAllowedFields(WebDataBinder)",
+    "sourceFile": "org/springframework/samples/petclinic/owner/OwnerController.java",
+    "sourceSpan": {"beginLine": 61, "beginColumn": 3, "endLine": 61, "endColumn": 46},
+    "expectedTargetIdentity": "org.springframework.validation.DataBinder.setDisallowedFields(java.lang.String...)",
+    "expectedResolutionByConfiguration": {"CONFIG_A": "UNRESOLVED", "CONFIG_B": "RESOLVED"}
+  },
+  {
+    "id": "GT-EXTERNAL-PARAMETER-ANNOTATION",
+    "description": "Spring @PathVariable parameter annotation is unresolved without dependencies",
+    "category": "ANNOTATED_WITH",
+    "sourceIdentity": "org.springframework.samples.petclinic.owner.OwnerController#findOwner(Integer)",
+    "sourceFile": "org/springframework/samples/petclinic/owner/OwnerController.java",
+    "sourceSpan": {"beginLine": 65, "beginColumn": 25, "endLine": 65, "endColumn": 73},
+    "expectedTargetIdentity": "org.springframework.web.bind.annotation.PathVariable",
+    "expectedResolutionByConfiguration": {"CONFIG_A": "UNRESOLVED", "CONFIG_B": "RESOLVED"}
+  }
+]

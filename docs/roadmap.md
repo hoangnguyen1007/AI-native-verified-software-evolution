@@ -14,12 +14,12 @@
 
 ### Milestone 1: Research & Validation
 
-- [ ] R1 PoC: JavaParser + SymbolSolver on PetClinic
+- [x] R1 PoC: JavaParser + SymbolSolver on PetClinic
 - [ ] R2: Schema validation against 3 core rules
 - [ ] R6: Classpath dependency impact test
 - [ ] Architecture rule catalog (research)
 - [ ] Identify 2–4 validation repositories
-- [ ] ADR-001: Parser selection
+- [x] ADR-001: Parser selection
 - [ ] ADR-002: Graph database selection
 
 ### Milestone 2: Core Analysis Pipeline
