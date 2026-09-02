@@ -1,0 +1,686 @@
+{
+  "schemaVersion": "0.1",
+  "generatedAtUtc": "2026-09-02T09:02:25.819378200Z",
+  "javaVersion": "21.0.12.1",
+  "javaVendor": "Oracle Corporation",
+  "results": {
+    "CONFIG_A_SOURCE_AND_JDK": [
+      {
+        "frontendId": "javaparser-symbolsolver-3.26.1",
+        "elapsedMillis": 777,
+        "diagnostics": [],
+        "observations": [
+          {
+            "category": "CALLS",
+            "source": "fixture/ArchitectureFixture.java#call-site",
+            "span": [
+              14,
+              31,
+              14,
+              51
+            ],
+            "diagnostic": "UnsolvedSymbolException: Unsolved symbol in values.get(0).trim() : values.get(0)",
+            "sourceFile": "fixture/ArchitectureFixture.java",
+            "origin": "UNKNOWN",
+            "state": "UNRESOLVED",
+            "target": "values.get(0).trim()"
+          },
+          {
+            "category": "CALLS",
+            "source": "fixture/ArchitectureFixture.java#call-site",
+            "span": [
+              14,
+              31,
+              14,
+              44
+            ],
+            "diagnostic": "",
+            "sourceFile": "fixture/ArchitectureFixture.java",
+            "origin": "JDK",
+            "state": "RESOLVED",
+            "target": "java.util.List.get(int)"
+          },
+          {
+            "category": "CALLS",
+            "source": "fixture/ArchitectureFixture.java#call-site",
+            "span": [
+              15,
+              13,
+              15,
+              41
+            ],
+            "diagnostic": "UnsolvedSymbolException: Unsolved symbol in dependency.process(inferred) : dependency",
+            "sourceFile": "fixture/ArchitectureFixture.java",
+            "origin": "UNKNOWN",
+            "state": "UNRESOLVED",
+            "target": "dependency.process(inferred)"
+          },
+          {
+            "category": "CALLS",
+            "source": "fixture/ArchitectureFixture.java#call-site",
+            "span": [
+              16,
+              13,
+              16,
+              32
+            ],
+            "diagnostic": "UnsolvedSymbolException: Unsolved symbol in optional.optional() : optional",
+            "sourceFile": "fixture/ArchitectureFixture.java",
+            "origin": "UNKNOWN",
+            "state": "UNRESOLVED",
+            "target": "optional.optional()"
+          },
+          {
+            "category": "CALLS",
+            "source": "fixture/ArchitectureFixture.java#call-site",
+            "span": [
+              18,
+              37,
+              18,
+              54
+            ],
+            "diagnostic": "UnsolvedSymbolException: Unsolved symbol in dependency.ping() : dependency",
+            "sourceFile": "fixture/ArchitectureFixture.java",
+            "origin": "UNKNOWN",
+            "state": "UNRESOLVED",
+            "target": "dependency.ping()"
+          },
+          {
+            "category": "CALLS",
+            "source": "fixture/ArchitectureFixture.java#call-site",
+            "span": [
+              19,
+              13,
+              19,
+              34
+            ],
+            "diagnostic": "",
+            "sourceFile": "fixture/ArchitectureFixture.java",
+            "origin": "JDK",
+            "state": "RESOLVED",
+            "target": "java.lang.Runnable.run()"
+          },
+          {
+            "category": "CALLS",
+            "source": "fixture/ArchitectureFixture.java#call-site",
+            "span": [
+              20,
+              13,
+              20,
+              25
+            ],
+            "diagnostic": "",
+            "sourceFile": "fixture/ArchitectureFixture.java",
+            "origin": "JDK",
+            "state": "RESOLVED",
+            "target": "java.lang.Runnable.run()"
+          }
+        ]
+      },
+      {
+        "frontendId": "openrewrite-java-8.87.7",
+        "elapsedMillis": 3609,
+        "diagnostics": [],
+        "observations": [
+          {
+            "category": "CALLS",
+            "source": "fixture\\ArchitectureFixture.java#call-site",
+            "span": [
+              14,
+              31,
+              14,
+              44
+            ],
+            "diagnostic": "",
+            "sourceFile": "fixture/ArchitectureFixture.java",
+            "origin": "JDK",
+            "state": "RESOLVED",
+            "target": "java.util.List.get([int])"
+          },
+          {
+            "category": "CALLS",
+            "source": "fixture\\ArchitectureFixture.java#call-site",
+            "span": [
+              14,
+              31,
+              14,
+              51
+            ],
+            "diagnostic": "",
+            "sourceFile": "fixture/ArchitectureFixture.java",
+            "origin": "JDK",
+            "state": "RESOLVED",
+            "target": "java.lang.String.trim([])"
+          },
+          {
+            "category": "CALLS",
+            "source": "fixture\\ArchitectureFixture.java#call-site",
+            "span": [
+              15,
+              13,
+              15,
+              41
+            ],
+            "diagnostic": "missing OpenRewrite method attribution",
+            "sourceFile": "fixture/ArchitectureFixture.java",
+            "origin": "UNKNOWN",
+            "state": "UNRESOLVED",
+            "target": "dependency.process(inferred)"
+          },
+          {
+            "category": "CALLS",
+            "source": "fixture\\ArchitectureFixture.java#call-site",
+            "span": [
+              16,
+              13,
+              16,
+              32
+            ],
+            "diagnostic": "missing OpenRewrite method attribution",
+            "sourceFile": "fixture/ArchitectureFixture.java",
+            "origin": "UNKNOWN",
+            "state": "UNRESOLVED",
+            "target": "optional.optional()"
+          },
+          {
+            "category": "CALLS",
+            "source": "fixture\\ArchitectureFixture.java#call-site",
+            "span": [
+              18,
+              37,
+              18,
+              54
+            ],
+            "diagnostic": "missing OpenRewrite method attribution",
+            "sourceFile": "fixture/ArchitectureFixture.java",
+            "origin": "UNKNOWN",
+            "state": "UNRESOLVED",
+            "target": "dependency.ping()"
+          },
+          {
+            "category": "CALLS",
+            "source": "fixture\\ArchitectureFixture.java#call-site",
+            "span": [
+              19,
+              13,
+              19,
+              34
+            ],
+            "diagnostic": "",
+            "sourceFile": "fixture/ArchitectureFixture.java",
+            "origin": "JDK",
+            "state": "RESOLVED",
+            "target": "java.lang.Runnable.run([])"
+          },
+          {
+            "category": "CALLS",
+            "source": "fixture\\ArchitectureFixture.java#call-site",
+            "span": [
+              20,
+              13,
+              20,
+              25
+            ],
+            "diagnostic": "",
+            "sourceFile": "fixture/ArchitectureFixture.java",
+            "origin": "JDK",
+            "state": "RESOLVED",
+            "target": "java.lang.Runnable.run([])"
+          }
+        ]
+      }
+    ],
+    "CONFIG_B_EXACT_COMPILE_CLASSPATH": [
+      {
+        "frontendId": "javaparser-symbolsolver-3.26.1",
+        "elapsedMillis": 141,
+        "diagnostics": [],
+        "observations": [
+          {
+            "category": "CALLS",
+            "source": "fixture/ArchitectureFixture.java#call-site",
+            "span": [
+              14,
+              31,
+              14,
+              51
+            ],
+            "diagnostic": "UnsolvedSymbolException: Unsolved symbol in values.get(0).trim() : values.get(0)",
+            "sourceFile": "fixture/ArchitectureFixture.java",
+            "origin": "UNKNOWN",
+            "state": "UNRESOLVED",
+            "target": "values.get(0).trim()"
+          },
+          {
+            "category": "CALLS",
+            "source": "fixture/ArchitectureFixture.java#call-site",
+            "span": [
+              14,
+              31,
+              14,
+              44
+            ],
+            "diagnostic": "",
+            "sourceFile": "fixture/ArchitectureFixture.java",
+            "origin": "JDK",
+            "state": "RESOLVED",
+            "target": "java.util.List.get(int)"
+          },
+          {
+            "category": "CALLS",
+            "source": "fixture/ArchitectureFixture.java#call-site",
+            "span": [
+              15,
+              13,
+              15,
+              41
+            ],
+            "diagnostic": "",
+            "sourceFile": "fixture/ArchitectureFixture.java",
+            "origin": "DEPENDENCY",
+            "state": "RESOLVED",
+            "target": "external.api.ExternalService.process(java.lang.String)"
+          },
+          {
+            "category": "CALLS",
+            "source": "fixture/ArchitectureFixture.java#call-site",
+            "span": [
+              16,
+              13,
+              16,
+              32
+            ],
+            "diagnostic": "",
+            "sourceFile": "fixture/ArchitectureFixture.java",
+            "origin": "DEPENDENCY",
+            "state": "RESOLVED",
+            "target": "optional.api.OptionalService.optional()"
+          },
+          {
+            "category": "CALLS",
+            "source": "fixture/ArchitectureFixture.java#call-site",
+            "span": [
+              18,
+              37,
+              18,
+              54
+            ],
+            "diagnostic": "",
+            "sourceFile": "fixture/ArchitectureFixture.java",
+            "origin": "DEPENDENCY",
+            "state": "RESOLVED",
+            "target": "external.api.ExternalService.ping()"
+          },
+          {
+            "category": "CALLS",
+            "source": "fixture/ArchitectureFixture.java#call-site",
+            "span": [
+              19,
+              13,
+              19,
+              34
+            ],
+            "diagnostic": "",
+            "sourceFile": "fixture/ArchitectureFixture.java",
+            "origin": "JDK",
+            "state": "RESOLVED",
+            "target": "java.lang.Runnable.run()"
+          },
+          {
+            "category": "CALLS",
+            "source": "fixture/ArchitectureFixture.java#call-site",
+            "span": [
+              20,
+              13,
+              20,
+              25
+            ],
+            "diagnostic": "",
+            "sourceFile": "fixture/ArchitectureFixture.java",
+            "origin": "JDK",
+            "state": "RESOLVED",
+            "target": "java.lang.Runnable.run()"
+          }
+        ]
+      },
+      {
+        "frontendId": "openrewrite-java-8.87.7",
+        "elapsedMillis": 1012,
+        "diagnostics": [],
+        "observations": [
+          {
+            "category": "CALLS",
+            "source": "fixture\\ArchitectureFixture.java#call-site",
+            "span": [
+              14,
+              31,
+              14,
+              44
+            ],
+            "diagnostic": "",
+            "sourceFile": "fixture/ArchitectureFixture.java",
+            "origin": "JDK",
+            "state": "RESOLVED",
+            "target": "java.util.List.get([int])"
+          },
+          {
+            "category": "CALLS",
+            "source": "fixture\\ArchitectureFixture.java#call-site",
+            "span": [
+              14,
+              31,
+              14,
+              51
+            ],
+            "diagnostic": "",
+            "sourceFile": "fixture/ArchitectureFixture.java",
+            "origin": "JDK",
+            "state": "RESOLVED",
+            "target": "java.lang.String.trim([])"
+          },
+          {
+            "category": "CALLS",
+            "source": "fixture\\ArchitectureFixture.java#call-site",
+            "span": [
+              15,
+              13,
+              15,
+              41
+            ],
+            "diagnostic": "",
+            "sourceFile": "fixture/ArchitectureFixture.java",
+            "origin": "DEPENDENCY",
+            "state": "RESOLVED",
+            "target": "external.api.ExternalService.process([java.lang.String])"
+          },
+          {
+            "category": "CALLS",
+            "source": "fixture\\ArchitectureFixture.java#call-site",
+            "span": [
+              16,
+              13,
+              16,
+              32
+            ],
+            "diagnostic": "",
+            "sourceFile": "fixture/ArchitectureFixture.java",
+            "origin": "DEPENDENCY",
+            "state": "RESOLVED",
+            "target": "optional.api.OptionalService.optional([])"
+          },
+          {
+            "category": "CALLS",
+            "source": "fixture\\ArchitectureFixture.java#call-site",
+            "span": [
+              18,
+              37,
+              18,
+              54
+            ],
+            "diagnostic": "",
+            "sourceFile": "fixture/ArchitectureFixture.java",
+            "origin": "DEPENDENCY",
+            "state": "RESOLVED",
+            "target": "external.api.ExternalService.ping([])"
+          },
+          {
+            "category": "CALLS",
+            "source": "fixture\\ArchitectureFixture.java#call-site",
+            "span": [
+              19,
+              13,
+              19,
+              34
+            ],
+            "diagnostic": "",
+            "sourceFile": "fixture/ArchitectureFixture.java",
+            "origin": "JDK",
+            "state": "RESOLVED",
+            "target": "java.lang.Runnable.run([])"
+          },
+          {
+            "category": "CALLS",
+            "source": "fixture\\ArchitectureFixture.java#call-site",
+            "span": [
+              20,
+              13,
+              20,
+              25
+            ],
+            "diagnostic": "",
+            "sourceFile": "fixture/ArchitectureFixture.java",
+            "origin": "JDK",
+            "state": "RESOLVED",
+            "target": "java.lang.Runnable.run([])"
+          }
+        ]
+      }
+    ],
+    "CONFIG_C_OPTIONAL_DEPENDENCY_REMOVED": [
+      {
+        "frontendId": "javaparser-symbolsolver-3.26.1",
+        "elapsedMillis": 45,
+        "diagnostics": [],
+        "observations": [
+          {
+            "category": "CALLS",
+            "source": "fixture/ArchitectureFixture.java#call-site",
+            "span": [
+              14,
+              31,
+              14,
+              51
+            ],
+            "diagnostic": "UnsolvedSymbolException: Unsolved symbol in values.get(0).trim() : values.get(0)",
+            "sourceFile": "fixture/ArchitectureFixture.java",
+            "origin": "UNKNOWN",
+            "state": "UNRESOLVED",
+            "target": "values.get(0).trim()"
+          },
+          {
+            "category": "CALLS",
+            "source": "fixture/ArchitectureFixture.java#call-site",
+            "span": [
+              14,
+              31,
+              14,
+              44
+            ],
+            "diagnostic": "",
+            "sourceFile": "fixture/ArchitectureFixture.java",
+            "origin": "JDK",
+            "state": "RESOLVED",
+            "target": "java.util.List.get(int)"
+          },
+          {
+            "category": "CALLS",
+            "source": "fixture/ArchitectureFixture.java#call-site",
+            "span": [
+              15,
+              13,
+              15,
+              41
+            ],
+            "diagnostic": "",
+            "sourceFile": "fixture/ArchitectureFixture.java",
+            "origin": "DEPENDENCY",
+            "state": "RESOLVED",
+            "target": "external.api.ExternalService.process(java.lang.String)"
+          },
+          {
+            "category": "CALLS",
+            "source": "fixture/ArchitectureFixture.java#call-site",
+            "span": [
+              16,
+              13,
+              16,
+              32
+            ],
+            "diagnostic": "UnsolvedSymbolException: Unsolved symbol in optional.optional() : optional",
+            "sourceFile": "fixture/ArchitectureFixture.java",
+            "origin": "UNKNOWN",
+            "state": "UNRESOLVED",
+            "target": "optional.optional()"
+          },
+          {
+            "category": "CALLS",
+            "source": "fixture/ArchitectureFixture.java#call-site",
+            "span": [
+              18,
+              37,
+              18,
+              54
+            ],
+            "diagnostic": "",
+            "sourceFile": "fixture/ArchitectureFixture.java",
+            "origin": "DEPENDENCY",
+            "state": "RESOLVED",
+            "target": "external.api.ExternalService.ping()"
+          },
+          {
+            "category": "CALLS",
+            "source": "fixture/ArchitectureFixture.java#call-site",
+            "span": [
+              19,
+              13,
+              19,
+              34
+            ],
+            "diagnostic": "",
+            "sourceFile": "fixture/ArchitectureFixture.java",
+            "origin": "JDK",
+            "state": "RESOLVED",
+            "target": "java.lang.Runnable.run()"
+          },
+          {
+            "category": "CALLS",
+            "source": "fixture/ArchitectureFixture.java#call-site",
+            "span": [
+              20,
+              13,
+              20,
+              25
+            ],
+            "diagnostic": "",
+            "sourceFile": "fixture/ArchitectureFixture.java",
+            "origin": "JDK",
+            "state": "RESOLVED",
+            "target": "java.lang.Runnable.run()"
+          }
+        ]
+      },
+      {
+        "frontendId": "openrewrite-java-8.87.7",
+        "elapsedMillis": 326,
+        "diagnostics": [],
+        "observations": [
+          {
+            "category": "CALLS",
+            "source": "fixture\\ArchitectureFixture.java#call-site",
+            "span": [
+              14,
+              31,
+              14,
+              44
+            ],
+            "diagnostic": "",
+            "sourceFile": "fixture/ArchitectureFixture.java",
+            "origin": "JDK",
+            "state": "RESOLVED",
+            "target": "java.util.List.get([int])"
+          },
+          {
+            "category": "CALLS",
+            "source": "fixture\\ArchitectureFixture.java#call-site",
+            "span": [
+              14,
+              31,
+              14,
+              51
+            ],
+            "diagnostic": "",
+            "sourceFile": "fixture/ArchitectureFixture.java",
+            "origin": "JDK",
+            "state": "RESOLVED",
+            "target": "java.lang.String.trim([])"
+          },
+          {
+            "category": "CALLS",
+            "source": "fixture\\ArchitectureFixture.java#call-site",
+            "span": [
+              15,
+              13,
+              15,
+              41
+            ],
+            "diagnostic": "",
+            "sourceFile": "fixture/ArchitectureFixture.java",
+            "origin": "DEPENDENCY",
+            "state": "RESOLVED",
+            "target": "external.api.ExternalService.process([java.lang.String])"
+          },
+          {
+            "category": "CALLS",
+            "source": "fixture\\ArchitectureFixture.java#call-site",
+            "span": [
+              16,
+              13,
+              16,
+              32
+            ],
+            "diagnostic": "missing OpenRewrite method attribution",
+            "sourceFile": "fixture/ArchitectureFixture.java",
+            "origin": "UNKNOWN",
+            "state": "UNRESOLVED",
+            "target": "optional.optional()"
+          },
+          {
+            "category": "CALLS",
+            "source": "fixture\\ArchitectureFixture.java#call-site",
+            "span": [
+              18,
+              37,
+              18,
+              54
+            ],
+            "diagnostic": "",
+            "sourceFile": "fixture/ArchitectureFixture.java",
+            "origin": "DEPENDENCY",
+            "state": "RESOLVED",
+            "target": "external.api.ExternalService.ping([])"
+          },
+          {
+            "category": "CALLS",
+            "source": "fixture\\ArchitectureFixture.java#call-site",
+            "span": [
+              19,
+              13,
+              19,
+              34
+            ],
+            "diagnostic": "",
+            "sourceFile": "fixture/ArchitectureFixture.java",
+            "origin": "JDK",
+            "state": "RESOLVED",
+            "target": "java.lang.Runnable.run([])"
+          },
+          {
+            "category": "CALLS",
+            "source": "fixture\\ArchitectureFixture.java#call-site",
+            "span": [
+              20,
+              13,
+              20,
+              25
+            ],
+            "diagnostic": "",
+            "sourceFile": "fixture/ArchitectureFixture.java",
+            "origin": "JDK",
+            "state": "RESOLVED",
+            "target": "java.lang.Runnable.run([])"
+          }
+        ]
+      }
+    ]
+  }
+}

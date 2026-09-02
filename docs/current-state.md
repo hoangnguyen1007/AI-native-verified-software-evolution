@@ -12,7 +12,7 @@ M1 - Semantic, Identity, Uncertainty, and Provenance Contracts (**COMPLETE; G1 P
 
 ## ACTIVE TASK
 
-Human review of the completed M1 parser-neutral contract foundation and G1 evidence.
+Human review of the completed M1 parser-neutral contract foundation and G1 evidence, plus the pre-M2 JavaParser-vs-OpenRewrite semantic-frontend technology gate. Controlled javac-oracle and PetClinic call-only parity evidence is recorded, but the full semantic denominator, provenance strategy, and resource comparison remain incomplete; no technology lock is justified.
 
 ## STATUS
 
