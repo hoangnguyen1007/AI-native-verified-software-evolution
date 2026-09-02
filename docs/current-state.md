@@ -1,6 +1,6 @@
 # Current State
 
-Last verified: 2026-09-01
+Last verified: 2026-09-02
 
 ## PROJECT PHASE
 
@@ -8,48 +8,55 @@ SE121 - Software Architecture Intelligence Platform.
 
 ## CURRENT MILESTONE
 
-M0 - Reproducible Foundation (**AUTHORIZED, NOT STARTED**).
+M0 - Reproducible Foundation (**COMPLETE; G0 PASSED; UNCOMMITTED**).
 
 ## ACTIVE TASK
 
-Documentation-only transition from completed M-1 into the M0 starting position. No M0 installation or implementation is part of this transition update.
+Human review of the completed M0 Maven/Java 21 foundation and its reproducibility evidence.
 
 ## STATUS
 
-M-1 is **COMPLETE, HUMAN-APPROVED, AND COMMITTED** at `86c4ca29fb747797df3e489d978804644a34f1ce` (`done setup`, 2026-09-01 19:37:07 +07:00). Gate G-1 passed and M0 is authorized. M0 installation and implementation have not started. This documentation-only milestone-transition update is not yet committed.
+M0 is implemented and verified but not committed. Gate G0 passed on 2026-09-02 with clean wrapper builds in local Windows/Oracle JDK 21 and Docker Linux/Temurin JDK 21 environments. Both environments used wrapper-managed Maven 3.9.16, passed one module-boundary test per module, and produced identical JAR SHA-256 values. No M1 or production semantic feature has started.
 
 ## LAST COMPLETED MILESTONE / TASK
 
 - R1 corrected JavaParser + SymbolSolver viability evidence package.
 - M-1 governance, roadmap, architecture/product-outcome foundation, consistency verification, human approval, and baseline commit.
+- M0 pinned wrapper/toolchain/build foundation and two-environment G0 verification.
 
 ## NEXT EXPECTED TASK
 
-After this documentation-only transition is reviewed and recorded cleanly, begin M0 with one bounded task: inspect the committed baseline and environment, then implement and verify the reproducible Maven/Java build foundation. Do not begin parser production extraction, graph, Spring inference, backend API, or frontend first.
+Review and record the M0 diff. The next implementation milestone is M1: define parser-neutral semantic, identity, uncertainty, provenance, manifest, metric-envelope, and assessment-status contracts with tests. Do not begin production JavaParser extraction first.
 
-### M0 Kickoff Boundary
+### M0 Completion Boundary
 
-- Preserve commit `86c4ca29fb747797df3e489d978804644a34f1ce` as the approved M-1 baseline.
-- Inspect the existing reactor and environment before choosing the smallest coherent module layout.
-- Limit the first implementation task to Maven Wrapper/checksum, Java 21 compiler/toolchain enforcement, pinned plugin/dependency controls, test boundaries, root build instructions, and reproducibility evidence.
-- Require a clean build from two documented environments before G0 passes.
-- Keep JavaParser PROVISIONAL and do not implement production semantic extraction inside the foundation task.
+- Preserved commit `86c4ca29fb747797df3e489d978804644a34f1ce` in current history.
+- Retained the existing root, `analyzer`, and `backend` reactor without adding modules.
+- Added only wrapper/checksum, Java/compiler enforcement, pinned build controls, module test boundaries, build instructions, and reproducibility evidence.
+- Passed clean verification in two documented environments and kept JavaParser PROVISIONAL.
+- Added no production semantic extraction or later-milestone feature.
 
 ## BLOCKERS
 
-None for starting the bounded M0 foundation task. Open technical decisions remain milestone work, not permission to skip M0 gates.
+None for human review of M0. M1 work has not started.
 
 ## REPOSITORY REALITY
 
-- Approved M-1 baseline and last verified repository commit: `86c4ca29fb747797df3e489d978804644a34f1ce`.
+- Approved M-1 baseline: `86c4ca29fb747797df3e489d978804644a34f1ce`; current `HEAD`: `4cbcd1211d3abf9cc5ccbd5bcd975b9050e907ae` plus the uncommitted M0 diff.
 - Root Maven reactor contains `analyzer` and `backend` modules.
 - Production Java source does not yet exist; tracked source trees contain placeholders.
+- Each module has one Java 21 build-boundary test; both are run by the root `verify` lifecycle.
 - `frontend/` and root `tests/` have no tracked implementation.
 - The tracked R1 PoC and raw results live under `benchmarks/poc/parser-eval/`.
 - No M0 semantic frontend, graph, policy engine, CLI, backend API, or workbench implementation exists.
 
 ## RECENT VERIFIED EVIDENCE
 
+- Wrapper 3.3.4 uses a repository JAR and a pinned Maven 3.9.16 ZIP with embedded SHA-256 verification.
+- The Maven ZIP matched Apache's published SHA-512 before its SHA-256 was recorded.
+- Local Windows/Oracle JDK 21.0.12.1 and Docker Linux/Temurin JDK 21.0.12 clean builds passed.
+- Both environments produced SHA-256 `02a0444ff1abefa808a6ae25f3f0644fc226b839af81da8474a59f4a24ebe26d` for each currently empty module JAR.
+- System Maven 3.9.15, compiler release 17, and JDK 17 were independently rejected by Enforcer.
 - M-1 approval commit independently verified at `86c4ca29fb747797df3e489d978804644a34f1ce`; the worktree was clean before this documentation-only transition update.
 - R1 PetClinic target commit: `818c4136ea971c21674525f9053de0d9c7ad8cfe`.
 - Config A: 30 files, 456 attempts, 218 resolved, 238 unresolved, 0 relationship errors.
@@ -105,7 +112,7 @@ None for starting the bounded M0 foundation task. Open technical decisions remai
 | Gate | State | Required evidence |
 |---|---|---|
 | G-1 M-1 operating system | PASSED | Human approval and clean baseline commit `86c4ca29fb747797df3e489d978804644a34f1ce` |
-| G0 reproducible foundation | NOT STARTED | Wrapper/toolchain/enforcement and clean reproducible build |
+| G0 reproducible foundation | PASSED | Clean wrapper builds and identical current artifact hashes on Windows/Oracle and Docker Linux/Temurin |
 | G1 semantic/metric contract | NOT STARTED | Parser-neutral facts, identity, uncertainty, provenance, metric/assessment envelopes, deterministic serialization |
 | G2 frontend/build model | NOT STARTED | Expanded ground truth, safe multi-module/build-model support, parser gate |
 | G3 Spring intelligence | NOT STARTED | Pre-registered correctness evidence |
@@ -114,19 +121,9 @@ None for starting the bounded M0 foundation task. Open technical decisions remai
 | G6 Track A release | NOT STARTED | Multi-repository correctness, robustness, performance, accessibility, and complete visual product workflow |
 | G7 Track B evolution | NOT STARTED | Compatible snapshot identity and labeled evolution events |
 
-## DURABLE STATE UPDATED BY M-1
+## DURABLE STATE UPDATED BY M0
 
-- `AGENTS.md`
-- `.agents/rules/`
-- `.agents/skills/se-project-engineering/SKILL.md`
-- `.agents/agents/`
-- `.agents/workflows/`
-- `docs/project-context.md`
+- `README.md`
 - `docs/current-state.md`
 - `docs/roadmap.md`
-- `roadmap_for_user.md`
-- `roadmap_for_user_vi.md`
-- `docs/architecture/product-outcome.md`
-- `docs/architecture/architecture.md`
-- `docs/architecture/knowledge-graph.md`
-- `docs/decisions/ADR-002-product-outcome-and-explainable-assessment.md`
+- `docs/reproducibility/m0-foundation.md`

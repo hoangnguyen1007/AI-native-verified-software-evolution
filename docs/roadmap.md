@@ -80,7 +80,7 @@ Exit gate: human approves governance diff and authorizes M0. No production code 
 
 ### M0 - Reproducible Foundation
 
-**Status: AUTHORIZED, NOT STARTED.** No installation or implementation was performed by the M-1 completion update.
+**Status: COMPLETE.** Implemented and locally verified on 2026-09-02. Gate G0 passed with clean Windows/Oracle JDK and Docker Linux/Temurin JDK environments; the M0 diff remains uncommitted for human review.
 
 Deliver:
 
@@ -242,7 +242,7 @@ Dates are guidance. Gates, not calendar pressure, authorize progression.
 | Gate | Decision |
 |---|---|
 | G-1 — PASSED | M-1 operating system approved and committed; M0 authorized |
-| G0 | Foundation builds reproducibly |
+| G0 — PASSED | Foundation builds reproducibly in the documented Windows/Oracle and Docker Linux/Temurin environments |
 | G1 | Parser-neutral semantic/identity/metric/assessment contracts are stable |
 | G2 | Frontend and multi-module build model meet ground truth |
 | G3 | Bounded Spring inference meets approved evidence criteria |
@@ -288,5 +288,6 @@ Paper readiness, venue selection, extensive artifact badging, and elaborate defe
 
 1. ~~Human reviews and approves M-1.~~ Complete.
 2. ~~Human commits the approved M-1 baseline.~~ Complete at `86c4ca29fb747797df3e489d978804644a34f1ce`.
-3. Begin M0 only with the bounded reproducible Maven/Java foundation task.
-4. Do not begin production parser extraction, graph, Spring, backend, CLI, or frontend before their prerequisite gates.
+3. ~~Complete the bounded M0 reproducible Maven/Java foundation task.~~ Complete; G0 passed on 2026-09-02.
+4. Human reviews and records the uncommitted M0 diff.
+5. Begin M1 semantic, identity, uncertainty, and provenance contracts without starting production parser extraction.
