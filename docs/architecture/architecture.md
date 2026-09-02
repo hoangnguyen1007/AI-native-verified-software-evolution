@@ -6,7 +6,8 @@ This document describes the approved architecture direction and the boundaries t
 
 - Modular-monolith direction and separation principles: **CONFIRMED**.
 - Complete visual architecture-intelligence product outcome: **CONFIRMED**.
-- Exact Maven modules, package layout, frameworks, storage adapter, metric formulas, score weights, and UI performance budgets: **PROVISIONAL** until their gates.
+- M1 contract placement and package boundaries in the existing `analyzer` module: **CONFIRMED by implementation and contract tests**.
+- Later Maven modules, adapter package layouts, frameworks, storage adapter, metric formulas, score weights, and UI performance budgets: **PROVISIONAL** until their gates.
 
 ## System Purpose
 
@@ -88,7 +89,9 @@ Dependencies point toward stable contracts. Core domain code must not import:
 - frontend framework types;
 - process- or environment-specific infrastructure.
 
-Exact Maven module boundaries will be decided in M0/M1. The logical boundaries above are invariant even if several components initially share a module.
+Later Maven module boundaries remain evidence-driven. The logical boundaries above are invariant even if several components initially share a module.
+
+M1 resolves the first placement decision: parser- and storage-neutral contracts live under `com.evolution.analysis.contract` in the existing `analyzer` module. Adapter/module extraction remains a later evidence-driven choice. See [M1 Contracts](m1-contracts.md).
 
 ## Canonical Data Flow
 
@@ -214,5 +217,6 @@ The architecture preserves boundaries for later phases but SE121 does not implem
 - [Technical Roadmap](../roadmap.md)
 - [Product Outcome Contract](product-outcome.md)
 - [Knowledge Graph](knowledge-graph.md)
+- [M1 Semantic, Identity, Uncertainty, and Provenance Contracts](m1-contracts.md)
 - [ADR-002](../decisions/ADR-002-product-outcome-and-explainable-assessment.md)
 - [Current State](../current-state.md)

@@ -80,7 +80,7 @@ Exit gate: human approves governance diff and authorizes M0. No production code 
 
 ### M0 - Reproducible Foundation
 
-**Status: COMPLETE.** Implemented and locally verified on 2026-09-02. Gate G0 passed with clean Windows/Oracle JDK and Docker Linux/Temurin JDK environments; the M0 diff remains uncommitted for human review.
+**Status: COMPLETE.** Human-accepted and committed at `375702f9b871dd78fbad99f8bc5994b7b2c499fb` on 2026-09-02. Gate G0 passed with clean Windows/Oracle JDK and Docker Linux/Temurin JDK environments.
 
 Deliver:
 
@@ -93,6 +93,8 @@ Deliver:
 Exit gate G0: clean build from at least two documented environments with exact tool versions and no unexplained artifacts.
 
 ### M1 - Semantic, Identity, Uncertainty, and Provenance Contracts
+
+**Status: COMPLETE.** Implemented and verified on 2026-09-02. Gate G1 passed; the M1 diff remains uncommitted for human review.
 
 Deliver parser-neutral immutable contracts for repository snapshots, modules, source documents/spans, entities, relationships, diagnostics, uncertainty, derivation, analysis manifests, content-addressed analysis identity, metric envelopes, metric/score versions, score status, and analysis confidence.
 
@@ -243,7 +245,7 @@ Dates are guidance. Gates, not calendar pressure, authorize progression.
 |---|---|
 | G-1 — PASSED | M-1 operating system approved and committed; M0 authorized |
 | G0 — PASSED | Foundation builds reproducibly in the documented Windows/Oracle and Docker Linux/Temurin environments |
-| G1 | Parser-neutral semantic/identity/metric/assessment contracts are stable |
+| G1 — PASSED | Parser-neutral semantic/identity/metric/assessment contracts are stable and deterministic |
 | G2 | Frontend and multi-module build model meet ground truth |
 | G3 | Bounded Spring inference meets approved evidence criteria |
 | G4 | Canonical graph/metric/query invariants pass |
@@ -289,5 +291,6 @@ Paper readiness, venue selection, extensive artifact badging, and elaborate defe
 1. ~~Human reviews and approves M-1.~~ Complete.
 2. ~~Human commits the approved M-1 baseline.~~ Complete at `86c4ca29fb747797df3e489d978804644a34f1ce`.
 3. ~~Complete the bounded M0 reproducible Maven/Java foundation task.~~ Complete; G0 passed on 2026-09-02.
-4. Human reviews and records the uncommitted M0 diff.
-5. Begin M1 semantic, identity, uncertainty, and provenance contracts without starting production parser extraction.
+4. ~~Complete M1 semantic, identity, uncertainty, provenance, metric-envelope, and assessment-status contracts.~~ Complete; G1 passed on 2026-09-02.
+5. Human reviews the uncommitted M1 diff and G1 evidence.
+6. Begin M2 contract/ground-truth design before production JavaParser extraction; keep JavaParser PROVISIONAL until G2.

@@ -8,6 +8,8 @@
 >
 > Nothing here should be treated as decided until R2 completes.
 
+The parser-neutral identity, source-evidence, semantic-status, uncertainty, derivation, manifest, metric-envelope, and assessment-status contracts are no longer hypotheses in this document. Their implemented authority is [M1 Semantic, Identity, Uncertainty, and Provenance Contracts](m1-contracts.md). Graph node/edge shape and Neo4j mapping remain hypotheses.
+
 ## Purpose
 
 The Software Knowledge Graph represents the semantic structure of a
@@ -173,12 +175,11 @@ The canonical graph supports metrics and visualization, but neither metric seman
 
 See [Product Outcome, Metrics, Scoring, and Workbench Contract](product-outcome.md).
 
-## Identity Strategy [HYPOTHESIS]
+## Identity Strategy
 
-- Use fully qualified names as stable identifiers
-- Method identity includes signature to distinguish overloads
-- Annotation identity is composite (annotation type + annotated element)
-- Spring bean identity is the implementing class qualified name
+Canonical identities follow the implemented [M1 identity contract](m1-contracts.md#stable-identity-contract): repository and typed scope prevent fully qualified names from colliding across modules or dependency origins; entity kind and canonical name/signature distinguish language-level symbols; relationship targets preserve resolved, candidate, or unresolved state; and occurrence identities include complete source evidence.
+
+The exact graph mapping of those canonical identities remains **HYPOTHESIS** until M5. Fully qualified name alone is not a canonical entity identity.
 
 ## Schema Evolution
 
@@ -225,3 +226,4 @@ the schema must be revised before implementation.
 
 - [Architecture Overview](architecture.md)
 - [Project Context](../project-context.md)
+- [M1 Contracts](m1-contracts.md)

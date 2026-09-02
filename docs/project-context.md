@@ -129,6 +129,7 @@ Lower-authority claims cannot become confirmed without higher-authority evidence
 - [Human Review Roadmap](../roadmap_for_user.md)
 - [Architecture Overview](architecture/architecture.md)
 - [Knowledge Graph](architecture/knowledge-graph.md)
+- [M1 Contracts](architecture/m1-contracts.md)
 - [Product Outcome and Workbench Contract](architecture/product-outcome.md)
 - [ADR-002: Complete Visual Product and Explainable Assessment](decisions/ADR-002-product-outcome-and-explainable-assessment.md)
 - [Research Questions](research/research-questions.md)
