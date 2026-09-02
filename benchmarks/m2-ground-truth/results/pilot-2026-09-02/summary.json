@@ -1,0 +1,333 @@
+{
+  "status": "PASS",
+  "caseCount": 34,
+  "casePassCount": 34,
+  "targetAdjudicatedCount": 30,
+  "blockedCompilationCaseCount": 4,
+  "identifierRelationCount": 3,
+  "groups": [
+    {
+      "group": "identifiers",
+      "registered": 6,
+      "rawCalls": 7,
+      "implicitOrMissingSpanCalls": 1,
+      "errors": 0,
+      "failures": []
+    },
+    {
+      "group": "bindings",
+      "registered": 10,
+      "rawCalls": 11,
+      "implicitOrMissingSpanCalls": 1,
+      "errors": 0,
+      "failures": []
+    },
+    {
+      "group": "offsets-lf",
+      "registered": 7,
+      "rawCalls": 8,
+      "implicitOrMissingSpanCalls": 1,
+      "errors": 0,
+      "failures": []
+    },
+    {
+      "group": "offsets-crlf",
+      "registered": 7,
+      "rawCalls": 8,
+      "implicitOrMissingSpanCalls": 1,
+      "errors": 0,
+      "failures": []
+    },
+    {
+      "group": "ambiguous",
+      "registered": 1,
+      "rawCalls": 2,
+      "implicitOrMissingSpanCalls": 1,
+      "errors": 1,
+      "failures": []
+    },
+    {
+      "group": "missing",
+      "registered": 2,
+      "rawCalls": 3,
+      "implicitOrMissingSpanCalls": 1,
+      "errors": 1,
+      "failures": []
+    },
+    {
+      "group": "malformed",
+      "registered": 1,
+      "rawCalls": 2,
+      "implicitOrMissingSpanCalls": 1,
+      "errors": 1,
+      "failures": []
+    }
+  ],
+  "cases": [
+    {
+      "group": "identifiers",
+      "id": "id-composed",
+      "verdict": "PASS",
+      "failures": [],
+      "semanticTargetAdjudicated": true
+    },
+    {
+      "group": "identifiers",
+      "id": "id-decomposed",
+      "verdict": "PASS",
+      "failures": [],
+      "semanticTargetAdjudicated": true
+    },
+    {
+      "group": "identifiers",
+      "id": "id-ignorable",
+      "verdict": "PASS",
+      "failures": [],
+      "semanticTargetAdjudicated": true
+    },
+    {
+      "group": "identifiers",
+      "id": "id-plain-ignored",
+      "verdict": "PASS",
+      "failures": [],
+      "semanticTargetAdjudicated": true
+    },
+    {
+      "group": "identifiers",
+      "id": "id-escape",
+      "verdict": "PASS",
+      "failures": [],
+      "semanticTargetAdjudicated": true
+    },
+    {
+      "group": "identifiers",
+      "id": "id-plain-escaped",
+      "verdict": "PASS",
+      "failures": [],
+      "semanticTargetAdjudicated": true
+    },
+    {
+      "group": "bindings",
+      "id": "overload-int",
+      "verdict": "PASS",
+      "failures": [],
+      "semanticTargetAdjudicated": true
+    },
+    {
+      "group": "bindings",
+      "id": "overload-boxed",
+      "verdict": "PASS",
+      "failures": [],
+      "semanticTargetAdjudicated": true
+    },
+    {
+      "group": "bindings",
+      "id": "overload-widen",
+      "verdict": "PASS",
+      "failures": [],
+      "semanticTargetAdjudicated": true
+    },
+    {
+      "group": "bindings",
+      "id": "generic-list-get",
+      "verdict": "PASS",
+      "failures": [],
+      "semanticTargetAdjudicated": true
+    },
+    {
+      "group": "bindings",
+      "id": "generic-list-trim",
+      "verdict": "PASS",
+      "failures": [],
+      "semanticTargetAdjudicated": true
+    },
+    {
+      "group": "bindings",
+      "id": "generic-identity",
+      "verdict": "PASS",
+      "failures": [],
+      "semanticTargetAdjudicated": true
+    },
+    {
+      "group": "bindings",
+      "id": "generic-identity-trim",
+      "verdict": "PASS",
+      "failures": [],
+      "semanticTargetAdjudicated": true
+    },
+    {
+      "group": "bindings",
+      "id": "varargs-expanded",
+      "verdict": "PASS",
+      "failures": [],
+      "semanticTargetAdjudicated": true
+    },
+    {
+      "group": "bindings",
+      "id": "varargs-object-overload",
+      "verdict": "PASS",
+      "failures": [],
+      "semanticTargetAdjudicated": true
+    },
+    {
+      "group": "bindings",
+      "id": "varargs-array",
+      "verdict": "PASS",
+      "failures": [],
+      "semanticTargetAdjudicated": true
+    },
+    {
+      "group": "offsets-lf",
+      "id": "duplicate-first",
+      "verdict": "PASS",
+      "failures": [],
+      "semanticTargetAdjudicated": true
+    },
+    {
+      "group": "offsets-lf",
+      "id": "duplicate-second",
+      "verdict": "PASS",
+      "failures": [],
+      "semanticTargetAdjudicated": true
+    },
+    {
+      "group": "offsets-lf",
+      "id": "multiline",
+      "verdict": "PASS",
+      "failures": [],
+      "semanticTargetAdjudicated": true
+    },
+    {
+      "group": "offsets-lf",
+      "id": "after-astral",
+      "verdict": "PASS",
+      "failures": [],
+      "semanticTargetAdjudicated": true
+    },
+    {
+      "group": "offsets-lf",
+      "id": "argument-astral",
+      "verdict": "PASS",
+      "failures": [],
+      "semanticTargetAdjudicated": true
+    },
+    {
+      "group": "offsets-lf",
+      "id": "escaped-identifier",
+      "verdict": "PASS",
+      "failures": [],
+      "semanticTargetAdjudicated": true
+    },
+    {
+      "group": "offsets-lf",
+      "id": "escaped-line",
+      "verdict": "PASS",
+      "failures": [],
+      "semanticTargetAdjudicated": true
+    },
+    {
+      "group": "offsets-crlf",
+      "id": "duplicate-first-crlf",
+      "verdict": "PASS",
+      "failures": [],
+      "semanticTargetAdjudicated": true
+    },
+    {
+      "group": "offsets-crlf",
+      "id": "duplicate-second-crlf",
+      "verdict": "PASS",
+      "failures": [],
+      "semanticTargetAdjudicated": true
+    },
+    {
+      "group": "offsets-crlf",
+      "id": "multiline-crlf",
+      "verdict": "PASS",
+      "failures": [],
+      "semanticTargetAdjudicated": true
+    },
+    {
+      "group": "offsets-crlf",
+      "id": "after-astral-crlf",
+      "verdict": "PASS",
+      "failures": [],
+      "semanticTargetAdjudicated": true
+    },
+    {
+      "group": "offsets-crlf",
+      "id": "argument-astral-crlf",
+      "verdict": "PASS",
+      "failures": [],
+      "semanticTargetAdjudicated": true
+    },
+    {
+      "group": "offsets-crlf",
+      "id": "escaped-identifier-crlf",
+      "verdict": "PASS",
+      "failures": [],
+      "semanticTargetAdjudicated": true
+    },
+    {
+      "group": "offsets-crlf",
+      "id": "escaped-line-crlf",
+      "verdict": "PASS",
+      "failures": [],
+      "semanticTargetAdjudicated": true
+    },
+    {
+      "group": "ambiguous",
+      "id": "ambiguous-0",
+      "verdict": "PASS",
+      "failures": [],
+      "semanticTargetAdjudicated": false
+    },
+    {
+      "group": "missing",
+      "id": "missing-0",
+      "verdict": "PASS",
+      "failures": [],
+      "semanticTargetAdjudicated": false
+    },
+    {
+      "group": "missing",
+      "id": "missing-1",
+      "verdict": "PASS",
+      "failures": [],
+      "semanticTargetAdjudicated": false
+    },
+    {
+      "group": "malformed",
+      "id": "malformed-0",
+      "verdict": "PASS",
+      "failures": [],
+      "semanticTargetAdjudicated": false
+    }
+  ],
+  "identifierRelations": [
+    {
+      "left": "id-composed",
+      "right": "id-decomposed",
+      "equal": false,
+      "observedEqual": false,
+      "verdict": "PASS"
+    },
+    {
+      "left": "id-ignorable",
+      "right": "id-plain-ignored",
+      "equal": true,
+      "observedEqual": true,
+      "verdict": "PASS"
+    },
+    {
+      "left": "id-escape",
+      "right": "id-plain-escaped",
+      "equal": true,
+      "observedEqual": true,
+      "verdict": "PASS"
+    }
+  ],
+  "unexpectedExplicitCalls": [],
+  "failures": [],
+  "gate": "DESIGN_PILOT_ONLY_NOT_M2_OR_G2",
+  "runDirectory": "D:\\UIT\\AI-native-verified-software-evolution\\out\\m2-design-20260902\\integrated-oracle-runs\\20260902T143606-493e3361"
+}

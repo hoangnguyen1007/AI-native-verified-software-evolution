@@ -1,24 +1,12 @@
-# Bootstrap Project Workflow
+# Bootstrap Project — Governance and State
 
-Purpose: initialize or re-baseline the project operating context before sustained implementation.
+Use when initializing, reconciling or changing the project operating system; routine tasks use the bootstrap already defined in AGENTS.md.
 
-## Bootstrap Context
+1. Inventory the relevant governance, Git state, implementation/build and evidence.
+2. Identify phase, milestone, approvals, validation gates, discrepancies and next task.
+3. Change only the authorized operating instructions/state. Preserve effective safety, evidence and architecture constraints.
+4. Remove duplication by keeping one owner per rule and links to conditional detail. Verify paths and all callers before removing a resource.
+5. For skill changes use the available skill-creator procedure; for complex/risky changes perform one bounded independent behavior evaluation when delegation is available and permitted. Keep evaluator writes in isolated scratch space and disclose limits.
+6. Verify structure, representative behavior, final diff and durable-state consistency.
 
-Run Tier 0 fully. Read all current governance, relevant official project documents, build configuration, repository structure, architecture, ADRs, and research evidence required to establish reality.
-
-## Procedure
-
-1. Inventory repository, Git state, source, tests, build, configuration, and evidence artifacts.
-2. Separate confirmed facts, provisional decisions, hypotheses, assumptions, and open questions.
-3. Identify current phase, milestone, blockers, architecture gaps, and next gate.
-4. Resolve only operating-system/foundation issues authorized by the task.
-5. Do not begin production features automatically.
-6. Verify document consistency, repository reality, and final diff.
-
-## State Update
-
-Update project context only for durable identity/constraints, roadmap only for approved direction/gates, and current state for operational truth.
-
-## Output and Handoff
-
-Use the mandatory project handoff. End with the exact first implementation task and required human approval.
+Do not begin production features. Finish with [handoff](handoff.md), the next bounded task and only decisions that still require human approval.

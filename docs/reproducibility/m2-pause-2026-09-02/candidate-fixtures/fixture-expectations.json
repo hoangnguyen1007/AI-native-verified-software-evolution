@@ -1,0 +1,1096 @@
+{
+  "schema": "m2-adversarial-fixture-expectations-v1",
+  "expectationBasis": "Literal source semantics prepared independently before inspecting candidate adapter output; valid sources compiled with isolated javac 21 -proc:none. Missing-source compiler diagnostics are expected and not treated as binding-oracle success.",
+  "coordinateContract": "One-based lines/UTF-16 columns; exclusive end; offsets zero-based original UTF-16; tab width one.",
+  "fixtures": [
+    {
+      "id": "calls",
+      "sourcePath": "fixture/CallsFixture.java",
+      "sourceSha256": "2ac2fc7e83f3b660f159078b039d9da7c4f220bf81d0e9d28f5e7d7f57408d1f",
+      "javaRelease": 21,
+      "encoding": "UTF-8",
+      "preview": false,
+      "classpath": [],
+      "expectedCompilerExit": 0,
+      "typeDeclarations": [
+        {
+          "id": "calls.CallsFixture",
+          "name": "CallsFixture",
+          "origin": "PROJECT",
+          "kind": "TYPE",
+          "span": {
+            "startLine": 5,
+            "startColumn": 1,
+            "endLine": 21,
+            "endColumn": 2,
+            "startOffsetUtf16": 42,
+            "endOffsetUtf16": 486,
+            "sourceText": "final class CallsFixture {\n    CallsFixture() {}\n\n    String choose(String value) { return value; }\n\n    String choose(Object value) { return value.toString(); }\n\n    String run(List<String> values) {\n        String first = choose(\"x\");\n        String second = choose((Object) \"x\");\n        return values.get(0).trim();\n    }\n\n    CallsFixture make() { return new CallsFixture(); }\n\n    String copy(String value) { return new String(value); }\n}"
+          },
+          "canonicalName": "java:v1:[\"type\",[\"fixture\"],\"CallsFixture\"]"
+        }
+      ],
+      "callableDeclarations": [
+        {
+          "id": "calls.ctor",
+          "ownerType": "calls.CallsFixture",
+          "name": "",
+          "kind": "CONSTRUCTOR",
+          "parameterErasure": [],
+          "origin": "PROJECT",
+          "span": {
+            "startLine": 6,
+            "startColumn": 5,
+            "endLine": 6,
+            "endColumn": 22,
+            "startOffsetUtf16": 73,
+            "endOffsetUtf16": 90,
+            "sourceText": "CallsFixture() {}"
+          },
+          "canonicalName": "java:v1:[\"constructor\",[\"type\",[\"fixture\"],\"CallsFixture\"],[]]"
+        },
+        {
+          "id": "calls.chooseString",
+          "ownerType": "calls.CallsFixture",
+          "name": "choose",
+          "kind": "METHOD",
+          "parameterErasure": [
+            "java.lang.String"
+          ],
+          "origin": "PROJECT",
+          "span": {
+            "startLine": 8,
+            "startColumn": 5,
+            "endLine": 8,
+            "endColumn": 50,
+            "startOffsetUtf16": 96,
+            "endOffsetUtf16": 141,
+            "sourceText": "String choose(String value) { return value; }"
+          },
+          "canonicalName": "java:v1:[\"method\",[\"type\",[\"fixture\"],\"CallsFixture\"],\"choose\",[[\"declared\",[\"type\",[\"java\",\"lang\"],\"String\"]]]]"
+        },
+        {
+          "id": "calls.chooseObject",
+          "ownerType": "calls.CallsFixture",
+          "name": "choose",
+          "kind": "METHOD",
+          "parameterErasure": [
+            "java.lang.Object"
+          ],
+          "origin": "PROJECT",
+          "span": {
+            "startLine": 10,
+            "startColumn": 5,
+            "endLine": 10,
+            "endColumn": 61,
+            "startOffsetUtf16": 147,
+            "endOffsetUtf16": 203,
+            "sourceText": "String choose(Object value) { return value.toString(); }"
+          },
+          "canonicalName": "java:v1:[\"method\",[\"type\",[\"fixture\"],\"CallsFixture\"],\"choose\",[[\"declared\",[\"type\",[\"java\",\"lang\"],\"Object\"]]]]"
+        },
+        {
+          "id": "calls.run",
+          "ownerType": "calls.CallsFixture",
+          "name": "run",
+          "kind": "METHOD",
+          "parameterErasure": [
+            "java.util.List"
+          ],
+          "origin": "PROJECT",
+          "span": {
+            "startLine": 12,
+            "startColumn": 5,
+            "endLine": 16,
+            "endColumn": 6,
+            "startOffsetUtf16": 209,
+            "endOffsetUtf16": 367,
+            "sourceText": "String run(List<String> values) {\n        String first = choose(\"x\");\n        String second = choose((Object) \"x\");\n        return values.get(0).trim();\n    }"
+          },
+          "canonicalName": "java:v1:[\"method\",[\"type\",[\"fixture\"],\"CallsFixture\"],\"run\",[[\"declared\",[\"type\",[\"java\",\"util\"],\"List\"]]]]"
+        },
+        {
+          "id": "calls.make",
+          "ownerType": "calls.CallsFixture",
+          "name": "make",
+          "kind": "METHOD",
+          "parameterErasure": [],
+          "origin": "PROJECT",
+          "span": {
+            "startLine": 18,
+            "startColumn": 5,
+            "endLine": 18,
+            "endColumn": 55,
+            "startOffsetUtf16": 373,
+            "endOffsetUtf16": 423,
+            "sourceText": "CallsFixture make() { return new CallsFixture(); }"
+          },
+          "canonicalName": "java:v1:[\"method\",[\"type\",[\"fixture\"],\"CallsFixture\"],\"make\",[]]"
+        },
+        {
+          "id": "calls.copy",
+          "ownerType": "calls.CallsFixture",
+          "name": "copy",
+          "kind": "METHOD",
+          "parameterErasure": [
+            "java.lang.String"
+          ],
+          "origin": "PROJECT",
+          "span": {
+            "startLine": 20,
+            "startColumn": 5,
+            "endLine": 20,
+            "endColumn": 60,
+            "startOffsetUtf16": 429,
+            "endOffsetUtf16": 484,
+            "sourceText": "String copy(String value) { return new String(value); }"
+          },
+          "canonicalName": "java:v1:[\"method\",[\"type\",[\"fixture\"],\"CallsFixture\"],\"copy\",[[\"declared\",[\"type\",[\"java\",\"lang\"],\"String\"]]]]"
+        }
+      ],
+      "occurrences": [
+        {
+          "id": "calls.objectToString",
+          "category": "java.calls",
+          "callerDeclaration": "calls.chooseObject",
+          "span": {
+            "startLine": 10,
+            "startColumn": 42,
+            "endLine": 10,
+            "endColumn": 58,
+            "startOffsetUtf16": 184,
+            "endOffsetUtf16": 200,
+            "sourceText": "value.toString()"
+          },
+          "status": "RESOLVED",
+          "ordinal": 0,
+          "target": {
+            "owner": "java.lang.Object",
+            "name": "toString",
+            "parameterErasure": [],
+            "origin": "JDK",
+            "kind": "METHOD",
+            "canonicalName": "java:v1:[\"method\",[\"type\",[\"java\",\"lang\"],\"Object\"],\"toString\",[]]"
+          }
+        },
+        {
+          "id": "calls.chooseStringCall",
+          "category": "java.calls",
+          "callerDeclaration": "calls.run",
+          "span": {
+            "startLine": 13,
+            "startColumn": 24,
+            "endLine": 13,
+            "endColumn": 35,
+            "startOffsetUtf16": 266,
+            "endOffsetUtf16": 277,
+            "sourceText": "choose(\"x\")"
+          },
+          "status": "RESOLVED",
+          "ordinal": 0,
+          "target": {
+            "declaration": "calls.chooseString"
+          }
+        },
+        {
+          "id": "calls.chooseObjectCall",
+          "category": "java.calls",
+          "callerDeclaration": "calls.run",
+          "span": {
+            "startLine": 14,
+            "startColumn": 25,
+            "endLine": 14,
+            "endColumn": 45,
+            "startOffsetUtf16": 303,
+            "endOffsetUtf16": 323,
+            "sourceText": "choose((Object) \"x\")"
+          },
+          "status": "RESOLVED",
+          "ordinal": 0,
+          "target": {
+            "declaration": "calls.chooseObject"
+          }
+        },
+        {
+          "id": "calls.genericGet",
+          "category": "java.calls",
+          "callerDeclaration": "calls.run",
+          "span": {
+            "startLine": 15,
+            "startColumn": 16,
+            "endLine": 15,
+            "endColumn": 29,
+            "startOffsetUtf16": 340,
+            "endOffsetUtf16": 353,
+            "sourceText": "values.get(0)"
+          },
+          "status": "RESOLVED",
+          "ordinal": 0,
+          "target": {
+            "owner": "java.util.List",
+            "name": "get",
+            "parameterErasure": [
+              "int"
+            ],
+            "origin": "JDK",
+            "kind": "METHOD",
+            "canonicalName": "java:v1:[\"method\",[\"type\",[\"java\",\"util\"],\"List\"],\"get\",[[\"primitive\",\"int\"]]]"
+          }
+        },
+        {
+          "id": "calls.chainedTrim",
+          "category": "java.calls",
+          "callerDeclaration": "calls.run",
+          "span": {
+            "startLine": 15,
+            "startColumn": 16,
+            "endLine": 15,
+            "endColumn": 36,
+            "startOffsetUtf16": 340,
+            "endOffsetUtf16": 360,
+            "sourceText": "values.get(0).trim()"
+          },
+          "status": "RESOLVED",
+          "ordinal": 0,
+          "target": {
+            "owner": "java.lang.String",
+            "name": "trim",
+            "parameterErasure": [],
+            "origin": "JDK",
+            "kind": "METHOD",
+            "canonicalName": "java:v1:[\"method\",[\"type\",[\"java\",\"lang\"],\"String\"],\"trim\",[]]"
+          }
+        },
+        {
+          "id": "calls.projectConstructor",
+          "category": "java.constructor-calls",
+          "callerDeclaration": "calls.make",
+          "span": {
+            "startLine": 18,
+            "startColumn": 34,
+            "endLine": 18,
+            "endColumn": 52,
+            "startOffsetUtf16": 402,
+            "endOffsetUtf16": 420,
+            "sourceText": "new CallsFixture()"
+          },
+          "status": "RESOLVED",
+          "ordinal": 0,
+          "target": {
+            "declaration": "calls.ctor"
+          }
+        },
+        {
+          "id": "calls.jdkConstructor",
+          "category": "java.constructor-calls",
+          "callerDeclaration": "calls.copy",
+          "span": {
+            "startLine": 20,
+            "startColumn": 40,
+            "endLine": 20,
+            "endColumn": 57,
+            "startOffsetUtf16": 464,
+            "endOffsetUtf16": 481,
+            "sourceText": "new String(value)"
+          },
+          "status": "RESOLVED",
+          "ordinal": 0,
+          "target": {
+            "owner": "java.lang.String",
+            "name": "",
+            "parameterErasure": [
+              "java.lang.String"
+            ],
+            "origin": "JDK",
+            "kind": "CONSTRUCTOR",
+            "canonicalName": "java:v1:[\"constructor\",[\"type\",[\"java\",\"lang\"],\"String\"],[[\"declared\",[\"type\",[\"java\",\"lang\"],\"String\"]]]]"
+          }
+        }
+      ]
+    },
+    {
+      "id": "missing",
+      "sourcePath": "fixture/MissingFixture.java",
+      "sourceSha256": "49486914344efe22a703a06f2f70491acee16a53ea76bedb9166a6eb0f092e7d",
+      "javaRelease": 21,
+      "encoding": "UTF-8",
+      "preview": false,
+      "classpath": [],
+      "expectedCompilerExit": 1,
+      "typeDeclarations": [
+        {
+          "id": "missing.MissingFixture",
+          "name": "MissingFixture",
+          "origin": "PROJECT",
+          "kind": "TYPE",
+          "span": {
+            "startLine": 5,
+            "startColumn": 1,
+            "endLine": 14,
+            "endColumn": 2,
+            "startOffsetUtf16": 51,
+            "endOffsetUtf16": 252,
+            "sourceText": "final class MissingFixture {\n    MissingType missing;\n\n    String run(String value) {\n        value.trim();\n        return missing.work();\n    }\n\n    MissingType build() { return new MissingType(); }\n}"
+          },
+          "canonicalName": "java:v1:[\"type\",[\"fixture\"],\"MissingFixture\"]"
+        }
+      ],
+      "callableDeclarations": [
+        {
+          "id": "missing.run",
+          "ownerType": "missing.MissingFixture",
+          "name": "run",
+          "kind": "METHOD",
+          "parameterErasure": [
+            "java.lang.String"
+          ],
+          "origin": "PROJECT",
+          "span": {
+            "startLine": 8,
+            "startColumn": 5,
+            "endLine": 11,
+            "endColumn": 6,
+            "startOffsetUtf16": 110,
+            "endOffsetUtf16": 195,
+            "sourceText": "String run(String value) {\n        value.trim();\n        return missing.work();\n    }"
+          },
+          "canonicalName": "java:v1:[\"method\",[\"type\",[\"fixture\"],\"MissingFixture\"],\"run\",[[\"declared\",[\"type\",[\"java\",\"lang\"],\"String\"]]]]"
+        },
+        {
+          "id": "missing.build",
+          "ownerType": "missing.MissingFixture",
+          "name": "build",
+          "kind": "METHOD",
+          "parameterErasure": [],
+          "origin": "PROJECT",
+          "span": {
+            "startLine": 13,
+            "startColumn": 5,
+            "endLine": 13,
+            "endColumn": 54,
+            "startOffsetUtf16": 201,
+            "endOffsetUtf16": 250,
+            "sourceText": "MissingType build() { return new MissingType(); }"
+          },
+          "canonicalName": "java:v1:[\"method\",[\"type\",[\"fixture\"],\"MissingFixture\"],\"build\",[]]"
+        }
+      ],
+      "occurrences": [
+        {
+          "id": "missing.independentJdkCall",
+          "category": "java.calls",
+          "callerDeclaration": "missing.run",
+          "span": {
+            "startLine": 9,
+            "startColumn": 9,
+            "endLine": 9,
+            "endColumn": 21,
+            "startOffsetUtf16": 145,
+            "endOffsetUtf16": 157,
+            "sourceText": "value.trim()"
+          },
+          "status": "RESOLVED",
+          "ordinal": 0,
+          "target": {
+            "owner": "java.lang.String",
+            "name": "trim",
+            "parameterErasure": [],
+            "origin": "JDK",
+            "kind": "METHOD",
+            "canonicalName": "java:v1:[\"method\",[\"type\",[\"java\",\"lang\"],\"String\"],\"trim\",[]]"
+          }
+        },
+        {
+          "id": "missing.unknownMethod",
+          "category": "java.calls",
+          "callerDeclaration": "missing.run",
+          "span": {
+            "startLine": 10,
+            "startColumn": 16,
+            "endLine": 10,
+            "endColumn": 30,
+            "startOffsetUtf16": 174,
+            "endOffsetUtf16": 188,
+            "sourceText": "missing.work()"
+          },
+          "status": "UNRESOLVED",
+          "ordinal": 0,
+          "target": null,
+          "requiresUncertainty": true,
+          "forbidInventedTargetEntity": true
+        },
+        {
+          "id": "missing.unknownConstructor",
+          "category": "java.constructor-calls",
+          "callerDeclaration": "missing.build",
+          "span": {
+            "startLine": 13,
+            "startColumn": 34,
+            "endLine": 13,
+            "endColumn": 51,
+            "startOffsetUtf16": 230,
+            "endOffsetUtf16": 247,
+            "sourceText": "new MissingType()"
+          },
+          "status": "UNRESOLVED",
+          "ordinal": 0,
+          "target": null,
+          "requiresUncertainty": true,
+          "forbidInventedTargetEntity": true
+        }
+      ]
+    },
+    {
+      "id": "spans",
+      "sourcePath": "fixture/SpanFixture.java",
+      "sourceSha256": "0ced79056de5a809d06a6b3115977e00d4674b79014600901e4c33047ecb7c9f",
+      "javaRelease": 21,
+      "encoding": "UTF-8",
+      "preview": false,
+      "classpath": [],
+      "expectedCompilerExit": 0,
+      "typeDeclarations": [
+        {
+          "id": "spans.SpanFixture",
+          "name": "SpanFixture",
+          "origin": "PROJECT",
+          "kind": "TYPE",
+          "span": {
+            "startLine": 3,
+            "startColumn": 1,
+            "endLine": 15,
+            "endColumn": 2,
+            "startOffsetUtf16": 18,
+            "endOffsetUtf16": 325,
+            "sourceText": "final class SpanFixture {\n    String run(String value) {\n        String first = value.trim(); String second = value.trim();\n        return value\n                .trim();\n    }\n\n    String unicode(String value) { /* \ud83d\ude42 */ return value.trim(); }\n\n    String tabs(String value) {\n\t\treturn value.trim();\n    }\n}"
+          },
+          "canonicalName": "java:v1:[\"type\",[\"fixture\"],\"SpanFixture\"]"
+        }
+      ],
+      "callableDeclarations": [
+        {
+          "id": "spans.run",
+          "ownerType": "spans.SpanFixture",
+          "name": "run",
+          "kind": "METHOD",
+          "parameterErasure": [
+            "java.lang.String"
+          ],
+          "origin": "PROJECT",
+          "span": {
+            "startLine": 4,
+            "startColumn": 5,
+            "endLine": 8,
+            "endColumn": 6,
+            "startOffsetUtf16": 48,
+            "endOffsetUtf16": 193,
+            "sourceText": "String run(String value) {\n        String first = value.trim(); String second = value.trim();\n        return value\n                .trim();\n    }"
+          },
+          "canonicalName": "java:v1:[\"method\",[\"type\",[\"fixture\"],\"SpanFixture\"],\"run\",[[\"declared\",[\"type\",[\"java\",\"lang\"],\"String\"]]]]"
+        },
+        {
+          "id": "spans.unicode",
+          "ownerType": "spans.SpanFixture",
+          "name": "unicode",
+          "kind": "METHOD",
+          "parameterErasure": [
+            "java.lang.String"
+          ],
+          "origin": "PROJECT",
+          "span": {
+            "startLine": 10,
+            "startColumn": 5,
+            "endLine": 10,
+            "endColumn": 67,
+            "startOffsetUtf16": 199,
+            "endOffsetUtf16": 261,
+            "sourceText": "String unicode(String value) { /* \ud83d\ude42 */ return value.trim(); }"
+          },
+          "canonicalName": "java:v1:[\"method\",[\"type\",[\"fixture\"],\"SpanFixture\"],\"unicode\",[[\"declared\",[\"type\",[\"java\",\"lang\"],\"String\"]]]]"
+        },
+        {
+          "id": "spans.tabs",
+          "ownerType": "spans.SpanFixture",
+          "name": "tabs",
+          "kind": "METHOD",
+          "parameterErasure": [
+            "java.lang.String"
+          ],
+          "origin": "PROJECT",
+          "span": {
+            "startLine": 12,
+            "startColumn": 5,
+            "endLine": 14,
+            "endColumn": 6,
+            "startOffsetUtf16": 267,
+            "endOffsetUtf16": 323,
+            "sourceText": "String tabs(String value) {\n\t\treturn value.trim();\n    }"
+          },
+          "canonicalName": "java:v1:[\"method\",[\"type\",[\"fixture\"],\"SpanFixture\"],\"tabs\",[[\"declared\",[\"type\",[\"java\",\"lang\"],\"String\"]]]]"
+        }
+      ],
+      "occurrences": [
+        {
+          "id": "spans.duplicateFirst",
+          "category": "java.calls",
+          "callerDeclaration": "spans.run",
+          "span": {
+            "startLine": 5,
+            "startColumn": 24,
+            "endLine": 5,
+            "endColumn": 36,
+            "startOffsetUtf16": 98,
+            "endOffsetUtf16": 110,
+            "sourceText": "value.trim()"
+          },
+          "status": "RESOLVED",
+          "ordinal": 0,
+          "target": {
+            "owner": "java.lang.String",
+            "name": "trim",
+            "parameterErasure": [],
+            "origin": "JDK",
+            "kind": "METHOD",
+            "canonicalName": "java:v1:[\"method\",[\"type\",[\"java\",\"lang\"],\"String\"],\"trim\",[]]"
+          }
+        },
+        {
+          "id": "spans.duplicateSecond",
+          "category": "java.calls",
+          "callerDeclaration": "spans.run",
+          "span": {
+            "startLine": 5,
+            "startColumn": 54,
+            "endLine": 5,
+            "endColumn": 66,
+            "startOffsetUtf16": 128,
+            "endOffsetUtf16": 140,
+            "sourceText": "value.trim()"
+          },
+          "status": "RESOLVED",
+          "ordinal": 0,
+          "target": {
+            "owner": "java.lang.String",
+            "name": "trim",
+            "parameterErasure": [],
+            "origin": "JDK",
+            "kind": "METHOD",
+            "canonicalName": "java:v1:[\"method\",[\"type\",[\"java\",\"lang\"],\"String\"],\"trim\",[]]"
+          }
+        },
+        {
+          "id": "spans.multiline",
+          "category": "java.calls",
+          "callerDeclaration": "spans.run",
+          "span": {
+            "startLine": 6,
+            "startColumn": 16,
+            "endLine": 7,
+            "endColumn": 24,
+            "startOffsetUtf16": 157,
+            "endOffsetUtf16": 186,
+            "sourceText": "value\n                .trim()"
+          },
+          "status": "RESOLVED",
+          "ordinal": 0,
+          "target": {
+            "owner": "java.lang.String",
+            "name": "trim",
+            "parameterErasure": [],
+            "origin": "JDK",
+            "kind": "METHOD",
+            "canonicalName": "java:v1:[\"method\",[\"type\",[\"java\",\"lang\"],\"String\"],\"trim\",[]]"
+          }
+        },
+        {
+          "id": "spans.afterSupplementaryCodePoint",
+          "category": "java.calls",
+          "callerDeclaration": "spans.unicode",
+          "span": {
+            "startLine": 10,
+            "startColumn": 52,
+            "endLine": 10,
+            "endColumn": 64,
+            "startOffsetUtf16": 246,
+            "endOffsetUtf16": 258,
+            "sourceText": "value.trim()"
+          },
+          "status": "RESOLVED",
+          "ordinal": 0,
+          "target": {
+            "owner": "java.lang.String",
+            "name": "trim",
+            "parameterErasure": [],
+            "origin": "JDK",
+            "kind": "METHOD",
+            "canonicalName": "java:v1:[\"method\",[\"type\",[\"java\",\"lang\"],\"String\"],\"trim\",[]]"
+          }
+        },
+        {
+          "id": "spans.afterTwoTabs",
+          "category": "java.calls",
+          "callerDeclaration": "spans.tabs",
+          "span": {
+            "startLine": 13,
+            "startColumn": 10,
+            "endLine": 13,
+            "endColumn": 22,
+            "startOffsetUtf16": 304,
+            "endOffsetUtf16": 316,
+            "sourceText": "value.trim()"
+          },
+          "status": "RESOLVED",
+          "ordinal": 0,
+          "target": {
+            "owner": "java.lang.String",
+            "name": "trim",
+            "parameterErasure": [],
+            "origin": "JDK",
+            "kind": "METHOD",
+            "canonicalName": "java:v1:[\"method\",[\"type\",[\"java\",\"lang\"],\"String\"],\"trim\",[]]"
+          }
+        }
+      ]
+    },
+    {
+      "id": "owners",
+      "sourcePath": "fixture/OwnerFixture.java",
+      "sourceSha256": "b1200f6c26720efb9c160527a5297866182668b2df0ba25f0bb9665f993b897c",
+      "javaRelease": 21,
+      "encoding": "UTF-8",
+      "preview": false,
+      "classpath": [],
+      "expectedCompilerExit": 0,
+      "typeDeclarations": [
+        {
+          "id": "owners.OwnerFixture",
+          "name": "OwnerFixture",
+          "origin": "PROJECT",
+          "kind": "TYPE",
+          "span": {
+            "startLine": 3,
+            "startColumn": 1,
+            "endLine": 25,
+            "endColumn": 2,
+            "startOffsetUtf16": 18,
+            "endOffsetUtf16": 612,
+            "sourceText": "final class OwnerFixture {\n    void first() {\n        class Local {\n            Local() {}\n            class Nested {\n                String trim(String input) { return input.trim(); }\n            }\n            String trim(String input) { return input.trim(); }\n        }\n        new Local().trim(\"a\");\n    }\n\n    void second() {\n        class Local {\n            Local() {}\n            class Nested {\n                String trim(String input) { return input.trim(); }\n            }\n            String trim(String input) { return input.trim(); }\n        }\n        new Local().trim(\"b\");\n    }\n}"
+          },
+          "canonicalName": "java:v1:[\"type\",[\"fixture\"],\"OwnerFixture\"]"
+        },
+        {
+          "id": "owners.LocalFirst",
+          "name": "Local",
+          "origin": "PROJECT",
+          "kind": "TYPE",
+          "span": {
+            "startLine": 5,
+            "startColumn": 9,
+            "endLine": 11,
+            "endColumn": 10,
+            "startOffsetUtf16": 72,
+            "endOffsetUtf16": 289,
+            "sourceText": "class Local {\n            Local() {}\n            class Nested {\n                String trim(String input) { return input.trim(); }\n            }\n            String trim(String input) { return input.trim(); }\n        }"
+          },
+          "localToCallable": "owners.first"
+        },
+        {
+          "id": "owners.NestedFirst",
+          "name": "Nested",
+          "origin": "PROJECT",
+          "kind": "TYPE",
+          "span": {
+            "startLine": 7,
+            "startColumn": 13,
+            "endLine": 9,
+            "endColumn": 14,
+            "startOffsetUtf16": 121,
+            "endOffsetUtf16": 216,
+            "sourceText": "class Nested {\n                String trim(String input) { return input.trim(); }\n            }"
+          },
+          "memberOfType": "owners.LocalFirst"
+        },
+        {
+          "id": "owners.LocalSecond",
+          "name": "Local",
+          "origin": "PROJECT",
+          "kind": "TYPE",
+          "span": {
+            "startLine": 16,
+            "startColumn": 9,
+            "endLine": 22,
+            "endColumn": 10,
+            "startOffsetUtf16": 356,
+            "endOffsetUtf16": 573,
+            "sourceText": "class Local {\n            Local() {}\n            class Nested {\n                String trim(String input) { return input.trim(); }\n            }\n            String trim(String input) { return input.trim(); }\n        }"
+          },
+          "localToCallable": "owners.second"
+        },
+        {
+          "id": "owners.NestedSecond",
+          "name": "Nested",
+          "origin": "PROJECT",
+          "kind": "TYPE",
+          "span": {
+            "startLine": 18,
+            "startColumn": 13,
+            "endLine": 20,
+            "endColumn": 14,
+            "startOffsetUtf16": 405,
+            "endOffsetUtf16": 500,
+            "sourceText": "class Nested {\n                String trim(String input) { return input.trim(); }\n            }"
+          },
+          "memberOfType": "owners.LocalSecond"
+        }
+      ],
+      "callableDeclarations": [
+        {
+          "id": "owners.first",
+          "ownerType": "owners.OwnerFixture",
+          "name": "first",
+          "kind": "METHOD",
+          "parameterErasure": [],
+          "origin": "PROJECT",
+          "span": {
+            "startLine": 4,
+            "startColumn": 5,
+            "endLine": 13,
+            "endColumn": 6,
+            "startOffsetUtf16": 49,
+            "endOffsetUtf16": 326,
+            "sourceText": "void first() {\n        class Local {\n            Local() {}\n            class Nested {\n                String trim(String input) { return input.trim(); }\n            }\n            String trim(String input) { return input.trim(); }\n        }\n        new Local().trim(\"a\");\n    }"
+          },
+          "canonicalName": "java:v1:[\"method\",[\"type\",[\"fixture\"],\"OwnerFixture\"],\"first\",[]]"
+        },
+        {
+          "id": "owners.second",
+          "ownerType": "owners.OwnerFixture",
+          "name": "second",
+          "kind": "METHOD",
+          "parameterErasure": [],
+          "origin": "PROJECT",
+          "span": {
+            "startLine": 15,
+            "startColumn": 5,
+            "endLine": 24,
+            "endColumn": 6,
+            "startOffsetUtf16": 332,
+            "endOffsetUtf16": 610,
+            "sourceText": "void second() {\n        class Local {\n            Local() {}\n            class Nested {\n                String trim(String input) { return input.trim(); }\n            }\n            String trim(String input) { return input.trim(); }\n        }\n        new Local().trim(\"b\");\n    }"
+          },
+          "canonicalName": "java:v1:[\"method\",[\"type\",[\"fixture\"],\"OwnerFixture\"],\"second\",[]]"
+        },
+        {
+          "id": "owners.LocalFirst.ctor",
+          "ownerType": "owners.LocalFirst",
+          "name": "",
+          "kind": "CONSTRUCTOR",
+          "parameterErasure": [],
+          "origin": "PROJECT",
+          "span": {
+            "startLine": 6,
+            "startColumn": 13,
+            "endLine": 6,
+            "endColumn": 23,
+            "startOffsetUtf16": 98,
+            "endOffsetUtf16": 108,
+            "sourceText": "Local() {}"
+          }
+        },
+        {
+          "id": "owners.NestedFirst.trim",
+          "ownerType": "owners.NestedFirst",
+          "name": "trim",
+          "kind": "METHOD",
+          "parameterErasure": [
+            "java.lang.String"
+          ],
+          "origin": "PROJECT",
+          "span": {
+            "startLine": 8,
+            "startColumn": 17,
+            "endLine": 8,
+            "endColumn": 67,
+            "startOffsetUtf16": 152,
+            "endOffsetUtf16": 202,
+            "sourceText": "String trim(String input) { return input.trim(); }"
+          }
+        },
+        {
+          "id": "owners.LocalFirst.trim",
+          "ownerType": "owners.LocalFirst",
+          "name": "trim",
+          "kind": "METHOD",
+          "parameterErasure": [
+            "java.lang.String"
+          ],
+          "origin": "PROJECT",
+          "span": {
+            "startLine": 10,
+            "startColumn": 13,
+            "endLine": 10,
+            "endColumn": 63,
+            "startOffsetUtf16": 229,
+            "endOffsetUtf16": 279,
+            "sourceText": "String trim(String input) { return input.trim(); }"
+          }
+        },
+        {
+          "id": "owners.LocalSecond.ctor",
+          "ownerType": "owners.LocalSecond",
+          "name": "",
+          "kind": "CONSTRUCTOR",
+          "parameterErasure": [],
+          "origin": "PROJECT",
+          "span": {
+            "startLine": 17,
+            "startColumn": 13,
+            "endLine": 17,
+            "endColumn": 23,
+            "startOffsetUtf16": 382,
+            "endOffsetUtf16": 392,
+            "sourceText": "Local() {}"
+          }
+        },
+        {
+          "id": "owners.NestedSecond.trim",
+          "ownerType": "owners.NestedSecond",
+          "name": "trim",
+          "kind": "METHOD",
+          "parameterErasure": [
+            "java.lang.String"
+          ],
+          "origin": "PROJECT",
+          "span": {
+            "startLine": 19,
+            "startColumn": 17,
+            "endLine": 19,
+            "endColumn": 67,
+            "startOffsetUtf16": 436,
+            "endOffsetUtf16": 486,
+            "sourceText": "String trim(String input) { return input.trim(); }"
+          }
+        },
+        {
+          "id": "owners.LocalSecond.trim",
+          "ownerType": "owners.LocalSecond",
+          "name": "trim",
+          "kind": "METHOD",
+          "parameterErasure": [
+            "java.lang.String"
+          ],
+          "origin": "PROJECT",
+          "span": {
+            "startLine": 21,
+            "startColumn": 13,
+            "endLine": 21,
+            "endColumn": 63,
+            "startOffsetUtf16": 513,
+            "endOffsetUtf16": 563,
+            "sourceText": "String trim(String input) { return input.trim(); }"
+          }
+        }
+      ],
+      "occurrences": [
+        {
+          "id": "owners.nestedFirstJdk",
+          "category": "java.calls",
+          "callerDeclaration": "owners.NestedFirst.trim",
+          "span": {
+            "startLine": 8,
+            "startColumn": 52,
+            "endLine": 8,
+            "endColumn": 64,
+            "startOffsetUtf16": 187,
+            "endOffsetUtf16": 199,
+            "sourceText": "input.trim()"
+          },
+          "status": "RESOLVED",
+          "ordinal": 0,
+          "target": {
+            "owner": "java.lang.String",
+            "name": "trim",
+            "parameterErasure": [],
+            "origin": "JDK",
+            "kind": "METHOD",
+            "canonicalName": "java:v1:[\"method\",[\"type\",[\"java\",\"lang\"],\"String\"],\"trim\",[]]"
+          }
+        },
+        {
+          "id": "owners.localFirstJdk",
+          "category": "java.calls",
+          "callerDeclaration": "owners.LocalFirst.trim",
+          "span": {
+            "startLine": 10,
+            "startColumn": 48,
+            "endLine": 10,
+            "endColumn": 60,
+            "startOffsetUtf16": 264,
+            "endOffsetUtf16": 276,
+            "sourceText": "input.trim()"
+          },
+          "status": "RESOLVED",
+          "ordinal": 0,
+          "target": {
+            "owner": "java.lang.String",
+            "name": "trim",
+            "parameterErasure": [],
+            "origin": "JDK",
+            "kind": "METHOD",
+            "canonicalName": "java:v1:[\"method\",[\"type\",[\"java\",\"lang\"],\"String\"],\"trim\",[]]"
+          }
+        },
+        {
+          "id": "owners.localFirstCall",
+          "category": "java.calls",
+          "callerDeclaration": "owners.first",
+          "span": {
+            "startLine": 12,
+            "startColumn": 9,
+            "endLine": 12,
+            "endColumn": 30,
+            "startOffsetUtf16": 298,
+            "endOffsetUtf16": 319,
+            "sourceText": "new Local().trim(\"a\")"
+          },
+          "status": "RESOLVED",
+          "ordinal": 0,
+          "target": {
+            "declaration": "owners.LocalFirst.trim"
+          }
+        },
+        {
+          "id": "owners.localFirstConstruction",
+          "category": "java.constructor-calls",
+          "callerDeclaration": "owners.first",
+          "span": {
+            "startLine": 12,
+            "startColumn": 9,
+            "endLine": 12,
+            "endColumn": 20,
+            "startOffsetUtf16": 298,
+            "endOffsetUtf16": 309,
+            "sourceText": "new Local()"
+          },
+          "status": "RESOLVED",
+          "ordinal": 0,
+          "target": {
+            "declaration": "owners.LocalFirst.ctor"
+          }
+        },
+        {
+          "id": "owners.nestedSecondJdk",
+          "category": "java.calls",
+          "callerDeclaration": "owners.NestedSecond.trim",
+          "span": {
+            "startLine": 19,
+            "startColumn": 52,
+            "endLine": 19,
+            "endColumn": 64,
+            "startOffsetUtf16": 471,
+            "endOffsetUtf16": 483,
+            "sourceText": "input.trim()"
+          },
+          "status": "RESOLVED",
+          "ordinal": 0,
+          "target": {
+            "owner": "java.lang.String",
+            "name": "trim",
+            "parameterErasure": [],
+            "origin": "JDK",
+            "kind": "METHOD",
+            "canonicalName": "java:v1:[\"method\",[\"type\",[\"java\",\"lang\"],\"String\"],\"trim\",[]]"
+          }
+        },
+        {
+          "id": "owners.localSecondJdk",
+          "category": "java.calls",
+          "callerDeclaration": "owners.LocalSecond.trim",
+          "span": {
+            "startLine": 21,
+            "startColumn": 48,
+            "endLine": 21,
+            "endColumn": 60,
+            "startOffsetUtf16": 548,
+            "endOffsetUtf16": 560,
+            "sourceText": "input.trim()"
+          },
+          "status": "RESOLVED",
+          "ordinal": 0,
+          "target": {
+            "owner": "java.lang.String",
+            "name": "trim",
+            "parameterErasure": [],
+            "origin": "JDK",
+            "kind": "METHOD",
+            "canonicalName": "java:v1:[\"method\",[\"type\",[\"java\",\"lang\"],\"String\"],\"trim\",[]]"
+          }
+        },
+        {
+          "id": "owners.localSecondCall",
+          "category": "java.calls",
+          "callerDeclaration": "owners.second",
+          "span": {
+            "startLine": 23,
+            "startColumn": 9,
+            "endLine": 23,
+            "endColumn": 30,
+            "startOffsetUtf16": 582,
+            "endOffsetUtf16": 603,
+            "sourceText": "new Local().trim(\"b\")"
+          },
+          "status": "RESOLVED",
+          "ordinal": 0,
+          "target": {
+            "declaration": "owners.LocalSecond.trim"
+          }
+        },
+        {
+          "id": "owners.localSecondConstruction",
+          "category": "java.constructor-calls",
+          "callerDeclaration": "owners.second",
+          "span": {
+            "startLine": 23,
+            "startColumn": 9,
+            "endLine": 23,
+            "endColumn": 20,
+            "startOffsetUtf16": 582,
+            "endOffsetUtf16": 593,
+            "sourceText": "new Local()"
+          },
+          "status": "RESOLVED",
+          "ordinal": 0,
+          "target": {
+            "declaration": "owners.LocalSecond.ctor"
+          }
+        }
+      ]
+    }
+  ],
+  "crossCaseAssertions": [
+    {
+      "differentTypeEntities": [
+        "owners.LocalFirst",
+        "owners.LocalSecond"
+      ]
+    },
+    {
+      "differentTypeEntities": [
+        "owners.NestedFirst",
+        "owners.NestedSecond"
+      ]
+    },
+    {
+      "differentCallerEntities": [
+        "owners.NestedFirst.trim",
+        "owners.NestedSecond.trim"
+      ]
+    },
+    {
+      "differentOccurrences": [
+        "spans.duplicateFirst",
+        "spans.duplicateSecond"
+      ]
+    }
+  ]
+}

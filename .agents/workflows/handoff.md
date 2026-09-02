@@ -1,61 +1,87 @@
-# Handoff Workflow
+---
+description: 
+---
 
-Purpose: make a completed or blocked task continuable without hidden conversation context.
+# Handoff — One Continuable Task Result
 
-## Bootstrap Context
+Cover every field below, combining related/empty fields in concise prose or a table. Do not emit twelve headings or repeat this handoff for every workflow step.
 
-Run Tier 0 and inspect the current diff, recent commits, relevant contracts, test evidence, and task exit criteria.
+| Field | Required content |
+|---|---|
+| STATE BEFORE | Milestone, task, Git state and relevant approvals |
+| WORK COMPLETED | Actual artifacts/actions, not intentions |
+| FILES CHANGED | Paths or clearly identified groups; link a full change record when useful |
+| TESTS / COMMANDS ACTUALLY RUN | Commands/checks, scope and evidence locations |
+| RESULTS | Exit outcomes, executed cases, failures and skips |
+| NEW EVIDENCE | Newly established facts and their boundaries |
+| DECISIONS MADE | Human-approved or routine reversible choices, distinguished |
+| DECISIONS STILL REQUIRING HUMAN APPROVAL | Only unresolved consequential choices; none when applicable |
+| LIMITATIONS | Unsupported or unverified behavior |
+| BLOCKERS | Concrete impediments; none when applicable |
+| DURABLE STATE FILES UPDATED | Files and why; none for read-only review |
+| EXACT NEXT RECOMMENDED TASK | One bounded action with relevant entry conditions |
 
-## Required Record
+## Adaptive Closeout
 
-### STATE BEFORE
+Do not run the full project closeout protocol for every task.
 
-Milestone, task, repository state, and relevant decisions at task start.
+Choose closeout depth by task impact.
 
-### WORK COMPLETED
+### LIGHT closeout
 
-Only work present in the repository or verified external artifacts.
+Use for:
 
-### FILES CHANGED
+* read-only investigation;
+* documentation-only edits;
+* small test/fixture changes;
+* failed or interrupted implementation with no production-state change;
+* intermediate vertical-slice work that does not change a milestone/gate/contract.
 
-Exact changed, added, and deleted files.
+Required:
 
-### TESTS / COMMANDS ACTUALLY RUN
+* `git status --short`
+* targeted `git diff -- <changed files>`
+* run only the directly relevant verification
+* concise result + blocker/next action
 
-Exact commands/checks; never infer unexecuted verification.
+Do NOT reread all canonical state files, handoff docs, reproducibility manifests, process lists, or unrelated output directories unless needed to resolve uncertainty.
 
-### RESULTS
+Do NOT update `docs/current-state.md` merely because an intermediate attempt occurred.
 
-Passes, failures, exit codes, and key observations.
+### STANDARD closeout
 
-### NEW EVIDENCE
+Use for:
 
-Newly established facts and artifact locations.
+* meaningful production implementation;
+* bounded feature completion;
+* contract-test changes;
+* accepted vertical slice.
 
-### DECISIONS MADE
+Required:
 
-Approved or low-risk reversible decisions, with rationale.
+* inspect changed diff;
+* targeted tests;
+* relevant integration/build verification;
+* update `docs/current-state.md` only if operational project state changed;
+* concise handoff.
 
-### DECISIONS STILL REQUIRING HUMAN APPROVAL
+### FULL closeout
 
-Small explicit decision set.
+Use only for:
 
-### LIMITATIONS
+* milestone completion;
+* gate promotion/change;
+* ADR or architecture contract change;
+* technology decision;
+* major benchmark/evidence conclusion;
+* substantial multi-agent campaign;
+* work immediately preceding a human commit.
 
-Known unsupported or unverified behavior.
+FULL closeout may reread canonical state, roadmap/gates, reproducibility evidence, worker status and broader Git state.
 
-### BLOCKERS
+Default to the cheapest closeout level that still preserves correctness.
 
-Concrete conditions preventing progress; `none` if there are none.
+Do not perform ceremonial reads or duplicate checks when the same facts were verified earlier in the current task and have not changed.
 
-### DURABLE STATE FILES UPDATED
+Ensure claims match the final affected state and AGENTS.md's document ownership. Distinguish fresh verification from historical evidence. Leave commit/push to the human unless explicitly requested.
 
-List and explain why each was updated.
-
-### EXACT NEXT RECOMMENDED TASK
-
-One bounded next action with its entry condition.
-
-## Verification and State Update
-
-Ensure `docs/current-state.md` matches the handoff. Update other durable files only under `AGENTS.md` rules. Confirm no claim depends on chat history.

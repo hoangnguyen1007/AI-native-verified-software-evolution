@@ -1,0 +1,19 @@
+D:\UIT\AI-native-verified-software-evolution\out\m2-production\adversarial-worker\fixtures\missing\fixture\MissingFixture.java:3: error: package missing.api does not exist
+import missing.api.MissingType;
+                  ^
+D:\UIT\AI-native-verified-software-evolution\out\m2-production\adversarial-worker\fixtures\missing\fixture\MissingFixture.java:6: error: cannot find symbol
+    MissingType missing;
+    ^
+  symbol:   class MissingType
+  location: class MissingFixture
+D:\UIT\AI-native-verified-software-evolution\out\m2-production\adversarial-worker\fixtures\missing\fixture\MissingFixture.java:13: error: cannot find symbol
+    MissingType build() { return new MissingType(); }
+    ^
+  symbol:   class MissingType
+  location: class MissingFixture
+D:\UIT\AI-native-verified-software-evolution\out\m2-production\adversarial-worker\fixtures\missing\fixture\MissingFixture.java:13: error: cannot find symbol
+    MissingType build() { return new MissingType(); }
+                                     ^
+  symbol:   class MissingType
+  location: class MissingFixture
+4 errors

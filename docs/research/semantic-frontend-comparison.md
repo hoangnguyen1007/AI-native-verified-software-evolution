@@ -2,7 +2,7 @@
 
 ## Status
 
-**OPEN TECHNOLOGY GATE — preliminary controlled evidence only.** This package does not authorize M2 production implementation or a change to ADR-001. Its present conclusion is **MORE EVIDENCE REQUIRED**.
+**PRELIMINARY COMPARATIVE EVIDENCE — full empirical gate incomplete.** The human approved JavaParser as the primary frontend on 2026-09-02; see [ADR-001](../decisions/ADR-001-parser-technology.md). This package does not establish general superiority or pass G2. The saved experiments remain unchanged.
 
 ## Protocol (pre-registered)
 
@@ -43,7 +43,7 @@ For seven extracted call occurrences:
 | B | 6/7 | 7/7 | Both resolve supplied external dependencies; JavaParser did not resolve chained generic `values.get(0).trim()` |
 | C | 5/7 | 6/7 | Both retain the supplied dependency and report the removed optional target unresolved |
 
-The preliminary B difference is independently inspectable in source: `List<String>.get(0)` has static type `String`, so the `trim` target is expected to resolve. This needs confirmation with javac output before being counted as a final correctness result.
+The preliminary B difference is independently inspectable in source: `List<String>.get(0)` has static type `String`, so the `trim` target is expected to resolve. The continuation below adds a javac check for this specific target; it does not validate the full semantic denominator.
 
 No performance or memory conclusion follows: this is one machine, one cold run, a one-file fixture, no controlled process isolation, and no peak-memory sampler. The observed elapsed times are retained in raw data only.
 
@@ -94,10 +94,12 @@ If OpenRewrite becomes the analysis frontend, its LST/type objects still cannot 
 
 ## Decision and approval follow-up
 
-**Recommendation: MORE EVIDENCE REQUIRED. Epistemic status: OPEN QUESTION.** The only comparative implementation result is too narrow to support either a migration or a renewed JavaParser endorsement.
+**Comparative conclusion: MORE EVIDENCE REQUIRED for broader correctness/resource claims.** The bounded evidence alone does not establish a technology ranking. The separate human decision to keep JavaParser is recorded in ADR-001 with explicit validation and replacement conditions.
 
-If human evidence later approves **KEEP JAVAPARSER**, update ADR-001 with the comparative protocol/raw-results references, retain OpenRewrite only as a future transformation dependency, and record explicit M2 acceptance thresholds. If it approves **SWITCH TO OPENREWRITE**, supersede ADR-001, add the OpenRewrite adapter dependency/ownership boundary, define a verified source-span strategy, and re-baseline M2 contracts/tests. Neither change is authorized by this preliminary package.
+Retain OpenRewrite as an independent comparator and possible future transformation technology. Register M2 acceptance criteria before production implementation. Any future primary-frontend switch requires new evidence, human approval and an ADR update; preserve the parser-neutral M1/SemanticFrontend boundary.
 
 ## Threats to validity
 
-The result is a one-file microfixture, not PetClinic; it has one relationship extractor, no ground-truth JSON yet, no javac/JDT executable oracle output, no multi-module fixture, one Windows/JDK environment, no repeated process-isolated timing, no peak-memory measurement, and an intentionally provisional OpenRewrite span strategy. It must not be used to claim semantic superiority, general incomplete-classpath behavior, or performance.
+Evidence includes a controlled microfixture, a narrow javac binding test and PetClinic CALLS-only outputs. It lacks the full labeled semantic denominator, broad compiler-oracle validation, a multi-module fixture, repeated process-isolated timing and peak-memory measurement. One Windows/JDK environment and the provisional span strategy limit conclusions.
+
+The intake audit also identified defects in the experimental evidence model: 89 placeholder spans in every saved OpenRewrite PetClinic configuration (the table above counts only diagnostics on resolved calls), provenance diagnostics dropped during resolved M1 mapping, and project-local targets classified as DEPENDENCY by a package-prefix heuristic. In Config B, both adapters label 85 PetClinic targets as dependencies. Preserve these raw outputs as historical evidence; repair the generator and produce a separately identified run before claiming correct provenance/origins. None of these adapter defects establishes intrinsic frontend superiority.

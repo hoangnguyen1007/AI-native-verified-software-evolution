@@ -94,7 +94,7 @@ Exit gate G0: clean build from at least two documented environments with exact t
 
 ### M1 - Semantic, Identity, Uncertainty, and Provenance Contracts
 
-**Status: COMPLETE.** Implemented and verified on 2026-09-02. Gate G1 passed; the M1 diff remains uncommitted for human review.
+**Status: COMPLETE.** Implemented and verified on 2026-09-02; committed at `b04220e722cc4bc772cbb3ad8531d4dc1ea1a058`. Gate G1 passed.
 
 Deliver parser-neutral immutable contracts for repository snapshots, modules, source documents/spans, entities, relationships, diagnostics, uncertainty, derivation, analysis manifests, content-addressed analysis identity, metric envelopes, metric/score versions, score status, and analysis confidence.
 
@@ -104,7 +104,7 @@ Exit gate G1: contract/invariant/golden tests define deterministic identity and 
 
 Deliver the JavaParser adapter and architecture-relevant relationship set: declarations, inheritance, implementations, permits, type uses, calls, constructor calls, field access, method references, parameters, returns, fields, throws, annotations, generics, and relevant modern Java constructs.
 
-Ground truth distinguishes attempted, correct, incorrect, unresolved, ambiguous, omitted, unsupported, and error outcomes. JavaParser remains provisional until this gate.
+Ground truth distinguishes attempted, correct, incorrect, unresolved, ambiguous, omitted, unsupported, and error outcomes. JavaParser is the human-approved primary frontend (ADR-001); this choice does not pass G2 or remove the validation/replacement gates.
 
 ### M3 - Multi-Module Workspace and Build-Model Intelligence
 
@@ -292,5 +292,5 @@ Paper readiness, venue selection, extensive artifact badging, and elaborate defe
 2. ~~Human commits the approved M-1 baseline.~~ Complete at `86c4ca29fb747797df3e489d978804644a34f1ce`.
 3. ~~Complete the bounded M0 reproducible Maven/Java foundation task.~~ Complete; G0 passed on 2026-09-02.
 4. ~~Complete M1 semantic, identity, uncertainty, provenance, metric-envelope, and assessment-status contracts.~~ Complete; G1 passed on 2026-09-02.
-5. Human reviews the uncommitted M1 diff and G1 evidence.
-6. Begin M2 contract/ground-truth design before production JavaParser extraction; keep JavaParser PROVISIONAL until G2.
+5. M1 is committed; the human-approved primary frontend choice is recorded in ADR-001. Comparative evidence remains bounded and does not pass G2.
+6. Begin M2 contract/ground-truth design before production JavaParser extraction; preserve the replaceable SemanticFrontend boundary and empirical G2 criteria.

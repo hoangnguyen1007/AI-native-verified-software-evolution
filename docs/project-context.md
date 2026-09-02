@@ -46,7 +46,7 @@ Architecture-mutation fixtures used to evaluate rule detection are part of SE121
 ## Explicit Non-Goals
 
 - AI diagnosis and graph-guided RAG
-- Automated refactoring, patch generation, or OpenRewrite execution
+- Automated refactoring, patch generation, or OpenRewrite transformation execution
 - Sandbox verification of generated changes
 - Differential/mutation testing of generated patches
 - CI/CD verification and Verified Pull Requests
@@ -91,6 +91,7 @@ Lower-authority claims cannot become confirmed without higher-authority evidence
 | HYPOTHESIS | Testable claim requiring evidence |
 | ASSUMPTION | Temporary default that has not been validated |
 | OPEN QUESTION | Explicit unresolved issue |
+| CANDIDATE IDEA | Unadopted option; not a task or approved commitment |
 
 ## Durable Technology Direction
 
@@ -99,7 +100,8 @@ Lower-authority claims cannot become confirmed without higher-authority evidence
 | Java 21 compile baseline | CONFIRMED |
 | Maven and monorepo | CONFIRMED |
 | Track A + Track B SE121 target | CONFIRMED |
-| JavaParser + SymbolSolver behind an adapter | PROVISIONAL |
+| JavaParser + SymbolSolver behind SemanticFrontend | CONFIRMED human choice (2026-09-02); empirical G2 acceptance pending; see ADR-001 |
+| OpenRewrite | Independent comparator; possible future transformation technology outside SE121 |
 | Storage-neutral canonical graph | CONFIRMED direction; detailed schema pending |
 | Neo4j Community adapter | PROVISIONAL/experimental |
 | Typed external policy representation | Approved direction; exact format pending |

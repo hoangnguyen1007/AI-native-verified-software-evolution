@@ -1,0 +1,488 @@
+{
+  "status": "PREPARED_NOT_DISPATCHED",
+  "head": "83797e840e414bf99a0f71117892da355d94be55",
+  "initial_user_state_capture": "out/m2-design-20260902/control/baseline.json",
+  "scope": "Hashes pin required inputs, not proof of reads. Extend oracle-review with accepted pilot files before dispatch. Refresh changed files without rewriting old raw runs.",
+  "files": [
+    {
+      "path": "AGENTS.md",
+      "sha256": "d9f1e35e33112f8e83a448a48aece831c58d9b6555821e84ffa6fb20412dc54e",
+      "task": "common",
+      "why": "Operating authority, approved contracts, M2 scope and evidence boundaries."
+    },
+    {
+      "path": "GEMINI.md",
+      "sha256": "f70c324c05177c50e6c1c39fc81a9c1f6aee76f134011f430f711f49439ef6d3",
+      "task": "common",
+      "why": "Operating authority, approved contracts, M2 scope and evidence boundaries."
+    },
+    {
+      "path": "docs/project-context.md",
+      "sha256": "16778f9b04d42ef7ede9e39a2719a0d074c788c64215f3329e2006cfe13f0424",
+      "task": "common",
+      "why": "Operating authority, approved contracts, M2 scope and evidence boundaries."
+    },
+    {
+      "path": "docs/current-state.md",
+      "sha256": "0df6b2d514d963286673b3b0a7a1095b1181e971dc249664549ab4e6cb8c3880",
+      "task": "common",
+      "why": "Operating authority, approved contracts, M2 scope and evidence boundaries."
+    },
+    {
+      "path": "docs/roadmap.md",
+      "sha256": "bfc443179d7511bd20b75c2ba6d95e944e8c7f95f7a29c197b188211be4d82a4",
+      "task": "common",
+      "why": "Operating authority, approved contracts, M2 scope and evidence boundaries."
+    },
+    {
+      "path": ".agents/rules/00-agent-core.md",
+      "sha256": "73b2896a3ab255a3bf74f9b12062659c98304b087724176c5fc6b1418693f822",
+      "task": "common",
+      "why": "Operating authority, approved contracts, M2 scope and evidence boundaries."
+    },
+    {
+      "path": ".agents/rules/10-engineering-excellence.md",
+      "sha256": "d7b2826404566a2de6dff807dd4b1fb15915e718f909977745b5731882b76fcc",
+      "task": "common",
+      "why": "Operating authority, approved contracts, M2 scope and evidence boundaries."
+    },
+    {
+      "path": ".agents/rules/20-evidence-first.md",
+      "sha256": "07c8d677795385d55939a171bfbf2374513790960f4c604c53290a935231573f",
+      "task": "common",
+      "why": "Operating authority, approved contracts, M2 scope and evidence boundaries."
+    },
+    {
+      "path": ".agents/rules/30-research-and-architecture.md",
+      "sha256": "1cb04e7d3e42b32bb4d63afe1e56b1b551841ba35aa3872cc677d616b4e2aaf1",
+      "task": "common",
+      "why": "Operating authority, approved contracts, M2 scope and evidence boundaries."
+    },
+    {
+      "path": ".agents/rules/40-git-and-change-safety.md",
+      "sha256": "a64605e1995ede762f8f6fea948678991dcd116314a2c8981bef7c623f47feda",
+      "task": "common",
+      "why": "Operating authority, approved contracts, M2 scope and evidence boundaries."
+    },
+    {
+      "path": ".agents/skills/se-project-engineering/SKILL.md",
+      "sha256": "04000ad7ebe1a10fd3cc137e021b3026ca868284637fe0ccfb414562f75e0a5a",
+      "task": "common",
+      "why": "Operating authority, approved contracts, M2 scope and evidence boundaries."
+    },
+    {
+      "path": ".agents/skills/se-project-engineering/semantic-evaluation.md",
+      "sha256": "0ffe1dcf210dc8e96f8fe82c9b69ac4efeb0ebd831caf48b86eeaea37c59ecf9",
+      "task": "common",
+      "why": "Operating authority, approved contracts, M2 scope and evidence boundaries."
+    },
+    {
+      "path": ".agents/skills/verification-before-completion/SKILL.md",
+      "sha256": "a77cf8df26a8927905b41e9e50212a5dcd219e8ab85a4abb1c745ff0ca656d07",
+      "task": "common",
+      "why": "Operating authority, approved contracts, M2 scope and evidence boundaries."
+    },
+    {
+      "path": ".agents/agents/semantic-analyst.md",
+      "sha256": "1b3015ed79f8fa7264d5b48792751ce7c051b4131aec1e1ba6a35be6eb4f3ced",
+      "task": "common",
+      "why": "Operating authority, approved contracts, M2 scope and evidence boundaries."
+    },
+    {
+      "path": ".agents/agents/red-team-reviewer.md",
+      "sha256": "4eb45d982440a3470f04bf1407e80ded0ed6989e6061d7cf1fe682e00d60a520",
+      "task": "common",
+      "why": "Operating authority, approved contracts, M2 scope and evidence boundaries."
+    },
+    {
+      "path": ".agents/workflows/review.md",
+      "sha256": "b6b8b9b90981dfa7b0b1d46ab6cbdfee700902fafaa1c42497fa50647aab99b1",
+      "task": "common",
+      "why": "Operating authority, approved contracts, M2 scope and evidence boundaries."
+    },
+    {
+      "path": ".agents/workflows/verify.md",
+      "sha256": "ac77d910e86618dbf465b3e7155e08af6a7d61b5f8232689de3de7cb9ecd8d84",
+      "task": "common",
+      "why": "Operating authority, approved contracts, M2 scope and evidence boundaries."
+    },
+    {
+      "path": ".agents/workflows/handoff.md",
+      "sha256": "2449b29dd6b6b592d2a2cf838852025dfcf78c19ddd191290b8d50f1f68cc748",
+      "task": "common",
+      "why": "Operating authority, approved contracts, M2 scope and evidence boundaries."
+    },
+    {
+      "path": "docs/architecture/m1-contracts.md",
+      "sha256": "b2b58821313207fa8840bb619fb5ddf024c01fde0fb2a5e8cbd3f7240ef64329",
+      "task": "common",
+      "why": "Operating authority, approved contracts, M2 scope and evidence boundaries."
+    },
+    {
+      "path": "docs/architecture/m2-semantic-frontend.md",
+      "sha256": "a2fe435fead68f8054244ddcf474287681ca5d59398a007e17e76fc17e0a13af",
+      "task": "common",
+      "why": "Operating authority, approved contracts, M2 scope and evidence boundaries."
+    },
+    {
+      "path": "docs/decisions/ADR-001-parser-technology.md",
+      "sha256": "1e822127ecc8f803f2121a1cf4028399a3a82a110d75036d4e17be6c37a625f0",
+      "task": "common",
+      "why": "Operating authority, approved contracts, M2 scope and evidence boundaries."
+    },
+    {
+      "path": "docs/research/semantic-frontend-comparison.md",
+      "sha256": "5c2ff5acb90e9375e0ace6ccda55e265d53a02c8b23d4c3884edde56e1d7b350",
+      "task": "common",
+      "why": "Operating authority, approved contracts, M2 scope and evidence boundaries."
+    },
+    {
+      "path": ".agents/agents/lead-architect.md",
+      "sha256": "016e804adfb4dda21e1f85d65339c18aed8d69df6f885ee0bace229809c895a6",
+      "task": "design-review",
+      "why": "Actual M1 invariants and consumers needed to challenge identity/port compatibility."
+    },
+    {
+      "path": ".agents/workflows/architect.md",
+      "sha256": "940bf44919bd2693405802eada1834d96919d81b9bb273299747c52bce4fae44",
+      "task": "design-review",
+      "why": "Actual M1 invariants and consumers needed to challenge identity/port compatibility."
+    },
+    {
+      "path": "docs/architecture/architecture.md",
+      "sha256": "3fb7c41a122679db20cb3874c8bb157062ff5dab2358803703142c371fb38101",
+      "task": "design-review",
+      "why": "Actual M1 invariants and consumers needed to challenge identity/port compatibility."
+    },
+    {
+      "path": "pom.xml",
+      "sha256": "4f200a575d15aa198242241941563f471271f53c3d61f33066f928302b5ad9a1",
+      "task": "design-review",
+      "why": "Actual M1 invariants and consumers needed to challenge identity/port compatibility."
+    },
+    {
+      "path": "analyzer/pom.xml",
+      "sha256": "13b042fca6283822fbf37f25b7984480d48b7bf5e1b780bdc884ebb95409947c",
+      "task": "design-review",
+      "why": "Actual M1 invariants and consumers needed to challenge identity/port compatibility."
+    },
+    {
+      "path": "README.md",
+      "sha256": "e4b53ba66ee19ed86d39beab274b58b0c018431587dfc07f11d6d7cfcc167647",
+      "task": "design-review",
+      "why": "Actual M1 invariants and consumers needed to challenge identity/port compatibility."
+    },
+    {
+      "path": "analyzer/src/main/java/com/evolution/analysis/contract/analysis/AnalysisConfiguration.java",
+      "sha256": "cb03989c35e56c6321aef5abc25c9e90540d24b340e995ba2a629eb072cef730",
+      "task": "design-review",
+      "why": "Actual M1 invariants and consumers needed to challenge identity/port compatibility."
+    },
+    {
+      "path": "analyzer/src/main/java/com/evolution/analysis/contract/analysis/AnalysisManifest.java",
+      "sha256": "f7cfecdcd48ac4fd707b444412f464e212df02f01b6f6fcf9f932562b4ddcf7d",
+      "task": "design-review",
+      "why": "Actual M1 invariants and consumers needed to challenge identity/port compatibility."
+    },
+    {
+      "path": "analyzer/src/main/java/com/evolution/analysis/contract/analysis/AnalysisProvenance.java",
+      "sha256": "ec2426174dbbb0ff919e8e81e01b60250bd7556712f156ac5780091f3a7979d2",
+      "task": "design-review",
+      "why": "Actual M1 invariants and consumers needed to challenge identity/port compatibility."
+    },
+    {
+      "path": "analyzer/src/main/java/com/evolution/analysis/contract/analysis/ClasspathEntry.java",
+      "sha256": "dffe46abd280de9dba134d412c7464e85104c644f7aac1cd06d3e2e8e8b72d3a",
+      "task": "design-review",
+      "why": "Actual M1 invariants and consumers needed to challenge identity/port compatibility."
+    },
+    {
+      "path": "analyzer/src/main/java/com/evolution/analysis/contract/analysis/ClasspathEntryKind.java",
+      "sha256": "0c75d2e095ac879128ab6f213e46c7cc727b741893ef9331693f2fc8b6d04f3b",
+      "task": "design-review",
+      "why": "Actual M1 invariants and consumers needed to challenge identity/port compatibility."
+    },
+    {
+      "path": "analyzer/src/main/java/com/evolution/analysis/contract/analysis/ManifestComponent.java",
+      "sha256": "5ce7b62c0ef54b16c7015d0a17acaa0b5bbdfa0145e76520430e85fded807491",
+      "task": "design-review",
+      "why": "Actual M1 invariants and consumers needed to challenge identity/port compatibility."
+    },
+    {
+      "path": "analyzer/src/main/java/com/evolution/analysis/contract/common/CanonicalIdentifier.java",
+      "sha256": "04a5cf5e54ec5bd63029845a98afb5ab8a690fe759bb4de8a545477fe82bab52",
+      "task": "design-review",
+      "why": "Actual M1 invariants and consumers needed to challenge identity/port compatibility."
+    },
+    {
+      "path": "analyzer/src/main/java/com/evolution/analysis/contract/common/ContentDigest.java",
+      "sha256": "e4cffcd15389aa25daa908afa8b97630359e3286924e859245ff9b16f7aa0dce",
+      "task": "design-review",
+      "why": "Actual M1 invariants and consumers needed to challenge identity/port compatibility."
+    },
+    {
+      "path": "analyzer/src/main/java/com/evolution/analysis/contract/common/ContractChecks.java",
+      "sha256": "dec980cf5a24bef8b1b7d51f4bcbe1d1edd8132904228148d6733b72495cf19c",
+      "task": "design-review",
+      "why": "Actual M1 invariants and consumers needed to challenge identity/port compatibility."
+    },
+    {
+      "path": "analyzer/src/main/java/com/evolution/analysis/contract/common/VersionedIdentifier.java",
+      "sha256": "6278d5f8d36a63a6b5b168d98408f70c99c0624ed4ab7ccee85a9cb2c11f7368",
+      "task": "design-review",
+      "why": "Actual M1 invariants and consumers needed to challenge identity/port compatibility."
+    },
+    {
+      "path": "analyzer/src/main/java/com/evolution/analysis/contract/identity/AnalysisIdentity.java",
+      "sha256": "0f4addec7f3a4b70f9512f34321bab6e68e99c7bbdd7cfb25dc5f6d7ac0ac3e0",
+      "task": "design-review",
+      "why": "Actual M1 invariants and consumers needed to challenge identity/port compatibility."
+    },
+    {
+      "path": "analyzer/src/main/java/com/evolution/analysis/contract/identity/ConfigurationIdentity.java",
+      "sha256": "0ea4d52953404fbacec4f3b234f12b3d298a1ae0740b7f07e08ed04c79d5309e",
+      "task": "design-review",
+      "why": "Actual M1 invariants and consumers needed to challenge identity/port compatibility."
+    },
+    {
+      "path": "analyzer/src/main/java/com/evolution/analysis/contract/identity/EntityIdentity.java",
+      "sha256": "03876fe44cd743f829c8d39e57d324a0d67b9f8ab50ac8398e0b4b3404d2ee95",
+      "task": "design-review",
+      "why": "Actual M1 invariants and consumers needed to challenge identity/port compatibility."
+    },
+    {
+      "path": "analyzer/src/main/java/com/evolution/analysis/contract/identity/EntityScope.java",
+      "sha256": "9c352583dac31a45210b259ce3d2a41f5d644af146415a57f56c15bd748ff23f",
+      "task": "design-review",
+      "why": "Actual M1 invariants and consumers needed to challenge identity/port compatibility."
+    },
+    {
+      "path": "analyzer/src/main/java/com/evolution/analysis/contract/identity/IdentitySupport.java",
+      "sha256": "bf1e3e010bff61cc5e578733e813d8953f7c83139b65814af0161254a7cca650",
+      "task": "design-review",
+      "why": "Actual M1 invariants and consumers needed to challenge identity/port compatibility."
+    },
+    {
+      "path": "analyzer/src/main/java/com/evolution/analysis/contract/identity/ModuleIdentity.java",
+      "sha256": "4ae8a2b7cd92c4b68309d6b5835804a9402c45bf03c1972f5412eafda6e03ecc",
+      "task": "design-review",
+      "why": "Actual M1 invariants and consumers needed to challenge identity/port compatibility."
+    },
+    {
+      "path": "analyzer/src/main/java/com/evolution/analysis/contract/identity/OccurrenceIdentity.java",
+      "sha256": "e58a0edc4da06daf10fc8ed56689beabd783f8325ec6faea9569d7e03784265b",
+      "task": "design-review",
+      "why": "Actual M1 invariants and consumers needed to challenge identity/port compatibility."
+    },
+    {
+      "path": "analyzer/src/main/java/com/evolution/analysis/contract/identity/RelationshipIdentity.java",
+      "sha256": "074c45fc225d5de929650675f88e904f418811f9809e7b7c498ce60e9b7d350c",
+      "task": "design-review",
+      "why": "Actual M1 invariants and consumers needed to challenge identity/port compatibility."
+    },
+    {
+      "path": "analyzer/src/main/java/com/evolution/analysis/contract/identity/RepositoryIdentity.java",
+      "sha256": "32bd61c8e15324f85fd4c688dc0d4e3b443298fccdd1d9abfcf732db5423d946",
+      "task": "design-review",
+      "why": "Actual M1 invariants and consumers needed to challenge identity/port compatibility."
+    },
+    {
+      "path": "analyzer/src/main/java/com/evolution/analysis/contract/identity/SnapshotIdentity.java",
+      "sha256": "58c0828a925f51fb49bc8a8a8db32a2d977416bb02b86cde87a2ba10a553ec76",
+      "task": "design-review",
+      "why": "Actual M1 invariants and consumers needed to challenge identity/port compatibility."
+    },
+    {
+      "path": "analyzer/src/main/java/com/evolution/analysis/contract/identity/SourceDocumentIdentity.java",
+      "sha256": "e3dc0a34bc6be186f6fb8e30a1eefe0791a8996549c004c09bdcef30ad9b1d85",
+      "task": "design-review",
+      "why": "Actual M1 invariants and consumers needed to challenge identity/port compatibility."
+    },
+    {
+      "path": "analyzer/src/main/java/com/evolution/analysis/contract/semantic/Derivation.java",
+      "sha256": "17b33966e1315af2fb9c6b271e72ff9a25398a62d9d600e5fd2c1792a5537db0",
+      "task": "design-review",
+      "why": "Actual M1 invariants and consumers needed to challenge identity/port compatibility."
+    },
+    {
+      "path": "analyzer/src/main/java/com/evolution/analysis/contract/semantic/DerivationKind.java",
+      "sha256": "faff04335b3dd2646194b059617ba9a2a242d715fd7f9ea2818bc4d30e185d35",
+      "task": "design-review",
+      "why": "Actual M1 invariants and consumers needed to challenge identity/port compatibility."
+    },
+    {
+      "path": "analyzer/src/main/java/com/evolution/analysis/contract/semantic/Diagnostic.java",
+      "sha256": "8fc74a94418b949398eee100dcee7e0579aa5e4cce86bd7008a9fc7767106113",
+      "task": "design-review",
+      "why": "Actual M1 invariants and consumers needed to challenge identity/port compatibility."
+    },
+    {
+      "path": "analyzer/src/main/java/com/evolution/analysis/contract/semantic/DiagnosticSeverity.java",
+      "sha256": "934c65884193ab3b5c0da5844b974d742c705577ac8d022fe20dff7d310daa9c",
+      "task": "design-review",
+      "why": "Actual M1 invariants and consumers needed to challenge identity/port compatibility."
+    },
+    {
+      "path": "analyzer/src/main/java/com/evolution/analysis/contract/semantic/Entity.java",
+      "sha256": "78e6e4058c4d9b6415ab238b531f749abcbf6883fe820de1bdc45200ee11dbac",
+      "task": "design-review",
+      "why": "Actual M1 invariants and consumers needed to challenge identity/port compatibility."
+    },
+    {
+      "path": "analyzer/src/main/java/com/evolution/analysis/contract/semantic/EntityKind.java",
+      "sha256": "416015e201ec63b36da4b3509ffc3676fc6b51fcb3bf9fad79929e82c4cbc993",
+      "task": "design-review",
+      "why": "Actual M1 invariants and consumers needed to challenge identity/port compatibility."
+    },
+    {
+      "path": "analyzer/src/main/java/com/evolution/analysis/contract/semantic/EntityOrigin.java",
+      "sha256": "4fdb926429c16fd48c1a81201c7d9f3a19b729a7006158930b5f185760e83e53",
+      "task": "design-review",
+      "why": "Actual M1 invariants and consumers needed to challenge identity/port compatibility."
+    },
+    {
+      "path": "analyzer/src/main/java/com/evolution/analysis/contract/semantic/RelationshipKind.java",
+      "sha256": "83bd4633f4a5b802b697004eeb5e79d4c811543820567fde01154754c4164af8",
+      "task": "design-review",
+      "why": "Actual M1 invariants and consumers needed to challenge identity/port compatibility."
+    },
+    {
+      "path": "analyzer/src/main/java/com/evolution/analysis/contract/semantic/RelationshipOccurrence.java",
+      "sha256": "4f9ac7c142cdc838ee16668ee8cfd5b27d248b376196feecd577a62ba308c26b",
+      "task": "design-review",
+      "why": "Actual M1 invariants and consumers needed to challenge identity/port compatibility."
+    },
+    {
+      "path": "analyzer/src/main/java/com/evolution/analysis/contract/semantic/RelationshipTarget.java",
+      "sha256": "5f3768f844027635c732d9ae3c8af3fbbdaefcdc979ffe4ae1f7301d7431a05e",
+      "task": "design-review",
+      "why": "Actual M1 invariants and consumers needed to challenge identity/port compatibility."
+    },
+    {
+      "path": "analyzer/src/main/java/com/evolution/analysis/contract/semantic/SemanticRelationship.java",
+      "sha256": "48dab55ca397218e16962cc8aeb3bcb287335e9671307e14c435989d5c609de5",
+      "task": "design-review",
+      "why": "Actual M1 invariants and consumers needed to challenge identity/port compatibility."
+    },
+    {
+      "path": "analyzer/src/main/java/com/evolution/analysis/contract/semantic/SemanticStatus.java",
+      "sha256": "c615839d8284715d6b9c6139f31af2c1e66d568f8ddee5963678e6ea12ec67a4",
+      "task": "design-review",
+      "why": "Actual M1 invariants and consumers needed to challenge identity/port compatibility."
+    },
+    {
+      "path": "analyzer/src/main/java/com/evolution/analysis/contract/semantic/Uncertainty.java",
+      "sha256": "237a75fa505fd7e019a5ebebcc2f02129826dc84c9b5969b5796dc531ac7d8c8",
+      "task": "design-review",
+      "why": "Actual M1 invariants and consumers needed to challenge identity/port compatibility."
+    },
+    {
+      "path": "analyzer/src/main/java/com/evolution/analysis/contract/serialization/CanonicalJson.java",
+      "sha256": "dcd20ecea8d900f721bf9aa2dbe47867aa7eb63d14abb575a50ecd8cf505f227",
+      "task": "design-review",
+      "why": "Actual M1 invariants and consumers needed to challenge identity/port compatibility."
+    },
+    {
+      "path": "analyzer/src/main/java/com/evolution/analysis/contract/source/ModuleDescriptor.java",
+      "sha256": "e60653051eb6441e56d5ffa2c6c629f0d201759d41b19d481c8a6a28f5ee3118",
+      "task": "design-review",
+      "why": "Actual M1 invariants and consumers needed to challenge identity/port compatibility."
+    },
+    {
+      "path": "analyzer/src/main/java/com/evolution/analysis/contract/source/RepositorySnapshot.java",
+      "sha256": "f6733a18b6f59d031fde7f5b2d1d50689f029a9220b3d6677dca2ce59f48bf1e",
+      "task": "design-review",
+      "why": "Actual M1 invariants and consumers needed to challenge identity/port compatibility."
+    },
+    {
+      "path": "analyzer/src/main/java/com/evolution/analysis/contract/source/SnapshotFile.java",
+      "sha256": "684ee5b3d449019f460dd56288ecdf9cb78adbbdfc974b22e0bc06aa1c4ce3c6",
+      "task": "design-review",
+      "why": "Actual M1 invariants and consumers needed to challenge identity/port compatibility."
+    },
+    {
+      "path": "analyzer/src/main/java/com/evolution/analysis/contract/source/SourceClassification.java",
+      "sha256": "7a1697a35e62a93b145f96e06c06b740bc5c5847add994e9c3aaa46879f8c939",
+      "task": "design-review",
+      "why": "Actual M1 invariants and consumers needed to challenge identity/port compatibility."
+    },
+    {
+      "path": "analyzer/src/main/java/com/evolution/analysis/contract/source/SourceDocument.java",
+      "sha256": "e234348a5be3d15dfa207433a2f43bcc93732089eb6f7232f941f2b77c1ffbef",
+      "task": "design-review",
+      "why": "Actual M1 invariants and consumers needed to challenge identity/port compatibility."
+    },
+    {
+      "path": "analyzer/src/main/java/com/evolution/analysis/contract/source/SourceSpan.java",
+      "sha256": "c6292c4199e8f20fd5556cb39e367ab5e601d0459573941222703441dd40a4e7",
+      "task": "design-review",
+      "why": "Actual M1 invariants and consumers needed to challenge identity/port compatibility."
+    },
+    {
+      "path": "analyzer/src/test/java/com/evolution/analysis/contract/AnalysisAndAssessmentContractTest.java",
+      "sha256": "d3b24b4042354291c985e7f011d4b31beaa77df873003f93324e6f152c5ad153",
+      "task": "design-review",
+      "why": "Actual M1 invariants and consumers needed to challenge identity/port compatibility."
+    },
+    {
+      "path": "analyzer/src/test/java/com/evolution/analysis/contract/CanonicalSerializationTest.java",
+      "sha256": "b2e1ccd05ce735670cc236a6cd3ea65fcc50cd3fc01dc04b793334ea44ba0670",
+      "task": "design-review",
+      "why": "Actual M1 invariants and consumers needed to challenge identity/port compatibility."
+    },
+    {
+      "path": "analyzer/src/test/java/com/evolution/analysis/contract/ContractFixtures.java",
+      "sha256": "7b5a7f44dfd71fa481cfac144b72e9d31516e96ad95595c92f68c94dfa430d18",
+      "task": "design-review",
+      "why": "Actual M1 invariants and consumers needed to challenge identity/port compatibility."
+    },
+    {
+      "path": "analyzer/src/test/java/com/evolution/analysis/contract/IdentityAndSourceContractTest.java",
+      "sha256": "47a168b54e04ac7addaddffe33051b48e2bd8d75783e177e52f82e572cdbb803",
+      "task": "design-review",
+      "why": "Actual M1 invariants and consumers needed to challenge identity/port compatibility."
+    },
+    {
+      "path": "analyzer/src/test/java/com/evolution/analysis/contract/SemanticContractTest.java",
+      "sha256": "826c9d59e895aa128f7742ce7b882d6e6c905d5808a2b2cf37bcbb0155434d81",
+      "task": "design-review",
+      "why": "Actual M1 invariants and consumers needed to challenge identity/port compatibility."
+    },
+    {
+      "path": ".agents/agents/benchmark-engineer.md",
+      "sha256": "7f0eee67f0720297d751202198b588480c66af4aef36131095c1e639621c6022",
+      "task": "oracle-review",
+      "why": "Oracle methodology and historical defects that must not contaminate M2 labels."
+    },
+    {
+      "path": ".agents/workflows/research.md",
+      "sha256": "685269add67327b02057414810e1cfc546c7d7bb03aa2494842574c8930a3414",
+      "task": "oracle-review",
+      "why": "Oracle methodology and historical defects that must not contaminate M2 labels."
+    },
+    {
+      "path": "benchmarks/semantic-frontend-evaluation/src/main/java/com/evolution/benchmark/frontend/JavacOracle.java",
+      "sha256": "4b02f245eacfd647c8f5bc482ad9aafff97855917830ee545e332a1d21abbe79",
+      "task": "oracle-review",
+      "why": "Oracle methodology and historical defects that must not contaminate M2 labels."
+    },
+    {
+      "path": "benchmarks/semantic-frontend-evaluation/src/main/java/com/evolution/benchmark/frontend/M1ContractMapper.java",
+      "sha256": "483adfae47ca639cf406060d7bfea8d41f7cb640c6321716de993bca69e1d65c",
+      "task": "oracle-review",
+      "why": "Oracle methodology and historical defects that must not contaminate M2 labels."
+    },
+    {
+      "path": "benchmarks/semantic-frontend-evaluation/src/main/java/com/evolution/benchmark/frontend/FrontendSupport.java",
+      "sha256": "476c16b7db1c13a235eaac16dcabaafd31f7001df391feaa34f6bbbe183859b4",
+      "task": "oracle-review",
+      "why": "Oracle methodology and historical defects that must not contaminate M2 labels."
+    },
+    {
+      "path": "C:/Users/Admin/.codex/skills/.system/antigravity-task-runner/SKILL.md",
+      "sha256": "32508139309948b4e356bba335aad7111f679f0b34dfec314eec028bb8d9f228",
+      "task": "common",
+      "why": "Explicitly invoked orchestration procedure; project/platform authority still applies."
+    }
+  ]
+}

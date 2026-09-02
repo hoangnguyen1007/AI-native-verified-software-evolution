@@ -4,7 +4,7 @@
 
 Implemented in the `analyzer` module for M1. The contracts are parser-neutral, storage-neutral, and framework-neutral. G1 state is recorded in [Current State](../current-state.md) after the complete verification gate.
 
-JavaParser + SymbolSolver remains **PROVISIONAL** and is not referenced by these contracts.
+JavaParser + SymbolSolver is the human-approved primary frontend (ADR-001); empirical G2 acceptance remains pending. These contracts do not reference parser types.
 
 ## Placement and dependency boundary
 

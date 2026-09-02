@@ -1,52 +1,47 @@
-# ADR 001: Parser Technology Selection
+# ADR-001: Primary Java Semantic Frontend
 
-**Status**: PROVISIONAL
-**Date**: 2026-09-01
-**Context**: SE121 - Software Architecture Intelligence Platform
-
-## Context and Problem Statement
-
-The platform requires a semantic parser to analyze Java 21 / Spring Boot repositories, extract a Software Knowledge Graph, and detect architecture violations. We need a parser that can accurately resolve project-local semantics and differentiate between resolvable types and missing external dependencies while preserving precise source location data (for evidence tracking).
-
-## Decision Drivers
-
-- **Semantic Fidelity**: Must resolve method calls, fields, constructor parameters, annotations, and inheritance.
-- **Source Traceability**: Must preserve line/column information for evidence generation.
-- **Ecosystem Compatibility**: Must handle modern Java (up to Java 21) and Spring Boot constructs.
-- **Incomplete Classpath Tolerance**: Must fail gracefully when external libraries are missing.
+**Status:** ACCEPTED — human-approved implementation choice; empirical G2 acceptance pending.
+**Originally provisional:** 2026-09-01. **Human approval recorded:** 2026-09-02.
+**Scope:** SE121/M2 Java source analysis.
 
 ## Decision
 
-We will use **JavaParser + JavaSymbolSolver** as the semantic parsing engine for the analyzer.
+Use JavaParser + JavaSymbolSolver as the primary semantic frontend behind a replaceable, parser-neutral `SemanticFrontend` port. The human explicitly confirmed this choice on 2026-09-02 after the comparative investigation.
 
-## Epistemic Status
+The approval selects a direction. It does not establish universal accuracy, superiority over OpenRewrite, resource advantages, or a passed M2/M3 gate.
 
-**PROVISIONAL**. This is not a confirmed technology decision. It is approved for the current phase based on initial PoC evidence, subject to future validation gates.
+OpenRewrite remains an independent comparator and a possible future transformation technology. No transformation/patch pipeline enters SE121.
 
-## Evidence
+## Drivers and evidence
 
-### Supporting Evidence (R1 PoC Evaluation)
-- Achieved high resolution rates for local types and method calls under incomplete classpaths (Config A).
-- Correctly parsed 30/30 Java files from Spring PetClinic without crashing on modern Java constructs.
-- Safely degrades via `UnsolvedSymbolException` rather than crashing when external classes (like Spring annotations) are missing.
-- When provided a complete classpath (Config B), successfully passed a 14-case manually verified ground-truth test encompassing Spring stereotypes, overloaded method calls, and constructor injection.
-- Consistently preserves accurate AST node line/column mapping.
+Required capabilities: architecture-relevant Java relationships, exact source provenance, explicit incomplete/ambiguous/error outcomes, modern Java support, safe multi-module classpaths and stable canonical mapping.
 
-### Missing Evidence
-- Performance characteristics and cyclic-dependency resolution stability on a massive monolithic codebase (>1,000 files) remain unvalidated.
-- Complex generics and lambda expression target resolution were not thoroughly tested in the initial sample.
+- [R1 evaluation](../research/parser-evaluation.md) demonstrated bounded viability on the pinned PetClinic corpus and 14 labeled cases. Resolution coverage is distinct from correctness.
+- [Comparative evaluation](../research/semantic-frontend-comparison.md) includes controlled and PetClinic CALLS-only evidence. It does not establish a general ranking; the experimental provenance/origin model has known defects recorded in current state.
+- M1 provides parser-neutral identity, evidence and status contracts. Preserve them rather than accepting parser-specific objects into the domain.
 
-### Rejected Interpretation of "100% Accuracy"
-While the Config B test resolved 100% of the ground truth cases, this must NOT be interpreted as "JavaParser is 100% accurate universally." The ground truth was a small, representative 14-case sample. Edge cases, complex generic inference, and deeply nested lambdas may still fail.
+## Alternatives and trade-offs
 
-## Future Validation Gates
+JavaParser provides direct node ranges and follows the established source-analysis direction. Its generic/lambda/modern-Java and scale behavior still needs expanded evidence.
 
-1. **R3 Scale Evaluation**: Must complete parsing and resolution of a large Spring Boot monolith within acceptable time limits (TBD) without memory exhaustion or infinite loops.
-2. **Generic/Lambda Correctness**: Must correctly identify dependencies originating from Java functional constructs.
+OpenRewrite provides an independent attribution comparison. The existing adapter's span reconstruction and canonical mapping remain incomplete; those are adapter limitations, not proof of an intrinsic technology defect.
 
-## Reversibility Strategy and Abstraction Requirement
+Eclipse JDT or Spoon remain possible alternatives if a replacement trigger requires a focused evaluation. No ranking or migration to these alternatives has been approved.
 
-To prevent the project from becoming inextricably coupled to JavaParser (and to allow fallback to Eclipse JDT or Spoon if JavaParser fails future validation gates):
-- The parser implementation **MUST** be hidden behind a generic, analyzer-specific `Parser` interface.
-- Core domain models (Knowledge Graph representation) must not expose JavaParser AST nodes or `ResolvedType` objects. 
-- All interactions with JavaParser must be confined to a single, isolated module (`analyzer-javaparser-impl` or similar).
+## Boundaries and validation
+
+- All AST/resolution objects remain inside the frontend adapter. Canonical output uses the approved M1 contracts.
+- Exact Java names/signatures, category coverage, port shape and ground truth are M2 design responsibilities.
+- Safe source/module/classpath acquisition is part of M3/G2. Do not use hidden dependency supersets or execute arbitrary target lifecycles.
+- Keep JavaParser interactions in an isolated implementation module, preserving the original ADR's boundary. Choose its exact name and dependency layout during M2 design; do not expose parser types through the port.
+- Register representative positive/negative/degraded/error cases and meaningful performance budgets before evaluation. Do not invent numeric thresholds in this ADR.
+
+## Replacement triggers
+
+Reassess the approved choice when reproducible evidence shows:
+1. Required semantic cases cannot meet registered acceptance criteria after bounded adapter investigation.
+2. Required provenance, uncertainty or deterministic identity cannot be preserved without violating canonical contracts.
+3. Representative multi-module/scale cases exceed approved resource budgets or repeatedly fail robustly bounded analysis.
+4. A supported alternative materially addresses the demonstrated gap with a credible migration cost and verified canonical mapping.
+
+A single preliminary difference starts investigation, not automatic replacement. Preserve raw evidence, distinguish adapter bugs from frontend limits, and obtain human approval before switching the primary technology.

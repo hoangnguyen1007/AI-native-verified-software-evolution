@@ -1,0 +1,141 @@
+[
+  {
+    "name": "java-version",
+    "command": [
+      "C:\\Program Files\\Java\\jdk-21.0.12.1\\bin\\java.exe",
+      "-version"
+    ],
+    "cwd": "D:\\UIT\\AI-native-verified-software-evolution\\out\\m2-design-20260902\\integrated-oracle-runs\\20260902T143606-493e3361",
+    "exitCode": 0,
+    "elapsedSeconds": 0.05594639999617357
+  },
+  {
+    "name": "javac-version",
+    "command": [
+      "C:\\Program Files\\Java\\jdk-21.0.12.1\\bin\\javac.exe",
+      "-version"
+    ],
+    "cwd": "D:\\UIT\\AI-native-verified-software-evolution\\out\\m2-design-20260902\\integrated-oracle-runs\\20260902T143606-493e3361",
+    "exitCode": 0,
+    "elapsedSeconds": 0.12421999999787658
+  },
+  {
+    "name": "compile-oracle",
+    "command": [
+      "C:\\Program Files\\Java\\jdk-21.0.12.1\\bin\\javac.exe",
+      "--release",
+      "21",
+      "-proc:none",
+      "-encoding",
+      "UTF-8",
+      "-classpath",
+      "D:\\UIT\\AI-native-verified-software-evolution\\out\\m2-design-20260902\\integrated-oracle-runs\\20260902T143606-493e3361\\empty-classpath",
+      "-sourcepath",
+      "D:\\UIT\\AI-native-verified-software-evolution\\out\\m2-design-20260902\\integrated-oracle-runs\\20260902T143606-493e3361\\empty-classpath",
+      "-d",
+      "D:\\UIT\\AI-native-verified-software-evolution\\out\\m2-design-20260902\\integrated-oracle-runs\\20260902T143606-493e3361\\oracle-classes",
+      "D:\\UIT\\AI-native-verified-software-evolution\\out\\m2-design-20260902\\integrated-oracle-runs\\20260902T143606-493e3361\\instrumentation\\OraclePilot.java"
+    ],
+    "cwd": "D:\\UIT\\AI-native-verified-software-evolution\\out\\m2-design-20260902\\integrated-oracle-runs\\20260902T143606-493e3361",
+    "exitCode": 0,
+    "elapsedSeconds": 1.0159660999997868
+  },
+  {
+    "name": "identifiers",
+    "command": [
+      "C:\\Program Files\\Java\\jdk-21.0.12.1\\bin\\java.exe",
+      "-cp",
+      "D:\\UIT\\AI-native-verified-software-evolution\\out\\m2-design-20260902\\integrated-oracle-runs\\20260902T143606-493e3361\\oracle-classes",
+      "OraclePilot",
+      "D:\\UIT\\AI-native-verified-software-evolution\\out\\m2-design-20260902\\integrated-oracle-runs\\20260902T143606-493e3361\\inputs\\identifiers",
+      "fixture/Identifiers.java"
+    ],
+    "cwd": "D:\\UIT\\AI-native-verified-software-evolution\\out\\m2-design-20260902\\integrated-oracle-runs\\20260902T143606-493e3361",
+    "exitCode": 0,
+    "elapsedSeconds": 0.5199744999990799
+  },
+  {
+    "name": "bindings",
+    "command": [
+      "C:\\Program Files\\Java\\jdk-21.0.12.1\\bin\\java.exe",
+      "-cp",
+      "D:\\UIT\\AI-native-verified-software-evolution\\out\\m2-design-20260902\\integrated-oracle-runs\\20260902T143606-493e3361\\oracle-classes",
+      "OraclePilot",
+      "D:\\UIT\\AI-native-verified-software-evolution\\out\\m2-design-20260902\\integrated-oracle-runs\\20260902T143606-493e3361\\inputs\\bindings",
+      "javax/lookalike/Bindings.java"
+    ],
+    "cwd": "D:\\UIT\\AI-native-verified-software-evolution\\out\\m2-design-20260902\\integrated-oracle-runs\\20260902T143606-493e3361",
+    "exitCode": 0,
+    "elapsedSeconds": 0.5368879000016022
+  },
+  {
+    "name": "offsets-lf",
+    "command": [
+      "C:\\Program Files\\Java\\jdk-21.0.12.1\\bin\\java.exe",
+      "-cp",
+      "D:\\UIT\\AI-native-verified-software-evolution\\out\\m2-design-20260902\\integrated-oracle-runs\\20260902T143606-493e3361\\oracle-classes",
+      "OraclePilot",
+      "D:\\UIT\\AI-native-verified-software-evolution\\out\\m2-design-20260902\\integrated-oracle-runs\\20260902T143606-493e3361\\inputs\\offsets-lf",
+      "fixture/Offsets.java"
+    ],
+    "cwd": "D:\\UIT\\AI-native-verified-software-evolution\\out\\m2-design-20260902\\integrated-oracle-runs\\20260902T143606-493e3361",
+    "exitCode": 0,
+    "elapsedSeconds": 0.5295935000031022
+  },
+  {
+    "name": "offsets-crlf",
+    "command": [
+      "C:\\Program Files\\Java\\jdk-21.0.12.1\\bin\\java.exe",
+      "-cp",
+      "D:\\UIT\\AI-native-verified-software-evolution\\out\\m2-design-20260902\\integrated-oracle-runs\\20260902T143606-493e3361\\oracle-classes",
+      "OraclePilot",
+      "D:\\UIT\\AI-native-verified-software-evolution\\out\\m2-design-20260902\\integrated-oracle-runs\\20260902T143606-493e3361\\inputs\\offsets-crlf",
+      "fixture/Offsets.java"
+    ],
+    "cwd": "D:\\UIT\\AI-native-verified-software-evolution\\out\\m2-design-20260902\\integrated-oracle-runs\\20260902T143606-493e3361",
+    "exitCode": 0,
+    "elapsedSeconds": 0.5308463999972446
+  },
+  {
+    "name": "ambiguous",
+    "command": [
+      "C:\\Program Files\\Java\\jdk-21.0.12.1\\bin\\java.exe",
+      "-cp",
+      "D:\\UIT\\AI-native-verified-software-evolution\\out\\m2-design-20260902\\integrated-oracle-runs\\20260902T143606-493e3361\\oracle-classes",
+      "OraclePilot",
+      "D:\\UIT\\AI-native-verified-software-evolution\\out\\m2-design-20260902\\integrated-oracle-runs\\20260902T143606-493e3361\\inputs\\ambiguous",
+      "fixture/Ambiguous.java"
+    ],
+    "cwd": "D:\\UIT\\AI-native-verified-software-evolution\\out\\m2-design-20260902\\integrated-oracle-runs\\20260902T143606-493e3361",
+    "exitCode": 0,
+    "elapsedSeconds": 0.5259816999969189
+  },
+  {
+    "name": "missing",
+    "command": [
+      "C:\\Program Files\\Java\\jdk-21.0.12.1\\bin\\java.exe",
+      "-cp",
+      "D:\\UIT\\AI-native-verified-software-evolution\\out\\m2-design-20260902\\integrated-oracle-runs\\20260902T143606-493e3361\\oracle-classes",
+      "OraclePilot",
+      "D:\\UIT\\AI-native-verified-software-evolution\\out\\m2-design-20260902\\integrated-oracle-runs\\20260902T143606-493e3361\\inputs\\missing",
+      "fixture/MissingType.java"
+    ],
+    "cwd": "D:\\UIT\\AI-native-verified-software-evolution\\out\\m2-design-20260902\\integrated-oracle-runs\\20260902T143606-493e3361",
+    "exitCode": 0,
+    "elapsedSeconds": 0.5115205000038259
+  },
+  {
+    "name": "malformed",
+    "command": [
+      "C:\\Program Files\\Java\\jdk-21.0.12.1\\bin\\java.exe",
+      "-cp",
+      "D:\\UIT\\AI-native-verified-software-evolution\\out\\m2-design-20260902\\integrated-oracle-runs\\20260902T143606-493e3361\\oracle-classes",
+      "OraclePilot",
+      "D:\\UIT\\AI-native-verified-software-evolution\\out\\m2-design-20260902\\integrated-oracle-runs\\20260902T143606-493e3361\\inputs\\malformed",
+      "fixture/Malformed.java"
+    ],
+    "cwd": "D:\\UIT\\AI-native-verified-software-evolution\\out\\m2-design-20260902\\integrated-oracle-runs\\20260902T143606-493e3361",
+    "exitCode": 0,
+    "elapsedSeconds": 0.575953200001095
+  }
+]

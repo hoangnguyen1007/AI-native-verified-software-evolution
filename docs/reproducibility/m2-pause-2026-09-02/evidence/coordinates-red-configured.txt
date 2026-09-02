@@ -1,0 +1,74 @@
+[INFO] Scanning for projects...
+[INFO] ------------------------------------------------------------------------
+[INFO] Reactor Build Order:
+[INFO] 
+[INFO] AI-Native Software Evolution Platform                              [pom]
+[INFO] Analyzer                                                           [jar]
+[INFO] JavaParser Semantic Frontend                                       [jar]
+[INFO] 
+[INFO] -------------< com.evolution:software-evolution-platform >--------------
+[INFO] Building AI-Native Software Evolution Platform 0.1.0-SNAPSHOT      [1/3]
+[INFO]   from pom.xml
+[INFO] --------------------------------[ pom ]---------------------------------
+[INFO] 
+[INFO] --- enforcer:3.6.3:enforce (enforce-build-foundation) @ software-evolution-platform ---
+[INFO] Rule 0: org.apache.maven.enforcer.rules.version.RequireMavenVersion passed
+[INFO] Rule 1: org.apache.maven.enforcer.rules.version.RequireJavaVersion passed
+[INFO] Rule 2: org.apache.maven.enforcer.rules.property.RequireProperty passed
+[INFO] Rule 3: org.apache.maven.enforcer.rules.property.RequireProperty passed
+[INFO] Rule 4: org.apache.maven.enforcer.rules.BanDuplicatePomDependencyVersions passed
+[INFO] Rule 5: org.apache.maven.enforcer.rules.dependency.DependencyConvergence passed
+[INFO] Rule 6: org.apache.maven.enforcer.rules.ReactorModuleConvergence passed
+[INFO] Rule 7: org.apache.maven.enforcer.rules.RequirePluginVersions passed
+[INFO] Rule 8: org.apache.maven.enforcer.rules.dependency.RequireReleaseDeps passed
+[INFO] Rule 9: org.apache.maven.enforcer.rules.dependency.RequireUpperBoundDeps passed
+[INFO] 
+[INFO] -----------------------< com.evolution:analyzer >-----------------------
+[INFO] Building Analyzer 0.1.0-SNAPSHOT                                   [2/3]
+[INFO]   from analyzer\pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- enforcer:3.6.3:enforce (enforce-build-foundation) @ analyzer ---
+[INFO] Rule 2: org.apache.maven.enforcer.rules.property.RequireProperty passed
+[INFO] Rule 3: org.apache.maven.enforcer.rules.property.RequireProperty passed
+[INFO] Rule 4: org.apache.maven.enforcer.rules.BanDuplicatePomDependencyVersions passed
+[INFO] Rule 5: org.apache.maven.enforcer.rules.dependency.DependencyConvergence passed
+[INFO] Rule 7: org.apache.maven.enforcer.rules.RequirePluginVersions passed
+[INFO] Rule 8: org.apache.maven.enforcer.rules.dependency.RequireReleaseDeps passed
+[INFO] Rule 9: org.apache.maven.enforcer.rules.dependency.RequireUpperBoundDeps passed
+[INFO] 
+[INFO] --- resources:3.5.0:resources (default-resources) @ analyzer ---
+[INFO] skip non existing resourceDirectory D:\UIT\AI-native-verified-software-evolution\out\m2-production\adapter-worker\reference-build\analyzer\src\main\resources
+[INFO] 
+[INFO] --- compiler:3.15.0:compile (default-compile) @ analyzer ---
+[INFO] Recompiling the module because of changed source code.
+[INFO] Compiling 50 source files with javac [debug release 21] to target\classes
+[INFO] 
+[INFO] --- resources:3.5.0:testResources (default-testResources) @ analyzer ---
+[INFO] skip non existing resourceDirectory D:\UIT\AI-native-verified-software-evolution\out\m2-production\adapter-worker\reference-build\analyzer\src\test\resources
+[INFO] 
+[INFO] --- compiler:3.15.0:testCompile (default-testCompile) @ analyzer ---
+[INFO] Recompiling the module because of changed dependency.
+[INFO] Compiling 6 source files with javac [debug release 21] to target\test-classes
+[INFO] ------------------------------------------------------------------------
+[INFO] Reactor Summary for AI-Native Software Evolution Platform 0.1.0-SNAPSHOT:
+[INFO] 
+[INFO] AI-Native Software Evolution Platform .............. SUCCESS [  0.413 s]
+[INFO] Analyzer ........................................... FAILURE [  1.994 s]
+[INFO] JavaParser Semantic Frontend ....................... SKIPPED
+[INFO] ------------------------------------------------------------------------
+[INFO] BUILD FAILURE
+[INFO] ------------------------------------------------------------------------
+[INFO] Total time:  2.535 s
+[INFO] Finished at: 2026-09-02T21:45:44+07:00
+[INFO] ------------------------------------------------------------------------
+[ERROR] Failed to execute goal org.apache.maven.plugins:maven-compiler-plugin:3.15.0:testCompile (default-testCompile) on project analyzer: Fatal error compiling: C:\Users\Admin\.m2\repository\org\junit\jupiter\junit-jupiter-engine\5.11.0\junit-jupiter-engine-5.11.0.jar -> [Help 1]
+[ERROR] 
+[ERROR] To see the full stack trace of the errors, re-run Maven with the -e switch.
+[ERROR] Re-run Maven using the -X switch to enable full debug logging.
+[ERROR] 
+[ERROR] For more information about the errors and possible solutions, please read the following articles:
+[ERROR] [Help 1] http://cwiki.apache.org/confluence/display/MAVEN/MojoExecutionException
+[ERROR] 
+[ERROR] After correcting the problems, you can resume the build with the command
+[ERROR]   mvn <args> -rf :analyzer

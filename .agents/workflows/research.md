@@ -1,29 +1,14 @@
-# Research Workflow
+# Research — One Decision-Relevant Question
 
-Purpose: reduce one consequential uncertainty with evidence.
+After bootstrap, load relevant contracts, ADRs, prior experiments and raw evidence.
 
-## Bootstrap Context
+1. Define the question, phase constraints, success evidence and cost of error.
+2. Compare the simple baseline, preferred candidate and strongest viable alternative.
+3. Gather repository evidence and authoritative current sources.
+4. Label approval, observations, inferences, hypotheses and unknowns with AGENTS.md's epistemic states.
+5. If needed, run the smallest controlled experiment that can change the decision. Register inputs, oracle, outcomes/denominators and stopping conditions before execution.
+6. Preserve raw failures and protocol deviations. Stop when further work is unlikely to change the decision.
 
-Run Tier 0, then inspect relevant architecture, ADRs, source/tests, existing experiments, and research documents. Research a repository decision, not an abstract trend.
+Check fairness, provenance, reproducibility and claim strength. For semantic experiments use [semantic evaluation](../skills/se-project-engineering/semantic-evaluation.md).
 
-## Procedure
-
-1. Define decision question, phase, constraints, success evidence, and cost of error.
-2. Select the simple baseline, preferred candidate, and strongest alternative.
-3. Gather repository and authoritative external evidence.
-4. Label facts, observations, inferences, hypotheses, and unknowns.
-5. If needed, design the smallest controlled experiment with inputs, environment, procedure, metrics, and interpretation.
-6. Preserve raw outcomes, including failures.
-7. Stop when additional work is unlikely to change the decision.
-
-## Verification
-
-Check source authority, experiment reproducibility, fair comparisons, denominators, and claim strength.
-
-## State Update
-
-Update research evidence when knowledge changed. Update current state, roadmap, architecture, or ADR only when an approved decision or gate changed.
-
-## Output and Handoff
-
-Return question, evidence, alternatives, experiment/results, recommendation, confidence, unknowns, approval required, and mandatory handoff.
+Update research when knowledge changes. Record approved consequential decisions through [architect](architect.md); do not promote a recommendation into human approval. Return evidence, trade-offs, recommendation, open questions and [handoff](handoff.md).

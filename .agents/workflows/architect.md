@@ -1,30 +1,12 @@
-# Architect Workflow
+# Architect — Consequential Design
 
-Purpose: produce an implementation-ready decision for a consequential architectural change.
+After bootstrap, read the relevant architecture, ADRs, source/tests and use-case requirements.
 
-## Bootstrap Context
+1. Define problem, constraints, non-goals, owned responsibilities and success evidence.
+2. Specify inputs/outputs, dependency direction, data ownership, invariants and failure boundaries.
+3. Compare the simple baseline, recommended design and strongest viable alternative.
+4. Assess provenance/semantic loss, coupling, scale, security, migration and reversibility.
+5. Define implementation boundaries, tests, replacement triggers and gate criteria.
+6. Seek human approval only for an unresolved consequential decision; keep prior approval in force.
 
-Run Tier 0, then read relevant architecture, ADRs, research evidence, source, tests, schemas, and query/use-case requirements in full.
-
-## Procedure
-
-1. Define problem, constraints, non-goals, affected boundaries, and success evidence.
-2. List invariants that must remain true.
-3. Map inputs, outputs, dependency direction, owned data, failure and test boundaries.
-4. Compare the simple baseline, recommended design, and strongest alternative.
-5. Analyze trade-offs, lock-in, migration, reversibility, security, and phase fit.
-6. Attack the preferred design for semantic loss, coupling, scale, and hidden failure modes.
-7. Specify implementation boundary, tests, migration, and gate criteria.
-8. Request human approval when the decision is consequential.
-
-## Verification
-
-Check that the design answers actual repository requirements, can be tested, preserves evidence, and does not assume future-phase implementation.
-
-## State Update
-
-After approval, create/update an ADR and affected architecture contracts. Update current state and roadmap only if decision/gate status changed.
-
-## Output and Handoff
-
-Return decision, evidence, alternatives, trade-offs, confidence, reversal conditions, affected files, verification strategy, and mandatory handoff.
+After approval update the ADR and affected architecture contracts; update state/roadmap only under AGENTS.md's ownership rules. Hand over an implementation-ready contract with remaining empirical gates, not an unsupported certainty claim. Use [handoff](handoff.md).

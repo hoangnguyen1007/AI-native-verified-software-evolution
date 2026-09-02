@@ -1,138 +1,77 @@
 # Current State
 
-Last verified: 2026-09-02
+Last reconciled: 2026-09-02. Fresh checks and their scope belong in the task handoff; historical gate evidence is identified below.
 
-## PROJECT PHASE
+## PHASE AND MILESTONE
 
-SE121 - Software Architecture Intelligence Platform.
+SE121, Track A + B. M1 semantic/identity/uncertainty/provenance contracts are implemented and committed at `b04220e722cc4bc772cbb3ad8531d4dc1ea1a058`; G1 is recorded passed. M2 contract design and a bounded JDK oracle pilot are prepared and verified at their stated scope; production extraction is not implemented and G2 is not passed.
 
-## CURRENT MILESTONE
+## ACTIVE TASK — PAUSED BY HUMAN
 
-M1 - Semantic, Identity, Uncertainty, and Provenance Contracts (**COMPLETE; G1 PASSED; UNCOMMITTED**).
+On 2026-09-02 the human paused work until a later conversation/token reset and instructed Codex to own subsequent work without Antigravity/Gemini. Do not automatically resume, schedule work, or dispatch external workers. The human will commit; Codex has not committed or pushed.
 
-## ACTIVE TASK
+The human explicitly directed implementation using the sufficiently mature M2 contracts: do not reopen D1–D3 approval or expand preflight/design/oracle work unless implementation exposes a concrete correctness blocker. The [M2 contract](architecture/m2-semantic-frontend.md) is the provisional implementation baseline. Prioritize production code, tests, fixtures alongside code, verification, then documentation only when truth changes. Work in vertical slices; Codex owns difficult semantic/identity issues.
 
-Human review of the completed M1 parser-neutral contract foundation and G1 evidence, plus the pre-M2 JavaParser-vs-OpenRewrite semantic-frontend technology gate. Controlled javac-oracle and PetClinic call-only parity evidence is recorded, but the full semantic denominator, provenance strategy, and resource comparison remain incomplete; no technology lock is justified.
+The new [oracle pilot](../benchmarks/m2-ground-truth/README.md) passed 34/34 registered call labels and three identifier relations in a coordinator rerun: 30 targets were adjudicated and four error-case labels verified withholding. This is bounded design evidence, not the full semantic ground truth or a JavaParser accuracy claim. Raw results are archived with byte-copy hashes. Earlier in this task, before implementation drafts, the existing reactor passed 26 tests with no failures/errors/skips; it was not rerun at pause. See the [M2 handoff and evidence](reproducibility/m2-design-2026-09-02.md).
 
-## STATUS
+Implementation preparation produced an identity test draft, adapter POM/coordinate stub and tests, and four candidate fixture families with 23 occurrence expectations. None is an integrated production adapter. They are preserved outside the reactor in the versionable [pause handoff and draft archive](reproducibility/m2-pause-2026-09-02/README.md). The incomplete identity test was moved out of Maven test sources, preserving its exact bytes. Later targeted builds hit Maven/JUnit-cache access failures before executing these tests; no TDD red/green or final build success is claimed for the drafts.
 
-M1 is implemented and verified without a commit. Gate G1 passed on 2026-09-02 with immutable Java 21 contracts for repository/snapshot/module/source/entity/relationship/occurrence identity, complete spans, explicit semantic states, derivation, uncertainty, diagnostics, manifest/provenance, versioned metrics, architecture-health status, and separate analysis confidence. Canonical JSON and SHA-256 identities are deterministic across registered locale/timezone variants. No parser, workspace acquisition, Spring, graph, rule, scoring, API, UI, Track B, or Track C implementation was added.
+Antigravity is discontinued for this work by the latest human instruction. After explicit repository-payload consent, a Gemini 3.1 Pro High session initialized but ended CANCELED following a CLI file-permission denial; it produced no implementation/review result or successful nonce round-trip. The task-started CLI server was stopped at pause. Historical [dispatch artifacts](reproducibility/m2-antigravity/README.md) are inactive, not prerequisites for continuation. The prior [orchestrator skill revision](reproducibility/antigravity-orchestrator-skill-2026-09-02.md) remains a separate maintenance record.
 
-## LAST COMPLETED MILESTONE / TASK
+Prior repository governance hardening remains complete and uncommitted; its [verification record](reproducibility/governance-hardening-2026-09-02.md) retains the actual checks and limits. No product gate advanced.
 
-- R1 corrected JavaParser + SymbolSolver viability evidence package.
-- M-1 governance, roadmap, architecture/product-outcome foundation, consistency verification, human approval, and baseline commit.
-- M0 pinned wrapper/toolchain/build foundation and two-environment G0 verification.
-- M1 parser-neutral semantic, identity, uncertainty, provenance, metric-envelope, and assessment-status contracts with G1 verification.
-
-## NEXT EXPECTED TASK
-
-Begin M2 design and ground-truth expansion before production frontend code: approve canonical Java symbol/signature rules, relationship-category coverage, adapter port shape, and positive/negative/unresolved/ambiguous/unsupported/error fixtures. JavaParser remains PROVISIONAL.
-
-### M0 Completion Boundary
-
-- Preserved commit `86c4ca29fb747797df3e489d978804644a34f1ce` in current history.
-- Retained the existing root, `analyzer`, and `backend` reactor without adding modules.
-- Added only wrapper/checksum, Java/compiler enforcement, pinned build controls, module test boundaries, build instructions, and reproducibility evidence.
-- Passed clean verification in two documented environments and kept JavaParser PROVISIONAL.
-- Added no production semantic extraction or later-milestone feature.
-
-## BLOCKERS
-
-None for human review of M1. M2 must not begin by bypassing the M1 contracts or its ground-truth gate.
+The human approved JavaParser + SymbolSolver as the primary SE121/M2 frontend on 2026-09-02. This confirms the implementation choice, not universal accuracy, performance superiority or G2 acceptance. See [ADR-001](decisions/ADR-001-parser-technology.md). The replaceable SemanticFrontend boundary, validation gates and replacement triggers remain mandatory. OpenRewrite remains an independent comparator.
 
 ## REPOSITORY REALITY
 
-- Approved M-1 baseline: `86c4ca29fb747797df3e489d978804644a34f1ce`; human-accepted M0 commit and current starting `HEAD`: `375702f9b871dd78fbad99f8bc5994b7b2c499fb`.
-- Root Maven reactor contains `analyzer` and `backend` modules.
-- Production Java now consists only of the parser-neutral M1 contract foundation under `analyzer/src/main/java/com/evolution/analysis/contract/`.
-- The analyzer has focused M1 contract tests plus its Java 21 build-boundary test; backend retains its Java 21 boundary test. All run through root `verify`.
-- `frontend/` and root `tests/` have no tracked implementation.
-- The tracked R1 PoC and raw results live under `benchmarks/poc/parser-eval/`.
-- No semantic frontend adapter, workspace/build acquisition, Spring intelligence, graph, policy engine, metric calculation, scoring formula, CLI, backend API, or workbench implementation exists.
+- M-1 approved baseline: `86c4ca29fb747797df3e489d978804644a34f1ce`.
+- M0 foundation commit: `375702f9b871dd78fbad99f8bc5994b7b2c499fb`.
+- M1 contracts commit: `b04220e722cc4bc772cbb3ad8531d4dc1ea1a058`.
+- Comparison package commit and task starting HEAD: `83797e840e414bf99a0f71117892da355d94be55`.
+- Root Maven reactor contains `analyzer` and `backend`. Production Java consists of parser-neutral M1 contracts under `analyzer/src/main/java/com/evolution/analysis/contract/`.
+- Root tests cover 24 M1 contract cases and two Java 21 build-boundary cases. Standalone benchmarks are outside root verification.
+- R1 PoC: `benchmarks/poc/parser-eval/`. Independent experimental adapters/comparison: `benchmarks/semantic-frontend-evaluation/`.
+- M2 oracle pilot: `benchmarks/m2-ground-truth/`, separate from the reactor and legacy comparator. It uses only JDK 21/Python standard libraries; no production port/adapter is present.
+- No production frontend adapter, workspace acquisition, Spring inference, graph, policy engine, metric/scoring calculation, CLI, backend API or workbench is implemented.
+- `frontend/` and root `tests/` have no tracked product implementation.
 
-## RECENT VERIFIED EVIDENCE
+## EVIDENCE AND LIMITS
 
-- Wrapper 3.3.4 uses a repository JAR and a pinned Maven 3.9.16 ZIP with embedded SHA-256 verification.
-- The Maven ZIP matched Apache's published SHA-512 before its SHA-256 was recorded.
-- Local Windows/Oracle JDK 21.0.12.1 and Docker Linux/Temurin JDK 21.0.12 clean builds passed.
-- Both environments produced SHA-256 `02a0444ff1abefa808a6ae25f3f0644fc226b839af81da8474a59f4a24ebe26d` for each currently empty module JAR.
-- System Maven 3.9.15, compiler release 17, and JDK 17 were independently rejected by Enforcer.
-- M-1 approval commit independently verified at `86c4ca29fb747797df3e489d978804644a34f1ce`; the worktree was clean before this documentation-only transition update.
-- R1 PetClinic target commit: `818c4136ea971c21674525f9053de0d9c7ad8cfe`.
-- Config A: 30 files, 456 attempts, 218 resolved, 238 unresolved, 0 relationship errors.
-- Config B: 30 files, 456 attempts, 456 resolved, 0 unresolved, 0 relationship errors.
-- Ground truth contains 14 cases; all matched their configuration-specific expected outcomes.
-- This establishes bounded viability and classpath impact, not universal semantic accuracy.
-- Runtime used by the saved local experiment provenance was Oracle JDK `21.0.12.1`; the narrative R1 report still contains a stale JDK 17 statement that requires later research-document correction without altering raw evidence.
-- JavaParser remains PROVISIONAL.
-- Focused M1 verification passed 24 tests covering identity, validation, equality, ordering, serialization, golden values, provenance, semantic states, and assessment envelopes.
-- Root `clean verify` passed 25 analyzer tests and the backend Java 21 boundary test on wrapper-managed Maven 3.9.16 / Oracle JDK 21.0.12.1.
-- Snapshot identity hashes the complete normalized file inventory, not only Java sources; every source document must match an inventoried path/digest.
-- Analysis identity includes the ordered exact classpath because classpath order can affect resolution; set-like inputs are sorted and duplicate-free.
-- Golden repository identity: `repository:sha256:0a98d9ce7629974142838c8611196506990eb604ea12eaf0822637bf992728b4` for the registered canonical coordinate fixture.
-- Golden ordered-manifest analysis identity: `analysis:sha256:1920a08b08b2b362d5666f95e8847d2eb882bd447e4662b8ff28e3cda55143a5`.
-- Canonical serialization produced the same bytes under `tr-TR`/Honolulu and `ja-JP`/Tokyo default locale/timezone variants.
-- Human-confirmed product outcome: analyzer + canonical metrics/assessment + API + complete visual workbench; an analyzer or CLI alone is insufficient.
-- Architecture health and analysis confidence are separate; insufficient evidence qualifies or withholds an assessment.
+Historical evidence, not rerun by this documentation/governance task:
+- G0: wrapper 3.3.4, Maven 3.9.16 with pinned/checksummed distribution, Java 21 enforcement; clean Windows/Oracle 21.0.12.1 and Docker Linux/Temurin 21.0.12 builds. At M0 the empty module JARs matched; this is not a hash claim for the later M1 analyzer. Exact commands/hashes and negative checks are in [M0 evidence](reproducibility/m0-foundation.md).
+- G1: 24 focused contract tests, 25 analyzer tests plus one backend test through root verification. Golden identities, full-inventory snapshot hashing, ordered classpaths, explicit target/status/uncertainty constraints and locale/timezone-independent serialization are documented in [M1 contracts](architecture/m1-contracts.md) and executable tests.
+- R1 PetClinic snapshot `818c4136ea971c21674525f9053de0d9c7ad8cfe`: 30 files; A = 218 resolved / 238 unresolved out of 456 attempts; B = 456 resolved / 0 unresolved; 14 labeled cases matched expected configuration-specific outcomes. This is bounded viability, not universal semantic accuracy.
+- R1 narrative still has a stale JDK 17 statement; saved provenance records Oracle 21.0.12.1. Correct the narrative when working on that report; preserve raw evidence.
+- Comparative saved PetClinic CALLS results: 220 occurrences; B resolves 220 for both adapters, C resolves 215 for both. Resolution is not independently established full semantic correctness.
+- Intake audit found 89 placeholder OpenRewrite spans in each saved PetClinic configuration, dropped provenance diagnostics on resolved M1 mapping, and project-local targets labeled DEPENDENCY by a shared heuristic (85 per adapter in B). These experimental defects remain unfixed; do not reuse the package as proof of provenance/origin correctness or G2 acceptance.
+- Controlled generic-chain evidence and comparative limits are in [frontend comparison](research/semantic-frontend-comparison.md). Full semantic denominator, robust provenance, multi-module evidence and fair resource measurements remain incomplete.
 
-## ACTIVE ARCHITECTURAL DECISIONS
+## DECISIONS
 
-- Track A is the protected correctness foundation.
-- Track B architecture evolution is the intended SE121 technical target after Track A gates.
-- Track C remains optional moonshot work.
-- Java 21, Maven, and a single monorepo are confirmed.
-- Core semantic contracts must remain parser-neutral.
-- Canonical graph/domain behavior must remain storage-neutral.
-- Multi-module workspace/build-model intelligence is required.
-- Analysis identity will be content-addressed from stable inputs.
-- Backend/frontend domain access will use architecture query services.
-- Bytecode validation remains ASSESS/HOLD.
-- Eight permanent agent roles are retained; no role proliferation is planned.
-- Track A requires the dashboard, structure explorer, focused graph, metrics/score, violations/evidence, Spring/impact, and provenance product workflow.
-- Metrics and scores use stable versions, deterministic inputs, explicit status, provenance, and limitations.
+Confirmed: Track A + B target; Java 21/Maven/monorepo; primary JavaParser/SymbolSolver choice behind SemanticFrontend; parser/storage-neutral domain; safe multi-module modeling; content-addressed analysis; stable query services; separate health/confidence; complete visual workbench.
 
-## PROVISIONAL DECISIONS
+Provisional: Neo4j Community adapter, Spring Boot API, YAML external policies, Cytoscape.js, exact metric/score formulas and thresholds. Bytecode validation remains ASSESS/HOLD. Track C remains optional.
 
-- JavaParser + SymbolSolver as the semantic frontend implementation.
-- Neo4j Community as an optional graph persistence/query adapter.
-- Spring Boot for the backend/API.
-- YAML as the likely external architecture-policy representation.
-- Cytoscape.js as the likely primary graph visualization.
+## OPEN QUESTIONS AND BLOCKERS
 
-## OPEN QUESTIONS
+Work is paused by request, not awaiting contract approval or Antigravity. On resumption, diagnose the observed Maven user-home/cache permission problem through supported execution permissions, then implement the first production slice. Do not bypass access controls or copy caches to route around denied access.
 
-- Safe effective-Maven-model/classpath acquisition design.
-- Exact M2 canonical Java symbol/signature rules for local, anonymous, lambda, generic, overloaded, and modern Java constructs.
-- Exact semantic relationship support denominator for the first production frontend.
-- Track A validation repositories beyond PetClinic.
-- Ground-truth scale and pre-registered Spring/policy gate criteria.
-- Neo4j adoption after canonical graph/query requirements are implemented.
-- Baseline metric catalog and exact inclusion/counting rules.
-- Architecture score dimensions, formula, weights, caps, thresholds, and comparison compatibility.
-- Analysis-confidence thresholds that qualify or withhold score output.
-- Registered graph/query/UI performance budgets and reference environments.
-- Frontend framework, design system, and graph library after bounded evaluation.
+Open work: validate the adopted provisional canonical signatures/port/coordinates through implementation; complete independently reviewed M2 labels and support denominator; safe effective-Maven-model/classpath acquisition including root-module representation; broader labeled repositories; Spring/policy gate criteria; metric catalog, score formula/compatibility/confidence thresholds; graph/query/UI budgets and frontend framework selection at their later gates.
 
-## CURRENT QUALITY GATES
+## QUALITY GATES
 
-| Gate | State | Required evidence |
+| Gate | State | Remaining acceptance boundary |
 |---|---|---|
-| G-1 M-1 operating system | PASSED | Human approval and clean baseline commit `86c4ca29fb747797df3e489d978804644a34f1ce` |
-| G0 reproducible foundation | PASSED | Clean wrapper builds and identical current artifact hashes on Windows/Oracle and Docker Linux/Temurin |
-| G1 semantic/metric contract | PASSED | Parser-neutral immutable contracts, typed/content-addressed identity, explicit uncertainty/provenance, versioned metric/assessment envelopes, deterministic canonical serialization, golden/adversarial tests |
-| G2 frontend/build model | NOT STARTED | Expanded ground truth, safe multi-module/build-model support, parser gate |
-| G3 Spring intelligence | NOT STARTED | Pre-registered correctness evidence |
-| G4 graph/metric/query layer | NOT STARTED | Invariants, deterministic construction, metric correctness, focused projections, storage-neutral query contracts |
-| G5 policy/evidence/assessment | NOT STARTED | Mutation/negative controls, complete Evidence Bundles, score golden/sensitivity/missing-evidence tests |
-| G6 Track A release | NOT STARTED | Multi-repository correctness, robustness, performance, accessibility, and complete visual product workflow |
-| G7 Track B evolution | NOT STARTED | Compatible snapshot identity and labeled evolution events |
+| G-1 governance baseline | PASSED (historical) | Current hardening is a separate maintenance task |
+| G0 build foundation | PASSED (historical) | Preserve pinned toolchain and reproducibility |
+| G1 contracts | PASSED (historical) | Preserve tested identity, uncertainty and evidence invariants |
+| G2 frontend/build model | NOT PASSED; M2 paused, production adapter not implemented | Production frontend, full ground truth, safe multi-module model, frontend evidence |
+| G3 Spring | NOT STARTED | Registered bounded correctness evidence |
+| G4 graph/metric/query | NOT STARTED | Invariants, metric correctness, bounded storage-neutral queries |
+| G5 policy/evidence/assessment | NOT STARTED | Negative/mutation controls, complete evidence, score safeguards |
+| G6 Track A release | NOT STARTED | Complete visual product and multi-repository verification |
+| G7 Track B | NOT STARTED | Compatible snapshots and labeled evolution events |
 
-## DURABLE STATE UPDATED BY M1
+## EXACT NEXT TASK
 
-- `docs/current-state.md`
-- `docs/roadmap.md`
-- `docs/project-context.md`
-- `docs/architecture/architecture.md`
-- `docs/architecture/knowledge-graph.md`
-- `docs/architecture/m1-contracts.md`
+When the human resumes, read the [pause handoff](reproducibility/m2-pause-2026-09-02/README.md), refresh repository context/Git state, resolve build execution permissions and implement one production vertical slice: minimal Unicode-safe Java symbol identity and neutral SemanticFrontend contracts in `analyzer`, plus the isolated `analyzer-javaparser` module for declarations and method calls with exact spans, origins, diagnostics and deterministic outputs. Use the archived drafts as unvalidated inputs; run focused and reactor verification. Continue relationship slices by dependency/risk without a new broad design phase. Use Codex only; do not troubleshoot or launch Antigravity. Preserve legacy raw evidence and existing user changes; no commit/push or silent entry into M3.

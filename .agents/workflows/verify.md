@@ -1,28 +1,14 @@
-# Verify Workflow
+# Verify — Evidence for a Specific Claim
 
-Purpose: independently test whether a change meets its requirements and exit criteria.
+Use [verification-before-completion](../skills/verification-before-completion/SKILL.md). Identify requirements, affected inputs and the precise claim being checked.
 
-## Bootstrap Context
+- Select the cheapest sufficient test, contract/integration check, build or manual experiment.
+- Inspect exit code, executed cases, skips, errors and output. Zero cases is not a passing behavioral check.
+- Broaden only for changed consumers, a required gate or a concrete remaining risk.
+- For experiments check pinned inputs, environment, identity, provenance, denominators and reproducibility.
+- For governance check file/skill/link structure and representative agent behavior; neither proves universal compliance.
+- Classify failures before choosing a remedy.
 
-Run Tier 0. Read task requirements, diff, changed files, relevant contracts/ADRs, source, tests, schemas, fixtures, and claimed evidence directly.
+A verifier assigned independently remains read-only and returns findings. During implementation self-checks, the implementer may repair in-scope issues, then rerun affected checks.
 
-## Procedure
-
-1. Establish baseline and expected behavior.
-2. Run the cheapest high-signal check first.
-3. Progress through syntax/compile, targeted tests, contract/integration tests, broader suite, static/build checks, and behavioral validation as relevant.
-4. Test high-risk negative/adversarial cases.
-5. Classify every failure: implementation, test, environment, dependency, flaky, specification, or pre-existing.
-6. Verify final diff scope, generated files, secrets, and durable-state accuracy.
-
-## Research and Data Checks
-
-For semantic/benchmark work verify identities, source evidence, denominators, uncertainty, metric computation, raw results, determinism, and reproducibility.
-
-## State Update
-
-Do not modify reviewed production files. Report evidence that requires the owner to update current state or another durable document. If explicitly assigned the documentation update, record only verified facts.
-
-## Output and Handoff
-
-Return exact checks, pass/fail evidence, root causes, gaps, regression risk, confidence, verdict, and mandatory handoff.
+Return commands/results, evidence locations, missing checks, limitations and acceptance against exit criteria. Incorporate these into the task's single [handoff](handoff.md).

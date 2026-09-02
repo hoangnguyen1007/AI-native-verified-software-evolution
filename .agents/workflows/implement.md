@@ -1,32 +1,11 @@
-# Implement Workflow
+# Implement — Authorized Bounded Change
 
-Purpose: implement an approved bounded change with controlled scope.
+After AGENTS.md bootstrap, inspect affected source/callers, contracts, tests, fixtures and build configuration. Define files, behavior, non-goals, risks and observable exit criteria.
 
-## Bootstrap Context
+1. For behavior changes, apply [TDD](../skills/test-driven-development/SKILL.md). For failures, first use [systematic debugging](../skills/systematic-debugging/SKILL.md).
+2. Implement the smallest coherent change preserving uncertainty, diagnostics, provenance and deterministic behavior.
+3. Run focused checks while iterating; fix supported in-scope defects. Avoid unrelated cleanup.
+4. Apply [verification](verify.md) to affected integrations/contracts and proportionate broader checks; inspect the final diff.
+5. Update durable state as required and [hand off](handoff.md).
 
-Run Tier 0 and inspect every relevant source file, caller, test, schema, fixture, dependency, configuration, architecture contract, ADR, and current diff.
-
-## Implementation Contract
-
-Define goal, non-goals, files, interfaces, behavior, evidence requirements, tests, risks, and exit criteria. Escalate unapproved consequential architecture.
-
-## Procedure
-
-1. Add or identify failing/specification tests where practical.
-2. Implement the smallest coherent change.
-3. Preserve diagnostics, uncertainty, provenance, security, and deterministic behavior.
-4. Run the narrowest useful checks after meaningful units.
-5. Fix root causes, not symptoms.
-6. Do not perform unrelated cleanup or dependency upgrades.
-
-## Verification
-
-Run targeted tests, affected integration/contract checks, proportional broader build/static checks, and inspect the complete diff.
-
-## State Update
-
-Update durable files exactly under the state-update rules in `AGENTS.md`.
-
-## Output and Handoff
-
-Use the mandatory handoff; list commands actually run, results, limitations, blockers, and exact next task.
+Review-only restrictions do not prevent an implementer from repairing their own authorized change. Seek a decision only if the remedy would change consequential unapproved scope or contracts.

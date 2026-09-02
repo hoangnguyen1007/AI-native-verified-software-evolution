@@ -1,35 +1,13 @@
-# Evidence-First Software Intelligence Rule
+# Evidence Rule — Always On
 
-Use for semantic analysis, build/workspace modeling, graph construction, architecture rules, violations, impact/evolution analysis, benchmarks, and reports.
+Apply the relevant parts to each task; detailed semantic/benchmark procedures live in [semantic evaluation](../skills/se-project-engineering/semantic-evaluation.md).
 
-## Evidence Chain
-
-Prefer:
-
-`source/build evidence -> semantic fact -> graph relationship -> rule evaluation -> violation`
-
-Every important conclusion must be traceable through that chain. Never fabricate a relationship to make analysis appear complete.
-
-## Required Relationship Evidence
-
-Preserve, where applicable:
-
-- relationship category
-- source/caller and target/candidate identity
-- repository-relative source file
-- complete source span
-- resolution status and derivation
-- configuration and analysis identity
-- diagnostic exception type/message for failures
-
-## Uncertainty
-
-Distinguish declared or resolved facts from framework inference. Represent unresolved, ambiguous, partial, conditional, unsupported, and error states explicitly. Numeric confidence is forbidden unless it has a defined and validated interpretation.
-
-## Violations
-
-A violation must identify its rule/version, involved symbols, supporting relationships, minimal graph path, source evidence, semantic status, snapshot/configuration, and limitations. A result relying on prohibited uncertainty cannot be presented as certain.
-
-## Benchmarks and Claims
-
-Record exact corpus commits, analyzer/rule/schema versions, configuration, classpath manifest, environment, command, runtime, raw outcomes, failures, and exclusions. Preserve raw output. Separate coverage from correctness and facts from inference. Never improve metrics by changing or hiding the denominator.
+- Distinguish human approval, verified observation, provisional inference and missing evidence using the labels in AGENTS.md.
+- Trace conclusions through source/build evidence -> semantic fact -> graph -> rule -> violation.
+- Preserve category, source/caller, target/candidates, origin, file/full span, status, derivation, uncertainty, diagnostics, repository/snapshot/configuration identity and provenance as applicable.
+- Missing, ambiguous, conditional, unsupported or failed analysis stays explicit. Numeric confidence needs a defined and validated meaning.
+- A semantic target can be resolved while provenance is missing. Never invent coordinates or discard the provenance failure to satisfy a contract.
+- A violation identifies rule/version, symbols, supporting relationships, minimal path, evidence and limitations. Prohibited uncertainty cannot support a certain violation.
+- Report coverage separately from correctness. Include omitted/error/unsupported cases and every registered category in denominators; a restricted slice does not establish a full gate.
+- Preserve exact corpus/analyzer/parser/rule/schema versions, hashes, ordered classpath, configuration, environment, commands, failures, exclusions and raw results.
+- Derived summaries must be reproducible from identified raw data. Fix a generator and produce separately identified results; never hand-improve evidence.

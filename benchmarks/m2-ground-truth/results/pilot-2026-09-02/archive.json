@@ -1,0 +1,61 @@
+{
+  "sourceRun": "D:\\UIT\\AI-native-verified-software-evolution\\out\\m2-design-20260902\\integrated-oracle-runs\\20260902T143606-493e3361",
+  "method": "Exact byte copies; stdout extension changed only for JSON tooling. No raw content edited.",
+  "files": [
+    {
+      "file": "manifest.json",
+      "source": "manifest.json",
+      "sha256": "237ff21869d5409663759f40f68f79084042185a314d43747aca5d7613094644"
+    },
+    {
+      "file": "commands.json",
+      "source": "commands.json",
+      "sha256": "cc70b0cac62c5742d92f58d5e453ac72c1e389abb369a6a4ad445e067d6cdc36"
+    },
+    {
+      "file": "summary.json",
+      "source": "summary.json",
+      "sha256": "6d8749713b07e70d398bb820eea38aaf33441ad462afa58157610dfc1f75b58a"
+    },
+    {
+      "file": "preregistration.json",
+      "source": "preregistration.json",
+      "sha256": "b0f65414a3ae88b6f8f9ca461cf9ed5fe1ed049f818d71c003924287e4334356"
+    },
+    {
+      "file": "identifiers.stdout.json",
+      "source": "identifiers.stdout.txt",
+      "sha256": "90ec8ede44741ed162eea1b2c12ed5814c1883c47a4ececf4f3eb5d6fa98decb"
+    },
+    {
+      "file": "bindings.stdout.json",
+      "source": "bindings.stdout.txt",
+      "sha256": "9e814ccc3f96bab7730d5badc3a05efc035e847b608eab5cf0938fbdfcf13381"
+    },
+    {
+      "file": "offsets-lf.stdout.json",
+      "source": "offsets-lf.stdout.txt",
+      "sha256": "430237094783813c0d667bfb05a3bc0b91328414734872aca2c7d8c384ec61f3"
+    },
+    {
+      "file": "offsets-crlf.stdout.json",
+      "source": "offsets-crlf.stdout.txt",
+      "sha256": "bb40b2077f091e11879b6109160d3eb0432159b74c74880f635e6ac5c5e788d0"
+    },
+    {
+      "file": "ambiguous.stdout.json",
+      "source": "ambiguous.stdout.txt",
+      "sha256": "8dbaa6c38eaf381aab80813cafb3742e4c0b9f5fec3fb2509d47461637d41115"
+    },
+    {
+      "file": "missing.stdout.json",
+      "source": "missing.stdout.txt",
+      "sha256": "e01e8e4319adf2c3aade118781fc8e60921234a6deee5e53c348bb0d232b0a2a"
+    },
+    {
+      "file": "malformed.stdout.json",
+      "source": "malformed.stdout.txt",
+      "sha256": "8cb600b5d5303ba9778d076e48ef80887507fe6516a6b231dec7497d59bdbf42"
+    }
+  ]
+}

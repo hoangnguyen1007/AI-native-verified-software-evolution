@@ -1,38 +1,33 @@
 ---
 name: se-project-engineering
-description: Engineering operating procedure for planning, implementing, reviewing, testing, researching, benchmarking, documenting, and making architecture decisions in this project.
+description: Route non-trivial work in this SE121 repository to applicable roles, workflows, rules, and verification. Use for engineering, research, reviews, benchmarks, and governance changes; skip simple prose edits.
 ---
 
 # SE Project Engineering
 
-`AGENTS.md` is the authoritative operating contract. Read it fully before applying this skill.
+Use the bootstrap, routing table, authority and completion contract in [AGENTS.md](../../../AGENTS.md). Read the selected role/workflow/rules once per task; refresh changed context rather than loading every file.
 
-## Purpose
+## Make the task executable
 
-Deliver the smallest coherent, evidence-backed project change while preserving SE121 phase boundaries, architecture quality, reproducibility, and human oversight.
+Identify the requested outcome, current gate, approved decisions, affected contracts, non-goals, likely files, and observable exit criteria. Select a route from AGENTS.md without requiring the user to name it.
 
-## Required Procedure
+- Ordinary implementation: preserve approved boundaries and choose reversible details autonomously.
+- Consequential uncertainty: define the question and collect only evidence that can change the decision.
+- Review: inspect actual artifacts and remain read-only.
+- Implementation self-review: fix supported defects inside the authorized scope and reverify.
+- Documentation/configuration: validate links, structure, effective behavior or rendered output as relevant; do not invent production tests for prose.
 
-1. Execute the Tier 0 bootstrap from `AGENTS.md`.
-2. Classify the task: research, architecture, design, implementation, refactoring, debugging, testing, review, benchmark, documentation, or infrastructure.
-3. Load milestone and task context progressively.
-4. Define goal, non-goals, contracts, risks, files, and exit criteria.
-5. Use a research or architecture gate when the task contains consequential uncertainty.
-6. For behavior changes, specify or add tests before implementation where practical.
-7. Implement only the approved scope.
-8. Run task-specific and proportional broader verification.
-9. Inspect the full diff and perform adversarial review when risk warrants it.
-10. Update durable state according to `AGENTS.md`.
-11. Return the complete mandatory handoff.
+For Java/Spring extraction, ground truth, or semantic benchmark claims, read [semantic-evaluation.md](semantic-evaluation.md). It defines evidence checks, not a replacement for milestone contracts.
 
-## Evidence Discipline
+## Verification selection
 
-Architecture relationships and violations must preserve identity, source evidence, semantic status, derivation, provenance, configuration, and diagnostics. Unknown or ambiguous information stays unknown or ambiguous.
+Use this repository's [README](../../../README.md) and the affected module POM/runner to choose commands. Root verification does not cover standalone benchmarks.
 
-## Phase Discipline
+Windows examples, after confirming a JDK 21 runtime:
+- `.\mvnw.cmd --version`
+- `.\mvnw.cmd -B -ntp -pl analyzer test` for analyzer-only behavior.
+- `.\mvnw.cmd -B -ntp verify` for reactor integration; use `clean verify` for a clean-build claim.
 
-Do not implement SE122/KLTN AI diagnosis, RAG, transformation, patching, sandbox verification, or Verified PR capabilities. Architecture-mutation fixtures for evaluating SE121 rule detection are allowed.
+On POSIX use `sh ./mvnw` with the same arguments. Inspect the actual runner before executing a standalone experiment: tests may regenerate evidence or require separately built artifacts/classpaths.
 
-## Completion
-
-Never claim completion because content was generated or code compiled. Completion requires verified exit criteria, an inspected diff, updated durable state, explicit limitations, and an exact next task.
+Use focused checks while iterating. Before handoff verify the final relevant state, inspect the diff, and report what was and was not tested. Avoid reopening a passed check without a changed input or concrete remaining risk.

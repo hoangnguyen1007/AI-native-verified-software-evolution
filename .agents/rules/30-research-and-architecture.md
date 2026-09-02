@@ -1,31 +1,10 @@
-# Research and Architecture Decision Rule
+# Decision Rule — Architecture, Technology and Methodology
 
-Use for consequential architecture, technology, semantic-model, graph-schema, policy, persistence, API, benchmark, or methodology decisions.
+For a consequential decision, define the problem, phase constraints, required capabilities, success evidence, simple baseline, strongest viable alternatives, reversibility and cost of being wrong.
 
-## Decision Contract
-
-Define:
-
-- decision and why it matters
-- current phase and constraints
-- required capabilities and success evidence
-- strongest viable alternatives, including the simple baseline
-- trade-offs, reversibility, and cost of being wrong
-
-Classify important statements as fact, observation, inference, hypothesis, or open question.
-
-## Evidence
-
-Prefer repository evidence and focused experiments. For changing external technology, use official current documentation. For research claims, use reproducible evidence and appropriate primary literature. Popularity is not a decision criterion.
-
-Do not invent numeric scores or thresholds. If a subjective comparison is useful, label it subjective. If reasoning is insufficient, run the smallest controlled experiment that can change the decision.
-
-## Architecture Gate
-
-Before implementation, define responsibilities, inputs/outputs, dependencies, owned data, invariants, failure boundaries, test strategy, and replacement strategy. Preserve parser and storage reversibility. Prefer a modular monolith.
-
-Current pressure points that require explicit treatment are multi-module workspaces, safe build-model intelligence, content-addressed analysis identity, storage-neutral architecture query services, and selective bytecode validation only on demonstrated need.
-
-## Durable Decision
-
-Create an ADR only when an approved decision has meaningful alternatives and durable consequences. Include evidence, trade-offs, consequences, confidence, and reversal conditions. Do not create ADR bureaucracy for low-risk reversible details.
+- Prefer verified repository evidence and focused experiments. Verify changing external capabilities against current official documentation; use primary research for scientific claims.
+- Use the epistemic labels in AGENTS.md. Avoid arbitrary numeric scores, invented thresholds and popularity arguments.
+- Specify responsibilities, inputs/outputs, dependency direction, owned data, invariants, failure boundaries, test strategy and replacement conditions before implementation.
+- Treat safe multi-module build modeling, stable identity, provenance, storage-neutral queries and compatibility as explicit design concerns.
+- Ask only for consequential decisions not already authorized. Record a significant approved choice with real alternatives in an ADR; routine reversible implementation details do not need one.
+- Approval selects an implementation direction; empirical gates still require evidence. Revisit a choice when a registered trigger fires or new evidence contradicts it.

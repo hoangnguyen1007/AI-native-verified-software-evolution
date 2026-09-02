@@ -1,0 +1,12 @@
+Exception in thread "main" java.nio.file.AccessDeniedException: C:\.m2
+	at java.base/sun.nio.fs.WindowsException.translateToIOException(WindowsException.java:89)
+	at java.base/sun.nio.fs.WindowsException.rethrowAsIOException(WindowsException.java:103)
+	at java.base/sun.nio.fs.WindowsException.rethrowAsIOException(WindowsException.java:108)
+	at java.base/sun.nio.fs.WindowsFileSystemProvider.createDirectory(WindowsFileSystemProvider.java:527)
+	at java.base/java.nio.file.Files.createDirectory(Files.java:699)
+	at java.base/java.nio.file.Files.createAndCheckIsDirectory(Files.java:807)
+	at java.base/java.nio.file.Files.createDirectories(Files.java:793)
+	at org.apache.maven.wrapper.DefaultDownloader.download(DefaultDownloader.java:80)
+	at org.apache.maven.wrapper.Installer.createDist(Installer.java:84)
+	at org.apache.maven.wrapper.WrapperExecutor.execute(WrapperExecutor.java:160)
+	at org.apache.maven.wrapper.MavenWrapperMain.main(MavenWrapperMain.java:73)

@@ -1,0 +1,11 @@
+package com.evolution.analysis.javaparser;
+
+import com.evolution.analysis.contract.identity.SourceDocumentIdentity;
+import com.evolution.analysis.contract.source.SourceSpan;
+import com.github.javaparser.ast.Node;
+
+final class OriginalSource {
+    OriginalSource(SourceDocumentIdentity document, String text) { }
+    SourceSpan span(Node node) { throw new UnsupportedOperationException("not implemented"); }
+    String slice(SourceSpan span) { throw new UnsupportedOperationException("not implemented"); }
+}

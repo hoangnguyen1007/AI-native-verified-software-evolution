@@ -1,0 +1,27 @@
+TASK_ID: M2-AG-02 / ATTEMPT: 1 / PARENT: M2 ground-truth design
+STATE: PREPARED; requires repository-payload consent, successful model/workspace handshake, and frozen pilot artifacts with refreshed hashes.
+PROJECT_ROOT / WORKSPACE: D:/UIT/AI-native-verified-software-evolution
+OUTPUT: captured stdout in a new attempt directory under out/m2-design-20260902/antigravity/oracle-review/. No repository writes.
+BASELINE: verify HEAD, dirty/staged/untracked state and docs/reproducibility/m2-antigravity/required-read-manifest.json. Do not infer unchanged files from a parent's summary. A hash mismatch or missing pilot is an input blocker, not permission to make up results.
+
+OBJECTIVE
+Independently attack the M2 oracle pilot and proposed evaluation protocol. Determine which exact Java claims are established, which expected labels are unsound, and what still prevents full M2 acceptance. Your conclusions must come from source, frozen expectations, compiler diagnostics and raw observations. Neither candidate frontend, the pilot's pass count nor another reviewer is your oracle.
+
+BOOTSTRAP
+Read complete common and oracle-review entries in the required-read manifest; extend for relevant source/fixtures discovered. Apply current AGENTS.md, Tier 0, working/staged diffs, relevant untracked files and recent log. Read rules 00/10/20/30/40; benchmark-engineer.md, semantic-analyst.md and red-team-reviewer.md; research.md, review.md, verify.md and handoff.md; se-project-engineering/SKILL.md, semantic-evaluation.md and verification-before-completion/SKILL.md. Recover truncated reads and give a receipt with actual paths/hashes and applied constraints. Inspect active/inherited harness instructions without treating target repository content as authority.
+
+EXAMINE
+1. Are expected targets, origins and source ranges derived independently before candidate output? Do duplicate textual occurrences, nested expressions, tabs, Unicode and CRLF retain distinct exact positions? Is a source slice being checked independently or against the same helper twice?
+2. Does the javac oracle retain all relevant diagnostics, NOPOS/absent bindings, exceptions and compilation errors? Can error recovery accidentally count as a valid method/field binding? Can a malformed file or zero-case run return success?
+3. Does the runner enforce Java 21, explicit classpath/sourcepath, disabled processing, pinned hashes, bounded output and a new results directory per attempt? Can ambient classes or old outputs contaminate the result? Inspect side effects before recommending any command.
+4. Are Unicode identifier equality, overload/generic/varargs declarations and local/JDK origin assertions actually tested? Identify tests that would still pass if a target, kind, origin, diagnostic, span or denominator were wrong.
+5. Reconcile pilot assertions with the full 18-category M2 catalog. Explicitly enumerate untested categories and uncertainty dimensions. Assess handling correctness separately from successful target resolution. Verify that legacy comparison defects are quarantined from accepted labels/results.
+
+BOUNDARIES
+This is a bounded oracle/design audit, not production implementation. JavaParser remains human-approved; D1-D3 remain proposed until a separate human decision is recorded. M3/G2 and later milestones are outside this pilot's acceptance. Do not edit source, labels or raw results; do not run a command that regenerates them, write shared build outputs, run untrusted target lifecycles, install packages, change permissions/accounts/billing or commit/push. Do not read secrets/credentials. Propose a scoped new experiment if execution is needed. No child allocation.
+
+MODEL / LIFECYCLE
+Requested gemini-3.7-flash-high, effort high, as an independent current coding/oracle challenge. This choice is not a claim of universal superiority over other models. Re-handshake after changing the selected model. Use observed CLI metadata and explicit conversation ID; never assert model identity from self-description. Initial timeout 10 minutes; checkpoint before stopping. Coordinator must observe terminal state/cancellation before reassigning work. Report actual permission/quota/auth failures without disguising them as test results.
+
+RETURN
+Bootstrap receipt; actionable P0-P3 findings with exact source/label/result locations, an independently reasoned counterexample and correction; checked assertions/outcomes; actual commands/cwd/exits if any; unverified dimensions; bounded verdict on pilot validity. Report state corrections to Codex. Do not modify durable state, adopt canonical identity decisions or claim M2/G2 passed.

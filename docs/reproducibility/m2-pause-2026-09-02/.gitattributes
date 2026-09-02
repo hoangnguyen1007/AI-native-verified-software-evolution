@@ -1,0 +1,4 @@
+# Preserve archived draft/evidence bytes and recorded SHA-256 across checkouts.
+drafts/** -text
+candidate-fixtures/** -text
+evidence/** -text

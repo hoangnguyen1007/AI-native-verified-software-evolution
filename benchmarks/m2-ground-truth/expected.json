@@ -1,0 +1,999 @@
+{
+  "schema": "m2-oracle-pilot-labels-v1",
+  "status": "PREREGISTERED_DESIGN_PILOT_NOT_M2_OR_G2",
+  "labelAuthority": "Assistant-authored source/JLS labels before oracle execution; independent human review pending.",
+  "javaRelease": 21,
+  "classpath": [],
+  "groups": [
+    {
+      "id": "identifiers",
+      "fixture": "identifiers",
+      "expectErrors": false,
+      "rationale": "JLS 21 3.3/3.8: Unicode escapes translate before tokenization; identifier-ignorable characters do not distinguish names; NFC and decomposed spellings remain distinct.",
+      "labels": [
+        {
+          "id": "id-composed",
+          "file": "fixture/Identifiers.java",
+          "category": "java.calls",
+          "sourceText": "café()",
+          "startUtf16": 185,
+          "endUtf16": 191,
+          "start": [
+            8,
+            9
+          ],
+          "end": [
+            8,
+            15
+          ],
+          "oracleAllowed": true,
+          "target": {
+            "owner": "fixture.Identifiers",
+            "name": "café",
+            "parameterTypes": [],
+            "erasedParameterTypes": [],
+            "origin": "PROJECT",
+            "varargs": false,
+            "expressionType": "void"
+          }
+        },
+        {
+          "id": "id-decomposed",
+          "file": "fixture/Identifiers.java",
+          "category": "java.calls",
+          "sourceText": "café()",
+          "startUtf16": 201,
+          "endUtf16": 208,
+          "start": [
+            9,
+            9
+          ],
+          "end": [
+            9,
+            16
+          ],
+          "oracleAllowed": true,
+          "target": {
+            "owner": "fixture.Identifiers",
+            "name": "café",
+            "parameterTypes": [],
+            "erasedParameterTypes": [],
+            "origin": "PROJECT",
+            "varargs": false,
+            "expressionType": "void"
+          }
+        },
+        {
+          "id": "id-ignorable",
+          "file": "fixture/Identifiers.java",
+          "category": "java.calls",
+          "sourceText": "ig‌nored()",
+          "startUtf16": 218,
+          "endUtf16": 228,
+          "start": [
+            10,
+            9
+          ],
+          "end": [
+            10,
+            19
+          ],
+          "oracleAllowed": true,
+          "target": {
+            "owner": "fixture.Identifiers",
+            "name": "ignored",
+            "parameterTypes": [],
+            "erasedParameterTypes": [],
+            "origin": "PROJECT",
+            "varargs": false,
+            "expressionType": "void"
+          }
+        },
+        {
+          "id": "id-plain-ignored",
+          "file": "fixture/Identifiers.java",
+          "category": "java.calls",
+          "sourceText": "ignored()",
+          "startUtf16": 238,
+          "endUtf16": 247,
+          "start": [
+            11,
+            9
+          ],
+          "end": [
+            11,
+            18
+          ],
+          "oracleAllowed": true,
+          "target": {
+            "owner": "fixture.Identifiers",
+            "name": "ignored",
+            "parameterTypes": [],
+            "erasedParameterTypes": [],
+            "origin": "PROJECT",
+            "varargs": false,
+            "expressionType": "void"
+          }
+        },
+        {
+          "id": "id-escape",
+          "file": "fixture/Identifiers.java",
+          "category": "java.calls",
+          "sourceText": "\\u0065scaped()",
+          "startUtf16": 257,
+          "endUtf16": 271,
+          "start": [
+            12,
+            9
+          ],
+          "end": [
+            12,
+            23
+          ],
+          "oracleAllowed": true,
+          "target": {
+            "owner": "fixture.Identifiers",
+            "name": "escaped",
+            "parameterTypes": [],
+            "erasedParameterTypes": [],
+            "origin": "PROJECT",
+            "varargs": false,
+            "expressionType": "void"
+          }
+        },
+        {
+          "id": "id-plain-escaped",
+          "file": "fixture/Identifiers.java",
+          "category": "java.calls",
+          "sourceText": "escaped()",
+          "startUtf16": 281,
+          "endUtf16": 290,
+          "start": [
+            13,
+            9
+          ],
+          "end": [
+            13,
+            18
+          ],
+          "oracleAllowed": true,
+          "target": {
+            "owner": "fixture.Identifiers",
+            "name": "escaped",
+            "parameterTypes": [],
+            "erasedParameterTypes": [],
+            "origin": "PROJECT",
+            "varargs": false,
+            "expressionType": "void"
+          }
+        }
+      ]
+    },
+    {
+      "id": "bindings",
+      "fixture": "bindings",
+      "expectErrors": false,
+      "rationale": "Source declaration inspection and JLS 21 15.12 overload/generic invocation rules. javax.lookalike is inventoried project source despite its prefix. Platform calls require compiler module/file evidence.",
+      "labels": [
+        {
+          "id": "overload-int",
+          "file": "javax/lookalike/Bindings.java",
+          "category": "java.calls",
+          "sourceText": "choose(1)",
+          "startUtf16": 351,
+          "endUtf16": 360,
+          "start": [
+            10,
+            9
+          ],
+          "end": [
+            10,
+            18
+          ],
+          "oracleAllowed": true,
+          "target": {
+            "owner": "javax.lookalike.Bindings",
+            "name": "choose",
+            "parameterTypes": [
+              "int"
+            ],
+            "erasedParameterTypes": [
+              "int"
+            ],
+            "origin": "PROJECT",
+            "varargs": false,
+            "expressionType": "void"
+          }
+        },
+        {
+          "id": "overload-boxed",
+          "file": "javax/lookalike/Bindings.java",
+          "category": "java.calls",
+          "sourceText": "choose(boxed)",
+          "startUtf16": 370,
+          "endUtf16": 383,
+          "start": [
+            11,
+            9
+          ],
+          "end": [
+            11,
+            22
+          ],
+          "oracleAllowed": true,
+          "target": {
+            "owner": "javax.lookalike.Bindings",
+            "name": "choose",
+            "parameterTypes": [
+              "java.lang.Integer"
+            ],
+            "erasedParameterTypes": [
+              "java.lang.Integer"
+            ],
+            "origin": "PROJECT",
+            "varargs": false,
+            "expressionType": "void"
+          }
+        },
+        {
+          "id": "overload-widen",
+          "file": "javax/lookalike/Bindings.java",
+          "category": "java.calls",
+          "sourceText": "choose((short) 1)",
+          "startUtf16": 393,
+          "endUtf16": 410,
+          "start": [
+            12,
+            9
+          ],
+          "end": [
+            12,
+            26
+          ],
+          "oracleAllowed": true,
+          "target": {
+            "owner": "javax.lookalike.Bindings",
+            "name": "choose",
+            "parameterTypes": [
+              "int"
+            ],
+            "erasedParameterTypes": [
+              "int"
+            ],
+            "origin": "PROJECT",
+            "varargs": false,
+            "expressionType": "void"
+          }
+        },
+        {
+          "id": "generic-list-get",
+          "file": "javax/lookalike/Bindings.java",
+          "category": "java.calls",
+          "sourceText": "values.get(0)",
+          "startUtf16": 420,
+          "endUtf16": 433,
+          "start": [
+            13,
+            9
+          ],
+          "end": [
+            13,
+            22
+          ],
+          "oracleAllowed": true,
+          "target": {
+            "owner": "java.util.List",
+            "name": "get",
+            "parameterTypes": [
+              "int"
+            ],
+            "erasedParameterTypes": [
+              "int"
+            ],
+            "origin": "JDK",
+            "varargs": false,
+            "expressionType": "java.lang.String"
+          }
+        },
+        {
+          "id": "generic-list-trim",
+          "file": "javax/lookalike/Bindings.java",
+          "category": "java.calls",
+          "sourceText": "values.get(0).trim()",
+          "startUtf16": 420,
+          "endUtf16": 440,
+          "start": [
+            13,
+            9
+          ],
+          "end": [
+            13,
+            29
+          ],
+          "oracleAllowed": true,
+          "target": {
+            "owner": "java.lang.String",
+            "name": "trim",
+            "parameterTypes": [],
+            "erasedParameterTypes": [],
+            "origin": "JDK",
+            "varargs": false,
+            "expressionType": "java.lang.String"
+          }
+        },
+        {
+          "id": "generic-identity",
+          "file": "javax/lookalike/Bindings.java",
+          "category": "java.calls",
+          "sourceText": "identity(\"x\")",
+          "startUtf16": 450,
+          "endUtf16": 463,
+          "start": [
+            14,
+            9
+          ],
+          "end": [
+            14,
+            22
+          ],
+          "oracleAllowed": true,
+          "target": {
+            "owner": "javax.lookalike.Bindings",
+            "name": "identity",
+            "parameterTypes": [
+              "T"
+            ],
+            "erasedParameterTypes": [
+              "java.lang.Object"
+            ],
+            "origin": "PROJECT",
+            "varargs": false,
+            "expressionType": "java.lang.String"
+          }
+        },
+        {
+          "id": "generic-identity-trim",
+          "file": "javax/lookalike/Bindings.java",
+          "category": "java.calls",
+          "sourceText": "identity(\"x\").trim()",
+          "startUtf16": 450,
+          "endUtf16": 470,
+          "start": [
+            14,
+            9
+          ],
+          "end": [
+            14,
+            29
+          ],
+          "oracleAllowed": true,
+          "target": {
+            "owner": "java.lang.String",
+            "name": "trim",
+            "parameterTypes": [],
+            "erasedParameterTypes": [],
+            "origin": "JDK",
+            "varargs": false,
+            "expressionType": "java.lang.String"
+          }
+        },
+        {
+          "id": "varargs-expanded",
+          "file": "javax/lookalike/Bindings.java",
+          "category": "java.calls",
+          "sourceText": "spread(\"a\", \"b\")",
+          "startUtf16": 480,
+          "endUtf16": 496,
+          "start": [
+            15,
+            9
+          ],
+          "end": [
+            15,
+            25
+          ],
+          "oracleAllowed": true,
+          "target": {
+            "owner": "javax.lookalike.Bindings",
+            "name": "spread",
+            "parameterTypes": [
+              "java.lang.String[]"
+            ],
+            "erasedParameterTypes": [
+              "java.lang.String[]"
+            ],
+            "origin": "PROJECT",
+            "varargs": true,
+            "expressionType": "void"
+          }
+        },
+        {
+          "id": "varargs-object-overload",
+          "file": "javax/lookalike/Bindings.java",
+          "category": "java.calls",
+          "sourceText": "spread((Object) \"a\")",
+          "startUtf16": 506,
+          "endUtf16": 526,
+          "start": [
+            16,
+            9
+          ],
+          "end": [
+            16,
+            29
+          ],
+          "oracleAllowed": true,
+          "target": {
+            "owner": "javax.lookalike.Bindings",
+            "name": "spread",
+            "parameterTypes": [
+              "java.lang.Object"
+            ],
+            "erasedParameterTypes": [
+              "java.lang.Object"
+            ],
+            "origin": "PROJECT",
+            "varargs": false,
+            "expressionType": "void"
+          }
+        },
+        {
+          "id": "varargs-array",
+          "file": "javax/lookalike/Bindings.java",
+          "category": "java.calls",
+          "sourceText": "spread(new String[] {\"a\"})",
+          "startUtf16": 536,
+          "endUtf16": 562,
+          "start": [
+            17,
+            9
+          ],
+          "end": [
+            17,
+            35
+          ],
+          "oracleAllowed": true,
+          "target": {
+            "owner": "javax.lookalike.Bindings",
+            "name": "spread",
+            "parameterTypes": [
+              "java.lang.String[]"
+            ],
+            "erasedParameterTypes": [
+              "java.lang.String[]"
+            ],
+            "origin": "PROJECT",
+            "varargs": true,
+            "expressionType": "void"
+          }
+        }
+      ]
+    },
+    {
+      "id": "offsets-lf",
+      "fixture": "offsets",
+      "expectErrors": false,
+      "rationale": "Literal original-source spans preregistered before compiler output. Tabs count one UTF-16 unit; supplementary characters count two. Unicode escape positions address original bytes after UTF-8 decode.",
+      "labels": [
+        {
+          "id": "duplicate-first",
+          "file": "fixture/Offsets.java",
+          "category": "java.calls",
+          "sourceText": "hit()",
+          "startUtf16": 127,
+          "endUtf16": 132,
+          "start": [
+            6,
+            3
+          ],
+          "end": [
+            6,
+            8
+          ],
+          "oracleAllowed": true,
+          "target": {
+            "owner": "fixture.Offsets",
+            "name": "hit",
+            "parameterTypes": [],
+            "erasedParameterTypes": [],
+            "origin": "PROJECT",
+            "varargs": false,
+            "expressionType": "void"
+          }
+        },
+        {
+          "id": "duplicate-second",
+          "file": "fixture/Offsets.java",
+          "category": "java.calls",
+          "sourceText": "hit()",
+          "startUtf16": 134,
+          "endUtf16": 139,
+          "start": [
+            6,
+            10
+          ],
+          "end": [
+            6,
+            15
+          ],
+          "oracleAllowed": true,
+          "target": {
+            "owner": "fixture.Offsets",
+            "name": "hit",
+            "parameterTypes": [],
+            "erasedParameterTypes": [],
+            "origin": "PROJECT",
+            "varargs": false,
+            "expressionType": "void"
+          }
+        },
+        {
+          "id": "multiline",
+          "file": "fixture/Offsets.java",
+          "category": "java.calls",
+          "sourceText": "take(\n\t\t    \"multi\"\n        )",
+          "startUtf16": 149,
+          "endUtf16": 178,
+          "start": [
+            7,
+            9
+          ],
+          "end": [
+            9,
+            10
+          ],
+          "oracleAllowed": true,
+          "target": {
+            "owner": "fixture.Offsets",
+            "name": "take",
+            "parameterTypes": [
+              "java.lang.String"
+            ],
+            "erasedParameterTypes": [
+              "java.lang.String"
+            ],
+            "origin": "PROJECT",
+            "varargs": false,
+            "expressionType": "void"
+          }
+        },
+        {
+          "id": "after-astral",
+          "file": "fixture/Offsets.java",
+          "category": "java.calls",
+          "sourceText": "hit()",
+          "startUtf16": 210,
+          "endUtf16": 215,
+          "start": [
+            10,
+            31
+          ],
+          "end": [
+            10,
+            36
+          ],
+          "oracleAllowed": true,
+          "target": {
+            "owner": "fixture.Offsets",
+            "name": "hit",
+            "parameterTypes": [],
+            "erasedParameterTypes": [],
+            "origin": "PROJECT",
+            "varargs": false,
+            "expressionType": "void"
+          }
+        },
+        {
+          "id": "argument-astral",
+          "file": "fixture/Offsets.java",
+          "category": "java.calls",
+          "sourceText": "take(\"😀\")",
+          "startUtf16": 225,
+          "endUtf16": 235,
+          "start": [
+            11,
+            9
+          ],
+          "end": [
+            11,
+            19
+          ],
+          "oracleAllowed": true,
+          "target": {
+            "owner": "fixture.Offsets",
+            "name": "take",
+            "parameterTypes": [
+              "java.lang.String"
+            ],
+            "erasedParameterTypes": [
+              "java.lang.String"
+            ],
+            "origin": "PROJECT",
+            "varargs": false,
+            "expressionType": "void"
+          }
+        },
+        {
+          "id": "escaped-identifier",
+          "file": "fixture/Offsets.java",
+          "category": "java.calls",
+          "sourceText": "\\u0068it()",
+          "startUtf16": 245,
+          "endUtf16": 255,
+          "start": [
+            12,
+            9
+          ],
+          "end": [
+            12,
+            19
+          ],
+          "oracleAllowed": true,
+          "target": {
+            "owner": "fixture.Offsets",
+            "name": "hit",
+            "parameterTypes": [],
+            "erasedParameterTypes": [],
+            "origin": "PROJECT",
+            "varargs": false,
+            "expressionType": "void"
+          }
+        },
+        {
+          "id": "escaped-line",
+          "file": "fixture/Offsets.java",
+          "category": "java.calls",
+          "sourceText": "hit()",
+          "startUtf16": 302,
+          "endUtf16": 307,
+          "start": [
+            13,
+            46
+          ],
+          "end": [
+            13,
+            51
+          ],
+          "oracleAllowed": true,
+          "target": {
+            "owner": "fixture.Offsets",
+            "name": "hit",
+            "parameterTypes": [],
+            "erasedParameterTypes": [],
+            "origin": "PROJECT",
+            "varargs": false,
+            "expressionType": "void"
+          }
+        }
+      ]
+    },
+    {
+      "id": "offsets-crlf",
+      "fixture": "offsets",
+      "expectErrors": false,
+      "rationale": "Literal original-source spans preregistered before compiler output. Tabs count one UTF-16 unit; supplementary characters count two. Unicode escape positions address original bytes after UTF-8 decode. Deterministic preregistered LF-to-CRLF input variant.",
+      "labels": [
+        {
+          "id": "duplicate-first-crlf",
+          "file": "fixture/Offsets.java",
+          "category": "java.calls",
+          "sourceText": "hit()",
+          "startUtf16": 132,
+          "endUtf16": 137,
+          "start": [
+            6,
+            3
+          ],
+          "end": [
+            6,
+            8
+          ],
+          "oracleAllowed": true,
+          "target": {
+            "owner": "fixture.Offsets",
+            "name": "hit",
+            "parameterTypes": [],
+            "erasedParameterTypes": [],
+            "origin": "PROJECT",
+            "varargs": false,
+            "expressionType": "void"
+          }
+        },
+        {
+          "id": "duplicate-second-crlf",
+          "file": "fixture/Offsets.java",
+          "category": "java.calls",
+          "sourceText": "hit()",
+          "startUtf16": 139,
+          "endUtf16": 144,
+          "start": [
+            6,
+            10
+          ],
+          "end": [
+            6,
+            15
+          ],
+          "oracleAllowed": true,
+          "target": {
+            "owner": "fixture.Offsets",
+            "name": "hit",
+            "parameterTypes": [],
+            "erasedParameterTypes": [],
+            "origin": "PROJECT",
+            "varargs": false,
+            "expressionType": "void"
+          }
+        },
+        {
+          "id": "multiline-crlf",
+          "file": "fixture/Offsets.java",
+          "category": "java.calls",
+          "sourceText": "take(\r\n\t\t    \"multi\"\r\n        )",
+          "startUtf16": 155,
+          "endUtf16": 186,
+          "start": [
+            7,
+            9
+          ],
+          "end": [
+            9,
+            10
+          ],
+          "oracleAllowed": true,
+          "target": {
+            "owner": "fixture.Offsets",
+            "name": "take",
+            "parameterTypes": [
+              "java.lang.String"
+            ],
+            "erasedParameterTypes": [
+              "java.lang.String"
+            ],
+            "origin": "PROJECT",
+            "varargs": false,
+            "expressionType": "void"
+          }
+        },
+        {
+          "id": "after-astral-crlf",
+          "file": "fixture/Offsets.java",
+          "category": "java.calls",
+          "sourceText": "hit()",
+          "startUtf16": 219,
+          "endUtf16": 224,
+          "start": [
+            10,
+            31
+          ],
+          "end": [
+            10,
+            36
+          ],
+          "oracleAllowed": true,
+          "target": {
+            "owner": "fixture.Offsets",
+            "name": "hit",
+            "parameterTypes": [],
+            "erasedParameterTypes": [],
+            "origin": "PROJECT",
+            "varargs": false,
+            "expressionType": "void"
+          }
+        },
+        {
+          "id": "argument-astral-crlf",
+          "file": "fixture/Offsets.java",
+          "category": "java.calls",
+          "sourceText": "take(\"😀\")",
+          "startUtf16": 235,
+          "endUtf16": 245,
+          "start": [
+            11,
+            9
+          ],
+          "end": [
+            11,
+            19
+          ],
+          "oracleAllowed": true,
+          "target": {
+            "owner": "fixture.Offsets",
+            "name": "take",
+            "parameterTypes": [
+              "java.lang.String"
+            ],
+            "erasedParameterTypes": [
+              "java.lang.String"
+            ],
+            "origin": "PROJECT",
+            "varargs": false,
+            "expressionType": "void"
+          }
+        },
+        {
+          "id": "escaped-identifier-crlf",
+          "file": "fixture/Offsets.java",
+          "category": "java.calls",
+          "sourceText": "\\u0068it()",
+          "startUtf16": 256,
+          "endUtf16": 266,
+          "start": [
+            12,
+            9
+          ],
+          "end": [
+            12,
+            19
+          ],
+          "oracleAllowed": true,
+          "target": {
+            "owner": "fixture.Offsets",
+            "name": "hit",
+            "parameterTypes": [],
+            "erasedParameterTypes": [],
+            "origin": "PROJECT",
+            "varargs": false,
+            "expressionType": "void"
+          }
+        },
+        {
+          "id": "escaped-line-crlf",
+          "file": "fixture/Offsets.java",
+          "category": "java.calls",
+          "sourceText": "hit()",
+          "startUtf16": 314,
+          "endUtf16": 319,
+          "start": [
+            13,
+            46
+          ],
+          "end": [
+            13,
+            51
+          ],
+          "oracleAllowed": true,
+          "target": {
+            "owner": "fixture.Offsets",
+            "name": "hit",
+            "parameterTypes": [],
+            "erasedParameterTypes": [],
+            "origin": "PROJECT",
+            "varargs": false,
+            "expressionType": "void"
+          }
+        }
+      ],
+      "transform": "LF_TO_CRLF"
+    },
+    {
+      "id": "ambiguous",
+      "fixture": "ambiguous",
+      "expectErrors": true,
+      "errorCodePrefix": "compiler.err.ref.ambiguous",
+      "rationale": "Deliberate invalid compilation; every recovered call in the compilation is inadmissible as a valid binding oracle, even known(). Diagnostics remain raw evidence. No candidate target is adjudicated.",
+      "labels": [
+        {
+          "id": "ambiguous-0",
+          "file": "fixture/Ambiguous.java",
+          "category": "java.calls",
+          "sourceText": "pick(null)",
+          "startUtf16": 149,
+          "endUtf16": 159,
+          "start": [
+            6,
+            9
+          ],
+          "end": [
+            6,
+            19
+          ],
+          "oracleAllowed": false
+        }
+      ]
+    },
+    {
+      "id": "missing",
+      "fixture": "missing",
+      "expectErrors": true,
+      "errorCodePrefix": "compiler.err.cant.resolve",
+      "rationale": "Deliberate invalid compilation; every recovered call in the compilation is inadmissible as a valid binding oracle, even known(). Diagnostics remain raw evidence. No candidate target is adjudicated.",
+      "labels": [
+        {
+          "id": "missing-0",
+          "file": "fixture/MissingType.java",
+          "category": "java.calls",
+          "sourceText": "known()",
+          "startUtf16": 141,
+          "endUtf16": 148,
+          "start": [
+            6,
+            9
+          ],
+          "end": [
+            6,
+            16
+          ],
+          "oracleAllowed": false
+        },
+        {
+          "id": "missing-1",
+          "file": "fixture/MissingType.java",
+          "category": "java.calls",
+          "sourceText": "value.absent()",
+          "startUtf16": 158,
+          "endUtf16": 172,
+          "start": [
+            7,
+            9
+          ],
+          "end": [
+            7,
+            23
+          ],
+          "oracleAllowed": false
+        }
+      ]
+    },
+    {
+      "id": "malformed",
+      "fixture": "malformed",
+      "expectErrors": true,
+      "errorCodePrefix": "compiler.err.illegal.start.of.expr",
+      "rationale": "Deliberate invalid compilation; every recovered call in the compilation is inadmissible as a valid binding oracle, even known(). Diagnostics remain raw evidence. No candidate target is adjudicated.",
+      "labels": [
+        {
+          "id": "malformed-0",
+          "file": "fixture/Malformed.java",
+          "category": "java.calls",
+          "sourceText": "known()",
+          "startUtf16": 99,
+          "endUtf16": 106,
+          "start": [
+            5,
+            9
+          ],
+          "end": [
+            5,
+            16
+          ],
+          "oracleAllowed": false
+        }
+      ]
+    }
+  ],
+  "sourceSha256": {
+    "ambiguous/fixture/Ambiguous.java": "f686f1d0c18cc6528e6b407cc40cf28995473bfa7b8af5a9c51d8b4ed66482ab",
+    "bindings/javax/lookalike/Bindings.java": "12eda2bfacbee8b25a9f1d5d5f1e9b8a0f561353225fac1d51317de25bff98a3",
+    "identifiers/fixture/Identifiers.java": "cf8f3d4a670e848aa240eed5be0ec3abe55a612088aaf801e2ba5f6f3b589982",
+    "malformed/fixture/Malformed.java": "731d4a46a88007023c36a1945ce9dac6879d745030b40f846d93205f3eb628d7",
+    "missing/fixture/MissingType.java": "ea20e17dd59cec9d564e2f6663fe9aa41b24df5119a56015216d6b5539d4f8c8",
+    "offsets/fixture/Offsets.java": "a0aa4a20d99c2a2f8f95e0e28aa5c31591ff6d72af6cd85f02545bc043f3059c"
+  },
+  "identifierRelations": [
+    {
+      "left": "id-composed",
+      "right": "id-decomposed",
+      "equal": false
+    },
+    {
+      "left": "id-ignorable",
+      "right": "id-plain-ignored",
+      "equal": true
+    },
+    {
+      "left": "id-escape",
+      "right": "id-plain-escaped",
+      "equal": true
+    }
+  ],
+  "excluded": [
+    "Production JavaParser adapter",
+    "M1 mapping/canonical formatting",
+    "Non-call relationship matrix",
+    "Multi-module or external artifact origin",
+    "Performance",
+    "M2 completion",
+    "G2 gate"
+  ]
+}

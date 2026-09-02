@@ -1,0 +1,34 @@
+{
+  "schema": "m2-oracle-pilot-run-v1",
+  "jdk": "C:\\Program Files\\Java\\jdk-21.0.12.1",
+  "jdkFiles": {
+    "release": "ba0b0ca802d29185ff7f3ac925839fa361fb076d1b2771101cc63b977e7fb617",
+    "lib/modules": "6033b3c99c2be48143ed6345bb2cdda3e6b1fc32dc38f44e58ee135e3dd495d7",
+    "lib/ct.sym": "cd00efe81f47d0e7f7a80a5d99ab1403cc4b4fd1eb97404ee4c897335dc80d8f"
+  },
+  "executables": {
+    "bin\\java.exe": "5cabacd1cf1c303f0e0d06a7c2475b16f6c908eee958af5b8b4e5909c6500ef1",
+    "bin\\javac.exe": "e4ce093a11fd6de2a9ea159a3fbc210855218304d51fe4e0c071d87e36854f36"
+  },
+  "packageFiles": {
+    "OraclePilot.java": "aba73bbba1c3e74baaab50eceaa8b84653a157d20ffd679878428317a5ae772a",
+    "run_oracle.py": "0dcc0336fe9dd2f3a4f597ae4fbc7d1b41491dfb58109a1c570b844c555f073a",
+    "expected.json": "b0f65414a3ae88b6f8f9ca461cf9ed5fe1ed049f818d71c003924287e4334356"
+  },
+  "inputSha256": {
+    "ambiguous/fixture/Ambiguous.java": "f686f1d0c18cc6528e6b407cc40cf28995473bfa7b8af5a9c51d8b4ed66482ab",
+    "bindings/javax/lookalike/Bindings.java": "12eda2bfacbee8b25a9f1d5d5f1e9b8a0f561353225fac1d51317de25bff98a3",
+    "identifiers/fixture/Identifiers.java": "cf8f3d4a670e848aa240eed5be0ec3abe55a612088aaf801e2ba5f6f3b589982",
+    "malformed/fixture/Malformed.java": "731d4a46a88007023c36a1945ce9dac6879d745030b40f846d93205f3eb628d7",
+    "missing/fixture/MissingType.java": "ea20e17dd59cec9d564e2f6663fe9aa41b24df5119a56015216d6b5539d4f8c8",
+    "offsets-crlf/fixture/Offsets.java": "70d79abf29cd6aac74e599ecf392e8c9e581cc695d49933138c4d6e23912965d",
+    "offsets-lf/fixture/Offsets.java": "a0aa4a20d99c2a2f8f95e0e28aa5c31591ff6d72af6cd85f02545bc043f3059c"
+  },
+  "python": "3.14.5 (tags/v3.14.5:5607950, May 10 2026, 10:43:50) [MSC v.1944 64 bit (AMD64)]",
+  "os": "Windows-11-10.0.26100-SP0",
+  "strippedEnvironmentKeys": [],
+  "classpath": [],
+  "release": 21,
+  "annotationProcessing": false,
+  "sourceInventoryFrozenBeforeCompilerInvocation": true
+}

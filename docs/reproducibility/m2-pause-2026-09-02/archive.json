@@ -1,0 +1,79 @@
+{
+  "schema": "m2-pause-archive-v1",
+  "date": "2026-09-02",
+  "status": "UNVALIDATED_DRAFTS",
+  "files": [
+    {
+      "originalPath": "analyzer/src/test/java/com/evolution/analysis/frontend/JavaSymbolNameTest.java",
+      "archivedPath": "drafts/JavaSymbolNameTest.java.txt",
+      "sha256": "a169f9ac9eb86dcdd9df12f2e2cb73e28440b292b11b2a3a5f373d4da8e8d461",
+      "disposition": "moved outside reactor; unimplemented test draft"
+    },
+    {
+      "originalPath": "out/m2-production/adapter-worker/reference-build/analyzer-javaparser/pom.xml",
+      "archivedPath": "drafts/analyzer-javaparser.pom.xml.txt",
+      "sha256": "24f933d1b2820f7d6030485c947d09b26d5bc1321191ba5e0a3ea6315145de30",
+      "disposition": "copied; scratch original retained"
+    },
+    {
+      "originalPath": "out/m2-production/adapter-worker/reference-build/analyzer-javaparser/src/main/java/com/evolution/analysis/javaparser/OriginalSource.java",
+      "archivedPath": "drafts/OriginalSource.java.txt",
+      "sha256": "5cfeb5e68cd70f65a0c87de7ac9eebb044892bd1eb8b80155994acc1fe301488",
+      "disposition": "copied; scratch original retained"
+    },
+    {
+      "originalPath": "out/m2-production/adapter-worker/reference-build/analyzer-javaparser/src/test/java/com/evolution/analysis/javaparser/OriginalSourceTest.java",
+      "archivedPath": "drafts/OriginalSourceTest.java.txt",
+      "sha256": "800aa7e716513c9f0f59d1b6ddea6012e6caf71343b5c483d6f9a893aa8d7abb",
+      "disposition": "copied; scratch original retained"
+    },
+    {
+      "originalPath": "out/m2-production/adversarial-worker/fixture-expectations.json",
+      "archivedPath": "candidate-fixtures/fixture-expectations.json",
+      "sha256": "e4aac9aa358124cf63eb191a61eecc26315f1c4187163e5f77af24a6ee3ace25",
+      "disposition": "copied; scratch original retained"
+    },
+    {
+      "originalPath": "out/m2-production/adversarial-worker/fixtures/calls/fixture/CallsFixture.java",
+      "archivedPath": "candidate-fixtures/fixtures/calls/fixture/CallsFixture.java",
+      "sha256": "2ac2fc7e83f3b660f159078b039d9da7c4f220bf81d0e9d28f5e7d7f57408d1f",
+      "disposition": "copied; scratch original retained"
+    },
+    {
+      "originalPath": "out/m2-production/adversarial-worker/fixtures/missing/fixture/MissingFixture.java",
+      "archivedPath": "candidate-fixtures/fixtures/missing/fixture/MissingFixture.java",
+      "sha256": "49486914344efe22a703a06f2f70491acee16a53ea76bedb9166a6eb0f092e7d",
+      "disposition": "copied; scratch original retained"
+    },
+    {
+      "originalPath": "out/m2-production/adversarial-worker/fixtures/owners/fixture/OwnerFixture.java",
+      "archivedPath": "candidate-fixtures/fixtures/owners/fixture/OwnerFixture.java",
+      "sha256": "b1200f6c26720efb9c160527a5297866182668b2df0ba25f0bb9665f993b897c",
+      "disposition": "copied; scratch original retained"
+    },
+    {
+      "originalPath": "out/m2-production/adversarial-worker/fixtures/spans/fixture/SpanFixture.java",
+      "archivedPath": "candidate-fixtures/fixtures/spans/fixture/SpanFixture.java",
+      "sha256": "0ced79056de5a809d06a6b3115977e00d4674b79014600901e4c33047ecb7c9f",
+      "disposition": "copied; scratch original retained"
+    },
+    {
+      "originalPath": "out/m2-production/adapter-worker/coordinates-red.txt",
+      "archivedPath": "evidence/coordinates-red.txt",
+      "sha256": "2975efb45ea97411207aa799f5e8671602f726cb1e1aed08ecc5d46a53868e02",
+      "disposition": "copied; scratch original retained"
+    },
+    {
+      "originalPath": "out/m2-production/adapter-worker/coordinates-red-configured.txt",
+      "archivedPath": "evidence/coordinates-red-configured.txt",
+      "sha256": "d889d8acef6951a3d9fcf10b68f8eb43f26ed9867840661ecad508a4a7cfaef6",
+      "disposition": "copied; scratch original retained"
+    },
+    {
+      "originalPath": "out/m2-production/adversarial-worker/compiler/missing-diagnostics.txt",
+      "archivedPath": "evidence/missing-diagnostics.txt",
+      "sha256": "465832adb412abc6f4cc732b24c47274a5f63d3ec3556fce8885aa2e11c408a0",
+      "disposition": "copied; scratch original retained"
+    }
+  ]
+}
