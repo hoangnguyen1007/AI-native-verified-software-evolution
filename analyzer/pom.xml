@@ -19,7 +19,7 @@
     </description>
 
     <dependencies>
-        <!-- Parser dependencies will be added after R1 PoC validation -->
+        <!-- Parser implementations depend on this module; parser libraries stay in isolated adapters. -->
 
         <!-- Testing -->
         <dependency>

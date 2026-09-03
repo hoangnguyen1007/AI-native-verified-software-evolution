@@ -1,0 +1,114 @@
+[
+  {
+    "module": "analyzer",
+    "suite": "com.evolution.analysis.contract.AnalysisAndAssessmentContractTest",
+    "tests": 7,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  {
+    "module": "analyzer",
+    "suite": "com.evolution.analysis.contract.CanonicalSerializationTest",
+    "tests": 3,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  {
+    "module": "analyzer",
+    "suite": "com.evolution.analysis.contract.IdentityAndSourceContractTest",
+    "tests": 8,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  {
+    "module": "analyzer",
+    "suite": "com.evolution.analysis.contract.SemanticContractTest",
+    "tests": 6,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  {
+    "module": "analyzer",
+    "suite": "com.evolution.analysis.frontend.FrontendContractTest",
+    "tests": 4,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  {
+    "module": "analyzer",
+    "suite": "com.evolution.analysis.frontend.FrontendResultTest",
+    "tests": 3,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  {
+    "module": "analyzer",
+    "suite": "com.evolution.analysis.frontend.JavaSymbolNameTest",
+    "tests": 6,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  {
+    "module": "analyzer",
+    "suite": "com.evolution.foundation.Java21BuildTest",
+    "tests": 1,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  {
+    "module": "analyzer-javaparser",
+    "suite": "com.evolution.analysis.javaparser.FrozenFixtureTest",
+    "tests": 1,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  {
+    "module": "analyzer-javaparser",
+    "suite": "com.evolution.analysis.javaparser.JavaParserFrontendTest",
+    "tests": 3,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  {
+    "module": "analyzer-javaparser",
+    "suite": "com.evolution.analysis.javaparser.OriginalSourceTest",
+    "tests": 4,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  {
+    "module": "analyzer-javaparser",
+    "suite": "com.evolution.analysis.javaparser.ResolutionInputsTest",
+    "tests": 6,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  {
+    "module": "analyzer-javaparser",
+    "suite": "com.evolution.analysis.javaparser.SemanticBoundariesTest",
+    "tests": 9,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  {
+    "module": "backend",
+    "suite": "com.evolution.foundation.Java21BuildTest",
+    "tests": 1,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  }
+]

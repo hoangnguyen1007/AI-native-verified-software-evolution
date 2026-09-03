@@ -1,6 +1,6 @@
 # AI-Native Verified Software Evolution
 
-This repository is the SE121 software architecture intelligence platform. The current codebase is an intentionally minimal Java 21 Maven reactor; production semantic analysis starts in later milestones.
+This repository is the SE121 software architecture intelligence platform. The Java 21 Maven reactor contains parser-neutral contracts and a JavaParser frontend for declarations, method calls, explicit constructor calls and declared-type relationships with recursive generic type detail. M2 is in progress; G2 is not passed. See [current state](docs/current-state.md) for verified scope and limitations.
 
 ## Build prerequisites
 
@@ -48,9 +48,12 @@ The Maven Enforcer configuration deliberately rejects a build JVM outside Java 2
 The root reactor owns all shared build and test policy and builds in this order:
 
 1. `software-evolution-platform` (root aggregator)
-2. `analyzer` (placeholder JAR and module-local test boundary)
-3. `backend` (placeholder JAR, depends on `analyzer`, and has its own test boundary)
+2. `analyzer` (M1 contracts, Unicode-safe Java identities and the neutral semantic frontend port)
+3. `analyzer-javaparser` (isolated JavaParser/SymbolSolver adapter and semantic fixtures)
+4. `backend` (placeholder JAR, depends on `analyzer`, and has its own test boundary)
 
-No production parser, graph, Spring, backend API, CLI, or frontend feature is part of this foundation.
+The adapter accepts exact supplied source bytes and verified resolution inputs; it does not discover or execute target builds. Graph, Spring, backend API, CLI and visual workbench implementation remain later work.
+
+For a Windows sandbox with the user Maven cache, explicitly configure `MAVEN_USER_HOME` and pass `-Dmaven.repo.local=C:/Users/Admin/.m2/repository`. If recompilation reports cache access denial, use the host's supported execution approval. Do not copy caches around a denial. Focused reactor builds use `-pl analyzer-javaparser -am test`; the parent is required by reactor-convergence enforcement.
 
 See [M0 foundation and reproducibility evidence](docs/reproducibility/m0-foundation.md) for pinned versions, checksum provenance, negative enforcement checks, exact environment evidence, and current limitations.

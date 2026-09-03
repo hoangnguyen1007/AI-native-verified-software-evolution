@@ -18,6 +18,7 @@
 
     <modules>
         <module>analyzer</module>
+        <module>analyzer-javaparser</module>
         <module>backend</module>
     </modules>
 

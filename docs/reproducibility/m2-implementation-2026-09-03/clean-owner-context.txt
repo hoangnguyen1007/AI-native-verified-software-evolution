@@ -1,0 +1,52 @@
+[INFO] Scanning for projects...
+[INFO] ------------------------------------------------------------------------
+[INFO] Reactor Build Order:
+[INFO] 
+[INFO] AI-Native Software Evolution Platform                              [pom]
+[INFO] Analyzer                                                           [jar]
+[INFO] JavaParser Semantic Frontend                                       [jar]
+[INFO] Backend                                                            [jar]
+[INFO] 
+[INFO] -------------< com.evolution:software-evolution-platform >--------------
+[INFO] Building AI-Native Software Evolution Platform 0.1.0-SNAPSHOT      [1/4]
+[INFO]   from pom.xml
+[INFO] --------------------------------[ pom ]---------------------------------
+[INFO] 
+[INFO] --- clean:3.5.0:clean (default-clean) @ software-evolution-platform ---
+[INFO] 
+[INFO] -----------------------< com.evolution:analyzer >-----------------------
+[INFO] Building Analyzer 0.1.0-SNAPSHOT                                   [2/4]
+[INFO]   from analyzer\pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- clean:3.5.0:clean (default-clean) @ analyzer ---
+[INFO] Deleting D:\UIT\AI-native-verified-software-evolution\analyzer\target
+[INFO] 
+[INFO] -----------------< com.evolution:analyzer-javaparser >------------------
+[INFO] Building JavaParser Semantic Frontend 0.1.0-SNAPSHOT               [3/4]
+[INFO]   from analyzer-javaparser\pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- clean:3.5.0:clean (default-clean) @ analyzer-javaparser ---
+[INFO] Deleting D:\UIT\AI-native-verified-software-evolution\analyzer-javaparser\target
+[INFO] 
+[INFO] -----------------------< com.evolution:backend >------------------------
+[INFO] Building Backend 0.1.0-SNAPSHOT                                    [4/4]
+[INFO]   from backend\pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- clean:3.5.0:clean (default-clean) @ backend ---
+[INFO] Deleting D:\UIT\AI-native-verified-software-evolution\backend\target
+[INFO] ------------------------------------------------------------------------
+[INFO] Reactor Summary for AI-Native Software Evolution Platform 0.1.0-SNAPSHOT:
+[INFO] 
+[INFO] AI-Native Software Evolution Platform .............. SUCCESS [  0.659 s]
+[INFO] Analyzer ........................................... SUCCESS [  0.077 s]
+[INFO] JavaParser Semantic Frontend ....................... SUCCESS [  0.058 s]
+[INFO] Backend ............................................ SUCCESS [  0.089 s]
+[INFO] ------------------------------------------------------------------------
+[INFO] BUILD SUCCESS
+[INFO] ------------------------------------------------------------------------
+[INFO] Total time:  1.176 s
+[INFO] Finished at: 2026-09-03T09:00:08+07:00
+[INFO] ------------------------------------------------------------------------

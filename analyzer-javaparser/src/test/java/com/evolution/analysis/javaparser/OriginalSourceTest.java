@@ -1,0 +1,69 @@
+package com.evolution.analysis.javaparser;
+
+import static org.junit.jupiter.api.Assertions.*;
+
+import com.evolution.analysis.contract.identity.RepositoryIdentity;
+import com.evolution.analysis.contract.identity.SourceDocumentIdentity;
+import com.github.javaparser.JavaParser;
+import com.github.javaparser.ParserConfiguration;
+import com.github.javaparser.ast.expr.MethodCallExpr;
+import org.junit.jupiter.api.Test;
+
+class OriginalSourceTest {
+    private static final SourceDocumentIdentity DOCUMENT = SourceDocumentIdentity.from(
+            RepositoryIdentity.fromCanonicalCoordinate("https://example.test/fixture.git"), "fixture/C.java");
+
+    @Test void duplicateCallsRetainDistinctTabAndAstralOffsets() {
+        String text = "class C {\n\tvoid run() { hit(); hit(); String x = \"😀\"; hit(); }\n}";
+        var calls = parser().parse(text).getResult().orElseThrow().findAll(MethodCallExpr.class);
+        var source = new OriginalSource(DOCUMENT, text);
+        assertEquals(3, calls.size());
+        var first = source.span(calls.get(0));
+        var second = source.span(calls.get(1));
+        var third = source.span(calls.get(2));
+        assertEquals(2, first.startLine());
+        assertEquals(15, first.startColumn());
+        assertEquals(22, second.startColumn());
+        assertEquals(46, third.startColumn());
+        assertEquals("hit()", source.slice(third));
+        assertEquals("hit()", source.slice(first));
+        assertEquals("hit()", source.slice(second));
+        assertNotEquals(first, second);
+    }
+
+    @Test void multilineCrLfSpanRoundTripsOriginalText() {
+        String expression = "take(\r\n\t\"x\"\r\n)";
+        String text = "class C { void run() { " + expression + "; }}";
+        var call = parser().parse(text).getResult().orElseThrow().findFirst(MethodCallExpr.class).orElseThrow();
+        var source = new OriginalSource(DOCUMENT, text);
+        var span = source.span(call);
+        assertEquals(3, span.endLine());
+        assertEquals(2, span.endColumn());
+        assertEquals(expression, source.slice(span));
+    }
+
+    @Test void unicodeEscapeAndEscapedLineTerminatorUseOriginalText() {
+        String escaped = "\\" + "u0068it()";
+        String line = "\\" + "u000a";
+        String text = "class C { void run() { " + escaped + "; // " + line + " hit();\n} }";
+        var calls = parser().parse(text).getResult().orElseThrow().findAll(MethodCallExpr.class);
+        var source = new OriginalSource(DOCUMENT, text);
+        assertEquals(2, calls.size());
+        assertEquals(escaped, source.slice(source.span(calls.get(0))));
+        assertEquals("hit()", source.slice(source.span(calls.get(1))));
+        assertEquals(1, source.span(calls.get(1)).startLine());
+    }
+
+    private static JavaParser parser() {
+        return new JavaParser(new ParserConfiguration().setLanguageLevel(ParserConfiguration.LanguageLevel.JAVA_21)
+                .setTabSize(1).setPreprocessUnicodeEscapes(true));
+    }
+
+    @Test void escapedFinalDelimiterAndCrOnlyLinesRetainFullOriginalSlice() {
+        String expression = "hit(" + "\\" + "u0029";
+        String text = "class C {\rvoid run(){" + expression + ";}\r}";
+        var call = parser().parse(text).getResult().orElseThrow().findFirst(MethodCallExpr.class).orElseThrow();
+        var source = new OriginalSource(DOCUMENT,text);
+        assertEquals(expression, source.slice(source.span(call)));
+    }
+}

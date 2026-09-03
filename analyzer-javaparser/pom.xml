@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>com.evolution</groupId>
+        <artifactId>software-evolution-platform</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+    </parent>
+    <artifactId>analyzer-javaparser</artifactId>
+    <name>JavaParser Semantic Frontend</name>
+    <properties><javaparser.version>3.26.1</javaparser.version></properties>
+    <dependencies>
+        <dependency>
+            <groupId>com.evolution</groupId><artifactId>analyzer</artifactId><version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.github.javaparser</groupId><artifactId>javaparser-symbol-solver-core</artifactId><version>${javaparser.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId><artifactId>junit-jupiter</artifactId><scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.google.code.gson</groupId><artifactId>gson</artifactId><version>2.11.0</version><scope>test</scope>
+        </dependency>
+    </dependencies>
+</project>

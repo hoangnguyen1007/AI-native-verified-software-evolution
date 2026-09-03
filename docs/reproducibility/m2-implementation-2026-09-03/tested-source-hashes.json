@@ -1,0 +1,370 @@
+[
+  {
+    "path": "analyzer-javaparser/pom.xml",
+    "sha256": "0c588b8161d983faf8cc7b46675c7d0a061f3ccd86afc7bb99758cb43a3a3976"
+  },
+  {
+    "path": "analyzer-javaparser/src/main/java/com/evolution/analysis/javaparser/Extraction.java",
+    "sha256": "1c90eb6f9d32322c1723496108afdce243d33798fb1ab1d6532c2a9ab3bfed49"
+  },
+  {
+    "path": "analyzer-javaparser/src/main/java/com/evolution/analysis/javaparser/JavaParserFrontend.java",
+    "sha256": "814286985e8de90ac8fe47be89adcd740d0000ea733423f2960e95c5d0ef2879"
+  },
+  {
+    "path": "analyzer-javaparser/src/main/java/com/evolution/analysis/javaparser/OriginalSource.java",
+    "sha256": "8029650a9ba62639e521e42fb9e8e88d6f1e417eef6fa87f5fe5beba638d3da9"
+  },
+  {
+    "path": "analyzer-javaparser/src/main/java/com/evolution/analysis/javaparser/ResolutionEnvironment.java",
+    "sha256": "e39c8c639d5f34b8002beb039f065797527f503039989fb00349d7f719a44792"
+  },
+  {
+    "path": "analyzer-javaparser/src/test/java/com/evolution/analysis/javaparser/FrozenFixtureTest.java",
+    "sha256": "b564483aa9b53a2f72690d6cc836cc18faa2d189b7049daf94dbbf0a67641a86"
+  },
+  {
+    "path": "analyzer-javaparser/src/test/java/com/evolution/analysis/javaparser/JavaParserFrontendTest.java",
+    "sha256": "69baad20a616bfaf0fa900e02ff6153e7a4cfa80e89518ecba5300b981e49b88"
+  },
+  {
+    "path": "analyzer-javaparser/src/test/java/com/evolution/analysis/javaparser/OriginalSourceTest.java",
+    "sha256": "a8d1f7077d38bf6cbced6c20c2645c57c60889d13378d29468b13aad258ad972"
+  },
+  {
+    "path": "analyzer-javaparser/src/test/java/com/evolution/analysis/javaparser/ResolutionInputsTest.java",
+    "sha256": "289e0194a6e5854e30598a406f9636aee378d3e27e0976a2579f35c3814a852d"
+  },
+  {
+    "path": "analyzer-javaparser/src/test/java/com/evolution/analysis/javaparser/SemanticBoundariesTest.java",
+    "sha256": "2a661b4e3eda3745d09384c051e1d34ed76d655807caf015ae17217a4d7a19ff"
+  },
+  {
+    "path": "analyzer-javaparser/src/test/java/com/evolution/analysis/javaparser/TestInputs.java",
+    "sha256": "f9d93eb77fdc88a7d59feca0d19c0c6cf01c9e7b64a51abd5477143486be1901"
+  },
+  {
+    "path": "analyzer-javaparser/src/test/resources/m2/fixture-expectations.json",
+    "sha256": "e4aac9aa358124cf63eb191a61eecc26315f1c4187163e5f77af24a6ee3ace25"
+  },
+  {
+    "path": "analyzer-javaparser/src/test/resources/m2/fixtures/calls/fixture/CallsFixture.java",
+    "sha256": "2ac2fc7e83f3b660f159078b039d9da7c4f220bf81d0e9d28f5e7d7f57408d1f"
+  },
+  {
+    "path": "analyzer-javaparser/src/test/resources/m2/fixtures/missing/fixture/MissingFixture.java",
+    "sha256": "49486914344efe22a703a06f2f70491acee16a53ea76bedb9166a6eb0f092e7d"
+  },
+  {
+    "path": "analyzer-javaparser/src/test/resources/m2/fixtures/owners/fixture/OwnerFixture.java",
+    "sha256": "b1200f6c26720efb9c160527a5297866182668b2df0ba25f0bb9665f993b897c"
+  },
+  {
+    "path": "analyzer-javaparser/src/test/resources/m2/fixtures/spans/fixture/SpanFixture.java",
+    "sha256": "0ced79056de5a809d06a6b3115977e00d4674b79014600901e4c33047ecb7c9f"
+  },
+  {
+    "path": "analyzer/pom.xml",
+    "sha256": "9b83a0644e246e4e53eec7e72d9c72bdb253d3c7a7678e75a26d7450b0231caa"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/analysis/AnalysisConfiguration.java",
+    "sha256": "cb03989c35e56c6321aef5abc25c9e90540d24b340e995ba2a629eb072cef730"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/analysis/AnalysisManifest.java",
+    "sha256": "f7cfecdcd48ac4fd707b444412f464e212df02f01b6f6fcf9f932562b4ddcf7d"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/analysis/AnalysisProvenance.java",
+    "sha256": "ec2426174dbbb0ff919e8e81e01b60250bd7556712f156ac5780091f3a7979d2"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/analysis/ClasspathEntry.java",
+    "sha256": "dffe46abd280de9dba134d412c7464e85104c644f7aac1cd06d3e2e8e8b72d3a"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/analysis/ClasspathEntryKind.java",
+    "sha256": "0c75d2e095ac879128ab6f213e46c7cc727b741893ef9331693f2fc8b6d04f3b"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/analysis/ManifestComponent.java",
+    "sha256": "5ce7b62c0ef54b16c7015d0a17acaa0b5bbdfa0145e76520430e85fded807491"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/assessment/AnalysisConfidence.java",
+    "sha256": "a68c164f520e4dc54a063265551a4028ad63c3aac93fd4b913e7d6f8fb0e9332"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/assessment/ArchitectureHealthAssessment.java",
+    "sha256": "52e380651eff700c5735ccede9f9f920c12664a555c141bfa7ccc646cd391802"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/assessment/AssessmentStateRules.java",
+    "sha256": "8b90a18705d33a71639e0d4f0cc2dbe14a0b24b69f580038a6c6f8c929bc6d34"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/assessment/AssessmentStatus.java",
+    "sha256": "4509badfb125662238a0291d6cd9769e20a971ba7478cc942f43712629250e65"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/common/CanonicalIdentifier.java",
+    "sha256": "04a5cf5e54ec5bd63029845a98afb5ab8a690fe759bb4de8a545477fe82bab52"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/common/ContentDigest.java",
+    "sha256": "e4cffcd15389aa25daa908afa8b97630359e3286924e859245ff9b16f7aa0dce"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/common/ContractChecks.java",
+    "sha256": "dec980cf5a24bef8b1b7d51f4bcbe1d1edd8132904228148d6733b72495cf19c"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/common/VersionedIdentifier.java",
+    "sha256": "6278d5f8d36a63a6b5b168d98408f70c99c0624ed4ab7ccee85a9cb2c11f7368"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/identity/AnalysisIdentity.java",
+    "sha256": "0f4addec7f3a4b70f9512f34321bab6e68e99c7bbdd7cfb25dc5f6d7ac0ac3e0"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/identity/ConfigurationIdentity.java",
+    "sha256": "0ea4d52953404fbacec4f3b234f12b3d298a1ae0740b7f07e08ed04c79d5309e"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/identity/EntityIdentity.java",
+    "sha256": "03876fe44cd743f829c8d39e57d324a0d67b9f8ab50ac8398e0b4b3404d2ee95"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/identity/EntityScope.java",
+    "sha256": "9c352583dac31a45210b259ce3d2a41f5d644af146415a57f56c15bd748ff23f"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/identity/IdentitySupport.java",
+    "sha256": "bf1e3e010bff61cc5e578733e813d8953f7c83139b65814af0161254a7cca650"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/identity/ModuleIdentity.java",
+    "sha256": "4ae8a2b7cd92c4b68309d6b5835804a9402c45bf03c1972f5412eafda6e03ecc"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/identity/OccurrenceIdentity.java",
+    "sha256": "e58a0edc4da06daf10fc8ed56689beabd783f8325ec6faea9569d7e03784265b"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/identity/RelationshipIdentity.java",
+    "sha256": "074c45fc225d5de929650675f88e904f418811f9809e7b7c498ce60e9b7d350c"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/identity/RepositoryIdentity.java",
+    "sha256": "32bd61c8e15324f85fd4c688dc0d4e3b443298fccdd1d9abfcf732db5423d946"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/identity/SnapshotIdentity.java",
+    "sha256": "58c0828a925f51fb49bc8a8a8db32a2d977416bb02b86cde87a2ba10a553ec76"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/identity/SourceDocumentIdentity.java",
+    "sha256": "e3dc0a34bc6be186f6fb8e30a1eefe0791a8996549c004c09bdcef30ad9b1d85"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/metrics/MetricEnvelope.java",
+    "sha256": "019fe3045c9a48964c411e6e08a5439ee297acf01ac409748de1e8fb00cf6bdf"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/metrics/MetricScope.java",
+    "sha256": "61b4ab178648c8a4746eafeb15a7bd588705e27a251c384470a78dd3adb096fd"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/metrics/MetricScopeType.java",
+    "sha256": "7d711a17adb7aad404ad8dde512fd473a8a47ee2ddf9d35c63f6ffac6a81fce9"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/metrics/MetricValue.java",
+    "sha256": "eb2f074a1225fdd421e72eaaef85856a574d5ddbe7e656b64c7fa64840314982"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/metrics/RatioEvidence.java",
+    "sha256": "6eddf31adaa39b71b543857fa684caf4f290e9e4fa65f65cdd41fd001407ce3d"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/semantic/Derivation.java",
+    "sha256": "17b33966e1315af2fb9c6b271e72ff9a25398a62d9d600e5fd2c1792a5537db0"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/semantic/DerivationKind.java",
+    "sha256": "faff04335b3dd2646194b059617ba9a2a242d715fd7f9ea2818bc4d30e185d35"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/semantic/Diagnostic.java",
+    "sha256": "8fc74a94418b949398eee100dcee7e0579aa5e4cce86bd7008a9fc7767106113"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/semantic/DiagnosticSeverity.java",
+    "sha256": "934c65884193ab3b5c0da5844b974d742c705577ac8d022fe20dff7d310daa9c"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/semantic/Entity.java",
+    "sha256": "78e6e4058c4d9b6415ab238b531f749abcbf6883fe820de1bdc45200ee11dbac"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/semantic/EntityKind.java",
+    "sha256": "4f81ce576ed24c38b2c69367d1916ae46242a07779671495516fca3faa5c882b"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/semantic/EntityOrigin.java",
+    "sha256": "4fdb926429c16fd48c1a81201c7d9f3a19b729a7006158930b5f185760e83e53"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/semantic/RelationshipKind.java",
+    "sha256": "83bd4633f4a5b802b697004eeb5e79d4c811543820567fde01154754c4164af8"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/semantic/RelationshipOccurrence.java",
+    "sha256": "4f9ac7c142cdc838ee16668ee8cfd5b27d248b376196feecd577a62ba308c26b"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/semantic/RelationshipTarget.java",
+    "sha256": "5f3768f844027635c732d9ae3c8af3fbbdaefcdc979ffe4ae1f7301d7431a05e"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/semantic/SemanticRelationship.java",
+    "sha256": "48dab55ca397218e16962cc8aeb3bcb287335e9671307e14c435989d5c609de5"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/semantic/SemanticStatus.java",
+    "sha256": "c615839d8284715d6b9c6139f31af2c1e66d568f8ddee5963678e6ea12ec67a4"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/semantic/Uncertainty.java",
+    "sha256": "237a75fa505fd7e019a5ebebcc2f02129826dc84c9b5969b5796dc531ac7d8c8"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/serialization/CanonicalJson.java",
+    "sha256": "dcd20ecea8d900f721bf9aa2dbe47867aa7eb63d14abb575a50ecd8cf505f227"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/source/ModuleDescriptor.java",
+    "sha256": "e60653051eb6441e56d5ffa2c6c629f0d201759d41b19d481c8a6a28f5ee3118"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/source/RepositorySnapshot.java",
+    "sha256": "f6733a18b6f59d031fde7f5b2d1d50689f029a9220b3d6677dca2ce59f48bf1e"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/source/SnapshotFile.java",
+    "sha256": "684ee5b3d449019f460dd56288ecdf9cb78adbbdfc974b22e0bc06aa1c4ce3c6"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/source/SourceClassification.java",
+    "sha256": "7a1697a35e62a93b145f96e06c06b740bc5c5847add994e9c3aaa46879f8c939"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/source/SourceDocument.java",
+    "sha256": "e234348a5be3d15dfa207433a2f43bcc93732089eb6f7232f941f2b77c1ffbef"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/source/SourceSpan.java",
+    "sha256": "c6292c4199e8f20fd5556cb39e367ab5e601d0459573941222703441dd40a4e7"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/frontend/BinaryInput.java",
+    "sha256": "3444d5eedb5d22b7a6e115a68a706420a6c2eabde2c9f89fcd2969cef3210405"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/frontend/CategoryCoverage.java",
+    "sha256": "0730f0c18935104bd4009f1c16bdf392740231db42246814c92b735262c5b5be"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/frontend/DeclarationRecord.java",
+    "sha256": "ae3e8c1c3a5a37a5fec93772721c96afc27feb3f03b655b13606bc9829a79229"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/frontend/ErasedType.java",
+    "sha256": "87371ae0c85ed3935b1a24c3d0fa16aec07eb3d61f87c92e40ab2b1714bfb8ff"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/frontend/FrontendInputException.java",
+    "sha256": "03825399e7d28e2c4ec919536c9b932486acd2125cf1abaf56d075cd6ef887b7"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/frontend/FrontendRequest.java",
+    "sha256": "498c5071fa5c4923fdeb656694bb2fc80f39490150f2e889de2de768e08deed3"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/frontend/FrontendResult.java",
+    "sha256": "6072e94170f787d19785cc3d7cacec37bc1870997a98c9fbdceb58b5f93bee48"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/frontend/JavaSymbolName.java",
+    "sha256": "e0926b7f82a9397472552bcfde3be70be09fccf5d6a6a36382f26734998325aa"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/frontend/ObservationRecord.java",
+    "sha256": "40aa9244a751b3102ffe9e980cd0b1f68400f55fb23aa250a32ba0ab4ee1cdd4"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/frontend/PlatformInput.java",
+    "sha256": "698738671a20c7919c7aeedffe2c19cf85b095a5d7d3875be2fd051ea9001ea9"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/frontend/SemanticFrontend.java",
+    "sha256": "3d21b19ce1a2c6ae89a11cffb3f2f10c5b7d17505039bd79f39834b61b8ca177"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/frontend/SourceInput.java",
+    "sha256": "b9f8731776e27ac58da46b933b6274f735e0a16a0c394c5a7c67d06e27cd9299"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/frontend/SourceOutcome.java",
+    "sha256": "a1636cb2b81461857c4dfbf44996e5558f603543b9b9b796a706d9f2aef4a665"
+  },
+  {
+    "path": "analyzer/src/test/java/com/evolution/analysis/contract/AnalysisAndAssessmentContractTest.java",
+    "sha256": "d3b24b4042354291c985e7f011d4b31beaa77df873003f93324e6f152c5ad153"
+  },
+  {
+    "path": "analyzer/src/test/java/com/evolution/analysis/contract/CanonicalSerializationTest.java",
+    "sha256": "b2e1ccd05ce735670cc236a6cd3ea65fcc50cd3fc01dc04b793334ea44ba0670"
+  },
+  {
+    "path": "analyzer/src/test/java/com/evolution/analysis/contract/ContractFixtures.java",
+    "sha256": "7b5a7f44dfd71fa481cfac144b72e9d31516e96ad95595c92f68c94dfa430d18"
+  },
+  {
+    "path": "analyzer/src/test/java/com/evolution/analysis/contract/IdentityAndSourceContractTest.java",
+    "sha256": "47a168b54e04ac7addaddffe33051b48e2bd8d75783e177e52f82e572cdbb803"
+  },
+  {
+    "path": "analyzer/src/test/java/com/evolution/analysis/contract/SemanticContractTest.java",
+    "sha256": "826c9d59e895aa128f7742ce7b882d6e6c905d5808a2b2cf37bcbb0155434d81"
+  },
+  {
+    "path": "analyzer/src/test/java/com/evolution/analysis/frontend/FrontendContractTest.java",
+    "sha256": "c15e7884ff39ecc6efe2cdb74b2ee037f609f1a1a86f82a4211e6233b7a6d382"
+  },
+  {
+    "path": "analyzer/src/test/java/com/evolution/analysis/frontend/FrontendResultTest.java",
+    "sha256": "62d04ce1318711334e4ef553bfdf7af46dd1f213f8e5cbb7bad910c68baca4cc"
+  },
+  {
+    "path": "analyzer/src/test/java/com/evolution/analysis/frontend/JavaSymbolNameTest.java",
+    "sha256": "a169f9ac9eb86dcdd9df12f2e2cb73e28440b292b11b2a3a5f373d4da8e8d461"
+  },
+  {
+    "path": "analyzer/src/test/java/com/evolution/foundation/Java21BuildTest.java",
+    "sha256": "bbd88eccea9fcef83b78d530f34ebe9b3716a21232fbc20e3cc55a85c25c3be3"
+  },
+  {
+    "path": "backend/pom.xml",
+    "sha256": "9b81a7a00439acd6ad861dae82777dfbdc7fc4a98dd3ef4f7410f05239ea10ac"
+  },
+  {
+    "path": "backend/src/test/java/com/evolution/foundation/Java21BuildTest.java",
+    "sha256": "0bd97a07aa899aabab23cc6b4a8c3ff22a03fa24e6a823bbd092157d1c49a86e"
+  },
+  {
+    "path": "pom.xml",
+    "sha256": "29df5c94bc5f3936d5cbd2dec25d2df32005bc3614bed9e821090572c4ad5951"
+  }
+]

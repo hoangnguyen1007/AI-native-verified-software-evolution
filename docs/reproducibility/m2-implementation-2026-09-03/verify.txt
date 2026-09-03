@@ -1,0 +1,58 @@
+[INFO] Scanning for projects...
+[INFO] ------------------------------------------------------------------------
+[INFO] Reactor Build Order:
+[INFO] 
+[INFO] AI-Native Software Evolution Platform                              [pom]
+[INFO] Analyzer                                                           [jar]
+[INFO] JavaParser Semantic Frontend                                       [jar]
+[INFO] Backend                                                            [jar]
+[INFO] 
+[INFO] -------------< com.evolution:software-evolution-platform >--------------
+[INFO] Building AI-Native Software Evolution Platform 0.1.0-SNAPSHOT      [1/4]
+[INFO]   from pom.xml
+[INFO] --------------------------------[ pom ]---------------------------------
+[INFO] 
+[INFO] --- clean:3.5.0:clean (default-clean) @ software-evolution-platform ---
+[INFO] 
+[INFO] --- enforcer:3.6.3:enforce (enforce-build-foundation) @ software-evolution-platform ---
+[INFO] Rule 0: org.apache.maven.enforcer.rules.version.RequireMavenVersion passed
+[INFO] Rule 1: org.apache.maven.enforcer.rules.version.RequireJavaVersion passed
+[INFO] Rule 2: org.apache.maven.enforcer.rules.property.RequireProperty passed
+[INFO] Rule 3: org.apache.maven.enforcer.rules.property.RequireProperty passed
+[INFO] Rule 4: org.apache.maven.enforcer.rules.BanDuplicatePomDependencyVersions passed
+[INFO] Rule 5: org.apache.maven.enforcer.rules.dependency.DependencyConvergence passed
+[INFO] Rule 6: org.apache.maven.enforcer.rules.ReactorModuleConvergence passed
+[INFO] Rule 7: org.apache.maven.enforcer.rules.RequirePluginVersions passed
+[INFO] Rule 8: org.apache.maven.enforcer.rules.dependency.RequireReleaseDeps passed
+[INFO] Rule 9: org.apache.maven.enforcer.rules.dependency.RequireUpperBoundDeps passed
+[INFO] 
+[INFO] -----------------------< com.evolution:analyzer >-----------------------
+[INFO] Building Analyzer 0.1.0-SNAPSHOT                                   [2/4]
+[INFO]   from analyzer\pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- clean:3.5.0:clean (default-clean) @ analyzer ---
+[INFO] Deleting D:\UIT\AI-native-verified-software-evolution\analyzer\target
+[INFO] ------------------------------------------------------------------------
+[INFO] Reactor Summary for AI-Native Software Evolution Platform 0.1.0-SNAPSHOT:
+[INFO] 
+[INFO] AI-Native Software Evolution Platform .............. SUCCESS [  1.589 s]
+[INFO] Analyzer ........................................... FAILURE [  1.568 s]
+[INFO] JavaParser Semantic Frontend ....................... SKIPPED
+[INFO] Backend ............................................ SKIPPED
+[INFO] ------------------------------------------------------------------------
+[INFO] BUILD FAILURE
+[INFO] ------------------------------------------------------------------------
+[INFO] Total time:  3.599 s
+[INFO] Finished at: 2026-09-03T08:50:05+07:00
+[INFO] ------------------------------------------------------------------------
+[ERROR] Failed to execute goal org.apache.maven.plugins:maven-clean-plugin:3.5.0:clean (default-clean) on project analyzer: Failed to clean project: Failed to delete D:\UIT\AI-native-verified-software-evolution\analyzer\target\classes\com\evolution\analysis\frontend\ErasedType.class -> [Help 1]
+[ERROR] 
+[ERROR] To see the full stack trace of the errors, re-run Maven with the -e switch.
+[ERROR] Re-run Maven using the -X switch to enable full debug logging.
+[ERROR] 
+[ERROR] For more information about the errors and possible solutions, please read the following articles:
+[ERROR] [Help 1] http://cwiki.apache.org/confluence/display/MAVEN/MojoExecutionException
+[ERROR] 
+[ERROR] After correcting the problems, you can resume the build with the command
+[ERROR]   mvn <args> -rf :analyzer

@@ -12,5 +12,8 @@ public enum EntityKind {
     FIELD,
     PARAMETER,
     TYPE_PARAMETER,
-    ANNOTATION_USE
+    ANNOTATION_USE,
+    RECORD_COMPONENT,
+    LAMBDA,
+    INITIALIZER
 }
