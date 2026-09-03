@@ -110,10 +110,10 @@ class FieldAccessTest {
         assertTrue(targets.stream().allMatch(e -> e.kind() == EntityKind.FIELD));
         assertEquals(Set.of(fieldName("E.A"),fieldName("java.time.DayOfWeek.MONDAY")),new HashSet<>(targets.stream().map(Entity::canonicalName).toList()));
         var unsupported = new JavaParserFrontend().analyze(TestInputs.request("record R(int x) { int f(){return this.x;} } class Constants { static final String NAME=\"old\"; } @Deprecated(since=Constants.NAME) class C {}"));
-        assertTrue(accesses(unsupported).isEmpty());
+        assertEquals(1,accesses(unsupported).size()); // Record field is supported; annotation values retain their boundary.
         var ledger = unsupported.observations().stream().filter(o -> isFieldCategory(o.category().value())).toList();
         assertEquals(2,ledger.size());
-        assertTrue(ledger.stream().allMatch(o -> o.attribution() == SemanticStatus.UNSUPPORTED && o.mappedOccurrence().isEmpty()));
+        assertEquals(1,ledger.stream().filter(o -> o.attribution()==SemanticStatus.UNSUPPORTED && o.mappedOccurrence().isEmpty()).count());
     }
     @Test void fieldHidingAndMultiDeclaratorsUseSelectedDeclarations() {
         var result = new JavaParserFrontend().analyze(TestInputs.request("class Base { int value; } class Child extends Base { int value; } class C { int left,right; void f(Child c){right=left; c.value=1; ((Base)c).value++;} }"));

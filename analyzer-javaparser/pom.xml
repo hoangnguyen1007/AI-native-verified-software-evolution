@@ -10,7 +10,7 @@
     </parent>
     <artifactId>analyzer-javaparser</artifactId>
     <name>JavaParser Semantic Frontend</name>
-    <properties><javaparser.version>3.26.1</javaparser.version></properties>
+    <properties><javaparser.version>3.27.1</javaparser.version></properties>
     <dependencies>
         <dependency>
             <groupId>com.evolution</groupId><artifactId>analyzer</artifactId><version>${project.version}</version>

@@ -13,8 +13,19 @@ final class FieldExtraction {
     FieldExtraction(Extraction context) { this.context = context; }
 
     void extract(CompilationUnit unit) {
+        for (var reference : unit.findAll(MethodReferenceExpr.class)) {
+            if (!(reference.getScope() instanceof TypeExpr type) || !type.getType().isClassOrInterfaceType()) continue;
+            for (var part = type.getType().asClassOrInterfaceType(); part != null; part = part.getScope().orElse(null)) {
+                if (compactParameter(reference,part.getNameWithScope())) continue;
+                var value = ReferenceResolution.value(reference,part.getNameWithScope());
+                if (value.isPresent() && (value.get().isField() || value.get().isEnumConstant())) {
+                    context.observe(part,"reads-field",() -> context.field(value.orElseThrow()),() -> context.fieldOwner(reference));
+                }
+            }
+        }
         for (var node : unit.stream().filter(n -> n instanceof FieldAccessExpr || n instanceof NameExpr).toList()) {
             var expression = (Expression)node;
+            if (expression instanceof NameExpr name && compactParameter(name,name.getNameAsString())) continue;
             if (expression instanceof FieldAccessExpr access && arrayLength(access)) {
                 emit(expression,() -> { throw new UnsupportedOperationException("Array length has no declared field entity"); });
                 continue;
@@ -31,6 +42,14 @@ final class FieldExtraction {
             if (value.isField() || value.isEnumConstant()) emit(expression,() -> value);
             // Parameters, locals, pattern variables and types deliberately have no field relationship.
         }
+    }
+    static boolean compactParameter(Node node,String name) {
+        for (Node parent=node.getParentNode().orElse(null);parent!=null;parent=parent.getParentNode().orElse(null)) {
+            if (parent instanceof com.github.javaparser.ast.body.CompactConstructorDeclaration compact)
+                return ((com.github.javaparser.ast.body.RecordDeclaration)compact.getParentNode().orElseThrow()).getParameters().stream().anyMatch(p -> p.getNameAsString().equals(name));
+            if (parent instanceof com.github.javaparser.ast.body.TypeDeclaration<?>) return false;
+        }
+        return false;
     }
     private void emit(Expression expression, Supplier<ResolvedValueDeclaration> target) {
         for (var mode : modes(expression))

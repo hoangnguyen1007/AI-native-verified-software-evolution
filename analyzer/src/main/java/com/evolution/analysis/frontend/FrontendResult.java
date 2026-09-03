@@ -6,11 +6,12 @@ import com.evolution.analysis.contract.semantic.*;
 import java.util.*;
 import java.util.stream.Collectors;
 
-/** Deterministic neutral output. Every relationship has an occurrence and ledger entry. */
+/** Deterministic neutral output. Explicit occurrences and language-rule evidence remain separate. */
 public record FrontendResult(AnalysisIdentity analysis, VersionedIdentifier frontend, State state,
         List<DeclarationRecord> declarations, List<RelationshipOccurrence> occurrences,
         List<ObservationRecord> observations, List<SourceOutcome> sources,
-        List<CategoryCoverage> coverage, List<Diagnostic> diagnostics, List<TypeUseRecord> types) {
+        List<CategoryCoverage> coverage, List<Diagnostic> diagnostics, List<TypeUseRecord> types, List<AnnotationUseRecord> annotations,
+        List<DerivedRelationshipRecord> derivedRelationships) {
     public enum State { COMPLETED, PARTIAL, INVALID_INPUT, FAILED, CANCELED }
     public FrontendResult {
         Objects.requireNonNull(analysis); Objects.requireNonNull(frontend); Objects.requireNonNull(state);
@@ -18,11 +19,25 @@ public record FrontendResult(AnalysisIdentity analysis, VersionedIdentifier fron
         observations = sorted(observations, "observations"); sources = sorted(sources, "source outcomes");
         coverage = sorted(coverage, "category coverage"); diagnostics = sorted(diagnostics, "diagnostics");
         types = sorted(types, "type uses");
+        annotations = sorted(annotations,"annotation uses");
+        derivedRelationships = sorted(derivedRelationships,"derived relationships");
         var entities = declarations.stream().map(d -> d.entity().identity()).collect(Collectors.toSet());
         var observed = observations.stream().flatMap(o -> o.mappedOccurrence().stream()).toList();
         if (observed.size() != new HashSet<>(observed).size() || !new HashSet<>(observed).equals(occurrences.stream().map(RelationshipOccurrence::identity).collect(Collectors.toSet()))) throw new IllegalArgumentException("ledger and occurrence mapping differ");
         var byId = occurrences.stream().collect(Collectors.toMap(RelationshipOccurrence::identity, o -> o));
         var documents = sources.stream().map(SourceOutcome::document).collect(Collectors.toSet());
+        var entityInputs = entities.stream().map(id -> id.value()).collect(Collectors.toSet());
+        for (var derived : derivedRelationships) {
+            var relation=derived.relationship();
+            if (!FrontendRequest.CATEGORIES.stream().anyMatch(c -> relation.kind().value().equals("java."+c))) throw new IllegalArgumentException("unregistered derived category");
+            if (!entities.contains(relation.source()) || !entityInputs.containsAll(derived.derivation().inputIdentities())
+                    || derived.supportingSpans().stream().anyMatch(s -> !documents.contains(s.document()))) throw new IllegalArgumentException("derived relationship references missing evidence");
+            if (relation.target() instanceof RelationshipTarget.Resolved r && !entities.contains(r.target())
+                    || relation.target() instanceof RelationshipTarget.Candidates c && !entities.containsAll(c.candidates())) throw new IllegalArgumentException("derived target missing");
+        }
+        for (var annotation : annotations) {
+            if (!entities.contains(annotation.owner()) || !documents.contains(annotation.span().document())) throw new IllegalArgumentException("annotation use references missing evidence");
+        }
         for (var type : types) {
             if (!documents.contains(type.span().document()) || !entities.containsAll(type.type().referencedEntities())
                     || type.owner().stream().anyMatch(id -> !entities.contains(id))) throw new IllegalArgumentException("type detail references missing evidence");
@@ -58,6 +73,18 @@ public record FrontendResult(AnalysisIdentity analysis, VersionedIdentifier fron
             long emitted = occurrences.stream().filter(o -> o.relationship().kind().equals(c.category())).count();
             if (attempted != c.attempted() || emitted != c.emitted()) throw new IllegalArgumentException("coverage differs from output");
         }
+    }
+    public FrontendResult(AnalysisIdentity analysis, VersionedIdentifier frontend, State state,
+            List<DeclarationRecord> declarations, List<RelationshipOccurrence> occurrences,
+            List<ObservationRecord> observations, List<SourceOutcome> sources,
+            List<CategoryCoverage> coverage, List<Diagnostic> diagnostics, List<TypeUseRecord> types, List<AnnotationUseRecord> annotations) {
+        this(analysis,frontend,state,declarations,occurrences,observations,sources,coverage,diagnostics,types,annotations,List.of());
+    }
+    public FrontendResult(AnalysisIdentity analysis, VersionedIdentifier frontend, State state,
+            List<DeclarationRecord> declarations, List<RelationshipOccurrence> occurrences,
+            List<ObservationRecord> observations, List<SourceOutcome> sources,
+            List<CategoryCoverage> coverage, List<Diagnostic> diagnostics, List<TypeUseRecord> types) {
+        this(analysis,frontend,state,declarations,occurrences,observations,sources,coverage,diagnostics,types,List.of());
     }
     public FrontendResult(AnalysisIdentity analysis, VersionedIdentifier frontend, State state,
             List<DeclarationRecord> declarations, List<RelationshipOccurrence> occurrences,

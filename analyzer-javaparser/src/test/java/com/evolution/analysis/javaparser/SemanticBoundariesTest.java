@@ -34,17 +34,17 @@ class SemanticBoundariesTest {
         var lambda = owners.stream().filter(e -> e.kind() == EntityKind.LAMBDA).findFirst().orElseThrow();
         assertTrue(lambda.canonicalName().contains("[\"initializer\",[\"field\""),lambda.canonicalName());
     }
-    @Test void unsupportedRecordAttributionNeverFallsBackToTypeCallerOrCrashes() {
+    @Test void recordAttributionUsesCompactConstructorAsCaller() {
         var result = analyze("record R(String s) { R { s.trim(); } }");
-        // The pinned resolver rejects RecordDeclaration indexing; keep this case in the denominator.
-        assertTrue(calls(result).isEmpty());
-        assertEquals(1,result.observations().stream().filter(o -> o.category().value().equals("java.calls") && o.attribution() == SemanticStatus.UNSUPPORTED).count());
-        assertEquals(FrontendResult.State.PARTIAL,result.state());
+        assertEquals(1,calls(result).size());
+        assertEquals(SemanticStatus.RESOLVED,calls(result).getFirst().status());
+        assertEquals(EntityKind.CONSTRUCTOR,TypeRelationshipsTest.entities(result).get(calls(result).getFirst().relationship().source()).kind());
     }
     @Test void enumConstantBodyCannotMasqueradeAsEnclosingEnumMethod() {
         var result = analyze("enum E { A { void f(){hit();} }; static void hit(){} abstract void f(); }");
-        assertTrue(calls(result).isEmpty(),CanonicalJson.write(result));
-        assertTrue(result.observations().stream().anyMatch(o -> o.category().value().equals("java.calls") && o.attribution() == SemanticStatus.UNSUPPORTED));
+        assertEquals(1,calls(result).size());
+        var owner=TypeRelationshipsTest.entities(result).get(calls(result).getFirst().relationship().source());
+        assertTrue(owner.canonicalName().contains("\"local-type\""));
     }
     @Test void invalidOverloadAmbiguityNeverBecomesAResolvedTarget() {
         var result = analyze("class C { void pick(String s){} void pick(Integer i){} void run(){pick(null);} }");
@@ -63,11 +63,11 @@ class SemanticBoundariesTest {
         assertEquals(2,result.declarations().stream().filter(d -> Set.of(EntityKind.FIELD,EntityKind.METHOD).contains(d.entity().kind())).count());
         assertTrue(result.declarations().stream().filter(d -> Set.of(EntityKind.FIELD,EntityKind.METHOD).contains(d.entity().kind())).allMatch(d -> d.status() == SemanticStatus.PARTIAL));
     }
-    @Test void inheritedCallSelectsActualDeclaringTypeAndImplicitMembersAreWithheld() {
+    @Test void inheritedCallSelectsActualDeclaringTypeAndDefaultConstructorIsDerived() {
         var result = analyze("class Base { String hit(){return \"x\";} } class Child extends Base {} class C { String run(Child c){return c.hit();} C make(){return new C();} }");
         var call = calls(result).getFirst();
         var id = ((RelationshipTarget.Resolved)call.relationship().target()).target();
         assertEquals("java:v1:[\"method\",[\"type\",[],\"Base\"],\"hit\",[]]",result.declarations().stream().map(DeclarationRecord::entity).filter(e -> e.identity().equals(id)).findFirst().orElseThrow().canonicalName());
-        assertTrue(result.observations().stream().anyMatch(o -> o.category().value().equals("java.constructor-calls") && o.attribution() == SemanticStatus.UNSUPPORTED));
+        assertTrue(result.observations().stream().anyMatch(o -> o.category().value().equals("java.constructor-calls") && o.attribution() == SemanticStatus.RESOLVED));
     }
 }

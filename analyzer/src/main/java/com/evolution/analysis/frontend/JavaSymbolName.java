@@ -33,6 +33,10 @@ public final class JavaSymbolName {
     public static JavaSymbolName recordComponent(JavaSymbolName owner, String name) {
         return new JavaSymbolName("record-component", typeOwner(owner), identifier(name));
     }
+    public static JavaSymbolName annotationUse(JavaSymbolName owner, SourceDocumentIdentity document, int offset) {
+        anchor(document,offset);
+        return new JavaSymbolName("annotation-use",owner.tuple,document.value(),offset);
+    }
     public static JavaSymbolName parameter(JavaSymbolName owner, int index) {
         if (!List.of("method", "constructor").contains(owner.tuple.getFirst())) throw new IllegalArgumentException("callable owner required");
         return indexed("parameter", owner, index);

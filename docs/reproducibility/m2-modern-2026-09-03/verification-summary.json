@@ -1,0 +1,182 @@
+{
+  "command": ".\\mvnw.cmd -o -B -ntp '-Dmaven.repo.local=C:/Users/Admin/.m2/repository' verify",
+  "exitCode": 0,
+  "totalTests": 98.0,
+  "modules": [
+    {
+      "module": "analyzer",
+      "suites": [
+        {
+          "name": "com.evolution.analysis.contract.AnalysisAndAssessmentContractTest",
+          "tests": 7,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.evolution.analysis.contract.CanonicalSerializationTest",
+          "tests": 3,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.evolution.analysis.contract.DerivedEvidenceTest",
+          "tests": 1,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.evolution.analysis.contract.IdentityAndSourceContractTest",
+          "tests": 8,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.evolution.analysis.contract.SemanticContractTest",
+          "tests": 6,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.evolution.analysis.frontend.FrontendContractTest",
+          "tests": 6,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.evolution.analysis.frontend.FrontendResultTest",
+          "tests": 3,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.evolution.analysis.frontend.JavaSymbolNameTest",
+          "tests": 6,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.evolution.foundation.Java21BuildTest",
+          "tests": 1,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        }
+      ],
+      "tests": 41.0
+    },
+    {
+      "module": "analyzer-javaparser",
+      "suites": [
+        {
+          "name": "com.evolution.analysis.javaparser.AnnotationsTest",
+          "tests": 4,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.evolution.analysis.javaparser.ExpressionTypesTest",
+          "tests": 3,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.evolution.analysis.javaparser.FieldAccessTest",
+          "tests": 7,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.evolution.analysis.javaparser.FrozenFixtureTest",
+          "tests": 1,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.evolution.analysis.javaparser.JavaParserFrontendTest",
+          "tests": 3,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.evolution.analysis.javaparser.MethodReferencesTest",
+          "tests": 6,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.evolution.analysis.javaparser.ModernFixtureTest",
+          "tests": 1,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.evolution.analysis.javaparser.OriginalSourceTest",
+          "tests": 4,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.evolution.analysis.javaparser.RecordsTest",
+          "tests": 5,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.evolution.analysis.javaparser.ResolutionInputsTest",
+          "tests": 7,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.evolution.analysis.javaparser.SemanticBoundariesTest",
+          "tests": 9,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.evolution.analysis.javaparser.TypeRelationshipsTest",
+          "tests": 6,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        }
+      ],
+      "tests": 56.0
+    },
+    {
+      "module": "backend",
+      "suites": [
+        {
+          "name": "com.evolution.foundation.Java21BuildTest",
+          "tests": 1,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        }
+      ],
+      "tests": 1.0
+    }
+  ],
+  "modernExplicitInvocations": 15,
+  "modernCatalogRowsExercised": 18,
+  "independentFinalReview": "INCOMPLETE: reviewer usage exhausted"
+}

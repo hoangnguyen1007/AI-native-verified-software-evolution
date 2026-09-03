@@ -30,7 +30,7 @@ class FrozenFixtureTest {
             fixture.getAsJsonArray("typeDeclarations").forEach(d -> labels.put(d.getAsJsonObject().get("id").getAsString(), d.getAsJsonObject()));
             fixture.getAsJsonArray("callableDeclarations").forEach(d -> labels.put(d.getAsJsonObject().get("id").getAsString(), d.getAsJsonObject()));
             var entities = new HashMap<String, Entity>();
-            assertEquals(labels.size(),result.declarations().stream().map(DeclarationRecord::entity)
+            assertEquals(labels.size(),result.declarations().stream().filter(d -> d.derivation().kind()==DerivationKind.DIRECT).map(DeclarationRecord::entity)
                     .filter(e -> e.origin() == EntityOrigin.PROJECT && Set.of(EntityKind.TYPE,EntityKind.METHOD,EntityKind.CONSTRUCTOR).contains(e.kind())).count(),id + ": unexpected declaration");
             for (var entry : labels.entrySet()) {
                 String key = canonical(entry.getKey(), labels, document.value());

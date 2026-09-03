@@ -5,8 +5,8 @@ import com.evolution.analysis.contract.semantic.*;
 import com.evolution.analysis.frontend.*;
 import com.github.javaparser.ast.*;
 import com.github.javaparser.ast.body.*;
+import com.github.javaparser.ast.expr.*;
 import com.github.javaparser.ast.type.*;
-import com.github.javaparser.resolution.declarations.ResolvedTypeDeclaration;
 import java.util.*;
 import java.util.function.Supplier;
 
@@ -17,6 +17,7 @@ final class TypeExtraction {
     private static final Set<String> ROOT_TYPE_ROLES = Set.of("extends", "implements", "permits", "throws");
     private final Extraction context;
     private final List<TypeUseRecord> result = new ArrayList<>();
+    private final Set<Type> handled = Collections.newSetFromMap(new IdentityHashMap<>());
     TypeExtraction(Extraction context) { this.context = context; }
 
     List<TypeUseRecord> extract(CompilationUnit unit) {
@@ -24,6 +25,8 @@ final class TypeExtraction {
             if (parameter.getParentNode().orElse(null) instanceof CallableDeclaration<?> callable) {
                 context.observe(parameter,"has-parameter",() -> context.entity(parameter),() -> context.entity(callable));
                 add(parameter,parameter.getType(),"parameter-type",parameter.isVarArgs());
+            } else if (parameter.getParentNode().orElse(null) instanceof RecordDeclaration) {
+                add(parameter,parameter.getType(),"field-type",parameter.isVarArgs());
             }
         }
         for (var method : unit.findAll(MethodDeclaration.class)) add(method,method.getType(),"returns",false);
@@ -41,16 +44,33 @@ final class TypeExtraction {
         }
         for (var type : unit.findAll(EnumDeclaration.class))
             for (var implemented : type.getImplementedTypes()) add(type,implemented,"implements",false);
+        for (var type : unit.findAll(RecordDeclaration.class))
+            for (var implemented : type.getImplementedTypes()) add(type,implemented,"implements",false);
+        for (var type : unit.findAll(Type.class)) {
+            if (handled.contains(type) || type instanceof TypeParameter || type instanceof UnknownType) continue;
+            if (type.getParentNode().orElse(null) instanceof TypeExpr expression
+                    && expression.getParentNode().orElse(null) instanceof MethodReferenceExpr reference
+                    && ReferenceResolution.value(reference,expression.toString()).isPresent()) {
+                handled.addAll(type.findAll(Type.class)); continue;
+            }
+            String role = type.getParentNode().orElse(null) instanceof MethodCallExpr
+                    || type.getParentNode().orElse(null) instanceof MethodReferenceExpr ? "type-argument" : "type-uses";
+            add(() -> context.typeUseOwner(type),type,role,false);
+        }
         return List.copyOf(result);
     }
     private void add(Node owner, Type type, String role, boolean variadic) {
+        add(() -> context.entity(owner),type,role,variadic);
+    }
+    private void add(Supplier<Entity> owner, Type type, String role, boolean variadic) {
+        handled.addAll(type.findAll(Type.class));
         var mapped = map(type,owner,role,false);
         Optional<EntityIdentity> identity;
-        try { identity = Optional.of(context.entity(owner).identity()); }
+        try { identity = Optional.of(owner.get().identity()); }
         catch (RuntimeException failure) { identity = Optional.empty(); }
         result.add(new TypeUseRecord(identity,new RelationshipKind("java."+role),context.source(type).span(type),mapped,variadic));
     }
-    private JavaType map(Type type, Node owner, String role, boolean argument) {
+    private JavaType map(Type type, Supplier<Entity> owner, String role, boolean argument) {
         String spelling = context.source(type).slice(context.source(type).span(type));
         if (type instanceof PrimitiveType) return simple(JavaType.Kind.PRIMITIVE,spelling,List.of());
         if (type instanceof VoidType) return simple(JavaType.Kind.VOID,spelling,List.of());
@@ -66,11 +86,14 @@ final class TypeExtraction {
             Entity target = null; RuntimeException failure = null;
             try { target = context.typeEntity(context.resolveNamed(named)); }
             catch (RuntimeException exception) { failure = exception; }
+            if (target!=null && target.kind()==EntityKind.TYPE_PARAMETER && (named.getTypeArguments().isPresent() || named.getScope().isPresent())) {
+                target=null; failure=new IllegalArgumentException("A type variable cannot have type arguments or a qualifier");
+            }
             Entity selected = target; RuntimeException error = failure;
             Supplier<Entity> resolver = () -> { if (error != null) throw error; return selected; };
             var categories = new LinkedHashSet<String>(); categories.add(role); categories.add("type-uses");
             if (argument) categories.add("type-argument");
-            for (var category : categories) context.observe(ROOT_TYPE_ROLES.contains(category) ? named : named.getName(),category,resolver,() -> context.entity(owner));
+            for (var category : categories) context.observe(ROOT_TYPE_ROLES.contains(category) ? named : named.getName(),category,resolver,owner);
             // Supertype and throws edges select the written root; their arguments/qualifiers are type uses.
             String nestedRole = ROOT_TYPE_ROLES.contains(role) ? "type-uses" : role;
             var arguments = named.getTypeArguments().orElseGet(NodeList::new).stream().map(t -> map(t,owner,nestedRole,true)).toList();
@@ -81,7 +104,7 @@ final class TypeExtraction {
             return new JavaType(target == null ? JavaType.Kind.UNKNOWN : target.kind() == EntityKind.TYPE_PARAMETER ? JavaType.Kind.TYPE_VARIABLE : JavaType.Kind.DECLARED,
                     spelling,Optional.ofNullable(target).map(Entity::identity),arguments,qualifier,status);
         }
-        context.observe(type,role,() -> { throw new UnsupportedOperationException("Unsupported written type"); },() -> context.entity(owner));
+        context.observe(type,role,() -> { throw new UnsupportedOperationException("Unsupported written type"); },owner);
         return new JavaType(JavaType.Kind.UNKNOWN,spelling,Optional.empty(),List.of(),Optional.empty(),SemanticStatus.UNSUPPORTED);
     }
     private boolean isTypeQualifier(ClassOrInterfaceType scope) {

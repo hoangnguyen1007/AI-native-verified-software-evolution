@@ -68,4 +68,18 @@ class FrontendContractTest {
         assertThrows(IllegalArgumentException.class,() -> new JavaType(JavaType.Kind.ARRAY,"Missing[]",Optional.empty(),List.of(missing),Optional.empty(),SemanticStatus.RESOLVED));
         assertThrows(UnsupportedOperationException.class,() -> type.components().add(missing));
     }
+    @Test void annotationAndDerivedEvidenceCannotReferenceMissingOwnersOrInputs() {
+        var a=source("fixture/A.java",new byte[]{65},SourceClassification.MAIN);
+        var request=request(List.of(a),List.of(a));
+        var owner=Entity.create(EntityOrigin.PROJECT,EntityScope.project(MODULE.identity()),EntityKind.TYPE,JavaSymbolName.topLevelType("","A").canonicalName(),Optional.empty());
+        var span=new SourceSpan(a.document().identity(),1,1,1,2);
+        var annotation=new AnnotationUseRecord(JavaSymbolName.annotationUse(JavaSymbolName.topLevelType("","A"),a.document().identity(),0).canonicalName(),owner.identity(),span,"declaration-syntax","@A");
+        var coverage=FrontendRequest.CATEGORIES.stream().map(c -> new CategoryCoverage(new RelationshipKind("java."+c),CategoryCoverage.Support.UNSUPPORTED,0,0,0)).toList();
+        var outcomes=List.of(new SourceOutcome(a.document().identity(),SourceOutcome.State.PROCESSED,List.of()));
+        assertThrows(IllegalArgumentException.class,() -> new FrontendResult(request.manifest().identity(),new VersionedIdentifier("frontend.test","1"),FrontendResult.State.COMPLETED,List.of(),List.of(),List.of(),outcomes,coverage,List.of(),List.of(),List.of(annotation)));
+        var relation=SemanticRelationship.create(owner.identity(),new RelationshipKind("java.declares"),new RelationshipTarget.Resolved(owner.identity()));
+        var derived=new DerivedRelationshipRecord(relation,SemanticStatus.RESOLVED,new Derivation(DerivationKind.DERIVED,new VersionedIdentifier("java.test","1"),List.of("missing-input")),List.of(span),List.of(),List.of());
+        var declaration=new DeclarationRecord(owner,"A",SemanticStatus.RESOLVED,new Derivation(DerivationKind.DIRECT,new VersionedIdentifier("java.source","1"),List.of()),List.of(),List.of());
+        assertThrows(IllegalArgumentException.class,() -> new FrontendResult(request.manifest().identity(),new VersionedIdentifier("frontend.test","1"),FrontendResult.State.COMPLETED,List.of(declaration),List.of(),List.of(),outcomes,coverage,List.of(),List.of(),List.of(),List.of(derived)));
+    }
 }

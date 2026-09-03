@@ -57,7 +57,7 @@ public record RelationshipOccurrence(
                 diagnostics);
     }
 
-    private static void validateState(
+    static void validateState(
             RelationshipTarget target,
             SemanticStatus status,
             List<Uncertainty> uncertainties,
