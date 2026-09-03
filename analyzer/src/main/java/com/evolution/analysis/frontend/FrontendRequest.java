@@ -9,7 +9,7 @@ import java.util.*;
 public record FrontendRequest(AnalysisManifest manifest, ModuleIdentity module,
         SourceClassification sourceSet, List<SourceInput> sources,
         PlatformInput platform, List<BinaryInput> dependencies) {
-    public static final String CATALOG = "m2-java-2";
+    public static final String CATALOG = "m2-java-3";
     public static final List<String> CATEGORIES = List.of("declares", "extends", "implements", "permits", "type-uses", "calls", "constructor-calls", "reads-field", "writes-field", "method-references", "has-parameter", "parameter-type", "returns", "field-type", "throws", "annotated-with", "type-parameter-bound", "type-argument");
     public FrontendRequest {
         Objects.requireNonNull(manifest); Objects.requireNonNull(module); Objects.requireNonNull(sourceSet); Objects.requireNonNull(platform);

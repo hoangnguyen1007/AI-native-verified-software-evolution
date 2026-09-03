@@ -20,7 +20,7 @@ import java.util.function.Supplier;
 
 /** Per-request state. Traversal order never enters identity or output ordering. */
 final class Extraction {
-    private static final VersionedIdentifier VERSION = new VersionedIdentifier("frontend.javaparser", "3.26.1-m2.2");
+    private static final VersionedIdentifier VERSION = new VersionedIdentifier("frontend.javaparser", "3.26.1-m2.3");
     private static final Derivation DIRECT = new Derivation(DerivationKind.DIRECT, new VersionedIdentifier("java.source", "1"), List.of());
     private final FrontendRequest request;
     private final ResolutionEnvironment environment;
@@ -63,6 +63,7 @@ final class Extraction {
             for (var node : unit.ast.findAll(ExplicitConstructorInvocationStmt.class)) observe(node, "constructor-calls", () -> callable(node.resolve()), () -> owner(node));
             for (var node : unit.ast.findAll(MethodReferenceExpr.class)) unsupported(node, "method-references");
             types.addAll(new TypeExtraction(this).extract(unit.ast));
+            new FieldExtraction(this).extract(unit.ast);
         }
         var outcomes = new ArrayList<>(rejected);
         for (var unit : orderedUnits) outcomes.add(new SourceOutcome(unit.input.document().identity(),
@@ -71,7 +72,7 @@ final class Extraction {
             var kind = new RelationshipKind("java." + c);
             long attempted = observations.stream().filter(o -> o.category().equals(kind)).count();
             long emitted = occurrences.values().stream().filter(o -> o.relationship().kind().equals(kind)).count();
-            return new CategoryCoverage(kind, Set.of("declares", "constructor-calls").contains(c) || TypeExtraction.CATEGORIES.contains(c) ? CategoryCoverage.Support.PARTIAL : c.equals("calls") ? CategoryCoverage.Support.IMPLEMENTED : CategoryCoverage.Support.UNSUPPORTED, attempted, emitted, attempted - emitted);
+            return new CategoryCoverage(kind, Set.of("declares", "constructor-calls").contains(c) || TypeExtraction.CATEGORIES.contains(c) || FieldExtraction.CATEGORIES.contains(c) ? CategoryCoverage.Support.PARTIAL : c.equals("calls") ? CategoryCoverage.Support.IMPLEMENTED : CategoryCoverage.Support.UNSUPPORTED, attempted, emitted, attempted - emitted);
         }).toList();
         return new FrontendResult(request.manifest().identity(), VERSION,
                 outcomes.stream().allMatch(s -> s.state() == SourceOutcome.State.PROCESSED) ? FrontendResult.State.COMPLETED : FrontendResult.State.PARTIAL,
@@ -317,6 +318,43 @@ final class Extraction {
         return entity;
     }
 
+    Entity field(ResolvedValueDeclaration resolved) {
+        if (resolved.toAst().isPresent()) {
+            Node node = resolved.toAst().orElseThrow();
+            if (node instanceof FieldDeclaration declaration) {
+                var matching = declaration.getVariables().stream().filter(v -> v.getNameAsString().equals(resolved.getName())).toList();
+                if (matching.size() != 1) throw new MappingFailure(SemanticStatus.ERROR,"java.field-declaration");
+                node = matching.getFirst();
+            }
+            if (node instanceof VariableDeclarator variable && variable.getParentNode().orElse(null) instanceof FieldDeclaration
+                    || node instanceof EnumConstantDeclaration) return entity(node);
+            throw new MappingFailure(SemanticStatus.UNSUPPORTED,"java.field-declaration");
+        }
+        ResolvedReferenceTypeDeclaration type = resolved.isField() ? resolved.asField().declaringType().asReferenceType()
+                : resolved.asEnumConstant().getType().asReferenceType().getTypeDeclaration().orElseThrow();
+        if (type.toAst().isPresent()) throw new MappingFailure(SemanticStatus.UNSUPPORTED,"java.implicit-field");
+        var origin = environment.origin(type.getQualifiedName());
+        if (environment.duplicateExternal(type.getQualifiedName())) diagnostics.add(new Diagnostic(DiagnosticSeverity.WARNING,"java.duplicate-binary-type","Ordered classpath selected the first definition",Optional.empty(),Map.of("type",typeName(type).canonicalName())));
+        var entity = Entity.create(origin.kind(),origin.scope(),EntityKind.FIELD,JavaSymbolName.field(typeName(type),resolved.getName()).canonicalName(),Optional.empty());
+        declarations.putIfAbsent(entity.identity(),new DeclarationRecord(entity,resolved.getName(),SemanticStatus.RESOLVED,DIRECT,List.of(),List.of()));
+        return entity;
+    }
+    Entity fieldOwner(Node node) {
+        for (Node ancestor = node.getParentNode().orElse(null); ancestor != null; ancestor = ancestor.getParentNode().orElse(null))
+            if (ancestor instanceof AnnotationExpr || ancestor instanceof AnnotationMemberDeclaration)
+                throw new MappingFailure(SemanticStatus.UNSUPPORTED,"java.field-annotation-context");
+        var owner = owner(node);
+        if (!Set.of(EntityKind.METHOD,EntityKind.CONSTRUCTOR,EntityKind.INITIALIZER,EntityKind.LAMBDA).contains(owner.kind()))
+            throw new MappingFailure(SemanticStatus.UNSUPPORTED,"java.field-execution-owner");
+        return owner;
+    }
+    boolean isTypeName(Node context, String name) {
+        try { return com.github.javaparser.symbolsolver.javaparsermodel.JavaParserFactory.getContext(context,environment.solver).solveType(name).isSolved(); }
+        catch (RuntimeException failure) { return false; }
+    }
+    void unmapped(Node node, String category, SemanticStatus status, String code) {
+        observe(node,category,() -> { throw new MappingFailure(status,code); },() -> { throw new MappingFailure(status,code); });
+    }
     ResolvedTypeDeclaration resolveNamed(com.github.javaparser.ast.type.ClassOrInterfaceType type) {
         var resolved = com.github.javaparser.symbolsolver.javaparsermodel.JavaParserFactory.getContext(type, environment.solver)
                 .solveType(type.getNameWithScope());

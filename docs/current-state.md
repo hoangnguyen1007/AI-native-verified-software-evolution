@@ -4,11 +4,11 @@ Last reconciled: 2026-09-03. Fresh checks and their scope belong in the task han
 
 ## PHASE AND MILESTONE
 
-SE121, Track A + B. M1 contracts are committed at `b04220e722cc4bc772cbb3ad8531d4dc1ea1a058`; G1 is recorded passed. M2 now has a production Unicode identity/neutral-port foundation, JavaParser declarations/method-calls/explicit constructors, and declared-type relationships with recursive type detail. M2 remains incomplete; G2 is not passed and also requires M3 evidence.
+SE121, Track A + B. M1 contracts are committed at `b04220e722cc4bc772cbb3ad8531d4dc1ea1a058`; G1 is recorded passed. M2 now has a production Unicode identity/neutral-port foundation, JavaParser declarations/method-calls/explicit constructors, declared-type relationships with recursive type detail, and bounded field read/write extraction. M2 remains incomplete; G2 is not passed and also requires M3 evidence.
 
 ## ACTIVE TASK — M2 IMPLEMENTATION
 
-On 2026-09-03 the human resumed M2 implementation, using Codex only. The previous pause is superseded. No Antigravity/Gemini work, automation, commit or push was performed. Starting checkout was clean at the human checkpoint `8f7582e`.
+On 2026-09-03 the human resumed M2 implementation, using Codex only. The previous pause is superseded. Initial implementation started at `8f7582e`; the field-access continuation started clean at `5c1c415`, which includes the calls/type slices. No Antigravity/Gemini work, automation, agent commit or push was performed.
 
 The human explicitly directed implementation using the sufficiently mature M2 contracts: do not reopen D1–D3 approval or expand preflight/design/oracle work unless implementation exposes a concrete correctness blocker. The [M2 contract](architecture/m2-semantic-frontend.md) is the provisional implementation baseline. Prioritize production code, tests, fixtures alongside code, verification, then documentation only when truth changes. Work in vertical slices; Codex owns difficult semantic/identity issues.
 
@@ -16,7 +16,9 @@ The human explicitly directed implementation using the sufficiently mature M2 co
 
 The four archived candidate fixtures were independently reviewed by a Codex reviewer and copied byte-for-byte into adapter test resources. The integrated adapter checks all 27 registered type/callable declarations and 23 invocations: 21 resolved targets and two correctly unresolved outcomes, exact callers/origins/spans, no unexpected registered-kind declarations/invocations, and deterministic reruns. Additional tests cover generic erasure, ambiguity, duplicate declarations, lexical execution owners, Unicode, real dependency JARs/order/removal, digest rejection and host-classpath isolation. This is bounded slice evidence, not full M2 accuracy.
 
-The next implemented slice adds immutable `JavaType`/`TypeUseRecord` output and extracts parameter/return/field types, explicit inheritance/permits, throws, bounds and generic argument references. Known generic containers and callable erasures survive missing arguments; unknown targets remain explicit. Primitive/void information stays in type detail without invented entities. Catalog version is `m2-java-2`, adapter version `3.26.1-m2.2`. See the [declared-type slice record](reproducibility/m2-types-2026-09-03/README.md) for fresh verification and limits. No new research/comparator or independent review campaign was run for this slice.
+The declared-type slice added immutable `JavaType`/`TypeUseRecord` output and parameter/return/field types, explicit inheritance/permits, throws, bounds and generic argument references. Known generic containers and callable erasures survive missing arguments; unknown targets remain explicit. Primitive/void information stays in type detail without invented entities. That slice used catalog `m2-java-2` and adapter `3.26.1-m2.2`; its [verification record](reproducibility/m2-types-2026-09-03/README.md) remains historical. No research/comparator or independent review campaign was added for that slice.
+
+Field reads/writes now distinguish simple assignment, compound assignment/increment, receiver reads and array-element updates. Source fields, inherited/hidden fields, static imports, enum constants and explicit dependency fields retain their actual declarations/origins. Unresolved explicit accesses remain occurrences; unclassified bare names remain unmapped ledger entries. Array length and annotation/record contexts have explicit unsupported handling. Catalog is now `m2-java-3`, adapter `3.26.1-m2.3`; field coverage remains `PARTIAL`. See the [field slice record](reproducibility/m2-fields-2026-09-03/README.md) for exact tested scope.
 
 The [pause archive](reproducibility/m2-pause-2026-09-02/README.md), historical [oracle pilot](../benchmarks/m2-ground-truth/README.md) (34/34 labels, three identifier relations) and inactive [Antigravity package](reproducibility/m2-antigravity/README.md) remain unchanged. No new oracle/comparator campaign was run.
 
@@ -29,12 +31,12 @@ The human approved JavaParser + SymbolSolver as the primary SE121/M2 frontend on
 - M-1 approved baseline: `86c4ca29fb747797df3e489d978804644a34f1ce`.
 - M0 foundation commit: `375702f9b871dd78fbad99f8bc5994b7b2c499fb`.
 - M1 contracts commit: `b04220e722cc4bc772cbb3ad8531d4dc1ea1a058`.
-- Comparison package commit: `83797e840e414bf99a0f71117892da355d94be55`; this task starts at human checkpoint `8f7582e`.
+- Comparison package commit: `83797e840e414bf99a0f71117892da355d94be55`; current implementation continuation starts at checkpoint `5c1c415`.
 - Root reactor: `analyzer`, `analyzer-javaparser`, `backend`. The neutral frontend lives under `analyzer/src/main/java/com/evolution/analysis/frontend/`; parser libraries remain isolated in `analyzer-javaparser`.
 - Root verification includes the original M1/build tests and new frontend/adapter tests. Exact final totals and raw console output are in the implementation evidence. Standalone benchmarks are outside root verification.
 - R1 PoC: `benchmarks/poc/parser-eval/`. Independent experimental adapters/comparison: `benchmarks/semantic-frontend-evaluation/`.
 - M2 oracle pilot: `benchmarks/m2-ground-truth/`, separate from the reactor and legacy comparator, using JDK 21/Python standard libraries.
-- Production adapter pin: JavaParser/SymbolSolver 3.26.1. Records (resolver indexing failure), constant-specific enum bodies and implicit source callables are explicitly unsupported. Recursive declared-type detail is implemented; expression type uses, field reads/writes, method references, annotations and derived relationships remain pending.
+- Production adapter pin: JavaParser/SymbolSolver 3.26.1. Records (resolver indexing failure), constant-specific enum bodies and implicit source callables are explicitly unsupported. Recursive declared-type detail and bounded field reads/writes are implemented; expression type uses, method references, annotations and derived relationships remain pending.
 - No workspace acquisition, Spring inference, graph, policy engine, metric/scoring calculation, CLI, backend API or workbench is implemented.
 - `frontend/` and root `tests/` have no tracked product implementation.
 
@@ -70,7 +72,7 @@ Open work: validate the adopted provisional canonical signatures/port/coordinate
 | G-1 governance baseline | PASSED (historical) | Current hardening is a separate maintenance task |
 | G0 build foundation | PASSED (historical) | Preserve pinned toolchain and reproducibility |
 | G1 contracts | PASSED (historical) | Preserve tested identity, uncertainty and evidence invariants |
-| G2 frontend/build model | NOT PASSED; M2 calls and declared-type slices implemented | Remaining M2 categories/modern Java, full ground truth, M3 safe multi-module model and real-repository evidence |
+| G2 frontend/build model | NOT PASSED; M2 calls, declared-type and field-access slices implemented | Remaining M2 categories/modern Java, full ground truth, M3 safe multi-module model and real-repository evidence |
 | G3 Spring | NOT STARTED | Registered bounded correctness evidence |
 | G4 graph/metric/query | NOT STARTED | Invariants, metric correctness, bounded storage-neutral queries |
 | G5 policy/evidence/assessment | NOT STARTED | Negative/mutation controls, complete evidence, score safeguards |
@@ -79,4 +81,4 @@ Open work: validate the adopted provisional canonical signatures/port/coordinate
 
 ## EXACT NEXT TASK
 
-Implement field reads/writes using the existing identity/origin/span and execution-owner helpers. Cover simple assignment (write only), compound assignment/increment (read and write), receiver reads, inherited/static-imported fields and local-variable negative controls with focused fixtures/tests. Preserve unresolved evidence and the complete catalog; do not claim full field-access support from only resolved cases. Keep record/implicit-member limitations visible. Use Codex only; preserve raw archives; no commit/push or silent M3 entry.
+Implement method references using the existing callable identity/origin/span and execution-owner helpers. Cover static, bound/unbound instance, overloaded and constructor references with focused fixtures; keep references distinct from immediate calls and preserve receiver field reads. Retain explicit unsupported/unresolved handling where the pinned resolver cannot safely select a target, including array constructors and implicit source constructors. Use Codex only; preserve raw archives; no commit/push or silent M3 entry.

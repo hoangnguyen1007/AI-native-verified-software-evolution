@@ -1,0 +1,29 @@
+{
+  "baseCommit": "5c1c415135cf00712698c3181e04fad579d724a6",
+  "files": [
+    {
+      "path": "analyzer/src/main/java/com/evolution/analysis/frontend/FrontendRequest.java",
+      "sha256": "02daf0443c4a8add72451f45c659eb00d58cb403c186e8f171a7a01b98edfbce"
+    },
+    {
+      "path": "analyzer-javaparser/src/main/java/com/evolution/analysis/javaparser/Extraction.java",
+      "sha256": "3e992a485d83ddcf1f72b54cde3e0067c5d12567e136de75af89dbc4b7035c5e"
+    },
+    {
+      "path": "analyzer-javaparser/src/main/java/com/evolution/analysis/javaparser/FieldExtraction.java",
+      "sha256": "2bb49f15b75b01a34cea0c2c12866fc28b9d15c0a928bda64c9fdbd8607675d8"
+    },
+    {
+      "path": "analyzer-javaparser/src/test/java/com/evolution/analysis/javaparser/FieldAccessTest.java",
+      "sha256": "f0b1bdb310d3dff8f2f6a3e1aa7ed153303d86451a46ee68f4cb82759dc09bdf"
+    },
+    {
+      "path": "analyzer-javaparser/src/test/java/com/evolution/analysis/javaparser/ResolutionInputsTest.java",
+      "sha256": "be18b420081df911bd35cfdcd8fea75032591a2faf0ff8daf8c24093a38778dd"
+    },
+    {
+      "path": "analyzer-javaparser/src/test/resources/m2/fields/Accesses.java",
+      "sha256": "230a2bad022a43ea5c9b54cae43b877c098938d9393508725d99b4dada030694"
+    }
+  ]
+}

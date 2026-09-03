@@ -1,6 +1,6 @@
 # AI-Native Verified Software Evolution
 
-This repository is the SE121 software architecture intelligence platform. The Java 21 Maven reactor contains parser-neutral contracts and a JavaParser frontend for declarations, method calls, explicit constructor calls and declared-type relationships with recursive generic type detail. M2 is in progress; G2 is not passed. See [current state](docs/current-state.md) for verified scope and limitations.
+This repository is the SE121 software architecture intelligence platform. The Java 21 Maven reactor contains parser-neutral contracts and a JavaParser frontend for declarations, method calls, explicit constructor calls, declared-type relationships with recursive generic type detail, and field reads/writes. M2 is in progress; G2 is not passed. See [current state](docs/current-state.md) for verified scope and limitations.
 
 ## Build prerequisites
 

@@ -47,14 +47,38 @@ class ResolutionInputsTest {
         assertNotEquals(request.manifest().identity(),TestInputs.request(source,List.of()).manifest().identity());
     }
     @Test void classpathOrderControlsSelectionAndReportsDuplicateDefinitions() throws Exception {
-        String code = "package dep; public class Library { public static String text(){return \"x\";} }";
+        String code = "package dep; public class Library { public static int number; public static String text(){return \"x\";} }";
         var first = jar("first",code); var second = jar("second",code);
-        var source = Map.of("fixture/C.java","class C { String run(){return dep.Library.text();} }");
+        var source = Map.of("fixture/C.java","class C { String run(){return dep.Library.text() + dep.Library.number;} }");
         var forward = TestInputs.request(source,List.of(first,second)); var reversed = TestInputs.request(source,List.of(second,first));
         var a = new JavaParserFrontend().analyze(forward); var b = new JavaParserFrontend().analyze(reversed);
         assertNotEquals(forward.manifest().identity(),reversed.manifest().identity());
         assertTrue(a.diagnostics().stream().anyMatch(d -> d.code().equals("java.duplicate-binary-type")));
         assertNotEquals(calls(a).getFirst().relationship().target(),calls(b).getFirst().relationship().target());
+        assertEquals(1,FieldAccessTest.accesses(a).size());
+        assertNotEquals(FieldAccessTest.accesses(a).getFirst().relationship().target(),FieldAccessTest.accesses(b).getFirst().relationship().target());
+    }
+    @Test void inheritedFieldsKeepTheirActualJarOriginAndMissingDependencyEvidence() throws Exception {
+        var dependency = jar("fields","package javax.fixture; public class Library { public static int NUMBER; public int count; }");
+        var source = Map.of("fixture/C.java","class C extends javax.fixture.Library { int run(){return NUMBER + this.count + javax.fixture.Library.NUMBER;} }");
+        var request = TestInputs.request(source,List.of(dependency));
+        var result = new JavaParserFrontend().analyze(request);
+        var entities = TypeRelationshipsTest.entities(result);
+        assertEquals(3,FieldAccessTest.accesses(result).size());
+        for (var occurrence : FieldAccessTest.accesses(result)) {
+            assertEquals(SemanticStatus.RESOLVED,occurrence.status());
+            var target = entities.get(((RelationshipTarget.Resolved)occurrence.relationship().target()).target());
+            assertEquals(EntityOrigin.DEPENDENCY,target.origin());
+            assertEquals(EntityScope.external(EntityOrigin.DEPENDENCY,dependency.entry().logicalName(),dependency.entry().contentDigest()),target.stableScope());
+            assertTrue(Set.of(FieldAccessTest.fieldName("javax.fixture.Library.NUMBER"),FieldAccessTest.fieldName("javax.fixture.Library.count")).contains(target.canonicalName()));
+            assertTrue(target.declaration().isEmpty());
+        }
+        var removed = new JavaParserFrontend().analyze(TestInputs.request(source,List.of()));
+        var ledger = removed.observations().stream().filter(o -> o.category().value().equals("java.reads-field")).toList();
+        assertEquals(3,ledger.size());
+        assertTrue(ledger.stream().allMatch(o -> o.attribution() == SemanticStatus.UNRESOLVED));
+        assertEquals(1,ledger.stream().filter(o -> o.mappedOccurrence().isEmpty()).count());
+        assertTrue(removed.declarations().stream().noneMatch(d -> d.entity().kind() == EntityKind.FIELD));
     }
     @Test void mutableArtifactHandlesAreRecheckedBeforeUse() throws Exception {
         var dependency = jar("changed","package dep; public class Library { public static void hit(){} }");
