@@ -110,9 +110,15 @@ Ground truth distinguishes attempted, correct, incorrect, unresolved, ambiguous,
 
 Deliver safe understanding of Maven parent POMs, modules, source/generated-source roots where safely discoverable, dependency management, BOMs, dependency scopes, module dependencies, and exact classpath manifests.
 
+Decouple analyzer execution from analyzed repository targets (**analyzer-runtime != analyzed-platform**):
+- **Separate source language level from platform symbol view:** Discover source language level (syntax support) and target platform release (standard library APIs) independently from `maven.compiler.source`, `maven.compiler.target`, `maven.compiler.release`, `<java.version>`, or toolchains. Supporting a target platform symbol view for Java N does not imply parser syntax support for all Java N language features; syntax beyond verified parser capabilities and preview features remain explicit unsupported/degraded outcomes.
+- **Toolchain / `JAVA_HOME` / Platform symbol acquisition:** Support configured target JDKs via `JAVA_HOME`, toolchains, or platform symbol views (`rt.jar` for Java 8, `jmods`/`ct.sym` for Java 9+) rather than restricting resolution exclusively to the analyzer's host JDK 21 image.
+- **Platform provenance:** Record the exact analyzed platform version, vendor, source release, and symbol-view hash in the analysis manifest and provenance.
+- **Build-declared source encodings:** Extract build-declared source encodings (e.g. `<project.build.sourceEncoding>` such as ISO-8859-1 or Windows-1252) per module/source set. Handling expectations: absence of an explicit declaration defaults strictly to UTF-8 (or explicit project configuration); UTF-8 with BOM must be handled deterministically without corrupting source coordinates; byte sequences invalid under the selected charset or declared/byte mismatches yield explicit input-error/degraded outcomes rather than speculative or heuristic guessing; original raw bytes and SHA-256 digests are strictly preserved alongside charset provenance.
+
 Do not execute arbitrary target lifecycle plugins. Gradle initially accepts an explicit classpath unless a separately approved safe approach exists.
 
-Exit gate G2: pinned multi-module fixtures and a real repository reproduce module/source/classpath models without hidden dependency supersets.
+Exit gate G2: pinned multi-module fixtures and a real repository reproduce module/source/classpath models without hidden dependency supersets, decouple the analyzer runtime from analyzed repository target platforms, and pass an early representative real-repository semantic coverage checkpoint (measuring attempted, resolved, unresolved, ambiguous, unsupported, omitted/unmapped, error, and adjudicated incorrect outcomes across registered categories, with reason-level breakdowns for degraded facts) before treating the frontend foundation as mature.
 
 ### M4 - Spring Semantic Intelligence
 
@@ -258,6 +264,7 @@ Dates are guidance. Gates, not calendar pressure, authorize progression.
 
 - Exhaustive microfixtures and contract tests on semantic changes
 - Parser/Spring ground truth at their gates
+- Early representative real-repository coverage checkpoints across registered categories with reason-level breakdowns before late-stage M9 hardening
 - Rule mutation and negative-control tests on policy changes
 - Full corpus runs at major gates
 - Immutable versioned raw results
