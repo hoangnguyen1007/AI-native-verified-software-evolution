@@ -113,6 +113,8 @@ Exit gate G1: contract/invariant/golden tests define deterministic identity and 
 
 ### M2 - Semantic Frontend and Ground-Truth Expansion
 
+**Status: COMPLETE (Frontend Implementation Verified).** Implemented, verified with 98 root tests, and confirmed on whole-project multi-file analysis (43 files, 1,488 occurrences). All 18 relationship families are implemented. Gate G2 boundary remains open for M3 build-model intelligence.
+
 Deliver the JavaParser adapter and architecture-relevant relationship set: declarations, inheritance, implementations, permits, type uses, calls, constructor calls, field access, method references, parameters, returns, fields, throws, annotations, generics, and relevant modern Java constructs.
 
 Ground truth distinguishes attempted, correct, incorrect, unresolved, ambiguous, omitted, unsupported, and error outcomes. JavaParser is the human-approved primary frontend (ADR-001); this choice does not pass G2 or remove the validation/replacement gates.

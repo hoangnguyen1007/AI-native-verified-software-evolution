@@ -4,11 +4,11 @@ Last reconciled: 2026-09-04. Fresh checks and their scope belong in the task han
 
 ## PHASE AND MILESTONE
 
-SE121, Track A + B. M1 contracts are committed at `b04220e722cc4bc772cbb3ad8531d4dc1ea1a058`; G1 is recorded passed. M2 now implements all 18 relationship families in bounded tested forms, including method references, expression types, annotations, records, enum bodies and derived-member evidence. M2 acceptance remains open for final independent review and the complete reviewed ground-truth denominator; G2 is not passed and also requires M3 evidence.
+SE121, Track A + B. M1 contracts are committed at `b04220e722cc4bc772cbb3ad8531d4dc1ea1a058`; G1 is recorded passed. M2 frontend delivery is COMPLETE: all 18 relationship families are implemented and verified (98/98 root tests pass), and multi-file project extraction is validated on a real 43-file Spring Boot project (`PC-Shop`, 304 declarations, 1,488 occurrences). Full Gate G2 acceptance remains open pending M3 build-model intelligence and the representative real-repository coverage checkpoint.
 
-## ACTIVE TASK — M2 IMPLEMENTATION
+## ACTIVE TASK — TRANSITION FROM M2 TO M3
 
-On 2026-09-03 the human resumed M2 implementation, using Codex only. The previous pause is superseded. Initial implementation started at `8f7582e`; the field-access continuation started clean at `5c1c415`, which includes the calls/type slices. No Antigravity/Gemini work, automation, agent commit or push was performed.
+On 2026-09-04, M2 frontend implementation was fully validated across all 18 relationship families (catalog `m2-java-4`, adapter `3.27.1-m2.4`), with 98 root reactor tests passing cleanly and whole-project multi-file extraction confirmed. The active task transitions from M2 to Milestone M3 (Multi-Module Workspace and Build-Model Intelligence).
 
 The human explicitly directed implementation using the sufficiently mature M2 contracts: do not reopen D1–D3 approval or expand preflight/design/oracle work unless implementation exposes a concrete correctness blocker. The [M2 contract](architecture/m2-semantic-frontend.md) is the provisional implementation baseline. Prioritize production code, tests, fixtures alongside code, verification, then documentation only when truth changes. Work in vertical slices; Codex owns difficult semantic/identity issues.
 
@@ -74,7 +74,7 @@ Open work: validate the adopted provisional canonical signatures/port/coordinate
 | G-1 governance baseline | PASSED (historical) | Current hardening is a separate maintenance task |
 | G0 build foundation | PASSED (historical) | Preserve pinned toolchain and reproducibility |
 | G1 contracts | PASSED (historical) | Preserve tested identity, uncertainty and evidence invariants |
-| G2 frontend/build model | NOT PASSED; all M2 categories have bounded implementation | M2 final independent review/full reviewed ground truth, M3 safe multi-module model and acquisition-gap contract, platform/charset decoupling, and early real-repository category/reason-level coverage checkpoint |
+| G2 frontend/build model | M2 frontend COMPLETE; M3 build model next | M2 frontend slice verified (98/98 tests, all 18 families); G2 full pass requires M3 safe multi-module model, dependency/classpath resolution, platform/charset decoupling, and real-repository coverage checkpoint |
 | G3 Spring | NOT STARTED | Registered bounded correctness evidence across classified wiring taxonomy |
 | G4 graph/metric/query | NOT STARTED | Invariants, metric correctness, bounded storage-neutral queries |
 | G5 policy/evidence/assessment | NOT STARTED | Negative/mutation controls, complete evidence, score safeguards |
@@ -83,4 +83,4 @@ Open work: validate the adopted provisional canonical signatures/port/coordinate
 
 ## EXACT NEXT TASK
 
-Complete one independent read-only Codex review of the final M2 implementation and modern fixture evidence; finish exact non-invocation/derived labels where existing tests do not establish the registered handling expectations. Repair concrete findings and verify affected inputs before closing M2. Use the modern evidence record as the entry point; do not repeat parser research or redesign D1–D3 without a correctness blocker. Preserve raw archives; no commit/push or silent M3 entry.
+Begin Milestone M3: Multi-Module Workspace and Build-Model Intelligence. Deliver safe effective-POM discovery, dependency resolution, parent POM and BOM parsing, exact classpath manifests to supply dependency JARs to the M2 frontend, platform decoupling (`analyzer-runtime != analyzed-platform`), and source encoding policy without heuristic guessing.
