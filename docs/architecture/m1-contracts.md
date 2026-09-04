@@ -175,9 +175,13 @@ M1 tests cover:
 
 ## Explicit limitations and deferred work
 
-M1 does not implement repository acquisition, Maven/classpath discovery, JavaParser/SymbolSolver, Spring inference, graph construction, persistence, graph queries, metrics, scoring, policy rules, CLI, API, UI, Track B, or Track C.
+M1 does not implement repository acquisition, Maven/classpath discovery, JavaParser/SymbolSolver, Spring inference, graph construction, persistence, graph queries, metrics, scoring, policy rules, CLI, API, UI, Track B, or Track C. This is a milestone allocation, not an assertion that those capabilities—or future generated-source, bytecode, configuration, sandbox/build or runtime evidence providers—are outside the platform architecture.
 
 Canonical Java symbol naming rules for every modern Java construct remain an M2 responsibility and must use these identity inputs. Exact module/build acquisition remains M3. Graph schema, metric formulas, assessment formulas, confidence thresholds, and comparison compatibility rules remain at their later gates.
+
+Later contracts may version the manifest/evidence envelope to identify additional providers, acquisition attempts, conflicts and capability gaps. They must preserve the M1 rules against invented identities or coordinates, hidden inputs, false certainty and provenance loss.
+
+M1 does not currently define or implement a `CapabilityGapRecord`. The provisional logical schema belongs to the M3+ [Progressive Evidence Acquisition and Capability-Gap Contract](evidence-acquisition.md); adding it to code requires versioned contracts and tests rather than retroactively claiming it as part of passed G1.
 
 ## Related documents
 
@@ -185,4 +189,6 @@ Canonical Java symbol naming rules for every modern Java construct remain an M2 
 - [Product Outcome Contract](product-outcome.md)
 - [Knowledge Graph](knowledge-graph.md)
 - [ADR-001: Parser Technology](../decisions/ADR-001-parser-technology.md)
+- [ADR-003: Progressive Evidence Acquisition](../decisions/ADR-003-progressive-evidence-acquisition.md)
+- [Progressive Evidence Acquisition Contract](evidence-acquisition.md)
 - [Current State](../current-state.md)

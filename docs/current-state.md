@@ -1,6 +1,6 @@
 # Current State
 
-Last reconciled: 2026-09-03. Fresh checks and their scope belong in the task handoff; historical gate evidence is identified below.
+Last reconciled: 2026-09-04. Fresh checks and their scope belong in the task handoff; historical gate evidence is identified below.
 
 ## PHASE AND MILESTONE
 
@@ -55,9 +55,9 @@ Historical evidence (the M2 implementation record identifies fresh checks separa
 
 ## DECISIONS
 
-Confirmed: Track A + B target; Java 21/Maven/monorepo; primary JavaParser/SymbolSolver choice behind SemanticFrontend; parser/storage-neutral domain; safe multi-module modeling; content-addressed analysis; stable query services; separate health/confidence; complete visual workbench.
+Confirmed: Track A + B target; Java 21/Maven/monorepo; primary JavaParser/SymbolSolver choice behind SemanticFrontend; parser/storage-neutral domain; safe multi-module modeling; content-addressed analysis; stable query services; separate health/confidence; complete visual workbench; milestone scope is not an ultimate capability ceiling; progressive, provenance-preserving evidence acquisition through replaceable providers is the long-term architecture direction. See [ADR-003](decisions/ADR-003-progressive-evidence-acquisition.md).
 
-Provisional: Neo4j Community adapter, Spring Boot API, YAML external policies, Cytoscape.js, exact metric/score formulas and thresholds. Bytecode validation remains ASSESS/HOLD. Track C remains optional.
+Provisional: Neo4j Community adapter, Spring Boot API, YAML external policies, Cytoscape.js, exact metric/score formulas and thresholds. The M3+ capability-gap logical schema and M4 producer/candidate/injection-point/condition model with `spring-mechanisms:v1` are documentation baselines awaiting implementation/fixture validation; they do not advance G2/G3. Specific additional evidence providers, including selective bytecode, controlled build/sandbox and runtime observation, remain ASSESS/HOLD for SE121 implementation. Track C remains optional.
 
 ## OPEN QUESTIONS AND BLOCKERS
 
@@ -65,7 +65,7 @@ The initial Maven sandbox JUnit-cache denial was resolved through supported exec
 
 Current input boundaries: verified running JDK 21 platform image and explicit single-release JARs (M3 decouples analyzer runtime from analyzed platform symbol views and source language levels without claiming parser syntax support beyond verified versions); no alternate platform, module-output resolution, multi-release JAR or JAR manifest classpath support. Remaining explicit degraded cases include array constructor references/array length, annotation-value field reads, inferred `var` detail, typed lambda/catch parameter identities and unsupported functional target/inference contexts. M2 final acceptance is blocked on unfinished independent review and the complete reviewed denominator, not Maven execution. The Codex reviewer delivered concrete findings, then stopped because of its usage limit; final repairs have implementer verification only.
 
-Open work: validate the adopted provisional canonical signatures/port/coordinates through implementation; complete independently reviewed M2 labels and support denominator; safe effective-Maven-model/classpath acquisition including root-module representation, build-declared source encodings without heuristic guessing, and decoupling analyzer runtime from analyzed repository target platforms (separating source language level from platform symbol view, toolchain/JAVA_HOME handling, platform provenance); early representative real-repository category/reason-level coverage checkpoint for G2; broader labeled repositories; Spring/policy gate criteria; metric catalog, score formula/compatibility/confidence thresholds; graph/query/UI budgets and frontend framework selection at their later gates.
+Open work: validate the adopted provisional canonical signatures/port/coordinates through implementation; complete independently reviewed M2 labels and support denominator; define and implement the M3 acquisition/capability-gap contract while delivering safe effective-Maven-model/classpath acquisition, root-module representation, source-encoding evidence/policy without heuristic guessing, and analyzed-platform decoupling; early representative real-repository category/reason-level coverage checkpoint for G2; broader labeled repositories; validate/approve the provisional Spring identities, `spring-mechanisms:v1` matrix and G3 criteria through M4 fixtures; policy gate criteria; metric catalog, score formula/compatibility/confidence thresholds; graph/query/UI budgets and frontend framework selection at their later gates.
 
 ## QUALITY GATES
 
@@ -74,8 +74,8 @@ Open work: validate the adopted provisional canonical signatures/port/coordinate
 | G-1 governance baseline | PASSED (historical) | Current hardening is a separate maintenance task |
 | G0 build foundation | PASSED (historical) | Preserve pinned toolchain and reproducibility |
 | G1 contracts | PASSED (historical) | Preserve tested identity, uncertainty and evidence invariants |
-| G2 frontend/build model | NOT PASSED; all M2 categories have bounded implementation | M2 final independent review/full reviewed ground truth, M3 safe multi-module model, platform/charset decoupling, and early real-repository category/reason-level coverage checkpoint |
-| G3 Spring | NOT STARTED | Registered bounded correctness evidence |
+| G2 frontend/build model | NOT PASSED; all M2 categories have bounded implementation | M2 final independent review/full reviewed ground truth, M3 safe multi-module model and acquisition-gap contract, platform/charset decoupling, and early real-repository category/reason-level coverage checkpoint |
+| G3 Spring | NOT STARTED | Registered bounded correctness evidence across classified wiring taxonomy |
 | G4 graph/metric/query | NOT STARTED | Invariants, metric correctness, bounded storage-neutral queries |
 | G5 policy/evidence/assessment | NOT STARTED | Negative/mutation controls, complete evidence, score safeguards |
 | G6 Track A release | NOT STARTED | Complete visual product and multi-repository verification |

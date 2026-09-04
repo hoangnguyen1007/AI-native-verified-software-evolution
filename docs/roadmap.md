@@ -12,6 +12,8 @@ The approved SE121 North Star is **Track A + Track B**:
 
 The roadmap is tech-first. Ground truth, benchmarks, evidence, and reproducibility remain mandatory engineering verification. Publication and extensive defense packaging are later/optional activities.
 
+Tracks and milestones define delivery order and acceptance claims, not permanent capability ceilings. Architecture work must preserve safe extension paths for deeper repository evidence even when the corresponding provider is not an SE121 deliverable.
+
 ## Protected Principles
 
 1. Do not weaken Track A to reach Track B.
@@ -21,12 +23,21 @@ The roadmap is tech-first. Ground truth, benchmarks, evidence, and reproducibili
 5. Canonical semantic and query contracts remain independent of parser and storage adapters.
 6. Multi-module workspace/build-model intelligence is a core capability.
 7. Analysis identity is content-addressed, but caching is deferred until a measured need.
-8. Bytecode validation remains optional until source evidence shows a concrete gap.
+8. Source-only analysis is a baseline, not a ceiling. Unresolved/unsupported cases are registered by reason and may trigger progressively stronger evidence providers; provider implementation remains gate- and evidence-driven.
 9. Evaluation runs throughout implementation rather than at the end.
 10. No SE122/KLTN production features enter SE121 silently.
 11. Architecture health, analysis confidence, and semantic coverage remain separate outputs.
 12. Metrics and scores are versioned, deterministic, explainable, and withheld when required evidence is insufficient.
 13. Track A must deliver the required visual product workflow; an analyzer or CLI alone is not product completion.
+14. Repository facts and inputs are never silently omitted because a current provider cannot interpret them; acquisition attempts, gaps, exclusions and reasons remain visible.
+
+## Capability Growth and Progressive Evidence
+
+Evidence may deepen from immutable source and declarative build/configuration metadata to resolved dependencies and generated sources, bytecode, framework metadata, explicitly authorized controlled build/sandbox outputs, and runtime observations. This is an extension ladder, not a mandatory universal sequence: use the least invasive provider that can answer a registered question, then stop when evidence is sufficient or the next step is unsafe, unauthorized, unavailable, or not justified.
+
+Every provider must declare its inputs, trust boundary, versions, configuration, permissions, resource limits, outputs, failures and provenance. Later evidence may corroborate, qualify or contradict earlier evidence; it must not silently rewrite history or turn an inference into a direct fact. When escalation is not available, the platform retains the unresolved capability gap and its effect on coverage, confidence and assessment.
+
+See [ADR-003: Progressive Evidence Acquisition and Capability Boundaries](decisions/ADR-003-progressive-evidence-acquisition.md).
 
 ## Tracks
 
@@ -66,7 +77,7 @@ The roadmap is tech-first. Ground truth, benchmarks, evidence, and reproducibili
 - Architecture blame beyond basic Track B comparison
 - Large temporal histories
 - Advanced hotspot analysis
-- Optional selective bytecode validation
+- Advanced evidence-provider research beyond needs already justified by Track A/B gaps, including selective bytecode/runtime correlation
 
 ## Milestones
 
@@ -108,23 +119,33 @@ Ground truth distinguishes attempted, correct, incorrect, unresolved, ambiguous,
 
 ### M3 - Multi-Module Workspace and Build-Model Intelligence
 
-Deliver safe understanding of Maven parent POMs, modules, source/generated-source roots where safely discoverable, dependency management, BOMs, dependency scopes, module dependencies, and exact classpath manifests.
+Deliver safe understanding of Maven parent POMs, modules, source/generated-source roots where safely discoverable, dependency management, BOMs, dependency scopes, module dependencies, and exact classpath manifests. Missing generated sources or effective-model inputs remain explicit acquisition gaps rather than disappearing from coverage.
+
+M3 also introduces the first normalized capability-gap/acquisition contract over M2 observations and build-model coverage, following the provisional [Progressive Evidence Acquisition and Capability-Gap Contract](architecture/evidence-acquisition.md). This includes provider identity, stable reason/mechanism catalogs, typed evidence requirements, attempt provenance and explicit provider conflicts; implementation must remain versioned and tested.
 
 Decouple analyzer execution from analyzed repository targets (**analyzer-runtime != analyzed-platform**):
 - **Separate source language level from platform symbol view:** Discover source language level (syntax support) and target platform release (standard library APIs) independently from `maven.compiler.source`, `maven.compiler.target`, `maven.compiler.release`, `<java.version>`, or toolchains. Supporting a target platform symbol view for Java N does not imply parser syntax support for all Java N language features; syntax beyond verified parser capabilities and preview features remain explicit unsupported/degraded outcomes.
 - **Toolchain / `JAVA_HOME` / Platform symbol acquisition:** Support configured target JDKs via `JAVA_HOME`, toolchains, or platform symbol views (`rt.jar` for Java 8, `jmods`/`ct.sym` for Java 9+) rather than restricting resolution exclusively to the analyzer's host JDK 21 image.
 - **Platform provenance:** Record the exact analyzed platform version, vendor, source release, and symbol-view hash in the analysis manifest and provenance.
-- **Build-declared source encodings:** Extract build-declared source encodings (e.g. `<project.build.sourceEncoding>` such as ISO-8859-1 or Windows-1252) per module/source set. Handling expectations: absence of an explicit declaration defaults strictly to UTF-8 (or explicit project configuration); UTF-8 with BOM must be handled deterministically without corrupting source coordinates; byte sequences invalid under the selected charset or declared/byte mismatches yield explicit input-error/degraded outcomes rather than speculative or heuristic guessing; original raw bytes and SHA-256 digests are strictly preserved alongside charset provenance.
+- **Source-encoding evidence:** Resolve charset per module/source set from ordered authoritative evidence such as a supported BOM, build declaration (for example `<project.build.sourceEncoding>`), supported repository configuration, or explicit analysis configuration. If none exists, use only a declared analysis policy such as assumed UTF-8 or withhold/degrade the input; never inherit an ambient host default or present the assumption as repository fact. UTF-8 with BOM must be handled deterministically without corrupting source coordinates; byte sequences invalid under the selected charset or declared/byte mismatches yield explicit input-error/degraded outcomes rather than speculative charset guessing; original raw bytes and SHA-256 digests are strictly preserved alongside charset provenance.
 
-Do not execute arbitrary target lifecycle plugins. Gradle initially accepts an explicit classpath unless a separately approved safe approach exists.
+Do not execute arbitrary target lifecycle plugins. M3's initial Gradle path accepts an explicit classpath unless a separately approved safe approach exists; this is an M3 delivery boundary, not a prohibition on future declarative, tool-model, or explicitly authorized isolated build/sandbox providers.
 
-Exit gate G2: pinned multi-module fixtures and a real repository reproduce module/source/classpath models without hidden dependency supersets, decouple the analyzer runtime from analyzed repository target platforms, and pass an early representative real-repository semantic coverage checkpoint (measuring attempted, resolved, unresolved, ambiguous, unsupported, omitted/unmapped, error, and adjudicated incorrect outcomes across registered categories, with reason-level breakdowns for degraded facts) before treating the frontend foundation as mature.
+Exit gate G2: pinned multi-module fixtures and a real repository reproduce module/source/classpath models without hidden dependency supersets, decouple the analyzer runtime from analyzed repository target platforms, account for registered input/acquisition gaps and provider failures, and pass an early representative real-repository semantic coverage checkpoint (measuring attempted, resolved, unresolved, ambiguous, unsupported, omitted/unmapped, error, and adjudicated incorrect outcomes across registered categories, with reason-level breakdowns for degraded facts) before treating the frontend foundation as mature.
 
 ### M4 - Spring Semantic Intelligence
 
 Deliver direct/composed stereotypes, `@Bean` producer candidates, injection points, constructor rules, assignable candidate sets, qualifiers, primary/fallback, collection injection, and explicit conditional/profile states.
 
-Exit gate G3: pre-registered ground truth demonstrates bounded correctness. Do not claim Spring runtime-container equivalence.
+M4 must systematically enumerate and classify all relevant Spring dependency/wiring mechanisms—including annotation-based, constructor, field, setter/method, @Bean parameter, JSR-330/@Resource, collection/provider, qualifier/primary/fallback, conditional/profile, lookup, programmatic registration, factory/auto-configuration, XML/legacy, and runtime-dynamic mechanisms—into SUPPORTED, CONDITIONAL, DYNAMIC, UNSUPPORTED, or OUT_OF_SCOPE; no registered mechanism may be silently omitted, and mechanisms that cannot be statically resolved must still be detected and accounted for with explicit evidence, uncertainty, and limitations.
+
+Static non-resolution is not a permanent verdict. Preserve the evidence need so later configuration, generated-source, bytecode, sandbox or runtime providers can enrich the same canonical model without erasing the original status or provenance.
+
+`OUT_OF_SCOPE` means outside the registered M4 provider/catalog boundary; it does not mean permanently excluded from the platform.
+
+The provisional storage-neutral concepts, versioned closed denominator and initial mechanism matrix are defined in [M4 Spring Intelligence and Closed Mechanism Taxonomy](architecture/m4-spring-intelligence.md). They narrow OQ-3 but remain subject to M4 fixtures, identity decisions and G3 review.
+
+Exit gate G3: pre-registered ground truth across the systematic Spring wiring taxonomy demonstrates bounded correctness without silent omissions. Do not claim Spring runtime-container equivalence.
 
 ### M5 - Canonical Graph, Metrics, and Architecture Query Layer
 
@@ -252,8 +273,8 @@ Dates are guidance. Gates, not calendar pressure, authorize progression.
 | G-1 — PASSED | M-1 operating system approved and committed; M0 authorized |
 | G0 — PASSED | Foundation builds reproducibly in the documented Windows/Oracle and Docker Linux/Temurin environments |
 | G1 — PASSED | Parser-neutral semantic/identity/metric/assessment contracts are stable and deterministic |
-| G2 | Frontend and multi-module build model meet ground truth |
-| G3 | Bounded Spring inference meets approved evidence criteria |
+| G2 | Frontend, multi-module build model and acquisition-gap accounting meet ground truth |
+| G3 | Bounded Spring inference meets approved evidence criteria and classified wiring taxonomy |
 | G4 | Canonical graph/metric/query invariants pass |
 | G5 | Policy/evidence/score correctness passes mutations, negatives, and sensitivity checks |
 | G6 | Complete Track A visual product and multi-repository evidence are sufficient |
@@ -282,7 +303,7 @@ Cut in this order if time/evidence requires:
 
 1. Track C incremental analysis and large history
 2. Advanced architecture blame/hotspot analysis
-3. Optional bytecode validation
+3. SE121 bytecode-provider implementation unless a registered correctness gap makes it gate-critical; preserve the provider boundary and capability-gap record
 4. Advanced comparison visualizations beyond the required Track B comparison flow
 5. Neo4j persistence, retaining canonical graph/file output
 6. Nonessential backend/workbench extras, retaining the required Track A dashboard, metrics, score, graph, violation, evidence, and provenance workflow

@@ -35,6 +35,7 @@ The platform must remain useful when some relationships are unresolved. It must 
 6. **Stable query boundary.** CLI, API, exports, and UI consume the same versioned architecture query services.
 7. **Deterministic results.** The same compatible snapshot, analyzer version, policy, classpath manifest, and configuration produce the same metric and score outputs.
 8. **Accessible, clean interaction.** Meaning is not encoded by color alone, controls are keyboard reachable where practical, and dense views remain legible.
+9. **Adaptive evidence, visible gaps.** The platform uses the least invasive sufficient evidence available, exposes what it attempted or could not acquire, and preserves extension paths for stronger providers rather than presenting current static limits as repository facts.
 
 ## Required User Journey
 
@@ -63,7 +64,8 @@ Required capabilities:
 - asynchronous progress, cancellation, failure diagnostics, and duration;
 - completed-analysis history keyed by analysis identity;
 - explicit dirty/untrusted/partial-input warnings;
-- provenance and classpath-manifest access.
+- provenance and classpath-manifest access; and
+- evidence-provider configuration/status and explicit acquisition-gap reasons where applicable.
 
 ### 2. Overview Dashboard
 
@@ -72,6 +74,7 @@ The default landing page for a completed analysis must show:
 - repository, commit, branch/reference when known, analysis time, analyzer version, and configuration;
 - inventory cards for modules, packages, source files, types, members, relationships, Spring elements, and endpoints;
 - semantic coverage and unresolved/ambiguous/error summary;
+- evidence-gap and acquisition summary grouped by mechanism, reason, provider and affected output, with attempted/failed/denied/unavailable states where applicable;
 - violation totals by severity, rule, scope, and semantic status;
 - architecture health score, dimension scores, score status, and analysis confidence side by side;
 - highest-risk cycles, boundary breaches, coupling hotspots, and affected modules/packages;
@@ -126,13 +129,14 @@ The default graph must be a meaningful architectural projection, not a raw dump 
 
 ### 7. Spring and Impact Views
 
-- components and composed stereotypes;
+- components, bean-definition candidates, producers, and composed stereotypes;
 - controllers and endpoints;
 - configuration classes and `@Bean` producers;
 - injection points, candidate sets, selected candidate where statically justified, and ambiguity reasons;
 - qualifier, primary/fallback, profile, and conditional states;
 - direct and bounded transitive dependents/impact with path evidence;
-- prominent warning that source analysis does not equal the complete runtime Spring container.
+- prominent warning that source analysis does not equal the complete runtime Spring container; and
+- drill-down from each unresolved/dynamic Spring mechanism to its source/configuration evidence, capability gap and candidate next evidence without implying automatic execution or a guaranteed resolution.
 
 ### 8. Evolution Comparison
 
@@ -193,6 +197,7 @@ Counts must state inclusion rules. For example, type counts must say whether nes
 - provenance completeness for source file and complete span;
 - analysis phase duration and failure counts;
 - classpath/module-model completeness indicators.
+- evidence-provider attempts, successes, failures, conflicts and unresolved capability gaps by reason where applicable.
 
 These describe analyzer evidence quality and must not be silently mixed into architecture health.
 
@@ -365,6 +370,8 @@ The following require later evidence and are not silently decided by this contra
 - persistence adapter, including Neo4j;
 - advanced maintainability predictions, technical-debt estimation, or AI recommendations.
 
+Deferral governs SE121 delivery and claim scope, not permanent platform capability. [ADR-003](../decisions/ADR-003-progressive-evidence-acquisition.md) governs how future evidence providers extend the product without weakening safety or epistemic integrity.
+
 ## Track A Product Exit Criteria
 
 Track A is not complete unless all of the following are true:
@@ -378,5 +385,5 @@ Track A is not complete unless all of the following are true:
 7. Metric and score formulas are versioned and pass their registered correctness tests.
 8. A compatible two-snapshot flow is demonstrated after Track B authorization.
 9. Limitations, unsupported cases, configuration, and provenance are visible.
-10. The complete demo is reproducible from a clean clone.
-
+10. Current provider limits are presented as scoped capability gaps, not claims that repository facts are absent or permanently unknowable.
+11. The complete demo is reproducible from a clean clone.

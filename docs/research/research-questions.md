@@ -99,7 +99,7 @@ These are engineering uncertainties identified during bootstrap analysis:
 |---|---|---|---|
 | OQ-1 | Is JavaParser sufficiently correct for the approved production semantic denominator? | P0 | R1 supports PROVISIONAL viability; broader gate pending |
 | OQ-2 | Is the proposed Neo4j schema sufficient for all SE121 rule types? | P0 | R2 experiment planned |
-| OQ-3 | How should Spring implicit wiring be modeled in the graph? | P0 | To be investigated |
+| OQ-3 | How should Spring implicit wiring be modeled in the graph? | P0 | [Provisional producer/candidate/injection-point/condition model](../architecture/m4-spring-intelligence.md) and `spring-mechanisms:v1` denominator drafted; M4 identity, fixtures and G3 validation pending |
 | OQ-4 | What architecture rules should the MVP detect? | P1 | Research task 1.3 |
 | OQ-5 | How should symbol identity work across incremental analysis? | P1 | Design task |
 | OQ-6 | What ground-truth datasets exist for architecture violation detection? | P1 | Research task 1.4 |
@@ -110,6 +110,7 @@ These are engineering uncertainties identified during bootstrap analysis:
 | OQ-11 | Which score dimensions, weights, caps, and withholding thresholds are stable and explainable? | P0 | M6/M9 labeled examples and sensitivity task |
 | OQ-12 | What focused-graph, query, and UI performance budgets are achievable on the registered corpus/reference environments? | P1 | M8/M9 benchmark task |
 | OQ-13 | Which frontend/design-system/graph stack best satisfies focused graph, accessibility, and scale requirements? | P1 | Bounded M8 technology evaluation |
+| OQ-14 | How should capability gaps, acquisition attempts and conflicting provider observations be versioned, reconciled and projected? | P0 | [Provisional M3+ contract](../architecture/evidence-acquisition.md) drafted; implementation shape and provider-policy evidence pending |
 
 ---
 

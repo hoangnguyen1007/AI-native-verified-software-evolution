@@ -9,11 +9,13 @@ Current phase: **SE121**. Approved North Star: **Track A + Track B**.
 - Track B: compatible-snapshot architecture evolution after Track A gates and human approval.
 - Track C: optional moonshot; never weaken or delay Track A + B.
 
+Milestone and phase scope govern current delivery, sequencing, and claim language; they are not permanent limits on platform capability. The platform adapts to repositories through progressive, provenance-preserving evidence acquisition rather than requiring repositories to fit one frontend, build convention, or static-analysis envelope.
+
 Priority: technical depth > correctness > architecture quality > engineering quality > product quality > empirical validation > publication later.
 
 In scope: Java semantics, safe multi-module build modeling, Spring intelligence, canonical Software Knowledge Graph, architecture policies and evidence-backed violations, bounded impact, metrics and explainable assessment, stable queries, visualization, reproducible evaluation, and gated snapshot comparison.
 
-Out of scope without an explicit phase change: AI diagnosis/RAG, automated refactoring or patch generation, OpenRewrite transformation pipelines, sandbox/differential/mutation verification of generated patches, Verified PR/CI-CD product flows, and another analyzed language. Architecture-mutation fixtures for SE121 rule detection are allowed.
+Not SE121 delivery commitments without an explicit phase change: AI diagnosis/RAG, automated refactoring or patch generation, OpenRewrite transformation pipelines, sandbox/differential/mutation verification of generated patches, Verified PR/CI-CD product flows, and another analyzed language. These are scheduled non-goals, not architectural prohibitions; extension boundaries may be preserved without implementing the capabilities now. Architecture-mutation fixtures for SE121 rule detection are allowed.
 
 ## Authority and decisions
 
@@ -76,12 +78,13 @@ A trivial prose/formatting edit needs applicable local instructions, diff inspec
 - Preserve boundaries: acquisition -> build model -> semantic frontend -> Spring enrichment -> canonical graph -> query/metrics/policy/assessment -> presentation.
 - Parser AST/resolution objects stay inside adapters; storage queries do not define domain behavior. Backend/frontend use stable architecture query services.
 - Use a replaceable `SemanticFrontend` boundary and explicit replacement triggers. Canonical entities/evidence remain parser- and storage-neutral.
-- Model modules, source roots, dependency scopes, parent POMs, dependency management and BOMs where analysis needs them. Never execute arbitrary untrusted target Maven/Gradle lifecycles.
+- Model modules, source roots, dependency scopes, parent POMs, dependency management and BOMs where analysis needs them. Never execute arbitrary untrusted target Maven/Gradle lifecycles. This safety rule does not preclude a future explicitly authorized, isolated, resource-bounded build/sandbox evidence provider with recorded inputs, outputs, side effects and provenance.
 - Content-address analysis from snapshot/source hashes, ordered exact classpath, configuration, rules, graph schema, and analyzer version.
 - Keep unresolved, ambiguous, partial, conditional, unsupported, and error outcomes explicit. Derivation and semantic status are separate.
+- Treat a current provider's unresolved or unsupported result as a capability-gap signal, not proof that the repository fact is unknowable. Where the phase and permissions allow, acquire progressively stronger evidence through replaceable providers; otherwise retain the gap, attempted methods and reason without silent omission.
 - Preserve identity, full source spans, origin, derivation, uncertainty, diagnostics, manifest, graph paths and rule/version provenance as applicable. Missing provenance cannot become a verified fact.
 - Keep health separate from analysis confidence; missing evidence may qualify/withhold assessment, never improve it. Metrics/scores are deterministic, versioned and explainable.
-- Prefer a modular monolith and reversible adapters. Bytecode validation stays ASSESS/HOLD until a demonstrated source-semantic gap.
+- Prefer a modular monolith and reversible adapters. Source, build metadata, generated sources, bytecode, configuration, controlled sandbox/build results and runtime observations remain possible evidence-provider inputs. Their implementation is gate- and evidence-driven; no provider may silently overwrite contradictory evidence or erase uncertainty.
 - Track A includes the usable visual workbench. Track B cannot bypass Track A correctness gates.
 
 ## Execution and collaboration

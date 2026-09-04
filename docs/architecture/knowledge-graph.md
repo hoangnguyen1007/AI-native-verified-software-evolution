@@ -8,12 +8,12 @@
 >
 > Nothing here should be treated as decided until R2 completes.
 
-The parser-neutral identity, source-evidence, semantic-status, uncertainty, derivation, manifest, metric-envelope, and assessment-status contracts are no longer hypotheses in this document. Their implemented authority is [M1 Semantic, Identity, Uncertainty, and Provenance Contracts](m1-contracts.md). Graph node/edge shape and Neo4j mapping remain hypotheses.
+The parser-neutral identity, source-evidence, semantic-status, uncertainty, derivation, manifest, metric-envelope, and assessment-status contracts are no longer hypotheses in this document. Their implemented authority is [M1 Semantic, Identity, Uncertainty, and Provenance Contracts](m1-contracts.md). The Spring producer/candidate/injection-point/condition concepts are a [provisional M4 baseline](m4-spring-intelligence.md); their exact graph node/edge shape and the Neo4j mapping remain hypotheses.
 
 ## Purpose
 
-The Software Knowledge Graph represents the semantic structure of a
-Java/Spring Boot repository as a labeled property graph. It must support:
+The Software Knowledge Graph represents the evidence-backed semantic structure of a
+Java/Spring Boot repository as a labeled property graph. Source semantics are the current baseline, not the exclusive future evidence source. It must support:
 
 1. Architecture rule evaluation
 2. Dependency analysis
@@ -21,6 +21,7 @@ Java/Spring Boot repository as a labeled property graph. It must support:
 4. Evidence-backed violation reporting
 5. Source traceability
 6. Versioned structural metrics and bounded visualization projections
+7. Evidence-provider provenance, conflicts, and unresolved capability gaps without treating missing evidence as absence
 
 **[CONFIRMED]** — from AGENTS.md.
 
@@ -32,22 +33,19 @@ Alternatives if Neo4j proves inadequate:
 - In-memory graph model (for development/testing)
 - JanusGraph (if distributed scale needed — unlikely for SE121)
 
-## Evidence Classification
+## Evidence, Status, and Gap Classification
 
-Every graph relationship carries an evidence type:
+Every graph statement keeps three orthogonal dimensions rather than collapsing them into one “evidence type”:
 
-| Type | Meaning | Example |
+| Dimension | Values/examples | Meaning |
 |---|---|---|
-| **DIRECT** | Directly observed from source semantics | `class A extends B` → EXTENDS relationship |
-| **DERIVED** | Deterministically derived from known relationships | Transitive dependency |
-| **INFERRED** | Produced by heuristic or framework-specific inference | Spring bean wiring from `@Autowired` |
-| **UNKNOWN** | Insufficient evidence to classify | Unresolved external dependency |
+| Derivation | `DIRECT`, `DERIVED`, `INFERRED` | How the statement was produced |
+| Semantic status | `RESOLVED`, `PARTIAL`, `UNRESOLVED`, `AMBIGUOUS`, `CONDITIONAL`, `UNSUPPORTED`, `ERROR` | What the provider established |
+| Provenance/gap | Observation, input and provider references; optional capability-gap reference | Which evidence supports the statement and what evidence is still missing |
 
-**[CONFIRMED]** — from `.agents/rules/20-evidence-first.md`.
+There is no `UNKNOWN` derivation kind in the implemented M1 contract. Insufficient evidence remains an explicit semantic/provenance state and, where a stable reason/evidence need exists, a [capability gap](evidence-acquisition.md). Do not silently convert `INFERRED` to `DIRECT`, an unresolved candidate to an absent edge, or a runtime observation to source-direct evidence.
 
-Do not silently convert INFERRED to DIRECT.
-
-## Node Types [HYPOTHESIS]
+## Node Types [HYPOTHESIS EXCEPT WHERE NOTED]
 
 ### Package
 
@@ -111,16 +109,18 @@ Represents classes, interfaces, enums, records, and annotation types.
 
 **Identity:** composite (annotation type + annotated element)
 
-### SpringBean
+### Spring semantic concepts [PROVISIONAL]
 
-| Property | Type | Description |
-|---|---|---|
-| `beanName` | String | Spring bean name |
-| `scope` | String | singleton/prototype/request/session |
-| `qualifiedName` | String | Implementing class |
-| `stereotype` | String | @Service/@Repository/@Controller/@Component |
+The earlier flat `SpringBean --INJECTS--> SpringBean` sketch is superseded. A stereotype class, bean producer, bean-definition candidate, injection point and runtime bean are not interchangeable identities.
 
-**Identity:** `qualifiedName`
+| Concept | Key graph responsibility |
+|---|---|
+| `BeanProducer` | Source/configuration/artifact/runtime mechanism that can produce a bean definition |
+| `BeanDefinitionCandidate` | Context-specific candidate with names, exposed types, scope, conditions and producer provenance; not proof of runtime instantiation |
+| `InjectionPoint` | Exact constructor/field/method/`@Bean` parameter or other registered injection site with requested type/qualifier evidence and source span where available |
+| `ConfigurationCondition` | Profile/property/classpath/bean/expression predicate with evaluation status and missing inputs |
+
+Exact canonical identities and node-versus-record mapping remain M4/M5 decisions. See [M4 Spring Intelligence and Closed Mechanism Taxonomy](m4-spring-intelligence.md).
 
 ### ConfigProperty
 
@@ -144,8 +144,12 @@ Represents classes, interfaces, enums, records, and annotation types.
 | `DEPENDS_ON` | Class | Class | DIRECT / DERIVED | `dependencyType` |
 | `IMPORTS` | Class | Class | DIRECT | — |
 | `ANNOTATED_WITH` | Any | Annotation | DIRECT | `params` (annotation parameters) |
-| `INJECTS` | SpringBean | SpringBean | DERIVED | `injectionType` (constructor/field/setter) |
-| `READS_PROPERTY` | SpringBean | ConfigProperty | DERIVED | — |
+| `PRODUCES_BEAN_CANDIDATE` | BeanProducer | BeanDefinitionCandidate | DIRECT / DERIVED / INFERRED | producer kind, status, evidence references |
+| `DECLARES_INJECTION_POINT` | BeanDefinitionCandidate / producer owner | InjectionPoint | DIRECT / DERIVED | injection kind, source evidence |
+| `HAS_CONDITION` | Producer / candidate / binding candidate | ConfigurationCondition | DIRECT / DERIVED | activation/evaluation status |
+| `INJECTION_CANDIDATE` | InjectionPoint | BeanDefinitionCandidate | DERIVED / INFERRED | compatibility and disambiguation reasoning, semantic status, evidence references |
+| `SELECTED_BINDING` | InjectionPoint | BeanDefinitionCandidate | DERIVED / INFERRED | only when selection is justified; conditions and evidence references required |
+| `READS_PROPERTY` | InjectionPoint / BeanProducer / BeanDefinitionCandidate | ConfigProperty | DIRECT / DERIVED / INFERRED | expression/condition role and evidence references |
 | `THROWS` | Method | Class (exception) | DIRECT | — |
 | `RETURNS` | Method | Class | DIRECT | — |
 | `HAS_PARAMETER` | Method | Class | DIRECT | `paramName`, `position` |
@@ -205,9 +209,9 @@ graph path each rule requires:
    - Requires: DEPENDS_ON aggregated at package level
    - Graph path: Package → CONTAINS → Class → DEPENDS_ON → Class → CONTAINS ← Package
 
-3. **Spring bean scope violation:** Singleton injecting Prototype
-   - Requires: INJECTS + SpringBean.scope
-   - Graph path: SpringBean(singleton) → INJECTS → SpringBean(prototype)
+3. **Spring bean scope violation:** Singleton candidate selecting Prototype candidate
+   - Requires: bean-definition scopes, an exact injection point, candidate evidence and a justified selected binding (or an explicitly conditional finding)
+   - Graph path: BeanDefinitionCandidate(singleton) → DECLARES_INJECTION_POINT → InjectionPoint → SELECTED_BINDING → BeanDefinitionCandidate(prototype)
 
 If any rule's graph path cannot be expressed with the current schema,
 the schema must be revised before implementation.
@@ -216,9 +220,10 @@ the schema must be revised before implementation.
 
 - Generic type parameters: not represented in current schema
 - Lambda expressions: method call targets unclear
-- Reflection-based dependencies: undetectable by static analysis
-- Conditional beans (`@ConditionalOn*`): may produce false INJECTS edges
-- AOP advice: may create invisible dependencies
+- Reflection-based dependencies: not generally attributable from source-only static evidence; retain candidate/configuration evidence and an acquisition gap for possible bytecode, configuration, controlled runtime, or other providers
+- Conditional beans (`@ConditionalOn*`): source/configuration evidence may be insufficient to select one active binding; retain conditional candidates and the missing evidence rather than emitting a certain selected-binding projection
+- AOP advice: source evidence may not expose woven or runtime dependencies; retain the mechanism/gap for possible configuration, bytecode or runtime enrichment
+- Provider precedence/conflict semantics and graph representation for build, generated-source, bytecode, sandbox and runtime observations
 - Exact graph projections and aggregation identities for large workbench views
 - Exact structural metric formulas and score inputs pending M5/M6 validation
 
@@ -227,3 +232,5 @@ the schema must be revised before implementation.
 - [Architecture Overview](architecture.md)
 - [Project Context](../project-context.md)
 - [M1 Contracts](m1-contracts.md)
+- [Progressive Evidence Acquisition Contract](evidence-acquisition.md)
+- [M4 Spring Intelligence and Closed Mechanism Taxonomy](m4-spring-intelligence.md)

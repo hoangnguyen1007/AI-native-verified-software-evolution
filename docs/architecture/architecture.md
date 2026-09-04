@@ -15,6 +15,8 @@ Analyze Java/Spring Boot repositories to produce deterministic, evidence-backed 
 
 The platform is not complete as an analyzer alone. Track A includes a usable dashboard and architecture workbench.
 
+Milestone boundaries constrain current delivery and claims, not the platform's eventual evidence sources. The durable restriction is not “source only” or “static only”; it is that every observation must remain safe to acquire, explicit about uncertainty, attributable to versioned inputs, and impossible to silently omit or promote beyond its evidence.
+
 ## Architecture Style
 
 **Modular monolith.**
@@ -44,15 +46,19 @@ Compatible snapshots
   -> Evolution Queries and UI
 ```
 
+Evidence acquisition is a feedback loop around the pipeline, not a one-time source-loading step. A provider may report a fact, a candidate set, a conflict, or an unresolved capability gap. Registered gaps can request the least invasive useful next provider—declarative build/configuration metadata, dependencies or generated sources, bytecode, controlled sandbox/build output, runtime observation, or a future source frontend—subject to phase scope, authorization and safety. Each pass produces new provenance; it never mutates an earlier observation into false certainty.
+
 ## Architectural Components
 
 | Component | Responsibility | Must not own |
 |---|---|---|
 | Repository acquisition | Snapshot identity, safe file inventory, content hashes | Semantic interpretation |
+| Evidence acquisition coordinator | Provider selection, trust/permission policy, gap escalation, evidence reconciliation and attempt provenance | Fabricating facts or treating unavailable evidence as absence |
+| Evidence providers | Versioned source, build, generated-source, bytecode, configuration, sandbox/build or runtime observations | Canonical truth, policy meaning or silent conflict resolution |
 | Workspace/build model | Modules, roots, dependencies, scopes, exact classpath manifest | Arbitrary target lifecycle execution |
 | Semantic frontend port | Parser-neutral Java facts, diagnostics, evidence | Graph storage or policy meaning |
 | JavaParser adapter | Parsing and symbol-resolution implementation | Domain types outside its adapter boundary |
-| Spring intelligence | Candidate components, injection sets, endpoints, conditional uncertainty | Claims of complete runtime-container equivalence |
+| Spring intelligence | Producers, bean-definition candidates, exact injection points, conditions, binding candidates, endpoints and a versioned mechanism taxonomy | Runtime-container equivalence, flat certain `INJECTS` edges or silent omission of unresolvable wiring |
 | Canonical graph builder | Deterministic nodes, occurrences, relationships, provenance | UI-specific graph shapes |
 | Graph storage adapter | Persist/load canonical graph representations | Canonical domain semantics |
 | Architecture query services | Search, dependencies, paths, cycles, projections, evidence, comparison | Presentation rendering |
@@ -102,6 +108,7 @@ M1 resolves the first placement decision: parser- and storage-neutral contracts 
 - exact classpath/dependency manifest;
 - analyzer and schema versions;
 - semantic, Spring, metric, score, policy, and limit configuration.
+- enabled evidence-provider identities, trust/permission policy, acquired artifact identities and prior acquisition-gap records.
 
 ### Canonical outputs
 
@@ -180,10 +187,11 @@ Every important relationship, metric input, violation, and score penalty preserv
 | Policy evidence | Rule ID/version and configuration |
 | Assessment evidence | Metric/score formula versions, contributions, penalties, and qualification |
 | Limitations | Missing inputs and bounded-claim language |
+| Acquisition | Provider/method/version, trust and permission context, inputs, attempts, failures, conflicts and resulting capability gaps |
 
 ## Safety and Scale Boundaries
 
-- Do not execute arbitrary untrusted Maven/Gradle lifecycle code during normal analysis.
+- Do not execute arbitrary untrusted Maven/Gradle lifecycle code during normal analysis. Any future execution-backed provider is opt-in, explicitly authorized, isolated, resource-bounded, network/filesystem constrained as appropriate, and records inputs, outputs and side effects.
 - Bound repository size, files, graph projections, traversal depth, result count, and job duration.
 - Use pagination, cancellation, aggregation, and progressive graph expansion.
 - Never render the complete raw graph by default.
@@ -203,7 +211,12 @@ Every important relationship, metric input, violation, and score penalty preserv
 
 ## Explicit Future Extension Points
 
-The architecture preserves boundaries for later phases but SE121 does not implement:
+The architecture preserves boundaries for later phases even where SE121 does not implement the capability. These are scheduled omissions, not permanent exclusions:
+
+- additional source/build-system frontends and declarative build-model providers;
+- generated-source and dependency-artifact acquisition;
+- selective bytecode and framework/configuration evidence;
+- explicitly authorized controlled build/sandbox and runtime-observation providers;
 
 - graph-guided RAG or AI diagnosis;
 - automated repair/refactoring;
@@ -218,5 +231,8 @@ The architecture preserves boundaries for later phases but SE121 does not implem
 - [Product Outcome Contract](product-outcome.md)
 - [Knowledge Graph](knowledge-graph.md)
 - [M1 Semantic, Identity, Uncertainty, and Provenance Contracts](m1-contracts.md)
+- [Progressive Evidence Acquisition and Capability-Gap Contract](evidence-acquisition.md)
+- [M4 Spring Intelligence and Closed Mechanism Taxonomy](m4-spring-intelligence.md)
 - [ADR-002](../decisions/ADR-002-product-outcome-and-explainable-assessment.md)
+- [ADR-003: Progressive Evidence Acquisition](../decisions/ADR-003-progressive-evidence-acquisition.md)
 - [Current State](../current-state.md)
