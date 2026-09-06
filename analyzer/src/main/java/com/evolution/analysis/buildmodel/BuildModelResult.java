@@ -10,13 +10,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
-/** M3.1 declarative model evidence, not a resolved classpath or a complete workspace analysis. */
+/** Declarative model/source-plan evidence, not a resolved classpath or a complete workspace analysis. */
 public record BuildModelResult(String schemaVersion, ContentDigest requestIdentity, VersionedIdentifier provider,
         List<ModuleModel> modules, List<Problem> problems, List<Attempt> attempts, List<String> limitations) {
-    public static final String SCHEMA = "build-model-result-v1";
+    public static final String SCHEMA = "build-model-result-v2";
     public static final List<String> DECLARATIVE_LIMITATIONS = List.of(
-            "Effective POM projection covers coordinates, aggregation, properties and dependency declarations only.",
-            "Source roots, compiler plugin configuration, encoding policy and platform symbols are not acquired.",
+            "Source plans describe declared candidate roots and compiler requirements; file membership and existence are not verified.",
+            "Source decoding, platform symbols and full Maven lifecycle/plugin parameter equivalence are not implemented.",
             "Dependency closures, JARs, generated outputs and target plugin effects are not evaluated.",
             "Parent and BOM lookup uses supplied relative POMs or exact-coordinate artifact POMs; no cache or network discovery.",
             "Build problems and read attempts are observations for the future normalized capability-gap contract.");
@@ -31,8 +31,11 @@ public record BuildModelResult(String schemaVersion, ContentDigest requestIdenti
     }
 
     public ContentDigest identity() { return ContentDigest.sha256Utf8(CanonicalJson.write(this)); }
-    /** Problems within this projection. An empty problem list does not remove declared limitations. */
-    public boolean hasGaps() { return !problems.isEmpty(); }
+    /** Includes source-plan gaps; even an empty result does not remove declared limitations. */
+    public boolean hasGaps() {
+        return !problems.isEmpty() || modules.stream().flatMap(m -> m.effectivePom().stream())
+                .flatMap(p -> p.sourcePlan().sourceSets().stream()).anyMatch(s -> !s.gaps().isEmpty());
+    }
 
     public enum Reason {
         MISSING_MODULE_POM, MISSING_PARENT_POM, MISSING_IMPORT_BOM,
@@ -92,7 +95,7 @@ public record BuildModelResult(String schemaVersion, ContentDigest requestIdenti
     /** Effective declarations in Maven order; versions/scopes are not evidence of acquired artifacts. */
     public record EffectivePom(MavenCoordinate coordinate, String packaging,
             List<String> declaredModules, List<Dependency> dependencies, List<Dependency> managedDependencies,
-            Map<String, String> properties, List<String> activeProfiles, List<PomEvidence> inputs) {
+            Map<String, String> properties, List<String> activeProfiles, List<PomEvidence> inputs, SourcePlanModel sourcePlan) {
         public EffectivePom {
             ContractChecks.notNull(coordinate, "coordinate");
             ContractChecks.text(packaging, "packaging");
@@ -102,6 +105,7 @@ public record BuildModelResult(String schemaVersion, ContentDigest requestIdenti
             properties = Map.copyOf(properties);
             activeProfiles = ContractChecks.sortedStrings(activeProfiles, "active profiles");
             inputs = ContractChecks.sortedDistinct(inputs, Comparator.comparing(PomEvidence::logicalId), "POM inputs");
+            ContractChecks.notNull(sourcePlan, "source plan");
         }
     }
 
@@ -117,6 +121,10 @@ public record BuildModelResult(String schemaVersion, ContentDigest requestIdenti
             aggregatorPom = ContractChecks.notNull(aggregatorPom, "aggregator")
                     .map(path -> ContractChecks.repositoryRelativePath(path, "aggregator POM"));
             ContractChecks.notNull(effectivePom, "effective POM");
+            if (effectivePom.isPresent() && effectivePom.get().sourcePlan().sourceSets().stream()
+                    .anyMatch(s -> !s.module().equals(module.identity()))) {
+                throw new IllegalArgumentException("Source plan belongs to a different module");
+            }
         }
     }
 }

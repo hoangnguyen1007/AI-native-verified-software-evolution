@@ -26,12 +26,23 @@ class PlatformReactorModelTest {
         var request = new BuildModelRequest(snapshot, "pom.xml", poms, Map.of(),
                 new BuildModelPolicy(List.of(), List.of(), Map.of(), 100_000, 100, 32));
         var result = new MavenBuildModelProvider().build(request);
-        assertFalse(result.hasGaps(), () -> result.problems().toString());
+        assertTrue(result.problems().isEmpty(), () -> result.problems().toString());
+        assertTrue(result.hasGaps()); // Candidate plans explicitly withhold generated-file acquisition/plugin effects.
         assertEquals(5, result.modules().size());
         for (var module : result.modules()) {
             var effective = module.effectivePom().orElseThrow();
             assertEquals("21", effective.properties().get("maven.compiler.release"));
             assertEquals("UTF-8", effective.properties().get("project.build.sourceEncoding"));
+            for (var sourceSet : effective.sourcePlan().sourceSets()) {
+                assertEquals(module.module().identity(), sourceSet.module());
+                assertEquals(Optional.of("21"), sourceSet.syntaxLevel().value());
+                assertEquals(Optional.of("21"), sourceSet.platformRelease().value());
+                assertEquals(Optional.of("UTF-8"), sourceSet.encoding().value());
+                if (!module.module().path().equals(".")) {
+                    String suffix = sourceSet.kind() == SourcePlanModel.Kind.MAIN ? "/src/main/java" : "/src/test/java";
+                    assertEquals(Optional.of(module.module().path() + suffix), sourceSet.sourceRoots().getFirst().value());
+                }
+            }
             effective.dependencies().stream().filter(d -> d.artifactId().equals("junit-jupiter"))
                     .forEach(d -> assertEquals("5.11.0", d.version()));
         }

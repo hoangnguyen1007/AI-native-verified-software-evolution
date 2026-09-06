@@ -1,0 +1,190 @@
+[INFO] Scanning for projects...
+[INFO] ------------------------------------------------------------------------
+[INFO] Reactor Build Order:
+[INFO] 
+[INFO] AI-Native Software Evolution Platform                              [pom]
+[INFO] Analyzer                                                           [jar]
+[INFO] Safe Maven Build Model                                             [jar]
+[INFO] 
+[INFO] -------------< com.evolution:software-evolution-platform >--------------
+[INFO] Building AI-Native Software Evolution Platform 0.1.0-SNAPSHOT      [1/3]
+[INFO]   from pom.xml
+[INFO] --------------------------------[ pom ]---------------------------------
+[INFO] 
+[INFO] --- enforcer:3.6.3:enforce (enforce-build-foundation) @ software-evolution-platform ---
+[INFO] Rule 0: org.apache.maven.enforcer.rules.version.RequireMavenVersion passed
+[INFO] Rule 1: org.apache.maven.enforcer.rules.version.RequireJavaVersion passed
+[INFO] Rule 2: org.apache.maven.enforcer.rules.property.RequireProperty passed
+[INFO] Rule 3: org.apache.maven.enforcer.rules.property.RequireProperty passed
+[INFO] Rule 4: org.apache.maven.enforcer.rules.BanDuplicatePomDependencyVersions passed
+[INFO] Rule 5: org.apache.maven.enforcer.rules.dependency.DependencyConvergence passed
+[INFO] Rule 6: org.apache.maven.enforcer.rules.ReactorModuleConvergence passed
+[INFO] Rule 7: org.apache.maven.enforcer.rules.RequirePluginVersions passed
+[INFO] Rule 8: org.apache.maven.enforcer.rules.dependency.RequireReleaseDeps passed
+[INFO] Rule 9: org.apache.maven.enforcer.rules.dependency.RequireUpperBoundDeps passed
+[INFO] 
+[INFO] -----------------------< com.evolution:analyzer >-----------------------
+[INFO] Building Analyzer 0.1.0-SNAPSHOT                                   [2/3]
+[INFO]   from analyzer\pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- enforcer:3.6.3:enforce (enforce-build-foundation) @ analyzer ---
+[INFO] Rule 2: org.apache.maven.enforcer.rules.property.RequireProperty passed
+[INFO] Rule 3: org.apache.maven.enforcer.rules.property.RequireProperty passed
+[INFO] Rule 4: org.apache.maven.enforcer.rules.BanDuplicatePomDependencyVersions passed
+[INFO] Rule 5: org.apache.maven.enforcer.rules.dependency.DependencyConvergence passed
+[INFO] Rule 7: org.apache.maven.enforcer.rules.RequirePluginVersions passed
+[INFO] Rule 8: org.apache.maven.enforcer.rules.dependency.RequireReleaseDeps passed
+[INFO] Rule 9: org.apache.maven.enforcer.rules.dependency.RequireUpperBoundDeps passed
+[INFO] 
+[INFO] --- resources:3.5.0:resources (default-resources) @ analyzer ---
+[INFO] skip non existing resourceDirectory D:\UIT\AI-native-verified-software-evolution\analyzer\src\main\resources
+[INFO] 
+[INFO] --- compiler:3.15.0:compile (default-compile) @ analyzer ---
+[INFO] Recompiling the module because of changed source code.
+[INFO] Compiling 74 source files with javac [debug release 21] to target\classes
+[INFO] 
+[INFO] --- resources:3.5.0:testResources (default-testResources) @ analyzer ---
+[INFO] skip non existing resourceDirectory D:\UIT\AI-native-verified-software-evolution\analyzer\src\test\resources
+[INFO] 
+[INFO] --- compiler:3.15.0:testCompile (default-testCompile) @ analyzer ---
+[INFO] Recompiling the module because of changed dependency.
+[INFO] Compiling 12 source files with javac [debug release 21] to target\test-classes
+[INFO] 
+[INFO] --- surefire:3.5.5:test (default-test) @ analyzer ---
+[INFO] 
+[INFO] --------------------< com.evolution:analyzer-maven >--------------------
+[INFO] Building Safe Maven Build Model 0.1.0-SNAPSHOT                     [3/3]
+[INFO]   from analyzer-maven\pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- enforcer:3.6.3:enforce (enforce-build-foundation) @ analyzer-maven ---
+[INFO] Rule 2: org.apache.maven.enforcer.rules.property.RequireProperty passed
+[INFO] Rule 3: org.apache.maven.enforcer.rules.property.RequireProperty passed
+[INFO] Rule 4: org.apache.maven.enforcer.rules.BanDuplicatePomDependencyVersions passed
+[INFO] Rule 5: org.apache.maven.enforcer.rules.dependency.DependencyConvergence passed
+[INFO] Rule 7: org.apache.maven.enforcer.rules.RequirePluginVersions passed
+[INFO] Rule 8: org.apache.maven.enforcer.rules.dependency.RequireReleaseDeps passed
+[INFO] Rule 9: org.apache.maven.enforcer.rules.dependency.RequireUpperBoundDeps passed
+[INFO] 
+[INFO] --- resources:3.5.0:resources (default-resources) @ analyzer-maven ---
+[INFO] skip non existing resourceDirectory D:\UIT\AI-native-verified-software-evolution\analyzer-maven\src\main\resources
+[INFO] 
+[INFO] --- compiler:3.15.0:compile (default-compile) @ analyzer-maven ---
+[INFO] Recompiling the module because of changed dependency.
+[INFO] Compiling 5 source files with javac [debug release 21] to target\classes
+[INFO] /D:/UIT/AI-native-verified-software-evolution/analyzer-maven/src/main/java/com/evolution/analysis/maven/ModelInputs.java: D:\UIT\AI-native-verified-software-evolution\analyzer-maven\src\main\java\com\evolution\analysis\maven\ModelInputs.java uses or overrides a deprecated API.
+[INFO] /D:/UIT/AI-native-verified-software-evolution/analyzer-maven/src/main/java/com/evolution/analysis/maven/ModelInputs.java: Recompile with -Xlint:deprecation for details.
+[INFO] 
+[INFO] --- resources:3.5.0:testResources (default-testResources) @ analyzer-maven ---
+[INFO] skip non existing resourceDirectory D:\UIT\AI-native-verified-software-evolution\analyzer-maven\src\test\resources
+[INFO] 
+[INFO] --- compiler:3.15.0:testCompile (default-testCompile) @ analyzer-maven ---
+[INFO] Recompiling the module because of changed dependency.
+[INFO] Compiling 3 source files with javac [debug release 21] to target\test-classes
+[INFO] 
+[INFO] --- surefire:3.5.5:test (default-test) @ analyzer-maven ---
+[INFO] Using auto detected provider org.apache.maven.surefire.junitplatform.JUnitPlatformProvider
+[INFO] 
+[INFO] -------------------------------------------------------
+[INFO]  T E S T S
+[INFO] -------------------------------------------------------
+[INFO] Running com.evolution.analysis.maven.SourcePlanProjectionTest
+[ERROR] Tests run: 5, Failures: 0, Errors: 5, Skipped: 0, Time elapsed: 0.210 s <<< FAILURE! -- in com.evolution.analysis.maven.SourcePlanProjectionTest
+[ERROR] com.evolution.analysis.maven.SourcePlanProjectionTest.customExecutionsAndGeneratorsArePreservedAndQualifyThePlan -- Time elapsed: 0.156 s <<< ERROR!
+java.lang.UnsupportedOperationException: M3.2 source plans are not yet implemented
+	at com.evolution.analysis.maven.SourcePlanProjection.project(SourcePlanProjection.java:10)
+	at com.evolution.analysis.maven.MavenBuildModelProvider$Run.project(MavenBuildModelProvider.java:162)
+	at com.evolution.analysis.maven.MavenBuildModelProvider$Run.build(MavenBuildModelProvider.java:95)
+	at com.evolution.analysis.maven.MavenBuildModelProvider.build(MavenBuildModelProvider.java:21)
+	at com.evolution.analysis.maven.SourcePlanProjectionTest.plans(SourcePlanProjectionTest.java:15)
+	at com.evolution.analysis.maven.SourcePlanProjectionTest.customExecutionsAndGeneratorsArePreservedAndQualifyThePlan(SourcePlanProjectionTest.java:77)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:580)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1596)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1596)
+
+[ERROR] com.evolution.analysis.maven.SourcePlanProjectionTest.inheritedSettingsRemainPerModuleAndTestOverridesMainWithoutChangingItsPlan -- Time elapsed: 0.010 s <<< ERROR!
+java.lang.UnsupportedOperationException: M3.2 source plans are not yet implemented
+	at com.evolution.analysis.maven.SourcePlanProjection.project(SourcePlanProjection.java:10)
+	at com.evolution.analysis.maven.MavenBuildModelProvider$Run.project(MavenBuildModelProvider.java:162)
+	at com.evolution.analysis.maven.MavenBuildModelProvider$Run.build(MavenBuildModelProvider.java:95)
+	at com.evolution.analysis.maven.MavenBuildModelProvider.build(MavenBuildModelProvider.java:21)
+	at com.evolution.analysis.maven.SourcePlanProjectionTest.inheritedSettingsRemainPerModuleAndTestOverridesMainWithoutChangingItsPlan(SourcePlanProjectionTest.java:41)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:580)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1596)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1596)
+
+[ERROR] com.evolution.analysis.maven.SourcePlanProjectionTest.unsafeAndUnknownPathsAndInvalidCharsetsRemainExplicit -- Time elapsed: 0.006 s <<< ERROR!
+java.lang.UnsupportedOperationException: M3.2 source plans are not yet implemented
+	at com.evolution.analysis.maven.SourcePlanProjection.project(SourcePlanProjection.java:10)
+	at com.evolution.analysis.maven.MavenBuildModelProvider$Run.project(MavenBuildModelProvider.java:162)
+	at com.evolution.analysis.maven.MavenBuildModelProvider$Run.build(MavenBuildModelProvider.java:95)
+	at com.evolution.analysis.maven.MavenBuildModelProvider.build(MavenBuildModelProvider.java:21)
+	at com.evolution.analysis.maven.SourcePlanProjectionTest.plans(SourcePlanProjectionTest.java:15)
+	at com.evolution.analysis.maven.SourcePlanProjectionTest.unsafeAndUnknownPathsAndInvalidCharsetsRemainExplicit(SourcePlanProjectionTest.java:67)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:580)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1596)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1596)
+
+[ERROR] com.evolution.analysis.maven.SourcePlanProjectionTest.customDirectoriesAndDefaultExecutionEncodingAreProjectedWithoutReadingFiles -- Time elapsed: 0.007 s <<< ERROR!
+java.lang.UnsupportedOperationException: M3.2 source plans are not yet implemented
+	at com.evolution.analysis.maven.SourcePlanProjection.project(SourcePlanProjection.java:10)
+	at com.evolution.analysis.maven.MavenBuildModelProvider$Run.project(MavenBuildModelProvider.java:162)
+	at com.evolution.analysis.maven.MavenBuildModelProvider$Run.build(MavenBuildModelProvider.java:95)
+	at com.evolution.analysis.maven.MavenBuildModelProvider.build(MavenBuildModelProvider.java:21)
+	at com.evolution.analysis.maven.SourcePlanProjectionTest.plans(SourcePlanProjectionTest.java:15)
+	at com.evolution.analysis.maven.SourcePlanProjectionTest.customDirectoriesAndDefaultExecutionEncodingAreProjectedWithoutReadingFiles(SourcePlanProjectionTest.java:52)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:580)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1596)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1596)
+
+[ERROR] com.evolution.analysis.maven.SourcePlanProjectionTest.defaultRootsAreExplicitCandidatesAndNoHostCompilerOrEncodingIsAssumed -- Time elapsed: 0.005 s <<< ERROR!
+java.lang.UnsupportedOperationException: M3.2 source plans are not yet implemented
+	at com.evolution.analysis.maven.SourcePlanProjection.project(SourcePlanProjection.java:10)
+	at com.evolution.analysis.maven.MavenBuildModelProvider$Run.project(MavenBuildModelProvider.java:162)
+	at com.evolution.analysis.maven.MavenBuildModelProvider$Run.build(MavenBuildModelProvider.java:95)
+	at com.evolution.analysis.maven.MavenBuildModelProvider.build(MavenBuildModelProvider.java:21)
+	at com.evolution.analysis.maven.SourcePlanProjectionTest.plans(SourcePlanProjectionTest.java:15)
+	at com.evolution.analysis.maven.SourcePlanProjectionTest.defaultRootsAreExplicitCandidatesAndNoHostCompilerOrEncodingIsAssumed(SourcePlanProjectionTest.java:24)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:580)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1596)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1596)
+
+[INFO] 
+[INFO] Results:
+[INFO] 
+[ERROR] Errors: 
+[ERROR]   SourcePlanProjectionTest.customDirectoriesAndDefaultExecutionEncodingAreProjectedWithoutReadingFiles:52->plans:15 � UnsupportedOperation M3.2 source plans are not yet implemented
+[ERROR]   SourcePlanProjectionTest.customExecutionsAndGeneratorsArePreservedAndQualifyThePlan:77->plans:15 � UnsupportedOperation M3.2 source plans are not yet implemented
+[ERROR]   SourcePlanProjectionTest.defaultRootsAreExplicitCandidatesAndNoHostCompilerOrEncodingIsAssumed:24->plans:15 � UnsupportedOperation M3.2 source plans are not yet implemented
+[ERROR]   SourcePlanProjectionTest.inheritedSettingsRemainPerModuleAndTestOverridesMainWithoutChangingItsPlan:41 � UnsupportedOperation M3.2 source plans are not yet implemented
+[ERROR]   SourcePlanProjectionTest.unsafeAndUnknownPathsAndInvalidCharsetsRemainExplicit:67->plans:15 � UnsupportedOperation M3.2 source plans are not yet implemented
+[INFO] 
+[ERROR] Tests run: 5, Failures: 0, Errors: 5, Skipped: 0
+[INFO] 
+[INFO] ------------------------------------------------------------------------
+[INFO] Reactor Summary for AI-Native Software Evolution Platform 0.1.0-SNAPSHOT:
+[INFO] 
+[INFO] AI-Native Software Evolution Platform .............. SUCCESS [  0.391 s]
+[INFO] Analyzer ........................................... SUCCESS [  2.765 s]
+[INFO] Safe Maven Build Model ............................. FAILURE [  1.589 s]
+[INFO] ------------------------------------------------------------------------
+[INFO] BUILD FAILURE
+[INFO] ------------------------------------------------------------------------
+[INFO] Total time:  4.861 s
+[INFO] Finished at: 2026-09-06T18:40:15+07:00
+[INFO] ------------------------------------------------------------------------
+[ERROR] Failed to execute goal org.apache.maven.plugins:maven-surefire-plugin:3.5.5:test (default-test) on project analyzer-maven: 
+[ERROR] 
+[ERROR] See D:\UIT\AI-native-verified-software-evolution\analyzer-maven\target\surefire-reports for the individual test results.
+[ERROR] See dump files (if any exist) [date].dump, [date]-jvmRun[N].dump and [date].dumpstream.
+[ERROR] -> [Help 1]
+[ERROR] 
+[ERROR] To see the full stack trace of the errors, re-run Maven with the -e switch.
+[ERROR] Re-run Maven using the -X switch to enable full debug logging.
+[ERROR] 
+[ERROR] For more information about the errors and possible solutions, please read the following articles:
+[ERROR] [Help 1] http://cwiki.apache.org/confluence/display/MAVEN/MojoFailureException
+[ERROR] 
+[ERROR] After correcting the problems, you can resume the build with the command
+[ERROR]   mvn <args> -rf :analyzer-maven

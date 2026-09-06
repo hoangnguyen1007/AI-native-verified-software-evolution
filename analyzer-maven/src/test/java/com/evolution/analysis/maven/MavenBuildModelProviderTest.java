@@ -43,7 +43,7 @@ class MavenBuildModelProviderTest {
         var result = provider.build(request(Map.of("pom.xml", root, "api/pom.xml", api, "app/pom.xml", app),
                 Map.of(new MavenCoordinate("demo", "platform", "1"), bom), POLICY));
 
-        assertFalse(result.hasGaps(), () -> result.problems().toString());
+        assertTrue(result.problems().isEmpty(), () -> result.problems().toString());
         assertEquals(List.of("api/pom.xml", "app/pom.xml", "pom.xml"), result.modules().stream().map(ModuleModel::pomPath).toList());
         assertEquals(".", module(result, "pom.xml").module().path());
         assertEquals(Optional.of("pom.xml"), module(result, "api/pom.xml").aggregatorPom());

@@ -14,7 +14,7 @@ import org.apache.maven.model.profile.activation.PropertyProfileActivator;
 
 /** Passive in-memory effective models. No Maven session, container, transport or lifecycle exists here. */
 public final class MavenBuildModelProvider implements BuildModelProvider {
-    public static final VersionedIdentifier VERSION = new VersionedIdentifier("build.maven-model", "3.9.16-m3.1");
+    public static final VersionedIdentifier VERSION = new VersionedIdentifier("build.maven-model", "3.9.16-m3.2");
 
     @Override
     public BuildModelResult build(BuildModelRequest request) {
@@ -158,7 +158,8 @@ public final class MavenBuildModelProvider implements BuildModelProvider {
             return new EffectivePom(coordinate, model.getPackaging(), model.getModules(),
                     model.getDependencies().stream().map(Run::dependency).toList(),
                     model.getDependencyManagement() == null ? List.of() : model.getDependencyManagement().getDependencies().stream().map(Run::dependency).toList(),
-                    properties, List.copyOf(profiles), List.copyOf(context.used.values()));
+                    properties, List.copyOf(profiles), List.copyOf(context.used.values()),
+                    SourcePlanProjection.project(model, context.root, request, List.copyOf(context.used.values())));
         }
 
         private static boolean hasDependencyExpression(Model model) {

@@ -1,0 +1,90 @@
+{
+  "date": "2026-09-06",
+  "baselineCommit": "5c2c7d437e3b196183417d00d84204d3e24ed171",
+  "command": ".\\mvnw.cmd -B -ntp '-Dmaven.repo.local=C:/Users/Admin/.m2/repository' verify",
+  "exitCode": 0,
+  "modules": [
+    {
+      "module": "analyzer",
+      "tests": 48,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "module": "analyzer-maven",
+      "tests": 33,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "module": "analyzer-javaparser",
+      "tests": 56,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "module": "backend",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    }
+  ],
+  "inputs": [
+    {
+      "path": "analyzer-javaparser/pom.xml",
+      "sha256": "4d96cf1801eca263d4bf41d6df338a11fd49b2276cdfa2709bd4ce24f2927067"
+    },
+    {
+      "path": "analyzer-maven/pom.xml",
+      "sha256": "15e328eaacec61f195ac2f93a5b09f14e24b1607e289da6deb5146702385fbd6"
+    },
+    {
+      "path": "analyzer-maven/src/main/java/com/evolution/analysis/maven/MavenBuildModelProvider.java",
+      "sha256": "0018fef6528f45160e8819c7419d5099d73ba00345f9a76833bb2680091b14b0"
+    },
+    {
+      "path": "analyzer-maven/src/main/java/com/evolution/analysis/maven/SourcePlanProjection.java",
+      "sha256": "2785d3c2f4bb52fea0c43cbf42b347d8316a104ab644f69c4de84577691d8b25"
+    },
+    {
+      "path": "analyzer-maven/src/test/java/com/evolution/analysis/maven/MavenBuildModelProviderTest.java",
+      "sha256": "48785838ea5b4a38cc32dbf1ff02492b61bee02fa3ed8e4fb31c0744d3dbec71"
+    },
+    {
+      "path": "analyzer-maven/src/test/java/com/evolution/analysis/maven/PlatformReactorModelTest.java",
+      "sha256": "0c88097043a8df4264cae01fa874e72b2a8b938a5090afacc7a6facf2dad8bcf"
+    },
+    {
+      "path": "analyzer-maven/src/test/java/com/evolution/analysis/maven/SourcePlanProjectionTest.java",
+      "sha256": "52096bdfc5ab61646942ce2bae16b2201d96897c05874f3bde43959eda54b28c"
+    },
+    {
+      "path": "analyzer/pom.xml",
+      "sha256": "9b83a0644e246e4e53eec7e72d9c72bdb253d3c7a7678e75a26d7450b0231caa"
+    },
+    {
+      "path": "analyzer/src/main/java/com/evolution/analysis/buildmodel/BuildModelResult.java",
+      "sha256": "6f3259f2708e97f3a318a341600d45488d65cac9e0e3ca1278914d9ad0166223"
+    },
+    {
+      "path": "analyzer/src/main/java/com/evolution/analysis/buildmodel/SourcePlanModel.java",
+      "sha256": "b73af082fee79a12992570c2c9d3c77ad13021814c5fa82e9fb52eae3c366a74"
+    },
+    {
+      "path": "analyzer/src/test/java/com/evolution/analysis/buildmodel/SourcePlanContractTest.java",
+      "sha256": "224d32281b5f54631f75f09405bf34850320830621b49adf3d38beb23b239cfe"
+    },
+    {
+      "path": "backend/pom.xml",
+      "sha256": "9b81a7a00439acd6ad861dae82777dfbdc7fc4a98dd3ef4f7410f05239ea10ac"
+    },
+    {
+      "path": "pom.xml",
+      "sha256": "ea8c1583f90578cbfa521c9f46adeda73c8044b3c541c3405d3a971b1fd1094b"
+    }
+  ]
+}

@@ -2,7 +2,7 @@
 
 ## Status and Scope
 
-**PROVISIONAL Milestone M3 baseline; the bounded M3.1 effective-POM projection below is implemented.** Later sections define target contracts for workspace discovery, build-model interpretation, exact classpath manifests, platform decoupling, source encoding, and generated-source lineage. They are not claims of delivered capability.
+**PROVISIONAL Milestone M3 baseline; bounded M3.1 effective-POM and M3.2 source-plan projections below are implemented.** Later sections define target contracts for workspace discovery, exact classpath manifests, platform decoupling, source decoding, and generated-source lineage. They are not claims of delivered capability.
 
 Authority: [Project Context](../project-context.md), [Roadmap](../roadmap.md), [ADR-001](../decisions/ADR-001-parser-technology.md), [ADR-003](../decisions/ADR-003-progressive-evidence-acquisition.md), and [Progressive Evidence Acquisition Contract](evidence-acquisition.md).
 
@@ -16,7 +16,7 @@ M3 bridges the gap between raw file snapshots and the semantic frontend (M2). It
 
 - `BuildModelRequest` binds a repository snapshot, exact entry POM path, defensive copies of supplied workspace/artifact POM bytes, and explicit `BuildModelPolicy`. Workspace bytes must match the existing snapshot inventory. The request does not discover files, read a cache, download artifacts, or change the snapshot.
 - Request identity `build-model-input-v1` hashes snapshot identity, entry path, sorted logical POM bindings with SHA-256 digests, explicit profile/property policy and limits. External artifact POM bytes participate even if a particular module does not use them. Host paths, host properties, clocks and mutable byte arrays cannot enter implicitly.
-- `build-model-result-v1`, provider `build.maven-model:3.9.16-m3.1`, retains each discovered module (including failed/missing ones), aggregator links, optional effective-POM projection, typed build problems, actual read-attempt outcomes and explicit limitations. The projection exposes coordinates, packaging, module declarations, effective properties, active profiles, ordered direct/managed dependency declarations, scopes, classifiers, optional flags, exclusions and all POM inputs read during that module's evaluation.
+- M3.1 introduced `build-model-result-v1`, provider `build.maven-model:3.9.16-m3.1` (superseded by M3.2 below). The result retains each discovered module (including failed/missing ones), aggregator links, optional effective-POM projection, typed build problems, actual read-attempt outcomes and explicit limitations. The projection exposes coordinates, packaging, module declarations, effective properties, active profiles, ordered direct/managed dependency declarations, scopes, classifiers, optional flags, exclusions and all POM inputs read during that module's evaluation.
 - Aggregation and inheritance remain separate. Dependency declaration order is preserved; it is not a classpath or dependency mediation result. A successful input read does not imply successful effective-model construction. Failed models remain absent, with problems and evidence; Maven's recovered model is used only to classify an error.
 - Build `Problem`/`Attempt` values are versioned observations, **not** the full `CapabilityGapRecord`, acquisition coordinator, evidence-requirement satisfaction or provider-conflict implementation described in `evidence-acquisition.md`. That normalization remains M3 work and must bind the eventual analysis identity without circular identity inputs.
 
@@ -35,7 +35,19 @@ M3.1 adds the exact module path `.` for the actual repository root. Only module-
 
 The strongest alternative was hand-written POM inheritance/interpolation. Using the pinned official model builder preserves Maven's own declarative merge semantics behind a replaceable boundary; a full Maven session would introduce unnecessary host settings, transport and extension-execution surfaces. The official [Model Builder sequence](https://maven.apache.org/ref/3.9.16/maven-model-builder/) defines the inherited/interpolated/imported stages used here. No Maven CLI-equivalence, complete repository acquisition, source-set isolation, classpath correctness, alternate-platform support or G2 acceptance is claimed by this slice.
 
-Next bounded slice: project effective build/compiler configuration into explicit per-module `main`/`test` source plans, preserving declaration provenance and unresolved settings. Filesystem/cache acquisition, exact dependency mediation/JAR manifests, source decoding/platform views, generated-source lineage, normalized capability gaps and the external coverage checkpoint remain later M3 work.
+## Implemented Slice M3.2 — Declarative Source Plans
+
+**CONFIRMED by implementation fixtures:** `SourcePlanModel` adds immutable, ordered `MAIN` and `TEST` plans for each successfully modeled module. `build-model-result-v2` and provider `build.maven-model:3.9.16-m3.2` include these plans in result identity; request schema and existing module identities are unchanged. This is a declaration plan, not the M2 acquired-file/source-membership plan or a completed workspace analysis. See [verification evidence](../reproducibility/m3-source-plans-2026-09-06/README.md).
+
+- **Paths:** inherited effective build source/test, resource and output directories are normalized lexically relative to the owning module inside the supplied inventory. `${project.basedir}`, `${basedir}` and `${project.build.directory}` have bounded path expansion; remaining expressions are unresolved, and absolute/escaping paths have no usable value. `pom` packaging gets no implicit Java roots; explicitly declared roots remain. Equal or nested main/test build roots are qualified as overlapping candidates. Resource directories are hints only; resource filtering and file membership are not evaluated. Cross-module ownership, symlinks, path existence and compiler `compileSourceRoots`/output overrides remain acquisition or plugin interpretation work.
+- **Compiler declarations:** Maven effective inheritance/plugin management is retained. The matching `default-compile` or `default-testCompile` configuration overlays the plugin configuration through Maven's XML merge. Explicit scalar configuration precedes parameter property defaults; supplied user properties precede effective POM properties. Test source/target/release fall back separately to their main counterparts only when unspecified. Empty, unresolved or malformed explicit values do not silently fall through. Named custom executions and other configuration trees (including toolchains, processor settings, arguments, filters and generators) remain neutral data with explicit gaps. This bounded mapping is checked against Compiler Plugin 3.15.0; it does not simulate plugin execution, version-specific defaults or lifecycle binding. Non-3.x/missing explicit compiler versions and unknown packaging/configuration are qualified.
+- **Separate requirements:** `syntaxLevel` uses declared release, otherwise source; `bytecodeTarget` uses release, otherwise target; `platformRelease` uses release only. The original six main/test source/target/release settings remain available. Legacy `1.1`–`1.8` source/target notation normalizes to integer levels. Positive integer release declarations are requirements, not proof of compiler, parser or platform availability. `java.version`, toolchain version and analyzer JDK never supply an inferred language/API level. Preview is retained as a declaration, without claiming preview support.
+- **Encoding:** explicit goal/plugin `encoding`, then the `encoding` user/POM property, then `project.build.sourceEncoding` supply the declared charset. A fixed portable table recognizes UTF-8, UTF-16, UTF-16BE, UTF-16LE, ISO-8859-1 and US-ASCII with a bounded alias set. Other syntactically valid names remain `UNSUPPORTED`; malformed names are `INVALID`. No installed charset-provider lookup, byte decoding, BOM handling, heuristic guess or ambient fallback occurs in this slice. Broader charset support requires the later decoding provider and tests.
+- **Provenance and gaps:** each setting retains the effective input expression, selector, optional normalized value, status, origin and POM derivation inputs. Selectors address the effective projection, not invented parent-file spans; raw POM bytes remain in the request. Convention paths retain model inputs because their base directory may be inherited. User-property origin is tied to the hashed request policy. Complete plugin/execution configuration trees preserve child order and attributes. Generated annotation-output directories are discovery hints, never acquired roots. `hasGaps()` now includes source-plan gaps as well as model problems; callers needing only model-construction problems inspect `problems()`.
+
+The pinned official [test compiler source](https://github.com/apache/maven-compiler-plugin/blob/maven-compiler-plugin-3.15.0/src/main/java/org/apache/maven/plugin/compiler/TestCompilerMojo.java) defines independent test parameter fallbacks and generated-test paths; [shared compiler parameters](https://github.com/apache/maven-compiler-plugin/blob/maven-compiler-plugin-3.15.0/src/main/java/org/apache/maven/plugin/compiler/AbstractCompilerMojo.java) distinguish release/source/target and encoding defaults. These references refine the earlier provisional encoding/discovery ordering below; neither they nor successful model construction establish analyzed-platform availability.
+
+Exact next slice M3.3: safe filesystem acquisition of an explicitly selected repository into immutable snapshot/POM inputs and candidate source ownership, with containment/symlink, byte/count limits and missing/overlapping-file evidence. Keep target lifecycles disabled. Cache/artifact acquisition, exact dependency mediation/JAR manifests, decoding/platform views, generated-source lineage, normalized capability gaps and external coverage remain later M3 work; G2 stays open.
 
 ---
 
@@ -144,12 +156,7 @@ The analyzer executes on Java 21, but repositories may target Java 8, 11, 17, or
 
 ### Decoupling Rules
 
-1. **Target Specification Discovery:** The analyzed Java version is extracted in order of precedence:
-   - `<maven.compiler.release>` property or compiler plugin configuration;
-   - `<maven.compiler.target>` and `<maven.compiler.source>`;
-   - `<java.version>` or property references;
-   - Configured repository toolchain definition;
-   - Declared analysis fallback policy (defaulting to Java 17 or 21 if unspecified, with recorded assumption).
+1. **Target Specification Discovery:** Preserve separate syntax, bytecode and API requirements per source set. Apply explicit compiler configuration and parameter properties as specified in M3.2. Release supplies a requested API level; source/target alone do not. `java.version` matters only when referenced by compiler configuration; a toolchain identifies a compiler requirement, not automatically a language or API level. A future explicit analysis fallback must record its assumption; M3.2 applies no default Java version.
 2. **Symbol View Acquisition:**
    - For Java 9+: Standard library types are resolved using `ct.sym` for the targeted release number, or explicit platform modules (`jmods`).
    - For Java 8: Standard library types are resolved from a configured `rt.jar` platform view.
@@ -160,9 +167,9 @@ The analyzer executes on Java 21, but repositories may target Java 8, 11, 17, or
 
 ## Source Encoding Policy
 
-1. **Authoritative Charset Resolution:** Source encoding is determined in strict order:
-   - Explicit POM property `<project.build.sourceEncoding>`;
-   - Maven compiler plugin `<encoding>` configuration;
+1. **Authoritative Charset Resolution:** Source encoding is determined per compiler goal in strict order:
+   - Explicit effective compiler goal/plugin `<encoding>` configuration;
+   - The parameter's `encoding` user/POM property, then `<project.build.sourceEncoding>`;
    - Explicit analysis configuration policy (e.g. declared default UTF-8).
    - *Ambient host default charset (`file.encoding`) must NEVER be inherited.*
 2. **Byte-Order-Mark (BOM) Handling:**
@@ -221,7 +228,7 @@ When build-model discovery encounters incomplete inputs, it emits typed gaps und
 | `build.pom` | `MISSING_PARENT_POM` | Parent POM cannot be resolved locally or from cache | Module inheritance incomplete; confidence `PARTIAL` |
 | `build.pom` | `UNRESOLVED_IMPORT_BOM` | Imported BOM in `dependencyManagement` missing | Dependency versions may remain unresolved |
 | `build.dependency` | `UNRESOLVED_ARTIFACT` | Declared JAR dependency missing from local repository | External symbol resolution fails; occurrences unresolved |
-| `build.platform` | `MISSING_PLATFORM_SYMBOLS`| Configured target JDK symbol view unavailable | Fallback to host symbols with explicit qualification |
+| `build.platform` | `MISSING_PLATFORM_SYMBOLS`| Configured target JDK symbol view unavailable | Preserve the gap; no implicit host-symbol substitution |
 | `build.encoding` | `MALFORMED_BYTE_SEQUENCE` | Raw bytes invalid under declared charset | Document degraded or omitted with `INVALID_INPUT` |
 | `build.generated-source`| `MISSING_OUTPUT_ROOT` | Declared generator output directory does not exist | Generated types missing; downstream references unresolved |
 | `build.generated-source`| `STALE_GENERATED_OUTPUT` | Output files older than input source modifications | Potential semantic discrepancy; flagged in provenance |
