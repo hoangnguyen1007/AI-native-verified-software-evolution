@@ -121,7 +121,7 @@ Ground truth distinguishes attempted, correct, incorrect, unresolved, ambiguous,
 
 ### M3 - Multi-Module Workspace and Build-Model Intelligence
 
-Deliver safe understanding of Maven parent POMs, modules, source/generated-source roots where safely discoverable, dependency management, BOMs, dependency scopes, module dependencies, and exact classpath manifests. Missing generated sources or effective-model inputs remain explicit acquisition gaps rather than disappearing from coverage.
+Deliver safe understanding of Maven parent POMs, modules, source/generated-source roots where safely discoverable, dependency management, BOMs, dependency scopes, module dependencies, and exact classpath manifests. The formal specification is maintained in the provisional [M3 Workspace and Build-Model Intelligence Contract](architecture/m3-workspace-build-model.md). Missing generated sources or effective-model inputs remain explicit acquisition gaps rather than disappearing from coverage.
 
 M3 also introduces the first normalized capability-gap/acquisition contract over M2 observations and build-model coverage, following the provisional [Progressive Evidence Acquisition and Capability-Gap Contract](architecture/evidence-acquisition.md). This includes provider identity, stable reason/mechanism catalogs, typed evidence requirements, attempt provenance and explicit provider conflicts; implementation must remain versioned and tested.
 

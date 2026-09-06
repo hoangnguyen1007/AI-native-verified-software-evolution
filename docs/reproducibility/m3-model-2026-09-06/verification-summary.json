@@ -1,0 +1,326 @@
+{
+  "schema": "m3-verification-v1",
+  "baseCommit": "cc5395e5b525f9d41c505729568eb05a7801a8dd",
+  "workingTree": "uncommitted implementation; pre-existing documentation changes preserved",
+  "command": "mvnw.cmd -B -ntp -Dmaven.repo.local=C:/Users/Admin/.m2/repository clean verify",
+  "totals": {
+    "tests": 123,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "reports": [
+    {
+      "module": "analyzer",
+      "suite": "com.evolution.analysis.buildmodel.BuildModelContractTest",
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "module": "analyzer",
+      "suite": "com.evolution.analysis.contract.AnalysisAndAssessmentContractTest",
+      "tests": 7,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "module": "analyzer",
+      "suite": "com.evolution.analysis.contract.CanonicalSerializationTest",
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "module": "analyzer",
+      "suite": "com.evolution.analysis.contract.DerivedEvidenceTest",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "module": "analyzer",
+      "suite": "com.evolution.analysis.contract.IdentityAndSourceContractTest",
+      "tests": 8,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "module": "analyzer",
+      "suite": "com.evolution.analysis.contract.RootModuleTest",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "module": "analyzer",
+      "suite": "com.evolution.analysis.contract.SemanticContractTest",
+      "tests": 6,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "module": "analyzer",
+      "suite": "com.evolution.analysis.frontend.FrontendContractTest",
+      "tests": 6,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "module": "analyzer",
+      "suite": "com.evolution.analysis.frontend.FrontendResultTest",
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "module": "analyzer",
+      "suite": "com.evolution.analysis.frontend.JavaSymbolNameTest",
+      "tests": 6,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "module": "analyzer",
+      "suite": "com.evolution.foundation.Java21BuildTest",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "module": "analyzer-maven",
+      "suite": "com.evolution.analysis.maven.MavenBuildModelProviderTest",
+      "tests": 20,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "module": "analyzer-maven",
+      "suite": "com.evolution.analysis.maven.PlatformReactorModelTest",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "module": "analyzer-javaparser",
+      "suite": "com.evolution.analysis.javaparser.AnnotationsTest",
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "module": "analyzer-javaparser",
+      "suite": "com.evolution.analysis.javaparser.ExpressionTypesTest",
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "module": "analyzer-javaparser",
+      "suite": "com.evolution.analysis.javaparser.FieldAccessTest",
+      "tests": 7,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "module": "analyzer-javaparser",
+      "suite": "com.evolution.analysis.javaparser.FrozenFixtureTest",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "module": "analyzer-javaparser",
+      "suite": "com.evolution.analysis.javaparser.JavaParserFrontendTest",
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "module": "analyzer-javaparser",
+      "suite": "com.evolution.analysis.javaparser.MethodReferencesTest",
+      "tests": 6,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "module": "analyzer-javaparser",
+      "suite": "com.evolution.analysis.javaparser.ModernFixtureTest",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "module": "analyzer-javaparser",
+      "suite": "com.evolution.analysis.javaparser.OriginalSourceTest",
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "module": "analyzer-javaparser",
+      "suite": "com.evolution.analysis.javaparser.RecordsTest",
+      "tests": 5,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "module": "analyzer-javaparser",
+      "suite": "com.evolution.analysis.javaparser.ResolutionInputsTest",
+      "tests": 7,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "module": "analyzer-javaparser",
+      "suite": "com.evolution.analysis.javaparser.SemanticBoundariesTest",
+      "tests": 9,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "module": "analyzer-javaparser",
+      "suite": "com.evolution.analysis.javaparser.TypeRelationshipsTest",
+      "tests": 6,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "module": "backend",
+      "suite": "com.evolution.foundation.Java21BuildTest",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    }
+  ],
+  "sources": [
+    {
+      "path": "analyzer-javaparser/pom.xml",
+      "sha256": "4d96cf1801eca263d4bf41d6df338a11fd49b2276cdfa2709bd4ce24f2927067"
+    },
+    {
+      "path": "analyzer-maven/pom.xml",
+      "sha256": "15e328eaacec61f195ac2f93a5b09f14e24b1607e289da6deb5146702385fbd6"
+    },
+    {
+      "path": "analyzer-maven/src/main/java/com/evolution/analysis/maven/MavenBuildModelProvider.java",
+      "sha256": "480c243dc32d6db66b7c61cf52220b8fd7cddfe02a6cebf51a5734f21b96068e"
+    },
+    {
+      "path": "analyzer-maven/src/main/java/com/evolution/analysis/maven/ModelInputs.java",
+      "sha256": "96da362404ccaa91b3ae57c015f74fbaf851524cdbceb1d4dc45ffaeccca7f2b"
+    },
+    {
+      "path": "analyzer-maven/src/main/java/com/evolution/analysis/maven/PomPaths.java",
+      "sha256": "9c1d3e7121e491954138ef8124c04c06dd8c2b96347af54c705d2a01d1786f70"
+    },
+    {
+      "path": "analyzer-maven/src/main/java/com/evolution/analysis/maven/SecurePomReader.java",
+      "sha256": "4b6f28ce971ec40e1f11f1cac610919adc3d9035ecd6f3fa57d2520ae34ea798"
+    },
+    {
+      "path": "analyzer-maven/src/test/java/com/evolution/analysis/maven/MavenBuildModelProviderTest.java",
+      "sha256": "cf0030800f0fd14979347236f6f32f6a9104428098ca270e2fee7a6c9e80418a"
+    },
+    {
+      "path": "analyzer-maven/src/test/java/com/evolution/analysis/maven/PlatformReactorModelTest.java",
+      "sha256": "b941a5a49fde03f484f90be02a357ea4ed3b9d7797f5bbc8696a080299184be1"
+    },
+    {
+      "path": "analyzer/pom.xml",
+      "sha256": "9b83a0644e246e4e53eec7e72d9c72bdb253d3c7a7678e75a26d7450b0231caa"
+    },
+    {
+      "path": "analyzer/src/main/java/com/evolution/analysis/buildmodel/BuildModelPolicy.java",
+      "sha256": "472926b898bf06c9fcb57e748bc4fce43e83befb5dd7721877b2a71248469153"
+    },
+    {
+      "path": "analyzer/src/main/java/com/evolution/analysis/buildmodel/BuildModelProvider.java",
+      "sha256": "151b31b5c655f7d15e7a8b12ee4df67df76b1e6b1443cda5f83d676400d7d6e7"
+    },
+    {
+      "path": "analyzer/src/main/java/com/evolution/analysis/buildmodel/BuildModelRequest.java",
+      "sha256": "780b6ec62fae93808fb6f30de3d614d952b6ebf90b4b8cc34e3832816be3b8b5"
+    },
+    {
+      "path": "analyzer/src/main/java/com/evolution/analysis/buildmodel/BuildModelResult.java",
+      "sha256": "4db5ac872fc6453ca1d299b3d5c89854821041b6666fc57b6dfc26085a68dd9a"
+    },
+    {
+      "path": "analyzer/src/main/java/com/evolution/analysis/buildmodel/MavenCoordinate.java",
+      "sha256": "423bae6561ae5a831c4e30a5eddb74537412aca72c7d040c3c08da6e03cd4614"
+    },
+    {
+      "path": "analyzer/src/main/java/com/evolution/analysis/buildmodel/PomInput.java",
+      "sha256": "117a83c594f8083f19d6acce76a37d81e2d70a4539eb246a817f4102ee74e8fc"
+    },
+    {
+      "path": "analyzer/src/main/java/com/evolution/analysis/contract/common/ContractChecks.java",
+      "sha256": "381c672c131fe365eadd3d68a0e1d072cd47b1bd78ab5bd6db522d41d230f258"
+    },
+    {
+      "path": "analyzer/src/main/java/com/evolution/analysis/contract/identity/ModuleIdentity.java",
+      "sha256": "0051ef943159b31b58c309ebe65a0b5b5cf0e2d56b346ed2e2245afe647782f3"
+    },
+    {
+      "path": "analyzer/src/main/java/com/evolution/analysis/contract/source/ModuleDescriptor.java",
+      "sha256": "8dd8ae5e56579f212f33d0fe13a075e614f9e5ad46ca19e12768b8c1c44c8c03"
+    },
+    {
+      "path": "analyzer/src/test/java/com/evolution/analysis/buildmodel/BuildModelContractTest.java",
+      "sha256": "09abc6de897f95e960c06bf590a621d1d1d72c807b5dd102e17eba49586bb847"
+    },
+    {
+      "path": "analyzer/src/test/java/com/evolution/analysis/contract/RootModuleTest.java",
+      "sha256": "5b1a94de8420a874c184a4681047823bb3413e7a0fecdf7730c7f6b04297ddaf"
+    },
+    {
+      "path": "backend/pom.xml",
+      "sha256": "9b81a7a00439acd6ad861dae82777dfbdc7fc4a98dd3ef4f7410f05239ea10ac"
+    },
+    {
+      "path": "pom.xml",
+      "sha256": "ea8c1583f90578cbfa521c9f46adeda73c8044b3c541c3405d3a971b1fd1094b"
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "analyzer/target/analyzer-0.1.0-SNAPSHOT.jar",
+      "sha256": "968ede75d929cb8992926c91551939fb41fd6e30304781f43550d7e4af170baf"
+    },
+    {
+      "path": "analyzer-maven/target/analyzer-maven-0.1.0-SNAPSHOT.jar",
+      "sha256": "29276a7c5f5d9dceb1ca75e988cabb94eac04d955e443875d3ae71a71ceaa9a9"
+    },
+    {
+      "path": "docs/reproducibility/m3-model-2026-09-06/reactor-clean-verify.txt",
+      "sha256": "eae9044ff4484099d034d886e27b2f476966aeac15446d25e26b03f8a3dfb256"
+    }
+  ]
+}

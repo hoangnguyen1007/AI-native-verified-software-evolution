@@ -126,6 +126,7 @@ Lower-authority claims cannot become confirmed without higher-authority evidence
 - `docs/current-state.md`: concise operational truth now
 - `docs/decisions/`: rationale for consequential approved decisions
 - `docs/architecture/`: current contracts, semantics, boundaries, schemas, and invariants
+- `docs/architecture/m3-workspace-build-model.md`: provisional M3 workspace, safe Maven model, exact classpath, and platform decoupling contract
 - `docs/architecture/evidence-acquisition.md`: provisional M3+ capability-gap, acquisition-attempt, and provider-conflict contract
 - `docs/architecture/m4-spring-intelligence.md`: provisional M4 Spring domain model and versioned closed mechanism denominator
 - `docs/architecture/product-outcome.md`: canonical product, metric, scoring, visualization, and acceptance contract
@@ -140,6 +141,7 @@ Lower-authority claims cannot become confirmed without higher-authority evidence
 - [Architecture Overview](architecture/architecture.md)
 - [Knowledge Graph](architecture/knowledge-graph.md)
 - [M1 Contracts](architecture/m1-contracts.md)
+- [M3 Workspace and Build-Model Contract](architecture/m3-workspace-build-model.md)
 - [Progressive Evidence Acquisition Contract](architecture/evidence-acquisition.md)
 - [M4 Spring Intelligence and Closed Mechanism Taxonomy](architecture/m4-spring-intelligence.md)
 - [Product Outcome and Workbench Contract](architecture/product-outcome.md)

@@ -7,4 +7,5 @@
 - Research only consequential uncertainty; do not reopen approved choices without new evidence.
 - Preserve scope while making routine reversible decisions autonomously. Existing approval persists; identify the exact unresolved decision if human input is necessary.
 - Finish authorized implementation through verification and durable-state updates. A review-only request ends with supported findings, not silent repairs.
+- Conserve context and execution budget: use targeted diffs and lean bootstrap for bounded code slices; do not ingest massive historical audits or distant-milestone research unless task-critical.
 - Report blockers and limits honestly. Do not invent a passed gate, test run, native tool, or independent review.

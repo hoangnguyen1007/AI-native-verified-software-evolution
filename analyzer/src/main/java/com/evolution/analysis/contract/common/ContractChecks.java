@@ -72,6 +72,11 @@ public final class ContractChecks {
         return value;
     }
 
+    /** M3 module-path extension: '.' denotes the actual repository root, never a file. */
+    public static String modulePath(String value) {
+        return ".".equals(value) ? value : repositoryRelativePath(value, "module path");
+    }
+
     public static <T> List<T> sortedDistinct(
             Collection<T> values, Comparator<? super T> comparator, String name) {
         notNull(values, name);

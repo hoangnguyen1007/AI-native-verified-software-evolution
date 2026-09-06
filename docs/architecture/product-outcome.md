@@ -149,6 +149,8 @@ Track B must provide:
 - side-by-side and delta-focused navigation to evidence;
 - no comparison when identity or formula compatibility requirements are not met.
 
+**Evidence Loss Invariant:** A loss of evidence (e.g. missing dependency JAR, unanalyzed source scope, skipped file, failed provider, or disabled rule) must **NEVER** be classified as `RESOLVED` or reported as a verified improvement in architecture health. A disappearance of violations caused by reduced analysis coverage must be explicitly reported as an evidence delta or degraded evaluation state.
+
 ## Metric Contract
 
 ### Required Metric Envelope
@@ -208,6 +210,7 @@ Initial required catalog, subject to formula validation:
 - node and relationship counts by architectural scope/category;
 - afferent coupling (`Ca`) and efferent coupling (`Ce`) at package/module scope;
 - instability `I = Ce / (Ca + Ce)`, with `NOT_APPLICABLE` when the denominator is zero;
+- abstractness `A = Na / N` and normalized distance `D = |A + I - 1|`;
 - fan-in and fan-out distributions and hotspots;
 - dependency density with an explicit denominator;
 - strongly connected component and cycle counts, sizes, and participating scopes;
@@ -215,6 +218,38 @@ Initial required catalog, subject to formula validation:
 - dependency path depth and bounded reachability summaries;
 - external dependency concentration and module dependency concentration;
 - cohesion metrics only after a precise supported definition and validation; do not label a proxy as cohesion.
+
+#### Robert C. Martin Metrics Counting Semantics
+
+To prevent ambiguous or inflated metrics, counting semantics must be strictly defined before formula evaluation:
+1. **Component Coupling (`Ca` and `Ce`):**
+   - Count **distinct neighboring components** (modules or packages) across the component boundary, **NOT** raw method invocation occurrences or syntax occurrences.
+   - For package-level coupling, `Ce` is the count of distinct external packages depended upon by types in the package. `Ca` is the count of distinct external packages that depend on types in the package.
+2. **Abstractness (`A = Na / N`):**
+   - `Na` counts interfaces and abstract classes within the component.
+   - `N` counts total types in the component. Enums and records are counted as concrete types in `N`. Annotations are counted in `Na` as abstract contract types.
+3. **Population Filtering:**
+   - Evaluated strictly over **main production sources**. Test sources, generated sources, and external dependency types are excluded from the component's internal type denominator `N`.
+4. **Zero Denominator Handling:**
+   - If `Ca + Ce = 0`, Instability `I` is `NOT_APPLICABLE`.
+   - If `N = 0`, Abstractness `A` is `NOT_APPLICABLE`.
+   - If either `A` or `I` is `NOT_APPLICABLE`, Distance `D` is `NOT_APPLICABLE`. Never invent a default zero or one.
+5. **Diagnostic Lens Role:** Martin metrics are diagnostic structural lenses, not an absolute verdict on architecture health.
+
+#### Cycle Engine and Multi-Level RAM Protection
+
+To prevent combinatorial explosion ($O((V+E)(C+1))$) and Out-Of-Memory errors on densely connected graphs:
+1. **Linear Component Isolation (Tarjan SCC):**
+   - The primary defense is Tarjan's Strongly Connected Components algorithm, running in linear time $O(V + E)$ on the projected architecture graph.
+   - A component with one vertex is cyclic only if it contains a self-loop.
+2. **Multi-Level Enumeration Bounds:**
+   - **Input Graph Thresholds:** Dense SCCs exceeding configured vertex/edge bounds are condensed without attempting full cycle enumeration.
+   - **Traversal Work Budget:** Depth-first cycle enumeration (Johnson's algorithm) enforces a maximum visitation step counter and recursion depth budget.
+   - **Memory and Cancellation:** The engine checks runtime memory thresholds and cooperative cancellation tokens at every traversal step.
+   - **Output Candidate Budget:** Enumeration halts upon collecting a bounded candidate quota of witness cycles (default 50).
+3. **Status Reporting:**
+   - If enumeration completes within all budgets, the exact cycle count is reported with status `COMPLETE`.
+   - If any budget is exceeded, the result returns with canonical M1 status `PARTIAL`, accompanied by enumeration metadata (`witnessesReturned: N`, `workBudgetExceeded: true/false`, `truncated: true`). No ad-hoc enum constants are introduced.
 
 ### D. Policy and Violation Metrics
 

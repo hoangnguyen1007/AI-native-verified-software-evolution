@@ -15,7 +15,7 @@ public record ModuleDescriptor(
     public ModuleDescriptor {
         ContractChecks.notNull(identity, "module identity");
         ContractChecks.notNull(repository, "repository");
-        path = ContractChecks.repositoryRelativePath(path, "module path");
+        path = ContractChecks.modulePath(path);
         displayName = ContractChecks.text(displayName, "module display name");
         ModuleIdentity expected = ModuleIdentity.from(repository, path);
         if (!identity.equals(expected)) {

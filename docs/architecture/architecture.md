@@ -231,6 +231,7 @@ The architecture preserves boundaries for later phases even where SE121 does not
 - [Product Outcome Contract](product-outcome.md)
 - [Knowledge Graph](knowledge-graph.md)
 - [M1 Semantic, Identity, Uncertainty, and Provenance Contracts](m1-contracts.md)
+- [M3 Workspace and Build-Model Intelligence Contract](m3-workspace-build-model.md)
 - [Progressive Evidence Acquisition and Capability-Gap Contract](evidence-acquisition.md)
 - [M4 Spring Intelligence and Closed Mechanism Taxonomy](m4-spring-intelligence.md)
 - [ADR-002](../decisions/ADR-002-product-outcome-and-explainable-assessment.md)

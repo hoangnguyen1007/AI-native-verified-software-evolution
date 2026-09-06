@@ -42,6 +42,8 @@ Repository-relative paths:
 - are not absolute and contain no drive or URI prefix; and
 - are not locale-normalized or lowercased.
 
+M3.1 adds one explicit module-path case: `.` denotes the repository root. File paths retain the M1 rules above, and previously valid module identity preimages remain unchanged. The additive root case and its golden test are documented in the [M3 contract](m3-workspace-build-model.md#root-module-compatibility).
+
 ## Stable identity contract
 
 All derived identities use SHA-256 over UTF-8 canonical JSON with an explicit domain separator:

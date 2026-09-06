@@ -29,6 +29,41 @@ M4 owns the storage-neutral domain meaning; M5 decides which concepts become gra
 
 Suggested semantic relationships are `DECLARES_PRODUCER`, `PRODUCES_BEAN_CANDIDATE`, `DECLARES_INJECTION_POINT`, `HAS_CONDITION`, `INJECTION_CANDIDATE`, and `SELECTED_BINDING`. `SELECTED_BINDING` is emitted only when the registered static/configuration semantics justify one selection; future runtime evidence uses a distinct observation/derivation rather than rewriting it as source-direct.
 
+## Candidate Determination and Selection Phasing
+
+Resolution must not apply a rigid priority shortcut (e.g. "Qualifier > Primary > Profile") that selects an inactive bean. Candidate selection proceeds in four decoupled phases:
+
+1. **Phase 1 — Candidate Discovery and Activation Evaluation:**
+   - Discover all bean producers within component-scan and configuration scopes.
+   - Evaluate activation conditions (`@Profile`, `@ConditionalOnProperty`, `@ConditionalOnClass`) against the explicit configuration context.
+   - A candidate is *eligible* only if its conditions evaluate to true in the active context.
+   - If condition data or properties are absent, candidate status is retained as `CONDITIONAL` or `UNKNOWN`. It must not be prematurely eliminated or selected.
+2. **Phase 2 — Type Matching and Assignability:**
+   - Filter eligible candidates by assignability to the requested injection-point type, preserving generic parameters, wildcards, and collection container semantics.
+3. **Phase 3 — Disambiguation and Preference:**
+   - Disambiguation rules apply **only** across the set of active, type-compatible candidates from Phases 1 and 2.
+   - Apply explicit `@Qualifier` values and composed qualifiers.
+   - If multiple qualified candidates remain, evaluate `@Primary` and `@Fallback` declarations.
+   - Apply parameter/field name matching fallback according to framework version semantics.
+4. **Phase 4 — Resolution Verdict:**
+   - If exactly one eligible candidate satisfies all criteria, emit `SELECTED_BINDING`.
+   - If multiple eligible candidates remain without a deterministic disambiguator, emit `AMBIGUOUS_CANDIDATE` with status `AMBIGUOUS`.
+   - If no eligible candidates exist, record an unsatisfied injection gap.
+
+## Configuration Context and Profile Sets
+
+1. **Active Profile Sets:** Spring Boot allows multiple profiles to be active simultaneously. The configuration context supplies a set of active profiles (`Set<String>`), not a single string.
+2. **Path Feasibility and Cycle Protection:**
+   - When evaluating paths or candidate cycles (e.g. `A -> B` requiring `@Profile("prod")` and `B -> A` requiring `@Profile("!prod")`), the path is evaluated against configuration feasibility.
+   - Two conditions that cannot be simultaneously satisfied in any valid configuration must not be combined into a certain cyclic dependency.
+   - A union view across configurations is explicitly labeled as a potential multi-scenario projection, not a single runtime reality.
+
+## Framework Entry Points and Dead-Code Safeguards
+
+Spring components are frequently invoked by the framework rather than direct application method calls:
+1. **Entry Point Classification:** REST endpoints (`@RequestMapping`, `@GetMapping`, `@PostMapping`, etc.), scheduled tasks (`@Scheduled`), message listeners, lifecycle callbacks (`@PostConstruct`), and event listeners (`@EventListener`) are explicitly modeled as **Framework Entry Points**.
+2. **Dead-Code Invariant:** A managed Spring bean or method with in-degree zero from application `CALLS` relationships must **NEVER** be concluded as dead code if it is a registered framework entry point. The absence of internal callers is an expected framework characteristic, not an architecture defect.
+
 ## Orthogonal Status Axes
 
 The model must not collapse these axes into one `status` property:
@@ -108,6 +143,7 @@ The workbench should show zero/one/many candidates, selection rationale, conditi
 
 - [Roadmap](../roadmap.md)
 - [Knowledge Graph](knowledge-graph.md)
+- [M3 Workspace and Build-Model Contract](m3-workspace-build-model.md)
 - [Progressive Evidence Acquisition Contract](evidence-acquisition.md)
 - [Product Outcome Contract](product-outcome.md)
 - [Current State](../current-state.md)

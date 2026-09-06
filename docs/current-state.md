@@ -1,12 +1,16 @@
 # Current State
 
-Last reconciled: 2026-09-04. Fresh checks and their scope belong in the task handoff; historical gate evidence is identified below.
+Last reconciled: 2026-09-06. Fresh checks and their scope belong in the task handoff; historical gate evidence is identified below.
 
 ## PHASE AND MILESTONE
 
-SE121, Track A + B. M1 contracts are committed at `b04220e722cc4bc772cbb3ad8531d4dc1ea1a058`; G1 is recorded passed. M2 frontend delivery is COMPLETE: all 18 relationship families are implemented and verified (98/98 root tests pass), and multi-file project extraction is validated on a real 43-file Spring Boot project (`PC-Shop`, 304 declarations, 1,488 occurrences). Full Gate G2 acceptance remains open pending M3 build-model intelligence and the representative real-repository coverage checkpoint.
+SE121, Track A + B. M1 contracts are committed at `b04220e722cc4bc772cbb3ad8531d4dc1ea1a058`; G1 is recorded passed. M2 frontend delivery is recorded complete across all 18 relationship families (98 root tests at that checkpoint), and multi-file project extraction is validated on a real 43-file Spring Boot project (`PC-Shop`, 304 declarations, 1,488 occurrences). M3.1 now adds passive effective-POM projection; final root `clean verify` passes 123 tests with no failures, errors or skips. Full Gate G2 acceptance remains open pending the remaining M3 build-model intelligence, independent semantic acceptance and representative real-repository coverage checkpoint.
 
-## ACTIVE TASK — TRANSITION FROM M2 TO M3
+## ACTIVE TASK — M3.1 DELIVERED; M3.2 SOURCE-PLAN PROJECTION NEXT
+
+**CONFIRMED by implementation:** M3.1 adds the neutral immutable `BuildModelProvider` contract and isolated `analyzer-maven` adapter (`build-model-input-v1`, `build-model-result-v1`, provider `3.9.16-m3.1`). It passively models root/nested aggregation, relative and explicitly supplied artifact parents, imported BOMs, inherited/interpolated properties, explicit/property/default profiles and ordered dependency-management/direct declarations. Inputs bind exact POM bytes/digests and explicit policy; missing/failed modules, read attempts, limits and typed problems remain visible. `.` now represents the real root module through an additive module-path extension; existing M1 identity preimages remain unchanged. See the [M3.1 contract](architecture/m3-workspace-build-model.md#implemented-slice-m31--passive-effective-pom-projection) and [verification record](reproducibility/m3-model-2026-09-06/README.md).
+
+This is an effective-POM **projection over supplied immutable inputs**, not full workspace acquisition or a resolved classpath. Source/compiler configuration projection, source-set ownership/decoding, filesystem/cache acquisition, dependency closure/JAR manifests, platform views, generated-source lineage and the full normalized capability-gap contract remain unfinished. No G2/G3/product gate advances. Review of M3.1 is implementer self-review, not independent acceptance.
 
 On 2026-09-04, M2 frontend implementation was fully validated across all 18 relationship families (catalog `m2-java-4`, adapter `3.27.1-m2.4`), with 98 root reactor tests passing cleanly and whole-project multi-file extraction confirmed. The active task transitions from M2 to Milestone M3 (Multi-Module Workspace and Build-Model Intelligence).
 
@@ -34,12 +38,12 @@ The human approved JavaParser + SymbolSolver as the primary SE121/M2 frontend on
 - M0 foundation commit: `375702f9b871dd78fbad99f8bc5994b7b2c499fb`.
 - M1 contracts commit: `b04220e722cc4bc772cbb3ad8531d4dc1ea1a058`.
 - Comparison package commit: `83797e840e414bf99a0f71117892da355d94be55`; current implementation continuation starts at checkpoint `dae013c`.
-- Root reactor: `analyzer`, `analyzer-javaparser`, `backend`. The neutral frontend lives under `analyzer/src/main/java/com/evolution/analysis/frontend/`; parser libraries remain isolated in `analyzer-javaparser`.
+- Root reactor: `analyzer`, `analyzer-maven`, `analyzer-javaparser`, `backend`. The neutral frontend lives under `analyzer/src/main/java/com/evolution/analysis/frontend/`; build-model contracts under `analyzer/src/main/java/com/evolution/analysis/buildmodel/`. Maven Model Builder 3.9.16 and JavaParser libraries remain in their respective adapters.
 - Root verification includes the original M1/build tests and new frontend/adapter tests. Exact final totals and raw console output are in the implementation evidence. Standalone benchmarks are outside root verification.
 - R1 PoC: `benchmarks/poc/parser-eval/`. Independent experimental adapters/comparison: `benchmarks/semantic-frontend-evaluation/`.
 - M2 oracle pilot: `benchmarks/m2-ground-truth/`, separate from the reactor and legacy comparator, using JDK 21/Python standard libraries.
 - Production adapter pin: JavaParser/SymbolSolver 3.27.1. Source records, enum constant bodies, bounded implicit members, method references, expression types and annotation uses are implemented. Detailed support and remaining degraded cases are in the modern Java evidence record; no compiler-equivalence or scale claim is made.
-- No workspace acquisition, Spring inference, graph, policy engine, metric/scoring calculation, CLI, backend API or workbench is implemented.
+- Passive effective-POM projection over supplied inputs is implemented. No filesystem/cache workspace acquisition, dependency-closure/JAR resolution, Spring inference, graph, policy engine, metric/scoring calculation, CLI, backend API or workbench is implemented.
 - `frontend/` and root `tests/` have no tracked product implementation.
 
 ## EVIDENCE AND LIMITS
@@ -65,7 +69,7 @@ The initial Maven sandbox JUnit-cache denial was resolved through supported exec
 
 Current input boundaries: verified running JDK 21 platform image and explicit single-release JARs (M3 decouples analyzer runtime from analyzed platform symbol views and source language levels without claiming parser syntax support beyond verified versions); no alternate platform, module-output resolution, multi-release JAR or JAR manifest classpath support. Remaining explicit degraded cases include array constructor references/array length, annotation-value field reads, inferred `var` detail, typed lambda/catch parameter identities and unsupported functional target/inference contexts. M2 final acceptance is blocked on unfinished independent review and the complete reviewed denominator, not Maven execution. The Codex reviewer delivered concrete findings, then stopped because of its usage limit; final repairs have implementer verification only.
 
-Open work: validate the adopted provisional canonical signatures/port/coordinates through implementation; complete independently reviewed M2 labels and support denominator; define and implement the M3 acquisition/capability-gap contract while delivering safe effective-Maven-model/classpath acquisition, root-module representation, source-encoding evidence/policy without heuristic guessing, and analyzed-platform decoupling; early representative real-repository category/reason-level coverage checkpoint for G2; broader labeled repositories; validate/approve the provisional Spring identities, `spring-mechanisms:v1` matrix and G3 criteria through M4 fixtures; policy gate criteria; metric catalog, score formula/compatibility/confidence thresholds; graph/query/UI budgets and frontend framework selection at their later gates.
+Open work: complete independently reviewed M2 labels and support denominator; extend the implemented M3.1 effective-POM projection into source/compiler plans, safe filesystem/cache acquisition and exact per-source-set dependency/JAR manifests; implement the full acquisition/capability-gap contract, source-encoding policy without heuristic guessing, and analyzed-platform decoupling; early representative real-repository category/reason-level coverage checkpoint for G2; broader labeled repositories; validate/approve the provisional Spring identities, `spring-mechanisms:v1` matrix and G3 criteria through M4 fixtures; policy gate criteria; metric catalog, score formula/compatibility/confidence thresholds; graph/query/UI budgets and frontend framework selection at their later gates.
 
 ## QUALITY GATES
 
@@ -74,7 +78,7 @@ Open work: validate the adopted provisional canonical signatures/port/coordinate
 | G-1 governance baseline | PASSED (historical) | Current hardening is a separate maintenance task |
 | G0 build foundation | PASSED (historical) | Preserve pinned toolchain and reproducibility |
 | G1 contracts | PASSED (historical) | Preserve tested identity, uncertainty and evidence invariants |
-| G2 frontend/build model | M2 frontend COMPLETE; M3 build model next | M2 frontend slice verified (98/98 tests, all 18 families); G2 full pass requires M3 safe multi-module model, dependency/classpath resolution, platform/charset decoupling, and real-repository coverage checkpoint |
+| G2 frontend/build model | M2 frontend verified; M3.1 effective-POM projection delivered | M3 source plans/acquisition, dependency/classpath resolution, platform/charset decoupling, independent semantic acceptance and real-repository coverage checkpoint remain open |
 | G3 Spring | NOT STARTED | Registered bounded correctness evidence across classified wiring taxonomy |
 | G4 graph/metric/query | NOT STARTED | Invariants, metric correctness, bounded storage-neutral queries |
 | G5 policy/evidence/assessment | NOT STARTED | Negative/mutation controls, complete evidence, score safeguards |
@@ -83,4 +87,4 @@ Open work: validate the adopted provisional canonical signatures/port/coordinate
 
 ## EXACT NEXT TASK
 
-Begin Milestone M3: Multi-Module Workspace and Build-Model Intelligence. Deliver safe effective-POM discovery, dependency resolution, parent POM and BOM parsing, exact classpath manifests to supply dependency JARs to the M2 frontend, platform decoupling (`analyzer-runtime != analyzed-platform`), and source encoding policy without heuristic guessing.
+M3.2: extend the effective-POM projection into explicit per-module `main`/`test` source plans. Project inherited build directories and compiler plugin/property declarations with input provenance; distinguish source syntax level, target/release platform requirement and charset evidence; retain unresolved configuration and plugin/generated-source effects as gaps. Do not acquire ambient host defaults, execute target plugins or claim alternate-platform/source-decoding support until their own integration tests pass. Follow this with safe filesystem/cache acquisition and exact dependency/JAR manifests, then platform/encoding integration and the remaining G2 evidence.

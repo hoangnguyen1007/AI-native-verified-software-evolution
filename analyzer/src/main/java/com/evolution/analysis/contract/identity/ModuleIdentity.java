@@ -12,7 +12,7 @@ public record ModuleIdentity(String value) implements CanonicalIdentifier, Compa
 
     public static ModuleIdentity from(RepositoryIdentity repository, String repositoryRelativePath) {
         ContractChecks.notNull(repository, "repository");
-        ContractChecks.repositoryRelativePath(repositoryRelativePath, "module path");
+        ContractChecks.modulePath(repositoryRelativePath);
         return new ModuleIdentity(IdentitySupport.derive(
                 "module", List.of(repository.value(), repositoryRelativePath)));
     }

@@ -35,9 +35,10 @@ Technology approval is not proof of accuracy or a passed quality gate. Keep appr
 
 ## Bootstrap and context
 
-Before repository-specific technical answers or non-trivial work, reconstruct current reality. Short prompts do not waive this contract.
+Before repository-specific technical answers or non-trivial work, reconstruct current reality at the depth required by the task:
 
-**Tier 0 — read fully:** this file, [project context](docs/project-context.md), [current state](docs/current-state.md), [roadmap](docs/roadmap.md); inspect Git status, working/staged diffs, and recent log. Inspect untracked files relevant to the task separately.
+- **Full Bootstrap (Tier 0):** Required for milestone transitions, architecture/ADR decisions, governance changes, gate reviews, or initial session entry. Read fully: this file, [project context](docs/project-context.md), [current state](docs/current-state.md), [roadmap](docs/roadmap.md); inspect Git status, working/staged diffs, and recent log.
+- **Lean Bootstrap (Task-Scoped):** For bounded vertical code slices, TDD cycles, or bugfixes within an established milestone where active contracts are already known: read [current state](docs/current-state.md), the relevant milestone contract in `docs/architecture/`, and target source/test files. Do not reread `project-context.md` or `roadmap.md` unless milestone scope, gates, or governance change.
 
 Identify milestone, task, repository state, confirmed/provisional decisions, open questions, blockers, quality gates, and next expected task.
 - Tier 1: read milestone-specific architecture, ADRs, and research in full where they define relevant contracts.
@@ -91,6 +92,12 @@ A trivial prose/formatting edit needs applicable local instructions, diff inspec
 
 Define scope, contracts, exit criteria and non-goals; resolve consequential uncertainty through research/architecture gates; implement the smallest coherent authorized change; verify; inspect the final diff; update durable state; hand off.
 
+**Context and Token Conservation:**
+- Prefer targeted inspection (`git diff`, focused line slices) over reading whole large source or document files.
+- Do not load unrelated historical research documents, raw benchmark logs, or prior conversational audit files unless directly resolving a cited discrepancy.
+- Maintain strict focus on the active milestone; avoid speculative architectural debates on distant milestones during code implementation.
+- Never compromise correctness, invariants, or evidence verification to save tokens. Efficiency comes from eliminating redundant reads and ceremonial prose, not cutting testing or safety checks.
+
 Proceed on reversible implementation details within approved scope. Seek a human decision only for unresolved consequential scope/architecture/identity/schema/security/cost changes. Explain the specific missing decision; do all separable useful work first. Never ask again for existing approval or silently continue into another milestone.
 
 Use the eight roles in the routing table; do not proliferate roles. One agent can apply multiple role guides. Distinguish implementer self-checks from independent review; changing role labels does not create independence.
@@ -109,7 +116,9 @@ One source per responsibility:
 
 Before completion: inspect all resulting changes, run task-specific validation and relevant integration/contract checks, run broader checks proportional to impact, compare against exit criteria, and record gaps/blockers. A read-only review reports needed state corrections without editing reviewed artifacts. An implementation task includes authorized repairs after self-review.
 
-Use [handoff](.agents/workflows/handoff.md) for meaningful work. Cover STATE BEFORE, WORK COMPLETED, FILES CHANGED, TESTS / COMMANDS ACTUALLY RUN, RESULTS, NEW EVIDENCE, DECISIONS MADE, DECISIONS STILL REQUIRING HUMAN APPROVAL, LIMITATIONS, BLOCKERS, DURABLE STATE FILES UPDATED, EXACT NEXT RECOMMENDED TASK. Combine empty/related fields in concise prose or a table; twelve separate sections are unnecessary.
+Apply [handoff](.agents/workflows/handoff.md) depth adaptively:
+- **Lean Slice Handoff:** For intermediate vertical code slices, bugfixes, or refactors, emit a concise 3-part summary: (1) Files Changed, (2) Verification Command & Result, and (3) Exact Next Slice.
+- **Standard/Full Handoff:** For milestone completion, gate assessment, major architectural deliverables, or human review checkpoints, cover the full fields (STATE BEFORE, WORK COMPLETED, FILES CHANGED, TESTS RUN, RESULTS, NEW EVIDENCE, DECISIONS MADE, DECISIONS REQUIRING APPROVAL, LIMITATIONS, BLOCKERS, DURABLE STATE, EXACT NEXT TASK) in concise prose or a table.
 
 ## Safety
 

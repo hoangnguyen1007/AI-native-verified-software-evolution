@@ -87,7 +87,22 @@ Stable query services should support:
 - conflicts and their effect on confidence, metrics, policies and assessments; and
 - drill-down to source spans, observations, artifacts and provenance.
 
-The workbench may present this as an “evidence gaps and acquisition paths” view. It must not present candidate providers as guaranteed fixes or an open gap as a repository defect.
+## Specific Evidence Providers and Conventions
+
+### Dependency Binary Symbols: `JarTypeSolver` as Primary Baseline
+
+1. **Primary Provider:** The baseline provider for external dependency binary symbols is `JarTypeSolver` (Javassist-based) inside `analyzer-javaparser`. It consumes the ordered `ExactClasspathManifest` produced by M3, resolving type declarations and member signatures directly from verified JAR bytes.
+2. **Selective Bytecode Provider (ASM):** A separate bytecode provider (such as ASM-backed inspection) is not an automatic fallback for generic solver failures. It is evaluated only when measured capability gaps require metadata that the baseline cannot safely extract (e.g., raw bytecode instruction offsets, specialized framework class attributes, or unparsed annotation parameters).
+
+### Lombok Generation and Provenance Policy
+
+1. **Execution Boundary:** Running `delombok` or annotation processors in a scratch buffer is an **unisolated provider execution**. It is NOT a sandbox. It requires explicit configuration, declared toolchain inputs, and authorized execution policy.
+2. **Declaration Spans vs Supporting Evidence:**
+   - Generated methods, accessors, and constructors **MUST NOT** assign the source annotation span (e.g. the span of `@Getter` or `@Builder`) as their declaration or body span.
+   - The original annotation span is strictly recorded as **supporting input evidence** (`supportingSpans`) in derivation provenance.
+   - The generated entity carries either an exact coordinate within an acquired `GeneratedDocument` artifact, or carries an empty declaration span (modeled as an implicit/derived member with project origin, citing the annotation as derivation input).
+3. **Entity Origin Invariant:** `GENERATED_LOMBOK` is generator tool metadata and derivation provenance. It **must not alter** the canonical `EntityOrigin` enum (which remains `PROJECT`, `JDK`, `DEPENDENCY`). A generated member for a project class retains `EntityOrigin.PROJECT`.
+4. **Lineage Preservation:** Original source files, bytes, and UTF-16 spans remain immutable. Generated documents are tracked separately in an acquired artifact plan with their own content digests.
 
 ## Acceptance Requirements
 
@@ -104,5 +119,6 @@ The workbench may present this as an “evidence gaps and acquisition paths” v
 - [Architecture Overview](architecture.md)
 - [M1 Contracts](m1-contracts.md)
 - [M2 Semantic Frontend](m2-semantic-frontend.md)
+- [M3 Workspace and Build-Model Contract](m3-workspace-build-model.md)
 - [M4 Spring Intelligence](m4-spring-intelligence.md)
 - [Product Outcome Contract](product-outcome.md)
