@@ -12,7 +12,7 @@ import java.nio.file.Path;
 import java.util.*;
 
 /**
- * Passive exact-classpath provider over one caller-selected Maven local repository.
+ * Passive exact-classpath provider over one caller-selected standard Maven2-layout cache.
  * It has no settings reader, remote repositories, transport, lifecycle or plugin execution.
  */
 public final class MavenLocalClasspathProvider implements ClasspathProvider {
@@ -227,6 +227,9 @@ public final class MavenLocalClasspathProvider implements ClasspathProvider {
             } else {
                 MavenArtifactModelReader.DescriptorOutcome outcome = modelReader.descriptor(coordinate.gav());
                 outcome.issues().forEach(issue -> problems.add(issue.problem()));
+                if (outcome.issues().stream().anyMatch(issue -> issue.reason() == Reason.RELOCATION_UNSUPPORTED)) {
+                    node.withheld = true;
+                }
                 if (outcome.descriptor().isPresent()) {
                     var descriptor = outcome.descriptor().orElseThrow();
                     children = descriptor.dependencies();
@@ -423,6 +426,10 @@ public final class MavenLocalClasspathProvider implements ClasspathProvider {
         }
 
         private static ArtifactCoordinate artifact(Dependency dependency) {
+            if (dependency.version().equalsIgnoreCase("LATEST")
+                    || dependency.version().equalsIgnoreCase("RELEASE")) {
+                throw new IllegalArgumentException("Dynamic Maven versions are not exact inputs");
+            }
             MavenCoordinate gav = new MavenCoordinate(
                     dependency.groupId(), dependency.artifactId(), dependency.version());
             String type = dependency.type().isEmpty() ? "jar" : dependency.type();

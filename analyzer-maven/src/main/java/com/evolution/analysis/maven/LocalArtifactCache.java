@@ -15,7 +15,7 @@ import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.*;
 
-/** Bounded immutable reads from one explicitly selected Maven-style local repository. */
+/** Bounded immutable reads from one explicitly selected standard Maven2-layout artifact cache. */
 final class LocalArtifactCache {
     private final Path root;
     private final BuildModelRequest buildRequest;

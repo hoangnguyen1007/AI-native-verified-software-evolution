@@ -24,7 +24,8 @@ public record ExactClasspathResult(
     public static final String SCHEMA = "exact-classpath-result-v1";
     public static final List<String> LIMITATIONS = List.of(
             "Only exact local Maven repository POM and JAR coordinates are acquired; no network, settings, transport or lifecycle is used.",
-            "Version ranges, relocations, system paths and non-JAR classpath artifacts remain explicit unsupported inputs.",
+            "Version ranges, dynamic versions, relocations, system paths and non-JAR classpath artifacts remain explicit unsupported inputs.",
+            "This provider accepts one explicitly selected standard Maven2-layout cache; split, custom and Gradle caches require separate providers.",
             "Reactor dependencies retain module/output requirements; compiled reactor outputs are not invented or acquired.",
             "Archive structural and multi-release platform validation remains a semantic-frontend responsibility.");
 

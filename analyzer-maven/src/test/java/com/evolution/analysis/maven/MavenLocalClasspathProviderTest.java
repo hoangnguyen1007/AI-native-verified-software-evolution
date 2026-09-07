@@ -208,9 +208,12 @@ class MavenLocalClasspathProviderTest {
                 + dependency("ext", "jarless", "1", "compile", false, "")
                 + dependency("ext", "unsafe", "1", "compile", false, "")
                 + dependency("ext", "range", "[1,2]", "compile", false, "")
+                + dependency("ext", "latest", "LATEST", "compile", false, "")
+                + dependency("ext", "release", "RELEASE", "compile", false, "")
                 + dependency("ext", "host-profile", "1", "compile", false, "")
                 + dependency("ext", "bad-jar", "1", "compile", false, "")
                 + dependency("ext", "mismatch", "1", "compile", false, "")
+                + dependency("ext", "relocated", "1", "compile", false, "")
                 + system + war + "</dependencies>")));
         artifact("ext", "jarless", "1", "", false);
         writePom("ext", "unsafe", "1", "<!DOCTYPE project [<!ENTITY x SYSTEM 'file:///private-marker'>]>"
@@ -222,6 +225,8 @@ class MavenLocalClasspathProviderTest {
         writeJar("ext", "bad-jar", "1", "jar", "", "not-a-jar".getBytes(StandardCharsets.UTF_8));
         writePom("ext", "mismatch", "1", pomWithGroup("ext", "impostor", "1", ""));
         writeJar("ext", "mismatch", "1", "jar", "", jar("mismatch"));
+        artifact("ext", "relocated", "1", "<distributionManagement><relocation><groupId>ext</groupId>"
+                + "<artifactId>new-home</artifactId><version>2</version></relocation></distributionManagement>", true);
         artifact("ext", "web", "1", "<packaging>war</packaging>", false);
 
         var result = resolve(fixture, POLICY, cacheRoot());
@@ -231,7 +236,15 @@ class MavenLocalClasspathProviderTest {
         assertTrue(reasons.containsAll(Set.of(Reason.MISSING_POM, Reason.MISSING_ARTIFACT,
                 Reason.UNSAFE_POM, Reason.NON_EXACT_VERSION, Reason.UNSUPPORTED_PROFILE_ACTIVATION,
                 Reason.INVALID_JAR, Reason.COORDINATE_MISMATCH, Reason.SYSTEM_PATH_UNAVAILABLE,
-                Reason.UNSUPPORTED_ARTIFACT_TYPE)), reasons::toString);
+                Reason.UNSUPPORTED_ARTIFACT_TYPE, Reason.RELOCATION_UNSUPPORTED)), reasons::toString);
+        assertTrue(main.problems().stream().anyMatch(problem ->
+                problem.reason() == Reason.NON_EXACT_VERSION && problem.subject().equals("ext:latest")));
+        assertTrue(main.problems().stream().anyMatch(problem ->
+                problem.reason() == Reason.NON_EXACT_VERSION && problem.subject().equals("ext:release")));
+        assertFalse(names(main).contains("ext:relocated:1@jar"));
+        assertTrue(result.attempts().stream().noneMatch(attempt ->
+                attempt.kind() == ArtifactKind.JAR
+                        && attempt.coordinate().gav().equals(new MavenCoordinate("ext", "relocated", "1"))));
         assertEquals(Status.PARTIAL, main.status());
         assertFalse(CanonicalJson.write(result).contains("private-marker"));
     }
