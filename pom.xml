@@ -19,6 +19,7 @@
     <modules>
         <module>analyzer</module>
         <module>analyzer-maven</module>
+        <module>analyzer-filesystem</module>
         <module>analyzer-javaparser</module>
         <module>backend</module>
     </modules>

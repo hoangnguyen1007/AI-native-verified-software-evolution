@@ -1,6 +1,6 @@
 # AI-Native Verified Software Evolution
 
-This repository is the SE121 software architecture intelligence platform. The Java 21 Maven reactor contains parser-neutral contracts, the M2 JavaParser frontend, and the first M3 slice: passive, bounded effective-POM modeling over explicitly supplied immutable inputs. M3 is in progress; G2 is not passed. See [current state](docs/current-state.md) for verified scope and limitations.
+This repository is the SE121 software architecture intelligence platform. The Java 21 Maven reactor contains parser-neutral contracts, the M2 JavaParser frontend, passive effective-POM/source-plan modeling, and bounded filesystem acquisition with explicit candidate source ownership. M3 is in progress; G2 is not passed. See [current state](docs/current-state.md) for verified scope and limitations.
 
 ## Build prerequisites
 
@@ -50,12 +50,15 @@ The root reactor owns all shared build and test policy and builds in this order:
 1. `software-evolution-platform` (root aggregator)
 2. `analyzer` (M1 contracts, Unicode-safe Java identities and the neutral semantic frontend port)
 3. `analyzer-maven` (isolated Maven Model Builder adapter; no target lifecycle, filesystem discovery or network resolution)
-4. `analyzer-javaparser` (isolated JavaParser/SymbolSolver adapter and semantic fixtures)
-5. `backend` (placeholder JAR, depends on `analyzer`, and has its own test boundary)
+4. `analyzer-filesystem` (isolated passive filesystem acquisition; no link following, execution or network access)
+5. `analyzer-javaparser` (isolated JavaParser/SymbolSolver adapter and semantic fixtures)
+6. `backend` (placeholder JAR, depends on `analyzer`, and has its own test boundary)
 
 The adapter accepts exact supplied source bytes and verified resolution inputs; it does not discover or execute target builds. Graph, Spring, backend API, CLI and visual workbench implementation remain later work.
 
-The Maven adapter implements `BuildModelProvider` in the neutral `com.evolution.analysis.buildmodel` package. It models root/nested modules, relative parents, supplied artifact parents/BOMs, inheritance, properties, explicit/property/default profiles, dependency management, scopes, optional flags and exclusions. M3.2 adds per-module main/test candidate source plans with inherited directories, separate syntax/bytecode/API requirements, encoding declarations, plugin configuration and provenance. Result schema `build-model-result-v2` includes source-plan gaps in `hasGaps()`. File acquisition, decoding and dependency JAR/classpath resolution remain open. See the [M3.2 contract](docs/architecture/m3-workspace-build-model.md#implemented-slice-m32--declarative-source-plans) and [verification evidence](docs/reproducibility/m3-source-plans-2026-09-06/README.md).
+The Maven adapter implements `BuildModelProvider` in the neutral `com.evolution.analysis.buildmodel` package. It models root/nested modules, relative parents, supplied artifact parents/BOMs, inheritance, properties, explicit/property/default profiles, dependency management, scopes, optional flags and exclusions. M3.2 adds per-module main/test candidate source plans with inherited directories, separate syntax/bytecode/API requirements, encoding declarations, plugin configuration and provenance. Result schema `build-model-result-v2` includes source-plan gaps in `hasGaps()`.
+
+M3.3 adds neutral immutable acquisition/ownership contracts and the isolated `analyzer-filesystem` adapter. It reads an explicitly selected directory under finite file/directory/byte/depth limits, preserves exact bytes and digests, withholds incomplete snapshots, rejects links/escapes, and records exclusions or failures without raw host paths. Acquired POM bytes feed M3.1/M3.2; `.java` files remain candidates classified as owned, overlapping or unowned until later decoding. Dependency cache/JAR/classpath resolution, source decoding, platform views and generated-source acquisition remain open. See the [M3.3 contract](docs/architecture/m3-workspace-build-model.md#implemented-slice-m33--safe-filesystem-acquisition-and-candidate-ownership) and [verification evidence](docs/reproducibility/m3-filesystem-acquisition-2026-09-07/README.md).
 
 For a Windows sandbox with the user Maven cache, explicitly configure `MAVEN_USER_HOME` and pass `-Dmaven.repo.local=C:/Users/Admin/.m2/repository`. If recompilation reports cache access denial, use the host's supported execution approval. Do not copy caches around a denial. Focused reactor builds use `-pl analyzer-javaparser -am test`; the parent is required by reactor-convergence enforcement.
 
