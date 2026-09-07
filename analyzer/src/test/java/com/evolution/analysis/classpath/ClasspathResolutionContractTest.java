@@ -35,8 +35,8 @@ class ClasspathResolutionContractTest {
         var secondCoordinate = new ArtifactCoordinate(new MavenCoordinate("demo", "second", "1"), "jar", "tests");
         var firstDigest = ContentDigest.sha256Utf8("first");
         var secondDigest = ContentDigest.sha256Utf8("second");
-        var first = entry(firstCoordinate, DependencyScope.COMPILE, firstDigest, true, 1);
-        var second = entry(secondCoordinate, DependencyScope.RUNTIME, secondDigest, false, 2);
+        var first = entry(firstCoordinate, DependencyScope.COMPILE, firstDigest, 0, true, 1);
+        var second = entry(secondCoordinate, DependencyScope.RUNTIME, secondDigest, 1, false, 2);
         var complete = Manifest.create(MODULE, SourcePlanModel.Kind.TEST,
                 List.of(first, second), List.of(), List.of(), List.of());
 
@@ -67,6 +67,7 @@ class ClasspathResolutionContractTest {
                 DependencyScope.COMPILE,
                 new ClasspathEntry(classpath.kind(), "wrong", digest),
                 coordinate.repositoryPath(),
+                0,
                 true,
                 1,
                 List.of(evidence)));
@@ -75,6 +76,7 @@ class ClasspathResolutionContractTest {
                 DependencyScope.COMPILE,
                 coordinate.classpathEntry(ContentDigest.sha256Utf8("different")),
                 coordinate.repositoryPath(),
+                0,
                 true,
                 1,
                 List.of(evidence)));
@@ -83,18 +85,20 @@ class ClasspathResolutionContractTest {
                 DependencyScope.COMPILE,
                 classpath,
                 "elsewhere.jar",
+                0,
                 true,
                 1,
                 List.of(evidence)));
     }
 
     private static Entry entry(
-            ArtifactCoordinate coordinate, DependencyScope scope, ContentDigest digest, boolean direct, int depth) {
+            ArtifactCoordinate coordinate, DependencyScope scope, ContentDigest digest, int order, boolean direct, int depth) {
         return new Entry(
                 coordinate,
                 scope,
                 coordinate.classpathEntry(digest),
                 coordinate.repositoryPath(),
+                order,
                 direct,
                 depth,
                 List.of(new Evidence("cache:" + coordinate.repositoryPath(), digest)));

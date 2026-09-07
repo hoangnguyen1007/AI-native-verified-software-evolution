@@ -20,7 +20,7 @@ import java.util.function.Supplier;
 
 /** Per-request state. Traversal order never enters identity or output ordering. */
 final class Extraction {
-    private static final VersionedIdentifier VERSION = new VersionedIdentifier("frontend.javaparser", "3.27.1-m2.4");
+    private static final VersionedIdentifier VERSION = new VersionedIdentifier("frontend.javaparser", "3.27.1-m3.5");
     private static final Derivation DIRECT = new Derivation(DerivationKind.DIRECT, new VersionedIdentifier("java.source", "1"), List.of());
     private final FrontendRequest request;
     private final ResolutionEnvironment environment;
@@ -89,7 +89,7 @@ final class Extraction {
     }
 
     private void parse() {
-        var configuration = new ParserConfiguration().setLanguageLevel(ParserConfiguration.LanguageLevel.JAVA_21)
+        var configuration = new ParserConfiguration().setLanguageLevel(languageLevel())
                 .setTabSize(1).setPreprocessUnicodeEscapes(true).setSymbolResolver(new JavaSymbolSolver(environment.solver));
         var parser = new JavaParser(configuration);
         for (var input : request.sources()) {
@@ -107,6 +107,31 @@ final class Extraction {
             var unit = new Unit(input, ast); units.put(ast, unit); orderedUnits.add(unit);
             sourceNodes.addAll(ast.stream().toList());
         }
+    }
+
+    private ParserConfiguration.LanguageLevel languageLevel() {
+        if (request.plan().preview()) {
+            throw new FrontendInputException("frontend.preview", "Preview syntax is not supported by this frontend version");
+        }
+        int level = request.plan().syntaxLevel().orElseThrow(
+                () -> new FrontendInputException("frontend.syntax-level", "A supported syntax level is required"));
+        return switch (level) {
+            case 8 -> ParserConfiguration.LanguageLevel.JAVA_8;
+            case 9 -> ParserConfiguration.LanguageLevel.JAVA_9;
+            case 10 -> ParserConfiguration.LanguageLevel.JAVA_10;
+            case 11 -> ParserConfiguration.LanguageLevel.JAVA_11;
+            case 12 -> ParserConfiguration.LanguageLevel.JAVA_12;
+            case 13 -> ParserConfiguration.LanguageLevel.JAVA_13;
+            case 14 -> ParserConfiguration.LanguageLevel.JAVA_14;
+            case 15 -> ParserConfiguration.LanguageLevel.JAVA_15;
+            case 16 -> ParserConfiguration.LanguageLevel.JAVA_16;
+            case 17 -> ParserConfiguration.LanguageLevel.JAVA_17;
+            case 18 -> ParserConfiguration.LanguageLevel.JAVA_18;
+            case 19 -> ParserConfiguration.LanguageLevel.JAVA_19;
+            case 20 -> ParserConfiguration.LanguageLevel.JAVA_20;
+            case 21 -> ParserConfiguration.LanguageLevel.JAVA_21;
+            default -> throw new FrontendInputException("frontend.syntax-level", "Syntax level is outside the verified Java 8-21 range");
+        };
     }
     private static String semanticIdentifier(String raw) {
         var result = new StringBuilder(); raw.codePoints().filter(c -> !Character.isIdentifierIgnorable(c)).forEach(result::appendCodePoint); return result.toString();

@@ -21,7 +21,7 @@ public record ExactClasspathResult(
         List<ArtifactRecord> artifacts,
         List<Attempt> attempts,
         List<String> limitations) {
-    public static final String SCHEMA = "exact-classpath-result-v1";
+    public static final String SCHEMA = "exact-classpath-result-v2";
     public static final List<String> LIMITATIONS = List.of(
             "Only exact local Maven repository POM and JAR coordinates are acquired; no network, settings, transport or lifecycle is used.",
             "Version ranges, dynamic versions, relocations, system paths and non-JAR classpath artifacts remain explicit unsupported inputs.",
@@ -155,6 +155,7 @@ public record ExactClasspathResult(
             DependencyScope scope,
             ClasspathEntry classpathEntry,
             String repositoryPath,
+            int order,
             boolean direct,
             int depth,
             List<Evidence> evidence) {
@@ -163,6 +164,7 @@ public record ExactClasspathResult(
             ContractChecks.notNull(scope, "entry scope");
             ContractChecks.notNull(classpathEntry, "entry classpath value");
             repositoryPath = ContractChecks.repositoryRelativePath(repositoryPath, "artifact repository path");
+            if (order < 0) throw new IllegalArgumentException("Classpath order must not be negative");
             if (depth < 1 || direct != (depth == 1)) {
                 throw new IllegalArgumentException("Classpath entry depth and direct flag disagree");
             }
@@ -182,6 +184,7 @@ public record ExactClasspathResult(
             SourcePlanModel.Kind targetSourceSet,
             DependencyScope scope,
             Optional<String> outputDirectory,
+            int order,
             boolean direct,
             int depth,
             List<Evidence> evidence) {
@@ -192,6 +195,7 @@ public record ExactClasspathResult(
             ContractChecks.notNull(scope, "reactor scope");
             outputDirectory = ContractChecks.notNull(outputDirectory, "reactor output")
                     .map(ContractChecks::modulePath);
+            if (order < 0) throw new IllegalArgumentException("Classpath order must not be negative");
             if (depth < 1 || direct != (depth == 1)) {
                 throw new IllegalArgumentException("Reactor entry depth and direct flag disagree");
             }
@@ -246,6 +250,13 @@ public record ExactClasspathResult(
                     problems, Comparator.comparing(CanonicalJson::write), "manifest problems");
             if (entries.stream().map(entry -> entry.coordinate().conflictKey()).distinct().count() != entries.size()) {
                 throw new IllegalArgumentException("Manifest contains duplicate conflict keys");
+            }
+            List<Integer> combinedOrder = new ArrayList<>();
+            entries.forEach(entry -> combinedOrder.add(entry.order()));
+            reactorEntries.forEach(entry -> combinedOrder.add(entry.order()));
+            List<Integer> expectedOrder = java.util.stream.IntStream.range(0, combinedOrder.size()).boxed().toList();
+            if (!combinedOrder.stream().sorted().toList().equals(expectedOrder)) {
+                throw new IllegalArgumentException("Classpath entry order must be unique and contiguous");
             }
             Status expectedStatus = problems.isEmpty() ? Status.COMPLETE : Status.PARTIAL;
             if (status != expectedStatus) throw new IllegalArgumentException("Manifest status does not match problems");

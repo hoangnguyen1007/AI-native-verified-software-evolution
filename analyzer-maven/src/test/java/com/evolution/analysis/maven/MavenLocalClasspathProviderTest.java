@@ -78,6 +78,9 @@ class MavenLocalClasspathProviderTest {
         assertEquals(1, appMain.reactorEntries().size());
         assertEquals(com.evolution.analysis.contract.identity.ModuleIdentity.from(REPOSITORY, "api"),
                 appMain.reactorEntries().getFirst().module());
+        assertEquals(0, appMain.reactorEntries().getFirst().order());
+        assertEquals(List.of(1, 2), appMain.entries().stream().map(Entry::order).toList(),
+                "reactor and external binaries must retain one shared classpath order");
         assertEquals(Status.PARTIAL, appMain.status(), "unacquired reactor output must stay explicit");
         assertTrue(appMain.problems().stream().anyMatch(problem -> problem.reason() == Reason.REACTOR_OUTPUT_NOT_ACQUIRED));
         assertFalse(names(apiTest).stream().anyMatch(name -> name.contains("app-")), "dependencies must not bleed across modules");

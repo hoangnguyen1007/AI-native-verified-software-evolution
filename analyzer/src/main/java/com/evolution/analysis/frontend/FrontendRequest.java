@@ -7,12 +7,19 @@ import java.util.*;
 
 /** One explicitly inventoried module/source-set and ordered resolution environment. */
 public record FrontendRequest(AnalysisManifest manifest, ModuleIdentity module,
-        SourceClassification sourceSet, List<SourceInput> sources,
+        SourceClassification sourceSet, FrontendPlan plan, List<SourceInput> sources,
         PlatformInput platform, List<BinaryInput> dependencies) {
     public static final String CATALOG = "m2-java-4";
     public static final List<String> CATEGORIES = List.of("declares", "extends", "implements", "permits", "type-uses", "calls", "constructor-calls", "reads-field", "writes-field", "method-references", "has-parameter", "parameter-type", "returns", "field-type", "throws", "annotated-with", "type-parameter-bound", "type-argument");
+    public FrontendRequest(AnalysisManifest manifest, ModuleIdentity module,
+            SourceClassification sourceSet, List<SourceInput> sources,
+            PlatformInput platform, List<BinaryInput> dependencies) {
+        this(manifest, module, sourceSet, FrontendPlan.legacy(), sources, platform, dependencies);
+    }
+
     public FrontendRequest {
-        Objects.requireNonNull(manifest); Objects.requireNonNull(module); Objects.requireNonNull(sourceSet); Objects.requireNonNull(platform);
+        Objects.requireNonNull(manifest); Objects.requireNonNull(module); Objects.requireNonNull(sourceSet);
+        Objects.requireNonNull(plan); Objects.requireNonNull(platform);
         sources = sources.stream().sorted(Comparator.comparing(s -> s.document().path())).toList();
         dependencies = List.copyOf(dependencies);
         if (manifest.modules().stream().noneMatch(m -> m.identity().equals(module))) reject("module", "Requested module is absent");
@@ -24,18 +31,48 @@ public record FrontendRequest(AnalysisManifest manifest, ModuleIdentity module,
         entries.add(platform.entry()); dependencies.forEach(d -> entries.add(d.entry()));
         if (!entries.equals(manifest.classpath())) reject("classpath", "Supplied resolution inputs must match the ordered manifest classpath");
         if (dependencies.stream().map(BinaryInput::path).distinct().count() != dependencies.size()) reject("duplicate-binary", "Duplicate physical binary input");
-        for (var entry : options(module, sourceSet, actual).entrySet()) {
+        for (var entry : options(plan, module, sourceSet, actual, platform).entrySet()) {
             if (!entry.getValue().equals(manifest.configuration().values().get(entry.getKey()))) reject("configuration", "Manifest must bind the frontend request plan and versions");
         }
     }
     /** Fixed plan for this slice: immutable in-memory sources, no root discovery, no preview, no truncation. */
     public static Map<String, String> options(ModuleIdentity module, SourceClassification sourceSet, List<com.evolution.analysis.contract.source.SourceDocument> documents) {
-        return Map.of("java.release", "21", "java.preview", "false", "java.symbols", "java:v1",
-                "java.coordinates", "original-utf16-v1", "java.frontend.catalog", CATALOG,
-                "java.module", module.value(), "java.source-set", sourceSet.name(),
-                "java.sources", "exact-manifest-subset-v1", "java.limits", "unbounded",
-                "java.source-plan", com.evolution.analysis.contract.common.ContentDigest.sha256Utf8(
-                        com.evolution.analysis.contract.serialization.CanonicalJson.write(documents.stream().sorted().toList())).value());
+        return legacyOptions(module, sourceSet, documents);
+    }
+
+    public static Map<String, String> options(
+            FrontendPlan plan,
+            ModuleIdentity module,
+            SourceClassification sourceSet,
+            List<com.evolution.analysis.contract.source.SourceDocument> documents,
+            PlatformInput platform) {
+        if (plan.equals(FrontendPlan.legacy())) return legacyOptions(module, sourceSet, documents);
+        Map<String, String> values = new TreeMap<>(legacyOptions(module, sourceSet, documents));
+        values.put("java.release", Integer.toString(platform.release()));
+        values.put("java.syntax", plan.syntaxLevel().map(String::valueOf).orElse("unspecified"));
+        values.put("java.bytecode-target", plan.bytecodeTarget().map(String::valueOf).orElse("unspecified"));
+        values.put("java.preview", Boolean.toString(plan.preview()));
+        values.put("java.platform.version", platform.version());
+        values.put("java.platform.vendor", platform.vendor());
+        values.put("java.platform.symbol-digest", platform.entry().contentDigest().value());
+        values.put("java.classpath-manifest", plan.classpathManifest().value());
+        values.put("java.source-decoding", plan.sourceDecoding().value());
+        return Map.copyOf(values);
+    }
+
+    private static Map<String, String> legacyOptions(
+            ModuleIdentity module,
+            SourceClassification sourceSet,
+            List<com.evolution.analysis.contract.source.SourceDocument> documents) {
+        Map<String, String> values = new TreeMap<>();
+        values.put("java.release", "21"); values.put("java.preview", "false");
+        values.put("java.symbols", "java:v1"); values.put("java.coordinates", "original-utf16-v1");
+        values.put("java.frontend.catalog", CATALOG); values.put("java.module", module.value());
+        values.put("java.source-set", sourceSet.name()); values.put("java.sources", "exact-manifest-subset-v1");
+        values.put("java.limits", "unbounded");
+        values.put("java.source-plan", com.evolution.analysis.contract.common.ContentDigest.sha256Utf8(
+                com.evolution.analysis.contract.serialization.CanonicalJson.write(documents.stream().sorted().toList())).value());
+        return Map.copyOf(values);
     }
     private static void reject(String code, String message) { throw new FrontendInputException("frontend." + code, message); }
 }

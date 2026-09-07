@@ -103,8 +103,59 @@ class ResolutionInputsTest {
     }
     @Test void wrongPlatformHashIsRejectedBeforeParsing() {
         var valid = TestInputs.request("class C {}");
-        var invalidPlatform = new PlatformInput(new ClasspathEntry(ClasspathEntryKind.JDK_MODULE,valid.platform().entry().logicalName(),ContentDigest.sha256Utf8("wrong")),valid.platform().javaHome());
+        var original = valid.platform().artifacts().getFirst();
+        var invalidPlatform = PlatformInput.create(valid.platform().release(), valid.platform().version(),
+                valid.platform().vendor(), List.of(new PlatformInput.Artifact(original.logicalName(),
+                        ContentDigest.sha256Utf8("wrong"), original.path(), original.format())));
         var request = TestInputs.request(valid.sources(),invalidPlatform,List.of());
         assertEquals("frontend.artifact-digest",assertThrows(FrontendInputException.class,() -> new JavaParserFrontend().analyze(request)).diagnostic().code());
+    }
+
+    @Test void explicitPlatformJarDecouplesSymbolsFromTheRunningJdk() throws Exception {
+        var archive = jar("platform-view", "package platform.fixture; public class Library { public static void hit(){} }");
+        var platform = PlatformInput.create(8, "1.8.0-fixture", "Fixture Vendor", List.of(
+                new PlatformInput.Artifact("lib/rt.jar", archive.entry().contentDigest(), archive.path(),
+                        PlatformInput.Format.JAR)));
+        var base = TestInputs.request("class C { void run(){ platform.fixture.Library.hit(); } }");
+        var plan = new FrontendPlan(Optional.of(8), Optional.of(8), false,
+                ContentDigest.sha256Utf8("classpath"), ContentDigest.sha256Utf8("decoding"));
+        var result = new JavaParserFrontend().analyze(
+                TestInputs.request(base.sources(), platform, List.of(), plan));
+
+        assertEquals(1, calls(result).size());
+        assertEquals(SemanticStatus.RESOLVED, calls(result).getFirst().status());
+        var targetId = ((RelationshipTarget.Resolved) calls(result).getFirst().relationship().target()).target();
+        assertEquals(EntityOrigin.JDK, result.declarations().stream().map(DeclarationRecord::entity)
+                .filter(entity -> entity.identity().equals(targetId)).findFirst().orElseThrow().origin());
+
+        var unsupportedSyntax = TestInputs.request(Map.of("fixture/C.java", "record TooNew(int value) {}"), List.of());
+        var java8Request = TestInputs.request(unsupportedSyntax.sources(), platform, List.of(), plan);
+        assertEquals(SourceOutcome.State.ERROR,
+                new JavaParserFrontend().analyze(java8Request).sources().getFirst().state());
+    }
+
+    @Test void explicitJmodViewUsesClassesPrefixAndRejectsMutation() throws Exception {
+        var archive = jar("jmod-source", "package platform.fixture; public class Library { public static void hit(){} }");
+        Path jmod = temp.resolve("java.fixture.jmod");
+        try (var input = new JarFile(archive.path().toFile());
+                var output = new JarOutputStream(Files.newOutputStream(jmod))) {
+            for (var item : input.stream().filter(value -> value.getName().endsWith(".class")).toList()) {
+                JarEntry entry = new JarEntry("classes/" + item.getName()); entry.setTime(0);
+                output.putNextEntry(entry); input.getInputStream(item).transferTo(output); output.closeEntry();
+            }
+        }
+        var artifact = new PlatformInput.Artifact("jmods/java.fixture.jmod",
+                ContentDigest.sha256(Files.readAllBytes(jmod)), jmod, PlatformInput.Format.JMOD);
+        var platform = PlatformInput.create(17, "17-fixture", "Fixture Vendor", List.of(artifact));
+        var base = TestInputs.request("class C { void run(){ platform.fixture.Library.hit(); } }");
+        var plan = new FrontendPlan(Optional.of(17), Optional.of(17), false,
+                ContentDigest.sha256Utf8("classpath"), ContentDigest.sha256Utf8("decoding"));
+        assertEquals(SemanticStatus.RESOLVED, calls(new JavaParserFrontend().analyze(
+                TestInputs.request(base.sources(), platform, List.of(), plan))).getFirst().status());
+
+        Files.writeString(jmod, "changed");
+        assertEquals("frontend.artifact-digest", assertThrows(FrontendInputException.class,
+                () -> new JavaParserFrontend().analyze(
+                        TestInputs.request(base.sources(), platform, List.of(), plan))).diagnostic().code());
     }
 }

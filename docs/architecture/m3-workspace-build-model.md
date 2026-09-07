@@ -2,7 +2,7 @@
 
 ## Status and Scope
 
-**PROVISIONAL Milestone M3 baseline; bounded M3.1 effective-POM, M3.2 source-plan, M3.3 filesystem-acquisition and M3.4 exact-classpath slices below are implemented.** Later sections define target contracts for platform decoupling, source decoding, generated-source lineage and normalized capability gaps. They are not claims of delivered capability.
+**PROVISIONAL Milestone M3 baseline; bounded M3.1 effective-POM, M3.2 source-plan, M3.3 filesystem-acquisition, M3.4 exact-classpath and M3.5 frontend-input slices below are implemented.** Later sections still define target contracts for generated-source lineage, cross-release `ct.sym` selection and normalized capability gaps. They are not claims of delivered capability.
 
 Authority: [Project Context](../project-context.md), [Roadmap](../roadmap.md), [ADR-001](../decisions/ADR-001-parser-technology.md), [ADR-003](../decisions/ADR-003-progressive-evidence-acquisition.md), and [Progressive Evidence Acquisition Contract](evidence-acquisition.md).
 
@@ -69,7 +69,20 @@ The pinned official [test compiler source](https://github.com/apache/maven-compi
 
 The mediation rules follow Maven's official [dependency mechanism](https://maven.apache.org/guides/introduction/introduction-to-dependency-mechanism.html), [optional/exclusion semantics](https://maven.apache.org/guides/introduction/introduction-to-optional-and-excludes-dependencies.html), [Resolver ordering description](https://maven.apache.org/resolver/how-resolver-works.html) and [Maven 3.9.16 Resolver pin](https://maven.apache.org/ref/3.9.16/apache-maven/dependencies.html). The [repository layout contract](https://maven.apache.org/repository/layout.html) defines the exact path mapping. The adapter deliberately uses no Maven repository system or transport, so successful fixtures establish this bounded standard-layout provider rather than Maven CLI equivalence.
 
-Exact next slice M3.5: decode acquired source candidates under declared or explicit charset policy and assemble per-module/source-set frontend inputs from verified dependency bytes plus an analyzed-platform symbol view. Generated-source lineage, normalized capability gaps, representative external coverage and G2 acceptance remain later work.
+M3.5 extends the result schema to `exact-classpath-result-v2` and the provider to `classpath.maven-local:3.9.16-m3.5` by assigning one unique contiguous `order` across external and reactor requirements. Dependency mediation and pre-order semantics are unchanged; the additive ordinal prevents loss of shadowing order when the two typed lists are assembled.
+
+## Implemented Slice M3.5 — Decoded Source, Platform Views and Frontend Inputs
+
+**CONFIRMED by implementation fixtures on 2026-09-07:** neutral contracts under `com.evolution.analysis.input` provide content-addressed source-decoding, platform-acquisition and per-source-set frontend-assembly ledgers. `analyzer-filesystem` implements `platform.jdk-filesystem:m3.5`; JavaParser consumes explicit JAR, Java 8 `rt.jar`, Java 9+ JMOD, or explicitly verified running-module views. See [verification evidence](../reproducibility/m3-frontend-inputs-2026-09-07/README.md).
+
+- **Strict source decoding:** `SourceDecoder` requires a complete M3.3 acquisition, exact candidate-ownership coverage, and the matching build request/result chain. It uses M3.2's usable declared encoding first; only an absent declaration may use an explicit `SourceDecodingPolicy`. Invalid, unresolved or unsupported declarations never fall through. The fixed portable catalog is UTF-8, UTF-16, UTF-16BE/LE, ISO-8859-1 and US-ASCII. Decoding reports malformed/unmappable input, BOM conflicts, unowned/overlapping files and missing evidence without charset guessing.
+- **Byte and coordinate provenance:** `SourceInput` retains defensive raw bytes, raw SHA-256 through `SourceDocument`, canonical charset and origin, exact POM/policy evidence, detected UTF-8/UTF-16 BOM, and separate LF/CRLF/CR counts. BOM bytes are excluded from parser text, while line/column coordinates remain over the decoded original text; line endings are not normalized.
+- **Analyzed-platform acquisition:** `PlatformSymbolRequest/Result` bind a target feature release and finite artifact/byte limits. The filesystem provider reads exactly one canonical configured JDK root, strict UTF-8 `release` metadata, and either `rt.jar` for Java 8 or a sorted JMOD set for Java 9+. It rejects links/aliases, non-regular or invalid archives, containment failures, mutation and release mismatch. Absolute paths are runtime locators and do not enter platform/result identity; exact artifact digests, release, full version and vendor do.
+- **Frontend decoupling:** `PlatformInput` is an explicit artifact set. JavaParser adapter `frontend.javaparser:3.27.1-m3.5` builds platform solvers from verified JAR bytes or from JMOD `classes/*.class` entries, and assigns platform entities the aggregate JDK scope. The legacy running-module format is explicit and digest-verified; it is not selected by the M3.5 filesystem provider. Syntax is configured independently for non-preview Java 8–21; missing/out-of-range levels and preview requests are rejected rather than parsed as Java 21.
+- **Exact assembly:** `FrontendInputAssembler` verifies the ownership/build/classpath/decoding provenance chain and emits one `FrontendRequest` per manifest only when its complete decoded source subset, platform view, external binaries and reactor-output JARs are present. Supplied dependency entries must exactly match M3.4 entries. Reactor outputs carry their producing module identity and declared output-root binding; their entities retain project/module scope. External and reactor inputs are merged by the shared ordinal. Missing, mismatched, classpath-partial or unreferenced binary inputs withhold the request, so a dependency superset cannot be introduced silently.
+- **Manifest provenance:** the M1 analysis manifest binds the platform aggregate, ordered binaries, syntax/bytecode/preview plan, classpath-manifest identity, source-decoding identity, analyzed platform release/version/vendor/hash and component versions. Machine paths remain outside stable identity.
+
+M3.5 does not execute target builds, acquire compiled reactor outputs, interpret class directories, select older releases from a newer JDK's `ct.sym`, discover toolchains, enable preview syntax, acquire generated sources, or normalize local typed problems into `CapabilityGapRecord`. Those are explicit subsequent boundaries; G2 remains open.
 
 ---
 
@@ -150,6 +163,7 @@ For each module and source-set, M3 produces an `ExactClasspathManifest` consumed
 | `scope` | Resolved dependency scope (`COMPILE`, `PROVIDED`, `RUNTIME`, `TEST`, `SYSTEM`) |
 | `contentDigest` | SHA-256 digest of the artifact binary |
 | `repositoryPath` | Portable path relative to the explicitly selected Maven cache; the absolute host root is not identity |
+| `order` | Zero-based ordinal shared by external and reactor entries, preserving the exact assembled classpath order |
 | `isDirect` | Boolean indicating whether the dependency was directly declared or transitively mediated |
 | `depth` | Selected dependency depth used by mediation |
 | `evidence` | Exact POM/JAR logical inputs and SHA-256 digests supporting the entry |

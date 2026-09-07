@@ -13,7 +13,9 @@ import static org.junit.jupiter.api.Assertions.*;
 class FrontendContractTest {
     private static final RepositoryIdentity REPO = RepositoryIdentity.fromCanonicalCoordinate("https://example.test/port.git");
     private static final ModuleDescriptor MODULE = ModuleDescriptor.create(REPO, "fixture", "fixture");
-    private static final PlatformInput PLATFORM = new PlatformInput(new ClasspathEntry(ClasspathEntryKind.JDK_MODULE, "test-jdk", ContentDigest.sha256Utf8("platform")), Path.of("runtime"));
+    private static final PlatformInput PLATFORM = PlatformInput.create(21, "21-test", "test-vendor", List.of(
+            new PlatformInput.Artifact("platform.jar", ContentDigest.sha256Utf8("platform"),
+                    Path.of("platform.jar"), PlatformInput.Format.JAR)));
     private static SourceInput source(String path, byte[] bytes, SourceClassification role) {
         return new SourceInput(SourceDocument.create(REPO, MODULE, path, ContentDigest.sha256(bytes), role), bytes);
     }

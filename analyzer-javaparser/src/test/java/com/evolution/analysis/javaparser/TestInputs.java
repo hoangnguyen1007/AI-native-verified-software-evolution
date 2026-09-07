@@ -16,8 +16,11 @@ final class TestInputs {
     static FrontendRequest request(Map<String, String> texts, List<BinaryInput> dependencies) {
         try {
             Path home = Path.of(System.getProperty("java.home"));
-            var platform = new PlatformInput(new ClasspathEntry(ClasspathEntryKind.JDK_MODULE,
-                    "jdk-runtime:" + Runtime.version(), ContentDigest.sha256(Files.readAllBytes(home.resolve("lib/modules")))), home);
+            Path modules = home.resolve("lib/modules");
+            var platform = PlatformInput.create(Runtime.version().feature(), Runtime.version().toString(),
+                    System.getProperty("java.vendor"), List.of(new PlatformInput.Artifact(
+                            "lib/modules", ContentDigest.sha256(Files.readAllBytes(modules)), modules,
+                            PlatformInput.Format.RUNTIME_MODULES)));
             var sources = texts.entrySet().stream().map(e -> {
                 byte[] bytes = e.getValue().getBytes(StandardCharsets.UTF_8);
                 return new SourceInput(SourceDocument.create(REPO, MODULE, e.getKey(), ContentDigest.sha256(bytes), SourceClassification.MAIN), bytes);
@@ -26,12 +29,19 @@ final class TestInputs {
         } catch (java.io.IOException e) { throw new java.io.UncheckedIOException(e); }
     }
     static FrontendRequest request(List<SourceInput> sources, PlatformInput platform, List<BinaryInput> dependencies) {
+        return request(sources, platform, dependencies, FrontendPlan.legacy());
+    }
+    static FrontendRequest request(List<SourceInput> sources, PlatformInput platform, List<BinaryInput> dependencies,
+            FrontendPlan plan) {
         var documents = sources.stream().map(SourceInput::document).toList();
         var snapshot = RepositorySnapshot.create(REPO, Optional.empty(), false, documents.stream().map(SnapshotFile::from).toList(), documents);
         var entries = new ArrayList<ClasspathEntry>(); entries.add(platform.entry()); dependencies.forEach(d -> entries.add(d.entry()));
         var component = new ManifestComponent(new VersionedIdentifier("test.fixture", "1"), ContentDigest.sha256Utf8("test-fixture-components-v1"));
         var manifest = AnalysisManifest.create(new VersionedIdentifier("analysis.manifest", "1"), snapshot, List.of(MODULE), entries,
-                AnalysisConfiguration.create(new VersionedIdentifier("analysis.configuration", "1"), FrontendRequest.options(MODULE.identity(), SourceClassification.MAIN, documents)), component, component, component);
-        return new FrontendRequest(manifest, MODULE.identity(), SourceClassification.MAIN, sources, platform, dependencies);
+                AnalysisConfiguration.create(new VersionedIdentifier("analysis.configuration", "1"),
+                        FrontendRequest.options(plan, MODULE.identity(), SourceClassification.MAIN, documents, platform)),
+                component, component, component);
+        return new FrontendRequest(manifest, MODULE.identity(), SourceClassification.MAIN, plan,
+                sources, platform, dependencies);
     }
 }

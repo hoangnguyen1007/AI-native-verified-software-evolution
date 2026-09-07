@@ -17,7 +17,7 @@ import java.util.*;
  */
 public final class MavenLocalClasspathProvider implements ClasspathProvider {
     public static final VersionedIdentifier VERSION =
-            new VersionedIdentifier("classpath.maven-local", "3.9.16-m3.4");
+            new VersionedIdentifier("classpath.maven-local", "3.9.16-m3.5");
 
     private final Path selectedCacheRoot;
 
@@ -135,7 +135,8 @@ public final class MavenLocalClasspathProvider implements ClasspathProvider {
 
             List<Entry> entries = new ArrayList<>();
             List<ReactorEntry> reactorEntries = new ArrayList<>();
-            for (SelectedNode root : roots) flatten(root, entries, reactorEntries);
+            int[] order = {0};
+            for (SelectedNode root : roots) flatten(root, entries, reactorEntries, order);
             return Manifest.create(
                     rootModule.module().identity(),
                     sourceSet,
@@ -264,7 +265,11 @@ public final class MavenLocalClasspathProvider implements ClasspathProvider {
             }
         }
 
-        private void flatten(SelectedNode node, List<Entry> entries, List<ReactorEntry> reactorEntries) {
+        private void flatten(
+                SelectedNode node,
+                List<Entry> entries,
+                List<ReactorEntry> reactorEntries,
+                int[] order) {
             if (node.withheld) {
                 // An ambiguous reactor coordinate must never fall back to a cache copy.
             } else if (node.scope == DependencyScope.SYSTEM) {
@@ -287,6 +292,7 @@ public final class MavenLocalClasspathProvider implements ClasspathProvider {
                         targetKind,
                         node.scope,
                         output,
+                        order[0]++,
                         node.depth == 1,
                         node.depth,
                         node.evidence));
@@ -310,6 +316,7 @@ public final class MavenLocalClasspathProvider implements ClasspathProvider {
                                 node.scope,
                                 node.coordinate.classpathEntry(material.record().contentDigest()),
                                 node.coordinate.repositoryPath(),
+                                order[0]++,
                                 node.depth == 1,
                                 node.depth,
                                 evidence));
@@ -318,7 +325,7 @@ public final class MavenLocalClasspathProvider implements ClasspathProvider {
                     problems.add(new Problem(failure.reason, failure.subject, failure.requirement, failure.evidence));
                 }
             }
-            for (SelectedNode child : node.children) flatten(child, entries, reactorEntries);
+            for (SelectedNode child : node.children) flatten(child, entries, reactorEntries, order);
         }
 
         private ManagedDependency manage(Dependency dependency, int depth) {
