@@ -2,7 +2,7 @@
 
 ## Status and Scope
 
-**PROVISIONAL Milestone M3 baseline; bounded M3.1 effective-POM, M3.2 source-plan and M3.3 filesystem-acquisition slices below are implemented.** Later sections define target contracts for dependency/cache acquisition, exact classpath manifests, platform decoupling, source decoding, and generated-source lineage. They are not claims of delivered capability.
+**PROVISIONAL Milestone M3 baseline; bounded M3.1 effective-POM, M3.2 source-plan, M3.3 filesystem-acquisition and M3.4 exact-classpath slices below are implemented.** Later sections define target contracts for platform decoupling, source decoding, generated-source lineage and normalized capability gaps. They are not claims of delivered capability.
 
 Authority: [Project Context](../project-context.md), [Roadmap](../roadmap.md), [ADR-001](../decisions/ADR-001-parser-technology.md), [ADR-003](../decisions/ADR-003-progressive-evidence-acquisition.md), and [Progressive Evidence Acquisition Contract](evidence-acquisition.md).
 
@@ -56,7 +56,20 @@ The pinned official [test compiler source](https://github.com/apache/maven-compi
 - **Containment and link policy:** the adapter requires the selected root's normalized absolute path to equal its canonical real path, compares real `Path` values rather than string prefixes, does not follow symbolic links or junction-like aliases, opens final files with `NOFOLLOW_LINKS`, and checks file and directory attributes around reads. A caller selecting through a symlinked ancestor or platform alias (for example macOS `/tmp`) must explicitly pass `selectedRoot.toRealPath()`; otherwise acquisition returns `ROOT_SYMBOLIC_LINK`. Raw exception text, target paths and host roots are not retained. This is passive local read access only: there is no Maven/Gradle lifecycle, plugin, process, user-settings, cache or network facility in the production adapter.
 - **Candidate ownership:** acquired `.java` paths are compared against usable M3.2 source-root declarations. Every Java candidate is classified as exactly owned, overlapping or unowned; claims preserve module, `MAIN`/`TEST`, source root and POM evidence. Missing source roots and exact overlapping/unowned files remain typed problems. Candidate membership does not decode bytes, create semantic documents, evaluate generated-source hints, or establish source correctness.
 
-Exact next slice M3.4: passive local-cache/artifact acquisition plus exact per-module/per-source-set dependency mediation and ordered JAR manifests, preserving digest, scope, unresolved-artifact and no-dependency-bleeding evidence. Decoding/platform views, generated-source lineage, normalized capability gaps and external coverage remain later M3 work; G2 stays open.
+## Implemented Slice M3.4 — Passive Exact Classpath Manifests
+
+**CONFIRMED by implementation fixtures on 2026-09-07:** neutral contracts under `com.evolution.analysis.classpath` define `classpath-resolution-input-v1` and `exact-classpath-result-v1`; the replaceable Maven adapter is `classpath.maven-local:3.9.16-m3.4`. For every successfully modeled module it emits separate ordered `MAIN` and `TEST` manifests. See [verification evidence](../reproducibility/m3-classpath-2026-09-07/README.md).
+
+- **Identity and evidence:** the request binds the exact M3 build request/result plus finite resolution policy. Each manifest identity binds module, source set, status, ordered entries, reactor requirements, mediation decisions and typed problems. The result also binds every successful/failed acquisition attempt, exact POM/JAR SHA-256 and byte size. Cache-relative Maven repository paths are portable locators; the selected absolute cache root is adapter state and never an identity or diagnostic input. Equal bytes and logical inputs therefore reproduce equal results across cache locations, while changed JAR bytes change identity.
+- **Maven closure and ordering:** deterministic breadth-first selection implements nearest definition and first declaration at equal depth; selected dependency trees are flattened in Maven declaration order. Root dependency management applies before transitive mediation. Compile/provided/runtime/test/system propagation, exclusions (including Maven wildcards), transitive optional omission, direct optional dependencies, classifiers, `test-jar`, `ejb-client` and descriptor-only POM dependencies have explicit behavior. Main and test manifests are resolved independently; dependencies never bleed between modules or source sets.
+- **Reactor precedence:** exact reactor GAVs are resolved before cache artifacts. Their module identity, target source set and declared output directory remain explicit, but unacquired compiled outputs produce `REACTOR_OUTPUT_NOT_ACQUIRED`; no directory digest or classpath entry is invented. Duplicate reactor coordinates are withheld and cannot fall back to a cache copy. POM-packaged reactor dependencies contribute only their descriptor closure.
+- **Passive cache boundary:** the caller selects one existing canonical Maven-style cache root. Reads use exact coordinate paths, real-path containment, link/junction refusal, final-component no-follow access, regular-file checks, before/after mutation checks and explicit coordinate/file/POM-byte/JAR-byte/total-byte/depth limits. Supplied artifact POM bytes from the hashed build request take precedence over cache POMs. Missing, denied, changed, invalid or over-limit inputs remain typed attempts/problems without raw host paths.
+- **External descriptor isolation:** each dependency POM is secure-XML validated before the pinned Maven Model Builder constructs its effective descriptor, including exact-coordinate parents and imported BOMs from the same bounded inputs. The M3 build policy's finite model-read budget is retained as `POM_MODEL_READ_LIMIT`. Plugin processing is disabled; repository declarations are inert; system properties, OS/JDK/file profile activation, user settings, transport, network and target lifecycles are unavailable. Only explicit profile/property policy is applied.
+- **Deliberate gaps:** ranges, relocations, system paths and non-JAR classpath artifacts are withheld rather than guessed. M3.4 performs a bounded JAR signature check; structural archive validation, manifest `Class-Path`, multi-release views, verified reactor binaries and construction of frontend `BinaryInput` values remain downstream responsibilities. These problems are versioned observations, not yet the normalized `CapabilityGapRecord` contract.
+
+The mediation rules follow Maven's official [dependency mechanism](https://maven.apache.org/guides/introduction/introduction-to-dependency-mechanism.html) and [optional/exclusion semantics](https://maven.apache.org/guides/introduction/introduction-to-optional-and-excludes-dependencies.html). The adapter deliberately uses no Maven repository system or transport, so successful fixtures establish this bounded local-cache provider rather than Maven CLI equivalence.
+
+Exact next slice M3.5: decode acquired source candidates under declared or explicit charset policy and assemble per-module/source-set frontend inputs from verified dependency bytes plus an analyzed-platform symbol view. Generated-source lineage, normalized capability gaps, representative external coverage and G2 acceptance remain later work.
 
 ---
 
@@ -123,8 +136,11 @@ For each module and source-set, M3 produces an `ExactClasspathManifest` consumed
 | `manifestIdentity` | Content-addressed SHA-256 hash of all ordered entry identities, module identity, and source-set kind |
 | `module` | Canonical module identity |
 | `sourceSet` | `MAIN` or `TEST` |
+| `status` | `COMPLETE` only when the manifest has no typed problem; otherwise `PARTIAL` |
 | `entries` | Ordered list of `ClasspathEntry` records representing the exact resolution order |
-| `unresolvedDependencies` | List of declared dependencies that could not be resolved to local artifacts, with reason codes |
+| `reactorEntries` | Ordered module/output requirements kept separate from acquired dependency JARs |
+| `decisions` | Deterministic nearest/first-declaration/duplicate-path/dependency-management mediation evidence |
+| `problems` | Missing, denied, unsupported, conflicting or bounded inputs with stable reason and requirement codes |
 
 ### Classpath Entry Schema
 
@@ -133,12 +149,14 @@ For each module and source-set, M3 produces an `ExactClasspathManifest` consumed
 | `coordinate` | Logical Maven coordinate (`groupId:artifactId:version`, classifier, type) |
 | `scope` | Resolved dependency scope (`COMPILE`, `PROVIDED`, `RUNTIME`, `TEST`, `SYSTEM`) |
 | `contentDigest` | SHA-256 digest of the artifact binary |
-| `localLocator` | Absolute or relative file path to the verified JAR file on the analyzing host |
+| `repositoryPath` | Portable path relative to the explicitly selected Maven cache; the absolute host root is not identity |
 | `isDirect` | Boolean indicating whether the dependency was directly declared or transitively mediated |
+| `depth` | Selected dependency depth used by mediation |
+| `evidence` | Exact POM/JAR logical inputs and SHA-256 digests supporting the entry |
 
 ### Integration with `JarTypeSolver`
 
-The ordered entries with `COMPILE` and `PROVIDED` scopes (plus module sibling outputs for reactor dependencies) are supplied directly to `ResolutionEnvironment` in `analyzer-javaparser`. `JarTypeSolver` instances are constructed from verified bytes in the exact manifest sequence, ensuring deterministic symbol shadowing behavior.
+M3.4 exposes the ordered logical `ClasspathEntry` sequence and verified cache-relative JAR evidence. Supplying those exact bytes as `BinaryInput` values, adding verified reactor outputs and composing the analyzed-platform entry into a frontend `AnalysisManifest` remain M3.5 integration work. The existing frontend rechecks every supplied binary digest and preserves manifest order; M3.4 does not bypass that boundary.
 
 ---
 
