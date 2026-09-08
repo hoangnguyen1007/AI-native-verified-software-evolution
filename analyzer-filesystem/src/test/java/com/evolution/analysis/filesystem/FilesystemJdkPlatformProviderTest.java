@@ -69,6 +69,31 @@ class FilesystemJdkPlatformProviderTest {
     }
 
     @Test
+    void acquiresAnOlderReleaseFromTheConfiguredJdksCtSymWithoutHostSubstitution() throws Exception {
+        Path jdk = Files.createDirectories(temp.resolve("jdk-21-with-ct-sym"));
+        Files.writeString(jdk.resolve("release"), "JAVA_VERSION=\"21.0.12\"\nIMPLEMENTOR=\"Fixture Vendor\"\n");
+        Path ctSym = jdk.resolve("lib/ct.sym");
+        Files.createDirectories(ctSym.getParent());
+        try (var output = new JarOutputStream(Files.newOutputStream(ctSym))) {
+            JarEntry selected = new JarEntry("H/java.base/java/lang/Fixture.sig");
+            selected.setTime(0); output.putNextEntry(selected); output.write(new byte[] {1, 2, 3}); output.closeEntry();
+            JarEntry newer = new JarEntry("K/java.base/java/lang/Newer.sig");
+            newer.setTime(0); output.putNextEntry(newer); output.write(new byte[] {4, 5, 6}); output.closeEntry();
+        }
+
+        PlatformSymbolResult result = new FilesystemJdkPlatformProvider().acquire(jdk,
+                new PlatformSymbolRequest(17, 10, 10_000, 20_000));
+
+        assertEquals(PlatformSymbolResult.Status.COMPLETE, result.status());
+        assertEquals(17, result.platform().orElseThrow().release());
+        assertEquals("release-17-from-21.0.12", result.platform().orElseThrow().version());
+        assertEquals(java.util.List.of("lib/ct.sym#release-17"),
+                result.platform().orElseThrow().artifacts().stream().map(PlatformInput.Artifact::logicalName).toList());
+        assertEquals(PlatformInput.Format.CT_SYM,
+                result.platform().orElseThrow().artifacts().getFirst().format());
+    }
+
+    @Test
     void javaEightUsesOnlyTheExplicitRtJar() throws Exception {
         Path jdk = Files.createDirectories(temp.resolve("jdk8"));
         Files.writeString(jdk.resolve("release"), "JAVA_VERSION=\"1.8.0_422\"\nIMPLEMENTOR=\"Fixture 8\"\n");

@@ -110,7 +110,7 @@ These are engineering uncertainties identified during bootstrap analysis:
 | OQ-11 | Which score dimensions, weights, caps, and withholding thresholds are stable and explainable? | P0 | M6/M9 labeled examples and sensitivity task |
 | OQ-12 | What focused-graph, query, and UI performance budgets are achievable on the registered corpus/reference environments? | P1 | M8/M9 benchmark task |
 | OQ-13 | Which frontend/design-system/graph stack best satisfies focused graph, accessibility, and scale requirements? | P1 | Bounded M8 technology evaluation |
-| OQ-14 | How should capability gaps, acquisition attempts and conflicting provider observations be versioned, reconciled and projected? | P0 | [Provisional M3+ contract](../architecture/evidence-acquisition.md) drafted; implementation shape and provider-policy evidence pending |
+| OQ-14 | How should capability gaps, acquisition attempts and conflicting provider observations be versioned, reconciled and projected? | P0 | Bounded M3.6 core implemented under the [provisional contract](../architecture/evidence-acquisition.md); real-repository projection evidence, provider-policy validation and later query integration pending |
 
 ---
 

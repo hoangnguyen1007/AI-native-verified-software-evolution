@@ -202,6 +202,22 @@ class MavenLocalClasspathProviderTest {
     }
 
     @Test
+    void unevaluatedArtifactProfileQualifiesButDoesNotEraseTheStableDescriptorBaseline() throws Exception {
+        var fixture = build(Map.of("pom.xml", pom("app", "<dependencies>"
+                + dependency("ext", "lib", "1", "compile", false, "") + "</dependencies>")));
+        artifact("ext", "lib", "1", "<profiles><profile><id>host</id><activation><jdk>[1,99)</jdk>"
+                + "</activation></profile></profiles><dependencies>"
+                + dependency("ext", "leaf", "1", "compile", false, "") + "</dependencies>", true);
+        artifact("ext", "leaf", "1", "", true);
+
+        var main = manifest(resolve(fixture, POLICY, cacheRoot()), ".", SourcePlanModel.Kind.MAIN);
+
+        assertEquals(List.of("ext:lib:1@jar", "ext:leaf:1@jar"), names(main));
+        assertTrue(main.problems().stream().anyMatch(
+                problem -> problem.reason() == Reason.UNSUPPORTED_PROFILE_ACTIVATION));
+    }
+
+    @Test
     void missingUnsafeUnsupportedAndSystemInputsRemainTypedWithoutLeakingHostDetails() throws Exception {
         String system = "<dependency><groupId>ext</groupId><artifactId>system</artifactId><version>1</version>"
                 + "<scope>system</scope><systemPath>C:\\private-marker\\system.jar</systemPath></dependency>";

@@ -57,6 +57,13 @@ final class LocalArtifactCache {
         return List.copyOf(attempts);
     }
 
+    void accountExternallyAcquiredBytes(long size) {
+        if (size < 0 || size > policy.maxTotalBytes() - totalBytes) {
+            throw new IllegalArgumentException("External bytes exceed the shared artifact-read budget");
+        }
+        totalBytes += size;
+    }
+
     private Material supplied(ArtifactCoordinate coordinate, PomInput input) throws Failure {
         Material cached = materials.get(coordinate);
         if (cached != null) return cached;

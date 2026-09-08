@@ -23,8 +23,8 @@ public record PlatformSymbolResult(
         List<String> limitations) {
     public static final String SCHEMA = "platform-symbol-result-v1";
     public static final List<String> LIMITATIONS = List.of(
-            "A configured JDK must match the requested feature release exactly; cross-release ct.sym selection is not performed.",
-            "Java 8 uses an explicit rt.jar and Java 9+ uses explicit JMOD artifacts; no host fallback, toolchain discovery or network acquisition occurs.");
+            "A configured newer JDK may supply an older supported API release through its exact ct.sym bytes; syntax support remains separate.",
+            "Java 8 uses an explicit rt.jar, exact releases use JMOD artifacts, and cross-release views use ct.sym; no host fallback, toolchain discovery or network acquisition occurs.");
 
     public PlatformSymbolResult {
         ContractChecks.notNull(identity, "platform result identity");
@@ -87,7 +87,7 @@ public record PlatformSymbolResult(
         JDK_ROOT_NOT_FOUND, JDK_ROOT_NOT_DIRECTORY, JDK_ROOT_SYMBOLIC_LINK, RELEASE_FILE_MISSING,
         RELEASE_FILE_INVALID, RELEASE_MISMATCH, SYMBOL_ROOT_MISSING, SYMBOLIC_LINK,
         NON_REGULAR_ARTIFACT, ARTIFACT_COUNT_LIMIT, ARTIFACT_BYTE_LIMIT, TOTAL_BYTE_LIMIT,
-        ARTIFACT_READ_FAILED, INVALID_SYMBOL_ARCHIVE
+        ARTIFACT_READ_FAILED, INVALID_SYMBOL_ARCHIVE, RELEASE_NOT_IN_CT_SYM
     }
     public enum Requirement { CONFIGURED_JDK, PLATFORM_METADATA, PLATFORM_SYMBOLS, ACQUISITION_POLICY }
     public enum Outcome { SUCCEEDED, UNAVAILABLE, DENIED, FAILED, LIMIT_EXCEEDED }

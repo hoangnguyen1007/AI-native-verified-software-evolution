@@ -21,10 +21,10 @@ public record FrontendAssemblyResult(
         List<Outcome> outcomes,
         List<String> limitations) {
     public static final String SCHEMA = "frontend-input-assembly-v1";
-    public static final VersionedIdentifier PROVIDER = new VersionedIdentifier("frontend.input-assembler", "m3.5");
+    public static final VersionedIdentifier PROVIDER = new VersionedIdentifier("frontend.input-assembler", "m3.7");
     public static final List<String> LIMITATIONS = List.of(
             "Only verified JAR-shaped dependency and reactor-output binaries are assembled; class directories and generated sources require later providers.",
-            "A source set is withheld when any required source, platform, dependency or reactor output is invalid or absent; no ambient fallback is added.");
+            "A source set is withheld when required source, platform, dependency or reactor output is invalid or absent; an explicitly recorded inactive profile baseline is a qualifier rather than missing binary evidence, and no ambient fallback is added.");
 
     public FrontendAssemblyResult {
         ContractChecks.notNull(identity, "assembly identity");

@@ -68,7 +68,7 @@ public final class PlatformInput {
     public String vendor() { return vendor; }
     public List<Artifact> artifacts() { return artifacts; }
 
-    public enum Format { RUNTIME_MODULES, JAR, JMOD }
+    public enum Format { RUNTIME_MODULES, JAR, JMOD, CT_SYM }
 
     public record Artifact(String logicalName, ContentDigest contentDigest, Path path, Format format) {
         public Artifact {

@@ -14,7 +14,7 @@ import org.apache.maven.model.profile.activation.PropertyProfileActivator;
 
 /** Passive in-memory effective models. No Maven session, container, transport or lifecycle exists here. */
 public final class MavenBuildModelProvider implements BuildModelProvider {
-    public static final VersionedIdentifier VERSION = new VersionedIdentifier("build.maven-model", "3.9.16-m3.2");
+    public static final VersionedIdentifier VERSION = new VersionedIdentifier("build.maven-model", "3.9.16-m3.7");
 
     @Override
     public BuildModelResult build(BuildModelRequest request) {

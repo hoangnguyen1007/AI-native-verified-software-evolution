@@ -17,7 +17,7 @@ import java.util.*;
  */
 public final class MavenLocalClasspathProvider implements ClasspathProvider {
     public static final VersionedIdentifier VERSION =
-            new VersionedIdentifier("classpath.maven-local", "3.9.16-m3.5");
+            new VersionedIdentifier("classpath.maven-local", "3.9.16-m3.7");
 
     private final Path selectedCacheRoot;
 

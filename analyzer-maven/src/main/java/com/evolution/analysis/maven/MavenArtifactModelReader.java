@@ -132,7 +132,7 @@ final class MavenArtifactModelReader {
                     || policy.inactiveProfiles().contains(profile.getId());
             if (!explicit && activation != null
                     && (activation.getJdk() != null || activation.getOs() != null || activation.getFile() != null)) {
-                throw new ModelRejected(issue(
+                issues.add(issue(
                         Reason.UNSUPPORTED_PROFILE_ACTIVATION,
                         coordinate.notation(),
                         Requirement.ANALYSIS_CONFIGURATION,

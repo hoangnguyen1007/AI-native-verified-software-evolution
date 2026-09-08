@@ -2,9 +2,9 @@
 
 ## Status and Scope
 
-**PROVISIONAL architecture contract for M3 and later.** This document refines [ADR-003](../decisions/ADR-003-progressive-evidence-acquisition.md). It does not claim that the records below exist in production code, does not alter the implemented M1 identity contract, and does not authorize execution of target builds.
+**PROVISIONAL architecture contract for M3 and later; the bounded M3.6 core below is implemented.** This document refines [ADR-003](../decisions/ADR-003-progressive-evidence-acquisition.md). The implementation does not alter the M1 identity contract and does not authorize or invoke target builds.
 
-M2 already preserves parser-neutral observations, input coverage, diagnostics and unmappable facts. M3 should introduce the first normalized capability-gap/acquisition contract over that evidence. Later provider types may reuse the contract after their own safety and acceptance gates.
+M2 preserves parser-neutral observations, input coverage, diagnostics and unmappable facts. M3.6 now supplies the first normalized capability-gap/acquisition contract over those observations and the typed M3.1-M3.5 problem/attempt ledgers. Later provider types may reuse the contract after their own safety and acceptance gates.
 
 ## Responsibilities
 
@@ -20,7 +20,7 @@ A capability gap is not a semantic fact and not proof that a fact is unknowable.
 
 ## `CapabilityGapRecord` Logical Schema
 
-The exact Java/package placement remains an M3 implementation decision. The logical schema is:
+The storage-neutral Java contract is implemented in `analyzer` under `com.evolution.analysis.evidence`. The logical schema is:
 
 | Field | Requirement |
 |---|---|
@@ -59,7 +59,7 @@ The coordinator selects the least invasive sufficient permitted requirement. It 
 
 ## Acquisition Attempts and Conflicts
 
-Every actual attempt records provider/version, requested requirement, exact inputs, configuration, trust/permission decision, resource limits, start/end state, output artifact identities, diagnostics and declared side effects. Attempt outcomes include `SUCCEEDED`, `PARTIAL`, `FAILED`, `DENIED`, `UNAVAILABLE` and `CANCELED`; these are acquisition outcomes, not semantic statuses.
+Every actual attempt records provider/version, requested requirement, exact input identities, configuration identity when supplied, trust/permission decision, resource limits, optional start/end instants, output artifact identities, diagnostics and declared side effects. Attempt outcomes include `SUCCEEDED`, `PARTIAL`, `FAILED`, `DENIED`, `UNAVAILABLE`, `CANCELED`, `EXCLUDED` and `LIMIT_EXCEEDED`; these are acquisition outcomes, not semantic statuses. When an older provider result preserves only a content-addressed request identity rather than expanding its policy, the normalizer retains that exact input reference and does not invent authorization, timing or limit values.
 
 Evidence artifacts are immutable and content-addressed where possible. A later successful attempt satisfies or narrows a gap by adding evidence and derivation references; it does not edit or delete the original observation/gap history.
 
@@ -76,6 +76,25 @@ M2's `ObservationRecord`, diagnostics and `InputCoverage` remain the authoritati
 - a dynamic Spring/reflection mechanism is detected without enough evidence to establish a target.
 
 Not every unresolved observation needs escalation. The normalizer must preserve the original semantic/provenance dimensions, deduplicate only by the deterministic gap identity, and retain gaps even when no candidate provider is known.
+
+## Implemented M3.6 Core
+
+**CONFIRMED by implementation and contract/integration tests on 2026-09-08:** the neutral core uses `capability-gap-record-v1`, catalog `evidence.capability-gap-catalog:m3.6-v1`, `acquisition-attempt-record-v1`, `provider-conflict-record-v1`, `gap-resolution-record-v1` and aggregate `evidence-acquisition-ledger-v1` produced by `evidence.gap-normalizer:m3.6`. See the [verification record](../reproducibility/m3-capability-gaps-2026-09-08/README.md).
+
+- **Non-circular context and identity:** `EvidenceContext` always binds the snapshot and optionally binds an already-derived M1 `AnalysisIdentity`. Build-stage gaps therefore need no fabricated analysis identity; `EvidenceContext.forAnalysis` derives the pair from an existing manifest. A gap identity includes schema/catalog version, context, detecting provider/version, mechanism, stable reason, typed subject, real spans and normalized evidence requirements. Candidate providers, observation/attempt history, diagnostics and limitations remain additive provenance and cannot churn the stable gap identity.
+- **Original observation preservation:** every normalized gap cites a content-addressed `ProviderObservationReference` binding the original provider, provider-result digest, observation kind and exact payload digest. M2 observations, source outcomes, category coverage and run state remain authoritative; M3 repository, build-model, source-plan, ownership, classpath, decoding, platform and frontend-assembly problems/attempts remain immutable source records.
+- **Closed current denominator:** exhaustive switches map every registered degraded enum value in M2/M3 to a stable mechanism/reason and typed evidence requirement. The normalizer separately retains semantic status, missing origin, missing provenance and unmapped-observation dimensions instead of collapsing them into one success/failure flag. New enum values force a compile-time mapping decision and the catalog-coverage test guards the denominator.
+- **Acquisition provenance without implied authority:** normalized attempts preserve success, partial, failure, denial, unavailability, cancellation, explicit exclusion and limit exhaustion as acquisition outcomes. A denied outcome requires a denied permission decision; legacy observations without an explicit permission record use `NOT_RECORDED`, never invented authorization. Candidate providers require one explicit versioned ordering policy and contiguous ranks, remain advisory records only, and are never populated or executed automatically by the normalizer.
+- **Conflict and later evidence:** conflict identity is symmetric in the two provider observations, records the exact conflicting dimensions, requires explicit adjudication and never selects truth by provider order. A later successful/partial attempt may add a `GapResolutionRecord` with `NARROWED` or `SATISFIED`; the ledger validates its references while retaining the original immutable gap.
+- **Deterministic aggregation:** the ledger sorts records, merges only equal stable gap identities while unioning their observation/attempt/diagnostic history, rejects cross-context references and prevents denied/failed attempts from satisfying a gap.
+
+This core provides the normalized data needed by the G2 checkpoint; it is not the checkpoint itself. No real-repository category/reason report, independent semantic acceptance or Gate G2 decision was produced in M3.6 core.
+
+## M3.7 Provider-Ladder Refinement
+
+**CONFIRMED by implementation on 2026-09-08:** a gap from one provider is no longer treated as a terminal repository verdict. The Maven build-model coordinator tries exact evidence in increasing authority/cost order: supplied/workspace bytes, a selected bounded local Maven2 cache, then optionally caller-configured bounded credential-free HTTPS release-POM endpoints. Cache and remote reads share one aggregate byte budget. It records each attempt and binds the final exact bytes into a new build request before recomputing the model. A successful fallback closes the acquisition problem while preserving earlier attempt history.
+
+The ladder is capability-based, not Maven-exclusive. POM absence must route to a future explicit or convention-backed neutral source-plan provider; Gradle and other build systems require their own replaceable adapters. Missing dependency descriptors/binaries, generated sources, reactor outputs and build-derived configuration are separate evidence requirements. The coordinator must not turn “current provider unavailable” into “repository unanalyzable,” but it also must not fabricate module ownership or a dependency superset merely to continue.
 
 ## Product and Query Projection
 

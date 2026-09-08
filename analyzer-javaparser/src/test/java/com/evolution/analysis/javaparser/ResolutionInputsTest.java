@@ -158,4 +158,30 @@ class ResolutionInputsTest {
                 () -> new JavaParserFrontend().analyze(
                         TestInputs.request(base.sources(), platform, List.of(), plan))).diagnostic().code());
     }
+
+    @Test void ctSymViewSelectsOnlyTheRequestedReleaseSignatures() throws Exception {
+        var archive = jar("ct-sym-source", "package platform.fixture; public class Library { public static void hit(){} }");
+        Path ctSym = temp.resolve("ct.sym");
+        try (var input = new JarFile(archive.path().toFile());
+                var output = new JarOutputStream(Files.newOutputStream(ctSym))) {
+            for (var item : input.stream().filter(value -> value.getName().endsWith(".class")).toList()) {
+                JarEntry selected = new JarEntry("H/java.base/" + item.getName().replace(".class", ".sig"));
+                selected.setTime(0); output.putNextEntry(selected); input.getInputStream(item).transferTo(output);
+                output.closeEntry();
+                JarEntry wrongRelease = new JarEntry("K/java.base/newer/" + item.getName().replace(".class", ".sig"));
+                wrongRelease.setTime(0); output.putNextEntry(wrongRelease); input.getInputStream(item).transferTo(output);
+                output.closeEntry();
+            }
+        }
+        var artifact = new PlatformInput.Artifact("lib/ct.sym#release-17",
+                ContentDigest.sha256(Files.readAllBytes(ctSym)), ctSym, PlatformInput.Format.CT_SYM);
+        var platform = PlatformInput.create(17, "release-17-from-21-fixture", "Fixture Vendor", List.of(artifact));
+        var base = TestInputs.request("class C { void run(){ platform.fixture.Library.hit(); } }");
+        var plan = new FrontendPlan(Optional.of(17), Optional.of(17), false,
+                ContentDigest.sha256Utf8("classpath"), ContentDigest.sha256Utf8("decoding"));
+
+        var result = new JavaParserFrontend().analyze(TestInputs.request(base.sources(), platform, List.of(), plan));
+
+        assertEquals(SemanticStatus.RESOLVED, calls(result).getFirst().status());
+    }
 }

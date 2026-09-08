@@ -55,7 +55,7 @@ final class ModelInputs {
             if (source.input.size() > request.policy().maxPomBytes()) throw new SecurePomReader.Rejected(Reason.INPUT_LIMIT);
             Model model = SecurePomReader.read(source.input.bytes());
             if (source.coordinate.isPresent()) validateCoordinate(model, source.coordinate.orElseThrow());
-            checkProfiles(model);
+            checkProfiles(model, source.id, evidence);
             if (model.getBuild() != null && (!model.getBuild().getExtensions().isEmpty()
                     || model.getBuild().getPlugins().stream().anyMatch(p -> p.isExtensions()))) {
                 problems.add(new Problem(Reason.EXTENSIONS_NOT_LOADED, root,
@@ -71,15 +71,20 @@ final class ModelInputs {
         }
     }
 
-    private void checkProfiles(Model model) throws SecurePomReader.Rejected {
-        for (var profile : model.getProfiles()) {
+    private void checkProfiles(Model model, String subject, PomEvidence evidence) {
+        boolean hasUnevaluatedActivation = model.getProfiles().stream().anyMatch(profile -> {
             var activation = profile.getActivation();
             boolean explicit = request.policy().activeProfiles().contains(profile.getId())
                     || request.policy().inactiveProfiles().contains(profile.getId());
-            if (!explicit && activation != null
-                    && (activation.getJdk() != null || activation.getOs() != null || activation.getFile() != null)) {
-                throw new SecurePomReader.Rejected(Reason.UNSUPPORTED_ACTIVATION);
-            }
+            return !explicit && activation != null
+                    && (activation.getJdk() != null || activation.getOs() != null || activation.getFile() != null);
+        });
+        if (hasUnevaluatedActivation) {
+            // Preserve a deterministic, explicitly qualified inactive baseline. A conditional
+            // profile is missing configuration evidence; it is not proof that every other
+            // declaration in this POM is unusable.
+            problems.add(new Problem(Reason.UNSUPPORTED_ACTIVATION, subject,
+                    Requirement.ANALYSIS_CONFIGURATION, List.of(evidence)));
         }
     }
 

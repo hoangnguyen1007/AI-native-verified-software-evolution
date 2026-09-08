@@ -11,6 +11,7 @@ import com.evolution.analysis.contract.common.*;
 import com.evolution.analysis.contract.identity.RepositoryIdentity;
 import com.evolution.analysis.contract.source.*;
 import com.evolution.analysis.frontend.*;
+import com.evolution.analysis.evidence.*;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.*;
@@ -74,6 +75,45 @@ class FrontendInputAssemblerTest {
                 wrongResult, List.of(fixture.dependency), List.of(fixture.reactor), policy());
         assertTrue(mismatch.outcomes().getFirst().problems().stream()
                 .anyMatch(problem -> problem.reason() == FrontendAssemblyResult.Reason.PLATFORM_RELEASE_MISMATCH));
+    }
+
+    @Test
+    void classpathProfileQualifierDoesNotEraseAnOtherwiseExactInactiveBaseline() {
+        Fixture fixture = fixture();
+        Manifest original = fixture.classpaths.manifests().getFirst();
+        Problem qualifier = new Problem(Reason.UNSUPPORTED_PROFILE_ACTIVATION, "ext:parent:1",
+                Requirement.ANALYSIS_CONFIGURATION, List.of());
+        Manifest qualified = Manifest.create(original.module(), original.sourceSet(), original.entries(),
+                original.reactorEntries(), original.decisions(),
+                java.util.stream.Stream.concat(original.problems().stream(), java.util.stream.Stream.of(qualifier))
+                        .toList());
+        ExactClasspathResult classpaths = ExactClasspathResult.create(fixture.classpathRequest.identity(),
+                new VersionedIdentifier("classpath.test", "1"), List.of(qualified), List.of(), List.of(), List.of());
+
+        FrontendAssemblyResult result = FrontendInputAssembler.assemble(
+                fixture.ownership, fixture.build, fixture.classpathRequest, classpaths, fixture.decoding,
+                fixture.platformResult, List.of(fixture.dependency), List.of(fixture.reactor), policy());
+
+        assertTrue(result.outcomes().getFirst().request().isPresent());
+    }
+
+    @Test
+    void withheldAssemblyNormalizesEveryProblemAndRetainsSourceSetScope() {
+        Fixture fixture = fixture();
+        FrontendAssemblyResult result = FrontendInputAssembler.assemble(
+                fixture.ownership, fixture.build, fixture.classpathRequest, fixture.classpaths, fixture.decoding,
+                fixture.platformResult, List.of(fixture.dependency), List.of(), policy());
+        EvidenceContext context = new EvidenceContext(fixture.decoding.snapshot().identity(), Optional.empty());
+
+        EvidenceAcquisitionLedger ledger = CapabilityGapNormalizer.normalize(context,
+                EvidenceNormalizationInput.builder().frontendAssemblies(List.of(result)).build());
+
+        assertEquals(result.outcomes().getFirst().problems().size(), ledger.gaps().size());
+        CapabilityGapRecord reactorGap = ledger.gaps().stream()
+                .filter(gap -> gap.reasonCode().equals("MISSING_REACTOR_OUTPUT")).findFirst().orElseThrow();
+        assertEquals(EvidenceSubject.Kind.SOURCE_SET, reactorGap.subject().kind());
+        assertEquals(EvidenceRequirement.Kind.REACTOR_OUTPUT, reactorGap.evidenceRequirements().getFirst().kind());
+        assertTrue(reactorGap.candidateProviders().isEmpty());
     }
 
     private static Fixture fixture() {

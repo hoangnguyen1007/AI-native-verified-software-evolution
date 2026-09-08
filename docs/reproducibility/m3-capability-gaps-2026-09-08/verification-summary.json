@@ -1,0 +1,32 @@
+{
+  "date": "2026-09-08",
+  "scope": "M3.6 normalized capability-gap core only; excludes representative repository checkpoint and Gate G2 report",
+  "environment": {
+    "os": "Windows 11 amd64",
+    "java": "Oracle JDK 21.0.12.1",
+    "maven": "3.9.16",
+    "offline": true,
+    "localRepository": "C:/Users/Admin/.m2/repository"
+  },
+  "focused": {
+    "tests": 19,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "analyzer": {
+    "tests": 73,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "reactorVerify": {
+    "tests": 184,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "projects": 6,
+    "status": "SUCCESS"
+  },
+  "gateG2": "NOT_ASSESSED"
+}

@@ -49,6 +49,7 @@ final class ResolutionEnvironment {
                         platform.add(new JarTypeSolver(new ByteArrayInputStream(bytes)));
                     }
                     case JMOD -> platform.add(jmodSolver(real));
+                    case CT_SYM -> platform.add(ctSymSolver(real, request.platform().release()));
                 }
             }
             var paths = new HashSet<Path>();
@@ -93,6 +94,41 @@ final class ResolutionEnvironment {
         }
         if (seen.isEmpty()) throw new FrontendInputException("frontend.jmod-empty", "JMOD contains no platform classes");
         return new JarTypeSolver(new ByteArrayInputStream(normalized.toByteArray()));
+    }
+    private static JarTypeSolver ctSymSolver(Path path, int release) throws IOException {
+        String code = releaseCode(release);
+        if (code == null) throw new FrontendInputException("frontend.ct-sym-release", "ct.sym release is unsupported");
+        ByteArrayOutputStream normalized = new ByteArrayOutputStream();
+        Set<String> seen = new HashSet<>();
+        try (ZipFile ctSym = new ZipFile(path.toFile());
+                JarOutputStream jar = new JarOutputStream(normalized)) {
+            List<? extends java.util.zip.ZipEntry> entries = ctSym.stream()
+                    .filter(entry -> {
+                        String[] parts = entry.getName().split("/", 3);
+                        return !entry.isDirectory() && parts.length == 3 && parts[0].contains(code)
+                                && parts[2].endsWith(".sig") && !parts[2].equals("module-info.sig");
+                    })
+                    .sorted(Comparator.comparing(java.util.zip.ZipEntry::getName)).toList();
+            for (var source : entries) {
+                String[] parts = source.getName().split("/", 3);
+                String name = parts[2].substring(0, parts[2].length() - ".sig".length()) + ".class";
+                if (!seen.add(name)) throw new FrontendInputException(
+                        "frontend.ct-sym-duplicate", "ct.sym contains duplicate platform classes for the requested release");
+                JarEntry target = new JarEntry(name);
+                target.setTime(0);
+                jar.putNextEntry(target);
+                try (InputStream input = ctSym.getInputStream(source)) { input.transferTo(jar); }
+                jar.closeEntry();
+            }
+        }
+        if (seen.isEmpty()) throw new FrontendInputException(
+                "frontend.ct-sym-empty", "ct.sym contains no classes for the requested release");
+        return new JarTypeSolver(new ByteArrayInputStream(normalized.toByteArray()));
+    }
+    private static String releaseCode(int release) {
+        if (release >= 0 && release <= 9) return Integer.toString(release);
+        if (release >= 10 && release <= 35) return Character.toString((char) ('A' + release - 10));
+        return null;
     }
     private static void validateJar(byte[] bytes) throws IOException {
         if (bytes.length < 4 || bytes[0] != 'P' || bytes[1] != 'K') throw new FrontendInputException("frontend.jar-format", "Dependency is not a JAR archive");

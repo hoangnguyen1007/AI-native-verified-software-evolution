@@ -114,14 +114,15 @@ class MavenBuildModelProviderTest {
     }
 
     @Test
-    void hostDependentProfileActivationIsWithheldUnlessExplicitlyDecided() {
+    void hostDependentProfileActivationQualifiesTheStableInactiveBaselineWithoutErasingIt() {
         for (String activation : List.of("<jdk>[1,99)</jdk>", "<os><family>windows</family></os>",
                 "<file><exists>pom.xml</exists></file>")) {
             String root = pom("root", "<profiles><profile><id>host</id><activation>" + activation
                     + "</activation><properties><selected>true</selected></properties></profile></profiles>");
             var result = provider.build(request(Map.of("pom.xml", root), Map.of(), POLICY));
             assertTrue(reasons(result).contains(Reason.UNSUPPORTED_ACTIVATION));
-            assertTrue(module(result, "pom.xml").effectivePom().isEmpty());
+            assertTrue(module(result, "pom.xml").effectivePom().isPresent());
+            assertFalse(effective(result, "pom.xml").properties().containsKey("selected"));
             var explicit = provider.build(request(Map.of("pom.xml", root), Map.of(),
                     new BuildModelPolicy(List.of("host"), List.of(), Map.of(), 100_000, 100, 16)));
             assertEquals("true", effective(explicit, "pom.xml").properties().get("selected"));

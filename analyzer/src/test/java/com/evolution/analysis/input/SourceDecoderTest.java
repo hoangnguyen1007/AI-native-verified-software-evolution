@@ -7,6 +7,7 @@ import com.evolution.analysis.buildmodel.*;
 import com.evolution.analysis.contract.common.*;
 import com.evolution.analysis.contract.identity.RepositoryIdentity;
 import com.evolution.analysis.contract.source.*;
+import com.evolution.analysis.evidence.*;
 import com.evolution.analysis.frontend.SourceInput;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
@@ -98,6 +99,23 @@ class SourceDecoderTest {
             SourceDecodingResult result = decode(bytes, setting, SourceDecodingPolicy.assumeUtf8());
             assertEquals(SourceDecodingResult.Status.WITHHELD, result.outcomes().getFirst().status());
         }
+    }
+
+    @Test
+    void malformedDecodingNormalizesToAStableConfigurationGapWithoutLosingRawSubject() {
+        SourceDecodingResult result = decode(new byte[] {(byte) 0xc3, 0x28}, declared("UTF-8"),
+                SourceDecodingPolicy.withholdWhenAbsent());
+        EvidenceContext context = new EvidenceContext(result.snapshot().identity(), Optional.empty());
+
+        EvidenceAcquisitionLedger ledger = CapabilityGapNormalizer.normalize(context,
+                EvidenceNormalizationInput.builder().sourceDecodings(List.of(result)).build());
+
+        assertEquals(1, ledger.gaps().size());
+        CapabilityGapRecord gap = ledger.gaps().getFirst();
+        assertEquals("MALFORMED_BYTE_SEQUENCE", gap.reasonCode());
+        assertEquals(new EvidenceSubject(EvidenceSubject.Kind.REPOSITORY_PATH, PATH), gap.subject());
+        assertEquals(EvidenceRequirement.Kind.REPOSITORY_CONTENT, gap.evidenceRequirements().getFirst().kind());
+        assertTrue(gap.sourceSpans().isEmpty());
     }
 
     private static SourceDecodingResult decode(

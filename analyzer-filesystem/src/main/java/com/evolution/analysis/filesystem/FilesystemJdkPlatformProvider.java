@@ -24,7 +24,7 @@ import java.util.zip.ZipFile;
 
 /** Bounded no-follow acquisition of rt.jar or JMOD symbols from one explicit JDK home. */
 public final class FilesystemJdkPlatformProvider implements PlatformSymbolProvider {
-    public static final VersionedIdentifier PROVIDER = new VersionedIdentifier("platform.jdk-filesystem", "m3.5");
+    public static final VersionedIdentifier PROVIDER = new VersionedIdentifier("platform.jdk-filesystem", "m3.7");
     private static final long RELEASE_FILE_LIMIT = 64 * 1024L;
     private static final Pattern PROPERTY = Pattern.compile("(?m)^([A-Z0-9_]+)=\"([^\"\\r\\n]*)\"$");
 
@@ -61,8 +61,33 @@ public final class FilesystemJdkPlatformProvider implements PlatformSymbolProvid
             String vendor = property(metadata, "IMPLEMENTOR")
                     .or(() -> property(metadata, "JAVA_VENDOR")).orElseThrow();
             int feature = feature(version);
-            if (feature != request.release()) return failed(request, problems, attempts,
-                    PlatformSymbolResult.Reason.RELEASE_MISMATCH, "release:" + request.release(), PlatformSymbolResult.Outcome.FAILED);
+            if (feature != request.release()) {
+                Path ctSym = root.resolve("lib/ct.sym");
+                if (feature > request.release() && Files.exists(ctSym, LinkOption.NOFOLLOW_LINKS)) {
+                    BasicFileAttributes attributes = Files.readAttributes(
+                            ctSym, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+                    if (attributes.isSymbolicLink() || !attributes.isRegularFile()) return failed(request, problems, attempts,
+                            PlatformSymbolResult.Reason.SYMBOLIC_LINK, "lib/ct.sym", PlatformSymbolResult.Outcome.DENIED);
+                    if (attributes.size() > request.maxArtifactBytes()) return failed(request, problems, attempts,
+                            PlatformSymbolResult.Reason.ARTIFACT_BYTE_LIMIT, "lib/ct.sym", PlatformSymbolResult.Outcome.LIMIT_EXCEEDED);
+                    if (attributes.size() > request.maxTotalBytes()) return failed(request, problems, attempts,
+                            PlatformSymbolResult.Reason.TOTAL_BYTE_LIMIT, "lib/ct.sym", PlatformSymbolResult.Outcome.LIMIT_EXCEEDED);
+                    byte[] bytes = read(root, ctSym, "lib/ct.sym#release-" + request.release(),
+                            Math.min(request.maxArtifactBytes(), request.maxTotalBytes()), attempts);
+                    if (!validCtSym(ctSym, request.release())) return failed(request, problems, attempts,
+                            PlatformSymbolResult.Reason.RELEASE_NOT_IN_CT_SYM, "release:" + request.release(),
+                            PlatformSymbolResult.Outcome.UNAVAILABLE);
+                    var artifact = new PlatformInput.Artifact(
+                            "lib/ct.sym#release-" + request.release(), ContentDigest.sha256(bytes), ctSym,
+                            PlatformInput.Format.CT_SYM);
+                    PlatformInput input = PlatformInput.create(request.release(),
+                            "release-" + request.release() + "-from-" + version, vendor, List.of(artifact));
+                    return PlatformSymbolResult.create(request, PROVIDER, Optional.of(input), List.of(), attempts);
+                }
+                return failed(request, problems, attempts,
+                        PlatformSymbolResult.Reason.RELEASE_MISMATCH, "release:" + request.release(),
+                        PlatformSymbolResult.Outcome.FAILED);
+            }
 
             List<Path> symbols;
             PlatformInput.Format format;
@@ -183,6 +208,26 @@ public final class FilesystemJdkPlatformProvider implements PlatformSymbolProvid
         } catch (IOException exception) {
             return false;
         }
+    }
+
+    private static boolean validCtSym(Path path, int release) {
+        String code = releaseCode(release);
+        if (code == null) return false;
+        try (ZipFile archive = new ZipFile(path.toFile())) {
+            return archive.stream().anyMatch(entry -> {
+                String[] parts = entry.getName().split("/", 3);
+                return !entry.isDirectory() && parts.length == 3 && parts[0].contains(code)
+                        && parts[2].endsWith(".sig") && !parts[2].equals("module-info.sig");
+            });
+        } catch (IOException exception) {
+            return false;
+        }
+    }
+
+    private static String releaseCode(int release) {
+        if (release >= 0 && release <= 9) return Integer.toString(release);
+        if (release >= 10 && release <= 35) return Character.toString((char) ('A' + release - 10));
+        return null;
     }
 
     private static PlatformSymbolResult failed(
