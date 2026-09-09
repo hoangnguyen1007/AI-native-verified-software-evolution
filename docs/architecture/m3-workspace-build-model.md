@@ -2,11 +2,17 @@
 
 ## Status and Scope
 
-**PROVISIONAL Milestone M3 baseline; bounded M3.1–M3.7 slices below are implemented.** M3.7 adds progressive external Maven model-POM acquisition, qualified environment-profile baselines and cross-release `ct.sym`. Later sections still define target contracts for generated-source lineage, POM-less/non-Maven source plans and remote dependency-binary acquisition. They are not claims of delivered capability.
+**PROVISIONAL Milestone M3 baseline; bounded M3.1–M3.7 slices are implemented, and Slice M3.8 defines the completion slice.** M3.7 delivered progressive external Maven model-POM acquisition, qualified environment-profile baselines and cross-release `ct.sym`. M3.8 provides bounded dependency artifact (JAR) acquisition into an isolated or selected local cache, unblocking external dependencies for the Spring PetClinic checkpoint and enabling Gate G2 completion. Later sections define target contracts for generated-source lineage and POM-less/non-Maven source plans.
 
 Authority: [Project Context](../project-context.md), [Roadmap](../roadmap.md), [ADR-001](../decisions/ADR-001-parser-technology.md), [ADR-003](../decisions/ADR-003-progressive-evidence-acquisition.md), and [Progressive Evidence Acquisition Contract](evidence-acquisition.md).
 
 M3 bridges the gap between raw file snapshots and the semantic frontend (M2). It delivers verified build context to the analyzer without executing untrusted repository code.
+
+### Boundary with Conditional Architecture
+
+M3 produces one exact source/build/classpath/platform world for each admitted source set. Explicit Maven profiles/properties that affect that world remain part of the M3 request and its identity; an unevaluated build profile remains a qualified M3 gap. M3 does not reinterpret one context as every possible build or deployment.
+
+After G2, M4 may derive a finite Spring `ModeledConfigurationSpace` **inside** that exact build context. Spring profile/property/bean-registration variation belongs to [Conditional Architecture Semantics](conditional-architecture-semantics.md). A future build-context-family layer may compare dependency/toolchain/Gradle/AOT alternatives, but it is not an M3 or SE121 implementation claim.
 
 ## Implemented Slice M3.1 — Passive Effective-POM Projection
 
@@ -98,13 +104,13 @@ M3.6 core does not run the representative repository pipeline, adjudicate correc
 
 ## Implemented Slice M3.7 — Progressive Maven Model Inputs and Cross-Release Platform Views
 
-**CONFIRMED by implementation, TDD fixtures and two local real-repository runs on 2026-09-08:** `MavenBuildModelResolver` wraps the pure model provider with `maven-build-model-resolution-v1` / `build.maven-local-inputs:3.9.16-m3.7`; model, classpath and assembly providers advance to M3.7 behavior. `platform.jdk-filesystem:m3.7` and `frontend.javaparser:3.27.1-m3.7` add exact `ct.sym` release views.
+**CONFIRMED by implementation, TDD fixtures and local real-repository execution on 2026-09-08:** `MavenBuildModelResolver` wraps the pure model provider with `maven-build-model-resolution-v1` / `build.maven-local-inputs:3.9.16-m3.7`; model, classpath and assembly providers advance to M3.7 behavior. `platform.jdk-filesystem:m3.7` and `frontend.javaparser:3.27.1-m3.7` add exact `ct.sym` release views.
 
 - **Progressive model-POM ladder:** use already supplied/workspace POMs first, then one explicitly selected standard Maven2 cache, then only release POMs from caller-configured credential-free HTTPS base repositories. Resolution iterates to a finite fixpoint so a parent may reveal imported BOMs and further parents. Exact coordinates, bytes, SHA-256, origin, logical location, attempts, failures, policy identity and final model/request identities are retained.
 - **Network boundary:** remote repositories are explicit policy, limited to 16 HTTPS bases ending in `/`; user info, query/fragment, redirects and remote snapshots are rejected. Counts, per-POM bytes, one aggregate byte budget shared across cache and remote acquisition, passes and connect/request timeouts are finite. Target POM repository declarations, Maven settings/mirrors/credentials, metadata search, plugins, extensions and target lifecycles never control transport. A successful later provider does not remain mislabeled as an open missing-POM problem; earlier attempt history remains visible.
 - **Qualified model continuity:** unevaluated JDK/OS/file profiles remain explicit configuration gaps but no longer invalidate every unrelated declaration in the same parent/BOM. The stable inactive baseline can establish modules, source roots, declared Java release and dependencies; profile-dependent claims remain qualified until explicit configuration is supplied.
 - **Cross-release platform:** when the configured JDK is newer than the declared target release, the provider verifies and hashes `lib/ct.sym`, selects only signature entries whose release set contains the requested release, normalizes `.sig` entries to an in-memory class view and excludes module descriptors. This allows a Java 21 analyzer host to model Java 17 APIs without substituting Java 21 JMODs.
-- **Shape matrix:** fixtures cover self-contained POMs, workspace-relative parents, external parent plus nested imported BOM, absent root POM, genuinely missing external parent, coordinate mismatch, local-cache acquisition, explicit HTTPS fallback and invalid remote configuration. PC-Shop and Spring PetClinic demonstrate two different external Spring Boot parent versions without executing their lifecycles.
+- **Shape matrix:** fixtures cover self-contained POMs, workspace-relative parents, external parent plus nested imported BOM, absent root POM, genuinely missing external parent, coordinate mismatch, local-cache acquisition, explicit HTTPS fallback and invalid remote configuration. Spring PetClinic demonstrates external Spring Boot parent and imported BOM acquisition without executing its lifecycle.
 
 M3.7 does not pretend one provider covers every repository. A POM-less repository remains visible but needs a neutral explicit/convention source-plan provider; Gradle or other build tools need their own adapters. Remote dependency descriptor/JAR acquisition is separate from parent/BOM model acquisition, and both real-repository runs exposed missing local dependency artifacts. These are registered next-provider inputs, not evidence that the source cannot be analyzed in principle and not permission to fabricate a classpath.
 
@@ -119,6 +125,7 @@ M3.7 does not pretend one provider covers every repository. A POM-less repositor
 5. **No Speculative Encoding Guessing:** Source encoding is derived from authoritative build declarations or explicit analysis policy. Invalid byte sequences yield explicit degraded outcomes; original bytes and digests are strictly preserved.
 6. **Lineage for Acquired/Generated Artifacts:** Generated sources do not mutate the immutable original repository snapshot. They are recorded as acquired artifacts with distinct identities, generator provenance, freshness status, and conflict handling.
 7. **Explicit Capability Gaps:** Missing parents, unresolved dependencies, absent platform symbols, or stale generated code yield typed `CapabilityGapRecord` entries rather than silent omissions or artificial fallbacks.
+8. **One Context Is Not Universal:** A complete M3 manifest establishes one exact build context. It does not establish all Spring deployment configurations or all build variants; downstream universal claims require proof over an explicitly identified modeled space.
 
 ---
 
@@ -281,6 +288,51 @@ Code generated by annotation processors (MapStruct, Lombok, QueryDSL) or build p
      - A `CONFLICT` diagnostic is recorded;
      - The duplicate generated entity is marked `SHADOWED_BY_SOURCE`.
 5. **Missing Generator Outputs:** If a repository declares generator plugins or annotations (e.g. `@Mapper`) but corresponding generated source files are absent from `target/`, M3 emits a typed `CapabilityGapRecord` (`build.generated-source.missing`), identifying the missing artifacts.
+
+---
+
+## Target Slice M3.8 — Bounded Dependency Artifact Acquisition & Isolated Cache
+
+### Purpose and Completion Boundary
+
+Slice M3.8 is the designated completion slice for Milestone M3. While M3.7 resolved POM inheritance, BOM imports, and cross-release platform views, real-world repositories (such as the 27 missing dependency coordinates in Spring PetClinic) require external binary JARs to satisfy `FrontendInputAssembler` compile classpath requirements. 
+
+M3.8 bridges this final gap by delivering a bounded, credential-free, policy-controlled dependency artifact provider that acquires missing external JARs into an isolated or selected local cache, verifies cryptographic digests, and admits complete source sets to the JavaParser semantic frontend for Gate G2 evaluation.
+
+### Logical Contracts and Provider Schema
+
+- **Provider Identity:** `dependency.artifact-cache:m3.8`.
+- **Request Input (`dependency-acquisition-request-v1`):**
+  - Ordered list of required coordinates (`groupId:artifactId:version`, optional classifier, packaging).
+  - Explicit target cache directory path (selected `~/.m2/repository` or isolated content-addressed scratch storage).
+  - Explicit list of authorized remote release repositories (default: Maven Central HTTPS `https://repo.maven.apache.org/maven2/`).
+  - Strict resource limits: `maxTotalBytes`, `maxArtifactBytes` (default 100MB per JAR), `connectionTimeoutMs`, `readTimeoutMs`, `maxRetries` (maximum 2).
+- **Result Output (`dependency-acquisition-result-v1`):**
+  - Deterministic map of coordinates to `AcquisitionOutcome`:
+    - `CACHED`: Artifact was already present in local cache and verified against expected SHA-256.
+    - `ACQUIRED`: Artifact successfully downloaded via HTTPS, validated, and stored.
+    - `SKIPPED_POM`: Packaging `pom` requires no binary JAR.
+    - `FAILED`: Acquisition failed with typed reason (`NOT_FOUND`, `CORRUPTED`, `TIMEOUT`, `SIZE_EXCEEDED`).
+  - Exact SHA-256 digest and portable cache-relative path for every resolved artifact.
+
+### Exhaustive Edge-Case Handling Matrix (Common to Rare)
+
+To ensure the platform handles any real-world repository robustly without guessing or silent failure, M3.8 enforces the following edge-case matrix:
+
+| Scenario / Edge Case | Frequency | Architectural Behavior & Deterministic Strategy | Result / Capability Gap |
+|---|---|---|---|
+| **Standard Release GAV** | Most Common | Download from Maven Central via HTTPS, stream to temporary file, verify ZIP magic bytes (`PK\x03\x04`), calculate SHA-256, atomically move to cache. | `ACQUIRED` (SHA-256 bound) |
+| **Already Cached Artifact** | Common | Verify file existence and non-zero size in local cache; read digest without network I/O. | `CACHED` (SHA-256 bound) |
+| **Packaging `pom` (e.g. BOM)** | Common | Recognize `pom` packaging from model; do not attempt JAR download. | `SKIPPED_POM` (Complete) |
+| **Custom Classifiers (`sources`, `test`)** | Common | Filter out non-binary classifiers during compile classpath assembly unless explicitly demanded by a test source plan. | Filtered / `SKIPPED` |
+| **Corrupted / Truncated Download** | Edge / Network | Validate ZIP header (`PK\x03\x04`) and file integrity before promoting from temp. Corrupt files are deleted. | `FAILED(CORRUPTED_DOWNLOAD)` |
+| **Network Timeout / HTTP 5xx / 404** | Edge / Transient | Bounded retry with exponential backoff (max 2 retries). On final failure, record explicit attempt outcome without crashing analyzer. | `FAILED(NETWORK_TIMEOUT)` / `FAILED(ARTIFACT_NOT_FOUND)` |
+| **Relocation POMs (`<relocation>`)** | Occasional | Parse relocation metadata if present; record relocation provenance and resolve target coordinate. | Relocation provenance recorded |
+| **Multi-Release JARs (MR-JARs)** | Occasional | Validate standard JAR; SymbolSolver reads root classes or Java N classes matching the target source plan's platform release. | `ACQUIRED` (MR-JAR verified) |
+| **Version Ranges (`[1.0, 2.0)`)** | Rare / Dynamic | Deterministic fallback: select highest matching version available in local cache; if absent, query metadata with strict limit or emit gap. | `FALLBACK_CACHED_VERSION` or `UNRESOLVED_VERSION_RANGE` |
+| **Timestamped Remote Snapshots** | Rare | Require explicit snapshot policy; default rejects non-reproducible snapshots to preserve deterministic replay. | `NON_DETERMINISTIC_SNAPSHOT` |
+| **Untrusted POM Repositories** | Security Boundary | Repository URLs declared inside target POMs are ignored by default. Only explicitly configured system repositories are queried. | Untrusted repos ignored |
+| **Credentials & Auth** | Security Boundary | Target repositories requiring authentication return `CREDENTIALS_NOT_SUPPORTED`; no ambient tokens or passwords are read. | `CREDENTIALS_REQUIRED` |
 
 ---
 

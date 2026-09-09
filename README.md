@@ -2,6 +2,8 @@
 
 This repository is the SE121 software architecture intelligence platform. The Java 21 Maven reactor contains parser-neutral contracts, the M2 JavaParser frontend, progressive effective-POM/source-plan modeling, bounded filesystem acquisition, exact Maven classpaths, deterministic source decoding, explicit analyzed-JDK symbol views, per-source-set frontend-input assembly and normalized capability-gap/acquisition records. M3 core is implemented through M3.7; G2 is not passed. See [current state](docs/current-state.md) for verified scope and limitations.
 
+The accepted post-G2 direction is bounded, phase/order-aware conditional Spring architecture semantics with configuration witnesses and conditional snapshot evolution. This is a documentation/architecture decision only; no M4 implementation exists. See [ADR-004](docs/decisions/ADR-004-staged-conditional-architecture-semantics.md) and the [research review](docs/research/2026-09-09-conditional-architecture-redirection-review.md).
+
 ## Build prerequisites
 
 - A Java Development Kit (JDK), version 21.

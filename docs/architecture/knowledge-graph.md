@@ -1,14 +1,14 @@
 # Knowledge Graph Schema
 
-> **Epistemic status: HYPOTHESIS**
+> **Epistemic status: MIXED**
 >
-> This entire schema is a starting proposal. It requires validation
-> via the R2 experiment (tracing 3 core architecture rules through the
-> schema against a real Spring Boot project).
+> Parser-neutral M1 identities and the ADR-004 conditional-semantics direction
+> are authoritative at their stated levels. The physical/logical graph mapping,
+> storage adapter and projection performance remain hypotheses requiring R2/G4 validation.
 >
-> Nothing here should be treated as decided until R2 completes.
+> Do not promote a proposed node/edge shape merely because its domain meaning is accepted.
 
-The parser-neutral identity, source-evidence, semantic-status, uncertainty, derivation, manifest, metric-envelope, and assessment-status contracts are no longer hypotheses in this document. Their implemented authority is [M1 Semantic, Identity, Uncertainty, and Provenance Contracts](m1-contracts.md). The Spring producer/candidate/injection-point/condition concepts are a [provisional M4 baseline](m4-spring-intelligence.md); their exact graph node/edge shape and the Neo4j mapping remain hypotheses.
+The parser-neutral identity, source-evidence, semantic-status, uncertainty, derivation, manifest, metric-envelope, and assessment-status contracts are no longer hypotheses in this document. Their implemented authority is [M1 Semantic, Identity, Uncertainty, and Provenance Contracts](m1-contracts.md). [ADR-004](../decisions/ADR-004-staged-conditional-architecture-semantics.md) accepts conditional fact semantics for M4+; exact graph node/edge/index mapping and the Neo4j adapter remain hypotheses for M5.
 
 ## Purpose
 
@@ -22,6 +22,7 @@ Java/Spring Boot repository as a labeled property graph. Source semantics are th
 5. Source traceability
 6. Versioned structural metrics and bounded visualization projections
 7. Evidence-provider provenance, conflicts, and unresolved capability gaps without treating missing evidence as absence
+8. Realized, `MUST`, condition-labeled `MAY`, bounded-union and unknown/gap projections without combining infeasible facts into one world
 
 **[CONFIRMED]** — from AGENTS.md.
 
@@ -109,7 +110,7 @@ Represents classes, interfaces, enums, records, and annotation types.
 
 **Identity:** composite (annotation type + annotated element)
 
-### Spring semantic concepts [PROVISIONAL]
+### Conditional Spring semantic concepts [ACCEPTED DIRECTION; SHAPE PROVISIONAL]
 
 The earlier flat `SpringBean --INJECTS--> SpringBean` sketch is superseded. A stereotype class, bean producer, bean-definition candidate, injection point and runtime bean are not interchangeable identities.
 
@@ -119,18 +120,24 @@ The earlier flat `SpringBean --INJECTS--> SpringBean` sketch is superseded. A st
 | `BeanDefinitionCandidate` | Context-specific candidate with names, exposed types, scope, conditions and producer provenance; not proof of runtime instantiation |
 | `InjectionPoint` | Exact constructor/field/method/`@Bean` parameter or other registered injection site with requested type/qualifier evidence and source span where available |
 | `ConfigurationCondition` | Profile/property/classpath/bean/expression predicate with evaluation status and missing inputs |
+| `RegistrationTransition` | Versioned phase/order-aware candidate registration step with input/output bean-definition state references |
+| `ConditionalFact` | Fact with configuration-space/build/framework identities, truth regions and quantifier classification |
+| `ConfigurationWitness` | Reproducible assignment and material registration-order identity that demonstrates a fact/finding outcome |
+| `CapabilityGap` | Projection/reference to the canonical evidence ledger for unresolved condition, order or provider questions |
 
-Exact canonical identities and node-versus-record mapping remain M4/M5 decisions. See [M4 Spring Intelligence and Closed Mechanism Taxonomy](m4-spring-intelligence.md).
+Exact canonical identities and node-versus-record mapping remain M4-R0/M5 decisions. Graph storage must not own condition evaluation or solver types. See [Conditional Architecture Semantics](conditional-architecture-semantics.md) and [M4 Spring Intelligence](m4-spring-intelligence.md).
 
-### ConfigProperty
+### Configuration declarations [PROVISIONAL]
 
 | Property | Type | Description |
 |---|---|---|
 | `key` | String | Property key (e.g. `spring.datasource.url`) |
-| `sourceFile` | String | Properties/YAML file |
-| `startLine` | Integer | Start line |
+| `valueOrSymbolicDomain` | Typed value/domain | Exact value when safely retained, redacted digest/descriptor for secrets, or modeled domain |
+| `sourceIdentity` | Identity | Repository/user-supplied configuration source and import/precedence context |
+| `sourceFile` / `startLine` | Optional evidence | Real properties/YAML declaration span when repository-declared |
+| `activationRegion` | Region reference | Profile/document/import condition under which the declaration contributes |
 
-**Identity:** `key`
+The identity is not the key alone. A declaration occurrence is content-addressed from configuration-space/schema version, source identity, key, activation/precedence context and real occurrence evidence. Multiple declarations of one key remain distinct; effective values are derived per realized configuration and never overwrite their sources.
 
 ## Relationship Types [HYPOTHESIS]
 
@@ -147,6 +154,9 @@ Exact canonical identities and node-versus-record mapping remain M4/M5 decisions
 | `PRODUCES_BEAN_CANDIDATE` | BeanProducer | BeanDefinitionCandidate | DIRECT / DERIVED / INFERRED | producer kind, status, evidence references |
 | `DECLARES_INJECTION_POINT` | BeanDefinitionCandidate / producer owner | InjectionPoint | DIRECT / DERIVED | injection kind, source evidence |
 | `HAS_CONDITION` | Producer / candidate / binding candidate | ConfigurationCondition | DIRECT / DERIVED | activation/evaluation status |
+| `PRECEDES_REGISTRATION` | RegistrationTransition | RegistrationTransition | DIRECT / DERIVED | phase/order evidence and framework semantics version |
+| `HAS_TRUTH_REGION` | Conditional fact/relationship/finding projection | Condition/region record | DERIVED | `MUST`/`MAY`/`NEVER`/`UNKNOWN`, `T`/`F`/`U` references |
+| `HAS_WITNESS` | Conditional fact/finding | ConfigurationWitness | DERIVED | truth value, minimization and replay digest |
 | `INJECTION_CANDIDATE` | InjectionPoint | BeanDefinitionCandidate | DERIVED / INFERRED | compatibility and disambiguation reasoning, semantic status, evidence references |
 | `SELECTED_BINDING` | InjectionPoint | BeanDefinitionCandidate | DERIVED / INFERRED | only when selection is justified; conditions and evidence references required |
 | `READS_PROPERTY` | InjectionPoint / BeanProducer / BeanDefinitionCandidate | ConfigProperty | DIRECT / DERIVED / INFERRED | expression/condition role and evidence references |
@@ -176,6 +186,8 @@ The canonical graph supports metrics and visualization, but neither metric seman
 - The workbench requests focused, bounded projections by module, package, configured layer, type neighborhood, cycle, violation path, or impact path.
 - The UI must not request the complete repository graph by default.
 - Storage adapters must pass the same projection, path, cycle, and metric contract tests.
+- Conditional paths/cycles/policies are evaluated in the semantic/query domain against compatible truth regions. A raw union of `MAY` edges is never a certain graph and cannot establish a certain violation.
+- Every projection declares one of: realized configuration, `MUST`, condition-labeled `MAY`, bounded union, or unknown/gap overlay.
 
 See [Product Outcome, Metrics, Scoring, and Workbench Contract](product-outcome.md).
 
@@ -213,6 +225,11 @@ graph path each rule requires:
    - Requires: bean-definition scopes, an exact injection point, candidate evidence and a justified selected binding (or an explicitly conditional finding)
    - Graph path: BeanDefinitionCandidate(singleton) → DECLARES_INJECTION_POINT → InjectionPoint → SELECTED_BINDING → BeanDefinitionCandidate(prototype)
 
+4. **Configuration-hidden boundary violation:** a dependency is absent in the baseline configuration but present for a feasible profile/property/bean-state witness
+   - Requires: conditional fact region, compatible registration/binding evidence and policy predicate
+   - Projection: finding → HAS_TRUTH_REGION → region and finding → HAS_WITNESS → configuration witness
+   - Negative control: mutually infeasible edges in a union projection must not form one certain violation path
+
 If any rule's graph path cannot be expressed with the current schema,
 the schema must be revised before implementation.
 
@@ -221,7 +238,9 @@ the schema must be revised before implementation.
 - Generic type parameters: not represented in current schema
 - Lambda expressions: method call targets unclear
 - Reflection-based dependencies: not generally attributable from source-only static evidence; retain candidate/configuration evidence and an acquisition gap for possible bytecode, configuration, controlled runtime, or other providers
-- Conditional beans (`@ConditionalOn*`): source/configuration evidence may be insufficient to select one active binding; retain conditional candidates and the missing evidence rather than emitting a certain selected-binding projection
+- Exact node-versus-index representation of canonical condition formulas and large truth regions
+- Partial-order registration projection and witness-order identity
+- Conditional beans (`@ConditionalOn*`): source/configuration/order evidence may be insufficient to select one active binding; retain conditional candidates and the missing evidence rather than emitting a certain selected-binding projection
 - AOP advice: source evidence may not expose woven or runtime dependencies; retain the mechanism/gap for possible configuration, bytecode or runtime enrichment
 - Provider precedence/conflict semantics and graph representation for build, generated-source, bytecode, sandbox and runtime observations
 - Exact graph projections and aggregation identities for large workbench views
@@ -234,3 +253,5 @@ the schema must be revised before implementation.
 - [M1 Contracts](m1-contracts.md)
 - [Progressive Evidence Acquisition Contract](evidence-acquisition.md)
 - [M4 Spring Intelligence and Closed Mechanism Taxonomy](m4-spring-intelligence.md)
+- [Conditional Architecture Semantics](conditional-architecture-semantics.md)
+- [ADR-004](../decisions/ADR-004-staged-conditional-architecture-semantics.md)

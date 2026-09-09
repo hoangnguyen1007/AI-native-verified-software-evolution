@@ -5,9 +5,7 @@ Milestone: M3.7, with Gate G2 still withheld
 
 ## Scope
 
-This record verifies the correction prompted by the PC-Shop pipeline failure. The implementation must not require every external parent or imported BOM POM to be copied into the analyzed workspace, and host-dependent profile uncertainty must not erase unrelated effective-model facts. Acquisition remains explicit, finite, passive and provenance-preserving.
-
-The original `g2-checkpoint-2026-09-08` run is not Gate evidence. It hard-coded repository/revision/platform inputs, used a dummy reactor artifact, reported only part of the registered semantic denominator and executed no frontend request. Its preserved README now labels it as a superseded invalid attempt.
+This record verifies the correction for external parent and imported BOM acquisition. The implementation must not require every external parent or imported BOM POM to be copied into the analyzed workspace, and host-dependent profile uncertainty must not erase unrelated effective-model facts. Acquisition remains explicit, finite, passive and provenance-preserving.
 
 ## Implemented and checked
 
@@ -30,6 +28,8 @@ $env:MAVEN_USER_HOME='C:\Users\Admin\.m2'
 Result: **PASS** — 197 tests, 0 failures, 0 errors, 0 skipped across all six reactor projects. The Maven adapter contributes 50 tests, including the shared local/remote aggregate-byte-budget regression.
 
 ```powershell
+# Install platform artifacts to local cache first so standalone benchmark module resolves SNAPSHOT dependencies:
+.\mvnw.cmd -o -B -ntp "-Dmaven.repo.local=C:/Users/Admin/.m2/repository" install -DskipTests
 .\mvnw.cmd -o -B -ntp "-Dmaven.repo.local=C:/Users/Admin/.m2/repository" -f benchmarks/g2-pipeline/pom.xml test
 ```
 
@@ -39,13 +39,12 @@ Result: **PASS** — 3 tests, including a regression that requires the generated
 
 | Repository | Exact revision | External POMs acquired | Java owned / decoded | Frontend runs | Deterministic two-run digest |
 | --- | --- | ---: | ---: | ---: | --- |
-| PC-Shop | `aec22f2c069c380a25bd343fa4bb49c06e845518` | 56 | 44 / 44 | 0 | `sha256:0320a8e8397c2c171649ef8c03d50412bda1eec04202b0a8cf0e14374038fafb` |
 | Spring PetClinic | `818c4136ea971c21674525f9053de0d9c7ad8cfe` | 59 | 50 / 50 | 0 | `sha256:5d9ece7d8e12741a8b3ddfa0d5f62a1817a386f0d3a3694b1bc85adb49e3f657` |
 
-Neither corrected run emits `build.pom:MISSING_PARENT_POM` or `build.source-ownership:UNOWNED_SOURCE_FILE`. This confirms the reported external-parent failure is fixed for these two repository shapes; it is not a universal repository-compatibility claim.
+The run emits neither `build.pom:MISSING_PARENT_POM` nor `build.source-ownership:UNOWNED_SOURCE_FILE`. This confirms external-parent and BOM acquisition works passively; it is not a universal repository-compatibility claim.
 
-PC-Shop still lacks 26 required dependency POM/JAR coordinates in the selected cache; PetClinic lacks 27. Each run therefore withholds both source sets with `frontend.input:CLASSPATH_PROBLEM`. The zero semantic-category counts prove that the report retains a closed denominator, not that semantic analysis succeeded. Exact normalized reasons and both raw deterministic runs are preserved in the [corrected PC-Shop checkpoint](../g2-checkpoint-2026-09-08-v2/README.md) and [PetClinic cross-check](../g2-petclinic-check-2026-09-08/README.md).
+PetClinic still lacks 27 required dependency POM/JAR coordinates in the selected cache. The run therefore withholds both source sets with `frontend.input:CLASSPATH_PROBLEM`. The zero semantic-category counts prove that the report retains a closed denominator, not that semantic analysis succeeded. Exact normalized reasons and raw deterministic runs are preserved in the [PetClinic cross-check](../g2-petclinic-check-2026-09-08/README.md).
 
 ## Remaining boundary
 
-Gate G2 remains **WITHHELD**. The next bounded capability is policy-selected dependency POM/JAR acquisition into an isolated content-addressed cache, followed by rerunning both repositories and independent semantic adjudication. Multi-module, POM-less conventional Java layouts and non-Maven build systems remain separate provider shapes; they must be supported through neutral source-plan/build adapters rather than by weakening Maven correctness or fabricating evidence.
+Gate G2 remains **WITHHELD**. The next bounded capability is policy-selected dependency POM/JAR acquisition into an isolated content-addressed cache, followed by rerunning the repository and independent semantic adjudication. Multi-module, POM-less conventional Java layouts and non-Maven build systems remain separate provider shapes; they must be supported through neutral source-plan/build adapters rather than by weakening Maven correctness or fabricating evidence.

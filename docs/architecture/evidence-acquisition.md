@@ -106,6 +106,22 @@ Stable query services should support:
 - conflicts and their effect on confidence, metrics, policies and assessments; and
 - drill-down to source spans, observations, artifacts and provenance.
 
+For M4+, queries also expose configuration-space identity, unknown condition regions, registration-order uncertainty, witness evidence and the exact requirement that could narrow each result. A missing configuration input is never projected as an inactive bean or a clean policy result.
+
+## M4 Conditional-Semantics Mapping
+
+[ADR-004](../decisions/ADR-004-staged-conditional-architecture-semantics.md) does not require an immediate change to the implemented evidence enums. The first M4 contract should reuse existing requirement kinds with versioned namespaced questions:
+
+| Conditional gap | Existing requirement kind | Candidate question |
+|---|---|---|
+| Missing external property/profile domain or import | `CONFIGURATION` | `spring.condition.resolve-property-domain` |
+| Unknown generated injection member | `GENERATED_SOURCE` or `BYTECODE` | `spring.injection.resolve-generated-member` |
+| Missing dependency auto-configuration/type metadata | `DEPENDENCY_ARTIFACT` or `BYTECODE` | `spring.registration.resolve-auto-configuration` |
+| Opaque custom condition, registrar or post-processor | `ISOLATED_BUILD_OUTPUT` or `RUNTIME_OBSERVATION` | `spring.condition.observe-dynamic-outcome` |
+| Runtime proxy/factory product type | `RUNTIME_OBSERVATION` | `spring.binding.observe-runtime-product-type` |
+
+M4 must add exhaustive catalog mappings before it emits production gaps. New enum kinds are justified only if a question cannot be expressed without losing policy or satisfaction semantics. Configuration-space identity, condition/registration semantic versions and affected truth region become part of the observation/gap context where they affect meaning; they do not rewrite an earlier M2/M3 record.
+
 ## Specific Evidence Providers and Conventions
 
 ### Dependency Binary Symbols: `JarTypeSolver` as Primary Baseline
@@ -122,6 +138,11 @@ Stable query services should support:
    - The generated entity carries either an exact coordinate within an acquired `GeneratedDocument` artifact, or carries an empty declaration span (modeled as an implicit/derived member with project origin, citing the annotation as derivation input).
 3. **Entity Origin Invariant:** `GENERATED_LOMBOK` is generator tool metadata and derivation provenance. It **must not alter** the canonical `EntityOrigin` enum (which remains `PROJECT`, `JDK`, `DEPENDENCY`). A generated member for a project class retains `EntityOrigin.PROJECT`.
 4. **Lineage Preservation:** Original source files, bytes, and UTF-16 spans remain immutable. Generated documents are tracked separately in an acquired artifact plan with their own content digests.
+5. **Synthesis Eligibility:** A derived Lombok constructor/accessor is permitted only for a versioned supported fragment when exact annotation identity, relevant Lombok configuration/version, field order, initialization, `@NonNull`, static/excluded fields and explicit-member interactions are known. Detection of `@RequiredArgsConstructor`, `@AllArgsConstructor`, `@Data` or a final field alone is insufficient. Otherwise retain a capability gap and request generated-source or bytecode evidence.
+
+### Spring Data Registration Policy
+
+A Spring Data repository interface is not automatically a bean fact. Registration evidence must establish the relevant enablement/scanning scope, base packages and filters, store binding, `@NoRepositoryBean` exclusion and supported framework-version semantics. Custom fragments, factory/base-class configuration and ambiguous multi-store binding remain explicit. When these inputs are incomplete, emit a candidate plus `CONFIGURATION`/`DEPENDENCY_ARTIFACT`/`BYTECODE` requirement as appropriate; do not synthesize a selected binding.
 
 ## Acceptance Requirements
 
@@ -140,4 +161,5 @@ Stable query services should support:
 - [M2 Semantic Frontend](m2-semantic-frontend.md)
 - [M3 Workspace and Build-Model Contract](m3-workspace-build-model.md)
 - [M4 Spring Intelligence](m4-spring-intelligence.md)
+- [Conditional Architecture Semantics](conditional-architecture-semantics.md)
 - [Product Outcome Contract](product-outcome.md)

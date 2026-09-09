@@ -1,13 +1,13 @@
 [CmdletBinding()]
 param(
-    [string]$TargetRepository = "$PSScriptRoot\temp_repo\PC-Shop",
-    [string]$RepositoryCoordinate = "https://github.com/hoangnguyen1007/PC-Shop.git",
-    [string]$RepositoryLabel = "PC-Shop",
-    [int]$FallbackPlatformRelease = 21,
+    [string]$TargetRepository = "$PSScriptRoot\temp_repo\spring-petclinic",
+    [string]$RepositoryCoordinate = "https://github.com/spring-projects/spring-petclinic.git",
+    [string]$RepositoryLabel = "spring-petclinic",
+    [int]$FallbackPlatformRelease = 17,
     [string]$MavenRepository = "",
     [string]$JdkHome = "",
     [string[]]$RemotePomRepositories = @("https://repo.maven.apache.org/maven2/"),
-    [string]$DocumentationDirectory = "$PSScriptRoot\..\docs\reproducibility\g2-checkpoint-2026-09-08-v2",
+    [string]$DocumentationDirectory = "$PSScriptRoot\..\docs\reproducibility\g2-petclinic-check-2026-09-08",
     [switch]$Publish
 )
 

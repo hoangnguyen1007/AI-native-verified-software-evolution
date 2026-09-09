@@ -6,12 +6,13 @@ This document describes the approved architecture direction and the boundaries t
 
 - Modular-monolith direction and separation principles: **CONFIRMED**.
 - Complete visual architecture-intelligence product outcome: **CONFIRMED**.
+- Bounded staged conditional architecture semantics for M4+: **ACCEPTED DIRECTION** by [ADR-004](../decisions/ADR-004-staged-conditional-architecture-semantics.md); implementation and empirical claims remain gated.
 - M1 contract placement and package boundaries in the existing `analyzer` module: **CONFIRMED by implementation and contract tests**.
 - Later Maven modules, adapter package layouts, frameworks, storage adapter, metric formulas, score weights, and UI performance budgets: **PROVISIONAL** until their gates.
 
 ## System Purpose
 
-Analyze Java/Spring Boot repositories to produce deterministic, evidence-backed architecture intelligence: semantic facts, Software Knowledge Graph projections, metrics, explainable architecture assessment, policy violations, bounded impact, visual exploration, and compatible snapshot evolution.
+Analyze Java/Spring Boot repositories to produce deterministic, evidence-backed architecture intelligence: Java facts, bounded conditional Spring facts, Software Knowledge Graph projections, configuration-qualified metrics and policy findings, explainable architecture assessment, bounded impact, visual exploration, and compatible conditional snapshot evolution.
 
 The platform is not complete as an analyzer alone. Track A includes a usable dashboard and architecture workbench.
 
@@ -33,16 +34,17 @@ Milestone boundaries constrain current delivery and claims, not the platform's e
 Repository/Snapshot Acquisition
   -> Safe Workspace and Build Model
   -> Java Semantic Frontend Adapter
-  -> Spring Semantic Enrichment
-  -> Canonical Facts and Graph Construction
-  -> Architecture Query and Metric Services
-  -> Policy, Evidence, and Assessment
+  -> Configuration-Space and Spring Mechanism Modeling
+  -> Phase/Order-Aware Registration and Binding Semantics
+  -> Canonical Conditional Facts
+  -> Graph Projection and Architecture Query/Metric Services
+  -> Configuration-Qualified Policy, Evidence, and Assessment
   -> CLI / Export / Versioned API
   -> Architecture Workbench
 
 Compatible snapshots
   -> Comparison Compatibility Check
-  -> Entity / Relationship / Metric / Score / Violation Deltas
+  -> Fact Region / Relationship / Metric / Score / Finding / Evidence Deltas
   -> Evolution Queries and UI
 ```
 
@@ -58,19 +60,21 @@ Evidence acquisition is a feedback loop around the pipeline, not a one-time sour
 | Workspace/build model | Modules, roots, dependencies, scopes, exact classpath manifest | Arbitrary target lifecycle execution |
 | Semantic frontend port | Parser-neutral Java facts, diagnostics, evidence | Graph storage or policy meaning |
 | JavaParser adapter | Parsing and symbol-resolution implementation | Domain types outside its adapter boundary |
-| Spring intelligence | Producers, bean-definition candidates, exact injection points, conditions, binding candidates, endpoints and a versioned mechanism taxonomy | Runtime-container equivalence, flat certain `INJECTS` edges or silent omission of unresolvable wiring |
-| Canonical graph builder | Deterministic nodes, occurrences, relationships, provenance | UI-specific graph shapes |
+| Configuration-space modeler | Repository/user configuration envelopes, finite domains, precedence, constraints and content-addressed space identity | Claiming repository files are the complete deployment environment |
+| Condition/registration reasoner | Solver-neutral condition IR, phase/order-aware bean-definition transitions, truth regions and deterministic witnesses | Generic unordered fixpoint claims, guessed order or solver-specific domain types |
+| Spring intelligence | Producers, bean-definition candidates, exact injection points, conditions, binding candidates, endpoints and a versioned closed mechanism taxonomy | Runtime-container equivalence, flat certain `INJECTS` edges, broad synthesis heuristics or silent omission of unresolvable wiring |
+| Canonical graph builder | Deterministic projections of Java/conditional facts, occurrences, relationships, regions and provenance | Owning condition semantics or UI-specific graph shapes |
 | Graph storage adapter | Persist/load canonical graph representations | Canonical domain semantics |
 | Architecture query services | Search, dependencies, paths, cycles, projections, evidence, comparison | Presentation rendering |
 | Metric engine | Versioned deterministic inventory/structural/quality metrics | Opaque or UI-only calculations |
-| Policy engine | Typed rules and evidence-first findings | AI diagnosis or automatic remediation |
+| Policy engine | Typed rules quantified over fact regions and evidence-first `MUST`/`MAY`/`UNKNOWN` findings | Treating union projections as one world, AI diagnosis or automatic remediation |
 | Assessment engine | Explainable health dimensions and score status | Analyzer-confidence calculation or hidden weights |
 | Analysis-confidence service | Evidence completeness and qualification/withholding decisions | Repository health judgment |
 | Application services | Job orchestration, cancellation, limits, analysis lifecycle | Core semantic algorithms |
 | CLI/export adapters | Scriptable workflow and canonical result formats | Independent metric semantics |
 | Versioned API | Bounded access to application/query services | Arbitrary graph-store queries |
 | Architecture workbench | Dashboard, explorer, graph, metrics, score, violations, Spring, impact, provenance | Recomputing canonical facts, metrics, or scores |
-| Evolution service | Compatible snapshot deltas and event classification | Comparing incompatible identities silently |
+| Evolution service | Compatible conditional/evidence snapshot deltas, affected regions and event classification | Comparing incompatible identities silently or reporting evidence loss as improvement |
 
 ## Dependency Direction
 
@@ -106,14 +110,16 @@ M1 resolves the first placement decision: parser- and storage-neutral contracts 
 - repository and immutable snapshot identity;
 - source hashes and workspace model;
 - exact classpath/dependency manifest;
+- exact build-context identity plus modeled configuration-space identity or one explicitly realized configuration;
 - analyzer and schema versions;
-- semantic, Spring, metric, score, policy, and limit configuration.
+- semantic, Spring framework/condition/registration, metric, score, policy, reasoner and limit configuration;
 - enabled evidence-provider identities, trust/permission policy, acquired artifact identities and prior acquisition-gap records.
 
 ### Canonical outputs
 
 - entity and occurrence identities;
 - relationships and candidate relationships;
+- conditional fact truth regions, registration/binding derivations and reproducible witnesses;
 - complete source evidence spans;
 - diagnostics, unresolved/ambiguous/unsupported/error outcomes;
 - graph identities and projections;
@@ -122,6 +128,8 @@ M1 resolves the first placement decision: parser- and storage-neutral contracts 
 - policy findings and Evidence Bundles;
 - architecture score and dimension explanations when evidence permits;
 - provenance/reproducibility manifest.
+
+A graph union across configurations is an explicitly labeled exploratory projection. It is never a canonical claim that all included edges coexist in one runtime world.
 
 ## Metric and Assessment Boundary
 
@@ -148,7 +156,8 @@ All product surfaces use the same versioned query services for:
 - focused subgraphs and bounded expansion;
 - dependencies, dependents, paths, and cycles;
 - violation aggregation/detail/evidence;
-- Spring components, endpoints, injections, and ambiguity;
+- Spring components, endpoints, injections, activation/registration explanation, ambiguity and condition regions;
+- realized-configuration, `MUST`, `MAY` and unknown/gap projections plus witness retrieval;
 - bounded impact;
 - compatible snapshot comparison.
 
@@ -167,7 +176,7 @@ The required Track A workbench contains:
 7. Spring and bounded-impact views;
 8. provenance, limitations, and export access.
 
-Track B adds compatible snapshot comparison and evolution views.
+Track B adds compatible conditional/evidence snapshot comparison, affected-region and evolution views.
 
 The detailed contract and acceptance criteria are defined in [Product Outcome, Metrics, Scoring, and Workbench Contract](product-outcome.md).
 
@@ -179,12 +188,14 @@ Every important relationship, metric input, violation, and score penalty preserv
 |---|---|
 | Repository/snapshot | Exact identity |
 | Analysis/configuration | Exact versioned identity |
+| Configuration space | Exact envelopes, domains, constraints, precedence and identity where a region claim is made |
 | Source and target | Stable identities |
 | Source location | File plus begin/end line/column |
 | Semantic status | Direct, derived, inferred, unresolved, ambiguous, conditional, unsupported, or error as defined by contract |
 | Derivation | Inputs and deterministic rule/formula |
 | Graph evidence | Supporting relationship/path identities |
 | Policy evidence | Rule ID/version and configuration |
+| Conditional evidence | Condition/registration semantic version, truth region, witness/counter-witness and unresolved residue |
 | Assessment evidence | Metric/score formula versions, contributions, penalties, and qualification |
 | Limitations | Missing inputs and bounded-claim language |
 | Acquisition | Provider/method/version, trust and permission context, inputs, attempts, failures, conflicts and resulting capability gaps |
@@ -201,8 +212,9 @@ Every important relationship, metric input, violation, and score penalty preserv
 ## Verification Boundaries
 
 - semantic ground truth verifies frontend facts;
+- exhaustive-oracle and adjudicated phase/order fixtures verify the supported conditional Spring fragment;
 - hand-computed graphs and invariants verify graph/structural metrics;
-- mutation and negative fixtures verify policies;
+- condition-region mutation, witness replay and negative fixtures verify policies;
 - golden and sensitivity cases verify assessment behavior;
 - adapter contracts verify storage independence;
 - API/UI end-to-end tests verify value agreement and evidence navigation;
@@ -217,6 +229,8 @@ The architecture preserves boundaries for later phases even where SE121 does not
 - generated-source and dependency-artifact acquisition;
 - selective bytecode and framework/configuration evidence;
 - explicitly authorized controlled build/sandbox and runtime-observation providers;
+- multi-build-context, AOT and deployment-configuration federation;
+- cross-repository API/event/schema architecture assurance;
 
 - graph-guided RAG or AI diagnosis;
 - automated repair/refactoring;
@@ -234,6 +248,8 @@ The architecture preserves boundaries for later phases even where SE121 does not
 - [M3 Workspace and Build-Model Intelligence Contract](m3-workspace-build-model.md)
 - [Progressive Evidence Acquisition and Capability-Gap Contract](evidence-acquisition.md)
 - [M4 Spring Intelligence and Closed Mechanism Taxonomy](m4-spring-intelligence.md)
+- [Conditional Architecture Semantics](conditional-architecture-semantics.md)
 - [ADR-002](../decisions/ADR-002-product-outcome-and-explainable-assessment.md)
 - [ADR-003: Progressive Evidence Acquisition](../decisions/ADR-003-progressive-evidence-acquisition.md)
+- [ADR-004: Staged Conditional Architecture Semantics](../decisions/ADR-004-staged-conditional-architecture-semantics.md)
 - [Current State](../current-state.md)

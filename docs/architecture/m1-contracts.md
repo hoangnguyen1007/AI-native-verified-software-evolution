@@ -69,6 +69,8 @@ The stored representation is `<identity-kind>:sha256:<64 lowercase hex character
 
 Revision labels, dirty flags, runtime timestamps, diagnostics, and limitations are provenance. They do not enter snapshot or analysis identity. Snapshot content still changes when any inventoried file changes, whether or not that file is a Java source.
 
+The implemented M1 `ConfigurationIdentity` remains the identity of one concrete canonical option map. [ADR-004](../decisions/ADR-004-staged-conditional-architecture-semantics.md) does not reinterpret or mutate that preimage. M4 will define separate `ConfigurationSpaceIdentity` and `ConditionalSemanticsContextIdentity` contracts for a finite modeled space and its framework/registration/reasoning semantics; any analysis-manifest integration requires an explicitly versioned later schema rather than a retroactive G1 claim.
+
 Module, source, entity, relationship, and occurrence identities are distinct Java types so callers cannot interchange them accidentally.
 
 ## Deterministic ordering and serialization
@@ -192,5 +194,7 @@ M1 does not currently define or implement a `CapabilityGapRecord`. The provision
 - [Knowledge Graph](knowledge-graph.md)
 - [ADR-001: Parser Technology](../decisions/ADR-001-parser-technology.md)
 - [ADR-003: Progressive Evidence Acquisition](../decisions/ADR-003-progressive-evidence-acquisition.md)
+- [ADR-004: Staged Conditional Architecture Semantics](../decisions/ADR-004-staged-conditional-architecture-semantics.md)
+- [Conditional Architecture Semantics](conditional-architecture-semantics.md)
 - [Progressive Evidence Acquisition Contract](evidence-acquisition.md)
 - [Current State](../current-state.md)

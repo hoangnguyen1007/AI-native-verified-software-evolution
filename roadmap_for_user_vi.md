@@ -1,5 +1,7 @@
 # SE121 — Roadmap và kế hoạch triển khai dành cho người duyệt
 
+> **TÀI LIỆU ĐỒNG HÀNH LỊCH SỬ:** Bản dài này có trạng thái milestone đã cũ và có trước quyết định chuyển hướng conditional architecture ngày 2026-09-09. Nguồn hiện hành là [`docs/current-state.md`](docs/current-state.md), [`docs/roadmap.md`](docs/roadmap.md), [ADR-004](docs/decisions/ADR-004-staged-conditional-architecture-semantics.md) và [báo cáo nghiên cứu](docs/research/2026-09-09-conditional-architecture-redirection-review.md). Giữ file này chỉ để tham chiếu lịch sử, không dùng để xác định “next task”.
+
 ## 1. Kết luận ngắn gọn
 
 Roadmap hiện tại **đủ mạnh, thực tế và có chiều sâu kỹ thuật để bắt đầu triển khai**. Dự án không cần thêm một vòng tái thiết kế tổng thể trước khi làm việc. Điểm mạnh quan trọng nhất là kế hoạch đặt tính đúng đắn, bằng chứng, khả năng tái lập và quản lý bất định lên trước số lượng tính năng.

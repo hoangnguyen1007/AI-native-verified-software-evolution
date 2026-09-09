@@ -1,5 +1,7 @@
 # SE121 Detailed Roadmap for Human Review
 
+> **HISTORICAL REVIEW COMPANION:** This long-form snapshot predates the accepted 2026-09-09 conditional-architecture redirection and contains stale milestone status. Use [`docs/current-state.md`](docs/current-state.md), [`docs/roadmap.md`](docs/roadmap.md), [ADR-004](docs/decisions/ADR-004-staged-conditional-architecture-semantics.md), and the [research review](docs/research/2026-09-09-conditional-architecture-redirection-review.md) as current authority. This file is retained only for historical review context.
+
 Purpose: provide one self-contained, from-scratch explanation of what the project is, what has already been established, what will be built, how each stage will be verified, and where human approval is required.
 
 This is a **human review companion**. Use:
