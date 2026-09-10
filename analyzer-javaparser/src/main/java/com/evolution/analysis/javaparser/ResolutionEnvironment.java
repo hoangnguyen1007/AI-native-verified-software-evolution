@@ -182,9 +182,8 @@ final class ResolutionEnvironment {
             manifest = jar.getManifest();
             if (manifest != null) seen.add("META-INF/MANIFEST.MF");
             for (var entry = jar.getNextJarEntry(); entry != null; entry = jar.getNextJarEntry()) {
-                if (!seen.add(entry.getName()))
-                    throw new FrontendInputException("frontend.jar-duplicate", "Duplicate JAR entries are unsupported");
                 if (entry.isDirectory()) continue;
+                if (!seen.add(entry.getName())) continue;
                 byte[] content = jar.readNBytes(100_000_001);
                 if (content.length > 100_000_000)
                     throw new FrontendInputException("frontend.jar-size", "A JAR entry exceeds the bounded class-view limit");
@@ -192,8 +191,7 @@ final class ResolutionEnvironment {
                 if (expandedBytes > 1_000_000_000L || physical.size() >= 1_000_000)
                     throw new FrontendInputException("frontend.jar-size", "JAR expansion exceeds the bounded class-view limit");
                 if (entry.getName().equalsIgnoreCase("META-INF/MANIFEST.MF")) {
-                    if (manifest != null)
-                        throw new FrontendInputException("frontend.jar-duplicate", "Duplicate JAR manifests are unsupported");
+                    if (manifest != null) continue;
                     manifest = new Manifest(new ByteArrayInputStream(content));
                 } else {
                     physical.add(new PhysicalJarEntry(entry.getName(), content));
