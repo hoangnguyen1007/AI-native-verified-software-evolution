@@ -2,9 +2,9 @@
 
 ## Status and Scope
 
-**PROVISIONAL architecture contract for M3 and later; the bounded M3.6 core below is implemented.** This document refines [ADR-003](../decisions/ADR-003-progressive-evidence-acquisition.md). The implementation does not alter the M1 identity contract and does not authorize or invoke target builds.
+**PROVISIONAL architecture contract for M3 and later; the bounded M3.6 core and M3.8 dependency-acquisition extension below are implemented.** This document refines [ADR-003](../decisions/ADR-003-progressive-evidence-acquisition.md). The implementation does not alter the M1 identity contract and does not authorize or invoke target builds.
 
-M2 preserves parser-neutral observations, input coverage, diagnostics and unmappable facts. M3.6 now supplies the first normalized capability-gap/acquisition contract over those observations and the typed M3.1-M3.5 problem/attempt ledgers. Later provider types may reuse the contract after their own safety and acceptance gates.
+M2 preserves parser-neutral observations, input coverage, diagnostics and unmappable facts. M3.6 supplies the first normalized capability-gap/acquisition contract over those observations and the typed M3.1–M3.5 problem/attempt ledgers. M3.8 extends that contract to bounded dependency-artifact outcomes and attempts. Later provider types may reuse the contract after their own safety and acceptance gates.
 
 ## Responsibilities
 
@@ -52,7 +52,7 @@ An evidence requirement records the unanswered question, not merely a provider n
 | `requirementKind` | Examples: `BUILD_MODEL`, `DEPENDENCY_ARTIFACT`, `GENERATED_SOURCE`, `PLATFORM_SYMBOLS`, `BYTECODE`, `CONFIGURATION`, `ISOLATED_BUILD_OUTPUT`, `RUNTIME_OBSERVATION`, `ALTERNATE_FRONTEND` |
 | `question` | Stable namespaced question such as “resolve generated declaration identity” or “determine active conditional bean candidates” |
 | `requiredInputs` | Known module/artifact/configuration/symbol identities and any missing input descriptor |
-| `authorizationClass` | `PASSIVE`, `LOCAL_READ`, `NETWORK`, `ISOLATED_EXECUTION`, or another versioned policy value |
+| `authorizationClass` | `PASSIVE`, `LOCAL_READ`, `LOCAL_WRITE`, `NETWORK`, `ISOLATED_EXECUTION`, `RUNTIME_ACCESS`, or another versioned policy value |
 | `satisfactionCriteria` | Observable evidence that would answer or narrow the question |
 
 The coordinator selects the least invasive sufficient permitted requirement. It may stop with the gap open when no safe, authorized, available or proportionate provider exists.
@@ -81,6 +81,8 @@ Not every unresolved observation needs escalation. The normalizer must preserve 
 
 **CONFIRMED by implementation and contract/integration tests on 2026-09-08:** the neutral core uses `capability-gap-record-v1`, catalog `evidence.capability-gap-catalog:m3.6-v1`, `acquisition-attempt-record-v1`, `provider-conflict-record-v1`, `gap-resolution-record-v1` and aggregate `evidence-acquisition-ledger-v1` produced by `evidence.gap-normalizer:m3.6`. See the [verification record](../reproducibility/m3-capability-gaps-2026-09-08/README.md).
 
+**CONFIRMED M3.8 extension on 2026-09-09:** dependency-artifact attempts and every `DependencyAcquisitionResult.FailureReason` are now normalized exhaustively. Because the mapping set and local cache-write authorization changed, the current catalog is `evidence.capability-gap-catalog:m3.8-v2`, the current normalizer is `evidence.gap-normalizer:m3.8`, and `LOCAL_WRITE` is an explicit authorization class. The M3.6 identifiers above remain the historical checkpoint rather than being silently reused for changed behavior.
+
 - **Non-circular context and identity:** `EvidenceContext` always binds the snapshot and optionally binds an already-derived M1 `AnalysisIdentity`. Build-stage gaps therefore need no fabricated analysis identity; `EvidenceContext.forAnalysis` derives the pair from an existing manifest. A gap identity includes schema/catalog version, context, detecting provider/version, mechanism, stable reason, typed subject, real spans and normalized evidence requirements. Candidate providers, observation/attempt history, diagnostics and limitations remain additive provenance and cannot churn the stable gap identity.
 - **Original observation preservation:** every normalized gap cites a content-addressed `ProviderObservationReference` binding the original provider, provider-result digest, observation kind and exact payload digest. M2 observations, source outcomes, category coverage and run state remain authoritative; M3 repository, build-model, source-plan, ownership, classpath, decoding, platform and frontend-assembly problems/attempts remain immutable source records.
 - **Closed current denominator:** exhaustive switches map every registered degraded enum value in M2/M3 to a stable mechanism/reason and typed evidence requirement. The normalizer separately retains semantic status, missing origin, missing provenance and unmapped-observation dimensions instead of collapsing them into one success/failure flag. New enum values force a compile-time mapping decision and the catalog-coverage test guards the denominator.
@@ -94,7 +96,7 @@ This core provides the normalized data needed by the G2 checkpoint; it is not th
 
 **CONFIRMED by implementation on 2026-09-08:** a gap from one provider is no longer treated as a terminal repository verdict. The Maven build-model coordinator tries exact evidence in increasing authority/cost order: supplied/workspace bytes, a selected bounded local Maven2 cache, then optionally caller-configured bounded credential-free HTTPS release-POM endpoints. Cache and remote reads share one aggregate byte budget. It records each attempt and binds the final exact bytes into a new build request before recomputing the model. A successful fallback closes the acquisition problem while preserving earlier attempt history.
 
-The ladder is capability-based, not Maven-exclusive. POM absence must route to a future explicit or convention-backed neutral source-plan provider; Gradle and other build systems require their own replaceable adapters. Missing dependency descriptors/binaries, generated sources, reactor outputs and build-derived configuration are separate evidence requirements. The coordinator must not turn “current provider unavailable” into “repository unanalyzable,” but it also must not fabricate module ownership or a dependency superset merely to continue.
+The ladder is capability-based, not Maven-exclusive. POM absence must route to a future explicit or convention-backed neutral source-plan provider; Gradle and other build systems require their own replaceable adapters. Dependency descriptors/binaries, generated sources, reactor outputs and build-derived configuration are separate evidence requirements. M3.8 implements the exact-release dependency POM/JAR provider while the other boundaries remain open. The coordinator must not turn “current provider unavailable” into “repository unanalyzable,” but it also must not fabricate module ownership or a dependency superset merely to continue.
 
 ## Product and Query Projection
 

@@ -4,7 +4,9 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import com.evolution.analysis.acquisition.*;
 import com.evolution.analysis.buildmodel.BuildModelResult;
+import com.evolution.analysis.buildmodel.MavenCoordinate;
 import com.evolution.analysis.buildmodel.SourcePlanModel;
+import com.evolution.analysis.classpath.ArtifactCoordinate;
 import com.evolution.analysis.classpath.ExactClasspathResult;
 import com.evolution.analysis.contract.analysis.*;
 import com.evolution.analysis.contract.common.*;
@@ -12,9 +14,11 @@ import com.evolution.analysis.contract.identity.*;
 import com.evolution.analysis.contract.semantic.*;
 import com.evolution.analysis.contract.source.*;
 import com.evolution.analysis.frontend.*;
+import com.evolution.analysis.dependency.*;
 import com.evolution.analysis.input.PlatformSymbolRequest;
 import com.evolution.analysis.input.PlatformSymbolResult;
 import java.time.Instant;
+import java.net.URI;
 import java.util.*;
 import org.junit.jupiter.api.Test;
 
@@ -245,6 +249,7 @@ class CapabilityGapContractTest {
         for (com.evolution.analysis.acquisition.RepositoryAcquisitionResult.Reason value : com.evolution.analysis.acquisition.RepositoryAcquisitionResult.Reason.values()) assertNotNull(CapabilityGapCatalog.entryFor(value));
         for (com.evolution.analysis.acquisition.CandidateSourceOwnership.Reason value : com.evolution.analysis.acquisition.CandidateSourceOwnership.Reason.values()) assertNotNull(CapabilityGapCatalog.entryFor(value));
         for (com.evolution.analysis.classpath.ExactClasspathResult.Reason value : com.evolution.analysis.classpath.ExactClasspathResult.Reason.values()) assertNotNull(CapabilityGapCatalog.entryFor(value));
+        for (DependencyAcquisitionResult.FailureReason value : DependencyAcquisitionResult.FailureReason.values()) assertNotNull(CapabilityGapCatalog.entryFor(value));
         for (com.evolution.analysis.input.SourceDecodingResult.Reason value : com.evolution.analysis.input.SourceDecodingResult.Reason.values()) assertNotNull(CapabilityGapCatalog.entryFor(value));
         for (com.evolution.analysis.input.PlatformSymbolResult.Reason value : com.evolution.analysis.input.PlatformSymbolResult.Reason.values()) assertNotNull(CapabilityGapCatalog.entryFor(value));
         for (com.evolution.analysis.input.FrontendAssemblyResult.Reason value : com.evolution.analysis.input.FrontendAssemblyResult.Reason.values()) assertNotNull(CapabilityGapCatalog.entryFor(value));
@@ -290,6 +295,54 @@ class CapabilityGapContractTest {
 
         assertEquals(AcquisitionAttemptRecord.Outcome.FAILED, ledger.attempts().getFirst().outcome());
         assertTrue(ledger.attempts().getFirst().outputArtifacts().isEmpty());
+    }
+
+    @Test
+    void dependencyAcquisitionFailureNormalizesNetworkAuthorizationAttemptsAndClosedGap() {
+        ArtifactCoordinate coordinate = new ArtifactCoordinate(
+                new MavenCoordinate("external", "library", "1"), "jar", "");
+        DependencyAcquisitionPolicy policy = new DependencyAcquisitionPolicy(
+                10, 1_000_000, 10_000_000, 4,
+                List.of(URI.create("https://repo.example.test/maven2/")), 1_000, 2_000, 0);
+        DependencyAcquisitionRequest request = DependencyAcquisitionRequest.of(List.of(coordinate), policy);
+        var requirement = request.requirements().getFirst();
+        var attempts = List.of(
+                new DependencyAcquisitionResult.Attempt(0, coordinate,
+                        DependencyAcquisitionResult.Origin.LOCAL_CACHE, coordinate.repositoryPath(),
+                        DependencyAcquisitionResult.AttemptOutcome.UNAVAILABLE, Optional.empty()),
+                new DependencyAcquisitionResult.Attempt(1, coordinate,
+                        DependencyAcquisitionResult.Origin.REMOTE_REPOSITORY,
+                        "https://repo.example.test/maven2/" + coordinate.repositoryPath(),
+                        DependencyAcquisitionResult.AttemptOutcome.FAILED, Optional.empty()));
+        var outcome = new DependencyAcquisitionResult.Outcome(requirement,
+                DependencyAcquisitionResult.Status.FAILED, Optional.empty(),
+                Optional.of(DependencyAcquisitionResult.FailureReason.FETCH_TIMEOUT));
+        DependencyAcquisitionResult result = DependencyAcquisitionResult.create(request,
+                new VersionedIdentifier("dependency.artifact-cache", "m3.8"), List.of(outcome), attempts, 0);
+
+        EvidenceAcquisitionLedger ledger = CapabilityGapNormalizer.normalize(SNAPSHOT_CONTEXT,
+                EvidenceNormalizationInput.builder().dependencyAcquisitions(List.of(result)).build());
+
+        assertEquals(new VersionedIdentifier("evidence.gap-normalizer", "m3.8"), ledger.normalizer());
+        assertEquals(1, ledger.gaps().size());
+        assertEquals(new VersionedIdentifier("evidence.capability-gap-catalog", "m3.8-v2"),
+                ledger.gaps().getFirst().catalog());
+        assertEquals("FETCH_TIMEOUT", ledger.gaps().getFirst().reasonCode());
+        assertEquals("build.artifact-acquisition", ledger.gaps().getFirst().mechanismCategory());
+        assertEquals(EvidenceRequirement.AuthorizationClass.NETWORK,
+                ledger.gaps().getFirst().evidenceRequirements().getFirst().authorizationClass());
+        assertEquals(2, ledger.attempts().size());
+        AcquisitionAttemptRecord remote = ledger.attempts().stream()
+                .filter(value -> value.requestedRequirement().authorizationClass()
+                        == EvidenceRequirement.AuthorizationClass.NETWORK)
+                .findFirst().orElseThrow();
+        assertEquals(AcquisitionAttemptRecord.PermissionDecision.AUTHORIZED, remote.permissionDecision());
+        assertEquals(Map.of("connectTimeoutMillis", 1_000L, "maxArtifactBytes", 1_000_000L,
+                "maxRetries", 0L, "maxTotalBytes", 10_000_000L, "readTimeoutMillis", 2_000L),
+                remote.resourceLimits());
+        assertEquals(EvidenceRequirement.AuthorizationClass.LOCAL_WRITE,
+                CapabilityGapCatalog.entryFor(DependencyAcquisitionResult.FailureReason.CACHE_WRITE_FAILED)
+                        .authorizationClass());
     }
 
     @Test
@@ -382,11 +435,11 @@ class CapabilityGapContractTest {
         CapabilityGapRecord source = goldenSourceGap();
 
         assertAll(
-                () -> assertEquals("gap:sha256:04e1e284647d9d4cbab1b2050510360880b1f97c95732ecdbb03c67739192434", build.gapIdentity().value()),
-                () -> assertEquals("sha256:8dfaca2a5709a28b2bce06a63c229343933b9822377011295df9ab82033bb201", ContentDigest.sha256Utf8(
+                () -> assertEquals("gap:sha256:c4ceb02133a3f409ccad55e0205ab08103da134dbac6ce398bf7dab8ae6f94c4", build.gapIdentity().value()),
+                () -> assertEquals("sha256:d9ab613a8ac89fbd3d582933b3226e8c50ab445c3137d79256e14fa4fff43556", ContentDigest.sha256Utf8(
                         com.evolution.analysis.contract.serialization.CanonicalJson.write(build)).value()),
-                () -> assertEquals("gap:sha256:5bd20e7a2236ddc6569f5145203c4b2e326cd1e66fd90c217a1ed8e0b078e7cd", source.gapIdentity().value()),
-                () -> assertEquals("sha256:daf670e14df90c5709e9c82c00bb53e8aef74a80ec06ae99b6dd5fe9589e5bd4", ContentDigest.sha256Utf8(
+                () -> assertEquals("gap:sha256:17d6c5183919c6901b5098b0cea1e672fe463fe31a72ca58e346e488b112773f", source.gapIdentity().value()),
+                () -> assertEquals("sha256:98fb9702b688feebb85aa808214f368b1e00c572575be088b2453cad58f3d82a", ContentDigest.sha256Utf8(
                         com.evolution.analysis.contract.serialization.CanonicalJson.write(source)).value()));
     }
 

@@ -8,6 +8,7 @@ import com.evolution.analysis.contract.common.*;
 import com.evolution.analysis.contract.identity.*;
 import com.evolution.analysis.contract.semantic.SemanticStatus;
 import com.evolution.analysis.contract.serialization.CanonicalJson;
+import com.evolution.analysis.dependency.*;
 import com.evolution.analysis.evidence.*;
 import com.evolution.analysis.filesystem.*;
 import com.evolution.analysis.frontend.*;
@@ -35,11 +36,13 @@ public final class G2BenchmarkRunner {
         Path outputDirectory = Paths.get(args[1]).toAbsolutePath().normalize();
         RepositoryIdentity repository = RepositoryIdentity.fromCanonicalCoordinate(args[2]);
         Optional<String> revision = args[3].equals("-") ? Optional.empty() : Optional.of(args[3]);
-        Path cacheRoot = Paths.get(args[4]).toAbsolutePath().normalize();
+        Path cacheBase = Paths.get(args[4]).toAbsolutePath().normalize();
         Path jdkHome = Paths.get(args[5]).toAbsolutePath().normalize();
         int fallbackPlatformRelease = Integer.parseInt(args[6]);
         List<URI> remoteRepositories = Arrays.stream(args).skip(7).map(URI::create).toList();
         Files.createDirectories(outputDirectory);
+        Path firstCache = emptyCache(cacheBase.resolve("run-1"));
+        Path secondCache = emptyCache(cacheBase.resolve("run-2"));
 
         Map<String, Object> environment = new TreeMap<>();
         environment.put("java.version", System.getProperty("java.version"));
@@ -51,13 +54,24 @@ public final class G2BenchmarkRunner {
                 StandardCharsets.UTF_8);
 
         String first = runPipeline(repositoryRoot, outputDirectory.resolve("pipeline-results-run-1.json"),
-                outputDirectory, repository, revision, cacheRoot, jdkHome, fallbackPlatformRelease, remoteRepositories);
+                outputDirectory, repository, revision, firstCache, jdkHome, fallbackPlatformRelease, remoteRepositories);
         String second = runPipeline(repositoryRoot, outputDirectory.resolve("pipeline-results-run-2.json"),
-                null, repository, revision, cacheRoot, jdkHome, fallbackPlatformRelease, remoteRepositories);
+                null, repository, revision, secondCache, jdkHome, fallbackPlatformRelease, remoteRepositories);
         Files.writeString(outputDirectory.resolve("canonical-digests.json"), CanonicalJson.write(
                 Map.of("run-1", first, "run-2", second)), StandardCharsets.UTF_8);
         if (!first.equals(second)) throw new IllegalStateException("Pipeline runs are not deterministic");
         System.out.println("G2 pipeline completed deterministically: " + first);
+    }
+
+    private static Path emptyCache(Path path) throws Exception {
+        Files.createDirectories(path);
+        Path real = path.toRealPath();
+        try (var children = Files.list(real)) {
+            if (children.findAny().isPresent()) {
+                throw new IllegalArgumentException("Each deterministic benchmark run requires an empty isolated cache");
+            }
+        }
+        return real;
     }
 
     private static String[] environmentArguments() {
@@ -123,8 +137,13 @@ public final class G2BenchmarkRunner {
                 new ClasspathResolutionPolicy(20_000, 40_000, 2_000_000L, 100_000_000L, 1_000_000_000L, 64);
         ClasspathResolutionRequest classpathRequest =
                 new ClasspathResolutionRequest(buildRequest, buildResult, classpathPolicy);
-        ExactClasspathResult classpathResult =
-                new MavenLocalClasspathProvider(cacheRoot).resolve(classpathRequest);
+        DependencyAcquisitionPolicy dependencyPolicy = new DependencyAcquisitionPolicy(
+                20_000, 100_000_000L, 1_000_000_000L, 64,
+                remoteRepositories, 5_000, 20_000, 2);
+        MavenDependencyArtifactResolver dependencyResolver = new MavenDependencyArtifactResolver(cacheRoot);
+        MavenDependencyArtifactResolution dependencyResolution =
+                dependencyResolver.resolve(classpathRequest, dependencyPolicy);
+        ExactClasspathResult classpathResult = dependencyResolution.classpath();
         SourceDecodingResult decodingResult = SourceDecoder.decode(
                 repositoryResult, ownership, buildRequest, buildResult, SourceDecodingPolicy.withholdWhenAbsent());
 
@@ -132,9 +151,9 @@ public final class G2BenchmarkRunner {
         PlatformSymbolResult platformResult = new FilesystemJdkPlatformProvider().acquire(
                 jdkHome, new PlatformSymbolRequest(platformRelease, 256, 100_000_000L, 1_000_000_000L));
 
-        List<BinaryInput> dependencyInputs = dependencyInputs(classpathResult, cacheRoot);
+        List<BinaryInput> dependencyInputs = dependencyResolver.binaryInputs(dependencyResolution);
         var component = new ManifestComponent(
-                new VersionedIdentifier("benchmark.g2", "2"), ContentDigest.sha256Utf8("benchmark.g2:2"));
+                new VersionedIdentifier("benchmark.g2", "m3.8"), ContentDigest.sha256Utf8("benchmark.g2:m3.8"));
         FrontendAssemblyPolicy assemblyPolicy = new FrontendAssemblyPolicy(
                 new VersionedIdentifier("analysis.manifest", "2"),
                 new VersionedIdentifier("analysis.configuration", "2"), component, component, component);
@@ -153,12 +172,17 @@ public final class G2BenchmarkRunner {
                 .buildModels(List.of(buildResult))
                 .sourceOwnerships(List.of(ownership))
                 .classpaths(List.of(classpathResult))
+                .dependencyAcquisitions(dependencyResolution.acquisitions())
                 .sourceDecodings(List.of(decodingResult))
                 .platformResults(List.of(platformResult))
                 .frontendAssemblies(List.of(assemblyResult))
-                .frontendResults(frontendResults)
                 .build();
         EvidenceAcquisitionLedger ledger = CapabilityGapNormalizer.normalize(context, normalizationInput);
+        List<EvidenceAcquisitionLedger> frontendLedgers = frontendResults.stream().map(result ->
+                CapabilityGapNormalizer.normalize(
+                        new EvidenceContext(snapshot.identity(), Optional.of(result.analysis())),
+                        EvidenceNormalizationInput.builder().frontendResults(List.of(result)).build()))
+                .toList();
 
         Map<String, Object> resolutionView = new TreeMap<>();
         resolutionView.put("identity", buildResolution.identity());
@@ -167,17 +191,25 @@ public final class G2BenchmarkRunner {
         resolutionView.put("acquiredPoms", buildResolution.acquiredPoms());
         resolutionView.put("attempts", buildResolution.attempts());
         resolutionView.put("problems", buildResolution.problems());
+        Map<String, Object> dependencyView = new TreeMap<>();
+        dependencyView.put("identity", dependencyResolution.identity());
+        dependencyView.put("provider", dependencyResolution.provider());
+        dependencyView.put("classpathPasses", dependencyResolution.classpathPasses());
+        dependencyView.put("acquisitions", dependencyResolution.acquisitions());
+        dependencyView.put("problems", dependencyResolution.problems());
         Map<String, Object> output = new TreeMap<>();
         output.put("identities", Map.of(
                 "repositoryAcquisition", repositoryResult.identity().value(),
                 "buildResolution", buildResolution.identity().value(),
                 "buildModel", buildResult.identity().value(),
+                "dependencyResolution", dependencyResolution.identity().value(),
                 "classpath", classpathResult.identity().value(),
                 "platform", platformResult.identity().value(),
                 "ownership", ownership.identity().value(),
                 "decoding", decodingResult.identity().value(),
                 "assembly", assemblyResult.identity().value()));
         output.put("buildResolution", resolutionView);
+        output.put("dependencyResolution", dependencyView);
         output.put("buildModel", buildResult);
         output.put("classpath", classpathResult);
         output.put("platform", platformView(platformResult));
@@ -186,11 +218,14 @@ public final class G2BenchmarkRunner {
         output.put("assembly", assemblyView(assemblyResult));
         output.put("frontendResults", frontendResults);
         output.put("ledger", ledger);
+        output.put("frontendLedgers", frontendLedgers);
         String json = CanonicalJson.write(output);
         Files.writeString(resultsFile, json, StandardCharsets.UTF_8);
         if (metricsDirectory != null) {
-            writeMetrics(metricsDirectory, repositoryResult, buildResolution, ownership, classpathResult,
-                    decodingResult, assemblyResult, frontendResults, ledger);
+            writeMetrics(metricsDirectory, repositoryResult, buildResolution, dependencyResolution,
+                    ownership, classpathResult,
+                    decodingResult, assemblyResult, frontendResults,
+                    java.util.stream.Stream.concat(java.util.stream.Stream.of(ledger), frontendLedgers.stream()).toList());
         }
         return ContentDigest.sha256Utf8(json).value();
     }
@@ -254,17 +289,6 @@ public final class G2BenchmarkRunner {
         return view;
     }
 
-    private static List<BinaryInput> dependencyInputs(ExactClasspathResult classpaths, Path cacheRoot) {
-        Map<ClasspathEntry, BinaryInput> inputs = new TreeMap<>();
-        for (ExactClasspathResult.Manifest manifest : classpaths.manifests()) {
-            for (ExactClasspathResult.Entry entry : manifest.entries()) {
-                Path path = cacheRoot.resolve(entry.repositoryPath().replace('/', java.io.File.separatorChar));
-                inputs.putIfAbsent(entry.classpathEntry(), new BinaryInput(entry.classpathEntry(), path));
-            }
-        }
-        return List.copyOf(inputs.values());
-    }
-
     private static int platformRelease(BuildModelResult build, int fallback) {
         Set<Integer> releases = new TreeSet<>();
         build.modules().stream().flatMap(module -> module.effectivePom().stream())
@@ -281,18 +305,19 @@ public final class G2BenchmarkRunner {
             Path directory,
             RepositoryAcquisitionResult repository,
             MavenBuildModelResolution build,
+            MavenDependencyArtifactResolution dependencyResolution,
             CandidateSourceOwnership ownership,
             ExactClasspathResult classpath,
             SourceDecodingResult decoding,
             FrontendAssemblyResult assembly,
             List<FrontendResult> frontendResults,
-            EvidenceAcquisitionLedger ledger) throws Exception {
+            List<EvidenceAcquisitionLedger> ledgers) throws Exception {
         Map<String, Map<String, Long>> categories = categoryMetrics(frontendResults);
         Files.writeString(directory.resolve("category-metrics.json"), CanonicalJson.write(categories), StandardCharsets.UTF_8);
         writeCategoryTsv(directory.resolve("category-metrics.tsv"), categories);
 
         Map<String, Long> reasons = new TreeMap<>();
-        for (CapabilityGapRecord gap : ledger.gaps()) {
+        for (CapabilityGapRecord gap : ledgers.stream().flatMap(value -> value.gaps().stream()).toList()) {
             reasons.merge(gap.mechanismCategory() + ":" + gap.reasonCode(), 1L, Long::sum);
         }
         Files.writeString(directory.resolve("reason-metrics.json"), CanonicalJson.write(reasons), StandardCharsets.UTF_8);
@@ -305,6 +330,17 @@ public final class G2BenchmarkRunner {
         summary.put("build.effectiveModules", build.model().modules().stream().filter(module -> module.effectivePom().isPresent()).count());
         summary.put("build.problems", (long) build.model().problems().size());
         summary.put("build.externalPomsAcquired", (long) build.acquiredPoms().size());
+        List<DependencyAcquisitionResult.Outcome> dependencyOutcomes = dependencyResolution.acquisitions().stream()
+                .flatMap(value -> value.outcomes().stream()).toList();
+        summary.put("dependency.acquisitionRounds", (long) dependencyResolution.acquisitions().size());
+        summary.put("dependency.classpathPasses", (long) dependencyResolution.classpathPasses());
+        summary.put("dependency.requested", (long) dependencyOutcomes.size());
+        for (DependencyAcquisitionResult.Status status : DependencyAcquisitionResult.Status.values()) {
+            summary.put("dependency." + status.name().toLowerCase(Locale.ROOT),
+                    dependencyOutcomes.stream().filter(value -> value.status() == status).count());
+        }
+        summary.put("dependency.bytesConsumed", dependencyResolution.acquisitions().stream()
+                .mapToLong(DependencyAcquisitionResult::bytesConsumed).sum());
         summary.put("ownership.owned", ownership.candidates().stream().filter(value -> value.status() == CandidateSourceOwnership.Status.OWNED).count());
         summary.put("ownership.unowned", ownership.candidates().stream().filter(value -> value.status() == CandidateSourceOwnership.Status.UNOWNED).count());
         summary.put("classpath.artifacts", (long) classpath.artifacts().size());
@@ -314,7 +350,7 @@ public final class G2BenchmarkRunner {
         summary.put("assembly.withheld", assembly.outcomes().stream().filter(value -> value.status() == FrontendAssemblyResult.Status.WITHHELD).count());
         summary.put("frontend.runs", (long) frontendResults.size());
         summary.put("frontend.observations", frontendResults.stream().mapToLong(value -> value.observations().size()).sum());
-        summary.put("capabilityGaps", (long) ledger.gaps().size());
+        summary.put("capabilityGaps", ledgers.stream().mapToLong(value -> value.gaps().size()).sum());
         Files.writeString(directory.resolve("pipeline-summary.json"), CanonicalJson.write(summary), StandardCharsets.UTF_8);
         writeSummaryTsv(directory.resolve("pipeline-summary.tsv"), summary);
 
@@ -322,7 +358,7 @@ public final class G2BenchmarkRunner {
                 ? "No frontend input was assembled; build/acquisition gaps must be resolved before semantic adjudication"
                 : "Independent semantic correctness labels and adjudication are not yet recorded";
         Map<String, Object> assessment = Map.of(
-                "checkpoint", "G2", "date", "2026-09-08", "status", "WITHHELD", "reason", reason);
+                "checkpoint", "G2", "date", "2026-09-09", "status", "WITHHELD", "reason", reason);
         Files.writeString(directory.resolve("gate-assessment.json"), CanonicalJson.write(assessment), StandardCharsets.UTF_8);
     }
 

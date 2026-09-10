@@ -6,6 +6,7 @@ import com.evolution.analysis.contract.identity.EntityScope;
 import com.evolution.analysis.contract.semantic.*;
 import com.evolution.analysis.contract.serialization.CanonicalJson;
 import com.evolution.analysis.frontend.*;
+import com.github.javaparser.ast.expr.MethodCallExpr;
 import java.nio.file.*;
 import java.util.*;
 import java.util.jar.*;
@@ -16,6 +17,14 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class ResolutionInputsTest {
     @TempDir Path temp;
+    private Path compileClass(String directory, String code) throws Exception {
+        Path root = temp.resolve(directory); Files.createDirectories(root.resolve("dep"));
+        Path source = root.resolve("dep/Library.java"); Files.writeString(source, code);
+        int exit = ToolProvider.getSystemJavaCompiler().run(null, null, null, "--release", "21", "-proc:none",
+                "-encoding", "UTF-8", "-d", root.toString(), source.toString());
+        assertEquals(0, exit);
+        return root.resolve("dep/Library.class");
+    }
     private BinaryInput jar(String name, String code) throws Exception {
         Path root = temp.resolve(name); Files.createDirectories(root);
         Path source = root.resolve("Library.java"); Files.writeString(source,code);
@@ -86,6 +95,69 @@ class ResolutionInputsTest {
         Files.writeString(dependency.path(),"changed");
         var failure = assertThrows(FrontendInputException.class,() -> new JavaParserFrontend().analyze(request));
         assertEquals("frontend.artifact-digest",failure.diagnostic().code());
+    }
+    @Test void multiReleaseJarSelectsTheHighestVersionNotNewerThanTheTargetPlatform() throws Exception {
+        Path base = compileClass("mr-base", "package dep; public class Library { public static void baseOnly(){} }");
+        Path java17 = compileClass("mr-17", "package dep; public class Library { public static void selected(){} }");
+        Path java22 = compileClass("mr-22", "package dep; public class Library { public static void tooNew(){} }");
+        Path archive = temp.resolve("multi-release.jar");
+        var manifest = new Manifest();
+        manifest.getMainAttributes().put(Attributes.Name.MANIFEST_VERSION, "1.0");
+        manifest.getMainAttributes().putValue("Multi-Release", "true");
+        try (var output = new JarOutputStream(Files.newOutputStream(archive), manifest)) {
+            for (var item : List.of(
+                    Map.entry("dep/Library.class", base),
+                    Map.entry("META-INF/versions/17/dep/Library.class", java17),
+                    Map.entry("META-INF/versions/22/dep/Library.class", java22))) {
+                var entry = new JarEntry(item.getKey()); entry.setTime(0);
+                output.putNextEntry(entry); Files.copy(item.getValue(), output); output.closeEntry();
+            }
+        }
+        var dependency = new BinaryInput(new ClasspathEntry(ClasspathEntryKind.DEPENDENCY,
+                "fixture:multi-release:1", ContentDigest.sha256(Files.readAllBytes(archive))), archive);
+
+        var result = new JavaParserFrontend().analyze(TestInputs.request(Map.of("fixture/C.java",
+                "class C { void run(){ dep.Library.selected(); dep.Library.tooNew(); } }"), List.of(dependency)));
+
+        assertEquals(2, calls(result).size());
+        assertEquals(1, calls(result).stream().filter(call -> call.status() == SemanticStatus.RESOLVED).count());
+        assertEquals(1, calls(result).stream().filter(call -> call.status() == SemanticStatus.UNRESOLVED).count());
+    }
+    @Test void manifestClasspathIsExplicitlyDiagnosedWhileTheExactSuppliedClasspathRemainsAuthoritative() throws Exception {
+        Path compiled = compileClass("manifest-classpath", "package dep; public class Library { public static void hit(){} }");
+        Path archive = temp.resolve("manifest-classpath.jar");
+        var manifest = new Manifest();
+        manifest.getMainAttributes().put(Attributes.Name.MANIFEST_VERSION, "1.0");
+        manifest.getMainAttributes().put(Attributes.Name.CLASS_PATH, "unbound-neighbor.jar");
+        try (var output = new JarOutputStream(Files.newOutputStream(archive), manifest)) {
+            var entry = new JarEntry("dep/Library.class"); entry.setTime(0);
+            output.putNextEntry(entry); Files.copy(compiled, output); output.closeEntry();
+        }
+        var dependency = new BinaryInput(new ClasspathEntry(ClasspathEntryKind.DEPENDENCY,
+                "fixture:manifest-classpath:1", ContentDigest.sha256(Files.readAllBytes(archive))), archive);
+
+        var result = new JavaParserFrontend().analyze(TestInputs.request(Map.of("fixture/C.java",
+                "class C { void run(){ dep.Library.hit(); } }"), List.of(dependency)));
+
+        assertEquals(SemanticStatus.RESOLVED, calls(result).getFirst().status());
+        assertTrue(result.diagnostics().stream().anyMatch(diagnostic ->
+                diagnostic.code().equals("frontend.jar-classpath-unmodeled")
+                        && diagnostic.details().get("artifact").equals("fixture:manifest-classpath:1")));
+    }
+    @Test void missingSourceSpansRetainDistinctDeterministicAstProvenance() {
+        var unit = new com.github.javaparser.ast.CompilationUnit();
+        var body = unit.addClass("C").addMethod("run").createBody();
+        var first = new MethodCallExpr("hit");
+        var second = new MethodCallExpr("hit");
+        body.addStatement(first); body.addStatement(second);
+
+        var a = Extraction.missingSpanDiagnostic(first, new IllegalArgumentException());
+        var b = Extraction.missingSpanDiagnostic(second, new IllegalArgumentException());
+
+        assertNotEquals(a, b);
+        assertNotEquals(a.details().get("astPath"), b.details().get("astPath"));
+        assertEquals(a.details().get("astPath"),
+                Extraction.missingSpanDiagnostic(first, new IllegalArgumentException()).details().get("astPath"));
     }
     @Test void hostApplicationDependenciesNeverLeakIntoAnalysis() {
         var result = new JavaParserFrontend().analyze(TestInputs.request("class C { void run(){org.junit.jupiter.api.Assertions.assertTrue(true);} }"));

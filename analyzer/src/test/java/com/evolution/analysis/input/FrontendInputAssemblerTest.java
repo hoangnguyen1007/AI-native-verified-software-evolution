@@ -98,6 +98,28 @@ class FrontendInputAssemblerTest {
     }
 
     @Test
+    void nonFatalDescriptorWarningsAndTruncatedCyclesRemainVisibleWithoutWithholdingExactBinaries() {
+        Fixture fixture = fixture();
+        Manifest original = fixture.classpaths.manifests().getFirst();
+        List<Problem> qualifiers = List.of(
+                new Problem(Reason.POM_MODEL_WARNING, "demo:external:1",
+                        Requirement.ARTIFACT_POM, List.of()),
+                new Problem(Reason.DEPENDENCY_CYCLE, "demo:external:1@jar",
+                        Requirement.ARTIFACT_POM, List.of()));
+        Manifest qualified = Manifest.create(original.module(), original.sourceSet(), original.entries(),
+                original.reactorEntries(), original.decisions(), qualifiers);
+        ExactClasspathResult classpaths = ExactClasspathResult.create(fixture.classpathRequest.identity(),
+                new VersionedIdentifier("classpath.test", "1"), List.of(qualified), List.of(), List.of(), List.of());
+
+        FrontendAssemblyResult result = FrontendInputAssembler.assemble(
+                fixture.ownership, fixture.build, fixture.classpathRequest, classpaths, fixture.decoding,
+                fixture.platformResult, List.of(fixture.dependency), List.of(fixture.reactor), policy());
+
+        assertTrue(result.outcomes().getFirst().request().isPresent(),
+                () -> result.outcomes().getFirst().problems().toString());
+    }
+
+    @Test
     void withheldAssemblyNormalizesEveryProblemAndRetainsSourceSetScope() {
         Fixture fixture = fixture();
         FrontendAssemblyResult result = FrontendInputAssembler.assemble(

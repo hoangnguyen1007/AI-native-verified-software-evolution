@@ -20,7 +20,7 @@ import java.util.function.Supplier;
 
 /** Per-request state. Traversal order never enters identity or output ordering. */
 final class Extraction {
-    private static final VersionedIdentifier VERSION = new VersionedIdentifier("frontend.javaparser", "3.27.1-m3.7");
+    private static final VersionedIdentifier VERSION = new VersionedIdentifier("frontend.javaparser", "3.27.1-m3.8");
     private static final Derivation DIRECT = new Derivation(DerivationKind.DIRECT, new VersionedIdentifier("java.source", "1"), List.of());
     private final FrontendRequest request;
     private final ResolutionEnvironment environment;
@@ -50,7 +50,11 @@ final class Extraction {
         final SemanticStatus status; final String code;
         MappingFailure(SemanticStatus status, String code) { this.status = status; this.code = code; }
     }
-    Extraction(FrontendRequest request) { this.request = Objects.requireNonNull(request); environment = new ResolutionEnvironment(request); }
+    Extraction(FrontendRequest request) {
+        this.request = Objects.requireNonNull(request);
+        environment = new ResolutionEnvironment(request);
+        diagnostics.addAll(environment.diagnostics);
+    }
 
     FrontendResult run() {
         parse();
@@ -523,9 +527,9 @@ final class Extraction {
         observe(node, category, () -> { throw new MappingFailure(SemanticStatus.UNSUPPORTED, "java.category-unsupported"); }, () -> owner(node));
     }
     void observe(Node node, String category, Supplier<Entity> targetSupplier, Supplier<Entity> ownerSupplier) {
-        var unit = unit(node); Optional<SourceSpan> span;
+        var unit = unit(node); Optional<SourceSpan> span; RuntimeException spanFailure = null;
         try { span = Optional.of(unit.source.span(node)); }
-        catch (RuntimeException exception) { span = Optional.empty(); }
+        catch (RuntimeException exception) { span = Optional.empty(); spanFailure = exception; }
         Entity source = null, target = null; SemanticStatus status = SemanticStatus.RESOLVED;
         var local = new ArrayList<Diagnostic>();
         try { source = ownerSupplier.get(); target = targetSupplier.get(); }
@@ -537,7 +541,7 @@ final class Extraction {
             local.add(new Diagnostic(status == SemanticStatus.ERROR ? DiagnosticSeverity.ERROR : DiagnosticSeverity.WARNING,
                     status == SemanticStatus.ERROR ? "java.adapter-error" : "java.ambiguous", "Attribution did not produce a safely mapped fact", span, Map.of("exception", exception.getClass().getName())));
         }
-        if (span.isEmpty()) local.add(diagnostic("java.missing-span", SemanticStatus.ERROR, span));
+        if (span.isEmpty()) local.add(missingSpanDiagnostic(node, spanFailure));
         Optional<OccurrenceIdentity> mapped = Optional.empty();
         String reference = span.map(unit.source::slice).orElse("");
         if (source != null && span.isPresent() && status != SemanticStatus.AMBIGUOUS && (target != null || !category.equals("declares"))) {
@@ -558,5 +562,28 @@ final class Extraction {
     private static Diagnostic diagnostic(String code, SemanticStatus status, Optional<SourceSpan> span) {
         return new Diagnostic(status == SemanticStatus.ERROR ? DiagnosticSeverity.ERROR : DiagnosticSeverity.WARNING, code,
                 "Semantic observation requires additional evidence or support", span, Map.of());
+    }
+    static Diagnostic missingSpanDiagnostic(Node node, RuntimeException failure) {
+        return new Diagnostic(DiagnosticSeverity.ERROR, "java.missing-span",
+                "Semantic observation has no verified source coordinates; the deterministic AST path preserves its denominator entry",
+                Optional.empty(), Map.of("astPath", astPath(node), "nodeType", node.getClass().getName(),
+                        "failure", failure == null ? "unknown" : failure.getClass().getName()));
+    }
+    static String astPath(Node node) {
+        var indexes = new ArrayList<Integer>();
+        Node child = node;
+        while (child.getParentNode().isPresent()) {
+            Node parent = child.getParentNode().orElseThrow();
+            int index = -1;
+            var children = parent.getChildNodes();
+            for (int candidate = 0; candidate < children.size(); candidate++) {
+                if (children.get(candidate) == child) { index = candidate; break; }
+            }
+            if (index < 0) throw new IllegalArgumentException("AST parent does not own child");
+            indexes.add(index); child = parent;
+        }
+        Collections.reverse(indexes);
+        return child.getClass().getName() + indexes.stream().map(String::valueOf)
+                .collect(java.util.stream.Collectors.joining("/", "/", ""));
     }
 }

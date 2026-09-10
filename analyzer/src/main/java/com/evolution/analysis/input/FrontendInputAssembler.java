@@ -120,6 +120,8 @@ public final class FrontendInputAssembler {
             manifest.problems().stream()
                     .filter(problem -> problem.reason() != ExactClasspathResult.Reason.REACTOR_OUTPUT_NOT_ACQUIRED)
                     .filter(problem -> problem.reason() != ExactClasspathResult.Reason.UNSUPPORTED_PROFILE_ACTIVATION)
+                    .filter(problem -> problem.reason() != ExactClasspathResult.Reason.POM_MODEL_WARNING)
+                    .filter(problem -> problem.reason() != ExactClasspathResult.Reason.DEPENDENCY_CYCLE)
                     .forEach(problem -> add(problems, FrontendAssemblyResult.Reason.CLASSPATH_PROBLEM,
                             problem.reason() + ":" + problem.subject(), FrontendAssemblyResult.Requirement.EXACT_CLASSPATH));
             if (hasExtraDependency || hasExtraReactor) add(problems,

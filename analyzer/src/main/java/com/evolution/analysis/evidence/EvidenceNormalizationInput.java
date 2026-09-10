@@ -3,6 +3,7 @@ package com.evolution.analysis.evidence;
 import com.evolution.analysis.acquisition.*;
 import com.evolution.analysis.buildmodel.BuildModelResult;
 import com.evolution.analysis.classpath.ExactClasspathResult;
+import com.evolution.analysis.dependency.DependencyAcquisitionResult;
 import com.evolution.analysis.contract.common.ContractChecks;
 import com.evolution.analysis.frontend.FrontendResult;
 import com.evolution.analysis.input.*;
@@ -14,6 +15,7 @@ public record EvidenceNormalizationInput(
         List<BuildModelResult> buildModels,
         List<CandidateSourceOwnership> sourceOwnerships,
         List<ExactClasspathResult> classpaths,
+        List<DependencyAcquisitionResult> dependencyAcquisitions,
         List<SourceDecodingResult> sourceDecodings,
         List<PlatformSymbolResult> platformResults,
         List<FrontendAssemblyResult> frontendAssemblies,
@@ -27,6 +29,7 @@ public record EvidenceNormalizationInput(
         buildModels = copy(buildModels, "build models");
         sourceOwnerships = copy(sourceOwnerships, "source ownerships");
         classpaths = copy(classpaths, "classpath results");
+        dependencyAcquisitions = copy(dependencyAcquisitions, "dependency acquisitions");
         sourceDecodings = copy(sourceDecodings, "source decodings");
         platformResults = copy(platformResults, "platform results");
         frontendAssemblies = copy(frontendAssemblies, "frontend assemblies");
@@ -49,6 +52,7 @@ public record EvidenceNormalizationInput(
         private List<BuildModelResult> buildModels = List.of();
         private List<CandidateSourceOwnership> sourceOwnerships = List.of();
         private List<ExactClasspathResult> classpaths = List.of();
+        private List<DependencyAcquisitionResult> dependencyAcquisitions = List.of();
         private List<SourceDecodingResult> sourceDecodings = List.of();
         private List<PlatformSymbolResult> platformResults = List.of();
         private List<FrontendAssemblyResult> frontendAssemblies = List.of();
@@ -61,6 +65,7 @@ public record EvidenceNormalizationInput(
         public Builder buildModels(List<BuildModelResult> values) { buildModels = values; return this; }
         public Builder sourceOwnerships(List<CandidateSourceOwnership> values) { sourceOwnerships = values; return this; }
         public Builder classpaths(List<ExactClasspathResult> values) { classpaths = values; return this; }
+        public Builder dependencyAcquisitions(List<DependencyAcquisitionResult> values) { dependencyAcquisitions = values; return this; }
         public Builder sourceDecodings(List<SourceDecodingResult> values) { sourceDecodings = values; return this; }
         public Builder platformResults(List<PlatformSymbolResult> values) { platformResults = values; return this; }
         public Builder frontendAssemblies(List<FrontendAssemblyResult> values) { frontendAssemblies = values; return this; }
@@ -71,7 +76,7 @@ public record EvidenceNormalizationInput(
 
         public EvidenceNormalizationInput build() {
             return new EvidenceNormalizationInput(repositoryAcquisitions, buildModels, sourceOwnerships,
-                    classpaths, sourceDecodings, platformResults, frontendAssemblies, frontendResults,
+                    classpaths, dependencyAcquisitions, sourceDecodings, platformResults, frontendAssemblies, frontendResults,
                     additionalAttempts, conflicts, resolutions);
         }
     }

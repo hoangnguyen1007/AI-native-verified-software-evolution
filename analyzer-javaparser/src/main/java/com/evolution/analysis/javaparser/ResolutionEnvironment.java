@@ -3,15 +3,19 @@ package com.evolution.analysis.javaparser;
 import com.evolution.analysis.contract.analysis.ClasspathEntry;
 import com.evolution.analysis.contract.common.ContentDigest;
 import com.evolution.analysis.contract.identity.EntityScope;
+import com.evolution.analysis.contract.semantic.Diagnostic;
+import com.evolution.analysis.contract.semantic.DiagnosticSeverity;
 import com.evolution.analysis.contract.semantic.EntityOrigin;
 import com.evolution.analysis.frontend.*;
 import com.github.javaparser.symbolsolver.resolution.typesolvers.*;
 import java.io.*;
 import java.nio.file.*;
 import java.util.*;
+import java.util.jar.Attributes;
 import java.util.jar.JarInputStream;
 import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;
+import java.util.jar.Manifest;
 import java.util.zip.ZipFile;
 
 /** Sources, platform loader and verified JAR snapshots only; no application classloader or directory scanning. */
@@ -19,6 +23,7 @@ final class ResolutionEnvironment {
     final MemoryTypeSolver project = new MemoryTypeSolver();
     final CombinedTypeSolver platform = new CombinedTypeSolver();
     final CombinedTypeSolver solver = new CombinedTypeSolver(project, platform);
+    final Set<Diagnostic> diagnostics = new TreeSet<>();
     private final ClasspathEntry platformEntry;
     private final List<Artifact> artifacts = new ArrayList<>();
     private record Artifact(BinaryInput input, JarTypeSolver solver) {}
@@ -45,8 +50,7 @@ final class ResolutionEnvironment {
                         platform.add(new ClassLoaderTypeSolver(ClassLoader.getPlatformClassLoader()));
                     }
                     case JAR -> {
-                        validateJar(bytes);
-                        platform.add(new JarTypeSolver(new ByteArrayInputStream(bytes)));
+                        platform.add(jarSolver(bytes, request.platform().release(), artifact.logicalName()));
                     }
                     case JMOD -> platform.add(jmodSolver(real));
                     case CT_SYM -> platform.add(ctSymSolver(real, request.platform().release()));
@@ -57,8 +61,7 @@ final class ResolutionEnvironment {
                 if (!paths.add(input.path().toRealPath())) throw new FrontendInputException("frontend.duplicate-binary", "Aliased binary inputs are not allowed");
                 byte[] bytes = Files.readAllBytes(input.path());
                 verify(input.entry(), bytes);
-                validateJar(bytes);
-                var jar = new JarTypeSolver(new ByteArrayInputStream(bytes));
+                var jar = jarSolver(bytes, request.platform().release(), input.entry().logicalName());
                 artifacts.add(new Artifact(input, jar)); solver.add(jar);
             }
         } catch (IOException exception) {
@@ -130,18 +133,84 @@ final class ResolutionEnvironment {
         if (release >= 10 && release <= 35) return Character.toString((char) ('A' + release - 10));
         return null;
     }
-    private static void validateJar(byte[] bytes) throws IOException {
-        if (bytes.length < 4 || bytes[0] != 'P' || bytes[1] != 'K') throw new FrontendInputException("frontend.jar-format", "Dependency is not a JAR archive");
+    private record PhysicalJarEntry(String name, byte[] bytes) {}
+    private record SelectedJarEntry(int version, byte[] bytes) {}
+    private record NormalizedJar(byte[] bytes, Optional<String> manifestClasspath) {}
+
+    private JarTypeSolver jarSolver(byte[] bytes, int targetRelease, String logicalName) throws IOException {
+        var normalized = normalizeJar(bytes, targetRelease);
+        normalized.manifestClasspath().ifPresent(classpath -> diagnostics.add(new Diagnostic(
+                DiagnosticSeverity.WARNING, "frontend.jar-classpath-unmodeled",
+                "JAR manifest Class-Path is recorded but not expanded; the exact supplied classpath remains authoritative",
+                Optional.empty(), Map.of("artifact", logicalName, "classPathSha256",
+                        ContentDigest.sha256Utf8(classpath).value()))));
+        return new JarTypeSolver(new ByteArrayInputStream(normalized.bytes()));
+    }
+
+    /** Materializes the exact target-release class view so SymbolSolver never guesses MR-JAR selection. */
+    private static NormalizedJar normalizeJar(byte[] bytes, int targetRelease) throws IOException {
+        if (bytes.length < 4 || bytes[0] != 'P' || bytes[1] != 'K' || bytes[2] != 3 || bytes[3] != 4)
+            throw new FrontendInputException("frontend.jar-format", "Dependency is not a JAR archive");
+        var physical = new ArrayList<PhysicalJarEntry>();
+        var seen = new HashSet<String>();
+        Manifest manifest;
+        long expandedBytes = 0;
         try (var jar = new JarInputStream(new ByteArrayInputStream(bytes))) {
-            var manifest = jar.getManifest();
-            if (manifest != null && manifest.getMainAttributes().getValue("Class-Path") != null)
-                throw new FrontendInputException("frontend.jar-classpath", "JAR manifest classpaths require an explicit supported input plan");
-            var seen = new HashSet<String>();
+            manifest = jar.getManifest();
+            if (manifest != null) seen.add("META-INF/MANIFEST.MF");
             for (var entry = jar.getNextJarEntry(); entry != null; entry = jar.getNextJarEntry()) {
-                if (!seen.add(entry.getName())) throw new FrontendInputException("frontend.jar-duplicate", "Duplicate JAR entries are unsupported");
-                if (entry.getName().startsWith("META-INF/versions/")) throw new FrontendInputException("frontend.multi-release", "Multi-release JAR views are not supported by this slice");
+                if (!seen.add(entry.getName()))
+                    throw new FrontendInputException("frontend.jar-duplicate", "Duplicate JAR entries are unsupported");
+                if (entry.isDirectory()) continue;
+                byte[] content = jar.readNBytes(100_000_001);
+                if (content.length > 100_000_000)
+                    throw new FrontendInputException("frontend.jar-size", "A JAR entry exceeds the bounded class-view limit");
+                expandedBytes += content.length;
+                if (expandedBytes > 1_000_000_000L || physical.size() >= 1_000_000)
+                    throw new FrontendInputException("frontend.jar-size", "JAR expansion exceeds the bounded class-view limit");
+                if (entry.getName().equalsIgnoreCase("META-INF/MANIFEST.MF")) {
+                    if (manifest != null)
+                        throw new FrontendInputException("frontend.jar-duplicate", "Duplicate JAR manifests are unsupported");
+                    manifest = new Manifest(new ByteArrayInputStream(content));
+                } else {
+                    physical.add(new PhysicalJarEntry(entry.getName(), content));
+                }
             }
         }
+        String manifestClasspath = manifest == null ? null
+                : manifest.getMainAttributes().getValue(Attributes.Name.CLASS_PATH);
+        boolean multiRelease = manifest != null && Boolean.parseBoolean(
+                manifest.getMainAttributes().getValue("Multi-Release"));
+        var selected = new TreeMap<String, SelectedJarEntry>();
+        for (var entry : physical) {
+            String name = entry.name();
+            int version = 0;
+            if (name.startsWith("META-INF/versions/")) {
+                if (!multiRelease) continue;
+                String remainder = name.substring("META-INF/versions/".length());
+                int separator = remainder.indexOf('/');
+                if (separator < 1) continue;
+                try {
+                    version = Integer.parseInt(remainder.substring(0, separator));
+                } catch (NumberFormatException ignored) {
+                    continue;
+                }
+                name = remainder.substring(separator + 1);
+                if (version < 9 || version > targetRelease || name.startsWith("META-INF/")) continue;
+            }
+            if (!name.endsWith(".class")) continue;
+            var current = selected.get(name);
+            if (current == null || version > current.version())
+                selected.put(name, new SelectedJarEntry(version, entry.bytes()));
+        }
+        var normalized = new ByteArrayOutputStream();
+        try (var output = new JarOutputStream(normalized)) {
+            for (var entry : selected.entrySet()) {
+                var target = new JarEntry(entry.getKey()); target.setTime(0);
+                output.putNextEntry(target); output.write(entry.getValue().bytes()); output.closeEntry();
+            }
+        }
+        return new NormalizedJar(normalized.toByteArray(), Optional.ofNullable(manifestClasspath));
     }
     Origin origin(String qualifiedName) {
         if (platform.tryToSolveType(qualifiedName).isSolved()) return origin(EntityOrigin.JDK, platformEntry);

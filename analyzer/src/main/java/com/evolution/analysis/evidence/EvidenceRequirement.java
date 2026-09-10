@@ -17,7 +17,7 @@ public record EvidenceRequirement(
         BYTECODE, CONFIGURATION, ISOLATED_BUILD_OUTPUT, RUNTIME_OBSERVATION, ALTERNATE_FRONTEND,
         SOURCE_OWNERSHIP, DECODED_SOURCE, EXACT_CLASSPATH, REACTOR_OUTPUT
     }
-    public enum AuthorizationClass { PASSIVE, LOCAL_READ, NETWORK, ISOLATED_EXECUTION, RUNTIME_ACCESS }
+    public enum AuthorizationClass { PASSIVE, LOCAL_READ, LOCAL_WRITE, NETWORK, ISOLATED_EXECUTION, RUNTIME_ACCESS }
 
     public EvidenceRequirement {
         ContractChecks.notNull(kind, "evidence requirement kind");

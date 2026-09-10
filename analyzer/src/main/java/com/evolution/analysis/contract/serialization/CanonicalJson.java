@@ -6,6 +6,7 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.RecordComponent;
 import java.math.BigDecimal;
 import java.math.BigInteger;
+import java.net.URI;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -61,6 +62,8 @@ public final class CanonicalJson {
             appendString(enumValue.name(), output);
         } else if (value instanceof Instant instant) {
             appendString(instant.toString(), output);
+        } else if (value instanceof URI uri) {
+            appendString(uri.toASCIIString(), output);
         } else if (value instanceof Map<?, ?> map) {
             appendMap(map, output);
         } else if (value instanceof Set<?> set) {

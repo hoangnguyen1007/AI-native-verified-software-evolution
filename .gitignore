@@ -45,7 +45,7 @@ coverage/
 **/.venv/
 **/venv/
 **/env/
-benchmarks/temp_repos/
+benchmarks/temp_repo*/
 benchmarks/results/raw_dumps/
 
 

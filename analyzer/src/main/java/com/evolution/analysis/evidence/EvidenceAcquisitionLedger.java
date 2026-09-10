@@ -18,7 +18,7 @@ public record EvidenceAcquisitionLedger(
         List<GapResolutionRecord> resolutions) {
     public static final String SCHEMA = "evidence-acquisition-ledger-v1";
     public static final VersionedIdentifier NORMALIZER =
-            new VersionedIdentifier("evidence.gap-normalizer", "m3.6");
+            new VersionedIdentifier("evidence.gap-normalizer", "m3.8");
 
     public EvidenceAcquisitionLedger {
         ContractChecks.notNull(identity, "evidence ledger identity");

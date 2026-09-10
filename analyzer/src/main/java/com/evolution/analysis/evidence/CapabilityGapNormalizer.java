@@ -3,6 +3,7 @@ package com.evolution.analysis.evidence;
 import com.evolution.analysis.acquisition.*;
 import com.evolution.analysis.buildmodel.*;
 import com.evolution.analysis.classpath.ExactClasspathResult;
+import com.evolution.analysis.dependency.*;
 import com.evolution.analysis.contract.common.*;
 import com.evolution.analysis.contract.semantic.Diagnostic;
 import com.evolution.analysis.contract.serialization.CanonicalJson;
@@ -24,6 +25,7 @@ public final class CapabilityGapNormalizer {
         input.repositoryAcquisitions().forEach(value -> normalizeAttempts(context, value, attempts));
         input.buildModels().forEach(value -> normalizeAttempts(context, value, attempts));
         input.classpaths().forEach(value -> normalizeAttempts(context, value, attempts));
+        input.dependencyAcquisitions().forEach(value -> normalizeAttempts(context, value, attempts));
         input.platformResults().forEach(value -> normalizeAttempts(context, value, attempts));
 
         ArrayList<CapabilityGapRecord> gaps = new ArrayList<>();
@@ -31,6 +33,7 @@ public final class CapabilityGapNormalizer {
         input.buildModels().forEach(value -> normalize(context, value, attempts, gaps));
         input.sourceOwnerships().forEach(value -> normalize(context, value, attempts, gaps));
         input.classpaths().forEach(value -> normalize(context, value, attempts, gaps));
+        input.dependencyAcquisitions().forEach(value -> normalize(context, value, attempts, gaps));
         input.sourceDecodings().forEach(value -> normalize(context, value, attempts, gaps));
         input.platformResults().forEach(value -> normalize(context, value, attempts, gaps));
         input.frontendAssemblies().forEach(value -> normalize(context, value, attempts, gaps));
@@ -107,6 +110,46 @@ public final class CapabilityGapNormalizer {
                     "build.acquire-dependency-artifact", EvidenceRequirement.AuthorizationClass.LOCAL_READ, subject);
             output.add(attempt(context, result.provider(), observation, subject, requirement,
                     List.of(result.requestIdentity()), map(attempt.outcome()), attempt.contentDigest()));
+        }
+    }
+
+    private static void normalizeAttempts(EvidenceContext context, DependencyAcquisitionResult result,
+            List<AcquisitionAttemptRecord> output) {
+        for (DependencyAcquisitionResult.Attempt attempt : result.attempts()) {
+            EvidenceSubject subject = subject(EvidenceSubject.Kind.ARTIFACT, attempt.coordinate().notation());
+            ProviderObservationReference observation = reference(result.provider(),
+                    "build.dependency-acquisition-attempt", result.identity(), attempt);
+            boolean remote = attempt.origin() == DependencyAcquisitionResult.Origin.REMOTE_REPOSITORY;
+            EvidenceRequirement.Kind kind = attempt.coordinate().extension().equals("pom")
+                    ? EvidenceRequirement.Kind.BUILD_MODEL : EvidenceRequirement.Kind.DEPENDENCY_ARTIFACT;
+            EvidenceRequirement requirement = requirement(kind,
+                    kind == EvidenceRequirement.Kind.BUILD_MODEL
+                            ? "build.acquire-artifact-pom" : "build.acquire-dependency-artifact",
+                    remote ? EvidenceRequirement.AuthorizationClass.NETWORK
+                            : EvidenceRequirement.AuthorizationClass.LOCAL_READ,
+                    subject);
+            AcquisitionAttemptRecord.Outcome outcome = map(attempt.outcome());
+            List<AcquisitionAttemptRecord.OutputArtifact> artifacts = attempt.contentDigest().stream()
+                    .map(value -> new AcquisitionAttemptRecord.OutputArtifact(
+                            attempt.coordinate().repositoryPath(), value)).toList();
+            Map<String, Long> limits = remote ? Map.of(
+                    "connectTimeoutMillis", (long) result.policy().connectTimeoutMillis(),
+                    "readTimeoutMillis", (long) result.policy().readTimeoutMillis(),
+                    "maxRetries", (long) result.policy().maxRetries(),
+                    "maxArtifactBytes", result.policy().maxArtifactBytes(),
+                    "maxTotalBytes", result.policy().maxTotalBytes()) : Map.of(
+                    "maxArtifactBytes", result.policy().maxArtifactBytes(),
+                    "maxTotalBytes", result.policy().maxTotalBytes());
+            output.add(AcquisitionAttemptRecord.create(context, result.provider(), observation, subject,
+                    requirement, List.of(result.requestIdentity()), Optional.empty(),
+                    AcquisitionAttemptRecord.TrustDecision.UNTRUSTED_INPUT,
+                    outcome == AcquisitionAttemptRecord.Outcome.DENIED
+                            ? AcquisitionAttemptRecord.PermissionDecision.DENIED
+                            : remote ? AcquisitionAttemptRecord.PermissionDecision.AUTHORIZED
+                                    : AcquisitionAttemptRecord.PermissionDecision.NOT_RECORDED,
+                    limits, Optional.empty(), Optional.empty(), outcome, artifacts, List.of(),
+                    remote && outcome == AcquisitionAttemptRecord.Outcome.SUCCEEDED
+                            ? List.of("write-selected-cache") : List.of("none")));
         }
     }
 
@@ -191,6 +234,25 @@ public final class CapabilityGapNormalizer {
                         CapabilityGapCatalog.entryFor(problem.reason()), requirement(problem.requirement(), subject),
                         subject, List.of(), List.of(), attempts, gaps);
             }
+        }
+    }
+
+    private static void normalize(EvidenceContext context, DependencyAcquisitionResult result,
+            List<AcquisitionAttemptRecord> attempts, List<CapabilityGapRecord> gaps) {
+        for (DependencyAcquisitionResult.Outcome outcome : result.outcomes()) {
+            if (outcome.status() != DependencyAcquisitionResult.Status.FAILED) continue;
+            DependencyAcquisitionResult.FailureReason reason = outcome.failureReason().orElseThrow();
+            EvidenceSubject subject = subject(EvidenceSubject.Kind.ARTIFACT,
+                    outcome.requirement().coordinate().notation());
+            CapabilityGapCatalog.Entry entry = CapabilityGapCatalog.entryFor(reason);
+            EvidenceRequirement.Kind kind = outcome.requirement().coordinate().extension().equals("pom")
+                    ? EvidenceRequirement.Kind.BUILD_MODEL : EvidenceRequirement.Kind.DEPENDENCY_ARTIFACT;
+            EvidenceRequirement requirement = requirement(kind,
+                    kind == EvidenceRequirement.Kind.BUILD_MODEL
+                            ? "build.acquire-artifact-pom" : "build.acquire-dependency-artifact",
+                    entry.authorizationClass(), subject);
+            addGap(context, result.provider(), result.identity(), "build.dependency-acquisition-problem",
+                    outcome, entry, requirement, subject, List.of(), List.of(), attempts, gaps);
         }
     }
 
@@ -457,6 +519,16 @@ public final class CapabilityGapNormalizer {
     }
 
     private static AcquisitionAttemptRecord.Outcome map(ExactClasspathResult.AttemptOutcome outcome) {
+        return switch (outcome) {
+            case SUCCEEDED -> AcquisitionAttemptRecord.Outcome.SUCCEEDED;
+            case FAILED -> AcquisitionAttemptRecord.Outcome.FAILED;
+            case LIMIT_EXCEEDED -> AcquisitionAttemptRecord.Outcome.LIMIT_EXCEEDED;
+            case DENIED -> AcquisitionAttemptRecord.Outcome.DENIED;
+            case UNAVAILABLE -> AcquisitionAttemptRecord.Outcome.UNAVAILABLE;
+        };
+    }
+
+    private static AcquisitionAttemptRecord.Outcome map(DependencyAcquisitionResult.AttemptOutcome outcome) {
         return switch (outcome) {
             case SUCCEEDED -> AcquisitionAttemptRecord.Outcome.SUCCEEDED;
             case FAILED -> AcquisitionAttemptRecord.Outcome.FAILED;

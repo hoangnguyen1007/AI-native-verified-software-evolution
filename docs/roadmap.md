@@ -12,7 +12,7 @@ The approved SE121 North Star is **Track A + Track B**:
 
 The roadmap is tech-first. Ground truth, benchmarks, evidence, and reproducibility remain mandatory engineering verification. Publication and extensive defense packaging are later/optional activities.
 
-On 2026-09-09, [ADR-004](decisions/ADR-004-staged-conditional-architecture-semantics.md) accepted bounded phase/order-aware conditional architecture semantics as the M4+ direction. The decision strengthens Track A+B but does not change the active M3.8 task or advance G2/G3.
+On 2026-09-09, [ADR-004](decisions/ADR-004-staged-conditional-architecture-semantics.md) accepted bounded phase/order-aware conditional architecture semantics as the M4+ direction. The decision strengthens Track A+B but does not bypass the independent G2 semantic-adjudication gate or advance G2/G3.
 
 Tracks and milestones define delivery order and acceptance claims, not permanent capability ceilings. Architecture work must preserve safe extension paths for deeper repository evidence even when the corresponding provider is not an SE121 deliverable.
 
@@ -131,7 +131,7 @@ Exit gate G1: contract/invariant/golden tests define deterministic identity and 
 
 ### M2 - Semantic Frontend and Ground-Truth Expansion
 
-**Status: COMPLETE (Frontend Implementation Verified).** Implemented, verified with 98 root tests, and confirmed on whole-project multi-file analysis (43 files, 1,488 occurrences). All 18 relationship families are implemented. Gate G2 boundary remains open for M3 build-model intelligence.
+**Status: COMPLETE (Frontend Implementation Verified).** Implemented, verified with 98 root tests at its checkpoint, and confirmed on whole-project multi-file analysis (43 files, 1,488 occurrences). All 18 relationship families are implemented. The combined frontend/build-model Gate G2 remains withheld pending independent semantic adjudication after completed M3 implementation.
 
 Deliver the JavaParser adapter and architecture-relevant relationship set: declarations, inheritance, implementations, permits, type uses, calls, constructor calls, field access, method references, parameters, returns, fields, throws, annotations, generics, and relevant modern Java constructs.
 
@@ -139,7 +139,7 @@ Ground truth distinguishes attempted, correct, incorrect, unresolved, ambiguous,
 
 ### M3 - Multi-Module Workspace and Build-Model Intelligence
 
-**Status: M3.1–M3.7 DELIVERED; M3.8 COMPLETION SLICE ACTIVE; G2 WITHHELD PENDING DEPENDENCY ARTIFACTS.** Progressive external parent/BOM POM acquisition, qualified inactive profile baselines and cross-release `ct.sym` are implemented and verified (197 root tests pass). Spring PetClinic execution successfully resolves external Spring Boot parent and imported BOMs, and recovers complete source ownership/decoding for all 50 Java files. M3.8 completes Milestone M3 by providing bounded dependency artifact (JAR) acquisition into an isolated or selected local cache (`dependency.artifact-cache:m3.8`), admitting full compile classpaths so source sets reach the JavaParser frontend and produce real semantic metrics to advance Gate G2.
+**Status: M3.1–M3.8 DELIVERED; M3 IMPLEMENTATION COMPLETE; G2 WITHHELD PENDING INDEPENDENT SEMANTIC ADJUDICATION.** The full reactor passes 221 tests. M3.8 adds neutral acquisition contracts, `dependency.artifact-cache:m3.8`, and the bounded `dependency.maven-fixpoint:3.9.16-m3.8` resolver. The official Spring PetClinic checkpoint ran twice from separate empty caches: each run accounted for 629 requested files, including 266 acquired JARs and 363 acquired/verified POM descriptors recorded as `SKIPPED_POM` because they are not frontend binaries; consumed 171,800,181 bytes; assembled both source sets; analyzed all 50 Java files; and emitted 4,250 frontend observations. The byte-identical canonical outputs have digest `sha256:8806702323d9bc307aef7795bee0b10bdf15e43da65353f75015517b46eb2796`. This closes the M3 implementation slice, not G2: independent semantic labels and adjudication are still required.
 
 Deliver safe understanding of Maven parent POMs, modules, source/generated-source roots where safely discoverable, dependency management, BOMs, dependency scopes, module dependencies, and exact classpath manifests. Build discovery is a provider family rather than a requirement that repositories conform to Maven: POM-less, Gradle and later build shapes use neutral source-plan/build adapters as evidence justifies them. The formal specification is maintained in the provisional [M3 Workspace and Build-Model Intelligence Contract](architecture/m3-workspace-build-model.md). Missing generated sources or effective-model inputs remain explicit acquisition gaps rather than disappearing from coverage.
 
@@ -328,7 +328,7 @@ Estimates may be introduced locally only after a wave has an approved denominato
 | G-1 — PASSED | M-1 operating system approved and committed; M0 authorized |
 | G0 — PASSED | Foundation builds reproducibly in the documented Windows/Oracle and Docker Linux/Temurin environments |
 | G1 — PASSED | Parser-neutral semantic/identity/metric/assessment contracts are stable and deterministic |
-| G2 | Frontend, multi-module build model and acquisition-gap accounting meet ground truth |
+| G2 — WITHHELD | M3.1–M3.8 build/acquisition implementation and deterministic real-repository execution are complete; independent semantic labels and adjudication must establish frontend correctness before acceptance |
 | M4-R0 | Condition/configuration identities, v1 semantics fragment, oracle, baselines, corpus protocol and limits are approved before production M4 semantics |
 | G3 | Bounded phase/order-aware Spring inference meets truth-region, witness, version and closed-taxonomy evidence criteria |
 | G4 | Canonical conditional graph/metric/query invariants pass, including infeasible-path rejection |
@@ -376,8 +376,8 @@ Paper readiness, venue selection, extensive artifact badging, and elaborate defe
 
 ## Immediate Sequence
 
-1. Preserve completed M0–M2 and delivered M3.1–M3.7 contracts/evidence.
-2. Complete the active M3.8 bounded dependency artifact acquisition slice and the full G2 review; the research redirection does not bypass this gate.
+1. Preserve completed M0–M2 and delivered M3.1–M3.8 contracts/evidence.
+2. Independently label and adjudicate the preserved Spring PetClinic semantic denominator, repair only evidence-backed defects, and obtain the human G2 decision; the research redirection does not bypass this gate.
 3. After G2, execute M4-R0 as a research/architecture gate before writing production Spring semantics.
 4. Implement the smallest approved conditional fragment through M4A–M4D with exhaustive oracle fixtures and closed denominators.
 5. Run M4E baselines/real-repository evaluation and obtain G3 acceptance before treating conditional Spring facts as stable M5/M6 inputs.

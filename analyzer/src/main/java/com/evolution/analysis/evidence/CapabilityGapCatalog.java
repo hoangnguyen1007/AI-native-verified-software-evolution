@@ -5,6 +5,7 @@ import com.evolution.analysis.acquisition.RepositoryAcquisitionResult;
 import com.evolution.analysis.buildmodel.BuildModelResult;
 import com.evolution.analysis.buildmodel.SourcePlanModel;
 import com.evolution.analysis.classpath.ExactClasspathResult;
+import com.evolution.analysis.dependency.DependencyAcquisitionResult;
 import com.evolution.analysis.contract.common.*;
 import com.evolution.analysis.contract.semantic.SemanticStatus;
 import com.evolution.analysis.frontend.*;
@@ -12,13 +13,13 @@ import com.evolution.analysis.input.*;
 import java.util.List;
 
 /**
- * Closed M3.6 mapping from every currently registered degraded M2/M3 outcome to stable gap semantics.
+ * Versioned mapping from every currently registered degraded M2/M3 outcome to stable gap semantics.
  * Requirement fields are reason-only fallbacks. When an original provider observation carries a typed
  * requirement, {@link CapabilityGapNormalizer} preserves that more specific requirement instead.
  */
 public final class CapabilityGapCatalog {
     public static final VersionedIdentifier CATALOG =
-            new VersionedIdentifier("evidence.capability-gap-catalog", "m3.6-v1");
+            new VersionedIdentifier("evidence.capability-gap-catalog", "m3.8-v2");
     private static final String SATISFACTION = "Evidence establishes or narrows the requested fact.";
 
     private CapabilityGapCatalog() {}
@@ -134,6 +135,26 @@ public final class CapabilityGapCatalog {
             default -> EvidenceRequirement.AuthorizationClass.PASSIVE;
         };
         return entry(category, reason.name(), kind, question(kind), auth,
+                AffectedOutput.Kind.FRONTEND_INPUT, "frontend.input");
+    }
+
+    public static Entry entryFor(DependencyAcquisitionResult.FailureReason reason) {
+        String category = switch (reason) {
+            case INVALID_POM -> "build.pom";
+            case SNAPSHOT_UNSUPPORTED -> "build.dependency";
+            default -> "build.artifact-acquisition";
+        };
+        EvidenceRequirement.AuthorizationClass authorization = switch (reason) {
+            case CACHE_ROOT_NOT_FOUND, CACHE_ROOT_NOT_DIRECTORY, CACHE_ROOT_SYMBOLIC_LINK,
+                    CACHE_ROOT_READ_FAILED, PATH_OUTSIDE_CACHE, SYMBOLIC_LINK, NON_REGULAR_ARTIFACT,
+                    CACHE_READ_FAILED, CACHE_CHANGED_DURING_READ, CORRUPTED_CACHE ->
+                    EvidenceRequirement.AuthorizationClass.LOCAL_READ;
+            case CACHE_WRITE_FAILED -> EvidenceRequirement.AuthorizationClass.LOCAL_WRITE;
+            case SNAPSHOT_UNSUPPORTED -> EvidenceRequirement.AuthorizationClass.PASSIVE;
+            default -> EvidenceRequirement.AuthorizationClass.NETWORK;
+        };
+        return entry(category, reason.name(), EvidenceRequirement.Kind.DEPENDENCY_ARTIFACT,
+                "build.acquire-dependency-artifact", authorization,
                 AffectedOutput.Kind.FRONTEND_INPUT, "frontend.input");
     }
 
