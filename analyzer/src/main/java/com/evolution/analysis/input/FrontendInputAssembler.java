@@ -100,6 +100,7 @@ public final class FrontendInputAssembler {
             }
 
             Map<Integer, BinaryInput> ordered = new TreeMap<>();
+            List<ReactorSourceInput> reactorSources = new ArrayList<>();
             for (ExactClasspathResult.Entry entry : manifest.entries()) {
                 BinaryInput input = dependencies.get(entry.classpathEntry());
                 if (input == null) add(problems, FrontendAssemblyResult.Reason.MISSING_DEPENDENCY_BINARY,
@@ -109,8 +110,10 @@ public final class FrontendInputAssembler {
             for (ExactClasspathResult.ReactorEntry entry : manifest.reactorEntries()) {
                 ReactorOutputInput output = reactor.get(reactorKey(entry.module(), entry.targetSourceSet()));
                 if (output == null) {
-                    add(problems, FrontendAssemblyResult.Reason.MISSING_REACTOR_OUTPUT,
-                            entry.coordinate().notation(), FrontendAssemblyResult.Requirement.REACTOR_OUTPUT);
+                    reactorSource(entry, modules, ownership, decoding).ifPresentOrElse(
+                            reactorSources::add,
+                            () -> add(problems, FrontendAssemblyResult.Reason.MISSING_REACTOR_OUTPUT,
+                                    entry.coordinate().notation(), FrontendAssemblyResult.Requirement.REACTOR_OUTPUT));
                 } else if (entry.outputDirectory().isEmpty()
                         || !entry.outputDirectory().orElseThrow().equals(output.outputDirectory())) {
                     add(problems, FrontendAssemblyResult.Reason.REACTOR_OUTPUT_MISMATCH,
@@ -141,14 +144,14 @@ public final class FrontendInputAssembler {
             List<com.evolution.analysis.contract.source.SourceDocument> documents = sources.stream()
                     .map(SourceInput::document).toList();
             Map<String, String> options = FrontendRequest.options(frontendPlan, manifest.module(), classification,
-                    documents, platform.orElseThrow());
+                    documents, platform.orElseThrow(), reactorSources);
             AnalysisManifest analysisManifest = AnalysisManifest.create(policy.manifestVersion(), decoding.snapshot(),
                     buildModel.modules().stream().map(BuildModelResult.ModuleModel::module).toList(),
                     concat(platform.orElseThrow().entry(), ordered.values()),
                     AnalysisConfiguration.create(policy.configurationSchema(), options),
                     policy.analyzer(), policy.ruleSet(), policy.graphSchema());
             FrontendRequest request = new FrontendRequest(analysisManifest, manifest.module(), classification,
-                    frontendPlan, sources, platform.orElseThrow(), List.copyOf(ordered.values()));
+                    frontendPlan, sources, platform.orElseThrow(), List.copyOf(ordered.values()), reactorSources);
             results.add(new FrontendAssemblyResult.Outcome(manifest.module(), manifest.sourceSet(),
                     FrontendAssemblyResult.Status.ASSEMBLED, Optional.of(request), List.of()));
         }
@@ -165,6 +168,44 @@ public final class FrontendInputAssembler {
                 "dependencies", dependencyViews,
                 "reactorOutputs", reactorViews, "policy", policy)));
         return FrontendAssemblyResult.create(inputIdentity, results);
+    }
+
+    private static Optional<ReactorSourceInput> reactorSource(
+            ExactClasspathResult.ReactorEntry entry,
+            Map<ModuleIdentity, BuildModelResult.ModuleModel> modules,
+            CandidateSourceOwnership ownership,
+            SourceDecodingResult decoding) {
+        BuildModelResult.ModuleModel module = modules.get(entry.module());
+        Optional<SourcePlanModel.SourceSetPlan> plan = sourcePlan(module, entry.targetSourceSet());
+        if (plan.isEmpty() || plan.orElseThrow().sourceRoots().stream().noneMatch(root -> root.value().isPresent())) {
+            return Optional.empty();
+        }
+        Set<SourcePlanModel.Gap> incomplete = Set.of(
+                SourcePlanModel.Gap.GENERATED_SOURCES_NOT_ACQUIRED,
+                SourcePlanModel.Gap.OVERLAPPING_SOURCE_ROOTS,
+                SourcePlanModel.Gap.UNSAFE_PATH);
+        if (plan.orElseThrow().gaps().stream().anyMatch(incomplete::contains)) return Optional.empty();
+        boolean ownershipGap = ownership.problems().stream().anyMatch(problem -> problem.claims().stream()
+                .anyMatch(claim -> claim.module().equals(entry.module())
+                        && claim.sourceSet() == entry.targetSourceSet()));
+        if (ownershipGap) return Optional.empty();
+
+        Map<String, SourceDecodingResult.Outcome> decoded = decoding.outcomes().stream()
+                .collect(Collectors.toUnmodifiableMap(SourceDecodingResult.Outcome::path, Function.identity()));
+        List<SourceInput> sources = new ArrayList<>();
+        for (CandidateSourceOwnership.Candidate candidate : ownership.candidates()) {
+            boolean selected = candidate.status() == CandidateSourceOwnership.Status.OWNED
+                    && candidate.claims().stream().anyMatch(claim -> claim.module().equals(entry.module())
+                            && claim.sourceSet() == entry.targetSourceSet());
+            if (!selected) continue;
+            SourceDecodingResult.Outcome outcome = decoded.get(candidate.path());
+            if (outcome == null || outcome.status() != SourceDecodingResult.Status.DECODED) return Optional.empty();
+            sources.add(outcome.input().orElseThrow());
+        }
+        if (sources.isEmpty()) return Optional.empty();
+        SourceClassification classification = entry.targetSourceSet() == SourcePlanModel.Kind.MAIN
+                ? SourceClassification.MAIN : SourceClassification.TEST;
+        return Optional.of(ReactorSourceInput.create(entry.module(), classification, entry.order(), sources));
     }
 
     private static List<SourceInput> decodedSources(

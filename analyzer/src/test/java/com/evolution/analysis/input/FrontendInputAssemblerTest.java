@@ -138,9 +138,48 @@ class FrontendInputAssemblerTest {
         assertTrue(reactorGap.candidateProviders().isEmpty());
     }
 
+    @Test
+    void completeDecodedSiblingSourcesReplaceOnlyTheMissingReactorBinaryPosition() {
+        Fixture fixture = fixture(true);
+
+        FrontendAssemblyResult result = FrontendInputAssembler.assemble(
+                fixture.ownership, fixture.build, fixture.classpathRequest, fixture.classpaths, fixture.decoding,
+                fixture.platformResult, List.of(fixture.dependency), List.of(), policy());
+
+        assertFalse(result.hasGaps(), () -> result.outcomes().getFirst().problems().toString());
+        FrontendRequest request = result.outcomes().getFirst().request().orElseThrow();
+        assertEquals(List.of(fixture.platform.entry(), fixture.dependency.entry()), request.manifest().classpath());
+        assertEquals(1, request.reactorSources().size());
+        ReactorSourceInput sibling = request.reactorSources().getFirst();
+        assertEquals(LIB.identity(), sibling.module());
+        assertEquals(SourceClassification.MAIN, sibling.sourceSet());
+        assertEquals(0, sibling.order());
+        assertEquals(List.of("lib/src/main/java/demo/Common.java"),
+                sibling.sources().stream().map(value -> value.document().path()).toList());
+        assertEquals("reactor-source-input-v1",
+                request.manifest().configuration().values().get("java.reactor-source-resolution"));
+
+        Fixture generated = fixture(true, true);
+        FrontendAssemblyResult withheld = FrontendInputAssembler.assemble(
+                generated.ownership, generated.build, generated.classpathRequest, generated.classpaths,
+                generated.decoding, generated.platformResult, List.of(generated.dependency), List.of(), policy());
+        assertTrue(withheld.outcomes().getFirst().problems().stream()
+                .anyMatch(problem -> problem.reason() == FrontendAssemblyResult.Reason.MISSING_REACTOR_OUTPUT),
+                "handwritten sources must not conceal an unacquired generated-source surface");
+    }
+
     private static Fixture fixture() {
+        return fixture(false);
+    }
+
+    private static Fixture fixture(boolean includeLibSource) {
+        return fixture(includeLibSource, false);
+    }
+
+    private static Fixture fixture(boolean includeLibSource, boolean generatedGap) {
         SourcePlanModel appPlan = sourcePlan(APP, "app/src/main/java", "app/target/classes");
-        SourcePlanModel libPlan = sourcePlan(LIB, "lib/src/main/java", "lib/target/classes");
+        SourcePlanModel libPlan = sourcePlan(LIB, "lib/src/main/java", "lib/target/classes",
+                generatedGap ? List.of(SourcePlanModel.Gap.GENERATED_SOURCES_NOT_ACQUIRED) : List.of());
         var appPom = new BuildModelResult.EffectivePom(new MavenCoordinate("demo", "app", "1"), "jar",
                 List.of(), List.of(), List.of(), Map.of(), List.of(), List.of(POM), appPlan);
         var libPom = new BuildModelResult.EffectivePom(new MavenCoordinate("demo", "lib", "1"), "jar",
@@ -148,11 +187,17 @@ class FrontendInputAssemblerTest {
         byte[] bytes = "class App {}\r\n".getBytes(StandardCharsets.UTF_8);
         SourceDocument document = SourceDocument.create(REPOSITORY, APP, SOURCE_PATH,
                 ContentDigest.sha256(bytes), SourceClassification.MAIN);
+        byte[] libBytes = "package demo; public class Common {}\n".getBytes(StandardCharsets.UTF_8);
+        SourceDocument libDocument = SourceDocument.create(REPOSITORY, LIB,
+                "lib/src/main/java/demo/Common.java", ContentDigest.sha256(libBytes), SourceClassification.MAIN);
         PomInput appPomInput = new PomInput("app-pom".getBytes(StandardCharsets.UTF_8));
         PomInput libPomInput = new PomInput("lib-pom".getBytes(StandardCharsets.UTF_8));
-        RepositorySnapshot snapshot = RepositorySnapshot.create(REPOSITORY, Optional.empty(), false,
-                List.of(SnapshotFile.from(document), new SnapshotFile("app/pom.xml", appPomInput.digest()),
-                        new SnapshotFile("lib/pom.xml", libPomInput.digest())), List.of(document));
+        List<SourceDocument> documents = includeLibSource ? List.of(document, libDocument) : List.of(document);
+        List<SnapshotFile> files = new ArrayList<>(documents.stream().map(SnapshotFile::from).toList());
+        files.add(new SnapshotFile("app/pom.xml", appPomInput.digest()));
+        files.add(new SnapshotFile("lib/pom.xml", libPomInput.digest()));
+        RepositorySnapshot snapshot = RepositorySnapshot.create(
+                REPOSITORY, Optional.empty(), false, files, documents);
         BuildModelRequest buildRequest = new BuildModelRequest(snapshot, "app/pom.xml",
                 Map.of("app/pom.xml", appPomInput, "lib/pom.xml", libPomInput), Map.of(),
                 new BuildModelPolicy(List.of(), List.of(), Map.of(), 10_000, 20, 10));
@@ -163,18 +208,34 @@ class FrontendInputAssemblerTest {
                 List.of(), List.of(), List.of());
         var claim = new CandidateSourceOwnership.Claim(APP.identity(), SourcePlanModel.Kind.MAIN,
                 "app/src/main/java", List.of(POM));
+        var libClaim = new CandidateSourceOwnership.Claim(LIB.identity(), SourcePlanModel.Kind.MAIN,
+                "lib/src/main/java", List.of(POM));
+        List<CandidateSourceOwnership.Candidate> candidates = new ArrayList<>();
+        candidates.add(new CandidateSourceOwnership.Candidate(SOURCE_PATH, document.contentDigest(),
+                CandidateSourceOwnership.Status.OWNED, List.of(claim)));
+        if (includeLibSource) candidates.add(new CandidateSourceOwnership.Candidate(
+                libDocument.path(), libDocument.contentDigest(), CandidateSourceOwnership.Status.OWNED,
+                List.of(libClaim)));
         CandidateSourceOwnership ownership = new CandidateSourceOwnership(CandidateSourceOwnership.SCHEMA,
                 snapshot.identity(), build.identity(), CandidateSourceOwnership.PROVIDER,
-                List.of(new CandidateSourceOwnership.Candidate(SOURCE_PATH, document.contentDigest(),
-                        CandidateSourceOwnership.Status.OWNED, List.of(claim))), List.of(), List.of());
+                candidates, List.of(), List.of());
         SourceInput source = new SourceInput(document, bytes, new SourceInput.Decoding("source-decoding-v1", "UTF-8",
                 SourceInput.EncodingOrigin.BUILD_DECLARATION,
                 List.of(new SourceInput.Evidence(POM.logicalId(), POM.digest())), SourceInput.Bom.NONE,
                 SourceInput.LineEndings.from("")));
         var outcome = new SourceDecodingResult.Outcome(SOURCE_PATH, document.contentDigest(),
                 SourceDecodingResult.Status.DECODED, Optional.of(source), List.of());
+        List<SourceDecodingResult.Outcome> outcomes = new ArrayList<>(List.of(outcome));
+        if (includeLibSource) {
+            SourceInput libSource = new SourceInput(libDocument, libBytes, new SourceInput.Decoding(
+                    "source-decoding-v1", "UTF-8", SourceInput.EncodingOrigin.BUILD_DECLARATION,
+                    List.of(new SourceInput.Evidence(POM.logicalId(), POM.digest())), SourceInput.Bom.NONE,
+                    SourceInput.LineEndings.from("")));
+            outcomes.add(new SourceDecodingResult.Outcome(libDocument.path(), libDocument.contentDigest(),
+                    SourceDecodingResult.Status.DECODED, Optional.of(libSource), List.of()));
+        }
         SourceDecodingResult decoding = SourceDecodingResult.create(ContentDigest.sha256Utf8("acquisition"),
-                ownership.identity(), build.identity(), SourceDecodingPolicy.withholdWhenAbsent(), snapshot, List.of(outcome));
+                ownership.identity(), build.identity(), SourceDecodingPolicy.withholdWhenAbsent(), snapshot, outcomes);
 
         ArtifactCoordinate external = new ArtifactCoordinate(new MavenCoordinate("demo", "external", "1"), "jar", "");
         ContentDigest dependencyDigest = ContentDigest.sha256Utf8("dependency");
@@ -211,6 +272,11 @@ class FrontendInputAssemblerTest {
     }
 
     private static SourcePlanModel sourcePlan(ModuleDescriptor module, String root, String output) {
+        return sourcePlan(module, root, output, List.of());
+    }
+
+    private static SourcePlanModel sourcePlan(
+            ModuleDescriptor module, String root, String output, List<SourcePlanModel.Gap> mainGaps) {
         var rootSetting = declared("root", root);
         var outputSetting = declared("output", output);
         var release = declared("release", "17");
@@ -219,7 +285,7 @@ class FrontendInputAssemblerTest {
         return new SourcePlanModel(List.of(
                 new SourcePlanModel.SourceSetPlan(module.identity(), SourcePlanModel.Kind.MAIN, List.of(rootSetting),
                         List.of(), outputSetting, Map.of("enablePreview", declared("preview", "false")),
-                        release, release, release, encoding, List.of(), List.of()),
+                        release, release, release, encoding, List.of(), mainGaps),
                 new SourcePlanModel.SourceSetPlan(module.identity(), SourcePlanModel.Kind.TEST, List.of(rootSetting),
                         List.of(), outputSetting, Map.of(), release, release, release, encoding, List.of(), List.of())),
                 List.of());

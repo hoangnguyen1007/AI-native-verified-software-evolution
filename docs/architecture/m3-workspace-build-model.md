@@ -348,6 +348,39 @@ This proves deterministic acquisition, classpath closure, assembly admission and
 
 ## M3 Capability-Gap Taxonomy
 
+### Gate G2 hardening — tolerant external descriptors and source-level reactor resolution
+
+**CONFIRMED by focused implementation tests on 2026-09-10:** external artifact POMs that contain
+redundant dependency or dependency-management rows no longer lose their whole descriptor solely
+because Maven 3.1 validation rejects the duplicate. Secure XML parsing, exact-coordinate checking
+and the normal Maven 3.1 validation path remain unchanged for ordinary descriptors. Minimal Maven
+validation is enabled only after secure preflight comparison proves every repeated dependency key
+has an equivalent complete declaration. If that proof is discovered while resolving a transitive
+parent or imported BOM, the same bounded build attempt is retried once with minimal validation;
+the model resolver, evidence set and read budget remain shared. Dependencies and managed
+dependencies declared inside profiles receive the same comparison. Accepted redundancy remains
+visible as `POM_MODEL_WARNING`; conflicting duplicate declarations remain `POM_MODEL_FAILED`.
+
+`FrontendInputAssembler` may now satisfy an unacquired reactor-output position with a
+`reactor-source-input-v1` view when the exact sibling module/source-set has a usable declared root,
+non-empty exactly-owned sources, successful decoding for every selected source, and no unsafe,
+overlapping or unacquired-generated-source condition. A verified reactor output JAR still takes
+precedence. The source view retains the original classpath ordinal, module/source-set identity,
+source documents, decoding evidence and SHA-256 identity; it performs no filesystem discovery and
+executes no target lifecycle.
+
+The JavaParser adapter places each sibling source solver at that exact classpath position. Sibling
+ASTs are resolution evidence, not another semantic traversal of the caller: their declarations do
+not enter the caller's category denominator, while referenced targets retain `PROJECT` origin, the
+sibling module scope and exact source provenance. Source outcomes include these evidence documents
+so canonical declarations cannot cite an unaccounted source. A malformed sibling document produces
+its own `ERROR` outcome and degrades the frontend result to `PARTIAL` instead of escaping through
+result validation. Referenced implicit record component accessors/fields are materialized on demand
+with sibling scope and derivation from the exact component declaration. Duplicate sibling types are
+rejected, and a sibling source that precedes a duplicate binary type retains first-declaration
+precedence with `java.duplicate-binary-type`. Generated-only Protobuf/gRPC modules remain
+`GENERATED_SOURCES_NOT_ACQUIRED`; source fallback never fabricates their missing types.
+
 When build-model discovery encounters incomplete inputs, it emits typed gaps under the [Capability-Gap Contract](evidence-acquisition.md):
 
 | Mechanism Category | Reason Code | Meaning | Downstream Effect |

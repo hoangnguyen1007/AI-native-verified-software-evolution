@@ -20,24 +20,28 @@ import java.util.function.Supplier;
 
 /** Per-request state. Traversal order never enters identity or output ordering. */
 final class Extraction {
-    private static final VersionedIdentifier VERSION = new VersionedIdentifier("frontend.javaparser", "3.27.1-m3.8");
+    private static final VersionedIdentifier VERSION = new VersionedIdentifier("frontend.javaparser", "3.27.1-m3.8.1");
     private static final Derivation DIRECT = new Derivation(DerivationKind.DIRECT, new VersionedIdentifier("java.source", "1"), List.of());
     private final FrontendRequest request;
     private final ResolutionEnvironment environment;
     private final Map<CompilationUnit, Unit> units = new IdentityHashMap<>();
     private final List<Unit> orderedUnits = new ArrayList<>();
+    private final List<ReactorUnit> reactorUnits = new ArrayList<>();
     private final Map<Node, JavaSymbolName> names = new IdentityHashMap<>();
     private final Map<Node, Entity> nodes = new IdentityHashMap<>();
     private final Set<Node> sourceNodes = Collections.newSetFromMap(new IdentityHashMap<>());
+    private final Set<Node> reactorNodes = Collections.newSetFromMap(new IdentityHashMap<>());
     private final Set<DerivedRelationshipRecord> derived = new TreeSet<>();
     private final Map<EntityIdentity, DeclarationRecord> declarations = new TreeMap<>();
     private final Set<EntityIdentity> duplicateDeclarations = new HashSet<>();
+    private final Set<String> duplicateTypeWarnings = new HashSet<>();
     private final Map<OccurrenceIdentity, RelationshipOccurrence> occurrences = new TreeMap<>();
     private final List<ObservationRecord> observations = new ArrayList<>();
     private final List<TypeUseRecord> types = new ArrayList<>();
     private final List<AnnotationUseRecord> annotations = new ArrayList<>();
     private final Set<Diagnostic> diagnostics = new TreeSet<>();
     private final List<SourceOutcome> rejected = new ArrayList<>();
+    private boolean reactorResolutionDegraded;
 
     private static final class Unit {
         final SourceInput input;
@@ -46,6 +50,7 @@ final class Extraction {
         final Set<Diagnostic> diagnostics = new TreeSet<>();
         Unit(SourceInput input, CompilationUnit ast) { this.input = input; this.ast = ast; source = new OriginalSource(input.document().identity(), input.text()); }
     }
+    private record ReactorUnit(ReactorSourceInput input, Unit unit) {}
     private static final class MappingFailure extends RuntimeException {
         final SemanticStatus status; final String code;
         MappingFailure(SemanticStatus status, String code) { this.status = status; this.code = code; }
@@ -80,6 +85,12 @@ final class Extraction {
         var outcomes = new ArrayList<>(rejected);
         for (var unit : orderedUnits) outcomes.add(new SourceOutcome(unit.input.document().identity(),
                 unit.diagnostics.isEmpty() ? SourceOutcome.State.PROCESSED : SourceOutcome.State.PARTIAL, List.copyOf(unit.diagnostics)));
+        for (var reactor : reactorUnits) {
+            Unit unit = reactor.unit();
+            outcomes.add(new SourceOutcome(unit.input.document().identity(),
+                    unit.diagnostics.isEmpty() ? SourceOutcome.State.PROCESSED : SourceOutcome.State.PARTIAL,
+                    List.copyOf(unit.diagnostics)));
+        }
         var coverage = FrontendRequest.CATEGORIES.stream().map(c -> {
             var kind = new RelationshipKind("java." + c);
             long attempted = observations.stream().filter(o -> o.category().equals(kind)).count();
@@ -87,7 +98,8 @@ final class Extraction {
             return new CategoryCoverage(kind, c.equals("calls") ? CategoryCoverage.Support.IMPLEMENTED : CategoryCoverage.Support.PARTIAL, attempted, emitted, attempted - emitted);
         }).toList();
         return new FrontendResult(request.manifest().identity(), VERSION,
-                outcomes.stream().allMatch(s -> s.state() == SourceOutcome.State.PROCESSED) ? FrontendResult.State.COMPLETED : FrontendResult.State.PARTIAL,
+                !reactorResolutionDegraded && outcomes.stream().allMatch(s -> s.state() == SourceOutcome.State.PROCESSED)
+                        ? FrontendResult.State.COMPLETED : FrontendResult.State.PARTIAL,
                 declarations.values().stream().filter(d -> !duplicateDeclarations.contains(d.entity().identity())).toList(),
                 List.copyOf(occurrences.values()), observations, outcomes, coverage, List.copyOf(diagnostics), types, annotations, List.copyOf(derived));
     }
@@ -97,20 +109,45 @@ final class Extraction {
                 .setTabSize(1).setPreprocessUnicodeEscapes(true).setSymbolResolver(new JavaSymbolSolver(environment.solver));
         var parser = new JavaParser(configuration);
         for (var input : request.sources()) {
-            var parsed = parser.parse(input.text());
-            if (!parsed.isSuccessful() || parsed.getResult().isEmpty()) {
-                var diagnostic = new Diagnostic(DiagnosticSeverity.ERROR, "java.parse-error", "Source syntax could not be parsed; recovered bindings are withheld", Optional.empty(), Map.of("document", input.document().identity().value()));
-                diagnostics.add(diagnostic); rejected.add(new SourceOutcome(input.document().identity(), SourceOutcome.State.ERROR, List.of(diagnostic)));
-                continue;
-            }
-            var ast = parsed.getResult().orElseThrow();
-            // Java identifier-ignorable characters do not participate in symbol equality.
-            ast.findAll(SimpleName.class).forEach(n -> n.setIdentifier(semanticIdentifier(n.getIdentifier())));
-            ast.findAll(Name.class).forEach(n -> n.setIdentifier(semanticIdentifier(n.getIdentifier())));
-            ast.findAll(MethodReferenceExpr.class).forEach(n -> n.setIdentifier(semanticIdentifier(n.getIdentifier())));
-            var unit = new Unit(input, ast); units.put(ast, unit); orderedUnits.add(unit);
-            sourceNodes.addAll(ast.stream().toList());
+            parse(parser, input, Optional.empty()).ifPresent(unit -> {
+                orderedUnits.add(unit);
+                sourceNodes.addAll(unit.ast.stream().toList());
+            });
         }
+        for (ReactorSourceInput reactor : request.reactorSources()) {
+            for (SourceInput input : reactor.sources()) {
+                parse(parser, input, Optional.of(reactor)).ifPresent(unit -> {
+                    reactorUnits.add(new ReactorUnit(reactor, unit));
+                    reactorNodes.addAll(unit.ast.stream().toList());
+                });
+            }
+        }
+    }
+
+    private Optional<Unit> parse(
+            JavaParser parser, SourceInput input, Optional<ReactorSourceInput> reactor) {
+        var parsed = parser.parse(input.text());
+        if (!parsed.isSuccessful() || parsed.getResult().isEmpty()) {
+            String code = reactor.isPresent() ? "java.reactor-source-parse-error" : "java.parse-error";
+            var diagnostic = new Diagnostic(DiagnosticSeverity.ERROR, code,
+                    reactor.isPresent()
+                            ? "Sibling-module source syntax could not be parsed; its bindings are unavailable"
+                            : "Source syntax could not be parsed; recovered bindings are withheld",
+                    Optional.empty(), Map.of("document", input.document().identity().value()));
+            diagnostics.add(diagnostic);
+            rejected.add(new SourceOutcome(
+                    input.document().identity(), SourceOutcome.State.ERROR, List.of(diagnostic)));
+            if (reactor.isPresent()) reactorResolutionDegraded = true;
+            return Optional.empty();
+        }
+        var ast = parsed.getResult().orElseThrow();
+        // Java identifier-ignorable characters do not participate in symbol equality.
+        ast.findAll(SimpleName.class).forEach(n -> n.setIdentifier(semanticIdentifier(n.getIdentifier())));
+        ast.findAll(Name.class).forEach(n -> n.setIdentifier(semanticIdentifier(n.getIdentifier())));
+        ast.findAll(MethodReferenceExpr.class).forEach(n -> n.setIdentifier(semanticIdentifier(n.getIdentifier())));
+        var unit = new Unit(input, ast);
+        units.put(ast, unit);
+        return Optional.of(unit);
     }
 
     private ParserConfiguration.LanguageLevel languageLevel() {
@@ -147,6 +184,18 @@ final class Extraction {
             String name = type.getFullyQualifiedName().orElseThrow();
             if (!indexed.add(name)) throw new FrontendInputException("frontend.duplicate-type", "Duplicate source type definitions in the supplied environment");
             environment.project.addDeclaration(name, type.resolve());
+        }
+        var reactorIndexed = new HashMap<Integer, Set<String>>();
+        for (ReactorUnit reactor : reactorUnits) {
+            Set<String> names = reactorIndexed.computeIfAbsent(reactor.input().order(), ignored -> new HashSet<>());
+            for (TypeDeclaration<?> type : reactor.unit().ast.findAll(TypeDeclaration.class)) {
+                if (type.getFullyQualifiedName().isEmpty() || hasLocalOwner(type)) continue;
+                String name = type.getFullyQualifiedName().orElseThrow();
+                if (!names.add(name)) throw new FrontendInputException(
+                        "frontend.duplicate-reactor-source-type",
+                        "Duplicate type definitions occur in one sibling-module source input");
+                environment.addReactorDeclaration(reactor.input().order(), name, type.resolve());
+            }
         }
     }
     private boolean hasLocalOwner(Node node) {
@@ -299,7 +348,9 @@ final class Extraction {
                 Optional.of(unit(constant).source.span(constant)), constant.getNameAsString(), DIRECT);
     }
     Entity entity(Node node) {
-        if (!sourceNodes.contains(node)) throw new MappingFailure(SemanticStatus.UNSUPPORTED,"java.generated-ast");
+        if (!sourceNodes.contains(node) && !reactorNodes.contains(node)) {
+            throw new MappingFailure(SemanticStatus.UNSUPPORTED,"java.generated-ast");
+        }
         Entity cached = nodes.get(node);
         if (cached != null) { if (duplicateDeclarations.contains(cached.identity())) throw new MappingFailure(SemanticStatus.ERROR, "java.duplicate-declaration"); return cached; }
         JavaSymbolName symbol = name(node);
@@ -310,7 +361,8 @@ final class Extraction {
                 : node instanceof InitializerDeclaration ? EntityKind.INITIALIZER : EntityKind.FIELD;
         Optional<SourceSpan> span = node instanceof CompilationUnit ? Optional.empty() : Optional.of(unit(node).source.span(node));
         Derivation derivation = node instanceof CompilationUnit ? new Derivation(DerivationKind.DERIVED, new VersionedIdentifier("java.package-scope", "1"), List.of(request.module().value())) : DIRECT;
-        var entity = register(symbol, kind, span, span.map(s -> unit(node).source.slice(s)).orElse(""), derivation);
+        ModuleIdentity module = sourceNodes.contains(node) ? request.module() : unit(node).input.document().module();
+        var entity = register(symbol, kind, span, span.map(s -> unit(node).source.slice(s)).orElse(""), derivation, module);
         checkDeclarationTypes(node, entity);
         nodes.put(node, entity); return entity;
     }
@@ -338,7 +390,11 @@ final class Extraction {
         }
     }
     private Entity register(JavaSymbolName name, EntityKind kind, Optional<SourceSpan> span, String spelling, Derivation derivation) {
-        var entity = Entity.create(EntityOrigin.PROJECT, EntityScope.project(request.module()), kind, name.canonicalName(), span);
+        return register(name, kind, span, spelling, derivation, request.module());
+    }
+    private Entity register(JavaSymbolName name, EntityKind kind, Optional<SourceSpan> span, String spelling,
+            Derivation derivation, ModuleIdentity module) {
+        var entity = Entity.create(EntityOrigin.PROJECT, EntityScope.project(module), kind, name.canonicalName(), span);
         var record = new DeclarationRecord(entity, spelling, SemanticStatus.RESOLVED, derivation, List.of(), List.of());
         var prior = declarations.putIfAbsent(entity.identity(), record);
         if (prior != null && !prior.entity().declaration().equals(span)) {
@@ -367,21 +423,52 @@ final class Extraction {
             if (record!=null) {
                 var parameters=new ArrayList<ErasedType>();
                 for (int i=0;i<method.getNumberOfParams();i++) parameters.add(erased(method.getParam(i).getType(),new HashSet<>()));
-                return existing(JavaSymbolName.method(name(record),method.getName(),parameters));
+                var symbol = JavaSymbolName.method(name(record),method.getName(),parameters);
+                if (reactorNodes.contains(record)) {
+                    warnDuplicateExternal(record.resolve().getQualifiedName());
+                    return reactorImplicit(symbol, EntityKind.METHOD, record, record,
+                            method.getName(), "java.record-object-methods");
+                }
+                return existing(symbol);
             }
         }
         return callable(resolved);
     }
     Entity callable(ResolvedMethodLikeDeclaration resolved) {
-        if (resolved.toAst().isPresent() && sourceNodes.contains(resolved.toAst().orElseThrow())) {
+        if (resolved.toAst().isPresent() && (sourceNodes.contains(resolved.toAst().orElseThrow())
+                || reactorNodes.contains(resolved.toAst().orElseThrow()))) {
             Node node = resolved.toAst().orElseThrow();
-            if (node instanceof CallableDeclaration<?> || node instanceof CompactConstructorDeclaration || node instanceof AnnotationMemberDeclaration) return entity(node);
+            if (node instanceof CallableDeclaration<?> || node instanceof CompactConstructorDeclaration || node instanceof AnnotationMemberDeclaration) {
+                if (reactorNodes.contains(node)) warnDuplicateExternal(resolved.declaringType().getQualifiedName());
+                return entity(node);
+            }
         }
         var type = resolved.declaringType();
         var parameters = new ArrayList<ErasedType>();
         for (int i = 0; i < resolved.getNumberOfParams(); i++) parameters.add(erased(resolved.getParam(i).getType(), new HashSet<>()));
         var symbol = resolved instanceof ResolvedConstructorDeclaration ? JavaSymbolName.constructor(typeName(type), parameters) : JavaSymbolName.method(typeName(type), resolved.getName(), parameters);
-        if (type.toAst().isPresent()) return existing(symbol);
+        if (type.toAst().isPresent()) {
+            Node declaration = type.toAst().orElseThrow();
+            if (reactorNodes.contains(declaration)) {
+                warnDuplicateExternal(type.getQualifiedName());
+                if (resolved instanceof ResolvedMethodDeclaration method
+                        && declaration instanceof RecordDeclaration record
+                        && method.getNumberOfParams() == 0) {
+                    var component = record.getParameters().stream()
+                            .filter(candidate -> candidate.getNameAsString().equals(method.getName()))
+                            .findFirst();
+                    if (component.isPresent()) {
+                        return reactorImplicit(symbol, EntityKind.METHOD, record, component.orElseThrow(),
+                                method.getName(), "java.record-component-accessor");
+                    }
+                }
+                EntityKind kind = resolved instanceof ResolvedConstructorDeclaration
+                        ? EntityKind.CONSTRUCTOR : EntityKind.METHOD;
+                return reactorImplicit(symbol, kind, declaration, declaration,
+                        resolved.getName(), "java.reactor-source-symbol");
+            }
+            return existing(symbol);
+        }
         var origin = environment.origin(type.getQualifiedName());
         if (environment.duplicateExternal(type.getQualifiedName())) diagnostics.add(new Diagnostic(DiagnosticSeverity.WARNING, "java.duplicate-binary-type", "Ordered classpath selected the first definition", Optional.empty(), Map.of("type", typeName(type).canonicalName())));
         var entity = Entity.create(origin.kind(), origin.scope(), resolved instanceof ResolvedConstructorDeclaration ? EntityKind.CONSTRUCTOR : EntityKind.METHOD, symbol.canonicalName(), Optional.empty());
@@ -391,8 +478,18 @@ final class Extraction {
 
     Entity field(ResolvedValueDeclaration resolved) {
         if (resolved.isField() && resolved.asField().declaringType().toAst().orElse(null) instanceof RecordDeclaration record
-                && record.getParameters().stream().anyMatch(p -> p.getNameAsString().equals(resolved.getName())))
-            return existing(JavaSymbolName.field(name(record),resolved.getName()));
+                && record.getParameters().stream().anyMatch(p -> p.getNameAsString().equals(resolved.getName()))) {
+            var symbol = JavaSymbolName.field(name(record), resolved.getName());
+            if (reactorNodes.contains(record)) {
+                warnDuplicateExternal(resolved.asField().declaringType().getQualifiedName());
+                var component = record.getParameters().stream()
+                        .filter(candidate -> candidate.getNameAsString().equals(resolved.getName()))
+                        .findFirst().orElseThrow();
+                return reactorImplicit(symbol, EntityKind.FIELD, record, component,
+                        resolved.getName(), "java.record-component-field");
+            }
+            return existing(symbol);
+        }
         if (resolved.toAst().isPresent()) {
             Node node = resolved.toAst().orElseThrow();
             if (node instanceof FieldDeclaration declaration) {
@@ -401,7 +498,12 @@ final class Extraction {
                 node = matching.getFirst();
             }
             if (node instanceof VariableDeclarator variable && variable.getParentNode().orElse(null) instanceof FieldDeclaration
-                    || node instanceof EnumConstantDeclaration) return entity(node);
+                    || node instanceof EnumConstantDeclaration) {
+                if (reactorNodes.contains(node) && resolved.isField()) {
+                    warnDuplicateExternal(resolved.asField().declaringType().getQualifiedName());
+                }
+                return entity(node);
+            }
             throw new MappingFailure(SemanticStatus.UNSUPPORTED,"java.field-declaration");
         }
         ResolvedReferenceTypeDeclaration type = resolved.isField() ? resolved.asField().declaringType().asReferenceType()
@@ -436,7 +538,13 @@ final class Extraction {
         return resolved.getCorrespondingDeclaration();
     }
     Entity typeEntity(ResolvedTypeDeclaration type) {
-        if (type.toAst().isPresent()) return entity(type.toAst().orElseThrow());
+        if (type.toAst().isPresent()) {
+            Node declaration = type.toAst().orElseThrow();
+            if (reactorNodes.contains(declaration) && type.isReferenceType()) {
+                warnDuplicateExternal(type.asReferenceType().getQualifiedName());
+            }
+            return entity(declaration);
+        }
         if (type.isTypeParameter()) throw new MappingFailure(SemanticStatus.UNSUPPORTED, "java.external-type-parameter");
         var reference = type.asReferenceType();
         var origin = environment.origin(reference.getQualifiedName());
@@ -449,6 +557,28 @@ final class Extraction {
         var found=declarations.values().stream().filter(d -> d.entity().origin()==EntityOrigin.PROJECT && d.entity().canonicalName().equals(symbol.canonicalName())).findFirst().orElse(null);
         if (found==null || duplicateDeclarations.contains(found.entity().identity())) throw new MappingFailure(SemanticStatus.UNSUPPORTED,"java.implicit-callable");
         return found.entity();
+    }
+    private Entity reactorImplicit(JavaSymbolName symbol, EntityKind kind, Node ownerNode,
+            Node evidenceNode, String spelling, String rule) {
+        Entity owner = entity(ownerNode);
+        Entity evidence = entity(evidenceNode);
+        var identity = EntityIdentity.from(EntityOrigin.PROJECT, owner.stableScope(), kind, symbol.canonicalName());
+        var prior = declarations.get(identity);
+        if (prior != null) return prior.entity();
+        var member = Entity.create(EntityOrigin.PROJECT, owner.stableScope(), kind,
+                symbol.canonicalName(), Optional.empty());
+        var derivation = new Derivation(DerivationKind.DERIVED,
+                new VersionedIdentifier(rule, "1"), List.of(evidence.identity().value()));
+        declarations.put(identity, new DeclarationRecord(
+                member, spelling, SemanticStatus.RESOLVED, derivation, List.of(), List.of()));
+        return member;
+    }
+    private void warnDuplicateExternal(String qualifiedName) {
+        if (environment.duplicateExternal(qualifiedName) && duplicateTypeWarnings.add(qualifiedName)) {
+            diagnostics.add(new Diagnostic(DiagnosticSeverity.WARNING, "java.duplicate-binary-type",
+                    "Ordered classpath selected the first definition", Optional.empty(),
+                    Map.of("type", qualifiedName)));
+        }
     }
     Entity implicit(JavaSymbolName symbol, EntityKind kind, Node input, String rule) {
         return implicit(symbol,kind,entity(input),input,rule);

@@ -94,8 +94,12 @@ public record FrontendResult(AnalysisIdentity analysis, VersionedIdentifier fron
     }
     /** Bind output coverage back to the complete requested input set, including documents with no facts. */
     public FrontendResult validateFor(FrontendRequest request) {
-        if (!analysis.equals(request.manifest().identity()) || !sources.stream().map(SourceOutcome::document).collect(Collectors.toSet())
-                .equals(request.sources().stream().map(s -> s.document().identity()).collect(Collectors.toSet())))
+        Set<SourceDocumentIdentity> expected = java.util.stream.Stream.concat(
+                        request.sources().stream(),
+                        request.reactorSources().stream().flatMap(value -> value.sources().stream()))
+                .map(value -> value.document().identity()).collect(Collectors.toSet());
+        if (!analysis.equals(request.manifest().identity())
+                || !sources.stream().map(SourceOutcome::document).collect(Collectors.toSet()).equals(expected))
             throw new IllegalArgumentException("result does not cover the requested analysis");
         return this;
     }

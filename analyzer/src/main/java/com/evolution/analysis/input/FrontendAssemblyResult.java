@@ -20,11 +20,11 @@ public record FrontendAssemblyResult(
         VersionedIdentifier provider,
         List<Outcome> outcomes,
         List<String> limitations) {
-    public static final String SCHEMA = "frontend-input-assembly-v1";
-    public static final VersionedIdentifier PROVIDER = new VersionedIdentifier("frontend.input-assembler", "m3.8");
+    public static final String SCHEMA = "frontend-input-assembly-v2";
+    public static final VersionedIdentifier PROVIDER = new VersionedIdentifier("frontend.input-assembler", "m3.8.1");
     public static final List<String> LIMITATIONS = List.of(
-            "Only verified JAR-shaped dependency and reactor-output binaries are assembled; class directories and generated sources require later providers.",
-            "A source set is withheld when required source, platform, dependency or reactor output is invalid or absent; inactive-profile qualifiers, recovered descriptor warnings and deterministically truncated dependency cycles remain visible without masquerading as missing binary evidence, and no ambient fallback is added.");
+            "Verified reactor output JARs are preferred; complete owned and decoded sibling-module sources may occupy the same exact classpath position without filesystem discovery or lifecycle execution. Class directories and generated sources require later providers.",
+            "A source set is withheld when required source, platform, dependency or reactor resolution evidence is invalid or absent; inactive-profile qualifiers, recovered descriptor warnings and deterministically truncated dependency cycles remain visible without masquerading as missing evidence, and no ambient fallback is added.");
 
     public FrontendAssemblyResult {
         ContractChecks.notNull(identity, "assembly identity");

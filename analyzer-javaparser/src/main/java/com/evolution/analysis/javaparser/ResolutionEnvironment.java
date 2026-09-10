@@ -26,6 +26,7 @@ final class ResolutionEnvironment {
     final Set<Diagnostic> diagnostics = new TreeSet<>();
     private final ClasspathEntry platformEntry;
     private final List<Artifact> artifacts = new ArrayList<>();
+    private final Map<Integer, MemoryTypeSolver> reactorSources = new TreeMap<>();
     private record Artifact(BinaryInput input, JarTypeSolver solver) {}
     record Origin(EntityOrigin kind, EntityScope scope) {}
 
@@ -62,11 +63,33 @@ final class ResolutionEnvironment {
                 byte[] bytes = Files.readAllBytes(input.path());
                 verify(input.entry(), bytes);
                 var jar = jarSolver(bytes, request.platform().release(), input.entry().logicalName());
-                artifacts.add(new Artifact(input, jar)); solver.add(jar);
+                artifacts.add(new Artifact(input, jar));
+            }
+            Map<Integer, ReactorSourceInput> sourcePositions = new TreeMap<>();
+            request.reactorSources().forEach(input -> sourcePositions.put(input.order(), input));
+            int binary = 0;
+            int size = request.dependencies().size() + request.reactorSources().size();
+            for (int order = 0; order < size; order++) {
+                if (sourcePositions.containsKey(order)) {
+                    var sourceSolver = new MemoryTypeSolver();
+                    reactorSources.put(order, sourceSolver);
+                    solver.add(sourceSolver);
+                } else {
+                    solver.add(artifacts.get(binary++).solver());
+                }
             }
         } catch (IOException exception) {
             throw new FrontendInputException("frontend.input-io", "Cannot read a supplied platform or dependency artifact");
         }
+    }
+    void addReactorDeclaration(
+            int order,
+            String qualifiedName,
+            com.github.javaparser.resolution.declarations.ResolvedReferenceTypeDeclaration declaration) {
+        MemoryTypeSolver target = reactorSources.get(order);
+        if (target == null) throw new FrontendInputException(
+                "frontend.reactor-source-order", "Reactor source declaration has no classpath position");
+        target.addDeclaration(qualifiedName, declaration);
     }
     private static void verify(ClasspathEntry entry, byte[] bytes) {
         verify(entry.contentDigest(), bytes);
@@ -228,6 +251,7 @@ final class ResolutionEnvironment {
     boolean duplicateExternal(String name) {
         int count = platform.tryToSolveType(name).isSolved() ? 1 : 0;
         for (var artifact : artifacts) if (artifact.solver().getKnownClasses().contains(name)) count++;
+        for (var source : reactorSources.values()) if (source.tryToSolveType(name).isSolved()) count++;
         return count > 1;
     }
     private static Origin origin(EntityOrigin kind, ClasspathEntry entry) {

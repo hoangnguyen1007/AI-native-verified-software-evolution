@@ -38,22 +38,41 @@ final class MavenArtifactModelReader {
     private DescriptorOutcome build(MavenCoordinate expected) {
         var issues = new ArrayList<Issue>();
         var used = new TreeMap<String, Evidence>();
+        var tolerantInBuild = new HashSet<MavenCoordinate>();
         Counter reads = new Counter();
         try {
-            Source source = source(expected, issues, used, reads);
+            Source source = source(expected, issues, used, reads, tolerantInBuild);
             var properties = new Properties();
             properties.putAll(policy.userProperties());
             var request = new DefaultModelBuildingRequest()
                     .setModelSource(source)
-                    .setValidationLevel(ModelBuildingRequest.VALIDATION_LEVEL_MAVEN_3_1)
+                    // Use Maven's tolerant mode only for a securely parsed descriptor whose
+                    // duplicate dependency rows were proven semantically equivalent below.
+                    .setValidationLevel(tolerantInBuild.contains(expected)
+                            ? ModelBuildingRequest.VALIDATION_LEVEL_MINIMAL
+                            : ModelBuildingRequest.VALIDATION_LEVEL_MAVEN_3_1)
                     .setProcessPlugins(false)
                     .setLocationTracking(true)
                     .setSystemProperties(new Properties())
                     .setUserProperties(properties)
                     .setActiveProfileIds(policy.activeProfiles())
                     .setInactiveProfileIds(policy.inactiveProfiles())
-                    .setModelResolver(new CacheResolver(issues, used, reads));
-            ModelBuildingResult result = builder().build(request);
+                    .setModelResolver(new CacheResolver(issues, used, reads, tolerantInBuild));
+            ModelBuildingResult result;
+            try {
+                result = builder().build(request);
+            } catch (ModelBuildingException strictFailure) {
+                if (reads.exceeded
+                        || request.getValidationLevel() == ModelBuildingRequest.VALIDATION_LEVEL_MINIMAL
+                        || tolerantInBuild.isEmpty()) {
+                    throw strictFailure;
+                }
+                // A parent or imported BOM can reveal a validated equivalent duplicate only
+                // after Maven has started a strict build. Retry once, with the same bounded
+                // resolver/read counter, now that the hierarchy has justified tolerant mode.
+                request.setValidationLevel(ModelBuildingRequest.VALIDATION_LEVEL_MINIMAL);
+                result = builder().build(request);
+            }
             Model model = result.getEffectiveModel();
             MavenCoordinate actual;
             try {
@@ -101,17 +120,20 @@ final class MavenArtifactModelReader {
             MavenCoordinate coordinate,
             List<Issue> issues,
             Map<String, Evidence> used,
-            Counter reads) throws ModelRejected {
+            Counter reads,
+            Set<MavenCoordinate> tolerantInBuild) throws ModelRejected {
         try {
             LocalArtifactCache.Material material = cache.pom(coordinate);
-            validate(material, coordinate, issues, used);
+            if (validate(material, coordinate, issues, used)) {
+                tolerantInBuild.add(coordinate);
+            }
             return new Source(coordinate, material, reads);
         } catch (LocalArtifactCache.Failure failure) {
             throw new ModelRejected(new Issue(failure.reason, failure.subject, failure.requirement, failure.evidence));
         }
     }
 
-    private void validate(
+    private boolean validate(
             LocalArtifactCache.Material material,
             MavenCoordinate coordinate,
             List<Issue> issues,
@@ -139,6 +161,91 @@ final class MavenArtifactModelReader {
                         used));
             }
         }
+        boolean tolerant = validateDuplicateDependencies(raw.getDependencies(), coordinate, issues, used);
+        if (raw.getDependencyManagement() != null) {
+            tolerant |= validateDuplicateDependencies(
+                    raw.getDependencyManagement().getDependencies(), coordinate, issues, used);
+        }
+        for (var profile : raw.getProfiles()) {
+            tolerant |= validateDuplicateDependencies(profile.getDependencies(), coordinate, issues, used);
+            if (profile.getDependencyManagement() != null) {
+                tolerant |= validateDuplicateDependencies(
+                        profile.getDependencyManagement().getDependencies(), coordinate, issues, used);
+            }
+        }
+        return tolerant;
+    }
+
+    private static boolean validateDuplicateDependencies(
+            List<org.apache.maven.model.Dependency> dependencies,
+            MavenCoordinate coordinate,
+            List<Issue> issues,
+            Map<String, Evidence> used) throws ModelRejected {
+        Map<String, DependencyView> declarations = new HashMap<>();
+        boolean redundant = false;
+        for (org.apache.maven.model.Dependency dependency : dependencies) {
+            String key = dependencyKey(dependency);
+            DependencyView view = DependencyView.from(dependency);
+            DependencyView prior = declarations.putIfAbsent(key, view);
+            if (prior == null) continue;
+            if (!prior.equals(view)) {
+                throw new ModelRejected(issue(
+                        Reason.POM_MODEL_FAILED,
+                        coordinate.notation(),
+                        Requirement.ARTIFACT_POM,
+                        used));
+            }
+            redundant = true;
+        }
+        if (redundant) {
+            boolean recorded = issues.stream().anyMatch(issue ->
+                    issue.reason() == Reason.POM_MODEL_WARNING
+                            && issue.subject().equals(coordinate.notation())
+                            && issue.requirement() == Requirement.ARTIFACT_POM);
+            if (!recorded) {
+                issues.add(issue(
+                        Reason.POM_MODEL_WARNING,
+                        coordinate.notation(),
+                        Requirement.ARTIFACT_POM,
+                        used));
+            }
+        }
+        return redundant;
+    }
+
+    private static String dependencyKey(org.apache.maven.model.Dependency dependency) {
+        return Objects.toString(dependency.getGroupId(), "") + ":"
+                + Objects.toString(dependency.getArtifactId(), "") + ":"
+                + Objects.toString(dependency.getType(), "jar") + ":"
+                + Objects.toString(dependency.getClassifier(), "");
+    }
+
+    private record DependencyView(
+            String groupId,
+            String artifactId,
+            String version,
+            String type,
+            String classifier,
+            String scope,
+            boolean optional,
+            String systemPath,
+            List<String> exclusions) {
+        private static DependencyView from(org.apache.maven.model.Dependency dependency) {
+            List<String> exclusions = dependency.getExclusions().stream()
+                    .map(exclusion -> Objects.toString(exclusion.getGroupId(), "") + ":"
+                            + Objects.toString(exclusion.getArtifactId(), ""))
+                    .sorted().toList();
+            return new DependencyView(
+                    Objects.toString(dependency.getGroupId(), ""),
+                    Objects.toString(dependency.getArtifactId(), ""),
+                    Objects.toString(dependency.getVersion(), ""),
+                    Objects.toString(dependency.getType(), "jar"),
+                    Objects.toString(dependency.getClassifier(), ""),
+                    Objects.toString(dependency.getScope(), "compile"),
+                    dependency.isOptional(),
+                    Objects.toString(dependency.getSystemPath(), ""),
+                    exclusions);
+        }
     }
 
     private DefaultModelBuilder builder() {
@@ -165,11 +272,14 @@ final class MavenArtifactModelReader {
         private final List<Issue> issues;
         private final Map<String, Evidence> used;
         private final Counter reads;
+        private final Set<MavenCoordinate> tolerantInBuild;
 
-        private CacheResolver(List<Issue> issues, Map<String, Evidence> used, Counter reads) {
+        private CacheResolver(List<Issue> issues, Map<String, Evidence> used, Counter reads,
+                Set<MavenCoordinate> tolerantInBuild) {
             this.issues = issues;
             this.used = used;
             this.reads = reads;
+            this.tolerantInBuild = tolerantInBuild;
         }
 
         private ModelSource resolve(String group, String artifact, String version)
@@ -177,7 +287,7 @@ final class MavenArtifactModelReader {
             MavenCoordinate coordinate;
             try {
                 coordinate = new MavenCoordinate(group, artifact, version);
-                return source(coordinate, issues, used, reads);
+                return source(coordinate, issues, used, reads, tolerantInBuild);
             } catch (IllegalArgumentException exception) {
                 issues.add(issue(Reason.NON_EXACT_VERSION,
                         Objects.toString(group, "unknown") + ":" + Objects.toString(artifact, "unknown"),
@@ -219,7 +329,7 @@ final class MavenArtifactModelReader {
 
         @Override
         public ModelResolver newCopy() {
-            return new CacheResolver(issues, used, reads);
+            return new CacheResolver(issues, used, reads, tolerantInBuild);
         }
     }
 
