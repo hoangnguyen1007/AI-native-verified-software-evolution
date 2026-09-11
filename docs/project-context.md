@@ -2,7 +2,7 @@
 
 ## Mission
 
-Build a deterministic, evidence-first platform that understands Java and Spring Boot repositories, reconstructs architecture-relevant semantics, measures architecture structure and health, detects architecture violations, explains every assessment through evidence, and presents the results through a complete visual workbench with a stable foundation for later verified software evolution.
+Build a deterministic, evidence-first platform that understands Java and Spring Boot repositories, reconstructs architecture-relevant semantics across bounded configuration spaces, measures architecture structure and health, detects configuration-qualified architecture violations, explains every assessment through evidence and counterexample configurations, and presents the results through a complete visual workbench with a stable foundation for later verified software evolution.
 
 ## Product Capability Philosophy
 
@@ -35,6 +35,8 @@ Research discipline remains required for ground truth, benchmarks, evidence, rep
 - Multi-module workspace intelligence
 - Safe Maven/build-model understanding
 - Spring semantic intelligence
+- Versioned finite configuration-space modeling and phase/order-aware Spring registration semantics
+- `MUST`/`MAY`/`NEVER`/`UNKNOWN` architecture facts with reproducible witnesses where applicable
 - Software Knowledge Graph construction
 - Dependency and architecture-policy modeling
 - Evidence-backed architecture violation detection
@@ -45,7 +47,7 @@ Research discipline remains required for ground truth, benchmarks, evidence, rep
 - Focused interactive architecture visualization and evidence navigation
 - A usable dashboard/workbench with inventory, metrics, score, graph, violations, Spring, impact, and provenance views
 - Reproducible benchmark and evaluation infrastructure
-- Track B comparison of compatible repository snapshots and architecture evolution
+- Track B comparison of compatible repository snapshots, conditional architecture regions, evidence, and architecture evolution
 
 Architecture-mutation fixtures used to evaluate rule detection are part of SE121 benchmarking.
 
@@ -76,6 +78,9 @@ These remain SE122/KLTN concerns unless a later explicit human decision changes 
 12. Metrics and scores are versioned, deterministic, scope-aware, and traceable to canonical inputs and limitations.
 13. The UI consumes bounded query projections and never depends on rendering the complete raw graph by default.
 14. Track A is not complete with a CLI or analyzer alone; the confirmed product outcome includes a usable visual workbench.
+15. M3 models one exact build/classpath/platform context. M4+ may model a bounded Spring configuration space inside it; one realized configuration never becomes a universal claim without proof over the modeled feasible space.
+16. Spring bean conditions that depend on definitions processed so far use versioned phase/order-aware transition semantics. Missing order, external configuration or dynamic behavior remains `UNKNOWN` or a typed capability gap.
+17. Canonical conditional facts own truth regions and witnesses. Graph, policy, API and UI are projections/consumers and must not flatten mutually infeasible facts into one application world.
 
 ## Source Authority
 
@@ -117,6 +122,9 @@ Lower-authority claims cannot become confirmed without higher-authority evidence
 | Complete visual architecture-intelligence workbench | CONFIRMED product outcome |
 | Explainable architecture score plus separate analysis confidence | CONFIRMED direction; exact formula PROVISIONAL |
 | Progressive evidence providers (including selective bytecode) | ASSESS/HOLD for SE121 implementation; extension boundary CONFIRMED |
+| Staged conditional architecture semantics for M4+ | ACCEPTED direction on 2026-09-09; implementation and G3 evidence pending; see ADR-004 |
+| Solver backend for configuration reasoning | PROVISIONAL; exhaustive oracle first, SAT/BDD choice requires benchmark |
+| Post-M12 context federation, cross-system assurance, and verified AI evolution | FUTURE HORIZONS; not SE121 commitments |
 
 ## Document Responsibilities
 
@@ -129,23 +137,28 @@ Lower-authority claims cannot become confirmed without higher-authority evidence
 - `docs/architecture/m3-workspace-build-model.md`: provisional M3 workspace, safe Maven model, exact classpath, and platform decoupling contract
 - `docs/architecture/evidence-acquisition.md`: provisional M3+ capability-gap, acquisition-attempt, and provider-conflict contract
 - `docs/architecture/m4-spring-intelligence.md`: provisional M4 Spring domain model and versioned closed mechanism denominator
+- `docs/architecture/conditional-architecture-semantics.md`: canonical M4+ configuration-space, staged registration, truth-region, witness, policy and evolution semantics
 - `docs/architecture/product-outcome.md`: canonical product, metric, scoring, visualization, and acceptance contract
 - `docs/research/`: methods and evidence, not project progress
-- `roadmap_for_user.md` and `roadmap_for_user_vi.md`: explanatory human review companions; not the source of current status
+- `roadmap_for_user.md` and `roadmap_for_user_vi.md`: historical human-review snapshots with explicit stale-status banners; never sources of current status or next-task authority
 
 ## Related Documents
 
 - [Current State](current-state.md)
 - [Roadmap](roadmap.md)
-- [Human Review Roadmap](../roadmap_for_user.md)
+- [Historical Human Review Roadmap](../roadmap_for_user.md)
+- [Historical Vietnamese Review Roadmap](../roadmap_for_user_vi.md)
 - [Architecture Overview](architecture/architecture.md)
 - [Knowledge Graph](architecture/knowledge-graph.md)
 - [M1 Contracts](architecture/m1-contracts.md)
 - [M3 Workspace and Build-Model Contract](architecture/m3-workspace-build-model.md)
 - [Progressive Evidence Acquisition Contract](architecture/evidence-acquisition.md)
 - [M4 Spring Intelligence and Closed Mechanism Taxonomy](architecture/m4-spring-intelligence.md)
+- [Conditional Architecture Semantics](architecture/conditional-architecture-semantics.md)
 - [Product Outcome and Workbench Contract](architecture/product-outcome.md)
 - [ADR-002: Complete Visual Product and Explainable Assessment](decisions/ADR-002-product-outcome-and-explainable-assessment.md)
 - [ADR-003: Progressive Evidence Acquisition](decisions/ADR-003-progressive-evidence-acquisition.md)
+- [ADR-004: Staged Conditional Architecture Semantics](decisions/ADR-004-staged-conditional-architecture-semantics.md)
+- [Conditional Architecture Redirection Review](research/2026-09-09-conditional-architecture-redirection-review.md)
 - [Research Questions](research/research-questions.md)
 - [Architecture Decisions](decisions/)

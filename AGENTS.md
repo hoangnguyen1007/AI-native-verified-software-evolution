@@ -13,7 +13,7 @@ Milestone and phase scope govern current delivery, sequencing, and claim languag
 
 Priority: technical depth > correctness > architecture quality > engineering quality > product quality > empirical validation > publication later.
 
-In scope: Java semantics, safe multi-module build modeling, Spring intelligence, canonical Software Knowledge Graph, architecture policies and evidence-backed violations, bounded impact, metrics and explainable assessment, stable queries, visualization, reproducible evaluation, and gated snapshot comparison.
+In scope: Java semantics, safe multi-module build modeling, bounded configuration-space and phase/order-aware Spring intelligence, canonical Software Knowledge Graph projections, configuration-qualified architecture policies and evidence-backed violations, bounded impact, metrics and explainable assessment, stable queries, visualization, reproducible evaluation, and gated conditional snapshot comparison.
 
 Not SE121 delivery commitments without an explicit phase change: AI diagnosis/RAG, automated refactoring or patch generation, OpenRewrite transformation pipelines, sandbox/differential/mutation verification of generated patches, Verified PR/CI-CD product flows, and another analyzed language. These are scheduled non-goals, not architectural prohibitions; extension boundaries may be preserved without implementing the capabilities now. Architecture-mutation fixtures for SE121 rule detection are allowed.
 
@@ -82,21 +82,34 @@ A trivial prose/formatting edit needs applicable local instructions, diff inspec
 - Model modules, source roots, dependency scopes, parent POMs, dependency management and BOMs where analysis needs them. Never execute arbitrary untrusted target Maven/Gradle lifecycles. This safety rule does not preclude a future explicitly authorized, isolated, resource-bounded build/sandbox evidence provider with recorded inputs, outputs, side effects and provenance.
 - Content-address analysis from snapshot/source hashes, ordered exact classpath, configuration, rules, graph schema, and analyzer version.
 - Keep unresolved, ambiguous, partial, conditional, unsupported, and error outcomes explicit. Derivation and semantic status are separate.
+- M3 produces one exact build/classpath/platform context. M4+ may model a finite Spring configuration space inside that context, but one realized configuration is never promoted to universal architecture truth. Conditional facts retain their truth region, framework/registration semantics version, witness or counterexample where applicable, and `UNKNOWN` when evidence or bounded reasoning is insufficient.
 - Treat a current provider's unresolved or unsupported result as a capability-gap signal, not proof that the repository fact is unknowable. Where the phase and permissions allow, acquire progressively stronger evidence through replaceable providers; otherwise retain the gap, attempted methods and reason without silent omission.
 - Preserve identity, full source spans, origin, derivation, uncertainty, diagnostics, manifest, graph paths and rule/version provenance as applicable. Missing provenance cannot become a verified fact.
 - Keep health separate from analysis confidence; missing evidence may qualify/withhold assessment, never improve it. Metrics/scores are deterministic, versioned and explainable.
 - Prefer a modular monolith and reversible adapters. Source, build metadata, generated sources, bytecode, configuration, controlled sandbox/build results and runtime observations remain possible evidence-provider inputs. Their implementation is gate- and evidence-driven; no provider may silently overwrite contradictory evidence or erase uncertainty.
 - Track A includes the usable visual workbench. Track B cannot bypass Track A correctness gates.
+- Future multi-build-context, deployment, cross-service and verified-AI evolution capabilities remain gated horizons; preserving their boundaries does not make them SE121 commitments.
 
 ## Execution and collaboration
 
 Define scope, contracts, exit criteria and non-goals; resolve consequential uncertainty through research/architecture gates; implement the smallest coherent authorized change; verify; inspect the final diff; update durable state; hand off.
 
-**Context and Token Conservation:**
-- Prefer targeted inspection (`git diff`, focused line slices) over reading whole large source or document files.
-- Do not load unrelated historical research documents, raw benchmark logs, or prior conversational audit files unless directly resolving a cited discrepancy.
-- Maintain strict focus on the active milestone; avoid speculative architectural debates on distant milestones during code implementation.
-- Never compromise correctness, invariants, or evidence verification to save tokens. Efficiency comes from eliminating redundant reads and ceremonial prose, not cutting testing or safety checks.
+### Core Non-Negotiable Invariants
+Every agent (Codex, ChatGPT, Gemini, human) must strictly uphold these four pillars without exception:
+1. **Execution Safety & Sandbox:** Never execute arbitrary or untrusted target Maven/Gradle lifecycles, scripts, or plugins. Target repositories are untrusted input data. Keep remote operations bounded, credential-free, and isolated.
+2. **Evidence-First & Zero Hallucination:** Never guess, assume, or invent semantic types, coordinates, or facts. All claims, entities, and outputs must be content-addressed and cryptographically verifiable (SHA-256).
+3. **Closed Reporting Denominator:** Never silently omit degraded, unresolved, or unsupported facts. Every gap must be recorded as an explicit, typed `CapabilityGapRecord` with root-cause provenance.
+4. **Deterministic Replay:** Repeated runs on identical inputs must yield identical digests and identical capability records.
+
+### LLM Implementation Autonomy & Proactive Robustness
+To maximize engineering velocity while preserving rock-solid correctness:
+- **Full Technical Autonomy within Scope:** Within an approved milestone or slice, the agent has full autonomy to design internal interfaces, algorithms, data structures, edge-case handlers, and comprehensive TDD suites without pausing to request human approval on routine implementation details.
+- **Proactive Robustness over Premature Rejection:** When encountering real-world complexity (e.g. version ranges, dynamic profiles, multi-release JARs, synthetic Lombok methods, network hiccups, corrupt archives), do not immediately reject or throw fatal errors. Instead, design deterministic handling strategies, safe fallbacks, or typed capability gaps that preserve platform continuity.
+- **Context and Token Conservation & Lean Dev Loop:** Prefer targeted inspection (`git diff`, focused 20–50 line slices) over reading whole large source or document files. Do not load unrelated historical research documents or raw benchmark logs unless directly resolving a cited discrepancy. Eliminate ceremonial prose and redundant status loops.
+  - *Strict Targeted Test Execution:* During iterative development and TDD loops, execute ONLY the single targeted test class in quiet mode (`mvn test -pl <target-module> -Dtest=<TargetTest> -q`). Test iterations must be bounded (<5 seconds, <20 lines of output). Never run full multi-module reactor builds or standalone real-world repository benchmarks (e.g. PetClinic pipelines) during feature/bugfix coding.
+  - *One-Shot Gate Benchmark Only:* Full repository benchmark runs are strictly restricted to final gate verification before milestone handoff, executed only once when all isolated unit tests are green and approved.
+  - *Bounded Test Fixtures:* Model new capabilities using minimal, in-memory or compact test fixtures (5–15 line Java classes in `src/test/resources/fixtures/`).
+  - *Zero Megabyte Log Ingestion:* Never pipe or ingest raw megabyte-scale JSON results or verbose download logs into the LLM context window. Read only compact verification summaries (digest, entity counts, pass/fail status).
 
 Proceed on reversible implementation details within approved scope. Seek a human decision only for unresolved consequential scope/architecture/identity/schema/security/cost changes. Explain the specific missing decision; do all separable useful work first. Never ask again for existing approval or silently continue into another milestone.
 

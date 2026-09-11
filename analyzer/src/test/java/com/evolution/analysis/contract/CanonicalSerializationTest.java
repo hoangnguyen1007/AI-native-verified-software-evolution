@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import com.evolution.analysis.contract.analysis.AnalysisManifest;
 import com.evolution.analysis.contract.serialization.CanonicalJson;
+import java.net.URI;
 import java.time.ZoneId;
 import java.util.Arrays;
 import java.util.List;
@@ -27,6 +28,12 @@ class CanonicalSerializationTest {
     void canonicalJsonRejectsBinaryFloatingPointAndNonStringMapKeys() {
         assertThrows(IllegalArgumentException.class, () -> CanonicalJson.write(0.1d));
         assertThrows(IllegalArgumentException.class, () -> CanonicalJson.write(Map.of(1, "value")));
+    }
+
+    @Test
+    void canonicalJsonUsesTheAsciiFormOfExplicitRepositoryUris() {
+        assertEquals("\"https://example.test/maven%20repo/\"",
+                CanonicalJson.write(URI.create("https://example.test/maven%20repo/")));
     }
 
     @Test

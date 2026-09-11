@@ -2,145 +2,227 @@
 
 ## Status and Scope
 
-**PROVISIONAL pre-implementation baseline.** This document narrows OQ-3 and makes the M4 denominator reviewable. It does not start M4, pass G3, claim runtime-container equivalence, or claim that any listed mechanism is implemented.
+**ACCEPTED direction; PROVISIONAL pre-implementation contract.** [ADR-004](../decisions/ADR-004-staged-conditional-architecture-semantics.md) changes M4 from one-context candidate enrichment to bounded, phase/order-aware conditional architecture semantics. Nothing in this document starts M4, changes M3.8, passes G2/G3, approves a solver backend or claims complete Spring runtime-container equivalence.
 
-The catalog is closed per version, not closed forever. `spring-mechanisms:v1` must account for every registered fixture/observation exactly once; a newly discovered mechanism requires an explicit catalog-version change rather than silent omission.
+The catalog is closed per version, not forever. `spring-mechanisms:v2` must account for every registered fixture/observation exactly once. A new mechanism or materially different framework behavior requires an explicit catalog/semantics-version change rather than silent omission.
 
-## Modeling Principles
+## M4 Delivery Slices
 
-- Model declarations, producers, bean-definition candidates, injection points, conditions and binding candidates separately.
-- Do not equate a class annotated with a stereotype, a bean-definition candidate and an instantiated runtime bean.
-- Preserve the exact injection site and producer source evidence where it exists.
-- Candidate compatibility, selection, activation and runtime observation are separate dimensions.
-- A direct bean-to-bean `INJECTS` edge is not canonical source truth. It may be a bounded projection derived from injection-point/candidate evidence with status and provenance.
-- Provider provenance is a reference to a versioned observation/evidence artifact, not a lossy string such as `SOURCE_ANALYSIS`.
+1. **M4-R0 — Research/semantics gate:** approve identities, first framework/condition fragment, version matrix, exhaustive oracle, baselines, corpus protocol and limits.
+2. **M4A — Mechanism ground truth:** detect/classify every `spring-mechanisms:v2` row and preserve real evidence/gaps.
+3. **M4B — Configuration space and condition IR:** build finite evidence-backed spaces inside one exact M3 build context.
+4. **M4C — Staged resolution:** evaluate phase/order-aware registration, activation, candidates and bindings.
+5. **M4D — Truth regions and witnesses:** derive `MUST`/`MAY`/`NEVER`/`UNKNOWN` facts with reproducible witnesses.
+6. **M4E — Evaluation/G3:** execute adjudicated fixtures, fair baselines and representative repository studies.
 
-## Provisional Canonical Concepts
+The detailed cross-milestone semantics live in [Conditional Architecture Semantics](conditional-architecture-semantics.md).
 
-M4 owns the storage-neutral domain meaning; M5 decides which concepts become graph nodes, relationships or indexed records.
+## Modeling Invariants
+
+- Declarations, producers, bean-definition candidates, injection points, conditions, registration transitions, binding candidates and runtime observations are different concepts.
+- A stereotype class or repository interface is not automatically an instantiated runtime bean.
+- One existing `ConfigurationIdentity` identifies one realized configuration. `ConfigurationSpaceIdentity` identifies a finite modeled space and its interpretation inputs.
+- A separate `ConditionalSemanticsContextIdentity` binds the space to framework/condition/registration semantics, registration plan, reasoner policy and result-affecting limits; identities must have non-circular preimages.
+- Activation, registration, type compatibility, disambiguation, selection and runtime instantiation are separate axes.
+- A direct bean-to-bean `INJECTS` edge is a bounded projection, not canonical source truth.
+- Mutually infeasible conditional edges cannot be combined into a certain path, cycle or violation.
+- `UNKNOWN` is preserved whenever missing configuration, order, classpath, generated members or dynamic behavior can change the conclusion.
+- Provider/version provenance references immutable observations/artifacts; later evidence cannot silently rewrite earlier evidence.
+
+## Canonical Domain Concepts
+
+M4 owns storage-neutral meaning; M5 decides node/relationship/index mapping.
 
 | Concept | Meaning and minimum evidence |
 |---|---|
-| `BeanProducer` | Source/configuration/artifact/runtime mechanism capable of declaring a bean definition: stereotype class, `@Bean` method, factory, auto-configuration, XML or programmatic registration. Carries producer kind, owner, origin, status and real declaration evidence when available |
-| `BeanDefinitionCandidate` | A candidate bean definition produced under a specific analysis/configuration context; includes names/aliases, exposed types, scope when known, producer reference, conditions and uncertainty. It is not proof of runtime instantiation |
-| `InjectionPoint` | Exact constructor parameter, field, method/setter parameter, `@Bean` parameter or other registered injection site; includes requested type/shape, name, qualifiers, owning bean candidate where known and complete source span when source-declared |
-| `ConfigurationCondition` | Profile/property/classpath/bean/expression or other activation predicate with normalized operands, evaluation status, evidence and missing inputs |
-| `BindingCandidate` | Evidence that one bean-definition candidate may satisfy one injection point, including assignability, name/qualifier reasoning, selection rank, semantic status, derivation, conditions and provider references |
+| `BeanProducer` | Source/configuration/artifact/runtime mechanism capable of declaring a definition, with producer kind, owner, origin, condition and real evidence |
+| `BeanDefinitionCandidate` | Potential definition with names/aliases, exposed types, scope, producer, registration condition and uncertainty; not runtime-instantiation proof |
+| `InjectionPoint` | Exact constructor parameter, field, method/setter parameter, `@Bean` parameter or registered injection site with requested shape, qualifiers, owner and source evidence where declared |
+| `ConditionExpression` | Versioned normalized profile/property/classpath/resource/web/bean-state/opaque predicate |
+| `RegistrationTransition` | Candidate registration step in a known phase/order with condition, input/output state references and uncertainty |
+| `BindingCandidate` | Evidence that one registered candidate may satisfy an injection point, including compatibility, selection rationale, truth region and provenance |
+| `ConditionalSpringFact` | Producer/registration/binding/endpoint fact with `T`/`F`/`U` region and `MUST`/`MAY`/`NEVER`/`UNKNOWN` classification |
+| `ConfigurationWitness` | Deterministic assignment and material registration-order identity reproducing a fact/finding outcome |
+| `FrameworkEntryPoint` | Endpoint/listener/scheduled/lifecycle callback invoked by the framework despite no application `CALLS` edge |
 
-Suggested semantic relationships are `DECLARES_PRODUCER`, `PRODUCES_BEAN_CANDIDATE`, `DECLARES_INJECTION_POINT`, `HAS_CONDITION`, `INJECTION_CANDIDATE`, and `SELECTED_BINDING`. `SELECTED_BINDING` is emitted only when the registered static/configuration semantics justify one selection; future runtime evidence uses a distinct observation/derivation rather than rewriting it as source-direct.
+Suggested semantic relationships include `DECLARES_PRODUCER`, `PRODUCES_BEAN_CANDIDATE`, `DECLARES_INJECTION_POINT`, `HAS_CONDITION`, `PRECEDES_REGISTRATION`, `INJECTION_CANDIDATE`, `SELECTED_BINDING` and `OBSERVED_BINDING`. `SELECTED_BINDING` exists only where a specific world/region and supported versioned semantics justify selection. `OBSERVED_BINDING` is a separate evidence layer.
 
-## Candidate Determination and Selection Phasing
+## Condition Classes
 
-Resolution must not apply a rigid priority shortcut (e.g. "Qualifier > Primary > Profile") that selects an inactive bean. Candidate selection proceeds in four decoupled phases:
+| Class | Examples | Evaluation input |
+|---|---|---|
+| Build-context constants | class/resource present, Java/Spring version | exact M3 context |
+| Exogenous configuration | profile, property, web mode | realized assignment in the modeled space |
+| Endogenous bean state | bean present/missing, single candidate | definitions processed before the transition |
+| Opaque/dynamic | custom `Condition`, unresolved SpEL, registrar/post-processor computation | additional configuration/build/runtime evidence |
 
-1. **Phase 1 — Candidate Discovery and Activation Evaluation:**
-   - Discover all bean producers within component-scan and configuration scopes.
-   - Evaluate activation conditions (`@Profile`, `@ConditionalOnProperty`, `@ConditionalOnClass`) against the explicit configuration context.
-   - A candidate is *eligible* only if its conditions evaluate to true in the active context.
-   - If condition data or properties are absent, candidate status is retained as `CONDITIONAL` or `UNKNOWN`. It must not be prematurely eliminated or selected.
-2. **Phase 2 — Type Matching and Assignability:**
-   - Filter eligible candidates by assignability to the requested injection-point type, preserving generic parameters, wildcards, and collection container semantics.
-3. **Phase 3 — Disambiguation and Preference:**
-   - Disambiguation rules apply **only** across the set of active, type-compatible candidates from Phases 1 and 2.
-   - Apply explicit `@Qualifier` values and composed qualifiers.
-   - If multiple qualified candidates remain, evaluate `@Primary` and `@Fallback` declarations.
-   - Apply parameter/field name matching fallback according to framework version semantics.
-4. **Phase 4 — Resolution Verdict:**
-   - If exactly one eligible candidate satisfies all criteria, emit `SELECTED_BINDING`.
-   - If multiple eligible candidates remain without a deterministic disambiguator, emit `AMBIGUOUS_CANDIDATE` with status `AMBIGUOUS`.
-   - If no eligible candidates exist, record an unsatisfied injection gap.
+These classes may compose in one expression, but their provenance and uncertainty remain visible. Unsupported or unrecognized nodes become opaque conditions plus capability gaps; they are not evaluated false.
 
-## Configuration Context and Profile Sets
+## Configuration Context and Space
 
-1. **Active Profile Sets:** Spring Boot allows multiple profiles to be active simultaneously. The configuration context supplies a set of active profiles (`Set<String>`), not a single string.
-2. **Path Feasibility and Cycle Protection:**
-   - When evaluating paths or candidate cycles (e.g. `A -> B` requiring `@Profile("prod")` and `B -> A` requiring `@Profile("!prod")`), the path is evaluated against configuration feasibility.
-   - Two conditions that cannot be simultaneously satisfied in any valid configuration must not be combined into a certain cyclic dependency.
-   - A union view across configurations is explicitly labeled as a potential multi-scenario projection, not a single runtime reality.
+1. **Profiles are sets and expressions:** multiple profiles may be active. Profile groups and `!`, `&`, `|` semantics are versioned and tested.
+2. **Property sources retain precedence:** repository documents, imports and user-supplied deployment envelopes remain distinct with exact origin/digest. Ambient host environment is never read implicitly.
+3. **Finite domains are explicit:** observed values, `MISSING` and a sound `OTHER` abstraction may be used. Empty and missing values remain distinct where Spring distinguishes them.
+4. **External configuration may be absent:** repository files are not called the complete production environment. Missing imports/config trees/custom loaders become `CONFIGURATION` gaps.
+5. **Path feasibility is mandatory:** incompatible profiles/conditions never form one certain path or cycle. Union views are labeled exploratory projections.
 
-## Framework Entry Points and Dead-Code Safeguards
+## Phase/Order-Aware Registration and Binding
 
-Spring components are frequently invoked by the framework rather than direct application method calls:
-1. **Entry Point Classification:** REST endpoints (`@RequestMapping`, `@GetMapping`, `@PostMapping`, etc.), scheduled tasks (`@Scheduled`), message listeners, lifecycle callbacks (`@PostConstruct`), and event listeners (`@EventListener`) are explicitly modeled as **Framework Entry Points**.
-2. **Dead-Code Invariant:** A managed Spring bean or method with in-degree zero from application `CALLS` relationships must **NEVER** be concluded as dead code if it is a registered framework entry point. The absence of internal callers is an expected framework characteristic, not an architecture defect.
+Resolution does not use a rigid shortcut such as “Qualifier > Primary > Profile” and does not use an unordered generic fixpoint.
+
+### Phase 1 — Parse and discover
+
+- discover configuration classes/imports, component-scan scopes, producers and injection sites;
+- evaluate parse-phase/build-context conditions where supported;
+- retain opaque/dynamic mechanisms and missing metadata as candidates/gaps.
+
+### Phase 2 — Ordered bean-definition registration
+
+- establish the supported framework-version registration plan;
+- evaluate each transition against the definitions processed so far;
+- honor supported user-definition/auto-configuration and before/after ordering rules;
+- treat missing-bean and single-candidate predicates as state-dependent;
+- explore alternative legal order only within explicit deterministic bounds; otherwise mark affected results `UNKNOWN`.
+
+### Phase 3 — Activation and type compatibility
+
+- evaluate exogenous configuration for the realized world;
+- filter registered candidates by type/generic/container compatibility;
+- retain zero/one/many candidate evidence.
+
+### Phase 4 — Disambiguation and verdict
+
+- apply qualifiers and composed qualifiers;
+- apply name fallback, `@Primary`, `@Fallback` and supported ordering semantics for the pinned framework version;
+- emit selected, ambiguous or unsatisfied results with truth regions and evidence;
+- never interpret “not established” as “no bean exists.”
+
+## Generated and Framework-Synthesized Semantics
+
+### Lombok
+
+A derived constructor/injection point is permitted only for a supported Lombok fragment with exact annotation identity, relevant configuration/version, field order, field initialization, `@NonNull`, static/excluded fields and explicit-member interactions. `@RequiredArgsConstructor`, `@AllArgsConstructor`, `@Data` or a final field alone is insufficient.
+
+Generated members retain `EntityOrigin.PROJECT`. The annotation span is supporting derivation evidence, not a generated declaration span. Insufficient evidence creates `GENERATED_SOURCE`/`BYTECODE` requirements.
+
+### Spring Data
+
+A repository interface becomes a candidate only when enablement/scanning, base package/filter, store binding and `@NoRepositoryBean` evidence establish eligibility. Multi-store ambiguity, custom fragments, repository base classes/factories and naming remain visible. Extending `Repository` alone does not establish a bean or selected binding.
+
+### Other generators and factories
+
+MapStruct, QueryDSL, factory methods, `FactoryBean` and proxy product types use the same evidence rule: synthesize only a versioned supported semantic fact; otherwise preserve a candidate and request generated-source, bytecode, configuration or runtime evidence.
 
 ## Orthogonal Status Axes
 
-The model must not collapse these axes into one `status` property:
-
-| Axis | Example values | Question answered |
+| Axis | Example values | Question |
 |---|---|---|
-| Mechanism handling | `SUPPORTED`, `CONDITIONAL`, `DYNAMIC`, `UNSUPPORTED`, `OUT_OF_SCOPE` | What does this provider/catalog promise to do with this mechanism? |
-| Semantic attribution | M1 `RESOLVED`, `PARTIAL`, `UNRESOLVED`, `AMBIGUOUS`, `CONDITIONAL`, `UNSUPPORTED`, `ERROR` | What target/candidate result did this analysis establish? |
+| Mechanism handling | `SUPPORTED`, `CONDITIONAL`, `DYNAMIC`, `UNSUPPORTED`, `OUT_OF_SCOPE` | What does the current catalog/provider promise? |
+| Semantic attribution | M1 `RESOLVED`, `PARTIAL`, `UNRESOLVED`, `AMBIGUOUS`, `CONDITIONAL`, `UNSUPPORTED`, `ERROR` | What target/candidate result was established? |
+| Logical condition | `TRUE`, `FALSE`, `UNKNOWN` | What is true for this exact state/configuration? |
+| Region quantifier | `MUST`, `MAY`, `NEVER`, `UNKNOWN` | How does truth vary over the modeled feasible space? |
 | Derivation | `DIRECT`, `DERIVED`, `INFERRED` | How was the observation produced? |
-| Activation/selection | active, inactive, conditional, candidate, selected, runtime-observed, unknown | What is known about configuration activation or binding selection? |
-| Evidence provenance | provider/version plus observation/artifact IDs | Which evidence supports the statement? |
+| Registration/selection | discovered, active, inactive, registered, candidate, selected, ambiguous, observed | Which framework step is established? |
+| Operational outcome | success, unsupported, error, timeout, denied, limit exceeded | Did the bounded method complete? |
+| Evidence provenance | provider/version, observation/artifact/gap IDs | What supports or limits the statement? |
 
-`SUPPORTED` does not guarantee a resolved binding. `DYNAMIC` does not mean ignored. `OUT_OF_SCOPE` means outside the current catalog/provider delivery contract, not permanently excluded from the platform.
+`SUPPORTED` does not guarantee a resolved binding. `DYNAMIC` does not mean ignored. `OUT_OF_SCOPE` is a versioned delivery boundary, not a permanent prohibition.
 
-## `spring-mechanisms:v1` Closed Denominator Matrix
+## `spring-mechanisms:v2` Closed Denominator
 
-The “M4 target” column is a provisional gate target, not current implementation status.
+The target column is a gate objective, not current implementation status.
 
-| Mechanism ID | Mechanism | M4 target | Minimum source/static evidence | Candidate next evidence when insufficient |
-|---|---|---|---|---|
-| `spring.bean.stereotype.direct` | Direct `@Component`/`@Service`/`@Repository`/`@Controller` | `SUPPORTED` | Annotation identity, class declaration, component-scan scope, compile classpath | Configuration/component-scan metadata |
-| `spring.bean.stereotype.composed` | Meta/composed stereotype | `SUPPORTED` | Annotation declaration graph and usage | Dependency bytecode/annotation metadata |
-| `spring.bean.factory-method` | `@Configuration` + `@Bean` producer | `SUPPORTED` | Method, return/exposed types, bean names, parameters and declaration span | Configuration/property evidence |
-| `spring.injection.constructor` | Explicit/implicit constructor injection | `SUPPORTED` | Constructor rules, parameter types/qualifiers, candidate set | Generated source, bytecode or configuration |
-| `spring.injection.field` | `@Autowired`/`@Inject` field | `SUPPORTED` | Field type/name/qualifiers and candidates | Dependency metadata or runtime observation |
-| `spring.injection.method` | Setter or arbitrary method injection | `SUPPORTED` | Method/parameter annotations, signatures and candidates | Dependency metadata or runtime observation |
-| `spring.injection.bean-parameter` | `@Bean` method parameter | `SUPPORTED` | Producer method parameter and candidate set | Configuration/runtime observation |
-| `spring.injection.resource` | JSR-250 `@Resource` name/type semantics | `SUPPORTED` | Annotation attributes, field/method name, requested type and candidates | Configuration/runtime observation |
-| `spring.disambiguation.qualifier` | `@Qualifier` and composed qualifier | `SUPPORTED` | Qualifier identities/values on point and candidate | Dependency annotation metadata |
-| `spring.disambiguation.priority` | `@Primary`, `@Fallback`, ordered/priority semantics where applicable | `SUPPORTED` | Candidate annotations and registered selection rules | Runtime/container observation for unsupported combinations |
-| `spring.injection.aggregate` | Collection/array/map/optional/provider/lazy injection | `SUPPORTED` | Requested container shape, generic element/key/value types and ordered candidates | Runtime observation for dynamic provider behavior |
-| `spring.condition.profile` | `@Profile` | `CONDITIONAL` | Normalized profile expression and explicit active-profile configuration | Configuration set or runtime environment |
-| `spring.condition.registered` | `@ConditionalOnProperty`, class, bean, expression and other registered conditions | `CONDITIONAL` | Condition kind/operands plus available property/classpath/bean evidence | Additional configuration, dependency artifacts or controlled runtime |
-| `spring.registration.auto-configuration` | Imports, selectors and auto-configuration metadata | `CONDITIONAL` | Import metadata, candidate declarations, classpath and conditions | Dependency metadata/bytecode, configuration or controlled runtime |
-| `spring.registration.factory` | `FactoryBean` and factory-produced definitions | `CONDITIONAL` | Factory type/generic/product metadata and conditions | Bytecode or runtime product-type observation |
-| `spring.registration.xml` | Legacy XML `<bean>`/context wiring | `OUT_OF_SCOPE` for M4 implementation; detected/accounted | XML resource presence/reference and source location | Future XML/configuration provider |
-| `spring.registration.programmatic` | `registerBean`, registrars, post-processors and computed definitions | `DYNAMIC` | Call/type/mechanism presence and arguments that are statically available | Isolated build or controlled runtime observation |
-| `spring.lookup.container` | `ApplicationContext.getBean`, service locator and `@Lookup` | `DYNAMIC` | Call site, constant names/types and owner evidence | Configuration or runtime observation |
-| `spring.expression.value` | `@Value` and SpEL-derived dependencies | `DYNAMIC` | Expression text, source span and statically referenced property names/types | Configuration/expression evaluator or controlled runtime |
-| `spring.runtime.proxy-aop` | Proxies, advisors and runtime-created dependencies affecting architecture | `DYNAMIC` | Enabling annotations/configuration and relevant declarations | Configuration, bytecode or runtime observation |
+| Mechanism ID | Mechanism | M4 target | Required evidence/qualification |
+|---|---|---|---|
+| `spring.discovery.component-scan` | Scan roots, base packages and include/exclude filters | `CONDITIONAL` | Configuration declaration, package/type evidence, condition region |
+| `spring.bean.stereotype.direct` | Direct component/service/repository/controller | `SUPPORTED` | Annotation identity plus proven scan/import eligibility |
+| `spring.bean.stereotype.composed` | Meta/composed stereotype | `SUPPORTED` | Annotation declaration graph and dependency metadata where needed |
+| `spring.bean.factory-method` | `@Configuration` + `@Bean` | `SUPPORTED` | Producer signature/name/types, phase/order and conditions |
+| `spring.injection.constructor.explicit` | Explicit constructor injection | `SUPPORTED` | Constructor/parameter types, qualifiers and candidates |
+| `spring.injection.constructor.implicit` | Single unannotated constructor | `SUPPORTED` | Framework-version rule and exact constructors |
+| `spring.injection.constructor.generated` | Lombok/generated constructor | `CONDITIONAL` | Versioned generator semantics or generated-source/bytecode evidence |
+| `spring.injection.field` | `@Autowired`/`@Inject` field | `SUPPORTED` | Field shape/qualifiers and registered candidates |
+| `spring.injection.method` | Setter/arbitrary method injection | `SUPPORTED` | Method/parameter annotations and candidates |
+| `spring.injection.bean-parameter` | `@Bean` method parameter | `SUPPORTED` | Producer transition, parameter and candidate state |
+| `spring.injection.resource` | JSR-250 `@Resource` | `SUPPORTED` | Name/type/version semantics and candidates |
+| `spring.disambiguation.qualifier` | `@Qualifier` and composed qualifier | `SUPPORTED` | Qualifier identities/values on point/candidate |
+| `spring.disambiguation.priority` | `@Primary`, `@Fallback`, name/order rules | `SUPPORTED` | Pinned framework-version selection semantics |
+| `spring.injection.aggregate` | Collection/array/map/optional/provider/lazy | `SUPPORTED` | Container/generic shape and ordered candidates; dynamic behavior qualified |
+| `spring.condition.profile` | `@Profile` and profile expressions/groups | `CONDITIONAL` | Normalized expression and configuration-space evidence |
+| `spring.condition.property` | `@ConditionalOnProperty` and property predicates | `CONDITIONAL` | Key/value/missing semantics, precedence and finite domain |
+| `spring.condition.build-context` | Class/resource/web-mode conditions | `CONDITIONAL` | Exact build/resource/web-mode evidence |
+| `spring.condition.bean-state` | On-bean/missing-bean/single-candidate | `CONDITIONAL` | Ordered bean-definition state and framework version |
+| `spring.condition.custom-expression` | Custom condition and SpEL | `DYNAMIC` | Detect/retain expression; additional evaluator/runtime evidence when needed |
+| `spring.registration.auto-configuration` | Imports/selectors/metadata and ordering | `CONDITIONAL` | Dependency metadata, condition IR and registration plan |
+| `spring.registration.spring-data` | Repository proxies and fragments | `CONDITIONAL` | Enablement/scan/store/exclusion/factory evidence |
+| `spring.registration.factory` | `FactoryBean`/factory-produced definitions | `CONDITIONAL` | Factory product metadata and condition region |
+| `spring.registration.xml` | XML bean/context wiring | `OUT_OF_SCOPE` for first implementation; detected/accounted | XML presence/reference and exact gap |
+| `spring.registration.programmatic` | `registerBean`, registrars, post-processors | `DYNAMIC` | Call/mechanism evidence plus configuration/build/runtime requirement |
+| `spring.lookup.container` | `getBean`, service locator, `@Lookup` | `DYNAMIC` | Call/name/type evidence and unresolved target region |
+| `spring.expression.value` | `@Value` and dependency-bearing SpEL | `DYNAMIC` | Expression/property evidence and explicit evaluator boundary |
+| `spring.runtime.proxy-aop` | Proxies/advisors/runtime dependencies | `DYNAMIC` | Enabling declarations plus bytecode/runtime evidence when needed |
+| `spring.entrypoint.framework` | MVC endpoints, listeners, scheduled/lifecycle callbacks | `SUPPORTED`/`CONDITIONAL` | Registration/condition evidence; never inferred dead from absent callers |
 
-`UNSUPPORTED` remains available for a registered construct that the current provider can detect but cannot yet interpret safely. It must carry a reason code and [capability gap](evidence-acquisition.md), not disappear from the denominator.
+Every `UNSUPPORTED`, `DYNAMIC` and `OUT_OF_SCOPE` case has a stable reason and capability-gap/denominator entry where it affects requested outputs.
 
-## Ground-Truth and Gate Requirements
+## Ground Truth and Evaluation
 
-For every catalog row, register positive cases where applicable plus negative controls, missing-classpath/configuration cases, ambiguity, conditional activation, unsupported forms and provider faults. Ground truth distinguishes:
+For every catalog row, register positive cases where applicable plus negative controls, missing classpath/configuration, conflicting property precedence, ambiguity, inactive conditions, alternative registration orders, unsupported forms and provider faults.
 
-- mechanism detection from binding correctness;
+Ground truth separates:
+
+- mechanism detection from activation/registration/binding correctness;
 - candidate recall from selected-binding precision;
-- semantic attribution from source/provenance completeness;
-- static/configuration conclusions from runtime observations; and
-- expected omissions from unexpected omissions.
+- exact realized-world results from truth-region classification;
+- semantic attribution from span/provenance completeness;
+- logical `UNKNOWN` from operational failure;
+- expected catalog exclusions from unexpected omissions.
 
-G3 requires all `spring-mechanisms:v1` rows to have reviewed handling expectations and reconciled denominators. A row may intentionally remain `DYNAMIC` or `OUT_OF_SCOPE`; gate acceptance requires truthful detection/accounting and bounded claims, not fabricated runtime equivalence.
+Required measurements include closed-denominator precision/recall, false-certainty, false-unconditional warnings, quantifier confusion, witness validity/minimality, affected-region accuracy, deterministic digest agreement and bounded time/memory.
+
+Applicable baselines are Java-static graph, one realized Spring configuration, flat presence conditions, ArchUnit, Spring Modulith and Jasmine where artifact/version/rule equivalence can be reproduced. ArchUnit and Spring Modulith are not characterized as only runtime-`ApplicationContext` analyzers.
 
 ## Graph and Product Projections
 
-The graph should retain producer, candidate, injection-point, condition and evidence identities. Useful projections include:
+The graph preserves producer, candidate, injection-point, condition, transition, fact-region, witness and evidence identities. Product/query views support:
 
-- bean-definition candidate → owned injection points;
-- injection point → all compatible candidates with disambiguation reasoning;
-- condition → affected producer/candidate/binding;
-- selected binding only where justified, visibly distinct from candidate edges; and
-- runtime-observed binding as a separate evidence layer.
+- one realized configuration;
+- `MUST`-only architecture;
+- condition-labeled `MAY` facts;
+- bounded union exploration with infeasibility warnings;
+- unknown/gap overlays;
+- “why active/inactive/registered/selected?” explanation;
+- witness replay input and affected configuration region.
 
-The workbench should show zero/one/many candidates, selection rationale, conditions, unresolved capability gaps and provider provenance. A convenience bean-to-bean dependency view must link back to the injection point and supporting candidate/selection evidence.
+A convenience bean-to-bean dependency always links back to the injection point, region and supporting selection evidence.
+
+## G3 Acceptance
+
+G3 requires:
+
+1. approved identities, framework-version matrix and v1 semantic fragment;
+2. every `spring-mechanisms:v2` row reconciled in a closed denominator;
+3. no silent omissions or false universal promotions in adjudicated fixtures;
+4. phase/order behavior verified, including missing-bean non-monotonic cases;
+5. deterministic valid witnesses and explicit unresolved residue;
+6. fair baseline and representative repository results with failures included;
+7. explicit limits and no complete-container-equivalence claim.
 
 ## Remaining Decisions
 
-- Exact canonical identities for producer, bean-definition candidate, injection point and condition.
-- Condition expression normalization and configuration-set identity.
-- Candidate ranking semantics for every qualifier/priority combination.
-- Graph node-versus-record mapping and storage-neutral query contracts.
-- Which `v1` mechanisms are required as full M4 implementations versus detected/accounted boundaries after fixture evidence.
+- Exact Java schemas/preimages for M4 concepts and `ConfigurationSpaceIdentity`.
+- First supported Spring Boot/Framework/Lombok/Spring Data version matrix.
+- Exact v1 condition/registration fragment and unsupported boundaries.
+- Property-source/import abstraction and sound `OTHER` domains.
+- Solver/branch limits and benchmark-backed backend selection.
+- Graph node-versus-record representation and query payload budgets.
+- Corpus repositories, historical pairs and registered baselines.
 
 ## Related Documents
 
+- [ADR-004](../decisions/ADR-004-staged-conditional-architecture-semantics.md)
+- [Conditional Architecture Semantics](conditional-architecture-semantics.md)
+- [Research Review](../research/2026-09-09-conditional-architecture-redirection-review.md)
 - [Roadmap](../roadmap.md)
 - [Knowledge Graph](knowledge-graph.md)
 - [M3 Workspace and Build-Model Contract](m3-workspace-build-model.md)

@@ -202,3 +202,7 @@ Repairing that experimental generator may later produce a newly identified compa
 6. Obtain independent read-only review of final contracts, source, labels and evidence. Resolve material findings before claiming M2 complete.
 
 M2 completion requires the registered architecture categories and modern-Java cases to meet their explicitly reviewed support/handling expectations, no hidden omissions, no fabricated origins/spans, no unresolved blocking identity/provenance defects, and deterministic output on pinned inputs. Passing only a pilot subset cannot complete M2. G2 additionally requires M3's pinned multi-module and real-repository build-model evidence. Performance budgets must be registered against representative inputs before a scale claim; the initial protocol makes no speed or memory superiority claim.
+
+## Boundary with M4 Conditional Semantics
+
+[ADR-004](../decisions/ADR-004-staged-conditional-architecture-semantics.md) does not change the M2 frontend contract or retroactively reinterpret Java relationships. M2 emits parser-neutral Java facts, candidates, statuses and evidence for one exact input context. M4 consumes those facts with M3 build evidence to model Spring conditions, registration order, bindings and truth regions. Configuration reasoning and solver types must not enter `SemanticFrontend` or parser-adapter outputs.

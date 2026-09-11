@@ -12,6 +12,8 @@ The approved SE121 North Star is **Track A + Track B**:
 
 The roadmap is tech-first. Ground truth, benchmarks, evidence, and reproducibility remain mandatory engineering verification. Publication and extensive defense packaging are later/optional activities.
 
+On 2026-09-09, [ADR-004](decisions/ADR-004-staged-conditional-architecture-semantics.md) accepted bounded phase/order-aware conditional architecture semantics as the M4+ direction. The decision strengthens Track A+B but does not bypass the independent G2 semantic-adjudication gate or advance G2/G3.
+
 Tracks and milestones define delivery order and acceptance claims, not permanent capability ceilings. Architecture work must preserve safe extension paths for deeper repository evidence even when the corresponding provider is not an SE121 deliverable.
 
 ## Protected Principles
@@ -30,6 +32,8 @@ Tracks and milestones define delivery order and acceptance claims, not permanent
 12. Metrics and scores are versioned, deterministic, explainable, and withheld when required evidence is insufficient.
 13. Track A must deliver the required visual product workflow; an analyzer or CLI alone is not product completion.
 14. Repository facts and inputs are never silently omitted because a current provider cannot interpret them; acquisition attempts, gaps, exclusions and reasons remain visible.
+15. One realized Spring configuration is not universal architecture truth. M4+ must preserve configuration-space identity, phase/order semantics, truth regions, witnesses and `UNKNOWN` outcomes.
+16. Graph, policy, metrics and UI consume conditional facts through stable contracts; they must not flatten mutually infeasible facts into one executable world.
 
 ## Capability Growth and Progressive Evidence
 
@@ -48,7 +52,10 @@ See [ADR-003: Progressive Evidence Acquisition and Capability Boundaries](decisi
 - Safe multi-module workspace and build-model intelligence
 - Expanded Java semantic frontend behind an adapter
 - Explicit uncertainty and diagnostics
-- Bounded Spring candidate/injection intelligence
+- Bounded, framework-versioned Spring producer/injection intelligence
+- Finite configuration-space modeling inside one exact build context
+- Phase/order-aware bean-registration and binding semantics
+- `MUST`/`MAY`/`NEVER`/`UNKNOWN` facts with deterministic witnesses where applicable
 - Deterministic canonical Software Knowledge Graph
 - Storage-neutral architecture query layer
 - Typed architecture-policy engine
@@ -66,6 +73,8 @@ See [ADR-003: Progressive Evidence Acquisition and Capability Boundaries](decisi
 - Entity, relationship, Spring-binding, policy, and metric diffs
 - Introduced, resolved, persisted, and reintroduced violations
 - Source-evidenced comparison queries and UI
+- Conditional fact/finding region and witness deltas
+- Evidence/configuration-space drift separated from repository change
 - Labeled historical/two-snapshot evaluation
 - Basic earliest-observed violation analysis only where history semantics are explicit
 
@@ -78,6 +87,15 @@ See [ADR-003: Progressive Evidence Acquisition and Capability Boundaries](decisi
 - Large temporal histories
 - Advanced hotspot analysis
 - Advanced evidence-provider research beyond needs already justified by Track A/B gaps, including selective bytecode/runtime correlation
+- AOT/JVM architecture comparison and multi-build-context federation
+
+### Post-M12 Capability Horizons
+
+These horizons preserve a coherent path toward a broader real-world product; they are not SE121 commitments and cannot bypass Track A+B gates.
+
+- **Horizon D — Context federation:** Maven/Gradle/POM-less build-context families, generated/deployment/AOT/runtime evidence and configuration descriptors from container/orchestration systems.
+- **Horizon E — System-of-systems assurance:** cross-repository API, event, schema, database-migration and ownership architecture with enterprise CI/PR/IDE integration.
+- **Horizon F — Verified AI evolution:** evidence-grounded explanation, gap prioritization, policy drafting, change planning and transformation proposals; deterministic analysis and isolated verification remain authoritative.
 
 ## Milestones
 
@@ -113,7 +131,7 @@ Exit gate G1: contract/invariant/golden tests define deterministic identity and 
 
 ### M2 - Semantic Frontend and Ground-Truth Expansion
 
-**Status: COMPLETE (Frontend Implementation Verified).** Implemented, verified with 98 root tests, and confirmed on whole-project multi-file analysis (43 files, 1,488 occurrences). All 18 relationship families are implemented. Gate G2 boundary remains open for M3 build-model intelligence.
+**Status: COMPLETE (Frontend Implementation Verified).** Implemented, verified with 98 root tests at its checkpoint, and confirmed on whole-project multi-file analysis (43 files, 1,488 occurrences). All 18 relationship families are implemented. The combined frontend/build-model Gate G2 remains withheld pending independent semantic adjudication after completed M3 implementation.
 
 Deliver the JavaParser adapter and architecture-relevant relationship set: declarations, inheritance, implementations, permits, type uses, calls, constructor calls, field access, method references, parameters, returns, fields, throws, annotations, generics, and relevant modern Java constructs.
 
@@ -121,7 +139,7 @@ Ground truth distinguishes attempted, correct, incorrect, unresolved, ambiguous,
 
 ### M3 - Multi-Module Workspace and Build-Model Intelligence
 
-**Status: CORE IMPLEMENTED THROUGH M3.7; G2 WITHHELD.** Progressive external parent/BOM POM acquisition, qualified inactive profile baselines and cross-release `ct.sym` are implemented and tested. PC-Shop and Spring PetClinic runs resolve their external Spring Boot parents and recover complete source ownership/decoding, while incomplete local dependency caches still withhold frontend input. Remote dependency binaries, POM-less/non-Maven source plans, representative multi-module evidence and independent semantic acceptance remain open.
+**Status: M3.1–M3.8 DELIVERED; M3 IMPLEMENTATION COMPLETE; G2 WITHHELD PENDING INDEPENDENT SEMANTIC ADJUDICATION.** The full reactor passes 221 tests. M3.8 adds neutral acquisition contracts, `dependency.artifact-cache:m3.8`, and the bounded `dependency.maven-fixpoint:3.9.16-m3.8` resolver. The official Spring PetClinic checkpoint ran twice from separate empty caches: each run accounted for 629 requested files, including 266 acquired JARs and 363 acquired/verified POM descriptors recorded as `SKIPPED_POM` because they are not frontend binaries; consumed 171,800,181 bytes; assembled both source sets; analyzed all 50 Java files; and emitted 4,250 frontend observations. The byte-identical canonical outputs have digest `sha256:8806702323d9bc307aef7795bee0b10bdf15e43da65353f75015517b46eb2796`. This closes the M3 implementation slice, not G2: independent semantic labels and adjudication are still required.
 
 Deliver safe understanding of Maven parent POMs, modules, source/generated-source roots where safely discoverable, dependency management, BOMs, dependency scopes, module dependencies, and exact classpath manifests. Build discovery is a provider family rather than a requirement that repositories conform to Maven: POM-less, Gradle and later build shapes use neutral source-plan/build adapters as evidence justifies them. The formal specification is maintained in the provisional [M3 Workspace and Build-Model Intelligence Contract](architecture/m3-workspace-build-model.md). Missing generated sources or effective-model inputs remain explicit acquisition gaps rather than disappearing from coverage.
 
@@ -139,41 +157,70 @@ Exit gate G2: pinned multi-module fixtures and a real repository reproduce modul
 
 ### M4 - Spring Semantic Intelligence
 
-Deliver direct/composed stereotypes, `@Bean` producer candidates, injection points, constructor rules, assignable candidate sets, qualifiers, primary/fallback, collection injection, and explicit conditional/profile states.
+M4 changes from single-context candidate enrichment to **bounded conditional architecture semantics** inside one exact M3 build context. [ADR-004](decisions/ADR-004-staged-conditional-architecture-semantics.md) and the [canonical semantics contract](architecture/conditional-architecture-semantics.md) govern the direction; no M4 production implementation exists yet.
 
-M4 must systematically enumerate and classify all relevant Spring dependency/wiring mechanisms—including annotation-based, constructor, field, setter/method, @Bean parameter, JSR-330/@Resource, collection/provider, qualifier/primary/fallback, conditional/profile, lookup, programmatic registration, factory/auto-configuration, XML/legacy, and runtime-dynamic mechanisms—into SUPPORTED, CONDITIONAL, DYNAMIC, UNSUPPORTED, or OUT_OF_SCOPE; no registered mechanism may be silently omitted, and mechanisms that cannot be statically resolved must still be detected and accounted for with explicit evidence, uncertainty, and limitations.
+#### M4-R0 — Research and Semantics Gate
 
-Static non-resolution is not a permanent verdict. Preserve the evidence need so later configuration, generated-source, bytecode, sandbox or runtime providers can enrich the same canonical model without erasing the original status or provenance.
+Before production Spring semantics:
 
-`OUT_OF_SCOPE` means outside the registered M4 provider/catalog boundary; it does not mean permanently excluded from the platform.
+- approve producer/candidate/injection/condition/configuration-space identities;
+- freeze `spring-mechanisms:v2` and the first supported Spring Boot/Framework version matrix;
+- define repository and user-supplied configuration envelopes, precedence and finite-domain abstraction;
+- adjudicate profile/property/classpath and ordered `OnBean`/`OnMissingBean`/single-candidate fixtures against official behavior;
+- define UNKNOWN, branching and resource-limit behavior;
+- implement an exhaustive small-space oracle specification and preregister solver/baseline/corpus protocols.
 
-The provisional storage-neutral concepts, versioned closed denominator and initial mechanism matrix are defined in [M4 Spring Intelligence and Closed Mechanism Taxonomy](architecture/m4-spring-intelligence.md). They narrow OQ-3 but remain subject to M4 fixtures, identity decisions and G3 review.
+#### M4A — Mechanism Ground Truth
 
-Exit gate G3: pre-registered ground truth across the systematic Spring wiring taxonomy demonstrates bounded correctness without silent omissions. Do not claim Spring runtime-container equivalence.
+Detect and account for direct/composed stereotypes, component scanning, `@Bean`, constructor/field/method/`@Bean` parameter injection, JSR-330/`@Resource`, collection/provider forms, qualifiers, primary/fallback, framework entry points, auto-configuration, factories, Spring Data, generated members, XML, programmatic registration, lookup, SpEL and runtime-dynamic mechanisms. Every registered row is `SUPPORTED`, `CONDITIONAL`, `DYNAMIC`, `UNSUPPORTED` or `OUT_OF_SCOPE` with a closed denominator and evidence need.
+
+Lombok and Spring Data are evidence-gated mechanism families. Do not synthesize members or repository beans from a broad annotation/interface heuristic. Exact generator/framework version, configuration, registration/scanning scope and supporting evidence are required; otherwise retain candidates and capability gaps.
+
+#### M4B — Configuration Space and Condition IR
+
+Deliver storage- and solver-neutral condition expressions; separate build constants, exogenous profile/property inputs, endogenous bean-state predicates and opaque/dynamic conditions; distinguish one existing realized `ConfigurationIdentity` from a new content-addressed `ConfigurationSpaceIdentity`.
+
+#### M4C — Phase/Order-Aware Spring Resolution
+
+Deliver versioned configuration-parse and bean-registration transitions, ordered/partially ordered auto-configuration handling, candidate activation, type/generic matching and qualifier/priority binding. Missing order or opaque behavior branches only within explicit limits and otherwise remains `UNKNOWN`. Do not use an unordered generic fixpoint as Spring truth.
+
+#### M4D — Truth Regions and Witnesses
+
+Classify facts and bindings over the feasible modeled space as `MUST`, `MAY`, `NEVER` or `UNKNOWN`; produce deterministic, minimized and revalidated witnesses/counter-witnesses; preserve unresolved regions and operational failures separately.
+
+#### M4E — Validation and G3
+
+Run adjudicated microfixtures, interaction fixtures and representative repositories across pinned framework versions. Compare against Java-static, realized-current-config, flat-condition and applicable ArchUnit/Spring Modulith/Jasmine baselines. Include failures in the denominator and report false-certainty plus false-unconditional-warning rates.
+
+Static non-resolution is not a permanent verdict. Later configuration, generated-source, bytecode, isolated build or runtime providers may add evidence without erasing the original observation. `OUT_OF_SCOPE` is a catalog boundary, not a permanent platform prohibition.
+
+Exit gate G3: `spring-mechanisms:v2` is fully accounted for; the approved semantic fragment has reviewed truth-region/binding evidence, valid deterministic witnesses, no silent universal promotion, explicit resource/version boundaries and bounded real-repository results. Do not claim complete Spring runtime-container equivalence.
 
 ### M5 - Canonical Graph, Metrics, and Architecture Query Layer
 
-Deliver deterministic graph construction, stable entity/occurrence/relationship identities, graph invariants, storage port, structural metric computation, focused graph projections, and query services for summaries, inventory, metrics, symbol lookup, dependencies, dependents, paths, cycles, evidence, impact, and snapshot comparison preparation.
+Deliver deterministic graph construction as a projection of canonical Java and conditional Spring facts, stable entity/occurrence/relationship/region identities, graph invariants, storage port, structural metric computation, focused configuration-aware projections, and query services for summaries, inventory, metrics, symbol lookup, dependencies, dependents, paths, cycles, evidence, impact, activation explanation and snapshot comparison preparation.
+
+Required projections include one realized configuration, `MUST` facts, condition-labeled `MAY` facts, bounded exploratory union and unknown/gap overlays. A union projection cannot be treated as one runtime application world. Graph storage does not own condition solving or policy quantification.
 
 Every metric exposes a stable ID/version, scope, value/unit, formula semantics, inputs, analysis/configuration identity, status, denominator where applicable, and uncertainty. Hand-computed micrographs and golden fixtures verify structural metrics.
 
 Neo4j is evaluated only as an adapter.
 
-Exit gate G4: idempotency, uniqueness, provenance, persistence round-trip, metric correctness, bounded projection, and query contract tests pass.
+Exit gate G4: idempotency, uniqueness, provenance, persistence round-trip, metric correctness, bounded projection and query contract tests pass across realized, `MUST`, `MAY` and unknown projections, including controls that reject infeasible cross-configuration paths.
 
 ### M6 - Policy, Evidence, and Explainable Architecture Assessment
 
 Deliver schema-validated external policy representation compiled to a typed internal model, initially covering forbidden dependency, layer/module/package boundary, and cycle rules.
 
-Each violation carries rule/version, source/target identities, supporting relationships, source spans, semantic status, graph path, configuration, and limitations.
+Each policy result composes rule predicates with fact truth regions. Findings distinguish `MUST`, `MAY` and `UNKNOWN`; `NEVER` is a clean result within the modeled space rather than a warning. Each finding carries rule/version, source/target identities, supporting relationships, source spans, semantic status, graph path, configuration-space/affected-region identity, witness/counter-witness where applicable, evidence gaps and limitations. Severity and configuration quantifier remain orthogonal.
 
-Deliver policy/violation metrics and a versioned explainable architecture health score with dimension breakdown, raw inputs, contributions, penalties, caps, and withheld reasons. Architecture health remains separate from analysis confidence. Exact weights and thresholds require labeled examples, sensitivity analysis, and human approval before being treated as confirmed.
+Deliver policy/violation metrics and a versioned explainable architecture health score with dimension breakdown, raw inputs, contributions, penalties, caps and withheld reasons. Scoring must define how conditional regions contribute and must not treat unknown configurations as healthy. Architecture health remains separate from analysis confidence. Exact weights and thresholds require labeled examples, sensitivity analysis and human approval before being treated as confirmed.
 
-Exit gate G5: positive, negative, ambiguous, and controlled architecture-mutation cases pass; score golden cases, expected monotonicity properties, missing-evidence behavior, sensitivity analysis, and formula-version tests pass without hidden false certainty.
+Exit gate G5: positive, negative, ambiguous, conditional and controlled architecture-mutation cases pass; witness replay, infeasible-path rejection, score golden cases, expected monotonicity properties, missing-evidence behavior, sensitivity analysis and formula-version tests pass without hidden false certainty.
 
 ### M7 - Impact, CLI, and Interoperability
 
-Deliver bounded direct/transitive/policy impact queries, a complete CLI workflow, and canonical exports for inventory, metrics, score explanations, violations, provenance, and limitations through JSON, SARIF, and GraphML where applicable. Impact remains potential structural impact, not guaranteed runtime behavior.
+Deliver bounded direct/transitive/policy impact queries, configuration-space selection, witness replay inputs, a complete CLI workflow and canonical exports for inventory, metrics, score explanations, conditional findings, provenance and limitations through JSON, SARIF and GraphML where applicable. Impact remains potential structural/configuration-qualified impact, not guaranteed runtime behavior.
 
 Exit gate: the entire Track A analysis/evidence workflow runs locally without backend or Neo4j.
 
@@ -187,17 +234,18 @@ Deliver asynchronous cancellable analysis jobs and versioned query APIs plus the
 - focused interactive architecture graph with search, filters, grouping, expansion, path highlighting, legends, limits, and export;
 - metrics catalog, distributions, drill-down, score breakdown, and contribution/penalty evidence;
 - violation explorer with rule, severity, status, uncertainty, graph path, and exact source evidence;
-- Spring component, endpoint, injection-candidate, and conditional/ambiguous views;
+- Spring component, endpoint, injection-candidate, condition/registration explanation and conditional/ambiguous views;
+- configuration-space summary, realized-configuration selector, `MUST`/`MAY`/`UNKNOWN` filters, affected-region and witness views;
 - bounded impact views; and
 - complete loading, empty, partial, error, canceled, and oversized-result states.
 
 The UI must use stable query services, bounded payloads, pagination/cancellation where applicable, progressive graph expansion, accessible status cues, and registered reference-environment performance budgets. It must not recompute canonical metrics or issue arbitrary graph-store queries.
 
-Exit gate: a user can complete the registered end-to-end product journey on a pinned external repository, drill from dashboard/score/violation/graph to exact evidence, and observe honest degraded behavior on a partial-evidence scenario. CLI, API, exports, and UI agree on canonical values.
+Exit gate: a user can complete the registered end-to-end product journey on a pinned external repository, compare a realized view with conditional regions, replay a finding witness, drill from dashboard/score/violation/graph to exact evidence, and observe honest degraded behavior on a partial-evidence scenario. CLI, API, exports and UI agree on canonical values.
 
 ### M9 - Multi-Repository Evaluation and Hardening
 
-Deliver curated microfixtures, PetClinic, medium, multi-module, and larger repositories; controlled partial-classpath experiments; architecture mutations; metric golden cases; score sensitivity and missing-evidence experiments; graph/query/UI scale scenarios; accessibility/usability review of primary workflows; robustness matrix; repeated determinism/performance runs; and immutable raw results.
+Deliver curated condition/registration/binding microfixtures, interaction fixtures, PetClinic, medium, multi-module and larger repositories; controlled partial-classpath/configuration experiments; architecture mutations with expected affected regions; metric golden cases; score sensitivity and missing-evidence experiments; graph/query/UI scale scenarios; accessibility/usability review of primary workflows; robustness matrix; repeated determinism/performance runs; and immutable raw results. Corpus inclusion, labels, baselines and primary metrics are registered before result interpretation.
 
 Exit gate G6: independent review supports the exact bounded Track A claims, metric and score correctness boundaries, registered product performance/usability criteria, and a clean reproducible product workflow.
 
@@ -209,13 +257,13 @@ Human approval is mandatory to continue.
 
 ### M11 - Track B Architecture Evolution
 
-Deliver compatible snapshot comparison, semantic/graph/policy/metric/score diffs, introduced/resolved/persisted/reintroduced violations, evidence-backed comparison queries and UI, and one labeled historical corpus. Reject or visibly qualify comparisons across incompatible analyzer, configuration, policy, metric, or score versions.
+Deliver compatible snapshot comparison for semantic facts, conditional regions, graph/policy/metric/score results, bindings, witnesses and evidence; classify introduced/resolved/persisted/reintroduced findings plus region expanded/shrunk and `MUST`/`MAY`/`NEVER`/`UNKNOWN` transitions; provide evidence-backed comparison queries/UI and one labeled historical corpus. Reject or visibly qualify comparisons across incompatible analyzer, build-context, configuration-space, framework/registration, policy, metric, score or result-affecting limit versions.
 
-Exit gate G7: known evolution events are reproduced and analyzer/configuration drift is distinguished from repository change.
+Exit gate G7: known configuration-hidden evolution events and affected regions are reproduced; analyzer/build/configuration/evidence drift is distinguished from repository change; evidence loss never becomes a resolved violation.
 
 ### M12 - Technical Integration and Final Reproducibility
 
-Deliver the Track A + B integrated visual product, clean-clone reproduction, current architecture documentation, benchmark evidence, known limitations, and a reliable local demonstration covering dashboard, metrics, score, graph, violations, evidence, impact, provenance, and compatible snapshot comparison. Publication packaging remains optional future work.
+Deliver the Track A + B integrated visual product, clean-clone reproduction, current architecture documentation, benchmark evidence, known limitations and a reliable local demonstration covering dashboard, metrics, score, conditional graph/findings, witness, evidence, impact, provenance and compatible conditional snapshot comparison. Publication packaging and post-M12 context/AI horizons remain optional future work.
 
 ## Milestone DAG
 
@@ -225,35 +273,38 @@ M-1 Human approval [COMPLETE: 86c4ca2]
   -> M1 Semantic/identity/provenance contracts
        -> M2 Semantic frontend + ground truth
        -> M3 Workspace/build model
-       -> M5 Canonical graph/metrics/query foundations
-  M2 + M3 -> M4 Spring intelligence
-  M4 + M5 -> M6 Policy/evidence/assessment
+       -> M5 base canonical graph/metrics/query foundations
+  G2 + M2 + M3 -> M4-R0 semantics gate
+  M4-R0 -> M4A mechanism ground truth
+        -> M4B condition/configuration IR
+        -> M4C staged registration/binding
+        -> M4D truth regions/witnesses
+        -> M4E validation -> G3
+  M4 + M5 -> M6 conditional policy/evidence/assessment
   M6 -> M7 Impact/CLI/export
   M7 -> M8 Backend/complete workbench
   M2 + M3 + M4 + M6 -> M9 External evaluation
   M8 + M9 -> M10 Track A gate
-  M10 human approval -> M11 Track B evolution
+  M10 human approval -> M11 Conditional architecture evolution
   M11 -> M12 Technical integration
-  M12 -> optional Track C
+  M12 -> optional Track C -> post-M12 horizons D/E/F
 ```
 
-## Approximate 24-Week Calendar
+## Gate-Driven Capability Waves
 
-| Weeks | Focus |
-|---|---|
-| 1 | M-1 governance approval and handoff |
-| 2-3 | M0 reproducible foundation |
-| 3-5 | M1 contracts and invariants |
-| 5-8 | M2 semantic frontend/ground truth and M3 build model |
-| 8-11 | M4 Spring intelligence and M5 graph/metrics/query layer |
-| 11-14 | M6 policy, Evidence Bundles, and explainable assessment |
-| 14-16 | M7 impact, CLI, and exports |
-| 16-19 | M8 complete workbench and continuous M9 evaluation |
-| 19-20 | Track A hardening and G6/M10 review |
-| 20-23 | M11 Track B evolution after approval |
-| 23-24 | M12 integration and reproducibility |
+The former approximate 24-week calendar is retired as an authority. The owner prioritizes technical depth and has not imposed a delivery deadline; forcing calendar estimates would encourage shallow scope cuts and make research uncertainty look scheduled. Progress is governed by evidence-bearing gates:
 
-Dates are guidance. Gates, not calendar pressure, authorize progression.
+| Wave | Capability boundary | Exit evidence |
+|---|---|---|
+| Foundation | M0–M3/G2 | Reproducible build context and reviewed semantic denominator |
+| Conditional semantics | M4-R0–M4E/G3 | Versioned Spring fragment, closed mechanism denominator, truth-region/witness correctness |
+| Architecture assurance | M5–M6/G4–G5 | Conditional graph/query/policy/metric/assessment invariants |
+| Product hardening | M7–M10/G6 | Complete evidence-oriented workbench and multi-repository acceptance |
+| Evolution | M11/G7 | Reproduced conditional/evidence deltas on historical cases |
+| Integration | M12/G8 | Clean reproducible Track A+B demonstration |
+| Optional expansion | Track C and horizons D/E/F | Separate human-approved gates and evidence |
+
+Estimates may be introduced locally only after a wave has an approved denominator and measured throughput. They never authorize skipping a gate.
 
 ## Parallel Workstreams
 
@@ -263,11 +314,11 @@ Dates are guidance. Gates, not calendar pressure, authorize progression.
 | Semantic intelligence | M1 | Contracts, frontend, diagnostics |
 | Workspace/build intelligence | M1/M3 | Modules, roots, dependencies/classpaths |
 | Benchmark/ground truth | M1 | Fixtures, labels, protocols, raw results |
-| Spring intelligence | M4 | Bean/injection candidates and uncertainty |
-| Graph/metrics/query | M5 | Canonical graph, invariants, structural metrics, projections, services |
-| Policy/evidence/assessment | M6 | Rules, violations, Evidence Bundles, explainable score |
-| Product | M7 | CLI, API, complete workbench, exports |
-| Evolution | M11 | Snapshot diffs and events |
+| Spring intelligence | M4-R0 | Mechanism ground truth, condition IR, registration transitions, bindings, truth regions and witnesses |
+| Graph/metrics/query | M5 | Canonical conditional projections, invariants, structural metrics and services |
+| Policy/evidence/assessment | M6 | Configuration-qualified rules/findings, Evidence Bundles and explainable score |
+| Product | M7/M8 | CLI, API, configuration/witness workbench and exports |
+| Evolution | M11 | Conditional fact/finding/evidence deltas and affected regions |
 | Documentation | Continuous | Current contracts, decisions, state |
 
 ## Stage Gates
@@ -277,18 +328,22 @@ Dates are guidance. Gates, not calendar pressure, authorize progression.
 | G-1 — PASSED | M-1 operating system approved and committed; M0 authorized |
 | G0 — PASSED | Foundation builds reproducibly in the documented Windows/Oracle and Docker Linux/Temurin environments |
 | G1 — PASSED | Parser-neutral semantic/identity/metric/assessment contracts are stable and deterministic |
-| G2 | Frontend, multi-module build model and acquisition-gap accounting meet ground truth |
-| G3 | Bounded Spring inference meets approved evidence criteria and classified wiring taxonomy |
-| G4 | Canonical graph/metric/query invariants pass |
-| G5 | Policy/evidence/score correctness passes mutations, negatives, and sensitivity checks |
+| G2 — WITHHELD | M3.1–M3.8 build/acquisition implementation and deterministic real-repository execution are complete; independent semantic labels and adjudication must establish frontend correctness before acceptance |
+| M4-R0 | Condition/configuration identities, v1 semantics fragment, oracle, baselines, corpus protocol and limits are approved before production M4 semantics |
+| G3 | Bounded phase/order-aware Spring inference meets truth-region, witness, version and closed-taxonomy evidence criteria |
+| G4 | Canonical conditional graph/metric/query invariants pass, including infeasible-path rejection |
+| G5 | Conditional policy/evidence/score correctness passes region mutations, negatives, witness replay and sensitivity checks |
 | G6 | Complete Track A visual product and multi-repository evidence are sufficient |
-| G7 | Track B evolution events are correct and reproducible |
+| G7 | Track B conditional/evidence evolution events and affected regions are correct and reproducible |
 | G8 | Final Track A + B integration is reproducible |
 
 ## Continuous Evaluation
 
 - Exhaustive microfixtures and contract tests on semantic changes
 - Parser/Spring ground truth at their gates
+- Exhaustive-oracle conformance for the supported condition/registration fragment
+- False-certainty and false-unconditional-warning measurements
+- Witness validity/minimality and affected-region precision/recall
 - Early representative real-repository coverage checkpoints across registered categories with reason-level breakdowns before late-stage M9 hardening
 - Rule mutation and negative-control tests on policy changes
 - Full corpus runs at major gates
@@ -307,12 +362,13 @@ Cut in this order if time/evidence requires:
 
 1. Track C incremental analysis and large history
 2. Advanced architecture blame/hotspot analysis
-3. SE121 bytecode-provider implementation unless a registered correctness gap makes it gate-critical; preserve the provider boundary and capability-gap record
-4. Advanced comparison visualizations beyond the required Track B comparison flow
-5. Neo4j persistence, retaining canonical graph/file output
-6. Nonessential backend/workbench extras, retaining the required Track A dashboard, metrics, score, graph, violation, evidence, and provenance workflow
+3. Selective runtime/AOT evidence unless a registered correctness gap makes it gate-critical; preserve provider boundaries and capability-gap records
+4. SAT/BDD optimization if the exhaustive oracle and bounded enumeration satisfy the approved fragment; preserve the reasoner port
+5. Advanced comparison visualizations beyond the required conditional Track B flow
+6. Neo4j persistence, retaining canonical graph/file output
+7. Nonessential backend/workbench extras, retaining the required Track A dashboard, metrics, score, conditional graph/finding, witness, evidence and provenance workflow
 
-Never cut semantic ground truth, uncertainty, provenance, graph/metric invariants, policy evidence, explainable score safeguards, the required Track A workbench, deterministic output, reproducibility, or honest limitations.
+Never cut semantic ground truth, uncertainty, provenance, configuration-space identity, no-false-universal semantics, graph/metric invariants, policy evidence, witness correctness, explainable score safeguards, the required Track A workbench, deterministic output, reproducibility or honest limitations.
 
 ## Publication and Defense
 
@@ -320,9 +376,9 @@ Paper readiness, venue selection, extensive artifact badging, and elaborate defe
 
 ## Immediate Sequence
 
-1. ~~Human reviews and approves M-1.~~ Complete.
-2. ~~Human commits the approved M-1 baseline.~~ Complete at `86c4ca29fb747797df3e489d978804644a34f1ce`.
-3. ~~Complete the bounded M0 reproducible Maven/Java foundation task.~~ Complete; G0 passed on 2026-09-02.
-4. ~~Complete M1 semantic, identity, uncertainty, provenance, metric-envelope, and assessment-status contracts.~~ Complete; G1 passed on 2026-09-02.
-5. M1 is committed; the human-approved primary frontend choice is recorded in ADR-001. Comparative evidence remains bounded and does not pass G2.
-6. Begin M2 contract/ground-truth design before production JavaParser extraction; preserve the replaceable SemanticFrontend boundary and empirical G2 criteria.
+1. Preserve completed M0–M2 and delivered M3.1–M3.8 contracts/evidence.
+2. Independently label and adjudicate the preserved Spring PetClinic semantic denominator, repair only evidence-backed defects, and obtain the human G2 decision; the research redirection does not bypass this gate.
+3. After G2, execute M4-R0 as a research/architecture gate before writing production Spring semantics.
+4. Implement the smallest approved conditional fragment through M4A–M4D with exhaustive oracle fixtures and closed denominators.
+5. Run M4E baselines/real-repository evaluation and obtain G3 acceptance before treating conditional Spring facts as stable M5/M6 inputs.
+6. Continue M5–M10 Track A product work, obtain human approval, then execute M11 conditional architecture evolution and M12 integration.

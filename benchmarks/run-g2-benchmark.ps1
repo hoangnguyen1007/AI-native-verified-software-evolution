@@ -1,13 +1,13 @@
 [CmdletBinding()]
 param(
-    [string]$TargetRepository = "$PSScriptRoot\temp_repo\PC-Shop",
-    [string]$RepositoryCoordinate = "https://github.com/hoangnguyen1007/PC-Shop.git",
-    [string]$RepositoryLabel = "PC-Shop",
-    [int]$FallbackPlatformRelease = 21,
+    [string]$TargetRepository = "$PSScriptRoot\temp_repo\spring-petclinic",
+    [string]$RepositoryCoordinate = "https://github.com/spring-projects/spring-petclinic.git",
+    [string]$RepositoryLabel = "spring-petclinic",
+    [int]$FallbackPlatformRelease = 17,
     [string]$MavenRepository = "",
     [string]$JdkHome = "",
     [string[]]$RemotePomRepositories = @("https://repo.maven.apache.org/maven2/"),
-    [string]$DocumentationDirectory = "$PSScriptRoot\..\docs\reproducibility\g2-checkpoint-2026-09-08-v2",
+    [string]$DocumentationDirectory = "$PSScriptRoot\..\docs\reproducibility\g2-petclinic-check-2026-09-09",
     [switch]$Publish
 )
 
@@ -42,6 +42,7 @@ $mavenRepo = (Resolve-Path -LiteralPath $MavenRepository).Path
 $configuredJdk = (Resolve-Path -LiteralPath $JdkHome).Path
 $safeLabel = $RepositoryLabel -replace '[^A-Za-z0-9._-]', '-'
 $outputDir = Join-Path $benchmarkDir "target\g2-output-$safeLabel"
+$artifactCacheBase = Join-Path $outputDir 'dependency-caches'
 $docsDir = [System.IO.Path]::GetFullPath($DocumentationDirectory)
 $wrapper = Join-Path $repoRoot 'mvnw.cmd'
 $mavenUserHome = Split-Path -Parent $mavenRepo
@@ -64,7 +65,7 @@ $env:G2_BENCHMARK_REPOSITORY_ROOT = $targetRepo
 $env:G2_BENCHMARK_OUTPUT_DIRECTORY = $outputDir
 $env:G2_BENCHMARK_REPOSITORY_COORDINATE = $RepositoryCoordinate
 $env:G2_BENCHMARK_REVISION = $revision
-$env:G2_BENCHMARK_MAVEN_CACHE = $mavenRepo
+$env:G2_BENCHMARK_MAVEN_CACHE = $artifactCacheBase
 $env:G2_BENCHMARK_JDK_HOME = $configuredJdk
 $env:G2_BENCHMARK_FALLBACK_PLATFORM_RELEASE = [string]$FallbackPlatformRelease
 $env:G2_BENCHMARK_REMOTE_POM_REPOSITORIES = $RemotePomRepositories -join '|'

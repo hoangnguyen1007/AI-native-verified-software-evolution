@@ -9,12 +9,16 @@ Use [AGENTS.md](../../../AGENTS.md) for scope, safety and authority. Test observ
 
 ## Behavior changes
 
-1. Read the relevant contract and consumers. Name the defect or missing behavior and the independent expected result.
-2. Add the smallest useful test. Run it against the baseline and inspect the failure: the intended assertion/contract must fail, not environment setup or a typo.
-3. Implement the smallest coherent fix. Run the failing case, then affected integration/contract tests.
-4. Refactor only while relevant checks stay green. Use [verification-before-completion](../verification-before-completion/SKILL.md) for final claims.
+1. Read the relevant contract and consumers (using 20–50 line slices). Name the defect or missing behavior and the independent expected result.
+2. Add the smallest useful test with a compact fixture (5–15 line Java sample). Run it strictly in isolated mode (`mvn test -pl <module> -Dtest=<TargetTest> -q`) and inspect the failure: the intended assertion/contract must fail, not environment setup or a typo.
+3. Implement the smallest coherent fix. Re-run only the failing test class in isolated mode to confirm green. Never run multi-module reactor builds or full benchmarks during this inner cycle.
+4. Refactor only while relevant checks stay green. Run broader integration checks or reactor verification only once at slice completion. Use [verification-before-completion](../verification-before-completion/SKILL.md) for final claims.
 
 If a test passes immediately, determine whether it characterizes existing behavior or fails to exercise the new requirement. Do not manufacture a failure or change a correct expectation merely to obtain red.
+
+### Lean Execution Discipline
+- **Inner Loop Isolation:** Inner TDD cycles must execute in <5 seconds and output <20 lines. Avoid broad builds until the vertical slice behavior is proven locally.
+- **Error Diagnosis:** When a test fails, inspect only the targeted stack trace or failure diff; never ingest full reactor logs or unrelated compiler warnings.
 
 ## Existing work and exceptions
 

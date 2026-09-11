@@ -202,6 +202,93 @@ class MavenLocalClasspathProviderTest {
     }
 
     @Test
+    void equivalentDuplicateManagedDependenciesQualifyButDoNotBreakExternalPomResolution() throws Exception {
+        String kotlin = "org.jetbrains.kotlin";
+        String duplicate = dependency(kotlin, "kotlin-stdlib-common", "1.9.23", "compile", false, "");
+        String root = pom("root", "<dependencies>"
+                + dependency(kotlin, "kotlin-stdlib", "1.9.23", "compile", false, "")
+                + dependency(kotlin, "kotlin-conflict", "1.9.24", "compile", false, "")
+                + "</dependencies>");
+        var fixture = build(Map.of("pom.xml", root));
+        artifact(kotlin, "kotlin-stdlib", "1.9.23",
+                "<dependencyManagement><dependencies>" + duplicate + duplicate
+                        + "</dependencies></dependencyManagement>", true);
+
+        String first = dependency(kotlin, "kotlin-stdlib-common", "1.9.23", "compile", false, "");
+        String conflicting = dependency(kotlin, "kotlin-stdlib-common", "1.9.24", "compile", false, "");
+        artifact(kotlin, "kotlin-conflict", "1.9.24",
+                "<dependencyManagement><dependencies>" + first + conflicting
+                        + "</dependencies></dependencyManagement>", true);
+
+        ExactClasspathResult result = resolve(fixture, POLICY, cacheRoot());
+        Manifest main = manifest(result, ".", SourcePlanModel.Kind.MAIN);
+
+        assertTrue(names(main).contains(kotlin + ":kotlin-stdlib:1.9.23@jar"));
+        assertTrue(main.problems().stream().anyMatch(problem -> problem.reason() == Reason.POM_MODEL_WARNING
+                && problem.subject().equals(kotlin + ":kotlin-stdlib:1.9.23")));
+        assertFalse(main.problems().stream().anyMatch(problem -> problem.reason() == Reason.POM_MODEL_FAILED
+                && problem.subject().equals(kotlin + ":kotlin-stdlib:1.9.23")));
+        assertTrue(main.problems().stream().anyMatch(problem -> problem.reason() == Reason.POM_MODEL_FAILED
+                && problem.subject().equals(kotlin + ":kotlin-conflict:1.9.24")));
+        assertEquals(CanonicalJson.write(result), CanonicalJson.write(resolve(fixture, POLICY, cacheRoot())));
+    }
+
+    @Test
+    void tolerantDuplicateRecoveryCoversParentsImportedBomsAndProfiles() throws Exception {
+        String duplicate = dependency("ext", "leaf", "1", "compile", false, "");
+        String conflicting = dependency("ext", "leaf", "2", "compile", false, "");
+        String root = pom("root", "<dependencies>"
+                + dependency("ext", "parent-child", "1", "compile", false, "")
+                + dependency("ext", "bom-child", "1", "compile", false, "")
+                + dependency("ext", "profile-ok", "1", "compile", false, "")
+                + dependency("ext", "profile-conflict", "1", "compile", false, "")
+                + "</dependencies>");
+        var fixture = build(Map.of("pom.xml", root));
+
+        artifact("ext", "duplicate-parent", "1", "<packaging>pom</packaging>"
+                + "<dependencyManagement><dependencies>" + duplicate + duplicate
+                + "</dependencies></dependencyManagement>", false);
+        writePom("ext", "parent-child", "1", """
+                <project><modelVersion>4.0.0</modelVersion>
+                  <parent><groupId>ext</groupId><artifactId>duplicate-parent</artifactId><version>1</version></parent>
+                  <artifactId>parent-child</artifactId>
+                </project>
+                """);
+        writeJar("ext", "parent-child", "1", "jar", "", jar("parent-child"));
+
+        artifact("ext", "duplicate-bom", "1", "<packaging>pom</packaging>"
+                + "<dependencyManagement><dependencies>" + duplicate + duplicate
+                + "</dependencies></dependencyManagement>", false);
+        artifact("ext", "bom-child", "1", "<dependencyManagement><dependencies>"
+                + dependency("ext", "duplicate-bom", "1", "import", false, "<type>pom</type>")
+                + "</dependencies></dependencyManagement>", true);
+
+        artifact("ext", "profile-ok", "1", "<profiles><profile><id>duplicates</id>"
+                + "<activation><activeByDefault>true</activeByDefault></activation><dependencies>"
+                + duplicate + duplicate + "</dependencies></profile></profiles>", true);
+        artifact("ext", "profile-conflict", "1", "<profiles><profile><id>duplicates</id>"
+                + "<activation><activeByDefault>true</activeByDefault></activation><dependencies>"
+                + duplicate + conflicting + "</dependencies></profile></profiles>", true);
+        artifact("ext", "leaf", "1", "", true);
+
+        Manifest main = manifest(resolve(fixture, POLICY, cacheRoot()), ".", SourcePlanModel.Kind.MAIN);
+
+        assertTrue(names(main).containsAll(List.of(
+                "ext:parent-child:1@jar", "ext:bom-child:1@jar", "ext:profile-ok:1@jar")));
+        assertFalse(main.problems().stream().anyMatch(problem -> problem.reason() == Reason.POM_MODEL_FAILED
+                && Set.of("ext:parent-child:1", "ext:bom-child:1", "ext:profile-ok:1")
+                        .contains(problem.subject())));
+        assertTrue(main.problems().stream().anyMatch(problem -> problem.reason() == Reason.POM_MODEL_WARNING
+                && problem.subject().equals("ext:duplicate-parent:1")));
+        assertTrue(main.problems().stream().anyMatch(problem -> problem.reason() == Reason.POM_MODEL_WARNING
+                && problem.subject().equals("ext:duplicate-bom:1")));
+        assertTrue(main.problems().stream().anyMatch(problem -> problem.reason() == Reason.POM_MODEL_WARNING
+                && problem.subject().equals("ext:profile-ok:1")));
+        assertTrue(main.problems().stream().anyMatch(problem -> problem.reason() == Reason.POM_MODEL_FAILED
+                && problem.subject().equals("ext:profile-conflict:1")));
+    }
+
+    @Test
     void unevaluatedArtifactProfileQualifiesButDoesNotEraseTheStableDescriptorBaseline() throws Exception {
         var fixture = build(Map.of("pom.xml", pom("app", "<dependencies>"
                 + dependency("ext", "lib", "1", "compile", false, "") + "</dependencies>")));

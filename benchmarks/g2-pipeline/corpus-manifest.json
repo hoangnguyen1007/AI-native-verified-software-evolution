@@ -2,16 +2,10 @@
   "schemaVersion": "g2-corpus-manifest-v2",
   "repositories": [
     {
-      "id": "pc-shop",
-      "repository": "https://github.com/hoangnguyen1007/PC-Shop.git",
-      "commit": "aec22f2c069c380a25bd343fa4bb49c06e845518",
-      "role": "primary checkpoint; external Spring Boot parent and Lombok"
-    },
-    {
       "id": "spring-petclinic",
       "repository": "https://github.com/spring-projects/spring-petclinic.git",
       "commit": "818c4136ea971c21674525f9053de0d9c7ad8cfe",
-      "role": "second-repository robustness check; external parent and broader dependency graph"
+      "role": "primary checkpoint; external parent and broader dependency graph"
     }
   ]
 }

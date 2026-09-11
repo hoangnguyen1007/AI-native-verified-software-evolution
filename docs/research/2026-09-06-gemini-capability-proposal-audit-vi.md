@@ -45,7 +45,7 @@ Các quyết định biên tập của bản đề xuất:
 
 **CONFIRMED — hiện trạng do tài liệu canonical ghi:** M2 frontend delivery complete; công việc kế tiếp M3; G2 chưa qua. Current state còn ghi final independent review và denominator chưa hoàn tất. Không nên diễn giải “M2 complete” thành “mọi yêu cầu chấp nhận đã được reviewer độc lập xác nhận”. [Current state](../current-state.md), [Roadmap](../roadmap.md).
 
-Current state báo cáo `PC-Shop`: 43 files, 304 declarations, 1.488 occurrences. Trong phạm vi tìm kiếm tài liệu/evidence tracked, chưa xác định được gói raw run riêng có manifest và nhãn độc lập cho số liệu này. Vì vậy bản đề xuất chỉ coi đây là **kết quả được tài liệu báo cáo**, không dùng làm proof of accuracy hay tự hủy trạng thái M2 đã được chủ dự án ghi nhận.
+Tài liệu ghi nhận kết quả sanity-check cục bộ ban đầu trên một số repository thử nghiệm. Trong phạm vi tìm kiếm tài liệu/evidence tracked chính thức, các số liệu thử nghiệm ad-hoc không có raw run bundle độc lập không được dùng làm proof of accuracy hay tự hủy trạng thái M2 đã được chủ dự án ghi nhận.
 
 **CONFIRMED — đọc source và test:** [ResolutionEnvironment.java](../../analyzer-javaparser/src/main/java/com/evolution/analysis/javaparser/ResolutionEnvironment.java) đã xác minh digest, tạo `JarTypeSolver` từ bytes và thêm theo thứ tự input. [ResolutionInputsTest.java](../../analyzer-javaparser/src/test/java/com/evolution/analysis/javaparser/ResolutionInputsTest.java) chứa các case dependency removal, thứ tự JAR, origin và ngăn host application classpath rò vào analysis. Đọc test không tương đương chạy lại test.
 
