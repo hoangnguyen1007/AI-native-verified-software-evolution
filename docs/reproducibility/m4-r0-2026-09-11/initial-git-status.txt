@@ -1,0 +1,55 @@
+ M .agents/rules/00-agent-core.md
+ M .agents/rules/10-engineering-excellence.md
+ M .agents/skills/test-driven-development/SKILL.md
+ M .gitignore
+ M AGENTS.md
+ M README.md
+ M analyzer-maven/src/main/java/com/evolution/analysis/maven/MavenArtifactModelReader.java
+ M analyzer-maven/src/test/java/com/evolution/analysis/maven/MavenLocalClasspathProviderTest.java
+ M analyzer/src/main/java/com/evolution/analysis/contract/serialization/CanonicalJson.java
+ M analyzer/src/test/java/com/evolution/analysis/contract/CanonicalSerializationTest.java
+ M benchmarks/g2-pipeline/corpus-manifest.json
+ M benchmarks/g2-pipeline/pom.xml
+ M benchmarks/g2-pipeline/src/main/java/com/evolution/benchmark/G2BenchmarkRunner.java
+ M benchmarks/run-g2-benchmark.ps1
+ M docs/architecture/architecture.md
+ M docs/architecture/evidence-acquisition.md
+ M docs/architecture/knowledge-graph.md
+ M docs/architecture/m1-contracts.md
+ M docs/architecture/m2-semantic-frontend.md
+ M docs/architecture/m3-workspace-build-model.md
+ M docs/architecture/m4-spring-intelligence.md
+ M docs/architecture/product-outcome.md
+ M docs/current-state.md
+ M docs/project-context.md
+ D docs/reproducibility/g2-checkpoint-2026-09-08/README.md
+ D docs/reproducibility/g2-checkpoint-2026-09-08/canonical-digests.json
+ D docs/reproducibility/g2-checkpoint-2026-09-08/category-metrics.json
+ D docs/reproducibility/g2-checkpoint-2026-09-08/environment.json
+ D docs/reproducibility/g2-checkpoint-2026-09-08/gate-assessment.json
+ D docs/reproducibility/g2-checkpoint-2026-09-08/pipeline-results-run-1.json
+ D docs/reproducibility/g2-checkpoint-2026-09-08/pipeline-results-run-2.json
+ D docs/reproducibility/g2-checkpoint-2026-09-08/protocol.md
+ D docs/reproducibility/g2-checkpoint-2026-09-08/reason-metrics.json
+ M docs/research/2026-09-06-gemini-capability-proposal-audit-vi.md
+ M docs/research/research-questions.md
+ M docs/roadmap.md
+ M roadmap_for_user.md
+ M roadmap_for_user_vi.md
+?? AI_Native_Verified_Software_Evolution_RESEARCH_REDIRECTION_V2_IMPLEMENTATION_ALIGNED_2026_2028.md
+?? analyzer-javaparser/src/test/java/com/evolution/analysis/javaparser/ReactorSourceResolutionTest.java
+?? analyzer-maven/src/main/java/com/evolution/analysis/maven/MavenDependencyArtifactProvider.java
+?? analyzer-maven/src/main/java/com/evolution/analysis/maven/MavenDependencyArtifactResolution.java
+?? analyzer-maven/src/main/java/com/evolution/analysis/maven/MavenDependencyArtifactResolver.java
+?? analyzer-maven/src/test/java/com/evolution/analysis/maven/MavenDependencyArtifactProviderTest.java
+?? analyzer-maven/src/test/java/com/evolution/analysis/maven/MavenDependencyArtifactResolverTest.java
+?? analyzer/src/main/java/com/evolution/analysis/dependency/
+?? analyzer/src/main/java/com/evolution/analysis/frontend/ReactorSourceInput.java
+?? analyzer/src/test/java/com/evolution/analysis/dependency/
+?? docs/architecture/conditional-architecture-semantics.md
+?? docs/decisions/ADR-004-staged-conditional-architecture-semantics.md
+?? docs/reproducibility/g2-chatserver-check-2026-09-10/
+?? docs/reproducibility/g2-comprehensive-architectural-evaluation-2026-09-10.md
+?? docs/reproducibility/g2-petclinic-check-2026-09-09/
+?? docs/reproducibility/g2-semantic-adjudication-record-2026-09-10.md
+?? docs/research/2026-09-09-conditional-architecture-redirection-review.md

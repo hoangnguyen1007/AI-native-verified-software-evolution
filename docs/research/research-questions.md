@@ -147,6 +147,10 @@ Provisional design target:
 
 These counts are planning ranges, not validated sample-size claims. Corpus, labels, baselines, primary metrics and exclusion rules are registered before observing comparative results.
 
+## M4-R0 evidence checkpoint
+
+The [2026-09-11 R0 assessment](2026-09-11-m4-r0-spring-semantics.md) provides concrete identity/catalog/fragment proposals, a historical Spring 1.x–Boot 3.4.x research matrix, bounded runtime/formal oracle evidence and preregistered comparison limits. These refine OQ-3 through OQ-7 for review; they do not close the empirical RQs or select a production solver.
+
 ## Open Engineering Questions
 
 | ID | Question | Priority | Resolution gate |

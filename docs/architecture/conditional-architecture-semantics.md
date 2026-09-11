@@ -4,7 +4,7 @@
 
 **ACCEPTED pre-implementation architecture direction.** [ADR-004](../decisions/ADR-004-staged-conditional-architecture-semantics.md) selects this model for M4+ on 2026-09-09. Exact Java schemas, the first supported semantic fragment, solver backend, numerical limits and empirical claims remain **PROVISIONAL** until their gates.
 
-This contract does not start M4, modify the active M3.8 slice, pass G2/G3, or claim equivalence to a complete Spring runtime container.
+The owner has now authorized M4-R0 after G2 was recorded passed. The [R0 refinement candidate](m4-r0-semantics-gate.md) specifies additive identities, historical scope, first fragment and nested event/ordering domains for review. Production M4 implementation and G3 remain gated; no complete Spring runtime-container equivalence is claimed.
 
 ## Purpose
 
@@ -120,7 +120,7 @@ Kleene-style composition may be used for pure Boolean nodes if its truth table i
 
 ### Framework phases
 
-The semantic version defines the supported phase/order model. At minimum it distinguishes configuration parsing from bean registration and separates user definitions from ordered auto-configuration where the registered Spring version does so.
+The [R0 candidate](m4-r0-semantics-gate.md#7-phase-and-order-model) refines this abstract sequence to nested event traces: configuration parsing/registration can occur within registry post-processing, and environment conditions execute at their actual call sites. The semantic version defines the supported phase/order model. At minimum it distinguishes configuration parsing from bean registration and separates user definitions from ordered auto-configuration where the registered Spring version does so.
 
 For an ordered registration plan `R = [r1, ..., rn]`:
 
@@ -140,7 +140,7 @@ evaluate(ri.condition, B, c, Si) = UNKNOWN
 
 `@ConditionalOnMissingBean` and similar predicates make the general system non-monotone. The analyzer must not replace this transition model with an unordered least fixpoint unless equivalence is proved for a restricted fragment.
 
-If only a partial order is known, deterministic topological exploration may be used within a registered bound. If alternative legal orders change a conclusion, the fact is order-dependent (`MAY` or `UNKNOWN` as evidence permits), and witnesses retain the order identity. An arbitrary lexicographic order is not framework evidence.
+If only a partial order is known, deterministic topological exploration may be used within a registered bound. If alternative legal orders change a conclusion, explicitly modeled realizable order alternatives may establish `MAY` over configuration/order worlds. Merely missing evidence about the actual order remains epistemic `UNKNOWN`; hypothetical permutations do not prove realizability. Witnesses retain the material order identity. An arbitrary lexicographic order is not framework evidence.
 
 ### Binding semantics
 
@@ -187,7 +187,7 @@ A `ConfigurationWitness` contains:
 - expected truth value;
 - solver/evaluator/semantic versions;
 - supporting evidence and gaps;
-- a digest of independent re-evaluation.
+- a separate replay record containing the digest of independent re-evaluation; that replay digest must not feed back into the witness identity.
 
 Minimization removes assignments only when the witness remains valid. Multiple minima use a canonical variable/value order. Runtime confirmation, when available, is a distinct observation attached to the witness.
 

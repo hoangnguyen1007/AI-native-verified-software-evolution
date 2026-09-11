@@ -2,7 +2,7 @@
 
 ## Status and Scope
 
-**ACCEPTED direction; PROVISIONAL pre-implementation contract.** [ADR-004](../decisions/ADR-004-staged-conditional-architecture-semantics.md) changes M4 from one-context candidate enrichment to bounded, phase/order-aware conditional architecture semantics. Nothing in this document starts M4, changes M3.8, passes G2/G3, approves a solver backend or claims complete Spring runtime-container equivalence.
+**ACCEPTED direction and gate contract.** [ADR-004](../decisions/ADR-004-staged-conditional-architecture-semantics.md) changes M4 from one-context candidate enrichment to bounded, phase/order-aware conditional architecture semantics. Gate M4-R0 was formally accepted by the human supervisor on 2026-09-11. The [accepted R0 contract](m4-r0-semantics-gate.md) governs identities, the 29-family `spring-mechanisms:v2` catalog, the historical version matrix, the phase/order model, and capability-gap bounds. Production implementation begins with slice M4A.1.
 
 The catalog is closed per version, not forever. `spring-mechanisms:v2` must account for every registered fixture/observation exactly once. A new mechanism or materially different framework behavior requires an explicit catalog/semantics-version change rather than silent omission.
 
@@ -70,6 +70,8 @@ These classes may compose in one expression, but their provenance and uncertaint
 
 Resolution does not use a rigid shortcut such as “Qualifier > Primary > Profile” and does not use an unordered generic fixpoint.
 
+The phases below are a conceptual projection; the [R0 nested event contract](m4-r0-semantics-gate.md#7-phase-and-order-model) defines their actual interleaving inside registry processing. Environment construction precedes condition evaluation.
+
 ### Phase 1 — Parse and discover
 
 - discover configuration classes/imports, component-scan scopes, producers and injection sites;
@@ -86,7 +88,7 @@ Resolution does not use a rigid shortcut such as “Qualifier > Primary > Profil
 
 ### Phase 3 — Activation and type compatibility
 
-- evaluate exogenous configuration for the realized world;
+- use the realized-world environment already evaluated at the applicable parse/registration events; do not postpone profile/property conditions until after registration;
 - filter registered candidates by type/generic/container compatibility;
 - retain zero/one/many candidate evidence.
 
@@ -130,38 +132,39 @@ MapStruct, QueryDSL, factory methods, `FactoryBean` and proxy product types use 
 
 ## `spring-mechanisms:v2` Closed Denominator
 
-The target column is a gate objective, not current implementation status.
+The target column is a gate objective, not current implementation status. The [machine-readable R0 candidate](../../benchmarks/m4-r0/mechanisms.json) freezes 29 proposed families, adding the unclassified catch-all and proposing bounded XML inclusion for review.
 
 | Mechanism ID | Mechanism | M4 target | Required evidence/qualification |
 |---|---|---|---|
-| `spring.discovery.component-scan` | Scan roots, base packages and include/exclude filters | `CONDITIONAL` | Configuration declaration, package/type evidence, condition region |
-| `spring.bean.stereotype.direct` | Direct component/service/repository/controller | `SUPPORTED` | Annotation identity plus proven scan/import eligibility |
-| `spring.bean.stereotype.composed` | Meta/composed stereotype | `SUPPORTED` | Annotation declaration graph and dependency metadata where needed |
-| `spring.bean.factory-method` | `@Configuration` + `@Bean` | `SUPPORTED` | Producer signature/name/types, phase/order and conditions |
-| `spring.injection.constructor.explicit` | Explicit constructor injection | `SUPPORTED` | Constructor/parameter types, qualifiers and candidates |
-| `spring.injection.constructor.implicit` | Single unannotated constructor | `SUPPORTED` | Framework-version rule and exact constructors |
-| `spring.injection.constructor.generated` | Lombok/generated constructor | `CONDITIONAL` | Versioned generator semantics or generated-source/bytecode evidence |
-| `spring.injection.field` | `@Autowired`/`@Inject` field | `SUPPORTED` | Field shape/qualifiers and registered candidates |
-| `spring.injection.method` | Setter/arbitrary method injection | `SUPPORTED` | Method/parameter annotations and candidates |
-| `spring.injection.bean-parameter` | `@Bean` method parameter | `SUPPORTED` | Producer transition, parameter and candidate state |
-| `spring.injection.resource` | JSR-250 `@Resource` | `SUPPORTED` | Name/type/version semantics and candidates |
-| `spring.disambiguation.qualifier` | `@Qualifier` and composed qualifier | `SUPPORTED` | Qualifier identities/values on point/candidate |
-| `spring.disambiguation.priority` | `@Primary`, `@Fallback`, name/order rules | `SUPPORTED` | Pinned framework-version selection semantics |
-| `spring.injection.aggregate` | Collection/array/map/optional/provider/lazy | `SUPPORTED` | Container/generic shape and ordered candidates; dynamic behavior qualified |
-| `spring.condition.profile` | `@Profile` and profile expressions/groups | `CONDITIONAL` | Normalized expression and configuration-space evidence |
-| `spring.condition.property` | `@ConditionalOnProperty` and property predicates | `CONDITIONAL` | Key/value/missing semantics, precedence and finite domain |
-| `spring.condition.build-context` | Class/resource/web-mode conditions | `CONDITIONAL` | Exact build/resource/web-mode evidence |
-| `spring.condition.bean-state` | On-bean/missing-bean/single-candidate | `CONDITIONAL` | Ordered bean-definition state and framework version |
-| `spring.condition.custom-expression` | Custom condition and SpEL | `DYNAMIC` | Detect/retain expression; additional evaluator/runtime evidence when needed |
-| `spring.registration.auto-configuration` | Imports/selectors/metadata and ordering | `CONDITIONAL` | Dependency metadata, condition IR and registration plan |
-| `spring.registration.spring-data` | Repository proxies and fragments | `CONDITIONAL` | Enablement/scan/store/exclusion/factory evidence |
-| `spring.registration.factory` | `FactoryBean`/factory-produced definitions | `CONDITIONAL` | Factory product metadata and condition region |
-| `spring.registration.xml` | XML bean/context wiring | `OUT_OF_SCOPE` for first implementation; detected/accounted | XML presence/reference and exact gap |
-| `spring.registration.programmatic` | `registerBean`, registrars, post-processors | `DYNAMIC` | Call/mechanism evidence plus configuration/build/runtime requirement |
-| `spring.lookup.container` | `getBean`, service locator, `@Lookup` | `DYNAMIC` | Call/name/type evidence and unresolved target region |
-| `spring.expression.value` | `@Value` and dependency-bearing SpEL | `DYNAMIC` | Expression/property evidence and explicit evaluator boundary |
-| `spring.runtime.proxy-aop` | Proxies/advisors/runtime dependencies | `DYNAMIC` | Enabling declarations plus bytecode/runtime evidence when needed |
-| `spring.entrypoint.framework` | MVC endpoints, listeners, scheduled/lifecycle callbacks | `SUPPORTED`/`CONDITIONAL` | Registration/condition evidence; never inferred dead from absent callers |
+| `spring.discovery.component-scan` | Scan roots, base packages and include/exclude filters | `CONDITIONAL` R0 candidate | Configuration declaration, package/type evidence, condition region |
+| `spring.bean.stereotype.direct` | Direct component/service/repository/controller | `SUPPORTED` R0 candidate | Annotation identity plus proven scan/import eligibility |
+| `spring.bean.stereotype.composed` | Meta/composed stereotype | `CONDITIONAL` R0 candidate | Annotation declaration graph and dependency metadata where needed |
+| `spring.bean.factory-method` | `@Configuration` + `@Bean` | `CONDITIONAL` R0 candidate | Producer signature/name/types, phase/order and conditions |
+| `spring.injection.constructor.explicit` | Explicit constructor injection | `SUPPORTED` R0 candidate | Constructor/parameter types, qualifiers and candidates |
+| `spring.injection.constructor.implicit` | Single unannotated constructor | `SUPPORTED` R0 candidate | Framework-version rule and exact constructors |
+| `spring.injection.constructor.generated` | Lombok/generated constructor | `CONDITIONAL` R0 candidate | Versioned generator semantics or generated-source/bytecode evidence |
+| `spring.injection.field` | `@Autowired`/`@Inject` field | `SUPPORTED` R0 candidate | Field shape/qualifiers and registered candidates |
+| `spring.injection.method` | Setter/arbitrary method injection | `SUPPORTED` R0 candidate | Method/parameter annotations and candidates |
+| `spring.injection.bean-parameter` | `@Bean` method parameter | `SUPPORTED` R0 candidate | Producer transition, parameter and candidate state |
+| `spring.injection.resource` | JSR-250 `@Resource` | `CONDITIONAL` R0 candidate | Name/type/version semantics and candidates |
+| `spring.disambiguation.qualifier` | `@Qualifier` and composed qualifier | `SUPPORTED` R0 candidate | Qualifier identities/values on point/candidate |
+| `spring.disambiguation.priority` | `@Primary`, `@Fallback`, name/order rules | `CONDITIONAL` R0 candidate | Pinned framework-version selection semantics |
+| `spring.injection.aggregate` | Collection/array/map/optional/provider/lazy | `CONDITIONAL` R0 candidate | Container/generic shape and ordered candidates; dynamic behavior qualified |
+| `spring.condition.profile` | `@Profile` and profile expressions/groups | `CONDITIONAL` R0 candidate | Normalized expression and configuration-space evidence |
+| `spring.condition.property` | `@ConditionalOnProperty` and property predicates | `CONDITIONAL` R0 candidate | Key/value/missing semantics, precedence and finite domain |
+| `spring.condition.build-context` | Class/resource/web-mode conditions | `CONDITIONAL` R0 candidate | Exact build/resource/web-mode evidence |
+| `spring.condition.bean-state` | On-bean/missing-bean/single-candidate | `CONDITIONAL` R0 candidate | Ordered bean-definition state and framework version |
+| `spring.condition.custom-expression` | Custom condition and SpEL | `DYNAMIC` R0 candidate | Detect/retain expression; additional evaluator/runtime evidence when needed |
+| `spring.registration.auto-configuration` | Imports/selectors/metadata and ordering | `CONDITIONAL` R0 candidate | Dependency metadata, condition IR and registration plan |
+| `spring.registration.spring-data` | Repository proxies and fragments | `CONDITIONAL` R0 candidate | Enablement/scan/store/exclusion/factory evidence |
+| `spring.registration.factory` | `FactoryBean`/factory-produced definitions | `CONDITIONAL` R0 candidate | Factory product metadata and condition region |
+| `spring.registration.xml` | XML bean/context wiring from 1.x onward | `CONDITIONAL` R0 candidate | Exact document/version, references and bounded XML semantics; unmodeled forms retain gaps |
+| `spring.registration.programmatic` | `registerBean`, registrars, post-processors | `DYNAMIC` R0 candidate | Call/mechanism evidence plus configuration/build/runtime requirement |
+| `spring.lookup.container` | `getBean`, service locator, `@Lookup` | `DYNAMIC` R0 candidate | Call/name/type evidence and unresolved target region |
+| `spring.expression.value` | `@Value` and dependency-bearing SpEL | `DYNAMIC` R0 candidate | Expression/property evidence and explicit evaluator boundary |
+| `spring.runtime.proxy-aop` | Proxies/advisors/runtime dependencies | `DYNAMIC` R0 candidate | Enabling declarations plus bytecode/runtime evidence when needed |
+| `spring.entrypoint.framework` | MVC endpoints, listeners, scheduled/lifecycle callbacks | `CONDITIONAL` R0 candidate | Registration/condition evidence; never inferred dead from absent callers |
+| `spring.mechanism.unclassified` | Unrecognized annotation/use, namespace, metadata or extension | `UNSUPPORTED` R0 candidate | Exact occurrence/artifact, unresolved role and typed gap; never silently omitted |
 
 Every `UNSUPPORTED`, `DYNAMIC` and `OUT_OF_SCOPE` case has a stable reason and capability-gap/denominator entry where it affects requested outputs.
 
@@ -209,6 +212,8 @@ G3 requires:
 7. explicit limits and no complete-container-equivalence claim.
 
 ## Remaining Decisions
+
+The [M4-R0 candidate](m4-r0-semantics-gate.md) now makes the following proposals concrete. They remain subject to its recorded review/acceptance gate rather than unscoped design work.
 
 - Exact Java schemas/preimages for M4 concepts and `ConfigurationSpaceIdentity`.
 - First supported Spring Boot/Framework/Lombok/Spring Data version matrix.

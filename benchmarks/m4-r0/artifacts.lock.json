@@ -1,0 +1,187 @@
+{
+  "artifacts": [
+    {
+      "bytes": 1489305,
+      "coordinate": "org.springframework:spring-core:5.3.31",
+      "file": "spring-core-5.3.31.jar",
+      "sha256": "7013ed3da15a8d4be797f5c310f9aa1b196b97f2313bc41e60ef3f5627224fe9",
+      "url": "https://repo.maven.apache.org/maven2/org/springframework/spring-core/5.3.31/spring-core-5.3.31.jar"
+    },
+    {
+      "bytes": 25161,
+      "coordinate": "org.springframework:spring-jcl:5.3.31",
+      "file": "spring-jcl-5.3.31.jar",
+      "sha256": "eee0df6a25a9c56d228ea86272546aa5a0656caf2f14e7b375417b066abbc0db",
+      "url": "https://repo.maven.apache.org/maven2/org/springframework/spring-jcl/5.3.31/spring-jcl-5.3.31.jar"
+    },
+    {
+      "bytes": 706400,
+      "coordinate": "org.springframework:spring-beans:5.3.31",
+      "file": "spring-beans-5.3.31.jar",
+      "sha256": "a8d6d99003d0a28049cba4273afbcfc64e1107ee3c33f67935853e9711544aa7",
+      "url": "https://repo.maven.apache.org/maven2/org/springframework/spring-beans/5.3.31/spring-beans-5.3.31.jar"
+    },
+    {
+      "bytes": 384535,
+      "coordinate": "org.springframework:spring-aop:5.3.31",
+      "file": "spring-aop-5.3.31.jar",
+      "sha256": "3f0c666f317abaa845fc3a24fba219b1f469716bf309cccd755eecb8fee20430",
+      "url": "https://repo.maven.apache.org/maven2/org/springframework/spring-aop/5.3.31/spring-aop-5.3.31.jar"
+    },
+    {
+      "bytes": 293174,
+      "coordinate": "org.springframework:spring-expression:5.3.31",
+      "file": "spring-expression-5.3.31.jar",
+      "sha256": "e027f122b8a4e3030339068220bed02d1c9d397eb5897f1e33ba2f63b22591ac",
+      "url": "https://repo.maven.apache.org/maven2/org/springframework/spring-expression/5.3.31/spring-expression-5.3.31.jar"
+    },
+    {
+      "bytes": 1275645,
+      "coordinate": "org.springframework:spring-context:5.3.31",
+      "file": "spring-context-5.3.31.jar",
+      "sha256": "38def055d1e22b5514b1cb19cef4474e5c1b0d2127c483e7d014bde87c4a4cf3",
+      "url": "https://repo.maven.apache.org/maven2/org/springframework/spring-context/5.3.31/spring-context-5.3.31.jar"
+    },
+    {
+      "bytes": 1882447,
+      "coordinate": "org.springframework:spring-core:6.1.14",
+      "file": "spring-core-6.1.14.jar",
+      "sha256": "e15a1179fc9642ffed13ca55e2863e2da524ccd1083b7c6f1b5cfd5733f3b2c5",
+      "url": "https://repo.maven.apache.org/maven2/org/springframework/spring-core/6.1.14/spring-core-6.1.14.jar"
+    },
+    {
+      "bytes": 24538,
+      "coordinate": "org.springframework:spring-jcl:6.1.14",
+      "file": "spring-jcl-6.1.14.jar",
+      "sha256": "9975c462bacee7a0c1aa79e55aa4faed02bd28dc78d1252404da87f5f7fb4cb1",
+      "url": "https://repo.maven.apache.org/maven2/org/springframework/spring-jcl/6.1.14/spring-jcl-6.1.14.jar"
+    },
+    {
+      "bytes": 862625,
+      "coordinate": "org.springframework:spring-beans:6.1.14",
+      "file": "spring-beans-6.1.14.jar",
+      "sha256": "6cad84b2a35a33a85a313a19445a43e5432b68e4f0bbf6c2bfc4a885a93dd727",
+      "url": "https://repo.maven.apache.org/maven2/org/springframework/spring-beans/6.1.14/spring-beans-6.1.14.jar"
+    },
+    {
+      "bytes": 417159,
+      "coordinate": "org.springframework:spring-aop:6.1.14",
+      "file": "spring-aop-6.1.14.jar",
+      "sha256": "15596939a6dbcca5812dee1ab9a8b36f69536bfd80672798927d5f1ac0d384e5",
+      "url": "https://repo.maven.apache.org/maven2/org/springframework/spring-aop/6.1.14/spring-aop-6.1.14.jar"
+    },
+    {
+      "bytes": 304491,
+      "coordinate": "org.springframework:spring-expression:6.1.14",
+      "file": "spring-expression-6.1.14.jar",
+      "sha256": "69ed6b052397a929a0e4c452f63f2c9a3d22e046d8b80d878190205ddb259518",
+      "url": "https://repo.maven.apache.org/maven2/org/springframework/spring-expression/6.1.14/spring-expression-6.1.14.jar"
+    },
+    {
+      "bytes": 1305875,
+      "coordinate": "org.springframework:spring-context:6.1.14",
+      "file": "spring-context-6.1.14.jar",
+      "sha256": "da76b53f6a20f09b38052a300435f3245780d30deb46ec5dd75314cda06fd365",
+      "url": "https://repo.maven.apache.org/maven2/org/springframework/spring-context/6.1.14/spring-context-6.1.14.jar"
+    },
+    {
+      "bytes": 1954386,
+      "coordinate": "org.springframework:spring-core:6.2.0",
+      "file": "spring-core-6.2.0.jar",
+      "sha256": "3b82629da38717dd616a70ec1055f9a8e208d58132071a6314a32159f8bce162",
+      "url": "https://repo.maven.apache.org/maven2/org/springframework/spring-core/6.2.0/spring-core-6.2.0.jar"
+    },
+    {
+      "bytes": 24534,
+      "coordinate": "org.springframework:spring-jcl:6.2.0",
+      "file": "spring-jcl-6.2.0.jar",
+      "sha256": "2b59288f030ce77a89ec88aa426f32eb9a309056f3646dd5157f9f31f0204fd7",
+      "url": "https://repo.maven.apache.org/maven2/org/springframework/spring-jcl/6.2.0/spring-jcl-6.2.0.jar"
+    },
+    {
+      "bytes": 875125,
+      "coordinate": "org.springframework:spring-beans:6.2.0",
+      "file": "spring-beans-6.2.0.jar",
+      "sha256": "33adf77b49236f2966c9cec7eb5a1aea8ade81d7ada80c36d91bbf89d3298e15",
+      "url": "https://repo.maven.apache.org/maven2/org/springframework/spring-beans/6.2.0/spring-beans-6.2.0.jar"
+    },
+    {
+      "bytes": 418340,
+      "coordinate": "org.springframework:spring-aop:6.2.0",
+      "file": "spring-aop-6.2.0.jar",
+      "sha256": "fe84f18bdefb3ad4f993357d31e61613bb55f348d7ea69ec1ca968b3240b3b08",
+      "url": "https://repo.maven.apache.org/maven2/org/springframework/spring-aop/6.2.0/spring-aop-6.2.0.jar"
+    },
+    {
+      "bytes": 317542,
+      "coordinate": "org.springframework:spring-expression:6.2.0",
+      "file": "spring-expression-6.2.0.jar",
+      "sha256": "37cfc1fe8ca22bb789c20aac6b90e09f2b0ea73085f3271ae61cf12cdb7e8876",
+      "url": "https://repo.maven.apache.org/maven2/org/springframework/spring-expression/6.2.0/spring-expression-6.2.0.jar"
+    },
+    {
+      "bytes": 1349182,
+      "coordinate": "org.springframework:spring-context:6.2.0",
+      "file": "spring-context-6.2.0.jar",
+      "sha256": "a0d2de9df7902edc5f6ae55e2936327bdeac177dbc5392906b8d36f3691fe121",
+      "url": "https://repo.maven.apache.org/maven2/org/springframework/spring-context/6.2.0/spring-context-6.2.0.jar"
+    },
+    {
+      "bytes": 1466652,
+      "coordinate": "org.springframework.boot:spring-boot:2.7.18",
+      "file": "spring-boot-2.7.18.jar",
+      "sha256": "530f4e0fdfeb3a0e2b3a369d15cdea38fbdc1696f8b030c35a6ad65c27524950",
+      "url": "https://repo.maven.apache.org/maven2/org/springframework/boot/spring-boot/2.7.18/spring-boot-2.7.18.jar"
+    },
+    {
+      "bytes": 1691093,
+      "coordinate": "org.springframework.boot:spring-boot-autoconfigure:2.7.18",
+      "file": "spring-boot-autoconfigure-2.7.18.jar",
+      "sha256": "1c4e0aadcb662b6149b536a2cf288003ffefe81a6cc69846e9f14976529a1b08",
+      "url": "https://repo.maven.apache.org/maven2/org/springframework/boot/spring-boot-autoconfigure/2.7.18/spring-boot-autoconfigure-2.7.18.jar"
+    },
+    {
+      "bytes": 1626599,
+      "coordinate": "org.springframework.boot:spring-boot:3.3.5",
+      "file": "spring-boot-3.3.5.jar",
+      "sha256": "6a4a5c8a5b58c209705881e487b49445679ab69c858623fef700f634e24eb9c2",
+      "url": "https://repo.maven.apache.org/maven2/org/springframework/boot/spring-boot/3.3.5/spring-boot-3.3.5.jar"
+    },
+    {
+      "bytes": 1965171,
+      "coordinate": "org.springframework.boot:spring-boot-autoconfigure:3.3.5",
+      "file": "spring-boot-autoconfigure-3.3.5.jar",
+      "sha256": "4e9d0d98414d92cc1844f84b88d58a0c968fde51e7333be48dffe424bab77844",
+      "url": "https://repo.maven.apache.org/maven2/org/springframework/boot/spring-boot-autoconfigure/3.3.5/spring-boot-autoconfigure-3.3.5.jar"
+    },
+    {
+      "bytes": 1758784,
+      "coordinate": "org.springframework.boot:spring-boot:3.4.0",
+      "file": "spring-boot-3.4.0.jar",
+      "sha256": "dea6332c2fa49ce2c724c78e3e57e41417dab50c82f1ccb5bfb22cc993290609",
+      "url": "https://repo.maven.apache.org/maven2/org/springframework/boot/spring-boot/3.4.0/spring-boot-3.4.0.jar"
+    },
+    {
+      "bytes": 2000642,
+      "coordinate": "org.springframework.boot:spring-boot-autoconfigure:3.4.0",
+      "file": "spring-boot-autoconfigure-3.4.0.jar",
+      "sha256": "525aa88505399c6ccfddfe295b313d55a259ed5e8d5890a3568485c074f98414",
+      "url": "https://repo.maven.apache.org/maven2/org/springframework/boot/spring-boot-autoconfigure/3.4.0/spring-boot-autoconfigure-3.4.0.jar"
+    },
+    {
+      "bytes": 26586,
+      "coordinate": "javax.annotation:javax.annotation-api:1.3.2",
+      "file": "javax.annotation-api-1.3.2.jar",
+      "sha256": "e04ba5195bcd555dc95650f7cc614d151e4bcd52d29a10b8aa2197f3ab89ab9b",
+      "url": "https://repo.maven.apache.org/maven2/javax/annotation/javax.annotation-api/1.3.2/javax.annotation-api-1.3.2.jar"
+    },
+    {
+      "bytes": 26141,
+      "coordinate": "jakarta.annotation:jakarta.annotation-api:2.1.1",
+      "file": "jakarta.annotation-api-2.1.1.jar",
+      "sha256": "5f65fdaf424eee2b55e1d882ba9bb376be93fb09b37b808be6e22e8851c909fe",
+      "url": "https://repo.maven.apache.org/maven2/jakarta/annotation/jakarta.annotation-api/2.1.1/jakarta.annotation-api-2.1.1.jar"
+    }
+  ],
+  "schema": "m4-r0-artifact-lock-v1"
+}

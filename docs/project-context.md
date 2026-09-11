@@ -111,7 +111,7 @@ Lower-authority claims cannot become confirmed without higher-authority evidence
 | Java 21 compile baseline | CONFIRMED |
 | Maven and monorepo | CONFIRMED |
 | Track A + Track B SE121 target | CONFIRMED |
-| JavaParser + SymbolSolver behind SemanticFrontend | CONFIRMED human choice (2026-09-02); empirical G2 acceptance pending; see ADR-001 |
+| JavaParser + SymbolSolver behind SemanticFrontend | CONFIRMED human choice (2026-09-02); G2 subsequently recorded PASSED in current state; see ADR-001 |
 | OpenRewrite | Independent comparator; possible future transformation technology outside SE121 |
 | Storage-neutral canonical graph | CONFIRMED direction; detailed schema pending |
 | Neo4j Community adapter | PROVISIONAL/experimental |
@@ -137,6 +137,7 @@ Lower-authority claims cannot become confirmed without higher-authority evidence
 - `docs/architecture/m3-workspace-build-model.md`: provisional M3 workspace, safe Maven model, exact classpath, and platform decoupling contract
 - `docs/architecture/evidence-acquisition.md`: provisional M3+ capability-gap, acquisition-attempt, and provider-conflict contract
 - `docs/architecture/m4-spring-intelligence.md`: provisional M4 Spring domain model and versioned closed mechanism denominator
+- `docs/architecture/m4-r0-semantics-gate.md`: reviewable R0 identity/fragment/version/order contract candidate spanning Spring 1.x XML through Boot 3.4.x
 - `docs/architecture/conditional-architecture-semantics.md`: canonical M4+ configuration-space, staged registration, truth-region, witness, policy and evolution semantics
 - `docs/architecture/product-outcome.md`: canonical product, metric, scoring, visualization, and acceptance contract
 - `docs/research/`: methods and evidence, not project progress

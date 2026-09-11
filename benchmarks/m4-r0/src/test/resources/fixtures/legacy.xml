@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<beans>
+  <bean id="token" class="fixtures.Token">
+    <constructor-arg value="legacy"/>
+  </bean>
+  <alias name="token" alias="service"/>
+  <bean id="consumer" class="fixtures.LegacyConsumer">
+    <property name="token"><ref bean="service"/></property>
+  </bean>
+</beans>

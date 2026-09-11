@@ -1,0 +1,1322 @@
+{
+  "schema": "m4-r0-formal-cases-v1",
+  "status": "AUTHOR_SPECIFICATION_LABELS_NOT_FRAMEWORK_ORACLE",
+  "cases": [
+    {
+      "id": "and-T-T",
+      "kind": "condition",
+      "input": {
+        "expr": {
+          "op": "all",
+          "args": [
+            {
+              "op": "const",
+              "value": "T"
+            },
+            {
+              "op": "const",
+              "value": "T"
+            }
+          ]
+        }
+      },
+      "expected": "T",
+      "sources": []
+    },
+    {
+      "id": "or-T-T",
+      "kind": "condition",
+      "input": {
+        "expr": {
+          "op": "any",
+          "args": [
+            {
+              "op": "const",
+              "value": "T"
+            },
+            {
+              "op": "const",
+              "value": "T"
+            }
+          ]
+        }
+      },
+      "expected": "T",
+      "sources": []
+    },
+    {
+      "id": "and-T-F",
+      "kind": "condition",
+      "input": {
+        "expr": {
+          "op": "all",
+          "args": [
+            {
+              "op": "const",
+              "value": "T"
+            },
+            {
+              "op": "const",
+              "value": "F"
+            }
+          ]
+        }
+      },
+      "expected": "F",
+      "sources": []
+    },
+    {
+      "id": "or-T-F",
+      "kind": "condition",
+      "input": {
+        "expr": {
+          "op": "any",
+          "args": [
+            {
+              "op": "const",
+              "value": "T"
+            },
+            {
+              "op": "const",
+              "value": "F"
+            }
+          ]
+        }
+      },
+      "expected": "T",
+      "sources": []
+    },
+    {
+      "id": "and-T-U",
+      "kind": "condition",
+      "input": {
+        "expr": {
+          "op": "all",
+          "args": [
+            {
+              "op": "const",
+              "value": "T"
+            },
+            {
+              "op": "const",
+              "value": "U"
+            }
+          ]
+        }
+      },
+      "expected": "U",
+      "sources": []
+    },
+    {
+      "id": "or-T-U",
+      "kind": "condition",
+      "input": {
+        "expr": {
+          "op": "any",
+          "args": [
+            {
+              "op": "const",
+              "value": "T"
+            },
+            {
+              "op": "const",
+              "value": "U"
+            }
+          ]
+        }
+      },
+      "expected": "T",
+      "sources": []
+    },
+    {
+      "id": "and-F-T",
+      "kind": "condition",
+      "input": {
+        "expr": {
+          "op": "all",
+          "args": [
+            {
+              "op": "const",
+              "value": "F"
+            },
+            {
+              "op": "const",
+              "value": "T"
+            }
+          ]
+        }
+      },
+      "expected": "F",
+      "sources": []
+    },
+    {
+      "id": "or-F-T",
+      "kind": "condition",
+      "input": {
+        "expr": {
+          "op": "any",
+          "args": [
+            {
+              "op": "const",
+              "value": "F"
+            },
+            {
+              "op": "const",
+              "value": "T"
+            }
+          ]
+        }
+      },
+      "expected": "T",
+      "sources": []
+    },
+    {
+      "id": "and-F-F",
+      "kind": "condition",
+      "input": {
+        "expr": {
+          "op": "all",
+          "args": [
+            {
+              "op": "const",
+              "value": "F"
+            },
+            {
+              "op": "const",
+              "value": "F"
+            }
+          ]
+        }
+      },
+      "expected": "F",
+      "sources": []
+    },
+    {
+      "id": "or-F-F",
+      "kind": "condition",
+      "input": {
+        "expr": {
+          "op": "any",
+          "args": [
+            {
+              "op": "const",
+              "value": "F"
+            },
+            {
+              "op": "const",
+              "value": "F"
+            }
+          ]
+        }
+      },
+      "expected": "F",
+      "sources": []
+    },
+    {
+      "id": "and-F-U",
+      "kind": "condition",
+      "input": {
+        "expr": {
+          "op": "all",
+          "args": [
+            {
+              "op": "const",
+              "value": "F"
+            },
+            {
+              "op": "const",
+              "value": "U"
+            }
+          ]
+        }
+      },
+      "expected": "F",
+      "sources": []
+    },
+    {
+      "id": "or-F-U",
+      "kind": "condition",
+      "input": {
+        "expr": {
+          "op": "any",
+          "args": [
+            {
+              "op": "const",
+              "value": "F"
+            },
+            {
+              "op": "const",
+              "value": "U"
+            }
+          ]
+        }
+      },
+      "expected": "U",
+      "sources": []
+    },
+    {
+      "id": "and-U-T",
+      "kind": "condition",
+      "input": {
+        "expr": {
+          "op": "all",
+          "args": [
+            {
+              "op": "const",
+              "value": "U"
+            },
+            {
+              "op": "const",
+              "value": "T"
+            }
+          ]
+        }
+      },
+      "expected": "U",
+      "sources": []
+    },
+    {
+      "id": "or-U-T",
+      "kind": "condition",
+      "input": {
+        "expr": {
+          "op": "any",
+          "args": [
+            {
+              "op": "const",
+              "value": "U"
+            },
+            {
+              "op": "const",
+              "value": "T"
+            }
+          ]
+        }
+      },
+      "expected": "T",
+      "sources": []
+    },
+    {
+      "id": "and-U-F",
+      "kind": "condition",
+      "input": {
+        "expr": {
+          "op": "all",
+          "args": [
+            {
+              "op": "const",
+              "value": "U"
+            },
+            {
+              "op": "const",
+              "value": "F"
+            }
+          ]
+        }
+      },
+      "expected": "F",
+      "sources": []
+    },
+    {
+      "id": "or-U-F",
+      "kind": "condition",
+      "input": {
+        "expr": {
+          "op": "any",
+          "args": [
+            {
+              "op": "const",
+              "value": "U"
+            },
+            {
+              "op": "const",
+              "value": "F"
+            }
+          ]
+        }
+      },
+      "expected": "U",
+      "sources": []
+    },
+    {
+      "id": "and-U-U",
+      "kind": "condition",
+      "input": {
+        "expr": {
+          "op": "all",
+          "args": [
+            {
+              "op": "const",
+              "value": "U"
+            },
+            {
+              "op": "const",
+              "value": "U"
+            }
+          ]
+        }
+      },
+      "expected": "U",
+      "sources": []
+    },
+    {
+      "id": "or-U-U",
+      "kind": "condition",
+      "input": {
+        "expr": {
+          "op": "any",
+          "args": [
+            {
+              "op": "const",
+              "value": "U"
+            },
+            {
+              "op": "const",
+              "value": "U"
+            }
+          ]
+        }
+      },
+      "expected": "U",
+      "sources": []
+    },
+    {
+      "id": "not-T",
+      "kind": "condition",
+      "input": {
+        "expr": {
+          "op": "not",
+          "arg": {
+            "op": "const",
+            "value": "T"
+          }
+        }
+      },
+      "expected": "F",
+      "sources": []
+    },
+    {
+      "id": "not-F",
+      "kind": "condition",
+      "input": {
+        "expr": {
+          "op": "not",
+          "arg": {
+            "op": "const",
+            "value": "F"
+          }
+        }
+      },
+      "expected": "T",
+      "sources": []
+    },
+    {
+      "id": "not-U",
+      "kind": "condition",
+      "input": {
+        "expr": {
+          "op": "not",
+          "arg": {
+            "op": "const",
+            "value": "U"
+          }
+        }
+      },
+      "expected": "U",
+      "sources": []
+    },
+    {
+      "id": "property-default-0",
+      "kind": "condition",
+      "input": {
+        "expr": {
+          "op": "property",
+          "name": "p",
+          "having": "",
+          "matchIfMissing": false
+        },
+        "assignment": {
+          "p": null
+        }
+      },
+      "expected": "F",
+      "sources": [
+        "S22"
+      ]
+    },
+    {
+      "id": "property-true-0",
+      "kind": "condition",
+      "input": {
+        "expr": {
+          "op": "property",
+          "name": "p",
+          "having": "true",
+          "matchIfMissing": true
+        },
+        "assignment": {
+          "p": null
+        }
+      },
+      "expected": "T",
+      "sources": [
+        "S22"
+      ]
+    },
+    {
+      "id": "property-default-1",
+      "kind": "condition",
+      "input": {
+        "expr": {
+          "op": "property",
+          "name": "p",
+          "having": "",
+          "matchIfMissing": false
+        },
+        "assignment": {
+          "p": ""
+        }
+      },
+      "expected": "T",
+      "sources": [
+        "S22"
+      ]
+    },
+    {
+      "id": "property-true-1",
+      "kind": "condition",
+      "input": {
+        "expr": {
+          "op": "property",
+          "name": "p",
+          "having": "true",
+          "matchIfMissing": true
+        },
+        "assignment": {
+          "p": ""
+        }
+      },
+      "expected": "F",
+      "sources": [
+        "S22"
+      ]
+    },
+    {
+      "id": "property-default-2",
+      "kind": "condition",
+      "input": {
+        "expr": {
+          "op": "property",
+          "name": "p",
+          "having": "",
+          "matchIfMissing": false
+        },
+        "assignment": {
+          "p": "false"
+        }
+      },
+      "expected": "F",
+      "sources": [
+        "S22"
+      ]
+    },
+    {
+      "id": "property-true-2",
+      "kind": "condition",
+      "input": {
+        "expr": {
+          "op": "property",
+          "name": "p",
+          "having": "true",
+          "matchIfMissing": true
+        },
+        "assignment": {
+          "p": "false"
+        }
+      },
+      "expected": "F",
+      "sources": [
+        "S22"
+      ]
+    },
+    {
+      "id": "property-default-3",
+      "kind": "condition",
+      "input": {
+        "expr": {
+          "op": "property",
+          "name": "p",
+          "having": "",
+          "matchIfMissing": false
+        },
+        "assignment": {
+          "p": "FALSE"
+        }
+      },
+      "expected": "F",
+      "sources": [
+        "S22"
+      ]
+    },
+    {
+      "id": "property-true-3",
+      "kind": "condition",
+      "input": {
+        "expr": {
+          "op": "property",
+          "name": "p",
+          "having": "true",
+          "matchIfMissing": true
+        },
+        "assignment": {
+          "p": "FALSE"
+        }
+      },
+      "expected": "F",
+      "sources": [
+        "S22"
+      ]
+    },
+    {
+      "id": "property-default-4",
+      "kind": "condition",
+      "input": {
+        "expr": {
+          "op": "property",
+          "name": "p",
+          "having": "",
+          "matchIfMissing": false
+        },
+        "assignment": {
+          "p": "true"
+        }
+      },
+      "expected": "T",
+      "sources": [
+        "S22"
+      ]
+    },
+    {
+      "id": "property-true-4",
+      "kind": "condition",
+      "input": {
+        "expr": {
+          "op": "property",
+          "name": "p",
+          "having": "true",
+          "matchIfMissing": true
+        },
+        "assignment": {
+          "p": "true"
+        }
+      },
+      "expected": "T",
+      "sources": [
+        "S22"
+      ]
+    },
+    {
+      "id": "property-default-5",
+      "kind": "condition",
+      "input": {
+        "expr": {
+          "op": "property",
+          "name": "p",
+          "having": "",
+          "matchIfMissing": false
+        },
+        "assignment": {
+          "p": "TRUE"
+        }
+      },
+      "expected": "T",
+      "sources": [
+        "S22"
+      ]
+    },
+    {
+      "id": "property-true-5",
+      "kind": "condition",
+      "input": {
+        "expr": {
+          "op": "property",
+          "name": "p",
+          "having": "true",
+          "matchIfMissing": true
+        },
+        "assignment": {
+          "p": "TRUE"
+        }
+      },
+      "expected": "T",
+      "sources": [
+        "S22"
+      ]
+    },
+    {
+      "id": "property-default-6",
+      "kind": "condition",
+      "input": {
+        "expr": {
+          "op": "property",
+          "name": "p",
+          "having": "",
+          "matchIfMissing": false
+        },
+        "assignment": {
+          "p": "other"
+        }
+      },
+      "expected": "T",
+      "sources": [
+        "S22"
+      ]
+    },
+    {
+      "id": "property-true-6",
+      "kind": "condition",
+      "input": {
+        "expr": {
+          "op": "property",
+          "name": "p",
+          "having": "true",
+          "matchIfMissing": true
+        },
+        "assignment": {
+          "p": "other"
+        }
+      },
+      "expected": "F",
+      "sources": [
+        "S22"
+      ]
+    },
+    {
+      "id": "property-default-7",
+      "kind": "condition",
+      "input": {
+        "expr": {
+          "op": "property",
+          "name": "p",
+          "having": "",
+          "matchIfMissing": false
+        },
+        "assignment": {
+          "p": " false"
+        }
+      },
+      "expected": "T",
+      "sources": [
+        "S22"
+      ]
+    },
+    {
+      "id": "property-true-7",
+      "kind": "condition",
+      "input": {
+        "expr": {
+          "op": "property",
+          "name": "p",
+          "having": "true",
+          "matchIfMissing": true
+        },
+        "assignment": {
+          "p": " false"
+        }
+      },
+      "expected": "F",
+      "sources": [
+        "S22"
+      ]
+    },
+    {
+      "id": "region-T",
+      "kind": "region",
+      "input": {
+        "values": [
+          "T"
+        ]
+      },
+      "expected": "MUST",
+      "sources": []
+    },
+    {
+      "id": "region-F",
+      "kind": "region",
+      "input": {
+        "values": [
+          "F"
+        ]
+      },
+      "expected": "NEVER",
+      "sources": []
+    },
+    {
+      "id": "region-TF",
+      "kind": "region",
+      "input": {
+        "values": [
+          "T",
+          "F"
+        ]
+      },
+      "expected": "MAY",
+      "sources": []
+    },
+    {
+      "id": "region-TFU",
+      "kind": "region",
+      "input": {
+        "values": [
+          "T",
+          "F",
+          "U"
+        ]
+      },
+      "expected": "MAY",
+      "sources": []
+    },
+    {
+      "id": "region-TU",
+      "kind": "region",
+      "input": {
+        "values": [
+          "T",
+          "U"
+        ]
+      },
+      "expected": "UNKNOWN",
+      "sources": []
+    },
+    {
+      "id": "region-FU",
+      "kind": "region",
+      "input": {
+        "values": [
+          "F",
+          "U"
+        ]
+      },
+      "expected": "UNKNOWN",
+      "sources": []
+    },
+    {
+      "id": "region-U",
+      "kind": "region",
+      "input": {
+        "values": [
+          "U"
+        ]
+      },
+      "expected": "UNKNOWN",
+      "sources": []
+    },
+    {
+      "id": "region-empty",
+      "kind": "region",
+      "input": {
+        "values": []
+      },
+      "expected": "INVALID_MODEL",
+      "sources": []
+    },
+    {
+      "id": "order-a-b",
+      "kind": "registration",
+      "input": {
+        "steps": [
+          {
+            "id": "a",
+            "condition": {
+              "op": "missingBean"
+            }
+          },
+          {
+            "id": "b",
+            "condition": {
+              "op": "missingBean"
+            }
+          }
+        ],
+        "query": "a"
+      },
+      "expected": "T",
+      "sources": [
+        "S13",
+        "S23"
+      ]
+    },
+    {
+      "id": "order-b-a",
+      "kind": "registration",
+      "input": {
+        "steps": [
+          {
+            "id": "b",
+            "condition": {
+              "op": "missingBean"
+            }
+          },
+          {
+            "id": "a",
+            "condition": {
+              "op": "missingBean"
+            }
+          }
+        ],
+        "query": "a"
+      },
+      "expected": "F",
+      "sources": [
+        "S13",
+        "S23"
+      ]
+    },
+    {
+      "id": "order-user-a",
+      "kind": "registration",
+      "input": {
+        "steps": [
+          {
+            "id": "user",
+            "condition": {
+              "op": "const",
+              "value": "T"
+            }
+          },
+          {
+            "id": "a",
+            "condition": {
+              "op": "missingBean"
+            }
+          }
+        ],
+        "query": "a"
+      },
+      "expected": "F",
+      "sources": [
+        "S13",
+        "S23"
+      ]
+    },
+    {
+      "id": "order-a-user",
+      "kind": "registration",
+      "input": {
+        "steps": [
+          {
+            "id": "a",
+            "condition": {
+              "op": "missingBean"
+            }
+          },
+          {
+            "id": "user",
+            "condition": {
+              "op": "const",
+              "value": "T"
+            }
+          }
+        ],
+        "query": "a"
+      },
+      "expected": "T",
+      "sources": [
+        "S13",
+        "S23"
+      ]
+    },
+    {
+      "id": "opaque-propagates",
+      "kind": "registration",
+      "input": {
+        "steps": [
+          {
+            "id": "x",
+            "condition": {
+              "op": "opaque"
+            }
+          },
+          {
+            "id": "a",
+            "condition": {
+              "op": "missingBean"
+            }
+          }
+        ],
+        "query": "a"
+      },
+      "expected": "U",
+      "sources": []
+    },
+    {
+      "id": "unrecognized-condition",
+      "kind": "condition",
+      "input": {
+        "expr": {
+          "op": "unknown-extension"
+        }
+      },
+      "expected": "U",
+      "sources": []
+    },
+    {
+      "id": "property-unobserved",
+      "kind": "condition",
+      "input": {
+        "expr": {
+          "op": "property",
+          "name": "p",
+          "having": "",
+          "matchIfMissing": false
+        },
+        "assignment": {}
+      },
+      "expected": "U",
+      "sources": []
+    },
+    {
+      "id": "limit-registration",
+      "kind": "registration",
+      "input": {
+        "steps": [
+          {
+            "id": "a",
+            "condition": {
+              "op": "const",
+              "value": "T"
+            }
+          },
+          {
+            "id": "b",
+            "condition": {
+              "op": "const",
+              "value": "T"
+            }
+          }
+        ],
+        "query": "b",
+        "maxSteps": 1
+      },
+      "expected": "U",
+      "sources": []
+    },
+    {
+      "id": "profile-both",
+      "kind": "condition",
+      "input": {
+        "expr": {
+          "op": "all",
+          "args": [
+            {
+              "op": "profile",
+              "name": "dev"
+            },
+            {
+              "op": "not",
+              "arg": {
+                "op": "profile",
+                "name": "prod"
+              }
+            }
+          ]
+        },
+        "assignment": {
+          "profile:dev": true,
+          "profile:prod": true
+        }
+      },
+      "expected": "F",
+      "sources": [
+        "S20"
+      ]
+    },
+    {
+      "id": "profile-dev",
+      "kind": "condition",
+      "input": {
+        "expr": {
+          "op": "all",
+          "args": [
+            {
+              "op": "profile",
+              "name": "dev"
+            },
+            {
+              "op": "not",
+              "arg": {
+                "op": "profile",
+                "name": "prod"
+              }
+            }
+          ]
+        },
+        "assignment": {
+          "profile:dev": true,
+          "profile:prod": false
+        }
+      },
+      "expected": "T",
+      "sources": [
+        "S20"
+      ]
+    },
+    {
+      "id": "precedence-highest",
+      "kind": "precedence",
+      "input": {
+        "sources": [
+          {
+            "p": "false"
+          },
+          {
+            "p": "true"
+          }
+        ],
+        "key": "p"
+      },
+      "expected": "true",
+      "sources": [
+        "S09"
+      ]
+    },
+    {
+      "id": "precedence-empty",
+      "kind": "precedence",
+      "input": {
+        "sources": [
+          {
+            "p": "true"
+          },
+          {
+            "p": ""
+          }
+        ],
+        "key": "p"
+      },
+      "expected": "",
+      "sources": [
+        "S09"
+      ]
+    },
+    {
+      "id": "binding-no-candidates",
+      "kind": "binding",
+      "input": {
+        "candidates": [],
+        "name": "b",
+        "version": "6.2.0"
+      },
+      "expected": "UNSATISFIED",
+      "sources": [
+        "S15",
+        "S16"
+      ]
+    },
+    {
+      "id": "binding-ambiguous",
+      "kind": "binding",
+      "input": {
+        "candidates": [
+          {
+            "id": "a"
+          },
+          {
+            "id": "b"
+          }
+        ],
+        "name": "b",
+        "version": "6.2.0"
+      },
+      "expected": "AMBIGUOUS",
+      "sources": [
+        "S15",
+        "S16"
+      ]
+    },
+    {
+      "id": "binding-one-primary",
+      "kind": "binding",
+      "input": {
+        "candidates": [
+          {
+            "id": "a",
+            "primary": true
+          },
+          {
+            "id": "b"
+          }
+        ],
+        "name": "b",
+        "version": "6.2.0"
+      },
+      "expected": "a",
+      "sources": [
+        "S15",
+        "S16"
+      ]
+    },
+    {
+      "id": "binding-two-primary",
+      "kind": "binding",
+      "input": {
+        "candidates": [
+          {
+            "id": "a",
+            "primary": true
+          },
+          {
+            "id": "b",
+            "primary": true
+          }
+        ],
+        "name": "b",
+        "version": "6.2.0"
+      },
+      "expected": "AMBIGUOUS",
+      "sources": [
+        "S15",
+        "S16"
+      ]
+    },
+    {
+      "id": "binding-name-before-priority",
+      "kind": "binding",
+      "input": {
+        "candidates": [
+          {
+            "id": "a",
+            "priority": 1
+          },
+          {
+            "id": "b"
+          }
+        ],
+        "name": "b",
+        "version": "6.2.0"
+      },
+      "expected": "b",
+      "sources": [
+        "S15",
+        "S16"
+      ]
+    },
+    {
+      "id": "binding-priority-before-name",
+      "kind": "binding",
+      "input": {
+        "candidates": [
+          {
+            "id": "a",
+            "priority": 1
+          },
+          {
+            "id": "b"
+          }
+        ],
+        "name": "b",
+        "version": "6.1.14"
+      },
+      "expected": "a",
+      "sources": [
+        "S15",
+        "S16"
+      ]
+    },
+    {
+      "id": "binding-unique-nonfallback",
+      "kind": "binding",
+      "input": {
+        "candidates": [
+          {
+            "id": "a",
+            "fallback": true
+          },
+          {
+            "id": "b"
+          }
+        ],
+        "name": "b",
+        "version": "6.2.0"
+      },
+      "expected": "b",
+      "sources": [
+        "S15",
+        "S16"
+      ]
+    },
+    {
+      "id": "space-profile-fallback",
+      "kind": "space",
+      "input": {
+        "domains": {
+          "profile:dev": [
+            false,
+            true
+          ]
+        },
+        "steps": [
+          {
+            "id": "user",
+            "condition": {
+              "op": "profile",
+              "name": "dev"
+            }
+          },
+          {
+            "id": "a",
+            "condition": {
+              "op": "missingBean"
+            }
+          }
+        ],
+        "query": "a",
+        "baseline": {
+          "profile:dev": false
+        }
+      },
+      "expected": {
+        "region": "MAY",
+        "values": [
+          "T",
+          "F"
+        ]
+      },
+      "sources": [
+        "S13",
+        "S23"
+      ]
+    },
+    {
+      "id": "empty-feasible-space",
+      "kind": "space",
+      "input": {
+        "domains": {
+          "p": [
+            false,
+            true
+          ]
+        },
+        "feasible": false,
+        "steps": [
+          {
+            "id": "a",
+            "condition": {
+              "op": "const",
+              "value": "T"
+            }
+          }
+        ],
+        "query": "a",
+        "baseline": {
+          "p": false
+        }
+      },
+      "expected": {
+        "region": "INVALID_MODEL",
+        "values": []
+      },
+      "sources": []
+    }
+  ]
+}

@@ -1,0 +1,680 @@
+{
+  "schema": "m4-r0-runtime-labels-v1",
+  "status": "AUTHOR_LABELS_PRE_EXECUTION_NOT_INDEPENDENT_ADJUDICATION",
+  "cases": [
+    {
+      "version": "5.3.31",
+      "id": "property-0",
+      "expected": "missingMatches",
+      "sources": [
+        "S22"
+      ]
+    },
+    {
+      "version": "5.3.31",
+      "id": "property-1",
+      "expected": "ordinary",
+      "sources": [
+        "S22"
+      ]
+    },
+    {
+      "version": "5.3.31",
+      "id": "property-2",
+      "expected": "",
+      "sources": [
+        "S22"
+      ]
+    },
+    {
+      "version": "5.3.31",
+      "id": "property-3",
+      "expected": "",
+      "sources": [
+        "S22"
+      ]
+    },
+    {
+      "version": "5.3.31",
+      "id": "property-4",
+      "expected": "explicitTrue,missingMatches,ordinary",
+      "sources": [
+        "S22"
+      ]
+    },
+    {
+      "version": "5.3.31",
+      "id": "property-5",
+      "expected": "explicitTrue,missingMatches,ordinary",
+      "sources": [
+        "S22"
+      ]
+    },
+    {
+      "version": "5.3.31",
+      "id": "property-6",
+      "expected": "ordinary",
+      "sources": [
+        "S22"
+      ]
+    },
+    {
+      "version": "5.3.31",
+      "id": "property-7",
+      "expected": "ordinary",
+      "sources": [
+        "S22"
+      ]
+    },
+    {
+      "version": "5.3.31",
+      "id": "profile-0",
+      "expected": "defaultProfile",
+      "sources": [
+        "S20"
+      ]
+    },
+    {
+      "version": "5.3.31",
+      "id": "profile-1",
+      "expected": "devOnly,either",
+      "sources": [
+        "S20"
+      ]
+    },
+    {
+      "version": "5.3.31",
+      "id": "profile-2",
+      "expected": "either",
+      "sources": [
+        "S20"
+      ]
+    },
+    {
+      "version": "5.3.31",
+      "id": "profile-3",
+      "expected": "either",
+      "sources": [
+        "S20"
+      ]
+    },
+    {
+      "version": "5.3.31",
+      "id": "profile-4",
+      "expected": "",
+      "sources": [
+        "S20"
+      ]
+    },
+    {
+      "version": "5.3.31",
+      "id": "order-ab",
+      "expected": "a",
+      "sources": [
+        "S13",
+        "S23"
+      ]
+    },
+    {
+      "version": "5.3.31",
+      "id": "order-ba",
+      "expected": "b",
+      "sources": [
+        "S13",
+        "S23"
+      ]
+    },
+    {
+      "version": "5.3.31",
+      "id": "order-user-a",
+      "expected": "user",
+      "sources": [
+        "S13",
+        "S23"
+      ]
+    },
+    {
+      "version": "5.3.31",
+      "id": "order-a-user",
+      "expected": "a,user",
+      "sources": [
+        "S13",
+        "S23"
+      ]
+    },
+    {
+      "version": "5.3.31",
+      "id": "onbean-true",
+      "expected": "true",
+      "sources": [
+        "S13",
+        "S23"
+      ]
+    },
+    {
+      "version": "5.3.31",
+      "id": "onbean-false",
+      "expected": "false",
+      "sources": [
+        "S13",
+        "S23"
+      ]
+    },
+    {
+      "version": "5.3.31",
+      "id": "single-0",
+      "expected": "false",
+      "sources": [
+        "S13",
+        "S23"
+      ]
+    },
+    {
+      "version": "5.3.31",
+      "id": "single-1",
+      "expected": "true",
+      "sources": [
+        "S13",
+        "S23"
+      ]
+    },
+    {
+      "version": "5.3.31",
+      "id": "single-2",
+      "expected": "false",
+      "sources": [
+        "S13",
+        "S23"
+      ]
+    },
+    {
+      "version": "5.3.31",
+      "id": "single-primary",
+      "expected": "true",
+      "sources": [
+        "S13",
+        "S23"
+      ]
+    },
+    {
+      "version": "5.3.31",
+      "id": "di-qualifier-primary",
+      "expected": "chosen",
+      "sources": [
+        "S15",
+        "S16",
+        "S17"
+      ]
+    },
+    {
+      "version": "5.3.31",
+      "id": "xml-alias-ref",
+      "expected": "true",
+      "sources": [
+        "S01"
+      ]
+    },
+    {
+      "version": "5.3.31",
+      "id": "di-name-priority",
+      "expected": "high",
+      "sources": [
+        "S15",
+        "S16",
+        "S17"
+      ]
+    },
+    {
+      "version": "6.1.14",
+      "id": "property-0",
+      "expected": "missingMatches",
+      "sources": [
+        "S22"
+      ]
+    },
+    {
+      "version": "6.1.14",
+      "id": "property-1",
+      "expected": "ordinary",
+      "sources": [
+        "S22"
+      ]
+    },
+    {
+      "version": "6.1.14",
+      "id": "property-2",
+      "expected": "",
+      "sources": [
+        "S22"
+      ]
+    },
+    {
+      "version": "6.1.14",
+      "id": "property-3",
+      "expected": "",
+      "sources": [
+        "S22"
+      ]
+    },
+    {
+      "version": "6.1.14",
+      "id": "property-4",
+      "expected": "explicitTrue,missingMatches,ordinary",
+      "sources": [
+        "S22"
+      ]
+    },
+    {
+      "version": "6.1.14",
+      "id": "property-5",
+      "expected": "explicitTrue,missingMatches,ordinary",
+      "sources": [
+        "S22"
+      ]
+    },
+    {
+      "version": "6.1.14",
+      "id": "property-6",
+      "expected": "ordinary",
+      "sources": [
+        "S22"
+      ]
+    },
+    {
+      "version": "6.1.14",
+      "id": "property-7",
+      "expected": "ordinary",
+      "sources": [
+        "S22"
+      ]
+    },
+    {
+      "version": "6.1.14",
+      "id": "profile-0",
+      "expected": "defaultProfile",
+      "sources": [
+        "S20"
+      ]
+    },
+    {
+      "version": "6.1.14",
+      "id": "profile-1",
+      "expected": "devOnly,either",
+      "sources": [
+        "S20"
+      ]
+    },
+    {
+      "version": "6.1.14",
+      "id": "profile-2",
+      "expected": "either",
+      "sources": [
+        "S20"
+      ]
+    },
+    {
+      "version": "6.1.14",
+      "id": "profile-3",
+      "expected": "either",
+      "sources": [
+        "S20"
+      ]
+    },
+    {
+      "version": "6.1.14",
+      "id": "profile-4",
+      "expected": "",
+      "sources": [
+        "S20"
+      ]
+    },
+    {
+      "version": "6.1.14",
+      "id": "order-ab",
+      "expected": "a",
+      "sources": [
+        "S13",
+        "S23"
+      ]
+    },
+    {
+      "version": "6.1.14",
+      "id": "order-ba",
+      "expected": "b",
+      "sources": [
+        "S13",
+        "S23"
+      ]
+    },
+    {
+      "version": "6.1.14",
+      "id": "order-user-a",
+      "expected": "user",
+      "sources": [
+        "S13",
+        "S23"
+      ]
+    },
+    {
+      "version": "6.1.14",
+      "id": "order-a-user",
+      "expected": "a,user",
+      "sources": [
+        "S13",
+        "S23"
+      ]
+    },
+    {
+      "version": "6.1.14",
+      "id": "onbean-true",
+      "expected": "true",
+      "sources": [
+        "S13",
+        "S23"
+      ]
+    },
+    {
+      "version": "6.1.14",
+      "id": "onbean-false",
+      "expected": "false",
+      "sources": [
+        "S13",
+        "S23"
+      ]
+    },
+    {
+      "version": "6.1.14",
+      "id": "single-0",
+      "expected": "false",
+      "sources": [
+        "S13",
+        "S23"
+      ]
+    },
+    {
+      "version": "6.1.14",
+      "id": "single-1",
+      "expected": "true",
+      "sources": [
+        "S13",
+        "S23"
+      ]
+    },
+    {
+      "version": "6.1.14",
+      "id": "single-2",
+      "expected": "false",
+      "sources": [
+        "S13",
+        "S23"
+      ]
+    },
+    {
+      "version": "6.1.14",
+      "id": "single-primary",
+      "expected": "true",
+      "sources": [
+        "S13",
+        "S23"
+      ]
+    },
+    {
+      "version": "6.1.14",
+      "id": "di-qualifier-primary",
+      "expected": "chosen",
+      "sources": [
+        "S15",
+        "S16",
+        "S17"
+      ]
+    },
+    {
+      "version": "6.1.14",
+      "id": "xml-alias-ref",
+      "expected": "true",
+      "sources": [
+        "S01"
+      ]
+    },
+    {
+      "version": "6.1.14",
+      "id": "di-name-priority",
+      "expected": "high",
+      "sources": [
+        "S15",
+        "S16",
+        "S17"
+      ]
+    },
+    {
+      "version": "6.2.0",
+      "id": "property-0",
+      "expected": "missingMatches",
+      "sources": [
+        "S22"
+      ]
+    },
+    {
+      "version": "6.2.0",
+      "id": "property-1",
+      "expected": "ordinary",
+      "sources": [
+        "S22"
+      ]
+    },
+    {
+      "version": "6.2.0",
+      "id": "property-2",
+      "expected": "",
+      "sources": [
+        "S22"
+      ]
+    },
+    {
+      "version": "6.2.0",
+      "id": "property-3",
+      "expected": "",
+      "sources": [
+        "S22"
+      ]
+    },
+    {
+      "version": "6.2.0",
+      "id": "property-4",
+      "expected": "explicitTrue,missingMatches,ordinary",
+      "sources": [
+        "S22"
+      ]
+    },
+    {
+      "version": "6.2.0",
+      "id": "property-5",
+      "expected": "explicitTrue,missingMatches,ordinary",
+      "sources": [
+        "S22"
+      ]
+    },
+    {
+      "version": "6.2.0",
+      "id": "property-6",
+      "expected": "ordinary",
+      "sources": [
+        "S22"
+      ]
+    },
+    {
+      "version": "6.2.0",
+      "id": "property-7",
+      "expected": "ordinary",
+      "sources": [
+        "S22"
+      ]
+    },
+    {
+      "version": "6.2.0",
+      "id": "profile-0",
+      "expected": "defaultProfile",
+      "sources": [
+        "S20"
+      ]
+    },
+    {
+      "version": "6.2.0",
+      "id": "profile-1",
+      "expected": "devOnly,either",
+      "sources": [
+        "S20"
+      ]
+    },
+    {
+      "version": "6.2.0",
+      "id": "profile-2",
+      "expected": "either",
+      "sources": [
+        "S20"
+      ]
+    },
+    {
+      "version": "6.2.0",
+      "id": "profile-3",
+      "expected": "either",
+      "sources": [
+        "S20"
+      ]
+    },
+    {
+      "version": "6.2.0",
+      "id": "profile-4",
+      "expected": "",
+      "sources": [
+        "S20"
+      ]
+    },
+    {
+      "version": "6.2.0",
+      "id": "order-ab",
+      "expected": "a",
+      "sources": [
+        "S13",
+        "S23"
+      ]
+    },
+    {
+      "version": "6.2.0",
+      "id": "order-ba",
+      "expected": "b",
+      "sources": [
+        "S13",
+        "S23"
+      ]
+    },
+    {
+      "version": "6.2.0",
+      "id": "order-user-a",
+      "expected": "user",
+      "sources": [
+        "S13",
+        "S23"
+      ]
+    },
+    {
+      "version": "6.2.0",
+      "id": "order-a-user",
+      "expected": "a,user",
+      "sources": [
+        "S13",
+        "S23"
+      ]
+    },
+    {
+      "version": "6.2.0",
+      "id": "onbean-true",
+      "expected": "true",
+      "sources": [
+        "S13",
+        "S23"
+      ]
+    },
+    {
+      "version": "6.2.0",
+      "id": "onbean-false",
+      "expected": "false",
+      "sources": [
+        "S13",
+        "S23"
+      ]
+    },
+    {
+      "version": "6.2.0",
+      "id": "single-0",
+      "expected": "false",
+      "sources": [
+        "S13",
+        "S23"
+      ]
+    },
+    {
+      "version": "6.2.0",
+      "id": "single-1",
+      "expected": "true",
+      "sources": [
+        "S13",
+        "S23"
+      ]
+    },
+    {
+      "version": "6.2.0",
+      "id": "single-2",
+      "expected": "false",
+      "sources": [
+        "S13",
+        "S23"
+      ]
+    },
+    {
+      "version": "6.2.0",
+      "id": "single-primary",
+      "expected": "true",
+      "sources": [
+        "S13",
+        "S23"
+      ]
+    },
+    {
+      "version": "6.2.0",
+      "id": "di-qualifier-primary",
+      "expected": "chosen",
+      "sources": [
+        "S15",
+        "S16",
+        "S17"
+      ]
+    },
+    {
+      "version": "6.2.0",
+      "id": "xml-alias-ref",
+      "expected": "true",
+      "sources": [
+        "S01"
+      ]
+    },
+    {
+      "version": "6.2.0",
+      "id": "di-name-priority",
+      "expected": "low",
+      "sources": [
+        "S15",
+        "S16",
+        "S17"
+      ]
+    },
+    {
+      "version": "6.2.0",
+      "id": "default-candidate",
+      "expected": "a,hidden",
+      "sources": [
+        "S23"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,532 @@
+{
+  "schema": "m4-r0-mechanism-catalog-v1",
+  "catalog": "spring-mechanisms:v2",
+  "revision": "r0-candidate-1",
+  "status": "PROVISIONAL_AWAITING_HUMAN_GATE_REVIEW",
+  "note": "Targets are future M4 promises. R0 does not implement these production mechanisms. Detection denominator uses a primary mechanism per semantic obligation, with secondary tags; annotations with several roles create distinct obligation IDs.",
+  "mechanisms": [
+    {
+      "id": "spring.discovery.component-scan",
+      "target": "CONDITIONAL",
+      "annotationExamples": [
+        "ComponentScan",
+        "ComponentScans"
+      ],
+      "sources": [
+        "S12"
+      ],
+      "gap": {
+        "reason": "SCAN_INPUT_INCOMPLETE",
+        "requirement": "REPOSITORY_CONTENT",
+        "question": "spring.research.establish-mechanism-semantics"
+      },
+      "variants": "scan roots, nested configurations, include/exclude regex/assignable/annotation filters, resource/index selection"
+    },
+    {
+      "id": "spring.bean.stereotype.direct",
+      "target": "SUPPORTED",
+      "annotationExamples": [
+        "Component",
+        "Service",
+        "Repository",
+        "Controller",
+        "RestController",
+        "Named"
+      ],
+      "sources": [
+        "S02"
+      ],
+      "gap": {
+        "reason": "REGISTRATION_ELIGIBILITY_UNKNOWN",
+        "requirement": "REPOSITORY_CONTENT",
+        "question": "spring.research.establish-mechanism-semantics"
+      },
+      "variants": "scan/import eligibility, custom bean names and duplicate names"
+    },
+    {
+      "id": "spring.bean.stereotype.composed",
+      "target": "CONDITIONAL",
+      "annotationExamples": [
+        "AliasFor",
+        "Indexed"
+      ],
+      "sources": [
+        "S21"
+      ],
+      "gap": {
+        "reason": "ANNOTATION_GRAPH_INCOMPLETE",
+        "requirement": "DEPENDENCY_ARTIFACT",
+        "question": "spring.research.establish-mechanism-semantics"
+      },
+      "variants": "meta-annotations, aliases/defaults, repeatable containers, inheritance and cycles"
+    },
+    {
+      "id": "spring.bean.factory-method",
+      "target": "CONDITIONAL",
+      "annotationExamples": [
+        "Configuration",
+        "Bean"
+      ],
+      "sources": [
+        "S13"
+      ],
+      "gap": {
+        "reason": "PRODUCER_SHAPE_UNSUPPORTED",
+        "requirement": "BYTECODE",
+        "question": "spring.research.establish-mechanism-semantics"
+      },
+      "variants": "full/lite configuration, static/instance factory methods, overrides, proxyBeanMethods, scopes"
+    },
+    {
+      "id": "spring.injection.constructor.explicit",
+      "target": "SUPPORTED",
+      "annotationExamples": [
+        "Autowired",
+        "Inject"
+      ],
+      "sources": [
+        "S04"
+      ],
+      "gap": {
+        "reason": "INJECTION_TYPE_UNRESOLVED",
+        "requirement": "EXACT_CLASSPATH",
+        "question": "spring.research.establish-mechanism-semantics"
+      },
+      "variants": "required/optional constructors, greedy overload selection"
+    },
+    {
+      "id": "spring.injection.constructor.implicit",
+      "target": "SUPPORTED",
+      "annotationExamples": [],
+      "sources": [
+        "S04"
+      ],
+      "gap": {
+        "reason": "CONSTRUCTOR_SET_INCOMPLETE",
+        "requirement": "BYTECODE",
+        "question": "spring.research.establish-mechanism-semantics"
+      },
+      "variants": "single constructor from 4.3; multiple/default constructors"
+    },
+    {
+      "id": "spring.injection.constructor.generated",
+      "target": "CONDITIONAL",
+      "annotationExamples": [
+        "RequiredArgsConstructor",
+        "AllArgsConstructor",
+        "Data"
+      ],
+      "sources": [
+        "S36"
+      ],
+      "gap": {
+        "reason": "GENERATED_MEMBER_NOT_ACQUIRED",
+        "requirement": "GENERATED_SOURCE",
+        "question": "spring.research.establish-mechanism-semantics"
+      },
+      "variants": "Lombok version/config, initialized/non-null/static fields, constructor conflicts"
+    },
+    {
+      "id": "spring.injection.field",
+      "target": "SUPPORTED",
+      "annotationExamples": [],
+      "sources": [
+        "S15"
+      ],
+      "gap": {
+        "reason": "INJECTION_TYPE_UNRESOLVED",
+        "requirement": "EXACT_CLASSPATH",
+        "question": "spring.research.establish-mechanism-semantics"
+      },
+      "variants": "Autowired/Inject field occurrence; static/final/inherited rules"
+    },
+    {
+      "id": "spring.injection.method",
+      "target": "SUPPORTED",
+      "annotationExamples": [],
+      "sources": [
+        "S15"
+      ],
+      "gap": {
+        "reason": "METHOD_INJECTION_UNMODELED",
+        "requirement": "BYTECODE",
+        "question": "spring.research.establish-mechanism-semantics"
+      },
+      "variants": "setter/arbitrary methods, overrides, bridges, optional all-parameter invocation"
+    },
+    {
+      "id": "spring.injection.bean-parameter",
+      "target": "SUPPORTED",
+      "annotationExamples": [],
+      "sources": [
+        "S13"
+      ],
+      "gap": {
+        "reason": "PARAMETER_EVIDENCE_INCOMPLETE",
+        "requirement": "BYTECODE",
+        "question": "spring.research.establish-mechanism-semantics"
+      },
+      "variants": "parameter name metadata, qualifiers and factory owner"
+    },
+    {
+      "id": "spring.injection.resource",
+      "target": "CONDITIONAL",
+      "annotationExamples": [
+        "Resource",
+        "Resources"
+      ],
+      "sources": [
+        "S18"
+      ],
+      "gap": {
+        "reason": "RESOURCE_BINDING_UNMODELED",
+        "requirement": "CONFIGURATION",
+        "question": "spring.research.establish-mechanism-semantics"
+      },
+      "variants": "javax/jakarta, name-first, default-name type fallback, explicit name and JNDI"
+    },
+    {
+      "id": "spring.disambiguation.qualifier",
+      "target": "SUPPORTED",
+      "annotationExamples": [
+        "Qualifier"
+      ],
+      "sources": [
+        "S15"
+      ],
+      "gap": {
+        "reason": "QUALIFIER_METADATA_INCOMPLETE",
+        "requirement": "DEPENDENCY_ARTIFACT",
+        "question": "spring.research.establish-mechanism-semantics"
+      },
+      "variants": "qualifier attributes, meta-qualifiers and bean-name matching within type candidates"
+    },
+    {
+      "id": "spring.disambiguation.priority",
+      "target": "CONDITIONAL",
+      "annotationExamples": [
+        "Primary",
+        "Fallback",
+        "Priority",
+        "Order"
+      ],
+      "sources": [
+        "S15"
+      ],
+      "gap": {
+        "reason": "ORDER_OR_SELECTION_UNKNOWN",
+        "requirement": "BYTECODE",
+        "question": "spring.research.establish-mechanism-semantics"
+      },
+      "variants": "priority/name version delta, primary conflicts, fallback 6.2 and defaultCandidate"
+    },
+    {
+      "id": "spring.injection.aggregate",
+      "target": "CONDITIONAL",
+      "annotationExamples": [
+        "Lazy",
+        "Nullable"
+      ],
+      "sources": [
+        "S15"
+      ],
+      "gap": {
+        "reason": "AGGREGATE_OR_PROVIDER_UNMODELED",
+        "requirement": "BYTECODE",
+        "question": "spring.research.establish-mechanism-semantics"
+      },
+      "variants": "arrays/List/Set/Map, Optional/ObjectProvider/Provider, lazy/self/resolvable dependencies"
+    },
+    {
+      "id": "spring.condition.profile",
+      "target": "CONDITIONAL",
+      "annotationExamples": [
+        "Profile"
+      ],
+      "sources": [
+        "S20"
+      ],
+      "gap": {
+        "reason": "PROFILE_ENVELOPE_INCOMPLETE",
+        "requirement": "CONFIGURATION",
+        "question": "spring.research.establish-mechanism-semantics"
+      },
+      "variants": "default/active profiles, OR annotation arrays, expression grammar, groups/include activation"
+    },
+    {
+      "id": "spring.condition.property",
+      "target": "CONDITIONAL",
+      "annotationExamples": [
+        "ConditionalOnProperty"
+      ],
+      "sources": [
+        "S22"
+      ],
+      "gap": {
+        "reason": "PROPERTY_DOMAIN_INCOMPLETE",
+        "requirement": "CONFIGURATION",
+        "question": "spring.research.establish-mechanism-semantics"
+      },
+      "variants": "all names, prefix, matchIfMissing, case-insensitive havingValue, absent vs empty"
+    },
+    {
+      "id": "spring.condition.build-context",
+      "target": "CONDITIONAL",
+      "annotationExamples": [
+        "ConditionalOnClass",
+        "ConditionalOnMissingClass",
+        "ConditionalOnResource",
+        "ConditionalOnJava",
+        "ConditionalOnWebApplication",
+        "ConditionalOnNotWebApplication",
+        "ConditionalOnWarDeployment",
+        "ConditionalOnNotWarDeployment",
+        "ConditionalOnCloudPlatform",
+        "ConditionalOnJndi"
+      ],
+      "sources": [
+        "S30"
+      ],
+      "gap": {
+        "reason": "BUILD_OR_ENVIRONMENT_CONSTANT_UNKNOWN",
+        "requirement": "EXACT_CLASSPATH",
+        "question": "spring.research.establish-mechanism-semantics"
+      },
+      "variants": "class loading/linkage vs metadata, resources, Java version, servlet/reactive/war/cloud/JNDI predicates"
+    },
+    {
+      "id": "spring.condition.bean-state",
+      "target": "CONDITIONAL",
+      "annotationExamples": [
+        "ConditionalOnBean",
+        "ConditionalOnMissingBean",
+        "ConditionalOnSingleCandidate"
+      ],
+      "sources": [
+        "S23"
+      ],
+      "gap": {
+        "reason": "BEAN_STATE_INCOMPLETE",
+        "requirement": "CONFIGURATION",
+        "question": "spring.research.establish-mechanism-semantics"
+      },
+      "variants": "types/names/annotations/ignored/parameterized containers, CURRENT/ANCESTORS/ALL and candidate flags"
+    },
+    {
+      "id": "spring.condition.custom-expression",
+      "target": "DYNAMIC",
+      "annotationExamples": [
+        "Conditional",
+        "ConditionalOnExpression"
+      ],
+      "sources": [
+        "S11"
+      ],
+      "gap": {
+        "reason": "OPAQUE_CONDITION",
+        "requirement": "RUNTIME_OBSERVATION",
+        "question": "spring.research.establish-mechanism-semantics"
+      },
+      "variants": "custom Condition/ConfigurationCondition, nested all/any/none conditions and opaque SpEL"
+    },
+    {
+      "id": "spring.registration.auto-configuration",
+      "target": "CONDITIONAL",
+      "annotationExamples": [
+        "EnableAutoConfiguration",
+        "SpringBootApplication",
+        "SpringBootConfiguration",
+        "AutoConfiguration",
+        "AutoConfigureBefore",
+        "AutoConfigureAfter",
+        "AutoConfigureOrder",
+        "ImportAutoConfiguration",
+        "Import",
+        "ImportResource"
+      ],
+      "sources": [
+        "S24"
+      ],
+      "gap": {
+        "reason": "AUTO_CONFIGURATION_METADATA_INCOMPLETE",
+        "requirement": "DEPENDENCY_ARTIFACT",
+        "question": "spring.research.establish-mechanism-semantics"
+      },
+      "variants": "spring.factories/imports, duplicate removal, exclusions, filters, selectors/deferred groups and ordering"
+    },
+    {
+      "id": "spring.registration.spring-data",
+      "target": "CONDITIONAL",
+      "annotationExamples": [
+        "NoRepositoryBean",
+        "RepositoryDefinition",
+        "EnableJpaRepositories",
+        "EnableMongoRepositories"
+      ],
+      "sources": [
+        "S37"
+      ],
+      "gap": {
+        "reason": "REPOSITORY_REGISTRATION_UNPROVED",
+        "requirement": "DEPENDENCY_ARTIFACT",
+        "question": "spring.research.establish-mechanism-semantics"
+      },
+      "variants": "store-specific enablement, strict multi-store binding, base packages, fragments/factory/proxy"
+    },
+    {
+      "id": "spring.registration.factory",
+      "target": "CONDITIONAL",
+      "annotationExamples": [],
+      "sources": [
+        "S01"
+      ],
+      "gap": {
+        "reason": "FACTORY_PRODUCT_TYPE_UNKNOWN",
+        "requirement": "BYTECODE",
+        "question": "spring.research.establish-mechanism-semantics"
+      },
+      "variants": "FactoryBean versus &factory, static/instance factory, null/unknown product type"
+    },
+    {
+      "id": "spring.registration.xml",
+      "target": "CONDITIONAL",
+      "annotationExamples": [],
+      "sources": [
+        "S01"
+      ],
+      "gap": {
+        "reason": "XML_SEMANTICS_UNMODELED",
+        "requirement": "REPOSITORY_CONTENT",
+        "question": "spring.research.establish-mechanism-semantics"
+      },
+      "variants": "1.x DTD and 2.x XSD, bean/ref/idref/alias/import/parent/abstract/autowire/inner/collections/lookup/replaced-method, custom namespaces"
+    },
+    {
+      "id": "spring.registration.programmatic",
+      "target": "DYNAMIC",
+      "annotationExamples": [],
+      "sources": [
+        "S14"
+      ],
+      "gap": {
+        "reason": "DYNAMIC_REGISTRY_MUTATION",
+        "requirement": "RUNTIME_OBSERVATION",
+        "question": "spring.research.establish-mechanism-semantics"
+      },
+      "variants": "registerBean/Definition/Singleton, suppliers, initializers, registry/factory post-processors, registrars"
+    },
+    {
+      "id": "spring.lookup.container",
+      "target": "DYNAMIC",
+      "annotationExamples": [
+        "Lookup"
+      ],
+      "sources": [
+        "S01"
+      ],
+      "gap": {
+        "reason": "DYNAMIC_LOOKUP_TARGET",
+        "requirement": "RUNTIME_OBSERVATION",
+        "question": "spring.research.establish-mechanism-semantics"
+      },
+      "variants": "getBean/provider/service locator, method injection, lookup/replaced-method"
+    },
+    {
+      "id": "spring.expression.value",
+      "target": "DYNAMIC",
+      "annotationExamples": [
+        "Value",
+        "PropertySource",
+        "PropertySources",
+        "ConfigurationProperties",
+        "EnableConfigurationProperties",
+        "ConfigurationPropertiesScan",
+        "ConstructorBinding"
+      ],
+      "sources": [
+        "S09"
+      ],
+      "gap": {
+        "reason": "CONFIGURATION_EXPRESSION_UNMODELED",
+        "requirement": "CONFIGURATION",
+        "question": "spring.research.establish-mechanism-semantics"
+      },
+      "variants": "placeholder/SpEL binding and configuration properties, conversions, external/config-tree imports"
+    },
+    {
+      "id": "spring.runtime.proxy-aop",
+      "target": "DYNAMIC",
+      "annotationExamples": [
+        "Scope",
+        "ScopedProxy",
+        "DependsOn",
+        "EnableAspectJAutoProxy",
+        "EnableTransactionManagement",
+        "Transactional",
+        "EnableAsync",
+        "Async",
+        "EnableCaching",
+        "Cacheable",
+        "CachePut",
+        "CacheEvict",
+        "Caching",
+        "CacheConfig"
+      ],
+      "sources": [
+        "S14"
+      ],
+      "gap": {
+        "reason": "PROXY_OR_INTERCEPTOR_UNMODELED",
+        "requirement": "RUNTIME_OBSERVATION",
+        "question": "spring.research.establish-mechanism-semantics"
+      },
+      "variants": "AOP advisors, JDK/CGLIB/scoped proxies, self-invocation, transactions, security, cache and async"
+    },
+    {
+      "id": "spring.entrypoint.framework",
+      "target": "CONDITIONAL",
+      "annotationExamples": [
+        "RequestMapping",
+        "GetMapping",
+        "PostMapping",
+        "PutMapping",
+        "DeleteMapping",
+        "PatchMapping",
+        "MessageMapping",
+        "JmsListener",
+        "KafkaListener",
+        "RabbitListener",
+        "EventListener",
+        "TransactionalEventListener",
+        "Scheduled",
+        "Schedules",
+        "EnableScheduling",
+        "PostConstruct",
+        "PreDestroy"
+      ],
+      "sources": [
+        "S19"
+      ],
+      "gap": {
+        "reason": "ENTRYPOINT_OR_LIFECYCLE_UNMODELED",
+        "requirement": "RUNTIME_OBSERVATION",
+        "question": "spring.research.establish-mechanism-semantics"
+      },
+      "variants": "MVC/WebFlux functional routes, messaging/listeners, lifecycle/SmartLifecycle, test bootstrap and synthesized infrastructure"
+    },
+    {
+      "id": "spring.mechanism.unclassified",
+      "target": "UNSUPPORTED",
+      "annotationExamples": [],
+      "sources": [
+        "S21"
+      ],
+      "gap": {
+        "reason": "UNCLASSIFIED_MECHANISM",
+        "requirement": "DEPENDENCY_ARTIFACT",
+        "question": "spring.research.establish-mechanism-semantics"
+      },
+      "variants": "every unrecognized annotation/use, XML namespace, metadata entry or extension SPI; never silently dropped"
+    }
+  ]
+}

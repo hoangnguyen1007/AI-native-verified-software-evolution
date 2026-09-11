@@ -1,0 +1,190 @@
+{
+  "schema": "m4-r0-source-list-v1",
+  "sources": [
+    {
+      "id": "S01",
+      "title": "Spring 1.2.9 IoC",
+      "url": "https://docs.spring.io/spring-framework/docs/1.2.9/reference/beans.html"
+    },
+    {
+      "id": "S02",
+      "title": "Spring 2.5.6 IoC",
+      "url": "https://docs.spring.io/spring-framework/docs/2.5.6/reference/beans.html"
+    },
+    {
+      "id": "S03",
+      "title": "Spring 3.1.4 profiles",
+      "url": "https://docs.spring.io/spring-framework/docs/3.1.4.RELEASE/javadoc-api/org/springframework/context/annotation/Profile.html"
+    },
+    {
+      "id": "S04",
+      "title": "Spring 4.3.30 Autowired",
+      "url": "https://docs.spring.io/spring-framework/docs/4.3.30.RELEASE/javadoc-api/org/springframework/beans/factory/annotation/Autowired.html"
+    },
+    {
+      "id": "S05",
+      "title": "Boot 2.7 registration migration",
+      "url": "https://github.com/spring-projects/spring-boot/wiki/Spring-Boot-2.7-Release-Notes"
+    },
+    {
+      "id": "S06",
+      "title": "Boot 3 migration",
+      "url": "https://github.com/spring-projects/spring-boot/wiki/Spring-Boot-3.0-Migration-Guide"
+    },
+    {
+      "id": "S07",
+      "title": "Spring 6 upgrade",
+      "url": "https://github.com/spring-projects/spring-framework/wiki/Upgrading-to-Spring-Framework-6.x"
+    },
+    {
+      "id": "S08",
+      "title": "Boot 2.4 configuration migration",
+      "url": "https://github.com/spring-projects/spring-boot/wiki/Spring-Boot-Config-Data-Migration-Guide"
+    },
+    {
+      "id": "S09",
+      "title": "Boot 3.4 external configuration",
+      "url": "https://docs.spring.io/spring-boot/3.4/reference/features/external-config.html"
+    },
+    {
+      "id": "S10",
+      "title": "Boot 3.4 profiles",
+      "url": "https://docs.spring.io/spring-boot/3.4/reference/features/profiles.html"
+    },
+    {
+      "id": "S11",
+      "title": "Framework 6.2.0 ConditionEvaluator.java",
+      "url": "https://raw.githubusercontent.com/spring-projects/spring-framework/v6.2.0/spring-context/src/main/java/org/springframework/context/annotation/ConditionEvaluator.java"
+    },
+    {
+      "id": "S12",
+      "title": "Framework 6.2.0 ConfigurationClassParser.java",
+      "url": "https://raw.githubusercontent.com/spring-projects/spring-framework/v6.2.0/spring-context/src/main/java/org/springframework/context/annotation/ConfigurationClassParser.java"
+    },
+    {
+      "id": "S13",
+      "title": "Framework 6.2.0 ConfigurationClassBeanDefinitionReader.java",
+      "url": "https://raw.githubusercontent.com/spring-projects/spring-framework/v6.2.0/spring-context/src/main/java/org/springframework/context/annotation/ConfigurationClassBeanDefinitionReader.java"
+    },
+    {
+      "id": "S14",
+      "title": "Framework 6.2.0 PostProcessorRegistrationDelegate.java",
+      "url": "https://raw.githubusercontent.com/spring-projects/spring-framework/v6.2.0/spring-context/src/main/java/org/springframework/context/support/PostProcessorRegistrationDelegate.java"
+    },
+    {
+      "id": "S15",
+      "title": "Framework 6.2.0 DefaultListableBeanFactory.java",
+      "url": "https://raw.githubusercontent.com/spring-projects/spring-framework/v6.2.0/spring-beans/src/main/java/org/springframework/beans/factory/support/DefaultListableBeanFactory.java"
+    },
+    {
+      "id": "S16",
+      "title": "Framework 6.1.14 DefaultListableBeanFactory.java",
+      "url": "https://raw.githubusercontent.com/spring-projects/spring-framework/v6.1.14/spring-beans/src/main/java/org/springframework/beans/factory/support/DefaultListableBeanFactory.java"
+    },
+    {
+      "id": "S17",
+      "title": "Framework 5.3.31 DefaultListableBeanFactory.java",
+      "url": "https://raw.githubusercontent.com/spring-projects/spring-framework/v5.3.31/spring-beans/src/main/java/org/springframework/beans/factory/support/DefaultListableBeanFactory.java"
+    },
+    {
+      "id": "S18",
+      "title": "Framework 6.2.0 CommonAnnotationBeanPostProcessor.java",
+      "url": "https://raw.githubusercontent.com/spring-projects/spring-framework/v6.2.0/spring-context/src/main/java/org/springframework/context/annotation/CommonAnnotationBeanPostProcessor.java"
+    },
+    {
+      "id": "S19",
+      "title": "Framework 6.2.0 DefaultLifecycleProcessor.java",
+      "url": "https://raw.githubusercontent.com/spring-projects/spring-framework/v6.2.0/spring-context/src/main/java/org/springframework/context/support/DefaultLifecycleProcessor.java"
+    },
+    {
+      "id": "S20",
+      "title": "Framework 5.3.31 ProfilesParser.java",
+      "url": "https://raw.githubusercontent.com/spring-projects/spring-framework/v5.3.31/spring-core/src/main/java/org/springframework/core/env/ProfilesParser.java"
+    },
+    {
+      "id": "S21",
+      "title": "Framework 6.2.0 AliasFor.java",
+      "url": "https://raw.githubusercontent.com/spring-projects/spring-framework/v6.2.0/spring-core/src/main/java/org/springframework/core/annotation/AliasFor.java"
+    },
+    {
+      "id": "S22",
+      "title": "Boot 3.4.0 OnPropertyCondition.java",
+      "url": "https://raw.githubusercontent.com/spring-projects/spring-boot/v3.4.0/spring-boot-project/spring-boot-autoconfigure/src/main/java/org/springframework/boot/autoconfigure/condition/OnPropertyCondition.java"
+    },
+    {
+      "id": "S23",
+      "title": "Boot 3.4.0 OnBeanCondition.java",
+      "url": "https://raw.githubusercontent.com/spring-projects/spring-boot/v3.4.0/spring-boot-project/spring-boot-autoconfigure/src/main/java/org/springframework/boot/autoconfigure/condition/OnBeanCondition.java"
+    },
+    {
+      "id": "S24",
+      "title": "Boot 2.7.18 AutoConfigurationImportSelector.java",
+      "url": "https://raw.githubusercontent.com/spring-projects/spring-boot/v2.7.18/spring-boot-project/spring-boot-autoconfigure/src/main/java/org/springframework/boot/autoconfigure/AutoConfigurationImportSelector.java"
+    },
+    {
+      "id": "S25",
+      "title": "Boot 3.4.0 AutoConfigurationImportSelector.java",
+      "url": "https://raw.githubusercontent.com/spring-projects/spring-boot/v3.4.0/spring-boot-project/spring-boot-autoconfigure/src/main/java/org/springframework/boot/autoconfigure/AutoConfigurationImportSelector.java"
+    },
+    {
+      "id": "S26",
+      "title": "Boot 3.4.0 AutoConfigurationSorter.java",
+      "url": "https://raw.githubusercontent.com/spring-projects/spring-boot/v3.4.0/spring-boot-project/spring-boot-autoconfigure/src/main/java/org/springframework/boot/autoconfigure/AutoConfigurationSorter.java"
+    },
+    {
+      "id": "S27",
+      "title": "Boot 3.4.0 ConditionalOnBean.java",
+      "url": "https://raw.githubusercontent.com/spring-projects/spring-boot/v3.4.0/spring-boot-project/spring-boot-autoconfigure/src/main/java/org/springframework/boot/autoconfigure/condition/ConditionalOnBean.java"
+    },
+    {
+      "id": "S28",
+      "title": "Boot 3.4.0 ConditionalOnMissingBean.java",
+      "url": "https://raw.githubusercontent.com/spring-projects/spring-boot/v3.4.0/spring-boot-project/spring-boot-autoconfigure/src/main/java/org/springframework/boot/autoconfigure/condition/ConditionalOnMissingBean.java"
+    },
+    {
+      "id": "S29",
+      "title": "Boot 3.4.0 ConditionalOnSingleCandidate.java",
+      "url": "https://raw.githubusercontent.com/spring-projects/spring-boot/v3.4.0/spring-boot-project/spring-boot-autoconfigure/src/main/java/org/springframework/boot/autoconfigure/condition/ConditionalOnSingleCandidate.java"
+    },
+    {
+      "id": "S30",
+      "title": "Boot 3.4.0 OnClassCondition.java",
+      "url": "https://raw.githubusercontent.com/spring-projects/spring-boot/v3.4.0/spring-boot-project/spring-boot-autoconfigure/src/main/java/org/springframework/boot/autoconfigure/condition/OnClassCondition.java"
+    },
+    {
+      "id": "S31",
+      "title": "Boot 3.4.0 OnWebApplicationCondition.java",
+      "url": "https://raw.githubusercontent.com/spring-projects/spring-boot/v3.4.0/spring-boot-project/spring-boot-autoconfigure/src/main/java/org/springframework/boot/autoconfigure/condition/OnWebApplicationCondition.java"
+    },
+    {
+      "id": "S32",
+      "title": "ArchUnit guide",
+      "url": "https://www.archunit.org/userguide/html/000_Index.html"
+    },
+    {
+      "id": "S33",
+      "title": "Modulith verification",
+      "url": "https://docs.spring.io/spring-modulith/reference/verification.html"
+    },
+    {
+      "id": "S34",
+      "title": "LogicNG SAT",
+      "url": "https://logicng.org/documentation/solvers/sat-solving/"
+    },
+    {
+      "id": "S35",
+      "title": "LogicNG BDD",
+      "url": "https://logicng.org/documentation/knowledge-compilation/bdd/"
+    },
+    {
+      "id": "S36",
+      "title": "Lombok constructor",
+      "url": "https://projectlombok.org/features/constructor"
+    },
+    {
+      "id": "S37",
+      "title": "Spring Data 3.4 repository configuration",
+      "url": "https://docs.spring.io/spring-data/commons/reference/3.4/repositories/create-instances.html"
+    }
+  ]
+}

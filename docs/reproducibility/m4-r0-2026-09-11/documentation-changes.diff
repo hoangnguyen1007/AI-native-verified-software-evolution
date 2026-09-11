@@ -1,0 +1,261 @@
+--- before-task/docs/architecture/conditional-architecture-semantics.md
++++ after-task/docs/architecture/conditional-architecture-semantics.md
+@@ -5,5 +5,5 @@
+ **ACCEPTED pre-implementation architecture direction.** [ADR-004](../decisions/ADR-004-staged-conditional-architecture-semantics.md) selects this model for M4+ on 2026-09-09. Exact Java schemas, the first supported semantic fragment, solver backend, numerical limits and empirical claims remain **PROVISIONAL** until their gates.
+ 
+-This contract does not start M4, modify the active M3.8 slice, pass G2/G3, or claim equivalence to a complete Spring runtime container.
++The owner has now authorized M4-R0 after G2 was recorded passed. The [R0 refinement candidate](m4-r0-semantics-gate.md) specifies additive identities, historical scope, first fragment and nested event/ordering domains for review. Production M4 implementation and G3 remain gated; no complete Spring runtime-container equivalence is claimed.
+ 
+ ## Purpose
+@@ -121,5 +121,5 @@
+ ### Framework phases
+ 
+-The semantic version defines the supported phase/order model. At minimum it distinguishes configuration parsing from bean registration and separates user definitions from ordered auto-configuration where the registered Spring version does so.
++The [R0 candidate](m4-r0-semantics-gate.md#7-phase-and-order-model) refines this abstract sequence to nested event traces: configuration parsing/registration can occur within registry post-processing, and environment conditions execute at their actual call sites. The semantic version defines the supported phase/order model. At minimum it distinguishes configuration parsing from bean registration and separates user definitions from ordered auto-configuration where the registered Spring version does so.
+ 
+ For an ordered registration plan `R = [r1, ..., rn]`:
+@@ -141,5 +141,5 @@
+ `@ConditionalOnMissingBean` and similar predicates make the general system non-monotone. The analyzer must not replace this transition model with an unordered least fixpoint unless equivalence is proved for a restricted fragment.
+ 
+-If only a partial order is known, deterministic topological exploration may be used within a registered bound. If alternative legal orders change a conclusion, the fact is order-dependent (`MAY` or `UNKNOWN` as evidence permits), and witnesses retain the order identity. An arbitrary lexicographic order is not framework evidence.
++If only a partial order is known, deterministic topological exploration may be used within a registered bound. If alternative legal orders change a conclusion, explicitly modeled realizable order alternatives may establish `MAY` over configuration/order worlds. Merely missing evidence about the actual order remains epistemic `UNKNOWN`; hypothetical permutations do not prove realizability. Witnesses retain the material order identity. An arbitrary lexicographic order is not framework evidence.
+ 
+ ### Binding semantics
+@@ -188,5 +188,5 @@
+ - solver/evaluator/semantic versions;
+ - supporting evidence and gaps;
+-- a digest of independent re-evaluation.
++- a separate replay record containing the digest of independent re-evaluation; that replay digest must not feed back into the witness identity.
+ 
+ Minimization removes assignments only when the witness remains valid. Multiple minima use a canonical variable/value order. Runtime confirmation, when available, is a distinct observation attached to the witness.
+--- before-task/docs/architecture/m4-spring-intelligence.md
++++ after-task/docs/architecture/m4-spring-intelligence.md
+@@ -3,5 +3,5 @@
+ ## Status and Scope
+ 
+-**ACCEPTED direction; PROVISIONAL pre-implementation contract.** [ADR-004](../decisions/ADR-004-staged-conditional-architecture-semantics.md) changes M4 from one-context candidate enrichment to bounded, phase/order-aware conditional architecture semantics. Nothing in this document starts M4, changes M3.8, passes G2/G3, approves a solver backend or claims complete Spring runtime-container equivalence.
++**ACCEPTED direction; PROVISIONAL pre-implementation contract.** [ADR-004](../decisions/ADR-004-staged-conditional-architecture-semantics.md) changes M4 from one-context candidate enrichment to bounded, phase/order-aware conditional architecture semantics. The owner authorized M4-R0 on 2026-09-11 after G2 was recorded passed. The [R0 contract candidate](m4-r0-semantics-gate.md) now supplies the detailed identities, historical/version matrix, phase/order model and evidence. Its gate remains REVIEW_REQUIRED; no production M4 code, G3 acceptance, solver choice or complete runtime-container equivalence is implied.
+ 
+ The catalog is closed per version, not forever. `spring-mechanisms:v2` must account for every registered fixture/observation exactly once. A new mechanism or materially different framework behavior requires an explicit catalog/semantics-version change rather than silent omission.
+@@ -71,4 +71,6 @@
+ Resolution does not use a rigid shortcut such as “Qualifier > Primary > Profile” and does not use an unordered generic fixpoint.
+ 
++The phases below are a conceptual projection; the [R0 nested event contract](m4-r0-semantics-gate.md#7-phase-and-order-model) defines their actual interleaving inside registry processing. Environment construction precedes condition evaluation.
++
+ ### Phase 1 — Parse and discover
+ 
+@@ -87,5 +89,5 @@
+ ### Phase 3 — Activation and type compatibility
+ 
+-- evaluate exogenous configuration for the realized world;
++- use the realized-world environment already evaluated at the applicable parse/registration events; do not postpone profile/property conditions until after registration;
+ - filter registered candidates by type/generic/container compatibility;
+ - retain zero/one/many candidate evidence.
+@@ -131,36 +133,37 @@
+ ## `spring-mechanisms:v2` Closed Denominator
+ 
+-The target column is a gate objective, not current implementation status.
++The target column is a gate objective, not current implementation status. The [machine-readable R0 candidate](../../benchmarks/m4-r0/mechanisms.json) freezes 29 proposed families, adding the unclassified catch-all and proposing bounded XML inclusion for review.
+ 
+ | Mechanism ID | Mechanism | M4 target | Required evidence/qualification |
+ |---|---|---|---|
+-| `spring.discovery.component-scan` | Scan roots, base packages and include/exclude filters | `CONDITIONAL` | Configuration declaration, package/type evidence, condition region |
+-| `spring.bean.stereotype.direct` | Direct component/service/repository/controller | `SUPPORTED` | Annotation identity plus proven scan/import eligibility |
+-| `spring.bean.stereotype.composed` | Meta/composed stereotype | `SUPPORTED` | Annotation declaration graph and dependency metadata where needed |
+-| `spring.bean.factory-method` | `@Configuration` + `@Bean` | `SUPPORTED` | Producer signature/name/types, phase/order and conditions |
+-| `spring.injection.constructor.explicit` | Explicit constructor injection | `SUPPORTED` | Constructor/parameter types, qualifiers and candidates |
+-| `spring.injection.constructor.implicit` | Single unannotated constructor | `SUPPORTED` | Framework-version rule and exact constructors |
+-| `spring.injection.constructor.generated` | Lombok/generated constructor | `CONDITIONAL` | Versioned generator semantics or generated-source/bytecode evidence |
+-| `spring.injection.field` | `@Autowired`/`@Inject` field | `SUPPORTED` | Field shape/qualifiers and registered candidates |
+-| `spring.injection.method` | Setter/arbitrary method injection | `SUPPORTED` | Method/parameter annotations and candidates |
+-| `spring.injection.bean-parameter` | `@Bean` method parameter | `SUPPORTED` | Producer transition, parameter and candidate state |
+-| `spring.injection.resource` | JSR-250 `@Resource` | `SUPPORTED` | Name/type/version semantics and candidates |
+-| `spring.disambiguation.qualifier` | `@Qualifier` and composed qualifier | `SUPPORTED` | Qualifier identities/values on point/candidate |
+-| `spring.disambiguation.priority` | `@Primary`, `@Fallback`, name/order rules | `SUPPORTED` | Pinned framework-version selection semantics |
+-| `spring.injection.aggregate` | Collection/array/map/optional/provider/lazy | `SUPPORTED` | Container/generic shape and ordered candidates; dynamic behavior qualified |
+-| `spring.condition.profile` | `@Profile` and profile expressions/groups | `CONDITIONAL` | Normalized expression and configuration-space evidence |
+-| `spring.condition.property` | `@ConditionalOnProperty` and property predicates | `CONDITIONAL` | Key/value/missing semantics, precedence and finite domain |
+-| `spring.condition.build-context` | Class/resource/web-mode conditions | `CONDITIONAL` | Exact build/resource/web-mode evidence |
+-| `spring.condition.bean-state` | On-bean/missing-bean/single-candidate | `CONDITIONAL` | Ordered bean-definition state and framework version |
+-| `spring.condition.custom-expression` | Custom condition and SpEL | `DYNAMIC` | Detect/retain expression; additional evaluator/runtime evidence when needed |
+-| `spring.registration.auto-configuration` | Imports/selectors/metadata and ordering | `CONDITIONAL` | Dependency metadata, condition IR and registration plan |
+-| `spring.registration.spring-data` | Repository proxies and fragments | `CONDITIONAL` | Enablement/scan/store/exclusion/factory evidence |
+-| `spring.registration.factory` | `FactoryBean`/factory-produced definitions | `CONDITIONAL` | Factory product metadata and condition region |
+-| `spring.registration.xml` | XML bean/context wiring | `OUT_OF_SCOPE` for first implementation; detected/accounted | XML presence/reference and exact gap |
+-| `spring.registration.programmatic` | `registerBean`, registrars, post-processors | `DYNAMIC` | Call/mechanism evidence plus configuration/build/runtime requirement |
+-| `spring.lookup.container` | `getBean`, service locator, `@Lookup` | `DYNAMIC` | Call/name/type evidence and unresolved target region |
+-| `spring.expression.value` | `@Value` and dependency-bearing SpEL | `DYNAMIC` | Expression/property evidence and explicit evaluator boundary |
+-| `spring.runtime.proxy-aop` | Proxies/advisors/runtime dependencies | `DYNAMIC` | Enabling declarations plus bytecode/runtime evidence when needed |
+-| `spring.entrypoint.framework` | MVC endpoints, listeners, scheduled/lifecycle callbacks | `SUPPORTED`/`CONDITIONAL` | Registration/condition evidence; never inferred dead from absent callers |
++| `spring.discovery.component-scan` | Scan roots, base packages and include/exclude filters | `CONDITIONAL` R0 candidate | Configuration declaration, package/type evidence, condition region |
++| `spring.bean.stereotype.direct` | Direct component/service/repository/controller | `SUPPORTED` R0 candidate | Annotation identity plus proven scan/import eligibility |
++| `spring.bean.stereotype.composed` | Meta/composed stereotype | `CONDITIONAL` R0 candidate | Annotation declaration graph and dependency metadata where needed |
++| `spring.bean.factory-method` | `@Configuration` + `@Bean` | `CONDITIONAL` R0 candidate | Producer signature/name/types, phase/order and conditions |
++| `spring.injection.constructor.explicit` | Explicit constructor injection | `SUPPORTED` R0 candidate | Constructor/parameter types, qualifiers and candidates |
++| `spring.injection.constructor.implicit` | Single unannotated constructor | `SUPPORTED` R0 candidate | Framework-version rule and exact constructors |
++| `spring.injection.constructor.generated` | Lombok/generated constructor | `CONDITIONAL` R0 candidate | Versioned generator semantics or generated-source/bytecode evidence |
++| `spring.injection.field` | `@Autowired`/`@Inject` field | `SUPPORTED` R0 candidate | Field shape/qualifiers and registered candidates |
++| `spring.injection.method` | Setter/arbitrary method injection | `SUPPORTED` R0 candidate | Method/parameter annotations and candidates |
++| `spring.injection.bean-parameter` | `@Bean` method parameter | `SUPPORTED` R0 candidate | Producer transition, parameter and candidate state |
++| `spring.injection.resource` | JSR-250 `@Resource` | `CONDITIONAL` R0 candidate | Name/type/version semantics and candidates |
++| `spring.disambiguation.qualifier` | `@Qualifier` and composed qualifier | `SUPPORTED` R0 candidate | Qualifier identities/values on point/candidate |
++| `spring.disambiguation.priority` | `@Primary`, `@Fallback`, name/order rules | `CONDITIONAL` R0 candidate | Pinned framework-version selection semantics |
++| `spring.injection.aggregate` | Collection/array/map/optional/provider/lazy | `CONDITIONAL` R0 candidate | Container/generic shape and ordered candidates; dynamic behavior qualified |
++| `spring.condition.profile` | `@Profile` and profile expressions/groups | `CONDITIONAL` R0 candidate | Normalized expression and configuration-space evidence |
++| `spring.condition.property` | `@ConditionalOnProperty` and property predicates | `CONDITIONAL` R0 candidate | Key/value/missing semantics, precedence and finite domain |
++| `spring.condition.build-context` | Class/resource/web-mode conditions | `CONDITIONAL` R0 candidate | Exact build/resource/web-mode evidence |
++| `spring.condition.bean-state` | On-bean/missing-bean/single-candidate | `CONDITIONAL` R0 candidate | Ordered bean-definition state and framework version |
++| `spring.condition.custom-expression` | Custom condition and SpEL | `DYNAMIC` R0 candidate | Detect/retain expression; additional evaluator/runtime evidence when needed |
++| `spring.registration.auto-configuration` | Imports/selectors/metadata and ordering | `CONDITIONAL` R0 candidate | Dependency metadata, condition IR and registration plan |
++| `spring.registration.spring-data` | Repository proxies and fragments | `CONDITIONAL` R0 candidate | Enablement/scan/store/exclusion/factory evidence |
++| `spring.registration.factory` | `FactoryBean`/factory-produced definitions | `CONDITIONAL` R0 candidate | Factory product metadata and condition region |
++| `spring.registration.xml` | XML bean/context wiring from 1.x onward | `CONDITIONAL` R0 candidate | Exact document/version, references and bounded XML semantics; unmodeled forms retain gaps |
++| `spring.registration.programmatic` | `registerBean`, registrars, post-processors | `DYNAMIC` R0 candidate | Call/mechanism evidence plus configuration/build/runtime requirement |
++| `spring.lookup.container` | `getBean`, service locator, `@Lookup` | `DYNAMIC` R0 candidate | Call/name/type evidence and unresolved target region |
++| `spring.expression.value` | `@Value` and dependency-bearing SpEL | `DYNAMIC` R0 candidate | Expression/property evidence and explicit evaluator boundary |
++| `spring.runtime.proxy-aop` | Proxies/advisors/runtime dependencies | `DYNAMIC` R0 candidate | Enabling declarations plus bytecode/runtime evidence when needed |
++| `spring.entrypoint.framework` | MVC endpoints, listeners, scheduled/lifecycle callbacks | `CONDITIONAL` R0 candidate | Registration/condition evidence; never inferred dead from absent callers |
++| `spring.mechanism.unclassified` | Unrecognized annotation/use, namespace, metadata or extension | `UNSUPPORTED` R0 candidate | Exact occurrence/artifact, unresolved role and typed gap; never silently omitted |
+ 
+ Every `UNSUPPORTED`, `DYNAMIC` and `OUT_OF_SCOPE` case has a stable reason and capability-gap/denominator entry where it affects requested outputs.
+@@ -210,4 +213,6 @@
+ 
+ ## Remaining Decisions
++
++The [M4-R0 candidate](m4-r0-semantics-gate.md) now makes the following proposals concrete. They remain subject to its recorded review/acceptance gate rather than unscoped design work.
+ 
+ - Exact Java schemas/preimages for M4 concepts and `ConfigurationSpaceIdentity`.
+--- before-task/docs/current-state.md
++++ after-task/docs/current-state.md
+@@ -1,9 +1,17 @@
+ # Current State
+ 
+-Last reconciled: 2026-09-10. Fresh checks and their scope belong in the task handoff; historical gate evidence is identified below.
++Last reconciled: 2026-09-11. Fresh checks and their scope belong in the task handoff; historical gate evidence is identified below.
+ 
+ ## PHASE AND MILESTONE
+ 
+ SE121, Track A + B. M1 contracts are committed at `b04220e722cc4bc772cbb3ad8531d4dc1ea1a058`; G1 is recorded passed. M2 frontend delivery is recorded complete across all 18 relationship families. M3.1–M3.8 implementation is delivered and its historical full reactor checkpoint passes 221 tests. Focused G2 hardening now tolerates equivalent duplicate dependency rows throughout external parent/BOM/profile model hierarchies and resolves complete handwritten reactor modules from exact acquired source evidence when bytecode output is unavailable. Sibling parse failures retain closed source outcomes, while referenced implicit record members retain sibling scope and component provenance. Comprehensive Gate G2 evaluation across 5 representative real-world architectural archetypes (Standard Monolith, Multi-Module Shared Libs, Cloud Microservices, Modular Monolith DDD, and Exotic Distributed IoT) is documented in [Gate G2 Comprehensive Architecture Evaluation](reproducibility/g2-comprehensive-architectural-evaluation-2026-09-10.md).
++
++## ACTIVE TASK — M4-R0 RESEARCH PACKAGE; GATE REVIEW REQUIRED
++
++**CONFIRMED human task scope (2026-09-11):** execute M4-R0 with historical research coverage from Spring 1.x XML through Boot 3.4.x, annotations and phase/order semantics. G2 is recorded PASSED by the supplied adjudication/current-state decision; this task did not re-certify that historical gate.
++
++**PROVISIONAL M4-R0 candidate delivered:** [exact contract and version matrix](architecture/m4-r0-semantics-gate.md), [research assessment](research/2026-09-11-m4-r0-spring-semantics.md), and [executable evidence](reproducibility/m4-r0-2026-09-11/README.md). The proposed `spring-mechanisms:v2` denominator has 29 families, including XML and an unclassified catch-all. Controlled Spring observations pass 79/79, formal cases 70/70, Boolean CNF conformance 64/64; the initial mislabeled negative control and failed acquisition attempt are retained. The 26-JAR census records 402 annotation declarations, and 452 actual typed research capability gaps preserve unvalidated mechanisms/versions and evidence limits. These are bounded authored-fixture results, not universal Spring support or independent semantic adjudication.
++
++M4-R0 remains **REVIEW_REQUIRED** for independent/human adjudication of the concrete identity/catalog/fragment/budget proposal. No production Spring extractor, M4A slice or G3 gate is advanced. Historical rows outside the exact executed framework tuples retain explicit gaps.
+ 
+ ## COMPLETED IMPLEMENTATION — M3.1–M3.8 WORKSPACE AND BUILD-MODEL INTELLIGENCE
+@@ -29,5 +37,5 @@
+ **CONFIRMED by the post-fix ChatServerMicroservices full-pipeline execution:** pinned revision `d9aa0cf5d9c4de70a16d36708a027f9d45c71792` ran cleanly across two independent empty caches in 58m 17s. The two runs are byte-identical at 57,647,513 bytes with digest `sha256:3a8903dd8fc96de64dddf3dd4fd17c45a2146c5a7d432cee929985d52fa66bd2`. Hardening eliminated the previous `POM_MODEL_FAILED` (now 0), acquired 397 JARs across 17 rounds without failure, assembled 8 source sets with 587 frontend observations (145/158 calls resolved), while cleanly reporting 442 typed capability gaps (including 30 unacquired protobuf generated sources and 24 unbuilt reactor outputs).
+ 
+-M3.1/M3.2 remain declarative projections; M3.3 supplies bounded repository inputs/candidate ownership, M3.4 supplies passive dependency/JAR manifests, M3.5 supplies decoded source/platform/frontend inputs, M3.6 normalizes gaps, M3.7 supplies exact parent/BOM POM and cross-release platform evidence, and M3.8 closes exact dependency release artifacts for the supported Maven context. Complete handwritten sibling modules may additionally provide source-level symbol evidence at their exact reactor classpath position; this does not acquire or claim bytecode output. Reactor-output acquisition, class-directory inputs, generated-source lineage, toolchain discovery, POM-less conventional source-plan inference and non-Maven build adapters remain future provider boundaries. Version ranges/dynamic selectors, relocations, system paths, non-JAR binaries, nonstandard/split cache layouts, timestamped snapshots and manifest-classpath expansion remain explicit gaps; relocation never admits the obsolete JAR. M3.8 received implementer self-review, reactor verification and real external-repository execution; the later hardening has focused unit verification only. No G2/G3/product gate advances.
++M3.1/M3.2 remain declarative projections; M3.3 supplies bounded repository inputs/candidate ownership, M3.4 supplies passive dependency/JAR manifests, M3.5 supplies decoded source/platform/frontend inputs, M3.6 normalizes gaps, M3.7 supplies exact parent/BOM POM and cross-release platform evidence, and M3.8 closes exact dependency release artifacts for the supported Maven context. Complete handwritten sibling modules may additionally provide source-level symbol evidence at their exact reactor classpath position; this does not acquire or claim bytecode output. Reactor-output acquisition, class-directory inputs, generated-source lineage, toolchain discovery, POM-less conventional source-plan inference and non-Maven build adapters remain future provider boundaries. Version ranges/dynamic selectors, relocations, system paths, non-JAR binaries, nonstandard/split cache layouts, timestamped snapshots and manifest-classpath expansion remain explicit gaps; relocation never admits the obsolete JAR. M3.8 received implementer self-review, reactor verification and real external-repository execution; the later hardening has focused unit verification only. That implementation checkpoint did not itself advance G2/G3/product gates; G2 is subsequently recorded passed below.
+ 
+ On 2026-09-04, M2 frontend implementation was fully validated across all 18 relationship families (catalog `m2-java-4`, adapter `3.27.1-m2.4`), with 98 root reactor tests passing cleanly and whole-project multi-file extraction confirmed. That checkpoint transitioned implementation from M2 to Milestone M3 (Multi-Module Workspace and Build-Model Intelligence).
+@@ -82,13 +90,13 @@
+ Accepted direction, implementation still pending: [ADR-004](decisions/ADR-004-staged-conditional-architecture-semantics.md) makes bounded, phase/order-aware conditional architecture semantics the M4+ direction. Existing `ConfigurationIdentity` remains one realized configuration; a future `ConfigurationSpaceIdentity` describes one finite modeled space inside an exact M3 build context. M5 becomes a projection of conditional facts, M6 evaluates configuration-qualified policy, and M11 compares conditional/evidence regions. This documentation decision does not reopen completed M3.8, start M4, approve a solver, or advance G2/G3. See the [research review](research/2026-09-09-conditional-architecture-redirection-review.md).
+ 
+-Provisional: Neo4j Community adapter, Spring Boot API, YAML external policies, Cytoscape.js, exact metric/score formulas and thresholds. The M3.6 capability-gap core and M3.7–M3.8 provider refinements are implemented against their provisional architecture contracts; downstream query/assessment integration and independent semantic adjudication remain pending. `spring-mechanisms:v2`, exact M4 identities, supported condition fragment, framework-version matrix, registration semantics, corpus and solver backend await the M4-R0 research gate and fixture validation. Specific additional evidence providers, including selective bytecode, controlled build/sandbox, AOT and runtime observation, remain ASSESS/HOLD for SE121 implementation. Post-M12 context federation, cross-system assurance and verified AI evolution are future horizons, not SE121 commitments.
++Provisional: Neo4j Community adapter, Spring Boot API, YAML external policies, Cytoscape.js, exact metric/score formulas and thresholds. The M3.6 capability-gap core and M3.7–M3.8 provider refinements are implemented against their provisional architecture contracts; downstream query/assessment integration remains pending. The M4-R0 contract, catalog, identities, fragment, matrix and protocol are now concrete candidates with bounded fixture evidence; independent/human gate review remains pending and no production solver is selected. Specific additional evidence providers, including selective bytecode, controlled build/sandbox, AOT and runtime observation, remain ASSESS/HOLD for SE121 implementation. Post-M12 context federation, cross-system assurance and verified AI evolution are future horizons, not SE121 commitments.
+ 
+ ## OPEN QUESTIONS AND BLOCKERS
+ 
+-The initial Maven sandbox JUnit-cache denial and the final benchmark install-cache denial were resolved through the host's supported execution approval, with explicit `MAVEN_USER_HOME` / `maven.repo.local`. No execution or human-approval blocker remains.
++The initial Maven sandbox JUnit-cache denial and the final benchmark install-cache denial were resolved through the host's supported execution approval, with explicit `MAVEN_USER_HOME` / `maven.repo.local`. Those historical M3 execution denials are resolved. M4-R0 now has its separate contract/adjudication checkpoint described above.
+ 
+-Current input boundaries: explicit strict portable charsets; configured Java 8 `rt.jar`, Java 9+ JMOD or verified cross-release `ct.sym` platform views; exact release dependencies from a single standard Maven2 cache plus explicit credential-free HTTPS repositories; exact reactor-output JARs supplied by the caller or complete owned/decoded handwritten sibling sources at the same logical classpath position; and non-preview Java 8–21 parser levels. There is no toolchain discovery, class-directory module output, generated-source acquisition, manifest `Class-Path` expansion, version-range/relocation/snapshot resolution or transport-authenticity claim beyond HTTPS. Multi-release JAR entries are selected deterministically for the analyzed target release while retaining the original artifact digest. Remaining explicit degraded frontend cases include array constructor references/array length, annotation-value field reads, inferred `var` detail, typed lambda/catch parameter identities and unsupported functional target/inference contexts. G2 acceptance is blocked on independent semantic review of the now-executed closed denominator, not dependency acquisition or Maven lifecycle execution.
++Current input boundaries: explicit strict portable charsets; configured Java 8 `rt.jar`, Java 9+ JMOD or verified cross-release `ct.sym` platform views; exact release dependencies from a single standard Maven2 cache plus explicit credential-free HTTPS repositories; exact reactor-output JARs supplied by the caller or complete owned/decoded handwritten sibling sources at the same logical classpath position; and non-preview Java 8–21 parser levels. There is no toolchain discovery, class-directory module output, generated-source acquisition, manifest `Class-Path` expansion, version-range/relocation/snapshot resolution or transport-authenticity claim beyond HTTPS. Multi-release JAR entries are selected deterministically for the analyzed target release while retaining the original artifact digest. Remaining explicit degraded frontend cases include array constructor references/array length, annotation-value field reads, inferred `var` detail, typed lambda/catch parameter identities and unsupported functional target/inference contexts. These known boundaries remain limitations of the G2 checkpoint recorded as passed; they are not a reopened G2 blocker.
+ 
+-Open work: independently label and adjudicate the preserved Spring PetClinic and ChatServerMicroservices category/reason denominators; distinguish correct, incorrect, unresolved, unsupported, unmapped and error outcomes; repair only evidence-backed defects; and obtain the human G2 decision. A future post-fix external checkpoint requires separate authorization and must produce new immutable evidence rather than modifying the preserved runs. Separately design neutral POM-less conventional source-plan and Gradle adapters without fabricating Maven semantics, and decide whether generated-source/reactor-output evidence is gate-critical. After G2, execute M4-R0: approve identities, `spring-mechanisms:v2`, the first condition fragment and framework-version matrix; adjudicate ordered registration fixtures; define configuration envelopes/precedence and UNKNOWN semantics; establish an exhaustive oracle; then benchmark solver options and preregister corpus/baselines. Later open decisions remain policy criteria, metric/score compatibility/confidence thresholds, graph/query/UI budgets and frontend framework selection.
++Open work: adjudicate the M4-R0 candidate and its source/runtime/formal evidence, accept or amend the additive identity preimages, 29-family catalog including bounded XML/catch-all, exact supported fragment and limits, then authorize M4A.1 within the accepted contract. Historical framework patches, declaration-level annotation semantics, Config Data loading, partial-order/correlated opaque reasoning and a production Java SAT encoding remain explicit bounded gaps, not passed claims. A new external G2 checkpoint still requires separate authorization and immutable new evidence; the preserved G2 runs remain unchanged. Later open decisions remain provider expansion, policy criteria, metric/score compatibility and thresholds, graph/query/UI budgets and frontend framework selection.
+ 
+ ## QUALITY GATES
+@@ -100,5 +108,6 @@
+ | G1 contracts | PASSED (historical) | Preserve tested identity, uncertainty and evidence invariants |
+ | G2 frontend/build model | PASSED | M2 frontend and M3.1–M3.8 verified; PetClinic and ChatServer checkpoints audited and confirmed via [Independent Semantic Adjudication Record](reproducibility/g2-semantic-adjudication-record-2026-09-10.md) |
+-| G3 Spring | NOT STARTED; direction accepted | M4-R0 contract/oracle gate, closed `spring-mechanisms:v2` denominator, phase/order-aware truth-region correctness, valid witnesses, deterministic replay and bounded framework-version claims |
++| M4-R0 research/semantics | REVIEW_REQUIRED | Concrete contract/catalog/identities, bounded oracle evidence and preregistered protocol delivered; independent/human acceptance pending |
++| G3 Spring | NOT STARTED; R0 research candidate available | M4-R0 contract/oracle gate, closed `spring-mechanisms:v2` denominator, phase/order-aware truth-region correctness, valid witnesses, deterministic replay and bounded framework-version claims |
+ | G4 graph/metric/query | NOT STARTED | Invariants, metric correctness, bounded storage-neutral queries |
+ | G5 policy/evidence/assessment | NOT STARTED | Negative/mutation controls, complete evidence, score safeguards |
+@@ -108,11 +117,3 @@
+ ## EXACT NEXT TASK
+ 
+-With Gate G2 formally PASSED and its semantic adjudication record confirmed, begin **Milestone 4: Spring Semantics Enrichment & Truth-Region Intelligence**:
+-1. Execute the **M4-R0 Research and Semantics Gate**:
+-   - Approve `spring-mechanisms:v2` catalog and canonical Spring relationship types.
+-   - Define exact M4 configuration identities and the first supported condition fragment.
+-   - Establish the Spring Boot framework-version matrix (Boot 2.7.x through 3.4.x).
+-   - Author bounded, ordered Spring component registration fixtures (DI, profiles, conditional beans).
+-   - Establish an exhaustive ground-truth oracle for Spring bean wiring and condition truth regions.
+-2. Benchmark candidate solver and analysis strategies against the M4 oracle before production code.
+-
++Perform the **M4-R0 adjudication and acceptance review** against the [contract candidate](architecture/m4-r0-semantics-gate.md) and [verification record](reproducibility/m4-r0-2026-09-11/README.md). Review actual source/fixture labels and retained gaps; explicitly accept or amend the identity preimages, catalog/XML/catch-all scope, first versioned fragment and deterministic budgets. This author self-review does not substitute for independent/human approval. After acceptance, implement **M4A.1: evidence-only mechanism inventory and CapabilityGapRecord normalization**, preserving closed raw-observation and semantic-obligation denominators. Do not start production condition/binding solving before that approval and the relevant M4B–M4D slices.
+--- before-task/docs/project-context.md
++++ after-task/docs/project-context.md
+@@ -112,5 +112,5 @@
+ | Maven and monorepo | CONFIRMED |
+ | Track A + Track B SE121 target | CONFIRMED |
+-| JavaParser + SymbolSolver behind SemanticFrontend | CONFIRMED human choice (2026-09-02); empirical G2 acceptance pending; see ADR-001 |
++| JavaParser + SymbolSolver behind SemanticFrontend | CONFIRMED human choice (2026-09-02); G2 subsequently recorded PASSED in current state; see ADR-001 |
+ | OpenRewrite | Independent comparator; possible future transformation technology outside SE121 |
+ | Storage-neutral canonical graph | CONFIRMED direction; detailed schema pending |
+@@ -138,4 +138,5 @@
+ - `docs/architecture/evidence-acquisition.md`: provisional M3+ capability-gap, acquisition-attempt, and provider-conflict contract
+ - `docs/architecture/m4-spring-intelligence.md`: provisional M4 Spring domain model and versioned closed mechanism denominator
++- `docs/architecture/m4-r0-semantics-gate.md`: reviewable R0 identity/fragment/version/order contract candidate spanning Spring 1.x XML through Boot 3.4.x
+ - `docs/architecture/conditional-architecture-semantics.md`: canonical M4+ configuration-space, staged registration, truth-region, witness, policy and evolution semantics
+ - `docs/architecture/product-outcome.md`: canonical product, metric, scoring, visualization, and acceptance contract
+--- before-task/docs/research/research-questions.md
++++ after-task/docs/research/research-questions.md
+@@ -147,4 +147,8 @@
+ 
+ These counts are planning ranges, not validated sample-size claims. Corpus, labels, baselines, primary metrics and exclusion rules are registered before observing comparative results.
++
++## M4-R0 evidence checkpoint
++
++The [2026-09-11 R0 assessment](2026-09-11-m4-r0-spring-semantics.md) provides concrete identity/catalog/fragment proposals, a historical Spring 1.x–Boot 3.4.x research matrix, bounded runtime/formal oracle evidence and preregistered comparison limits. These refine OQ-3 through OQ-7 for review; they do not close the empirical RQs or select a production solver.
+ 
+ ## Open Engineering Questions
+--- before-task/docs/roadmap.md
++++ after-task/docs/roadmap.md
+@@ -132,5 +132,5 @@
+ ### M2 - Semantic Frontend and Ground-Truth Expansion
+ 
+-**Status: COMPLETE (Frontend Implementation Verified).** Implemented, verified with 98 root tests at its checkpoint, and confirmed on whole-project multi-file analysis (43 files, 1,488 occurrences). All 18 relationship families are implemented. The combined frontend/build-model Gate G2 remains withheld pending independent semantic adjudication after completed M3 implementation.
++**Status: COMPLETE (Frontend Implementation Verified).** Implemented, verified with 98 root tests at its checkpoint, and confirmed on whole-project multi-file analysis (43 files, 1,488 occurrences). All 18 relationship families are implemented. The combined frontend/build-model Gate G2 is subsequently recorded PASSED in current state and the 2026-09-10 adjudication record; historical checkpoints retain their original scope.
+ 
+ Deliver the JavaParser adapter and architecture-relevant relationship set: declarations, inheritance, implementations, permits, type uses, calls, constructor calls, field access, method references, parameters, returns, fields, throws, annotations, generics, and relevant modern Java constructs.
+@@ -140,5 +140,5 @@
+ ### M3 - Multi-Module Workspace and Build-Model Intelligence
+ 
+-**Status: M3.1–M3.8 DELIVERED; M3 IMPLEMENTATION COMPLETE; G2 WITHHELD PENDING INDEPENDENT SEMANTIC ADJUDICATION.** The full reactor passes 221 tests. M3.8 adds neutral acquisition contracts, `dependency.artifact-cache:m3.8`, and the bounded `dependency.maven-fixpoint:3.9.16-m3.8` resolver. The official Spring PetClinic checkpoint ran twice from separate empty caches: each run accounted for 629 requested files, including 266 acquired JARs and 363 acquired/verified POM descriptors recorded as `SKIPPED_POM` because they are not frontend binaries; consumed 171,800,181 bytes; assembled both source sets; analyzed all 50 Java files; and emitted 4,250 frontend observations. The byte-identical canonical outputs have digest `sha256:8806702323d9bc307aef7795bee0b10bdf15e43da65353f75015517b46eb2796`. This closes the M3 implementation slice, not G2: independent semantic labels and adjudication are still required.
++**Status: M3.1–M3.8 DELIVERED; G2 RECORDED PASSED.** See the [recorded adjudication](reproducibility/g2-semantic-adjudication-record-2026-09-10.md). The historical full reactor checkpoint passes 221 tests. M3.8 adds neutral acquisition contracts, `dependency.artifact-cache:m3.8`, and the bounded `dependency.maven-fixpoint:3.9.16-m3.8` resolver. The official Spring PetClinic checkpoint ran twice from separate empty caches: each run accounted for 629 requested files, including 266 acquired JARs and 363 acquired/verified POM descriptors recorded as `SKIPPED_POM` because they are not frontend binaries; consumed 171,800,181 bytes; assembled both source sets; analyzed all 50 Java files; and emitted 4,250 frontend observations. The byte-identical canonical outputs have digest `sha256:8806702323d9bc307aef7795bee0b10bdf15e43da65353f75015517b46eb2796`. Those execution results closed the M3 implementation slice; the later G2 decision is recorded separately and is not inferred merely from deterministic output.
+ 
+ Deliver safe understanding of Maven parent POMs, modules, source/generated-source roots where safely discoverable, dependency management, BOMs, dependency scopes, module dependencies, and exact classpath manifests. Build discovery is a provider family rather than a requirement that repositories conform to Maven: POM-less, Gradle and later build shapes use neutral source-plan/build adapters as evidence justifies them. The formal specification is maintained in the provisional [M3 Workspace and Build-Model Intelligence Contract](architecture/m3-workspace-build-model.md). Missing generated sources or effective-model inputs remain explicit acquisition gaps rather than disappearing from coverage.
+@@ -161,4 +161,6 @@
+ 
+ #### M4-R0 — Research and Semantics Gate
++
++**2026-09-11: research/evidence candidate delivered; REVIEW_REQUIRED.** The owner expanded research coverage to Spring 1.x XML through Boot 3.4.x, including all annotation/extension obligations and phase/order domains. The [R0 candidate](architecture/m4-r0-semantics-gate.md) and [bounded evidence](research/2026-09-11-m4-r0-spring-semantics.md) make the following proposals concrete; unvalidated versions/mechanisms stay in typed gap records. No production M4 semantics or G3 acceptance is implied.
+ 
+ Before production Spring semantics:
+@@ -329,6 +331,6 @@
+ | G0 — PASSED | Foundation builds reproducibly in the documented Windows/Oracle and Docker Linux/Temurin environments |
+ | G1 — PASSED | Parser-neutral semantic/identity/metric/assessment contracts are stable and deterministic |
+-| G2 — WITHHELD | M3.1–M3.8 build/acquisition implementation and deterministic real-repository execution are complete; independent semantic labels and adjudication must establish frontend correctness before acceptance |
+-| M4-R0 | Condition/configuration identities, v1 semantics fragment, oracle, baselines, corpus protocol and limits are approved before production M4 semantics |
++| G2 — RECORDED PASSED | Historical frontend/build acceptance is recorded in current state and the 2026-09-10 adjudication record; R0 does not re-certify it |
++| M4-R0 — REVIEW_REQUIRED | Concrete historical matrix, identities/catalog/fragment, bounded oracle results and protocol delivered; independent/human review must accept them before production M4 semantics |
+ | G3 | Bounded phase/order-aware Spring inference meets truth-region, witness, version and closed-taxonomy evidence criteria |
+ | G4 | Canonical conditional graph/metric/query invariants pass, including infeasible-path rejection |
+@@ -378,6 +380,6 @@
+ 
+ 1. Preserve completed M0–M2 and delivered M3.1–M3.8 contracts/evidence.
+-2. Independently label and adjudicate the preserved Spring PetClinic semantic denominator, repair only evidence-backed defects, and obtain the human G2 decision; the research redirection does not bypass this gate.
+-3. After G2, execute M4-R0 as a research/architecture gate before writing production Spring semantics.
++2. Preserve the G2 decision and its immutable evidence; any new external checkpoint requires separate authorization.
++3. Adjudicate and accept/amend the delivered M4-R0 research candidate before writing production Spring semantics.
+ 4. Implement the smallest approved conditional fragment through M4A–M4D with exhaustive oracle fixtures and closed denominators.
+ 5. Run M4E baselines/real-repository evaluation and obtain G3 acceptance before treating conditional Spring facts as stable M5/M6 inputs.

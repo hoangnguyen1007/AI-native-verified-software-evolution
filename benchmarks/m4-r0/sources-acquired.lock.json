@@ -1,0 +1,298 @@
+{
+  "schema": "m4-r0-source-lock-v1",
+  "sources": [
+    {
+      "bytes": 155920,
+      "id": "S01",
+      "sha256": "60ceddb9bbde2997380b55f69b2c15c7aaf093879774f90bdcea95df566194d8",
+      "status": "ACQUIRED",
+      "title": "Spring 1.2.9 IoC",
+      "url": "https://docs.spring.io/spring-framework/docs/1.2.9/reference/beans.html"
+    },
+    {
+      "bytes": 344847,
+      "id": "S02",
+      "sha256": "25b9e2fb336b20d28e5c00a058a3180d195388e2d39adf4cacfd7b903f35b6f2",
+      "status": "ACQUIRED",
+      "title": "Spring 2.5.6 IoC",
+      "url": "https://docs.spring.io/spring-framework/docs/2.5.6/reference/beans.html"
+    },
+    {
+      "bytes": 15294,
+      "id": "S03",
+      "sha256": "4f9f231fbe4c7850673ba0a25a9b91c47f29cb3eda6e7c7d10c5dfcd5c684dd4",
+      "status": "ACQUIRED",
+      "title": "Spring 3.1.4 profiles",
+      "url": "https://docs.spring.io/spring-framework/docs/3.1.4.RELEASE/javadoc-api/org/springframework/context/annotation/Profile.html"
+    },
+    {
+      "bytes": 16147,
+      "id": "S04",
+      "sha256": "4b3357fd99e846b4b59597e5d74dd03d1d0566364241f418e9e0528118f8dcaf",
+      "status": "ACQUIRED",
+      "title": "Spring 4.3.30 Autowired",
+      "url": "https://docs.spring.io/spring-framework/docs/4.3.30.RELEASE/javadoc-api/org/springframework/beans/factory/annotation/Autowired.html"
+    },
+    {
+      "bytes": 1062397,
+      "id": "S05",
+      "sha256": "171116ea0fa158757e8f265c721f6f08e5741208dbcf8addf6c3a8daa000b6f4",
+      "status": "ACQUIRED",
+      "title": "Boot 2.7 registration migration",
+      "url": "https://github.com/spring-projects/spring-boot/wiki/Spring-Boot-2.7-Release-Notes"
+    },
+    {
+      "bytes": 1094140,
+      "id": "S06",
+      "sha256": "f113948677abfc96279781ac118e36f90b505230db15f2da8a1261a884619a15",
+      "status": "ACQUIRED",
+      "title": "Boot 3 migration",
+      "url": "https://github.com/spring-projects/spring-boot/wiki/Spring-Boot-3.0-Migration-Guide"
+    },
+    {
+      "bytes": 292954,
+      "id": "S07",
+      "sha256": "656a741ef23097d40cb02d01e2644b30e856989e3608d00e0bcae0bcf8392822",
+      "status": "ACQUIRED",
+      "title": "Spring 6 upgrade",
+      "url": "https://github.com/spring-projects/spring-framework/wiki/Upgrading-to-Spring-Framework-6.x"
+    },
+    {
+      "bytes": 990745,
+      "id": "S08",
+      "sha256": "3b520357309a45842c7daebda85c0eb4220bd104cd3316e1ed47cdb9cf4f7e2d",
+      "status": "ACQUIRED",
+      "title": "Boot 2.4 configuration migration",
+      "url": "https://github.com/spring-projects/spring-boot/wiki/Spring-Boot-Config-Data-Migration-Guide"
+    },
+    {
+      "bytes": 236402,
+      "id": "S09",
+      "sha256": "8064467e09101e8ee7fb2b56bdf8a8242482f2f1353c3dc6c4ac429f10fceafd",
+      "status": "ACQUIRED",
+      "title": "Boot 3.4 external configuration",
+      "url": "https://docs.spring.io/spring-boot/3.4/reference/features/external-config.html"
+    },
+    {
+      "bytes": 84968,
+      "id": "S10",
+      "sha256": "a083d04445ebab03a45d219a3331003fe2f3fa01aa7b1d1fa550fa6af24181ca",
+      "status": "ACQUIRED",
+      "title": "Boot 3.4 profiles",
+      "url": "https://docs.spring.io/spring-boot/3.4/reference/features/profiles.html"
+    },
+    {
+      "bytes": 8213,
+      "id": "S11",
+      "sha256": "b96ee133cb8f72333c74e094a13f1feeb743ee126fac27784e4e89527375effb",
+      "status": "ACQUIRED",
+      "title": "Framework 6.2.0 ConditionEvaluator.java",
+      "url": "https://raw.githubusercontent.com/spring-projects/spring-framework/v6.2.0/spring-context/src/main/java/org/springframework/context/annotation/ConditionEvaluator.java"
+    },
+    {
+      "bytes": 44198,
+      "id": "S12",
+      "sha256": "caae858d1f74084a63e2407e64d0334dbbfb8a714efbbc92762e806a712130b2",
+      "status": "ACQUIRED",
+      "title": "Framework 6.2.0 ConfigurationClassParser.java",
+      "url": "https://raw.githubusercontent.com/spring-projects/spring-framework/v6.2.0/spring-context/src/main/java/org/springframework/context/annotation/ConfigurationClassParser.java"
+    },
+    {
+      "bytes": 19359,
+      "id": "S13",
+      "sha256": "b618b578fcba13826cec11585d66e45881aeca5e8f5835368c31b78fd3defe03",
+      "status": "ACQUIRED",
+      "title": "Framework 6.2.0 ConfigurationClassBeanDefinitionReader.java",
+      "url": "https://raw.githubusercontent.com/spring-projects/spring-framework/v6.2.0/spring-context/src/main/java/org/springframework/context/annotation/ConfigurationClassBeanDefinitionReader.java"
+    },
+    {
+      "bytes": 24552,
+      "id": "S14",
+      "sha256": "8c71d4e042c61e897e0feaac4a355b620db823d59de8c70f0671b94eb7c9be0d",
+      "status": "ACQUIRED",
+      "title": "Framework 6.2.0 PostProcessorRegistrationDelegate.java",
+      "url": "https://raw.githubusercontent.com/spring-projects/spring-framework/v6.2.0/spring-context/src/main/java/org/springframework/context/support/PostProcessorRegistrationDelegate.java"
+    },
+    {
+      "bytes": 94618,
+      "id": "S15",
+      "sha256": "7b2cf2db4aacc037b2c69e8e1721fd5a9e8b3400e8c3238dbb783305c1bccfe6",
+      "status": "ACQUIRED",
+      "title": "Framework 6.2.0 DefaultListableBeanFactory.java",
+      "url": "https://raw.githubusercontent.com/spring-projects/spring-framework/v6.2.0/spring-beans/src/main/java/org/springframework/beans/factory/support/DefaultListableBeanFactory.java"
+    },
+    {
+      "bytes": 85059,
+      "id": "S16",
+      "sha256": "ae5d03d519b6be17ae8f433cfffb51f1690c073d0ba1e48855b63639b3009716",
+      "status": "ACQUIRED",
+      "title": "Framework 6.1.14 DefaultListableBeanFactory.java",
+      "url": "https://raw.githubusercontent.com/spring-projects/spring-framework/v6.1.14/spring-beans/src/main/java/org/springframework/beans/factory/support/DefaultListableBeanFactory.java"
+    },
+    {
+      "bytes": 80928,
+      "id": "S17",
+      "sha256": "cc8b80f4bbb585ad2e2423665f5bd99a3e95b9bc88bfc7f1c0c0cf9834edcc06",
+      "status": "ACQUIRED",
+      "title": "Framework 5.3.31 DefaultListableBeanFactory.java",
+      "url": "https://raw.githubusercontent.com/spring-projects/spring-framework/v5.3.31/spring-beans/src/main/java/org/springframework/beans/factory/support/DefaultListableBeanFactory.java"
+    },
+    {
+      "bytes": 39790,
+      "id": "S18",
+      "sha256": "12fe911750f8eefc8261272e75ed417fd4d94f9d77cac282e1c38c00bbabca83",
+      "status": "ACQUIRED",
+      "title": "Framework 6.2.0 CommonAnnotationBeanPostProcessor.java",
+      "url": "https://raw.githubusercontent.com/spring-projects/spring-framework/v6.2.0/spring-context/src/main/java/org/springframework/context/annotation/CommonAnnotationBeanPostProcessor.java"
+    },
+    {
+      "bytes": 21707,
+      "id": "S19",
+      "sha256": "ca8525085e4b274621acc337fdcc8bf5dce39bae1588fba38a451cac18b2b406",
+      "status": "ACQUIRED",
+      "title": "Framework 6.2.0 DefaultLifecycleProcessor.java",
+      "url": "https://raw.githubusercontent.com/spring-projects/spring-framework/v6.2.0/spring-context/src/main/java/org/springframework/context/support/DefaultLifecycleProcessor.java"
+    },
+    {
+      "bytes": 5561,
+      "id": "S20",
+      "sha256": "bb345fa306f78dd7016b31468da4aeab3b2fbeae2adcb7b48aca8da4c9fc9581",
+      "status": "ACQUIRED",
+      "title": "Framework 5.3.31 ProfilesParser.java",
+      "url": "https://raw.githubusercontent.com/spring-projects/spring-framework/v5.3.31/spring-core/src/main/java/org/springframework/core/env/ProfilesParser.java"
+    },
+    {
+      "bytes": 8903,
+      "id": "S21",
+      "sha256": "cfca14ad4a25f19c5154849880df22089c11019a5196b311972aba926a781cc9",
+      "status": "ACQUIRED",
+      "title": "Framework 6.2.0 AliasFor.java",
+      "url": "https://raw.githubusercontent.com/spring-projects/spring-framework/v6.2.0/spring-core/src/main/java/org/springframework/core/annotation/AliasFor.java"
+    },
+    {
+      "bytes": 5935,
+      "id": "S22",
+      "sha256": "d2836c06eb19b083f43255beeffb9e5acc1c260ffbb483963f7e5bbf214a0556",
+      "status": "ACQUIRED",
+      "title": "Boot 3.4.0 OnPropertyCondition.java",
+      "url": "https://raw.githubusercontent.com/spring-projects/spring-boot/v3.4.0/spring-boot-project/spring-boot-autoconfigure/src/main/java/org/springframework/boot/autoconfigure/condition/OnPropertyCondition.java"
+    },
+    {
+      "bytes": 33338,
+      "id": "S23",
+      "sha256": "f9a9e7afc96679b013b59eaf419ac881f94396968eb8a51c6ebea72ca0ffa97f",
+      "status": "ACQUIRED",
+      "title": "Boot 3.4.0 OnBeanCondition.java",
+      "url": "https://raw.githubusercontent.com/spring-projects/spring-boot/v3.4.0/spring-boot-project/spring-boot-autoconfigure/src/main/java/org/springframework/boot/autoconfigure/condition/OnBeanCondition.java"
+    },
+    {
+      "bytes": 19362,
+      "id": "S24",
+      "sha256": "cea98e83d85ecdf914459df00732e7c884b91ae333ea3f915ada369a6a05a82b",
+      "status": "ACQUIRED",
+      "title": "Boot 2.7.18 AutoConfigurationImportSelector.java",
+      "url": "https://raw.githubusercontent.com/spring-projects/spring-boot/v2.7.18/spring-boot-project/spring-boot-autoconfigure/src/main/java/org/springframework/boot/autoconfigure/AutoConfigurationImportSelector.java"
+    },
+    {
+      "bytes": 20686,
+      "id": "S25",
+      "sha256": "b15bf4467dad9803b92fbdbce265900b3c0d2283ffd0a4ca9bd0c3ad844cbf93",
+      "status": "ACQUIRED",
+      "title": "Boot 3.4.0 AutoConfigurationImportSelector.java",
+      "url": "https://raw.githubusercontent.com/spring-projects/spring-boot/v3.4.0/spring-boot-project/spring-boot-autoconfigure/src/main/java/org/springframework/boot/autoconfigure/AutoConfigurationImportSelector.java"
+    },
+    {
+      "bytes": 9558,
+      "id": "S26",
+      "sha256": "421625160fcdc1434ebe98eaea9ef3fa6de10b8d109527d338cfb322f3349e52",
+      "status": "ACQUIRED",
+      "title": "Boot 3.4.0 AutoConfigurationSorter.java",
+      "url": "https://raw.githubusercontent.com/spring-projects/spring-boot/v3.4.0/spring-boot-project/spring-boot-autoconfigure/src/main/java/org/springframework/boot/autoconfigure/AutoConfigurationSorter.java"
+    },
+    {
+      "bytes": 5052,
+      "id": "S27",
+      "sha256": "6ec7bdb626d20d89d750d78b68dbe2ab27bdf6e32b2a87c740b52fbcca0b3a88",
+      "status": "ACQUIRED",
+      "title": "Boot 3.4.0 ConditionalOnBean.java",
+      "url": "https://raw.githubusercontent.com/spring-projects/spring-boot/v3.4.0/spring-boot-project/spring-boot-autoconfigure/src/main/java/org/springframework/boot/autoconfigure/condition/ConditionalOnBean.java"
+    },
+    {
+      "bytes": 5505,
+      "id": "S28",
+      "sha256": "92d3189a9b91907806d7a5fa042e448c64df700e07c18fc3394e333622e116cc",
+      "status": "ACQUIRED",
+      "title": "Boot 3.4.0 ConditionalOnMissingBean.java",
+      "url": "https://raw.githubusercontent.com/spring-projects/spring-boot/v3.4.0/spring-boot-project/spring-boot-autoconfigure/src/main/java/org/springframework/boot/autoconfigure/condition/ConditionalOnMissingBean.java"
+    },
+    {
+      "bytes": 3856,
+      "id": "S29",
+      "sha256": "fd5c13ad74b2c89003e4d3694e5ed01e438c71497e0dc73efa628ee1c66abfae",
+      "status": "ACQUIRED",
+      "title": "Boot 3.4.0 ConditionalOnSingleCandidate.java",
+      "url": "https://raw.githubusercontent.com/spring-projects/spring-boot/v3.4.0/spring-boot-project/spring-boot-autoconfigure/src/main/java/org/springframework/boot/autoconfigure/condition/ConditionalOnSingleCandidate.java"
+    },
+    {
+      "bytes": 9266,
+      "id": "S30",
+      "sha256": "2243996fe76f871a8c31b55c0c0c5d3f946c1ef7ce18cd61d33c5b9a8db9456a",
+      "status": "ACQUIRED",
+      "title": "Boot 3.4.0 OnClassCondition.java",
+      "url": "https://raw.githubusercontent.com/spring-projects/spring-boot/v3.4.0/spring-boot-project/spring-boot-autoconfigure/src/main/java/org/springframework/boot/autoconfigure/condition/OnClassCondition.java"
+    },
+    {
+      "bytes": 7620,
+      "id": "S31",
+      "sha256": "3230fa8d902012c0d5e6572c505b8bb8e8933a630e48ce749877593bdfda64f1",
+      "status": "ACQUIRED",
+      "title": "Boot 3.4.0 OnWebApplicationCondition.java",
+      "url": "https://raw.githubusercontent.com/spring-projects/spring-boot/v3.4.0/spring-boot-project/spring-boot-autoconfigure/src/main/java/org/springframework/boot/autoconfigure/condition/OnWebApplicationCondition.java"
+    },
+    {
+      "bytes": 175185,
+      "id": "S32",
+      "sha256": "fbc8bc8355d9d9a19428d8f93efdc16b11a20fd2cf5808f88369e8a13e1c7808",
+      "status": "ACQUIRED",
+      "title": "ArchUnit guide",
+      "url": "https://www.archunit.org/userguide/html/000_Index.html"
+    },
+    {
+      "bytes": 42578,
+      "id": "S33",
+      "sha256": "921e6b8847a61370f5b3795adecb4724ec084a9f2df68f930ff87c3de8616744",
+      "status": "ACQUIRED",
+      "title": "Modulith verification",
+      "url": "https://docs.spring.io/spring-modulith/reference/verification.html"
+    },
+    {
+      "id": "S34",
+      "reason": "HTTPError",
+      "status": "UNAVAILABLE",
+      "title": "LogicNG SAT",
+      "url": "https://logicng.org/documentation/solvers/sat-solving/"
+    },
+    {
+      "id": "S35",
+      "reason": "HTTPError",
+      "status": "UNAVAILABLE",
+      "title": "LogicNG BDD",
+      "url": "https://logicng.org/documentation/knowledge-compilation/bdd/"
+    },
+    {
+      "bytes": 22347,
+      "id": "S36",
+      "sha256": "5a592238b731b0f9fcef4009d03e66337b28b751819021bf99004f328d44c5c4",
+      "status": "ACQUIRED",
+      "title": "Lombok constructor",
+      "url": "https://projectlombok.org/features/constructor"
+    },
+    {
+      "id": "S37",
+      "reason": "HTTPError",
+      "status": "UNAVAILABLE",
+      "title": "Spring Data 3.4 repository configuration",
+      "url": "https://docs.spring.io/spring-data/commons/reference/3.4/repositories/create-instances.html"
+    }
+  ]
+}
