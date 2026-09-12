@@ -1,6 +1,6 @@
 # M4-R0 research gate handoff — 2026-09-11
 
-**Result: research candidate and bounded evidence delivered; M4-R0 REVIEW_REQUIRED.** G3 remains NOT STARTED. This is author self-verification, not independent semantic adjudication or human gate acceptance.
+**Current adjudication: M4-R0 PASSED by human acceptance on 2026-09-11.** G3 remains NOT STARTED. This package was originally produced as author self-verification with status `REVIEW_REQUIRED`; the later human decision accepted the bounded contract and evidence without converting those research results into a comprehensive-Spring claim.
 
 ## Scope and changes
 
@@ -12,14 +12,14 @@ The task began in SE121 Track A+B with G2 recorded PASSED and M4-R0 listed as ne
 | New architecture/research | [R0 contract](../../architecture/m4-r0-semantics-gate.md), [assessment](../../research/2026-09-11-m4-r0-spring-semantics.md), [standalone package](../../../benchmarks/m4-r0/README.md) |
 | Existing documentation changed | current-state, project-context, roadmap, M4 Spring contract, conditional architecture semantics, research-questions; reconciled obsolete G2 blockers and linked the R0 candidate |
 | Production files changed | None by this task; existing analyzer changes belong to the initial working tree |
-| Decisions made | Human historical research scope retained; reversible research harness choices; nested event/ordering and additive identity/catalog proposals remain PROVISIONAL |
-| Decisions requiring review | Exact identity preimages, 29-row catalog/XML/catch-all, supported first fragment/patch matrix, numerical budgets and source/fixture adjudication |
+| Decisions made | Human historical research scope retained; reversible research harness choices; nested event/ordering, additive identity preimages, 29-row catalog/XML/catch-all, first fragment/patch matrix and numerical budgets were accepted for the bounded M4 baseline |
+| Decisions requiring review | None remaining for M4-R0. Production schemas, later version fragments, loaders, solver choice and G3 evidence remain later milestone decisions |
 | Limitations | No full historical annotation-use census, independent review, Java M4 schema implementation, production extraction, Config Data oracle, full partial-order/correlated opaque evaluation, Spring SAT encoding, Java SAT/BDD performance comparison or real-repository Spring evaluation |
-| Blockers | No remaining execution-permission blocker; independent/human R0 adjudication and acceptance still required |
-| Durable state | current-state now names R0 REVIEW_REQUIRED and exact adjudication task; roadmap preserves G2 acceptance and gates production M4A |
-| Exact next task | Review actual contract/labels/results/gaps, accept or amend the R0 candidate; after acceptance implement M4A.1 evidence-only mechanism inventory and gap normalization |
+| Blockers | No remaining M4-R0 acceptance blocker. The historical `INDEPENDENT_ADJUDICATION_PENDING` gap row records package-generation state and is superseded only as status by the later human decision; raw evidence is intentionally not rewritten |
+| Durable state | current-state records M4-R0 PASSED and M4A.1 delivered; the roadmap preserves G2 acceptance and keeps G3 gated |
+| Exact next task | M4A.2 remaining evidence-only mechanism acquisition; activation, registration, binding and configuration-space inference remain later slices |
 
-## Executed checks
+## Historical executed checks
 
 All commands below ran from the repository root. No root reactor, target Maven/Gradle lifecycle, external application benchmark or production test suite ran; this change is a standalone research/contract package. `javac` compiled only authored fixture code or the existing neutral contract classes needed to validate gap construction.
 
@@ -37,9 +37,25 @@ All commands below ran from the repository root. No root reactor, target Maven/G
 | `java -cp benchmarks/m4-r0/.cache/gap-classes GapExport benchmarks/m4-r0 docs/reproducibility/m4-r0-2026-09-11/gap-run-2` and `gap-run-3` | 452 valid typed records per run; identical bytes and study snapshot identities |
 | `python benchmarks/m4-r0/verify_package.py` | Offline source/JAR/input hashes, catalog/census denominators, result counts, byte-identical replays, gap references/snapshot and introduced local links checked |
 
-The final integrity check passed: 26 artifact hashes, 34 source hashes, 29 catalog rows, 402 annotation declarations, 79 runtime cases, 70 formal cases, 64 CNF cases, 452 typed gaps and 37 introduced local links. `git diff --check` passed for the changed existing documentation. [documentation-changes.diff](documentation-changes.diff) isolates this task's edits from the pre-existing working tree; [initial-git-status.txt](initial-git-status.txt) records its starting state. The deliverable [manifest](manifest.json) binds the final documents, scripts and saved results; verify it with `python docs/reproducibility/m4-r0-2026-09-11/verify_manifest.py`.
+At gate generation, the cache-backed integrity check passed: 26 artifact hashes, 34 source hashes, 29 catalog rows, 402 annotation declarations, 79 runtime cases, 70 formal cases, 64 CNF cases, 452 typed gaps and 37 introduced local links. `git diff --check` passed for the changed existing documentation. [documentation-changes.diff](documentation-changes.diff) isolates that task's edits from its pre-existing working tree; [initial-git-status.txt](initial-git-status.txt) records the starting state.
+
+## Post-acceptance integrity hardening — 2026-09-12
+
+The v2 [manifest](manifest.json) closes over the 97 checked-in files below `benchmarks/m4-r0` and this immutable evidence directory. Every text entry declares `utf8-lf-v1`, which hashes UTF-8 content after CRLF/CR-to-LF normalization; binary entries use raw bytes. The eight architecture, research and governance documents that legitimately evolve after a gate are no longer compared as if they were immutable package members. Their exact original v1 byte digests remain in `historicalExternalReferences` as `REFERENCE_ONLY`, so the old review-time reference is preserved without making later milestone edits look like evidence corruption. Package-scope drift, duplicate/unsafe paths, hash-mode changes and payload/file digest mismatches fail closed.
+
+Run the self-contained checks on a clean clone without network or cache:
+
+```powershell
+python benchmarks/m4-r0/test_integrity.py -v
+python benchmarks/m4-r0/verify_package.py
+python docs/reproducibility/m4-r0-2026-09-11/verify_manifest.py
+```
+
+`verify_package.py` validates the checked-in locks, closed denominators, saved result inputs and replays, typed gap/snapshot identities, summaries and current local links. It no longer depends on the undistributed `.cache/before` directory. Downloaded source/JAR bytes are a distinct optional layer: after the explicit fetch steps, run `python benchmarks/m4-r0/verify_package.py --require-cache`. If any of the 60 external inputs are absent it exits with code 2 and a closed `UNAVAILABLE` report listing every missing input; a present hash/size mismatch exits with code 1. It never downloads or executes code while verifying.
 
 Runtime details, exact ordered classpaths and JDK/Python versions are in each runtime environment.json. Runtime fixtures disable ambient Spring system-property/environment sources. The formal oracle uses explicit inputs only. Timing files remain separate from canonical semantic bytes; no performance ranking is claimed.
+
+The 79/79 runtime result is evidence only for Framework/Boot 5.3.31/2.7.18, 6.1.14/3.3.5 and 6.2.0/3.4.0. The 13 `VERSION_FRAGMENT_NOT_VALIDATED` records preserve the unexecuted historical/patch rows; acceptance did not turn them into runtime-tested support. Likewise, the eight formal `binding` cases consume a complete, already type/qualifier-filtered, single-context candidate set. They test the normalized primary/fallback/name/priority decision layer only, not Java assignability, generic/collection/provider candidate construction, composed qualifier extraction or full Spring injection equivalence. Those responsibilities remain M4A.2/M4C work and must retain typed gaps until separately evidenced.
 
 ## Canonical evidence digests
 

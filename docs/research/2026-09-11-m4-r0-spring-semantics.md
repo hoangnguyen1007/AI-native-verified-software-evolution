@@ -8,7 +8,11 @@ The [R0 contract candidate](../architecture/m4-r0-semantics-gate.md) extends res
 
 **CONFIRMED by this task's controlled execution:** 79/79 registered framework observations matched their pre-execution labels across selected Framework/Boot pairs 5.3.31/2.7.18, 6.1.14/3.3.5 and 6.2.0/3.4.0. These exercise property missing/empty/case/whitespace distinctions, profile sets/defaults, ordered missing/present/single-candidate conditions, name/priority selection, qualifier-versus-primary, XML alias/ref wiring and the 6.2 default-candidate boundary. Each configuration creates only authored in-memory objects, then closes the context.
 
+These three tuples are the entire executed runtime matrix. Thirteen `VERSION_FRAGMENT_NOT_VALIDATED` gap records retain the older historical families and unexecuted patch rows; the human gate decision accepted that bounded matrix and did not relabel those rows as runtime-tested support.
+
 **CONFIRMED by the executable formal specification:** after correcting one mislabeled ambiguity-control input, 70/70 formal cases and 64/64 Boolean CNF comparisons pass. A deliberately naive flat registration baseline disagrees on 2/4 ordered controls. This is evidence that the tested state-dependent cases need order, not a prevalence estimate or a claim against every flat-condition technique.
+
+The eight formal binding cases start from a complete, already type/qualifier-filtered, single-context candidate set. They validate only the normalized primary/fallback/name/priority decision layer; Java assignability, generic collection/provider candidate construction, composed qualifier extraction and complete Spring binding remain outside this oracle.
 
 **CONFIRMED by passive artifact inspection:** 15,594 classfiles in exactly 26 pinned JARs contain 402 annotation declarations. Of those, 192 have no candidate family hint. All 402 still require declaration-level semantic adjudication. This inventory is complete only for those JARs; it is neither a historical annotation-use census nor proof of production semantics.
 
@@ -16,7 +20,7 @@ The [R0 contract candidate](../architecture/m4-r0-semantics-gate.md) extends res
 
 ## Evidence and sources
 
-The [protocol](../../benchmarks/m4-r0/PROTOCOL.md), [pre-execution runtime labels](../../benchmarks/m4-r0/runtime-labels.json), [formal cases](../../benchmarks/m4-r0/cases.json), [exact artifacts](../../benchmarks/m4-r0/artifacts.lock.json) and [verification handoff](../reproducibility/m4-r0-2026-09-11/README.md) define inputs and limitations. Source IDs below resolve through [sources.json](../../benchmarks/m4-r0/sources.json); the [acquisition lock](../../benchmarks/m4-r0/sources-acquired.lock.json) records 34 successful acquisitions, 5,086,990 bytes and three failures. Source bytes are cached locally and SHA-256 verified. URL/version labels alone are not hashes.
+The [protocol](../../benchmarks/m4-r0/PROTOCOL.md), [pre-execution runtime labels](../../benchmarks/m4-r0/runtime-labels.json), [formal cases](../../benchmarks/m4-r0/cases.json), [exact artifacts](../../benchmarks/m4-r0/artifacts.lock.json) and [verification handoff](../reproducibility/m4-r0-2026-09-11/README.md) define inputs and limitations. Source IDs below resolve through [sources.json](../../benchmarks/m4-r0/sources.json); the [acquisition lock](../../benchmarks/m4-r0/sources-acquired.lock.json) records 34 successful acquisitions, 5,086,990 bytes and three failures. Source bytes were cached and SHA-256 verified during the recorded run; the Git-ignored payload cache is not distributed, while its exact lock metadata is. URL/version labels alone are not hashes.
 
 | Finding | Primary evidence inspected | Design consequence |
 |---|---|---|
@@ -70,13 +74,13 @@ M3's production enum set and normalizer remain unchanged. The formal oracle's U 
 
 | R0 criterion | Assessment |
 |---|---|
-| Historical breadth and zero-omission strategy | Candidate matrix covers all requested eras; exact historical patch inventory still explicit gaps |
-| Identities, relationships and acyclic preimages | Concrete candidate specified; future Java schema/golden tests and human acceptance pending |
-| Closed mechanism catalog | 29 rows with explicit reasons; XML and catch-all changes require review of the frozen candidate |
+| Historical breadth and zero-omission strategy | Accepted bounded matrix covers all requested eras; exact historical patch execution remains 13 explicit version gaps |
+| Identities, relationships and acyclic preimages | Additive preimages accepted for the M4 baseline; later Java schemas and configuration-space implementation remain gated slices |
+| Closed mechanism catalog | Accepted 29 rows with explicit reasons, bounded XML and mandatory catch-all |
 | Configuration/phase/order/UNKNOWN contract | Specified with source evidence; partial-order/correlation/loader runtime work outside the executed oracle fragment |
 | Exhaustive oracle and controlled fixtures | Executed bounded formal and actual-framework controls; no extractor equivalence claim |
 | Solver strategies | Exhaustive/DPLL conformance and flat baseline executed; production Java solver/Spring encoding not selected |
 | Baselines, corpus, budgets, kill criteria | Preregistered; real repository selection freeze and equivalent external tool experiments deferred to M4E |
-| Independent adjudication / human acceptance | **REVIEW_REQUIRED**, not passed by this author |
+| Independent adjudication / human acceptance | **PASSED by human supervisor on 2026-09-11**; results remain author-produced rather than independent empirical replication |
 
-The exact next task is an M4-R0 adjudication/acceptance review of the contract, labels, raw results and gap ledger. Accept or amend the bounded fragment, identities, XML/catch-all catalog and budgets explicitly. After that acceptance, M4A.1 may implement evidence-only mechanism inventory and normalization. G3 remains NOT STARTED; this research package does not certify comprehensive Spring support.
+M4A.1 subsequently implemented evidence-only mechanism inventory and gap normalization with root-reactor coverage. The exact next task is M4A.2 remaining evidence-only mechanism acquisition. G3 remains NOT STARTED; this research package does not certify comprehensive Spring support, and its historical `INDEPENDENT_ADJUDICATION_PENDING` row is preserved as package-generation provenance rather than current gate status.

@@ -2,7 +2,7 @@
 
 ## Status and Scope
 
-**ACCEPTED direction and gate contract.** [ADR-004](../decisions/ADR-004-staged-conditional-architecture-semantics.md) changes M4 from one-context candidate enrichment to bounded, phase/order-aware conditional architecture semantics. Gate M4-R0 was formally accepted by the human supervisor on 2026-09-11. The [accepted R0 contract](m4-r0-semantics-gate.md) governs identities, the 29-family `spring-mechanisms:v2` catalog, the historical version matrix, the phase/order model, and capability-gap bounds. Production implementation begins with slice M4A.1.
+**ACCEPTED direction and gate contract.** [ADR-004](../decisions/ADR-004-staged-conditional-architecture-semantics.md) changes M4 from one-context candidate enrichment to bounded, phase/order-aware conditional architecture semantics. Gate M4-R0 was formally accepted by the human supervisor on 2026-09-11. The [accepted R0 contract](m4-r0-semantics-gate.md) governs identities, the 29-family `spring-mechanisms:v2` catalog, the historical version matrix, the phase/order model, and capability-gap bounds. Production implementation began with M4A.1, which is now delivered as described below.
 
 The catalog is closed per version, not forever. `spring-mechanisms:v2` must account for every registered fixture/observation exactly once. A new mechanism or materially different framework behavior requires an explicit catalog/semantics-version change rather than silent omission.
 
@@ -16,6 +16,24 @@ The catalog is closed per version, not forever. `spring-mechanisms:v2` must acco
 6. **M4E — Evaluation/G3:** execute adjudicated fixtures, fair baselines and representative repository studies.
 
 The detailed cross-milestone semantics live in [Conditional Architecture Semantics](conditional-architecture-semantics.md).
+
+## Implemented Slice M4A.1 — Evidence-Only Mechanism Inventory
+
+**CONFIRMED by implementation and focused tests (2026-09-12):** `analyzer` now contains the accepted 29-family `spring-mechanisms:v2` catalog at revision `r0-candidate-1`, including `spring.mechanism.unclassified` and bounded beans XML. The revision name is retained because it is the immutable machine-artifact identifier accepted at M4-R0; acceptance did not rename its contents.
+
+The passive provider `spring.mechanism-scanner:m4a.1` consumes only immutable supplied evidence:
+
+- one existing M2 `FrontendResult`;
+- exact classpath entries and manifest identity projected from one M3 `ExactClasspathResult.Manifest`;
+- explicitly supplied, already-decoded XML and Spring metadata `SourceInput`s.
+
+It performs no filesystem or network acquisition, class loading, target handler invocation, lifecycle execution, condition evaluation, bean registration or binding. Resolved annotation types are admitted to a catalog family only when their dependency `EntityScope` matches an exact supplied classpath entry; a project declaration that copies a Spring FQN cannot cross that boundary. The three accepted executable tuples are checked against the exact SHA-256 pins in `benchmarks/m4-r0/artifacts.lock.json`: Framework 5.3.31/Boot 2.7.18, Framework 6.1.14/Boot 3.3.5 and Framework 6.2.0/Boot 3.4.0. Missing manifest identity, incomplete pins, mixed versions and unaccepted patches retain `VERSION_FRAGMENT_NOT_VALIDATED`.
+
+`spring-mechanism-inventory-v1` binds the frontend result, exact framework evidence, resource bytes/digests and decoding provenance. Each raw annotation use/declaration and each supplied XML/metadata occurrence is content-addressed. Every raw row is reconciled as either a positively established marker or one or more semantic obligations; the two sets are disjoint, all obligations cite an existing raw row, and every unclassified row has an accepted typed explanation. Coverage counts are recomputed and rejected if they do not close.
+
+XML inventory is deliberately lexical and bounded to supplied documents, start elements, attributes and document-type declarations. Known beans elements remain in `spring.registration.xml`; unknown namespaces/elements enter the catch-all. DTD text is inventoried lexically but removed before a DTD-disabled StAX validation pass, so internal entities are never expanded and external resources are never fetched. Custom namespace handlers are never loaded. `spring.factories` logical continuation rows and Boot `AutoConfiguration.imports` physical rows retain exact source spans; unrecognized keys are counted rather than dropped.
+
+The M3 `CapabilityGapRecord` schema remains unchanged. `evidence.spring-mechanism-gaps:m4a.1-v1` and `evidence.gap-normalizer:m4a.1` add the accepted M4A.1 mappings for `UNCLASSIFIED_MECHANISM`, `ANNOTATION_SEMANTICS_NOT_ADJUDICATED` and `VERSION_FRAGMENT_NOT_VALIDATED`, preserving observation references, source spans, diagnostics, limitations and affected coverage. This slice establishes detection and denominator closure only. It does not claim annotation composition, activation, configuration-space truth, registration, candidate selection, runtime instantiation or complete Spring-container equivalence.
 
 ## Modeling Invariants
 
@@ -213,15 +231,14 @@ G3 requires:
 
 ## Remaining Decisions
 
-The [M4-R0 candidate](m4-r0-semantics-gate.md) now makes the following proposals concrete. They remain subject to its recorded review/acceptance gate rather than unscoped design work.
+The [accepted M4-R0 contract](m4-r0-semantics-gate.md) resolved the baseline identity preimages, 29-family catalog, three executable Framework/Boot tuples, initial condition/registration fragment, UNKNOWN policy and experimental budgets. The following implementation/evaluation decisions remain; they do not reopen that acceptance without contradictory evidence or a registered replacement trigger.
 
-- Exact Java schemas/preimages for M4 concepts and `ConfigurationSpaceIdentity`.
-- First supported Spring Boot/Framework/Lombok/Spring Data version matrix.
-- Exact v1 condition/registration fragment and unsupported boundaries.
-- Property-source/import abstraction and sound `OTHER` domains.
-- Solver/branch limits and benchmark-backed backend selection.
+- Exact Java schemas for M4 concepts not yet implemented, including `ConfigurationSpaceIdentity` and staged registration/binding records.
+- Evidence-backed expansion beyond the three accepted executable Framework/Boot tuples, plus exact Lombok and Spring Data fragments.
+- Production property-source/import abstraction and sound `OTHER` domains.
+- Solver/branch limits under representative workloads and benchmark-backed backend selection.
 - Graph node-versus-record representation and query payload budgets.
-- Corpus repositories, historical pairs and registered baselines.
+- Frozen corpus repositories, historical runtime pairs and registered M4E baselines.
 
 ## Related Documents
 

@@ -122,7 +122,7 @@ Lower-authority claims cannot become confirmed without higher-authority evidence
 | Complete visual architecture-intelligence workbench | CONFIRMED product outcome |
 | Explainable architecture score plus separate analysis confidence | CONFIRMED direction; exact formula PROVISIONAL |
 | Progressive evidence providers (including selective bytecode) | ASSESS/HOLD for SE121 implementation; extension boundary CONFIRMED |
-| Staged conditional architecture semantics for M4+ | ACCEPTED direction on 2026-09-09; implementation and G3 evidence pending; see ADR-004 |
+| Staged conditional architecture semantics for M4+ | ACCEPTED direction on 2026-09-09 and M4-R0 baseline on 2026-09-11; M4A.1 evidence-only inventory delivered, conditional inference and G3 evidence pending; see ADR-004 |
 | Solver backend for configuration reasoning | PROVISIONAL; exhaustive oracle first, SAT/BDD choice requires benchmark |
 | Post-M12 context federation, cross-system assurance, and verified AI evolution | FUTURE HORIZONS; not SE121 commitments |
 

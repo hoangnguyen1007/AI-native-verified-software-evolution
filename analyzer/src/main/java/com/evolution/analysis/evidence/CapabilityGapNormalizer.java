@@ -10,6 +10,7 @@ import com.evolution.analysis.contract.serialization.CanonicalJson;
 import com.evolution.analysis.contract.source.SourceSpan;
 import com.evolution.analysis.frontend.*;
 import com.evolution.analysis.input.*;
+import com.evolution.analysis.spring.*;
 import java.util.*;
 
 /** Pure normalizer: it observes supplied immutable results and never selects or invokes a provider. */
@@ -38,8 +39,12 @@ public final class CapabilityGapNormalizer {
         input.platformResults().forEach(value -> normalize(context, value, attempts, gaps));
         input.frontendAssemblies().forEach(value -> normalize(context, value, attempts, gaps));
         input.frontendResults().forEach(value -> normalize(context, value, attempts, gaps));
+        input.springInventories().forEach(value -> normalize(context, value, gaps));
 
-        return EvidenceAcquisitionLedger.create(context, gaps, attempts, input.conflicts(), input.resolutions());
+        VersionedIdentifier normalizer = input.springInventories().isEmpty()
+                ? EvidenceAcquisitionLedger.NORMALIZER : EvidenceAcquisitionLedger.M4A1_NORMALIZER;
+        return EvidenceAcquisitionLedger.create(
+                normalizer, context, gaps, attempts, input.conflicts(), input.resolutions());
     }
 
     private static void validateContext(EvidenceContext context, EvidenceNormalizationInput input) {
@@ -61,6 +66,12 @@ public final class CapabilityGapNormalizer {
         input.frontendResults().forEach(value -> {
             if (context.analysisIdentity().isEmpty() || !context.analysisIdentity().orElseThrow().equals(value.analysis())) {
                 throw new IllegalArgumentException("Frontend normalization requires its exact pre-existing analysis identity");
+            }
+        });
+        input.springInventories().forEach(value -> {
+            if (context.analysisIdentity().isEmpty()
+                    || !context.analysisIdentity().orElseThrow().equals(value.analysis())) {
+                throw new IllegalArgumentException("Spring inventory normalization requires its exact pre-existing analysis identity");
             }
         });
         if (input.additionalAttempts().stream().anyMatch(value -> !value.context().equals(context))
@@ -346,6 +357,20 @@ public final class CapabilityGapNormalizer {
                 addGap(context, result.frontend(), reference, CapabilityGapCatalog.unmappedObservation(), subject,
                         spans, observation.diagnostics(), attempts, gaps);
             }
+        }
+    }
+
+    private static void normalize(EvidenceContext context, SpringMechanismInventory inventory,
+            List<CapabilityGapRecord> gaps) {
+        for (SpringMechanismInventory.Problem problem : inventory.problems()) {
+            SpringCapabilityGapCatalog.Entry entry = SpringCapabilityGapCatalog.entryFor(problem.reason());
+            ProviderObservationReference observation = reference(inventory.provider(),
+                    "spring.inventory-problem", inventory.identity(), problem);
+            gaps.add(CapabilityGapRecord.create(SpringCapabilityGapCatalog.CATALOG, context,
+                    inventory.provider(), problem.mechanismCategory(), problem.reason().name(),
+                    problem.subject(), problem.sourceSpans(), List.of(observation),
+                    List.of(entry.requirement(problem.subject())), List.of(),
+                    List.of(entry.affectedOutput()), List.of(), problem.diagnostics(), problem.limitations()));
         }
     }
 

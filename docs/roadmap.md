@@ -157,13 +157,13 @@ Exit gate G2: pinned multi-module fixtures and a real repository reproduce modul
 
 ### M4 - Spring Semantic Intelligence
 
-M4 changes from single-context candidate enrichment to **bounded conditional architecture semantics** inside one exact M3 build context. [ADR-004](decisions/ADR-004-staged-conditional-architecture-semantics.md) and the [canonical semantics contract](architecture/conditional-architecture-semantics.md) govern the direction; no M4 production implementation exists yet.
+M4 changes from single-context candidate enrichment to **bounded conditional architecture semantics** inside one exact M3 build context. [ADR-004](decisions/ADR-004-staged-conditional-architecture-semantics.md) and the [canonical semantics contract](architecture/conditional-architecture-semantics.md) govern the direction. M4A.1 now provides the first production evidence-only mechanism inventory and gap-normalization slice; conditional inference remains unimplemented.
 
 #### M4-R0 — Research and Semantics Gate
 
 **2026-09-11: PASSED (Human-Accepted).** The human supervisor reviewed and approved the R0 contract candidate ([architecture/m4-r0-semantics-gate.md](architecture/m4-r0-semantics-gate.md)), research matrix ([research/2026-09-11-m4-r0-spring-semantics.md](research/2026-09-11-m4-r0-spring-semantics.md)), 29-family catalog (`spring-mechanisms:v2`), bounded runtime/formal oracle evidence and preregistered protocol. Production implementation is authorized starting with slice M4A.1.
 
-Before production Spring semantics:
+Accepted M4-R0 prerequisites (historical checklist):
 
 - approve producer/candidate/injection/condition/configuration-space identities;
 - freeze `spring-mechanisms:v2` and the first supported Spring Boot/Framework version matrix;
@@ -173,6 +173,8 @@ Before production Spring semantics:
 - implement an exhaustive small-space oracle specification and preregister solver/baseline/corpus protocols.
 
 #### M4A — Mechanism Ground Truth
+
+**2026-09-12: M4A.1 DELIVERED; M4A.2 NEXT.** The first slice passively inventories the accepted 29-family catalog from exact frontend/classpath/resource evidence and closes every raw row as a marker or typed semantic obligation. It deliberately performs no activation, registration or binding inference. M4A.2 extends acquisition to composed declarations and remaining callable/type/declaration mechanisms.
 
 Detect and account for direct/composed stereotypes, component scanning, `@Bean`, constructor/field/method/`@Bean` parameter injection, JSR-330/`@Resource`, collection/provider forms, qualifiers, primary/fallback, framework entry points, auto-configuration, factories, Spring Data, generated members, XML, programmatic registration, lookup, SpEL and runtime-dynamic mechanisms. Every registered row is `SUPPORTED`, `CONDITIONAL`, `DYNAMIC`, `UNSUPPORTED` or `OUT_OF_SCOPE` with a closed denominator and evidence need.
 
@@ -380,7 +382,7 @@ Paper readiness, venue selection, extensive artifact badging, and elaborate defe
 
 1. Preserve completed M0–M2 and delivered M3.1–M3.8 contracts/evidence.
 2. Preserve the G2 decision and its immutable evidence; any new external checkpoint requires separate authorization.
-3. Gate M4-R0 research and semantics accepted. Execute M4A.1 mechanism ground truth.
+3. Preserve accepted M4-R0 evidence and delivered M4A.1 invariants. Execute M4A.2 remaining evidence-only mechanism acquisition.
 4. Implement the smallest approved conditional fragment through M4A–M4D with exhaustive oracle fixtures and closed denominators.
 5. Run M4E baselines/real-repository evaluation and obtain G3 acceptance before treating conditional Spring facts as stable M5/M6 inputs.
 6. Continue M5–M10 Track A product work, obtain human approval, then execute M11 conditional architecture evolution and M12 integration.

@@ -79,11 +79,32 @@ public record CapabilityGapRecord(
             List<AcquisitionAttemptRecord.Identity> acquisitionAttemptReferences,
             List<Diagnostic> diagnostics,
             List<String> limitations) {
+        return create(CapabilityGapCatalog.CATALOG, context, detectingProvider, mechanismCategory,
+                reasonCode, subject, sourceSpans, observationReferences, evidenceRequirements,
+                candidateProviders, affectedOutputs, acquisitionAttemptReferences, diagnostics, limitations);
+    }
+
+    /** Additive factory for a separately versioned domain reason catalog using the same gap schema. */
+    public static CapabilityGapRecord create(
+            VersionedIdentifier catalog,
+            EvidenceContext context,
+            VersionedIdentifier detectingProvider,
+            String mechanismCategory,
+            String reasonCode,
+            EvidenceSubject subject,
+            List<SourceSpan> sourceSpans,
+            List<ProviderObservationReference> observationReferences,
+            List<EvidenceRequirement> evidenceRequirements,
+            List<CandidateProvider> candidateProviders,
+            List<AffectedOutput> affectedOutputs,
+            List<AcquisitionAttemptRecord.Identity> acquisitionAttemptReferences,
+            List<Diagnostic> diagnostics,
+            List<String> limitations) {
         List<SourceSpan> spans = sourceSpans.stream().sorted().distinct().toList();
         List<EvidenceRequirement> requirements = evidenceRequirements.stream().sorted().distinct().toList();
-        CapabilityGapIdentity identity = derive(CapabilityGapCatalog.CATALOG, context, detectingProvider,
+        CapabilityGapIdentity identity = derive(catalog, context, detectingProvider,
                 mechanismCategory, reasonCode, subject, spans, requirements);
-        return new CapabilityGapRecord(SCHEMA, CapabilityGapCatalog.CATALOG, identity, context,
+        return new CapabilityGapRecord(SCHEMA, catalog, identity, context,
                 detectingProvider, mechanismCategory, reasonCode, subject, spans, observationReferences,
                 requirements, candidateProviders, affectedOutputs, acquisitionAttemptReferences, diagnostics, limitations);
     }
@@ -92,7 +113,7 @@ public record CapabilityGapRecord(
         if (!gapIdentity.equals(other.gapIdentity()) || !stableView().equals(other.stableView())) {
             throw new IllegalArgumentException("Only records for the same stable gap may be merged");
         }
-        return create(context, detectingProvider, mechanismCategory, reasonCode, subject, sourceSpans,
+        return create(catalog, context, detectingProvider, mechanismCategory, reasonCode, subject, sourceSpans,
                 union(observationReferences, other.observationReferences(), Comparator.naturalOrder()),
                 evidenceRequirements,
                 mergeCandidatePlans(candidateProviders, other.candidateProviders()),

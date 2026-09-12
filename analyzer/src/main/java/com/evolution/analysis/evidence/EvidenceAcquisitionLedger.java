@@ -19,6 +19,8 @@ public record EvidenceAcquisitionLedger(
     public static final String SCHEMA = "evidence-acquisition-ledger-v1";
     public static final VersionedIdentifier NORMALIZER =
             new VersionedIdentifier("evidence.gap-normalizer", "m3.8");
+    public static final VersionedIdentifier M4A1_NORMALIZER =
+            new VersionedIdentifier("evidence.gap-normalizer", "m4a.1");
 
     public EvidenceAcquisitionLedger {
         ContractChecks.notNull(identity, "evidence ledger identity");
@@ -81,6 +83,15 @@ public record EvidenceAcquisitionLedger(
     public static EvidenceAcquisitionLedger create(EvidenceContext context,
             List<CapabilityGapRecord> gaps, List<AcquisitionAttemptRecord> attempts,
             List<ProviderConflictRecord> conflicts, List<GapResolutionRecord> resolutions) {
+        return create(NORMALIZER, context, gaps, attempts, conflicts, resolutions);
+    }
+
+    public static EvidenceAcquisitionLedger create(VersionedIdentifier normalizer, EvidenceContext context,
+            List<CapabilityGapRecord> gaps, List<AcquisitionAttemptRecord> attempts,
+            List<ProviderConflictRecord> conflicts, List<GapResolutionRecord> resolutions) {
+        if (!NORMALIZER.equals(normalizer) && !M4A1_NORMALIZER.equals(normalizer)) {
+            throw new IllegalArgumentException("Unsupported evidence normalizer version");
+        }
         TreeMap<CapabilityGapIdentity, CapabilityGapRecord> merged = new TreeMap<>();
         for (CapabilityGapRecord gap : gaps) {
             merged.merge(gap.gapIdentity(), gap, CapabilityGapRecord::mergeHistory);
@@ -89,8 +100,8 @@ public record EvidenceAcquisitionLedger(
         List<AcquisitionAttemptRecord> normalizedAttempts = mergeAttempts(attempts);
         List<ProviderConflictRecord> normalizedConflicts = conflicts.stream().sorted().distinct().toList();
         List<GapResolutionRecord> normalizedResolutions = resolutions.stream().sorted().distinct().toList();
-        return new EvidenceAcquisitionLedger(derive(NORMALIZER, context, normalizedGaps, normalizedAttempts,
-                normalizedConflicts, normalizedResolutions), SCHEMA, NORMALIZER, context, normalizedGaps,
+        return new EvidenceAcquisitionLedger(derive(normalizer, context, normalizedGaps, normalizedAttempts,
+                normalizedConflicts, normalizedResolutions), SCHEMA, normalizer, context, normalizedGaps,
                 normalizedAttempts, normalizedConflicts, normalizedResolutions);
     }
 
