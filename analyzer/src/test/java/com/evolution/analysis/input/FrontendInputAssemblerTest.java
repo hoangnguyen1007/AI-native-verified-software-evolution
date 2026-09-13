@@ -43,6 +43,11 @@ class FrontendInputAssemblerTest {
                 request.manifest().configuration().values().get("java.platform.vendor"));
         assertEquals(fixture.decoding.identity().value(),
                 request.manifest().configuration().values().get("java.source-decoding"));
+        var spring = com.evolution.analysis.spring.condition.SpringBuildContext.from(result, APP.identity(), SourcePlanModel.Kind.MAIN);
+        assertEquals(request.manifest().snapshot().identity(), spring.snapshotIdentity());
+        assertEquals(List.of(Map.of("kind", "BINARY", "entry", fixture.reactor.binary().entry()),
+                        Map.of("kind", "BINARY", "entry", fixture.dependency.entry())),
+                spring.canonicalForm().get("orderedResolutionInputs"));
     }
 
     @Test
@@ -158,6 +163,10 @@ class FrontendInputAssemblerTest {
                 sibling.sources().stream().map(value -> value.document().path()).toList());
         assertEquals("reactor-source-input-v1",
                 request.manifest().configuration().values().get("java.reactor-source-resolution"));
+        var spring = com.evolution.analysis.spring.condition.SpringBuildContext.from(result, APP.identity(), SourcePlanModel.Kind.MAIN);
+        assertEquals(List.of(Map.of("kind", "REACTOR_SOURCE", "identity", sibling.identity()),
+                        Map.of("kind", "BINARY", "entry", fixture.dependency.entry())),
+                spring.canonicalForm().get("orderedResolutionInputs"));
 
         Fixture generated = fixture(true, true);
         FrontendAssemblyResult withheld = FrontendInputAssembler.assemble(
@@ -166,6 +175,8 @@ class FrontendInputAssemblerTest {
         assertTrue(withheld.outcomes().getFirst().problems().stream()
                 .anyMatch(problem -> problem.reason() == FrontendAssemblyResult.Reason.MISSING_REACTOR_OUTPUT),
                 "handwritten sources must not conceal an unacquired generated-source surface");
+        assertThrows(IllegalArgumentException.class, () -> com.evolution.analysis.spring.condition.SpringBuildContext.from(
+                withheld, APP.identity(), SourcePlanModel.Kind.MAIN));
     }
 
     private static Fixture fixture() {

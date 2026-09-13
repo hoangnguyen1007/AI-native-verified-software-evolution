@@ -1,0 +1,22 @@
+[
+  {
+    "path": "analyzer/target/analyzer-0.1.0-SNAPSHOT.jar",
+    "sha256": "2cf4695f0f5373f4578435c5c3ab03fcf9d95f7494c25806b64dcb7f9c4896f7"
+  },
+  {
+    "path": "analyzer-maven/target/analyzer-maven-0.1.0-SNAPSHOT.jar",
+    "sha256": "11c44bb54cc086a6b1f8cb57b0fc18d7906ebaa79cef34d6f2d0802f7191510e"
+  },
+  {
+    "path": "analyzer-filesystem/target/analyzer-filesystem-0.1.0-SNAPSHOT.jar",
+    "sha256": "d7555ba114a41dddcc7da3425427dd6dc2cf680bcec32642c84f166e67996aa0"
+  },
+  {
+    "path": "analyzer-javaparser/target/analyzer-javaparser-0.1.0-SNAPSHOT.jar",
+    "sha256": "30c0bc938fcfe7a0290232678dd7204ffe50e18aea294e899af5bebbfbaf70ca"
+  },
+  {
+    "path": "backend/target/backend-0.1.0-SNAPSHOT.jar",
+    "sha256": "02a0444ff1abefa808a6ae25f3f0644fc226b839af81da8474a59f4a24ebe26d"
+  }
+]

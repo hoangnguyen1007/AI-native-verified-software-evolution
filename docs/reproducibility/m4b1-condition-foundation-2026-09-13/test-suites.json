@@ -1,0 +1,425 @@
+[
+  {
+    "module": "analyzer",
+    "name": "com.evolution.analysis.acquisition.RepositoryAcquisitionContractTest",
+    "tests": 3,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "seconds": "0.133"
+  },
+  {
+    "module": "analyzer",
+    "name": "com.evolution.analysis.buildmodel.BuildModelContractTest",
+    "tests": 3,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "seconds": "0.031"
+  },
+  {
+    "module": "analyzer",
+    "name": "com.evolution.analysis.buildmodel.SourcePlanContractTest",
+    "tests": 3,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "seconds": "0.018"
+  },
+  {
+    "module": "analyzer",
+    "name": "com.evolution.analysis.classpath.ClasspathResolutionContractTest",
+    "tests": 3,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "seconds": "0.062"
+  },
+  {
+    "module": "analyzer",
+    "name": "com.evolution.analysis.contract.AnalysisAndAssessmentContractTest",
+    "tests": 7,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "seconds": "0.082"
+  },
+  {
+    "module": "analyzer",
+    "name": "com.evolution.analysis.contract.CanonicalSerializationTest",
+    "tests": 4,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "seconds": "0.02"
+  },
+  {
+    "module": "analyzer",
+    "name": "com.evolution.analysis.contract.DerivedEvidenceTest",
+    "tests": 1,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "seconds": "0.015"
+  },
+  {
+    "module": "analyzer",
+    "name": "com.evolution.analysis.contract.IdentityAndSourceContractTest",
+    "tests": 8,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "seconds": "0.017"
+  },
+  {
+    "module": "analyzer",
+    "name": "com.evolution.analysis.contract.RootModuleTest",
+    "tests": 1,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "seconds": "0.003"
+  },
+  {
+    "module": "analyzer",
+    "name": "com.evolution.analysis.contract.SemanticContractTest",
+    "tests": 6,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "seconds": "0.012"
+  },
+  {
+    "module": "analyzer",
+    "name": "com.evolution.analysis.dependency.DependencyAcquisitionContractTest",
+    "tests": 3,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "seconds": "0.018"
+  },
+  {
+    "module": "analyzer",
+    "name": "com.evolution.analysis.evidence.CapabilityGapContractTest",
+    "tests": 12,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "seconds": "0.122"
+  },
+  {
+    "module": "analyzer",
+    "name": "com.evolution.analysis.frontend.FrontendContractTest",
+    "tests": 6,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "seconds": "0.046"
+  },
+  {
+    "module": "analyzer",
+    "name": "com.evolution.analysis.frontend.FrontendResultTest",
+    "tests": 3,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "seconds": "0.009"
+  },
+  {
+    "module": "analyzer",
+    "name": "com.evolution.analysis.frontend.JavaSymbolNameTest",
+    "tests": 6,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "seconds": "0.011"
+  },
+  {
+    "module": "analyzer",
+    "name": "com.evolution.analysis.input.FrontendInputAssemblerTest",
+    "tests": 6,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "seconds": "0.201"
+  },
+  {
+    "module": "analyzer",
+    "name": "com.evolution.analysis.input.SourceDecoderTest",
+    "tests": 6,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "seconds": "0.056"
+  },
+  {
+    "module": "analyzer",
+    "name": "com.evolution.analysis.spring.condition.ConditionExpressionTest",
+    "tests": 5,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "seconds": "0.062"
+  },
+  {
+    "module": "analyzer",
+    "name": "com.evolution.analysis.spring.condition.ConditionModelTest",
+    "tests": 11,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "seconds": "0.619"
+  },
+  {
+    "module": "analyzer",
+    "name": "com.evolution.analysis.spring.condition.ConfigurationSpaceTest",
+    "tests": 8,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "seconds": "0.075"
+  },
+  {
+    "module": "analyzer",
+    "name": "com.evolution.analysis.spring.SpringMechanismInventoryTest",
+    "tests": 12,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "seconds": "0.236"
+  },
+  {
+    "module": "analyzer",
+    "name": "com.evolution.analysis.spring.SpringMechanismM4A2Test",
+    "tests": 1,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "seconds": "0.03"
+  },
+  {
+    "module": "analyzer",
+    "name": "com.evolution.foundation.Java21BuildTest",
+    "tests": 1,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "seconds": "0.001"
+  },
+  {
+    "module": "analyzer-maven",
+    "name": "com.evolution.analysis.maven.MavenBuildModelProviderTest",
+    "tests": 20,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "seconds": "0.569"
+  },
+  {
+    "module": "analyzer-maven",
+    "name": "com.evolution.analysis.maven.MavenBuildModelResolverTest",
+    "tests": 8,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "seconds": "0.251"
+  },
+  {
+    "module": "analyzer-maven",
+    "name": "com.evolution.analysis.maven.MavenDependencyArtifactProviderTest",
+    "tests": 12,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "seconds": "0.24"
+  },
+  {
+    "module": "analyzer-maven",
+    "name": "com.evolution.analysis.maven.MavenDependencyArtifactResolverTest",
+    "tests": 3,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "seconds": "0.238"
+  },
+  {
+    "module": "analyzer-maven",
+    "name": "com.evolution.analysis.maven.MavenLocalClasspathProviderTest",
+    "tests": 11,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "seconds": "0.759"
+  },
+  {
+    "module": "analyzer-maven",
+    "name": "com.evolution.analysis.maven.PlatformReactorModelTest",
+    "tests": 1,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "seconds": "0.028"
+  },
+  {
+    "module": "analyzer-maven",
+    "name": "com.evolution.analysis.maven.SourcePlanProjectionTest",
+    "tests": 12,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "seconds": "0.096"
+  },
+  {
+    "module": "analyzer-filesystem",
+    "name": "com.evolution.analysis.filesystem.FilesystemJdkPlatformProviderTest",
+    "tests": 4,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "seconds": "0.253"
+  },
+  {
+    "module": "analyzer-filesystem",
+    "name": "com.evolution.analysis.filesystem.FilesystemRepositoryAcquirerTest",
+    "tests": 8,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "seconds": "0.429"
+  },
+  {
+    "module": "analyzer-javaparser",
+    "name": "com.evolution.analysis.javaparser.AnnotationsTest",
+    "tests": 4,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "seconds": "1.741"
+  },
+  {
+    "module": "analyzer-javaparser",
+    "name": "com.evolution.analysis.javaparser.ExpressionTypesTest",
+    "tests": 3,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "seconds": "0.971"
+  },
+  {
+    "module": "analyzer-javaparser",
+    "name": "com.evolution.analysis.javaparser.FieldAccessTest",
+    "tests": 7,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "seconds": "3.434"
+  },
+  {
+    "module": "analyzer-javaparser",
+    "name": "com.evolution.analysis.javaparser.FrozenFixtureTest",
+    "tests": 1,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "seconds": "2.95"
+  },
+  {
+    "module": "analyzer-javaparser",
+    "name": "com.evolution.analysis.javaparser.JavaParserFrontendTest",
+    "tests": 3,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "seconds": "1.161"
+  },
+  {
+    "module": "analyzer-javaparser",
+    "name": "com.evolution.analysis.javaparser.MethodReferencesTest",
+    "tests": 6,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "seconds": "2.778"
+  },
+  {
+    "module": "analyzer-javaparser",
+    "name": "com.evolution.analysis.javaparser.ModernFixtureTest",
+    "tests": 1,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "seconds": "1.99"
+  },
+  {
+    "module": "analyzer-javaparser",
+    "name": "com.evolution.analysis.javaparser.OriginalSourceTest",
+    "tests": 4,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "seconds": "0.025"
+  },
+  {
+    "module": "analyzer-javaparser",
+    "name": "com.evolution.analysis.javaparser.ReactorSourceResolutionTest",
+    "tests": 5,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "seconds": "2.529"
+  },
+  {
+    "module": "analyzer-javaparser",
+    "name": "com.evolution.analysis.javaparser.RecordsTest",
+    "tests": 5,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "seconds": "2.112"
+  },
+  {
+    "module": "analyzer-javaparser",
+    "name": "com.evolution.analysis.javaparser.ResolutionInputsTest",
+    "tests": 13,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "seconds": "6.476"
+  },
+  {
+    "module": "analyzer-javaparser",
+    "name": "com.evolution.analysis.javaparser.SemanticBoundariesTest",
+    "tests": 9,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "seconds": "2.868"
+  },
+  {
+    "module": "analyzer-javaparser",
+    "name": "com.evolution.analysis.javaparser.SpringMechanismM4A2IntegrationTest",
+    "tests": 5,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "seconds": "3.769"
+  },
+  {
+    "module": "analyzer-javaparser",
+    "name": "com.evolution.analysis.javaparser.TypeRelationshipsTest",
+    "tests": 6,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "seconds": "2.098"
+  },
+  {
+    "module": "backend",
+    "name": "com.evolution.foundation.Java21BuildTest",
+    "tests": 1,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "seconds": "0.038"
+  }
+]

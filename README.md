@@ -2,7 +2,7 @@
 
 This repository is the SE121 software architecture intelligence platform. The Java 21 Maven reactor contains parser-neutral contracts, the M2 JavaParser frontend, progressive effective-POM/source-plan modeling, bounded filesystem and dependency-artifact acquisition, exact Maven classpaths, deterministic source decoding, explicit analyzed-JDK symbol views, per-source-set frontend-input assembly, and normalized capability-gap/acquisition records. Gate G2 is formally PASSED following independent semantic adjudication across representative archetypes. Gate M4-R0 (Research and Semantics Gate) is PASSED following human review and acceptance. See [current state](docs/current-state.md) for verified scope and limitations.
 
-The active milestone is **Milestone 4: Spring Semantics Enrichment & Truth-Region Intelligence**, executing starting with slice **M4A.1: evidence-only mechanism inventory and CapabilityGapRecord normalization** based on the accepted [M4-R0 semantics gate contract](docs/architecture/m4-r0-semantics-gate.md) and [ADR-004](docs/decisions/ADR-004-staged-conditional-architecture-semantics.md).
+The active milestone is **Milestone 4: Spring Semantics Enrichment & Truth-Region Intelligence**. M4A.1–M4A.2 evidence acquisition and [M4B.1 configuration-space/condition IR foundation](docs/architecture/m4b1-configuration-space-condition-ir.md) are delivered; the next slice is M4B.2 evidence-to-IR lowering and bounded exogenous evaluation, under the accepted [M4-R0 contract](docs/architecture/m4-r0-semantics-gate.md) and [ADR-004](docs/decisions/ADR-004-staged-conditional-architecture-semantics.md).
 
 ## Build prerequisites
 

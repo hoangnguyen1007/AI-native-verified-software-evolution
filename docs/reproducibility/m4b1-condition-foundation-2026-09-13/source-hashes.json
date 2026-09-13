@@ -1,0 +1,74 @@
+[
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/spring/condition/ConditionEvidence.java",
+    "sha256": "3999bbdb2ac2ecd966ccd8b3e1938f8a86020bdb4f2ef059355c53df6193a719"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/spring/condition/ConditionExpression.java",
+    "sha256": "96f87c3c3617b4075ad4ba8c852266c24d0aa539f0db64a1e2a62a714fbcbdf1"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/spring/condition/ConditionIdentitySupport.java",
+    "sha256": "21eb7f56559d5c49867337e6d2d7c62ba3886adac335d7a1ebd180700658c329"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/spring/condition/ConditionModel.java",
+    "sha256": "1bb46c672f71d774acab2c44097aa2f8168585c35aa37465adeabd5a84ef9b35"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/spring/condition/ConditionOccurrence.java",
+    "sha256": "88e0ff590c464c168367d22e684c21c91a1e5c5bfdf135403c34ec524ff2cf91"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/spring/condition/ConfigurationEnvelope.java",
+    "sha256": "d70e8e3a2513fac05607d0c3b3e8dd59e7618ef5a25a1e86ca90a9a2c776488a"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/spring/condition/ConfigurationSpace.java",
+    "sha256": "b0794ed5e1deb68580ef20ea5b7a65d7f953657f7f4c66dcd4a3974c8d8d69a2"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/spring/condition/ConfigurationSpaceIdentity.java",
+    "sha256": "e3731360be351638dfeb7d7dde03697467aa88b52cc4c6dcbd4e08511a19e600"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/spring/condition/FiniteDomain.java",
+    "sha256": "163cecc9e8a4330988f0129cf942131dfbf490a415d54b319cfb19f6099ed6cd"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/spring/condition/LogicalValue.java",
+    "sha256": "97620ffab298721997b8f9b37e98e1b687079a2d494f59629f9c81ff39f8a90b"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/spring/condition/SpringBuildContext.java",
+    "sha256": "434233a9745202f96533997b91e6ee231b6a60756230df34002adf41c051459d"
+  },
+  {
+    "path": "analyzer/src/test/java/com/evolution/analysis/input/ConditionTestInputs.java",
+    "sha256": "e379e7015be531cbd7824d02b43f036198eb94c069f8c278bbf5a94a50b63bb1"
+  },
+  {
+    "path": "analyzer/src/test/java/com/evolution/analysis/input/FrontendInputAssemblerTest.java",
+    "sha256": "b5f05ef5a8eef007cc242d54f3ea2ba69ee8fc4d34fe00cc622cf90a86fb2246"
+  },
+  {
+    "path": "analyzer/src/test/java/com/evolution/analysis/spring/condition/ConditionExpressionTest.java",
+    "sha256": "669a6d5b2d20c0f1723b81376aa697b00ae8e0057056a8665b9336606f1d8aba"
+  },
+  {
+    "path": "analyzer/src/test/java/com/evolution/analysis/spring/condition/ConditionModelTest.java",
+    "sha256": "870dbcf234bf01a8535a0250a1a6e491cdc0fac5ad59afd00dfb267ff0db5339"
+  },
+  {
+    "path": "analyzer/src/test/java/com/evolution/analysis/spring/condition/ConfigurationSpaceTest.java",
+    "sha256": "9146707237ebf37fff047d0e38657e6400aa61a5fd1ea311af568bd72d22e847"
+  },
+  {
+    "path": "analyzer/src/test/resources/fixtures/m4b1/r0-kleene.tsv",
+    "sha256": "9816e509c5c36f4fe4d62584fb841bad95f42dabd5107b71c4689913ff732829"
+  },
+  {
+    "path": "analyzer/src/test/resources/fixtures/m4b1/README.md",
+    "sha256": "34b0a083b3289b628b63cd16c44cc6659c70d989ef5a13f02cde096b593e10d5"
+  }
+]

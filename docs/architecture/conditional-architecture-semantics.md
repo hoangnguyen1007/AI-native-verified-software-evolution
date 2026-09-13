@@ -2,9 +2,9 @@
 
 ## Status and Authority
 
-**ACCEPTED pre-implementation architecture direction.** [ADR-004](../decisions/ADR-004-staged-conditional-architecture-semantics.md) selects this model for M4+ on 2026-09-09. Exact Java schemas, the first supported semantic fragment, solver backend, numerical limits and empirical claims remain **PROVISIONAL** until their gates.
+**ACCEPTED architecture direction.** [ADR-004](../decisions/ADR-004-staged-conditional-architecture-semantics.md) selects this model for M4+ on 2026-09-09. The accepted M4-R0 refinement defines the first fragment, identities and bounded experimental limits. [M4B.1](m4b1-configuration-space-condition-ir.md) implements the condition/configuration-space representation schemas; remaining evaluator/registration/binding schemas, solver selection and empirical claims remain gated.
 
-The owner has now authorized M4-R0 after G2 was recorded passed. The [R0 refinement candidate](m4-r0-semantics-gate.md) specifies additive identities, historical scope, first fragment and nested event/ordering domains for review. Production M4 implementation and G3 remain gated; no complete Spring runtime-container equivalence is claimed.
+The owner accepted [M4-R0](m4-r0-semantics-gate.md) on 2026-09-11 after G2 was recorded passed. M4A.1–M4A.2 provide passive mechanism evidence; M4B.1 provides finite-space identities, typed IR and gap-preserving validation. Conditional evaluation and G3 remain pending; no complete Spring runtime-container equivalence is claimed.
 
 ## Purpose
 
@@ -311,7 +311,7 @@ Adding support for a new condition or framework version changes the relevant cat
 - repository configuration files are not the complete production environment;
 - no solver backend is approved by this document;
 - no prevalence, accuracy, speed or novelty threshold has yet passed;
-- no M4 production capability is implemented;
+- no production Spring activation, registration/binding or truth-region evaluation is implemented by the delivered M4A/M4B.1 foundations;
 - no runtime/build execution is authorized by this contract.
 
 ## Related Documents

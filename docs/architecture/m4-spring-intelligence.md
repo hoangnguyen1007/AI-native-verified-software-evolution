@@ -2,7 +2,7 @@
 
 ## Status and Scope
 
-**ACCEPTED direction and gate contract.** [ADR-004](../decisions/ADR-004-staged-conditional-architecture-semantics.md) changes M4 from one-context candidate enrichment to bounded, phase/order-aware conditional architecture semantics. Gate M4-R0 was formally accepted by the human supervisor on 2026-09-11. The [accepted R0 contract](m4-r0-semantics-gate.md) governs identities, the 29-family `spring-mechanisms:v2` catalog, the historical version matrix, the phase/order model, and capability-gap bounds. Production M4A evidence acquisition is delivered through M4A.1 and M4A.2 as described below; conditional inference starts in M4B and remains unimplemented.
+**ACCEPTED direction and gate contract.** [ADR-004](../decisions/ADR-004-staged-conditional-architecture-semantics.md) changes M4 from one-context candidate enrichment to bounded, phase/order-aware conditional architecture semantics. Gate M4-R0 was formally accepted by the human supervisor on 2026-09-11. The [accepted R0 contract](m4-r0-semantics-gate.md) governs identities, the 29-family `spring-mechanisms:v2` catalog, the historical version matrix, the phase/order model, and capability-gap bounds. M4A.1–M4A.2 deliver evidence acquisition; M4B.1 adds the [finite-space identity and condition IR foundation](m4b1-configuration-space-condition-ir.md). Condition evaluation and conditional inference remain unimplemented.
 
 The catalog is closed per version, not forever. `spring-mechanisms:v2` must account for every registered fixture/observation exactly once. A new mechanism or materially different framework behavior requires an explicit catalog/semantics-version change rather than silent omission.
 
@@ -251,7 +251,7 @@ G3 requires:
 
 The [accepted M4-R0 contract](m4-r0-semantics-gate.md) resolved the baseline identity preimages, 29-family catalog, three executable Framework/Boot tuples, initial condition/registration fragment, UNKNOWN policy and experimental budgets. The following implementation/evaluation decisions remain; they do not reopen that acceptance without contradictory evidence or a registered replacement trigger.
 
-- Exact Java schemas for M4 concepts not yet implemented, including `ConfigurationSpaceIdentity` and staged registration/binding records.
+- Exact Java schemas for remaining M4 concepts, including staged registration/binding records; the M4B.1 configuration-space/condition schemas are documented in the [implemented foundation](m4b1-configuration-space-condition-ir.md).
 - Evidence-backed expansion beyond the three accepted executable Framework/Boot tuples, plus exact Lombok and Spring Data fragments.
 - Production property-source/import abstraction and sound `OTHER` domains.
 - Solver/branch limits under representative workloads and benchmark-backed backend selection.
