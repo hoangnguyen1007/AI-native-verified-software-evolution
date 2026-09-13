@@ -4,7 +4,7 @@ import com.evolution.analysis.contract.common.ContractChecks;
 import com.evolution.analysis.frontend.*;
 import java.util.*;
 
-/** Exact already-decoded inputs for the passive M4A.1 scanner; no I/O occurs during scanning. */
+/** Exact already-decoded inputs for the passive M4A.2 scanner; no I/O occurs during scanning. */
 public record SpringMechanismScanRequest(
         FrontendResult frontendResult,
         SpringFrameworkEvidence frameworkEvidence,

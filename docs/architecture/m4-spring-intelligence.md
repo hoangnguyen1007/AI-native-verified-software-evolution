@@ -2,7 +2,7 @@
 
 ## Status and Scope
 
-**ACCEPTED direction and gate contract.** [ADR-004](../decisions/ADR-004-staged-conditional-architecture-semantics.md) changes M4 from one-context candidate enrichment to bounded, phase/order-aware conditional architecture semantics. Gate M4-R0 was formally accepted by the human supervisor on 2026-09-11. The [accepted R0 contract](m4-r0-semantics-gate.md) governs identities, the 29-family `spring-mechanisms:v2` catalog, the historical version matrix, the phase/order model, and capability-gap bounds. Production implementation began with M4A.1, which is now delivered as described below.
+**ACCEPTED direction and gate contract.** [ADR-004](../decisions/ADR-004-staged-conditional-architecture-semantics.md) changes M4 from one-context candidate enrichment to bounded, phase/order-aware conditional architecture semantics. Gate M4-R0 was formally accepted by the human supervisor on 2026-09-11. The [accepted R0 contract](m4-r0-semantics-gate.md) governs identities, the 29-family `spring-mechanisms:v2` catalog, the historical version matrix, the phase/order model, and capability-gap bounds. Production M4A evidence acquisition is delivered through M4A.1 and M4A.2 as described below; conditional inference starts in M4B and remains unimplemented.
 
 The catalog is closed per version, not forever. `spring-mechanisms:v2` must account for every registered fixture/observation exactly once. A new mechanism or materially different framework behavior requires an explicit catalog/semantics-version change rather than silent omission.
 
@@ -34,6 +34,24 @@ It performs no filesystem or network acquisition, class loading, target handler 
 XML inventory is deliberately lexical and bounded to supplied documents, start elements, attributes and document-type declarations. Known beans elements remain in `spring.registration.xml`; unknown namespaces/elements enter the catch-all. DTD text is inventoried lexically but removed before a DTD-disabled StAX validation pass, so internal entities are never expanded and external resources are never fetched. Custom namespace handlers are never loaded. `spring.factories` logical continuation rows and Boot `AutoConfiguration.imports` physical rows retain exact source spans; unrecognized keys are counted rather than dropped.
 
 The M3 `CapabilityGapRecord` schema remains unchanged. `evidence.spring-mechanism-gaps:m4a.1-v1` and `evidence.gap-normalizer:m4a.1` add the accepted M4A.1 mappings for `UNCLASSIFIED_MECHANISM`, `ANNOTATION_SEMANTICS_NOT_ADJUDICATED` and `VERSION_FRAGMENT_NOT_VALIDATED`, preserving observation references, source spans, diagnostics, limitations and affected coverage. This slice establishes detection and denominator closure only. It does not claim annotation composition, activation, configuration-space truth, registration, candidate selection, runtime instantiation or complete Spring-container equivalence.
+
+## Implemented Slice M4A.2 — Remaining Evidence-Only Mechanism Acquisition
+
+**CONFIRMED by implementation and focused tests (2026-09-13):** passive provider `spring.mechanism-scanner:m4a.2` advances the content-addressed contract to `spring-mechanism-inventory-v2`. It preserves the M4A.1 resource and annotation-use denominator while adding three deterministic graph ledgers: annotation declarations, meta-annotation edges and strongly connected cycles. Exact project annotation declaration bytes are digested; attribute declarations retain source spans, declaration digests, `default` presence and exact `@AliasFor` raw-observation references; `@Repeatable` retains its resolved container target. Unresolved external declarations remain explicit nodes without fabricated bytes or targets.
+
+Composed classification traverses only resolved declaration edges. Source-to-source edges are valid evidence, known framework/JDK terminal edges additionally require their exact accepted origin/scope, cycles are retained as content-addressed SCCs, and incompleteness propagates backwards through the graph. A project type copying a Spring FQN or an annotation sharing a familiar simple name cannot cross the artifact or graph boundary.
+
+The same provider classifies the remaining evidence shapes without asserting their runtime result:
+
+- an implicit constructor only when the exact resolved source constructor set contains one eligible constructor, plus exact `@Bean` parameter declarations and their written type completeness;
+- aggregate/provider injection shapes from exact array/JDK/Spring/Jakarta/Javax type identities;
+- `FactoryBean`, Spring Data repository ancestry, programmatic-registration SPIs and framework entrypoint/callback SPIs through exact resolved type hierarchies;
+- programmatic registration and container lookup calls through exact canonical callable owners and registered method names on supplied dependency artifacts;
+- generated-member annotations as candidates with explicit missing-generated-source/bytecode evidence, never synthesized members.
+
+Every added Java raw row is reconciled to a classified obligation or `spring.mechanism.unclassified`. The gap catalog is `evidence.spring-mechanism-gaps:m4a.2-v1` and normalization uses `evidence.gap-normalizer:m4a.2`; it adds typed reasons for incomplete annotation/constructor/parameter evidence, aggregate/provider shapes, generated members, unknown factory products, unproved repositories, dynamic registry mutation/lookup and unresolved lifecycle entrypoints. Runtime access is requested only for explicitly dynamic registry, lookup and callback questions; the scanner itself performs no runtime access.
+
+M4A.2 completes M4A detection/provenance scope, not G3. It does not evaluate conditions, scan enablement, bean names, producer activation, registration effects/order, factory products, repository proxy creation, injection binding, lifecycle execution or configuration-space truth. Those remain M4B–M4E work and typed capability gaps.
 
 ## Modeling Invariants
 

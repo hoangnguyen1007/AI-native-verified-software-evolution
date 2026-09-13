@@ -64,7 +64,12 @@ class SpringMechanismInventoryTest {
         assertEquals("UNCLASSIFIED_MECHANISM",
                 SpringMechanismCatalog.require("spring.mechanism.unclassified").gap().reasonCode());
         assertEquals(Set.of("UNCLASSIFIED_MECHANISM", "ANNOTATION_SEMANTICS_NOT_ADJUDICATED",
-                        "VERSION_FRAGMENT_NOT_VALIDATED"),
+                        "VERSION_FRAGMENT_NOT_VALIDATED", "ANNOTATION_GRAPH_INCOMPLETE",
+                        "CONSTRUCTOR_SET_INCOMPLETE", "GENERATED_MEMBER_NOT_ACQUIRED",
+                        "PARAMETER_EVIDENCE_INCOMPLETE", "AGGREGATE_OR_PROVIDER_UNMODELED",
+                        "FACTORY_PRODUCT_TYPE_UNKNOWN", "DYNAMIC_REGISTRY_MUTATION",
+                        "DYNAMIC_LOOKUP_TARGET", "REPOSITORY_REGISTRATION_UNPROVED",
+                        "ENTRYPOINT_OR_LIFECYCLE_UNMODELED"),
                 Arrays.stream(SpringMechanismInventory.ProblemReason.values())
                         .map(Enum::name).collect(java.util.stream.Collectors.toSet()));
     }
@@ -160,7 +165,12 @@ class SpringMechanismInventoryTest {
         assertEquals("spring.mechanism.unclassified",
                 unclassified.obligations().getFirst().primaryMechanism());
         assertEquals(1, unclassified.coverage().unclassifiedObservationCount());
-        assertEquals(Set.of("ANNOTATION_SEMANTICS_NOT_ADJUDICATED"), reasons(unclassified));
+        assertEquals(Set.of("ANNOTATION_GRAPH_INCOMPLETE"), reasons(unclassified));
+        assertEquals(1, unclassified.annotationDeclarations().size());
+        assertEquals(SpringMechanismInventory.EvidenceState.UNRESOLVED,
+                unclassified.annotationDeclarations().getFirst().evidenceState());
+        assertTrue(unclassified.annotationDeclarations().getFirst().rawDeclarationObservationIdentity().isEmpty());
+        assertFalse(unclassified.annotationDeclarations().getFirst().graphComplete());
         assertEquals(Set.of("VERSION_FRAGMENT_NOT_VALIDATED"), reasons(versionGap));
 
         RepositorySnapshot snapshot = RepositorySnapshot.create(REPOSITORY, Optional.empty(), false,
@@ -171,12 +181,12 @@ class SpringMechanismInventoryTest {
         EvidenceAcquisitionLedger replay = CapabilityGapNormalizer.normalize(context,
                 EvidenceNormalizationInput.builder().springInventories(List.of(unclassified)).build());
 
-        assertEquals(new VersionedIdentifier("evidence.gap-normalizer", "m4a.1"), ledger.normalizer());
+        assertEquals(new VersionedIdentifier("evidence.gap-normalizer", "m4a.2"), ledger.normalizer());
         assertEquals(ledger.identity(), replay.identity());
         assertEquals(1, ledger.gaps().size());
         CapabilityGapRecord gap = ledger.gaps().getFirst();
-        assertEquals(new VersionedIdentifier("evidence.spring-mechanism-gaps", "m4a.1-v1"), gap.catalog());
-        assertEquals("ANNOTATION_SEMANTICS_NOT_ADJUDICATED", gap.reasonCode());
+        assertEquals(new VersionedIdentifier("evidence.spring-mechanism-gaps", "m4a.2-v1"), gap.catalog());
+        assertEquals("ANNOTATION_GRAPH_INCOMPLETE", gap.reasonCode());
         assertEquals("spring.mechanism.unclassified", gap.mechanismCategory());
         assertFalse(gap.observationReferences().isEmpty());
         assertFalse(gap.sourceSpans().isEmpty());

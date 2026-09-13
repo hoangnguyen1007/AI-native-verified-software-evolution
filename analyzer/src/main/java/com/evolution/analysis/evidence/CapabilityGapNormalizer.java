@@ -42,7 +42,7 @@ public final class CapabilityGapNormalizer {
         input.springInventories().forEach(value -> normalize(context, value, gaps));
 
         VersionedIdentifier normalizer = input.springInventories().isEmpty()
-                ? EvidenceAcquisitionLedger.NORMALIZER : EvidenceAcquisitionLedger.M4A1_NORMALIZER;
+                ? EvidenceAcquisitionLedger.NORMALIZER : EvidenceAcquisitionLedger.M4A2_NORMALIZER;
         return EvidenceAcquisitionLedger.create(
                 normalizer, context, gaps, attempts, input.conflicts(), input.resolutions());
     }
