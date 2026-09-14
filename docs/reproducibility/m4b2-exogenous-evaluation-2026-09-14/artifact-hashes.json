@@ -1,0 +1,7 @@
+{
+  "analyzer-filesystem\\target\\analyzer-filesystem-0.1.0-SNAPSHOT.jar": "d7555ba114a41dddcc7da3425427dd6dc2cf680bcec32642c84f166e67996aa0",
+  "analyzer-javaparser\\target\\analyzer-javaparser-0.1.0-SNAPSHOT.jar": "9cf17a7b5c7ee919b2f2ef4e7bac27313527d5507e99a27b5af5ec8eb773e3b0",
+  "analyzer-maven\\target\\analyzer-maven-0.1.0-SNAPSHOT.jar": "87816f6ec9aa2ab881cffbd4c9187d170efcb35aa0a3f8d094a1f000a62b889a",
+  "analyzer\\target\\analyzer-0.1.0-SNAPSHOT.jar": "f2c0686d72fbe5c87560cb8ece8941f07ae6e3409f0d524a9671a33de4a292a0",
+  "backend\\target\\backend-0.1.0-SNAPSHOT.jar": "02a0444ff1abefa808a6ae25f3f0644fc226b839af81da8474a59f4a24ebe26d"
+}

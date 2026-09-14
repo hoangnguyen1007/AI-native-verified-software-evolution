@@ -13,6 +13,9 @@ public final class SpringBuildContext {
     private final SnapshotIdentity snapshot;
     private final Map<String, Object> canonicalForm;
     private final Map<SourceDocumentIdentity, ContentDigest> snapshotSources;
+    private final AnalysisIdentity analysis;
+    private final ContentDigest classpathManifest;
+    private final List<com.evolution.analysis.contract.analysis.ClasspathEntry> binaries;
 
     private SpringBuildContext(FrontendAssemblyResult assembly, FrontendAssemblyResult.Outcome outcome) {
         FrontendRequest request = outcome.request().orElseThrow();
@@ -23,6 +26,9 @@ public final class SpringBuildContext {
             throw new IllegalArgumentException("Assembly source-set scope does not match its request");
         }
         snapshot = request.manifest().snapshot().identity();
+        analysis = request.manifest().identity();
+        classpathManifest = request.plan().classpathManifest();
+        binaries = request.dependencies().stream().map(BinaryInput::entry).toList();
         Map<SourceDocumentIdentity, ContentDigest> sourceEvidence = new HashMap<>();
         request.manifest().snapshot().files().forEach(file -> sourceEvidence.put(
                 SourceDocumentIdentity.from(request.manifest().snapshot().repository(), file.path()), file.contentDigest()));
@@ -62,6 +68,16 @@ public final class SpringBuildContext {
     }
     public Identity identity() { return identity; }
     public SnapshotIdentity snapshotIdentity() { return snapshot; }
+    public AnalysisIdentity analysisIdentity() { return analysis; }
+    public Optional<ContentDigest> sourceDigest(SourceDocumentIdentity document) { return Optional.ofNullable(snapshotSources.get(document)); }
+    public boolean containsFrameworkEvidence(com.evolution.analysis.spring.SpringFrameworkEvidence evidence) {
+        return evidence.classpathManifestIdentity().filter(classpathManifest::equals).isPresent()
+                && evidence.artifacts().stream().allMatch(artifact -> binaries.stream().anyMatch(entry ->
+                        entry.logicalName().equals(artifact.classpathLogicalName()) && entry.contentDigest().equals(artifact.contentDigest())))
+                && binaries.stream().filter(entry -> entry.logicalName().startsWith("org.springframework:")
+                        || entry.logicalName().startsWith("org.springframework.boot:")).allMatch(entry -> evidence.artifacts().stream().anyMatch(artifact ->
+                        entry.logicalName().equals(artifact.classpathLogicalName()) && entry.contentDigest().equals(artifact.contentDigest())));
+    }
     public Map<String, Object> canonicalForm() { return canonicalForm; }
     public boolean containsSource(ConditionEvidence.Source evidence) {
         Objects.requireNonNull(evidence);

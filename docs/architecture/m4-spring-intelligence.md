@@ -2,7 +2,7 @@
 
 ## Status and Scope
 
-**ACCEPTED direction and gate contract.** [ADR-004](../decisions/ADR-004-staged-conditional-architecture-semantics.md) changes M4 from one-context candidate enrichment to bounded, phase/order-aware conditional architecture semantics. Gate M4-R0 was formally accepted by the human supervisor on 2026-09-11. The [accepted R0 contract](m4-r0-semantics-gate.md) governs identities, the 29-family `spring-mechanisms:v2` catalog, the historical version matrix, the phase/order model, and capability-gap bounds. M4A.1–M4A.2 deliver evidence acquisition; M4B.1 adds the [finite-space identity and condition IR foundation](m4b1-configuration-space-condition-ir.md). Condition evaluation and conditional inference remain unimplemented.
+**ACCEPTED direction and gate contract.** [ADR-004](../decisions/ADR-004-staged-conditional-architecture-semantics.md) changes M4 from one-context candidate enrichment to bounded, phase/order-aware conditional architecture semantics. Gate M4-R0 was formally accepted by the human supervisor on 2026-09-11. The [accepted R0 contract](m4-r0-semantics-gate.md) governs identities, the 29-family `spring-mechanisms:v2` catalog, the historical version matrix, the phase/order model, and capability-gap bounds. M4A.1–M4A.2 deliver evidence acquisition; M4B.1 adds the [finite-space identity and condition IR foundation](m4b1-configuration-space-condition-ir.md); M4B.2 delivers [evidence-to-IR lowering and bounded exogenous condition evaluation](m4b2-evidence-lowering-exogenous-evaluation.md). Phase/order-aware registration and conditional inference remain pending.
 
 The catalog is closed per version, not forever. `spring-mechanisms:v2` must account for every registered fixture/observation exactly once. A new mechanism or materially different framework behavior requires an explicit catalog/semantics-version change rather than silent omission.
 
@@ -52,6 +52,18 @@ The same provider classifies the remaining evidence shapes without asserting the
 Every added Java raw row is reconciled to a classified obligation or `spring.mechanism.unclassified`. The gap catalog is `evidence.spring-mechanism-gaps:m4a.2-v1` and normalization uses `evidence.gap-normalizer:m4a.2`; it adds typed reasons for incomplete annotation/constructor/parameter evidence, aggregate/provider shapes, generated members, unknown factory products, unproved repositories, dynamic registry mutation/lookup and unresolved lifecycle entrypoints. Runtime access is requested only for explicitly dynamic registry, lookup and callback questions; the scanner itself performs no runtime access.
 
 M4A.2 completes M4A detection/provenance scope, not G3. It does not evaluate conditions, scan enablement, bean names, producer activation, registration effects/order, factory products, repository proxy creation, injection binding, lifecycle execution or configuration-space truth. Those remain M4B–M4E work and typed capability gaps.
+
+## Implemented Slice M4B.1 — Configuration-Space Identity and Condition IR Foundation
+
+**CONFIRMED by implementation and focused tests (2026-09-13):** `analyzer` delivers the storage- and solver-neutral condition expression IR (`spring.condition-ir:m4b.1-v1`), content-addressed `ConfigurationSpaceIdentity`, exact M3 build context projections (`SpringBuildContext`), typed finite domains (`FiniteDomain`), explicit configuration envelopes (`ConfigurationEnvelope`), and the bounded condition-row validator (`ConditionModel`). Original M1/M3 identities and schemas remain unchanged. Bounded Cartesian counting uses `BigInteger` with deterministic saturation. The Strong-Kleene 3-valued algebra is strictly enforced. See [M4B.1 Architecture Contract](m4b1-configuration-space-condition-ir.md).
+
+## Implemented Slice M4B.2 — Evidence-to-IR Lowering and Bounded Exogenous Evaluation
+
+**CONFIRMED by implementation and focused tests (2026-09-14):** `analyzer` delivers the evidence-to-IR lowering boundary (`spring.condition-lowering:m4b.2`), bounded exogenous condition evaluation (`spring.exogenous-evaluator:m4b.2`), and finite configuration space enumeration (`spring.finite-exogenous-evaluator:m4b.2`).
+
+Every M4A obligation is partitioned into a closed denominator: `LOWERED`, `OPAQUE`, or `NOT_A_CONDITION`. Supported literal `@Profile` and `@ConditionalOnProperty` annotations are lowered with strict AST escape handling, whitespace/empty preservation, and Spring's mandatory parentheses rule for mixed AND/OR profile expressions. Build-context conditions (`@ConditionalOnClass`, `@ConditionalOnResource`, `@ConditionalOnJava`) are verified against whole-annotation query proofs; conflicting proofs emit `BUILD_EVIDENCE_CONFLICT`. Project-defined Spring impostors and unverified framework version fragments remain `OPAQUE`.
+
+Exogenous evaluation supports Strong-Kleene 3-valued logic, source precedence ordering (`spring.normalized-precedence:last-active-v1`) with `MISSING` fall-through, profile policies (`spring.normalized-profiles:defaults-includes-groups-v1`) with cycle-safe monotone reachability, Spring Boot `matchIfMissing` and `havingValue` matching rules, and deterministic step/depth budgets. Endogenous bean conditions and custom `@Conditional` classes remain `UNKNOWN` with typed obligations. Finite small-space evaluation enumerates Cartesian assignments with deterministic saturation guards. See [M4B.2 Architecture Contract](m4b2-evidence-lowering-exogenous-evaluation.md).
 
 ## Modeling Invariants
 

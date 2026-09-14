@@ -1,0 +1,16 @@
+{
+  "analyzer/src/main/java/com/evolution/analysis/spring/SpringFrameworkEvidence.java": "54b2dafad9e643dab3a851a5d33b6b893de320815f355bf148b67f1d2494ca1a",
+  "analyzer/src/main/java/com/evolution/analysis/spring/SpringMechanismScanner.java": "293a16daeb115bb3fad3ab83c7ffdd488ed9a6eac58e9daceb4883d428c502b7",
+  "analyzer/src/main/java/com/evolution/analysis/spring/condition/ConditionEvidenceLowering.java": "635752b041de20db53fb5ace262096cdae1e1ffc7d023ac3bb5d3e44d54dc5e7",
+  "analyzer/src/main/java/com/evolution/analysis/spring/condition/ConditionProcessing.java": "62c61fff3ddcc7fdf716d03a905d97a1f544f4f1a2cd1168d53b854886402e89",
+  "analyzer/src/main/java/com/evolution/analysis/spring/condition/ConfigurationAssignment.java": "03e7ca08d9c8692c9544d60d0b01adb9e45d9d361d9ff9461bdd709df3c597e1",
+  "analyzer/src/main/java/com/evolution/analysis/spring/condition/ExogenousConditionEvaluator.java": "d2752733775ec4c20acb55ff0bba9489ab9e628e38542f881e741071ed7eefba",
+  "analyzer/src/main/java/com/evolution/analysis/spring/condition/FiniteConfigurationEvaluation.java": "bf9a92694a092cca5415c558234509fe99e7c2124c802b67cbe1bac75823dbdc",
+  "analyzer/src/main/java/com/evolution/analysis/spring/condition/LiteralConditionAnnotation.java": "598686d7e71bc675f5c4b1e98fd2d47230760513648aa654875147b87f5d3d2f",
+  "analyzer/src/main/java/com/evolution/analysis/spring/condition/ProfileExpressionLowering.java": "cab2058280c379d5c9fb5ed4ffab6397c9d819de99ab82c84d0d3b6841e2ac1d",
+  "analyzer/src/main/java/com/evolution/analysis/spring/condition/SpringBuildContext.java": "9fbe235cfc5138cbcde9ed24dcf8316918526744d6e1e487ab05d5917b09edea",
+  "analyzer/src/test/java/com/evolution/analysis/input/ConditionTestInputs.java": "28a82244ec2dba3455712fbce91f4f9403b517d13adb338b69af40009fc8b97d",
+  "analyzer/src/test/java/com/evolution/analysis/spring/condition/ConditionLoweringTest.java": "f95e6eada50f4ee2c5885c81b49f26a6d7f66a2acaba8a7faaa47844c473f519",
+  "analyzer/src/test/java/com/evolution/analysis/spring/condition/ExogenousConditionEvaluatorTest.java": "adcc21073106b310ba49e19b08946a2ef86f545fd87b9d358518693e3c988310",
+  "analyzer/src/test/java/com/evolution/analysis/spring/condition/FiniteConfigurationEvaluationTest.java": "2475e89f4fb880984c8de71f8dfc0279486a83f1605d72518a85913c179c59d2"
+}

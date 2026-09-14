@@ -40,6 +40,29 @@ public record SpringFrameworkEvidence(boolean completeClasspath,
         return artifacts.stream().anyMatch(value -> value.entityScope().equals(scope));
     }
 
+    /** Exact accepted R0 artifact tuples, never a version-range or name-only support claim. */
+    public boolean acceptedConditionFragment(boolean bootRequired) {
+        if (!completeClasspath || classpathManifestIdentity.isEmpty()) return false;
+        Set<String> framework = new TreeSet<>(), boot = new TreeSet<>();
+        for (var artifact : artifacts) {
+            if (artifact.groupId().equals("org.springframework")) framework.add(artifact.version());
+            if (artifact.groupId().equals("org.springframework.boot")) boot.add(artifact.version());
+        }
+        if (framework.size() != 1 || boot.size() > 1 || bootRequired && boot.isEmpty()) return false;
+        String version = framework.iterator().next();
+        String expectedBoot = switch (version) {
+            case "5.3.31" -> "2.7.18"; case "6.1.14" -> "3.3.5"; case "6.2.0" -> "3.4.0"; default -> "";
+        };
+        if (expectedBoot.isEmpty() || !boot.isEmpty() && !boot.equals(Set.of(expectedBoot))) return false;
+        for (var expected : SpringMechanismScanner.expectedArtifacts(version, expectedBoot).entrySet()) {
+            if (boot.isEmpty() && expected.getKey().startsWith("org.springframework.boot:")) continue;
+            var matching = artifacts.stream().filter(a -> a.coordinate().equals(expected.getKey())).toList();
+            if (matching.size() != 1 || !matching.getFirst().classpathLogicalName().equals(expected.getKey() + "@jar")
+                    || !matching.getFirst().contentDigest().value().equals(expected.getValue())) return false;
+        }
+        return true;
+    }
+
     public record Artifact(String coordinate, String classpathLogicalName, ContentDigest contentDigest)
             implements Comparable<Artifact> {
         public Artifact(String coordinate, ContentDigest contentDigest) {

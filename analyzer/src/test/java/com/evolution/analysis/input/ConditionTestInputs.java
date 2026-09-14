@@ -23,6 +23,11 @@ public final class ConditionTestInputs {
     private ConditionTestInputs() {}
 
     public static SpringBuildContext context() { return context(List.of("a", "b"), "fixture-locator", 21); }
+    public static FrontendAssemblyResult assembly(FrontendRequest request) {
+        return FrontendAssemblyResult.create(ContentDigest.sha256Utf8("authored-m4b2-assembly"), List.of(
+                new FrontendAssemblyResult.Outcome(request.module(), SourcePlanModel.Kind.valueOf(request.sourceSet().name()),
+                        FrontendAssemblyResult.Status.ASSEMBLED, Optional.of(request), List.of())));
+    }
     public static SpringBuildContext context(List<String> dependencyOrder, String locator, int release) {
         var assembly = assembly(dependencyOrder, locator, release);
         return SpringBuildContext.from(assembly, MODULE.identity(), SourcePlanModel.Kind.MAIN);

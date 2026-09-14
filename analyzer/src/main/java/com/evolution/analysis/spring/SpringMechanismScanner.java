@@ -1371,7 +1371,7 @@ public final class SpringMechanismScanner {
                 List.of(), List.of(), limitation);
     }
 
-    private static Map<String, String> expectedArtifacts(String framework, String boot) {
+    static Map<String, String> expectedArtifacts(String framework, String boot) {
         return switch (framework) {
             case "5.3.31" -> pins(framework, boot,
                     "3f0c666f317abaa845fc3a24fba219b1f469716bf309cccd755eecb8fee20430",
