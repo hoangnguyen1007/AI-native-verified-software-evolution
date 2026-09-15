@@ -117,10 +117,12 @@ public final class AutoConfigurationOrdering {
             return result(Status.ORDERED, sorted.stream().filter(selected::contains).toList());
         }
         List<String> orderedPredecessors(String name, List<String> pending, Map<String, LinkedHashSet<String>> predecessors) {
-            // Boot's TreeSet compares the current pending-list index, including its -1 equivalence class.
+            // Keep Boot's pending-index priority, but retain every constraint when several
+            // predecessors have left pending. A tie must not hide a cycle or drop evidence.
             Map<String, Integer> positions = new HashMap<>();
             for (int i = 0; i < pending.size(); i++) { if (!tick()) break; positions.putIfAbsent(pending.get(i), i); }
-            TreeSet<String> result = new TreeSet<>(Comparator.comparingInt(n -> positions.getOrDefault(n, -1)));
+            TreeSet<String> result = new TreeSet<>(Comparator.comparingInt((String n) -> positions.getOrDefault(n, -1))
+                    .thenComparing(Comparator.naturalOrder()));
             for (String predecessor : predecessors.get(name)) { if (!tick()) break; result.add(predecessor); }
             return List.copyOf(result);
         }

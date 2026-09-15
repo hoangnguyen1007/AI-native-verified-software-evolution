@@ -1,0 +1,46 @@
+[
+  {
+    "path": "raw/com.evolution.analysis.spring.condition.AutoConfigurationOrderingTest.txt",
+    "sha256": "591cb613e93c0612c48cef5aed9d9ec9adece7dff08bd15226263807e1422356"
+  },
+  {
+    "path": "raw/com.evolution.analysis.spring.condition.RegistrationDiscoveryTest.txt",
+    "sha256": "cf087116061808544efa4e1e1125cd897327502ef8b7c0c9b5f3650de17a5948"
+  },
+  {
+    "path": "raw/com.evolution.analysis.spring.condition.RegistrationPlanTest.txt",
+    "sha256": "62e59b20e7dadab690f8e394180744f5b1c970bac0de9aecf2d78f45807100d6"
+  },
+  {
+    "path": "raw/m4c1-discovery-final-20260915.log",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "raw/m4c1-discovery-red-4.log",
+    "sha256": "ed1b9876cfb275797ebb49802923feafe1fbf85c0135fbefa43516d9bc1cf3e9"
+  },
+  {
+    "path": "raw/m4c1-identity-red.log",
+    "sha256": "1f15b619feb016b29d188a40a17a90e9cb91a1531144b92d8e19ff3fc1b471e8"
+  },
+  {
+    "path": "raw/m4c1-order-final.log",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "raw/m4c1-order-red.log",
+    "sha256": "1341692defbad7d6317c63ea29fc3634ea85fef67b09ab258dac55da3e1ca1cd"
+  },
+  {
+    "path": "raw/m4c1-plan-red.log",
+    "sha256": "7a37343da30e583acf4ae7c45726354aaf3d9f0b7f2bef4a50fc3468608e6d6c"
+  },
+  {
+    "path": "raw/m4c1-red-3.log",
+    "sha256": "be414cb5878fe19fddbd5e4d300cbdbc399d06514d78f17c05dd616a136686c9"
+  },
+  {
+    "path": "summary.json",
+    "sha256": "2ee8e24185c20fd5e2e14bd4ffa8376dfa3f6f42abbfc8b36a740a905a5c88ae"
+  }
+]

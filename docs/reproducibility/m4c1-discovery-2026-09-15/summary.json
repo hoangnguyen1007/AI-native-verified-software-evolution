@@ -1,0 +1,170 @@
+{
+  "schema": "m4c1-focused-verification-v1",
+  "tests": 32.0,
+  "failures": 0.0,
+  "errors": 0.0,
+  "skipped": 0.0,
+  "reactorRun": false,
+  "externalBenchmarkRun": false,
+  "finalGitInspection": false,
+  "suites": [
+    {
+      "suite": "RegistrationDiscoveryTest",
+      "tests": 18,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 2.268,
+      "cases": [
+        {
+          "name": "registerOnlyConditionDoesNotPreventParsingOrDiscoveryOfBeanMethod",
+          "seconds": 0.783
+        },
+        {
+          "name": "registrarAndSelectorCallbacksRetainTypedGapsAndTaintLaterConditionInputs",
+          "seconds": 0.33
+        },
+        {
+          "name": "independentlyReconstructedConditionObjectsAreAcceptedByContentIdentity",
+          "seconds": 0.046
+        },
+        {
+          "name": "multipleDiscoveryPathsRetainHistoryWithoutDuplicatingACanonicalCandidate",
+          "seconds": 0.152
+        },
+        {
+          "name": "skippedParentDoesNotInvokeOpaqueChildOrTaintAnUnrelatedConfiguration",
+          "seconds": 0.079
+        },
+        {
+          "name": "unknownPhaseIsNotTreatedAsAnOrdinaryOrRegisterOnlyCondition",
+          "seconds": 0.044
+        },
+        {
+          "name": "falseParseGuardSuppressesImportSubtreeAndDoesNotInvokeChildCondition",
+          "seconds": 0.057
+        },
+        {
+          "name": "registerConditionOnAnImporterDoesNotBecomeAConditionOnAnUnrelatedImportedScan",
+          "seconds": 0.096
+        },
+        {
+          "name": "exactTransitionChainAndCandidateDiscoveryAreSeparateFromRegistration",
+          "seconds": 0.108
+        },
+        {
+          "name": "absentOrderEvidenceNeverBecomesALexicalExecutionOrder",
+          "seconds": 0.047
+        },
+        {
+          "name": "limitsRetainEveryEventAndBindDifferentContextIdentities",
+          "seconds": 0.128
+        },
+        {
+          "name": "unknownCustomParseConditionTaintsAllDescendants",
+          "seconds": 0.041
+        },
+        {
+          "name": "actualImportCycleHasAnErrorOutcomeAndCannotBeHiddenByCandidateDeduplication",
+          "seconds": 0.036
+        },
+        {
+          "name": "unknownMembershipAndMissingConditionMetadataCannotCertifyDiscovery",
+          "seconds": 0.061
+        },
+        {
+          "name": "aPlainScannedComponentEvaluatesOrdinaryConditionsAtItsRegisterConditionSite",
+          "seconds": 0.047
+        },
+        {
+          "name": "definiteScanRegisterPhaseErrorStopsLaterEventsWithoutCallingThem",
+          "seconds": 0.056
+        },
+        {
+          "name": "endogenousConditionAtARegisterSiteCannotBeEvaluatedAgainstTheFinalCandidateInventory",
+          "seconds": 0.041
+        },
+        {
+          "name": "ordinaryBeanMethodConditionIsRecordedDuringParseButEvaluatedOnlyAtRegistration",
+          "seconds": 0.048
+        }
+      ]
+    },
+    {
+      "suite": "RegistrationPlanTest",
+      "tests": 8,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.487,
+      "cases": [
+        {
+          "name": "duplicateInvocationIdentityAndForeignObligationsAreInvalidApiInputs",
+          "seconds": 0.033
+        },
+        {
+          "name": "missingParentAndSourceSpanRemainTypedGaps",
+          "seconds": 0.086
+        },
+        {
+          "name": "exactPhaseProvenanceCannotMislabelProfileAsRegisterOnly",
+          "seconds": 0.043
+        },
+        {
+          "name": "sourceMismatchedOrderingProofDoesNotInventSequence",
+          "seconds": 0.045
+        },
+        {
+          "name": "canonicalIdentityDoesNotDependOnListEncounterOrderButDoesBindPrecedenceAndOverridePolicy",
+          "seconds": 0.073
+        },
+        {
+          "name": "candidateNamesAreContainerScopedAndUnresolvedNamesNeverAcquireDefaults",
+          "seconds": 0.057
+        },
+        {
+          "name": "cyclicEdgesRemainVisibleAndEveryBlockedEventHasAnOutcome",
+          "seconds": 0.062
+        },
+        {
+          "name": "unrelatedOrderDomainCannotEstablishARegistrationPrefix",
+          "seconds": 0.07
+        }
+      ]
+    },
+    {
+      "suite": "AutoConfigurationOrderingTest",
+      "tests": 6,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.798,
+      "cases": [
+        {
+          "name": "cycleAndStepExhaustionReturnNoFabricatedOrderAndRetainTheSelectedDenominator",
+          "seconds": 0.607
+        },
+        {
+          "name": "metadataOnlyIntermediateClassesStillConstrainSelectedClasses",
+          "seconds": 0.03
+        },
+        {
+          "name": "absentMetadataTargetsAreDifferentFromUnknownOrMissingEvidence",
+          "seconds": 0.035
+        },
+        {
+          "name": "beforeEdgesOverrideOrderAndTiesUseThePinnedBootAlphabeticalRule",
+          "seconds": 0.029
+        },
+        {
+          "name": "missingSelectedClassCannotBecomeAValidEmptyConfigurationAndDuplicatesAreRejected",
+          "seconds": 0.029
+        },
+        {
+          "name": "bootSortsByOrderThenWalksAfterDependenciesRatherThanUsingPriorityTopologicalSelection",
+          "seconds": 0.025
+        }
+      ]
+    }
+  ]
+}

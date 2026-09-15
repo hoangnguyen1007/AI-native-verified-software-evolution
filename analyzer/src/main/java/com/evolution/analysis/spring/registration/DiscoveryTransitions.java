@@ -114,6 +114,7 @@ public final class DiscoveryTransitions {
         final Map<RegistrationEvent.Identity, RegistrationEvent> events = new HashMap<>();
         final Map<RegistrationEvent.Identity, Row> rows = new HashMap<>();
         final Map<ConditionOccurrence.Identity, LogicalValue> truths = new HashMap<>();
+        final Set<ConditionOccurrence.Identity> opaqueConditions = new HashSet<>();
         final Map<BeanDefinitionCandidate.Identity, CandidateState> candidates = new TreeMap<>();
         final List<State> states = new ArrayList<>();
         final List<Transition> transitions = new ArrayList<>();
@@ -135,6 +136,8 @@ public final class DiscoveryTransitions {
                     && plan.lowering().occurrences().stream().allMatch(o -> modelOccurrences.contains(o.identity()));
             conditionResult = ExogenousConditionEvaluator.evaluate(model, plan.lowering().semantics(), assignment, limits);
             conditionResult.rows().forEach(r -> truths.put(r.occurrence(), r.truth()));
+            plan.lowering().occurrences().stream().filter(o -> o.expression().dependencies().contains(ConditionExpression.Dependency.OPAQUE))
+                    .forEach(o -> opaqueConditions.add(o.identity()));
             plan.events().forEach(e -> { events.put(e.identity(), e); e.candidate().ifPresent(c -> candidates.putIfAbsent(c.identity(),
                     new CandidateState(c.identity(), DiscoveryStatus.NOT_PROCESSED, RegistrationStatus.NOT_EVALUATED, List.of()))); });
             plan.initialDefinitions().forEach(c -> candidates.put(c.identity(), new CandidateState(c.identity(), DiscoveryStatus.DISCOVERED,
@@ -213,6 +216,9 @@ public final class DiscoveryTransitions {
                 } else {
                     status = InvocationStatus.EVALUATED;
                     truth = environmentUnknown ? LogicalValue.UNKNOWN : truths.getOrDefault(condition.occurrence(), LogicalValue.UNKNOWN);
+                    // An invoked opaque condition has no proven purity contract. Its possible
+                    // environment effects also qualify subsequent condition evaluations.
+                    if (opaqueConditions.contains(condition.occurrence())) environmentUnknown = true;
                     guard = guard.and(truth);
                     if (truth == LogicalValue.UNKNOWN) issue(PARSE_CONDITION_UNKNOWN, condition.occurrence().value(), event);
                 }
