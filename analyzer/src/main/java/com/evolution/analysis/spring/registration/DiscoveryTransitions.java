@@ -103,7 +103,13 @@ public final class DiscoveryTransitions {
         }
     }
     public static Result evaluate(RegistrationPlan plan, ConditionModel model, ConfigurationAssignment assignment, ExogenousConditionEvaluator.Limits limits) {
-        return new Evaluation(plan, model, assignment, limits).run();
+        return new Evaluation(plan, model, assignment, limits, false).run();
+    }
+    /** M4C.2 preparation: register-site conditions/callbacks belong to the separate evidenced
+     * registration schedule. This mode establishes membership only, never their effects. */
+    public static Result prepareRegistration(RegistrationPlan plan, ConditionModel model, ConfigurationAssignment assignment,
+                                             ExogenousConditionEvaluator.Limits limits) {
+        return new Evaluation(plan, model, assignment, limits, true).run();
     }
     private static final class Evaluation {
         final RegistrationPlan plan;
@@ -120,16 +126,19 @@ public final class DiscoveryTransitions {
         final List<Transition> transitions = new ArrayList<>();
         final List<RegistrationProcessing.Issue> issues = new ArrayList<>();
         final boolean validContext;
+        final boolean registrationPreparation;
         boolean discoveryClosed, environmentUnknown, stopped;
         long stateCells;
-        Evaluation(RegistrationPlan plan, ConditionModel model, ConfigurationAssignment assignment, ExogenousConditionEvaluator.Limits limits) {
+        Evaluation(RegistrationPlan plan, ConditionModel model, ConfigurationAssignment assignment, ExogenousConditionEvaluator.Limits limits,
+                   boolean registrationPreparation) {
             this.plan = Objects.requireNonNull(plan); Objects.requireNonNull(model); this.assignment = Objects.requireNonNull(assignment);
+            this.registrationPreparation = registrationPreparation;
             context = new ContextIdentity(RegistrationIdentity.derive("spring-semantics-context", Map.ofEntries(
                     Map.entry("buildContextIdentity", plan.buildContext().identity()), Map.entry("configurationSpaceIdentity", model.space().identity()),
                     Map.entry("registrationPlanIdentity", plan.identity()), Map.entry("mechanismCatalog", plan.inventory().mechanismCatalog()),
                     Map.entry("conditionIrVersion", ConditionExpression.IR), Map.entry("frameworkSemantics", plan.lowering().semantics()),
                     Map.entry("registrationSemantics", RegistrationProcessing.SEMANTICS), Map.entry("bindingSemantics", "NOT_IMPLEMENTED"),
-                    Map.entry("reasonerPolicy", "evidenced-order-prefix:no-branching-v1"), Map.entry("deterministicLimits", Map.of("discovery", plan.limits(), "exogenous", limits)))));
+                    Map.entry("reasonerPolicy", registrationPreparation ? "registration-preparation:m4c.2-v1" : "evidenced-order-prefix:no-branching-v1"), Map.entry("deterministicLimits", Map.of("discovery", plan.limits(), "exogenous", limits)))));
             input = RegistrationIdentity.digest(Map.of("context", context, "model", model.identity(), "assignment", assignment.identity(), "provider", RegistrationProcessing.PROVIDER));
             var modelOccurrences = new HashSet<ConditionOccurrence.Identity>(); model.sourceRows().forEach(o -> modelOccurrences.add(o.identity()));
             validContext = model.space().buildContext().identity().equals(plan.buildContext().identity())
@@ -203,6 +212,12 @@ public final class DiscoveryTransitions {
                 return row(event, framework62 ? Outcome.ERROR : Outcome.UNKNOWN, LogicalValue.UNKNOWN, InvocationStatus.NOT_INVOKED);
             }
             if (importCycle(event)) { issue(IMPORT_CYCLE, event.eventSlot(), event); stopped = true; return row(event, Outcome.ERROR, LogicalValue.UNKNOWN, InvocationStatus.NOT_INVOKED); }
+            if (registrationPreparation && (event.conditionSite() == ConditionSite.REGISTER_BEAN
+                    || event.kind() == Kind.IMPORT_REGISTRAR || event.kind() == Kind.REGISTRY_POST_PROCESSOR
+                    || event.kind() == Kind.XML_READER)) {
+                return row(event, environmentUnknown ? Outcome.UNKNOWN : Outcome.DISCOVERED,
+                        environmentUnknown ? LogicalValue.UNKNOWN : LogicalValue.TRUE, InvocationStatus.DEFERRED);
+            }
             LogicalValue guard = event.conditionMetadata() == Completeness.COMPLETE ? LogicalValue.TRUE : LogicalValue.UNKNOWN;
             if (event.conditionMetadata() != Completeness.COMPLETE) issue(CONDITION_METADATA_INCOMPLETE, event.eventSlot(), event);
             var invocations = new ArrayList<Invocation>();

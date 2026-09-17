@@ -16,6 +16,7 @@ public final class SpringBuildContext {
     private final AnalysisIdentity analysis;
     private final ContentDigest classpathManifest;
     private final List<com.evolution.analysis.contract.analysis.ClasspathEntry> binaries;
+    private final Set<ContentDigest> artifactDigests;
 
     private SpringBuildContext(FrontendAssemblyResult assembly, FrontendAssemblyResult.Outcome outcome) {
         FrontendRequest request = outcome.request().orElseThrow();
@@ -29,6 +30,10 @@ public final class SpringBuildContext {
         analysis = request.manifest().identity();
         classpathManifest = request.plan().classpathManifest();
         binaries = request.dependencies().stream().map(BinaryInput::entry).toList();
+        Set<ContentDigest> exactArtifacts = new HashSet<>();
+        binaries.forEach(entry -> exactArtifacts.add(entry.contentDigest()));
+        request.platform().artifacts().forEach(artifact -> exactArtifacts.add(artifact.contentDigest()));
+        artifactDigests = Set.copyOf(exactArtifacts);
         Map<SourceDocumentIdentity, ContentDigest> sourceEvidence = new HashMap<>();
         request.manifest().snapshot().files().forEach(file -> sourceEvidence.put(
                 SourceDocumentIdentity.from(request.manifest().snapshot().repository(), file.path()), file.contentDigest()));
@@ -70,6 +75,8 @@ public final class SpringBuildContext {
     public SnapshotIdentity snapshotIdentity() { return snapshot; }
     public AnalysisIdentity analysisIdentity() { return analysis; }
     public Optional<ContentDigest> sourceDigest(SourceDocumentIdentity document) { return Optional.ofNullable(snapshotSources.get(document)); }
+    /** Exact dependency/platform payload membership; the existing build identity already binds these digests. */
+    public boolean containsArtifact(ContentDigest digest) { return artifactDigests.contains(Objects.requireNonNull(digest)); }
     public boolean containsFrameworkEvidence(com.evolution.analysis.spring.SpringFrameworkEvidence evidence) {
         return evidence.classpathManifestIdentity().filter(classpathManifest::equals).isPresent()
                 && evidence.artifacts().stream().allMatch(artifact -> binaries.stream().anyMatch(entry ->

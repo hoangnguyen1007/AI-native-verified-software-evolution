@@ -188,7 +188,7 @@ public final class ConditionEvidenceLowering {
             default -> Optional.empty();
         };
     }
-    private static String exactAnnotationType(RawObservation observation, SpringFrameworkEvidence framework) {
+    static String exactAnnotationType(RawObservation observation, SpringFrameworkEvidence framework) {
         for (var entry : SpringMechanismCatalog.entries()) if (entry.id().startsWith("spring.condition.")) {
             for (String type : entry.annotationTypes()) {
                 int dot = type.lastIndexOf('.'); String key = JavaSymbolName.topLevelType(type.substring(0, dot), type.substring(dot + 1)).canonicalName();
