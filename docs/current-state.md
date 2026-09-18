@@ -31,7 +31,8 @@ G3. **CONFIRMED final verification:** 15 focused M4D tests pass; the final six-m
 469 tests across 62 suites with zero failures, errors or skips under Maven 3.9.16 / Oracle JDK 21.0.12.1.
 Exact commands are recorded in the
 [M4D verification package](reproducibility/m4d-truth-regions-2026-09-18/README.md). Exact next task:
-**M4E validation and G3 evidence**, not another M4D implementation slice.
+**Milestone M4-UNIVERSAL (Big Task: Universal Multi-Repository & Spring Intelligence Engine)**,
+executing the comprehensive practical overhaul across Lombok, Spring Data, auto-config ingestion, Sat4j and dual-version Boot 2/3 prior to M4E validation.
 
 ## COMPLETED IMPLEMENTATION — M4C.3 INJECTION BINDING AND DEPENDENCY RESOLUTION
 
@@ -203,8 +204,12 @@ Open work starts with M4E validation and G3 evidence over the delivered M4D boun
 
 ## EXACT NEXT TASK
 
-Recommended **Milestone 4 — M4E validation and Gate G3 evidence**:
-1. Freeze the adjudicated M4E fixture/corpus and baseline inputs permitted by the accepted protocol.
-2. Evaluate the delivered M4B–M4D fragment across pinned framework tuples and representative repositories, including failures and capability gaps in closed denominators.
-3. Report binding/truth-region correctness, false certainty, false unconditional warnings, witness validity/minimality, deterministic replay and resource boundaries against registered baselines.
-4. Seek human G3 adjudication. Do not infer G3 from M4D unit tests or silently expand providers/framework tuples during evaluation.
+Recommended **Milestone 4 — M4-UNIVERSAL (Big Task: Universal Multi-Repository & Spring Intelligence Engine)**:
+1. **Lombok & Java 17/21 Record Synthetic DI:** Implement preprocessors in `analyzer-javaparser` and `analyzer` to extract synthetic constructors (`@RequiredArgsConstructor`, `@AllArgsConstructor`, `@NoArgsConstructor`) and record canonical constructors as valid injection points.
+2. **Spring Data Repository Synthesizer:** Automatically detect interfaces extending `Repository`, `CrudRepository`, `JpaRepository`, `MongoRepository` and register synthetic bean definition candidates, eliminating unsatisfied repository dependency gaps.
+3. **Automated Resource Ingestion:** Implement native parsing of `application.properties` and `application.yml` (plus profile variants) to build baseline configuration assignments automatically, resolving `@Value` and `@ConditionalOnProperty`.
+4. **SAT Solver Backend (Sat4j):** Integrate pure-Java Sat4j solver into `ConfigurationReasoner` to handle massive/unbounded configuration spaces ($2^{50}+$ variables) in milliseconds without `ENUMERATION_INCOMPLETE`.
+5. **Dual-Version Compatibility:** Support both `javax.*` (Spring Boot 1.x/2.x) and `jakarta.*` (Spring Boot 3.x), and parse both `spring.factories` and `AutoConfiguration.imports`.
+6. **Auto Component Scanning & Route Mapping:** Auto-scan base packages from `@SpringBootApplication` and extract HTTP endpoints (`@RequestMapping`, `@GetMapping`, `@PostMapping`).
+
+Follow with **M4E validation and Gate G3 evidence** once the universal coverage engine is active.

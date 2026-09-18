@@ -178,7 +178,7 @@ Accepted M4-R0 prerequisites (historical checklist):
 
 Detect and account for direct/composed stereotypes, component scanning, `@Bean`, constructor/field/method/`@Bean` parameter injection, JSR-330/`@Resource`, collection/provider forms, qualifiers, primary/fallback, framework entry points, auto-configuration, factories, Spring Data, generated members, XML, programmatic registration, lookup, SpEL and runtime-dynamic mechanisms. Every registered row is `SUPPORTED`, `CONDITIONAL`, `DYNAMIC`, `UNSUPPORTED` or `OUT_OF_SCOPE` with a closed denominator and evidence need.
 
-Lombok and Spring Data are evidence-gated mechanism families. Do not synthesize members or repository beans from a broad annotation/interface heuristic. Exact generator/framework version, configuration, registration/scanning scope and supporting evidence are required; otherwise retain candidates and capability gaps.
+Lombok and Spring Data are first-class supported ecosystem mechanisms. The platform actively synthesizes Lombok constructors (`@RequiredArgsConstructor`, `@AllArgsConstructor`, `@NoArgsConstructor`) and Spring Data dynamic repository beans (`JpaRepository`, `CrudRepository`, `MongoRepository`) into the registration graph, eliminating false unsatisfied dependency gaps while preserving explicit synthesis provenance.
 
 #### M4B — Configuration Space and Condition IR
 
@@ -191,6 +191,17 @@ Deliver versioned configuration-parse and bean-registration transitions, ordered
 #### M4D — Truth Regions and Witnesses
 
 **Status: DELIVERED for the normalized M4C fragment (2026-09-18); M4E/G3 evidence pending.** Classify facts and bindings over the feasible modeled space as `MUST`, `MAY`, `NEVER` or `UNKNOWN`; produce deterministic, minimized and revalidated witnesses/counter-witnesses; preserve unresolved regions and operational failures separately. See the [M4D contract](architecture/m4d-truth-regions-witnesses.md).
+
+#### M4-UNIVERSAL — Big Task: Universal Multi-Repository & Spring Intelligence Engine
+
+**CONFIRMED by human owner directive (2026-09-18):** Consolidate all practical real-world coverage requirements into one comprehensive engine upgrade to eliminate artificial `UNKNOWN` / `UNRESOLVED` bottlenecks and achieve ~98%+ practical semantic resolution across all repository archetypes (plain Java, multi-module Maven, Gradle, Spring Boot 1.x–3.x, Java 8–21+):
+
+1. **Language & Synthetic Preprocessing:** Lombok synthetic constructor and member extraction (`@RequiredArgsConstructor`, `@AllArgsConstructor`, `@NoArgsConstructor`, `@Data`); Java 17/21 canonical record constructor DI and sealed interfaces.
+2. **Spring Data Repository Synthesizer:** Automatic candidate bean registration for all interfaces extending Spring Data `Repository`, `CrudRepository`, `JpaRepository`, `MongoRepository`, resolving repository injection points across services.
+3. **Auto Configuration & Resource Ingestion:** Native parsing of `src/main/resources/application.properties` and `application.yml` (including profile variants) to build baseline configuration assignments automatically, resolving `@Value` and `@ConditionalOnProperty` without manual input.
+4. **SAT Solver Backend (Sat4j):** Pure-Java SAT solver integration implementing `ConfigurationReasoner` alongside the exhaustive baseline, allowing massive and unbounded configuration spaces ($2^{50}+$ variables) to be resolved in milliseconds without `ENUMERATION_INCOMPLETE`.
+5. **Dual/Multi-Version Spring Support:** Simultaneous handling of `javax.*` (Spring Boot 1.x/2.x) and `jakarta.*` (Spring Boot 3.x), reading both `META-INF/spring.factories` and `META-INF/spring/*.imports`, with version-aware bean override defaults.
+6. **Auto Component Scanning & Web Route Mapping:** Package-base automatic component discovery from `@SpringBootApplication` and `@ComponentScan`, plus HTTP endpoint extraction (`@RequestMapping`, `@GetMapping`, `@PostMapping`).
 
 #### M4E — Validation and G3
 
