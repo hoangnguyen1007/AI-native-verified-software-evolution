@@ -204,12 +204,18 @@ Open work starts with M4E validation and G3 evidence over the delivered M4D boun
 
 ## EXACT NEXT TASK
 
-Recommended **Milestone 4 — M4-UNIVERSAL (Big Task: Universal Multi-Repository & Spring Intelligence Engine)**:
-1. **Lombok & Java 17/21 Record Synthetic DI:** Implement preprocessors in `analyzer-javaparser` and `analyzer` to extract synthetic constructors (`@RequiredArgsConstructor`, `@AllArgsConstructor`, `@NoArgsConstructor`) and record canonical constructors as valid injection points.
-2. **Spring Data Repository Synthesizer:** Automatically detect interfaces extending `Repository`, `CrudRepository`, `JpaRepository`, `MongoRepository` and register synthetic bean definition candidates, eliminating unsatisfied repository dependency gaps.
-3. **Automated Resource Ingestion:** Implement native parsing of `application.properties` and `application.yml` (plus profile variants) to build baseline configuration assignments automatically, resolving `@Value` and `@ConditionalOnProperty`.
-4. **SAT Solver Backend (Sat4j):** Integrate pure-Java Sat4j solver into `ConfigurationReasoner` to handle massive/unbounded configuration spaces ($2^{50}+$ variables) in milliseconds without `ENUMERATION_INCOMPLETE`.
-5. **Dual-Version Compatibility:** Support both `javax.*` (Spring Boot 1.x/2.x) and `jakarta.*` (Spring Boot 3.x), and parse both `spring.factories` and `AutoConfiguration.imports`.
-6. **Auto Component Scanning & Route Mapping:** Auto-scan base packages from `@SpringBootApplication` and extract HTTP endpoints (`@RequestMapping`, `@GetMapping`, `@PostMapping`).
+Deliver **Milestone M4-UNIVERSAL (Big Task: Universal Multi-Repository & Spring Architecture Intelligence Engine)** in **at most 2 consolidated execution slices**:
 
-Follow with **M4E validation and Gate G3 evidence** once the universal coverage engine is active.
+### Slice 1: Universal Source, Build & Configuration Ingestion
+- **Source & Preprocessor Ingestion:** Automatic extraction and synthesis of Lombok constructors/members (`@RequiredArgsConstructor`, `@AllArgsConstructor`, `@NoArgsConstructor`, `@Data`, `@Value`, `@Builder`), Java 17/21 canonical record constructor DI, and sealed types across Java 8 to 26+.
+- **Universal Build Model Adaptation:** Safe declarative build model extraction across plain Java, single/multi-module Maven (POM inheritance, BOMs, dependency management), and Gradle (`build.gradle` Groovy DSL and `build.gradle.kts` Kotlin DSL).
+- **Automated Configuration Ingestion:** Native reading and hierarchical flattening of configuration sources (`application.properties`, `application.yml`, `application.yaml`, and profile variants) to build baseline configuration assignments automatically.
+- **Zero-Setup Component Discovery:** Package-root auto-detection from `@SpringBootApplication` and `@ComponentScan` to discover all stereotypes across the package tree.
+
+### Slice 2: Universal Spring Semantics, Dynamic Frameworks & SAT Reasoning
+- **Dynamic Framework & Spring Data Synthesizer:** Candidate bean registration for all interfaces extending Spring Data (`Repository`, `CrudRepository`, `JpaRepository`, `MongoRepository`, etc.).
+- **Cross-Generation Dual Namespace Support:** Full support for `javax.*` (Boot 1.x/2.x) and `jakarta.*` (Boot 3.x+), reading both `spring.factories` and `.imports`, with version-aware bean override semantics.
+- **Pure-Java SAT Reasoning Backend:** Boolean SAT solver (DPLL / Sat4j) integrated into `ConfigurationReasoner` to eliminate `ENUMERATION_INCOMPLETE` on arbitrary configuration spaces ($2^{50}+$ variables).
+- **Web API Route Extraction & Advanced Contexts:** HTTP route extraction (`@RequestMapping`, `@GetMapping`, `@PostMapping`) mapping entry points to components; basic SpEL evaluation for `@ConditionalOnExpression`; and hierarchical application context modeling.
+
+**Execution Guidance:** Documentation defines mandatory capabilities, coverage outcomes (~99% real-world coverage), and non-negotiable safety/evidence invariants. Reasoning AI models autonomously devise internal algorithms, data structures, and synthesizers without micromanaged execution steps. Follow with **M4E validation and Gate G3 evidence**.

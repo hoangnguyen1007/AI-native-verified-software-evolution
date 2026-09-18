@@ -194,14 +194,23 @@ Deliver versioned configuration-parse and bean-registration transitions, ordered
 
 #### M4-UNIVERSAL — Big Task: Universal Multi-Repository & Spring Intelligence Engine
 
-**CONFIRMED by human owner directive (2026-09-18):** Consolidate all practical real-world coverage requirements into one comprehensive engine upgrade to eliminate artificial `UNKNOWN` / `UNRESOLVED` bottlenecks and achieve ~98%+ practical semantic resolution across all repository archetypes (plain Java, multi-module Maven, Gradle, Spring Boot 1.x–3.x, Java 8–21+):
+**CONFIRMED by human owner directive (2026-09-18):** Transform the platform into a universal architecture intelligence engine achieving ~99% practical semantic coverage across all real-world repository archetypes: ancient Java (Java 8 or earlier) through modern Java (Java 11, 17, 21, 26+), Spring Framework 1.x–6.x, Spring Boot 1.x–3.x+, multi-module Maven, Gradle (`build.gradle` Groovy and `build.gradle.kts` Kotlin), and plain Java workspaces.
 
-1. **Language & Synthetic Preprocessing:** Lombok synthetic constructor and member extraction (`@RequiredArgsConstructor`, `@AllArgsConstructor`, `@NoArgsConstructor`, `@Data`); Java 17/21 canonical record constructor DI and sealed interfaces.
-2. **Spring Data Repository Synthesizer:** Automatic candidate bean registration for all interfaces extending Spring Data `Repository`, `CrudRepository`, `JpaRepository`, `MongoRepository`, resolving repository injection points across services.
-3. **Auto Configuration & Resource Ingestion:** Native parsing of `src/main/resources/application.properties` and `application.yml` (including profile variants) to build baseline configuration assignments automatically, resolving `@Value` and `@ConditionalOnProperty` without manual input.
-4. **SAT Solver Backend (Sat4j):** Pure-Java SAT solver integration implementing `ConfigurationReasoner` alongside the exhaustive baseline, allowing massive and unbounded configuration spaces ($2^{50}+$ variables) to be resolved in milliseconds without `ENUMERATION_INCOMPLETE`.
-5. **Dual/Multi-Version Spring Support:** Simultaneous handling of `javax.*` (Spring Boot 1.x/2.x) and `jakarta.*` (Spring Boot 3.x), reading both `META-INF/spring.factories` and `META-INF/spring/*.imports`, with version-aware bean override defaults.
-6. **Auto Component Scanning & Web Route Mapping:** Package-base automatic component discovery from `@SpringBootApplication` and `@ComponentScan`, plus HTTP endpoint extraction (`@RequestMapping`, `@GetMapping`, `@PostMapping`).
+**Specification Principle:** Documentation declares **required coverage outcomes, capabilities, and system invariants**; it strictly avoids micromanaging low-level execution procedures, empowering reasoning AI models to autonomously devise optimal algorithms, data structures, and synthesizers.
+
+The Mega Task is partitioned into **at most 2 consolidated execution slices**:
+
+##### Slice 1: Universal Source, Build & Configuration Ingestion
+- **Mandatory Source & Preprocessing Coverage:** Full parsing of Java 8 to 26+ syntax; automatic synthesis and resolution of pervasive real-world patterns including Lombok (`@RequiredArgsConstructor`, `@AllArgsConstructor`, `@NoArgsConstructor`, `@Data`, `@Value`, `@Builder`), Java 17/21 canonical record constructor DI, and sealed hierarchies without requiring pre-compiled bytecode.
+- **Universal Build Model Coverage:** Declarative model extraction across plain Java, single/multi-module Maven (POM inheritance, BOMs, dependency management), and Gradle (`build.gradle` / `build.gradle.kts`), extracting module coordinates, dependencies, and source sets safely without untrusted lifecycle execution.
+- **Automated Configuration Ingestion:** Native ingestion and hierarchical flattening of configuration sources (`application.properties`, `application.yml`, `application.yaml`, and profile-specific variants) to automatically populate property assignments and resolve `@Value` and `@ConditionalOnProperty` without manual inputs.
+- **Zero-Setup Component Discovery:** Package-root auto-detection from `@SpringBootApplication` and `@ComponentScan` to discover all stereotypes (`@Component`, `@Service`, `@Repository`, `@Controller`, `@RestController`, `@Configuration`) across the package tree.
+
+##### Slice 2: Universal Spring Semantics, Dynamic Frameworks & SAT Reasoning
+- **Dynamic Bean & Framework Generation:** Automatic candidate bean modeling for dynamic framework types, including all Spring Data repository interfaces (`Repository`, `CrudRepository`, `JpaRepository`, `MongoRepository`, etc.), eliminating missing dependency gaps in consuming services.
+- **Cross-Generation Framework & Namespace Parity:** Seamless dual support for legacy `javax.*` (Spring Boot 1.x/2.x) and modern `jakarta.*` (Spring Boot 3.x+), auto-configuration registration mechanisms (`META-INF/spring.factories` and `META-INF/spring/*.imports`), and version-aware bean override semantics.
+- **Unbounded Logic & SAT Solving:** Elimination of combinatorial explosion gaps (`ENUMERATION_INCOMPLETE`) on massive configuration spaces ($2^{50}+$ variables) via high-performance Boolean SAT reasoning (pure-Java DPLL / Sat4j) integrated into the truth-region engine.
+- **Web API Route Mapping & Advanced Contexts:** HTTP route extraction (`@RequestMapping`, `@GetMapping`, `@PostMapping`, etc.) mapping API entry points to controllers and services; basic SpEL expression evaluation for `@ConditionalOnExpression`; and hierarchical parent-child application context modeling.
 
 #### M4E — Validation and G3
 
