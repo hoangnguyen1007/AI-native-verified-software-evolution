@@ -2,7 +2,7 @@
 
 ## Status and Scope
 
-**ACCEPTED direction and gate contract.** [ADR-004](../decisions/ADR-004-staged-conditional-architecture-semantics.md) changes M4 from one-context candidate enrichment to bounded, phase/order-aware conditional architecture semantics. Gate M4-R0 was formally accepted by the human supervisor on 2026-09-11. The [accepted R0 contract](m4-r0-semantics-gate.md) governs identities, the 29-family `spring-mechanisms:v2` catalog, the historical version matrix, the phase/order model, and capability-gap bounds. M4A.1–M4A.2 deliver evidence acquisition; M4B.1 adds the [finite-space identity and condition IR foundation](m4b1-configuration-space-condition-ir.md); M4B.2 delivers [evidence-to-IR lowering and bounded exogenous condition evaluation](m4b2-evidence-lowering-exogenous-evaluation.md). M4C.1 delivers [evidence-normalized registration plans and phase/order-aware discovery transitions](m4c1-registration-plan-discovery.md); M4C.2 adds [ordered registration and endogenous conditions](m4c2-ordered-bean-registration.md); M4C.3 delivers [normalized injection binding](m4c3-injection-binding.md). Multi-world truth regions, witnesses and G3 remain pending.
+**ACCEPTED direction and gate contract.** [ADR-004](../decisions/ADR-004-staged-conditional-architecture-semantics.md) changes M4 from one-context candidate enrichment to bounded, phase/order-aware conditional architecture semantics. Gate M4-R0 was formally accepted by the human supervisor on 2026-09-11. The [accepted R0 contract](m4-r0-semantics-gate.md) governs identities, the 29-family `spring-mechanisms:v2` catalog, the historical version matrix, the phase/order model, and capability-gap bounds. M4A.1–M4A.2 deliver evidence acquisition; M4B.1 adds the [finite-space identity and condition IR foundation](m4b1-configuration-space-condition-ir.md); M4B.2 delivers [evidence-to-IR lowering and bounded exogenous condition evaluation](m4b2-evidence-lowering-exogenous-evaluation.md). M4C.1 delivers [evidence-normalized registration plans and phase/order-aware discovery transitions](m4c1-registration-plan-discovery.md); M4C.2 adds [ordered registration and endogenous conditions](m4c2-ordered-bean-registration.md); M4C.3 delivers [normalized injection binding](m4c3-injection-binding.md); M4D delivers [truth regions and revalidated witnesses](m4d-truth-regions-witnesses.md). M4E validation and G3 remain pending.
 
 The catalog is closed per version, not forever. `spring-mechanisms:v2` must account for every registered fixture/observation exactly once. A new mechanism or materially different framework behavior requires an explicit catalog/semantics-version change rather than silent omission.
 
@@ -64,6 +64,28 @@ M4A.2 completes M4A detection/provenance scope, not G3. It does not evaluate con
 Every M4A obligation is partitioned into a closed denominator: `LOWERED`, `OPAQUE`, or `NOT_A_CONDITION`. Supported literal `@Profile` and `@ConditionalOnProperty` annotations are lowered with strict AST escape handling, whitespace/empty preservation, and Spring's mandatory parentheses rule for mixed AND/OR profile expressions. Build-context conditions (`@ConditionalOnClass`, `@ConditionalOnResource`, `@ConditionalOnJava`) are verified against whole-annotation query proofs; conflicting proofs emit `BUILD_EVIDENCE_CONFLICT`. Project-defined Spring impostors and unverified framework version fragments remain `OPAQUE`.
 
 Exogenous evaluation supports Strong-Kleene 3-valued logic, source precedence ordering (`spring.normalized-precedence:last-active-v1`) with `MISSING` fall-through, profile policies (`spring.normalized-profiles:defaults-includes-groups-v1`) with cycle-safe monotone reachability, Spring Boot `matchIfMissing` and `havingValue` matching rules, and deterministic step/depth budgets. Endogenous bean conditions and custom `@Conditional` classes remain `UNKNOWN` with typed obligations. Finite small-space evaluation enumerates Cartesian assignments with deterministic saturation guards. See [M4B.2 Architecture Contract](m4b2-evidence-lowering-exogenous-evaluation.md).
+
+## Implemented Milestone M4D — Truth Regions and Revalidated Witnesses
+
+**CONFIRMED by implementation and focused specification tests (2026-09-18):** the neutral
+`spring.truth` package consumes exact M4C registration/binding plans across the bounded finite M4B
+space. It emits content-addressed definition-presence, injection-candidate and selected-binding facts;
+disjoint/exhaustive `T`/`F`/`U` regions; `MUST`/`MAY`/`NEVER`/`UNKNOWN` classifications; separate
+feasibility and operational outcomes; and deterministic minimum-cardinality baseline-delta witnesses
+with independent M4B/M4C replay. Operationally unevaluated, exhausted or failed worlds remain explicit
+in the denominator but are not promoted to semantic witnesses; failed replay candidates are diagnostic
+evidence, not published revalidated witnesses.
+
+`ConfigurationReasoner` is a solver-neutral port. The delivered exhaustive backend is the small-space
+reference and provides satisfiability, witness, implication and equivalence operations without
+selecting SAT/BDD. Empty, unknown or incompletely enumerated spaces never yield vacuous universal
+facts, and incomplete operands cannot turn an unobserved world into a false implication/equivalence
+counterexample. All result-affecting limits participate in the semantics context, and every upstream/new gap is
+retained through the unchanged M3 capability-gap schema. See the [M4D architecture contract](m4d-truth-regions-witnesses.md).
+
+M4D closes the production truth-region/witness boundary for the normalized M4C fragment. It does not
+expand framework tuples, acquire external configuration/descriptors, prove runtime instantiation,
+run representative repositories or pass G3; those are M4E responsibilities.
 
 ## Modeling Invariants
 

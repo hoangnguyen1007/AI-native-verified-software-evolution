@@ -157,7 +157,7 @@ Exit gate G2: pinned multi-module fixtures and a real repository reproduce modul
 
 ### M4 - Spring Semantic Intelligence
 
-M4 changes from single-context candidate enrichment to **bounded conditional architecture semantics** inside one exact M3 build context. [ADR-004](decisions/ADR-004-staged-conditional-architecture-semantics.md) and the [canonical semantics contract](architecture/conditional-architecture-semantics.md) govern the direction. M4A.1–M4A.2 now provide the production evidence-only mechanism inventory, declaration graph and gap-normalization foundation; conditional inference remains unimplemented.
+M4 changes from single-context candidate enrichment to **bounded conditional architecture semantics** inside one exact M3 build context. [ADR-004](decisions/ADR-004-staged-conditional-architecture-semantics.md) and the [canonical semantics contract](architecture/conditional-architecture-semantics.md) govern the direction. M4A.1–M4A.2 provide the production evidence-only mechanism inventory, declaration graph and gap-normalization foundation; M4B–M4C provide bounded per-assignment inference; and M4D now provides finite-space truth regions and revalidated witnesses. M4E validation and G3 remain pending.
 
 #### M4-R0 — Research and Semantics Gate
 
@@ -190,7 +190,7 @@ Deliver versioned configuration-parse and bean-registration transitions, ordered
 
 #### M4D — Truth Regions and Witnesses
 
-Classify facts and bindings over the feasible modeled space as `MUST`, `MAY`, `NEVER` or `UNKNOWN`; produce deterministic, minimized and revalidated witnesses/counter-witnesses; preserve unresolved regions and operational failures separately.
+**Status: DELIVERED for the normalized M4C fragment (2026-09-18); M4E/G3 evidence pending.** Classify facts and bindings over the feasible modeled space as `MUST`, `MAY`, `NEVER` or `UNKNOWN`; produce deterministic, minimized and revalidated witnesses/counter-witnesses; preserve unresolved regions and operational failures separately. See the [M4D contract](architecture/m4d-truth-regions-witnesses.md).
 
 #### M4E — Validation and G3
 
@@ -383,6 +383,6 @@ Paper readiness, venue selection, extensive artifact badging, and elaborate defe
 1. Preserve completed M0–M2 and delivered M3.1–M3.8 contracts/evidence.
 2. Preserve the G2 decision and its immutable evidence; any new external checkpoint requires separate authorization.
 3. Preserve accepted M4-R0 evidence and delivered M4A.1–M4A.2 detection/provenance invariants. Begin M4B with the storage-/solver-neutral condition IR and finite `ConfigurationSpaceIdentity` inside one exact M3 build context.
-4. Implement the smallest approved conditional fragment through M4B–M4D with exhaustive oracle fixtures and closed denominators.
+4. Preserve the delivered M4B–M4D conditional fragment, exhaustive-oracle behavior, closed denominators and witness replay invariants.
 5. Run M4E baselines/real-repository evaluation and obtain G3 acceptance before treating conditional Spring facts as stable M5/M6 inputs.
 6. Continue M5–M10 Track A product work, obtain human approval, then execute M11 conditional architecture evolution and M12 integration.
