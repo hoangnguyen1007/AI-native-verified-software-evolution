@@ -1,0 +1,80 @@
+{
+  "frameworkSources": [
+    {
+      "bytes": 94618,
+      "scope": "passively inspected source; reference payload outside saved package",
+      "sha256": "7b2cf2db4aacc037b2c69e8e1721fd5a9e8b3400e8c3238dbb783305c1bccfe6",
+      "url": "https://github.com/spring-projects/spring-framework/blob/v6.2.0/spring-beans/src/main/java/org/springframework/beans/factory/support/DefaultListableBeanFactory.java"
+    },
+    {
+      "bytes": 39790,
+      "scope": "passively inspected source; reference payload outside saved package",
+      "sha256": "12fe911750f8eefc8261272e75ed417fd4d94f9d77cac282e1c38c00bbabca83",
+      "url": "https://github.com/spring-projects/spring-framework/blob/v6.2.0/spring-context/src/main/java/org/springframework/context/annotation/CommonAnnotationBeanPostProcessor.java"
+    },
+    {
+      "bytes": 16229,
+      "scope": "passively inspected source; reference payload outside saved package",
+      "sha256": "111e3e45db150e00a82aa049b66ab1fb0c91dd6f6f23069c8cc566f18c99ada4",
+      "url": "https://github.com/spring-projects/spring-framework/blob/v6.2.0/spring-beans/src/main/java/org/springframework/beans/factory/annotation/QualifierAnnotationAutowireCandidateResolver.java"
+    },
+    {
+      "bytes": 7991,
+      "scope": "passively inspected source; reference payload outside saved package",
+      "sha256": "da8c803d7064406778e4069acb8697062961324200b685e3c6359c793917cce3",
+      "url": "https://github.com/spring-projects/spring-framework/blob/v6.2.0/spring-beans/src/main/java/org/springframework/beans/factory/support/GenericTypeAwareAutowireCandidateResolver.java"
+    }
+  ],
+  "oracleArtifacts": [
+    {
+      "bytes": 1954386,
+      "coordinate": "org.springframework:spring-core:6.2.0",
+      "file": "spring-core-6.2.0.jar",
+      "sha256": "3b82629da38717dd616a70ec1055f9a8e208d58132071a6314a32159f8bce162",
+      "url": "https://repo.maven.apache.org/maven2/org/springframework/spring-core/6.2.0/spring-core-6.2.0.jar"
+    },
+    {
+      "bytes": 24534,
+      "coordinate": "org.springframework:spring-jcl:6.2.0",
+      "file": "spring-jcl-6.2.0.jar",
+      "sha256": "2b59288f030ce77a89ec88aa426f32eb9a309056f3646dd5157f9f31f0204fd7",
+      "url": "https://repo.maven.apache.org/maven2/org/springframework/spring-jcl/6.2.0/spring-jcl-6.2.0.jar"
+    },
+    {
+      "bytes": 875125,
+      "coordinate": "org.springframework:spring-beans:6.2.0",
+      "file": "spring-beans-6.2.0.jar",
+      "sha256": "33adf77b49236f2966c9cec7eb5a1aea8ade81d7ada80c36d91bbf89d3298e15",
+      "url": "https://repo.maven.apache.org/maven2/org/springframework/spring-beans/6.2.0/spring-beans-6.2.0.jar"
+    },
+    {
+      "bytes": 418340,
+      "coordinate": "org.springframework:spring-aop:6.2.0",
+      "file": "spring-aop-6.2.0.jar",
+      "sha256": "fe84f18bdefb3ad4f993357d31e61613bb55f348d7ea69ec1ca968b3240b3b08",
+      "url": "https://repo.maven.apache.org/maven2/org/springframework/spring-aop/6.2.0/spring-aop-6.2.0.jar"
+    },
+    {
+      "bytes": 317542,
+      "coordinate": "org.springframework:spring-expression:6.2.0",
+      "file": "spring-expression-6.2.0.jar",
+      "sha256": "37cfc1fe8ca22bb789c20aac6b90e09f2b0ea73085f3271ae61cf12cdb7e8876",
+      "url": "https://repo.maven.apache.org/maven2/org/springframework/spring-expression/6.2.0/spring-expression-6.2.0.jar"
+    },
+    {
+      "bytes": 1349182,
+      "coordinate": "org.springframework:spring-context:6.2.0",
+      "file": "spring-context-6.2.0.jar",
+      "sha256": "a0d2de9df7902edc5f6ae55e2936327bdeac177dbc5392906b8d36f3691fe121",
+      "url": "https://repo.maven.apache.org/maven2/org/springframework/spring-context/6.2.0/spring-context-6.2.0.jar"
+    },
+    {
+      "bytes": 26141,
+      "coordinate": "jakarta.annotation:jakarta.annotation-api:2.1.1",
+      "file": "jakarta.annotation-api-2.1.1.jar",
+      "sha256": "5f65fdaf424eee2b55e1d882ba9bb376be93fb09b37b808be6e22e8851c909fe",
+      "url": "https://repo.maven.apache.org/maven2/jakarta/annotation/jakarta.annotation-api/2.1.1/jakarta.annotation-api-2.1.1.jar"
+    }
+  ],
+  "schema": "m4c3-external-inputs-v1"
+}

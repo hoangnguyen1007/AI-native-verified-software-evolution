@@ -1,0 +1,20 @@
+{
+  "cleanBuild": false,
+  "date": "2026-09-18",
+  "externalRepositoryBenchmark": false,
+  "focusedSpecificationTests": 52,
+  "gitInspection": "omitted by explicit user instruction",
+  "independentReviewer": false,
+  "mavenExecutable": "C:/Users/Admin/.m2/wrapper/dists/apache-maven-3.9.16-bin/5grr65jo27hi51sujmtcldfovl/apache-maven-3.9.16/bin/mvn.cmd",
+  "oracleJUnitTests": 1,
+  "oracleObservations": 23,
+  "reactorCommand": "mvn -o -B -ntp verify -Dmaven.repo.local=C:/Users/Admin/.m2/repository -q",
+  "reactorEnforcerEnabled": true,
+  "reactorExit": 0,
+  "reactorStartedUtc": "2026-09-18T01:46:04.3587300Z",
+  "reactorSuites": 56,
+  "reactorTests": 406,
+  "reportSelection": "Surefire XML LastWriteTimeUtc >= reactor start; prior oracle IT excluded",
+  "schema": "m4c3-verification-execution-v1",
+  "targetRepositoryExecution": false
+}

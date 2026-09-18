@@ -2,9 +2,9 @@
 
 ## Status and Authority
 
-**ACCEPTED architecture direction.** [ADR-004](../decisions/ADR-004-staged-conditional-architecture-semantics.md) selects this model for M4+ on 2026-09-09. The accepted M4-R0 refinement defines the first fragment, identities and bounded experimental limits. [M4B.1](m4b1-configuration-space-condition-ir.md) implements the condition/configuration-space representation schemas; remaining evaluator/registration/binding schemas, solver selection and empirical claims remain gated.
+**ACCEPTED architecture direction.** [ADR-004](../decisions/ADR-004-staged-conditional-architecture-semantics.md) selects this model for M4+ on 2026-09-09. The accepted M4-R0 refinement defines the first fragment, identities and bounded experimental limits. [M4B.1](m4b1-configuration-space-condition-ir.md) implements the condition/configuration-space representation schemas; [M4B.2](m4b2-evidence-lowering-exogenous-evaluation.md), [M4C.1](m4c1-registration-plan-discovery.md), [M4C.2](m4c2-ordered-bean-registration.md) and [M4C.3](m4c3-injection-binding.md) implement bounded exogenous evaluation and normalized per-assignment discovery/registration/binding. Multi-world region/witness schemas, solver selection and G3 empirical claims remain gated.
 
-The owner accepted [M4-R0](m4-r0-semantics-gate.md) on 2026-09-11 after G2 was recorded passed. M4A.1–M4A.2 provide passive mechanism evidence; M4B.1 provides finite-space identities, typed IR and gap-preserving validation. Conditional evaluation and G3 remain pending; no complete Spring runtime-container equivalence is claimed.
+The owner accepted [M4-R0](m4-r0-semantics-gate.md) on 2026-09-11 after G2 was recorded passed. M4A.1–M4A.2 provide passive mechanism evidence; M4B provides finite-space identities, typed IR and bounded exogenous evaluation; M4C provides evidence-qualified single-assignment results. M4D truth regions/witnesses and G3 remain pending; no complete Spring runtime-container equivalence is claimed.
 
 ## Purpose
 

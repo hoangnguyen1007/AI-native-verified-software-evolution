@@ -1,0 +1,506 @@
+[
+  {
+    "Errors": 0,
+    "Failures": 0,
+    "Module": "analyzer",
+    "Seconds": 0.432,
+    "Skipped": 0,
+    "Suite": "com.evolution.analysis.acquisition.RepositoryAcquisitionContractTest",
+    "Tests": 3
+  },
+  {
+    "Errors": 0,
+    "Failures": 0,
+    "Module": "analyzer",
+    "Seconds": 0.127,
+    "Skipped": 0,
+    "Suite": "com.evolution.analysis.buildmodel.BuildModelContractTest",
+    "Tests": 3
+  },
+  {
+    "Errors": 0,
+    "Failures": 0,
+    "Module": "analyzer",
+    "Seconds": 0.067,
+    "Skipped": 0,
+    "Suite": "com.evolution.analysis.buildmodel.SourcePlanContractTest",
+    "Tests": 3
+  },
+  {
+    "Errors": 0,
+    "Failures": 0,
+    "Module": "analyzer",
+    "Seconds": 0.187,
+    "Skipped": 0,
+    "Suite": "com.evolution.analysis.classpath.ClasspathResolutionContractTest",
+    "Tests": 3
+  },
+  {
+    "Errors": 0,
+    "Failures": 0,
+    "Module": "analyzer",
+    "Seconds": 0.242,
+    "Skipped": 0,
+    "Suite": "com.evolution.analysis.contract.AnalysisAndAssessmentContractTest",
+    "Tests": 7
+  },
+  {
+    "Errors": 0,
+    "Failures": 0,
+    "Module": "analyzer",
+    "Seconds": 0.055,
+    "Skipped": 0,
+    "Suite": "com.evolution.analysis.contract.CanonicalSerializationTest",
+    "Tests": 4
+  },
+  {
+    "Errors": 0,
+    "Failures": 0,
+    "Module": "analyzer",
+    "Seconds": 0.024,
+    "Skipped": 0,
+    "Suite": "com.evolution.analysis.contract.DerivedEvidenceTest",
+    "Tests": 1
+  },
+  {
+    "Errors": 0,
+    "Failures": 0,
+    "Module": "analyzer",
+    "Seconds": 0.056,
+    "Skipped": 0,
+    "Suite": "com.evolution.analysis.contract.IdentityAndSourceContractTest",
+    "Tests": 8
+  },
+  {
+    "Errors": 0,
+    "Failures": 0,
+    "Module": "analyzer",
+    "Seconds": 0.01,
+    "Skipped": 0,
+    "Suite": "com.evolution.analysis.contract.RootModuleTest",
+    "Tests": 1
+  },
+  {
+    "Errors": 0,
+    "Failures": 0,
+    "Module": "analyzer",
+    "Seconds": 0.048,
+    "Skipped": 0,
+    "Suite": "com.evolution.analysis.contract.SemanticContractTest",
+    "Tests": 6
+  },
+  {
+    "Errors": 0,
+    "Failures": 0,
+    "Module": "analyzer",
+    "Seconds": 0.137,
+    "Skipped": 0,
+    "Suite": "com.evolution.analysis.dependency.DependencyAcquisitionContractTest",
+    "Tests": 3
+  },
+  {
+    "Errors": 0,
+    "Failures": 0,
+    "Module": "analyzer",
+    "Seconds": 0.665,
+    "Skipped": 0,
+    "Suite": "com.evolution.analysis.evidence.CapabilityGapContractTest",
+    "Tests": 12
+  },
+  {
+    "Errors": 0,
+    "Failures": 0,
+    "Module": "analyzer",
+    "Seconds": 0.101,
+    "Skipped": 0,
+    "Suite": "com.evolution.analysis.frontend.FrontendContractTest",
+    "Tests": 6
+  },
+  {
+    "Errors": 0,
+    "Failures": 0,
+    "Module": "analyzer",
+    "Seconds": 0.025,
+    "Skipped": 0,
+    "Suite": "com.evolution.analysis.frontend.FrontendResultTest",
+    "Tests": 3
+  },
+  {
+    "Errors": 0,
+    "Failures": 0,
+    "Module": "analyzer",
+    "Seconds": 0.024,
+    "Skipped": 0,
+    "Suite": "com.evolution.analysis.frontend.JavaSymbolNameTest",
+    "Tests": 6
+  },
+  {
+    "Errors": 0,
+    "Failures": 0,
+    "Module": "analyzer",
+    "Seconds": 0.686,
+    "Skipped": 0,
+    "Suite": "com.evolution.analysis.input.FrontendInputAssemblerTest",
+    "Tests": 6
+  },
+  {
+    "Errors": 0,
+    "Failures": 0,
+    "Module": "analyzer",
+    "Seconds": 0.129,
+    "Skipped": 0,
+    "Suite": "com.evolution.analysis.input.SourceDecoderTest",
+    "Tests": 6
+  },
+  {
+    "Errors": 0,
+    "Failures": 0,
+    "Module": "analyzer",
+    "Seconds": 0.433,
+    "Skipped": 0,
+    "Suite": "com.evolution.analysis.spring.condition.AutoConfigurationOrderingTest",
+    "Tests": 6
+  },
+  {
+    "Errors": 0,
+    "Failures": 0,
+    "Module": "analyzer",
+    "Seconds": 1.811,
+    "Skipped": 0,
+    "Suite": "com.evolution.analysis.spring.condition.BeanRegistrationTransitionsTest",
+    "Tests": 28
+  },
+  {
+    "Errors": 0,
+    "Failures": 0,
+    "Module": "analyzer",
+    "Seconds": 0.02,
+    "Skipped": 0,
+    "Suite": "com.evolution.analysis.spring.condition.ConditionExpressionTest",
+    "Tests": 5
+  },
+  {
+    "Errors": 0,
+    "Failures": 0,
+    "Module": "analyzer",
+    "Seconds": 0.418,
+    "Skipped": 0,
+    "Suite": "com.evolution.analysis.spring.condition.ConditionLoweringTest",
+    "Tests": 7
+  },
+  {
+    "Errors": 0,
+    "Failures": 0,
+    "Module": "analyzer",
+    "Seconds": 0.814,
+    "Skipped": 0,
+    "Suite": "com.evolution.analysis.spring.condition.ConditionModelTest",
+    "Tests": 11
+  },
+  {
+    "Errors": 0,
+    "Failures": 0,
+    "Module": "analyzer",
+    "Seconds": 0.205,
+    "Skipped": 0,
+    "Suite": "com.evolution.analysis.spring.condition.ConfigurationSpaceTest",
+    "Tests": 8
+  },
+  {
+    "Errors": 0,
+    "Failures": 0,
+    "Module": "analyzer",
+    "Seconds": 0.219,
+    "Skipped": 0,
+    "Suite": "com.evolution.analysis.spring.condition.ExogenousConditionEvaluatorTest",
+    "Tests": 12
+  },
+  {
+    "Errors": 0,
+    "Failures": 0,
+    "Module": "analyzer",
+    "Seconds": 0.129,
+    "Skipped": 0,
+    "Suite": "com.evolution.analysis.spring.condition.FiniteConfigurationEvaluationTest",
+    "Tests": 4
+  },
+  {
+    "Errors": 0,
+    "Failures": 0,
+    "Module": "analyzer",
+    "Seconds": 1.254,
+    "Skipped": 0,
+    "Suite": "com.evolution.analysis.spring.condition.InjectionBindingBoundaryTest",
+    "Tests": 22
+  },
+  {
+    "Errors": 0,
+    "Failures": 0,
+    "Module": "analyzer",
+    "Seconds": 1.685,
+    "Skipped": 0,
+    "Suite": "com.evolution.analysis.spring.condition.InjectionBindingsTest",
+    "Tests": 30
+  },
+  {
+    "Errors": 0,
+    "Failures": 0,
+    "Module": "analyzer",
+    "Seconds": 0.658,
+    "Skipped": 0,
+    "Suite": "com.evolution.analysis.spring.condition.RegistrationDiscoveryTest",
+    "Tests": 18
+  },
+  {
+    "Errors": 0,
+    "Failures": 0,
+    "Module": "analyzer",
+    "Seconds": 0.296,
+    "Skipped": 0,
+    "Suite": "com.evolution.analysis.spring.condition.RegistrationPlanTest",
+    "Tests": 8
+  },
+  {
+    "Errors": 0,
+    "Failures": 0,
+    "Module": "analyzer",
+    "Seconds": 0.325,
+    "Skipped": 0,
+    "Suite": "com.evolution.analysis.spring.SpringMechanismInventoryTest",
+    "Tests": 12
+  },
+  {
+    "Errors": 0,
+    "Failures": 0,
+    "Module": "analyzer",
+    "Seconds": 0.04,
+    "Skipped": 0,
+    "Suite": "com.evolution.analysis.spring.SpringMechanismM4A2Test",
+    "Tests": 1
+  },
+  {
+    "Errors": 0,
+    "Failures": 0,
+    "Module": "analyzer",
+    "Seconds": 0.002,
+    "Skipped": 0,
+    "Suite": "com.evolution.foundation.Java21BuildTest",
+    "Tests": 1
+  },
+  {
+    "Errors": 0,
+    "Failures": 0,
+    "Module": "analyzer-filesystem",
+    "Seconds": 0.464,
+    "Skipped": 0,
+    "Suite": "com.evolution.analysis.filesystem.FilesystemJdkPlatformProviderTest",
+    "Tests": 4
+  },
+  {
+    "Errors": 0,
+    "Failures": 0,
+    "Module": "analyzer-filesystem",
+    "Seconds": 0.825,
+    "Skipped": 0,
+    "Suite": "com.evolution.analysis.filesystem.FilesystemRepositoryAcquirerTest",
+    "Tests": 8
+  },
+  {
+    "Errors": 0,
+    "Failures": 0,
+    "Module": "analyzer-javaparser",
+    "Seconds": 6.135,
+    "Skipped": 0,
+    "Suite": "com.evolution.analysis.javaparser.AnnotationsTest",
+    "Tests": 4
+  },
+  {
+    "Errors": 0,
+    "Failures": 0,
+    "Module": "analyzer-javaparser",
+    "Seconds": 4.147,
+    "Skipped": 0,
+    "Suite": "com.evolution.analysis.javaparser.ExpressionTypesTest",
+    "Tests": 3
+  },
+  {
+    "Errors": 0,
+    "Failures": 0,
+    "Module": "analyzer-javaparser",
+    "Seconds": 11.148,
+    "Skipped": 0,
+    "Suite": "com.evolution.analysis.javaparser.FieldAccessTest",
+    "Tests": 7
+  },
+  {
+    "Errors": 0,
+    "Failures": 0,
+    "Module": "analyzer-javaparser",
+    "Seconds": 8.493,
+    "Skipped": 0,
+    "Suite": "com.evolution.analysis.javaparser.FrozenFixtureTest",
+    "Tests": 1
+  },
+  {
+    "Errors": 0,
+    "Failures": 0,
+    "Module": "analyzer-javaparser",
+    "Seconds": 3.959,
+    "Skipped": 0,
+    "Suite": "com.evolution.analysis.javaparser.JavaParserFrontendTest",
+    "Tests": 3
+  },
+  {
+    "Errors": 0,
+    "Failures": 0,
+    "Module": "analyzer-javaparser",
+    "Seconds": 8.612,
+    "Skipped": 0,
+    "Suite": "com.evolution.analysis.javaparser.MethodReferencesTest",
+    "Tests": 6
+  },
+  {
+    "Errors": 0,
+    "Failures": 0,
+    "Module": "analyzer-javaparser",
+    "Seconds": 3.756,
+    "Skipped": 0,
+    "Suite": "com.evolution.analysis.javaparser.ModernFixtureTest",
+    "Tests": 1
+  },
+  {
+    "Errors": 0,
+    "Failures": 0,
+    "Module": "analyzer-javaparser",
+    "Seconds": 0.031,
+    "Skipped": 0,
+    "Suite": "com.evolution.analysis.javaparser.OriginalSourceTest",
+    "Tests": 4
+  },
+  {
+    "Errors": 0,
+    "Failures": 0,
+    "Module": "analyzer-javaparser",
+    "Seconds": 8.768,
+    "Skipped": 0,
+    "Suite": "com.evolution.analysis.javaparser.ReactorSourceResolutionTest",
+    "Tests": 5
+  },
+  {
+    "Errors": 0,
+    "Failures": 0,
+    "Module": "analyzer-javaparser",
+    "Seconds": 9.748,
+    "Skipped": 0,
+    "Suite": "com.evolution.analysis.javaparser.RecordsTest",
+    "Tests": 5
+  },
+  {
+    "Errors": 0,
+    "Failures": 0,
+    "Module": "analyzer-javaparser",
+    "Seconds": 24.807,
+    "Skipped": 0,
+    "Suite": "com.evolution.analysis.javaparser.ResolutionInputsTest",
+    "Tests": 13
+  },
+  {
+    "Errors": 0,
+    "Failures": 0,
+    "Module": "analyzer-javaparser",
+    "Seconds": 11.666,
+    "Skipped": 0,
+    "Suite": "com.evolution.analysis.javaparser.SemanticBoundariesTest",
+    "Tests": 9
+  },
+  {
+    "Errors": 0,
+    "Failures": 0,
+    "Module": "analyzer-javaparser",
+    "Seconds": 9.662,
+    "Skipped": 0,
+    "Suite": "com.evolution.analysis.javaparser.SpringMechanismM4A2IntegrationTest",
+    "Tests": 5
+  },
+  {
+    "Errors": 0,
+    "Failures": 0,
+    "Module": "analyzer-javaparser",
+    "Seconds": 7.584,
+    "Skipped": 0,
+    "Suite": "com.evolution.analysis.javaparser.TypeRelationshipsTest",
+    "Tests": 6
+  },
+  {
+    "Errors": 0,
+    "Failures": 0,
+    "Module": "analyzer-maven",
+    "Seconds": 1.313,
+    "Skipped": 0,
+    "Suite": "com.evolution.analysis.maven.MavenBuildModelProviderTest",
+    "Tests": 20
+  },
+  {
+    "Errors": 0,
+    "Failures": 0,
+    "Module": "analyzer-maven",
+    "Seconds": 0.49,
+    "Skipped": 0,
+    "Suite": "com.evolution.analysis.maven.MavenBuildModelResolverTest",
+    "Tests": 8
+  },
+  {
+    "Errors": 0,
+    "Failures": 0,
+    "Module": "analyzer-maven",
+    "Seconds": 0.367,
+    "Skipped": 0,
+    "Suite": "com.evolution.analysis.maven.MavenDependencyArtifactProviderTest",
+    "Tests": 12
+  },
+  {
+    "Errors": 0,
+    "Failures": 0,
+    "Module": "analyzer-maven",
+    "Seconds": 0.5,
+    "Skipped": 0,
+    "Suite": "com.evolution.analysis.maven.MavenDependencyArtifactResolverTest",
+    "Tests": 3
+  },
+  {
+    "Errors": 0,
+    "Failures": 0,
+    "Module": "analyzer-maven",
+    "Seconds": 1.763,
+    "Skipped": 0,
+    "Suite": "com.evolution.analysis.maven.MavenLocalClasspathProviderTest",
+    "Tests": 11
+  },
+  {
+    "Errors": 0,
+    "Failures": 0,
+    "Module": "analyzer-maven",
+    "Seconds": 0.086,
+    "Skipped": 0,
+    "Suite": "com.evolution.analysis.maven.PlatformReactorModelTest",
+    "Tests": 1
+  },
+  {
+    "Errors": 0,
+    "Failures": 0,
+    "Module": "analyzer-maven",
+    "Seconds": 0.192,
+    "Skipped": 0,
+    "Suite": "com.evolution.analysis.maven.SourcePlanProjectionTest",
+    "Tests": 12
+  },
+  {
+    "Errors": 0,
+    "Failures": 0,
+    "Module": "backend",
+    "Seconds": 0.102,
+    "Skipped": 0,
+    "Suite": "com.evolution.foundation.Java21BuildTest",
+    "Tests": 1
+  }
+]

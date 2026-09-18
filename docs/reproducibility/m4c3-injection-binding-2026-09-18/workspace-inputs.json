@@ -1,0 +1,1347 @@
+[
+  {
+    "mode": "utf8-lf",
+    "path": ".mvn/wrapper/maven-wrapper.properties",
+    "sha256": "ec15e462d862b9ba5dc9d8cdf249576bfdad7c70ccd441d64117d9abcd808dab"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/pom.xml",
+    "sha256": "9b83a0644e246e4e53eec7e72d9c72bdb253d3c7a7678e75a26d7450b0231caa"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/.gitkeep",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/acquisition/AcquiredFile.java",
+    "sha256": "64d749fa26919d9cc4006c0056ab1a284302690253b211c97cf8560acdc991b6"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/acquisition/CandidateSourceOwnership.java",
+    "sha256": "086bb021189dca57057424a66156f8b6f1df6276f4e996718e93f8d72a56ddaa"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/acquisition/CandidateSourceOwnershipResolver.java",
+    "sha256": "baac298e719b57da355b9763fc414fbb6fe02200558d6662881de7a4a4328b58"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/acquisition/RepositoryAcquisitionPolicy.java",
+    "sha256": "00b09a9b7de47b5ab650015e420d9c2121338f7a45b50150fc192315dedb14cb"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/acquisition/RepositoryAcquisitionRequest.java",
+    "sha256": "92f8a8d0de8514eca9fe16612292b46cdb0871f071a702d8522a841ddca96553"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/acquisition/RepositoryAcquisitionResult.java",
+    "sha256": "a1c7fb798d5766328a8cbc17b106416a764817e8cce6fdb230dc63c0ed03ae85"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/buildmodel/BuildModelPolicy.java",
+    "sha256": "472926b898bf06c9fcb57e748bc4fce43e83befb5dd7721877b2a71248469153"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/buildmodel/BuildModelProvider.java",
+    "sha256": "151b31b5c655f7d15e7a8b12ee4df67df76b1e6b1443cda5f83d676400d7d6e7"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/buildmodel/BuildModelRequest.java",
+    "sha256": "780b6ec62fae93808fb6f30de3d614d952b6ebf90b4b8cc34e3832816be3b8b5"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/buildmodel/BuildModelResult.java",
+    "sha256": "6f3259f2708e97f3a318a341600d45488d65cac9e0e3ca1278914d9ad0166223"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/buildmodel/MavenCoordinate.java",
+    "sha256": "423bae6561ae5a831c4e30a5eddb74537412aca72c7d040c3c08da6e03cd4614"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/buildmodel/PomInput.java",
+    "sha256": "117a83c594f8083f19d6acce76a37d81e2d70a4539eb246a817f4102ee74e8fc"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/buildmodel/SourcePlanModel.java",
+    "sha256": "b73af082fee79a12992570c2c9d3c77ad13021814c5fa82e9fb52eae3c366a74"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/classpath/ArtifactCoordinate.java",
+    "sha256": "fa6de408e3125a345472ebe02260a1934ea74b22e79cdacf985bff526af8379b"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/classpath/ClasspathProvider.java",
+    "sha256": "7efc9d9bfb470aca048bd709aa8517b5a1dfc141c25bf4bb63579d08a04d36c9"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/classpath/ClasspathResolutionPolicy.java",
+    "sha256": "d351f074dc0e6a4c599bc88bbbd66dbeada70a5d925e59421b9a5779c464cdd5"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/classpath/ClasspathResolutionRequest.java",
+    "sha256": "708dd461e5a32cac608a9376f4f992da46f74f0c2dd60518671f09a852ca8f1c"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/classpath/ExactClasspathResult.java",
+    "sha256": "b366477c283e332fb85214529e4d8c68623c0dcb631f2c5233fcb66d7f1c8fd2"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/analysis/AnalysisConfiguration.java",
+    "sha256": "cb03989c35e56c6321aef5abc25c9e90540d24b340e995ba2a629eb072cef730"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/analysis/AnalysisManifest.java",
+    "sha256": "f7cfecdcd48ac4fd707b444412f464e212df02f01b6f6fcf9f932562b4ddcf7d"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/analysis/AnalysisProvenance.java",
+    "sha256": "ec2426174dbbb0ff919e8e81e01b60250bd7556712f156ac5780091f3a7979d2"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/analysis/ClasspathEntry.java",
+    "sha256": "dffe46abd280de9dba134d412c7464e85104c644f7aac1cd06d3e2e8e8b72d3a"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/analysis/ClasspathEntryKind.java",
+    "sha256": "0c75d2e095ac879128ab6f213e46c7cc727b741893ef9331693f2fc8b6d04f3b"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/analysis/ManifestComponent.java",
+    "sha256": "5ce7b62c0ef54b16c7015d0a17acaa0b5bbdfa0145e76520430e85fded807491"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/assessment/AnalysisConfidence.java",
+    "sha256": "a68c164f520e4dc54a063265551a4028ad63c3aac93fd4b913e7d6f8fb0e9332"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/assessment/ArchitectureHealthAssessment.java",
+    "sha256": "52e380651eff700c5735ccede9f9f920c12664a555c141bfa7ccc646cd391802"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/assessment/AssessmentStateRules.java",
+    "sha256": "8b90a18705d33a71639e0d4f0cc2dbe14a0b24b69f580038a6c6f8c929bc6d34"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/assessment/AssessmentStatus.java",
+    "sha256": "4509badfb125662238a0291d6cd9769e20a971ba7478cc942f43712629250e65"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/common/CanonicalIdentifier.java",
+    "sha256": "04a5cf5e54ec5bd63029845a98afb5ab8a690fe759bb4de8a545477fe82bab52"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/common/ContentDigest.java",
+    "sha256": "e4cffcd15389aa25daa908afa8b97630359e3286924e859245ff9b16f7aa0dce"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/common/ContractChecks.java",
+    "sha256": "381c672c131fe365eadd3d68a0e1d072cd47b1bd78ab5bd6db522d41d230f258"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/common/VersionedIdentifier.java",
+    "sha256": "6278d5f8d36a63a6b5b168d98408f70c99c0624ed4ab7ccee85a9cb2c11f7368"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/identity/AnalysisIdentity.java",
+    "sha256": "0f4addec7f3a4b70f9512f34321bab6e68e99c7bbdd7cfb25dc5f6d7ac0ac3e0"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/identity/ConfigurationIdentity.java",
+    "sha256": "0ea4d52953404fbacec4f3b234f12b3d298a1ae0740b7f07e08ed04c79d5309e"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/identity/EntityIdentity.java",
+    "sha256": "03876fe44cd743f829c8d39e57d324a0d67b9f8ab50ac8398e0b4b3404d2ee95"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/identity/EntityScope.java",
+    "sha256": "9c352583dac31a45210b259ce3d2a41f5d644af146415a57f56c15bd748ff23f"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/identity/IdentitySupport.java",
+    "sha256": "bf1e3e010bff61cc5e578733e813d8953f7c83139b65814af0161254a7cca650"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/identity/ModuleIdentity.java",
+    "sha256": "0051ef943159b31b58c309ebe65a0b5b5cf0e2d56b346ed2e2245afe647782f3"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/identity/OccurrenceIdentity.java",
+    "sha256": "e58a0edc4da06daf10fc8ed56689beabd783f8325ec6faea9569d7e03784265b"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/identity/RelationshipIdentity.java",
+    "sha256": "074c45fc225d5de929650675f88e904f418811f9809e7b7c498ce60e9b7d350c"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/identity/RepositoryIdentity.java",
+    "sha256": "32bd61c8e15324f85fd4c688dc0d4e3b443298fccdd1d9abfcf732db5423d946"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/identity/SnapshotIdentity.java",
+    "sha256": "58c0828a925f51fb49bc8a8a8db32a2d977416bb02b86cde87a2ba10a553ec76"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/identity/SourceDocumentIdentity.java",
+    "sha256": "e3dc0a34bc6be186f6fb8e30a1eefe0791a8996549c004c09bdcef30ad9b1d85"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/metrics/MetricEnvelope.java",
+    "sha256": "019fe3045c9a48964c411e6e08a5439ee297acf01ac409748de1e8fb00cf6bdf"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/metrics/MetricScope.java",
+    "sha256": "61b4ab178648c8a4746eafeb15a7bd588705e27a251c384470a78dd3adb096fd"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/metrics/MetricScopeType.java",
+    "sha256": "7d711a17adb7aad404ad8dde512fd473a8a47ee2ddf9d35c63f6ffac6a81fce9"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/metrics/MetricValue.java",
+    "sha256": "eb2f074a1225fdd421e72eaaef85856a574d5ddbe7e656b64c7fa64840314982"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/metrics/RatioEvidence.java",
+    "sha256": "6eddf31adaa39b71b543857fa684caf4f290e9e4fa65f65cdd41fd001407ce3d"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/semantic/Derivation.java",
+    "sha256": "17b33966e1315af2fb9c6b271e72ff9a25398a62d9d600e5fd2c1792a5537db0"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/semantic/DerivationKind.java",
+    "sha256": "faff04335b3dd2646194b059617ba9a2a242d715fd7f9ea2818bc4d30e185d35"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/semantic/DerivedRelationshipRecord.java",
+    "sha256": "b6b96938f3daba45f8875d979a8122d6042700acc810629f94196b63dd829440"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/semantic/Diagnostic.java",
+    "sha256": "8fc74a94418b949398eee100dcee7e0579aa5e4cce86bd7008a9fc7767106113"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/semantic/DiagnosticSeverity.java",
+    "sha256": "934c65884193ab3b5c0da5844b974d742c705577ac8d022fe20dff7d310daa9c"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/semantic/Entity.java",
+    "sha256": "78e6e4058c4d9b6415ab238b531f749abcbf6883fe820de1bdc45200ee11dbac"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/semantic/EntityKind.java",
+    "sha256": "4f81ce576ed24c38b2c69367d1916ae46242a07779671495516fca3faa5c882b"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/semantic/EntityOrigin.java",
+    "sha256": "4fdb926429c16fd48c1a81201c7d9f3a19b729a7006158930b5f185760e83e53"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/semantic/RelationshipKind.java",
+    "sha256": "83bd4633f4a5b802b697004eeb5e79d4c811543820567fde01154754c4164af8"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/semantic/RelationshipOccurrence.java",
+    "sha256": "a7b21a39d36626abcd8f659f033a10ffb6adeb1d1de06384a552fc7a72cb804c"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/semantic/RelationshipTarget.java",
+    "sha256": "5f3768f844027635c732d9ae3c8af3fbbdaefcdc979ffe4ae1f7301d7431a05e"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/semantic/SemanticRelationship.java",
+    "sha256": "48dab55ca397218e16962cc8aeb3bcb287335e9671307e14c435989d5c609de5"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/semantic/SemanticStatus.java",
+    "sha256": "c615839d8284715d6b9c6139f31af2c1e66d568f8ddee5963678e6ea12ec67a4"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/semantic/Uncertainty.java",
+    "sha256": "237a75fa505fd7e019a5ebebcc2f02129826dc84c9b5969b5796dc531ac7d8c8"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/serialization/CanonicalJson.java",
+    "sha256": "8d3ac2f2a4bb5d4002335b4b6dbca08151032ffa40d7b9ba7de1a1fc2f81fae6"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/source/ModuleDescriptor.java",
+    "sha256": "8dd8ae5e56579f212f33d0fe13a075e614f9e5ad46ca19e12768b8c1c44c8c03"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/source/RepositorySnapshot.java",
+    "sha256": "f6733a18b6f59d031fde7f5b2d1d50689f029a9220b3d6677dca2ce59f48bf1e"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/source/SnapshotFile.java",
+    "sha256": "684ee5b3d449019f460dd56288ecdf9cb78adbbdfc974b22e0bc06aa1c4ce3c6"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/source/SourceClassification.java",
+    "sha256": "7a1697a35e62a93b145f96e06c06b740bc5c5847add994e9c3aaa46879f8c939"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/source/SourceDocument.java",
+    "sha256": "e234348a5be3d15dfa207433a2f43bcc93732089eb6f7232f941f2b77c1ffbef"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/contract/source/SourceSpan.java",
+    "sha256": "c6292c4199e8f20fd5556cb39e367ab5e601d0459573941222703441dd40a4e7"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/dependency/DependencyAcquisitionPolicy.java",
+    "sha256": "3b05e510dde94252c0b69b968a77e8217e0c8885457f52870f0a61c187956c2b"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/dependency/DependencyAcquisitionRequest.java",
+    "sha256": "733993b6d90ca6865f285f04c75e98a36479528671ec13c389ecc47abb9493db"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/dependency/DependencyAcquisitionResult.java",
+    "sha256": "8b20310ce1c08e28a9418185cc6c0530cd5273860e2df9caaafdde86561c5e85"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/dependency/DependencyArtifactProvider.java",
+    "sha256": "2e0ac5d3a81af34bbb396f7c77fb7ae5e0034da24830de064dd21d51eb8c4088"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/evidence/AcquisitionAttemptRecord.java",
+    "sha256": "c9d8985c36c7651b959e6bcc9faff939294c616640eb0de8917255d214df7abe"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/evidence/AffectedOutput.java",
+    "sha256": "328d6db0493f2f23ffe30c8b4602056ca47790dd94620e61f54b8377059c175d"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/evidence/CandidateProvider.java",
+    "sha256": "f5b70d9f06d71b15640763199158dfd3752141616e77dc1426425ffdb622c153"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/evidence/CapabilityGapCatalog.java",
+    "sha256": "62806f95526897d1064b0083dad90dcb1f3561f27dc4ddd6fa8b5ea8af5438f0"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/evidence/CapabilityGapIdentity.java",
+    "sha256": "04af3d73250c647ca0613c0b3eaf201fab0e2cd4bb1b5df7550701032028244c"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/evidence/CapabilityGapNormalizer.java",
+    "sha256": "da8c89fe3f870cadab7a8d07a89cb953ea9ba8d174a5d8321e270ea6181d4fc7"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/evidence/CapabilityGapRecord.java",
+    "sha256": "fca007c7dbb17d6c7b035ba4057f12403521a0ffa6a6a8e7ac8835b1fe96f497"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/evidence/EvidenceAcquisitionLedger.java",
+    "sha256": "cf9ddfb57e42d664825e01cdca693ab8656acedf93a4818036afbfb0074b0804"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/evidence/EvidenceContext.java",
+    "sha256": "dd1e4a169b8f759b14aee3f7e98cf9cfa8bdb524f7bf34275036d9fdbc2e9c7e"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/evidence/EvidenceIdentity.java",
+    "sha256": "8bc8c6c76558d30675f7c141a72b6728fc406d1879188461c175e9309bcce981"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/evidence/EvidenceNormalizationInput.java",
+    "sha256": "740fc425fc81cc77c2789b7786a8193f0a13d76848175274fc87a5c19275958e"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/evidence/EvidenceRequirement.java",
+    "sha256": "ed69a0653e03a1078e7100c14794b6ecc27edeed6952565ab825dce497c389be"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/evidence/EvidenceSubject.java",
+    "sha256": "533166da9d8d6c7493ea7c9e0c4e29bd67c20c76f329ceb8fbb44df156e80976"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/evidence/GapResolutionRecord.java",
+    "sha256": "79e0cc4d5d02027202a891b5be0b73f1a7b1b073acc043c577b9afa0c828619a"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/evidence/ProviderConflictRecord.java",
+    "sha256": "ecd1f2de2c13c6cb1ddd4f2c4cb320e2ed05d2c20468dce2f90c8dc2f5cd1ec0"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/evidence/ProviderObservationReference.java",
+    "sha256": "90ec354e4ef93cd5f063bef9bf55d41b75130411893733c2fc517d76c911349d"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/frontend/AnnotationUseRecord.java",
+    "sha256": "b35ccf5bf39e4880a7aa7490ce300f983d54292d38d56a34b3cf5d532a961fd2"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/frontend/BinaryInput.java",
+    "sha256": "b905c7f229927c9fc7e49b5af9c2bd286dd13b2b8b38edc0b26fd3fc325ebb47"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/frontend/CategoryCoverage.java",
+    "sha256": "0730f0c18935104bd4009f1c16bdf392740231db42246814c92b735262c5b5be"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/frontend/DeclarationRecord.java",
+    "sha256": "ae3e8c1c3a5a37a5fec93772721c96afc27feb3f03b655b13606bc9829a79229"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/frontend/ErasedType.java",
+    "sha256": "87371ae0c85ed3935b1a24c3d0fa16aec07eb3d61f87c92e40ab2b1714bfb8ff"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/frontend/FrontendInputException.java",
+    "sha256": "03825399e7d28e2c4ec919536c9b932486acd2125cf1abaf56d075cd6ef887b7"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/frontend/FrontendPlan.java",
+    "sha256": "23556ee50c688c2a2274bc4cd28500a97056a8fda0ec217f1405c957928fb7bc"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/frontend/FrontendRequest.java",
+    "sha256": "cb9c9c50304d78863af3424f499d2a2459c8c6dbbec3ae9fb33a8911fd5ae003"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/frontend/FrontendResult.java",
+    "sha256": "33aa5ba1cd6def61fb87ec7b280e015fb328fc49ee5f8dea64d57edc5e09cdae"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/frontend/JavaSymbolName.java",
+    "sha256": "31efad83f1f8efc829862856cc9b77620c1f0436ca5d09843a412263dd4eab47"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/frontend/JavaType.java",
+    "sha256": "d20166a4514f7ab7c71069e919f7ee158eee83d919c1c6d580d0b4dff0c045fe"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/frontend/ObservationRecord.java",
+    "sha256": "40aa9244a751b3102ffe9e980cd0b1f68400f55fb23aa250a32ba0ab4ee1cdd4"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/frontend/PlatformInput.java",
+    "sha256": "8b61801f05311f4f859eb50fdae39caa0fb3d25143cfc4984f24cbe3f8f94e73"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/frontend/ReactorSourceInput.java",
+    "sha256": "c8f48e4ab77e0278804c932ba7b5251e65266356fcc18062acf02b58d287b759"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/frontend/SemanticFrontend.java",
+    "sha256": "3d21b19ce1a2c6ae89a11cffb3f2f10c5b7d17505039bd79f39834b61b8ca177"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/frontend/SourceInput.java",
+    "sha256": "19204e4138b3b38ea7b775593d3f95e0ab7d7e7cf29fa56464e5b056fc3f410c"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/frontend/SourceOutcome.java",
+    "sha256": "a1636cb2b81461857c4dfbf44996e5558f603543b9b9b796a706d9f2aef4a665"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/frontend/TypeUseRecord.java",
+    "sha256": "06d202a6d15702067199ed11628e511336dafcdb43d5e38979f1c1542fb7695f"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/input/FrontendAssemblyPolicy.java",
+    "sha256": "5978f2e24755d0959c733b80854282d0bc2e4c8085a230c1e7081d670de8eaa7"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/input/FrontendAssemblyResult.java",
+    "sha256": "3e8ea50ac91ce47a8513d4cf6f9e26af9b78265db528f58c87c08aed4fbfd394"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/input/FrontendInputAssembler.java",
+    "sha256": "ec35c62304e0da3b19a50c36e23f46b3491a622ecd436ac273119c558798c7a1"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/input/PlatformSymbolProvider.java",
+    "sha256": "7cf9f04f1dab85015363c26c59edb8b5e3f65b2a31c66cf0c03ae0e35fd75546"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/input/PlatformSymbolRequest.java",
+    "sha256": "e653304c5b016cd548b484434783e7f8094a7b616818e4c930bbe5ae735a9bed"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/input/PlatformSymbolResult.java",
+    "sha256": "97756d4c9fb645a3565ce847f8b18396948ce3ee9c563afc732c0a9b9d788f29"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/input/ReactorOutputInput.java",
+    "sha256": "114e48c905c1c5c50153ad322debaa0e1f49300bce57477b6d36592bbe95c3ac"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/input/SourceDecoder.java",
+    "sha256": "65edd15c72795d544e1756bb49cb40a9999a63ccff3dbeb5b4bff1e8df048962"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/input/SourceDecodingPolicy.java",
+    "sha256": "1346cf483eb85d7757140df90ac2fbe7a82a40b3f404460a775353132c1a50b3"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/input/SourceDecodingResult.java",
+    "sha256": "3046b82e20d280d25c98656a70607fcd32306f07b18446e3ccb15f93769536bd"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/spring/binding/BindingEvidence.java",
+    "sha256": "72ccd029edb0ed38bb9940201a2bc630b634d3dba33ee388a915a35826ffd137"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/spring/binding/BindingIdentity.java",
+    "sha256": "3a7f8ff5bf571adc2c2056c4f38e24a8e8f6a74f00aa070a175162a519b461de"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/spring/binding/BindingProcessing.java",
+    "sha256": "e5a7c0770b5afedc927ede8ef4dd79aaaed13975aed16ebacca73241c6ef7014"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/spring/binding/BindingResolution.java",
+    "sha256": "5107636febf8e9500748863fb31f7d7410e7b1d5e90f78ed0c1c3e07d95605cb"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/spring/binding/InjectionBindingPlan.java",
+    "sha256": "a0be51739c775297db703463c85879751fccfeceae4e63a11d33dee964acc000"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/spring/binding/InjectionBindings.java",
+    "sha256": "cfffa472d795d816cc6812fe2b05f86d0f4504b3272cac7c067876d306f55500"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/spring/binding/InjectionPoint.java",
+    "sha256": "a6c273bca96f223e964b164d3247f7b934a943c94a2e0aff092e822bac5189d9"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/spring/condition/BeanConditionLowering.java",
+    "sha256": "67e11ca77a5cf73ce74165b60183089ff14b9c037282d8fa9a61c514c7ff0936"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/spring/condition/ConditionEvidence.java",
+    "sha256": "3999bbdb2ac2ecd966ccd8b3e1938f8a86020bdb4f2ef059355c53df6193a719"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/spring/condition/ConditionEvidenceLowering.java",
+    "sha256": "351492076e20fbcc681eba06adfd772846ba982632f5f01781ef90588d67ad86"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/spring/condition/ConditionExpression.java",
+    "sha256": "96f87c3c3617b4075ad4ba8c852266c24d0aa539f0db64a1e2a62a714fbcbdf1"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/spring/condition/ConditionIdentitySupport.java",
+    "sha256": "21eb7f56559d5c49867337e6d2d7c62ba3886adac335d7a1ebd180700658c329"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/spring/condition/ConditionModel.java",
+    "sha256": "1bb46c672f71d774acab2c44097aa2f8168585c35aa37465adeabd5a84ef9b35"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/spring/condition/ConditionOccurrence.java",
+    "sha256": "88e0ff590c464c168367d22e684c21c91a1e5c5bfdf135403c34ec524ff2cf91"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/spring/condition/ConditionProcessing.java",
+    "sha256": "62c61fff3ddcc7fdf716d03a905d97a1f544f4f1a2cd1168d53b854886402e89"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/spring/condition/ConfigurationAssignment.java",
+    "sha256": "03e7ca08d9c8692c9544d60d0b01adb9e45d9d361d9ff9461bdd709df3c597e1"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/spring/condition/ConfigurationEnvelope.java",
+    "sha256": "d70e8e3a2513fac05607d0c3b3e8dd59e7618ef5a25a1e86ca90a9a2c776488a"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/spring/condition/ConfigurationSpace.java",
+    "sha256": "b0794ed5e1deb68580ef20ea5b7a65d7f953657f7f4c66dcd4a3974c8d8d69a2"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/spring/condition/ConfigurationSpaceIdentity.java",
+    "sha256": "e3731360be351638dfeb7d7dde03697467aa88b52cc4c6dcbd4e08511a19e600"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/spring/condition/ExogenousConditionEvaluator.java",
+    "sha256": "d2752733775ec4c20acb55ff0bba9489ab9e628e38542f881e741071ed7eefba"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/spring/condition/FiniteConfigurationEvaluation.java",
+    "sha256": "bf9a92694a092cca5415c558234509fe99e7c2124c802b67cbe1bac75823dbdc"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/spring/condition/FiniteDomain.java",
+    "sha256": "163cecc9e8a4330988f0129cf942131dfbf490a415d54b319cfb19f6099ed6cd"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/spring/condition/LiteralConditionAnnotation.java",
+    "sha256": "598686d7e71bc675f5c4b1e98fd2d47230760513648aa654875147b87f5d3d2f"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/spring/condition/LogicalValue.java",
+    "sha256": "97620ffab298721997b8f9b37e98e1b687079a2d494f59629f9c81ff39f8a90b"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/spring/condition/ProfileExpressionLowering.java",
+    "sha256": "cab2058280c379d5c9fb5ed4ffab6397c9d819de99ab82c84d0d3b6841e2ac1d"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/spring/condition/SpringBuildContext.java",
+    "sha256": "39c1cdaed419df1bf03addd4ee9f22ee87a5583f816dd8884936e81c8df930c9"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/spring/registration/AutoConfigurationOrdering.java",
+    "sha256": "d33c9b48301653643a04932b25434eb12c90d0a9c32f7f82a0ca3fdfaf4f4827"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/spring/registration/BeanDefinitionCandidate.java",
+    "sha256": "652954560603749e803d17255e66b8b2b577ee255ab15c0c4880092b38b12d88"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/spring/registration/BeanDefinitionState.java",
+    "sha256": "a463d9878031af7c743b8b4dbcbd1d9fb0b62dc70b117fecc6ab5312f1b40afe"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/spring/registration/BeanProducer.java",
+    "sha256": "500b3705e719f7c29a2082864b23e5d4c7a7980a9064baf0fa3e60d5f35720be"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/spring/registration/BeanRegistrationEvidence.java",
+    "sha256": "d76bfa575c5420529e377c936bd1fa9aa58d6989a61e85c775c132d35b0ec091"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/spring/registration/BeanRegistrationPlan.java",
+    "sha256": "108304ec77cfa8df28416043ac63a7810396e568b6849cc2409b48a6b270eba2"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/spring/registration/BeanRegistrationProcessing.java",
+    "sha256": "2bde0b104f1a0a93e20fec9af2ce50dbd84ecc39bf8ddb8de2a5e1826f76a2e8"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/spring/registration/BeanRegistrationTransitions.java",
+    "sha256": "f88e7e3f5e7af99f4e8dd44fa706722ac9a72b242b94514bf0e3fa243f7affde"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/spring/registration/DiscoveryTransitions.java",
+    "sha256": "699284527fbaaf5406928e31a6b9997bb53c265ac44762a7190ac90dfbef85e7"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/spring/registration/EndogenousBeanConditions.java",
+    "sha256": "7b10d8b4080d4ce8426e72ed79754cbd06c0bb82e43d03680a38c445593ede27"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/spring/registration/RegistrationEvent.java",
+    "sha256": "12b5733f5bc9dc34881ef51904840ce93a0f755a184564167401f2ddb3e7cf14"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/spring/registration/RegistrationIdentity.java",
+    "sha256": "1e0e4f9171c707ca13a101fe06e8aa04b88a665f9552fed42983b83dcdfce81b"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/spring/registration/RegistrationPlan.java",
+    "sha256": "315b058e7b0d66bbc16e89f2b97baa464f5d641b60cc37b120b942f97b144d99"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/spring/registration/RegistrationProcessing.java",
+    "sha256": "9c8186462dfdbef7e466e2c2d1261943ffe60078ab83bc72fac76e27ba0f590e"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/spring/SpringCapabilityGapCatalog.java",
+    "sha256": "7351ef2d7f1eb2a34aca23c4d95aa6e463aaa1b8888065b0c3c43fde454a6b01"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/spring/SpringFrameworkEvidence.java",
+    "sha256": "54b2dafad9e643dab3a851a5d33b6b893de320815f355bf148b67f1d2494ca1a"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/spring/SpringMechanismCatalog.java",
+    "sha256": "db3b05ae9e98521867cab025937e0598f457689125adfc1fa79cc94df7d4ba73"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/spring/SpringMechanismInventory.java",
+    "sha256": "72f1547794fd7733a8672565cb71a7f2b6567934c3f403961de142e7a95d9520"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/spring/SpringMechanismScanner.java",
+    "sha256": "293a16daeb115bb3fad3ab83c7ffdd488ed9a6eac58e9daceb4883d428c502b7"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/main/java/com/evolution/analysis/spring/SpringMechanismScanRequest.java",
+    "sha256": "777b8aa94c9ff26f9f87731744d4d64a8cb603651790f74babfdbdce310a013e"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/test/java/com/evolution/analysis/acquisition/RepositoryAcquisitionContractTest.java",
+    "sha256": "ccc3eea01b828b72ee0a3075a6abc3228a2dab3e5ac2fef06641119a716fedfc"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/test/java/com/evolution/analysis/buildmodel/BuildModelContractTest.java",
+    "sha256": "09abc6de897f95e960c06bf590a621d1d1d72c807b5dd102e17eba49586bb847"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/test/java/com/evolution/analysis/buildmodel/SourcePlanContractTest.java",
+    "sha256": "224d32281b5f54631f75f09405bf34850320830621b49adf3d38beb23b239cfe"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/test/java/com/evolution/analysis/classpath/ClasspathResolutionContractTest.java",
+    "sha256": "f9dc7d97cbdf8df55b918c7f64a5f9728909cecb654946f7cbab66f258366305"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/test/java/com/evolution/analysis/contract/AnalysisAndAssessmentContractTest.java",
+    "sha256": "d3b24b4042354291c985e7f011d4b31beaa77df873003f93324e6f152c5ad153"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/test/java/com/evolution/analysis/contract/CanonicalSerializationTest.java",
+    "sha256": "d9679fdc5017788c15f050b1f2ea66cec8fc5829bff7f3ffa29a69047e704cb0"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/test/java/com/evolution/analysis/contract/ContractFixtures.java",
+    "sha256": "7b5a7f44dfd71fa481cfac144b72e9d31516e96ad95595c92f68c94dfa430d18"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/test/java/com/evolution/analysis/contract/DerivedEvidenceTest.java",
+    "sha256": "5f617082d43b2c65cb6465896d200cdc17f5346f043ce6a156e59556234a2390"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/test/java/com/evolution/analysis/contract/IdentityAndSourceContractTest.java",
+    "sha256": "47a168b54e04ac7addaddffe33051b48e2bd8d75783e177e52f82e572cdbb803"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/test/java/com/evolution/analysis/contract/RootModuleTest.java",
+    "sha256": "5b1a94de8420a874c184a4681047823bb3413e7a0fecdf7730c7f6b04297ddaf"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/test/java/com/evolution/analysis/contract/SemanticContractTest.java",
+    "sha256": "826c9d59e895aa128f7742ce7b882d6e6c905d5808a2b2cf37bcbb0155434d81"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/test/java/com/evolution/analysis/dependency/DependencyAcquisitionContractTest.java",
+    "sha256": "93cfd809083d08188b562c7a260cabc9bdf2457bac157834272d3367c2f24a9c"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/test/java/com/evolution/analysis/evidence/CapabilityGapContractTest.java",
+    "sha256": "8ea37b4ae61a3ec0b810c5d5fb0551579f143a740027630511aaf50001647d0b"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/test/java/com/evolution/analysis/frontend/FrontendContractTest.java",
+    "sha256": "eeb1c3d39b00a75dd0b2ce7678a871ea228a01fa400c9d3ac807ce8ba23a911c"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/test/java/com/evolution/analysis/frontend/FrontendResultTest.java",
+    "sha256": "62d04ce1318711334e4ef553bfdf7af46dd1f213f8e5cbb7bad910c68baca4cc"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/test/java/com/evolution/analysis/frontend/JavaSymbolNameTest.java",
+    "sha256": "a169f9ac9eb86dcdd9df12f2e2cb73e28440b292b11b2a3a5f373d4da8e8d461"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/test/java/com/evolution/analysis/input/ConditionTestInputs.java",
+    "sha256": "28a82244ec2dba3455712fbce91f4f9403b517d13adb338b69af40009fc8b97d"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/test/java/com/evolution/analysis/input/FrontendInputAssemblerTest.java",
+    "sha256": "b5f05ef5a8eef007cc242d54f3ea2ba69ee8fc4d34fe00cc622cf90a86fb2246"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/test/java/com/evolution/analysis/input/SourceDecoderTest.java",
+    "sha256": "265fd4e0deda19e0e726ae45308adff3726d599ea6124b8d8c9b3f7cd1b96838"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/test/java/com/evolution/analysis/spring/BindingInventoryFixtures.java",
+    "sha256": "9b03589174455219a14d938a5e720186852682446c6117acf6bde2cc4a79e1db"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/test/java/com/evolution/analysis/spring/condition/AutoConfigurationOrderingTest.java",
+    "sha256": "76c79e0730179ffcc6f9b714d176beda449aa0bda3cb5fa779767e704f1a6ffa"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/test/java/com/evolution/analysis/spring/condition/BeanRegistrationTransitionsTest.java",
+    "sha256": "4c63aa79acfb619adb7836d17ac75b8b8d1a0b42ac1d0199c0b38d04d6efc259"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/test/java/com/evolution/analysis/spring/condition/ConditionExpressionTest.java",
+    "sha256": "669a6d5b2d20c0f1723b81376aa697b00ae8e0057056a8665b9336606f1d8aba"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/test/java/com/evolution/analysis/spring/condition/ConditionLoweringTest.java",
+    "sha256": "f95e6eada50f4ee2c5885c81b49f26a6d7f66a2acaba8a7faaa47844c473f519"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/test/java/com/evolution/analysis/spring/condition/ConditionModelTest.java",
+    "sha256": "870dbcf234bf01a8535a0250a1a6e491cdc0fac5ad59afd00dfb267ff0db5339"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/test/java/com/evolution/analysis/spring/condition/ConfigurationSpaceTest.java",
+    "sha256": "9146707237ebf37fff047d0e38657e6400aa61a5fd1ea311af568bd72d22e847"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/test/java/com/evolution/analysis/spring/condition/ExogenousConditionEvaluatorTest.java",
+    "sha256": "adcc21073106b310ba49e19b08946a2ef86f545fd87b9d358518693e3c988310"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/test/java/com/evolution/analysis/spring/condition/FiniteConfigurationEvaluationTest.java",
+    "sha256": "2475e89f4fb880984c8de71f8dfc0279486a83f1605d72518a85913c179c59d2"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/test/java/com/evolution/analysis/spring/condition/InjectionBindingBoundaryTest.java",
+    "sha256": "ab6f568c1680be9c4bd6db6c3e8a8c7fca8a7ae71ad19e92dc079784f7a8e8e8"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/test/java/com/evolution/analysis/spring/condition/InjectionBindingsTest.java",
+    "sha256": "b3bf61c3ffff4300bc0e44e18468e8c29f791c80d035f47028eccacfadef1850"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/test/java/com/evolution/analysis/spring/condition/RegistrationDiscoveryTest.java",
+    "sha256": "bdbdb3cf03eed90e6e664fa8b02fa78d8d8347406cc7410b7549ab410ddf64bd"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/test/java/com/evolution/analysis/spring/condition/RegistrationPlanTest.java",
+    "sha256": "84aec5ea448e5030e14daf70b3f69e8b87e6d443f1ec0c6c1f571bc809a4e67c"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/test/java/com/evolution/analysis/spring/condition/SpringBindingOracleIT.java",
+    "sha256": "7defc5512204a411a95d6552f2b394a9ea51f62678ee4a1a4c505486e3d38fd6"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/test/java/com/evolution/analysis/spring/SpringMechanismInventoryTest.java",
+    "sha256": "87ee6a723f6cd0c2001c7a9228ec084a2bf218892cdb304b76789e884b355007"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/test/java/com/evolution/analysis/spring/SpringMechanismM4A2Test.java",
+    "sha256": "01c169a867f0927a7d600845a712f9ac8c2cbeac32a8acf1f769d00d392f4399"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/test/java/com/evolution/foundation/Java21BuildTest.java",
+    "sha256": "bbd88eccea9fcef83b78d530f34ebe9b3716a21232fbc20e3cc55a85c25c3be3"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/test/resources/fixtures/m4b1/r0-kleene.tsv",
+    "sha256": "9816e509c5c36f4fe4d62584fb841bad95f42dabd5107b71c4689913ff732829"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/test/resources/fixtures/m4b1/README.md",
+    "sha256": "34b0a083b3289b628b63cd16c44cc6659c70d989ef5a13f02cde096b593e10d5"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer/src/test/resources/spring-binding-oracle/Spring620Probe.java",
+    "sha256": "47a4af9821cedfdd82b5ee8e7fc6d2e76c5790504f7c70e7aaffcbc190ec69d2"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer-filesystem/pom.xml",
+    "sha256": "4dbd9f770aaa65dd34c5224cfc07967d8721027e943202a17a565870c89ac779"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer-filesystem/src/main/java/com/evolution/analysis/filesystem/FilesystemJdkPlatformProvider.java",
+    "sha256": "2ec97f6787e2686201f78d4619b0496a36e09e8fe783d743d2f6fc6459bece7b"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer-filesystem/src/main/java/com/evolution/analysis/filesystem/FilesystemRepositoryAcquirer.java",
+    "sha256": "323fd6f0bf45709a74a90eb2cd38cd1e298c5a8a51e243b51ba06d60250614f6"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer-filesystem/src/test/java/com/evolution/analysis/filesystem/FilesystemJdkPlatformProviderTest.java",
+    "sha256": "a8cd2c69b08f0036bd8f0753b06d6877aaf43265b3d1e618dca47dfabc5f70d6"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer-filesystem/src/test/java/com/evolution/analysis/filesystem/FilesystemRepositoryAcquirerTest.java",
+    "sha256": "a4f751dedbe80de10246f9938fc2b2e15b5a1f9a320ea9b928396e7973485b58"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer-javaparser/pom.xml",
+    "sha256": "4d96cf1801eca263d4bf41d6df338a11fd49b2276cdfa2709bd4ce24f2927067"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer-javaparser/src/main/java/com/evolution/analysis/javaparser/AnnotationExtraction.java",
+    "sha256": "8beb21db7491a8b52844cbcd8ce16b4148d7e10aa6ee3591ad4a33cba79deab7"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer-javaparser/src/main/java/com/evolution/analysis/javaparser/Extraction.java",
+    "sha256": "c516961cc7eefda6473e1c14c8f766c54a463f41bf2c1fcfead227f9f52cae5a"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer-javaparser/src/main/java/com/evolution/analysis/javaparser/FieldExtraction.java",
+    "sha256": "e0055c3fa562448fdf2678f35e3a4183f1e9bf92e3c5fd3c19e1c8d45dec196b"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer-javaparser/src/main/java/com/evolution/analysis/javaparser/ImplicitExtraction.java",
+    "sha256": "69806dc7c780add286a6b70b0efc187d0cb6a3381b36d7e1dd625fa2240f8b55"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer-javaparser/src/main/java/com/evolution/analysis/javaparser/JavaParserFrontend.java",
+    "sha256": "814286985e8de90ac8fe47be89adcd740d0000ea733423f2960e95c5d0ef2879"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer-javaparser/src/main/java/com/evolution/analysis/javaparser/OriginalSource.java",
+    "sha256": "8029650a9ba62639e521e42fb9e8e88d6f1e417eef6fa87f5fe5beba638d3da9"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer-javaparser/src/main/java/com/evolution/analysis/javaparser/ReferenceResolution.java",
+    "sha256": "aff2dc8d95e2a537c36b44ad6b4923a935c09b4677d27e64264d413b57e61611"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer-javaparser/src/main/java/com/evolution/analysis/javaparser/ResolutionEnvironment.java",
+    "sha256": "c443ede2bba000f169d24b3303987732c8745d28667e83d7e3bbbb87bd5aa9d8"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer-javaparser/src/main/java/com/evolution/analysis/javaparser/TypeExtraction.java",
+    "sha256": "84a266b2a5661d59d38c22317433015ce57f4e9240590bd8548c8f4305a13982"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer-javaparser/src/test/java/com/evolution/analysis/javaparser/AnnotationsTest.java",
+    "sha256": "751335ccbde9aa5d31edf5dc8c86ef1043d7e55bdc0b576258c88cc26ab1ec93"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer-javaparser/src/test/java/com/evolution/analysis/javaparser/ExpressionTypesTest.java",
+    "sha256": "917d524cbbcd234a080a40312549425f4a500caff10d9d7eaf3cc5b1db10acca"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer-javaparser/src/test/java/com/evolution/analysis/javaparser/FieldAccessTest.java",
+    "sha256": "656a8ca931c0a699e3749d042e3ff64c5c470d95c6682d8398a88b85c9257a17"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer-javaparser/src/test/java/com/evolution/analysis/javaparser/FrozenFixtureTest.java",
+    "sha256": "c8da08e62a32042e45e863d344e086eb0e7d1861a01db08beebfd594877b37b3"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer-javaparser/src/test/java/com/evolution/analysis/javaparser/JavaParserFrontendTest.java",
+    "sha256": "69baad20a616bfaf0fa900e02ff6153e7a4cfa80e89518ecba5300b981e49b88"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer-javaparser/src/test/java/com/evolution/analysis/javaparser/MethodReferencesTest.java",
+    "sha256": "7c0ed1417f83aba9b7a72b4706158746d3f504e0e79bd679f3da9f19a9f027de"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer-javaparser/src/test/java/com/evolution/analysis/javaparser/ModernFixtureTest.java",
+    "sha256": "c0d77d89e30644bf961db39458fe7bd6ce6c22d4ad4d8eb56fe04cd962fd5326"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer-javaparser/src/test/java/com/evolution/analysis/javaparser/OriginalSourceTest.java",
+    "sha256": "a8d1f7077d38bf6cbced6c20c2645c57c60889d13378d29468b13aad258ad972"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer-javaparser/src/test/java/com/evolution/analysis/javaparser/ReactorSourceResolutionTest.java",
+    "sha256": "261fa156e1c24cdeb2752008279aa6e293b60a8227bbe2b5b9af92229a64c7cd"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer-javaparser/src/test/java/com/evolution/analysis/javaparser/RecordsTest.java",
+    "sha256": "186424edd4a1235fa0ef952510d360a24cafc5564b0b0bf97f44b6ff7c7de9a0"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer-javaparser/src/test/java/com/evolution/analysis/javaparser/ResolutionInputsTest.java",
+    "sha256": "51c3a0a8614c450b88fb24bef7a5f37c2269f42b4818fcdf64be291c3f7f12ed"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer-javaparser/src/test/java/com/evolution/analysis/javaparser/SemanticBoundariesTest.java",
+    "sha256": "0faae3a0439ac2e23c44beb3d09337cd331e0476223c51125038b02938b27965"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer-javaparser/src/test/java/com/evolution/analysis/javaparser/SpringMechanismM4A2IntegrationTest.java",
+    "sha256": "955b437df88b73058e3420e2050eaf0d302e8b7d5e47b844818e82ac3e672b78"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer-javaparser/src/test/java/com/evolution/analysis/javaparser/TestInputs.java",
+    "sha256": "2115d1a213de9e5e58b4f1e504a015940234a24d8ec67b938e0848230abe5cfb"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer-javaparser/src/test/java/com/evolution/analysis/javaparser/TypeRelationshipsTest.java",
+    "sha256": "fd48db8995e35486f617bd8cb0ac1d2d0ff9588210ff45dc8d909048a1e8adc7"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer-javaparser/src/test/resources/m2/.gitattributes",
+    "sha256": "be98180abfc7a282589fd0d873d0afcb9627d85ca3d9333f5fb37e7ebc852d5c"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer-javaparser/src/test/resources/m2/fields/Accesses.java",
+    "sha256": "230a2bad022a43ea5c9b54cae43b877c098938d9393508725d99b4dada030694"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer-javaparser/src/test/resources/m2/fixture-expectations.json",
+    "sha256": "98212f7d3b65bdbe1a9aee69c03e642920a968bb757ddd331ef9cd8c77a3633a"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer-javaparser/src/test/resources/m2/fixtures/calls/fixture/CallsFixture.java",
+    "sha256": "2ac2fc7e83f3b660f159078b039d9da7c4f220bf81d0e9d28f5e7d7f57408d1f"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer-javaparser/src/test/resources/m2/fixtures/missing/fixture/MissingFixture.java",
+    "sha256": "49486914344efe22a703a06f2f70491acee16a53ea76bedb9166a6eb0f092e7d"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer-javaparser/src/test/resources/m2/fixtures/owners/fixture/OwnerFixture.java",
+    "sha256": "b1200f6c26720efb9c160527a5297866182668b2df0ba25f0bb9665f993b897c"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer-javaparser/src/test/resources/m2/fixtures/spans/fixture/SpanFixture.java",
+    "sha256": "0ced79056de5a809d06a6b3115977e00d4674b79014600901e4c33047ecb7c9f"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer-javaparser/src/test/resources/m2/modern/Modern.java",
+    "sha256": "19ce0b2e8650b9aa05a9c6443df08484739151d00aa7b19378b94716d59b02d0"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer-maven/pom.xml",
+    "sha256": "15e328eaacec61f195ac2f93a5b09f14e24b1607e289da6deb5146702385fbd6"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer-maven/src/main/java/com/evolution/analysis/maven/LocalArtifactCache.java",
+    "sha256": "0a5c22c9e382970bffb4b11d5114dc0b2f013f2e30e7b6ef49e93d63b41d2e44"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer-maven/src/main/java/com/evolution/analysis/maven/MavenArtifactModelReader.java",
+    "sha256": "79612d978d092fd5112acdce39f5d9b21ccc8fba69c9b867c0f3e943d82bc87a"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer-maven/src/main/java/com/evolution/analysis/maven/MavenBuildModelProvider.java",
+    "sha256": "afd57c0cc0ee5cf7b284d670b19a0e25cb9bf5f1a83a5d5f4d3748d58cebace7"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer-maven/src/main/java/com/evolution/analysis/maven/MavenBuildModelResolution.java",
+    "sha256": "78d6385eae76b4275bf3b5251cde58baa4b4136f91d73b36607e4a501c10258b"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer-maven/src/main/java/com/evolution/analysis/maven/MavenBuildModelResolver.java",
+    "sha256": "4bd1135ac00970ebf04ec7d42d634da8d3d4c1f411c4cbfc1c4526ea156b1ec0"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer-maven/src/main/java/com/evolution/analysis/maven/MavenDependencyArtifactProvider.java",
+    "sha256": "6f07d80abc57dbcaf6dc1e27b8395e8c78f531b70de75e41ec2a85b14e1f2e6b"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer-maven/src/main/java/com/evolution/analysis/maven/MavenDependencyArtifactResolution.java",
+    "sha256": "0c020cf7fbe08d82c79164d0e42dd9b12dbe586e9b57dbd558bd291cd4be0474"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer-maven/src/main/java/com/evolution/analysis/maven/MavenDependencyArtifactResolver.java",
+    "sha256": "7350fe1cb25a856cedecaf0bb56c7a7b0ca371d3e34411b4e4378758ceb93562"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer-maven/src/main/java/com/evolution/analysis/maven/MavenLocalClasspathProvider.java",
+    "sha256": "eb964efdebc47cd58cce4812bd21e96ce09ea0083bf6ab9dd9aba8940b4f68b1"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer-maven/src/main/java/com/evolution/analysis/maven/MavenPomResolutionPolicy.java",
+    "sha256": "49882f2b1e75e0a3b9d3777215b97502de4b9c1fe4b639290b3c935e274c522f"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer-maven/src/main/java/com/evolution/analysis/maven/ModelInputs.java",
+    "sha256": "ff4c71d5de7a6a83f32d24fbc424a6c4765484b41e4127b70ab37a88165ead91"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer-maven/src/main/java/com/evolution/analysis/maven/PomPaths.java",
+    "sha256": "9c1d3e7121e491954138ef8124c04c06dd8c2b96347af54c705d2a01d1786f70"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer-maven/src/main/java/com/evolution/analysis/maven/SecurePomReader.java",
+    "sha256": "4b6f28ce971ec40e1f11f1cac610919adc3d9035ecd6f3fa57d2520ae34ea798"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer-maven/src/main/java/com/evolution/analysis/maven/SourcePlanProjection.java",
+    "sha256": "2785d3c2f4bb52fea0c43cbf42b347d8316a104ab644f69c4de84577691d8b25"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer-maven/src/test/java/com/evolution/analysis/maven/MavenBuildModelProviderTest.java",
+    "sha256": "07bf301d1503b99fcd24d73baa7f8d2b59aee0f8a2ebb9071ab27e17cf7c0a4b"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer-maven/src/test/java/com/evolution/analysis/maven/MavenBuildModelResolverTest.java",
+    "sha256": "f630f3904ed1a25a65c46f0bfe1ce838bc0fd5b7650a881d2506b53bec430f63"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer-maven/src/test/java/com/evolution/analysis/maven/MavenDependencyArtifactProviderTest.java",
+    "sha256": "f5a30db88f937663e18b82730d08007a82be999870624d11f19b779d0af4866e"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer-maven/src/test/java/com/evolution/analysis/maven/MavenDependencyArtifactResolverTest.java",
+    "sha256": "23b1e1e441ade5b676f33d0575c81a8080945bd9b41cd6c435b48caa7a46f973"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer-maven/src/test/java/com/evolution/analysis/maven/MavenLocalClasspathProviderTest.java",
+    "sha256": "3e0d0f65b02d5febb0a9411ad7ec07ad216697af1d55a5b43cfb2eb58d094469"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer-maven/src/test/java/com/evolution/analysis/maven/PlatformReactorModelTest.java",
+    "sha256": "96018b39759688891ff51ddad2314ac7bdf6b2e0b6e7c3e1e588b5c8c6109637"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "analyzer-maven/src/test/java/com/evolution/analysis/maven/SourcePlanProjectionTest.java",
+    "sha256": "52096bdfc5ab61646942ce2bae16b2201d96897c05874f3bde43959eda54b28c"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "backend/pom.xml",
+    "sha256": "9b81a7a00439acd6ad861dae82777dfbdc7fc4a98dd3ef4f7410f05239ea10ac"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "backend/src/main/java/com/evolution/.gitkeep",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "backend/src/test/java/com/evolution/foundation/Java21BuildTest.java",
+    "sha256": "0bd97a07aa899aabab23cc6b4a8c3ff22a03fa24e6a823bbd092157d1c49a86e"
+  },
+  {
+    "mode": "utf8-lf",
+    "path": "pom.xml",
+    "sha256": "c3ffc8d598e140ee93047cdc4a67967c5657833b52c43ee0558f0bdec9ab0aad"
+  }
+]

@@ -1,0 +1,335 @@
+{
+  "files": [
+    {
+      "mode": "utf8-lf",
+      "path": "execution.json",
+      "sha256": "833dbfcf434ed451a6fe6706ad2cdd8325ca6011e37e49227d3073b0fd551b60"
+    },
+    {
+      "mode": "utf8-lf",
+      "path": "external-inputs.json",
+      "sha256": "a9551dda1a5f99033b3ea4a65e999f6769b57b70330d642f7043df963e1671e7"
+    },
+    {
+      "mode": "utf8-lf",
+      "path": "oracle-observations.json",
+      "sha256": "e4dcffaa15eea71cd6c7b1eb32c20b3a2349092cb5dc8530819ca4b4c5bb2b02"
+    },
+    {
+      "mode": "utf8-lf",
+      "path": "reactor-suites.json",
+      "sha256": "fc11b193ef3eb44b05ee028f96fd0e94327a46e8f1c2cb5b91e8ef361e56d490"
+    },
+    {
+      "mode": "bytes",
+      "path": "reactor.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "mode": "utf8-lf",
+      "path": "README.md",
+      "sha256": "141710d935d5612183e74f89894460bcb9f1018e17dd43f3c28cf901915c6b58"
+    },
+    {
+      "mode": "bytes",
+      "path": "reports/com.evolution.analysis.acquisition.RepositoryAcquisitionContractTest.txt",
+      "sha256": "73ef040e12797b879912b35393f9292f3f2b22fbf1c306f6f4c8b6ca1e76445b"
+    },
+    {
+      "mode": "bytes",
+      "path": "reports/com.evolution.analysis.buildmodel.BuildModelContractTest.txt",
+      "sha256": "ac27cdb04177dd190b99825fea04840eb162f2001ab72f2adfbfc34243d6ce66"
+    },
+    {
+      "mode": "bytes",
+      "path": "reports/com.evolution.analysis.buildmodel.SourcePlanContractTest.txt",
+      "sha256": "7e90a9f25ec7d5624d2b0c4b4119ce5116b28e96b5f6d45cb2c67f7ebec42e63"
+    },
+    {
+      "mode": "bytes",
+      "path": "reports/com.evolution.analysis.classpath.ClasspathResolutionContractTest.txt",
+      "sha256": "92a31b1b1493a9ca910fb105f6ba7b32258ea0d1b825b5929344798ff5b5ab1d"
+    },
+    {
+      "mode": "bytes",
+      "path": "reports/com.evolution.analysis.contract.AnalysisAndAssessmentContractTest.txt",
+      "sha256": "cb28ab0e4e084e903640182e6bfd0e4695a9672a345047d3a45255025f3530c9"
+    },
+    {
+      "mode": "bytes",
+      "path": "reports/com.evolution.analysis.contract.CanonicalSerializationTest.txt",
+      "sha256": "90bc7ea61adffce66c562bbe2249dce38e4edb91644686a0770b437d375dc3c6"
+    },
+    {
+      "mode": "bytes",
+      "path": "reports/com.evolution.analysis.contract.DerivedEvidenceTest.txt",
+      "sha256": "fac3ff15e1426d196d854624766476d813beca0e1eb3f1f42d00469cf3d7cec4"
+    },
+    {
+      "mode": "bytes",
+      "path": "reports/com.evolution.analysis.contract.IdentityAndSourceContractTest.txt",
+      "sha256": "3caf1f976370d92cbbea474569957b4b36bbcbce9584ca5e3ae126d58484e3d4"
+    },
+    {
+      "mode": "bytes",
+      "path": "reports/com.evolution.analysis.contract.RootModuleTest.txt",
+      "sha256": "a2f9c676484ed595ba8e36149e01d27fd12f12c140a3d041cc593b672d2c4138"
+    },
+    {
+      "mode": "bytes",
+      "path": "reports/com.evolution.analysis.contract.SemanticContractTest.txt",
+      "sha256": "891e8a861e913ff5ef76cf272e4df7a46584887a22c0ddaf4b3d73b98cb7a00f"
+    },
+    {
+      "mode": "bytes",
+      "path": "reports/com.evolution.analysis.dependency.DependencyAcquisitionContractTest.txt",
+      "sha256": "281ef79ba39844856079748e78369687c9cfabb7e87ea4353621c46f12094f50"
+    },
+    {
+      "mode": "bytes",
+      "path": "reports/com.evolution.analysis.evidence.CapabilityGapContractTest.txt",
+      "sha256": "5b2392a7a29fc995afc5e4d12ae4c1fb913a2fc0732b0164051b3e153ccc12db"
+    },
+    {
+      "mode": "bytes",
+      "path": "reports/com.evolution.analysis.filesystem.FilesystemJdkPlatformProviderTest.txt",
+      "sha256": "e3ec5a78f89c473b607cdbfc68f604871a01a1d8463ddaaa3b60414967c401fe"
+    },
+    {
+      "mode": "bytes",
+      "path": "reports/com.evolution.analysis.filesystem.FilesystemRepositoryAcquirerTest.txt",
+      "sha256": "81ac1153f2ddd350ad7a125a9ce21e472cc0509fd192e3931d42b914595022f6"
+    },
+    {
+      "mode": "bytes",
+      "path": "reports/com.evolution.analysis.frontend.FrontendContractTest.txt",
+      "sha256": "b8c71aee7d64b3b6154c90297b58f49346f63cb74ebeec3692f53c91ae2306bb"
+    },
+    {
+      "mode": "bytes",
+      "path": "reports/com.evolution.analysis.frontend.FrontendResultTest.txt",
+      "sha256": "fc385a646b985706239d810458c085e10407bef18aa708b6806fe9ca85b6b67a"
+    },
+    {
+      "mode": "bytes",
+      "path": "reports/com.evolution.analysis.frontend.JavaSymbolNameTest.txt",
+      "sha256": "f4876b044727f070b854136aeb4d848813a9eb14ff3819daac07885b55da20fd"
+    },
+    {
+      "mode": "bytes",
+      "path": "reports/com.evolution.analysis.input.FrontendInputAssemblerTest.txt",
+      "sha256": "e668bd15629d1350426bc7d8361748cff6b1846127508eccb30f8a9a3702a5b9"
+    },
+    {
+      "mode": "bytes",
+      "path": "reports/com.evolution.analysis.input.SourceDecoderTest.txt",
+      "sha256": "712e094addddcee2a9d03bf2697a65b5de0870ff5e4dea8a3d7768c56efc294d"
+    },
+    {
+      "mode": "bytes",
+      "path": "reports/com.evolution.analysis.javaparser.AnnotationsTest.txt",
+      "sha256": "12de80d8b7084739b9a4e4463175c24b14434d722469c21655704723da7bdbb6"
+    },
+    {
+      "mode": "bytes",
+      "path": "reports/com.evolution.analysis.javaparser.ExpressionTypesTest.txt",
+      "sha256": "7ee05aac4184bcbfb567704ed16a7f49d9a351c5c0fdcf713f47eb873da22394"
+    },
+    {
+      "mode": "bytes",
+      "path": "reports/com.evolution.analysis.javaparser.FieldAccessTest.txt",
+      "sha256": "547a6c50749bd62219890624c57cc681021146e7e905941182ffd54737979a5c"
+    },
+    {
+      "mode": "bytes",
+      "path": "reports/com.evolution.analysis.javaparser.FrozenFixtureTest.txt",
+      "sha256": "71bef554edcdb298d240cd9aa49d06ad26f84fd39e27ef1c5be1df70ff7a3307"
+    },
+    {
+      "mode": "bytes",
+      "path": "reports/com.evolution.analysis.javaparser.JavaParserFrontendTest.txt",
+      "sha256": "e6872e7c2e8eeb23881dc7bb12f4afd517f7da30e768672f07c06c84eb7c4bee"
+    },
+    {
+      "mode": "bytes",
+      "path": "reports/com.evolution.analysis.javaparser.MethodReferencesTest.txt",
+      "sha256": "35b70c0864c78bb3e1336421d92930ce929997799d7988e4356827ef2b91682a"
+    },
+    {
+      "mode": "bytes",
+      "path": "reports/com.evolution.analysis.javaparser.ModernFixtureTest.txt",
+      "sha256": "c440a1c82aa1f506898896977e1d1d1b177fd1d3e057dd709d27f95ca31e99a8"
+    },
+    {
+      "mode": "bytes",
+      "path": "reports/com.evolution.analysis.javaparser.OriginalSourceTest.txt",
+      "sha256": "ebdd67f913146e3a5588545fdc0dcb1e823ca700490ce0c5c855ccedd787b0b2"
+    },
+    {
+      "mode": "bytes",
+      "path": "reports/com.evolution.analysis.javaparser.ReactorSourceResolutionTest.txt",
+      "sha256": "6fe891e005ba7cd6cd2b5bd3223695fbd2ada767188d699b4aaafb1aea192862"
+    },
+    {
+      "mode": "bytes",
+      "path": "reports/com.evolution.analysis.javaparser.RecordsTest.txt",
+      "sha256": "cd187ee70935cdda0c9ea23f08eda1445202ca35ed872c585d890587ea86d026"
+    },
+    {
+      "mode": "bytes",
+      "path": "reports/com.evolution.analysis.javaparser.ResolutionInputsTest.txt",
+      "sha256": "6f4481dff2081e49a3013cd9513b9d39fd92f507e22c2e962470dc85ffac1fd5"
+    },
+    {
+      "mode": "bytes",
+      "path": "reports/com.evolution.analysis.javaparser.SemanticBoundariesTest.txt",
+      "sha256": "035e0780a8bdc0363a1275a3fc503f04b7d6c1aa63ee3417b010ac3e02e25ddb"
+    },
+    {
+      "mode": "bytes",
+      "path": "reports/com.evolution.analysis.javaparser.SpringMechanismM4A2IntegrationTest.txt",
+      "sha256": "2fe346313061549b395a2f1d5e97a1f32a28d78b802853faf51ac166f74c8215"
+    },
+    {
+      "mode": "bytes",
+      "path": "reports/com.evolution.analysis.javaparser.TypeRelationshipsTest.txt",
+      "sha256": "6bbbdcd49f56e7330b87129ca4c26a8a4052a8f2d8ea8008be5ac4a43e359431"
+    },
+    {
+      "mode": "bytes",
+      "path": "reports/com.evolution.analysis.maven.MavenBuildModelProviderTest.txt",
+      "sha256": "95e6c65d344e0b0a1093cbfe45eb1615b22e5dbf4c5629ff18b2d9edbd142f7e"
+    },
+    {
+      "mode": "bytes",
+      "path": "reports/com.evolution.analysis.maven.MavenBuildModelResolverTest.txt",
+      "sha256": "1cafefac469dfff53c9840a23b29c742f0b3c70f5ef1f64d5e29714f210fa8b6"
+    },
+    {
+      "mode": "bytes",
+      "path": "reports/com.evolution.analysis.maven.MavenDependencyArtifactProviderTest.txt",
+      "sha256": "255a14bdc9d3952d4f1a2699d473cebdd675c8c0f6f2cb07400b9e60db6db729"
+    },
+    {
+      "mode": "bytes",
+      "path": "reports/com.evolution.analysis.maven.MavenDependencyArtifactResolverTest.txt",
+      "sha256": "fa835eb368e93aa667bf6fa172705debd5bff25aebfaaec0bc1a9a8fb52af840"
+    },
+    {
+      "mode": "bytes",
+      "path": "reports/com.evolution.analysis.maven.MavenLocalClasspathProviderTest.txt",
+      "sha256": "1b0ac9d237afd800537bbb0a5c2d2056586618542a48bac8163d990d13cb613e"
+    },
+    {
+      "mode": "bytes",
+      "path": "reports/com.evolution.analysis.maven.PlatformReactorModelTest.txt",
+      "sha256": "1eb841ad7aeedf034b93e832cdb9ec62e6d3c1ead3d4ed03390b8537b5d0c701"
+    },
+    {
+      "mode": "bytes",
+      "path": "reports/com.evolution.analysis.maven.SourcePlanProjectionTest.txt",
+      "sha256": "e956ea07f42d1fa9eed406f031e603ba504a9e057118f7b7bf16a0df9042dbd1"
+    },
+    {
+      "mode": "bytes",
+      "path": "reports/com.evolution.analysis.spring.condition.AutoConfigurationOrderingTest.txt",
+      "sha256": "f92805e5a37b9bf327bb45b16f37153dfd100437bb7a13ec8f472a2c4f424d0a"
+    },
+    {
+      "mode": "bytes",
+      "path": "reports/com.evolution.analysis.spring.condition.BeanRegistrationTransitionsTest.txt",
+      "sha256": "f8738bbb64959cc0342024af0ed09231b3205865ac6ddf0184b07908fd9281fc"
+    },
+    {
+      "mode": "bytes",
+      "path": "reports/com.evolution.analysis.spring.condition.ConditionExpressionTest.txt",
+      "sha256": "d4fec354c830871fdaee9317002626ea93300cfa736b6f900747e8f55b49d09e"
+    },
+    {
+      "mode": "bytes",
+      "path": "reports/com.evolution.analysis.spring.condition.ConditionLoweringTest.txt",
+      "sha256": "d0f00d7f2bc8efd048acb2841a8c8018c77bbc2fc58d721da06d36def5007259"
+    },
+    {
+      "mode": "bytes",
+      "path": "reports/com.evolution.analysis.spring.condition.ConditionModelTest.txt",
+      "sha256": "f11223af7efb739ae5babfb3961ba21530da794668462056083eb88f3758faf5"
+    },
+    {
+      "mode": "bytes",
+      "path": "reports/com.evolution.analysis.spring.condition.ConfigurationSpaceTest.txt",
+      "sha256": "fd917fd89e0e1f32923b42e193c945fa229a94bb8c5ed349951414f398d45216"
+    },
+    {
+      "mode": "bytes",
+      "path": "reports/com.evolution.analysis.spring.condition.ExogenousConditionEvaluatorTest.txt",
+      "sha256": "f91a3027322d9e85bfcd6e3622795a46027e356c8632f6560a206036eca2feca"
+    },
+    {
+      "mode": "bytes",
+      "path": "reports/com.evolution.analysis.spring.condition.FiniteConfigurationEvaluationTest.txt",
+      "sha256": "ef5de0667ca7d3804188685e7e05043b03988e2460a04fa2c408b85ccde69194"
+    },
+    {
+      "mode": "bytes",
+      "path": "reports/com.evolution.analysis.spring.condition.InjectionBindingBoundaryTest.txt",
+      "sha256": "788e0f1137f636bdfd691b5a0a830929b4fa92833527a4e80d48e5626485ab5f"
+    },
+    {
+      "mode": "bytes",
+      "path": "reports/com.evolution.analysis.spring.condition.InjectionBindingsTest.txt",
+      "sha256": "b3a107c222d017583e55a46a61461752358247583001dfe596efc661185b3fe9"
+    },
+    {
+      "mode": "bytes",
+      "path": "reports/com.evolution.analysis.spring.condition.RegistrationDiscoveryTest.txt",
+      "sha256": "f877a7ba0fa4a45d39443a5f2e44e6b472b650df4d5b580c91bb94d814c421e6"
+    },
+    {
+      "mode": "bytes",
+      "path": "reports/com.evolution.analysis.spring.condition.RegistrationPlanTest.txt",
+      "sha256": "8d3689a241eca83eb785686be07ee061796a8166a600f451718bc2be2afaa309"
+    },
+    {
+      "mode": "bytes",
+      "path": "reports/com.evolution.analysis.spring.condition.SpringBindingOracleIT.txt",
+      "sha256": "79f22a1a8808e94a8832dde9efd1d3725c68a2dcad59324b2815382ff1ee14b1"
+    },
+    {
+      "mode": "bytes",
+      "path": "reports/com.evolution.analysis.spring.SpringMechanismInventoryTest.txt",
+      "sha256": "7fdf99ee0e42c7000e9846d0410b32ca7b93b05f8abb2387aa681b7fae3ee28a"
+    },
+    {
+      "mode": "bytes",
+      "path": "reports/com.evolution.analysis.spring.SpringMechanismM4A2Test.txt",
+      "sha256": "ef7df30611263b96f819f8e295484f8bc4a539dc4fe0aa244d308ba274eaac92"
+    },
+    {
+      "mode": "bytes",
+      "path": "reports/com.evolution.foundation.Java21BuildTest.txt",
+      "sha256": "8b419972f862f9fd11993cedd42a49d06864a9fe2ac01b6d9d9199e3f452ba99"
+    },
+    {
+      "mode": "bytes",
+      "path": "tdd-red.log",
+      "sha256": "8cd4e08278bab9b05cd99d116a2d4052b436523ad7f6056f49a6d05a5ca8fccb"
+    },
+    {
+      "mode": "bytes",
+      "path": "toolchain.txt",
+      "sha256": "4dbf3a00aeee684b622b6670cd1ea65b3acba5217637f9b1c3a2198b71b36630"
+    },
+    {
+      "mode": "utf8-lf",
+      "path": "verify.py",
+      "sha256": "dd8757b6b1ea21ded1ca9d27fcab235add1deee6a6a22dddf93a0752b178cee7"
+    },
+    {
+      "mode": "utf8-lf",
+      "path": "workspace-inputs.json",
+      "sha256": "49fc5ad6baff49187aba8ffc3b822f6dc1af8b4aec00278e9b92a53c0a556aff"
+    }
+  ],
+  "schema": "m4c3-verification-manifest-v1"
+}

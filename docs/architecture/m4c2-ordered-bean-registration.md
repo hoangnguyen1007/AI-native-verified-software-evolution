@@ -106,4 +106,4 @@ All 11 items from the expected checklist were verified:
 | Identity/provenance | `equivalentInputsProduceIdenticalResultIdentity`, `changedLimitsProduceDifferentContextIdentity`, `transitionChainAndStateSnapshotsGrowMonotonically`, `wrongFrameworkVersionProducesVersionFragmentGap` | PASSED |
 | Regressions | `existingDiscoveryApiIsUnaffectedByRegistrationEvaluation` and regression sweep across all 11 Spring test suites | PASSED |
 
-Exact next task: M4C.3 injection binding and multi-world truth regions. Multi-build contexts, runtime equivalence and Gate G3 remain subsequent work.
+M4C.3 now delivers [normalized injection binding](m4c3-injection-binding.md). Multi-world truth regions and witnesses belong to M4D; multi-build contexts, runtime equivalence and Gate G3 are not established by these slices.

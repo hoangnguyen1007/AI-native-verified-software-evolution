@@ -1,0 +1,4 @@
+-------------------------------------------------------------------------------
+Test set: com.evolution.analysis.javaparser.SpringMechanismM4A2IntegrationTest
+-------------------------------------------------------------------------------
+Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 9.662 s -- in com.evolution.analysis.javaparser.SpringMechanismM4A2IntegrationTest
