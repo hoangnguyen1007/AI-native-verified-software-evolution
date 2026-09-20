@@ -1,0 +1,7 @@
+{
+  "command": ".\\mvnw.cmd -B -ntp verify -q",
+  "started": "2026-09-20T14:08:45.9888534+07:00",
+  "finished": "2026-09-20T14:10:07.8903363+07:00",
+  "exitCode": 0,
+  "enforcerSkipped": false
+}

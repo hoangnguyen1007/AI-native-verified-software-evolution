@@ -1,10 +1,45 @@
 # Current State
 
-Last reconciled: 2026-09-18. Fresh checks and their scope belong in the task handoff; historical gate evidence is identified below.
+Last reconciled: 2026-09-20. Fresh checks and their scope belong in the task handoff; historical gate evidence is identified below.
 
 ## PHASE AND MILESTONE
 
 SE121, Track A + B. M1 contracts are committed at `b04220e722cc4bc772cbb3ad8531d4dc1ea1a058`; G1 is recorded passed. M2 frontend delivery is recorded complete across all 18 relationship families. M3.1–M3.8 implementation is delivered and its historical full reactor checkpoint passes 221 tests. M4-R0 is human-accepted, M4A.1–M4A.2 deliver the production evidence-only Spring mechanism inventory and annotation-declaration graph, M4B.1–M4B.2 deliver the condition IR foundation, evidence-to-IR lowering and bounded exogenous condition evaluation, M4C.1–M4C.3 deliver normalized discovery/registration/binding for the pinned Framework 6.2.0 / Boot 3.4.0 fragment, and M4D delivers finite-space truth regions plus minimized independently replayed witnesses. M4E validation and G3 remain pending. Focused G2 hardening tolerates equivalent duplicate dependency rows throughout external parent/BOM/profile model hierarchies and resolves complete handwritten reactor modules from exact acquired source evidence when bytecode output is unavailable. Sibling parse failures retain closed source outcomes, while referenced implicit record members retain sibling scope and component provenance. Comprehensive Gate G2 evaluation across 5 representative real-world architectural archetypes is documented in [Gate G2 Comprehensive Architecture Evaluation](reproducibility/g2-comprehensive-architectural-evaluation-2026-09-10.md).
+
+## IMPLEMENTED — M4-UNIVERSAL SLICE 1 PASSIVE INGESTION
+
+**CONFIRMED by implementation and focused tests:** `UniversalBuildIngestion` adds
+passive Gradle Groovy/Kotlin and plain-Java projections while preserving original
+Maven results. `UniversalSourceIngestion` closes source ownership and binds exact
+caller-supplied platform/classpath evidence. `UniversalIngestionPipeline` joins
+frontend output, automatic configuration baselines, component discovery,
+constructor injection sites and typed gaps into one reproducible result.
+
+JavaParser is now pinned to 3.28.2 (`frontend.javaparser:3.28.2-m4u.1`), with exact
+non-preview parser levels through 26 and neutral type-declaration shape metadata.
+Pinned Lombok 1.18.46 structural synthesis covers the six requested annotations
+in the documented fragment; record and generated constructor parameters retain
+type evidence. Config ingestion covers properties/YAML, profile variants,
+bounded activation/placeholder handling and deterministic precedence. Component
+roots support literal packages and resolved class markers; all six standard
+stereotypes are checked against exact artifact evidence. Unique constructor
+sites are acquired without claiming downstream binding or runtime activation.
+
+The [slice contract](architecture/m4u1-passive-ingestion.md) defines the actual
+support and gap boundaries. The [verification package](reproducibility/m4u1-ingestion-2026-09-20/README.md)
+records final commands, totals, compiler/config-loader controls and file hashes.
+**CONFIRMED final verification:** the current reactor passes **472 tests across
+67 suites**, with zero failures, errors or skips and Enforcer enabled. All reports
+are fresh for this invocation; 43 tests in 10 suites were added for M4U.1.
+Implementation self-review is not independent code review. No target repository
+build, external corpus benchmark, Git inspection, commit or push was performed.
+
+**OPEN acceptance claim:** worldwide repository coverage of at least 98% remains
+unmeasured. Dynamic Gradle behavior and exact classpath resolution, unsupported
+Lombok configurations/versions, external Config Data and complete source-to-runtime
+Spring normalization retain explicit gaps. This delivery does not pass G3 or
+certify the entire M4-UNIVERSAL target. **Exact next implementation task: Slice 2**,
+followed by M4E/G3 evidence over both supported results and unresolved obligations.
 
 ## COMPLETED IMPLEMENTATION — M4D TRUTH REGIONS AND REVALIDATED WITNESSES
 
@@ -124,7 +159,7 @@ In the official checkpoint, pinned Spring PetClinic snapshot `818c4136ea971c2167
 
 **CONFIRMED by the post-fix ChatServerMicroservices full-pipeline execution:** pinned revision `d9aa0cf5d9c4de70a16d36708a027f9d45c71792` ran cleanly across two independent empty caches in 58m 17s. The two runs are byte-identical at 57,647,513 bytes with digest `sha256:3a8903dd8fc96de64dddf3dd4fd17c45a2146c5a7d432cee929985d52fa66bd2`. Hardening eliminated the previous `POM_MODEL_FAILED` (now 0), acquired 397 JARs across 17 rounds without failure, assembled 8 source sets with 587 frontend observations (145/158 calls resolved), while cleanly reporting 442 typed capability gaps (including 30 unacquired protobuf generated sources and 24 unbuilt reactor outputs).
 
-M3.1/M3.2 remain declarative projections; M3.3 supplies bounded repository inputs/candidate ownership, M3.4 supplies passive dependency/JAR manifests, M3.5 supplies decoded source/platform/frontend inputs, M3.6 normalizes gaps, M3.7 supplies exact parent/BOM POM and cross-release platform evidence, and M3.8 closes exact dependency release artifacts for the supported Maven context. Complete handwritten sibling modules may additionally provide source-level symbol evidence at their exact reactor classpath position; this does not acquire or claim bytecode output. Reactor-output acquisition, class-directory inputs, generated-source lineage, toolchain discovery, POM-less conventional source-plan inference and non-Maven build adapters remain future provider boundaries. Version ranges/dynamic selectors, relocations, system paths, non-JAR binaries, nonstandard/split cache layouts, timestamped snapshots and manifest-classpath expansion remain explicit gaps; relocation never admits the obsolete JAR. M3.8 received implementer self-review, reactor verification and real external-repository execution; the later hardening has focused unit verification only. That implementation checkpoint did not itself advance G2/G3/product gates; G2 is subsequently recorded passed below.
+M3.1/M3.2 remain declarative projections; M3.3 supplies bounded repository inputs/candidate ownership, M3.4 supplies passive dependency/JAR manifests, M3.5 supplies decoded source/platform/frontend inputs, M3.6 normalizes gaps, M3.7 supplies exact parent/BOM POM and cross-release platform evidence, and M3.8 closes exact dependency release artifacts for the supported Maven context. Complete handwritten sibling modules may additionally provide source-level symbol evidence at their exact reactor classpath position; this does not acquire or claim bytecode output. Reactor-output acquisition, class-directory inputs, generated-source lineage and toolchain discovery remain future provider boundaries. M4U.1 now provides bounded POM-less and Gradle source-plan projections. Version ranges/dynamic selectors, relocations, system paths, non-JAR binaries, nonstandard/split cache layouts, timestamped snapshots and manifest-classpath expansion remain explicit gaps; relocation never admits the obsolete JAR. M3.8 received implementer self-review, reactor verification and real external-repository execution; the later hardening has focused unit verification only. That implementation checkpoint did not itself advance G2/G3/product gates; G2 is subsequently recorded passed below.
 
 On 2026-09-04, M2 frontend implementation was fully validated across all 18 relationship families (catalog `m2-java-4`, adapter `3.27.1-m2.4`), with 98 root reactor tests passing cleanly and whole-project multi-file extraction confirmed. That checkpoint transitioned implementation from M2 to Milestone M3 (Multi-Module Workspace and Build-Model Intelligence).
 
@@ -156,8 +191,8 @@ The human approved JavaParser + SymbolSolver as the primary SE121/M2 frontend on
 - Root verification includes the original M1/build tests and new frontend/adapter tests. Exact final totals and raw console output are in the implementation evidence. Standalone benchmarks are outside root verification.
 - R1 PoC: `benchmarks/poc/parser-eval/`. Independent experimental adapters/comparison: `benchmarks/semantic-frontend-evaluation/`.
 - M2 oracle pilot: `benchmarks/m2-ground-truth/`, separate from the reactor and legacy comparator, using JDK 21/Python standard libraries.
-- Production adapter pin: JavaParser/SymbolSolver 3.27.1. Source records, enum constant bodies, bounded implicit members, method references, expression types and annotation uses are implemented. Detailed support and remaining degraded cases are in the modern Java evidence record; no compiler-equivalence or scale claim is made.
-- Progressive effective-POM/source-plan projection, bounded local filesystem acquisition/candidate ownership, passive exact dependency/JAR manifests, bounded credential-free HTTPS release-POM/JAR acquisition, strict source decoding, explicit JDK/`ct.sym` platform views, frontend-input assembly, normalized capability-gap/acquisition/conflict core and M4A.1–M4A.2 evidence-only Spring mechanism acquisition are implemented. M4B exogenous evaluation, M4C.1 normalized plan/discovery transitions, M4C.2 ordered registration, M4C.3 normalized injection binding and M4D truth-region/witness aggregation are implemented and tested. No POM-less/non-Maven source-plan provider, generated-source/reactor-output acquisition, complete source-to-Spring-descriptor adapter, M4E external validation, graph, policy engine, metric/scoring calculation, CLI, backend API or workbench is implemented.
+- Production adapter pin: JavaParser/SymbolSolver 3.28.2. M4U.1 adds bounded Lombok synthesis, parser-neutral type shapes and record constructor parameter evidence to the existing frontend. The M4U.1 contract qualifies the fresh extension; historical M2 evidence remains unchanged. No compiler-equivalence or scale claim is made.
+- Progressive effective-POM/source-plan projection, bounded filesystem/dependency acquisition, explicit platform/frontend assembly, capability-gap normalization and M4A–M4D bounded Spring semantics are implemented. M4U.1 adds passive POM-less/Gradle source plans, configuration baseline ingestion and component/constructor acquisition. Generated-source/reactor-output acquisition, a complete source-to-Spring-descriptor adapter, M4E external validation, graph, policy engine, metric/scoring calculation, CLI, backend API and workbench remain unimplemented.
 - `frontend/` and root `tests/` have no tracked product implementation.
 
 ## EVIDENCE AND LIMITS
@@ -183,9 +218,9 @@ Provisional: Neo4j Community adapter, Spring Boot API, YAML external policies, C
 
 The initial Maven sandbox JUnit-cache denial and the final benchmark install-cache denial were resolved through the host's supported execution approval, with explicit `MAVEN_USER_HOME` / `maven.repo.local`. Those historical M3 execution denials are resolved. M4-R0 now has its separate contract/adjudication checkpoint described above.
 
-Current input boundaries: explicit strict portable charsets; configured Java 8 `rt.jar`, Java 9+ JMOD or verified cross-release `ct.sym` platform views; exact release dependencies from a single standard Maven2 cache plus explicit credential-free HTTPS repositories; exact reactor-output JARs supplied by the caller or complete owned/decoded handwritten sibling sources at the same logical classpath position; and non-preview Java 8–21 parser levels. There is no toolchain discovery, class-directory module output, generated-source acquisition, manifest `Class-Path` expansion, version-range/relocation/snapshot resolution or transport-authenticity claim beyond HTTPS. Multi-release JAR entries are selected deterministically for the analyzed target release while retaining the original artifact digest. Remaining explicit degraded frontend cases include array constructor references/array length, annotation-value field reads, inferred `var` detail, typed lambda/catch parameter identities and unsupported functional target/inference contexts. These known boundaries remain limitations of the G2 checkpoint recorded as passed; they are not a reopened G2 blocker.
+Current input boundaries: explicit strict portable charsets; configured Java 8 `rt.jar`, Java 9+ JMOD or verified cross-release `ct.sym` platform views; exact release dependencies from a single standard Maven2 cache plus explicit credential-free HTTPS repositories; exact reactor-output JARs supplied by the caller or complete owned/decoded handwritten sibling sources at the same logical classpath position; and non-preview parser-level selection through Java 26 (bounded M4U.1 controls, separate from platform API verification). There is no toolchain discovery, class-directory module output, generated-source acquisition, manifest `Class-Path` expansion, version-range/relocation/snapshot resolution or transport-authenticity claim beyond HTTPS. Multi-release JAR entries are selected deterministically for the analyzed target release while retaining the original artifact digest. Remaining explicit degraded frontend cases include array constructor references/array length, annotation-value field reads, inferred `var` detail, typed lambda/catch parameter identities and unsupported functional target/inference contexts. These known boundaries remain limitations of the G2 checkpoint recorded as passed; they are not a reopened G2 blocker.
 
-Open work starts with M4E validation and G3 evidence over the delivered M4D boundary. Historical framework tuples, hierarchy/factory/runtime behavior beyond the documented fragment, automatic source-to-container/descriptor normalization, Config Data loading, OTHER abstraction verification, partial-order/correlated opaque reasoning and a production Java SAT encoding remain explicit bounded gaps, not passed claims. M4D has no remaining blocker within its normalized contract; provider expansion, registered baselines, representative-repository evidence and G3 adjudication remain separate. A new external G2 checkpoint still requires separate authorization and immutable new evidence; the preserved G2 runs remain unchanged. Later open decisions remain provider expansion, policy criteria, metric/score compatibility and thresholds, graph/query/UI budgets and frontend framework selection.
+Open work continues with M4-UNIVERSAL Slice 2 before M4E validation and G3 evidence. Historical framework tuples, hierarchy/factory/runtime behavior beyond the documented fragment, complete source-to-container/descriptor normalization, external Config Data providers, OTHER abstraction verification, partial-order/correlated opaque reasoning and a production Java SAT encoding remain explicit bounded gaps, not passed claims. M4D has no remaining blocker within its normalized contract; provider expansion, registered baselines, representative-repository evidence and G3 adjudication remain separate. A new external G2 checkpoint still requires separate authorization and immutable new evidence; the preserved G2 runs remain unchanged. Later open decisions remain provider expansion, policy criteria, metric/score compatibility and thresholds, graph/query/UI budgets and frontend framework selection.
 
 ## QUALITY GATES
 
@@ -204,13 +239,12 @@ Open work starts with M4E validation and G3 evidence over the delivered M4D boun
 
 ## EXACT NEXT TASK
 
-Deliver **Milestone M4-UNIVERSAL (Big Task: Universal Multi-Repository & Spring Architecture Intelligence Engine)** in **at most 2 consolidated execution slices**:
+Continue **Milestone M4-UNIVERSAL (Big Task: Universal Multi-Repository & Spring Architecture Intelligence Engine)** within the approved **2 consolidated execution slices**:
 
-### Slice 1: Universal Source, Build & Configuration Ingestion
-- **Source & Preprocessor Ingestion:** Automatic extraction and synthesis of Lombok constructors/members (`@RequiredArgsConstructor`, `@AllArgsConstructor`, `@NoArgsConstructor`, `@Data`, `@Value`, `@Builder`), Java 17/21 canonical record constructor DI, and sealed types across Java 8 to 26+.
-- **Universal Build Model Adaptation:** Safe declarative build model extraction across plain Java, single/multi-module Maven (POM inheritance, BOMs, dependency management), and Gradle (`build.gradle` Groovy DSL and `build.gradle.kts` Kotlin DSL).
-- **Automated Configuration Ingestion:** Native reading and hierarchical flattening of configuration sources (`application.properties`, `application.yml`, `application.yaml`, and profile variants) to build baseline configuration assignments automatically.
-- **Zero-Setup Component Discovery:** Package-root auto-detection from `@SpringBootApplication` and `@ComponentScan` to discover all stereotypes across the package tree.
+Slice 1 implementation and its remaining provider gaps are recorded in the
+[M4U.1 contract](architecture/m4u1-passive-ingestion.md). Use these exact outputs
+as the Slice 2 acquisition boundary; do not treat partial ingestion as universal
+architecture truth or silently erase upstream obligations.
 
 ### Slice 2: Universal Spring Semantics, Dynamic Frameworks & SAT Reasoning
 - **Dynamic Framework & Spring Data Synthesizer:** Candidate bean registration for all interfaces extending Spring Data (`Repository`, `CrudRepository`, `JpaRepository`, `MongoRepository`, etc.).
@@ -218,4 +252,9 @@ Deliver **Milestone M4-UNIVERSAL (Big Task: Universal Multi-Repository & Spring 
 - **Pure-Java SAT Reasoning Backend:** Boolean SAT solver (DPLL / Sat4j) integrated into `ConfigurationReasoner` to eliminate `ENUMERATION_INCOMPLETE` on arbitrary configuration spaces ($2^{50}+$ variables).
 - **Web API Route Extraction & Advanced Contexts:** HTTP route extraction (`@RequestMapping`, `@GetMapping`, `@PostMapping`) mapping entry points to components; basic SpEL evaluation for `@ConditionalOnExpression`; and hierarchical application context modeling.
 
-**Execution Guidance:** Documentation defines mandatory capabilities, coverage outcomes (~99% real-world coverage), and non-negotiable safety/evidence invariants. Reasoning AI models autonomously devise internal algorithms, data structures, and synthesizers without micromanaged execution steps. Follow with **M4E validation and Gate G3 evidence**.
+**Execution Guidance:** The approved capability direction remains in the
+[M4-UNIVERSAL contract](architecture/m4-universal-engine.md). The requested
+98–99% coverage is an acceptance target, not a measured result. Preserve safety,
+content-addressed evidence, explicit unknown outcomes and deterministic replay.
+Follow Slice 2 with **M4E validation and Gate G3 evidence**; neither gate advances
+from implementation tests alone.

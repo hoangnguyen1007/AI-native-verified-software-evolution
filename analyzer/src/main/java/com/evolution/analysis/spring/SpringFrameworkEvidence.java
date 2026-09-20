@@ -40,6 +40,18 @@ public record SpringFrameworkEvidence(boolean completeClasspath,
         return artifacts.stream().anyMatch(value -> value.entityScope().equals(scope));
     }
 
+    /** Whether this exact artifact belongs to the checked-in framework evidence catalog. */
+    public boolean verifiedArtifact(Artifact artifact) {
+        if(artifact.coordinate().equals("org.springframework:spring-web:6.2.0")
+                &&artifact.classpathLogicalName().equals(artifact.coordinate()+"@jar")
+                &&artifact.contentDigest().value().equals("sha256:24bd75b1049104699e4f57f3a70fc2ba41943d667d5d1a3b24ed1b70c3582020"))return true;
+        for (var tuple : List.of(List.of("5.3.31","2.7.18"),List.of("6.1.14","3.3.5"),List.of("6.2.0","3.4.0"))) {
+            String expected=SpringMechanismScanner.expectedArtifacts(tuple.getFirst(),tuple.getLast()).get(artifact.coordinate());
+            if (artifact.classpathLogicalName().equals(artifact.coordinate()+"@jar") && artifact.contentDigest().value().equals(expected)) return true;
+        }
+        return false;
+    }
+
     /** Exact accepted R0 artifact tuples, never a version-range or name-only support claim. */
     public boolean acceptedConditionFragment(boolean bootRequired) {
         if (!completeClasspath || classpathManifestIdentity.isEmpty()) return false;

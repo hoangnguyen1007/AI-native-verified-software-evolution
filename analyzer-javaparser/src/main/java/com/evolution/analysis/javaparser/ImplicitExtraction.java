@@ -11,10 +11,12 @@ final class ImplicitExtraction {
     private final Extraction context;
     ImplicitExtraction(Extraction context) { this.context=context; }
     void declarations(CompilationUnit unit) {
+        context.lombok.unsupportedGenerators(unit);
         for (TypeDeclaration<?> type : unit.findAll(TypeDeclaration.class)) {
             try {
                 var symbol=context.name(type);
                 if (type instanceof RecordDeclaration record) record(record);
+                else if (type instanceof ClassOrInterfaceDeclaration c && context.lombok.declarations(c)) { /* Processor-owned constructor set. */ }
                 else if (type instanceof ClassOrInterfaceDeclaration c && !c.isInterface() && c.getConstructors().isEmpty()
                         || type instanceof EnumDeclaration e && e.getConstructors().isEmpty())
                     context.implicit(JavaSymbolName.constructor(symbol,List.of()),EntityKind.CONSTRUCTOR,type,"java.default-constructor");

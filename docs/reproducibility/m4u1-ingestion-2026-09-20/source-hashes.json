@@ -1,0 +1,146 @@
+[
+  {
+    "path": "analyzer-javaparser/pom.xml",
+    "sha256": "f90c068a5e125817442713ddff992034337dd59141809da6fd0ecdf5ecb3cd32"
+  },
+  {
+    "path": "analyzer-javaparser/src/main/java/com/evolution/analysis/javaparser/Extraction.java",
+    "sha256": "eb8d400368d1e5e5ad4fee855bc161aabcc5725a558fb78449bed7c06623d927"
+  },
+  {
+    "path": "analyzer-javaparser/src/main/java/com/evolution/analysis/javaparser/ImplicitExtraction.java",
+    "sha256": "ccd58ed15061d1cfa80f0ffd2d8ad1cde39c7273997c5d79d303b3aeb6a4b411"
+  },
+  {
+    "path": "analyzer-javaparser/src/main/java/com/evolution/analysis/javaparser/LombokExtraction.java",
+    "sha256": "6ea66e427504c05bc855c677d5698e946912de5abaab64b03d2e2735bd730611"
+  },
+  {
+    "path": "analyzer-javaparser/src/test/java/com/evolution/analysis/javaparser/ComponentIngestionTest.java",
+    "sha256": "5b77c2d2d4ef8d1e7cb881bd582006c21582249081da64bf75c01c6fa84d2889"
+  },
+  {
+    "path": "analyzer-javaparser/src/test/java/com/evolution/analysis/javaparser/ConfigDataOracleTest.java",
+    "sha256": "4068d4407817043e18eaca03676b8c3216c9c5a776f84c80f31b23f4e8d96014"
+  },
+  {
+    "path": "analyzer-javaparser/src/test/java/com/evolution/analysis/javaparser/ConstructorInjectionIngestionTest.java",
+    "sha256": "0337dd67c663caed6d278898078e69f4572f16ef4ad4704000d82b9da88d20d4"
+  },
+  {
+    "path": "analyzer-javaparser/src/test/java/com/evolution/analysis/javaparser/LombokIngestionTest.java",
+    "sha256": "cda1cfecad1c800cbe1561f5c02dbe7c0407153a0aeaa0c6a95dd807dedf3a79"
+  },
+  {
+    "path": "analyzer-javaparser/src/test/java/com/evolution/analysis/javaparser/LombokSynthesisOracleTest.java",
+    "sha256": "ab9feeea8ec001c01b664fe84bcdbd7d99dacdadef101730dd56f9cde7df509d"
+  },
+  {
+    "path": "analyzer-javaparser/src/test/java/com/evolution/analysis/javaparser/ModernLanguageIngestionTest.java",
+    "sha256": "4b9031b7314f67657aa56341b7c17e944e937ae12353923fee49d903709d52e1"
+  },
+  {
+    "path": "analyzer-javaparser/src/test/java/com/evolution/analysis/javaparser/SpringMechanismM4A2IntegrationTest.java",
+    "sha256": "899365a02fa56671a8fbb1c5b239b62969f455a002b86941d111cc622b4ed175"
+  },
+  {
+    "path": "analyzer-javaparser/src/test/java/com/evolution/analysis/javaparser/UniversalIngestionPipelineTest.java",
+    "sha256": "371c32a9c3b7337364a40646139963141f70dc6c3367f9f0e6734994ec6333e7"
+  },
+  {
+    "path": "analyzer-maven/src/test/java/com/evolution/analysis/maven/UniversalMavenIngestionTest.java",
+    "sha256": "369c6b581b169c73f5037bb22ab56ec7c1f7685dffde38ff063cb3fcb437b923"
+  },
+  {
+    "path": "analyzer/pom.xml",
+    "sha256": "4465be35e90280bb29689f54377cbda50cbda4ffbbc1e8cb1436ea5c6929a654"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/buildmodel/DeclarativeScript.java",
+    "sha256": "5b9df998088887b0dba331de5b26fa0d77f2d970c86fe4cc6611176e3fbdb0c6"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/buildmodel/SourcePlanModel.java",
+    "sha256": "b97189e744bb1a0d4a081c26b514b59be49b9bb00db06d34097f092d5d1e440b"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/buildmodel/UniversalBuildIngestion.java",
+    "sha256": "b73b1d88ef224da39a258334e68233220cb6af6e57ef87f36b1ac3db6fe64a8f"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/buildmodel/UniversalBuildModel.java",
+    "sha256": "f3130a8100010d612821553db68e39385db7ea9fc2dd6805c05044a6e5db8494"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/frontend/FrontendResult.java",
+    "sha256": "de69b95cdea388d2c9e97ed8ca9f7e3a979cc9d4bef8cf9d92707f38acc02899"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/frontend/JavaTypeName.java",
+    "sha256": "d7ad7416583b12540776bf6e0a82308669f00b06987078a4e339dfc573b49ac7"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/frontend/TypeDeclarationRecord.java",
+    "sha256": "e2e36a15c7ce69a15d410c059df60340c73100182e690bc9e3483c4a0fb5b17f"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/ingestion/IngestionEvidence.java",
+    "sha256": "29654b1648d19e3a02927bad16aa83b0f080e0a6fe557cdef32c257d01504f3d"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/ingestion/RepositoryInputs.java",
+    "sha256": "79654f2d0a7c5b34f1a0d1e726dfedc251b954482022ba4e287418f66a5e5eb6"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/ingestion/UniversalIngestionPipeline.java",
+    "sha256": "f4cb0a3877eeff75f4639fb84c3ea82bc41be073087aecb4a1ad7428446e5ca9"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/ingestion/UniversalSourceIngestion.java",
+    "sha256": "19498cfcb2335b26f5747ab461829556bc61f349f8927ed8eaae957c903690c3"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/spring/SpringFrameworkEvidence.java",
+    "sha256": "53bb17e56a5c8590adb91f0a7c0cb36a6980606c8b9a8ebbb9069494610dad2b"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/spring/condition/ComponentScanIngestion.java",
+    "sha256": "a93f41bdc688eff1635b9e17222a4e006af07e948b6c6e7cc704e8cc391e48ce"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/spring/condition/ConfigDataIngestion.java",
+    "sha256": "50aa2eadd2e639e7290935caf863d5a56607e5c7e5225e34becbc6ab287e6e31"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/spring/condition/ConstructorInjectionIngestion.java",
+    "sha256": "316eda53a68ab15b0eee9f6228f673b9749293bacd04fe856d7593517f72b4fa"
+  },
+  {
+    "path": "analyzer/src/main/java/com/evolution/analysis/spring/condition/LiteralConditionAnnotation.java",
+    "sha256": "eab67a7d301f0b13a459daa2ef493cbbb66b5fff080c091e4288cc66361d0ce4"
+  },
+  {
+    "path": "analyzer/src/test/java/com/evolution/analysis/buildmodel/UniversalBuildIngestionTest.java",
+    "sha256": "6a4cf26beca35edc67ecf1ced4c4e509421e74306b62d5273ebfcf55d84a75c7"
+  },
+  {
+    "path": "analyzer/src/test/java/com/evolution/analysis/ingestion/IngestionFixtures.java",
+    "sha256": "579ebb85389e154c5d99cc2b8c77f4d4d34153c814c530cefa28116c7cae1eba"
+  },
+  {
+    "path": "analyzer/src/test/java/com/evolution/analysis/spring/condition/ConfigDataIngestionTest.java",
+    "sha256": "b168748c9f13a2205060239c09e2bf1eae0c6ddf8568beb4c63f8b863469f7b4"
+  },
+  {
+    "path": "docs/architecture/m4u1-passive-ingestion.md",
+    "sha256": "33d4d24073c74d3ef29424ee61697f5623e39e4c3581f0e60b5c2ad799d98029"
+  },
+  {
+    "path": "docs/current-state.md",
+    "sha256": "209cc18365684252a6bbb255c8bfa61fb318d93f083f7a01d6b59cdf70189e84"
+  },
+  {
+    "path": "docs/reproducibility/m4u1-ingestion-2026-09-20/README.md",
+    "sha256": "7329e88de4b94cc9f0b404ea51ee386f3afb8bb679f142adfa21752062f2842a"
+  }
+]

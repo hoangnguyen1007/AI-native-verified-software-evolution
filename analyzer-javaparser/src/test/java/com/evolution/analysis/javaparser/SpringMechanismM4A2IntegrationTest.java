@@ -49,7 +49,9 @@ class SpringMechanismM4A2IntegrationTest {
                 """;
         FrontendRequest request = TestInputs.request(Map.of("fixture/App.java", source), List.of(springApi));
         FrontendResult frontend = new JavaParserFrontend().analyze(request);
-        assertEquals(FrontendResult.State.COMPLETED, frontend.state());
+        // This authored API JAR includes a Lombok annotation stub, not the verified generator artifact.
+        assertEquals(FrontendResult.State.PARTIAL, frontend.state());
+        assertTrue(frontend.diagnostics().stream().anyMatch(d -> d.code().equals("lombok.artifact-unverified")));
 
         SpringMechanismInventory inventory = SpringMechanismScanner.scan(new SpringMechanismScanRequest(
                 frontend, frameworkEvidence(springApi), List.of(), List.of()));

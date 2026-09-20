@@ -1,0 +1,8 @@
+{
+  "command": ".\\mvnw.cmd -B -ntp verify -q",
+  "started": "2026-09-20T14:20:46.8647338+07:00",
+  "finished": "2026-09-20T14:22:07.8826207+07:00",
+  "exitCode": 0,
+  "enforcerSkipped": false,
+  "reason": "Verify the unsupported Lombok generator/target gap fix found in final self-review"
+}

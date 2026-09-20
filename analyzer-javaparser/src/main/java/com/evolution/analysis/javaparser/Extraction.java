@@ -20,7 +20,7 @@ import java.util.function.Supplier;
 
 /** Per-request state. Traversal order never enters identity or output ordering. */
 final class Extraction {
-    private static final VersionedIdentifier VERSION = new VersionedIdentifier("frontend.javaparser", "3.27.1-m3.8.1");
+    private static final VersionedIdentifier VERSION = new VersionedIdentifier("frontend.javaparser", "3.28.2-m4u.1");
     private static final Derivation DIRECT = new Derivation(DerivationKind.DIRECT, new VersionedIdentifier("java.source", "1"), List.of());
     private final FrontendRequest request;
     private final ResolutionEnvironment environment;
@@ -42,6 +42,7 @@ final class Extraction {
     private final Set<Diagnostic> diagnostics = new TreeSet<>();
     private final List<SourceOutcome> rejected = new ArrayList<>();
     private boolean reactorResolutionDegraded;
+    final LombokExtraction lombok = new LombokExtraction(this);
 
     private static final class Unit {
         final SourceInput input;
@@ -81,6 +82,7 @@ final class Extraction {
             new FieldExtraction(this).extract(unit.ast);
             new AnnotationExtraction(this).extract(unit.ast);
             implicit.relationships(unit.ast);
+            lombok.relationships(unit.ast);
         }
         var outcomes = new ArrayList<>(rejected);
         for (var unit : orderedUnits) outcomes.add(new SourceOutcome(unit.input.document().identity(),
@@ -101,7 +103,28 @@ final class Extraction {
                 !reactorResolutionDegraded && outcomes.stream().allMatch(s -> s.state() == SourceOutcome.State.PROCESSED)
                         ? FrontendResult.State.COMPLETED : FrontendResult.State.PARTIAL,
                 declarations.values().stream().filter(d -> !duplicateDeclarations.contains(d.entity().identity())).toList(),
-                List.copyOf(occurrences.values()), observations, outcomes, coverage, List.copyOf(diagnostics), types, annotations, List.copyOf(derived));
+                List.copyOf(occurrences.values()), observations, outcomes, coverage, List.copyOf(diagnostics), types, annotations, List.copyOf(derived),typeDeclarations());
+    }
+
+    private List<TypeDeclarationRecord> typeDeclarations() {
+        var result=new ArrayList<TypeDeclarationRecord>();
+        for(var unit:orderedUnits)for(var type:unit.ast.findAll(TypeDeclaration.class)) {
+            var entity=nodes.get(type);
+            if(entity==null || duplicateDeclarations.contains(entity.identity()))continue;
+            TypeDeclarationRecord.Kind kind=type instanceof AnnotationDeclaration?TypeDeclarationRecord.Kind.ANNOTATION
+                    :type instanceof RecordDeclaration?TypeDeclarationRecord.Kind.RECORD
+                    :type instanceof EnumDeclaration?TypeDeclarationRecord.Kind.ENUM
+                    :type instanceof ClassOrInterfaceDeclaration c && c.isInterface()?TypeDeclarationRecord.Kind.INTERFACE:TypeDeclarationRecord.Kind.CLASS;
+            Node parent=type.getParentNode().orElse(null);
+            boolean member=parent instanceof TypeDeclaration<?>;
+            boolean implicitStatic=kind!=TypeDeclarationRecord.Kind.CLASS || parent instanceof AnnotationDeclaration
+                    || parent instanceof ClassOrInterfaceDeclaration c && c.isInterface();
+            boolean independent=parent instanceof CompilationUnit || member && (type.isStatic() || implicitStatic);
+            boolean abstractType=type instanceof ClassOrInterfaceDeclaration c && (c.isAbstract() || c.isInterface())
+                    || kind==TypeDeclarationRecord.Kind.ANNOTATION;
+            result.add(new TypeDeclarationRecord(entity.identity(),kind,abstractType,independent));
+        }
+        return result;
     }
 
     private void parse() {
@@ -157,6 +180,13 @@ final class Extraction {
         int level = request.plan().syntaxLevel().orElseThrow(
                 () -> new FrontendInputException("frontend.syntax-level", "A supported syntax level is required"));
         return switch (level) {
+            case 1 -> ParserConfiguration.LanguageLevel.JAVA_1_1;
+            case 2 -> ParserConfiguration.LanguageLevel.JAVA_1_2;
+            case 3 -> ParserConfiguration.LanguageLevel.JAVA_1_3;
+            case 4 -> ParserConfiguration.LanguageLevel.JAVA_1_4;
+            case 5 -> ParserConfiguration.LanguageLevel.JAVA_5;
+            case 6 -> ParserConfiguration.LanguageLevel.JAVA_6;
+            case 7 -> ParserConfiguration.LanguageLevel.JAVA_7;
             case 8 -> ParserConfiguration.LanguageLevel.JAVA_8;
             case 9 -> ParserConfiguration.LanguageLevel.JAVA_9;
             case 10 -> ParserConfiguration.LanguageLevel.JAVA_10;
@@ -171,7 +201,12 @@ final class Extraction {
             case 19 -> ParserConfiguration.LanguageLevel.JAVA_19;
             case 20 -> ParserConfiguration.LanguageLevel.JAVA_20;
             case 21 -> ParserConfiguration.LanguageLevel.JAVA_21;
-            default -> throw new FrontendInputException("frontend.syntax-level", "Syntax level is outside the verified Java 8-21 range");
+            case 22 -> ParserConfiguration.LanguageLevel.JAVA_22;
+            case 23 -> ParserConfiguration.LanguageLevel.JAVA_23;
+            case 24 -> ParserConfiguration.LanguageLevel.JAVA_24;
+            case 25 -> ParserConfiguration.LanguageLevel.JAVA_25;
+            case 26 -> ParserConfiguration.LanguageLevel.JAVA_26;
+            default -> throw new FrontendInputException("frontend.syntax-level", "Syntax level is outside this parser's Java 1-26 capability; a newer syntax provider is required");
         };
     }
     private static String semanticIdentifier(String raw) {
@@ -255,7 +290,7 @@ final class Extraction {
             return p.isVarArgs() ? ErasedType.array(type, 1) : type;
         }).toList();
     }
-    private ErasedType erasedParameter(com.github.javaparser.ast.type.Type type) {
+    ErasedType erasedParameter(com.github.javaparser.ast.type.Type type) {
         if (type.isArrayType()) return ErasedType.array(erasedParameter(type.asArrayType().getComponentType()), 1);
         if (type.isClassOrInterfaceType()) {
             var declaration = resolveNamed(type.asClassOrInterfaceType());
@@ -603,10 +638,32 @@ final class Extraction {
         unit(node).diagnostics.add(problem); diagnostics.add(problem);
     }
     boolean isImplicit(Entity entity) { return declarations.get(entity.identity()).derivation().kind()==DerivationKind.DERIVED; }
+    boolean hasDeclaration(JavaSymbolName name) { return declarations.values().stream().anyMatch(d->d.entity().canonicalName().equals(name.canonicalName())&&d.entity().stableScope().equals(EntityScope.project(request.module()))); }
+    boolean hasLombokConfiguration(Node node) {
+        String path=unit(node).input.document().path();
+        return request.manifest().snapshot().files().stream().anyMatch(f->f.path().equals("lombok.config")
+                ||f.path().endsWith("/lombok.config")&&path.startsWith(f.path().substring(0,f.path().lastIndexOf('/')+1)));
+    }
+    boolean isLombok(Entity entity,String name) {
+        int dot=name.lastIndexOf('.');
+        if(entity.origin()!=EntityOrigin.DEPENDENCY||!entity.canonicalName().equals(JavaSymbolName.topLevelType(name.substring(0,dot),name.substring(dot+1)).canonicalName()))return false;
+        return request.dependencies().stream().anyMatch(b->b.entry().logicalName().equals("org.projectlombok:lombok:1.18.46@jar")
+                &&b.entry().contentDigest().value().equals("sha256:01f7b1a015e33e2b62d5f5f37053306357ab1415fd181fcba7794f5d198c1126")
+                &&entity.stableScope().equals(EntityScope.external(EntityOrigin.DEPENDENCY,b.entry().logicalName(),b.entry().contentDigest())));
+    }
+    void synthesisGap(Node node,String code) {
+        var problem=new Diagnostic(DiagnosticSeverity.WARNING,code,"Generated-member evidence is incomplete",Optional.of(source(node).span(node)),Map.of());
+        unit(node).diagnostics.add(problem);diagnostics.add(problem);
+    }
+    void derivedMemberTypes(Node input,Entity target,String role,String rule) {
+        var inputId=entity(input).identity();
+        for(var use:List.copyOf(types))if(use.owner().equals(Optional.of(inputId))) {
+            types.add(new TypeUseRecord(Optional.of(target.identity()),new RelationshipKind("java."+role),use.span(),use.type(),use.variadic()));
+            for(var id:use.type().referencedEntities())derive(target,declarations.get(id).entity(),role,input,rule);
+        }
+    }
     void derivedComponentTypes(Parameter component, Entity target, String role) {
-        var componentId=entity(component).identity();
-        for (var use : types) if (use.owner().equals(Optional.of(componentId)))
-            for (var id : use.type().referencedEntities()) derive(target,declarations.get(id).entity(),role,component,"java.record-component-type");
+        derivedMemberTypes(component,target,role,"java.record-component-type");
     }
     Entity enumConstructor(EnumConstantDeclaration constant) {
         var type=(EnumDeclaration)constant.getParentNode().orElseThrow();

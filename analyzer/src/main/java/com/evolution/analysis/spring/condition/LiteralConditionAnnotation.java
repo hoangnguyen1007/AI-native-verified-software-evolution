@@ -4,9 +4,10 @@ import java.util.*;
 
 /** A deliberately bounded literal metadata decoder; never resolves Java names or evaluates Java code. */
 final class LiteralConditionAnnotation {
-    sealed interface Value permits Strings, Bool {}
+    sealed interface Value permits Strings, Bool, Classes {}
     record Strings(List<String> values) implements Value { Strings { values = List.copyOf(values); } }
     record Bool(boolean value) implements Value {}
+    record Classes(List<String> names) implements Value {Classes{names=List.copyOf(names);}}
     private final String text;
     private int offset;
     private LiteralConditionAnnotation(String text) { this.text = text; }
@@ -36,15 +37,25 @@ final class LiteralConditionAnnotation {
         skip();
         if (peek() == '"') return new Strings(List.of(string()));
         if (take('{')) {
-            List<String> values = new ArrayList<>();
+            skip();List<String> values = new ArrayList<>();boolean classes=peek()!='"'&&peek()!='}';
             if (!take('}')) {
-                values.add(string());
-                while (take(',')) { if (take('}')) return new Strings(values); values.add(string()); }
+                values.add(classes?className():string());
+                while (take(',')) { if (take('}')) return classes?new Classes(values):new Strings(values); values.add(classes?className():string()); }
                 require('}');
             }
-            return new Strings(values);
+            return classes?new Classes(values):new Strings(values);
         }
-        return switch (identifier()) { case "true" -> new Bool(true); case "false" -> new Bool(false); default -> throw unsupported(); };
+        int start=offset;String identifier=identifier();
+        if(identifier.equals("true"))return new Bool(true);
+        if(identifier.equals("false"))return new Bool(false);
+        offset=start;return new Classes(List.of(className()));
+    }
+    String className() {
+        StringBuilder name=new StringBuilder(identifier());
+        while(take('.')) {
+            String part=identifier();if(part.equals("class"))return name.toString();name.append('.').append(part);
+        }
+        throw unsupported();
     }
     String string() {
         skip(); require('"'); StringBuilder value = new StringBuilder();
@@ -98,5 +109,11 @@ final class LiteralConditionAnnotation {
     static boolean bool(Map<String, Value> attributes, String name, boolean fallback) {
         var value = attributes.get(name); if (value == null) return fallback;
         if (value instanceof Bool bool) return bool.value(); throw unsupported();
+    }
+    static List<String> classes(Map<String,Value> attributes,String name) {
+        var value=attributes.get(name);if(value==null)return List.of();
+        if(value instanceof Classes classes)return classes.names();
+        if(value instanceof Strings strings&&strings.values().isEmpty())return List.of();
+        throw unsupported();
     }
 }

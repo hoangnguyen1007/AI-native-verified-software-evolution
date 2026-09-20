@@ -20,7 +20,7 @@ public record SourcePlanModel(List<SourceSetPlan> sourceSets, List<PluginDeclara
 
     public enum Kind { MAIN, TEST }
     public enum Status { DECLARED, DEFAULT, UNSPECIFIED, UNRESOLVED, INVALID, UNSUPPORTED }
-    public enum Origin { EFFECTIVE_MODEL, USER_PROPERTY, MAVEN_CONVENTION, ABSENT }
+    public enum Origin { EFFECTIVE_MODEL, USER_PROPERTY, MAVEN_CONVENTION, GRADLE_CONVENTION, PLAIN_JAVA_CONVENTION, ABSENT }
     public enum Gap {
         UNRESOLVED_SETTING, INVALID_SETTING, UNSAFE_PATH, MISSING_SOURCE_LEVEL, MISSING_PLATFORM_RELEASE,
         MISSING_ENCODING, UNSUPPORTED_ENCODING, UNSUPPORTED_COMPILER_CONFIGURATION, ADDITIONAL_COMPILER_EXECUTION,
@@ -42,7 +42,7 @@ public record SourcePlanModel(List<SourceSetPlan> sourceSets, List<PluginDeclara
             if ((origin == Origin.ABSENT) != (status == Status.UNSPECIFIED)) {
                 throw new IllegalArgumentException("Absent origin is reserved for unspecified settings");
             }
-            if (status == Status.DEFAULT && origin != Origin.MAVEN_CONVENTION) {
+            if (status == Status.DEFAULT && !Set.of(Origin.MAVEN_CONVENTION,Origin.GRADLE_CONVENTION,Origin.PLAIN_JAVA_CONVENTION).contains(origin)) {
                 throw new IllegalArgumentException("Defaults require an explicit convention");
             }
             value.ifPresent(v -> ContractChecks.text(v, "setting value"));
