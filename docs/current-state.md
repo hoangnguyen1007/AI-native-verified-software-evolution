@@ -1,10 +1,49 @@
 # Current State
 
-Last reconciled: 2026-09-20. Fresh checks and their scope belong in the task handoff; historical gate evidence is identified below.
+Last reconciled: 2026-09-23. Fresh checks and their scope belong in the task handoff; historical gate evidence is identified below.
 
 ## PHASE AND MILESTONE
 
 SE121, Track A + B. M1 contracts are committed at `b04220e722cc4bc772cbb3ad8531d4dc1ea1a058`; G1 is recorded passed. M2 frontend delivery is recorded complete across all 18 relationship families. M3.1–M3.8 implementation is delivered and its historical full reactor checkpoint passes 221 tests. M4-R0 is human-accepted, M4A.1–M4A.2 deliver the production evidence-only Spring mechanism inventory and annotation-declaration graph, M4B.1–M4B.2 deliver the condition IR foundation, evidence-to-IR lowering and bounded exogenous condition evaluation, M4C.1–M4C.3 deliver normalized discovery/registration/binding for the pinned Framework 6.2.0 / Boot 3.4.0 fragment, and M4D delivers finite-space truth regions plus minimized independently replayed witnesses. M4E validation and G3 remain pending. Focused G2 hardening tolerates equivalent duplicate dependency rows throughout external parent/BOM/profile model hierarchies and resolves complete handwritten reactor modules from exact acquired source evidence when bytecode output is unavailable. Sibling parse failures retain closed source outcomes, while referenced implicit record members retain sibling scope and component provenance. Comprehensive Gate G2 evaluation across 5 representative real-world architectural archetypes is documented in [Gate G2 Comprehensive Architecture Evaluation](reproducibility/g2-comprehensive-architectural-evaluation-2026-09-10.md).
+
+## IMPLEMENTED — M4-UNIVERSAL SLICE 2 SPRING SEMANTICS AND SAT
+
+**CONFIRMED by implementation and focused tests:** the unified ingestion pipeline
+now exposes Spring Data repository candidates, generation-qualified namespace and
+metadata policies, direct injection/route evidence and potential component paths.
+The neutral providers add supplied-resource auto-configuration parsing, normalized
+parent/child visibility and selection, and passive basic SpEL lowering into the
+actual M4B condition evaluator.
+
+`SatConfigurationReasoner` implements bounded pure-Java DPLL over content-addressed
+Boolean formulae. `TruthRegionEvaluation.evaluateSymbolic` supports condition
+regions and partitions configuration truth signatures before running the unchanged
+M4C registration/binding engine. Tests cover 56 profile dimensions without Cartesian
+enumeration, witness replay, unknown residuals and small-space agreement with the
+existing exhaustive evaluator. Legacy explicit enumeration remains available.
+
+The [Slice 2 implementation contract](architecture/m4u2-universal-spring.md)
+records exact APIs and support boundaries; the
+[verification package](reproducibility/m4u2-spring-2026-09-23/README.md) records
+commands, fresh report totals, toolchain and hashes. Implementation self-review
+includes regressions for inherited-primary conflicts, namespace-specific repository
+names and numeric-expression bounds; it is not independent agent review.
+
+**CONFIRMED final verification (2026-09-23):** root `verify` passed **504 tests in
+71 fresh suites**, with zero failures, errors or skips and Enforcer enabled.
+All 71 current test suites are accounted for; eight historical report files were
+excluded explicitly, and verified source/build input hashes remained unchanged.
+No target repository build, external corpus benchmark or Git inspection was run.
+
+**OPEN acceptance obligations:** the 98–99% global coverage target is unmeasured.
+Structural repository candidates and dependency paths do not prove runtime
+activation. Historical framework policies do not certify historical containers;
+M4C execution remains pinned to Framework 6.2.0 / Boot 3.4.0. General library-resource
+acquisition, complete source-to-descriptor normalization, arbitrary composed/inherited
+mappings and dynamic expressions remain explicit provider boundaries. Finite SAT
+does not establish arbitrary infinite-domain solving or worst-case millisecond
+latency. M4E/G3 remain pending; **exact next task: M4E validation**, including the
+unresolved obligations of both universal slices.
 
 ## IMPLEMENTED — M4-UNIVERSAL SLICE 1 PASSIVE INGESTION
 
@@ -28,7 +67,7 @@ sites are acquired without claiming downstream binding or runtime activation.
 The [slice contract](architecture/m4u1-passive-ingestion.md) defines the actual
 support and gap boundaries. The [verification package](reproducibility/m4u1-ingestion-2026-09-20/README.md)
 records final commands, totals, compiler/config-loader controls and file hashes.
-**CONFIRMED final verification:** the current reactor passes **472 tests across
+**CONFIRMED historical Slice 1 verification:** that checkpoint passed **472 tests across
 67 suites**, with zero failures, errors or skips and Enforcer enabled. All reports
 are fresh for this invocation; 43 tests in 10 suites were added for M4U.1.
 Implementation self-review is not independent code review. No target repository
@@ -38,8 +77,8 @@ build, external corpus benchmark, Git inspection, commit or push was performed.
 unmeasured. Dynamic Gradle behavior and exact classpath resolution, unsupported
 Lombok configurations/versions, external Config Data and complete source-to-runtime
 Spring normalization retain explicit gaps. This delivery does not pass G3 or
-certify the entire M4-UNIVERSAL target. **Exact next implementation task: Slice 2**,
-followed by M4E/G3 evidence over both supported results and unresolved obligations.
+certify the entire M4-UNIVERSAL target. Slice 2 is now implemented above;
+M4E/G3 evidence must cover both supported results and unresolved obligations.
 
 ## COMPLETED IMPLEMENTATION — M4D TRUTH REGIONS AND REVALIDATED WITNESSES
 
@@ -192,7 +231,7 @@ The human approved JavaParser + SymbolSolver as the primary SE121/M2 frontend on
 - R1 PoC: `benchmarks/poc/parser-eval/`. Independent experimental adapters/comparison: `benchmarks/semantic-frontend-evaluation/`.
 - M2 oracle pilot: `benchmarks/m2-ground-truth/`, separate from the reactor and legacy comparator, using JDK 21/Python standard libraries.
 - Production adapter pin: JavaParser/SymbolSolver 3.28.2. M4U.1 adds bounded Lombok synthesis, parser-neutral type shapes and record constructor parameter evidence to the existing frontend. The M4U.1 contract qualifies the fresh extension; historical M2 evidence remains unchanged. No compiler-equivalence or scale claim is made.
-- Progressive effective-POM/source-plan projection, bounded filesystem/dependency acquisition, explicit platform/frontend assembly, capability-gap normalization and M4A–M4D bounded Spring semantics are implemented. M4U.1 adds passive POM-less/Gradle source plans, configuration baseline ingestion and component/constructor acquisition. Generated-source/reactor-output acquisition, a complete source-to-Spring-descriptor adapter, M4E external validation, graph, policy engine, metric/scoring calculation, CLI, backend API and workbench remain unimplemented.
+- Progressive effective-POM/source-plan projection, bounded filesystem/dependency acquisition, explicit platform/frontend assembly, capability-gap normalization and M4A–M4D bounded Spring semantics are implemented. M4U.1 adds passive POM-less/Gradle source plans, configuration baseline ingestion and component/constructor acquisition. M4U.2 adds the bounded Spring Data, version/namespace/metadata, SAT, route, hierarchy and SpEL providers described above. Generated-source/reactor-output acquisition, a complete source-to-Spring-descriptor adapter, M4E external validation, graph, policy engine, metric/scoring calculation, CLI, backend API and workbench remain unimplemented.
 - `frontend/` and root `tests/` have no tracked product implementation.
 
 ## EVIDENCE AND LIMITS
@@ -210,9 +249,9 @@ Historical evidence (the M2 implementation record identifies fresh checks separa
 
 Confirmed: Track A + B target; Java 21/Maven/monorepo; primary JavaParser/SymbolSolver choice behind SemanticFrontend; parser/storage-neutral domain; safe multi-module modeling; content-addressed analysis; stable query services; separate health/confidence; complete visual workbench; milestone scope is not an ultimate capability ceiling; progressive, provenance-preserving evidence acquisition through replaceable providers is the long-term architecture direction. See [ADR-003](decisions/ADR-003-progressive-evidence-acquisition.md).
 
-Accepted direction and bounded multi-world evaluation delivered: [ADR-004](decisions/ADR-004-staged-conditional-architecture-semantics.md) makes bounded, phase/order-aware conditional architecture semantics the M4+ direction. M4A.1–M4A.2 provide evidence-only detection and gap normalization; M4B provides the condition IR, finite configuration-space identity and bounded exogenous evaluation; M4C provides normalized per-assignment discovery, registration and binding; M4D provides explicit truth regions and replayed witnesses. Existing `ConfigurationIdentity` remains one realized configuration; the separate implemented `ConfigurationSpaceIdentity` describes one finite modeled space inside an exact M3 build context. M5 becomes a projection of conditional facts, M6 evaluates configuration-qualified policy, and M11 compares conditional/evidence regions. No SAT/BDD backend is selected and G2/G3 are unchanged. See the [research review](research/2026-09-09-conditional-architecture-redirection-review.md).
+Accepted direction and bounded multi-world evaluation delivered: [ADR-004](decisions/ADR-004-staged-conditional-architecture-semantics.md) makes bounded, phase/order-aware conditional architecture semantics the M4+ direction. M4A.1–M4A.2 provide evidence-only detection and gap normalization; M4B provides the condition IR, finite configuration-space identity and bounded exogenous evaluation; M4C provides normalized per-assignment discovery, registration and binding; M4D provides explicit truth regions and replayed witnesses. Existing `ConfigurationIdentity` remains one realized configuration; the separate implemented `ConfigurationSpaceIdentity` describes one finite modeled space inside an exact M3 build context. M5 becomes a projection of conditional facts, M6 evaluates configuration-qualified policy, and M11 compares conditional/evidence regions. M4U.2 now implements a replaceable pure-Java DPLL backend and symbolic signature execution within the approved SAT capability direction; this does not change G2/G3 status. See the [research review](research/2026-09-09-conditional-architecture-redirection-review.md) for the earlier decision context.
 
-Provisional: Neo4j Community adapter, Spring Boot API, YAML external policies, Cytoscape.js, exact metric/score formulas and thresholds. The M3.6 capability-gap core, M3.7–M3.8 provider refinements and M4A.1–M4A.2 acquisition are implemented against their architecture contracts; downstream inference/query/assessment integration remains pending. The M4-R0 contract, catalog, identities, fragment, matrix and protocol are human-accepted; no production solver is selected. Specific additional evidence providers, including selective bytecode, controlled build/sandbox, AOT and runtime observation, remain ASSESS/HOLD for SE121 implementation. Post-M12 context federation, cross-system assurance and verified AI evolution are future horizons, not SE121 commitments.
+Provisional: Neo4j Community adapter, Spring Boot API, YAML external policies, Cytoscape.js, exact metric/score formulas and thresholds. The M3.6 capability-gap core, M3.7–M3.8 provider refinements and M4A.1–M4A.2 acquisition are implemented against their architecture contracts; downstream query/assessment integration remains pending. The M4-R0 contract, catalog, identities, fragment, matrix and protocol are human-accepted; the M4U.2 solver's corpus performance and semantic coverage still require M4E evidence. Specific additional evidence providers, including selective bytecode, controlled build/sandbox, AOT and runtime observation, remain ASSESS/HOLD for SE121 implementation. Post-M12 context federation, cross-system assurance and verified AI evolution are future horizons, not SE121 commitments.
 
 ## OPEN QUESTIONS AND BLOCKERS
 
@@ -220,7 +259,7 @@ The initial Maven sandbox JUnit-cache denial and the final benchmark install-cac
 
 Current input boundaries: explicit strict portable charsets; configured Java 8 `rt.jar`, Java 9+ JMOD or verified cross-release `ct.sym` platform views; exact release dependencies from a single standard Maven2 cache plus explicit credential-free HTTPS repositories; exact reactor-output JARs supplied by the caller or complete owned/decoded handwritten sibling sources at the same logical classpath position; and non-preview parser-level selection through Java 26 (bounded M4U.1 controls, separate from platform API verification). There is no toolchain discovery, class-directory module output, generated-source acquisition, manifest `Class-Path` expansion, version-range/relocation/snapshot resolution or transport-authenticity claim beyond HTTPS. Multi-release JAR entries are selected deterministically for the analyzed target release while retaining the original artifact digest. Remaining explicit degraded frontend cases include array constructor references/array length, annotation-value field reads, inferred `var` detail, typed lambda/catch parameter identities and unsupported functional target/inference contexts. These known boundaries remain limitations of the G2 checkpoint recorded as passed; they are not a reopened G2 blocker.
 
-Open work continues with M4-UNIVERSAL Slice 2 before M4E validation and G3 evidence. Historical framework tuples, hierarchy/factory/runtime behavior beyond the documented fragment, complete source-to-container/descriptor normalization, external Config Data providers, OTHER abstraction verification, partial-order/correlated opaque reasoning and a production Java SAT encoding remain explicit bounded gaps, not passed claims. M4D has no remaining blocker within its normalized contract; provider expansion, registered baselines, representative-repository evidence and G3 adjudication remain separate. A new external G2 checkpoint still requires separate authorization and immutable new evidence; the preserved G2 runs remain unchanged. Later open decisions remain provider expansion, policy criteria, metric/score compatibility and thresholds, graph/query/UI budgets and frontend framework selection.
+Open work continues with M4E validation and G3 evidence over both M4-UNIVERSAL implementations. Historical container equivalence, hierarchy/factory/runtime behavior beyond the documented fragment, complete source-to-container/descriptor normalization, library resource acquisition, external Config Data providers, OTHER abstraction verification and partial-order/correlated opaque reasoning remain explicit boundaries. The Java SAT backend is implemented; arbitrary infinite spaces and global latency/coverage remain unproven. Provider expansion, registered baselines, representative-repository evidence and G3 adjudication remain separate. A new external G2 checkpoint still requires separate authorization and immutable new evidence; the preserved G2 runs remain unchanged. Later open decisions remain provider expansion, policy criteria, metric/score compatibility and thresholds, graph/query/UI budgets and frontend framework selection.
 
 ## QUALITY GATES
 
@@ -231,7 +270,7 @@ Open work continues with M4-UNIVERSAL Slice 2 before M4E validation and G3 evide
 | G1 contracts | PASSED (historical) | Preserve tested identity, uncertainty and evidence invariants |
 | G2 frontend/build model | PASSED | M2 frontend and M3.1–M3.8 verified; PetClinic and ChatServer checkpoints audited and confirmed via [Independent Semantic Adjudication Record](reproducibility/g2-semantic-adjudication-record-2026-09-10.md) |
 | M4-R0 research/semantics | PASSED | Concrete contract/catalog/identities, bounded oracle evidence and preregistered protocol approved by human supervisor on 2026-09-11 |
-| G3 Spring | NOT STARTED | M4A–M4D bounded semantics are delivered and tested; M4C.3 adds 23 pinned runtime oracle observations. M4E expanded provider/version/corpus evidence, baseline comparison and G3 adjudication remain required |
+| G3 Spring | NOT STARTED | M4A–M4D and both universal provider slices are implemented within documented bounds; M4C.3 has 23 pinned runtime oracle observations. M4E expanded provider/version/corpus evidence, baseline comparison and G3 adjudication remain required |
 | G4 graph/metric/query | NOT STARTED | Invariants, metric correctness, bounded storage-neutral queries |
 | G5 policy/evidence/assessment | NOT STARTED | Negative/mutation controls, complete evidence, score safeguards |
 | G6 Track A release | NOT STARTED | Complete visual product and multi-repository verification |
@@ -239,22 +278,14 @@ Open work continues with M4-UNIVERSAL Slice 2 before M4E validation and G3 evide
 
 ## EXACT NEXT TASK
 
-Continue **Milestone M4-UNIVERSAL (Big Task: Universal Multi-Repository & Spring Architecture Intelligence Engine)** within the approved **2 consolidated execution slices**:
+**M4E validation and Gate G3 evidence.** Establish a registered evaluation package
+covering the supported and unresolved obligations in the
+[Slice 1 contract](architecture/m4u1-passive-ingestion.md) and
+[Slice 2 contract](architecture/m4u2-universal-spring.md). Pin representative inputs,
+framework versions, independent labels, baseline comparisons, closed denominators
+and deterministic performance budgets before measuring or adjudicating G3.
 
-Slice 1 implementation and its remaining provider gaps are recorded in the
-[M4U.1 contract](architecture/m4u1-passive-ingestion.md). Use these exact outputs
-as the Slice 2 acquisition boundary; do not treat partial ingestion as universal
-architecture truth or silently erase upstream obligations.
-
-### Slice 2: Universal Spring Semantics, Dynamic Frameworks & SAT Reasoning
-- **Dynamic Framework & Spring Data Synthesizer:** Candidate bean registration for all interfaces extending Spring Data (`Repository`, `CrudRepository`, `JpaRepository`, `MongoRepository`, etc.).
-- **Cross-Generation Dual Namespace Support:** Full support for `javax.*` (Boot 1.x/2.x) and `jakarta.*` (Boot 3.x+), reading both `spring.factories` and `.imports`, with version-aware bean override semantics.
-- **Pure-Java SAT Reasoning Backend:** Boolean SAT solver (DPLL / Sat4j) integrated into `ConfigurationReasoner` to eliminate `ENUMERATION_INCOMPLETE` on arbitrary configuration spaces ($2^{50}+$ variables).
-- **Web API Route Extraction & Advanced Contexts:** HTTP route extraction (`@RequestMapping`, `@GetMapping`, `@PostMapping`) mapping entry points to components; basic SpEL evaluation for `@ConditionalOnExpression`; and hierarchical application context modeling.
-
-**Execution Guidance:** The approved capability direction remains in the
-[M4-UNIVERSAL contract](architecture/m4-universal-engine.md). The requested
-98–99% coverage is an acceptance target, not a measured result. Preserve safety,
-content-addressed evidence, explicit unknown outcomes and deterministic replay.
-Follow Slice 2 with **M4E validation and Gate G3 evidence**; neither gate advances
-from implementation tests alone.
+The approved direction remains the [M4-UNIVERSAL contract](architecture/m4-universal-engine.md)
+with two implementation slices. The requested 98–99% coverage and broad performance
+goals are acceptance targets, not measured results. No third slice or automatic
+gate advancement is introduced by this handoff.

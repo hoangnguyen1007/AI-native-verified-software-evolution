@@ -3,15 +3,16 @@ package com.evolution.analysis.spring.condition;
 import java.util.*;
 
 /** A deliberately bounded literal metadata decoder; never resolves Java names or evaluates Java code. */
-final class LiteralConditionAnnotation {
-    sealed interface Value permits Strings, Bool, Classes {}
-    record Strings(List<String> values) implements Value { Strings { values = List.copyOf(values); } }
-    record Bool(boolean value) implements Value {}
-    record Classes(List<String> names) implements Value {Classes{names=List.copyOf(names);}}
+public final class LiteralConditionAnnotation {
+    public sealed interface Value permits Strings, Bool, Classes, Enums {}
+    public record Strings(List<String> values) implements Value { public Strings { values = List.copyOf(values); } }
+    public record Bool(boolean value) implements Value {}
+    public record Classes(List<String> names) implements Value {public Classes{names=List.copyOf(names);}}
+    public record Enums(List<String> names) implements Value {public Enums{names=List.copyOf(names);}}
     private final String text;
     private int offset;
     private LiteralConditionAnnotation(String text) { this.text = text; }
-    static Map<String, Value> parse(String text) {
+    public static Map<String, Value> parse(String text) {
         if (text.contains("\\u")) throw unsupported();
         var parser = new LiteralConditionAnnotation(text);
         return parser.annotation();
@@ -39,16 +40,26 @@ final class LiteralConditionAnnotation {
         if (take('{')) {
             skip();List<String> values = new ArrayList<>();boolean classes=peek()!='"'&&peek()!='}';
             if (!take('}')) {
-                values.add(classes?className():string());
-                while (take(',')) { if (take('}')) return classes?new Classes(values):new Strings(values); values.add(classes?className():string()); }
+                values.add(classes?qualifiedValue():string());
+                while (take(',')) { if (take('}')) return classes?qualifiedValues(values):new Strings(values); values.add(classes?qualifiedValue():string()); }
                 require('}');
             }
-            return classes?new Classes(values):new Strings(values);
+            return classes?qualifiedValues(values):new Strings(values);
         }
         int start=offset;String identifier=identifier();
         if(identifier.equals("true"))return new Bool(true);
         if(identifier.equals("false"))return new Bool(false);
-        offset=start;return new Classes(List.of(className()));
+        offset=start;return qualifiedValues(List.of(qualifiedValue()));
+    }
+    String qualifiedValue() {
+        StringBuilder name=new StringBuilder(identifier());
+        while(take('.'))name.append('.').append(identifier());
+        return name.toString();
+    }
+    Value qualifiedValues(List<String> values) {
+        if(values.stream().allMatch(v->v.endsWith(".class")))return new Classes(values.stream().map(v->v.substring(0,v.length()-6)).toList());
+        if(values.stream().anyMatch(v->v.endsWith(".class")))throw unsupported();
+        return new Enums(values);
     }
     String className() {
         StringBuilder name=new StringBuilder(identifier());
@@ -99,18 +110,18 @@ final class LiteralConditionAnnotation {
     boolean take(char c) { skip(); if (peek() != c) return false; offset++; return true; }
     void require(char c) { if (!take(c)) throw unsupported(); }
     static IllegalArgumentException unsupported() { return new IllegalArgumentException("Metadata is outside the bounded literal annotation fragment"); }
-    static List<String> strings(Map<String, Value> attributes, String name, List<String> fallback) {
+    public static List<String> strings(Map<String, Value> attributes, String name, List<String> fallback) {
         var value = attributes.get(name); if (value == null) return fallback;
         if (value instanceof Strings strings) return strings.values(); throw unsupported();
     }
-    static String string(Map<String, Value> attributes, String name, String fallback) {
+    public static String string(Map<String, Value> attributes, String name, String fallback) {
         var values = strings(attributes, name, List.of(fallback)); if (values.size() != 1) throw unsupported(); return values.getFirst();
     }
-    static boolean bool(Map<String, Value> attributes, String name, boolean fallback) {
+    public static boolean bool(Map<String, Value> attributes, String name, boolean fallback) {
         var value = attributes.get(name); if (value == null) return fallback;
         if (value instanceof Bool bool) return bool.value(); throw unsupported();
     }
-    static List<String> classes(Map<String,Value> attributes,String name) {
+    public static List<String> classes(Map<String,Value> attributes,String name) {
         var value=attributes.get(name);if(value==null)return List.of();
         if(value instanceof Classes classes)return classes.names();
         if(value instanceof Strings strings&&strings.values().isEmpty())return List.of();

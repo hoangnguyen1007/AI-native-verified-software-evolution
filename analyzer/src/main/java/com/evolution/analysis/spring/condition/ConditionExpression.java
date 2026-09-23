@@ -7,7 +7,7 @@ import java.util.*;
  * No algebraic rewrites, state evaluation, opaque branching or solver implementation occur here. */
 public final class ConditionExpression {
     public static final VersionedIdentifier IR = new VersionedIdentifier("spring.condition-ir", "m4b.1-v1");
-    public enum Operator { CONSTANT, ALL, ANY, NOT, PROFILE, PROPERTY, WEB_MODE, BUILD, BEAN_STATE, OPAQUE }
+    public enum Operator { CONSTANT, ALL, ANY, NOT, PROFILE, PROPERTY, WEB_MODE, BUILD, BEAN_STATE, OPAQUE, BASIC_SPEL }
     public enum Dependency { BUILD_CONTEXT, CONFIGURATION, BEAN_STATE, OPAQUE }
     public enum BuildPredicate { CLASS_PRESENT, RESOURCE_PRESENT, JAVA_VERSION, FRAMEWORK_VERSION }
     public enum BeanPredicate { PRESENT, MISSING, SINGLE_CANDIDATE }
@@ -17,7 +17,12 @@ public final class ConditionExpression {
     public record Semantics(VersionedIdentifier version, ContentDigest frameworkEvidence) {
         public Semantics { Objects.requireNonNull(version); Objects.requireNonNull(frameworkEvidence); }
     }
-    public sealed interface Operand permits Constant, Profile, Property, Web, Build, Bean, Opaque, None {}
+    public sealed interface Operand permits Constant, Profile, Property, Web, Build, Bean, Opaque, None, BasicSpel {}
+    /** Additive M4U.2 operand; existing expression identity preimages remain unchanged. */
+    public record BasicSpel(String expression,VersionedIdentifier policy) implements Operand {
+        public BasicSpel(String expression){this(expression,new VersionedIdentifier("spring.basic-spel","m4u.2-v1"));}
+        public BasicSpel {expression=ConditionIdentitySupport.raw(expression);Objects.requireNonNull(policy);}
+    }
     public record Constant(LogicalValue value) implements Operand { public Constant { Objects.requireNonNull(value); } }
     public record Profile(String name) implements Operand { public Profile { name = ConditionIdentitySupport.name(name); } }
     /** Exact prefix/names and Spring condition options, not a relaxed binder or property evaluator. */
@@ -84,7 +89,7 @@ public final class ConditionExpression {
         EnumSet<Dependency> dependencies = EnumSet.noneOf(Dependency.class);
         switch (operator) {
             case BUILD -> dependencies.add(Dependency.BUILD_CONTEXT);
-            case PROFILE, PROPERTY, WEB_MODE -> dependencies.add(Dependency.CONFIGURATION);
+            case PROFILE, PROPERTY, WEB_MODE, BASIC_SPEL -> dependencies.add(Dependency.CONFIGURATION);
             case BEAN_STATE -> dependencies.add(Dependency.BEAN_STATE);
             case OPAQUE -> dependencies.add(Dependency.OPAQUE);
             default -> { }
@@ -112,6 +117,7 @@ public final class ConditionExpression {
             case Property ignored -> Operator.PROPERTY; case Web ignored -> Operator.WEB_MODE;
             case Build ignored -> Operator.BUILD; case Bean ignored -> Operator.BEAN_STATE;
             case Opaque ignored -> Operator.OPAQUE;
+            case BasicSpel ignored -> Operator.BASIC_SPEL;
             case None ignored -> throw new IllegalArgumentException("None is not an atom");
         };
     }

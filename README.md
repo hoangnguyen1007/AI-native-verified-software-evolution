@@ -2,7 +2,7 @@
 
 This repository is the SE121 software architecture intelligence platform. The Java 21 Maven reactor contains parser-neutral contracts, the M2 JavaParser frontend, progressive effective-POM/source-plan modeling, bounded filesystem and dependency-artifact acquisition, exact Maven classpaths, deterministic source decoding, explicit analyzed-JDK symbol views, per-source-set frontend-input assembly, and normalized capability-gap/acquisition records. Gate G2 is formally PASSED following independent semantic adjudication across representative archetypes. Gate M4-R0 (Research and Semantics Gate) is PASSED following human review and acceptance. See [current state](docs/current-state.md) for verified scope and limitations.
 
-The active milestone is **Milestone 4: Spring Semantics Enrichment & Truth-Region Intelligence**. M4A.1–M4A.2 evidence acquisition, [M4B.1 configuration-space/condition IR foundation](docs/architecture/m4b1-configuration-space-condition-ir.md), and [M4B.2 evidence-to-IR lowering & bounded exogenous evaluation](docs/architecture/m4b2-evidence-lowering-exogenous-evaluation.md) are delivered; the next slice is M4C.1 phase/order-aware Spring registration plan and discovery transitions, under the accepted [M4-R0 contract](docs/architecture/m4-r0-semantics-gate.md) and [ADR-004](docs/decisions/ADR-004-staged-conditional-architecture-semantics.md).
+The active milestone is **Milestone 4: Spring Semantics Enrichment & Truth-Region Intelligence**. M4A–M4D and both M4-UNIVERSAL implementation slices are delivered within their recorded provider boundaries. [Slice 1](docs/architecture/m4u1-passive-ingestion.md) adds passive universal ingestion; [Slice 2](docs/architecture/m4u2-universal-spring.md) adds Spring Data, generation-qualified evidence, symbolic SAT regions, routes, contexts and basic SpEL. The exact next task is M4E validation before G3 adjudication, under the accepted [M4-R0 contract](docs/architecture/m4-r0-semantics-gate.md) and [ADR-004](docs/decisions/ADR-004-staged-conditional-architecture-semantics.md). Global coverage and unrestricted runtime equivalence remain unmeasured.
 
 ## Build prerequisites
 
@@ -56,7 +56,7 @@ The root reactor owns all shared build and test policy and builds in this order:
 5. `analyzer-javaparser` (isolated JavaParser/SymbolSolver adapter and semantic fixtures)
 6. `backend` (placeholder JAR, depends on `analyzer`, and has its own test boundary)
 
-The adapter accepts exact supplied source bytes and verified resolution inputs; it does not discover or execute target builds. Graph, Spring, backend API, CLI and visual workbench implementation remain later work.
+The adapter accepts exact supplied source bytes and verified resolution inputs; it does not execute target builds. Bounded Spring providers are implemented as recorded above. Graph, backend API, CLI and visual workbench implementation remain later work.
 
 The Maven adapter implements `BuildModelProvider` in the neutral `com.evolution.analysis.buildmodel` package. It models root/nested modules, relative parents, supplied artifact parents/BOMs, inheritance, properties, explicit/property/default profiles, dependency management, scopes, optional flags and exclusions. M3.2 adds per-module main/test candidate source plans with inherited directories, separate syntax/bytecode/API requirements, encoding declarations, plugin configuration and provenance. Result schema `build-model-result-v2` includes source-plan gaps in `hasGaps()`.
 

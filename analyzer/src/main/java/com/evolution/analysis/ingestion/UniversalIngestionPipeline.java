@@ -5,14 +5,21 @@ import com.evolution.analysis.evidence.*;
 import com.evolution.analysis.frontend.*;
 import com.evolution.analysis.spring.*;
 import com.evolution.analysis.spring.condition.*;
+import com.evolution.analysis.spring.universal.*;
 import java.util.*;
 
 /** Executes replaceable semantic providers over an already acquired, exact source/build context. */
 public final class UniversalIngestionPipeline {
-    public static final VersionedIdentifier PROVIDER=new VersionedIdentifier("repository.ingestion-pipeline","m4u.1");
+    public static final VersionedIdentifier PROVIDER=new VersionedIdentifier("repository.ingestion-pipeline","m4u.2");
     public enum Status { ANALYZED, NOT_ANALYZED, REJECTED, FAILED }
     public record Unit(UniversalSourceIngestion.SourceSet sourceSet,Status status,Optional<FrontendResult> frontend,
-                       Optional<ComponentScanIngestion.Result> components,Optional<ConstructorInjectionIngestion.Result> constructors){}
+                       Optional<ComponentScanIngestion.Result> components,Optional<ConstructorInjectionIngestion.Result> constructors,
+                       Optional<UniversalSpringSemantics.Result> spring) {
+        public Unit(UniversalSourceIngestion.SourceSet sourceSet,Status status,Optional<FrontendResult> frontend,
+                    Optional<ComponentScanIngestion.Result> components,Optional<ConstructorInjectionIngestion.Result> constructors) {
+            this(sourceSet,status,frontend,components,constructors,Optional.empty());
+        }
+    }
     public record Result(ContentDigest inputIdentity,UniversalSourceIngestion.Result sourceIngestion,List<Unit> units,
                          List<IngestionEvidence.Issue> issues,List<CapabilityGapRecord> gaps) {
         public Result {units=List.copyOf(units);issues=List.copyOf(issues);gaps=List.copyOf(gaps);}
@@ -40,7 +47,10 @@ public final class UniversalIngestionPipeline {
                 scanned=Optional.of(components);gaps.addAll(components.gaps());
                 var constructors=new ConstructorInjectionIngestion().ingest(result,components,framework,maxParameters);
                 gaps.addAll(constructors.gaps());
-                units.add(new Unit(source.sourceSet(),Status.ANALYZED,Optional.of(result),Optional.of(components),Optional.of(constructors)));
+                var spring=UniversalSpringSemantics.analyze(new SpringSourceEvidence(request.manifest(),result,framework),framework,
+                        components,constructors,source.configuration(),source.metadata(),Math.max(maxTypes,maxParameters));
+                gaps.addAll(spring.gaps());
+                units.add(new Unit(source.sourceSet(),Status.ANALYZED,Optional.of(result),Optional.of(components),Optional.of(constructors),Optional.of(spring)));
             }catch(RuntimeException failure) {
                 // Retain the failed source-set obligation and continue unrelated modules. Never expose exception text.
                 var reason=failure instanceof FrontendInputException?IngestionEvidence.Reason.SEMANTIC_INPUT_REJECTED:IngestionEvidence.Reason.SEMANTIC_PROVIDER_FAILED;
@@ -57,7 +67,7 @@ public final class UniversalIngestionPipeline {
         var artifacts=new ArrayList<SpringFrameworkEvidence.Artifact>();
         for(var entry:request.manifest().classpath()) {
             String name=entry.logicalName();
-            if(name.matches("org\\.springframework(?:\\.boot)?:[^:@]+:[^:@]+@jar"))
+            if(name.matches("[^:@]+:[^:@]+:[^:@]+@jar"))
                 artifacts.add(new SpringFrameworkEvidence.Artifact(name.substring(0,name.length()-4),name,entry.contentDigest()));
         }
         var versions=artifacts.stream().filter(a->a.groupId().equals("org.springframework")).map(SpringFrameworkEvidence.Artifact::version).distinct().toList();

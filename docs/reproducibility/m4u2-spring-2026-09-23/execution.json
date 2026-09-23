@@ -1,0 +1,12 @@
+{
+  "command": ".\\mvnw.cmd -B -ntp verify -q -Dmaven.repo.local=<MAVEN_USER_HOME>/repository",
+  "startedUtc": "2026-09-23T13:48:28.7152987Z",
+  "finishedUtc": "2026-09-23T13:52:01.1640816Z",
+  "exitCode": 0,
+  "seconds": 212.4487829,
+  "enforcerEnabled": true,
+  "cleanBuild": false,
+  "sourceInputsUnchanged": true,
+  "gitInspected": false,
+  "targetRepositoryExecuted": false
+}

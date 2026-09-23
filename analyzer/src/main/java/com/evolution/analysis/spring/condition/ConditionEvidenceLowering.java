@@ -12,7 +12,7 @@ import static com.evolution.analysis.spring.condition.ConditionProcessing.Reason
 
 /** Passive evidence-to-IR boundary. Every M4A obligation is classified in the output denominator. */
 public final class ConditionEvidenceLowering {
-    public static final VersionedIdentifier PROVIDER = new VersionedIdentifier("spring.condition-lowering", "m4b.2");
+    public static final VersionedIdentifier PROVIDER = new VersionedIdentifier("spring.condition-lowering", "m4u.2");
     public record Limits(int maxLoweredRows, int maxMetadataCharacters, int maxProfileDepth) {
         public Limits { if (maxLoweredRows < 1 || maxMetadataCharacters < 1 || maxProfileDepth < 1) throw new IllegalArgumentException("Positive lowering limits required"); }
         public static Limits conservative() { return new Limits(10000, 16384, 256); }
@@ -142,6 +142,10 @@ public final class ConditionEvidenceLowering {
                         expression = ConditionExpression.atom(semantics, new ConditionExpression.Property(
                                 LiteralConditionAnnotation.string(attributes, "prefix", "").trim(), selected.stream().distinct().toList(),
                                 LiteralConditionAnnotation.string(attributes, "havingValue", ""), LiteralConditionAnnotation.bool(attributes, "matchIfMissing", false)));
+                    } else if (type.equals("org.springframework.boot.autoconfigure.condition.ConditionalOnExpression")) {
+                        var attributes=LiteralConditionAnnotation.parse(observation.spelling());
+                        if(!Set.of("value").containsAll(attributes.keySet()))throw LiteralConditionAnnotation.unsupported();
+                        expression=ConditionExpression.atom(semantics,new ConditionExpression.BasicSpel(LiteralConditionAnnotation.string(attributes,"value","true")));
                     } else if (buildPredicate(type).isPresent()) {
                         var supplied = builds.getOrDefault(observation.identity(), List.of());
                         if (supplied.isEmpty()) reason = BUILD_EVIDENCE_UNAVAILABLE;

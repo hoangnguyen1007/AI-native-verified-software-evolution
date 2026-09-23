@@ -251,6 +251,8 @@ public final class ConditionModel {
                 case ConditionExpression.Property property -> property.keys().forEach(key -> requireDomain(
                         new FiniteDomain.Variable(FiniteDomain.Kind.PROPERTY, key), node, occurrence));
                 case ConditionExpression.Web ignored -> requireDomain(new FiniteDomain.Variable(FiniteDomain.Kind.WEB_MODE, "spring.web-mode"), node, occurrence);
+                case ConditionExpression.BasicSpel spel -> com.evolution.analysis.spring.universal.BasicSpelEvaluator.propertyKeys(spel.expression())
+                        .ifPresent(keys->keys.forEach(key->requireDomain(new FiniteDomain.Variable(FiniteDomain.Kind.PROPERTY,key),node,occurrence)));
                 case ConditionExpression.Constant constant -> {
                     if (constant.value() == LogicalValue.UNKNOWN) add(Reason.UNRESOLVED_LOGICAL_CONSTANT, node.identity().value(), rowId, evidence);
                 }

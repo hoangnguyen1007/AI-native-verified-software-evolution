@@ -1,0 +1,42 @@
+[
+  {
+    "cacheRelativePath": "org/springframework/spring-context/6.2.0/spring-context-6.2.0.jar",
+    "sha256": "a0d2de9df7902edc5f6ae55e2936327bdeac177dbc5392906b8d36f3691fe121"
+  },
+  {
+    "cacheRelativePath": "org/springframework/spring-beans/6.2.0/spring-beans-6.2.0.jar",
+    "sha256": "33adf77b49236f2966c9cec7eb5a1aea8ade81d7ada80c36d91bbf89d3298e15"
+  },
+  {
+    "cacheRelativePath": "org/springframework/spring-expression/6.2.0/spring-expression-6.2.0.jar",
+    "sha256": "37cfc1fe8ca22bb789c20aac6b90e09f2b0ea73085f3271ae61cf12cdb7e8876"
+  },
+  {
+    "cacheRelativePath": "org/springframework/spring-web/6.2.0/spring-web-6.2.0.jar",
+    "sha256": "24bd75b1049104699e4f57f3a70fc2ba41943d667d5d1a3b24ed1b70c3582020"
+  },
+  {
+    "cacheRelativePath": "org/springframework/boot/spring-boot/3.4.0/spring-boot-3.4.0.jar",
+    "sha256": "dea6332c2fa49ce2c724c78e3e57e41417dab50c82f1ccb5bfb22cc993290609"
+  },
+  {
+    "cacheRelativePath": "org/springframework/boot/spring-boot-autoconfigure/3.4.0/spring-boot-autoconfigure-3.4.0.jar",
+    "sha256": "525aa88505399c6ccfddfe295b313d55a259ed5e8d5890a3568485c074f98414"
+  },
+  {
+    "cacheRelativePath": "org/springframework/data/spring-data-commons/3.4.0/spring-data-commons-3.4.0.jar",
+    "sha256": "865bf9ce12e5b42f85200a839c0dc7f98fcd7a3b05eefc30975054a6c3b887b9"
+  },
+  {
+    "cacheRelativePath": "org/springframework/data/spring-data-jpa/3.4.0/spring-data-jpa-3.4.0.jar",
+    "sha256": "d4e7983da342f9934504885e58e006940301e639e8fe0eab2d944806ee1abd5e"
+  },
+  {
+    "cacheRelativePath": "jakarta/inject/jakarta.inject-api/2.0.1/jakarta.inject-api-2.0.1.jar",
+    "sha256": "f7dc98062fccf14126abb751b64fab12c312566e8cbdc8483598bffcea93af7c"
+  },
+  {
+    "cacheRelativePath": "javax/inject/javax.inject/1/javax.inject-1.jar",
+    "sha256": "91c77044a50c481636c32d916fd89c9118a72195390452c81065080f957de7ff"
+  }
+]

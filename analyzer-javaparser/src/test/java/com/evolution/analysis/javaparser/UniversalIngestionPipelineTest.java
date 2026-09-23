@@ -18,7 +18,8 @@ class UniversalIngestionPipelineTest {
                 @org.springframework.stereotype.Component record RecordService(String name) {}
                 """;
         var exact=ComponentIngestionTest.fixture(Map.of("fixture/App.java",source),true).request();
-        var input=inputs(Map.of("src/main/java/app/App.java",source,"src/main/resources/application.properties","feature.enabled=true\n"));
+        var input=inputs(Map.of("src/main/java/app/App.java",source,"src/main/resources/application.properties","feature.enabled=true\n",
+                "src/main/resources/META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports","app.OptionalConfiguration\n"));
         var policy=new UniversalBuildIngestion.Policy(Optional.of(21),Optional.of(21),Optional.of("UTF-8"),100,10000,1000,16);
         var build=new UniversalBuildIngestion().ingest(input,policy,Optional.empty(),Map.of(),new BuildModelPolicy(List.of(),List.of(),Map.of(),10000,100,16));
         var key=new UniversalSourceIngestion.SourceSet(build.modules().getFirst().descriptor().identity(),SourcePlanModel.Kind.MAIN);
@@ -30,6 +31,7 @@ class UniversalIngestionPipelineTest {
         assertEquals(UniversalIngestionPipeline.Status.ANALYZED,main.status(),result.issues().toString());
         assertEquals(3,main.components().orElseThrow().rows().stream().filter(r->r.status()==com.evolution.analysis.spring.condition.ComponentScanIngestion.Status.INCLUDED).count());
         assertEquals(2,main.constructors().orElseThrow().rows().stream().flatMap(r->r.parameters().stream()).count());
+        assertEquals(List.of("app.OptionalConfiguration"),main.spring().orElseThrow().metadata().candidates());
         assertTrue(assembly.outcomes().getFirst().configuration().assignment().isPresent());
     }
     private RepositoryInputs inputs(Map<String,String> text) {

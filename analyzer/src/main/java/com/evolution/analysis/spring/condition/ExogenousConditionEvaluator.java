@@ -7,7 +7,7 @@ import static com.evolution.analysis.spring.condition.ConditionProcessing.Reason
 
 /** Bounded interpreter of normalized, evidence-qualified exogenous IR, before bean registration. */
 public final class ExogenousConditionEvaluator {
-    public static final VersionedIdentifier PROVIDER = new VersionedIdentifier("spring.exogenous-evaluator", "m4b.2");
+    public static final VersionedIdentifier PROVIDER = new VersionedIdentifier("spring.exogenous-evaluator", "m4u.2");
     public static final VersionedIdentifier SEMANTICS = new VersionedIdentifier("spring.exogenous-semantics", "m4b.2-v1");
     public static final VersionedIdentifier PRECEDENCE = new VersionedIdentifier("spring.normalized-precedence", "last-active-v1");
     public static final VersionedIdentifier PROFILES = new VersionedIdentifier("spring.normalized-profiles", "defaults-includes-groups-v1");
@@ -365,6 +365,22 @@ public final class ExogenousConditionEvaluator {
                     yield profiles.getOrDefault(profile.name(), LogicalValue.UNKNOWN);
                 }
                 case ConditionExpression.Property property -> property(property, node.identity());
+                case ConditionExpression.BasicSpel spel -> {
+                    var keys=com.evolution.analysis.spring.universal.BasicSpelEvaluator.propertyKeys(spel.expression());
+                    var properties=new TreeMap<String,String>();boolean complete=keys.isPresent();
+                    if(keys.isPresent())for(String key:keys.orElseThrow()) {
+                        var selected=value(new FiniteDomain.Variable(FiniteDomain.Kind.PROPERTY,key));
+                        if(selected.isEmpty()||selected.orElseThrow().kind()==FiniteDomain.ValueKind.OTHER)complete=false;
+                        else selected.orElseThrow().exact().ifPresent(v->properties.put(key,v));
+                    }
+                    if(!complete||!spel.policy().equals(new VersionedIdentifier("spring.basic-spel","m4u.2-v1"))) {
+                        issue(PROPERTY_SEMANTICS_UNSUPPORTED,node.identity().value(),currentEvidence);yield LogicalValue.UNKNOWN;
+                    }
+                    var result=com.evolution.analysis.spring.universal.BasicSpelEvaluator.evaluate(spel.expression(),properties,currentEvidence,
+                            space.buildContext().snapshotIdentity(),com.evolution.analysis.spring.universal.BasicSpelEvaluator.Limits.defaults());
+                    if(result.value()==LogicalValue.UNKNOWN)issue(PROPERTY_SEMANTICS_UNSUPPORTED,result.identity().value(),currentEvidence);
+                    yield result.value();
+                }
                 case ConditionExpression.Web web -> value(new FiniteDomain.Variable(FiniteDomain.Kind.WEB_MODE, "spring.web-mode"))
                         .flatMap(FiniteDomain.Value::webMode).map(v -> truth(v == web.mode())).orElse(LogicalValue.UNKNOWN);
                 case ConditionExpression.Build build -> {

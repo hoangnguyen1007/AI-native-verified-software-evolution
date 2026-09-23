@@ -17,6 +17,14 @@ import static com.evolution.analysis.spring.condition.LogicalValue.*;
  * configuration space. This provider performs no I/O, class loading or target execution.
  */
 public final class TruthRegionEvaluation {
+    /** Scalable exogenous condition regions. Registration/binding facts still require their staged providers. */
+    public static SymbolicTruthRegions.Result evaluateSymbolic(ConditionModel model, ConditionExpression.Semantics semantics,
+            ConfigurationReasoner reasoner, SymbolicConfiguration.Limits limits) {
+        return SymbolicTruthRegions.evaluate(model, semantics, reasoner, limits);
+    }
+    public static SymbolicTruthRegions.StagedResult evaluateSymbolic(Request request,int maxSignatures,SymbolicConfiguration.Limits limits) {
+        return SymbolicTruthRegions.evaluateStaged(request,maxSignatures,limits);
+    }
     public static final VersionedIdentifier REGION_ENCODING =
             new VersionedIdentifier("spring.truth-region-encoding", "explicit-worlds-m4d-v1");
     public static final VersionedIdentifier WITNESS_POLICY =
@@ -534,7 +542,7 @@ public final class TruthRegionEvaluation {
                 "orderInterpretation", "evidenced-registration-prefix-v1")));
     }
 
-    private static List<ConditionalFactKey> deriveFacts(InjectionBindingPlan plan,
+    static List<ConditionalFactKey> deriveFacts(InjectionBindingPlan plan,
                                                          Map<ContentDigest, InjectionBindingPlan.Dependency> dependencies) {
         var facts = new TreeSet<ConditionalFactKey>();
         var discovery = plan.registrationPlan().discoveryPlan();
@@ -552,7 +560,7 @@ public final class TruthRegionEvaluation {
         return List.copyOf(facts);
     }
 
-    private static LogicalValue factTruth(ConditionalFactKey fact, InjectionBindings.Result result,
+    static LogicalValue factTruth(ConditionalFactKey fact, InjectionBindings.Result result,
                                           Map<ContentDigest, InjectionBindingPlan.Dependency> dependencies) {
         return switch (fact.kind()) {
             case DEFINITION_PRESENT -> result.registration().candidates().stream()
@@ -577,7 +585,7 @@ public final class TruthRegionEvaluation {
         };
     }
 
-    private static OperationalStatus operationalStatus(InjectionBindings.Result result) {
+    static OperationalStatus operationalStatus(InjectionBindings.Result result) {
         if (result.registration().containerError() || result.rows().stream().anyMatch(r -> r.operation() == InjectionBindings.Operation.ERROR))
             return OperationalStatus.ERROR;
         if (result.rows().stream().anyMatch(r -> r.operation() == InjectionBindings.Operation.LIMIT_EXCEEDED))

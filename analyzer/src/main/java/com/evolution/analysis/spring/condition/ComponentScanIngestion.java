@@ -160,7 +160,9 @@ public final class ComponentScanIngestion {
             return !name.startsWith("java.lang.") && !annotation.trustedName().filter(n -> Set.of(SCAN,
                     "org.springframework.context.annotation.Lazy","org.springframework.context.annotation.Primary",
                     "org.springframework.context.annotation.Profile","org.springframework.context.annotation.DependsOn",
-                    "org.springframework.context.annotation.Scope","org.springframework.beans.factory.annotation.Qualifier").contains(n)).isPresent();
+                    "org.springframework.context.annotation.Scope","org.springframework.beans.factory.annotation.Qualifier",
+                    "org.springframework.web.bind.annotation.RequestMapping",
+                    "org.springframework.boot.autoconfigure.condition.ConditionalOnExpression").contains(n)).isPresent();
         }
         return false;
     }

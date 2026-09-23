@@ -2,6 +2,11 @@
 
 **Status: APPROVED by Human Owner Directive (2026-09-18); Core Architecture Specification for Universal Coverage.**
 
+Implementation evidence: [Slice 1](m4u1-passive-ingestion.md) and
+[Slice 2](m4u2-universal-spring.md) record the delivered providers, executable
+boundaries and remaining M4E/G3 acceptance obligations. These records do not turn
+the coverage or latency targets below into measured results.
+
 ---
 
 ## 1. Tầm nhìn & Nguyên lý Đặc tả Năng lực (Capability-Driven Philosophy)

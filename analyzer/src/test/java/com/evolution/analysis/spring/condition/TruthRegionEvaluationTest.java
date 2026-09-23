@@ -58,6 +58,37 @@ class TruthRegionEvaluationTest {
         return result.regions().stream().filter(r -> r.fact().kind() == kind).findFirst().orElseThrow();
     }
 
+    @Test void satSignaturesReplayStagedRegistrationAndBindingAcrossFiftySixDimensions() throws Exception {
+        var fixture=conditionalFixture(TRUE);var original=fixture.model().space();
+        var domains=new ArrayList<>(original.domains());var values=new TreeMap<>(fixture.baseline().baseline());
+        for(int i=0;i<55;i++) {
+            var variable=new FiniteDomain.Variable(FiniteDomain.Kind.PROFILE,"unrelated-"+i);
+            domains.add(new FiniteDomain(variable,List.of(FiniteDomain.Value.bool(false),FiniteDomain.Value.bool(true)),fixture.baseline().evidence()));values.put(variable,FiniteDomain.Value.bool(false));
+        }
+        var space=new ConfigurationSpace(original.buildContext(),original.repositoryEnvelope(),original.deploymentEnvelope(),domains,original.constraints(),original.precedencePolicy(),original.profilePolicy(),original.abstractionVersion(),
+                new ConfigurationSpace.FeasibilityPolicy(original.feasibilityPolicy().version(),new ConfigurationSpace.Limits(128,4096,Long.MAX_VALUE,10000,100000,256),original.feasibilityPolicy().evidence()));
+        var model=ConditionModel.create(space,fixture.model().sourceRows());var baseline=new ConfigurationAssignment(values,fixture.baseline().evidence());
+        var request=new TruthRegionEvaluation.Request(fixture.binding(),model,fixture.source().lowering().semantics(),baseline,SatConfigurationReasoner.INSTANCE,TruthRegionEvaluation.Limits.conservative(),ARTIFACT);
+        var symbolic=TruthRegionEvaluation.evaluateSymbolic(request,4,SymbolicConfiguration.Limits.defaults());
+        assertTrue(symbolic.signaturesComplete(),symbolic.issues().toString());assertEquals(2,symbolic.traces().size());
+        assertTrue(symbolic.traces().stream().allMatch(SymbolicTruthRegions.Trace::replayed));
+        assertEquals(3,symbolic.regions().size());assertTrue(symbolic.regions().stream().allMatch(r->r.classification()==TruthRegionEvaluation.Classification.MAY));
+        assertTrue(symbolic.gaps().stream().noneMatch(g->g.reasonCode().equals("ENUMERATION_INCOMPLETE")));
+        assertEquals(symbolic.identity(),TruthRegionEvaluation.evaluateSymbolic(request,4,SymbolicConfiguration.Limits.defaults()).identity());
+        var bounded=TruthRegionEvaluation.evaluateSymbolic(request,1,SymbolicConfiguration.Limits.defaults());
+        assertFalse(bounded.signaturesComplete());assertTrue(bounded.regions().stream().allMatch(r->r.classification()==TruthRegionEvaluation.Classification.UNKNOWN));
+        assertTrue(bounded.gaps().stream().anyMatch(g->g.reasonCode().equals("SOLVER_LIMIT")));
+    }
+
+    @Test void satStagedClassificationsAgreeWithTheExhaustiveSmallSpaceOracle()throws Exception {
+        for(var match:List.of(TRUE,FALSE,UNKNOWN)) {
+            var fixture=conditionalFixture(match);var exhaustive=evaluate(fixture);
+            var request=new TruthRegionEvaluation.Request(fixture.binding(),fixture.model(),fixture.source().lowering().semantics(),fixture.baseline(),SatConfigurationReasoner.INSTANCE,TruthRegionEvaluation.Limits.conservative(),ARTIFACT);
+            var symbolic=TruthRegionEvaluation.evaluateSymbolic(request,4,SymbolicConfiguration.Limits.defaults());
+            assertEquals(exhaustive.regions().stream().map(r->List.of(r.fact(),r.classification())).toList(),symbolic.regions().stream().map(r->List.of(r.fact(),r.classification())).toList());
+        }
+    }
+
     @Test void conditionalRegistrationAndBindingAreMayWithMinimalRevalidatedWitnesses() throws Exception {
         var result = evaluate(conditionalFixture(TRUE));
         assertEquals(TruthRegionEvaluation.Feasibility.FEASIBLE, result.feasibility());

@@ -24,6 +24,27 @@ public interface ConfigurationReasoner {
 
     VersionedIdentifier policy();
 
+    /** Additive symbolic port; explicit-world providers retain their original contract. */
+    default SymbolicConfiguration.Answer solve(SymbolicConfiguration.Query query) {
+        return new SymbolicConfiguration.Answer(query.identity(), Satisfiability.UNKNOWN, Map.of(), 0,
+                Optional.of("SYMBOLIC_BACKEND_UNAVAILABLE"));
+    }
+    default LogicalValue implies(SymbolicConfiguration.Formula antecedent,SymbolicConfiguration.Formula consequent,
+                                 SymbolicConfiguration.Limits limits) {
+        var counterexample=SymbolicConfiguration.and(antecedent,SymbolicConfiguration.not(consequent));
+        return switch(solve(new SymbolicConfiguration.Query(counterexample,limits)).status()) {
+            case UNSATISFIABLE->LogicalValue.TRUE;case SATISFIABLE->LogicalValue.FALSE;case UNKNOWN->LogicalValue.UNKNOWN;
+        };
+    }
+    default LogicalValue equivalent(SymbolicConfiguration.Formula left,SymbolicConfiguration.Formula right,
+                                    SymbolicConfiguration.Limits limits) {
+        var difference=SymbolicConfiguration.or(SymbolicConfiguration.and(left,SymbolicConfiguration.not(right)),
+                SymbolicConfiguration.and(right,SymbolicConfiguration.not(left)));
+        return switch(solve(new SymbolicConfiguration.Query(difference,limits)).status()) {
+            case UNSATISFIABLE->LogicalValue.TRUE;case SATISFIABLE->LogicalValue.FALSE;case UNKNOWN->LogicalValue.UNKNOWN;
+        };
+    }
+
     FiniteConfigurationEvaluation.Result enumerate(ConditionModel model,
             ConditionExpression.Semantics semantics, FiniteConfigurationEvaluation.Limits limits);
 

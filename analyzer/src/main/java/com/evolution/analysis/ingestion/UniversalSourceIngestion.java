@@ -8,6 +8,8 @@ import com.evolution.analysis.contract.source.*;
 import com.evolution.analysis.evidence.CapabilityGapRecord;
 import com.evolution.analysis.frontend.*;
 import com.evolution.analysis.spring.condition.ConfigDataIngestion;
+import com.evolution.analysis.spring.condition.ConditionEvidence;
+import com.evolution.analysis.spring.universal.AutoConfigurationMetadata;
 import java.util.*;
 import static com.evolution.analysis.ingestion.IngestionEvidence.Reason.*;
 
@@ -21,12 +23,16 @@ public final class UniversalSourceIngestion {
     }
     public enum Status { OWNED, UNOWNED, OVERLAPPING, INPUT_UNAVAILABLE }
     public record SourceRow(String path,Status status,List<SourceSet> claims) {public SourceRow{claims=List.copyOf(claims);}}
-    public record Outcome(SourceSet sourceSet,Optional<FrontendRequest> request,ConfigDataIngestion.Result configuration){}
+    public record Outcome(SourceSet sourceSet,Optional<FrontendRequest> request,ConfigDataIngestion.Result configuration,
+                          List<AutoConfigurationMetadata.Resource> metadata) {
+        public Outcome {metadata=List.copyOf(metadata);}
+        public Outcome(SourceSet set,Optional<FrontendRequest> request,ConfigDataIngestion.Result configuration){this(set,request,configuration,List.of());}
+    }
     public record Result(ContentDigest inputIdentity,List<SourceRow> sources,List<Outcome> outcomes,
                          List<IngestionEvidence.Issue> issues,List<CapabilityGapRecord> gaps) {
         public Result {sources=List.copyOf(sources);outcomes=List.copyOf(outcomes);issues=List.copyOf(issues);gaps=List.copyOf(gaps);}
         public ContentDigest identity(){return IngestionEvidence.digest(List.of(inputIdentity,sources,
-                outcomes.stream().map(o->List.of(o.sourceSet(),o.request().map(r->r.manifest().identity()),o.configuration().identity())).toList(),issues,gaps));}
+                outcomes.stream().map(o->List.of(o.sourceSet(),o.request().map(r->r.manifest().identity()),o.configuration().identity(),o.metadata().stream().map(AutoConfigurationMetadata.Resource::identity).toList())).toList(),issues,gaps));}
     }
     public Result assemble(RepositoryInputs inputs,UniversalBuildModel build,Map<SourceSet,Resolution> resolutions,
                            ManifestComponent analyzer,ManifestComponent rules,ManifestComponent schema) {
@@ -83,7 +89,13 @@ public final class UniversalSourceIngestion {
                     request=Optional.of(new FrontendRequest(manifest,plan.module(),set,frontendPlan,sourceInputs,resolution.platform(),resolution.binaries()));
                 }catch(IllegalArgumentException failure){issues.add(new IngestionEvidence.Issue(SOURCE_INCOMPLETE,key.toString(),List.of(identity)));}
             }
-            outcomes.add(new Outcome(key,request,config));
+            var metadata=new ArrayList<AutoConfigurationMetadata.Resource>();
+            for(String root:resources.stream().flatMap(r->r.value().stream()).distinct().toList())for(String name:List.of("META-INF/spring.factories","META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports")) {
+                String path=root.equals(".")?name:root+"/"+name;var file=inputs.files().get(path);
+                if(file!=null)metadata.add(new AutoConfigurationMetadata.Resource(path,file.bytes(),new ConditionEvidence.Source(file.document().identity(),file.document().contentDigest(),Optional.empty(),0)));
+                else if(inputs.snapshot().files().stream().anyMatch(f->f.path().equals(path)))issues.add(new IngestionEvidence.Issue(INPUT_UNAVAILABLE,path,List.of(identity)));
+            }
+            outcomes.add(new Outcome(key,request,config,metadata));
         }
         var sorted=issues.stream().distinct().sorted(Comparator.comparing(IngestionEvidence.Issue::identity)).toList();
         var gaps=new TreeSet<>(build.gaps());outcomes.forEach(o->gaps.addAll(o.configuration().gaps()));gaps.addAll(IngestionEvidence.gaps(snapshot.identity(),PROVIDER,identity,sorted));
