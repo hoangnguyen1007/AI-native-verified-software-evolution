@@ -8,9 +8,9 @@ Build a deterministic, evidence-first platform that understands Java and Spring 
 
 **CONFIRMED by the human owner on 2026-09-04 and re-affirmed with full universal scope expansion on 2026-09-18:** the platform adapts to understand each repository as deeply as safely and truthfully possible; it does not require repositories to conform to one analyzer assumption. There are **no artificial restrictions or "forbidden zones"**; the platform must not be shackled by narrow academic assumptions or artificial boundaries that declare common real-world code "unsupported". Prefer maximum capability, minimum assumptions, progressive evidence acquisition, explicit uncertainty, and zero silent omission.
 
-The platform targets **MỌI kiểu repository (Universal Multi-Repository Intelligence ~99% Real-World Coverage)**: plain Java libraries, single-module apps, multi-module Maven and Gradle (`build.gradle` Groovy DSL and `build.gradle.kts` Kotlin DSL) architectures, legacy and modern Spring Framework (1.x–6.x), and Spring Boot (1.x–3.x+) across ancient Java through modern Java (Java 8, 11, 17, 21, up to Java 26+). Real-world conventions such as Lombok synthetic constructors (`@RequiredArgsConstructor`, `@AllArgsConstructor`, `@NoArgsConstructor`, `@Data`, `@Value`, `@Builder`), Java 17/21 canonical record constructor DI, sealed types, Spring Data dynamic repositories (`JpaRepository`, `CrudRepository`, `MongoRepository`, etc.), automatic Component Scanning from `@SpringBootApplication`, automatic resource ingestion (`application.yml` and `.properties` with profile cascading), Web HTTP endpoint mapping, and SAT solving (pure-Java DPLL / Sat4j) for unbounded configuration spaces are first-class engineering objectives designed to achieve ~99% practical semantic resolution without artificially resigning to `UNKNOWN` or `UNRESOLVED`.
+The platform targets broad Java/Spring repository understanding: student/plain Java, legacy and modern apps, Maven/Gradle reactors, generated-code-heavy systems, enterprise monorepos, binary/resource inputs and incomplete environments. **CONFIRMED clarification (2026-09-23):** deep Java/Spring analysis plus inventory and evidenced boundaries for other languages in polyglot repositories; another language's semantic engine is not part of this request. [M4 Universal v2](architecture/m4-universal-v2.md) defines progressive evidence acquisition and automatic source-to-Spring integration. The existing 98–99% aspiration becomes an empirical target on preregistered cohorts, not a worldwide measured fact. Syntax, platform API, framework version and mechanism support are verified separately; finite SAT cannot guarantee infinite-domain or millisecond worst-case solving.
 
-**Autonomous Reasoning & Capability-Driven Specification Mandate:** All project documentation and architecture contracts must declare **mandatory capabilities, coverage outcomes, and verifiable invariants** rather than micromanaging low-level procedural commands. High-reasoning AI models (e.g. Claude 3.7 Sonnet Thinking, Gemini 3.8 Flash High, OpenAI o3/o1) are given full technical autonomy to design optimal algorithms, synthesizers, data structures, and handling strategies within these invariants. Milestone delivery is partitioned into **at most 2 consolidated execution slices** (Slice 1: Universal Source, Build & Configuration Ingestion; Slice 2: Universal Spring Semantics, Dynamic Frameworks & SAT Reasoning).
+**Autonomous Reasoning & Capability-Driven Specification Mandate:** Documentation declares required capabilities, coverage outcomes, boundaries and verifiable invariants. Implementers choose internal algorithms and structures within those contracts. Universal v1 had two implementation slices. The owner's latest request for a compact v2 plan is represented by **three tasks: two implementation tasks and one integration/acceptance task**, each with internal checklists and its own [task file](tasks/m4-universal-v2/README.md). A checklist is not an additional task; smaller task count cannot remove coverage or correctness controls.
 
 Milestone scope sequences implementation delivery, but never serves as a ceiling or artificial constraint on platform capabilities. When justified and authorized, providers synthesize and acquire build-model, dependency, generated-source, bytecode, configuration, controlled sandbox/build, runtime, or other evidence. All such evidence remains versioned, attributable, bounded by permissions and safety, and reconciled without fabrication or silent replacement of conflicting observations.
 
@@ -125,9 +125,9 @@ Lower-authority claims cannot become confirmed without higher-authority evidence
 | Cytoscape.js workbench visualization | PROVISIONAL |
 | Complete visual architecture-intelligence workbench | CONFIRMED product outcome |
 | Explainable architecture score plus separate analysis confidence | CONFIRMED direction; exact formula PROVISIONAL |
-| Progressive evidence providers (including selective bytecode) | ASSESS/HOLD for SE121 implementation; extension boundary CONFIRMED |
-| Staged conditional architecture semantics for M4+ | ACCEPTED direction on 2026-09-09 and M4-R0 baseline on 2026-09-11; M4A.1–M4A.2 evidence-only acquisition delivered, conditional inference and G3 evidence pending; see ADR-004 |
-| Solver backend for configuration reasoning | PROVISIONAL; exhaustive oracle first, SAT/BDD choice requires benchmark |
+| Progressive evidence providers | M3/M4 passive baseline delivered; broader passive acquisition/import/coordinator PLANNED in Universal v2; target execution remains ASSESS/HOLD |
+| Staged conditional architecture semantics for M4+ | ACCEPTED direction and bounded M4B–D implementation; empirical G3 acceptance pending; see ADR-004/current state |
+| Solver backend for configuration reasoning | Pure-Java DPLL and exhaustive backends implemented within recorded fragment; broader performance/coverage unmeasured |
 | Post-M12 context federation, cross-system assurance, and verified AI evolution | FUTURE HORIZONS; not SE121 commitments |
 
 ## Document Responsibilities
@@ -141,18 +141,18 @@ Lower-authority claims cannot become confirmed without higher-authority evidence
 - `docs/architecture/m3-workspace-build-model.md`: provisional M3 workspace, safe Maven model, exact classpath, and platform decoupling contract
 - `docs/architecture/evidence-acquisition.md`: provisional M3+ capability-gap, acquisition-attempt, and provider-conflict contract
 - `docs/architecture/m4-spring-intelligence.md`: provisional M4 Spring domain model and versioned closed mechanism denominator
+- `docs/architecture/m4-universal-v2.md`: planned adaptive intake/evidence/semantic integration contract; coverage catalog is the required-case companion
+- `docs/tasks/m4-universal-v2/`: exactly three upcoming execution tasks and their shared index
 - `docs/architecture/m4-r0-semantics-gate.md`: reviewable R0 identity/fragment/version/order contract candidate spanning Spring 1.x XML through Boot 3.4.x
 - `docs/architecture/conditional-architecture-semantics.md`: canonical M4+ configuration-space, staged registration, truth-region, witness, policy and evolution semantics
 - `docs/architecture/product-outcome.md`: canonical product, metric, scoring, visualization, and acceptance contract
 - `docs/research/`: methods and evidence, not project progress
-- `roadmap_for_user.md` and `roadmap_for_user_vi.md`: historical human-review snapshots with explicit stale-status banners; never sources of current status or next-task authority
+- Former `roadmap_for_user.md` and `roadmap_for_user_vi.md` review snapshots are absent from the current checkout. Use `docs/roadmap.md` for direction and `docs/current-state.md` for operational status.
 
 ## Related Documents
 
 - [Current State](current-state.md)
 - [Roadmap](roadmap.md)
-- [Historical Human Review Roadmap](../roadmap_for_user.md)
-- [Historical Vietnamese Review Roadmap](../roadmap_for_user_vi.md)
 - [Architecture Overview](architecture/architecture.md)
 - [Knowledge Graph](architecture/knowledge-graph.md)
 - [M1 Contracts](architecture/m1-contracts.md)
@@ -164,6 +164,8 @@ Lower-authority claims cannot become confirmed without higher-authority evidence
 - [ADR-002: Complete Visual Product and Explainable Assessment](decisions/ADR-002-product-outcome-and-explainable-assessment.md)
 - [ADR-003: Progressive Evidence Acquisition](decisions/ADR-003-progressive-evidence-acquisition.md)
 - [ADR-004: Staged Conditional Architecture Semantics](decisions/ADR-004-staged-conditional-architecture-semantics.md)
+- [ADR-005: M4 Universal v2](decisions/ADR-005-m4-universal-v2.md)
+- [M4 Universal v2 task plan](tasks/m4-universal-v2/README.md)
 - [Conditional Architecture Redirection Review](research/2026-09-09-conditional-architecture-redirection-review.md)
 - [Research Questions](research/research-questions.md)
 - [Architecture Decisions](decisions/)

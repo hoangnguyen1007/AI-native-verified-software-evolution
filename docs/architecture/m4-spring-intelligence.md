@@ -6,6 +6,8 @@
 
 The catalog is closed per version, not forever. `spring-mechanisms:v2` must account for every registered fixture/observation exactly once. A new mechanism or materially different framework behavior requires an explicit catalog/semantics-version change rather than silent omission.
 
+The owner-requested [M4 Universal v2](m4-universal-v2.md) now precedes M4E, after the two delivered Universal v1 slices. Its [three-task plan](../tasks/m4-universal-v2/README.md) expands passive acquisition, source-to-M4C integration and acceptance evidence. These are planned capabilities, not a change to implemented semantics or a passed G3.
+
 ## M4 Delivery Slices
 
 1. **M4-R0 — Research/semantics gate:** approve identities, first framework/condition fragment, version matrix, exhaustive oracle, baselines, corpus protocol and limits.

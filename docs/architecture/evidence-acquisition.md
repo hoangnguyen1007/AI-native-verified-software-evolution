@@ -18,6 +18,12 @@ The acquisition layer must distinguish five things:
 
 A capability gap is not a semantic fact and not proof that a fact is unknowable. A suggested provider is not authorization to invoke it.
 
+The planned [Universal v2 coordinator](m4-universal-v2.md) reuses this ledger and
+adds requirement-driven provider selection, satisfaction checks, scoped invalidation
+and recovery. [V2.1](../tasks/m4-universal-v2/01-adaptive-intake-and-evidence.md)
+owns that implementation; the normalizer remains passive. Imported generated,
+binary, AOT or runtime evidence is data and does not authorize executing its producer.
+
 ## `CapabilityGapRecord` Logical Schema
 
 The storage-neutral Java contract is implemented in `analyzer` under `com.evolution.analysis.evidence`. The logical schema is:

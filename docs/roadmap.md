@@ -178,7 +178,7 @@ Accepted M4-R0 prerequisites (historical checklist):
 
 Detect and account for direct/composed stereotypes, component scanning, `@Bean`, constructor/field/method/`@Bean` parameter injection, JSR-330/`@Resource`, collection/provider forms, qualifiers, primary/fallback, framework entry points, auto-configuration, factories, Spring Data, generated members, XML, programmatic registration, lookup, SpEL and runtime-dynamic mechanisms. Every registered row is `SUPPORTED`, `CONDITIONAL`, `DYNAMIC`, `UNSUPPORTED` or `OUT_OF_SCOPE` with a closed denominator and evidence need.
 
-Lombok and Spring Data are first-class supported ecosystem mechanisms. The platform actively synthesizes Lombok constructors (`@RequiredArgsConstructor`, `@AllArgsConstructor`, `@NoArgsConstructor`) and Spring Data dynamic repository beans (`JpaRepository`, `CrudRepository`, `MongoRepository`) into the registration graph, eliminating false unsatisfied dependency gaps while preserving explicit synthesis provenance.
+Lombok and Spring Data are first-class coverage obligations. Universal v1 supplies bounded generated-member and repository-candidate evidence; Universal v2 closes symbol/descriptor/registration integration. Synthesis requires exact version/configuration/eligibility evidence. An interface or generated constructor alone does not prove an active bean or selected binding.
 
 #### M4B — Configuration Space and Condition IR
 
@@ -192,26 +192,23 @@ Deliver versioned configuration-parse and bean-registration transitions, ordered
 
 **Status: DELIVERED for the normalized M4C fragment (2026-09-18); M4E/G3 evidence pending.** Classify facts and bindings over the feasible modeled space as `MUST`, `MAY`, `NEVER` or `UNKNOWN`; produce deterministic, minimized and revalidated witnesses/counter-witnesses; preserve unresolved regions and operational failures separately. See the [M4D contract](architecture/m4d-truth-regions-witnesses.md).
 
-#### M4-UNIVERSAL — Big Task: Universal Multi-Repository & Spring Intelligence Engine
+#### M4-UNIVERSAL v1 — delivered provider foundation
 
-**CONFIRMED by human owner directive (2026-09-18):** Transform the platform into a universal architecture intelligence engine achieving ~99% practical semantic coverage across all real-world repository archetypes: ancient Java (Java 8 or earlier) through modern Java (Java 11, 17, 21, 26+), Spring Framework 1.x–6.x, Spring Boot 1.x–3.x+, multi-module Maven, Gradle (`build.gradle` Groovy and `build.gradle.kts` Kotlin), and plain Java workspaces.
+The human's 2026-09-18 direction established broad Java/Spring coverage through two implementation slices: [passive source/build/config ingestion](architecture/m4u1-passive-ingestion.md) and [Spring evidence plus symbolic SAT](architecture/m4u2-universal-spring.md). Their implementation contracts own actual support and remaining obligations. Historical 98–99% coverage ambitions are targets, not measured worldwide coverage. Finite SAT does not promise arbitrary infinite-domain or constant-time solving.
 
-**Specification Principle:** Documentation declares **required coverage outcomes, capabilities, and system invariants**; it strictly avoids micromanaging low-level execution procedures, empowering reasoning AI models to autonomously devise optimal algorithms, data structures, and synthesizers.
+#### M4-UNIVERSAL-V2 — Adaptive Repository Understanding
 
-The Mega Task is partitioned into **at most 2 consolidated execution slices**:
+**CONFIRMED owner request (2026-09-23, compact plan finalized 2026-09-26):** add one new M4 Universal v2 umbrella task before M4E, with deep Java/Spring semantics, polyglot inventory/boundaries, and fewer execution tasks. [ADR-005](decisions/ADR-005-m4-universal-v2.md) records sequencing; the [architecture contract](architecture/m4-universal-v2.md), [coverage catalog](architecture/m4-universal-v2-coverage.md) and [evaluation protocol](research/m4-universal-v2-evaluation.md) define the provisional implementation plan.
 
-##### Slice 1: Universal Source, Build & Configuration Ingestion
-- **Mandatory Source & Preprocessing Coverage:** Full parsing of Java 8 to 26+ syntax; automatic synthesis and resolution of pervasive real-world patterns including Lombok (`@RequiredArgsConstructor`, `@AllArgsConstructor`, `@NoArgsConstructor`, `@Data`, `@Value`, `@Builder`), Java 17/21 canonical record constructor DI, and sealed hierarchies without requiring pre-compiled bytecode.
-- **Universal Build Model Coverage:** Declarative model extraction across plain Java, single/multi-module Maven (POM inheritance, BOMs, dependency management), and Gradle (`build.gradle` / `build.gradle.kts`), extracting module coordinates, dependencies, and source sets safely without untrusted lifecycle execution.
-- **Automated Configuration Ingestion:** Native ingestion and hierarchical flattening of configuration sources (`application.properties`, `application.yml`, `application.yaml`, and profile-specific variants) to automatically populate property assignments and resolve `@Value` and `@ConditionalOnProperty` without manual inputs.
-- **Zero-Setup Component Discovery:** Package-root auto-detection from `@SpringBootApplication` and `@ComponentScan` to discover all stereotypes (`@Component`, `@Service`, `@Repository`, `@Controller`, `@RestController`, `@Configuration`) across the package tree.
+Exactly three task files:
 
-##### Slice 2: Universal Spring Semantics, Dynamic Frameworks & SAT Reasoning
-- **Dynamic Bean & Framework Generation:** Automatic candidate bean modeling for dynamic framework types, including all Spring Data repository interfaces (`Repository`, `CrudRepository`, `JpaRepository`, `MongoRepository`, etc.), eliminating missing dependency gaps in consuming services.
-- **Cross-Generation Framework & Namespace Parity:** Seamless dual support for legacy `javax.*` (Spring Boot 1.x/2.x) and modern `jakarta.*` (Spring Boot 3.x+), auto-configuration registration mechanisms (`META-INF/spring.factories` and `META-INF/spring/*.imports`), and version-aware bean override semantics.
-- **Unbounded Logic & SAT Solving:** Elimination of combinatorial explosion gaps (`ENUMERATION_INCOMPLETE`) on massive configuration spaces ($2^{50}+$ variables) via high-performance Boolean SAT reasoning (pure-Java DPLL / Sat4j) integrated into the truth-region engine.
-- **Web API Route Mapping & Advanced Contexts:** HTTP route extraction (`@RequestMapping`, `@GetMapping`, `@PostMapping`, etc.) mapping API entry points to controllers and services; basic SpEL expression evaluation for `@ConditionalOnExpression`; and hierarchical parent-child application context modeling.
+1. [V2.1 — Adaptive intake and evidence closure](tasks/m4-universal-v2/01-adaptive-intake-and-evidence.md): resilient inventory, scoped build/source plans, exact dependencies/platforms, generated/binary/library evidence imports and an active permitted-evidence coordinator.
+2. [V2.2 — Java/Spring semantic closure](tasks/m4-universal-v2/02-java-spring-semantic-closure.md): Java/generated symbol resolution, config closure, automatic source-to-M4C descriptors, version/mechanism packs and dependency-local conditional reasoning.
+3. [V2.3 — Integrated architecture and acceptance](tasks/m4-universal-v2/03-integration-and-acceptance.md): input-to-report integration, root-cause uncertainty explanations, recovery/replay controls and one registered acceptance evidence campaign shared with M4E.
 
+The first two are implementation tasks; the third integrates and verifies. Internal checklists do not create additional tasks. Each supported capability needs positive and negative end-to-end evidence; returning a gap for every input satisfies accounting only. Architecture usefulness, correct resolution, false certainty, setup burden and residual uncertainty are measured separately. Scope covers Java/Spring repository diversity without silently adding another analyzed language, target execution or cross-build universal semantics.
+
+Exit: integrated evidence closure and semantic journeys pass their controls; all registered categories/failures remain in denominators; applicable permitted providers have been attempted; residuals have exact causes/affected outputs; corpus claims use preregistered inputs/modes/labels and honest comparison. The 98–99% aspiration is evaluated on declared cohorts. V2 is not implemented by this plan and does not pass G3; M4E adjudicates its evidence.
 #### M4E — Validation and G3
 
 Run adjudicated microfixtures, interaction fixtures and representative repositories across pinned framework versions. Compare against Java-static, realized-current-config, flat-condition and applicable ArchUnit/Spring Modulith/Jasmine baselines. Include failures in the denominator and report false-certainty plus false-unconditional-warning rates.
@@ -303,7 +300,9 @@ M-1 Human approval [COMPLETE: 86c4ca2]
         -> M4B condition/configuration IR
         -> M4C staged registration/binding
         -> M4D truth regions/witnesses
-        -> M4E validation -> G3
+        -> Universal v1 (two delivered slices)
+        -> Universal v2: V2.1 -> V2.2 -> V2.3
+        -> M4E shared-evidence adjudication -> G3
   M4 + M5 -> M6 conditional policy/evidence/assessment
   M6 -> M7 Impact/CLI/export
   M7 -> M8 Backend/complete workbench
@@ -402,7 +401,7 @@ Paper readiness, venue selection, extensive artifact badging, and elaborate defe
 
 1. Preserve completed M0–M2 and delivered M3.1–M3.8 contracts/evidence.
 2. Preserve the G2 decision and its immutable evidence; any new external checkpoint requires separate authorization.
-3. Preserve accepted M4-R0 evidence and delivered M4A.1–M4A.2 detection/provenance invariants. Begin M4B with the storage-/solver-neutral condition IR and finite `ConfigurationSpaceIdentity` inside one exact M3 build context.
-4. Preserve the delivered M4B–M4D conditional fragment, exhaustive-oracle behavior, closed denominators and witness replay invariants.
-5. Run M4E baselines/real-repository evaluation and obtain G3 acceptance before treating conditional Spring facts as stable M5/M6 inputs.
+3. Preserve accepted M4-R0 and delivered M4A–M4D plus Universal v1 contracts and immutable evidence.
+4. Execute the [three-task Universal v2 plan](tasks/m4-universal-v2/README.md), starting with V2.1. Preserve conditional semantics, exact contexts, closed denominators and witness invariants.
+5. Complete the registered acceptance evidence shared by V2.3/M4E, then obtain M4E/G3 adjudication before treating conditional Spring facts as stable M5/M6 inputs; do not duplicate the full benchmark campaign.
 6. Continue M5–M10 Track A product work, obtain human approval, then execute M11 conditional architecture evolution and M12 integration.

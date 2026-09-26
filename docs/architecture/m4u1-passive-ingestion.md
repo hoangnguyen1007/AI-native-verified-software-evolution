@@ -167,7 +167,9 @@ representative denominator, stratified corpus or repository-level success
 measurement was established by these tests. Recognizing a build format, reporting
 a gap and completing a repository analysis are different outcomes. M4E/G3 must
 evaluate the actual support matrix and unresolved providers before promoting a
-coverage claim. Slice 2 remains the next implementation task; M4E/G3 are unchanged.
+coverage claim. Slice 2 was the next task at this checkpoint and is now delivered.
+The current sequence is [Universal v2 V2.1–V2.3](../tasks/m4-universal-v2/README.md),
+then M4E/G3. This update changes planning, not the historical verification above.
 
 Primary implementation references: [Lombok constructors](https://projectlombok.org/features/constructor),
 [Data](https://projectlombok.org/features/Data), [Value](https://projectlombok.org/features/Value),

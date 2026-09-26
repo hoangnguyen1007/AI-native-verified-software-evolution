@@ -166,7 +166,8 @@ retained rather than erased by a successful downstream projection. Inputs and
 results are SHA-256 addressed; repeatability assertions cover both identities and
 unknown outcomes. Deterministic identities do not substitute for empirical accuracy.
 
-**Exact next task:** M4E validation over the closed denominator of supported and
-unresolved obligations from both universal slices, with registered baselines and
-representative/version evidence before G3 adjudication. Global 98–99% coverage,
+**Current next task:** [Universal v2 V2.1](../tasks/m4-universal-v2/01-adaptive-intake-and-evidence.md),
+followed by V2.2/V2.3 and M4E adjudication. The v2 plan addresses remaining
+acquisition/integration obligations; M4E still requires closed denominators,
+registered baselines and representative/version evidence. Global 98–99% coverage,
 all-generation container equivalence and G3 acceptance remain unmeasured/unpassed.
