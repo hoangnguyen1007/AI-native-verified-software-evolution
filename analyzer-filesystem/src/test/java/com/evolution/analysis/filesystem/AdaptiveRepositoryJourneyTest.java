@@ -9,9 +9,12 @@ import com.evolution.analysis.evidence.*;
 import com.evolution.analysis.frontend.*;
 import com.evolution.analysis.ingestion.*;
 import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
+import java.time.Duration;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.zip.*;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -20,6 +23,125 @@ import static org.junit.jupiter.api.Assertions.*;
 class AdaptiveRepositoryJourneyTest {
     @TempDir Path temporary;
     private static final VersionedIdentifier PRODUCER = new VersionedIdentifier("test.capture", "1");
+
+    @Test void supervisedClasspathReceiptRecoversAfterCrashAndTimeoutWithoutLosingStructure() throws Exception {
+        var journey = new AdaptiveRepositoryJourney();
+        var intake = journey.intake(repo(), request(100), policy());
+        var inputs = intake.inputs().orElseThrow(); var build = intake.build().orElseThrow();
+        var set = new UniversalSourceIngestion.SourceSet(build.modules().getFirst().descriptor().identity(),
+                SourcePlanModel.Kind.MAIN);
+        Path root = Files.createDirectory(temporary.resolve("supervised-artifacts"));
+        byte[] platformBytes = zip("java/lang/Object.class");
+        byte[] dependencyBytes = zip("Dependency.class");
+        Path platformFile = Files.write(root.resolve("platform.jar"), platformBytes);
+        Path dependencyFile = Files.write(root.resolve("dependency.jar"), dependencyBytes);
+        var platform = PlatformInput.create(21, "fixture", "authored", List.of(new PlatformInput.Artifact(
+                "platform.jar", ContentDigest.sha256(platformBytes), platformFile, PlatformInput.Format.JAR)));
+        var binary = new BinaryInput(new ClasspathEntry(ClasspathEntryKind.DEPENDENCY,
+                "g:dependency:1@jar", ContentDigest.sha256(dependencyBytes)), dependencyFile);
+        var manifest = FilesystemResolutionBundleImporter.Manifest.create(inputs.identity(), build.identity(), set,
+                List.of(binary.entry()), PRODUCER, FilesystemResolutionBundleImporter.Trust.TRUSTED_CAPTURE);
+        var selection = new AdaptiveRepositoryJourney.Selection(root, set, manifest, platform, List.of(binary),
+                new FilesystemResolutionBundleImporter.Policy(8, 10000, 20000, 100, 20000, Set.of(PRODUCER)));
+        var permitted = new AdaptiveEvidenceCoordinator.Policy(
+                Set.of(EvidenceRequirement.AuthorizationClass.LOCAL_READ,
+                        EvidenceRequirement.AuthorizationClass.LOCAL_WRITE), 8, 10000);
+        var workerPolicy = new WorkerProcessSupervisor.Policy(Duration.ofMillis(800), 64, 10000, 256, 1);
+        Path checkpoints = Files.createDirectory(temporary.resolve("worker-checkpoints"));
+
+        var crashed = journey.resolveSupervised(intake, selection, permitted, components(), workerPolicy,
+                checkpoints, new WorkerProcessSupervisor((task, limits) -> faultWorker("exit")), () -> false);
+        assertEquals(AdaptiveEvidenceCoordinator.Termination.OUTSTANDING, crashed.coordination().termination());
+        assertEquals(FilesystemResolutionBundleImporter.Status.EXACT, crashed.imported().orElseThrow().status());
+        assertTrue(crashed.sources().outcomes().stream().allMatch(o -> o.request().isEmpty()));
+        assertTrue(crashed.ledger().gaps().stream().anyMatch(g -> g.reasonCode().equals("CRASHED")));
+        assertTrue(crashed.ledger().gaps().stream().filter(g -> g.reasonCode().equals("CRASHED"))
+                .allMatch(g -> g.evidenceRequirements().getFirst().authorizationClass()
+                        == EvidenceRequirement.AuthorizationClass.LOCAL_WRITE));
+        assertTrue(crashed.sources().sources().stream().anyMatch(s -> s.path().endsWith("Client.java")));
+
+        var timedOut = journey.resolveSupervised(intake, selection, permitted, components(), workerPolicy,
+                checkpoints, new WorkerProcessSupervisor((task, limits) -> faultWorker("hang")), () -> false);
+        assertEquals(AdaptiveEvidenceCoordinator.Termination.OUTSTANDING, timedOut.coordination().termination());
+        assertTrue(timedOut.ledger().gaps().stream().anyMatch(g -> g.reasonCode().equals("TIMED_OUT")));
+
+        var cancellationRequested = new AtomicBoolean();
+        var cancelled = journey.resolveSupervised(intake, selection, permitted, components(), workerPolicy,
+                checkpoints, new WorkerProcessSupervisor((task, limits) -> {
+                    Process worker = faultWorker("hang");
+                    cancellationRequested.set(true);
+                    return worker;
+                }), cancellationRequested::get);
+        assertEquals(AdaptiveEvidenceCoordinator.Termination.CANCELLED, cancelled.coordination().termination());
+        assertTrue(cancelled.ledger().gaps().stream().anyMatch(g -> g.reasonCode().equals("CANCELLED")));
+        assertTrue(cancelled.sources().outcomes().stream().allMatch(o -> o.request().isEmpty()));
+
+        var complete = journey.resolveSupervised(intake, selection, permitted, components(), workerPolicy,
+                checkpoints, new WorkerProcessSupervisor(), () -> false);
+        assertEquals(AdaptiveEvidenceCoordinator.Termination.COMPLETE, complete.coordination().termination());
+        assertEquals(800_000_000L, complete.coordination().ledger().attempts().getFirst()
+                .resourceLimits().get("workerTimeoutNanos"));
+        assertTrue(complete.sources().outcomes().stream().anyMatch(o -> o.request().isPresent()));
+        var replay = journey.resolveSupervised(intake, selection, permitted, components(), workerPolicy,
+                checkpoints, new WorkerProcessSupervisor((task, limits) -> {
+                    throw new AssertionError("committed worker stage must replay");
+                }), () -> false);
+        assertEquals(complete.identity(), replay.identity());
+        var changedPolicy = new WorkerProcessSupervisor.Policy(Duration.ofSeconds(2), 64, 10000, 256, 1);
+        var invalidated = journey.resolveSupervised(intake, selection, permitted, components(), changedPolicy,
+                checkpoints, new WorkerProcessSupervisor((task, limits) -> {
+                    throw new IOException("expected new task after policy change");
+                }), () -> false);
+        assertEquals(AdaptiveEvidenceCoordinator.Termination.OUTSTANDING, invalidated.coordination().termination());
+        assertTrue(invalidated.ledger().gaps().stream().anyMatch(g -> g.reasonCode().equals("START_FAILED")));
+    }
+
+    @Test void deniedSupervisedStageDoesNotLaunchAWorkerOrReadArtifacts() throws Exception {
+        var journey = new AdaptiveRepositoryJourney();
+        var intake = journey.intake(repo(), request(100), policy());
+        var inputs = intake.inputs().orElseThrow(); var build = intake.build().orElseThrow();
+        var set = new UniversalSourceIngestion.SourceSet(build.modules().getFirst().descriptor().identity(),
+                SourcePlanModel.Kind.MAIN);
+        var platform = PlatformInput.create(21, "fixture", "authored", List.of(new PlatformInput.Artifact(
+                "unread.jar", ContentDigest.sha256Utf8("unread"), temporary.resolve("missing.jar"), PlatformInput.Format.JAR)));
+        var selection = new AdaptiveRepositoryJourney.Selection(temporary, set,
+                FilesystemResolutionBundleImporter.Manifest.create(inputs.identity(), build.identity(), set,
+                        List.of(), PRODUCER, FilesystemResolutionBundleImporter.Trust.TRUSTED_CAPTURE),
+                platform, List.of(), new FilesystemResolutionBundleImporter.Policy(8, 10000, 20000, 100,
+                        20000, Set.of(PRODUCER)));
+        Path checkpoints = Files.createDirectory(temporary.resolve("denied-checkpoints"));
+        var report = journey.resolveSupervised(intake, selection,
+                new AdaptiveEvidenceCoordinator.Policy(Set.of(EvidenceRequirement.AuthorizationClass.LOCAL_READ),
+                        8, 10000), components(), new WorkerProcessSupervisor.Policy(Duration.ofSeconds(1),
+                        64, 10000, 256, 1), checkpoints, new WorkerProcessSupervisor((task, limits) -> {
+                    throw new AssertionError("denied stage must not launch");
+                }), () -> false);
+        assertEquals(AdaptiveEvidenceCoordinator.OpenReason.DENIED,
+                report.coordination().open().values().iterator().next());
+        assertTrue(report.imported().isEmpty());
+
+        var writeOnly = journey.resolveSupervised(intake, selection,
+                new AdaptiveEvidenceCoordinator.Policy(Set.of(EvidenceRequirement.AuthorizationClass.LOCAL_WRITE),
+                        8, 10000), components(), new WorkerProcessSupervisor.Policy(Duration.ofSeconds(1),
+                        64, 10000, 256, 1), checkpoints, new WorkerProcessSupervisor((task, limits) -> {
+                    throw new AssertionError("read-denied stage must not launch");
+                }), () -> false);
+        assertEquals(AdaptiveEvidenceCoordinator.OpenReason.DENIED,
+                writeOnly.coordination().open().values().iterator().next());
+        assertTrue(writeOnly.imported().isEmpty());
+    }
+
+    private static Process faultWorker(String mode) throws IOException {
+        return new ProcessBuilder(Path.of(System.getProperty("java.home"), "bin", "java").toString(),
+                "-cp", System.getProperty("surefire.test.class.path", System.getProperty("java.class.path")),
+                FaultWorkerMain.class.getName(), mode).redirectError(ProcessBuilder.Redirect.DISCARD).start();
+    }
+    public static final class FaultWorkerMain {
+        public static void main(String[] args) throws Exception {
+            if (args[0].equals("exit")) System.exit(17);
+            Thread.sleep(60_000);
+        }
+    }
 
     @Test void capturedGradleClasspathClosesRequirementAndAssemblesExactInput() throws Exception {
         Path repository = repo();

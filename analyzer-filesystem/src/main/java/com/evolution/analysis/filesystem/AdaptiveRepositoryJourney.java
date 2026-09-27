@@ -16,6 +16,8 @@ import java.util.function.BooleanSupplier;
 /** One passive filesystem-to-exact-input journey with an explicit permitted evidence step. */
 public final class AdaptiveRepositoryJourney {
     public static final String SCHEMA = "adaptive-repository-journey-v3";
+    public static final VersionedIdentifier SUPERVISED_IMPORT_PROVIDER =
+            new VersionedIdentifier("repository.supervised-bundle-import", "m4uv2.1-v1");
     public static final VersionedIdentifier PROVIDER =
             new VersionedIdentifier("repository.adaptive-journey", "m4uv2.1-v3");
     public static final VersionedIdentifier IMPORT_GAP_CATALOG =
@@ -113,6 +115,50 @@ public final class AdaptiveRepositoryJourney {
     public Result resolve(Intake intake, UniversalBuildModel build, Selection selection,
             AdaptiveEvidenceCoordinator.Policy acquisitionPolicy, Components components,
             BooleanSupplier cancellationRequested) {
+        return resolveInternal(intake, build, selection, acquisitionPolicy, components,
+                cancellationRequested, Optional.empty());
+    }
+
+    /** Opt-in trusted-process validation of the captured exact-classpath receipt. */
+    public Result resolveSupervised(Intake intake, Selection selection,
+            AdaptiveEvidenceCoordinator.Policy acquisitionPolicy, Components components,
+            WorkerProcessSupervisor.Policy workerPolicy, Path checkpointDirectory,
+            BooleanSupplier cancellationRequested) {
+        return resolveSupervised(intake, selection, acquisitionPolicy, components, workerPolicy,
+                checkpointDirectory, new WorkerProcessSupervisor(), cancellationRequested);
+    }
+
+    /** The selected build can also be a separately captured source-plan island. */
+    public Result resolveSupervised(Intake intake, UniversalBuildModel build, Selection selection,
+            AdaptiveEvidenceCoordinator.Policy acquisitionPolicy, Components components,
+            WorkerProcessSupervisor.Policy workerPolicy, Path checkpointDirectory,
+            BooleanSupplier cancellationRequested) {
+        return resolveInternal(intake, build, selection, acquisitionPolicy, components,
+                cancellationRequested, Optional.of(new WorkerControl(workerPolicy, checkpointDirectory,
+                        new WorkerProcessSupervisor())));
+    }
+
+    Result resolveSupervised(Intake intake, Selection selection,
+            AdaptiveEvidenceCoordinator.Policy acquisitionPolicy, Components components,
+            WorkerProcessSupervisor.Policy workerPolicy, Path checkpointDirectory,
+            WorkerProcessSupervisor supervisor, BooleanSupplier cancellationRequested) {
+        Objects.requireNonNull(intake);
+        return resolveInternal(intake, intake.build().orElseThrow(), selection, acquisitionPolicy,
+                components, cancellationRequested,
+                Optional.of(new WorkerControl(workerPolicy, checkpointDirectory, supervisor)));
+    }
+
+    private record WorkerControl(WorkerProcessSupervisor.Policy policy, Path checkpointDirectory,
+                                 WorkerProcessSupervisor supervisor) {
+        private WorkerControl {
+            Objects.requireNonNull(policy); Objects.requireNonNull(checkpointDirectory);
+            Objects.requireNonNull(supervisor);
+        }
+    }
+
+    private Result resolveInternal(Intake intake, UniversalBuildModel build, Selection selection,
+            AdaptiveEvidenceCoordinator.Policy acquisitionPolicy, Components components,
+            BooleanSupplier cancellationRequested, Optional<WorkerControl> workerControl) {
         Objects.requireNonNull(intake); Objects.requireNonNull(selection);
         Objects.requireNonNull(build); Objects.requireNonNull(acquisitionPolicy); Objects.requireNonNull(components);
         Objects.requireNonNull(cancellationRequested);
@@ -123,10 +169,12 @@ public final class AdaptiveRepositoryJourney {
                 || !selection.manifest().sourceSet().equals(selection.sourceSet()))
             throw new IllegalArgumentException("Selection belongs to a different intake revision");
         var context = EvidenceContext.forSnapshot(inputs.snapshot().identity());
-        var revision = IngestionEvidence.digest(List.of(SCHEMA, inputs.identity(), build.identity(),
+        var baseRevision = IngestionEvidence.digest(List.of(SCHEMA, inputs.identity(), build.identity(),
                 selection.manifest().identity(), selection.platform().entry(),
                 selection.binaries().stream().map(BinaryInput::entry).toList(), selection.policy(),
                 selection.resolvedGraph().map(FilesystemResolutionBundleImporter.ResolvedGraph::identity)));
+        var revision = workerControl.map(control -> IngestionEvidence.digest(List.of(baseRevision,
+                SUPERVISED_IMPORT_PROVIDER, control.policy().identity()))).orElse(baseRevision);
         byte[] receiptBytes = com.evolution.analysis.contract.serialization.CanonicalJson.write(List.of(
                 SCHEMA, "captured-resolution", selection.manifest().identity(),
                 selection.platform().entry(), selection.binaries().stream().map(BinaryInput::entry).toList(),
@@ -139,7 +187,8 @@ public final class AdaptiveRepositoryJourney {
         var requirement = new EvidenceRequirement(EvidenceRequirement.Kind.EXACT_CLASSPATH,
                 "build.captured-exact-classpath",
                 List.of(new EvidenceSubject(EvidenceSubject.Kind.ARTIFACT, expected.value())),
-                EvidenceRequirement.AuthorizationClass.LOCAL_READ,
+                workerControl.isPresent() ? EvidenceRequirement.AuthorizationClass.LOCAL_WRITE
+                        : EvidenceRequirement.AuthorizationClass.LOCAL_READ,
                 List.of("A permitted importer verified every selected artifact and the captured order."));
         var observation = ProviderObservationReference.create(PROVIDER, "repository.exact-input-required",
                 build.identity(), selection.manifest().identity());
@@ -150,12 +199,28 @@ public final class AdaptiveRepositoryJourney {
                 List.of(), List.of(), List.of("A declaration alone is not an exact classpath."));
         var imported = new AtomicReference<FilesystemResolutionBundleImporter.Result>();
         AdaptiveEvidenceCoordinator.Provider provider = new AdaptiveEvidenceCoordinator.Provider() {
-            @Override public VersionedIdentifier id() { return FilesystemResolutionBundleImporter.PROVIDER; }
+            @Override public VersionedIdentifier id() { return workerControl.isPresent()
+                    ? SUPERVISED_IMPORT_PROVIDER : FilesystemResolutionBundleImporter.PROVIDER; }
             @Override public Set<EvidenceRequirement.Kind> kinds() {
                 return Set.of(EvidenceRequirement.Kind.EXACT_CLASSPATH);
             }
             @Override public EvidenceRequirement.AuthorizationClass authorizationClass() {
-                return EvidenceRequirement.AuthorizationClass.LOCAL_READ;
+                return workerControl.isPresent() ? EvidenceRequirement.AuthorizationClass.LOCAL_WRITE
+                        : EvidenceRequirement.AuthorizationClass.LOCAL_READ;
+            }
+            @Override public Set<EvidenceRequirement.AuthorizationClass> requiredPermissions() {
+                return workerControl.isPresent() ? Set.of(EvidenceRequirement.AuthorizationClass.LOCAL_READ,
+                        EvidenceRequirement.AuthorizationClass.LOCAL_WRITE)
+                        : Set.of(EvidenceRequirement.AuthorizationClass.LOCAL_READ);
+            }
+            @Override public Map<String, Long> resourceLimits() {
+                if (workerControl.isEmpty()) return Map.of();
+                var limits = workerControl.orElseThrow().policy();
+                return Map.of("workerTimeoutNanos", limits.timeout().toNanos(),
+                        "workerHeapMiB", (long) limits.maxHeapMiB(),
+                        "workerInputBytes", (long) limits.maxInputBytes(),
+                        "workerOutputBytes", (long) limits.maxOutputBytes(),
+                        "workerMaxTasks", (long) limits.maxTasks());
             }
             @Override public int costClass() { return 0; }
             @Override public AdaptiveEvidenceCoordinator.Acquisition acquire(EvidenceRequirement ignored) {
@@ -170,6 +235,22 @@ public final class AdaptiveRepositoryJourney {
                 imported.set(result);
                 if (result.status() != FilesystemResolutionBundleImporter.Status.EXACT)
                     return AdaptiveEvidenceCoordinator.Acquisition.unavailable();
+                if (workerControl.isPresent()) {
+                    var control = workerControl.orElseThrow();
+                    var task = new WorkerProcessSupervisor.Task("classpath-" + revision.value().substring(7, 39),
+                            receiptBytes, expected);
+                    var checked = control.supervisor().run(List.of(task), control.policy(),
+                            control.checkpointDirectory(), cancellationRequested);
+                    if (checked.termination() != WorkerProcessSupervisor.Termination.COMPLETE) {
+                        var status = checked.units().getFirst().status();
+                        return new AdaptiveEvidenceCoordinator.Acquisition(
+                                status == WorkerProcessSupervisor.Status.CANCELLED
+                                        ? AcquisitionAttemptRecord.Outcome.CANCELED
+                                        : AcquisitionAttemptRecord.Outcome.FAILED,
+                                Optional.empty(), checked.gaps(context, SUPERVISED_IMPORT_PROVIDER,
+                                        EvidenceRequirement.AuthorizationClass.LOCAL_WRITE));
+                    }
+                }
                 return new AdaptiveEvidenceCoordinator.Acquisition(AcquisitionAttemptRecord.Outcome.SUCCEEDED,
                         Optional.of(new AdaptiveEvidenceCoordinator.CapturedArtifact(
                                 "captured-classpath", receiptBytes, expected, context, revision)));

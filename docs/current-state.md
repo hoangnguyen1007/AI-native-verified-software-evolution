@@ -27,7 +27,15 @@ recovery, literal catalog and custom source-set projections, a producer-asserted
 a lineage-checked generated-source importer,
 an exact captured artifact importer with optional selected dependency-graph validation,
 a permission-checked evidence coordinator with cooperative cancellation,
-an integrated source-to-frontend-input journey, and acquisition-stage checkpoints.
+an integrated source-to-frontend-input journey, acquisition-stage checkpoints,
+and a bounded trusted-JVM worker supervisor with sealed per-unit checkpoints.
+The second worker slice now routes exact-classpath receipt validation inside the
+integrated evidence provider through that supervisor. Worker failure retains the
+importer's structural/artifact observations, keeps the exact frontend request closed,
+and records a scoped capability gap; successful checkpoint replay restores the same
+result identity. Archive inspection, build-model computation and semantic providers
+still run in the parent process. JVM heap is bounded, while OS-level total memory
+isolation remains open.
 Focused controls include an actual generated-constructor resolution and exact
 classpath success/denial/failure paths. These are implementation evidence, not a
 new benchmark result or gate promotion. Historical verification totals below remain historical.
@@ -322,7 +330,9 @@ Open work starts with Universal v2 V2.1, then V2.2/V2.3 and M4E/G3. Historical c
 [implementation ledger](research/m4-universal-v2-v21-implementation-ledger.md) and
 [task file](tasks/m4-universal-v2/01-adaptive-intake-and-evidence.md): implement the
 resolved-build graph import and passive custom source-set extraction, then library
-bytecode/annotation and worker recovery controls. Register the baseline/cohorts and
+bytecode/annotation and process isolation of bounded artifact import/semantic stages
+beyond the now supervised exact-classpath receipt validation.
+Register the baseline/cohorts and
 finish the unproved catalog subcases before declaring the V2.1 exit gate.
 
 The [three-task plan](tasks/m4-universal-v2/README.md) then proceeds to Java/Spring

@@ -50,12 +50,17 @@ public final class AdaptiveEvidenceCoordinator {
         public long size() { return bytes.length; }
     }
 
-    public record Acquisition(AcquisitionAttemptRecord.Outcome outcome, Optional<CapturedArtifact> artifact) {
+    public record Acquisition(AcquisitionAttemptRecord.Outcome outcome, Optional<CapturedArtifact> artifact,
+                              List<CapabilityGapRecord> providerGaps) {
         public Acquisition {
             Objects.requireNonNull(outcome); Objects.requireNonNull(artifact);
+            providerGaps = List.copyOf(Objects.requireNonNull(providerGaps));
             if (artifact.isPresent() != (outcome == AcquisitionAttemptRecord.Outcome.SUCCEEDED
                     || outcome == AcquisitionAttemptRecord.Outcome.PARTIAL))
                 throw new IllegalArgumentException("Only successful or partial acquisition has bytes");
+        }
+        public Acquisition(AcquisitionAttemptRecord.Outcome outcome, Optional<CapturedArtifact> artifact) {
+            this(outcome, artifact, List.of());
         }
         public static Acquisition unavailable() {
             return new Acquisition(AcquisitionAttemptRecord.Outcome.UNAVAILABLE, Optional.empty());
@@ -67,6 +72,12 @@ public final class AdaptiveEvidenceCoordinator {
         VersionedIdentifier id();
         Set<EvidenceRequirement.Kind> kinds();
         EvidenceRequirement.AuthorizationClass authorizationClass();
+        /** A provider may need several separately granted local capabilities. */
+        default Set<EvidenceRequirement.AuthorizationClass> requiredPermissions() {
+            return Set.of(authorizationClass());
+        }
+        /** Provider-specific deterministic limits are recorded on each attempt. */
+        default Map<String, Long> resourceLimits() { return Map.of(); }
         int costClass();
         Acquisition acquire(EvidenceRequirement requirement);
         /** Explicit provider classification of a no-payload transient miss; defaults to no retry. */
@@ -136,7 +147,9 @@ public final class AdaptiveEvidenceCoordinator {
         var providers = registry.stream().sorted(Comparator.comparing((Provider p) -> p.authorizationClass().ordinal())
                 .thenComparingInt(Provider::costClass).thenComparing(p -> p.id().toString())).toList();
         if (providers.stream().map(Provider::id).distinct().count() != providers.size()
-                || providers.stream().anyMatch(p -> p.costClass() < 0))
+                || providers.stream().anyMatch(p -> p.costClass() < 0 || p.requiredPermissions().isEmpty()
+                        || p.requiredPermissions().stream().anyMatch(permission ->
+                        permission.ordinal() > p.authorizationClass().ordinal())))
             throw new IllegalArgumentException("Provider registry needs unique IDs and nonnegative costs");
         Map<EvidenceRequirement, List<CapabilityGapRecord>> demand = new TreeMap<>();
         for (var gap : request.gaps()) for (var requirement : gap.evidenceRequirements())
@@ -147,6 +160,7 @@ public final class AdaptiveEvidenceCoordinator {
         var attempts = new ArrayList<AcquisitionAttemptRecord>();
         var resolutions = new ArrayList<GapResolutionRecord>();
         var conflicts = new ArrayList<ProviderConflictRecord>();
+        var providerGaps = new TreeSet<CapabilityGapRecord>();
         var acquired = new TreeMap<EvidenceRequirement, CapturedArtifact>();
         var conflicted = new HashSet<EvidenceRequirement>();
         var satisfiedProofs = new TreeMap<EvidenceRequirement, AcquisitionAttemptRecord>();
@@ -170,11 +184,19 @@ public final class AdaptiveEvidenceCoordinator {
                 var attemptKey = IngestionEvidence.digest(List.of(requirement, provider.id(),
                         request.inputRevision(), request.policy().identity(), retry));
                 if (!attempted.add(attemptKey)) continue;
-                boolean permitted = request.policy().allowed().contains(provider.authorizationClass());
+                boolean permitted = request.policy().allowed().containsAll(provider.requiredPermissions());
                 Acquisition result;
                 if (!permitted) result = new Acquisition(AcquisitionAttemptRecord.Outcome.DENIED, Optional.empty());
                 else try { result = Objects.requireNonNull(provider.acquire(requirement)); }
                 catch (RuntimeException failure) { result = new Acquisition(AcquisitionAttemptRecord.Outcome.FAILED, Optional.empty()); }
+                boolean validGaps = result.providerGaps().stream().allMatch(g ->
+                        g.context().equals(request.context()) && g.detectingProvider().equals(provider.id()));
+                if (!validGaps) result = new Acquisition(AcquisitionAttemptRecord.Outcome.FAILED, Optional.empty());
+                for (var reported : result.providerGaps()) {
+                    providerGaps.add(reported);
+                    open.putIfAbsent(reported.gapIdentity(), result.outcome() == AcquisitionAttemptRecord.Outcome.CANCELED
+                            ? OpenReason.CANCELLED : OpenReason.FAILED);
+                }
                 var outcome = result.outcome();
                 var artifact = result.artifact();
                 if (artifact.isPresent()) {
@@ -207,11 +229,16 @@ public final class AdaptiveEvidenceCoordinator {
                 if (artifact.isPresent()) try {
                     trust = Objects.requireNonNull(provider.trustDecision(requirement, artifact.orElseThrow()));
                 } catch (RuntimeException failure) { trust = AcquisitionAttemptRecord.TrustDecision.NOT_ASSESSED; }
+                Map<String, Long> limits = new TreeMap<>(Map.of("maxBytes", request.policy().maxBytes(),
+                        "maxAttempts", (long) request.policy().maxAttempts(), "retryOrdinal", (long) retry));
+                provider.resourceLimits().forEach((key, value) -> {
+                    if (limits.putIfAbsent(key, value) != null)
+                        throw new IllegalArgumentException("Provider limit collides with coordinator limit");
+                });
                 var attempt = AcquisitionAttemptRecord.create(request.context(), provider.id(), observation,
                         demand.get(requirement).getFirst().subject(), requirement, List.of(request.inputRevision()),
                         Optional.empty(), trust, permission,
-                        Map.of("maxBytes", request.policy().maxBytes(), "maxAttempts", (long) request.policy().maxAttempts(),
-                                "retryOrdinal", (long) retry),
+                        limits,
                         Optional.empty(), Optional.empty(), outcome, output, List.of(), List.of("none"));
                 attempts.add(attempt);
                 if (artifact.isEmpty()) {
@@ -219,9 +246,11 @@ public final class AdaptiveEvidenceCoordinator {
                         case DENIED -> OpenReason.DENIED;
                         case LIMIT_EXCEEDED -> OpenReason.LIMIT_EXCEEDED;
                         case UNAVAILABLE -> OpenReason.UNAVAILABLE;
+                        case CANCELED -> OpenReason.CANCELLED;
                         default -> OpenReason.FAILED;
                     };
                     demand.get(requirement).forEach(g -> open.put(g.gapIdentity(), reason));
+                    if (outcome == AcquisitionAttemptRecord.Outcome.CANCELED) cancelled = true;
                     boolean retryable = permitted && outcome == AcquisitionAttemptRecord.Outcome.UNAVAILABLE
                             && retry < request.policy().maxRetriesPerProvider();
                     if (retryable) try { retryable = provider.retryable(outcome); }
@@ -284,8 +313,10 @@ public final class AdaptiveEvidenceCoordinator {
                     .anyMatch(requirement -> !completedRequirements.contains(requirement)))
                 open.put(gap.gapIdentity(), OpenReason.CANCELLED);
         }
+        var allGaps = new TreeSet<>(request.gaps());
+        allGaps.addAll(providerGaps);
         var ledger = EvidenceAcquisitionLedger.create(EvidenceAcquisitionLedger.V3_COORDINATOR,
-                request.context(), request.gaps(), attempts, conflicts, resolutions);
+                request.context(), List.copyOf(allGaps), attempts, conflicts, resolutions);
         var termination = open.isEmpty() ? Termination.COMPLETE
                 : cancelled ? Termination.CANCELLED
                 : attemptLimit ? Termination.ATTEMPT_LIMIT : Termination.OUTSTANDING;

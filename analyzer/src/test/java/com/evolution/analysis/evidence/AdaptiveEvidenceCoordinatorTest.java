@@ -9,6 +9,33 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 class AdaptiveEvidenceCoordinatorTest {
+    @Test void foreignProviderGapCannotPromoteCapturedBytesOrEnterLedger() {
+        var context = context();
+        var expected = ContentDigest.sha256(JAR);
+        var requirement = requirement(expected);
+        var foreign = EvidenceContext.forSnapshot(IngestionFixtures.inputs(
+                Map.of("Other.java", "class Other {}")).snapshot().identity());
+        AdaptiveEvidenceCoordinator.Provider provider = new AdaptiveEvidenceCoordinator.Provider() {
+            public VersionedIdentifier id() { return IMPORTER; }
+            public Set<EvidenceRequirement.Kind> kinds() { return Set.of(requirement.kind()); }
+            public EvidenceRequirement.AuthorizationClass authorizationClass() {
+                return EvidenceRequirement.AuthorizationClass.LOCAL_READ;
+            }
+            public int costClass() { return 0; }
+            public AdaptiveEvidenceCoordinator.Acquisition acquire(EvidenceRequirement ignored) {
+                return new AdaptiveEvidenceCoordinator.Acquisition(AcquisitionAttemptRecord.Outcome.SUCCEEDED,
+                        Optional.of(artifact(context, REVISION, JAR, expected)),
+                        List.of(gap(foreign, requirement, "foreign")));
+            }
+            public boolean satisfies(EvidenceRequirement ignored,
+                    AdaptiveEvidenceCoordinator.CapturedArtifact artifact) { return true; }
+        };
+        var result = new AdaptiveEvidenceCoordinator().run(request(context, requirement, true), List.of(provider));
+        assertEquals(AdaptiveEvidenceCoordinator.Termination.OUTSTANDING, result.termination());
+        assertTrue(result.acquired().isEmpty());
+        assertEquals(1, result.ledger().gaps().size());
+        assertEquals(AcquisitionAttemptRecord.Outcome.FAILED, result.ledger().attempts().getFirst().outcome());
+    }
     private static final ContentDigest REVISION = ContentDigest.sha256Utf8("captured-input-revision");
     private static final byte[] JAR = "fixture-jar".getBytes(StandardCharsets.UTF_8);
     private static final ContentDigest JAR_DIGEST = ContentDigest.sha256(JAR);
