@@ -2,6 +2,7 @@ package com.evolution.analysis.filesystem;
 
 import com.evolution.analysis.acquisition.*;
 import com.evolution.analysis.acquisition.RepositoryAcquisitionResult.*;
+import com.evolution.analysis.contract.common.ContentDigest;
 import com.evolution.analysis.contract.common.VersionedIdentifier;
 import com.evolution.analysis.contract.source.RepositorySnapshot;
 import com.evolution.analysis.contract.source.SnapshotFile;
@@ -19,7 +20,7 @@ import java.util.*;
  */
 public final class FilesystemRepositoryAcquirer {
     public static final VersionedIdentifier VERSION =
-            new VersionedIdentifier("repository.filesystem", "m3.3");
+            new VersionedIdentifier("repository.filesystem", "m4uv2.1-v2");
 
     /**
      * Acquires a repository only when the normalized absolute root is already its real path.
@@ -32,6 +33,7 @@ public final class FilesystemRepositoryAcquirer {
     }
 
     private static final class Run {
+        private static final int MAX_SAME_CONTENT_ALIAS_CHECKS = 32;
         private final Path selectedRoot;
         private final RepositoryAcquisitionRequest request;
         private final RepositoryAcquisitionPolicy policy;
@@ -39,6 +41,9 @@ public final class FilesystemRepositoryAcquirer {
         private final List<String> directories = new ArrayList<>();
         private final List<Problem> problems = new ArrayList<>();
         private final List<Attempt> attempts = new ArrayList<>();
+        private final Map<Object, String> observedFileKeys = new HashMap<>();
+        private final Map<ContentDigest, List<Path>> observedByDigest = new HashMap<>();
+        private final Map<ContentDigest, List<Path>> unknownKeyByDigest = new HashMap<>();
         private Path root;
         private long totalBytes;
         private int fileCount;
@@ -166,7 +171,11 @@ public final class FilesystemRepositoryAcquirer {
             }
             children.sort(Comparator.comparing(path -> path.getFileName().toString()));
             for (Path child : children) {
-                if (stop) return;
+                if (stop) {
+                    reject(Reason.UNVISITED_REGION, logicalDirectory, Requirement.ACQUISITION_POLICY,
+                            AttemptKind.DIRECTORY, Outcome.DENIED, false);
+                    return;
+                }
                 String logicalPath;
                 try {
                     logicalPath = logical(root.relativize(child.toAbsolutePath().normalize()));
@@ -304,6 +313,39 @@ public final class FilesystemRepositoryAcquirer {
             totalBytes += bytes.length;
             attempts.add(new Attempt(
                     AttemptKind.FILE, logicalPath, Outcome.SUCCEEDED, Optional.of(file.contentDigest())));
+            boolean alias = before.fileKey() != null
+                    && observedFileKeys.putIfAbsent(before.fileKey(), logicalPath) != null;
+            boolean unverifiedAlias = false;
+            var candidates = before.fileKey() == null
+                    ? observedByDigest.getOrDefault(file.contentDigest(), List.of())
+                    : unknownKeyByDigest.getOrDefault(file.contentDigest(), List.of());
+            if (!alias && candidates.size() > MAX_SAME_CONTENT_ALIAS_CHECKS) {
+                unverifiedAlias = true;
+            } else if (!alias) for (Path prior : candidates) {
+                try {
+                    if (Files.isSymbolicLink(prior) || Files.isSymbolicLink(path)) {
+                        unverifiedAlias = true;
+                        break;
+                    }
+                    if (Files.isSameFile(prior, path)) { alias = true; break; }
+                } catch (IOException | SecurityException failure) {
+                    unverifiedAlias = true;
+                    break;
+                }
+            }
+            observedByDigest.computeIfAbsent(file.contentDigest(), ignored -> new ArrayList<>()).add(path);
+            if (before.fileKey() == null)
+                unknownKeyByDigest.computeIfAbsent(file.contentDigest(), ignored -> new ArrayList<>()).add(path);
+            if (alias) {
+                incomplete = true;
+                problems.add(new Problem(Reason.HARDLINK_ALIAS, logicalPath,
+                        Requirement.REPOSITORY_SELECTION));
+            }
+            if (unverifiedAlias) {
+                incomplete = true;
+                problems.add(new Problem(Reason.HARDLINK_ALIAS_UNVERIFIED, logicalPath,
+                        Requirement.FILESYSTEM_READ));
+            }
         }
 
         private static byte[] readBounded(Path path, long maxFileBytes, long remainingTotal)

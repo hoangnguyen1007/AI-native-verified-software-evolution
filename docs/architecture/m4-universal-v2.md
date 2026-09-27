@@ -150,7 +150,7 @@ Unknown ảnh hưởng theo dependency slice. Muốn chứng minh opaque action 
 
 ## 9. Nghiệm thu và ưu thế cần chứng minh
 
-Universal v2 hoàn tất khi mọi task acceptance dưới [protocol](../research/m4-universal-v2-evaluation.md) được đánh giá; integration trả kiến trúc có evidence; blockers/denominators không bị giấu. G3 vẫn do M4E adjudication. Mục tiêu 98–99% được giữ làm **mục tiêu thực nghiệm trên corpus đã đăng ký**, không làm nhãn hiện trạng hoặc số cam kết trên internet.
+Universal v2 hoàn tất khi mọi task acceptance dưới [protocol](../research/m4-universal-v2-evaluation.md) được đánh giá; integration trả kiến trúc có evidence; blockers/denominators không bị giấu. G3 vẫn do M4E adjudication. Theo quyết định của owner ngày 2026-09-27, ngưỡng **ít nhất 99% coverage đúng, có evidence trên cohort đủ điều kiện đã đăng ký** là mục tiêu thực nghiệm; chưa phải số đo hiện trạng hoặc cam kết trên mọi repository.
 
 Ưu thế cần đo: ít phụ thuộc thao tác setup, coverage đúng ở repo thiếu build, recovery tốt, ít false certainty, trace source-to-architecture và configuration-qualified facts tốt. “Tốt hơn tool trên thị trường” chỉ được công bố cho từng nhiệm vụ/baseline/version/input mode đã chạy công bằng. Không suy luận chất lượng security/dataflow của đối thủ từ kết quả architecture benchmark.
 
@@ -158,4 +158,4 @@ Universal v2 hoàn tất khi mọi task acceptance dưới [protocol](../researc
 
 Đầu ra bắt buộc: provider implementations + compact fixtures + additive schema/catalog controls + coordinator/recovery evidence + reason-level uncertainty deltas + architecture report examples + registered M4E package. Không cần một UI mới trong M4 để chứng minh orchestration; M5/M7/M8 tiêu thụ report contract này qua boundary hiện có.
 
-Task đầu tiên: [V2.1 — Adaptive intake and evidence closure](../tasks/m4-universal-v2/01-adaptive-intake-and-evidence.md). Tổng cộng chỉ có ba task: hai task triển khai và một task tích hợp/nghiệm thu. Checklist bên trong là điểm kiểm chứng, không phải task/milestone mới. Không bắt đầu implementation trong lần chỉnh tài liệu này; không có gate đã được thông qua, benchmark mới hoặc independent review được tuyên bố.
+Task đầu tiên: [V2.1 — Adaptive intake and evidence closure](../tasks/m4-universal-v2/01-adaptive-intake-and-evidence.md). Tổng cộng chỉ có ba task: hai task triển khai và một task tích hợp/nghiệm thu. Checklist bên trong là điểm kiểm chứng, không phải task/milestone mới. V2.1 đang triển khai theo [implementation ledger](../research/m4-universal-v2-v21-implementation-ledger.md); chưa có gate được thông qua, benchmark chấm điểm hoặc independent review được tuyên bố.

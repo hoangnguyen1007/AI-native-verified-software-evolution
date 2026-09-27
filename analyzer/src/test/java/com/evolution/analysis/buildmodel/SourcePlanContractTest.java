@@ -5,6 +5,7 @@ import com.evolution.analysis.buildmodel.SourcePlanModel.*;
 import com.evolution.analysis.contract.common.ContentDigest;
 import com.evolution.analysis.contract.identity.*;
 import com.evolution.analysis.contract.serialization.CanonicalJson;
+import com.evolution.analysis.contract.source.SourceClassification;
 import java.util.*;
 import org.junit.jupiter.api.Test;
 
@@ -47,5 +48,25 @@ class SourcePlanContractTest {
         assertEquals(before, CanonicalJson.write(main));
         assertEquals(before, CanonicalJson.write(sourceSet(Kind.MAIN, List.of(), new TreeMap<>(Map.of("release", ABSENT, "source", ABSENT)))));
         assertThrows(UnsupportedOperationException.class, () -> main.compilerSettings().clear());
+    }
+
+    @Test void namedCustomSetHasSeparateIdentityAndExplicitSemanticRole() {
+        var main = sourceSet(Kind.MAIN, List.of(), Map.of());
+        var test = sourceSet(Kind.TEST, List.of(), Map.of());
+        var integration = new SourceSetPlan(MODULE, Kind.CUSTOM, "integrationTest",
+                SourceClassification.TEST, List.of(), List.of(), ABSENT, Map.of(),
+                ABSENT, ABSENT, ABSENT, ABSENT, List.of(), List.of());
+        var plan = new SourcePlanModel(List.of(main, test, integration), List.of());
+        assertEquals(3, plan.sourceSets().size());
+        assertNotEquals(CanonicalJson.write(test), CanonicalJson.write(integration));
+        assertThrows(IllegalArgumentException.class, () -> new SourcePlanModel(
+                List.of(main, test, integration, integration), List.of()));
+        assertThrows(IllegalArgumentException.class, () -> new SourceSetPlan(MODULE, Kind.CUSTOM,
+                "integrationTest", SourceClassification.OTHER, List.of(), List.of(), ABSENT,
+                Map.of(), ABSENT, ABSENT, ABSENT, ABSENT, List.of(), List.of()));
+        var unqualified = new SourceSetPlan(MODULE, Kind.CUSTOM, "custom",
+                SourceClassification.OTHER, List.of(), List.of(), ABSENT, Map.of(),
+                ABSENT, ABSENT, ABSENT, ABSENT, List.of(), List.of(Gap.UNRESOLVED_SOURCE_ROLE));
+        assertEquals(SourceClassification.OTHER, unqualified.semanticRole());
     }
 }

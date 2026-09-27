@@ -6,7 +6,7 @@
 
 Measure whether v2 acquires more correct architecture facts, reduces avoidable uncertainty, preserves useful independent regions under failure, and produces complete source-to-Spring conditional explanations. Compare with unchanged v1 and applicable external baselines under explicitly different input modes.
 
-The owner’s 98–99% aspiration is a **target for correct, evidenced coverage on registered eligible cohorts**, not a claim about all repositories. Freeze the exact release threshold and cohort weights before scoring. Until registered and adjudicated, numeric targets remain PROVISIONAL; they cannot be weakened after seeing failures. Correctness, inventory closure and safety checks below are blocking regardless of percentage.
+**CONFIRMED owner decision (2026-09-27):** the release target is **at least 99% correct, evidenced coverage on registered eligible cohorts**. This is a preregistered acceptance threshold, not a measured result or a claim about all repositories. Freeze cohort inclusion, labels, weighting, input modes and hardware before scoring; the threshold must not be weakened after observing failures. Correctness, inventory closure and safety checks below are blocking regardless of percentage.
 
 ## 2. Three denominators, no silent conversion
 
@@ -52,6 +52,8 @@ Publish micro aggregates, macro average per repository/cohort, worst required co
 | L3 adversarial envelopes | Empty/non-Java, malformed/partial acquisition, unavailable private input, archive/link attacks, worker crash, cancellation and resource saturation | Show terminal reporting and honest residuals |
 
 V2.1 chooses pinned public or owner-supplied repositories by these features, records exact snapshot/license/input hashes and expected strata before scoring. Existing PetClinic/ChatServer evidence is historical; any reuse creates a separately identified run, never rewrites G2 artifacts. Owner-supplied enterprise-like cases are not assumed to represent all private enterprise code.
+
+The [candidate public L2 roster](m4-universal-v2-l2-cohort.md) records selected revisions, bounded source-export and license-file SHA-256 identities, plus remaining freeze fields. It is not an eligible scored corpus until analyzed input modes and independent labels are fixed and residual content/license questions are adjudicated.
 
 Input modes:
 

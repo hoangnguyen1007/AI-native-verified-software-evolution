@@ -1,6 +1,6 @@
 # V2.1 — Adaptive intake and evidence closure
 
-Status: **PLANNED / PROVISIONAL implementation design**. Task triển khai đầu tiên của [kế hoạch ba task](README.md). Mục tiêu: repo đến được semantic providers với nhiều bằng chứng đúng nhất có thể, giữ phần độc lập khi gặp lỗi và tự tìm cách đóng missing-evidence obligations. Các mục dưới đây là checklist của cùng task.
+Status: **IN PROGRESS / PROVISIONAL implementation design**. [Implementation ledger](../../research/m4-universal-v2-v21-implementation-ledger.md) records bounded tested paths and remaining obligations. Task triển khai đầu tiên của [kế hoạch ba task](README.md). Mục tiêu: repo đến được semantic providers với nhiều bằng chứng đúng nhất có thể, giữ phần độc lập khi gặp lỗi và tự tìm cách đóng missing-evidence obligations. Các mục dưới đây là checklist của cùng task.
 
 ## Đầu vào, phạm vi và đầu ra
 
@@ -31,7 +31,7 @@ Không implement Spring semantic rules, product CLI/API/UI hoặc target builds 
 - [ ] Initial before/after dùng compact fixtures; không corpus benchmark trong coding loop.
 - [ ] Reuse ledger/attempt/conflict/resolution types; chỉ additive envelope/version khi có missing semantics thực sự.
 - [ ] Golden input/run/revision/bundle preimages: không circular dependency; result-affecting policy/budgets có identity.
-- [ ] Freeze cohort inclusion/labels và scoped 98–99% target; tham số chưa đủ evidence là provisional, bounded calibration trước acceptance scoring.
+- [ ] Freeze cohort inclusion/labels và mục tiêu **ít nhất 99% correct evidenced coverage trên cohort đủ điều kiện** theo quyết định owner 2026-09-27; tham số chưa đủ evidence là provisional, bounded calibration trước acceptance scoring.
 
 **Control:** mất một obligation làm reconciliation fail; đổi nhãn unknown mà không satisfaction evidence không tăng correct coverage.
 

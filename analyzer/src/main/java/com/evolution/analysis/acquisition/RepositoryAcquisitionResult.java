@@ -28,6 +28,7 @@ public record RepositoryAcquisitionResult(
     public static final List<String> LIMITATIONS = List.of(
             "Filesystem acquisition does not decode source files or infer source-document facts.",
             "Symbolic links and non-regular entries are not followed; their contents require a separately approved provider policy.",
+            "Hardlink aliases use file keys or bounded same-content path comparisons; unverified alias groups withhold a complete snapshot.",
             "Explicitly excluded paths are outside this snapshot selection and remain visible in acquisition attempts.",
             "Concurrent filesystem mutation is checked around file reads; a stable snapshot is withheld when detected.");
 
@@ -88,9 +89,11 @@ public record RepositoryAcquisitionResult(
     public enum Completion { COMPLETE, PARTIAL, FAILED }
     public enum Reason {
         ROOT_NOT_FOUND, ROOT_NOT_DIRECTORY, ROOT_SYMBOLIC_LINK, ROOT_READ_FAILED, DIRECTORY_READ_FAILED,
-        SYMBOLIC_LINK, NON_REGULAR_ENTRY, PATH_OUTSIDE_ROOT, INVALID_LOGICAL_PATH,
+        SYMBOLIC_LINK, HARDLINK_ALIAS, HARDLINK_ALIAS_UNVERIFIED,
+        NON_REGULAR_ENTRY, PATH_OUTSIDE_ROOT, INVALID_LOGICAL_PATH,
         ENTRY_COUNT_LIMIT, FILE_COUNT_LIMIT, DIRECTORY_COUNT_LIMIT, FILE_BYTE_LIMIT, TOTAL_BYTE_LIMIT, DEPTH_LIMIT,
-        FILE_READ_FAILED, FILE_CHANGED_DURING_READ, DIRECTORY_CHANGED_DURING_READ, MISSING_ROOT_POM
+        FILE_READ_FAILED, FILE_CHANGED_DURING_READ, DIRECTORY_CHANGED_DURING_READ,
+        UNVISITED_REGION, MISSING_ROOT_POM
     }
     public enum Requirement { REPOSITORY_SELECTION, FILESYSTEM_READ, ACQUISITION_POLICY, BUILD_MODEL_INPUT }
     public enum AttemptKind { ROOT, DIRECTORY, FILE, EXCLUSION }

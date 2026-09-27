@@ -10,10 +10,20 @@ import java.util.*;
 public record UniversalBuildModel(ContentDigest inputIdentity, ContentDigest repositoryInputIdentity, List<Module> modules,
                                   List<BuildModelResult> mavenModels, List<IngestionEvidence.Issue> issues,
                                   List<CapabilityGapRecord> gaps) {
-    public enum Tool { MAVEN, GRADLE_GROOVY, GRADLE_KOTLIN, PLAIN_JAVA }
+    public enum Tool { MAVEN, GRADLE_GROOVY, GRADLE_KOTLIN, PLAIN_JAVA, IMPORTED_SOURCE_PLAN }
     public record Dependency(String configuration, Optional<MavenCoordinate> coordinate,
-                             Optional<String> projectPath, String notation, BuildModelResult.PomEvidence evidence) {
-        public Dependency { Objects.requireNonNull(configuration); Objects.requireNonNull(coordinate); Objects.requireNonNull(projectPath); Objects.requireNonNull(notation); Objects.requireNonNull(evidence); }
+                             Optional<String> projectPath, String notation, List<BuildModelResult.PomEvidence> evidence) {
+        public Dependency {
+            Objects.requireNonNull(configuration); Objects.requireNonNull(coordinate);
+            Objects.requireNonNull(projectPath); Objects.requireNonNull(notation);
+            evidence = ContractChecks.sortedDistinct(evidence,
+                    Comparator.comparing(BuildModelResult.PomEvidence::logicalId), "dependency evidence");
+            if (evidence.isEmpty()) throw new IllegalArgumentException("Dependency needs declaration evidence");
+        }
+        public Dependency(String configuration, Optional<MavenCoordinate> coordinate,
+                          Optional<String> projectPath, String notation, BuildModelResult.PomEvidence evidence) {
+            this(configuration, coordinate, projectPath, notation, List.of(evidence));
+        }
     }
     public record Module(ModuleDescriptor descriptor, Tool tool, Optional<String> buildFile,
                          Optional<MavenCoordinate> coordinate, SourcePlanModel sourcePlan,

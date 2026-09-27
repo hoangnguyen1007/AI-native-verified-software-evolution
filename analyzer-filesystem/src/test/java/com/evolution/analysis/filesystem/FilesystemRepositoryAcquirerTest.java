@@ -118,6 +118,33 @@ class FilesystemRepositoryAcquirerTest {
     }
 
     @Test
+    void recordsUnvisitedDirectoryRemainderAfterQuotaStopsTraversal() throws Exception {
+        write("a.txt", "a");
+        write("b.txt", "b");
+        write("c.txt", "c");
+        var result = acquire(new RepositoryAcquisitionPolicy(1, 100, 100, 100, 20, List.of()));
+        assertEquals(RepositoryAcquisitionResult.Completion.PARTIAL, result.completion());
+        assertEquals(List.of("a.txt"), result.files().stream().map(AcquiredFile::path).toList());
+        assertTrue(result.problems().stream().anyMatch(p -> p.reason()
+                == RepositoryAcquisitionResult.Reason.UNVISITED_REGION && p.subject().equals(".")));
+    }
+
+    @Test
+    void hardlinkAliasesRetainBothObservedPathsButWithholdCompleteSnapshot() throws Exception {
+        write("pom.xml", "<project/>");
+        write("src/A.java", "class A {}");
+        Path first = repositoryRoot().resolve("src/A.java");
+        Files.createLink(repositoryRoot().resolve("src/B.java"), first);
+        var result = acquire(POLICY);
+        assertEquals(Set.of("src/A.java", "src/B.java"), result.files().stream()
+                .map(AcquiredFile::path).filter(p -> p.endsWith(".java")).collect(java.util.stream.Collectors.toSet()));
+        assertEquals(RepositoryAcquisitionResult.Completion.PARTIAL, result.completion());
+        assertTrue(result.snapshot().isEmpty());
+        assertTrue(result.problems().stream().anyMatch(p -> p.reason()
+                == RepositoryAcquisitionResult.Reason.HARDLINK_ALIAS));
+    }
+
+    @Test
     void aMissingEntryPomIsVisibleButDoesNotInvalidateACompleteFilesystemSnapshot() throws Exception {
         Files.createDirectories(repositoryRoot());
         var result = acquire(POLICY);

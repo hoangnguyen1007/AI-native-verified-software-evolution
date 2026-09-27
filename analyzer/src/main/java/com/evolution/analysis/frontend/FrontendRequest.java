@@ -31,7 +31,11 @@ public record FrontendRequest(AnalysisManifest manifest, ModuleIdentity module,
         dependencies = List.copyOf(dependencies);
         reactorSources = reactorSources.stream().sorted(Comparator.comparingInt(ReactorSourceInput::order)).toList();
         if (manifest.modules().stream().noneMatch(m -> m.identity().equals(module))) reject("module", "Requested module is absent");
-        var expected = manifest.snapshot().documents().stream().filter(d -> d.module().equals(module) && d.classification() == sourceSet).sorted().toList();
+        var expected = manifest.snapshot().documents().stream().filter(d -> d.module().equals(module)
+                && (d.classification() == sourceSet
+                        || sourceSet == SourceClassification.MAIN && d.classification() == SourceClassification.GENERATED_MAIN
+                        || sourceSet == SourceClassification.TEST && d.classification() == SourceClassification.GENERATED_TEST))
+                .sorted().toList();
         var actual = sources.stream().map(SourceInput::document).sorted().toList();
         if (!actual.equals(expected)) reject("source-coverage", "Sources must equal the complete inventoried module and source-set subset");
         if (new HashSet<>(actual).size() != actual.size()) reject("duplicate-source", "Duplicate source input");

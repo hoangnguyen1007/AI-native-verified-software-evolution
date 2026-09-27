@@ -1,12 +1,12 @@
 # Current State
 
-Last reconciled: 2026-09-26. Latest change is documentation and task sequencing only. Fresh checks and their scope belong in the task handoff; historical gate evidence is identified below.
+Last reconciled: 2026-09-27. V2.1 implementation is in progress; the [implementation ledger](research/m4-universal-v2-v21-implementation-ledger.md) separates focused evidence from unfulfilled acceptance rows. Fresh checks and their scope belong in the task handoff; historical gate evidence is identified below.
 
 ## PHASE AND MILESTONE
 
 SE121, Track A + B. M1 contracts are committed at `b04220e722cc4bc772cbb3ad8531d4dc1ea1a058`; G1 is recorded passed. M2 frontend delivery is recorded complete across all 18 relationship families. M3.1–M3.8 implementation is delivered and its historical full reactor checkpoint passes 221 tests. M4-R0 is human-accepted, M4A.1–M4A.2 deliver the production evidence-only Spring mechanism inventory and annotation-declaration graph, M4B.1–M4B.2 deliver the condition IR foundation, evidence-to-IR lowering and bounded exogenous condition evaluation, M4C.1–M4C.3 deliver normalized discovery/registration/binding for the pinned Framework 6.2.0 / Boot 3.4.0 fragment, and M4D delivers finite-space truth regions plus minimized independently replayed witnesses. M4E validation and G3 remain pending. Focused G2 hardening tolerates equivalent duplicate dependency rows throughout external parent/BOM/profile model hierarchies and resolves complete handwritten reactor modules from exact acquired source evidence when bytecode output is unavailable. Sibling parse failures retain closed source outcomes, while referenced implicit record members retain sibling scope and component provenance. Comprehensive Gate G2 evaluation across 5 representative real-world architectural archetypes is documented in [Gate G2 Comprehensive Architecture Evaluation](reproducibility/g2-comprehensive-architectural-evaluation-2026-09-10.md).
 
-## PLANNED — M4 UNIVERSAL V2, THREE TASKS BEFORE M4E
+## IN PROGRESS — M4 UNIVERSAL V2, THREE TASKS BEFORE M4E
 
 **CONFIRMED human direction:** add a new M4 Universal v2 task to maximize useful
 Java/Spring architecture coverage and reduce UNKNOWN/UNRESOLVED through stronger
@@ -22,11 +22,24 @@ and [V2.3 integration/acceptance](tasks/m4-universal-v2/03-integration-and-accep
 [ADR-005](decisions/ADR-005-m4-universal-v2.md). Planned mechanisms include scoped
 recovery, passive build/artifact/generated evidence, active requirement-driven
 acquisition, automatic source-to-M4C normalization and validated semantic packs.
-No production code, new benchmark result or gate promotion is delivered by this
-planning task. Historical verification totals below remain historical.
+V2.1 now has bounded acquisition/inventory and decoding, bounded hardlink-alias detection, scoped Gradle failure
+recovery, literal catalog and custom source-set projections, a producer-asserted named source-plan importer,
+a lineage-checked generated-source importer,
+an exact captured artifact importer with optional selected dependency-graph validation,
+a permission-checked evidence coordinator with cooperative cancellation,
+an integrated source-to-frontend-input journey, and acquisition-stage checkpoints.
+Focused controls include an actual generated-constructor resolution and exact
+classpath success/denial/failure paths. These are implementation evidence, not a
+new benchmark result or gate promotion. Historical verification totals below remain historical.
 
-**Exact next task: V2.1.** V2.2 and V2.3 follow, then M4E adjudicates the shared
-acceptance evidence before G3. The 98–99% aspiration is a scoped empirical target,
+The [public L2 candidate cohort](research/m4-universal-v2-l2-cohort.md) now has seven
+commit-pinned, bounded source exports with per-entry SHA-256 manifests and matched
+license-file hashes. Independent labels, analyzed path inclusion, input modes,
+weights and hardware remain open; no L2 acceptance campaign has run.
+
+**Current task: finish V2.1.** V2.2 and V2.3 follow, then M4E adjudicates the shared
+acceptance evidence before G3. The owner fixed the threshold at 99% or more correct,
+evidenced coverage on registered eligible cohorts on 2026-09-27; this is an empirical target,
 not worldwide measured coverage. Target build/runtime execution, a primary-parser
 replacement and new analyzed languages are not authorized by this plan.
 
@@ -62,7 +75,7 @@ All 71 current test suites are accounted for; eight historical report files were
 excluded explicitly, and verified source/build input hashes remained unchanged.
 No target repository build, external corpus benchmark or Git inspection was run.
 
-**OPEN acceptance obligations:** the 98–99% global coverage target is unmeasured.
+**OPEN acceptance obligations:** the registered-cohort 99% target is unmeasured.
 Structural repository candidates and dependency paths do not prove runtime
 activation. Historical framework policies do not certify historical containers;
 M4C execution remains pinned to Framework 6.2.0 / Boot 3.4.0. General library-resource
@@ -278,13 +291,13 @@ Confirmed: Track A + B target; Java 21/Maven/monorepo; primary JavaParser/Symbol
 
 Accepted direction and bounded multi-world evaluation delivered: [ADR-004](decisions/ADR-004-staged-conditional-architecture-semantics.md) makes bounded, phase/order-aware conditional architecture semantics the M4+ direction. M4A.1–M4A.2 provide evidence-only detection and gap normalization; M4B provides the condition IR, finite configuration-space identity and bounded exogenous evaluation; M4C provides normalized per-assignment discovery, registration and binding; M4D provides explicit truth regions and replayed witnesses. Existing `ConfigurationIdentity` remains one realized configuration; the separate implemented `ConfigurationSpaceIdentity` describes one finite modeled space inside an exact M3 build context. M5 becomes a projection of conditional facts, M6 evaluates configuration-qualified policy, and M11 compares conditional/evidence regions. M4U.2 now implements a replaceable pure-Java DPLL backend and symbolic signature execution within the approved SAT capability direction; this does not change G2/G3 status. See the [research review](research/2026-09-09-conditional-architecture-redirection-review.md) for the earlier decision context.
 
-Provisional: Neo4j Community adapter, Spring Boot API, YAML external policies, Cytoscape.js, exact metric/score formulas and thresholds. The M3.6 capability-gap core, M3.7–M3.8 provider refinements and M4A.1–M4A.2 acquisition are implemented against their contracts; downstream query/assessment integration remains pending. The M4-R0 baseline is human-accepted; the M4U.2 solver's corpus performance and semantic coverage still require M4E evidence. ADR-005 plans passive selective metadata/generated/artifact providers and qualified evidence imports for Universal v2; their implementation and empirical acceptance remain pending. Executing controlled build/sandbox, AOT or runtime producers remains ASSESS/HOLD and needs its separate security/authorization contract. Context federation, cross-system assurance and verified AI evolution remain future horizons.
+Provisional: Neo4j Community adapter, Spring Boot API, YAML external policies, Cytoscape.js, exact metric/score formulas and thresholds. The M3.6 capability-gap core, M3.7–M3.8 provider refinements and M4A.1–M4A.2 acquisition are implemented against their contracts; downstream query/assessment integration remains pending. The M4-R0 baseline is human-accepted; the M4U.2 solver's corpus performance and semantic coverage still require M4E evidence. ADR-005 plans passive selective metadata/generated/artifact providers and qualified evidence imports for Universal v2; V2.1 has implemented a bounded subset while broad capability and empirical acceptance remain pending. Executing controlled build/sandbox, AOT or runtime producers remains ASSESS/HOLD and needs its separate security/authorization contract. Context federation, cross-system assurance and verified AI evolution remain future horizons.
 
 ## OPEN QUESTIONS AND BLOCKERS
 
 The initial Maven sandbox JUnit-cache denial and the final benchmark install-cache denial were resolved through the host's supported execution approval, with explicit `MAVEN_USER_HOME` / `maven.repo.local`. Those historical M3 execution denials are resolved. M4-R0 now has its separate contract/adjudication checkpoint described above.
 
-Current input boundaries: explicit strict portable charsets; configured Java 8 `rt.jar`, Java 9+ JMOD or verified cross-release `ct.sym` platform views; exact release dependencies from a single standard Maven2 cache plus explicit credential-free HTTPS repositories; exact reactor-output JARs supplied by the caller or complete owned/decoded handwritten sibling sources at the same logical classpath position; and non-preview parser-level selection through Java 26 (bounded M4U.1 controls, separate from platform API verification). There is no toolchain discovery, class-directory module output, generated-source acquisition, manifest `Class-Path` expansion, version-range/relocation/snapshot resolution or transport-authenticity claim beyond HTTPS. Multi-release JAR entries are selected deterministically for the analyzed target release while retaining the original artifact digest. Remaining explicit degraded frontend cases include array constructor references/array length, annotation-value field reads, inferred `var` detail, typed lambda/catch parameter identities and unsupported functional target/inference contexts. These known boundaries remain limitations of the G2 checkpoint recorded as passed; they are not a reopened G2 blocker.
+Current input boundaries: explicit strict portable charsets; configured Java 8 `rt.jar`, Java 9+ JMOD or verified cross-release `ct.sym` platform views; exact release dependencies from a single standard Maven2 cache plus explicit credential-free HTTPS repositories; exact reactor-output JARs supplied by the caller or complete owned/decoded handwritten sibling sources at the same logical classpath position; and non-preview parser-level selection through Java 26 (bounded M4U.1 controls, separate from platform API verification). V2.1 additionally supports lineage-checked supplied generated Java under declared source roots and explicit exact artifact captures. There is no toolchain discovery, class-directory module output, arbitrary generated-root acquisition, manifest `Class-Path` expansion, version-range/relocation/snapshot resolution or transport-authenticity claim beyond HTTPS. The existing dependency reader selects multi-release JAR entries deterministically for the analyzed release, and the V2.1 importer records a corresponding release-selected class entry digest view for captured dependency JARs; JPMS/module-path semantics remain unproven. Remaining explicit degraded frontend cases include array constructor references/array length, annotation-value field reads, inferred `var` detail, typed lambda/catch parameter identities and unsupported functional target/inference contexts. These known boundaries remain limitations of the G2 checkpoint recorded as passed; they are not a reopened G2 blocker.
 
 Open work starts with Universal v2 V2.1, then V2.2/V2.3 and M4E/G3. Historical container equivalence, hierarchy/factory/runtime behavior beyond the documented fragment, complete source-to-descriptor normalization, library resources, external Config Data, OTHER abstraction and correlated opaque/order reasoning remain implementation boundaries targeted by the new plan. Finite SAT is implemented; arbitrary infinite spaces and global latency/coverage remain unproven. Passive provider expansion, registered baselines, representative evidence and G3 adjudication are distinct stages. A new external G2 checkpoint still needs separate authorization and immutable evidence; preserved G2 runs stay unchanged. Policy criteria, metric/score thresholds, graph/query/UI budgets and frontend framework selection remain later decisions.
 
@@ -305,12 +318,14 @@ Open work starts with Universal v2 V2.1, then V2.2/V2.3 and M4E/G3. Historical c
 
 ## EXACT NEXT TASK
 
-**M4 Universal v2 / V2.1 — Adaptive intake and evidence closure.** Follow the
-[task file](tasks/m4-universal-v2/01-adaptive-intake-and-evidence.md): freeze additive
-contracts and closed denominators, add the scoped module-failure regression, then
-implement resilient intake, exact build/artifact evidence and the active coordinator.
+**M4 Universal v2 / V2.1 — remaining adaptive intake and evidence closure.** Follow the
+[implementation ledger](research/m4-universal-v2-v21-implementation-ledger.md) and
+[task file](tasks/m4-universal-v2/01-adaptive-intake-and-evidence.md): implement the
+resolved-build graph import and passive custom source-set extraction, then library
+bytecode/annotation and worker recovery controls. Register the baseline/cohorts and
+finish the unproved catalog subcases before declaring the V2.1 exit gate.
 
 The [three-task plan](tasks/m4-universal-v2/README.md) then proceeds to Java/Spring
 semantic closure and integration/acceptance. M4E adjudicates the shared evidence
 before G3; no duplicate benchmark campaign or automatic gate promotion is implied.
-No v2 production implementation or benchmark was run by the documentation task.
+No Universal v2 corpus benchmark or M4E/G3 gate assessment has been run.
