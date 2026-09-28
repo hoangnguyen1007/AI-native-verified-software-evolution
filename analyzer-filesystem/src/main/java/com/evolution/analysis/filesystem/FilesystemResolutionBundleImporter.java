@@ -14,6 +14,7 @@ import java.nio.file.attribute.BasicFileAttributes;
 import java.security.*;
 import java.util.*;
 import java.util.zip.*;
+import java.util.function.BooleanSupplier;
 
 /** Imports one captured exact classpath within an explicit local selection; never evaluates a target build. */
 public final class FilesystemResolutionBundleImporter {
@@ -36,7 +37,10 @@ public final class FilesystemResolutionBundleImporter {
         RESOLVED_GRAPH_LIMIT,
         RESOLVED_SELECTION_MISMATCH, SELECTED_ARTIFACT_MISMATCH,
         UNBOUND_DECLARED_DEPENDENCY, UNDECLARED_DIRECT_SELECTOR,
-        INVALID_RESOLVED_EDGE, UNREACHABLE_RESOLVED_ARTIFACT
+        INVALID_RESOLVED_EDGE, UNREACHABLE_RESOLVED_ARTIFACT,
+        WORKER_INPUT_LIMIT, WORKER_CRASHED, WORKER_TIMED_OUT, WORKER_PROTOCOL_ERROR,
+        WORKER_START_FAILED, WORKER_CANCELLED, WORKER_CHECKPOINT_CORRUPT,
+        WORKER_CHECKPOINT_STALE, WORKER_CHECKPOINT_UNAVAILABLE, WORKER_SCRATCH_UNAVAILABLE
     }
     public record Problem(Reason reason, String subject) implements Comparable<Problem> {
         public Problem { Objects.requireNonNull(reason); subject = ContractChecks.text(subject, "bundle problem subject"); }
@@ -189,6 +193,41 @@ public final class FilesystemResolutionBundleImporter {
     public Result importBundle(Path selectedRoot, RepositoryInputs inputs, UniversalBuildModel build,
             UniversalSourceIngestion.SourceSet sourceSet, Manifest manifest, PlatformInput platform,
             List<BinaryInput> binaries, Policy policy) {
+        return importBundleInternal(selectedRoot, inputs, build, sourceSet, manifest, platform,
+                binaries, policy, Optional.empty());
+    }
+
+    /** The archive bytes are captured by the parent; expansion and selected-entry inspection run in a worker. */
+    public Result importBundleSupervised(Path selectedRoot, RepositoryInputs inputs, UniversalBuildModel build,
+            UniversalSourceIngestion.SourceSet sourceSet, Manifest manifest, PlatformInput platform,
+            List<BinaryInput> binaries, Policy policy, WorkerProcessSupervisor.Policy workerPolicy,
+            Path checkpointDirectory, BooleanSupplier cancellationRequested) {
+        return importBundleSupervised(selectedRoot, inputs, build, sourceSet, manifest, platform,
+                binaries, policy, workerPolicy, checkpointDirectory,
+                new ArchiveWorkerSupervisor(), cancellationRequested);
+    }
+
+    Result importBundleSupervised(Path selectedRoot, RepositoryInputs inputs, UniversalBuildModel build,
+            UniversalSourceIngestion.SourceSet sourceSet, Manifest manifest, PlatformInput platform,
+            List<BinaryInput> binaries, Policy policy, WorkerProcessSupervisor.Policy workerPolicy,
+            Path checkpointDirectory, ArchiveWorkerSupervisor supervisor,
+            BooleanSupplier cancellationRequested) {
+        return importBundleInternal(selectedRoot, inputs, build, sourceSet, manifest, platform,
+                binaries, policy, Optional.of(new ArchiveControl(workerPolicy, checkpointDirectory,
+                        supervisor, cancellationRequested)));
+    }
+
+    private record ArchiveControl(WorkerProcessSupervisor.Policy policy, Path checkpoints,
+                                  ArchiveWorkerSupervisor supervisor, BooleanSupplier cancellation) {
+        private ArchiveControl {
+            Objects.requireNonNull(policy); Objects.requireNonNull(checkpoints);
+            Objects.requireNonNull(supervisor); Objects.requireNonNull(cancellation);
+        }
+    }
+
+    private Result importBundleInternal(Path selectedRoot, RepositoryInputs inputs, UniversalBuildModel build,
+            UniversalSourceIngestion.SourceSet sourceSet, Manifest manifest, PlatformInput platform,
+            List<BinaryInput> binaries, Policy policy, Optional<ArchiveControl> archiveControl) {
         Objects.requireNonNull(selectedRoot); Objects.requireNonNull(inputs); Objects.requireNonNull(build);
         Objects.requireNonNull(sourceSet); Objects.requireNonNull(manifest); Objects.requireNonNull(platform);
         Objects.requireNonNull(binaries); Objects.requireNonNull(policy);
@@ -242,7 +281,7 @@ public final class FilesystemResolutionBundleImporter {
                     continue;
                 }
                 inspect(root, artifact.path(), artifact.logicalName(), artifact.contentDigest(), policy,
-                        budget, receipts, resources, selectedClasses, problems, false, platform.release());
+                        budget, receipts, resources, selectedClasses, problems, false, platform.release(), archiveControl);
             }
             for (var binary : binaries) {
                 if (binary.reactorModule().isPresent()) {
@@ -250,7 +289,7 @@ public final class FilesystemResolutionBundleImporter {
                     continue;
                 }
                 inspect(root, binary.path(), binary.entry().logicalName(), binary.entry().contentDigest(),
-                        policy, budget, receipts, resources, selectedClasses, problems, true, platform.release());
+                        policy, budget, receipts, resources, selectedClasses, problems, true, platform.release(), archiveControl);
             }
         }
         var byClass = new TreeMap<String, List<SelectedClassEntry>>();
@@ -274,6 +313,33 @@ public final class FilesystemResolutionBundleImporter {
             List<BinaryInput> binaries, Policy policy, ResolvedGraph graph) {
         Objects.requireNonNull(graph);
         var base = importBundle(selectedRoot, inputs, build, sourceSet, manifest, platform, binaries, policy);
+        return withResolvedGraph(inputs, build, sourceSet, manifest, platform, binaries, policy, graph, base);
+    }
+
+    public Result importBundleSupervised(Path selectedRoot, RepositoryInputs inputs, UniversalBuildModel build,
+            UniversalSourceIngestion.SourceSet sourceSet, Manifest manifest, PlatformInput platform,
+            List<BinaryInput> binaries, Policy policy, ResolvedGraph graph,
+            WorkerProcessSupervisor.Policy workerPolicy, Path checkpointDirectory,
+            BooleanSupplier cancellationRequested) {
+        return importBundleSupervised(selectedRoot, inputs, build, sourceSet, manifest, platform,
+                binaries, policy, graph, workerPolicy, checkpointDirectory,
+                new ArchiveWorkerSupervisor(), cancellationRequested);
+    }
+
+    Result importBundleSupervised(Path selectedRoot, RepositoryInputs inputs, UniversalBuildModel build,
+            UniversalSourceIngestion.SourceSet sourceSet, Manifest manifest, PlatformInput platform,
+            List<BinaryInput> binaries, Policy policy, ResolvedGraph graph,
+            WorkerProcessSupervisor.Policy workerPolicy, Path checkpointDirectory,
+            ArchiveWorkerSupervisor supervisor, BooleanSupplier cancellationRequested) {
+        Objects.requireNonNull(graph);
+        var base = importBundleSupervised(selectedRoot, inputs, build, sourceSet, manifest, platform,
+                binaries, policy, workerPolicy, checkpointDirectory, supervisor, cancellationRequested);
+        return withResolvedGraph(inputs, build, sourceSet, manifest, platform, binaries, policy, graph, base);
+    }
+
+    private Result withResolvedGraph(RepositoryInputs inputs, UniversalBuildModel build,
+            UniversalSourceIngestion.SourceSet sourceSet, Manifest manifest, PlatformInput platform,
+            List<BinaryInput> binaries, Policy policy, ResolvedGraph graph, Result base) {
         var problems = new ArrayList<>(base.problems());
         validateResolvedGraph(inputs, build, sourceSet, manifest, policy, graph, problems);
         var sorted = problems.stream().distinct().sorted().toList();
@@ -379,7 +445,7 @@ public final class FilesystemResolutionBundleImporter {
     private static void inspect(Path root, Path file, String logicalId, ContentDigest expected,
             Policy policy, Budget budget, List<Receipt> receipts, List<LibraryResource> resources,
             List<SelectedClassEntry> selectedClasses, List<Problem> problems,
-            boolean collectResources, int targetRelease) {
+            boolean collectResources, int targetRelease, Optional<ArchiveControl> archiveControl) {
         Path absolute = file.toAbsolutePath().normalize();
         BasicFileAttributes before;
         try {
@@ -423,8 +489,12 @@ public final class FilesystemResolutionBundleImporter {
         }
         var selected = new ArrayList<ResourceBytes>();
         var classes = new ArrayList<SelectedClassBytes>();
-        int entries = inspectArchive(absolute, logicalId, policy, budget, problems,
-                collectResources ? selected : null, collectResources ? classes : null, targetRelease);
+        int entries = archiveControl.isPresent()
+                ? inspectArchiveSupervised(absolute, actual, logicalId, policy, budget, problems,
+                        collectResources ? selected : null, collectResources ? classes : null,
+                        targetRelease, archiveControl.orElseThrow())
+                : inspectArchive(absolute, logicalId, policy, budget, problems,
+                        collectResources ? selected : null, collectResources ? classes : null, targetRelease);
         try {
             var after = Files.readAttributes(absolute, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
             if (Files.isSymbolicLink(absolute) || !absolute.equals(absolute.toRealPath())
@@ -451,6 +521,68 @@ public final class FilesystemResolutionBundleImporter {
     private record ResourceBytes(String name, byte[] bytes) {}
     private record SelectedClassBytes(String logicalName, String physicalName,
                                       int release, ContentDigest digest) {}
+    private static int inspectArchiveSupervised(Path file, ContentDigest expected, String logicalId,
+            Policy policy, Budget budget, List<Problem> problems, List<ResourceBytes> selected,
+            List<SelectedClassBytes> selectedClasses, int targetRelease, ArchiveControl control) {
+        if (budget.expandedBytes >= policy.maxExpandedBytes()) {
+            problems.add(new Problem(Reason.ARCHIVE_EXPANSION_LIMIT, logicalId)); return -1;
+        }
+        long fileSize;
+        try { fileSize = Files.size(file); }
+        catch (IOException | SecurityException unavailable) {
+            problems.add(new Problem(Reason.FILE_CHANGED, logicalId)); return -1;
+        }
+        if (fileSize > control.policy().maxInputBytes()) {
+            problems.add(new Problem(Reason.WORKER_INPUT_LIMIT, logicalId)); return -1;
+        }
+        byte[] captured;
+        try (InputStream input = Files.newInputStream(file, LinkOption.NOFOLLOW_LINKS)) {
+            captured = input.readNBytes(control.policy().maxInputBytes() + 1);
+            if (captured.length > control.policy().maxInputBytes()) {
+                problems.add(new Problem(Reason.WORKER_INPUT_LIMIT, logicalId)); return -1;
+            }
+        } catch (IOException | SecurityException unavailable) {
+            problems.add(new Problem(Reason.FILE_CHANGED, logicalId)); return -1;
+        }
+        if (!ContentDigest.sha256(captured).equals(expected)) {
+            problems.add(new Problem(Reason.FILE_CHANGED, logicalId)); return -1;
+        }
+        var task = new ArchiveWorkerSupervisor.Task(captured, expected, targetRelease,
+                selected != null, policy.maxArchiveEntries(),
+                policy.maxExpandedBytes() - budget.expandedBytes);
+        var scanned = control.supervisor().scan(task, control.policy(), control.checkpoints(), control.cancellation());
+        if (scanned.status() != ArchiveWorkerSupervisor.Status.COMPLETED) {
+            Reason reason = switch (scanned.status()) {
+                case INPUT_LIMIT -> Reason.WORKER_INPUT_LIMIT;
+                case INPUT_MISMATCH -> Reason.FILE_CHANGED;
+                case CRASHED -> Reason.WORKER_CRASHED;
+                case TIMED_OUT -> Reason.WORKER_TIMED_OUT;
+                case PROTOCOL_ERROR -> Reason.WORKER_PROTOCOL_ERROR;
+                case START_FAILED -> Reason.WORKER_START_FAILED;
+                case CANCELLED -> Reason.WORKER_CANCELLED;
+                case CHECKPOINT_CORRUPT -> Reason.WORKER_CHECKPOINT_CORRUPT;
+                case CHECKPOINT_STALE -> Reason.WORKER_CHECKPOINT_STALE;
+                case CHECKPOINT_UNAVAILABLE -> Reason.WORKER_CHECKPOINT_UNAVAILABLE;
+                case CORRUPT_ARCHIVE -> Reason.CORRUPT_ARCHIVE;
+                case ARCHIVE_ENTRY_LIMIT -> Reason.ARCHIVE_ENTRY_LIMIT;
+                case ARCHIVE_EXPANSION_LIMIT -> Reason.ARCHIVE_EXPANSION_LIMIT;
+                case UNSAFE_ARCHIVE_ENTRY -> Reason.UNSAFE_ARCHIVE_ENTRY;
+                case DUPLICATE_ARCHIVE_ENTRY -> Reason.DUPLICATE_ARCHIVE_ENTRY;
+                case NESTED_ARCHIVE_UNSELECTED -> Reason.NESTED_ARCHIVE_UNSELECTED;
+                case RESOURCE_LIMIT -> Reason.RESOURCE_LIMIT;
+                case SCRATCH_UNAVAILABLE -> Reason.WORKER_SCRATCH_UNAVAILABLE;
+                case COMPLETED -> throw new IllegalStateException("Handled completed scan");
+            };
+            problems.add(new Problem(reason, logicalId)); return -1;
+        }
+        budget.expandedBytes += scanned.expandedBytes();
+        if (selected != null) for (var resource : scanned.resources())
+            selected.add(new ResourceBytes(resource.name(), resource.bytes()));
+        if (selectedClasses != null) for (var entry : scanned.classes())
+            selectedClasses.add(new SelectedClassBytes(entry.logicalName(), entry.physicalName(),
+                    entry.release(), entry.digest()));
+        return scanned.entries();
+    }
     private static int inspectArchive(Path file, String logicalId, Policy policy, Budget budget,
             List<Problem> problems, List<ResourceBytes> selected,
             List<SelectedClassBytes> selectedClasses, int targetRelease) {

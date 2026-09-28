@@ -17,7 +17,7 @@ import java.util.function.BooleanSupplier;
 public final class AdaptiveRepositoryJourney {
     public static final String SCHEMA = "adaptive-repository-journey-v3";
     public static final VersionedIdentifier SUPERVISED_IMPORT_PROVIDER =
-            new VersionedIdentifier("repository.supervised-bundle-import", "m4uv2.1-v1");
+            new VersionedIdentifier("repository.supervised-bundle-import", "m4uv2.1-v2");
     public static final VersionedIdentifier PROVIDER =
             new VersionedIdentifier("repository.adaptive-journey", "m4uv2.1-v3");
     public static final VersionedIdentifier IMPORT_GAP_CATALOG =
@@ -135,7 +135,7 @@ public final class AdaptiveRepositoryJourney {
             BooleanSupplier cancellationRequested) {
         return resolveInternal(intake, build, selection, acquisitionPolicy, components,
                 cancellationRequested, Optional.of(new WorkerControl(workerPolicy, checkpointDirectory,
-                        new WorkerProcessSupervisor())));
+                        new WorkerProcessSupervisor(), new ArchiveWorkerSupervisor())));
     }
 
     Result resolveSupervised(Intake intake, Selection selection,
@@ -145,14 +145,28 @@ public final class AdaptiveRepositoryJourney {
         Objects.requireNonNull(intake);
         return resolveInternal(intake, intake.build().orElseThrow(), selection, acquisitionPolicy,
                 components, cancellationRequested,
-                Optional.of(new WorkerControl(workerPolicy, checkpointDirectory, supervisor)));
+                Optional.of(new WorkerControl(workerPolicy, checkpointDirectory, supervisor,
+                        new ArchiveWorkerSupervisor())));
+    }
+
+    Result resolveSupervised(Intake intake, Selection selection,
+            AdaptiveEvidenceCoordinator.Policy acquisitionPolicy, Components components,
+            WorkerProcessSupervisor.Policy workerPolicy, Path checkpointDirectory,
+            WorkerProcessSupervisor receiptSupervisor, ArchiveWorkerSupervisor archiveSupervisor,
+            BooleanSupplier cancellationRequested) {
+        Objects.requireNonNull(intake);
+        return resolveInternal(intake, intake.build().orElseThrow(), selection, acquisitionPolicy,
+                components, cancellationRequested,
+                Optional.of(new WorkerControl(workerPolicy, checkpointDirectory, receiptSupervisor,
+                        archiveSupervisor)));
     }
 
     private record WorkerControl(WorkerProcessSupervisor.Policy policy, Path checkpointDirectory,
-                                 WorkerProcessSupervisor supervisor) {
+                                 WorkerProcessSupervisor supervisor,
+                                 ArchiveWorkerSupervisor archiveSupervisor) {
         private WorkerControl {
             Objects.requireNonNull(policy); Objects.requireNonNull(checkpointDirectory);
-            Objects.requireNonNull(supervisor);
+            Objects.requireNonNull(supervisor); Objects.requireNonNull(archiveSupervisor);
         }
     }
 
@@ -225,13 +239,28 @@ public final class AdaptiveRepositoryJourney {
             @Override public int costClass() { return 0; }
             @Override public AdaptiveEvidenceCoordinator.Acquisition acquire(EvidenceRequirement ignored) {
                 var importer = new FilesystemResolutionBundleImporter();
-                var result = selection.resolvedGraph().isPresent()
-                        ? importer.importBundle(selection.artifactRoot(), inputs, build,
-                                selection.sourceSet(), selection.manifest(), selection.platform(),
-                                selection.binaries(), selection.policy(), selection.resolvedGraph().orElseThrow())
-                        : importer.importBundle(selection.artifactRoot(), inputs, build,
-                                selection.sourceSet(), selection.manifest(), selection.platform(),
-                                selection.binaries(), selection.policy());
+                FilesystemResolutionBundleImporter.Result result;
+                if (workerControl.isPresent()) {
+                    var control = workerControl.orElseThrow();
+                    result = selection.resolvedGraph().isPresent()
+                            ? importer.importBundleSupervised(selection.artifactRoot(), inputs, build,
+                                    selection.sourceSet(), selection.manifest(), selection.platform(),
+                                    selection.binaries(), selection.policy(), selection.resolvedGraph().orElseThrow(),
+                                    control.policy(), control.checkpointDirectory(),
+                                    control.archiveSupervisor(), cancellationRequested)
+                            : importer.importBundleSupervised(selection.artifactRoot(), inputs, build,
+                                    selection.sourceSet(), selection.manifest(), selection.platform(),
+                                    selection.binaries(), selection.policy(), control.policy(),
+                                    control.checkpointDirectory(), control.archiveSupervisor(), cancellationRequested);
+                } else {
+                    result = selection.resolvedGraph().isPresent()
+                            ? importer.importBundle(selection.artifactRoot(), inputs, build,
+                                    selection.sourceSet(), selection.manifest(), selection.platform(),
+                                    selection.binaries(), selection.policy(), selection.resolvedGraph().orElseThrow())
+                            : importer.importBundle(selection.artifactRoot(), inputs, build,
+                                    selection.sourceSet(), selection.manifest(), selection.platform(),
+                                    selection.binaries(), selection.policy());
+                }
                 imported.set(result);
                 if (result.status() != FilesystemResolutionBundleImporter.Status.EXACT)
                     return AdaptiveEvidenceCoordinator.Acquisition.unavailable();
@@ -311,11 +340,15 @@ public final class AdaptiveRepositoryJourney {
     private static CapabilityGapRecord importProblemGap(EvidenceContext context, ContentDigest revision,
             Selection selection, FilesystemResolutionBundleImporter.Result imported,
             FilesystemResolutionBundleImporter.Problem problem) {
+        boolean workerFailure = problem.reason().name().startsWith("WORKER_");
+        VersionedIdentifier problemProvider = workerFailure
+                ? SUPERVISED_IMPORT_PROVIDER : FilesystemResolutionBundleImporter.PROVIDER;
         var platform = selection.platform().artifacts().stream()
                 .filter(a -> a.logicalName().equals(problem.subject())).findFirst();
         var binary = selection.binaries().stream()
                 .filter(b -> b.entry().logicalName().equals(problem.subject())).findFirst();
-        EvidenceRequirement.Kind kind = platform.isPresent()
+        EvidenceRequirement.Kind kind = workerFailure ? EvidenceRequirement.Kind.REPOSITORY_CONTENT
+                : platform.isPresent()
                 ? EvidenceRequirement.Kind.PLATFORM_SYMBOLS
                 : binary.isPresent() ? EvidenceRequirement.Kind.DEPENDENCY_ARTIFACT
                 : EvidenceRequirement.Kind.EXACT_CLASSPATH;
@@ -324,13 +357,16 @@ public final class AdaptiveRepositoryJourney {
                 EvidenceSubject.Kind.ARTIFACT, b.entry().contentDigest().value())))
                 .orElse(new EvidenceSubject(EvidenceSubject.Kind.BUILD_INPUT,
                         selection.manifest().identity().value()));
-        var requirement = new EvidenceRequirement(kind, "artifact.valid-selected-input",
-                List.of(required), EvidenceRequirement.AuthorizationClass.LOCAL_READ,
-                List.of("Re-import an exact, bounded artifact with verified context and structural bytes."));
-        var observation = ProviderObservationReference.create(FilesystemResolutionBundleImporter.PROVIDER,
+        var requirement = new EvidenceRequirement(kind, workerFailure
+                ? "worker.archive-inspection" : "artifact.valid-selected-input",
+                List.of(required), workerFailure ? EvidenceRequirement.AuthorizationClass.LOCAL_WRITE
+                        : EvidenceRequirement.AuthorizationClass.LOCAL_READ,
+                workerFailure ? List.of("Replay bounded archive inspection in the trusted worker with captured bytes and policy.")
+                        : List.of("Re-import an exact, bounded artifact with verified context and structural bytes."));
+        var observation = ProviderObservationReference.create(problemProvider,
                 "filesystem.bundle-import-problem", imported.identity(), revision);
         return CapabilityGapRecord.create(IMPORT_GAP_CATALOG, context,
-                FilesystemResolutionBundleImporter.PROVIDER, "build.artifact",
+                problemProvider, "build.artifact",
                 problem.reason().name(), new EvidenceSubject(EvidenceSubject.Kind.ARTIFACT,
                         problem.subject()), List.of(), List.of(observation), List.of(requirement),
                 List.of(), List.of(new AffectedOutput(AffectedOutput.Kind.FRONTEND_INPUT,

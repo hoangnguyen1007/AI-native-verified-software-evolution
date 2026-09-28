@@ -10,6 +10,7 @@ import com.evolution.analysis.ingestion.*;
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
+import java.time.Duration;
 import java.util.*;
 import java.util.zip.*;
 import org.junit.jupiter.api.Test;
@@ -52,6 +53,25 @@ class EvidenceBundleImportTest {
                 .anyMatch(o -> o.request().isPresent()), assembled.issues().toString());
         assertEquals(imported.identity(), importer.importBundle(root, inputs, build, set,
                 manifest, platform, List.of(binary), policy()).identity());
+        Path checkpoints = Files.createDirectory(temporary.resolve("archive-checkpoints"));
+        var workerLimits = new WorkerProcessSupervisor.Policy(Duration.ofSeconds(3), 64, 4096, 4096, 4);
+        var isolated = importer.importBundleSupervised(root, inputs, build, set, manifest, platform,
+                List.of(binary), policy(), workerLimits, checkpoints, () -> false);
+        assertEquals(FilesystemResolutionBundleImporter.Status.EXACT, isolated.status(), isolated.problems().toString());
+        assertEquals(imported.identity(), isolated.identity());
+        assertEquals(imported.selectedClasses(), isolated.selectedClasses());
+        assertEquals(imported.receipts(), isolated.receipts());
+        Path unavailableCheckpoints = Files.createDirectory(temporary.resolve("unavailable-checkpoints"));
+        var failed = importer.importBundleSupervised(root, inputs, build, set, manifest, platform,
+                List.of(binary), policy(), workerLimits, unavailableCheckpoints,
+                new ArchiveWorkerSupervisor((task, limits, scratch) -> {
+                    throw new java.io.IOException("injected worker failure");
+                }), () -> false);
+        assertEquals(FilesystemResolutionBundleImporter.Status.PARTIAL, failed.status());
+        assertTrue(failed.resolution().isEmpty());
+        assertTrue(failed.problems().stream().anyMatch(p -> p.reason()
+                == FilesystemResolutionBundleImporter.Reason.WORKER_START_FAILED));
+        assertTrue(failed.selectedClasses().isEmpty());
     }
 
     @Test void capturedResolvedGraphBindsDirectSelectionAndTransitiveClasspath() throws Exception {

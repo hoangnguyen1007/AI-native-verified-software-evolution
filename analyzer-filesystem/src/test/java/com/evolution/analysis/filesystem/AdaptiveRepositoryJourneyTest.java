@@ -49,6 +49,20 @@ class AdaptiveRepositoryJourneyTest {
         var workerPolicy = new WorkerProcessSupervisor.Policy(Duration.ofMillis(800), 64, 10000, 256, 1);
         Path checkpoints = Files.createDirectory(temporary.resolve("worker-checkpoints"));
 
+        var failedArchive = journey.resolveSupervised(intake, selection, permitted, components(), workerPolicy,
+                checkpoints, new WorkerProcessSupervisor(),
+                new ArchiveWorkerSupervisor((task, limits, scratch) -> {
+                    throw new IOException("injected archive-worker failure");
+                }), () -> false);
+        assertEquals(FilesystemResolutionBundleImporter.Status.PARTIAL,
+                failedArchive.imported().orElseThrow().status());
+        assertTrue(failedArchive.sources().outcomes().stream().allMatch(o -> o.request().isEmpty()));
+        assertTrue(failedArchive.sources().sources().stream().anyMatch(s -> s.path().endsWith("Client.java")));
+        assertTrue(failedArchive.ledger().gaps().stream().filter(g -> g.reasonCode().equals("WORKER_START_FAILED"))
+                .allMatch(g -> g.evidenceRequirements().getFirst().authorizationClass()
+                        == EvidenceRequirement.AuthorizationClass.LOCAL_WRITE));
+        assertTrue(failedArchive.ledger().gaps().stream().anyMatch(g -> g.reasonCode().equals("WORKER_START_FAILED")));
+
         var crashed = journey.resolveSupervised(intake, selection, permitted, components(), workerPolicy,
                 checkpoints, new WorkerProcessSupervisor((task, limits) -> faultWorker("exit")), () -> false);
         assertEquals(AdaptiveEvidenceCoordinator.Termination.OUTSTANDING, crashed.coordination().termination());

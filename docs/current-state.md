@@ -1,6 +1,6 @@
 # Current State
 
-Last reconciled: 2026-09-27. V2.1 implementation is in progress; the [implementation ledger](research/m4-universal-v2-v21-implementation-ledger.md) separates focused evidence from unfulfilled acceptance rows. Fresh checks and their scope belong in the task handoff; historical gate evidence is identified below.
+Last reconciled: 2026-09-28. V2.1 implementation is in progress; the [implementation ledger](research/m4-universal-v2-v21-implementation-ledger.md) separates focused evidence from unfulfilled acceptance rows. Fresh checks and their scope belong in the task handoff; historical gate evidence is identified below.
 
 ## PHASE AND MILESTONE
 
@@ -29,16 +29,18 @@ an exact captured artifact importer with optional selected dependency-graph vali
 a permission-checked evidence coordinator with cooperative cancellation,
 an integrated source-to-frontend-input journey, acquisition-stage checkpoints,
 and a bounded trusted-JVM worker supervisor with sealed per-unit checkpoints.
-The second worker slice now routes exact-classpath receipt validation inside the
-integrated evidence provider through that supervisor. Worker failure retains the
-importer's structural/artifact observations, keeps the exact frontend request closed,
-and records a scoped capability gap; successful checkpoint replay restores the same
-result identity. Archive inspection, build-model computation and semantic providers
-still run in the parent process. JVM heap is bounded, while OS-level total memory
-isolation remains open.
+The supervised journey now routes bounded archive expansion/selected-entry inspection
+and exact-classpath receipt validation through trusted workers. The parent still
+captures/hashes artifact bytes and runs build-model/frontend assembly. Worker failure
+retains independent source structure, keeps the exact frontend request closed and
+records a scoped capability gap; sealed completed archive checkpoints replay with the
+same result identity. Build-model computation and semantic providers still run in the
+parent process. JVM heap is bounded; OS-level total memory isolation remains open.
 Focused controls include an actual generated-constructor resolution and exact
-classpath success/denial/failure paths. These are implementation evidence, not a
-new benchmark result or gate promotion. Historical verification totals below remain historical.
+classpath success/denial/failure paths. The 2026-09-28 root `verify -q` passed
+571 tests in 83 fresh Surefire suites with no failures, errors or skips. These are
+implementation checks, not a new benchmark result or gate promotion. Older
+verification totals below remain historical.
 
 The [public L2 candidate cohort](research/m4-universal-v2-l2-cohort.md) now has seven
 commit-pinned, bounded source exports with per-entry SHA-256 manifests and matched
@@ -328,10 +330,10 @@ Open work starts with Universal v2 V2.1, then V2.2/V2.3 and M4E/G3. Historical c
 
 **M4 Universal v2 / V2.1 — remaining adaptive intake and evidence closure.** Follow the
 [implementation ledger](research/m4-universal-v2-v21-implementation-ledger.md) and
-[task file](tasks/m4-universal-v2/01-adaptive-intake-and-evidence.md): implement the
-resolved-build graph import and passive custom source-set extraction, then library
-bytecode/annotation and process isolation of bounded artifact import/semantic stages
-beyond the now supervised exact-classpath receipt validation.
+[task file](tasks/m4-universal-v2/01-adaptive-intake-and-evidence.md): extend the
+bounded build/artifact/generated evidence paths, especially library bytecode and
+annotations, class directories and packaged library variants. Complete durable
+coordinator recovery and isolate remaining build/frontend stages where justified.
 Register the baseline/cohorts and
 finish the unproved catalog subcases before declaring the V2.1 exit gate.
 

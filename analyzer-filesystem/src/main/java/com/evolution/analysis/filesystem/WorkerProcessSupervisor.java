@@ -27,8 +27,8 @@ public final class WorkerProcessSupervisor {
             Objects.requireNonNull(timeout);
             if (timeout.isZero() || timeout.isNegative() || timeout.compareTo(Duration.ofMinutes(5)) > 0
                     || maxHeapMiB < 16 || maxHeapMiB > 1024 || maxInputBytes < 1
-                    || maxInputBytes > 16 * 1024 * 1024 || maxOutputBytes < 96
-                    || maxOutputBytes > 64 * 1024 || maxTasks < 1 || maxTasks > 1_000)
+                    || maxInputBytes > 64 * 1024 * 1024 || maxOutputBytes < 96
+                    || maxOutputBytes > 16 * 1024 * 1024 || maxTasks < 1 || maxTasks > 1_000)
                 throw new IllegalArgumentException("Invalid trusted-worker limits");
         }
         public ContentDigest identity() {
