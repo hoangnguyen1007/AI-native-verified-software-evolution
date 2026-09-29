@@ -26,7 +26,7 @@ class UniversalIngestionPipelineTest {
         var resolution=new UniversalSourceIngestion.Resolution(exact.platform(),exact.dependencies(),ContentDigest.sha256Utf8("authored-exact-spring-classpath"));
         var component=new ManifestComponent(new VersionedIdentifier("test.components","1"),ContentDigest.sha256Utf8("test-components"));
         var assembly=new UniversalSourceIngestion().assemble(input,build,Map.of(key,resolution),component,component,component);
-        var result=new UniversalIngestionPipeline().run(assembly,new JavaParserFrontend(),new VersionedIdentifier("frontend.javaparser","3.28.2-m4u.1"),100,100);
+        var result=new UniversalIngestionPipeline().run(assembly,new JavaParserFrontend(),JavaParserFrontend.PROVIDER,100,100);
         var main=result.units().stream().filter(u->u.sourceSet().equals(key)).findFirst().orElseThrow();
         assertEquals(UniversalIngestionPipeline.Status.ANALYZED,main.status(),result.issues().toString());
         assertEquals(3,main.components().orElseThrow().rows().stream().filter(r->r.status()==com.evolution.analysis.spring.condition.ComponentScanIngestion.Status.INCLUDED).count());
@@ -54,10 +54,10 @@ class UniversalIngestionPipelineTest {
             assertEquals(1,result.sources().size());assertEquals(UniversalSourceIngestion.Status.OWNED,result.sources().getFirst().status());
             var main=result.outcomes().stream().filter(o->o.sourceSet().equals(key)).findFirst().orElseThrow();
             var request=main.request().orElseThrow(()->new AssertionError(result.issues().toString()));
-            var pipeline=new UniversalIngestionPipeline().run(result,new JavaParserFrontend(),new VersionedIdentifier("frontend.javaparser","3.28.2-m4u.1"),100,100);
+            var pipeline=new UniversalIngestionPipeline().run(result,new JavaParserFrontend(),JavaParserFrontend.PROVIDER,100,100);
             var frontend=pipeline.units().stream().filter(u->u.sourceSet().equals(key)).findFirst().orElseThrow().frontend().orElseThrow();
             assertEquals(FrontendResult.State.COMPLETED,frontend.state());
-            assertEquals(pipeline.identity(),new UniversalIngestionPipeline().run(result,new JavaParserFrontend(),new VersionedIdentifier("frontend.javaparser","3.28.2-m4u.1"),100,100).identity());
+            assertEquals(pipeline.identity(),new UniversalIngestionPipeline().run(result,new JavaParserFrontend(),JavaParserFrontend.PROVIDER,100,100).identity());
             var rejected=new UniversalIngestionPipeline().run(result,r->{throw new FrontendInputException("frontend.syntax-level","sensitive input must not escape");},new VersionedIdentifier("frontend.test","1"),100,100);
             assertTrue(rejected.units().stream().anyMatch(u->u.status()==UniversalIngestionPipeline.Status.REJECTED));
             assertFalse(rejected.gaps().isEmpty());assertFalse(rejected.issues().toString().contains("sensitive"));

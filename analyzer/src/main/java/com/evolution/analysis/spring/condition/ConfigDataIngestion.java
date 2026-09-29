@@ -16,7 +16,7 @@ import static com.evolution.analysis.ingestion.IngestionEvidence.Reason.*;
 
 /** Passive repository configuration ingestion. The policy explicitly selects one application's locations. */
 public final class ConfigDataIngestion {
-    public static final VersionedIdentifier PROVIDER = new VersionedIdentifier("spring.config-data-ingestion", "m4u.1");
+    public static final VersionedIdentifier PROVIDER = new VersionedIdentifier("spring.config-data-ingestion", "m4uv2.2");
     public record Policy(List<String> locations, List<String> activeProfiles, Map<String,String> overrides,
                          int maxDocuments, int maxCharacters, int maxDepth, int maxProperties) {
         public Policy {
@@ -80,7 +80,9 @@ public final class ConfigDataIngestion {
                 && !yamlNames.add(d.path().replaceFirst("\\.ya?ml$","")))
             issue(issues,CONFIG_PRECEDENCE_UNKNOWN,d.path(),d.evidence().identity());
         var base = new TreeMap<String,String>();
-        var unconditional=parsed.stream().filter(d -> d.profile().isEmpty() && !hasActivation(d.properties())).toList();
+        var unconditional=new ImportClosure(inputs,policy,issues,identity,Set.of(),true)
+                .expand(parsed.stream().filter(d -> d.profile().isEmpty() && !hasActivation(d.properties())).toList())
+                .stream().filter(d -> d.profile().isEmpty() && !hasActivation(d.properties())).toList();
         unconditional.forEach(d -> mergeProfileLists(base,d.properties()));
         mergeProfileLists(base,policy.overrides());
         if(!validProfileLists(base))issue(issues,CONFIG_PROFILE_INVALID,"baseline-profile-list",identity);
@@ -107,7 +109,7 @@ public final class ConfigDataIngestion {
         parsed.sort(Comparator.comparingInt((Document d) -> location(d.path(),policy))
                 .thenComparingInt(d -> d.profile().map(active::indexOf).map(i -> i+1).orElse(0)).thenComparing(baseOrder));
         Map<String,String> merged = new TreeMap<>(); var documents = new ArrayList<Document>();
-        for (var d : parsed) {
+        for (var d : new ImportClosure(inputs,policy,issues,identity,profiles,false).expand(parsed)) {
             boolean enabled = d.profile().map(profiles::contains).orElse(true);
             try {
                 var expressions=listValue(d.properties(),"spring.config.activate.on-profile");
@@ -126,7 +128,6 @@ public final class ConfigDataIngestion {
             if (enabled) {
                 merged.putAll(d.properties());
                 for (String key : d.properties().keySet()) {
-                    if (key.equals("spring.config.import")) issue(issues,CONFIG_IMPORT_REQUIRED,d.path()+"#"+d.ordinal(),d.evidence().identity());
                     if (Set.of("spring.config.location","spring.config.additional-location","spring.config.name").contains(key))
                         issue(issues,CONFIG_EXTERNAL_INPUT_REQUIRED,d.path()+"#"+d.ordinal(),d.evidence().identity());
                 }
@@ -136,7 +137,7 @@ public final class ConfigDataIngestion {
         merged.putAll(policy.overrides());
         for (String key : merged.keySet()) {
             if (key.isBlank()) issue(issues,MALFORMED_INPUT,"blank-property-key",identity);
-            if (key.equals("spring.config.import") || key.startsWith("spring.config.import["))
+            if ((key.equals("spring.config.import") || key.startsWith("spring.config.import[")) && policy.overrides().containsKey(key))
                 issue(issues,CONFIG_IMPORT_REQUIRED,"config-import",identity);
             if (Set.of("spring.config.location","spring.config.additional-location","spring.config.name").contains(key))
                 issue(issues,CONFIG_EXTERNAL_INPUT_REQUIRED,"config-location",identity);
@@ -161,6 +162,125 @@ public final class ConfigDataIngestion {
         return new Result(identity,documents,resolved,active,
                 sortedIssues.isEmpty() ? Optional.of(new ConfigurationAssignment(baseline,evidence)) : Optional.empty(),
                 sortedIssues,IngestionEvidence.gaps(inputs.snapshot().identity(),PROVIDER,identity,sortedIssues));
+    }
+
+    /** Reads only captured repository bytes. A relative import has no authority to read the host.
+     * Expansion is repeated for the non-profile and selected-profile phases, each with bounded work. */
+    private static final class ImportClosure {
+        private final RepositoryInputs inputs;
+        private final Policy policy;
+        private final List<IngestionEvidence.Issue> issues;
+        private final ContentDigest identity;
+        private final Set<String> profiles;
+        private final boolean beforeProfiles;
+        private final Set<String> seen = new HashSet<>();
+        private final Set<String> stack = new HashSet<>();
+        private final Set<String> charged = new HashSet<>();
+        private final Map<String,List<Document>> cache = new HashMap<>();
+        private final List<Document> output = new ArrayList<>();
+        private int characters;
+        private int edges;
+
+        ImportClosure(RepositoryInputs inputs,Policy policy,List<IngestionEvidence.Issue> issues,
+                      ContentDigest identity,Set<String> profiles,boolean beforeProfiles) {
+            this.inputs=inputs;this.policy=policy;this.issues=issues;this.identity=identity;
+            this.profiles=profiles;this.beforeProfiles=beforeProfiles;
+        }
+        List<Document> expand(List<Document> roots) {
+            // Boot discovers the highest-precedence contributor first. Import-once must
+            // therefore retain the last declared import position, not the first low-priority one.
+            for (var root:roots.reversed()) visit(root,0);
+            return List.copyOf(output.reversed());
+        }
+        private void visit(Document document,int depth) {
+            String key=document.path()+"#"+document.ordinal();
+            if(stack.contains(key)) { problem(CONFIG_IMPORT_REQUIRED,document,"cyclic-import");return; }
+            if(!seen.add(key))return;
+            if(depth>policy.maxDepth() || seen.size()>policy.maxDocuments()) {
+                problem(INPUT_LIMIT,document,"import-depth-or-documents");return;
+            }
+            var input=inputs.files().get(document.path());
+            if(input!=null && charged.add(document.path())) {
+                if((long)characters+input.bytes().length>policy.maxCharacters()) {
+                    problem(INPUT_LIMIT,document,"import-bytes");return;
+                }
+                characters+=input.bytes().length;
+            }
+            if(!enabled(document)) {output.add(document);return;}
+            stack.add(key);
+            try {
+                var properties=document.properties();
+                if(properties.keySet().stream().anyMatch(k -> k.startsWith("spring.config.import["))) {
+                    long count=properties.keySet().stream().filter(k -> k.startsWith("spring.config.import[")).count();
+                    if(properties.containsKey("spring.config.import") || count!=listValue(properties,"spring.config.import").size()) {
+                        problem(CONFIG_IMPORT_REQUIRED,document,"import-list");return;
+                    }
+                }
+                for(String raw:listValue(properties,"spring.config.import").reversed()) {
+                    if(++edges>policy.maxProperties()) {problem(INPUT_LIMIT,document,"import-edges");break;}
+                    boolean optional=raw.startsWith("optional:");
+                    String relative=optional?raw.substring(9):raw;
+                    String path=relativePath(document.path(),relative);
+                    if(path==null) {problem(CONFIG_IMPORT_REQUIRED,document,"external-or-unsupported-import");continue;}
+                    if(!beforeProfiles) {
+                        int dot=path.lastIndexOf('.');
+                        for(String profile:List.copyOf(profiles).reversed()) {
+                            if(!profile.matches("[A-Za-z0-9][A-Za-z0-9._+@-]*"))continue;
+                            String variant=path.substring(0,dot)+"-"+profile+path.substring(dot);
+                            read(variant,Optional.of(profile),true,document).reversed().forEach(d -> visit(d,depth+1));
+                        }
+                    }
+                    read(path,Optional.empty(),optional,document).reversed().forEach(d -> visit(d,depth+1));
+                }
+            } finally {stack.remove(key);output.add(document);}
+        }
+        private boolean enabled(Document d) {
+            if(beforeProfiles)return d.profile().isEmpty()&&!hasActivation(d.properties());
+            if(d.profile().isPresent()&&!profiles.contains(d.profile().orElseThrow()))return false;
+            if(d.properties().containsKey("spring.profiles")||d.properties().containsKey("spring.config.activate.on-cloud-platform"))return false;
+            if(d.properties().keySet().stream().noneMatch(k -> k.startsWith("spring.config.activate.on-profile")))return true;
+            try {return listValue(d.properties(),"spring.config.activate.on-profile").stream()
+                    .anyMatch(e -> matches(e,profiles,policy.maxDepth(),identity));}
+            catch(IllegalArgumentException invalid) {return false;}
+        }
+        private List<Document> read(String path,Optional<String> profile,boolean optional,Document importer) {
+            if(cache.containsKey(path))return cache.get(path);
+            var source=inputs.files().get(path);
+            if(source==null) {
+                boolean recorded=inputs.snapshot().files().stream().anyMatch(f -> f.path().equals(path));
+                if(recorded||!optional)problem(recorded?INPUT_UNAVAILABLE:CONFIG_IMPORT_REQUIRED,importer,"missing-import");
+                return List.of();
+            }
+            var rows=new ArrayList<Document>();
+            try {
+                if(source.bytes().length>policy.maxCharacters()-characters)throw new Limit();
+                String decoded=path.endsWith(".properties")?new String(source.bytes(),StandardCharsets.ISO_8859_1):decodeYaml(source);
+                var values=path.endsWith(".properties")?properties(decoded,policy):yaml(decoded,policy);
+                for(int i=0;i<values.size();i++) {
+                    if(!validProfileLists(values.get(i)))problem(CONFIG_PROFILE_INVALID,importer,"import-profile-list");
+                    rows.add(new Document(path,i,profile,values.get(i),new ConditionEvidence.Source(
+                            source.document().identity(),source.document().contentDigest(),Optional.empty(),i),false));
+                }
+            } catch(Limit exceeded) {problem(INPUT_LIMIT,importer,"import-bytes-or-parser");}
+            catch(UnsupportedFormat unsupported) {problem(CONFIG_FORMAT_UNSUPPORTED,importer,"import-format");}
+            catch(YAMLException|IllegalArgumentException malformed) {problem(MALFORMED_INPUT,importer,"malformed-import");}
+            cache.put(path,List.copyOf(rows));return rows;
+        }
+        private String relativePath(String importer,String relative) {
+            if(relative.isBlank()||relative.startsWith("/")||relative.contains(":")||relative.contains("\\")
+                    ||relative.contains("${")||relative.contains("*")||!relative.matches(".*\\.(properties|ya?ml)"))return null;
+            var parts=new ArrayDeque<String>();
+            String directory=importer.contains("/")?importer.substring(0,importer.lastIndexOf('/')+1):"";
+            for(String part:(directory+relative).split("/",-1)) {
+                if(part.equals("..")) {if(parts.isEmpty())return null;parts.removeLast();}
+                else if(!part.equals(".")&&!part.isEmpty())parts.addLast(part);
+            }
+            String path=String.join("/",parts);
+            return policy.locations().stream().anyMatch(root -> root.equals(".")||path.startsWith(root+"/"))?path:null;
+        }
+        private void problem(IngestionEvidence.Reason reason,Document importer,String detail) {
+            issue(issues,reason,importer.path()+"#"+importer.ordinal()+":"+detail,importer.evidence().identity());
+        }
     }
 
     private static String decodeYaml(SourceInput source) {

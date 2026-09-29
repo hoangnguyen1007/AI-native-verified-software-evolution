@@ -102,18 +102,23 @@ class FieldAccessTest {
         var references = result.observations().stream().filter(o -> isFieldCategory(o.category().value())).map(ObservationRecord::reference).toList();
         assertTrue(references.containsAll(List.of("arg.missing","child.missing","child")));
     }
-    @Test void enumConstantsAreFieldsAndUnsupportedContextsNeverBecomeTypeCallers() {
+    @Test void enumConstantsAndAnnotationValuesRetainTheirActualFieldTargetsAndOwners() {
         var result = new JavaParserFrontend().analyze(TestInputs.request("enum E { A,B } class C { E e=E.A; java.time.DayOfWeek f(){return java.time.DayOfWeek.MONDAY;} }"));
         assertEquals(2,accesses(result).size());
         var entities = TypeRelationshipsTest.entities(result);
         var targets = accesses(result).stream().map(o -> entities.get(((RelationshipTarget.Resolved)o.relationship().target()).target())).toList();
         assertTrue(targets.stream().allMatch(e -> e.kind() == EntityKind.FIELD));
         assertEquals(Set.of(fieldName("E.A"),fieldName("java.time.DayOfWeek.MONDAY")),new HashSet<>(targets.stream().map(Entity::canonicalName).toList()));
-        var unsupported = new JavaParserFrontend().analyze(TestInputs.request("record R(int x) { int f(){return this.x;} } class Constants { static final String NAME=\"old\"; } @Deprecated(since=Constants.NAME) class C {}"));
-        assertEquals(1,accesses(unsupported).size()); // Record field is supported; annotation values retain their boundary.
-        var ledger = unsupported.observations().stream().filter(o -> isFieldCategory(o.category().value())).toList();
+        var metadata = new JavaParserFrontend().analyze(TestInputs.request("record R(int x) { int f(){return this.x;} } class Constants { static final String NAME=\"old\"; } @Deprecated(since=Constants.NAME) class C {}"));
+        assertEquals(2,accesses(metadata).size());
+        var metadataEntities=TypeRelationshipsTest.entities(metadata);
+        var annotationRead=accesses(metadata).stream().filter(o -> metadataEntities.get(((RelationshipTarget.Resolved)o.relationship().target()).target())
+                .canonicalName().equals(fieldName("Constants.NAME"))).findFirst().orElseThrow();
+        assertEquals(JavaSymbolName.topLevelType("","C").canonicalName(),metadataEntities.get(annotationRead.relationship().source()).canonicalName());
+        assertEquals(EntityKind.TYPE,metadataEntities.get(annotationRead.relationship().source()).kind());
+        var ledger = metadata.observations().stream().filter(o -> isFieldCategory(o.category().value())).toList();
         assertEquals(2,ledger.size());
-        assertEquals(1,ledger.stream().filter(o -> o.attribution()==SemanticStatus.UNSUPPORTED && o.mappedOccurrence().isEmpty()).count());
+        assertTrue(ledger.stream().allMatch(o -> o.attribution()==SemanticStatus.RESOLVED && o.mappedOccurrence().isPresent()));
     }
     @Test void fieldHidingAndMultiDeclaratorsUseSelectedDeclarations() {
         var result = new JavaParserFrontend().analyze(TestInputs.request("class Base { int value; } class Child extends Base { int value; } class C { int left,right; void f(Child c){right=left; c.value=1; ((Base)c).value++;} }"));

@@ -1,6 +1,8 @@
 # V2.2 — Java/Spring semantic closure
 
-Status: **PLANNED / PROVISIONAL implementation design**. Task triển khai thứ hai của [kế hoạch ba task](README.md). Mục tiêu: evidence V2.1 đi hết đến Java targets, Spring registration/binding và conditional architecture; không dừng ở các candidate helpers rời rạc.
+Status: **IN PROGRESS / partial implementation, chưa đạt exit criteria**, cập nhật 2026-09-28. Task triển khai thứ hai của [kế hoạch ba task](README.md). Mục tiêu: evidence V2.1 đi hết đến Java targets, Spring registration/binding và conditional architecture; không dừng ở các candidate helpers rời rạc.
+
+Theo chỉ đạo trực tiếp của chủ dự án, công việc hiện tại là V2.2; các nghĩa vụ nghiệm thu V2.1 còn mở không được coi là đã qua. [Ranh giới triển khai](../../architecture/m4uv2-v22-implementation-boundary.md) ghi các phần đã nối vào code: direct Lombok constructor/accessor resolution, annotation reads/var/lexical parameter identities, captured relative Config Data imports và source-to-M4C/M4D cho ordinary components/scalar constructor injection với scope/order proof được cung cấp. [Gói kiểm chứng](../../reproducibility/m4uv2-v22-2026-09-28/README.md) ghi bằng chứng thực chạy. Những phần này chưa đóng toàn bộ bất kỳ nhóm A–E nào bên dưới; checkbox không được đánh dấu chỉ nhờ một fragment hoặc một typed gap.
 
 ## Entry, output và boundary
 

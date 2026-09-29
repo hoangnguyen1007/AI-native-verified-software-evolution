@@ -20,7 +20,7 @@ import java.util.function.Supplier;
 
 /** Per-request state. Traversal order never enters identity or output ordering. */
 final class Extraction {
-    private static final VersionedIdentifier VERSION = new VersionedIdentifier("frontend.javaparser", "3.28.2-m4u.1");
+    private static final VersionedIdentifier VERSION = JavaParserFrontend.PROVIDER;
     private static final Derivation DIRECT = new Derivation(DerivationKind.DIRECT, new VersionedIdentifier("java.source", "1"), List.of());
     private final FrontendRequest request;
     private final ResolutionEnvironment environment;
@@ -73,8 +73,8 @@ final class Extraction {
         for (var unit : orderedUnits) implicit.declarations(unit.ast);
         for (var unit : orderedUnits) {
             for (var node : unit.ast.stream().filter(this::isDeclaration).toList()) observe(node, "declares", () -> entity(node), () -> owner(node));
-            for (var node : unit.ast.findAll(MethodCallExpr.class)) observe(node, "calls", () -> callable(node.resolve(),node), () -> owner(node));
-            for (var node : unit.ast.findAll(ObjectCreationExpr.class)) observe(node, "constructor-calls", () -> callable(node.resolve()), () -> owner(node));
+            for (var node : unit.ast.findAll(MethodCallExpr.class)) observe(node, "calls", () -> resolveCall(node), () -> owner(node));
+            for (var node : unit.ast.findAll(ObjectCreationExpr.class)) observe(node, "constructor-calls", () -> resolveCall(node), () -> owner(node));
             for (var node : unit.ast.findAll(ExplicitConstructorInvocationStmt.class)) observe(node, "constructor-calls", () -> callable(node.resolve()), () -> owner(node));
             var references = new ReferenceResolution(environment.solver);
             for (var node : unit.ast.findAll(MethodReferenceExpr.class)) observe(node,"method-references",() -> callable(references.resolve(node),node),() -> owner(node));
@@ -267,6 +267,9 @@ final class Extraction {
             Node parent = parameter.getParentNode().orElseThrow();
             if (parent instanceof CallableDeclaration<?> callable) result = JavaSymbolName.parameter(name(callable), callable.getParameters().indexOf(parameter));
             else if (parent instanceof RecordDeclaration record) result = JavaSymbolName.recordComponent(name(record), parameter.getNameAsString());
+            else if (parent instanceof LambdaExpr lambda) result = JavaSymbolName.parameter(name(lambda), lambda.getParameters().indexOf(parameter));
+            else if (parent instanceof com.github.javaparser.ast.stmt.CatchClause) result = JavaSymbolName.catchParameter(
+                    ownerName(parameter), unit(parameter).input.document().identity(), unit(parameter).source.start(parameter), parameter.getNameAsString());
             else throw new MappingFailure(SemanticStatus.UNSUPPORTED, "java.parameter-owner");
         } else if (node instanceof TypeParameter parameter) {
             Node parent = parameter.getParentNode().orElseThrow();
@@ -469,6 +472,12 @@ final class Extraction {
         }
         return callable(resolved);
     }
+    private Entity resolveCall(Expression expression) {
+        var generated=lombok.resolve(expression);
+        if(generated.isPresent())return generated.orElseThrow();
+        return expression instanceof MethodCallExpr call ? callable(call.resolve(),call)
+                : callable(((ObjectCreationExpr)expression).resolve());
+    }
     Entity callable(ResolvedMethodLikeDeclaration resolved) {
         if (resolved.toAst().isPresent() && (sourceNodes.contains(resolved.toAst().orElseThrow())
                 || reactorNodes.contains(resolved.toAst().orElseThrow()))) {
@@ -552,8 +561,8 @@ final class Extraction {
     }
     Entity fieldOwner(Node node) {
         for (Node ancestor = node.getParentNode().orElse(null); ancestor != null; ancestor = ancestor.getParentNode().orElse(null))
-            if (ancestor instanceof AnnotationExpr || ancestor instanceof AnnotationMemberDeclaration)
-                throw new MappingFailure(SemanticStatus.UNSUPPORTED,"java.field-annotation-context");
+            if (ancestor instanceof AnnotationExpr annotation) return typeUseOwner(annotation);
+            else if (ancestor instanceof AnnotationMemberDeclaration) return entity(ancestor);
         var owner = owner(node);
         if (!Set.of(EntityKind.METHOD,EntityKind.CONSTRUCTOR,EntityKind.INITIALIZER,EntityKind.LAMBDA).contains(owner.kind()))
             throw new MappingFailure(SemanticStatus.UNSUPPORTED,"java.field-execution-owner");

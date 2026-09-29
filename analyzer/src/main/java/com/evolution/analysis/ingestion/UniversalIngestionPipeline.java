@@ -63,6 +63,22 @@ public final class UniversalIngestionPipeline {
         }
         return new Result(identity,sources,units,issues.stream().sorted(Comparator.comparing(IngestionEvidence.Issue::identity)).toList(),List.copyOf(gaps));
     }
+    /** Continue an acquired unit into real M4C plans under an explicitly evidenced scope.
+     * Missing order/container closure is represented by UNKNOWN completeness, never inferred from sorting. */
+    public SourceToSpringPlan.Result prepareSpring(Result pipeline,UniversalSourceIngestion.SourceSet sourceSet,
+                                                   SourceToSpringPlan.Scope scope,int limit) {
+        var input=pipeline.sourceIngestion().outcomes().stream().filter(o -> o.sourceSet().equals(sourceSet)).findFirst().orElseThrow();
+        var unit=pipeline.units().stream().filter(u -> u.sourceSet().equals(sourceSet)).findFirst().orElseThrow();
+        if(unit.status()!=Status.ANALYZED||input.request().isEmpty())
+            throw new IllegalArgumentException("Spring plans require an analyzed exact source set");
+        var request=input.request().orElseThrow();
+        var source=new SpringSourceEvidence(request.manifest(),unit.frontend().orElseThrow(),framework(request));
+        var build=SpringBuildContext.fromExactRequest(request,pipeline.sourceIngestion().identity());
+        var normalized=SourceToSpringPlan.normalize(build,source,unit.components().orElseThrow(),unit.constructors().orElseThrow(),scope,limit);
+        var inherited=new TreeSet<>(pipeline.gaps());inherited.addAll(normalized.gaps());
+        return new SourceToSpringPlan.Result(normalized.inputIdentity(),normalized.inventory(),normalized.conditions(),
+                normalized.binding(),List.copyOf(inherited));
+    }
     private static SpringFrameworkEvidence framework(FrontendRequest request) {
         var artifacts=new ArrayList<SpringFrameworkEvidence.Artifact>();
         for(var entry:request.manifest().classpath()) {

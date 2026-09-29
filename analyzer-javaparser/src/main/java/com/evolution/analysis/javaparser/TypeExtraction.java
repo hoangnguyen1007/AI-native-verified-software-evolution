@@ -72,6 +72,20 @@ final class TypeExtraction {
     }
     private JavaType map(Type type, Supplier<Entity> owner, String role, boolean argument) {
         String spelling = context.source(type).slice(context.source(type).span(type));
+        if (type instanceof VarType) {
+            try {
+                var inferred = inferred(type.resolve(), spelling, 0);
+                if(inferred.target().isPresent()) {
+                    var resolved = type.resolve();
+                    if(resolved.isReferenceType()) context.observe(type,role,
+                            () -> context.typeEntity(resolved.asReferenceType().getTypeDeclaration().orElseThrow()),owner);
+                }
+                return inferred;
+            } catch(RuntimeException failure) {
+                context.observe(type,role,() -> {throw failure;},owner);
+                return new JavaType(JavaType.Kind.UNKNOWN,spelling,Optional.empty(),List.of(),Optional.empty(),Extraction.failureStatus(failure));
+            }
+        }
         if (type instanceof PrimitiveType) return simple(JavaType.Kind.PRIMITIVE,spelling,List.of());
         if (type instanceof VoidType) return simple(JavaType.Kind.VOID,spelling,List.of());
         if (type instanceof ArrayType array) return simple(JavaType.Kind.ARRAY,spelling,List.of(map(array.getComponentType(),owner,role,argument)));
@@ -111,6 +125,29 @@ final class TypeExtraction {
         if (scope.getTypeArguments().isPresent()) return true;
         try { context.resolveNamed(scope); return true; }
         catch (RuntimeException failure) { return scope.getScope().map(this::isTypeQualifier).orElse(false); }
+    }
+    private JavaType inferred(com.github.javaparser.resolution.types.ResolvedType type,String spelling,int depth) {
+        if(depth>64)throw new UnsupportedOperationException("Inferred type nesting limit");
+        if(type.isPrimitive())return simple(JavaType.Kind.PRIMITIVE,spelling,List.of());
+        if(type.isArray())return simple(JavaType.Kind.ARRAY,spelling,List.of(inferred(type.asArrayType().getComponentType(),type.asArrayType().getComponentType().describe(),depth+1)));
+        if(type.isReferenceType()) {
+            var reference=type.asReferenceType();
+            var target=context.typeEntity(reference.getTypeDeclaration().orElseThrow());
+            var arguments=reference.typeParametersValues().stream().map(t -> inferred(t,t.describe(),depth+1)).toList();
+            return new JavaType(JavaType.Kind.DECLARED,spelling,Optional.of(target.identity()),arguments,Optional.empty(),completeness(arguments,Optional.empty()));
+        }
+        if(type.isTypeVariable()) {
+            var target=context.typeEntity(type.asTypeVariable().asTypeParameter());
+            return new JavaType(JavaType.Kind.TYPE_VARIABLE,spelling,Optional.of(target.identity()),List.of(),Optional.empty(),SemanticStatus.RESOLVED);
+        }
+        if(type.isWildcard()) {
+            var wildcard=type.asWildcard();
+            if(!wildcard.isBounded())return simple(JavaType.Kind.WILDCARD,spelling,List.of());
+            var bound=wildcard.getBoundedType();
+            return simple(wildcard.isExtends()?JavaType.Kind.EXTENDS_WILDCARD:JavaType.Kind.SUPER_WILDCARD,
+                    spelling,List.of(inferred(bound,bound.describe(),depth+1)));
+        }
+        throw new UnsupportedOperationException("Inferred type requires further attribution");
     }
     private static JavaType simple(JavaType.Kind kind, String spelling, List<JavaType> children) {
         return new JavaType(kind,spelling,Optional.empty(),children,Optional.empty(),completeness(children,Optional.empty()));

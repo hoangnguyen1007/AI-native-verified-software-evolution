@@ -1,0 +1,34 @@
+[
+  {
+    "path": "pom.xml",
+    "sha256": "c3ffc8d598e140ee93047cdc4a67967c5657833b52c43ee0558f0bdec9ab0aad"
+  },
+  {
+    "path": "analyzer/pom.xml",
+    "sha256": "4465be35e90280bb29689f54377cbda50cbda4ffbbc1e8cb1436ea5c6929a654"
+  },
+  {
+    "path": "analyzer-maven/pom.xml",
+    "sha256": "15e328eaacec61f195ac2f93a5b09f14e24b1607e289da6deb5146702385fbd6"
+  },
+  {
+    "path": "analyzer-filesystem/pom.xml",
+    "sha256": "4dbd9f770aaa65dd34c5224cfc07967d8721027e943202a17a565870c89ac779"
+  },
+  {
+    "path": "analyzer-javaparser/pom.xml",
+    "sha256": "6363db9b824533eb7910c30720565927c4bbe89cfe7e186f1431a381c74c3fd3"
+  },
+  {
+    "path": "backend/pom.xml",
+    "sha256": "9b81a7a00439acd6ad861dae82777dfbdc7fc4a98dd3ef4f7410f05239ea10ac"
+  },
+  {
+    "path": ".mvn/wrapper/maven-wrapper.properties",
+    "sha256": "1d1e17ecd638f210b441d9fb7193e35f36eea346f495a99c6a88f836a88ca270"
+  },
+  {
+    "path": "mvnw.cmd",
+    "sha256": "8c720db91d96ba5f67afa4083726b20eb4be399d86bb859e09eb67436bb230f5"
+  }
+]

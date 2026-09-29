@@ -1,6 +1,6 @@
 # Current State
 
-Last reconciled: 2026-09-28. V2.1 implementation is in progress; the [implementation ledger](research/m4-universal-v2-v21-implementation-ledger.md) separates focused evidence from unfulfilled acceptance rows. Fresh checks and their scope belong in the task handoff; historical gate evidence is identified below.
+Last reconciled: 2026-09-28. The owner explicitly requested continuation of V2.2; its [implemented boundary](architecture/m4uv2-v22-implementation-boundary.md) is partial and its exit criteria remain open. V2.1 acceptance also remains open in the [implementation ledger](research/m4-universal-v2-v21-implementation-ledger.md). Fresh checks and their scope belong in the task handoff; historical gate evidence is identified below.
 
 ## PHASE AND MILESTONE
 
@@ -47,14 +47,42 @@ commit-pinned, bounded source exports with per-entry SHA-256 manifests and match
 license-file hashes. Independent labels, analyzed path inclusion, input modes,
 weights and hardware remain open; no L2 acceptance campaign has run.
 
-**Current task: finish V2.1.** V2.2 and V2.3 follow, then M4E adjudicates the shared
-acceptance evidence before G3. The owner fixed the threshold at 99% or more correct,
+**Current task: V2.2, by explicit owner request.** V2.1's remaining acceptance
+obligations are retained; neither V2.1 nor V2.2 is declared complete. V2.3 follows
+their exits, then M4E adjudicates the shared acceptance evidence before G3.
+The owner fixed the threshold at 99% or more correct,
 evidenced coverage on registered eligible cohorts on 2026-09-27; this is an empirical target,
 not worldwide measured coverage. Target build/runtime execution, a primary-parser
 replacement and new analyzed languages are not authorized by this plan.
 
 Completed sections below retain checkpoint history; their former next-slice
 instructions do not override this current sequence or the final next-task section.
+
+## IN PROGRESS — V2.2 SEMANTIC CLOSURE
+
+The production adapter now resolves direct generated Lombok constructor/accessor
+calls in a bounded evidenced fragment, retains annotation constant reads, inferred
+`var` types and anchored lambda/catch parameter identities. Config ingestion expands
+captured relative imports with precedence, profile variants and resource bounds.
+`UniversalIngestionPipeline.prepareSpring` connects actual source evidence to M4C
+registration/binding and existing exhaustive/SAT truth evaluation under explicit
+container/order/closure proofs. The bridge currently closes only ordinary direct
+components and selected scalar constructor dependencies; it is not automatic
+application bootstrap or full Spring normalization.
+
+The [implementation boundary](architecture/m4uv2-v22-implementation-boundary.md)
+lists supported fragments, APIs and remaining A–E obligations. The
+[verification package](reproducibility/m4uv2-v22-2026-09-28/README.md) records fresh
+commands and results, including authored compiler/Lombok, Boot import and Spring
+container controls. No broad V2.2 checklist section is marked complete. No target
+build/runtime, external benchmark, measured 99% claim or gate promotion is made.
+
+**CONFIRMED final implementation verification (2026-09-28):** root `verify -q`
+with Enforcer enabled passed **597 tests in 88 fresh suites**, with zero failures,
+errors or skips. All 18 changed source/test hashes remained unchanged through the
+run. The initial broad run exposed an obsolete annotation-read expectation; the
+repaired expectation and upstream-gap-retention control pass in the final run.
+These results do not close the remaining V2.2 exit criteria.
 
 ## IMPLEMENTED — M4-UNIVERSAL SLICE 2 SPRING SEMANTICS AND SAT
 
@@ -280,8 +308,8 @@ The human approved JavaParser + SymbolSolver as the primary SE121/M2 frontend on
 - Root verification includes the original M1/build tests and new frontend/adapter tests. Exact final totals and raw console output are in the implementation evidence. Standalone benchmarks are outside root verification.
 - R1 PoC: `benchmarks/poc/parser-eval/`. Independent experimental adapters/comparison: `benchmarks/semantic-frontend-evaluation/`.
 - M2 oracle pilot: `benchmarks/m2-ground-truth/`, separate from the reactor and legacy comparator, using JDK 21/Python standard libraries.
-- Production adapter pin: JavaParser/SymbolSolver 3.28.2. M4U.1 adds bounded Lombok synthesis, parser-neutral type shapes and record constructor parameter evidence to the existing frontend. The M4U.1 contract qualifies the fresh extension; historical M2 evidence remains unchanged. No compiler-equivalence or scale claim is made.
-- Progressive effective-POM/source-plan projection, bounded filesystem/dependency acquisition, explicit platform/frontend assembly, capability-gap normalization and M4A–M4D bounded Spring semantics are implemented. M4U.1 adds passive POM-less/Gradle source plans, configuration baseline ingestion and component/constructor acquisition. M4U.2 adds the bounded Spring Data, version/namespace/metadata, SAT, route, hierarchy and SpEL providers described above. Generated-source/reactor-output acquisition, a complete source-to-Spring-descriptor adapter, M4E external validation, graph, policy engine, metric/scoring calculation, CLI, backend API and workbench remain unimplemented.
+- Production adapter pin: JavaParser/SymbolSolver 3.28.2, current provider `frontend.javaparser:3.28.2-m4uv2.2`. M4U.1 supplied bounded Lombok synthesis, parser-neutral type shapes and record constructor parameter evidence; V2.2 adds the bounded resolution/attribution changes described above. Historical M2 evidence remains unchanged. No general compiler-equivalence or scale claim is made.
+- Progressive effective-POM/source-plan projection, bounded filesystem/dependency acquisition, explicit platform/frontend assembly, capability-gap normalization and M4A–M4D bounded Spring semantics are implemented. M4U.1 adds passive POM-less/Gradle source plans, configuration baseline ingestion and component/constructor acquisition. M4U.2 adds the bounded Spring Data, version/namespace/metadata, SAT, route, hierarchy and SpEL providers described above. V2.1 supports supplied generated sources/artifacts with lineage; V2.2 adds a bounded source-to-plan continuation. General generated-root acquisition, complete source-to-Spring-descriptor normalization, M4E external validation, graph, policy engine, metric/scoring calculation, CLI, backend API and workbench remain unimplemented.
 - `frontend/` and root `tests/` have no tracked product implementation.
 
 ## EVIDENCE AND LIMITS
@@ -307,9 +335,9 @@ Provisional: Neo4j Community adapter, Spring Boot API, YAML external policies, C
 
 The initial Maven sandbox JUnit-cache denial and the final benchmark install-cache denial were resolved through the host's supported execution approval, with explicit `MAVEN_USER_HOME` / `maven.repo.local`. Those historical M3 execution denials are resolved. M4-R0 now has its separate contract/adjudication checkpoint described above.
 
-Current input boundaries: explicit strict portable charsets; configured Java 8 `rt.jar`, Java 9+ JMOD or verified cross-release `ct.sym` platform views; exact release dependencies from a single standard Maven2 cache plus explicit credential-free HTTPS repositories; exact reactor-output JARs supplied by the caller or complete owned/decoded handwritten sibling sources at the same logical classpath position; and non-preview parser-level selection through Java 26 (bounded M4U.1 controls, separate from platform API verification). V2.1 additionally supports lineage-checked supplied generated Java under declared source roots and explicit exact artifact captures. There is no toolchain discovery, class-directory module output, arbitrary generated-root acquisition, manifest `Class-Path` expansion, version-range/relocation/snapshot resolution or transport-authenticity claim beyond HTTPS. The existing dependency reader selects multi-release JAR entries deterministically for the analyzed release, and the V2.1 importer records a corresponding release-selected class entry digest view for captured dependency JARs; JPMS/module-path semantics remain unproven. Remaining explicit degraded frontend cases include array constructor references/array length, annotation-value field reads, inferred `var` detail, typed lambda/catch parameter identities and unsupported functional target/inference contexts. These known boundaries remain limitations of the G2 checkpoint recorded as passed; they are not a reopened G2 blocker.
+Current input boundaries: explicit strict portable charsets; configured Java 8 `rt.jar`, Java 9+ JMOD or verified cross-release `ct.sym` platform views; exact release dependencies from a single standard Maven2 cache plus explicit credential-free HTTPS repositories; exact reactor-output JARs supplied by the caller or complete owned/decoded handwritten sibling sources at the same logical classpath position; and non-preview parser-level selection through Java 26 (bounded M4U.1 controls, separate from platform API verification). V2.1 additionally supports lineage-checked supplied generated Java under declared source roots and explicit exact artifact captures. There is no toolchain discovery, class-directory module output, arbitrary generated-root acquisition, manifest `Class-Path` expansion, version-range/relocation/snapshot resolution or transport-authenticity claim beyond HTTPS. The existing dependency reader selects multi-release JAR entries deterministically for the analyzed release, and the V2.1 importer records a corresponding release-selected class entry digest view for captured dependency JARs; JPMS/module-path semantics remain unproven. Remaining explicit degraded frontend cases include array constructor references/array length, unsupported functional target/inference contexts and broader generated overload/builder/configuration cases. V2.2 now supplies bounded annotation-value field reads, inferred `var` detail and typed lambda/catch parameter identities; see its implemented boundary and verification package. These known boundaries remain limitations of the G2 checkpoint recorded as passed; they are not a reopened G2 blocker.
 
-Open work starts with Universal v2 V2.1, then V2.2/V2.3 and M4E/G3. Historical container equivalence, hierarchy/factory/runtime behavior beyond the documented fragment, complete source-to-descriptor normalization, library resources, external Config Data, OTHER abstraction and correlated opaque/order reasoning remain implementation boundaries targeted by the new plan. Finite SAT is implemented; arbitrary infinite spaces and global latency/coverage remain unproven. Passive provider expansion, registered baselines, representative evidence and G3 adjudication are distinct stages. A new external G2 checkpoint still needs separate authorization and immutable evidence; preserved G2 runs stay unchanged. Policy criteria, metric/score thresholds, graph/query/UI budgets and frontend framework selection remain later decisions.
+Current authorized work is V2.2, with V2.1 acceptance obligations preserved, then V2.3 and M4E/G3. Historical container equivalence, hierarchy/factory/runtime behavior beyond the documented fragment, complete source-to-descriptor normalization, library resources, external Config Data, OTHER abstraction and correlated opaque/order reasoning remain implementation boundaries targeted by the new plan. Finite SAT is implemented; arbitrary infinite spaces and global latency/coverage remain unproven. Passive provider expansion, registered baselines, representative evidence and G3 adjudication are distinct stages. A new external G2 checkpoint still needs separate authorization and immutable evidence; preserved G2 runs stay unchanged. Policy criteria, metric/score thresholds, graph/query/UI budgets and frontend framework selection remain later decisions.
 
 ## QUALITY GATES
 
@@ -328,16 +356,15 @@ Open work starts with Universal v2 V2.1, then V2.2/V2.3 and M4E/G3. Historical c
 
 ## EXACT NEXT TASK
 
-**M4 Universal v2 / V2.1 — remaining adaptive intake and evidence closure.** Follow the
-[implementation ledger](research/m4-universal-v2-v21-implementation-ledger.md) and
-[task file](tasks/m4-universal-v2/01-adaptive-intake-and-evidence.md): extend the
-bounded build/artifact/generated evidence paths, especially library bytecode and
-annotations, class directories and packaged library variants. Complete durable
-coordinator recovery and isolate remaining build/frontend stages where justified.
-Register the baseline/cohorts and
-finish the unproved catalog subcases before declaring the V2.1 exit gate.
+**M4 Universal v2 / V2.2 — extend source-to-M4C acquisition to bean producers and
+their constructor/bean-parameter dependencies with evidenced scheduling.** Start
+from `SourceToSpringPlan` and the [implemented boundary](architecture/m4uv2-v22-implementation-boundary.md).
+Add a compact source-to-conditional-binding positive and wrong/missing order,
+producer metadata and qualifier controls against the pinned container. Keep
+acquisition gaps, complete scope/order proofs and deterministic identities intact;
+do not accept hand-built final descriptors as the integration positive.
 
-The [three-task plan](tasks/m4-universal-v2/README.md) then proceeds to Java/Spring
-semantic closure and integration/acceptance. M4E adjudicates the shared evidence
-before G3; no duplicate benchmark campaign or automatic gate promotion is implied.
-No Universal v2 corpus benchmark or M4E/G3 gate assessment has been run.
+Continue the remaining A–E obligations in the [V2.2 task](tasks/m4-universal-v2/02-java-spring-semantic-closure.md).
+Retain V2.1's [unfulfilled acceptance rows](research/m4-universal-v2-v21-implementation-ledger.md).
+V2.3, M4E and G3 remain later steps in the approved three-task plan. No Universal v2
+corpus benchmark or M4E/G3 gate assessment has been run.

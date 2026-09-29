@@ -1,0 +1,8 @@
+{
+  "command": ".\\mvnw.cmd -q verify",
+  "enforcerEnabled": true,
+  "exitCode": 0,
+  "startedUtc": "2026-09-28T13:39:24.0232122Z",
+  "finishedUtc": "2026-09-28T13:43:21.9469069Z",
+  "elapsedSeconds": 237.926
+}

@@ -1,0 +1,919 @@
+{
+  "baseCommit": "e18c901c15c3366107a24078ac277e232cdbf301",
+  "verification": {
+    "command": ".\\mvnw.cmd -q verify",
+    "enforcerEnabled": true,
+    "exitCode": 0,
+    "startedUtc": "2026-09-28T13:39:24.0232122Z",
+    "finishedUtc": "2026-09-28T13:43:21.9469069Z",
+    "elapsedSeconds": 237.926
+  },
+  "toolchain": {
+    "maven": "3.9.16",
+    "java": "Oracle 21.0.12.1",
+    "os": "Windows 10 amd64",
+    "locale": "en_US",
+    "encoding": "UTF-8"
+  },
+  "totals": {
+    "suites": 88,
+    "tests": 597.0,
+    "failures": 0.0,
+    "errors": 0.0,
+    "skipped": 0.0
+  },
+  "changedSourceHashesUnchanged": true,
+  "excludedStaleReports": [
+    "TEST-com.evolution.analysis.gap.CapabilityGapRecordTest.xml",
+    "TEST-com.evolution.analysis.gap.G2CheckpointFixtureTest.xml",
+    "TEST-com.evolution.analysis.gap.GapNormalizerTest.xml",
+    "TEST-com.evolution.analysis.gap.ProviderConflictTest.xml",
+    "TEST-com.evolution.analysis.javaparser.LombokSynthesisTest.xml",
+    "TEST-com.evolution.analysis.spring.condition.SpringBindingOracleIT.xml",
+    "TEST-com.evolution.analysis.spring.condition.SpringConfigurationResourceLoaderTest.xml",
+    "TEST-com.evolution.analysis.spring.SpringBootComponentScannerTest.xml"
+  ],
+  "finalLogSha256": "4d198bf8c5d10ba4bdf9e55655a90ea0e5ecc2b31d27ad77faea88b062db52b0",
+  "suites": [
+    {
+      "name": "com.evolution.analysis.filesystem.AcquisitionCheckpointStoreTest",
+      "path": "analyzer-filesystem/target/surefire-reports/TEST-com.evolution.analysis.filesystem.AcquisitionCheckpointStoreTest.xml",
+      "tests": 2,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.448,
+      "sha256": "b5d13773431374415603aa8d692802797c622fc36e3c52492312e9d2f33b09a6"
+    },
+    {
+      "name": "com.evolution.analysis.filesystem.AdaptiveRepositoryJourneyTest",
+      "path": "analyzer-filesystem/target/surefire-reports/TEST-com.evolution.analysis.filesystem.AdaptiveRepositoryJourneyTest.xml",
+      "tests": 8,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 3.53,
+      "sha256": "021c4b728eb3652ac4dd44801f4c35c4095c3c4968f1cdc7df8514882665dc1f"
+    },
+    {
+      "name": "com.evolution.analysis.filesystem.ArchiveWorkerSupervisorTest",
+      "path": "analyzer-filesystem/target/surefire-reports/TEST-com.evolution.analysis.filesystem.ArchiveWorkerSupervisorTest.xml",
+      "tests": 5,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 2.001,
+      "sha256": "dd0e4d87cebd4781616849e675c648486a389529cd7e6163e4e0087b22d9b9d3"
+    },
+    {
+      "name": "com.evolution.analysis.filesystem.EvidenceBundleImportTest",
+      "path": "analyzer-filesystem/target/surefire-reports/TEST-com.evolution.analysis.filesystem.EvidenceBundleImportTest.xml",
+      "tests": 8,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.777,
+      "sha256": "8e30b433c239d5dc246d55b91440106143647b85b5a1af5c810d0889d224634a"
+    },
+    {
+      "name": "com.evolution.analysis.filesystem.FilesystemJdkPlatformProviderTest",
+      "path": "analyzer-filesystem/target/surefire-reports/TEST-com.evolution.analysis.filesystem.FilesystemJdkPlatformProviderTest.xml",
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.194,
+      "sha256": "a3216f6238e3e7de3aee099e096d25dad6e29fb05bdab165ea318f8871a947e1"
+    },
+    {
+      "name": "com.evolution.analysis.filesystem.FilesystemRepositoryAcquirerTest",
+      "path": "analyzer-filesystem/target/surefire-reports/TEST-com.evolution.analysis.filesystem.FilesystemRepositoryAcquirerTest.xml",
+      "tests": 10,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.4,
+      "sha256": "cba0525df9f363d4e832af3127e770f9fa8ae4152d94756fa4fe6f0de6702194"
+    },
+    {
+      "name": "com.evolution.analysis.filesystem.WorkerProcessSupervisorTest",
+      "path": "analyzer-filesystem/target/surefire-reports/TEST-com.evolution.analysis.filesystem.WorkerProcessSupervisorTest.xml",
+      "tests": 7,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 3.208,
+      "sha256": "0ebab8d841f72c54170ad429996dbb1ce3caa17093c184100bae952a0885d285"
+    },
+    {
+      "name": "com.evolution.analysis.javaparser.AnnotationsTest",
+      "path": "analyzer-javaparser/target/surefire-reports/TEST-com.evolution.analysis.javaparser.AnnotationsTest.xml",
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 5.074,
+      "sha256": "1e8894f25ecac606777a8d95d0e2559f4c6f7a67a1b771464226b6b84bb00a18"
+    },
+    {
+      "name": "com.evolution.analysis.javaparser.ComponentIngestionTest",
+      "path": "analyzer-javaparser/target/surefire-reports/TEST-com.evolution.analysis.javaparser.ComponentIngestionTest.xml",
+      "tests": 8,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 17.309,
+      "sha256": "6ffd14b49aa259aba70d2e2c6e405cb2a3bfd550e6d99770e9973d3b6f4f22a2"
+    },
+    {
+      "name": "com.evolution.analysis.javaparser.ConfigDataOracleTest",
+      "path": "analyzer-javaparser/target/surefire-reports/TEST-com.evolution.analysis.javaparser.ConfigDataOracleTest.xml",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.173,
+      "sha256": "5edd299f0d49628c6b4c57d12011532ddf5d198513483e6e2d76dd732abfff24"
+    },
+    {
+      "name": "com.evolution.analysis.javaparser.ConfigImportOracleTest",
+      "path": "analyzer-javaparser/target/surefire-reports/TEST-com.evolution.analysis.javaparser.ConfigImportOracleTest.xml",
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.441,
+      "sha256": "18a9b0574537f8527d3a3defa277db38465e8331340fe619492a3f322e837631"
+    },
+    {
+      "name": "com.evolution.analysis.javaparser.ConstructorInjectionIngestionTest",
+      "path": "analyzer-javaparser/target/surefire-reports/TEST-com.evolution.analysis.javaparser.ConstructorInjectionIngestionTest.xml",
+      "tests": 2,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 3.92,
+      "sha256": "e0d3a0ddecdd082b8aa22a47b1ede714d0ccd6e002fbff552417a091661c15bf"
+    },
+    {
+      "name": "com.evolution.analysis.javaparser.ExpressionTypesTest",
+      "path": "analyzer-javaparser/target/surefire-reports/TEST-com.evolution.analysis.javaparser.ExpressionTypesTest.xml",
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 3.002,
+      "sha256": "70997c3c71c47c26f5796e5caad63a01ab122b502942abdcc4e9bc411bc1fcc9"
+    },
+    {
+      "name": "com.evolution.analysis.javaparser.FieldAccessTest",
+      "path": "analyzer-javaparser/target/surefire-reports/TEST-com.evolution.analysis.javaparser.FieldAccessTest.xml",
+      "tests": 7,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 7.44,
+      "sha256": "f99bb67104b658a4577c945fb40111ab09015f7df2c9001aeecf28ec8468651b"
+    },
+    {
+      "name": "com.evolution.analysis.javaparser.FrozenFixtureTest",
+      "path": "analyzer-javaparser/target/surefire-reports/TEST-com.evolution.analysis.javaparser.FrozenFixtureTest.xml",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 5.795,
+      "sha256": "ab14c27754aebf1d1ce2e3d38c2d94015c3b82c7535417c07a859bd8530aef2a"
+    },
+    {
+      "name": "com.evolution.analysis.javaparser.GeneratedConstructorIntegrationTest",
+      "path": "analyzer-javaparser/target/surefire-reports/TEST-com.evolution.analysis.javaparser.GeneratedConstructorIntegrationTest.xml",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 1.331,
+      "sha256": "ad4b8334952e7def5155591a15e35ad99e1e221eac2b301e413690d1f18e0db9"
+    },
+    {
+      "name": "com.evolution.analysis.javaparser.GeneratedSymbolResolutionTest",
+      "path": "analyzer-javaparser/target/surefire-reports/TEST-com.evolution.analysis.javaparser.GeneratedSymbolResolutionTest.xml",
+      "tests": 5,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 7.685,
+      "sha256": "6bdf5f43d72ec1e003ad0b621dc5ab7e3c7aa6c3e8c8305a581b01df40bf44c7"
+    },
+    {
+      "name": "com.evolution.analysis.javaparser.JavaParserFrontendTest",
+      "path": "analyzer-javaparser/target/surefire-reports/TEST-com.evolution.analysis.javaparser.JavaParserFrontendTest.xml",
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 3.085,
+      "sha256": "5f774377796e02397910a921a5dddb58f7fb4c3eabafe32176510f40ab57bf12"
+    },
+    {
+      "name": "com.evolution.analysis.javaparser.JavaSemanticClosureTest",
+      "path": "analyzer-javaparser/target/surefire-reports/TEST-com.evolution.analysis.javaparser.JavaSemanticClosureTest.xml",
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 2.586,
+      "sha256": "21e19db977bbea6641901ff7abbe6ce5e2fe7dc942e160998c6d27486bc9e534"
+    },
+    {
+      "name": "com.evolution.analysis.javaparser.LombokIngestionTest",
+      "path": "analyzer-javaparser/target/surefire-reports/TEST-com.evolution.analysis.javaparser.LombokIngestionTest.xml",
+      "tests": 6,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 12.596,
+      "sha256": "89c28cf4bdd5bed0a543f36d2b1fe7177ec0144deb2a8f8b58854fee03b57cc2"
+    },
+    {
+      "name": "com.evolution.analysis.javaparser.LombokSynthesisOracleTest",
+      "path": "analyzer-javaparser/target/surefire-reports/TEST-com.evolution.analysis.javaparser.LombokSynthesisOracleTest.xml",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 1.448,
+      "sha256": "c1f7a7bf94e8b7ff65f379984e1c7600292eb16c53ec6aa80cbbe4ae733c957c"
+    },
+    {
+      "name": "com.evolution.analysis.javaparser.MethodReferencesTest",
+      "path": "analyzer-javaparser/target/surefire-reports/TEST-com.evolution.analysis.javaparser.MethodReferencesTest.xml",
+      "tests": 6,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 7.38,
+      "sha256": "c2ba84ad48729391e99ae50183d1ce1c583daf7f8449c8cb65fa47bc3c464f1d"
+    },
+    {
+      "name": "com.evolution.analysis.javaparser.ModernFixtureTest",
+      "path": "analyzer-javaparser/target/surefire-reports/TEST-com.evolution.analysis.javaparser.ModernFixtureTest.xml",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 1.965,
+      "sha256": "40dbae67596b7b9cbc654009c7b6b3b11e84c4db35cb3583698cdcdfb2e7dc18"
+    },
+    {
+      "name": "com.evolution.analysis.javaparser.ModernLanguageIngestionTest",
+      "path": "analyzer-javaparser/target/surefire-reports/TEST-com.evolution.analysis.javaparser.ModernLanguageIngestionTest.xml",
+      "tests": 2,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 8.571,
+      "sha256": "b50c86373431ab18e9ebeb3e323d5db01144f389c39cc0e57c2dbd471f1df817"
+    },
+    {
+      "name": "com.evolution.analysis.javaparser.OriginalSourceTest",
+      "path": "analyzer-javaparser/target/surefire-reports/TEST-com.evolution.analysis.javaparser.OriginalSourceTest.xml",
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.019,
+      "sha256": "da91568fe993bf3b4541e4eed74fff347f77ff514e1993925b0288647d54b89a"
+    },
+    {
+      "name": "com.evolution.analysis.javaparser.ReactorSourceResolutionTest",
+      "path": "analyzer-javaparser/target/surefire-reports/TEST-com.evolution.analysis.javaparser.ReactorSourceResolutionTest.xml",
+      "tests": 5,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 4.678,
+      "sha256": "b965e70d090652572a640f0abc8b3ecde0c3fe71a10d942a5c0f55a25cf992b5"
+    },
+    {
+      "name": "com.evolution.analysis.javaparser.RecordsTest",
+      "path": "analyzer-javaparser/target/surefire-reports/TEST-com.evolution.analysis.javaparser.RecordsTest.xml",
+      "tests": 5,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 4.486,
+      "sha256": "4771fb91ccc225bccb383dfe138cc205687aba81252f7ada111f9305c7784ee0"
+    },
+    {
+      "name": "com.evolution.analysis.javaparser.ResolutionInputsTest",
+      "path": "analyzer-javaparser/target/surefire-reports/TEST-com.evolution.analysis.javaparser.ResolutionInputsTest.xml",
+      "tests": 13,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 15.024,
+      "sha256": "0e8a4a58cd01cf54a2dc291088e296198687e88b73fb04b06e38892440198a4d"
+    },
+    {
+      "name": "com.evolution.analysis.javaparser.SemanticBoundariesTest",
+      "path": "analyzer-javaparser/target/surefire-reports/TEST-com.evolution.analysis.javaparser.SemanticBoundariesTest.xml",
+      "tests": 9,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 7.82,
+      "sha256": "41e119218d969e7a9fd283d9ce3127a8a7eab28467dea6e442cdd704de791b99"
+    },
+    {
+      "name": "com.evolution.analysis.javaparser.SourceToSpringPlanTest",
+      "path": "analyzer-javaparser/target/surefire-reports/TEST-com.evolution.analysis.javaparser.SourceToSpringPlanTest.xml",
+      "tests": 5,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 19.28,
+      "sha256": "1f2711a31f5252fbaf119b981cd60b9529e6c6bfb3919db7f7f325ee2362d73b"
+    },
+    {
+      "name": "com.evolution.analysis.javaparser.SpringMechanismM4A2IntegrationTest",
+      "path": "analyzer-javaparser/target/surefire-reports/TEST-com.evolution.analysis.javaparser.SpringMechanismM4A2IntegrationTest.xml",
+      "tests": 5,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 6.244,
+      "sha256": "de91b74f93f3fa8259b3cb34d39b0248eca435394918054bb99856038109079a"
+    },
+    {
+      "name": "com.evolution.analysis.javaparser.TypeRelationshipsTest",
+      "path": "analyzer-javaparser/target/surefire-reports/TEST-com.evolution.analysis.javaparser.TypeRelationshipsTest.xml",
+      "tests": 6,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 5.691,
+      "sha256": "bdb175ba6b00206c60bd71390d72a50569c8c79b2e7d91c9f10183a3ba85b576"
+    },
+    {
+      "name": "com.evolution.analysis.javaparser.UniversalIngestionPipelineTest",
+      "path": "analyzer-javaparser/target/surefire-reports/TEST-com.evolution.analysis.javaparser.UniversalIngestionPipelineTest.xml",
+      "tests": 2,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 5.942,
+      "sha256": "839a346f28d304509ad2b82e876ed43a7e2d58e5d1cf124363f34f4995721379"
+    },
+    {
+      "name": "com.evolution.analysis.javaparser.UniversalSpringSemanticsTest",
+      "path": "analyzer-javaparser/target/surefire-reports/TEST-com.evolution.analysis.javaparser.UniversalSpringSemanticsTest.xml",
+      "tests": 10,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 38.628,
+      "sha256": "8d30a39dca05a61e742ebebfc3a56bb49e5cb70eb006d0e34dcd01b431bc55d7"
+    },
+    {
+      "name": "com.evolution.analysis.maven.MavenBuildModelProviderTest",
+      "path": "analyzer-maven/target/surefire-reports/TEST-com.evolution.analysis.maven.MavenBuildModelProviderTest.xml",
+      "tests": 20,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.959,
+      "sha256": "3af59810f28014d8d980dc4bc73e5adf1bcf99f79f4a4fd8c25e0ad61fb84b64"
+    },
+    {
+      "name": "com.evolution.analysis.maven.MavenBuildModelResolverTest",
+      "path": "analyzer-maven/target/surefire-reports/TEST-com.evolution.analysis.maven.MavenBuildModelResolverTest.xml",
+      "tests": 8,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.375,
+      "sha256": "b47d87f9b86db6a111ababdc52201c0fdb07097d43b35dbb8e65205fea80586e"
+    },
+    {
+      "name": "com.evolution.analysis.maven.MavenDependencyArtifactProviderTest",
+      "path": "analyzer-maven/target/surefire-reports/TEST-com.evolution.analysis.maven.MavenDependencyArtifactProviderTest.xml",
+      "tests": 12,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.232,
+      "sha256": "e092040adee9e01b6dfb35a7ed601731cb1b60717eb8dbeeeeb1e6a2253795b4"
+    },
+    {
+      "name": "com.evolution.analysis.maven.MavenDependencyArtifactResolverTest",
+      "path": "analyzer-maven/target/surefire-reports/TEST-com.evolution.analysis.maven.MavenDependencyArtifactResolverTest.xml",
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.511,
+      "sha256": "da3139c1139353297ac7425e415c7ae5741331beb3f7e6a06e777bd78c7680f4"
+    },
+    {
+      "name": "com.evolution.analysis.maven.MavenLocalClasspathProviderTest",
+      "path": "analyzer-maven/target/surefire-reports/TEST-com.evolution.analysis.maven.MavenLocalClasspathProviderTest.xml",
+      "tests": 11,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 1.167,
+      "sha256": "d0c66b07f4dfc42dff4d718e59625a5f85fa5f8f5fd21f61ec8307267de02530"
+    },
+    {
+      "name": "com.evolution.analysis.maven.PlatformReactorModelTest",
+      "path": "analyzer-maven/target/surefire-reports/TEST-com.evolution.analysis.maven.PlatformReactorModelTest.xml",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.04,
+      "sha256": "8f940e4152778a15e894b4673ab095a8ca8d61552207412a54e69981314576f9"
+    },
+    {
+      "name": "com.evolution.analysis.maven.SourcePlanProjectionTest",
+      "path": "analyzer-maven/target/surefire-reports/TEST-com.evolution.analysis.maven.SourcePlanProjectionTest.xml",
+      "tests": 12,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.16,
+      "sha256": "bf62d29727450b75e572af913c6b8fe69c4320d78e4785b9fe851902c0b6bc36"
+    },
+    {
+      "name": "com.evolution.analysis.maven.UniversalMavenIngestionTest",
+      "path": "analyzer-maven/target/surefire-reports/TEST-com.evolution.analysis.maven.UniversalMavenIngestionTest.xml",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.048,
+      "sha256": "5dbaf34feda5e8fdfbc3e86b2c95ad76ef56f20dd1869e41da38b468b8d35b0a"
+    },
+    {
+      "name": "com.evolution.analysis.acquisition.RepositoryAcquisitionContractTest",
+      "path": "analyzer/target/surefire-reports/TEST-com.evolution.analysis.acquisition.RepositoryAcquisitionContractTest.xml",
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.205,
+      "sha256": "a7ca3e30cde6d634980199c38e2ea40934c5b4827d0bef73e30beb6c3e666cd5"
+    },
+    {
+      "name": "com.evolution.analysis.acquisition.RepositoryUnderstandingContractTest",
+      "path": "analyzer/target/surefire-reports/TEST-com.evolution.analysis.acquisition.RepositoryUnderstandingContractTest.xml",
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.077,
+      "sha256": "28f3e5a0fbd20ea3122d7c815917da6487db85d9218a72b783040c9464fcc930"
+    },
+    {
+      "name": "com.evolution.analysis.buildmodel.BuildModelContractTest",
+      "path": "analyzer/target/surefire-reports/TEST-com.evolution.analysis.buildmodel.BuildModelContractTest.xml",
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.031,
+      "sha256": "39b85b5b9fcb3058528b18de4fb825014c47799afd162c828595dfcf824ec2a4"
+    },
+    {
+      "name": "com.evolution.analysis.buildmodel.CapturedSourcePlanImporterTest",
+      "path": "analyzer/target/surefire-reports/TEST-com.evolution.analysis.buildmodel.CapturedSourcePlanImporterTest.xml",
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.241,
+      "sha256": "2773f290ea5b58bc6b7657bf4f32f265b8f8d0322f8ac10472fab04c8991ee93"
+    },
+    {
+      "name": "com.evolution.analysis.buildmodel.SourcePlanContractTest",
+      "path": "analyzer/target/surefire-reports/TEST-com.evolution.analysis.buildmodel.SourcePlanContractTest.xml",
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.015,
+      "sha256": "b48ebd41d1cfe6db228ee7b81a0e1dc6f94cb6b1c91065b1f03a06f0fed0e36a"
+    },
+    {
+      "name": "com.evolution.analysis.buildmodel.UniversalBuildIngestionTest",
+      "path": "analyzer/target/surefire-reports/TEST-com.evolution.analysis.buildmodel.UniversalBuildIngestionTest.xml",
+      "tests": 16,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.184,
+      "sha256": "09a9cbfd68e793aa1a96b8ca200baea64f27b02478d94289ae8d77917d0c47c2"
+    },
+    {
+      "name": "com.evolution.analysis.classpath.ClasspathResolutionContractTest",
+      "path": "analyzer/target/surefire-reports/TEST-com.evolution.analysis.classpath.ClasspathResolutionContractTest.xml",
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.047,
+      "sha256": "3731a7819c478a0393475668c398789b2ac25d4fa73e5b2aebef0e6f89d1858f"
+    },
+    {
+      "name": "com.evolution.analysis.contract.AnalysisAndAssessmentContractTest",
+      "path": "analyzer/target/surefire-reports/TEST-com.evolution.analysis.contract.AnalysisAndAssessmentContractTest.xml",
+      "tests": 7,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.047,
+      "sha256": "36b3713efec5ced36196fc636d44f4a711815710c914c5683b3a556d65c7033d"
+    },
+    {
+      "name": "com.evolution.analysis.contract.CanonicalSerializationTest",
+      "path": "analyzer/target/surefire-reports/TEST-com.evolution.analysis.contract.CanonicalSerializationTest.xml",
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.02,
+      "sha256": "3ce102171a20c1d3afe69bc9b0ebac27a938b9987197c48748578b110f63b8a5"
+    },
+    {
+      "name": "com.evolution.analysis.contract.DerivedEvidenceTest",
+      "path": "analyzer/target/surefire-reports/TEST-com.evolution.analysis.contract.DerivedEvidenceTest.xml",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.016,
+      "sha256": "fb8cc60aaf3f4dd35ec94dc0549fa233b3df9ce3f9e42d7e6e57f7bbdaa42c2e"
+    },
+    {
+      "name": "com.evolution.analysis.contract.IdentityAndSourceContractTest",
+      "path": "analyzer/target/surefire-reports/TEST-com.evolution.analysis.contract.IdentityAndSourceContractTest.xml",
+      "tests": 8,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.016,
+      "sha256": "ab1742da598fecc61ce39e3d5ee63667010b3b2e4c0650b70749b89ad4554c89"
+    },
+    {
+      "name": "com.evolution.analysis.contract.RootModuleTest",
+      "path": "analyzer/target/surefire-reports/TEST-com.evolution.analysis.contract.RootModuleTest.xml",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.015,
+      "sha256": "b4d8f5df3589d8f0125ebce2079c29aa03a6b956853457096a88903631364a29"
+    },
+    {
+      "name": "com.evolution.analysis.contract.SemanticContractTest",
+      "path": "analyzer/target/surefire-reports/TEST-com.evolution.analysis.contract.SemanticContractTest.xml",
+      "tests": 6,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.016,
+      "sha256": "c31fb45fbd824acfed0779548d8a3ec30d75fceb74f0ba4012a8ee287c734e25"
+    },
+    {
+      "name": "com.evolution.analysis.dependency.DependencyAcquisitionContractTest",
+      "path": "analyzer/target/surefire-reports/TEST-com.evolution.analysis.dependency.DependencyAcquisitionContractTest.xml",
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.024,
+      "sha256": "02e73121583f04f631302da4db3e72217f9cf23725b8feb935a0d2cac4843d06"
+    },
+    {
+      "name": "com.evolution.analysis.evidence.AdaptiveEvidenceCoordinatorTest",
+      "path": "analyzer/target/surefire-reports/TEST-com.evolution.analysis.evidence.AdaptiveEvidenceCoordinatorTest.xml",
+      "tests": 10,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.145,
+      "sha256": "bb5860f093875db5991fe5683830d2858c78f143856d87963fd5b261e59ad5af"
+    },
+    {
+      "name": "com.evolution.analysis.evidence.CapabilityGapContractTest",
+      "path": "analyzer/target/surefire-reports/TEST-com.evolution.analysis.evidence.CapabilityGapContractTest.xml",
+      "tests": 12,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.111,
+      "sha256": "644bfacf7576271420af3779ab42d94d6117bde1a234dc010a465689a02a3565"
+    },
+    {
+      "name": "com.evolution.analysis.frontend.FrontendContractTest",
+      "path": "analyzer/target/surefire-reports/TEST-com.evolution.analysis.frontend.FrontendContractTest.xml",
+      "tests": 6,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.031,
+      "sha256": "685bac6dea0367b0d4201807cca2ec1ff0413d90ecec956c708e21197d027e98"
+    },
+    {
+      "name": "com.evolution.analysis.frontend.FrontendResultTest",
+      "path": "analyzer/target/surefire-reports/TEST-com.evolution.analysis.frontend.FrontendResultTest.xml",
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.008,
+      "sha256": "b5cee7e80f8417fe16dff96c6e51e0cbfa9eb78e0a9df74a120421abc006084e"
+    },
+    {
+      "name": "com.evolution.analysis.frontend.JavaSymbolNameTest",
+      "path": "analyzer/target/surefire-reports/TEST-com.evolution.analysis.frontend.JavaSymbolNameTest.xml",
+      "tests": 7,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.009,
+      "sha256": "fca534d63b5d3977729064793291dd061d4b0cd69714d69954fabb2ee9e1eab7"
+    },
+    {
+      "name": "com.evolution.analysis.ingestion.GeneratedEvidenceImportTest",
+      "path": "analyzer/target/surefire-reports/TEST-com.evolution.analysis.ingestion.GeneratedEvidenceImportTest.xml",
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.063,
+      "sha256": "7b8d301d9b26720a6bc10b4fdd876c88a9cda6647565f31c2c9ca45e8cfdcfdb"
+    },
+    {
+      "name": "com.evolution.analysis.ingestion.RepositoryIntakeDecoderTest",
+      "path": "analyzer/target/surefire-reports/TEST-com.evolution.analysis.ingestion.RepositoryIntakeDecoderTest.xml",
+      "tests": 2,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.015,
+      "sha256": "90863a9846d7ce09294859018847da1e139ced7e81608143b01473220e3bf4b8"
+    },
+    {
+      "name": "com.evolution.analysis.ingestion.ScopedIngestionRecoveryTest",
+      "path": "analyzer/target/surefire-reports/TEST-com.evolution.analysis.ingestion.ScopedIngestionRecoveryTest.xml",
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.071,
+      "sha256": "88faeaa84370777d2332952546f28f971f35fac15b8993f14fdbe5eb0bbffc7a"
+    },
+    {
+      "name": "com.evolution.analysis.input.FrontendInputAssemblerTest",
+      "path": "analyzer/target/surefire-reports/TEST-com.evolution.analysis.input.FrontendInputAssemblerTest.xml",
+      "tests": 6,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.221,
+      "sha256": "e65596aad2f837df363357c7ad2cf348aa60dac598f2b740d5c3b736a5ddd532"
+    },
+    {
+      "name": "com.evolution.analysis.input.SourceDecoderTest",
+      "path": "analyzer/target/surefire-reports/TEST-com.evolution.analysis.input.SourceDecoderTest.xml",
+      "tests": 6,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.059,
+      "sha256": "e3ea94d2b81eda63c9157ba610945f9c7e357e1579fe1eb992d3f75d126f0d6e"
+    },
+    {
+      "name": "com.evolution.analysis.spring.condition.AutoConfigurationOrderingTest",
+      "path": "analyzer/target/surefire-reports/TEST-com.evolution.analysis.spring.condition.AutoConfigurationOrderingTest.xml",
+      "tests": 6,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.209,
+      "sha256": "06c284e62c2982bdd0abad7ff9ecd80d1dd4d03c1bd9f98d04d5a4a60503daf0"
+    },
+    {
+      "name": "com.evolution.analysis.spring.condition.BeanRegistrationTransitionsTest",
+      "path": "analyzer/target/surefire-reports/TEST-com.evolution.analysis.spring.condition.BeanRegistrationTransitionsTest.xml",
+      "tests": 28,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.881,
+      "sha256": "85a4296e37765521930492fd09a9b39ebff41616416cc376a61821934e8d8469"
+    },
+    {
+      "name": "com.evolution.analysis.spring.condition.ConditionExpressionTest",
+      "path": "analyzer/target/surefire-reports/TEST-com.evolution.analysis.spring.condition.ConditionExpressionTest.xml",
+      "tests": 5,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.016,
+      "sha256": "db4e1661124b1cc920001fbd03ce02ff5a492112fe8c20987e0c99492c92f0a9"
+    },
+    {
+      "name": "com.evolution.analysis.spring.condition.ConditionLoweringTest",
+      "path": "analyzer/target/surefire-reports/TEST-com.evolution.analysis.spring.condition.ConditionLoweringTest.xml",
+      "tests": 7,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.264,
+      "sha256": "474d3bb7775985ebd03d2de648e250787da280efce41b2ea94a7e07c771364bb"
+    },
+    {
+      "name": "com.evolution.analysis.spring.condition.ConditionModelTest",
+      "path": "analyzer/target/surefire-reports/TEST-com.evolution.analysis.spring.condition.ConditionModelTest.xml",
+      "tests": 11,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.542,
+      "sha256": "4e00e1f35e85a709297aa40fbf1c86e3a07700745e8cd534ff58b264a335002b"
+    },
+    {
+      "name": "com.evolution.analysis.spring.condition.ConfigDataIngestionTest",
+      "path": "analyzer/target/surefire-reports/TEST-com.evolution.analysis.spring.condition.ConfigDataIngestionTest.xml",
+      "tests": 12,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.123,
+      "sha256": "2434ec49560a8546448ad468f8676e1e95d9171964083d3ecf5f66b399b47ba5"
+    },
+    {
+      "name": "com.evolution.analysis.spring.condition.ConfigImportClosureTest",
+      "path": "analyzer/target/surefire-reports/TEST-com.evolution.analysis.spring.condition.ConfigImportClosureTest.xml",
+      "tests": 9,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.04,
+      "sha256": "db98a68a4ebc30cbffc0b277c9504e90e83dab86ba6fa3bbffe6afb4b4609e4e"
+    },
+    {
+      "name": "com.evolution.analysis.spring.condition.ConfigurationSpaceTest",
+      "path": "analyzer/target/surefire-reports/TEST-com.evolution.analysis.spring.condition.ConfigurationSpaceTest.xml",
+      "tests": 8,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.078,
+      "sha256": "d4755f1b7546d4c8390fd7794ff0885038c167a3f94fa05037a07f87fbdffd47"
+    },
+    {
+      "name": "com.evolution.analysis.spring.condition.ExogenousConditionEvaluatorTest",
+      "path": "analyzer/target/surefire-reports/TEST-com.evolution.analysis.spring.condition.ExogenousConditionEvaluatorTest.xml",
+      "tests": 12,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.153,
+      "sha256": "94c383c7afbf5dfb20b3b6ca0b5abeda8d6df259af2ef53c45813b1fe63f2d20"
+    },
+    {
+      "name": "com.evolution.analysis.spring.condition.FiniteConfigurationEvaluationTest",
+      "path": "analyzer/target/surefire-reports/TEST-com.evolution.analysis.spring.condition.FiniteConfigurationEvaluationTest.xml",
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.082,
+      "sha256": "d3deb67afab6456e7c9e08f130885e597b930858d6492726f1306b0898020a73"
+    },
+    {
+      "name": "com.evolution.analysis.spring.condition.InjectionBindingBoundaryTest",
+      "path": "analyzer/target/surefire-reports/TEST-com.evolution.analysis.spring.condition.InjectionBindingBoundaryTest.xml",
+      "tests": 30,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 1.033,
+      "sha256": "22dd8d84f51f3f05b314f22208388278fff45b6bcba65af1111af7d9a10768ba"
+    },
+    {
+      "name": "com.evolution.analysis.spring.condition.InjectionBindingsTest",
+      "path": "analyzer/target/surefire-reports/TEST-com.evolution.analysis.spring.condition.InjectionBindingsTest.xml",
+      "tests": 30,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 1.176,
+      "sha256": "a25ba63ec3660045bc5108fac806443e42f3d651820c1439acf4d681e8586807"
+    },
+    {
+      "name": "com.evolution.analysis.spring.condition.RegistrationDiscoveryTest",
+      "path": "analyzer/target/surefire-reports/TEST-com.evolution.analysis.spring.condition.RegistrationDiscoveryTest.xml",
+      "tests": 18,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.384,
+      "sha256": "6b0aec8f787577469909282477c7390a02f0ff0d95df0587454d1b1d8d850ba0"
+    },
+    {
+      "name": "com.evolution.analysis.spring.condition.RegistrationPlanTest",
+      "path": "analyzer/target/surefire-reports/TEST-com.evolution.analysis.spring.condition.RegistrationPlanTest.xml",
+      "tests": 8,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.11,
+      "sha256": "96eeb39b154d428d20497d16775529557e894f61f4d2be8ccfae370cec92b86d"
+    },
+    {
+      "name": "com.evolution.analysis.spring.condition.SatConfigurationReasonerTest",
+      "path": "analyzer/target/surefire-reports/TEST-com.evolution.analysis.spring.condition.SatConfigurationReasonerTest.xml",
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.063,
+      "sha256": "ab44b09fef9466e1970adcb1c4f91ee3df58ca0f187a5dc745e675c197ebec6f"
+    },
+    {
+      "name": "com.evolution.analysis.spring.condition.TruthRegionEvaluationTest",
+      "path": "analyzer/target/surefire-reports/TEST-com.evolution.analysis.spring.condition.TruthRegionEvaluationTest.xml",
+      "tests": 17,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 4.012,
+      "sha256": "16ef742d150d80a3fc8acca4340e3a0ff2740e676a9a4e852220e0ddf1486ec4"
+    },
+    {
+      "name": "com.evolution.analysis.spring.condition.UniversalConditionSemanticsTest",
+      "path": "analyzer/target/surefire-reports/TEST-com.evolution.analysis.spring.condition.UniversalConditionSemanticsTest.xml",
+      "tests": 9,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.755,
+      "sha256": "4c2268e372f62bacc4ca8d49a913e840c4cb0fb3862464f33256f0bee65ab1fb"
+    },
+    {
+      "name": "com.evolution.analysis.spring.condition.UniversalFrameworkContextTest",
+      "path": "analyzer/target/surefire-reports/TEST-com.evolution.analysis.spring.condition.UniversalFrameworkContextTest.xml",
+      "tests": 7,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.047,
+      "sha256": "d1b3cc120bdcd327b421dd0906abc3a2c96c0e0ad31bb3d38658a51734ac5568"
+    },
+    {
+      "name": "com.evolution.analysis.spring.SpringMechanismInventoryTest",
+      "path": "analyzer/target/surefire-reports/TEST-com.evolution.analysis.spring.SpringMechanismInventoryTest.xml",
+      "tests": 12,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.234,
+      "sha256": "0f776c8800a48a2199847fa39ac796f9c29fc226bb3924d0ecbcdd1e2d46190f"
+    },
+    {
+      "name": "com.evolution.analysis.spring.SpringMechanismM4A2Test",
+      "path": "analyzer/target/surefire-reports/TEST-com.evolution.analysis.spring.SpringMechanismM4A2Test.xml",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.031,
+      "sha256": "961038b16991ef0830126bc9500b9338c2046ea65fb45d63e8381eebdfe88db8"
+    },
+    {
+      "name": "com.evolution.foundation.Java21BuildTest",
+      "path": "analyzer/target/surefire-reports/TEST-com.evolution.foundation.Java21BuildTest.xml",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.0,
+      "sha256": "f46e9fa8b81d52041ee635c7a9ab4fa13a02dc5845ec24c7bac6034169fc6e73"
+    },
+    {
+      "name": "com.evolution.foundation.Java21BuildTest",
+      "path": "backend/target/surefire-reports/TEST-com.evolution.foundation.Java21BuildTest.xml",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.078,
+      "sha256": "4bbea0e43a9a71b38624a9eb3b54048acfb99a79f3d8b5851211749a6a51f32d"
+    }
+  ]
+}

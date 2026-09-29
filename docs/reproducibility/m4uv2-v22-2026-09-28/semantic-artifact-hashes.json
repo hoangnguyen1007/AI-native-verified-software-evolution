@@ -1,0 +1,46 @@
+[
+  {
+    "coordinates": "org.projectlombok:lombok:1.18.46",
+    "sha256": "01f7b1a015e33e2b62d5f5f37053306357ab1415fd181fcba7794f5d198c1126"
+  },
+  {
+    "coordinates": "org.springframework.boot:spring-boot:3.4.0",
+    "sha256": "dea6332c2fa49ce2c724c78e3e57e41417dab50c82f1ccb5bfb22cc993290609"
+  },
+  {
+    "coordinates": "org.springframework.boot:spring-boot-autoconfigure:3.4.0",
+    "sha256": "525aa88505399c6ccfddfe295b313d55a259ed5e8d5890a3568485c074f98414"
+  },
+  {
+    "coordinates": "org.springframework:spring-context:6.2.0",
+    "sha256": "a0d2de9df7902edc5f6ae55e2936327bdeac177dbc5392906b8d36f3691fe121"
+  },
+  {
+    "coordinates": "org.springframework:spring-beans:6.2.0",
+    "sha256": "33adf77b49236f2966c9cec7eb5a1aea8ade81d7ada80c36d91bbf89d3298e15"
+  },
+  {
+    "coordinates": "org.springframework:spring-core:6.2.0",
+    "sha256": "3b82629da38717dd616a70ec1055f9a8e208d58132071a6314a32159f8bce162"
+  },
+  {
+    "coordinates": "org.springframework:spring-aop:6.2.0",
+    "sha256": "fe84f18bdefb3ad4f993357d31e61613bb55f348d7ea69ec1ca968b3240b3b08"
+  },
+  {
+    "coordinates": "org.springframework:spring-expression:6.2.0",
+    "sha256": "37cfc1fe8ca22bb789c20aac6b90e09f2b0ea73085f3271ae61cf12cdb7e8876"
+  },
+  {
+    "coordinates": "org.springframework:spring-jcl:6.2.0",
+    "sha256": "2b59288f030ce77a89ec88aa426f32eb9a309056f3646dd5157f9f31f0204fd7"
+  },
+  {
+    "coordinates": "com.github.javaparser:javaparser-core:3.28.2",
+    "sha256": "b5499a3b1c40b16c0671fabe478c9aafeab38160c6fde74a6c13f42d86716ecd"
+  },
+  {
+    "coordinates": "com.github.javaparser:javaparser-symbol-solver-core:3.28.2",
+    "sha256": "4cb097c0834427939c01f4169dd0bab20068673913341c5b6db27be1a7445098"
+  }
+]

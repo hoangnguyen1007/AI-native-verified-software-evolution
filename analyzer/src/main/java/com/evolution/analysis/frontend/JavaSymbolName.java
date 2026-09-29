@@ -38,8 +38,13 @@ public final class JavaSymbolName {
         return new JavaSymbolName("annotation-use",owner.tuple,document.value(),offset);
     }
     public static JavaSymbolName parameter(JavaSymbolName owner, int index) {
-        if (!List.of("method", "constructor").contains(owner.tuple.getFirst())) throw new IllegalArgumentException("callable owner required");
+        if (!List.of("method", "constructor", "lambda").contains(owner.tuple.getFirst())) throw new IllegalArgumentException("callable owner required");
         return indexed("parameter", owner, index);
+    }
+    /** Catch parameters have lexical scope, unlike positional callable parameters. */
+    public static JavaSymbolName catchParameter(JavaSymbolName owner, SourceDocumentIdentity document, int offset, String name) {
+        anchor(document, offset);
+        return new JavaSymbolName("catch-parameter", owner.tuple, document.value(), offset, identifier(name));
     }
     public static JavaSymbolName typeParameter(JavaSymbolName owner, int index) { return indexed("type-parameter", owner, index); }
     private static JavaSymbolName indexed(String tag, JavaSymbolName owner, int index) {

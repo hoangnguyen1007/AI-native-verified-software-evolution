@@ -12,6 +12,8 @@ final class LombokExtraction {
     private static final Set<String> GENERATORS=Set.of("RequiredArgsConstructor","AllArgsConstructor","NoArgsConstructor","Data","Value","Builder");
     private final Extraction context;
     private final List<Generated> generated=new ArrayList<>();
+    private final Map<Entity,ClassOrInterfaceDeclaration> generatedOwners=new HashMap<>();
+    private final Map<Entity,String> generatedMethodNames=new HashMap<>();
     private final Set<ClassOrInterfaceDeclaration> unsupportedConstructorOwners=Collections.newSetFromMap(new IdentityHashMap<>());
     private record Generated(Entity callable,JavaSymbolName name,List<VariableDeclarator> fields,List<Entity> parameters,String rule,boolean setter){}
     LombokExtraction(Extraction context){this.context=context;}
@@ -137,12 +139,15 @@ final class LombokExtraction {
         var name=JavaSymbolName.constructor(context.name(type),fields.stream().map(f->context.erasedParameter(f.getType())).toList());
         if(context.hasDeclaration(name)){context.synthesisGap(type,"lombok.constructor-collision");return;}
         var callable=context.implicit(name,EntityKind.CONSTRUCTOR,type,rule);
+        generatedOwners.put(callable,type);
         generated.add(new Generated(callable,name,fields,parameters(callable,name,fields,rule),rule,true));
     }
     private void member(ClassOrInterfaceDeclaration type,String method,List<VariableDeclarator> parameters,List<VariableDeclarator> fields,String rule,boolean setter) {
         var name=JavaSymbolName.method(context.name(type),method,parameters.stream().map(f->context.erasedParameter(f.getType())).toList());
         if(context.hasDeclaration(name))return;
         var callable=context.implicit(name,EntityKind.METHOD,type,rule);
+        generatedOwners.put(callable,type);
+        generatedMethodNames.put(callable,method);
         generated.add(new Generated(callable,name,fields,parameters(callable,name,parameters,rule),rule,setter));
     }
     private List<Entity> parameters(Entity callable,JavaSymbolName name,List<VariableDeclarator> fields,String rule) {
@@ -160,6 +165,87 @@ final class LombokExtraction {
             if(g.setter()&&i<g.parameters().size())context.derivedMemberTypes(f,g.parameters().get(i),"parameter-type",g.rule());
             else if(!g.setter())context.derivedMemberTypes(f,g.callable(),"returns",g.rule());
         }
+    }
+    /** Exact-argument generated overloads participate before native resolution can select a
+     * wider handwritten overload. No AST mutation, processor execution, or guessed coercion. */
+    Optional<Entity> resolve(Expression expression) {
+        boolean affectedGenerated=false;
+        try {
+            ClassOrInterfaceDeclaration owner;
+            List<Expression> arguments;
+            String method;
+            boolean constructor=expression instanceof ObjectCreationExpr;
+            if(expression instanceof ObjectCreationExpr creation) {
+                if(creation.getAnonymousClassBody().isPresent())return Optional.empty();
+                var ast=creation.getType().resolve().asReferenceType().getTypeDeclaration().orElseThrow().toAst().orElse(null);
+                if(!(ast instanceof ClassOrInterfaceDeclaration type))return Optional.empty();
+                owner=type;arguments=creation.getArguments();method="";
+            } else if(expression instanceof MethodCallExpr call) {
+                if(call.getTypeArguments().isPresent())return Optional.empty();
+                if(call.getScope().isPresent()) {
+                    var scope=call.getScope().orElseThrow();
+                    if(scope instanceof NameExpr name && context.isTypeName(scope,name.getNameAsString()))return Optional.empty();
+                    var resolved=scope.calculateResolvedType();
+                    if(!resolved.isReferenceType())return Optional.empty();
+                    var ast=resolved.asReferenceType().getTypeDeclaration().orElseThrow().toAst().orElse(null);
+                    if(!(ast instanceof ClassOrInterfaceDeclaration type))return Optional.empty();
+                    owner=type;
+                } else {
+                    owner=call.findAncestor(ClassOrInterfaceDeclaration.class).orElseThrow();
+                    // An implicit receiver is not established in static methods or nested anonymous scopes.
+                    for(Node parent=call.getParentNode().orElse(null);parent!=owner;parent=parent.getParentNode().orElse(null)) {
+                        if(parent==null || parent instanceof ObjectCreationExpr
+                                || parent instanceof MethodDeclaration m && m.isStatic()
+                                || parent instanceof InitializerDeclaration i && i.isStatic()
+                                || parent instanceof FieldDeclaration f && f.isStatic())return Optional.empty();
+                    }
+                }
+                method=call.getNameAsString();arguments=call.getArguments();
+            } else return Optional.empty();
+            boolean generatedConstructor=constructor && generated.stream().anyMatch(g -> generatedOwners.get(g.callable())==owner
+                    && g.callable().kind()==EntityKind.CONSTRUCTOR);
+            affectedGenerated=generatedConstructor || !constructor && generated.stream().anyMatch(g ->
+                    generatedOwners.get(g.callable())==owner && method.equals(generatedMethodNames.get(g.callable())));
+            if(!owner.getTypeParameters().isEmpty() || !owner.getExtendedTypes().isEmpty()) {
+                if(affectedGenerated)throw new GeneratedAccessFailure();
+                return Optional.empty();
+            }
+            var actual=arguments.stream().map(a -> a.calculateResolvedType().describe()).toList();
+            var matches=new ArrayList<Entity>();
+            for(var candidate:generated) {
+                if(generatedOwners.get(candidate.callable())!=owner)continue;
+                if(constructor!=(candidate.callable().kind()==EntityKind.CONSTRUCTOR))continue;
+                if(!constructor && !candidate.name().equals(JavaSymbolName.method(context.name(owner),method,
+                        candidate.setter()?candidate.fields().stream().map(f -> context.erasedParameter(f.getType())).toList():List.of())))continue;
+                var formal=(constructor||candidate.setter()?candidate.fields():List.<VariableDeclarator>of()).stream()
+                        .map(f -> f.getType().resolve().describe()).toList();
+                if(!formal.equals(actual))continue;
+                if(constructor && (candidate.rule().equals("lombok.builder-constructor") || owner.getAnnotations().stream()
+                        .filter(a -> a instanceof NormalAnnotationExpr)
+                        .map(a -> (NormalAnnotationExpr)a).flatMap(a -> a.getPairs().stream())
+                        .anyMatch(p -> p.getNameAsString().equals("access")&&!p.getValue().toString().matches("(?:lombok\\.)?AccessLevel.PUBLIC"))))
+                    throw new GeneratedAccessFailure();
+                if(!owner.isPublic()&&!owner.findCompilationUnit().orElseThrow().getPackageDeclaration().map(p -> p.getNameAsString())
+                        .equals(expression.findCompilationUnit().orElseThrow().getPackageDeclaration().map(p -> p.getNameAsString())))
+                    throw new GeneratedAccessFailure();
+                for(Node enclosing=owner;enclosing!=null;enclosing=enclosing.getParentNode().orElse(null))
+                    if(enclosing instanceof ClassOrInterfaceDeclaration type && (type.isPrivate()||type.isProtected()))
+                        throw new GeneratedAccessFailure();
+                matches.add(candidate.callable());
+            }
+            if(matches.size()==1)return Optional.of(matches.getFirst());
+            // Native resolution sees only handwritten overloads. Null, conversions and generics
+            // must not silently pick one while a generated constructor can change the result.
+            if(affectedGenerated)throw new GeneratedAccessFailure();
+            return Optional.empty();
+        } catch(GeneratedAccessFailure unavailable) {throw unavailable;}
+        catch(RuntimeException unavailable) {
+            if(affectedGenerated)throw new GeneratedAccessFailure();
+            return Optional.empty();
+        }
+    }
+    private static final class GeneratedAccessFailure extends com.github.javaparser.resolution.UnsolvedSymbolException {
+        GeneratedAccessFailure() {super("Generated member applicability or accessibility requires evidence");}
     }
     private boolean nonNull(FieldDeclaration field){return field.getAnnotations().stream().anyMatch(a->exact(a,"lombok.NonNull"));}
     private boolean nonFinal(FieldDeclaration field){return field.getAnnotations().stream().anyMatch(a->exact(a,"lombok.experimental.NonFinal"));}

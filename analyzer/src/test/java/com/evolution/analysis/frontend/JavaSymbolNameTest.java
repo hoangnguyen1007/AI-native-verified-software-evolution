@@ -48,4 +48,14 @@ class JavaSymbolNameTest {
         var method = JavaSymbolName.method(JavaSymbolName.topLevelType("p", "A"), "run", List.of());
         assertThrows(IllegalArgumentException.class, () -> JavaSymbolName.memberType(method, "Wrong"));
     }
+    @Test void lambdaAndCatchParametersRetainLexicalIdentityWithoutChangingCallableTuples() {
+        var owner=JavaSymbolName.method(JavaSymbolName.topLevelType("p","C"),"run",List.of());
+        var document=SourceDocumentIdentity.from(RepositoryIdentity.fromCanonicalCoordinate("https://example.test/repo"),"C.java");
+        var lambda=JavaSymbolName.execution("lambda",owner,document,30,"lambda");
+        assertTrue(JavaSymbolName.parameter(lambda,0).canonicalName().startsWith("java:v1:[\"parameter\",[\"lambda\","));
+        assertNotEquals(JavaSymbolName.parameter(lambda,0),JavaSymbolName.parameter(lambda,1));
+        assertNotEquals(JavaSymbolName.catchParameter(owner,document,50,"e"),JavaSymbolName.catchParameter(owner,document,70,"e"));
+        assertThrows(IllegalArgumentException.class,() -> JavaSymbolName.catchParameter(owner,document,-1,"e"));
+        assertEquals("java:v1:[\"method\",[\"type\",[\"p\"],\"C\"],\"run\",[]]",owner.canonicalName());
+    }
 }

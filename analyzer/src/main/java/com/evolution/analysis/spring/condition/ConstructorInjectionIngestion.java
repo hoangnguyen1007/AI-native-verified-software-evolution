@@ -44,7 +44,8 @@ public final class ConstructorInjectionIngestion {
                 frontend.derivedRelationships().stream().filter(o->o.status()==SemanticStatus.RESOLVED).map(DerivedRelationshipRecord::relationship)).toList();
         var issues=new ArrayList<IngestionEvidence.Issue>();var rows=new ArrayList<Row>();int parametersSeen=0;
         boolean frameworkKnown=framework.completeClasspath()&&framework.artifacts().stream().anyMatch(a->a.artifactId().equals("spring-beans")&&framework.verifiedArtifact(a));
-        boolean providerKnown=frontend.frontend().equals(new VersionedIdentifier("frontend.javaparser","3.28.2-m4u.1"));
+        boolean providerKnown=Set.of(new VersionedIdentifier("frontend.javaparser","3.28.2-m4u.1"),
+                new VersionedIdentifier("frontend.javaparser","3.28.2-m4uv2.2")).contains(frontend.frontend());
         for(var component:discovery.rows()) {
             var evidence=new ConditionEvidence.Derived(List.of(identity,component.evidence().identity()),PROVIDER,"constructor-selection:"+component.type().value());
             if(component.status()!=ComponentScanIngestion.Status.INCLUDED) {

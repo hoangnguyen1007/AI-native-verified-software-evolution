@@ -19,11 +19,16 @@ public final class SpringBuildContext {
     private final Set<ContentDigest> artifactDigests;
 
     private SpringBuildContext(FrontendAssemblyResult assembly, FrontendAssemblyResult.Outcome outcome) {
-        FrontendRequest request = outcome.request().orElseThrow();
+        this(outcome.request().orElseThrow(), assembly.identity(), outcome.sourceSet());
+        FrontendRequest request=outcome.request().orElseThrow();
+        if (!request.module().equals(outcome.module()) || !request.sourceSet().name().equals(outcome.sourceSet().name()))
+            throw new IllegalArgumentException("Assembly source-set scope does not match its request");
+    }
+    private SpringBuildContext(FrontendRequest request, ContentDigest assemblyIdentity, SourcePlanModel.Kind sourceSet) {
         if (request.plan().equals(FrontendPlan.legacy())) {
             throw new IllegalArgumentException("M4 build context requires an evidence-bound M3 plan");
         }
-        if (!request.module().equals(outcome.module()) || !request.sourceSet().name().equals(outcome.sourceSet().name())) {
+        if (!request.sourceSet().name().equals(sourceSet.name())) {
             throw new IllegalArgumentException("Assembly source-set scope does not match its request");
         }
         snapshot = request.manifest().snapshot().identity();
@@ -55,10 +60,17 @@ public final class SpringBuildContext {
                 "release", request.platform().release(), "version", request.platform().version(),
                 "vendor", request.platform().vendor()));
         canonicalForm = Map.of("snapshotIdentity", snapshot, "sourcePlanIdentity", sourcePlan,
-                "moduleSourceSet", Map.of("module", request.module(), "sourceSet", outcome.sourceSet()),
-                "frontendAssemblyIdentity", assembly.identity(), "orderedResolutionInputs", List.copyOf(ordered),
+                "moduleSourceSet", Map.of("module", request.module(), "sourceSet", sourceSet),
+                "frontendAssemblyIdentity", assemblyIdentity, "orderedResolutionInputs", List.copyOf(ordered),
                 "platformViewIdentity", platform, "buildPolicyIdentity", request.manifest().configuration().identity());
         identity = new Identity(ConditionIdentitySupport.derive("spring-build-context", canonicalForm));
+    }
+
+    /** Universal intake already enforces the same exact request contract. Assembly identity
+     * remains in the preimage, so inputs from different acquisition revisions cannot merge. */
+    public static SpringBuildContext fromExactRequest(FrontendRequest request, ContentDigest assemblyIdentity) {
+        Objects.requireNonNull(request); Objects.requireNonNull(assemblyIdentity);
+        return new SpringBuildContext(request,assemblyIdentity,SourcePlanModel.Kind.valueOf(request.sourceSet().name()));
     }
 
     public static SpringBuildContext from(FrontendAssemblyResult assembly, ModuleIdentity module, SourcePlanModel.Kind sourceSet) {
