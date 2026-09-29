@@ -1,0 +1,58 @@
+[
+  {
+    "file": "spring-boot-autoconfigure-3.4.0.jar",
+    "sha256": "525aa88505399c6ccfddfe295b313d55a259ed5e8d5890a3568485c074f98414"
+  },
+  {
+    "file": "spring-boot-3.4.0.jar",
+    "sha256": "dea6332c2fa49ce2c724c78e3e57e41417dab50c82f1ccb5bfb22cc993290609"
+  },
+  {
+    "file": "spring-web-6.2.0.jar",
+    "sha256": "24bd75b1049104699e4f57f3a70fc2ba41943d667d5d1a3b24ed1b70c3582020"
+  },
+  {
+    "file": "spring-beans-6.2.0.jar",
+    "sha256": "33adf77b49236f2966c9cec7eb5a1aea8ade81d7ada80c36d91bbf89d3298e15"
+  },
+  {
+    "file": "spring-core-6.2.0.jar",
+    "sha256": "3b82629da38717dd616a70ec1055f9a8e208d58132071a6314a32159f8bce162"
+  },
+  {
+    "file": "spring-jcl-6.2.0.jar",
+    "sha256": "2b59288f030ce77a89ec88aa426f32eb9a309056f3646dd5157f9f31f0204fd7"
+  },
+  {
+    "file": "spring-data-commons-3.4.0.jar",
+    "sha256": "865bf9ce12e5b42f85200a839c0dc7f98fcd7a3b05eefc30975054a6c3b887b9"
+  },
+  {
+    "file": "spring-data-jpa-3.4.0.jar",
+    "sha256": "d4e7983da342f9934504885e58e006940301e639e8fe0eab2d944806ee1abd5e"
+  },
+  {
+    "file": "spring-orm-6.2.0.jar",
+    "sha256": "c6010df1674a6b006090a84238daf9fff3dde50ace1bff532d888c55bb47c7c5"
+  },
+  {
+    "file": "spring-jdbc-6.2.0.jar",
+    "sha256": "d0d01f327bbd468555da46d3546b67f0dba837479591bdcafabe09302a83fa44"
+  },
+  {
+    "file": "spring-context-6.2.0.jar",
+    "sha256": "a0d2de9df7902edc5f6ae55e2936327bdeac177dbc5392906b8d36f3691fe121"
+  },
+  {
+    "file": "spring-expression-6.2.0.jar",
+    "sha256": "37cfc1fe8ca22bb789c20aac6b90e09f2b0ea73085f3271ae61cf12cdb7e8876"
+  },
+  {
+    "file": "spring-aop-6.2.0.jar",
+    "sha256": "fe84f18bdefb3ad4f993357d31e61613bb55f348d7ea69ec1ca968b3240b3b08"
+  },
+  {
+    "file": "spring-tx-6.2.0.jar",
+    "sha256": "c1a49cec2467bcfd2be3eb5892e9a84e09c63870149479ef1b9f59f01bcae0e3"
+  }
+]

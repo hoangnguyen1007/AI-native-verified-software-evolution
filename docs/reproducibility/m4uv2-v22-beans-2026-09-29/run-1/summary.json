@@ -1,0 +1,12 @@
+{
+  "sourceRecord": "verification.json",
+  "sourceSha256": "f7f43e4fa9098ba6d95b7440a2d2f09cc6612add2a0acfcd4702a840298588ba",
+  "exitCode": 0,
+  "inputsUnchanged": true,
+  "inputCount": 351,
+  "suites": 88,
+  "tests": 609.0,
+  "failures": 0.0,
+  "errors": 0.0,
+  "skipped": 0.0
+}

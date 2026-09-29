@@ -1,6 +1,6 @@
 # Current State
 
-Last reconciled: 2026-09-28. The owner explicitly requested continuation of V2.2; its [implemented boundary](architecture/m4uv2-v22-implementation-boundary.md) is partial and its exit criteria remain open. V2.1 acceptance also remains open in the [implementation ledger](research/m4-universal-v2-v21-implementation-ledger.md). Fresh checks and their scope belong in the task handoff; historical gate evidence is identified below.
+Last reconciled: 2026-09-29. The owner explicitly requested the next V2.2 slice; its [implemented boundary](architecture/m4uv2-v22-implementation-boundary.md) now includes direct bean producers and scalar constructor/bean-parameter bindings. V2.2 remains partial and its exit criteria remain open. V2.1 acceptance also remains open in the [implementation ledger](research/m4-universal-v2-v21-implementation-ledger.md). Fresh checks and their scope belong in the task handoff; historical gate evidence is identified below.
 
 ## PHASE AND MILESTONE
 
@@ -66,9 +66,11 @@ calls in a bounded evidenced fragment, retains annotation constant reads, inferr
 captured relative imports with precedence, profile variants and resource bounds.
 `UniversalIngestionPipeline.prepareSpring` connects actual source evidence to M4C
 registration/binding and existing exhaustive/SAT truth evaluation under explicit
-container/order/closure proofs. The bridge currently closes only ordinary direct
-components and selected scalar constructor dependencies; it is not automatic
-application bootstrap or full Spring normalization.
+container/order/closure proofs. The bridge now also acquires direct bean methods
+on ordinary components/lite configuration classes, declared scalar source return
+types, factory ownership, literal names/flags/qualifiers and scalar bean parameters.
+Explicit owner gates and registration schedules drive conditional binding. This
+is not automatic application bootstrap or full Spring normalization.
 
 The [implementation boundary](architecture/m4uv2-v22-implementation-boundary.md)
 lists supported fragments, APIs and remaining A–E obligations. The
@@ -83,6 +85,20 @@ errors or skips. All 18 changed source/test hashes remained unchanged through th
 run. The initial broad run exposed an obsolete annotation-read expectation; the
 repaired expectation and upstream-gap-retention control pass in the final run.
 These results do not close the remaining V2.2 exit criteria.
+
+**CONFIRMED bean-producer slice verification (2026-09-29):** the root reactor
+checkpoint passed **609 tests in 88 fresh suites**, zero failures/errors/skips,
+with Enforcer enabled and 351 source/resource/build inputs unchanged during that
+run. Final self-review then reproduced and repaired a Java identifier-ignorable
+character in a default bean name. The full affected integration class was rerun
+against that corrected state: **18/18 tests passed** (13 additions to the prior
+slice), zero failures/errors/skips, with all 351 inputs stable. The 609-test
+checkpoint predates this narrow final correction; no second reactor or clean-build
+claim is made. The [slice verification package](reproducibility/m4uv2-v22-beans-2026-09-29/README.md)
+preserves both states, the failing controls, pinned container checks and hashes.
+Aliases, enhanced configuration, overloaded/colliding reader decisions, wider
+return-type metadata and runtime parameter names remain explicit evidence gaps.
+This completes the recorded next bean-producer slice, not all V2.2 A–E obligations.
 
 ## IMPLEMENTED — M4-UNIVERSAL SLICE 2 SPRING SEMANTICS AND SAT
 
@@ -356,13 +372,17 @@ Current authorized work is V2.2, with V2.1 acceptance obligations preserved, the
 
 ## EXACT NEXT TASK
 
-**M4 Universal v2 / V2.2 — extend source-to-M4C acquisition to bean producers and
-their constructor/bean-parameter dependencies with evidenced scheduling.** Start
-from `SourceToSpringPlan` and the [implemented boundary](architecture/m4uv2-v22-implementation-boundary.md).
-Add a compact source-to-conditional-binding positive and wrong/missing order,
-producer metadata and qualifier controls against the pinned container. Keep
-acquisition gaps, complete scope/order proofs and deterministic identities intact;
-do not accept hand-built final descriptors as the integration positive.
+**M4 Universal v2 / V2.2 — extend source-to-M4C scalar field/method injection
+acquisition, including required/optional method groups.** Start from
+`SourceToSpringPlan`, `SpringInjectionSites` and the
+[implemented boundary](architecture/m4uv2-v22-implementation-boundary.md).
+Use actual source-to-conditional-binding positives and pinned-container controls
+for qualifier mismatch, optional method suppression and incomplete descriptors.
+Preserve runtime parameter-name uncertainty, source spans, acquisition gaps,
+scope/order proofs and deterministic identities. Do not accept hand-built final
+descriptors as the integration positive. Remaining bean aliases, reader collisions,
+generic/binary return types and inferred bean-query type metadata stay explicit
+V2.2 obligations alongside this next bounded slice.
 
 Continue the remaining A–E obligations in the [V2.2 task](tasks/m4-universal-v2/02-java-spring-semantic-closure.md).
 Retain V2.1's [unfulfilled acceptance rows](research/m4-universal-v2-v21-implementation-ledger.md).

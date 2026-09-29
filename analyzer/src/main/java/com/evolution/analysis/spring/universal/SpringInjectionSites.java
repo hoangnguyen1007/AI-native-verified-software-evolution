@@ -11,7 +11,7 @@ import java.util.*;
 
 /** Automatic normalized constructor, field, method and dual-namespace injection evidence. */
 public final class SpringInjectionSites {
-    public enum Kind { CONSTRUCTOR, FIELD, METHOD, RESOURCE, VALUE }
+    public enum Kind { CONSTRUCTOR, FIELD, METHOD, BEAN_PARAMETER, RESOURCE, VALUE }
     public enum Status { ACQUIRED, UNKNOWN }
     public record Site(EntityIdentity owner,EntityIdentity element,Kind kind,Optional<JavaType> type,
                        Optional<String> name,Optional<String> qualifier,boolean required,Status status,ConditionEvidence evidence) {
@@ -27,7 +27,7 @@ public final class SpringInjectionSites {
     public static Result acquire(SpringSourceEvidence source,ConstructorInjectionIngestion.Result constructors,FrameworkGeneration generation,int maxSites) {
         if(maxSites<1)throw new IllegalArgumentException("Positive injection limit required");
         if(!constructors.analysis().equals(source.frontend().analysis()))throw new IllegalArgumentException("Foreign constructor evidence");
-        var input=IngestionEvidence.digest(List.of("spring.injection-sites:m4u.2-v1",source.identity(),constructors.identity(),generation,maxSites));
+        var input=IngestionEvidence.digest(List.of("spring.injection-sites:m4uv2.2-beans-v1",source.identity(),constructors.identity(),generation,maxSites));
         var sites=new TreeMap<String,Site>();var issues=new ArrayList<UniversalSpringEvidence.Issue>();
         for(var row:constructors.rows())if(row.status()==ConstructorInjectionIngestion.Status.SELECTED)for(var p:row.parameters()) {
             var metadata=metadata(source,p.parameter(),generation,issues);
@@ -36,29 +36,29 @@ public final class SpringInjectionSites {
         }
         for(var declaration:source.declarations().values())if(declaration.entity().origin()==EntityOrigin.PROJECT) {
             var element=declaration.entity().identity();
-            var annotations=source.annotations(element).stream().filter(a->a.name().filter(INJECT::contains).isPresent()).toList();
+            var annotations=source.annotations(element).stream().filter(a->a.name().filter(n -> INJECT.contains(n)||n.equals(BeanMethodIngestion.BEAN)).isPresent()).toList();
             if(annotations.isEmpty())continue;
             var annotation=annotations.getFirst();var name=annotation.name().orElseThrow();
             var owner=source.owner(element);while(owner.isPresent()&&source.declarations().get(owner.orElseThrow()).entity().kind()!=EntityKind.TYPE)owner=source.owner(owner.orElseThrow());
             if(owner.isEmpty()){issues.add(new UniversalSpringEvidence.Issue(UniversalSpringEvidence.Reason.EVIDENCE_MISSING,element.value(),List.of(annotation.evidence())));continue;}
             boolean namespace=compatible(name,generation);if(!namespace)issues.add(new UniversalSpringEvidence.Issue(UniversalSpringEvidence.Reason.NAMESPACE_INCOMPATIBLE,element.value(),List.of(annotation.evidence())));
-            var kind=name.endsWith(".Resource")?Kind.RESOURCE:name.endsWith(".Value")?Kind.VALUE:
+            var kind=name.equals(BeanMethodIngestion.BEAN)?Kind.BEAN_PARAMETER:name.endsWith(".Resource")?Kind.RESOURCE:name.endsWith(".Value")?Kind.VALUE:
                     declaration.entity().kind()==EntityKind.CONSTRUCTOR?Kind.CONSTRUCTOR:declaration.entity().kind()==EntityKind.FIELD?Kind.FIELD:Kind.METHOD;
             var parameters=source.relationships().stream().filter(r->r.source().equals(element)&&r.kind().value().equals("java.has-parameter")&&r.target() instanceof RelationshipTarget.Resolved)
                     .map(r->((RelationshipTarget.Resolved)r.target()).target()).distinct().toList();
             List<EntityIdentity> targets=declaration.entity().kind()==EntityKind.FIELD||declaration.entity().kind()==EntityKind.PARAMETER?List.of(element):parameters;
-            if(targets.isEmpty()&&kind!=Kind.CONSTRUCTOR)issues.add(new UniversalSpringEvidence.Issue(UniversalSpringEvidence.Reason.ANNOTATION_UNSUPPORTED,element.value(),List.of(annotation.evidence())));
+            if(targets.isEmpty()&&kind!=Kind.CONSTRUCTOR&&kind!=Kind.BEAN_PARAMETER)issues.add(new UniversalSpringEvidence.Issue(UniversalSpringEvidence.Reason.ANNOTATION_UNSUPPORTED,element.value(),List.of(annotation.evidence())));
             for(var target:targets) {
                 boolean valid=namespace&&annotations.size()==1&&kind!=Kind.VALUE;Optional<String> resourceName=Optional.empty();boolean required=true;
                 try {
                     var values=LiteralConditionAnnotation.parse(annotation.use().spelling());
                     if(kind==Kind.RESOURCE){if(!Set.of("name").containsAll(values.keySet()))valid=false;String explicit=LiteralConditionAnnotation.string(values,"name","");if(!explicit.isEmpty())resourceName=Optional.of(explicit);}
-                    else if(kind!=Kind.VALUE){if(!Set.of("required").containsAll(values.keySet()))valid=false;required=LiteralConditionAnnotation.bool(values,"required",true);}
+                    else if(kind!=Kind.VALUE&&kind!=Kind.BEAN_PARAMETER){if(!Set.of("required").containsAll(values.keySet()))valid=false;required=LiteralConditionAnnotation.bool(values,"required",true);}
                 }catch(IllegalArgumentException malformed){valid=false;}
                 var types=source.frontend().types().stream().filter(t->t.owner().equals(Optional.of(target))&&Set.of("java.parameter-type","java.field-type").contains(t.role().value())).map(TypeUseRecord::type).toList();
                 var metadata=metadata(source,target,generation,issues);valid&=metadata.valid()&&types.size()==1&&types.getFirst().status()==SemanticStatus.RESOLVED;
                 if(!valid)issues.add(new UniversalSpringEvidence.Issue(UniversalSpringEvidence.Reason.ANNOTATION_UNSUPPORTED,target.value(),List.of(annotation.evidence())));
-                sites.put(target.value(),new Site(owner.orElseThrow(),target,kind,types.size()==1?Optional.of(types.getFirst()):Optional.empty(),resourceName,metadata.qualifier(),required,valid?Status.ACQUIRED:Status.UNKNOWN,annotation.evidence()));
+                sites.put(target.value(),new Site(kind==Kind.BEAN_PARAMETER?element:owner.orElseThrow(),target,kind,types.size()==1?Optional.of(types.getFirst()):Optional.empty(),resourceName,metadata.qualifier(),required,valid?Status.ACQUIRED:Status.UNKNOWN,source.evidence(target)));
             }
         }
         var result=new ArrayList<Site>();int seen=0;

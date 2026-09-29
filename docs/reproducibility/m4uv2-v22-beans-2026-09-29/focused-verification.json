@@ -1,0 +1,9 @@
+{
+  "command": ".\\mvnw.cmd -q -pl analyzer-javaparser -Denforcer.skip=true -Dtest=SourceToSpringPlanTest test",
+  "tests": 17,
+  "failures": 0,
+  "errors": 0,
+  "skipped": 0,
+  "seconds": 120.887,
+  "reportSha256": "8afbc04289785663e311a94690f63828fcf2ef1fe723f7838cf41920713c6f71"
+}

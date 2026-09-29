@@ -1,10 +1,16 @@
 # V2.2 — Java/Spring semantic closure
 
-Status: **IN PROGRESS / partial implementation, chưa đạt exit criteria**, cập nhật 2026-09-28. Task triển khai thứ hai của [kế hoạch ba task](README.md). Mục tiêu: evidence V2.1 đi hết đến Java targets, Spring registration/binding và conditional architecture; không dừng ở các candidate helpers rời rạc.
+Status: **IN PROGRESS / partial implementation, chưa đạt exit criteria**, cập nhật 2026-09-29. Task triển khai thứ hai của [kế hoạch ba task](README.md). Mục tiêu: evidence V2.1 đi hết đến Java targets, Spring registration/binding và conditional architecture; không dừng ở các candidate helpers rời rạc.
 
 Theo chỉ đạo trực tiếp của chủ dự án, công việc hiện tại là V2.2; các nghĩa vụ nghiệm thu V2.1 còn mở không được coi là đã qua. [Ranh giới triển khai](../../architecture/m4uv2-v22-implementation-boundary.md) ghi các phần đã nối vào code: direct Lombok constructor/accessor resolution, annotation reads/var/lexical parameter identities, captured relative Config Data imports và source-to-M4C/M4D cho ordinary components/scalar constructor injection với scope/order proof được cung cấp. [Gói kiểm chứng](../../reproducibility/m4uv2-v22-2026-09-28/README.md) ghi bằng chứng thực chạy. Những phần này chưa đóng toàn bộ bất kỳ nhóm A–E nào bên dưới; checkbox không được đánh dấu chỉ nhờ một fragment hoặc một typed gap.
 
 ## Entry, output và boundary
+
+Slice ngày 2026-09-29 mở rộng bridge cho direct `@Bean`, scalar bean parameters và
+constructor tiêu thụ bean products, dưới scope/order proof rõ ràng. Giữ riêng
+producer identity, exposed return type và factory owner; thiếu metadata/name/order
+vẫn có typed gaps. [Gói kiểm chứng slice bean producers](../../reproducibility/m4uv2-v22-beans-2026-09-29/README.md)
+ghi positive/negative controls, container oracle và giới hạn; chưa đóng nhóm C hoặc V2.2.
 
 Entry: V2.1 exact/partial inputs, artifact lineage, coordinator contracts và controls ổn định. Đọc [conditional semantics](../../architecture/conditional-architecture-semantics.md), [v1 Spring](../../architecture/m4u2-universal-spring.md), [v2 architecture](../../architecture/m4-universal-v2.md), [matrix J/S/Q](../../architecture/m4-universal-v2-coverage.md) và target M4B/C/D contracts.
 
