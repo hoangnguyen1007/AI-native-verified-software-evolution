@@ -82,7 +82,24 @@ public final class SpringSourceEvidence {
     public SpringFrameworkEvidence framework(){return framework;}
     public Map<EntityIdentity,DeclarationRecord> declarations(){return Collections.unmodifiableMap(declarations);}
     public List<Annotation> annotations(EntityIdentity owner){return List.copyOf(annotations.getOrDefault(owner,List.of()));}
+    /** JDK Override is declaration metadata, not an unresolved Spring annotation. */
+    public boolean javaOverride(Annotation annotation) {
+        return frontend.occurrences().stream().filter(o -> o.status()==SemanticStatus.RESOLVED
+                &&o.relationship().kind().value().equals("java.annotated-with")
+                &&o.relationship().source().equals(annotation.use().owner())&&o.span().equals(annotation.use().span()))
+                .anyMatch(o -> o.relationship().target() instanceof RelationshipTarget.Resolved r
+                        &&declarations.containsKey(r.target())&&declarations.get(r.target()).entity().origin()==EntityOrigin.JDK
+                        &&"java.lang.Override".equals(typeName(r.target())));
+    }
     public Optional<SpringFrameworkEvidence.Artifact> artifact(EntityIdentity type){return Optional.ofNullable(artifacts.get(type));}
+    public Optional<SpringFrameworkEvidence.Artifact> annotationArtifact(Annotation annotation) {
+        var targets=frontend.occurrences().stream().filter(o -> o.status()==SemanticStatus.RESOLVED
+                &&o.relationship().kind().value().equals("java.annotated-with")
+                &&o.relationship().source().equals(annotation.use().owner())&&o.span().equals(annotation.use().span()))
+                .filter(o -> o.relationship().target() instanceof RelationshipTarget.Resolved)
+                .map(o -> ((RelationshipTarget.Resolved)o.relationship().target()).target()).distinct().toList();
+        return targets.size()==1?artifact(targets.getFirst()):Optional.empty();
+    }
     public Optional<EntityIdentity> owner(EntityIdentity member){return Optional.ofNullable(owners.get(member));}
     public String typeName(EntityIdentity type){var d=declarations.get(type);return d==null?null:JavaTypeName.fromCanonical(d.entity().canonicalName()).map(JavaTypeName::qualifiedName).orElse(null);}
     public List<SemanticRelationship> relationships(){return relations;}

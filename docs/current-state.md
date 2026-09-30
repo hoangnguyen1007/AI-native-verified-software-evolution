@@ -1,6 +1,6 @@
 # Current State
 
-Last reconciled: 2026-09-30. The owner requested completion of the next task; the [implemented V2.2 boundary](architecture/m4uv2-v22-implementation-boundary.md) now attaches inherited scalar fields to bounded ordinary source components using evidenced superclass closure. Private/hidden fields retain their declaring points and full spans; shared ancestor sites keep separate conditional component owners. Incomplete/binary/generic hierarchies and inherited metadata/method semantics remain qualified. V2.2 remains partial and its exit criteria remain open. V2.1 acceptance also remains open in the [implementation ledger](research/m4-universal-v2-v21-implementation-ledger.md). Fresh checks and their scope belong in the task handoff; historical gate evidence is identified below.
+Last reconciled: 2026-09-30. The owner requested completion of the next task; the [implemented V2.2 boundary](architecture/m4uv2-v22-implementation-boundary.md) now acquires direct scalar Jakarta Resource fields on bounded source components and supported source bean products, under explicit processor-policy evidence. Name/type fallback semantics remain separate from Autowired qualifiers. Unsupported attributes, setter/inherited shapes and unproved policy/runtime evidence retain typed gaps. Pre-existing inherited-method changes are preserved. V2.2 remains partial and its exit criteria remain open. V2.1 acceptance also remains open in the [implementation ledger](research/m4-universal-v2-v21-implementation-ledger.md). Fresh checks and their scope belong in the task handoff; historical gate evidence is identified below.
 
 ## PHASE AND MILESTONE
 
@@ -300,6 +300,102 @@ no independent agent review, full reactor/clean build, target execution, externa
 benchmark, new reproducibility package or gate promotion is claimed. Git was clean
 at entry. This slice remains unstaged and uncommitted; no commit or push was performed.
 
+**CONFIRMED inherited-method slice (2026-09-30):** the recorded next bounded slice
+is implemented by `SourceMethodSelection`, `SpringInjectionSites` and
+`SourceToSpringPlan`, with source/site provider version `m4uv2.2-inherited-methods-v1`.
+Every considered method/component pair retains an included/suppressed/unknown
+decision and declaring/hierarchy evidence in the actual pipeline result and its
+identity. Annotated/unannotated overrides, private/final methods and overloads use
+resolved signature evidence. Shared ancestor groups retain separate conditional
+owners, source points/spans, declaration-order parameters, qualifier precedence and
+requiredness. Generic/bridge/binary/incomplete cases and comparison exhaustion keep
+typed gaps. Fully suppressed M4A obligations retain the existing engine's conservative
+`NORMALIZATION_REQUIRED` residual; no fake descriptor clears it. Exact support and
+the shared comparison budget belong in the [implemented boundary](architecture/m4uv2-v22-implementation-boundary.md).
+
+The unannotated-override regression first failed as intended (2 dependencies expected,
+4 acquired), then passed: **6.310 s red / 6.345 s green**, exceeding the five-second
+inner-loop command target. Two new assertions used a nonexistent qualifier accessor;
+those test API errors were corrected. A parameter-order expectation was corrected to
+the actual full declaration spelling. The annotated-override control exposed JDK
+`Override` incorrectly spoiling method-qualifier metadata; artifact/platform-proven
+language metadata is now distinguished from source annotation impostors. JDK 21
+`javac -encoding UTF-8 -proc:none --release 21` compiled all five changed production
+classes and both authored test files against the standard module test classpaths,
+avoiding IDE-generated unresolved-compilation stubs. The trusted local analyzer
+artifact was refreshed with `jar:jar install:install -pl analyzer -q`.
+
+Final bounded pre-handoff commands (PowerShell; only partial-reactor membership skipped):
+
+```powershell
+.\mvnw.cmd test -pl analyzer "-Dtest=FrontendResultTest,FrontendContractTest,SpringMechanismM4A2Test,SpringMechanismInventoryTest,InjectionBindingsTest,InjectionBindingBoundaryTest,TruthRegionEvaluationTest" "-Denforcer.skipRules=reactorModuleConvergence" -q
+.\mvnw.cmd test -pl analyzer-javaparser "-Dtest=SourceToSpringPlanTest,UniversalIngestionPipelineTest,ConstructorInjectionIngestionTest,ComponentIngestionTest,UniversalSpringSemanticsTest#sourceToRepositoryInjectionAndControllerServiceRepositoryPath+dualNamespaceIsResolvedFromArtifactAndGeneration+inheritedCustomAndUnresolvedMappingsRemainVisibleWithoutInventedRoutes" "-Denforcer.skipRules=reactorModuleConvergence" -q
+```
+
+Final fresh reports: **102 analyzer + 94 adapter = 196 passing tests in 12 classes**,
+zero failures/errors/skips. `SourceToSpringPlanTest` passes **79 tests** (13 additions
+and the upgraded override regression) in **324.803 s**. Final self-review added an
+explicit protected-to-package-private access-reduction guard and negative control;
+10 targeted controls passed before rerunning the entire affected adapter bundle.
+Both bounded commands exited zero on the final compiled state. Authored
+Framework 6.2.0 controls corroborate override selection, private/package-boundary
+methods and optional/required suppression. Exhaustive/SAT agreement, witness replay,
+deterministic identities, provider version, missing evidence, impostor metadata and
+budget closure pass. Diff checks and 94 local document links pass. This is implementation
+self-review; no independent agent review, full reactor/clean build, target execution,
+external benchmark, new reproducibility package or gate promotion is claimed. Git was
+clean at entry; the ten changed/added files remain unstaged and uncommitted, with no
+commit or push. V2.2 remains partial; the next bounded slice is recorded below.
+
+**CONFIRMED direct Resource-field slice (2026-09-30):** the recorded next bounded
+slice now acquires artifact-evidenced scalar Jakarta Resource fields on ordinary
+source components and supported final source bean products. Literal default/explicit
+names, source points/spans, separate conditional owners, factory ownership and
+obligation fan-out reach the existing separate M4C.3 Resource selection path.
+Named selection bypasses autowire/default/qualifier/primary filters, wrong types
+remain errors, and only absent default names use type fallback. An additive optional
+processor-policy proof in Scope is required; absent/foreign/incomplete proof cannot
+certify Resource selection. Preliminary structural Resource rows remain unknown
+until the registry/policy continuation. Source/site provider version is
+`m4uv2.2-resource-fields-v1`; M1/R0 preimages and binding schemas are unchanged.
+Exact API/version/shape support and residuals belong in the
+[implementation boundary](architecture/m4uv2-v22-implementation-boundary.md).
+
+The initial regression failed at `COMPLETE` versus `INCOMPLETE` (3.040 s for its
+Surefire class; total asynchronous command duration was not captured). Its green
+command took **6.749 s**, exceeding the five-second inner-loop target. A missing
+import and two new test accessor errors were corrected; JDK 21
+`javac -encoding UTF-8 -proc:none --release 21` compiled the affected production
+classes and both integration test classes, avoiding IDE-generated unresolved
+compilation stubs. `jar:jar install:install -pl analyzer -q` refreshed the trusted
+local analyzer artifact. One new assertion incorrectly required an injection
+obligation when annotation identity was unavailable; its correction checks exact
+retained Resource raw observations/spans and upstream gaps without fake descriptors.
+The focused correction and foreign-policy proof controls passed before final checks.
+
+Final bounded pre-handoff commands (PowerShell; only partial-reactor membership skipped):
+
+```powershell
+.\mvnw.cmd test -pl analyzer "-Dtest=FrontendResultTest,FrontendContractTest,SpringMechanismM4A2Test,SpringMechanismInventoryTest,InjectionBindingsTest,InjectionBindingBoundaryTest,TruthRegionEvaluationTest" "-Denforcer.skipRules=reactorModuleConvergence" -q
+.\mvnw.cmd test -pl analyzer-javaparser "-Dtest=ResourceFieldIngestionTest,SourceToSpringPlanTest,UniversalIngestionPipelineTest,ConstructorInjectionIngestionTest,ComponentIngestionTest,UniversalSpringSemanticsTest#sourceToRepositoryInjectionAndControllerServiceRepositoryPath+dualNamespaceIsResolvedFromArtifactAndGeneration+inheritedCustomAndUnresolvedMappingsRemainVisibleWithoutInventedRoutes" "-Denforcer.skipRules=reactorModuleConvergence" -q
+```
+
+Both exited zero: **102 analyzer + 106 adapter = 208 tests in 13 fresh classes**,
+zero failures/errors/skips. `ResourceFieldIngestionTest` passes **12 new tests**
+in **69.592 s**; the existing `SourceToSpringPlanTest` passes **79 tests** in
+**267.651 s**. Fixed authored Framework 6.2.0 containers corroborate name/filter
+bypass, fallback, qualifier/ambiguity, wrong-type errors, profile absence, product
+injection and disabled-fallback failure. Source-to-pipeline checks include full
+provenance, policy identity/foreign-proof rejection, missing/impostor annotations,
+unsupported metadata/shapes, resource budgets, exhaustive/SAT agreement,
+deterministic replay and revalidated witnesses. Diff checks and 95 local Markdown
+links pass. This is implementation self-review; no independent agent review,
+full reactor/clean build, analyzed-target execution, external benchmark, new
+reproducibility package or milestone/gate acceptance is claimed. The workspace
+was already dirty at entry; its inherited-method changes were preserved. All
+changes remain unstaged and uncommitted; no commit or push was performed.
+V2.2 remains partial; its next bounded slice is recorded below.
+
 ## IMPLEMENTED — M4-UNIVERSAL SLICE 2 SPRING SEMANTICS AND SAT
 
 **CONFIRMED by implementation and focused tests:** the unified ingestion pipeline
@@ -572,16 +668,18 @@ Current authorized work is V2.2, with V2.1 acceptance obligations preserved, the
 
 ## EXACT NEXT TASK
 
-**M4 Universal v2 / V2.2 — acquire inherited scalar method injection and override
-selection on bounded ordinary source components.** Reuse the evidenced source
-superclass closure in `SpringSourceEvidence`, `SpringInjectionSites`, `SourceToSpringPlan`
-and the [implemented boundary](architecture/m4uv2-v22-implementation-boundary.md).
-Use authored Framework 6.2.0 controls for annotated/unannotated overrides and private
-methods; distinguish declaring points from owning components. Preserve per-owner method
-groups, declaration-order parameters, qualifier precedence, requiredness, conditional
-activation, closed obligations and witness replay. Resolve only evidenced override
-relationships; generic/bridge/binary/incomplete cases keep typed gaps. Wider
-bean-product runtime types remain explicit gaps until separately evidenced. Remaining
+**M4 Universal v2 / V2.2 — acquire inherited scalar Jakarta `@Resource` field descriptors
+on bounded ordinary source components.** Reuse the existing closed source superclass
+evidence, separate M4C.3 Resource name/type-fallback path, explicit processor-policy proof and
+the [implemented boundary](architecture/m4uv2-v22-implementation-boundary.md).
+Use authored Framework 6.2.0 controls for private/hidden fields, shared ancestors,
+explicit/default names, fallback, wrong types and ambiguous candidates. Preserve
+declaring points/spans, separate component owners, conditional activation,
+obligation mappings, deterministic identities and witness replay.
+Do not equate Resource with Autowired qualifiers. Unsupported namespace/attributes,
+setter/generic/binary/runtime-product shapes retain typed gaps. The inherited-method slice's
+fully suppressed M4A obligations still have a conservative normalization residual;
+source acquisition decisions explain their absence without fabricated descriptors. Remaining
 bean aliases, reader collisions, generic/binary return types and inferred bean-query
 type metadata stay explicit V2.2 obligations alongside this next bounded slice.
 

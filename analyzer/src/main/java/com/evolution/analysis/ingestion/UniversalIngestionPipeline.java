@@ -77,7 +77,7 @@ public final class UniversalIngestionPipeline {
         var normalized=SourceToSpringPlan.normalize(build,source,unit.components().orElseThrow(),unit.constructors().orElseThrow(),scope,limit);
         var inherited=new TreeSet<>(pipeline.gaps());inherited.addAll(normalized.gaps());
         return new SourceToSpringPlan.Result(normalized.inputIdentity(),normalized.inventory(),normalized.conditions(),
-                normalized.binding(),List.copyOf(inherited));
+                normalized.binding(),List.copyOf(inherited),normalized.methodSelections());
     }
     private static SpringFrameworkEvidence framework(FrontendRequest request) {
         var artifacts=new ArrayList<SpringFrameworkEvidence.Artifact>();

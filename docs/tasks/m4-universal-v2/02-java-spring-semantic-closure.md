@@ -6,6 +6,25 @@ Theo chỉ đạo trực tiếp của chủ dự án, công việc hiện tại 
 
 ## Entry, output và boundary
 
+Slice Resource ngày 2026-09-30 nối direct scalar `jakarta.annotation.Resource` field
+trên ordinary source components và supported final source bean products vào nhánh
+Resource riêng của M4C.3. Giữ tên mặc định/tường minh, type fallback, lỗi sai kiểu,
+ambiguity, conditional owners, source spans và obligation fan-out. Policy processor
+phải có evidence trong Scope; thiếu proof, namespace/attribute ngoài fragment,
+setter/kế thừa hoặc runtime type chưa chứng minh vẫn giữ typed gaps. Ranh giới chính
+xác thuộc implementation boundary; kiểm chứng và next slice thuộc current state.
+Nhóm C, V2.2 và G3 vẫn chưa hoàn tất.
+
+Slice inherited methods ngày 2026-09-30 nối method injection kế thừa và lựa chọn
+method cụ thể nhất theo từng ordinary source component. Annotated/unannotated
+override, private/final method và overload có decision row riêng, giữ declaring
+points/spans, parameter order, qualifier/requiredness, conditional owners và witness
+replay. Thiếu evidence, generic/bridge/binary hierarchy hoặc hết budget vẫn có
+`UNKNOWN` và typed gaps. Obligation của method bị suppress ở mọi owner vẫn được
+engine hiện tại báo `NORMALIZATION_REQUIRED`; không tạo descriptor giả để đóng gap.
+Hợp đồng nằm tại [ranh giới triển khai](../../architecture/m4uv2-v22-implementation-boundary.md);
+kiểm chứng và exact next slice thuộc current state. Nhóm C và V2.2 vẫn chưa hoàn tất.
+
 Slice ngày 2026-09-29 mở rộng bridge cho direct `@Bean`, scalar bean parameters và
 constructor tiêu thụ bean products, dưới scope/order proof rõ ràng. Giữ riêng
 producer identity, exposed return type và factory owner; thiếu metadata/name/order

@@ -40,10 +40,13 @@ class SourceToSpringPlanTest {
                 """.formatted(qualifier);
         return sourceFixture(text);
     }
-    private Fixture sourceFixture(String text) throws Exception {
+    Fixture sourceFixture(String text) throws Exception {
         return sourceFixture(Map.of("app/App.java",text));
     }
-    private Fixture sourceFixture(Map<String,String> sources) throws Exception {
+    Fixture sourceFixture(Map<String,String> sources) throws Exception {
+        return sourceFixture(sources,true);
+    }
+    Fixture sourceFixture(Map<String,String> sources,boolean resourceArtifact) throws Exception {
         var artifactFixture=ComponentIngestionTest.fixture(sources,false);
         var binaries=new ArrayList<>(artifactFixture.request().dependencies());
         var artifacts=new ArrayList<>(artifactFixture.framework().artifacts());
@@ -60,6 +63,12 @@ class SourceToSpringPlanTest {
             var digest=ContentDigest.sha256(java.nio.file.Files.readAllBytes(path));
             binaries.add(new BinaryInput(new ClasspathEntry(ClasspathEntryKind.DEPENDENCY,"jakarta.inject:jakarta.inject-api:2.0.1@jar",digest),path));
             artifacts.add(new SpringFrameworkEvidence.Artifact("jakarta.inject:jakarta.inject-api:2.0.1",digest));
+        }
+        if(resourceArtifact&&sources.values().stream().anyMatch(text -> text.contains("jakarta.annotation."))) {
+            var path=java.nio.file.Path.of(jakarta.annotation.Resource.class.getProtectionDomain().getCodeSource().getLocation().toURI());
+            var digest=ContentDigest.sha256(java.nio.file.Files.readAllBytes(path));
+            binaries.add(new BinaryInput(new ClasspathEntry(ClasspathEntryKind.DEPENDENCY,"jakarta.annotation:jakarta.annotation-api:2.0.0@jar",digest),path));
+            artifacts.add(new SpringFrameworkEvidence.Artifact("jakarta.annotation:jakarta.annotation-api:2.0.0",digest));
         }
         var files=new TreeMap<String,SourceInput>();
         var captured=new TreeMap<String,String>();captured.put("build.gradle","plugins { java }");
@@ -260,7 +269,7 @@ class SourceToSpringPlanTest {
         assertEquals(UNKNOWN,qualified.binding().environment().descriptorsComplete());assertFalse(qualified.gaps().isEmpty());
         assertTrue(qualified.inventory().rawObservations().stream().anyMatch(r -> r.spelling().contains("@Wire")));
     }
-    @Test void inheritedMethodsKeepOwnerSpecificUnknownGroupsWithoutOverrideGuesses() throws Exception {
+    @Test void unannotatedOverrideSuppressesOnlyItsOwnInheritedMethodGroup() throws Exception {
         var f=sourceFixture("""
                 package app;
                 @org.springframework.context.annotation.ComponentScan("app") class App {}
@@ -270,12 +279,286 @@ class SourceToSpringPlanTest {
                 @org.springframework.stereotype.Component @org.springframework.context.annotation.Profile("dev") class Other extends Base {}
                 """);
         var plan=prepare(f,true);
-        assertEquals(4,plan.binding().dependencies().size());assertEquals(2,plan.binding().groups().size());
+        assertEquals(2,plan.binding().dependencies().size());assertEquals(1,plan.binding().groups().size());
         assertTrue(plan.binding().groups().stream().allMatch(g -> g.dependencies().size()==2));
-        assertTrue(plan.binding().dependencies().stream().allMatch(d -> d.normalization()==InjectionBindingPlan.Normalization.INCOMPLETE));
-        assertTrue(bindingAt(f,plan,true).rows().stream().noneMatch(r -> r.outcome()==InjectionBindings.Outcome.SELECTED));
+        assertTrue(plan.binding().dependencies().stream().allMatch(d -> d.normalization()==InjectionBindingPlan.Normalization.COMPLETE));
+        assertEquals(2,bindingAt(f,plan,true).rows().stream().filter(r -> r.outcome()==InjectionBindings.Outcome.SELECTED).count());
         assertEquals(2,bindingAt(f,plan,false).rows().stream().filter(r -> r.outcome()==InjectionBindings.Outcome.NOT_ACTIVE).count());
         assertFalse(plan.gaps().isEmpty());
+        assertEquals(1,plan.methodSelections().stream().filter(s -> s.status()==SourceMethodSelection.Status.SUPPRESSED).count());
+        assertEquals(1,plan.methodSelections().stream().filter(s -> s.status()==SourceMethodSelection.Status.INCLUDED).count());
+        try(var context=container(true)) {
+            context.register(OracleInheritedStore.class,OracleUnannotatedMethodClient.class,OracleInheritedMethodOther.class);context.refresh();
+            assertEquals(0,context.getBean(OracleUnannotatedMethodClient.class).calls);
+            assertEquals(0,context.getBean(OracleUnannotatedMethodClient.class).overrideCalls);
+            assertEquals(1,context.getBean(OracleInheritedMethodOther.class).calls);
+        }
+    }
+    @org.springframework.stereotype.Component static class OracleUnannotatedMethodClient extends OracleInheritedMethodBase {
+        int overrideCalls;
+        @Override protected void wire(OracleInheritedStore z,OracleInheritedStore a){overrideCalls++;}
+    }
+    @Test void fullySuppressedMethodRetainsAcquisitionEvidenceAndUnmappedObligation() throws Exception {
+        var f=inheritedFixture("@org.springframework.beans.factory.annotation.Autowired protected void wire(Store store) {}","@Override protected void wire(Store store) {}","");
+        var plan=prepare(f,true);assertTrue(plan.binding().dependencies().isEmpty());assertTrue(plan.binding().groups().isEmpty());
+        assertEquals(1,plan.methodSelections().size());assertEquals(SourceMethodSelection.Status.SUPPRESSED,plan.methodSelections().getFirst().status());
+        assertTrue(bindingAt(f,plan,true).obligations().stream().anyMatch(o -> o.status()==InjectionBindings.ObligationStatus.NORMALIZATION_REQUIRED));
+        assertFalse(bindingAt(f,plan,true).capabilityGaps().isEmpty());
+        assertTrue(plan.inventory().rawObservations().stream().anyMatch(r -> r.spelling().contains("@org.springframework.beans.factory.annotation.Autowired")));
+        assertEquals(plan.identity(),prepare(f,true).identity());
+    }
+    @Test void packagePrivateAncestorMethodAcrossPackagesIsNotSuppressed() throws Exception {
+        var f=sourceFixture(Map.of("base/Base.java","""
+                package base;
+                public abstract class Base {
+                  @org.springframework.beans.factory.annotation.Autowired void wire(app.Store store) {}
+                }
+                ""","app/Store.java","package app; @org.springframework.stereotype.Component public class Store {}",
+                "app/App.java","""
+                package app;
+                @org.springframework.context.annotation.ComponentScan("app") class App {}
+                @org.springframework.stereotype.Component class Client extends base.Base { void wire(Store store) {} }
+                """));
+        var plan=prepare(f,true);assertEquals(1,plan.binding().dependencies().size());assertEquals(SourceMethodSelection.Status.INCLUDED,plan.methodSelections().getFirst().status());
+        assertEquals(InjectionBindings.Outcome.SELECTED,bindingAt(f,plan,true).rows().getFirst().outcome());
+        try(var context=container(true)) {
+            context.registerBean("chosen",Object.class,Object::new);context.register(OraclePackageMethodClient.class);context.refresh();
+            var client=context.getBean(OraclePackageMethodClient.class);assertEquals(1,client.baseCalls);assertEquals(0,client.childCalls);
+        }
+    }
+    @org.springframework.stereotype.Component static class OraclePackageMethodClient extends com.evolution.analysis.javaparser.controls.PackageMethodBase {
+        int childCalls;void wire(Object store){childCalls++;}
+    }
+    @Test void qualifiedAndSimpleParameterSpellingsUseResolvedSignatureEquality() throws Exception {
+        var f=inheritedFixture("@org.springframework.beans.factory.annotation.Autowired protected void wire(app.Store store) {}","@Override protected void wire(Store store) {}","");
+        assertTrue(prepare(f,true).binding().dependencies().isEmpty());
+        var different=sourceFixture("""
+                package app;
+                @org.springframework.context.annotation.ComponentScan("app") class App {}
+                @org.springframework.stereotype.Component class Store {}
+                class OtherStore {}
+                abstract class Base { @org.springframework.beans.factory.annotation.Autowired protected void wire(Store store) {} }
+                @org.springframework.stereotype.Component class Client extends Base { void wire(OtherStore store) {} }
+                """);
+        var plan=prepare(different,true);assertEquals(1,plan.binding().dependencies().size());assertEquals(SourceMethodSelection.Status.INCLUDED,plan.methodSelections().getFirst().status());
+        assertEquals(InjectionBindings.Outcome.SELECTED,bindingAt(different,plan,true).rows().getFirst().outcome());
+    }
+    @Test void methodComparisonExhaustionNeverCertifiesAbsenceOfAnOverride() throws Exception {
+        var f=inheritedFixture("@org.springframework.beans.factory.annotation.Autowired protected void wire(Store store) {}","void alpha() {} void beta() {}","");
+        var source=f.source();var client=source.declarations().values().stream().filter(d -> "app.Client".equals(source.typeName(d.entity().identity()))).findFirst().orElseThrow().entity().identity();
+        var base=source.declarations().values().stream().filter(d -> d.entity().kind()==com.evolution.analysis.contract.semantic.EntityKind.METHOD&&source.owner(d.entity().identity()).filter(id -> "app.Base".equals(source.typeName(id))).isPresent()).findFirst().orElseThrow().entity().identity();
+        var decision=new SourceMethodSelection(source,1).select(client,base,source.sourceHierarchy(client,64));
+        assertEquals(SourceMethodSelection.Status.UNKNOWN,decision.status());assertEquals(SourceMethodSelection.Problem.COMPARISON_LIMIT,decision.problem());
+        assertTrue(decision.moreSpecific().isEmpty());assertFalse(decision.evidence().isEmpty());
+        assertThrows(IllegalArgumentException.class,() -> new SourceMethodSelection(source,0));
+        var exhausted=inheritedFixture("@org.springframework.beans.factory.annotation.Autowired protected void wire(Store store) {}",
+                "void a() {} void b() {} void c() {} void d() {} void e() {} void f() {} void g() {} void h() {} void i() {} void j() {}","");
+        var plan=prepare(exhausted,true,COMPLETE,3);
+        assertEquals(1,plan.binding().dependencies().size());assertEquals(SourceMethodSelection.Problem.COMPARISON_LIMIT,plan.methodSelections().getFirst().problem());
+        assertTrue(plan.gaps().stream().anyMatch(g -> g.reasonCode().equals("RESOURCE_LIMIT")));
+        assertTrue(bindingAt(exhausted,plan,true).rows().getFirst().selected().isEmpty());
+        assertEquals(plan.identity(),prepare(exhausted,true,COMPLETE,3).identity());
+    }
+    @Test void sourceOverrideAnnotationImpostorCannotCertifyAnnotatedChildInjection() throws Exception {
+        var f=sourceFixture("""
+                package app;
+                @org.springframework.context.annotation.ComponentScan("app") class App {}
+                @interface Override {}
+                @org.springframework.stereotype.Component class Store {}
+                abstract class Base { protected void wire(Store store) {} }
+                @org.springframework.stereotype.Component class Client extends Base { @Override @org.springframework.beans.factory.annotation.Autowired protected void wire(Store store) {} }
+                """);
+        var plan=prepare(f,true);assertEquals(1,plan.binding().dependencies().size());
+        assertEquals(InjectionBindingPlan.Normalization.INCOMPLETE,plan.binding().dependencies().getFirst().normalization());
+        assertFalse(plan.gaps().isEmpty());assertTrue(bindingAt(f,plan,true).rows().getFirst().selected().isEmpty());
+    }
+    @Test void inheritedScalarMethodsKeepConditionalOwnersParameterOrderAndReplay() throws Exception {
+        var f=sourceFixture(Map.of("base/Base.java","""
+                package base;
+                public abstract class Base {
+                  @org.springframework.beans.factory.annotation.Autowired @org.springframework.beans.factory.annotation.Qualifier("chosen")
+                  protected void wire(app.Store z,@org.springframework.beans.factory.annotation.Qualifier("chosen") app.Store a) {}
+                }
+                ""","app/Store.java","package app; @org.springframework.stereotype.Component(\"chosen\") public class Store {}",
+                "app/App.java","""
+                package app;
+                @org.springframework.context.annotation.ComponentScan("app") class App {}
+                class Middle extends base.Base {}
+                @org.springframework.stereotype.Component @org.springframework.context.annotation.Profile("dev") class Client extends Middle {}
+                @org.springframework.stereotype.Component class Other extends base.Base {}
+                """));
+        var plan=prepare(f,true);assertEquals(COMPLETE,plan.binding().environment().descriptorsComplete());
+        assertEquals(4,plan.binding().dependencies().size());assertEquals(2,plan.binding().groups().size());
+        assertEquals(2,plan.methodSelections().size());assertTrue(plan.methodSelections().stream().allMatch(s -> s.status()==SourceMethodSelection.Status.INCLUDED));
+        assertEquals(2,plan.binding().dependencies().stream().map(d -> d.point().identity()).distinct().count());
+        for(var group:plan.binding().groups()) {
+            var dependencies=group.dependencies().stream().map(id -> plan.binding().dependencies().stream().filter(d -> d.identity().equals(id)).findFirst().orElseThrow()).toList();
+            assertEquals(List.of("app.Store z","@org.springframework.beans.factory.annotation.Qualifier(\"chosen\") app.Store a"),dependencies.stream().map(d -> f.source().declarations().values().stream()
+                    .filter(p -> p.entity().identity().value().equals(d.point().siteSlot())).findFirst().orElseThrow().spelling()).toList());
+            assertEquals(1,dependencies.stream().map(InjectionBindingPlan.Dependency::owner).distinct().count());
+            assertTrue(dependencies.stream().allMatch(d -> d.suggestedName().equals(InjectionBindingPlan.Name.of("chosen"))));
+        }
+        assertTrue(plan.binding().dependencies().stream().allMatch(d -> d.evidence() instanceof ConditionEvidence.Source s&&f.build().containsSource(s)
+                &&f.source().manifest().snapshot().documents().stream().anyMatch(doc -> doc.identity().equals(s.document())&&doc.path().equals("src/main/java/base/Base.java"))));
+        assertEquals(4,bindingAt(f,plan,true).rows().stream().filter(r -> r.outcome()==InjectionBindings.Outcome.SELECTED).count());
+        assertEquals(2,bindingAt(f,plan,false).rows().stream().filter(r -> r.outcome()==InjectionBindings.Outcome.NOT_ACTIVE).count());
+        assertTrue(plan.binding().obligations().stream().anyMatch(o -> o.dependencies().size()==4));
+        var truth=evaluate(f,plan);assertFalse(truth.replays().isEmpty());assertTrue(truth.replays().stream().allMatch(TruthRegionEvaluation.WitnessReplay::valid));
+        assertEquals(truth.identity(),evaluate(f,prepare(f,true)).identity());
+        for(boolean active:List.of(false,true))try(var context=container(active)) {
+            context.register(OracleInheritedStore.class,OracleInheritedMethodClient.class,OracleInheritedMethodOther.class);context.refresh();
+            assertEquals(1,context.getBean(OracleInheritedMethodOther.class).calls);
+            if(active)assertEquals(1,context.getBean(OracleInheritedMethodClient.class).calls);
+            else assertFalse(context.containsBean("oracleInheritedMethodClient"));
+        }
+    }
+    static abstract class OracleInheritedMethodBase {
+        int calls;OracleInheritedStore first,second;
+        @org.springframework.beans.factory.annotation.Autowired @org.springframework.beans.factory.annotation.Qualifier("chosen")
+        protected void wire(OracleInheritedStore z,@org.springframework.beans.factory.annotation.Qualifier("chosen") OracleInheritedStore a){calls++;first=z;second=a;}
+    }
+    static class OracleInheritedMethodMiddle extends OracleInheritedMethodBase {}
+    @org.springframework.stereotype.Component @org.springframework.context.annotation.Profile("dev")
+    static class OracleInheritedMethodClient extends OracleInheritedMethodMiddle {}
+    @org.springframework.stereotype.Component static class OracleInheritedMethodOther extends OracleInheritedMethodBase {}
+    @Test void annotatedNearestOverrideUsesItsOwnQualifiersAndRequiredness() throws Exception {
+        var f=sourceFixture("""
+                package app;
+                @org.springframework.context.annotation.ComponentScan("app") class App {}
+                @org.springframework.stereotype.Component("chosen") class Store {}
+                abstract class Base { @org.springframework.beans.factory.annotation.Autowired @org.springframework.beans.factory.annotation.Qualifier("missing") protected void wire(Store store) {} }
+                class Middle extends Base { @Override @org.springframework.beans.factory.annotation.Autowired(required=false) @org.springframework.beans.factory.annotation.Qualifier("chosen") protected void wire(Store store) {} }
+                @org.springframework.stereotype.Component class Client extends Middle {}
+                """);
+        var plan=prepare(f,true);assertEquals(1,plan.binding().dependencies().size());assertEquals(1,plan.binding().groups().size());
+        var dep=plan.binding().dependencies().getFirst();assertEquals(InjectionBindingPlan.Required.OPTIONAL,dep.required());
+        assertEquals(InjectionBindingPlan.Name.of("chosen"),dep.suggestedName());
+        assertEquals(InjectionBindingPlan.Normalization.COMPLETE,dep.normalization());
+        assertEquals(InjectionBindings.Outcome.SELECTED,bindingAt(f,plan,true).rows().getFirst().outcome());
+        var suppressed=plan.methodSelections().stream().filter(s -> s.status()==SourceMethodSelection.Status.SUPPRESSED).toList();
+        assertEquals(1,suppressed.size());assertTrue(suppressed.getFirst().moreSpecific().isPresent());
+        assertEquals(suppressed.getFirst().moreSpecific().orElseThrow().value(),dep.point().ownerDeclarationKey());
+        assertTrue(suppressed.getFirst().evidence().stream().allMatch(e -> e instanceof ConditionEvidence.Source s&&s.span().isPresent()&&f.build().containsSource(s)));
+        assertEquals(COMPLETE,plan.binding().environment().descriptorsComplete());
+        var truth=evaluate(f,plan);assertEquals(1,selected(truth,true).size());
+        try(var context=container(true)) {
+            context.register(OracleInheritedStore.class,OracleAnnotatedOverrideClient.class);context.refresh();
+            var client=context.getBean(OracleAnnotatedOverrideClient.class);assertEquals(1,client.calls);assertNotNull(client.first);
+        }
+    }
+    static abstract class OracleAnnotatedOverrideBase {
+        int calls;OracleInheritedStore first;
+        @org.springframework.beans.factory.annotation.Autowired @org.springframework.beans.factory.annotation.Qualifier("missing")
+        protected void wire(OracleInheritedStore store){throw new AssertionError("Suppressed ancestor invoked");}
+    }
+    static class OracleAnnotatedOverrideMiddle extends OracleAnnotatedOverrideBase {
+        @Override @org.springframework.beans.factory.annotation.Autowired(required=false) @org.springframework.beans.factory.annotation.Qualifier("chosen")
+        protected void wire(OracleInheritedStore store){calls++;first=store;}
+    }
+    @org.springframework.stereotype.Component static class OracleAnnotatedOverrideClient extends OracleAnnotatedOverrideMiddle {}
+    @Test void privateSameNamedMethodsRemainDistinctInjectionGroups() throws Exception {
+        var f=inheritedFixture("@org.springframework.beans.factory.annotation.Autowired private void wire(Store store) {}",
+                "@org.springframework.beans.factory.annotation.Autowired private void wire(Store store) {}","");
+        var plan=prepare(f,true);assertEquals(COMPLETE,plan.binding().environment().descriptorsComplete());
+        assertEquals(2,plan.binding().groups().size());assertEquals(2,plan.binding().dependencies().size());
+        assertTrue(plan.methodSelections().stream().allMatch(s -> s.status()==SourceMethodSelection.Status.INCLUDED));
+        assertEquals(2,bindingAt(f,plan,true).rows().stream().filter(r -> r.outcome()==InjectionBindings.Outcome.SELECTED).count());
+        try(var context=container(true)) {
+            context.register(OracleInheritedStore.class,OraclePrivateMethodClient.class);context.refresh();
+            var client=context.getBean(OraclePrivateMethodClient.class);assertEquals(1,client.childCalls);assertEquals(1,((OraclePrivateMethodBase)client).baseCalls);
+        }
+    }
+    static abstract class OraclePrivateMethodBase {
+        int baseCalls;
+        @org.springframework.beans.factory.annotation.Autowired private void wire(OracleInheritedStore store){baseCalls++;}
+    }
+    @org.springframework.stereotype.Component static class OraclePrivateMethodClient extends OraclePrivateMethodBase {
+        int childCalls;
+        @org.springframework.beans.factory.annotation.Autowired private void wire(OracleInheritedStore store){childCalls++;}
+    }
+    @Test void overloadsDoNotSuppressInheritedMethodAndFinalMethodsRemainIncluded() throws Exception {
+        var f=inheritedFixture("@org.springframework.beans.factory.annotation.Autowired protected final void wire(Store store) {}",
+                "void wire(Store a,Store b) {}","");
+        var plan=prepare(f,true);assertEquals(1,plan.binding().dependencies().size());
+        assertEquals(SourceMethodSelection.Status.INCLUDED,plan.methodSelections().getFirst().status());
+        assertEquals(InjectionBindings.Outcome.SELECTED,bindingAt(f,plan,true).rows().getFirst().outcome());
+        var overloaded=inheritedFixture("@org.springframework.beans.factory.annotation.Autowired protected void wire(Store store) {}","void wire(Store a,Store b) {}","");
+        assertEquals(1,prepare(overloaded,true).binding().dependencies().size());
+        try(var context=container(true)) {
+            context.register(OracleInheritedStore.class,OracleOverloadedMethodClient.class);context.refresh();assertEquals(1,context.getBean(OracleOverloadedMethodClient.class).calls);
+        }
+    }
+    static abstract class OracleOverloadedMethodBase {
+        int calls;
+        @org.springframework.beans.factory.annotation.Autowired protected final void wire(OracleInheritedStore store){calls++;}
+    }
+    @org.springframework.stereotype.Component static class OracleOverloadedMethodClient extends OracleOverloadedMethodBase {void wire(OracleInheritedStore a,OracleInheritedStore b){throw new AssertionError();}}
+    @Test void inheritedOptionalAndRequiredGroupsClearTentativeEdgesIndependently() throws Exception {
+        for(boolean required:List.of(false,true)) {
+            var f=inheritedFixture("@org.springframework.beans.factory.annotation.Autowired(required="+required+") protected void wire(Store z,@org.springframework.beans.factory.annotation.Qualifier(\"missing\") Store a) {}","","");
+            var plan=prepare(f,true);assertEquals(2,plan.binding().dependencies().size());
+            var rows=bindingAt(f,plan,true).rows();assertTrue(rows.stream().allMatch(r -> r.selected().isEmpty()));
+            assertTrue(rows.stream().anyMatch(r -> r.outcome()==(required?InjectionBindings.Outcome.UNSATISFIED:InjectionBindings.Outcome.GROUP_SKIPPED)));
+            assertTrue(selected(evaluate(f,plan),true).isEmpty());
+        }
+        try(var context=container(true)) {context.register(OracleInheritedStore.class,OracleInheritedOptionalMethodClient.class);context.refresh();assertEquals(0,context.getBean(OracleInheritedOptionalMethodClient.class).calls);}
+        try(var context=container(true)) {context.register(OracleInheritedStore.class,OracleInheritedRequiredMethodClient.class);assertThrows(org.springframework.beans.factory.UnsatisfiedDependencyException.class,context::refresh);}
+    }
+    static abstract class OracleInheritedOptionalMethodBase {
+        int calls;
+        @org.springframework.beans.factory.annotation.Autowired(required=false) protected void wire(OracleInheritedStore z,@org.springframework.beans.factory.annotation.Qualifier("missing") OracleInheritedStore a){calls++;}
+    }
+    @org.springframework.stereotype.Component static class OracleInheritedOptionalMethodClient extends OracleInheritedOptionalMethodBase {}
+    static abstract class OracleInheritedRequiredMethodBase {
+        @org.springframework.beans.factory.annotation.Autowired protected void wire(OracleInheritedStore z,@org.springframework.beans.factory.annotation.Qualifier("missing") OracleInheritedStore a){}
+    }
+    @org.springframework.stereotype.Component static class OracleInheritedRequiredMethodClient extends OracleInheritedRequiredMethodBase {}
+    @Test void genericOverridesAndIncompleteHierarchyCannotProveSuppression() throws Exception {
+        for(String child:List.of("<T> void wire(T store) {}","void wire(Missing store) {}","void wire(Store store) {}")) {
+            var f=inheritedFixture("@org.springframework.beans.factory.annotation.Autowired protected void wire(Store store) {}",child,"");
+            var plan=prepare(f,true);assertEquals(1,plan.binding().dependencies().size());
+            assertEquals(SourceMethodSelection.Status.UNKNOWN,plan.methodSelections().getFirst().status());
+            assertEquals(InjectionBindingPlan.Normalization.INCOMPLETE,plan.binding().dependencies().getFirst().normalization());
+            assertFalse(plan.gaps().isEmpty());assertTrue(bindingAt(f,plan,true).rows().getFirst().selected().isEmpty());
+        }
+        var f=sourceFixture("""
+                package app;
+                @org.springframework.context.annotation.ComponentScan("app") class App {}
+                @org.springframework.stereotype.Component class Store {}
+                abstract class Base extends Missing { @org.springframework.beans.factory.annotation.Autowired protected void wire(Store store) {} }
+                @org.springframework.stereotype.Component class Client extends Base { @Override protected void wire(Store store) {} }
+                """);
+        var plan=prepare(f,true);assertEquals(1,plan.binding().dependencies().size());assertEquals(SourceMethodSelection.Status.UNKNOWN,plan.methodSelections().getFirst().status());
+        assertTrue(plan.gaps().containsAll(f.result().gaps()));
+    }
+    @Test void missingOverrideShapeOrParameterEvidenceRetainsUnknownSelection() throws Exception {
+        var f=inheritedFixture("@org.springframework.beans.factory.annotation.Autowired protected void wire(Store store) {}","@Override protected void wire(Store store) {}","");
+        var original=f.source().frontend();
+        var client=original.declarations().stream().filter(d -> "app.Client".equals(f.source().typeName(d.entity().identity()))).findFirst().orElseThrow().entity().identity();
+        var base=original.declarations().stream().filter(d -> d.entity().kind()==com.evolution.analysis.contract.semantic.EntityKind.METHOD&&f.source().owner(d.entity().identity()).filter(id -> "app.Base".equals(f.source().typeName(id))).isPresent()).findFirst().orElseThrow().entity().identity();
+        var child=original.memberDeclarations().stream().filter(m -> f.source().owner(m.member()).filter(client::equals).isPresent()).findFirst().orElseThrow().member();
+        var missingShape=withMembers(original,original.memberDeclarations().stream().filter(m -> !m.member().equals(child)).toList());
+        var missingTypes=new FrontendResult(original.analysis(),original.frontend(),original.state(),original.declarations(),original.occurrences(),original.observations(),
+                original.sources(),original.coverage(),original.diagnostics(),original.types().stream().filter(t -> t.owner().flatMap(f.source()::owner).filter(child::equals).isEmpty()).toList(),
+                original.annotations(),original.derivedRelationships(),original.typeDeclarations(),original.memberDeclarations());
+        for(var changed:List.of(missingShape,missingTypes)) {
+            var source=new SpringSourceEvidence(f.source().manifest(),changed,f.source().framework());
+            assertEquals(SourceMethodSelection.Status.UNKNOWN,new SourceMethodSelection(source).select(client,base,source.sourceHierarchy(client,64)).status());
+        }
+    }
+    @Test void methodFanOutBudgetKeepsAllOwnerGroupsAndObligations() throws Exception {
+        var f=sourceFixture("""
+                package app;
+                @org.springframework.context.annotation.ComponentScan("app") class App {}
+                @org.springframework.stereotype.Component class Store {}
+                abstract class Base { @org.springframework.beans.factory.annotation.Autowired void wire(Store a,Store b) {} }
+                @org.springframework.stereotype.Component class Client extends Base {}
+                @org.springframework.stereotype.Component class Other extends Base {}
+                """);
+        var plan=prepare(f,true,COMPLETE,3);assertEquals(4,plan.binding().dependencies().size());assertEquals(2,plan.binding().groups().size());
+        assertEquals(2,plan.methodSelections().size());assertEquals(4,bindingAt(f,plan,true).rows().size());assertEquals(UNKNOWN,plan.binding().environment().descriptorsComplete());
+        assertEquals(4,plan.binding().obligations().stream().flatMap(o -> o.dependencies().stream()).distinct().count());assertFalse(plan.gaps().isEmpty());
+        assertEquals(plan.identity(),prepare(f,true,COMPLETE,3).identity());
     }
     @Test void inheritedFieldFanOutRetainsEveryRequestWhenDescriptorBudgetIsExhausted() throws Exception {
         var f=sourceFixture("""
@@ -364,13 +647,13 @@ class SourceToSpringPlanTest {
                 new ConfigurationSpace.ProfilePolicy(ExogenousConditionEvaluator.PROFILES,List.of(),Map.of(),List.of(),proof),version,
                 new ConfigurationSpace.FeasibilityPolicy(version,ConfigurationSpace.Limits.conservative(),proof));
     }
-    private InjectionBindings.Result bindingAt(Fixture f,SourceToSpringPlan.Result plan,boolean active) {
+    InjectionBindings.Result bindingAt(Fixture f,SourceToSpringPlan.Result plan,boolean active) {
         var space=space(f);var variable=new FiniteDomain.Variable(FiniteDomain.Kind.PROFILE,"dev");
         return InjectionBindings.evaluate(plan.binding(),ConditionModel.create(space,plan.conditions().occurrences()),
                 new ConfigurationAssignment(Map.of(variable,FiniteDomain.Value.bool(active)),space.domains().getFirst().evidence()),
                 ExogenousConditionEvaluator.Limits.conservative());
     }
-    private TruthRegionEvaluation.Result evaluate(Fixture f,SourceToSpringPlan.Result plan) {
+    TruthRegionEvaluation.Result evaluate(Fixture f,SourceToSpringPlan.Result plan) {
         var space=space(f);var variable=new FiniteDomain.Variable(FiniteDomain.Kind.PROFILE,"dev");
         var baseline=new ConfigurationAssignment(Map.of(variable,FiniteDomain.Value.bool(false)),space.domains().getFirst().evidence());
         var evaluated=plan.evaluate(space,baseline,
@@ -457,7 +740,7 @@ class SourceToSpringPlanTest {
                 }
                 """.formatted(metadata,qualifier));
     }
-    private SourceToSpringPlan.Result beanPlan(Fixture f, boolean known, String... names) {
+    SourceToSpringPlan.Result beanPlan(Fixture f, boolean known, String... names) {
         return beanPlan(f,known,100,names);
     }
     private SourceToSpringPlan.Result beanPlan(Fixture f, boolean known, int limit, String... names) {
@@ -502,7 +785,7 @@ class SourceToSpringPlanTest {
         OracleBeanStore store(){return new OracleBeanStore();}
         @org.springframework.context.annotation.Bean OracleBeanClient client(@org.springframework.beans.factory.annotation.Qualifier("chosen") OracleBeanStore store){return new OracleBeanClient(store);}
     }
-    private org.springframework.context.annotation.AnnotationConfigApplicationContext container(boolean active) {
+    org.springframework.context.annotation.AnnotationConfigApplicationContext container(boolean active) {
         var context=new org.springframework.context.annotation.AnnotationConfigApplicationContext();
         var environment=new org.springframework.core.env.StandardEnvironment();var properties=environment.getPropertySources();
         for(var property:java.util.stream.StreamSupport.stream(properties.spliterator(),false).toList())properties.remove(property.getName());
@@ -514,7 +797,7 @@ class SourceToSpringPlanTest {
         return result.regions().stream().filter(r -> r.fact().kind()==ConditionalFactKey.Kind.SELECTED_BINDING&&r.trueWorlds().contains(world.identity()))
                 .map(r -> r.fact().target().orElseThrow().value()).collect(java.util.stream.Collectors.toSet());
     }
-    private BeanDefinitionCandidate candidate(SourceToSpringPlan.Result plan,String name) {
+    BeanDefinitionCandidate candidate(SourceToSpringPlan.Result plan,String name) {
         return plan.binding().registrationPlan().discoveryPlan().events().stream().flatMap(e -> e.candidate().stream())
                 .filter(c -> c.declaredNameKey().primary().filter(name::equals).isPresent()).findFirst().orElseThrow();
     }
@@ -1388,7 +1671,7 @@ class SourceToSpringPlanTest {
                 @org.springframework.beans.factory.annotation.Autowired void wire(Dependency z,Dependency a) {}
                 ""","@org.springframework.context.annotation.Profile(\"dev\")");
         var plan=beanPlan(f,true,"Dependency","Config","first","second");
-        assertEquals("m4uv2.2-inherited-fields-v1",SourceToSpringPlan.PROVIDER.version());
+        assertEquals("m4uv2.2-resource-fields-v1",SourceToSpringPlan.PROVIDER.version());
         assertEquals(6,plan.binding().dependencies().size());
         assertEquals(3,plan.binding().dependencies().stream().map(d -> d.point().identity()).distinct().count());
         assertEquals(6,plan.binding().dependencies().stream().map(InjectionBindingPlan.Dependency::identity).distinct().count());

@@ -3,6 +3,7 @@ package com.evolution.analysis.spring.universal;
 import com.evolution.analysis.contract.common.*;
 import com.evolution.analysis.contract.identity.EntityIdentity;
 import com.evolution.analysis.contract.semantic.SemanticStatus;
+import com.evolution.analysis.contract.semantic.EntityKind;
 import com.evolution.analysis.evidence.CapabilityGapRecord;
 import com.evolution.analysis.frontend.JavaType;
 import com.evolution.analysis.ingestion.IngestionEvidence;
@@ -20,26 +21,44 @@ import static com.evolution.analysis.spring.registration.RegistrationEvent.Compl
  * evidenced container/order closure, never final definitions, dependency descriptors or matches.
  * An unproved scope stays open. This is not an application bootstrap detector. */
 public final class SourceToSpringPlan {
-    public static final VersionedIdentifier PROVIDER=new VersionedIdentifier("spring.source-to-plan","m4uv2.2-inherited-fields-v1");
+    public static final VersionedIdentifier PROVIDER=new VersionedIdentifier("spring.source-to-plan","m4uv2.2-resource-fields-v1");
+
+    /** Evidence that the standard Framework 6.2.0 CommonAnnotationBeanPostProcessor is
+     * enabled for this container with default type fallback, local resource factory,
+     * no ignored resource types, no JNDI override and no later processor mutation. */
+    public record ResourcePolicy(ConditionEvidence evidence) {
+        public ResourcePolicy {Objects.requireNonNull(evidence);}
+    }
 
     public record Scope(String container, ContentDigest sourceEvidence, List<EntityIdentity> registrationOrder,
                         RegistrationEvent.Completeness order, RegistrationEvent.Completeness registry,
                         RegistrationEvent.Completeness noParent, RegistrationEvent.Completeness noResolvableDependencies,
                         RegistrationEvent.Completeness noPostRegistrationMutation,
-                        RegistrationPlan.OverridePolicy overrides, ConditionEvidence evidence) {
+                        RegistrationPlan.OverridePolicy overrides, ConditionEvidence evidence,Optional<ResourcePolicy> resourcePolicy) {
         public Scope {
             ContractChecks.text(container,"container");Objects.requireNonNull(sourceEvidence);
             registrationOrder=ContractChecks.distinctInOrder(registrationOrder,"source registration order");
             Objects.requireNonNull(order);Objects.requireNonNull(registry);Objects.requireNonNull(noParent);
             Objects.requireNonNull(noResolvableDependencies);Objects.requireNonNull(noPostRegistrationMutation);
-            Objects.requireNonNull(overrides);Objects.requireNonNull(evidence);
+            Objects.requireNonNull(overrides);Objects.requireNonNull(evidence);Objects.requireNonNull(resourcePolicy);
+        }
+        public Scope(String container,ContentDigest sourceEvidence,List<EntityIdentity> registrationOrder,
+                     RegistrationEvent.Completeness order,RegistrationEvent.Completeness registry,
+                     RegistrationEvent.Completeness noParent,RegistrationEvent.Completeness noResolvableDependencies,
+                     RegistrationEvent.Completeness noPostRegistrationMutation,RegistrationPlan.OverridePolicy overrides,ConditionEvidence evidence) {
+            this(container,sourceEvidence,registrationOrder,order,registry,noParent,noResolvableDependencies,noPostRegistrationMutation,
+                    overrides,evidence,Optional.empty());
         }
     }
     public record Result(ContentDigest inputIdentity, SpringMechanismInventory inventory,
                          ConditionEvidenceLowering.Result conditions, InjectionBindingPlan binding,
-                         List<CapabilityGapRecord> gaps) {
-        public Result {gaps=List.copyOf(gaps);}
-        public ContentDigest identity() {return IngestionEvidence.digest(List.of(inputIdentity,inventory.identity(),conditions.identity(),binding.identity(),gaps));}
+                         List<CapabilityGapRecord> gaps,List<SourceMethodSelection.Decision> methodSelections) {
+        public Result {gaps=List.copyOf(gaps);methodSelections=List.copyOf(methodSelections);}
+        public Result(ContentDigest inputIdentity,SpringMechanismInventory inventory,ConditionEvidenceLowering.Result conditions,
+                      InjectionBindingPlan binding,List<CapabilityGapRecord> gaps) {
+            this(inputIdentity,inventory,conditions,binding,gaps,List.of());
+        }
+        public ContentDigest identity() {return IngestionEvidence.digest(List.of(inputIdentity,inventory.identity(),conditions.identity(),binding.identity(),gaps,methodSelections));}
         public Evaluation evaluate(ConfigurationSpace space,ConfigurationAssignment baseline,
                                                      TruthRegionEvaluation.Limits limits,ContentDigest evaluatorArtifact) {
             if(!space.buildContext().identity().equals(binding.registrationPlan().discoveryPlan().buildContext().identity()))
@@ -93,6 +112,11 @@ public final class SourceToSpringPlan {
         if(scope.evidence() instanceof ConditionEvidence.Source evidence && (!build.containsSource(evidence)||evidence.span().isEmpty())
                 ||scope.evidence() instanceof ConditionEvidence.Artifact artifact&&!build.containsArtifact(artifact.artifactDigest()))
             throw new IllegalArgumentException("Foreign scope proof");
+        scope.resourcePolicy().ifPresent(policy -> {
+            if(policy.evidence() instanceof ConditionEvidence.Source evidence&&(!build.containsSource(evidence)||evidence.span().isEmpty())
+                    ||policy.evidence() instanceof ConditionEvidence.Artifact artifact&&!build.containsArtifact(artifact.artifactDigest()))
+                throw new IllegalArgumentException("Foreign resource processor proof");
+        });
         var inventory=SpringMechanismScanner.scan(new SpringMechanismScanRequest(source.frontend(),source.framework(),List.of(),List.of()));
         var lowering=ConditionEvidenceLowering.lower(build,inventory,List.of(),ConditionEvidenceLowering.Limits.conservative());
         var sites=SpringInjectionSites.acquire(source,constructors,FrameworkGeneration.from(source.framework(),Optional.empty()),limit);
@@ -115,7 +139,7 @@ public final class SourceToSpringPlan {
             for(var declaring:hierarchy.types().stream().skip(1).toList())for(var declaration:source.declarations().values()) {
                 var member=declaration.entity().identity();
                 if(source.owner(member).filter(declaring::equals).isPresent()
-                        &&source.annotations(member).stream().anyMatch(a -> a.name().filter(SITE_METADATA::contains).isEmpty()))
+                        &&source.annotations(member).stream().anyMatch(a -> a.name().filter(SITE_METADATA::contains).isEmpty()&&!source.javaOverride(a)))
                     acquisitionIssues.add(new UniversalSpringEvidence.Issue(UniversalSpringEvidence.Reason.ANNOTATION_UNSUPPORTED,
                             "inherited-member-metadata:"+member.value(),List.of(source.evidence(member),source.evidence(entry.getKey()))));
             }
@@ -208,6 +232,8 @@ public final class SourceToSpringPlan {
         var methodDependencies=new TreeMap<String,Map<EntityIdentity,InjectionBindingPlan.Dependency>>();
         var groupDeclarations=new TreeMap<String,EntityIdentity>();
         var selectedParameters=new HashSet<EntityIdentity>();
+        var methodSelector=new SourceMethodSelection(source,limit*limit);
+        var methodSelections=new TreeMap<String,SourceMethodSelection.Decision>();
         constructors.rows().stream().filter(r -> r.status()==ConstructorInjectionIngestion.Status.SELECTED)
                 .forEach(r -> r.parameters().forEach(p -> selectedParameters.add(p.parameter())));
         for(var site:sites.sites()) {
@@ -226,19 +252,34 @@ public final class SourceToSpringPlan {
                 var componentType=owner.exposedTypes().size()==1?owner.exposedTypes().getFirst():null;
                 var hierarchy=componentHierarchies.get(componentType);
                 boolean inherited=member&&product==null&&!site.owner().equals(componentType);
+                boolean resource=site.kind()==SpringInjectionSites.Kind.RESOURCE;
+                boolean resourceComplete=!resource||scope.resourcePolicy().isPresent()&&!inherited
+                        &&source.declarations().get(site.element()).entity().kind()==EntityKind.FIELD;
+                if(resource&&!resourceComplete)acquisitionIssues.add(new UniversalSpringEvidence.Issue(
+                        UniversalSpringEvidence.Reason.EVIDENCE_MISSING,"resource-processor-or-direct-field:"+site.element().value(),List.of(site.evidence())));
+                var method=site.kind()==SpringInjectionSites.Kind.METHOD?source.owner(site.element()):Optional.<EntityIdentity>empty();
+                SourceMethodSelection.Decision selection=null;
+                if(method.isPresent()&&product==null&&hierarchy!=null) {
+                    var methodId=method.orElseThrow();String selectionKey=owner.identity().value()+":"+methodId.value();
+                    selection=methodSelections.computeIfAbsent(selectionKey,k -> methodSelector.select(componentType,methodId,hierarchy));
+                    if(selection.status()==SourceMethodSelection.Status.SUPPRESSED)continue;
+                    if(selection.status()==SourceMethodSelection.Status.UNKNOWN)acquisitionIssues.add(new UniversalSpringEvidence.Issue(
+                            selection.problem()==SourceMethodSelection.Problem.COMPARISON_LIMIT?UniversalSpringEvidence.Reason.RESOURCE_LIMIT:UniversalSpringEvidence.Reason.EVIDENCE_MISSING,
+                            "source-method-selection:"+selection.problem()+":"+selectionKey,selection.evidence()));
+                }
                 boolean memberComplete=!member||product!=null||hierarchy!=null&&hierarchy.complete()
-                        &&(!inherited||site.kind()==SpringInjectionSites.Kind.FIELD);
+                        &&(site.kind()!=SpringInjectionSites.Kind.METHOD||selection!=null&&selection.status()==SourceMethodSelection.Status.INCLUDED);
                 if(site.type().isEmpty()) {
                     acquisitionIssues.add(new UniversalSpringEvidence.Issue(UniversalSpringEvidence.Reason.EVIDENCE_MISSING,
                             site.element().value(),List.of(site.evidence())));
                 }
                 var type=site.type().orElseGet(() -> new JavaType(JavaType.Kind.UNKNOWN,"<unavailable>",Optional.empty(),List.of(),Optional.empty(),SemanticStatus.UNRESOLVED));
-                boolean scalar=productComplete&&memberComplete&&site.status()==SpringInjectionSites.Status.ACQUIRED&&type.kind()==JavaType.Kind.DECLARED
+                boolean scalar=productComplete&&memberComplete&&resourceComplete&&site.status()==SpringInjectionSites.Status.ACQUIRED&&type.kind()==JavaType.Kind.DECLARED
                         &&type.status()==SemanticStatus.RESOLVED&&type.target().isPresent()&&type.components().isEmpty()
                         &&(site.kind()==SpringInjectionSites.Kind.CONSTRUCTOR&&selectedParameters.contains(site.element())
                            ||site.kind()==SpringInjectionSites.Kind.BEAN_PARAMETER&&methods.containsKey(site.owner())&&methods.get(site.owner()).complete()
-                           ||site.kind()==SpringInjectionSites.Kind.FIELD||site.kind()==SpringInjectionSites.Kind.METHOD)
-                        &&source.annotations(site.element()).stream().allMatch(a -> a.name().filter(SITE_METADATA::contains).isPresent())
+                           ||site.kind()==SpringInjectionSites.Kind.FIELD||site.kind()==SpringInjectionSites.Kind.METHOD||resource)
+                        &&source.annotations(site.element()).stream().allMatch(a -> a.name().filter(n -> SITE_METADATA.contains(n)||resource&&n.equals("jakarta.annotation.Resource")).isPresent())
                         &&site.qualifier().filter(String::isBlank).isEmpty()
                         &&Optional.ofNullable(source.typeName(type.target().orElseThrow())).filter(n -> !DEFERRED_TYPES.contains(n)).isPresent();
                 if(!scalar)acquisitionIssues.add(new UniversalSpringEvidence.Issue(UniversalSpringEvidence.Reason.ANNOTATION_UNSUPPORTED,
@@ -246,19 +287,19 @@ public final class SourceToSpringPlan {
                 var kind=switch(site.kind()) {
                     case CONSTRUCTOR -> InjectionPoint.SiteKind.CONSTRUCTOR_PARAMETER;
                     case FIELD -> InjectionPoint.SiteKind.FIELD;
+                    case RESOURCE -> source.declarations().get(site.element()).entity().kind()==EntityKind.FIELD?InjectionPoint.SiteKind.FIELD:InjectionPoint.SiteKind.OTHER;
                     case METHOD -> InjectionPoint.SiteKind.METHOD_PARAMETER;
                     case BEAN_PARAMETER -> InjectionPoint.SiteKind.BEAN_PARAMETER;
                     default -> InjectionPoint.SiteKind.OTHER;
                 };
-                var method=site.kind()==SpringInjectionSites.Kind.METHOD?source.owner(site.element()):Optional.<EntityIdentity>empty();
                 var point=new InjectionPoint(build.identity(),method.orElse(site.owner()).value(),kind,site.element().value(),site.evidence());
                 var dependency=new InjectionBindingPlan.Dependency(point,Optional.of(owner.identity()),type,InjectionBindingPlan.Shape.SINGLE,
-                        InjectionBindingPlan.Mode.AUTOWIRE,site.required()?InjectionBindingPlan.Required.REQUIRED:InjectionBindingPlan.Required.OPTIONAL,
+                        resource?InjectionBindingPlan.Mode.RESOURCE:InjectionBindingPlan.Mode.AUTOWIRE,site.required()?InjectionBindingPlan.Required.REQUIRED:InjectionBindingPlan.Required.OPTIONAL,
                         // Source spelling does not establish reflection parameter-name availability.
-                        site.kind()==SpringInjectionSites.Kind.FIELD?site.name().map(InjectionBindingPlan.Name::of).orElseGet(InjectionBindingPlan.Name::unknown):InjectionBindingPlan.Name.unknown(),
+                        site.kind()==SpringInjectionSites.Kind.FIELD||resource?site.name().map(InjectionBindingPlan.Name::of).orElseGet(InjectionBindingPlan.Name::unknown):InjectionBindingPlan.Name.unknown(),
                         site.qualifier().map(q -> q.isBlank()?InjectionBindingPlan.Name.unknown():InjectionBindingPlan.Name.of(q))
                                 .orElseGet(InjectionBindingPlan.Name::absent),
-                        site.qualifier().isPresent()?TRUE:FALSE,false,false,false,false,FALSE,
+                        site.qualifier().isPresent()?TRUE:FALSE,false,resource&&site.resourceDefaultName(),resource&&scope.resourcePolicy().isPresent(),false,FALSE,
                         scalar?InjectionBindingPlan.Normalization.COMPLETE:InjectionBindingPlan.Normalization.INCOMPLETE,site.evidence());
                 dependencies.add(dependency);
                 method.ifPresent(m -> {
@@ -306,7 +347,7 @@ public final class SourceToSpringPlan {
         gaps.addAll(UniversalSpringEvidence.gaps(build.snapshotIdentity(),input,acquisitionIssues));
         if(!bounded||!withinBudget)gaps.addAll(UniversalSpringEvidence.gaps(build.snapshotIdentity(),input,List.of(
                 new UniversalSpringEvidence.Issue(UniversalSpringEvidence.Reason.RESOURCE_LIMIT,"source-to-plan",List.of(proof)))));
-        return new Result(input,inventory,lowering,binding,List.copyOf(gaps));
+        return new Result(input,inventory,lowering,binding,List.copyOf(gaps),List.copyOf(methodSelections.values()));
     }
     private static boolean metadataComplete(SpringSourceEvidence source,EntityIdentity type,SpringSourceEvidence.SourceHierarchy hierarchy) {
         return source.frontend().state()==com.evolution.analysis.frontend.FrontendResult.State.COMPLETED

@@ -53,7 +53,9 @@ public final class UniversalSpringSemantics {
         var bindings=new ArrayList<CandidateBinding>();
         for(var site:injections.sites()) {
             var candidates=new ArrayList<EntityIdentity>();
-            if(site.status()==SpringInjectionSites.Status.ACQUIRED&&site.type().isPresent()) {
+            // Resource requires a final registry and processor-policy proof. This
+            // structural projection cannot substitute qualifier filtering for its name path.
+            if(site.kind()!=SpringInjectionSites.Kind.RESOURCE&&site.status()==SpringInjectionSites.Status.ACQUIRED&&site.type().isPresent()) {
                 var type=site.type().orElseThrow();
                 // Generic assignability is an existing M4C descriptor obligation, never erasure-only certainty.
                 if(type.components().isEmpty()&&type.target().isPresent())for(var entry:types.entrySet())if(entry.getValue().contains(type.target().orElseThrow())

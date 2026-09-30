@@ -73,7 +73,7 @@ arbitrary target Config Data is loaded by Boot.
 ## Source to registration, binding and truth
 
 `UniversalIngestionPipeline.prepareSpring` continues one analyzed exact source set
-through `SourceToSpringPlan` (`spring.source-to-plan:m4uv2.2-inherited-fields-v1`).
+through `SourceToSpringPlan` (`spring.source-to-plan:m4uv2.2-resource-fields-v1`).
 `SpringBuildContext.fromExactRequest` retains the existing content preimage:
 snapshot, source plan, module/source set, assembly identity, ordered classpath,
 platform and policy. Legacy requests and foreign evidence are rejected.
@@ -99,7 +99,7 @@ evidence and do not pass handmade final definitions, descriptors or matches.
 The currently complete descriptor fragment is direct unconditional scan membership,
 ordinary direct component metadata, `@Profile`, primary/fallback/qualifier metadata,
 and selected constructors', bean methods', direct scanned components' and bounded
-ordinary source bean products' field/method
+ordinary source bean products' field/method and direct Jakarta Resource field
 resolved non-generic scalar dependencies. The tested
 exact execution tuple is Framework 6.2.0 / Boot 3.4.0. Unknown/composed annotations,
 inherited component metadata, unsupported scan drivers, missing constructor
@@ -308,9 +308,10 @@ truncation keeps a resource gap and never becomes a terminal-class proof.
 Direct component metadata remains separately validated. Ancestor class annotations
 need inherited metadata/condition semantics and keep registration qualified.
 Unsupported/composed/impostor member annotations retain a footprint gap even when
-the direct-site provider cannot produce a descriptor. Acquired inherited methods
-retain incomplete requests and separate groups for every owner; override, bridge
-and invocation semantics are not inferred. Static, unavailable-type, qualifier,
+the direct-site provider cannot produce a descriptor. At the inherited-field
+checkpoint, inherited methods retained incomplete requests; the subsequent method
+slice below closes the ordinary scalar source fragment. Bridge and invocation
+semantics remain qualified. Static, unavailable-type, qualifier,
 wrapper/aggregate/Resource and other existing site boundaries retain typed gaps.
 Known source-prefix requests survive incomplete hierarchy evidence. Descriptor
 fan-out counts toward the existing budgets, retains all acquired requests and
@@ -326,6 +327,103 @@ Framework 6.2.0 containers independently corroborate hidden-field injection and
 optional/required mismatch behavior. Exhaustive/SAT agreement, deterministic replay,
 full source provenance and revalidated witnesses remain checked. Fresh commands and
 results belong in current state; V2.2 and G3 remain open.
+
+### Inherited scalar source-component methods (2026-09-30)
+
+`SourceMethodSelection` joins neutral member shapes, resolved parameter/return
+types, full declaring spans and the existing closed source superclass chain.
+The declaration header establishes modifiers and parameter inventory only;
+signature equality uses resolved type identities, not written type spellings.
+Within the non-generic ordinary source fragment, the most-specific method is
+selected per component using Framework 6.2.0's
+[ClassUtils filter](https://github.com/spring-projects/spring-framework/blob/v6.2.0/spring-core/src/main/java/org/springframework/util/ClassUtils.java)
+and the [injection metadata reader](https://github.com/spring-projects/spring-framework/blob/v6.2.0/spring-beans/src/main/java/org/springframework/beans/factory/annotation/AutowiredAnnotationBeanPostProcessor.java).
+An annotated override uses its own descriptors; an unannotated override suppresses
+the ancestor site. Private/final methods remain distinct; overloads with different
+resolved signatures do not suppress sites. Package-private ancestor methods are
+retained across different component/declaring packages, matching the pinned filter.
+
+Every considered method/component pair has an immutable `methodSelections` row:
+`INCLUDED`, `SUPPRESSED` with its evidenced more-specific declaration, or `UNKNOWN`
+with a typed problem. Rows retain full source evidence and participate in result
+identity and the actual pipeline continuation. Suppression removes binding requests
+for that owner only; source observations and M4A obligations remain in the inventory.
+When all owners suppress a method, the existing binding engine still reports its
+unmapped obligation as `NORMALIZATION_REQUIRED` with a capability gap. No fabricated
+descriptor or false binding is used to clear that conservative reporting residual.
+
+At this checkpoint, source-to-plan and site acquisition version this behavior as
+`m4uv2.2-inherited-methods-v1`. Artifact/platform-proven JDK `Override` is neutral
+declaration metadata and no longer spoils otherwise supported method qualifiers;
+a source annotation with the same spelling remains unsupported. Source points,
+declaring documents/spans, per-owner groups, parameter order, qualifier precedence,
+requiredness, conditional activation and witness replay remain intact.
+
+Missing declaration/member/parameter/return evidence, incomplete/binary/generic
+hierarchies, generic methods, covariant or visibility bridge uncertainty and invalid
+static/access reductions cannot prove suppression. Acquired requests stay incomplete
+with typed gaps. Method comparisons share a deterministic `descriptorLimit²` budget;
+exhaustion produces `UNKNOWN` plus `RESOURCE_LIMIT`, retaining decisions, requests,
+groups and obligations. The existing 64-class hierarchy cap and descriptor/match
+budgets remain active. Bean-product runtime-type prediction is unchanged.
+
+Actual source-to-pipeline controls cover shared conditional owners across documents,
+annotated/unannotated overrides, private methods, final methods, overloads, package
+boundaries, qualifiers/requiredness, missing/generic evidence, impostor annotations
+and budget closure. Fixed authored 6.2.0 containers corroborate selection and group
+suppression. Exhaustive/SAT agreement, deterministic identities and revalidated
+witnesses remain checked. This establishes the bounded implementation slice;
+V2.2 acceptance, corpus coverage and G3 remain open.
+
+### Direct scalar Jakarta Resource fields (2026-09-30)
+
+`SpringInjectionSites` and `SourceToSpringPlan` version the current acquisition as
+`m4uv2.2-resource-fields-v1`. Direct instance fields on bounded ordinary source
+components and supported final source bean products accept artifact-resolved
+`jakarta.annotation.Resource` from the exact captured
+`jakarta.annotation:jakarta.annotation-api:2.0.0` input. The supplying annotation
+declaration, not a same-spelled source annotation or an unrelated artifact in the
+classpath, establishes its identity. Framework 6.2.0 / Boot 3.4.0 execution remains
+the supported M4C tuple. The API dependency is explicit and test-only at its
+previously resolved version; production adds no annotation loading or reflection.
+
+The additive optional `Scope.resourcePolicy` supplies evidence that the standard
+Framework 6.2.0 `CommonAnnotationBeanPostProcessor` is enabled for the named
+container with default local lookup/type fallback, no ignored types or custom
+JNDI/resource factory, and no later processor mutation. The existing Scope
+constructor remains available with an absent policy; missing proof keeps Resource
+requests incomplete rather than silently enabling the processor or fallback.
+Source/artifact proofs are checked against the exact build; source proofs require
+a full span. Policy evidence participates in acquisition and derived match identity.
+This is a caller-supplied scope proof, not automatic bootstrap evidence.
+
+Absent or empty literal `name` uses the frontend-evidenced Java field name and
+`resourceDefaultName=true`; nonempty literal names retain their exact string and
+disable default-name fallback. Descriptors use `Mode.RESOURCE` and `SiteKind.FIELD`
+with required scalar semantics, retaining declaring points/spans, product/component
+owners, factory ownership and every matching obligation mapping. An existing name
+uses the separate M4C.3 raw-type path, bypassing autowire/default/qualifier/primary
+filters; an existing wrong type remains an error. Only an absent default name can
+use type-based resolution, whose direct Spring qualifiers and ambiguity semantics
+remain separate. These branches follow the pinned
+[CommonAnnotationBeanPostProcessor](https://github.com/spring-projects/spring-framework/blob/v6.2.0/spring-context/src/main/java/org/springframework/context/annotation/CommonAnnotationBeanPostProcessor.java).
+
+The preliminary structural `UniversalSpringSemantics` projection retains Resource
+binding rows as `UNKNOWN`; it lacks the final registry and processor proof and
+cannot substitute ordinary qualifier filtering for Resource lookup. Actual
+conditional selection occurs in the source-to-M4C continuation. Inactive owners,
+conditional name absence, budget exhaustion, exhaustive/SAT agreement, deterministic
+replay and witness validation retain the existing contracts.
+
+Attributes other than literal `name` (including explicit type/JNDI metadata),
+placeholder/expression names, legacy/unproved API namespaces or versions,
+static/setter/inherited/generic/wrapper/aggregate shapes, mixed/custom/composed
+annotations and unproved product runtime types retain typed gaps and upstream
+observations. Missing annotation/type evidence never fabricates a descriptor.
+Fixed authored Framework containers corroborate name/filter bypass, fallback,
+wrong types, ambiguity, qualifier behavior, conditional products and custom-policy
+failure. Source inputs are only parsed; the oracle runs separate fixed test classes.
+Fresh bounded verification belongs in current state; no V2.2/G3 acceptance follows.
 
 `Result.evaluate` returns an `Evaluation` retaining acquisition plus the existing
 exhaustive M4D result. `Result.evaluateSymbolic` retains acquisition plus the
@@ -351,7 +449,7 @@ No A–E checklist section is accepted wholesale by these controls. In particula
 |---|---|
 | A / J01–J12 | Remaining Java attribution controls; full generated resolver integration and imported-generator client journeys; compiler-adjudicated coverage across declared variants |
 | B / S01–S05 | Configtree/classpath and supplied external envelopes; predicate-derived finite domains with proven OTHER uniformity, correlation and coercion controls |
-| C / S06–S12, S21 | Complete binary/source annotation composition; automatic evidenced bootstrap/scheduling; remaining bean/alias/reader-collision/type-prediction cases and import/XML/auto-configuration producers; generic/inherited/wider-product/provider/aggregate/Resource/hierarchy descriptors and JSR-330/composed/custom qualifier matching |
+| C / S06–S12, S21 | Complete binary/source annotation composition; automatic evidenced bootstrap/scheduling; remaining bean/alias/reader-collision/type-prediction cases and import/XML/auto-configuration producers; generic/inherited/wider-product/provider/aggregate/hierarchy descriptors, Resource setter/inherited/attribute/API-policy expansion and JSR-330/composed/custom qualifier matching |
 | D / S13–S19, S23 | Exact version-pack registry and complete historical/modern/data/proxy/route/event/client journeys with positive and negative independent oracles |
 | E / J12, S15, S20, Q01–Q02 | Passive effect summaries, dependency-local opaque refinement, correlated residuals, order/saturation controls and source-integrated high-signature cases |
 
