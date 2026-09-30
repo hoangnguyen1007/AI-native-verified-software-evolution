@@ -28,7 +28,7 @@ class SpringMechanismM4A2Test {
                 fixture.frontend(), validatedFramework531(), List.of(), List.of()));
 
         assertEquals("spring-mechanism-inventory-v2", inventory.schemaVersion());
-        assertEquals(new VersionedIdentifier("spring.mechanism-scanner", "m4a.2"), inventory.provider());
+        assertEquals(new VersionedIdentifier("spring.mechanism-scanner", "m4a.2-source-spelling-v2"), inventory.provider());
         assertEquals(3, inventory.annotationDeclarations().size());
         assertEquals(4, inventory.annotationMetaEdges().size());
         assertEquals(1, inventory.annotationCycles().size());
@@ -55,6 +55,29 @@ class SpringMechanismM4A2Test {
                 SpringMechanismInventory.AnnotationMetaEdge.create(fixture.annotationA(), Optional.empty(),
                         "fixture.Unresolved", targetUse.identity(),
                         SpringMechanismInventory.EvidenceState.VERIFIED));
+    }
+
+    @Test
+    void rawSpellingsPreserveUnicodeAndRejectMalformedEvidence() {
+        SourceDocumentIdentity document = SourceDocumentIdentity.from(REPOSITORY, "fixture/Unicode.java");
+        String decomposed = "@Bean(\"e\u0301\")";
+        String composed = "@Bean(\"\u00e9\")";
+        var raw = rawSpelling(document, decomposed);
+        assertEquals(decomposed, raw.spelling());
+        assertEquals(raw, rawSpelling(document, decomposed));
+        assertNotEquals(raw.identity(), rawSpelling(document, composed).identity());
+        assertThrows(IllegalArgumentException.class, () -> new SpringMechanismInventory.RawObservation(
+                raw.identity(), raw.kind(), raw.document(), raw.span(), raw.ordinal(), raw.owner(),
+                raw.resolvedTarget(), raw.evidenceState(), raw.stableReference(), composed, raw.diagnostics()));
+        for (String invalid : List.of("", " ", " @Bean", "@Bean ", "@Bean\0")) {
+            assertThrows(IllegalArgumentException.class, () -> rawSpelling(document, invalid));
+        }
+    }
+
+    private static SpringMechanismInventory.RawObservation rawSpelling(SourceDocumentIdentity document, String spelling) {
+        return SpringMechanismInventory.RawObservation.create(SpringMechanismInventory.RawKind.ANNOTATION_USE,
+                document, Optional.empty(), 0, Optional.empty(), Optional.empty(),
+                SpringMechanismInventory.EvidenceState.UNRESOLVED, "fixture.unicode", spelling, List.of());
     }
 
     private static GraphFixture graphFixture() {

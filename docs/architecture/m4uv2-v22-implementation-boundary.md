@@ -1,17 +1,23 @@
 # V2.2 semantic closure — implemented boundary
 
-Status: **PROVISIONAL, partial V2.2 implementation**, 2026-09-29.
+Status: **PROVISIONAL, partial V2.2 implementation**, 2026-09-30.
 This document describes the implemented contracts, not acceptance of the entire
 [V2.2 task](../tasks/m4-universal-v2/02-java-spring-semantic-closure.md).
 The [coverage catalog](m4-universal-v2-coverage.md) and its denominator remain unchanged.
 
 ## Java evidence
 
-`JavaParserFrontend.PROVIDER` is `frontend.javaparser:3.28.2-m4uv2.2`.
+`JavaParserFrontend.PROVIDER` is `frontend.javaparser:3.28.2-m4uv2.2-injection-v1`.
 Existing method/constructor/type identity tuples remain unchanged. Lambda
 parameters use the positional parameter tuple under their source-anchored lambda;
 catch parameters use `catch-parameter`, lexical owner, source document, offset and
 identifier. Source spans belong to the original captured source.
+
+The additive `FrontendResult.memberDeclarations` contains parser-neutral field/method
+names, static/abstract flags and generic-method presence, bound to existing source
+declaration identities. Older constructors remain available with an empty shape
+inventory; missing shapes cannot establish complete member descriptors. Java name
+equality removes identifier-ignorable characters without Unicode normalization.
 
 Annotation arguments and annotation-member defaults can produce exact constant
 field-read targets. Their owners are the annotated declaration and annotation
@@ -67,7 +73,7 @@ arbitrary target Config Data is loaded by Boot.
 ## Source to registration, binding and truth
 
 `UniversalIngestionPipeline.prepareSpring` continues one analyzed exact source set
-through `SourceToSpringPlan` (`spring.source-to-plan:m4uv2.2-beans-v1`).
+through `SourceToSpringPlan` (`spring.source-to-plan:m4uv2.2-injection-v1`).
 `SpringBuildContext.fromExactRequest` retains the existing content preimage:
 snapshot, source plan, module/source set, assembly identity, ordered classpath,
 platform and policy. Legacy requests and foreign evidence are rejected.
@@ -92,10 +98,11 @@ evidence and do not pass handmade final definitions, descriptors or matches.
 
 The currently complete descriptor fragment is direct unconditional scan membership,
 ordinary direct component metadata, `@Profile`, primary/fallback/qualifier metadata,
-and selected constructors' and bean methods' resolved non-generic scalar dependencies. The tested
+and selected constructors', bean methods' and direct scanned components' field/method
+resolved non-generic scalar dependencies. The tested
 exact execution tuple is Framework 6.2.0 / Boot 3.4.0. Unknown/composed annotations,
 inherited component metadata, unsupported scan drivers, missing constructor
-selection, lazy/provider/generic and field/method descriptors are not silently
+selection, lazy/provider/generic and inherited/product member descriptors are not silently
 promoted. Empty qualifiers remain an incomplete descriptor with an explicit gap.
 Limits preserve inventory and qualify incomplete matching rather than inventing
 negative matches.
@@ -147,6 +154,55 @@ types, name collisions and unproved parameter names. Fixed authored Framework
 flags, primary conflict and reversed named missing-bean registration. See the
 [bean-producer verification package](../reproducibility/m4uv2-v22-beans-2026-09-29/README.md).
 
+### Direct field/method acquisition (2026-09-30)
+
+`SpringInjectionSites` versions this acquisition as `m4uv2.2-injection-v1`.
+Direct instance fields and non-generic instance methods on acquired components
+support artifact-resolved `@Autowired`, literal requiredness and scalar declared
+types, with direct qualifiers on fields/parameters. Member shape comes from the
+frontend's neutral source metadata, rather than guessing modifiers from variable
+spelling. Field names are evidenced; reflection parameter names remain `UNKNOWN`.
+The constructor provider accepts the exact new frontend version and is versioned
+`spring.constructor-ingestion:m4uv2.2-injection-v1`; previous recognized frontend
+versions remain recognized.
+
+Each method has a group keyed by its declaration, with parameter order established
+by original source coordinates. Optional scalar parameters are absent-parameter
+skip triggers. Missing one skips the group and clears tentative selections;
+required errors, ambiguity and incomplete descriptors also withhold tentative
+method edges. Unavailable types retain explicit unknown requests when an owning
+candidate and site can be acquired. Missing declaration/type evidence remains
+in the upstream inventory and gaps without inventing a target or site. A definitely
+inactive owner makes every group parameter `NOT_ACTIVE`, including parameters not
+evaluated after the first. That engine correction versions the implementation as
+`spring.injection-binding:m4c.3-inactive-groups-v2`; the accepted binding semantics
+and gap catalog versions remain unchanged.
+
+Static members, generic methods, method-level qualifier merging, unknown metadata,
+lazy/provider/aggregate/Resource shapes and inherited descriptors remain qualified
+with typed gaps. Members of unscanned classes returned by bean methods retain an
+explicit acquisition gap and open descriptor inventory; this fragment does not
+attach them to product identities. Field names with distinct composed/decomposed
+Unicode sequences remain distinct Java identifiers and distinct binding names.
+Raw mechanism spellings now preserve those sequences without an NFC requirement;
+scanner provider `spring.mechanism-scanner:m4a.2-source-spelling-v2` versions that
+source-evidence correction. Existing entity, span and raw-observation preimages
+remain unchanged.
+
+Source-to-pipeline controls include conditional fields/methods, required/optional
+groups, qualifier mismatch, ambiguity, missing types, incomplete descriptors,
+static members, field versus parameter names, source annotation impostors,
+member-shape serialization/provenance validation, deterministic replay and
+exhaustive/SAT agreement. Fixed authored Framework 6.2.0 container classes check
+selection, optional suppression, required failure, ambiguity, static handling and
+Unicode field names. Their group behavior follows the pinned
+[AutowiredAnnotationBeanPostProcessor](https://github.com/spring-projects/spring-framework/blob/v6.2.0/spring-beans/src/main/java/org/springframework/beans/factory/annotation/AutowiredAnnotationBeanPostProcessor.java).
+The initial slice ran only `SourceToSpringPlanTest`; the subsequent audit found a
+stale upstream scanner-provider assertion. Two-tier verification now includes
+affected unit/contract tests and direct integration consumers in both modules.
+Fresh results and verification qualifications belong in current state and the handoff;
+no additional reproducibility package or reactor claim is made.
+
 `Result.evaluate` returns an `Evaluation` retaining acquisition plus the existing
 exhaustive M4D result. `Result.evaluateSymbolic` retains acquisition plus the
 existing SAT signature-partition result. Both expose the sorted union of
@@ -171,7 +227,7 @@ No A–E checklist section is accepted wholesale by these controls. In particula
 |---|---|
 | A / J01–J12 | Remaining Java attribution controls; full generated resolver integration and imported-generator client journeys; compiler-adjudicated coverage across declared variants |
 | B / S01–S05 | Configtree/classpath and supplied external envelopes; predicate-derived finite domains with proven OTHER uniformity, correlation and coercion controls |
-| C / S06–S12, S21 | Complete binary/source annotation composition; automatic evidenced bootstrap/scheduling; remaining bean/alias/reader-collision/type-prediction cases and import/XML/auto-configuration producers; full generic/field/method/provider/aggregate/Resource/hierarchy descriptors |
+| C / S06–S12, S21 | Complete binary/source annotation composition; automatic evidenced bootstrap/scheduling; remaining bean/alias/reader-collision/type-prediction cases and import/XML/auto-configuration producers; full generic/inherited/product-member/provider/aggregate/Resource/hierarchy descriptors and method-level qualifier merging |
 | D / S13–S19, S23 | Exact version-pack registry and complete historical/modern/data/proxy/route/event/client journeys with positive and negative independent oracles |
 | E / J12, S15, S20, Q01–Q02 | Passive effect summaries, dependency-local opaque refinement, correlated residuals, order/saturation controls and source-integrated high-signature cases |
 
@@ -180,6 +236,6 @@ unit evidence does not prove that all source acquisition journeys are connected.
 No external cohort benchmark, measured 99% coverage, V2.3 handoff, M4E acceptance
 or G3 promotion is claimed. V2.1 acceptance obligations also remain open.
 
-Verification commands, results and changed-source hashes are recorded in the
+Historical verification commands, results and changed-source hashes are recorded in the
 [initial verification package](../reproducibility/m4uv2-v22-2026-09-28/README.md) and
 [bean-producer slice package](../reproducibility/m4uv2-v22-beans-2026-09-29/README.md).

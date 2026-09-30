@@ -14,7 +14,7 @@ import static com.evolution.analysis.ingestion.IngestionEvidence.Reason.*;
 
 /** Constructor-site acquisition. Candidate matching and conditional activation remain downstream. */
 public final class ConstructorInjectionIngestion {
-    public static final VersionedIdentifier PROVIDER=new VersionedIdentifier("spring.constructor-ingestion","m4u.1");
+    public static final VersionedIdentifier PROVIDER=new VersionedIdentifier("spring.constructor-ingestion","m4uv2.2-injection-v1");
     public enum Status { SELECTED, NOT_SELECTED, UNKNOWN }
     public record Parameter(EntityIdentity constructor,EntityIdentity parameter,int index,JavaType type,ConditionEvidence evidence) {
         public Parameter {Objects.requireNonNull(constructor);Objects.requireNonNull(parameter);Objects.requireNonNull(type);Objects.requireNonNull(evidence);if(index<0)throw new IllegalArgumentException("Negative parameter index");}
@@ -45,7 +45,8 @@ public final class ConstructorInjectionIngestion {
         var issues=new ArrayList<IngestionEvidence.Issue>();var rows=new ArrayList<Row>();int parametersSeen=0;
         boolean frameworkKnown=framework.completeClasspath()&&framework.artifacts().stream().anyMatch(a->a.artifactId().equals("spring-beans")&&framework.verifiedArtifact(a));
         boolean providerKnown=Set.of(new VersionedIdentifier("frontend.javaparser","3.28.2-m4u.1"),
-                new VersionedIdentifier("frontend.javaparser","3.28.2-m4uv2.2")).contains(frontend.frontend());
+                new VersionedIdentifier("frontend.javaparser","3.28.2-m4uv2.2"),
+                new VersionedIdentifier("frontend.javaparser","3.28.2-m4uv2.2-injection-v1")).contains(frontend.frontend());
         for(var component:discovery.rows()) {
             var evidence=new ConditionEvidence.Derived(List.of(identity,component.evidence().identity()),PROVIDER,"constructor-selection:"+component.type().value());
             if(component.status()!=ComponentScanIngestion.Status.INCLUDED) {

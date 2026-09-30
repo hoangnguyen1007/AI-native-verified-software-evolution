@@ -36,6 +36,26 @@ class FrontendResultTest {
         var observation = List.of(observation("java.calls",SPAN,ObservationRecord.EvidenceState.VERIFIED));
         assertThrows(IllegalArgumentException.class, () -> result(observation,List.of(),List.of()));
     }
+    @Test void memberShapesRequireOneSourceDeclarationAndPreserveJavaNames() {
+        var source = List.of(new SourceOutcome(DOCUMENT, SourceOutcome.State.PROCESSED,List.of()));
+        var coverage = FrontendRequest.CATEGORIES.stream().map(c -> new CategoryCoverage(new RelationshipKind("java." + c),CategoryCoverage.Support.PARTIAL,c.equals("calls")?1:0,c.equals("calls")?1:0,0)).toList();
+        var baseline = result(List.of(observation("java.calls",SPAN,ObservationRecord.EvidenceState.VERIFIED)),source,coverage);
+        var decomposed = new MemberDeclarationRecord(ENTITY.identity(), "e\u0301", false, false, false);
+        var composed = new MemberDeclarationRecord(ENTITY.identity(), "\u00e9", false, false, false);
+        assertNotEquals(decomposed.name(), composed.name());
+        assertEquals(List.of(decomposed), withMembers(baseline, List.of(decomposed)).memberDeclarations());
+        assertThrows(IllegalArgumentException.class, () -> withMembers(baseline, List.of(decomposed, composed)));
+        var foreign = EntityIdentity.from(EntityOrigin.PROJECT, EntityScope.project(MODULE), EntityKind.FIELD, "foreign");
+        assertThrows(IllegalArgumentException.class, () -> withMembers(baseline,
+                List.of(new MemberDeclarationRecord(foreign, "field", false, false, false))));
+        assertThrows(IllegalArgumentException.class, () -> new MemberDeclarationRecord(ENTITY.identity(), "bad name", false, false, false));
+        assertThrows(NullPointerException.class, () -> new MemberDeclarationRecord(null, "field", false, false, false));
+    }
+    private static FrontendResult withMembers(FrontendResult f, List<MemberDeclarationRecord> members) {
+        return new FrontendResult(f.analysis(), f.frontend(), f.state(), f.declarations(), f.occurrences(),
+                f.observations(), f.sources(), f.coverage(), f.diagnostics(), f.types(), f.annotations(),
+                f.derivedRelationships(), f.typeDeclarations(), members);
+    }
     @Test void foreignCategoryCannotHideOutsideRegisteredCoverage() {
         var diagnostic = new Diagnostic(DiagnosticSeverity.WARNING,"test.unsupported","Unsupported observation",Optional.of(SPAN),Map.of());
         var foreign = new ObservationRecord(DOCUMENT,new RelationshipKind("fake.calls"),Optional.of(SPAN),SemanticStatus.UNSUPPORTED,

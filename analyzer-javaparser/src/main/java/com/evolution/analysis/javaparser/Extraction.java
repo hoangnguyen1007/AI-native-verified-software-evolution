@@ -103,9 +103,27 @@ final class Extraction {
                 !reactorResolutionDegraded && outcomes.stream().allMatch(s -> s.state() == SourceOutcome.State.PROCESSED)
                         ? FrontendResult.State.COMPLETED : FrontendResult.State.PARTIAL,
                 declarations.values().stream().filter(d -> !duplicateDeclarations.contains(d.entity().identity())).toList(),
-                List.copyOf(occurrences.values()), observations, outcomes, coverage, List.copyOf(diagnostics), types, annotations, List.copyOf(derived),typeDeclarations());
+                List.copyOf(occurrences.values()), observations, outcomes, coverage, List.copyOf(diagnostics), types, annotations,
+                List.copyOf(derived),typeDeclarations(),memberDeclarations());
     }
 
+    private List<MemberDeclarationRecord> memberDeclarations() {
+        var result=new ArrayList<MemberDeclarationRecord>();
+        for(var unit:orderedUnits)for(var node:unit.ast.stream().toList()) {
+            var entity=nodes.get(node);
+            if(entity==null||duplicateDeclarations.contains(entity.identity()))continue;
+            if(node instanceof VariableDeclarator variable && variable.getParentNode().orElse(null) instanceof FieldDeclaration field) {
+                boolean implicitStatic=field.getParentNode().orElse(null) instanceof AnnotationDeclaration
+                        ||field.getParentNode().orElse(null) instanceof ClassOrInterfaceDeclaration c&&c.isInterface();
+                result.add(new MemberDeclarationRecord(entity.identity(),semanticIdentifier(variable.getNameAsString()),
+                        field.isStatic()||implicitStatic,false,false));
+            } else if(node instanceof MethodDeclaration method) {
+                result.add(new MemberDeclarationRecord(entity.identity(),semanticIdentifier(method.getNameAsString()),
+                        method.isStatic(),method.isAbstract()||method.getBody().isEmpty(),!method.getTypeParameters().isEmpty()));
+            }
+        }
+        return result;
+    }
     private List<TypeDeclarationRecord> typeDeclarations() {
         var result=new ArrayList<TypeDeclarationRecord>();
         for(var unit:orderedUnits)for(var type:unit.ast.findAll(TypeDeclaration.class)) {

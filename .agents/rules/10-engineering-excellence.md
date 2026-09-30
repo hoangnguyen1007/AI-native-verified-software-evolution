@@ -9,4 +9,5 @@
 - For a bug: reproduce, identify the root cause, add regression evidence, fix, and verify affected consumers.
 - Do not add unneeded concurrency, speculative bytecode analysis or heavy infrastructure without a demonstrated need and relevant correctness checks.
 - Use the affected build/runner's documented commands. A root reactor build does not cover standalone benchmark projects.
+- Apply AGENTS.md's two-tier targeted verification: isolate the inner loop, then check changed behavior and direct consumers across every affected module before handoff. Provider/version contract tests belong in that set. Never run full reactor builds or generate ceremonial hash/verification JSON packages (`reproducibility/`) for intermediate slices.
 - Keep changes coherent and proportionate; no unrelated cleanup or dependency upgrades.

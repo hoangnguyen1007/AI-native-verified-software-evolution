@@ -7,7 +7,7 @@ import java.util.*;
 
 /** Closed M4C.3 reason catalog, additive to upstream historical gaps. */
 public final class BindingProcessing {
-    public static final VersionedIdentifier PROVIDER = new VersionedIdentifier("spring.injection-binding", "m4c.3");
+    public static final VersionedIdentifier PROVIDER = new VersionedIdentifier("spring.injection-binding", "m4c.3-inactive-groups-v2");
     public static final VersionedIdentifier SEMANTICS = new VersionedIdentifier("spring.binding-semantics", "6.2.0-m4c.3-v1");
     public static final VersionedIdentifier GAPS = new VersionedIdentifier("evidence.spring-binding-gaps", "m4c.3-v1");
     public enum Reason {

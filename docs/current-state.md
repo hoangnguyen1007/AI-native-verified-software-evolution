@@ -1,6 +1,6 @@
 # Current State
 
-Last reconciled: 2026-09-29. The owner explicitly requested the next V2.2 slice; its [implemented boundary](architecture/m4uv2-v22-implementation-boundary.md) now includes direct bean producers and scalar constructor/bean-parameter bindings. V2.2 remains partial and its exit criteria remain open. V2.1 acceptance also remains open in the [implementation ledger](research/m4-universal-v2-v21-implementation-ledger.md). Fresh checks and their scope belong in the task handoff; historical gate evidence is identified below.
+Last reconciled: 2026-09-30. The owner requested completion of the next task; the [implemented V2.2 boundary](architecture/m4uv2-v22-implementation-boundary.md) now includes scalar field/method bindings and required/optional method groups on directly acquired components, alongside direct bean producers and constructor/bean-parameter bindings. V2.2 remains partial and its exit criteria remain open. V2.1 acceptance also remains open in the [implementation ledger](research/m4-universal-v2-v21-implementation-ledger.md). Fresh checks and their scope belong in the task handoff; historical gate evidence is identified below.
 
 ## PHASE AND MILESTONE
 
@@ -99,6 +99,72 @@ preserves both states, the failing controls, pinned container checks and hashes.
 Aliases, enhanced configuration, overloaded/colliding reader decisions, wider
 return-type metadata and runtime parameter names remain explicit evidence gaps.
 This completes the recorded next bean-producer slice, not all V2.2 A–E obligations.
+
+**CONFIRMED initial field/method slice check (2026-09-30):** the focused
+`SourceToSpringPlanTest` run passed **32/32 tests** (14 additions), with zero
+failures/errors/skips. Actual source-to-pipeline controls cover conditional scalar
+fields/methods, required/optional groups, declaration-order parameters, qualifier
+mismatch, primary conflict, incomplete/unresolved evidence, static members, field
+versus parameter names, source annotation impostors and retained bean-product
+member obligations. Fixed authored Framework 6.2.0 container controls corroborate
+selection, suppression, errors, static handling and distinct Unicode field names.
+Exhaustive/SAT agreement, witness replay and deterministic identities are checked.
+The slice also repairs inactive group parameters incorrectly becoming `UNKNOWN`
+and raw mechanism spelling incorrectly requiring NFC. Entity/span preimages,
+accepted binding semantics and historical evidence remain unchanged; implementation
+provider versions record the changes.
+
+Initial slice command (PowerShell): `.\mvnw.cmd test -pl analyzer-javaparser "-Dtest=SourceToSpringPlanTest" "-Denforcer.skipRules=reactorModuleConvergence" -q`.
+The unmodified single-module command failed the reactor-parent membership rule;
+only that inapplicable rule is skipped, with other Enforcer checks retained.
+Generated target bytecode contained unresolved-compilation stubs, so JDK 21
+`javac -proc:none --release 21` rebuilt analyzer/adapter sources and the selected
+test class; `jar:jar install:install -pl analyzer -q` refreshed the local dependency.
+At that checkpoint the Surefire report recorded **63.531 seconds** for the whole class; this did
+not satisfy a sub-five-second whole-class budget. Inner controls were method-filtered
+within the same class. No full reactor, external benchmark, new reproducibility
+package, independent review or gate promotion is claimed. This is implementation
+self-review with authored framework controls. Method-level qualifier merging,
+inherited/generic/wrapper/aggregate/Resource descriptors and bean-product member
+attachment retain explicit gaps. The next bounded slice is recorded below.
+
+**CONFIRMED audit repair and cross-module verification (2026-09-30):** the supplied
+audit's obsolete `SpringMechanismM4A2Test` provider assertion was reproduced as a
+failure, then updated to the deliberately versioned source-spelling provider.
+Three upstream controls now check exact Unicode spelling/digest integrity and
+malformed spelling rejection, member-shape source provenance/name equality, and
+all parameters of an inactive method group remaining `NOT_ACTIVE`. No production
+semantics were changed in this audit repair. `MemberDeclarationRecord.java` is
+selectively staged; all other changes remain unstaged, with no commit or push.
+The unquoted dotted Maven property also reproduced PowerShell's unknown-phase
+error; commands now quote the `-D` arguments.
+
+Bounded pre-handoff commands (PowerShell, only the partial-reactor membership rule skipped):
+
+```powershell
+.\mvnw.cmd test -pl analyzer "-Dtest=FrontendResultTest,FrontendContractTest,SpringMechanismM4A2Test,SpringMechanismInventoryTest,InjectionBindingsTest,InjectionBindingBoundaryTest,TruthRegionEvaluationTest" "-Denforcer.skipRules=reactorModuleConvergence" -q
+.\mvnw.cmd test -pl analyzer-javaparser "-Dtest=JavaParserFrontendTest,ConstructorInjectionIngestionTest,GeneratedConstructorIntegrationTest,SpringMechanismM4A2IntegrationTest,ComponentIngestionTest,UniversalSpringSemanticsTest,SourceToSpringPlanTest" "-Denforcer.skipRules=reactorModuleConvergence" -q
+```
+
+Both commands exited zero: **102 analyzer + 61 adapter tests = 163 tests in 14
+classes**, zero failures/errors/skips. These selected tests cover directly affected
+contracts and consumers; they do not establish a full module/reactor build. The
+whole `SourceToSpringPlanTest` class took **93.397 seconds** in this run. A subsequent
+`"-Dtest=SourceToSpringPlanTest#fieldNamesAreEvidencedWhileMethodParameterNamesRemainUnknown"`
+run passed one test, but still took **7.669 seconds for the command**; method filtering
+does not by itself establish a sub-five-second inner loop. Its latest standard
+Surefire report supersedes the earlier whole-class report. JDK 21
+`javac -proc:none --release 21` compiled the three edited upstream tests against the standard test
+classpath before verification.
+
+`AGENTS.md` now owns two-tier verification: method/small-class inner loops with
+honest timing, then bounded affected unit/contract and direct integration checks
+across all changed modules before handoff. Rules, workflows, skills and the V2.2
+task instructions agree; ordinary slices still prohibit full reactors, benchmarks
+and ceremonial evidence packages. Diff checks, local Markdown links and skill
+headers pass. The skill-creator Python validator could not run because `PyYAML`
+is absent; header/link checks and the upstream regression exercise are self-checks,
+not independent behavioral evaluation. No new gate, benchmark or build claim is made.
 
 ## IMPLEMENTED — M4-UNIVERSAL SLICE 2 SPRING SEMANTICS AND SAT
 
@@ -324,7 +390,7 @@ The human approved JavaParser + SymbolSolver as the primary SE121/M2 frontend on
 - Root verification includes the original M1/build tests and new frontend/adapter tests. Exact final totals and raw console output are in the implementation evidence. Standalone benchmarks are outside root verification.
 - R1 PoC: `benchmarks/poc/parser-eval/`. Independent experimental adapters/comparison: `benchmarks/semantic-frontend-evaluation/`.
 - M2 oracle pilot: `benchmarks/m2-ground-truth/`, separate from the reactor and legacy comparator, using JDK 21/Python standard libraries.
-- Production adapter pin: JavaParser/SymbolSolver 3.28.2, current provider `frontend.javaparser:3.28.2-m4uv2.2`. M4U.1 supplied bounded Lombok synthesis, parser-neutral type shapes and record constructor parameter evidence; V2.2 adds the bounded resolution/attribution changes described above. Historical M2 evidence remains unchanged. No general compiler-equivalence or scale claim is made.
+- Production adapter pin: JavaParser/SymbolSolver 3.28.2, current provider `frontend.javaparser:3.28.2-m4uv2.2-injection-v1`. M4U.1 supplied bounded Lombok synthesis, parser-neutral type shapes and record constructor parameter evidence; V2.2 adds the bounded resolution/attribution and neutral member-shape changes described above. Historical M2 evidence remains unchanged. No general compiler-equivalence or scale claim is made.
 - Progressive effective-POM/source-plan projection, bounded filesystem/dependency acquisition, explicit platform/frontend assembly, capability-gap normalization and M4A–M4D bounded Spring semantics are implemented. M4U.1 adds passive POM-less/Gradle source plans, configuration baseline ingestion and component/constructor acquisition. M4U.2 adds the bounded Spring Data, version/namespace/metadata, SAT, route, hierarchy and SpEL providers described above. V2.1 supports supplied generated sources/artifacts with lineage; V2.2 adds a bounded source-to-plan continuation. General generated-root acquisition, complete source-to-Spring-descriptor normalization, M4E external validation, graph, policy engine, metric/scoring calculation, CLI, backend API and workbench remain unimplemented.
 - `frontend/` and root `tests/` have no tracked product implementation.
 
@@ -372,17 +438,24 @@ Current authorized work is V2.2, with V2.1 acceptance obligations preserved, the
 
 ## EXACT NEXT TASK
 
-**M4 Universal v2 / V2.2 — extend source-to-M4C scalar field/method injection
-acquisition, including required/optional method groups.** Start from
-`SourceToSpringPlan`, `SpringInjectionSites` and the
+**M4 Universal v2 / V2.2 — attach evidenced scalar field/method sites to ordinary
+source objects produced by `@Bean`.** Start from `SourceToSpringPlan`,
+`SpringInjectionSites`, `BeanMethodIngestion` and the
 [implemented boundary](architecture/m4uv2-v22-implementation-boundary.md).
-Use actual source-to-conditional-binding positives and pinned-container controls
-for qualifier mismatch, optional method suppression and incomplete descriptors.
-Preserve runtime parameter-name uncertainty, source spans, acquisition gaps,
-scope/order proofs and deterministic identities. Do not accept hand-built final
-descriptors as the integration positive. Remaining bean aliases, reader collisions,
+Preserve distinct owning candidates when multiple producers return the same type,
+source point identities, per-owner method groups, explicit factory ownership and
+source-to-conditional-binding controls. Do not auto-inject a product's constructor
+merely because its factory returns that type; factory-parameter dependencies and
+member injection are separate. Require pinned authored container controls, retain
+unsupported/inherited/type-prediction gaps and use actual pipeline acquisition
+rather than hand-built final descriptors. Remaining bean aliases, reader collisions,
 generic/binary return types and inferred bean-query type metadata stay explicit
 V2.2 obligations alongside this next bounded slice.
+
+**Mandatory Lean Execution for all agents:**
+- Follow AGENTS.md's two-tier verification: filter a relevant method/small class during coding, then run affected unit/contract and direct integration tests across every changed module before handoff. Quote PowerShell `-D` arguments; report actual duration and selected test scope.
+- Do NOT generate ceremonial `reproducibility/` folders, `input-hashes.json` (multi-thousand-line hash dumps), or raw JSON test outputs for intermediate slices.
+- Prune scope aggressively: classify non-essential/fringe mechanisms (MapStruct, Protobuf, WebFlux routes, Spring Batch, SpEL internals) cleanly as `CapabilityGapRecord(UNSUPPORTED)` to avoid stalling progress toward M5 (Knowledge Graph) and M10 (Visual Workbench).
 
 Continue the remaining A–E obligations in the [V2.2 task](tasks/m4-universal-v2/02-java-spring-semantic-closure.md).
 Retain V2.1's [unfulfilled acceptance rows](research/m4-universal-v2-v21-implementation-ledger.md).

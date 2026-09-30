@@ -35,7 +35,7 @@ public record SpringMechanismInventory(
         List<String> limitations) {
     public static final String SCHEMA = "spring-mechanism-inventory-v2";
     public static final VersionedIdentifier PROVIDER =
-            new VersionedIdentifier("spring.mechanism-scanner", "m4a.2");
+            new VersionedIdentifier("spring.mechanism-scanner", "m4a.2-source-spelling-v2");
     public static final List<String> LIMITATIONS = List.of(
             "M4A.2 inventories evidence and obligations only; it does not establish activation, registration, binding, runtime instantiation or truth regions.",
             "Annotation composition follows only exact resolved declaration edges; missing declaration bytes, ambiguous aliases, repeatable containers and cycles remain explicit graph evidence or gaps.",
@@ -482,7 +482,11 @@ public record SpringMechanismInventory(
                 throw new IllegalArgumentException("Verified annotation evidence requires one target");
             }
             stableReference = ContractChecks.text(stableReference, "raw observation stable reference");
-            spelling = ContractChecks.text(spelling, "raw observation spelling");
+            spelling = ContractChecks.notNull(spelling, "raw observation spelling");
+            // Raw source is evidence, not normalized metadata: Java identifiers and
+            // annotation string values distinguish canonically equivalent sequences.
+            if(spelling.isBlank()||!spelling.equals(spelling.strip())||spelling.indexOf('\0')>=0)
+                throw new IllegalArgumentException("Invalid raw observation spelling");
             diagnostics = ContractChecks.sortedDistinct(
                     diagnostics, Comparator.naturalOrder(), "raw observation diagnostics");
             ContentDigest expected = rawIdentity(kind, document, span, ordinal, owner,

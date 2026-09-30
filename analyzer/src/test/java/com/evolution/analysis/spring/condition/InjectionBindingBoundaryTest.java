@@ -38,6 +38,22 @@ class InjectionBindingBoundaryTest {
                 new ConfigurationAssignment(Map.of(new FiniteDomain.Variable(FiniteDomain.Kind.PROFILE,"dev"),FiniteDomain.Value.bool(false)),d.evidence()),ExogenousConditionEvaluator.Limits.conservative());
         outcome(r,NOT_ACTIVE); assertTrue(r.rows().getFirst().trace().isEmpty());
     }
+    @Test void inactiveMethodOwnerKeepsEveryGroupParameterInactive() throws Exception {
+        var f=setup("a"); var base=dependency(f,Shape.SINGLE,Name.absent(),Required.OPTIONAL);
+        var owned=change(base,Shape.SINGLE,Mode.AUTOWIRE,Required.OPTIONAL,Name.absent(),Name.absent(),FALSE,
+                true,false,false,false,Normalization.COMPLETE,Optional.of(id(f,"a")));
+        var first=parameter(owned,"0"); var second=parameter(owned,"1");
+        var p=bindingPlan(f,List.of(first,second),ordinary(f),List.of());
+        p=new InjectionBindingPlan(p.registrationPlan(),p.dependencies(),p.definitions(),p.matches(),
+                List.of(new Group("wire",List.of(first.identity(),second.identity()),
+                        List.of(first.identity(),second.identity()),first.evidence())),p.environment(),p.limits());
+        var r=InjectionBindings.evaluate(p,ConditionModel.create(f.source().space(),f.source().lowering().occurrences()),
+                new ConfigurationAssignment(Map.of(new FiniteDomain.Variable(FiniteDomain.Kind.PROFILE,"dev"),
+                        FiniteDomain.Value.bool(false)),first.evidence()),ExogenousConditionEvaluator.Limits.conservative());
+        assertEquals(2,r.rows().size());
+        assertTrue(r.rows().stream().allMatch(row -> row.outcome()==NOT_ACTIVE && row.selected().isEmpty()));
+        assertFalse(r.capabilityGaps().stream().anyMatch(gap -> gap.reasonCode().equals("OPTIONAL_GROUP_UNKNOWN")));
+    }
     @Test void beanNameAliasSelectsCanonicalDefinitionWithoutDuplicateCandidate() throws Exception {
         var f=setup("a","b"); var d=dependency(f,Shape.SINGLE,Name.of("chosen"),Required.REQUIRED); var p=bindingPlan(f,d,ordinary(f));
         var steps=new ArrayList<>(f.registration().steps()); steps.add(aliasStep("alias",f.events().getFirst(),"reg-a","chosen","a",d.evidence()));

@@ -4,6 +4,7 @@ import com.evolution.analysis.contract.common.*;
 import com.evolution.analysis.contract.identity.EntityIdentity;
 import com.evolution.analysis.contract.semantic.SemanticStatus;
 import com.evolution.analysis.evidence.CapabilityGapRecord;
+import com.evolution.analysis.frontend.JavaType;
 import com.evolution.analysis.ingestion.IngestionEvidence;
 import com.evolution.analysis.spring.*;
 import com.evolution.analysis.spring.binding.*;
@@ -19,7 +20,7 @@ import static com.evolution.analysis.spring.registration.RegistrationEvent.Compl
  * evidenced container/order closure, never final definitions, dependency descriptors or matches.
  * An unproved scope stays open. This is not an application bootstrap detector. */
 public final class SourceToSpringPlan {
-    public static final VersionedIdentifier PROVIDER=new VersionedIdentifier("spring.source-to-plan","m4uv2.2-beans-v1");
+    public static final VersionedIdentifier PROVIDER=new VersionedIdentifier("spring.source-to-plan","m4uv2.2-injection-v1");
 
     public record Scope(String container, ContentDigest sourceEvidence, List<EntityIdentity> registrationOrder,
                         RegistrationEvent.Completeness order, RegistrationEvent.Completeness registry,
@@ -165,20 +166,31 @@ public final class SourceToSpringPlan {
                 scope.order(),scope.evidence(),scope.registry(),scope.noParent(),scope.evidence(),definitions,List.of(),BeanRegistrationPlan.Limits.conservative());
         var dependencies=new ArrayList<InjectionBindingPlan.Dependency>();var matches=new ArrayList<BindingEvidence.Match>();
         var acquiredDependencies=new HashMap<EntityIdentity,List<ContentDigest>>();
+        var methodDependencies=new TreeMap<EntityIdentity,Map<EntityIdentity,InjectionBindingPlan.Dependency>>();
         var selectedParameters=new HashSet<EntityIdentity>();
         constructors.rows().stream().filter(r -> r.status()==ConstructorInjectionIngestion.Status.SELECTED)
                 .forEach(r -> r.parameters().forEach(p -> selectedParameters.add(p.parameter())));
         for(var site:sites.sites()) {
-            var owner=byDeclaration.get(site.owner());if(owner==null)continue;
+            var owner=byDeclaration.get(site.owner());
+            if(owner==null) {
+                // Returned objects also have member-injection obligations. This direct-component
+                // fragment cannot attach them to product identities; keep that closure open.
+                if((site.kind()==SpringInjectionSites.Kind.FIELD||site.kind()==SpringInjectionSites.Kind.METHOD)
+                        &&methods.values().stream().anyMatch(m -> m.candidate().exposedTypes().contains(site.owner())))
+                    acquisitionIssues.add(new UniversalSpringEvidence.Issue(UniversalSpringEvidence.Reason.ANNOTATION_UNSUPPORTED,
+                            "bean-product-member:"+site.element().value(),List.of(site.evidence())));
+                continue;
+            }
             if(site.type().isEmpty()) {
                 acquisitionIssues.add(new UniversalSpringEvidence.Issue(UniversalSpringEvidence.Reason.EVIDENCE_MISSING,
                         site.element().value(),List.of(site.evidence())));
-                continue;
             }
-            var type=site.type().orElseThrow();boolean scalar=site.status()==SpringInjectionSites.Status.ACQUIRED
+            var type=site.type().orElseGet(() -> new JavaType(JavaType.Kind.UNKNOWN,"<unavailable>",Optional.empty(),List.of(),Optional.empty(),SemanticStatus.UNRESOLVED));
+            boolean scalar=site.status()==SpringInjectionSites.Status.ACQUIRED&&type.kind()==JavaType.Kind.DECLARED
                     &&type.status()==SemanticStatus.RESOLVED&&type.target().isPresent()&&type.components().isEmpty()
                     &&(site.kind()==SpringInjectionSites.Kind.CONSTRUCTOR&&selectedParameters.contains(site.element())
-                       ||site.kind()==SpringInjectionSites.Kind.BEAN_PARAMETER&&methods.containsKey(site.owner())&&methods.get(site.owner()).complete())
+                       ||site.kind()==SpringInjectionSites.Kind.BEAN_PARAMETER&&methods.containsKey(site.owner())&&methods.get(site.owner()).complete()
+                       ||site.kind()==SpringInjectionSites.Kind.FIELD||site.kind()==SpringInjectionSites.Kind.METHOD)
                     &&source.annotations(site.element()).stream().allMatch(a -> a.name().filter(SITE_METADATA::contains).isPresent())
                     &&site.qualifier().filter(String::isBlank).isEmpty()
                     &&Optional.ofNullable(source.typeName(type.target().orElseThrow())).filter(n -> !DEFERRED_TYPES.contains(n)).isPresent();
@@ -191,15 +203,18 @@ public final class SourceToSpringPlan {
                 case BEAN_PARAMETER -> InjectionPoint.SiteKind.BEAN_PARAMETER;
                 default -> InjectionPoint.SiteKind.OTHER;
             };
-            var point=new InjectionPoint(build.identity(),site.owner().value(),kind,site.element().value(),site.evidence());
+            var method=site.kind()==SpringInjectionSites.Kind.METHOD?source.owner(site.element()):Optional.<EntityIdentity>empty();
+            var point=new InjectionPoint(build.identity(),method.orElse(site.owner()).value(),kind,site.element().value(),site.evidence());
             var dependency=new InjectionBindingPlan.Dependency(point,Optional.of(owner.identity()),type,InjectionBindingPlan.Shape.SINGLE,
                     InjectionBindingPlan.Mode.AUTOWIRE,site.required()?InjectionBindingPlan.Required.REQUIRED:InjectionBindingPlan.Required.OPTIONAL,
                     // Source spelling does not establish reflection parameter-name availability.
-                    InjectionBindingPlan.Name.unknown(),site.qualifier().map(q -> q.isBlank()?InjectionBindingPlan.Name.unknown():InjectionBindingPlan.Name.of(q))
+                    site.kind()==SpringInjectionSites.Kind.FIELD?site.name().map(InjectionBindingPlan.Name::of).orElseGet(InjectionBindingPlan.Name::unknown):InjectionBindingPlan.Name.unknown(),
+                    site.qualifier().map(q -> q.isBlank()?InjectionBindingPlan.Name.unknown():InjectionBindingPlan.Name.of(q))
                             .orElseGet(InjectionBindingPlan.Name::absent),
                     site.qualifier().isPresent()?TRUE:FALSE,false,false,false,false,FALSE,
                     scalar?InjectionBindingPlan.Normalization.COMPLETE:InjectionBindingPlan.Normalization.INCOMPLETE,site.evidence());
             dependencies.add(dependency);
+            method.ifPresent(m -> methodDependencies.computeIfAbsent(m,k -> new HashMap<>()).put(site.element(),dependency));
             acquiredDependencies.computeIfAbsent(site.element(),k -> new ArrayList<>()).add(dependency.identity());
             source.owner(site.element()).ifPresent(ownerElement -> acquiredDependencies.computeIfAbsent(ownerElement,k -> new ArrayList<>()).add(dependency.identity()));
             for(var entry:byDeclaration.entrySet()) {
@@ -211,6 +226,15 @@ public final class SourceToSpringPlan {
                 matches.add(new BindingEvidence.Match(dependency.identity(),entry.getValue().identity(),BindingEvidence.Lane.DIRECT,
                         compatible,compatible,compatible,qualifier,BindingEvidence.Knowledge.KNOWN,proof));
             }
+        }
+        var groups=new ArrayList<InjectionBindingPlan.Group>();
+        for(var entry:methodDependencies.entrySet()) {
+            // Declaration coordinates establish parameter order; hash/relationship order does not.
+            var ordered=entry.getValue().entrySet().stream().sorted(Comparator.comparing(e ->
+                    source.declarations().get(e.getKey()).entity().declaration().orElseThrow())).map(Map.Entry::getValue).toList();
+            groups.add(new InjectionBindingPlan.Group(entry.getKey().value(),ordered.stream().map(InjectionBindingPlan.Dependency::identity).toList(),
+                    ordered.stream().filter(d -> d.required()==InjectionBindingPlan.Required.OPTIONAL).map(InjectionBindingPlan.Dependency::identity).toList(),
+                    source.evidence(entry.getKey())));
         }
         boolean withinBudget=(long)dependencies.size()*byDeclaration.size()<=limit*limit;
         boolean constructorClosure=constructors.rows().stream().filter(r -> byDeclaration.containsKey(r.type()))
@@ -224,7 +248,7 @@ public final class SourceToSpringPlan {
                 var acquired=acquiredDependencies.getOrDefault(owner,List.of()).stream().distinct().toList();
                 if(!acquired.isEmpty())obligations.add(new InjectionBindingPlan.ObligationBinding(obligation.identity(),acquired,proof));
             });
-        var binding=new InjectionBindingPlan(registration,dependencies,bindingDefinitions,matches,List.of(),obligations,environment,
+        var binding=new InjectionBindingPlan(registration,dependencies,bindingDefinitions,matches,groups,obligations,environment,
                 new InjectionBindingPlan.Limits(limit,limit*limit,limit*limit,limit*limit));
         var gaps=new TreeSet<>(components.gaps());gaps.addAll(constructors.gaps());gaps.addAll(sites.gaps());gaps.addAll(lowering.capabilityGaps());gaps.addAll(discovery.capabilityGaps());
         gaps.addAll(UniversalSpringEvidence.gaps(build.snapshotIdentity(),input,acquisitionIssues));

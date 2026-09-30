@@ -66,8 +66,8 @@ public record InjectionBindingPlan(BeanRegistrationPlan registrationPlan, List<D
             default -> false;
         }; }
     }
-    /** All dependency parameters of one optional autowired method. Missing one skips the
-     * invocation, so none of the tentative selections become dependency edges. */
+    /** Ordered dependency parameters of one autowired method. An absent skip trigger or
+     * a failed/unknown parameter clears tentative selections for the whole invocation. */
     public record Group(String key, List<ContentDigest> dependencies, List<ContentDigest> skipOnAbsent, ConditionEvidence evidence) {
         public Group {
             key = BindingIdentity.text(key);

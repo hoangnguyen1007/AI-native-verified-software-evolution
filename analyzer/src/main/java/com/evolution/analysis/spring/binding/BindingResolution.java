@@ -133,7 +133,7 @@ final class BindingResolution {
         }
     }
     private void evaluateGroup(Group group) {
-        List<Row> completed = new ArrayList<>(); boolean stopped = false, skipped = false;
+        List<Row> completed = new ArrayList<>(); boolean stopped = false, skipped = false, inactive = false;
         boolean groupValid = valid(group.evidence(), build);
         var first = dependencies.get(group.dependencies().getFirst());
         groupValid &= group.dependencies().stream().map(dependencies::get).allMatch(d ->
@@ -143,11 +143,12 @@ final class BindingResolution {
             var d = dependencies.get(id);
             Row row;
             if (!groupValid || stopped) {
-                row = empty(d, skipped ? Outcome.GROUP_SKIPPED : Outcome.UNKNOWN, Operation.NOT_INVOKED);
-                if (!skipped) issue(OPTIONAL_GROUP_UNKNOWN, d, group.key(), List.of(group.evidence()));
+                row = empty(d, inactive ? Outcome.NOT_ACTIVE : skipped ? Outcome.GROUP_SKIPPED : Outcome.UNKNOWN, Operation.NOT_INVOKED);
+                if (!skipped && !inactive) issue(OPTIONAL_GROUP_UNKNOWN, d, group.key(), List.of(group.evidence()));
             } else {
                 row = evaluate(d); completed.add(row);
                 skipped = row.outcome() == Outcome.ABSENT_OPTIONAL && group.skipOnAbsent().contains(id);
+                inactive = row.outcome() == Outcome.NOT_ACTIVE;
                 stopped = skipped || switch (row.outcome()) {
                     case UNKNOWN, ERROR, NOT_REACHED, UNSATISFIED, AMBIGUOUS, NOT_ACTIVE -> true;
                     default -> false;

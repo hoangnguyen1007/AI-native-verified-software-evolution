@@ -24,10 +24,12 @@ public final class SpringInjectionSites {
     }
     private static final Set<String> INJECT=Set.of("org.springframework.beans.factory.annotation.Autowired","javax.inject.Inject","jakarta.inject.Inject",
             "javax.annotation.Resource","jakarta.annotation.Resource","org.springframework.beans.factory.annotation.Value");
+    private static final Set<String> MEMBER_METADATA=Set.of("org.springframework.beans.factory.annotation.Autowired",
+            "org.springframework.beans.factory.annotation.Qualifier","javax.inject.Inject","jakarta.inject.Inject","javax.inject.Named","jakarta.inject.Named");
     public static Result acquire(SpringSourceEvidence source,ConstructorInjectionIngestion.Result constructors,FrameworkGeneration generation,int maxSites) {
         if(maxSites<1)throw new IllegalArgumentException("Positive injection limit required");
         if(!constructors.analysis().equals(source.frontend().analysis()))throw new IllegalArgumentException("Foreign constructor evidence");
-        var input=IngestionEvidence.digest(List.of("spring.injection-sites:m4uv2.2-beans-v1",source.identity(),constructors.identity(),generation,maxSites));
+        var input=IngestionEvidence.digest(List.of("spring.injection-sites:m4uv2.2-injection-v1",source.identity(),constructors.identity(),generation,maxSites));
         var sites=new TreeMap<String,Site>();var issues=new ArrayList<UniversalSpringEvidence.Issue>();
         for(var row:constructors.rows())if(row.status()==ConstructorInjectionIngestion.Status.SELECTED)for(var p:row.parameters()) {
             var metadata=metadata(source,p.parameter(),generation,issues);
@@ -44,12 +46,19 @@ public final class SpringInjectionSites {
             boolean namespace=compatible(name,generation);if(!namespace)issues.add(new UniversalSpringEvidence.Issue(UniversalSpringEvidence.Reason.NAMESPACE_INCOMPATIBLE,element.value(),List.of(annotation.evidence())));
             var kind=name.equals(BeanMethodIngestion.BEAN)?Kind.BEAN_PARAMETER:name.endsWith(".Resource")?Kind.RESOURCE:name.endsWith(".Value")?Kind.VALUE:
                     declaration.entity().kind()==EntityKind.CONSTRUCTOR?Kind.CONSTRUCTOR:declaration.entity().kind()==EntityKind.FIELD?Kind.FIELD:Kind.METHOD;
+            var shape=source.frontend().memberDeclarations().stream().filter(m -> m.member().equals(element)).findFirst();
+            boolean memberComplete=kind!=Kind.FIELD&&kind!=Kind.METHOD || shape.filter(m -> !m.staticMember()&&!m.abstractMember()&&!m.genericMethod()).isPresent()
+                    &&declaration.status()==SemanticStatus.RESOLVED
+                    &&source.annotations(element).stream().allMatch(a -> a.name().filter(MEMBER_METADATA::contains).isPresent())
+                    // Method-level qualifiers require merged method/parameter semantics; do not ignore them.
+                    &&(kind!=Kind.METHOD||source.annotations(element).stream().noneMatch(a -> a.name().filter(n -> n.endsWith(".Qualifier")||n.endsWith(".Named")).isPresent()));
             var parameters=source.relationships().stream().filter(r->r.source().equals(element)&&r.kind().value().equals("java.has-parameter")&&r.target() instanceof RelationshipTarget.Resolved)
                     .map(r->((RelationshipTarget.Resolved)r.target()).target()).distinct().toList();
             List<EntityIdentity> targets=declaration.entity().kind()==EntityKind.FIELD||declaration.entity().kind()==EntityKind.PARAMETER?List.of(element):parameters;
             if(targets.isEmpty()&&kind!=Kind.CONSTRUCTOR&&kind!=Kind.BEAN_PARAMETER)issues.add(new UniversalSpringEvidence.Issue(UniversalSpringEvidence.Reason.ANNOTATION_UNSUPPORTED,element.value(),List.of(annotation.evidence())));
             for(var target:targets) {
-                boolean valid=namespace&&annotations.size()==1&&kind!=Kind.VALUE;Optional<String> resourceName=Optional.empty();boolean required=true;
+                boolean valid=namespace&&annotations.size()==1&&kind!=Kind.VALUE&&memberComplete;
+                Optional<String> resourceName=kind==Kind.FIELD?shape.map(MemberDeclarationRecord::name):Optional.empty();boolean required=true;
                 try {
                     var values=LiteralConditionAnnotation.parse(annotation.use().spelling());
                     if(kind==Kind.RESOURCE){if(!Set.of("name").containsAll(values.keySet()))valid=false;String explicit=LiteralConditionAnnotation.string(values,"name","");if(!explicit.isEmpty())resourceName=Optional.of(explicit);}

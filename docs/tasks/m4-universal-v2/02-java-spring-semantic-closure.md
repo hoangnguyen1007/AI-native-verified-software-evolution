@@ -103,6 +103,19 @@ Mỗi pack cần exact Framework/Boot/artifact tuple, mechanisms, metadata/defau
 
 Reuse focused suites; planned new names where useful: `GeneratedSymbolResolutionTest`, `SourceToSpringPlanTest`, `FrameworkPackConformanceTest`, `ConditionalEvidenceRefinementTest`. Tests cạnh production owner; mỗi vòng một class quiet mode, compact fixtures. Trusted oracle setup tách rõ untrusted target analysis. Labels không sinh bằng chính implementation được chấm; no full repo benchmark trong coding.
 
+### Quy định kiểm thử tinh gọn & Cắt tỉa phạm vi (Lean Execution & Scope Pruning)
+
+1. **Tuyệt đối cấm sinh gói nghiệm thu hình thức cho slice hàng ngày:**
+   - KHÔNG tạo folder `reproducibility/`, không sinh file `input-hashes.json` (danh sách hash hàng nghìn dòng) hay file dump `verification.json` trong các commit code/TDD thường ngày.
+   - Các gói bằng chứng đầy đủ chỉ được tạo 1 lần duy nhất khi nghiệm thu toàn bộ Milestone Gate (G3).
+2. **Kiểm thử hai tầng theo AGENTS.md:**
+   - Inner TDD loop: chạy một method hoặc class nhỏ ở chế độ quiet; với lớp tích hợp chậm dùng `"-Dtest=SourceToSpringPlanTest#<method>"`. Mục tiêu <5 giây, <20 dòng chẩn đoán; ghi nhận thời gian thực nếu vượt, không bỏ bằng chứng cần thiết.
+   - Trước handoff: chạy tập unit/contract test và consumer tích hợp trực tiếp bị ảnh hưởng ở mọi module đã sửa, gồm assertion provider/version. Ghi rõ tập test và kết quả; ngân sách thời gian inner loop không áp cho tập này.
+   - Bọc tham số `-D` trong dấu ngoặc kép khi dùng PowerShell. Không chạy full reactor hoặc benchmark repository cho slice thường ngày; dành cho milestone gate được phép.
+3. **Cắt tỉa phạm vi (Scope Pruning) - Tránh sa lầy ở M4:**
+   - Tập trung hoàn thành lõi Spring DI thiết yếu: Field Injection, Method Injection & Method Groups.
+   - Các framework/tính năng ngoại vi (MapStruct, Protobuf, WebFlux routes, Spring Batch, SpEL phức tạp): Phân loại dứt khoát là `CapabilityGapRecord(UNSUPPORTED)` theo chuẩn của repo, không cố code chi tiết làm chậm tiến độ tiến sang M5 (Knowledge Graph) và M10 (Visual Workbench).
+
 ## Exit và exact next task
 
 Done khi input-to-conditional-architecture journeys dùng providers thật, mỗi claimed-supported fragment có positive/negative evidence, actual targets/bindings tăng với đúng provenance, old gaps chỉ closes qua evidence và false-certainty controls xanh. Standalone helper không được pipeline dùng chưa đủ done.

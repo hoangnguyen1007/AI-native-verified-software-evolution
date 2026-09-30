@@ -74,7 +74,14 @@ Source evidence requires a full span and the exact M3 snapshot/source digest. Ar
 
 ## Identity, determinism and limits
 
-Provider: `spring.injection-binding:m4c.3`; binding semantics: `spring.binding-semantics:6.2.0-m4c.3-v1`; reason catalog: `evidence.spring-binding-gaps:m4c.3-v1`. Plan/result schemas are `spring-injection-binding-plan-v1` and `spring-injection-binding-result-v1`.
+Current implementation provider: `spring.injection-binding:m4c.3-inactive-groups-v2`;
+binding semantics: `spring.binding-semantics:6.2.0-m4c.3-v1`; reason catalog:
+`evidence.spring-binding-gaps:m4c.3-v1`. Plan/result schemas remain
+`spring-injection-binding-plan-v1` and `spring-injection-binding-result-v1`.
+The 2026-09-30 source-integration correction preserves definite `NOT_ACTIVE` for
+every parameter of a group whose owning definition is inactive. Historical M4C.3
+verification used provider `spring.injection-binding:m4c.3`; this correction's
+focused checks are recorded in [current state](../current-state.md).
 
 Injection-point and binding-candidate identities use the accepted R0 SHA-256 envelope. The additive `spring-binding-context-v1` context binds exact build, finite configuration space, enriched registration plan, mechanism catalog, condition IR, framework/registration/binding versions, reasoner policy, all deterministic limits, and the binding-plan identity. Input/result identities additionally bind the realized registration result, which includes the assignment. Candidate identities describe a contextual possible relationship; membership/selection status remains in assignment-qualified result rows. Existing M1/M3/M4A/M4B/M4C.1/M4C.2 identities and schemas are unchanged.
 
