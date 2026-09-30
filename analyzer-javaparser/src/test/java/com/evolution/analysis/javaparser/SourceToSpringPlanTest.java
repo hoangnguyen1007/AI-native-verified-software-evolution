@@ -52,6 +52,12 @@ class SourceToSpringPlanTest {
             binaries.add(new BinaryInput(new ClasspathEntry(ClasspathEntryKind.DEPENDENCY,entry.getKey()+"@jar",digest),path));
             artifacts.add(new SpringFrameworkEvidence.Artifact(entry.getKey(),digest));
         }
+        if(text.contains("jakarta.inject.")) {
+            var path=java.nio.file.Path.of(jakarta.inject.Named.class.getProtectionDomain().getCodeSource().getLocation().toURI());
+            var digest=ContentDigest.sha256(java.nio.file.Files.readAllBytes(path));
+            binaries.add(new BinaryInput(new ClasspathEntry(ClasspathEntryKind.DEPENDENCY,"jakarta.inject:jakarta.inject-api:2.0.1@jar",digest),path));
+            artifacts.add(new SpringFrameworkEvidence.Artifact("jakarta.inject:jakarta.inject-api:2.0.1",digest));
+        }
         var files=new TreeMap<String,SourceInput>();
         Map.of("build.gradle","plugins { java }", "src/main/java/app/App.java",text).forEach((path,value) -> {
             byte[] bytes=value.getBytes(StandardCharsets.UTF_8);
@@ -490,6 +496,213 @@ class SourceToSpringPlanTest {
                 class Client { %s }
                 """.formatted(members));
     }
+    @Test void voidMethodQualifierIsAcquiredForEachUnqualifiedParameter() throws Exception {
+        var f=memberFixture("""
+                @org.springframework.beans.factory.annotation.Autowired
+                @org.springframework.beans.factory.annotation.Qualifier("chosen")
+                void wire(Store first, Store second) {}
+                """);
+        var plan=prepare(f,true);
+        assertEquals(2,plan.binding().dependencies().size());
+        assertTrue(plan.binding().dependencies().stream().allMatch(d -> d.normalization()==InjectionBindingPlan.Normalization.COMPLETE));
+        assertTrue(plan.binding().dependencies().stream().allMatch(d -> d.suggestedName().equals(InjectionBindingPlan.Name.of("chosen"))));
+        assertTrue(bindingAt(f,plan,true).rows().stream().allMatch(r -> r.outcome()==InjectionBindings.Outcome.SELECTED));
+        assertTrue(bindingAt(f,plan,false).rows().stream().allMatch(r -> r.outcome()==InjectionBindings.Outcome.NOT_ACTIVE));
+        var truth=evaluate(f,plan);
+        assertEquals(2,truth.regions().stream().filter(r -> r.fact().kind()==ConditionalFactKey.Kind.SELECTED_BINDING
+                &&r.classification()==TruthRegionEvaluation.Classification.MAY).count());
+        assertFalse(truth.replays().isEmpty());
+        assertTrue(truth.replays().stream().allMatch(TruthRegionEvaluation.WitnessReplay::valid));
+        assertEquals(plan.identity(),prepare(f,true).identity());
+        try(var context=container(true)) {
+            context.register(OracleStore.class,OracleMethodQualifier.class);context.refresh();
+            var client=context.getBean(OracleMethodQualifier.class);
+            assertSame(context.getBean(OracleStore.class),client.first);assertSame(client.first,client.second);
+        }
+    }
+    @org.springframework.stereotype.Component
+    static class OracleMethodQualifier {
+        OracleStore first,second;
+        @org.springframework.beans.factory.annotation.Autowired
+        @org.springframework.beans.factory.annotation.Qualifier("chosen")
+        void wire(OracleStore first,OracleStore second){this.first=first;this.second=second;}
+    }
+    @Test void parameterQualifierOverridesMatchingConflictingAndEmptyMethodMetadata() throws Exception {
+        for(String methodQualifier:List.of("chosen","missing","")) {
+            var f=memberFixture("""
+                    @org.springframework.beans.factory.annotation.Autowired
+                    @org.springframework.beans.factory.annotation.Qualifier("%s")
+                    void wire(@org.springframework.beans.factory.annotation.Qualifier("chosen") Store store) {}
+                    """.formatted(methodQualifier));
+            var plan=prepare(f,true);
+            assertEquals(InjectionBindingPlan.Normalization.COMPLETE,plan.binding().dependencies().getFirst().normalization());
+            assertEquals(InjectionBindingPlan.Name.of("chosen"),plan.binding().dependencies().getFirst().suggestedName());
+            assertEquals(InjectionBindings.Outcome.SELECTED,bindingAt(f,plan,true).rows().getFirst().outcome());
+        }
+        try(var context=container(true)) {
+            context.register(OracleStore.class,OracleParameterOverride.class,OracleEmptyMethodOverride.class);context.refresh();
+            assertSame(context.getBean(OracleStore.class),context.getBean(OracleParameterOverride.class).store);
+            assertSame(context.getBean(OracleStore.class),context.getBean(OracleEmptyMethodOverride.class).store);
+        }
+    }
+    @org.springframework.stereotype.Component
+    static class OracleParameterOverride {
+        OracleStore store;
+        @org.springframework.beans.factory.annotation.Autowired @org.springframework.beans.factory.annotation.Qualifier("missing")
+        void wire(@org.springframework.beans.factory.annotation.Qualifier("chosen") OracleStore store){this.store=store;}
+    }
+    @org.springframework.stereotype.Component
+    static class OracleEmptyMethodOverride {
+        OracleStore store;
+        @org.springframework.beans.factory.annotation.Autowired @org.springframework.beans.factory.annotation.Qualifier
+        void wire(@org.springframework.beans.factory.annotation.Qualifier("chosen") OracleStore store){this.store=store;}
+    }
+    @Test void mismatchingParameterDoesNotFallBackToMatchingMethodQualifier() throws Exception {
+        var f=memberFixture("""
+                @org.springframework.beans.factory.annotation.Autowired @org.springframework.beans.factory.annotation.Qualifier("chosen")
+                void wire(@org.springframework.beans.factory.annotation.Qualifier("missing") Store store) {}
+                """);
+        var plan=prepare(f,true);
+        assertEquals(InjectionBindingPlan.Normalization.COMPLETE,plan.binding().dependencies().getFirst().normalization());
+        assertEquals(InjectionBindings.Outcome.UNSATISFIED,bindingAt(f,plan,true).rows().getFirst().outcome());
+        assertTrue(selected(evaluate(f,plan),true).isEmpty());
+        try(var context=container(true)) {
+            context.register(OracleStore.class,OracleMismatchingParameter.class);
+            assertThrows(org.springframework.beans.factory.UnsatisfiedDependencyException.class,context::refresh);
+        }
+    }
+    @org.springframework.stereotype.Component
+    static class OracleMismatchingParameter {
+        @org.springframework.beans.factory.annotation.Autowired @org.springframework.beans.factory.annotation.Qualifier("chosen")
+        void wire(@org.springframework.beans.factory.annotation.Qualifier("missing") OracleStore store){}
+    }
+    @Test void nonVoidMethodQualifierDoesNotFilterItsUnqualifiedParameters() throws Exception {
+        var f=memberFixture("""
+                @org.springframework.beans.factory.annotation.Autowired @org.springframework.beans.factory.annotation.Qualifier("missing")
+                Store wire(Store store) { return store; }
+                """);
+        var plan=prepare(f,true);
+        assertEquals(InjectionBindingPlan.Normalization.COMPLETE,plan.binding().dependencies().getFirst().normalization());
+        assertEquals(InjectionBindingPlan.Name.absent(),plan.binding().dependencies().getFirst().suggestedName());
+        assertEquals(InjectionBindings.Outcome.SELECTED,bindingAt(f,plan,true).rows().getFirst().outcome());
+        try(var context=container(true)) {
+            context.register(OracleStore.class,OracleNonVoidMethod.class);context.refresh();
+            assertSame(context.getBean(OracleStore.class),context.getBean(OracleNonVoidMethod.class).store);
+        }
+    }
+    @org.springframework.stereotype.Component
+    static class OracleNonVoidMethod {
+        OracleStore store;
+        @org.springframework.beans.factory.annotation.Autowired @org.springframework.beans.factory.annotation.Qualifier("missing")
+        OracleStore wire(OracleStore store){this.store=store;return store;}
+    }
+    @Test void methodQualifierMismatchClearsRequiredAndOptionalGroupSelections() throws Exception {
+        for(boolean required:List.of(false,true)) {
+            var f=memberFixture("""
+                    @org.springframework.beans.factory.annotation.Autowired(required=%s)
+                    @org.springframework.beans.factory.annotation.Qualifier("missing")
+                    void wire(@org.springframework.beans.factory.annotation.Qualifier("chosen") Store first,Store second) {}
+                    """.formatted(required));
+            var plan=prepare(f,true);
+            assertEquals(2,plan.binding().dependencies().size());
+            assertTrue(plan.binding().dependencies().stream().allMatch(d -> d.normalization()==InjectionBindingPlan.Normalization.COMPLETE));
+            var rows=bindingAt(f,plan,true).rows();
+            assertTrue(rows.stream().allMatch(r -> r.selected().isEmpty()));
+            assertTrue(rows.stream().anyMatch(r -> r.outcome()==(required?InjectionBindings.Outcome.UNSATISFIED:InjectionBindings.Outcome.GROUP_SKIPPED)));
+            assertTrue(bindingAt(f,plan,false).rows().stream().allMatch(r -> r.outcome()==InjectionBindings.Outcome.NOT_ACTIVE));
+        }
+        try(var context=container(true)) {
+            context.register(OracleStore.class,OracleOptionalMethodFallback.class);context.refresh();
+            assertFalse(context.getBean(OracleOptionalMethodFallback.class).invoked);
+        }
+        try(var context=container(true)) {
+            context.register(OracleStore.class,OracleRequiredMethodFallback.class);
+            assertThrows(org.springframework.beans.factory.UnsatisfiedDependencyException.class,context::refresh);
+        }
+    }
+    @org.springframework.stereotype.Component
+    static class OracleOptionalMethodFallback {
+        boolean invoked;
+        @org.springframework.beans.factory.annotation.Autowired(required=false) @org.springframework.beans.factory.annotation.Qualifier("missing")
+        void wire(@org.springframework.beans.factory.annotation.Qualifier("chosen") OracleStore first,OracleStore second){invoked=true;}
+    }
+    @org.springframework.stereotype.Component
+    static class OracleRequiredMethodFallback {
+        @org.springframework.beans.factory.annotation.Autowired @org.springframework.beans.factory.annotation.Qualifier("missing")
+        void wire(@org.springframework.beans.factory.annotation.Qualifier("chosen") OracleStore first,OracleStore second){}
+    }
+    @Test void emptyAndMalformedMethodQualifiersRemainExplicitGaps() throws Exception {
+        for(String qualifier:List.of("@org.springframework.beans.factory.annotation.Qualifier",
+                "@org.springframework.beans.factory.annotation.Qualifier(value=\"chosen\",other=\"ignored\")")) {
+            var f=memberFixture("@org.springframework.beans.factory.annotation.Autowired "+qualifier+" void wire(Store store) {}");
+            var plan=prepare(f,true);
+            assertEquals(InjectionBindingPlan.Normalization.INCOMPLETE,plan.binding().dependencies().getFirst().normalization());
+            assertFalse(plan.gaps().isEmpty());
+            assertTrue(bindingAt(f,plan,true).rows().stream().noneMatch(r -> r.outcome()==InjectionBindings.Outcome.SELECTED));
+        }
+    }
+    @Test void emptyParameterQualifierCannotBeReplacedByMatchingMethodMetadata() throws Exception {
+        var f=memberFixture("""
+                @org.springframework.beans.factory.annotation.Autowired @org.springframework.beans.factory.annotation.Qualifier("chosen")
+                void wire(@org.springframework.beans.factory.annotation.Qualifier Store store) {}
+                """);
+        var plan=prepare(f,true);
+        assertEquals(InjectionBindingPlan.Normalization.INCOMPLETE,plan.binding().dependencies().getFirst().normalization());
+        assertFalse(plan.gaps().isEmpty());
+        assertTrue(bindingAt(f,plan,true).rows().stream().noneMatch(r -> r.outcome()==InjectionBindings.Outcome.SELECTED));
+        try(var context=container(true)) {
+            context.register(OracleStore.class,OracleEmptyParameter.class);
+            assertThrows(org.springframework.beans.factory.UnsatisfiedDependencyException.class,context::refresh);
+        }
+    }
+    @org.springframework.stereotype.Component
+    static class OracleEmptyParameter {
+        @org.springframework.beans.factory.annotation.Autowired @org.springframework.beans.factory.annotation.Qualifier("chosen")
+        void wire(@org.springframework.beans.factory.annotation.Qualifier OracleStore store){}
+    }
+    @Test void sourceMethodQualifierImpostorCannotEstablishFrameworkSemantics() throws Exception {
+        var f=sourceFixture("""
+                package org.springframework.beans.factory.annotation;
+                @org.springframework.context.annotation.ComponentScan("org.springframework.beans.factory.annotation") class App {}
+                @interface Qualifier { String value(); }
+                @org.springframework.stereotype.Component class Store {}
+                @org.springframework.stereotype.Component class Client {
+                  @Autowired @Qualifier("chosen") void wire(Store store) {}
+                }
+                """);
+        var plan=prepare(f,true);
+        assertEquals(InjectionBindingPlan.Normalization.INCOMPLETE,plan.binding().dependencies().getFirst().normalization());
+        assertFalse(plan.gaps().isEmpty());
+        assertTrue(bindingAt(f,plan,true).rows().stream().noneMatch(r -> r.outcome()==InjectionBindings.Outcome.SELECTED));
+    }
+    @Test void methodNamedAndMixedQualifierKindsNeedAnnotationSpecificMatchingProofs() throws Exception {
+        for(String qualifier:List.of("@jakarta.inject.Named(\"chosen\")",
+                "@jakarta.inject.Named(\"chosen\") @org.springframework.beans.factory.annotation.Qualifier(\"chosen\")")) {
+            var f=memberFixture("@org.springframework.beans.factory.annotation.Autowired "+qualifier+" void wire(Store store) {}");
+            assertTrue(f.source().framework().artifacts().stream().anyMatch(a -> a.coordinate().equals("jakarta.inject:jakarta.inject-api:2.0.1")));
+            var plan=prepare(f,true);
+            assertEquals(InjectionBindingPlan.Normalization.INCOMPLETE,plan.binding().dependencies().getFirst().normalization());
+            assertFalse(plan.gaps().isEmpty());
+            assertTrue(bindingAt(f,plan,true).rows().stream().noneMatch(r -> r.outcome()==InjectionBindings.Outcome.SELECTED));
+        }
+    }
+    @Test void composedMethodAndParameterQualifiersAreNotSilentlyIgnored() throws Exception {
+        for(String members:List.of("@Chosen void wire(Store store) {}","void wire(@Chosen Store store) {}")) {
+            var f=sourceFixture("""
+                    package app;
+                    @org.springframework.context.annotation.ComponentScan("app") class App {}
+                    @org.springframework.beans.factory.annotation.Qualifier("chosen") @interface Chosen {}
+                    @org.springframework.stereotype.Component class Store {}
+                    @org.springframework.stereotype.Component class Client {
+                      @org.springframework.beans.factory.annotation.Autowired %s
+                    }
+                    """.formatted(members));
+            var plan=prepare(f,true);
+            assertEquals(InjectionBindingPlan.Normalization.INCOMPLETE,plan.binding().dependencies().getFirst().normalization());
+            assertFalse(plan.gaps().isEmpty());
+            assertTrue(bindingAt(f,plan,true).rows().stream().noneMatch(r -> r.outcome()==InjectionBindings.Outcome.SELECTED));
+        }
+    }
     @Test void scalarFieldsAndMethodsProduceConditionalBindingsWithExactSourceEvidence() throws Exception {
         var f=memberFixture("""
                 @org.springframework.beans.factory.annotation.Autowired
@@ -666,7 +879,7 @@ class SourceToSpringPlanTest {
         static boolean invoked;
         @org.springframework.beans.factory.annotation.Autowired static void wire(OracleStore store){invoked=true;}
     }
-    @Test void methodLevelQualifiersAndGenericMethodsKeepExplicitIncompleteDescriptors() throws Exception {
+    @Test void directMethodQualifierIsCompleteWhileGenericMethodRemainsIncomplete() throws Exception {
         var f=memberFixture("""
                 @org.springframework.beans.factory.annotation.Autowired @org.springframework.beans.factory.annotation.Qualifier("missing")
                 void wire(Store store) {}
@@ -674,7 +887,10 @@ class SourceToSpringPlanTest {
                 """);
         var plan=prepare(f,true);
         assertEquals(2,plan.binding().dependencies().size());assertEquals(2,plan.binding().groups().size());
-        assertTrue(plan.binding().dependencies().stream().allMatch(d -> d.normalization()==InjectionBindingPlan.Normalization.INCOMPLETE));
+        var qualified=plan.binding().dependencies().stream().filter(d -> d.suggestedName().equals(InjectionBindingPlan.Name.of("missing"))).findFirst().orElseThrow();
+        assertEquals(InjectionBindingPlan.Normalization.COMPLETE,qualified.normalization());
+        assertTrue(plan.binding().dependencies().stream().filter(d -> !d.identity().equals(qualified.identity()))
+                .allMatch(d -> d.normalization()==InjectionBindingPlan.Normalization.INCOMPLETE));
         assertFalse(plan.gaps().isEmpty());assertTrue(selected(evaluate(f,plan),true).isEmpty());
     }
     @Test void fieldNamesAreEvidencedWhileMethodParameterNamesRemainUnknown() throws Exception {
@@ -806,6 +1022,102 @@ class SourceToSpringPlanTest {
                         members.contains("Product(Dependency constructorOnly)")?"new Product(null)":"new Product()",
                         members.contains("Product(Dependency constructorOnly)")?"new Product(null)":"new Product()"));
     }
+    @Test void productMethodQualifiersPreservePerOwnerGroupsSourcePointsAndWitnesses() throws Exception {
+        var f=productFixture("final class Product","""
+                @org.springframework.beans.factory.annotation.Autowired @org.springframework.beans.factory.annotation.Qualifier("dependency")
+                void wire(Dependency first,@org.springframework.beans.factory.annotation.Qualifier("dependency") Dependency second) {}
+                ""","@org.springframework.context.annotation.Profile(\"dev\")");
+        var plan=beanPlan(f,true,"Dependency","Config","first","second");
+        assertEquals(COMPLETE,plan.binding().environment().descriptorsComplete());
+        assertEquals(4,plan.binding().dependencies().size());assertEquals(2,plan.binding().groups().size());
+        assertEquals(2,plan.binding().dependencies().stream().map(d -> d.point().identity()).distinct().count());
+        for(var group:plan.binding().groups()) {
+            var groupDependencies=plan.binding().dependencies().stream().filter(d -> group.dependencies().contains(d.identity())).toList();
+            assertEquals(2,groupDependencies.size());
+            assertEquals(1,groupDependencies.stream().map(InjectionBindingPlan.Dependency::owner).distinct().count());
+        }
+        assertTrue(plan.binding().dependencies().stream().allMatch(d -> d.suggestedName().equals(InjectionBindingPlan.Name.of("dependency"))
+                &&d.dependencyName().equals(InjectionBindingPlan.Name.unknown())&&d.evidence() instanceof ConditionEvidence.Source s
+                &&s.span().isPresent()&&f.build().containsSource(s)));
+        assertTrue(plan.binding().dependencies().stream().allMatch(d -> plan.binding().obligations().stream().anyMatch(o -> o.dependencies().contains(d.identity()))));
+        assertEquals(4,bindingAt(f,plan,true).rows().stream().filter(r -> r.outcome()==InjectionBindings.Outcome.SELECTED).count());
+        assertEquals(2,bindingAt(f,plan,false).rows().stream().filter(r -> r.outcome()==InjectionBindings.Outcome.NOT_ACTIVE).count());
+        var truth=evaluate(f,plan);
+        assertFalse(truth.replays().isEmpty());assertTrue(truth.replays().stream().allMatch(TruthRegionEvaluation.WitnessReplay::valid));
+        assertEquals(plan.identity(),beanPlan(f,true,"Dependency","Config","first","second").identity());
+        for(boolean active:List.of(false,true))try(var context=container(active)) {
+            context.register(OracleQualifiedProducts.class);context.refresh();
+            var second=context.getBean("second",OracleQualifiedProduct.class);
+            assertSame(context.getBean("dependency"),second.first);assertSame(second.first,second.second);
+            assertEquals(active,context.containsBean("first"));
+            if(active)assertSame(second.first,context.getBean("first",OracleQualifiedProduct.class).second);
+        }
+    }
+    static final class OracleQualifiedProduct {
+        OracleProductDependency first,second;
+        @org.springframework.beans.factory.annotation.Autowired @org.springframework.beans.factory.annotation.Qualifier("dependency")
+        void wire(OracleProductDependency first,@org.springframework.beans.factory.annotation.Qualifier("dependency") OracleProductDependency second){this.first=first;this.second=second;}
+    }
+    @org.springframework.context.annotation.Configuration(proxyBeanMethods=false)
+    static class OracleQualifiedProducts {
+        @org.springframework.context.annotation.Bean OracleProductDependency dependency(){return new OracleProductDependency();}
+        @org.springframework.context.annotation.Bean @org.springframework.context.annotation.Profile("dev")
+        OracleQualifiedProduct first(){return new OracleQualifiedProduct();}
+        @org.springframework.context.annotation.Bean static OracleQualifiedProduct second(){return new OracleQualifiedProduct();}
+    }
+    @Test void productMethodQualifierMismatchClearsEachOptionalAndRequiredOwnerGroup() throws Exception {
+        for(boolean required:List.of(false,true)) {
+            var f=productFixture("final class Product","""
+                    @org.springframework.beans.factory.annotation.Autowired(required=%s) @org.springframework.beans.factory.annotation.Qualifier("missing")
+                    void wire(@org.springframework.beans.factory.annotation.Qualifier("dependency") Dependency first,Dependency second) {}
+                    """.formatted(required),"@org.springframework.context.annotation.Profile(\"dev\")");
+            var plan=beanPlan(f,true,"Dependency","Config","first","second");
+            assertEquals(COMPLETE,plan.binding().environment().descriptorsComplete());
+            assertEquals(4,plan.binding().dependencies().size());assertEquals(2,plan.binding().groups().size());
+            var rows=bindingAt(f,plan,true).rows();
+            assertTrue(rows.stream().allMatch(r -> r.selected().isEmpty()));
+            assertEquals(required?2:4,rows.stream().filter(r -> r.outcome()==(required?InjectionBindings.Outcome.UNSATISFIED:InjectionBindings.Outcome.GROUP_SKIPPED)).count());
+            assertEquals(2,bindingAt(f,plan,false).rows().stream().filter(r -> r.outcome()==InjectionBindings.Outcome.NOT_ACTIVE).count());
+        }
+        try(var context=container(true)) {
+            context.register(OracleProductDependencyConfig.class);context.registerBean("product",OracleOptionalProductFallback.class);context.refresh();
+            assertFalse(context.getBean(OracleOptionalProductFallback.class).invoked);
+        }
+        try(var context=container(true)) {
+            context.register(OracleProductDependencyConfig.class);context.registerBean("product",OracleRequiredProductFallback.class);
+            assertThrows(org.springframework.beans.factory.UnsatisfiedDependencyException.class,context::refresh);
+        }
+    }
+    @org.springframework.context.annotation.Configuration(proxyBeanMethods=false)
+    static class OracleProductDependencyConfig {
+        @org.springframework.context.annotation.Bean OracleProductDependency dependency(){return new OracleProductDependency();}
+    }
+    static final class OracleOptionalProductFallback {
+        boolean invoked;
+        @org.springframework.beans.factory.annotation.Autowired(required=false) @org.springframework.beans.factory.annotation.Qualifier("missing")
+        void wire(@org.springframework.beans.factory.annotation.Qualifier("dependency") OracleProductDependency first,OracleProductDependency second){invoked=true;}
+    }
+    static final class OracleRequiredProductFallback {
+        @org.springframework.beans.factory.annotation.Autowired @org.springframework.beans.factory.annotation.Qualifier("missing")
+        void wire(@org.springframework.beans.factory.annotation.Qualifier("dependency") OracleProductDependency first,OracleProductDependency second){}
+    }
+    @Test void missingMethodReturnEvidenceCannotDecideQualifierFallback() throws Exception {
+        var f=memberFixture("""
+                @org.springframework.beans.factory.annotation.Autowired @org.springframework.beans.factory.annotation.Qualifier("chosen")
+                void wire(Store store) {}
+                """);
+        var frontend=f.source().frontend();
+        var missingReturns=new FrontendResult(frontend.analysis(),frontend.frontend(),frontend.state(),frontend.declarations(),frontend.occurrences(),frontend.observations(),
+                frontend.sources(),frontend.coverage(),frontend.diagnostics(),frontend.types().stream().filter(t -> !t.role().value().equals("java.returns")).toList(),
+                frontend.annotations(),frontend.derivedRelationships(),frontend.typeDeclarations(),frontend.memberDeclarations());
+        var source=new SpringSourceEvidence(f.source().manifest(),missingReturns,f.source().framework());
+        var constructors=f.result().units().stream().filter(u -> u.sourceSet().equals(f.key())).findFirst().orElseThrow().constructors().orElseThrow();
+        var sites=SpringInjectionSites.acquire(source,constructors,FrameworkGeneration.from(source.framework(),Optional.empty()),100);
+        assertEquals(1,sites.sites().stream().filter(s -> s.kind()==SpringInjectionSites.Kind.METHOD).count());
+        assertTrue(sites.sites().stream().filter(s -> s.kind()==SpringInjectionSites.Kind.METHOD).allMatch(s -> s.status()==SpringInjectionSites.Status.UNKNOWN));
+        assertTrue(sites.issues().stream().anyMatch(i -> i.reason()==UniversalSpringEvidence.Reason.EVIDENCE_MISSING));
+        assertFalse(sites.gaps().isEmpty());
+    }
     @Test void sharedProductSitesKeepDistinctOwnersGroupsAndConditionalFacts() throws Exception {
         var f=productFixture("final class Product","""
                 @org.springframework.beans.factory.annotation.Autowired Product(Dependency constructorOnly) {}
@@ -813,7 +1125,7 @@ class SourceToSpringPlanTest {
                 @org.springframework.beans.factory.annotation.Autowired void wire(Dependency z,Dependency a) {}
                 ""","@org.springframework.context.annotation.Profile(\"dev\")");
         var plan=beanPlan(f,true,"Dependency","Config","first","second");
-        assertEquals("m4uv2.2-product-members-v1",SourceToSpringPlan.PROVIDER.version());
+        assertEquals("m4uv2.2-method-qualifiers-v1",SourceToSpringPlan.PROVIDER.version());
         assertEquals(6,plan.binding().dependencies().size());
         assertEquals(3,plan.binding().dependencies().stream().map(d -> d.point().identity()).distinct().count());
         assertEquals(6,plan.binding().dependencies().stream().map(InjectionBindingPlan.Dependency::identity).distinct().count());

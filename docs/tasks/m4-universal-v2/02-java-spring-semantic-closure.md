@@ -21,6 +21,13 @@ dependency riêng; constructor của product không được tự inject. Hợp 
 hạn được cập nhật tại [ranh giới triển khai](../../architecture/m4uv2-v22-implementation-boundary.md);
 kiểm chứng hai tầng và task tiếp theo thuộc [current state](../../current-state.md).
 
+Slice qualifier ngày 2026-09-30 thu nhận direct method qualifier cho parameter chưa
+có qualifier trên method `void`, giữ ưu tiên qualifier trên parameter theo Framework
+6.2.0 và không lọc parameter bằng qualifier của method non-void. Giữ riêng group từng
+component/product owner, conditional activation, provenance và witness replay.
+Empty/malformed/composed/impostor metadata hoặc thiếu return evidence vẫn có gap;
+không đóng toàn bộ nhóm C hay V2.2. Kết quả kiểm chứng thuộc current state/handoff.
+
 Entry: V2.1 exact/partial inputs, artifact lineage, coordinator contracts và controls ổn định. Đọc [conditional semantics](../../architecture/conditional-architecture-semantics.md), [v1 Spring](../../architecture/m4u2-universal-spring.md), [v2 architecture](../../architecture/m4-universal-v2.md), [matrix J/S/Q](../../architecture/m4-universal-v2-coverage.md) và target M4B/C/D contracts.
 
 Output: per-occurrence Java evidence; generated members tham gia resolution; complete source/artifact-to-Spring descriptors; qualified configuration spaces; versioned mechanism/effect packs; ordered registration/binding requests; truth regions/witnesses và requirements gửi lại coordinator.

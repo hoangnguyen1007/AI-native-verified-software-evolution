@@ -20,7 +20,7 @@ import static com.evolution.analysis.spring.registration.RegistrationEvent.Compl
  * evidenced container/order closure, never final definitions, dependency descriptors or matches.
  * An unproved scope stays open. This is not an application bootstrap detector. */
 public final class SourceToSpringPlan {
-    public static final VersionedIdentifier PROVIDER=new VersionedIdentifier("spring.source-to-plan","m4uv2.2-product-members-v1");
+    public static final VersionedIdentifier PROVIDER=new VersionedIdentifier("spring.source-to-plan","m4uv2.2-method-qualifiers-v1");
 
     public record Scope(String container, ContentDigest sourceEvidence, List<EntityIdentity> registrationOrder,
                         RegistrationEvent.Completeness order, RegistrationEvent.Completeness registry,

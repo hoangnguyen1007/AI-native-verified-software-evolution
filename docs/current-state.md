@@ -1,6 +1,6 @@
 # Current State
 
-Last reconciled: 2026-09-30. The owner requested completion of the next task; the [implemented V2.2 boundary](architecture/m4uv2-v22-implementation-boundary.md) now attaches scalar field/method bindings and per-owner required/optional method groups to bounded ordinary source objects produced by `@Bean`, alongside directly acquired components and constructor/bean-parameter bindings. Runtime-type footprint gaps remain explicit for wider/generic/inherited/binary products. V2.2 remains partial and its exit criteria remain open. V2.1 acceptance also remains open in the [implementation ledger](research/m4-universal-v2-v21-implementation-ledger.md). Fresh checks and their scope belong in the task handoff; historical gate evidence is identified below.
+Last reconciled: 2026-09-30. The owner requested completion of the next task; the [implemented V2.2 boundary](architecture/m4uv2-v22-implementation-boundary.md) now acquires direct method-level Spring qualifiers for scalar injection into components and bounded ordinary source bean products. Parameter qualifiers take precedence; method fallback requires an evidenced `void` return. Per-owner groups, conditional activation, exact source points and gaps remain preserved. V2.2 remains partial and its exit criteria remain open. V2.1 acceptance also remains open in the [implementation ledger](research/m4-universal-v2-v21-implementation-ledger.md). Fresh checks and their scope belong in the task handoff; historical gate evidence is identified below.
 
 ## PHASE AND MILESTONE
 
@@ -207,6 +207,53 @@ partial-reactor membership Enforcer rule was skipped. These checks are implement
 self-review, not an independent agent review, full reactor/clean build, target execution,
 external benchmark, reproducibility package or milestone/gate acceptance. Git was clean
 at entry; this slice is uncommitted and unstaged, with no commit or push.
+
+**CONFIRMED direct method-qualifier slice (2026-09-30):** the next recorded slice
+now acquires direct Spring method qualifiers for unqualified scalar parameters on
+evidenced `void` methods. Parameter qualifiers take precedence; mismatching parameters
+do not fall back, and non-void method qualifiers do not filter parameters. Component
+and bounded product owners retain separate required/optional groups, source points,
+full spans, conditional activation and obligation mappings. Missing return evidence,
+empty/malformed/composed/impostor metadata and unproved method-level JSR-330/mixed
+qualifier kinds remain typed gaps. Provider `m4uv2.2-method-qualifiers-v1` versions
+both acquisition and source-to-plan composition; M1/R0 preimages and binding schemas
+are unchanged. The [implementation boundary](architecture/m4uv2-v22-implementation-boundary.md)
+owns the exact support contract.
+
+The initial regression failed at descriptor completeness, then passed after the
+implementation (**7.283 s red / 8.802 s green**, exceeding the inner-loop target).
+Two newly authored controls initially had a wrong constructor API and optional-group
+row-count expectation; both were repaired without changing the binding engine.
+The bounded adapter bundle exposed one obsolete expectation that all method qualifiers
+remain incomplete. Its updated control passes individually; the whole affected
+integration class was then rerun on the final state. JDK 21 `javac -proc:none --release 21`
+also compiled the two changed production classes and integration test class to avoid
+IDE-generated unresolved-compilation stubs. The trusted analyzer artifact was refreshed
+locally with `jar:jar install:install -pl analyzer -q`.
+
+Commands actually run (PowerShell; only the partial-reactor membership rule skipped):
+
+```powershell
+.\mvnw.cmd test -pl analyzer "-Dtest=InjectionBindingsTest,InjectionBindingBoundaryTest,TruthRegionEvaluationTest" "-Denforcer.skipRules=reactorModuleConvergence" -q
+.\mvnw.cmd test -pl analyzer-javaparser "-Dtest=SourceToSpringPlanTest,UniversalIngestionPipelineTest,UniversalSpringSemanticsTest,ConstructorInjectionIngestionTest,ComponentIngestionTest" "-Denforcer.skipRules=reactorModuleConvergence" -q
+.\mvnw.cmd test -pl analyzer-javaparser "-Dtest=SourceToSpringPlanTest" "-Denforcer.skipRules=reactorModuleConvergence" -q
+```
+
+Final relevant evidence: **78 analyzer + 77 adapter = 155 passing tests in 8 classes**,
+zero final failures/errors/skips. The middle command initially failed only the obsolete
+expectation; its other four classes passed **22 tests** and remain unchanged. The final
+command exited zero with **55/55 tests**, including **13 new tests**, in **123.233 s**.
+The three changed code/test SHA-256 hashes stayed stable during that final class run.
+Controls include authored Framework 6.2.0 containers, exhaustive/SAT agreement,
+witness replay, deterministic identities, provider version and explicit negative gaps.
+The unchanged `UniversalSpringSemanticsTest` report took **2448.760 s**, dominated by
+`repositoryNamesRespectTheActiveInjectNamespace` (**2424.238 s**); this control calls
+repository synthesis, not the new method-qualifier path. The timing cause is not isolated
+and no performance-budget claim follows. Diff checks and 91 local document links pass.
+This is implementation self-review, without independent agent review, full reactor,
+clean build, target execution, benchmark, new reproducibility package or gate promotion.
+All six changed files remain unstaged and uncommitted; no commit or push was performed.
+V2.2 remains partial; the next bounded slice is recorded below.
 
 ## IMPLEMENTED — M4-UNIVERSAL SLICE 2 SPRING SEMANTICS AND SAT
 
@@ -480,15 +527,16 @@ Current authorized work is V2.2, with V2.1 acceptance obligations preserved, the
 
 ## EXACT NEXT TASK
 
-**M4 Universal v2 / V2.2 — acquire merged method-level qualifiers for scalar
-method-injection descriptors.** Start from `SpringInjectionSites`,
+**M4 Universal v2 / V2.2 — acquire inherited scalar field injection on bounded
+ordinary source components.** Start from `SpringInjectionSites`, `SpringSourceEvidence`,
 `SourceToSpringPlan` and the [implemented boundary](architecture/m4uv2-v22-implementation-boundary.md).
-Use actual source/artifact acquisition and authored Framework 6.2.0 controls to
-establish how direct method/parameter qualifiers combine, including matching,
-mismatching, empty and conflicting metadata. Cover scanned components and bounded
-bean-product owners, required/optional groups, conditional activation and witness
-replay. Preserve per-owner groups and source point identities; unproven composed
-qualifiers, runtime parameter names and wider types remain typed gaps. Remaining
+Use complete evidenced source superclass chains and authored Framework 6.2.0 controls;
+distinguish source declaring type from the owning component candidate, including hidden
+same-named fields. Preserve declaration identities/spans, qualifier and requiredness
+metadata, conditional activation, closed obligations and witness replay. Prove bounded
+hierarchy/metadata closure rather than simply removing existing ancestry guards.
+Binary/generic/incomplete hierarchies, inherited method override semantics and wider
+bean-product runtime types remain explicit gaps until separately evidenced. Remaining
 bean aliases, reader collisions, generic/binary return types and inferred bean-query
 type metadata stay explicit V2.2 obligations alongside this next bounded slice.
 

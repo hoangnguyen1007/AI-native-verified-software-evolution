@@ -73,7 +73,7 @@ arbitrary target Config Data is loaded by Boot.
 ## Source to registration, binding and truth
 
 `UniversalIngestionPipeline.prepareSpring` continues one analyzed exact source set
-through `SourceToSpringPlan` (`spring.source-to-plan:m4uv2.2-product-members-v1`).
+through `SourceToSpringPlan` (`spring.source-to-plan:m4uv2.2-method-qualifiers-v1`).
 `SpringBuildContext.fromExactRequest` retains the existing content preimage:
 snapshot, source plan, module/source set, assembly identity, ordered classpath,
 platform and policy. Legacy requests and foreign evidence are rejected.
@@ -179,7 +179,9 @@ evaluated after the first. That engine correction versions the implementation as
 `spring.injection-binding:m4c.3-inactive-groups-v2`; the accepted binding semantics
 and gap catalog versions remain unchanged.
 
-Static members, generic methods, method-level qualifier merging, unknown metadata,
+At this initial field/method checkpoint, method-level qualifier merging retained
+an explicit gap; the subsequent qualifier slice below closes its direct fragment.
+Static members, generic methods, unknown metadata,
 lazy/provider/aggregate/Resource shapes and inherited descriptors remain qualified
 with typed gaps. The subsequent product-member slice below attaches unscanned
 source member sites to distinct product identities. Field names with distinct composed/decomposed
@@ -246,6 +248,41 @@ non-injection and an unannotated runtime override suppressing declared method in
 Fresh bounded verification belongs in current state; this is implementation self-review,
 with no external benchmark, independent agent review or gate promotion.
 
+### Direct method/parameter qualifier precedence (2026-09-30)
+
+`SpringInjectionSites` and `SourceToSpringPlan` now version their acquisition as
+`m4uv2.2-method-qualifiers-v1`. The exact Framework 6.2.0
+[candidate resolver](https://github.com/spring-projects/spring-framework/blob/v6.2.0/spring-beans/src/main/java/org/springframework/beans/factory/annotation/QualifierAnnotationAutowireCandidateResolver.java)
+checks parameter qualifiers first: a matching direct parameter qualifier takes
+precedence over a different method qualifier; a mismatching parameter qualifier
+does not fall back to the method. An unqualified parameter uses direct method
+qualifier metadata only on an evidenced `void` method. Non-void method qualifiers
+do not filter its parameters. Unknown/missing return evidence cannot decide that
+fallback. Direct literal metadata rejects unsupported attributes rather than
+ignoring them. Empty parameter qualifiers remain explicit gaps, even with a
+matching method qualifier; empty method metadata can be superseded by a fully
+evidenced parameter qualifier.
+
+This behavior applies to direct scanned components and every bounded source
+bean-product owner. Source parameter identities/spans, unknown runtime parameter
+names, owner-specific method groups, conditional activation and required/optional
+group suppression are preserved. `@Bean` return qualifiers remain candidate
+metadata rather than becoming qualifiers for its unqualified factory parameters.
+Method-level JSR-330 `Named` and combined qualifier kinds still need
+annotation-specific candidate proofs; they are not flattened into an equivalent
+Spring qualifier string. Composed/custom/impostor annotations, unsupported
+namespace/versions and wider descriptor shapes retain their existing typed gaps.
+No annotation execution, runtime-name inference or binding-schema change is added.
+
+Actual source-to-pipeline controls and fixed authored Framework 6.2.0 containers
+cover precedence, mismatch, void/non-void behavior, empty metadata, component and
+product groups, profile activation, provenance and obligation mappings.
+Malformed/composed/impostor metadata and missing return evidence have negative
+controls. Exhaustive/SAT agreement, witness replay, stable source points across
+product owners, deterministic identities and provider versions remain checked.
+Fresh verification commands/results belong in current state and the handoff;
+this slice does not close V2.2 or advance an acceptance gate.
+
 `Result.evaluate` returns an `Evaluation` retaining acquisition plus the existing
 exhaustive M4D result. `Result.evaluateSymbolic` retains acquisition plus the
 existing SAT signature-partition result. Both expose the sorted union of
@@ -270,7 +307,7 @@ No A–E checklist section is accepted wholesale by these controls. In particula
 |---|---|
 | A / J01–J12 | Remaining Java attribution controls; full generated resolver integration and imported-generator client journeys; compiler-adjudicated coverage across declared variants |
 | B / S01–S05 | Configtree/classpath and supplied external envelopes; predicate-derived finite domains with proven OTHER uniformity, correlation and coercion controls |
-| C / S06–S12, S21 | Complete binary/source annotation composition; automatic evidenced bootstrap/scheduling; remaining bean/alias/reader-collision/type-prediction cases and import/XML/auto-configuration producers; generic/inherited/wider-product/provider/aggregate/Resource/hierarchy descriptors and method-level qualifier merging |
+| C / S06–S12, S21 | Complete binary/source annotation composition; automatic evidenced bootstrap/scheduling; remaining bean/alias/reader-collision/type-prediction cases and import/XML/auto-configuration producers; generic/inherited/wider-product/provider/aggregate/Resource/hierarchy descriptors and JSR-330/composed/custom qualifier matching |
 | D / S13–S19, S23 | Exact version-pack registry and complete historical/modern/data/proxy/route/event/client journeys with positive and negative independent oracles |
 | E / J12, S15, S20, Q01–Q02 | Passive effect summaries, dependency-local opaque refinement, correlated residuals, order/saturation controls and source-integrated high-signature cases |
 
