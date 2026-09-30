@@ -26,6 +26,8 @@ final class BeanMethodIngestion {
     private static final Pattern HEADER=Pattern.compile("^\\s*((?:(?:public|protected|private|static|final|synchronized|strictfp)\\s+)*)"
             +"[\\p{javaJavaIdentifierStart}][\\p{javaJavaIdentifierPart}.$]*\\s+"
             +"([\\p{javaJavaIdentifierStart}][\\p{javaJavaIdentifierPart}]*)\\s*\\(");
+    private static final Pattern FINAL_PRODUCT=Pattern.compile("^\\s*((?:(?:public|protected|private|static|final|strictfp)\\s+)*)"
+            +"class\\s+[\\p{javaJavaIdentifierStart}][\\p{javaJavaIdentifierPart}]*\\s*\\{");
     record Method(EntityIdentity declaration, EntityIdentity owner, BeanDefinitionCandidate candidate,
                   boolean complete, boolean staticMethod, LogicalValue autowire, LogicalValue defaultCandidate) {}
 
@@ -112,6 +114,20 @@ final class BeanMethodIngestion {
         var target=type.target().orElseThrow();
         return source.frontend().typeDeclarations().stream().anyMatch(t -> t.type().equals(target)&&t.kind()==TypeDeclarationRecord.Kind.CLASS)
                 &&source.ancestry(target,2).size()==1&&source.annotations(target).isEmpty();
+    }
+    /** Final ordinary source types close the declared member footprint without evaluating
+     * factory bodies. A wider return type cannot prove runtime overrides or additional sites. */
+    static boolean productMembersComplete(SpringSourceEvidence source,Method method) {
+        if(!method.complete()||method.candidate().exposedTypes().size()!=1)return false;
+        var target=method.candidate().exposedTypes().getFirst();
+        var declaration=source.declarations().get(target);
+        if(declaration==null||declaration.status()!=SemanticStatus.RESOLVED
+                ||source.frontend().typeDeclarations().stream().noneMatch(t -> t.type().equals(target)
+                    &&t.kind()==TypeDeclarationRecord.Kind.CLASS&&!t.abstractType()))return false;
+        var spelling=declaration.spelling();
+        if(spelling.contains("\\u"))return false;
+        var header=FINAL_PRODUCT.matcher(spelling.replaceAll("(?s)/\\*.*?\\*/|//[^\\r\\n]*"," "));
+        return header.find()&&Arrays.asList(header.group(1).strip().split("\\s+")).contains("final");
     }
     static boolean configurationMetadata(SpringSourceEvidence source,EntityIdentity type) {
         try {

@@ -73,7 +73,7 @@ arbitrary target Config Data is loaded by Boot.
 ## Source to registration, binding and truth
 
 `UniversalIngestionPipeline.prepareSpring` continues one analyzed exact source set
-through `SourceToSpringPlan` (`spring.source-to-plan:m4uv2.2-injection-v1`).
+through `SourceToSpringPlan` (`spring.source-to-plan:m4uv2.2-product-members-v1`).
 `SpringBuildContext.fromExactRequest` retains the existing content preimage:
 snapshot, source plan, module/source set, assembly identity, ordered classpath,
 platform and policy. Legacy requests and foreign evidence are rejected.
@@ -98,11 +98,12 @@ evidence and do not pass handmade final definitions, descriptors or matches.
 
 The currently complete descriptor fragment is direct unconditional scan membership,
 ordinary direct component metadata, `@Profile`, primary/fallback/qualifier metadata,
-and selected constructors', bean methods' and direct scanned components' field/method
+and selected constructors', bean methods', direct scanned components' and bounded
+ordinary source bean products' field/method
 resolved non-generic scalar dependencies. The tested
 exact execution tuple is Framework 6.2.0 / Boot 3.4.0. Unknown/composed annotations,
 inherited component metadata, unsupported scan drivers, missing constructor
-selection, lazy/provider/generic and inherited/product member descriptors are not silently
+selection, lazy/provider/generic and inherited member descriptors are not silently
 promoted. Empty qualifiers remain an incomplete descriptor with an explicit gap.
 Limits preserve inventory and qualify incomplete matching rather than inventing
 negative matches.
@@ -180,9 +181,8 @@ and gap catalog versions remain unchanged.
 
 Static members, generic methods, method-level qualifier merging, unknown metadata,
 lazy/provider/aggregate/Resource shapes and inherited descriptors remain qualified
-with typed gaps. Members of unscanned classes returned by bean methods retain an
-explicit acquisition gap and open descriptor inventory; this fragment does not
-attach them to product identities. Field names with distinct composed/decomposed
+with typed gaps. The subsequent product-member slice below attaches unscanned
+source member sites to distinct product identities. Field names with distinct composed/decomposed
 Unicode sequences remain distinct Java identifiers and distinct binding names.
 Raw mechanism spellings now preserve those sequences without an NFC requirement;
 scanner provider `spring.mechanism-scanner:m4a.2-source-spelling-v2` versions that
@@ -202,6 +202,49 @@ stale upstream scanner-provider assertion. Two-tier verification now includes
 affected unit/contract tests and direct integration consumers in both modules.
 Fresh results and verification qualifications belong in current state and the handoff;
 no additional reproducibility package or reactor claim is made.
+
+### Source bean-product member attachment (2026-09-30)
+
+`SourceToSpringPlan` provider `m4uv2.2-product-members-v1` reuses the unchanged
+`SpringInjectionSites` source inventory and joins member sites to every direct
+bean-method candidate exposing their declaring type. A shared source point retains
+its original identity/span; dependency identities additionally bind their owning
+candidate. Method groups are keyed by source method and product owner, retain
+declaration-order parameters, and cannot mix the invocations of two products.
+M4A obligation mappings retain all corresponding dependency identities.
+
+Complete product-member descriptors require the existing ordinary-return fragment,
+complete factory metadata and a resolved, non-abstract, non-generic final source
+class with a conservatively validated declaration header. Factory bodies are not
+interpreted or executed. A wider declared return type cannot prove runtime subtype
+overrides or additional injection members. Such products keep an `EVIDENCE_MISSING`
+runtime-type footprint gap and open inventory, even if their declared type has no
+sites. Acquired sites on unproved product types remain incomplete descriptors;
+missing source declarations/parameters remain upstream observations and unnormalized
+obligations rather than fabricated injection points. Binary, generic, inherited,
+proxy/factory and unsupported annotation/member shapes remain qualified.
+
+Factory-parameter dependencies and member dependencies are separate sites owned
+by the product. Constructor sites of an unscanned return type are never attached
+because a factory returns that type, including an explicitly annotated constructor.
+Instance factory ownership and static factory absence of ownership remain unchanged.
+An ordinary type/selected definition does not establish non-null creation, successful
+initialization, invocation or runtime object identity.
+
+Product fan-out also counts toward the descriptor budget. Exhaustion preserves
+every acquired owner/site request and per-owner method group, bounds match evidence,
+records a resource gap and lets the existing evaluator retain explicit limit rows.
+Deterministic source/evaluation identities and provider-version assertions are covered.
+
+Actual source-to-pipeline controls cover scalar fields, per-owner required/optional
+methods, independent profile activation, factory parameters versus constructor
+sites, source evidence/obligation mappings, runtime-type gaps, unsupported metadata,
+missing types and fan-out limits. Exhaustive/SAT classifications agree and witnesses
+replay. Authored Framework 6.2.0 containers corroborate field/method injection into
+instance/static factory products, optional suppression, required failure, constructor
+non-injection and an unannotated runtime override suppressing declared method injection.
+Fresh bounded verification belongs in current state; this is implementation self-review,
+with no external benchmark, independent agent review or gate promotion.
 
 `Result.evaluate` returns an `Evaluation` retaining acquisition plus the existing
 exhaustive M4D result. `Result.evaluateSymbolic` retains acquisition plus the
@@ -227,7 +270,7 @@ No A–E checklist section is accepted wholesale by these controls. In particula
 |---|---|
 | A / J01–J12 | Remaining Java attribution controls; full generated resolver integration and imported-generator client journeys; compiler-adjudicated coverage across declared variants |
 | B / S01–S05 | Configtree/classpath and supplied external envelopes; predicate-derived finite domains with proven OTHER uniformity, correlation and coercion controls |
-| C / S06–S12, S21 | Complete binary/source annotation composition; automatic evidenced bootstrap/scheduling; remaining bean/alias/reader-collision/type-prediction cases and import/XML/auto-configuration producers; full generic/inherited/product-member/provider/aggregate/Resource/hierarchy descriptors and method-level qualifier merging |
+| C / S06–S12, S21 | Complete binary/source annotation composition; automatic evidenced bootstrap/scheduling; remaining bean/alias/reader-collision/type-prediction cases and import/XML/auto-configuration producers; generic/inherited/wider-product/provider/aggregate/Resource/hierarchy descriptors and method-level qualifier merging |
 | D / S13–S19, S23 | Exact version-pack registry and complete historical/modern/data/proxy/route/event/client journeys with positive and negative independent oracles |
 | E / J12, S15, S20, Q01–Q02 | Passive effect summaries, dependency-local opaque refinement, correlated residuals, order/saturation controls and source-integrated high-signature cases |
 

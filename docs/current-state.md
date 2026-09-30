@@ -1,6 +1,6 @@
 # Current State
 
-Last reconciled: 2026-09-30. The owner requested completion of the next task; the [implemented V2.2 boundary](architecture/m4uv2-v22-implementation-boundary.md) now includes scalar field/method bindings and required/optional method groups on directly acquired components, alongside direct bean producers and constructor/bean-parameter bindings. V2.2 remains partial and its exit criteria remain open. V2.1 acceptance also remains open in the [implementation ledger](research/m4-universal-v2-v21-implementation-ledger.md). Fresh checks and their scope belong in the task handoff; historical gate evidence is identified below.
+Last reconciled: 2026-09-30. The owner requested completion of the next task; the [implemented V2.2 boundary](architecture/m4uv2-v22-implementation-boundary.md) now attaches scalar field/method bindings and per-owner required/optional method groups to bounded ordinary source objects produced by `@Bean`, alongside directly acquired components and constructor/bean-parameter bindings. Runtime-type footprint gaps remain explicit for wider/generic/inherited/binary products. V2.2 remains partial and its exit criteria remain open. V2.1 acceptance also remains open in the [implementation ledger](research/m4-universal-v2-v21-implementation-ledger.md). Fresh checks and their scope belong in the task handoff; historical gate evidence is identified below.
 
 ## PHASE AND MILESTONE
 
@@ -165,6 +165,48 @@ and ceremonial evidence packages. Diff checks, local Markdown links and skill
 headers pass. The skill-creator Python validator could not run because `PyYAML`
 is absent; header/link checks and the upstream regression exercise are self-checks,
 not independent behavioral evaluation. No new gate, benchmark or build claim is made.
+
+**CONFIRMED bean-product member slice (2026-09-30):** source-to-pipeline acquisition
+now attaches member sites to every matching direct factory-product owner, preserves
+source injection-point identity and full spans, and keeps source-method groups
+separate per product. Conditional owners retain all inactive group parameters;
+required/optional groups clear tentative edges independently. Factory ownership
+is preserved, factory parameters remain separate dependencies, and an annotated
+product constructor is never automatically injected. Complete product descriptors
+currently require the bounded final ordinary source-class fragment; wider types
+retain runtime-footprint gaps even without declared sites. An actual authored
+Framework 6.2.0 subtype override control confirms why declared return types alone
+cannot certify runtime method injection. Missing declarations/types and unsupported
+metadata retain upstream obligations. Product fan-out preserves every acquired
+request/group under the descriptor and match budgets with explicit resource gaps.
+Provider `spring.source-to-plan:m4uv2.2-product-members-v1` records the new behavior;
+M1/R0 injection-point preimages and existing acquisition/binding semantics are unchanged.
+
+The initial scalar-field regression failed as intended (`COMPLETE` versus `UNKNOWN`),
+then passed after implementation. Its commands took **7.069 s red / 7.842 s green**,
+exceeding the five-second inner-loop target. A new missing-type control initially
+expected fabricated parameter descriptors; inspection showed the unresolved method
+has no fully evidenced sites. The corrected control checks retained frontend
+observations/gaps and the actual acquired static-field requests instead.
+
+Final bounded pre-handoff commands (PowerShell):
+
+```powershell
+.\mvnw.cmd test -pl analyzer "-Dtest=InjectionBindingsTest,InjectionBindingBoundaryTest,TruthRegionEvaluationTest" "-Denforcer.skipRules=reactorModuleConvergence" -q
+.\mvnw.cmd test -pl analyzer-javaparser "-Dtest=SourceToSpringPlanTest,UniversalIngestionPipelineTest,UniversalSpringSemanticsTest,ConstructorInjectionIngestionTest,ComponentIngestionTest" "-Denforcer.skipRules=reactorModuleConvergence" -q
+```
+
+Both exited zero: **78 analyzer + 64 adapter = 142 tests in 8 fresh classes**,
+zero failures/errors/skips. `SourceToSpringPlanTest` passes **42 tests**, including
+10 additions and the upgraded product-field regression, and took **135.169 s**.
+Controls include actual pinned containers, exhaustive/SAT agreement, witness replay,
+deterministic identities, provider version, owner/group isolation, negative metadata,
+type gaps and budget closure. The trusted analyzer artifact was refreshed locally
+with `jar:jar install:install -pl analyzer -q` before adapter verification. Only the
+partial-reactor membership Enforcer rule was skipped. These checks are implementation
+self-review, not an independent agent review, full reactor/clean build, target execution,
+external benchmark, reproducibility package or milestone/gate acceptance. Git was clean
+at entry; this slice is uncommitted and unstaged, with no commit or push.
 
 ## IMPLEMENTED — M4-UNIVERSAL SLICE 2 SPRING SEMANTICS AND SAT
 
@@ -438,19 +480,17 @@ Current authorized work is V2.2, with V2.1 acceptance obligations preserved, the
 
 ## EXACT NEXT TASK
 
-**M4 Universal v2 / V2.2 — attach evidenced scalar field/method sites to ordinary
-source objects produced by `@Bean`.** Start from `SourceToSpringPlan`,
-`SpringInjectionSites`, `BeanMethodIngestion` and the
-[implemented boundary](architecture/m4uv2-v22-implementation-boundary.md).
-Preserve distinct owning candidates when multiple producers return the same type,
-source point identities, per-owner method groups, explicit factory ownership and
-source-to-conditional-binding controls. Do not auto-inject a product's constructor
-merely because its factory returns that type; factory-parameter dependencies and
-member injection are separate. Require pinned authored container controls, retain
-unsupported/inherited/type-prediction gaps and use actual pipeline acquisition
-rather than hand-built final descriptors. Remaining bean aliases, reader collisions,
-generic/binary return types and inferred bean-query type metadata stay explicit
-V2.2 obligations alongside this next bounded slice.
+**M4 Universal v2 / V2.2 — acquire merged method-level qualifiers for scalar
+method-injection descriptors.** Start from `SpringInjectionSites`,
+`SourceToSpringPlan` and the [implemented boundary](architecture/m4uv2-v22-implementation-boundary.md).
+Use actual source/artifact acquisition and authored Framework 6.2.0 controls to
+establish how direct method/parameter qualifiers combine, including matching,
+mismatching, empty and conflicting metadata. Cover scanned components and bounded
+bean-product owners, required/optional groups, conditional activation and witness
+replay. Preserve per-owner groups and source point identities; unproven composed
+qualifiers, runtime parameter names and wider types remain typed gaps. Remaining
+bean aliases, reader collisions, generic/binary return types and inferred bean-query
+type metadata stay explicit V2.2 obligations alongside this next bounded slice.
 
 **Mandatory Lean Execution for all agents:**
 - Follow AGENTS.md's two-tier verification: filter a relevant method/small class during coding, then run affected unit/contract and direct integration tests across every changed module before handoff. Quote PowerShell `-D` arguments; report actual duration and selected test scope.

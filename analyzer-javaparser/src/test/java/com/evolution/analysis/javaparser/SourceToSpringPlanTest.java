@@ -189,6 +189,9 @@ class SourceToSpringPlanTest {
                 """.formatted(metadata,qualifier));
     }
     private SourceToSpringPlan.Result beanPlan(Fixture f, boolean known, String... names) {
+        return beanPlan(f,known,100,names);
+    }
+    private SourceToSpringPlan.Result beanPlan(Fixture f, boolean known, int limit, String... names) {
         var order=Arrays.stream(names).map(name -> f.source().declarations().values().stream()
                 .filter(d -> d.entity().origin()==com.evolution.analysis.contract.semantic.EntityOrigin.PROJECT)
                 .filter(d -> ("app."+name).equals(f.source().typeName(d.entity().identity()))
@@ -197,7 +200,7 @@ class SourceToSpringPlanTest {
                 .map(d -> d.entity().identity()).findFirst().orElseThrow()).toList();
         var proof=new ConditionEvidence.Derived(List.of(f.source().identity()),new VersionedIdentifier("test.authored-scope","1"),"bean-reader-order");
         return f.pipeline().prepareSpring(f.result(),f.key(),new SourceToSpringPlan.Scope("authored-context",f.source().identity(),order,
-                known?COMPLETE:UNKNOWN,COMPLETE,COMPLETE,COMPLETE,COMPLETE,RegistrationPlan.OverridePolicy.FORBID,proof),100);
+                known?COMPLETE:UNKNOWN,COMPLETE,COMPLETE,COMPLETE,COMPLETE,RegistrationPlan.OverridePolicy.FORBID,proof),limit);
     }
     @Test void beanMethodsProduceConditionalBindingsFromActualSource() throws Exception {
         var f=beanFixture("@org.springframework.beans.factory.annotation.Qualifier(\"chosen\")",
@@ -752,24 +755,285 @@ class SourceToSpringPlanTest {
         return new FrontendResult(f.analysis(),f.frontend(),f.state(),f.declarations(),f.occurrences(),f.observations(),
                 f.sources(),f.coverage(),f.diagnostics(),f.types(),f.annotations(),f.derivedRelationships(),f.typeDeclarations(),members);
     }
-    @Test void beanProducedMemberSitesRetainAnExplicitAcquisitionGap() throws Exception {
+    @Test void beanProducedScalarFieldsAttachToTheirFactoryProduct() throws Exception {
         var f=sourceFixture("""
                 package app;
                 @org.springframework.context.annotation.ComponentScan("app") class App {}
                 @org.springframework.stereotype.Component class Dependency {}
-                class Store { @org.springframework.beans.factory.annotation.Autowired Dependency dependency; }
+                final class Store { @org.springframework.beans.factory.annotation.Autowired Dependency dependency; }
                 @org.springframework.context.annotation.Configuration(proxyBeanMethods=false) class Config {
                   @org.springframework.context.annotation.Bean Store store(){return new Store();}
                 }
                 """);
         var plan=beanPlan(f,true,"Dependency","Config","store");
-        assertEquals(UNKNOWN,plan.binding().environment().descriptorsComplete());
-        assertTrue(plan.gaps().stream().anyMatch(g -> g.reasonCode().equals("ANNOTATION_UNSUPPORTED")));
+        assertEquals(COMPLETE,plan.binding().environment().descriptorsComplete());
+        var dependency=plan.binding().dependencies().getFirst();
+        assertEquals(Optional.of(candidate(plan,"store").identity()),dependency.owner());
+        assertEquals(InjectionPoint.SiteKind.FIELD,dependency.point().siteKind());
+        assertEquals(InjectionBindingPlan.Normalization.COMPLETE,dependency.normalization());
         var evidence=new SpringSourceEvidence(f.source().manifest(),f.source().frontend(),f.source().framework());
         var sites=SpringInjectionSites.acquire(evidence,f.result().units().stream().filter(u -> u.sourceSet().equals(f.key()))
                         .findFirst().orElseThrow().constructors().orElseThrow(),FrameworkGeneration.from(evidence.framework(),Optional.empty()),100);
         assertEquals(1,sites.sites().stream().filter(s -> s.kind()==SpringInjectionSites.Kind.FIELD).count());
+        assertEquals(InjectionBindings.Outcome.SELECTED,bindingAt(f,plan,true).rows().getFirst().outcome());
+        assertTrue(selected(evaluate(f,plan),true).contains(candidate(plan,"dependency").identity().value()));
+        assertTrue(plan.binding().obligations().stream().anyMatch(o -> o.dependencies().contains(dependency.identity())));
+        try(var context=container(true)) {
+            context.register(OracleProductFieldConfig.class);context.refresh();
+            assertSame(context.getBean("dependency"),context.getBean(OracleProductField.class).dependency);
+        }
+    }
+    static class OracleProductDependency {}
+    static final class OracleProductField {
+        @org.springframework.beans.factory.annotation.Autowired OracleProductDependency dependency;
+    }
+    @org.springframework.context.annotation.Configuration(proxyBeanMethods=false)
+    static class OracleProductFieldConfig {
+        @org.springframework.context.annotation.Bean OracleProductDependency dependency(){return new OracleProductDependency();}
+        @org.springframework.context.annotation.Bean OracleProductField store(){return new OracleProductField();}
+    }
+    private Fixture productFixture(String declaration,String members,String firstMetadata) throws Exception {
+        return sourceFixture("""
+                package app;
+                @org.springframework.context.annotation.ComponentScan("app") class App {}
+                @org.springframework.stereotype.Component class Dependency {}
+                %s { %s }
+                @org.springframework.context.annotation.Configuration(proxyBeanMethods=false) class Config {
+                  @org.springframework.context.annotation.Bean %s Product first(){return %s;}
+                  @org.springframework.context.annotation.Bean static Product second(){return %s;}
+                }
+                """.formatted(declaration,members,firstMetadata,
+                        members.contains("Product(Dependency constructorOnly)")?"new Product(null)":"new Product()",
+                        members.contains("Product(Dependency constructorOnly)")?"new Product(null)":"new Product()"));
+    }
+    @Test void sharedProductSitesKeepDistinctOwnersGroupsAndConditionalFacts() throws Exception {
+        var f=productFixture("final class Product","""
+                @org.springframework.beans.factory.annotation.Autowired Product(Dependency constructorOnly) {}
+                @org.springframework.beans.factory.annotation.Autowired Dependency field;
+                @org.springframework.beans.factory.annotation.Autowired void wire(Dependency z,Dependency a) {}
+                ""","@org.springframework.context.annotation.Profile(\"dev\")");
+        var plan=beanPlan(f,true,"Dependency","Config","first","second");
+        assertEquals("m4uv2.2-product-members-v1",SourceToSpringPlan.PROVIDER.version());
+        assertEquals(6,plan.binding().dependencies().size());
+        assertEquals(3,plan.binding().dependencies().stream().map(d -> d.point().identity()).distinct().count());
+        assertEquals(6,plan.binding().dependencies().stream().map(InjectionBindingPlan.Dependency::identity).distinct().count());
+        assertTrue(plan.binding().dependencies().stream().noneMatch(d -> d.point().siteKind()==InjectionPoint.SiteKind.CONSTRUCTOR_PARAMETER));
+        assertEquals(COMPLETE,plan.binding().environment().descriptorsComplete());
+        assertEquals(2,plan.binding().groups().size());
+        for(var group:plan.binding().groups()) {
+            var parameters=group.dependencies().stream().map(id -> plan.binding().dependencies().stream()
+                    .filter(d -> d.identity().equals(id)).findFirst().orElseThrow()).toList();
+            assertEquals(1,parameters.stream().map(InjectionBindingPlan.Dependency::owner).distinct().count());
+            assertEquals(List.of("Dependency z","Dependency a"),parameters.stream().map(d -> f.source().declarations().values().stream()
+                    .filter(s -> s.entity().identity().value().equals(d.point().siteSlot())).findFirst().orElseThrow().spelling()).toList());
+            assertTrue(group.evidence() instanceof ConditionEvidence.Source s&&f.build().containsSource(s));
+        }
+        var first=candidate(plan,"first").identity();var second=candidate(plan,"second").identity();
+        assertEquals(Optional.of(candidate(plan,"config").identity()),plan.binding().definitions().stream()
+                .filter(d -> d.candidate().equals(first)).findFirst().orElseThrow().factoryOwner());
+        assertTrue(plan.binding().definitions().stream().filter(d -> d.candidate().equals(second)).findFirst().orElseThrow().factoryOwner().isEmpty());
+        for(boolean active:List.of(false,true)) {
+            var rows=bindingAt(f,plan,active).rows();
+            for(var dependency:plan.binding().dependencies())assertEquals(!active&&dependency.owner().equals(Optional.of(first))
+                    ?InjectionBindings.Outcome.NOT_ACTIVE:InjectionBindings.Outcome.SELECTED,
+                    rows.stream().filter(r -> r.dependency().equals(dependency.identity())).findFirst().orElseThrow().outcome());
+            try(var context=container(active)) {
+                context.register(OracleSharedProducts.class);context.refresh();
+                assertEquals(active,context.containsBean("first"));
+                var products=new ArrayList<OracleSharedProduct>();products.add(context.getBean("second",OracleSharedProduct.class));
+                if(active)products.add(context.getBean("first",OracleSharedProduct.class));
+                assertEquals(active?2:1,products.size());
+                for(var product:products) {
+                    assertNull(product.constructorOnly);
+                    assertSame(context.getBean("dependency"),product.field);
+                    assertSame(product.field,product.z);assertSame(product.z,product.a);
+                }
+                if(active)assertNotSame(products.get(0),products.get(1));
+            }
+        }
+        var truth=evaluate(f,plan);
+        assertEquals(3,truth.regions().stream().filter(r -> r.fact().kind()==ConditionalFactKey.Kind.SELECTED_BINDING
+                &&r.classification()==TruthRegionEvaluation.Classification.MAY).count());
+        assertEquals(3,truth.regions().stream().filter(r -> r.fact().kind()==ConditionalFactKey.Kind.SELECTED_BINDING
+                &&r.classification()==TruthRegionEvaluation.Classification.MUST).count());
+        assertFalse(truth.replays().isEmpty());assertTrue(truth.replays().stream().allMatch(TruthRegionEvaluation.WitnessReplay::valid));
+        assertEquals(truth.identity(),evaluate(f,beanPlan(f,true,"Dependency","Config","first","second")).identity());
+        assertTrue(plan.binding().obligations().stream().anyMatch(o -> o.dependencies().size()==4));
+    }
+    static final class OracleSharedProduct {
+        final OracleProductDependency constructorOnly;
+        @org.springframework.beans.factory.annotation.Autowired OracleSharedProduct(OracleProductDependency constructorOnly){this.constructorOnly=constructorOnly;}
+        @org.springframework.beans.factory.annotation.Autowired OracleProductDependency field;
+        OracleProductDependency z,a;
+        @org.springframework.beans.factory.annotation.Autowired void wire(OracleProductDependency z,OracleProductDependency a){this.z=z;this.a=a;}
+    }
+    @org.springframework.context.annotation.Configuration(proxyBeanMethods=false)
+    static class OracleSharedProducts {
+        @org.springframework.context.annotation.Bean OracleProductDependency dependency(){return new OracleProductDependency();}
+        @org.springframework.context.annotation.Bean @org.springframework.context.annotation.Profile("dev")
+        OracleSharedProduct first(){return new OracleSharedProduct(null);}
+        @org.springframework.context.annotation.Bean static OracleSharedProduct second(){return new OracleSharedProduct(null);}
+    }
+    @Test void productOptionalMethodGroupsSkipIndependentlyAndRetainInactiveParameters() throws Exception {
+        var f=productFixture("final class Product","""
+                @org.springframework.beans.factory.annotation.Autowired(required=false)
+                void wire(Dependency first,@org.springframework.beans.factory.annotation.Qualifier("missing") Dependency second) {}
+                ""","@org.springframework.context.annotation.Profile(\"dev\")");
+        var plan=beanPlan(f,true,"Dependency","Config","first","second");
+        assertEquals(4,plan.binding().dependencies().size());assertEquals(2,plan.binding().groups().size());
+        assertTrue(plan.binding().groups().stream().allMatch(g -> g.dependencies().size()==2&&g.skipOnAbsent().size()==2));
+        for(boolean active:List.of(false,true)) {
+            var rows=bindingAt(f,plan,active).rows();
+            assertEquals(active?4:2,rows.stream().filter(r -> r.outcome()==InjectionBindings.Outcome.GROUP_SKIPPED).count());
+            assertEquals(active?0:2,rows.stream().filter(r -> r.outcome()==InjectionBindings.Outcome.NOT_ACTIVE).count());
+            assertTrue(rows.stream().allMatch(r -> r.selected().isEmpty()));
+            try(var context=container(active)) {
+                context.register(OracleOptionalProducts.class);context.refresh();
+                assertFalse(context.getBean("second",OracleOptionalProduct.class).invoked);
+                if(active)assertFalse(context.getBean("first",OracleOptionalProduct.class).invoked);
+            }
+        }
         assertTrue(selected(evaluate(f,plan),true).isEmpty());
+    }
+    static final class OracleOptionalProduct {
+        boolean invoked;
+        @org.springframework.beans.factory.annotation.Autowired(required=false)
+        void wire(OracleProductDependency first,@org.springframework.beans.factory.annotation.Qualifier("missing") OracleProductDependency second){invoked=true;}
+    }
+    @org.springframework.context.annotation.Configuration(proxyBeanMethods=false)
+    static class OracleOptionalProducts {
+        @org.springframework.context.annotation.Bean OracleProductDependency dependency(){return new OracleProductDependency();}
+        @org.springframework.context.annotation.Bean @org.springframework.context.annotation.Profile("dev")
+        OracleOptionalProduct first(){return new OracleOptionalProduct();}
+        @org.springframework.context.annotation.Bean static OracleOptionalProduct second(){return new OracleOptionalProduct();}
+    }
+    @Test void productRequiredMethodFailureClearsSelectionsForEveryOwner() throws Exception {
+        var f=productFixture("final class Product","""
+                @org.springframework.beans.factory.annotation.Autowired
+                void wire(Dependency first,@org.springframework.beans.factory.annotation.Qualifier("missing") Dependency second) {}
+                ""","");
+        var plan=beanPlan(f,true,"Dependency","Config","first","second");
+        assertEquals(2,plan.binding().groups().size());
+        var rows=bindingAt(f,plan,true).rows();
+        assertEquals(2,rows.stream().filter(r -> r.outcome()==InjectionBindings.Outcome.UNSATISFIED).count());
+        assertTrue(rows.stream().allMatch(r -> r.selected().isEmpty()));
+        try(var context=container(true)) {
+            context.register(OracleRequiredProductConfig.class);
+            assertThrows(org.springframework.beans.factory.UnsatisfiedDependencyException.class,context::refresh);
+        }
+    }
+    static final class OracleRequiredProduct {
+        @org.springframework.beans.factory.annotation.Autowired
+        void wire(OracleProductDependency first,@org.springframework.beans.factory.annotation.Qualifier("missing") OracleProductDependency second){}
+    }
+    @org.springframework.context.annotation.Configuration(proxyBeanMethods=false)
+    static class OracleRequiredProductConfig {
+        @org.springframework.context.annotation.Bean OracleProductDependency dependency(){return new OracleProductDependency();}
+        @org.springframework.context.annotation.Bean OracleRequiredProduct first(){return new OracleRequiredProduct();}
+    }
+    @Test void widerAndGenericProductTypesRetainDescriptorsWithoutCertifyingRuntimeMembers() throws Exception {
+        for(String declaration:List.of("class Product","final class Product<T>","class Base {} final class Product extends Base",
+                "/* final class is only a comment */ class Product")) {
+            var f=productFixture(declaration,"@org.springframework.beans.factory.annotation.Autowired Dependency field;","");
+            var plan=beanPlan(f,true,"Dependency","Config","first","second");
+            assertEquals(2,plan.binding().dependencies().size());
+            assertEquals(UNKNOWN,plan.binding().environment().descriptorsComplete());
+            assertTrue(plan.binding().dependencies().stream().allMatch(d -> d.normalization()==InjectionBindingPlan.Normalization.INCOMPLETE));
+            assertTrue(plan.gaps().stream().anyMatch(g -> g.reasonCode().equals("EVIDENCE_MISSING")));
+            assertTrue(bindingAt(f,plan,true).rows().stream().noneMatch(r -> r.outcome()==InjectionBindings.Outcome.SELECTED));
+        }
+    }
+    @Test void declaredProductMethodDoesNotProveAnOverridingRuntimeSubtypeInjection() throws Exception {
+        var f=productFixture("class Product","@org.springframework.beans.factory.annotation.Autowired void wire(Dependency dependency) {}","");
+        var plan=beanPlan(f,true,"Dependency","Config","first","second");
+        assertEquals(2,plan.binding().groups().size());
+        assertTrue(plan.binding().dependencies().stream().allMatch(d -> d.normalization()==InjectionBindingPlan.Normalization.INCOMPLETE));
+        assertTrue(bindingAt(f,plan,true).rows().stream().noneMatch(r -> r.outcome()==InjectionBindings.Outcome.SELECTED));
+        try(var context=container(true)) {
+            context.register(OracleRuntimeSubtypeConfig.class);context.refresh();
+            assertFalse(context.getBean("product",OracleWiderProduct.class).invoked);
+        }
+    }
+    @Test void widerProductWithNoDeclaredSitesStillRetainsItsRuntimeFootprintGap() throws Exception {
+        var f=productFixture("class Product","","");
+        var plan=beanPlan(f,true,"Dependency","Config","first","second");
+        assertTrue(plan.binding().dependencies().isEmpty());
+        assertEquals(UNKNOWN,plan.binding().environment().descriptorsComplete());
+        assertTrue(plan.gaps().stream().anyMatch(g -> g.reasonCode().equals("EVIDENCE_MISSING")));
+        assertTrue(bindingAt(f,plan,true).capabilityGaps().stream().anyMatch(g -> g.reasonCode().equals("DESCRIPTOR_INVENTORY_OPEN")));
+    }
+    @Test void factoryParametersAndProductMembersHaveSeparateSitesOnTheSameOwner() throws Exception {
+        var f=sourceFixture("""
+                package app;
+                @org.springframework.context.annotation.ComponentScan("app") class App {}
+                @org.springframework.stereotype.Component class Dependency {}
+                final class Product {
+                  Product(Dependency supplied) {}
+                  @org.springframework.beans.factory.annotation.Autowired Dependency field;
+                }
+                @org.springframework.context.annotation.Configuration(proxyBeanMethods=false) class Config {
+                  @org.springframework.context.annotation.Bean Product product(Dependency factoryParameter){return new Product(factoryParameter);}
+                }
+                """);
+        var plan=beanPlan(f,true,"Dependency","Config","product");
+        assertEquals(2,plan.binding().dependencies().size());
+        assertEquals(Set.of(InjectionPoint.SiteKind.FIELD,InjectionPoint.SiteKind.BEAN_PARAMETER),plan.binding().dependencies().stream()
+                .map(d -> d.point().siteKind()).collect(java.util.stream.Collectors.toSet()));
+        assertTrue(plan.binding().dependencies().stream().allMatch(d -> d.owner().equals(Optional.of(candidate(plan,"product").identity()))));
+        assertTrue(bindingAt(f,plan,true).rows().stream().allMatch(r -> r.outcome()==InjectionBindings.Outcome.SELECTED));
+        assertEquals(2,plan.binding().dependencies().stream().map(d -> d.point().identity()).distinct().count());
+    }
+    static class OracleWiderProduct {
+        boolean invoked;
+        @org.springframework.beans.factory.annotation.Autowired void wire(OracleProductDependency dependency){invoked=true;}
+    }
+    static final class OracleRuntimeSubtype extends OracleWiderProduct {
+        @Override void wire(OracleProductDependency dependency){invoked=true;}
+    }
+    @org.springframework.context.annotation.Configuration(proxyBeanMethods=false)
+    static class OracleRuntimeSubtypeConfig {
+        @org.springframework.context.annotation.Bean OracleProductDependency dependency(){return new OracleProductDependency();}
+        @org.springframework.context.annotation.Bean OracleWiderProduct product(){return new OracleRuntimeSubtype();}
+    }
+    @Test void productOwnerExpansionPreservesEveryRequestWhenTheBudgetIsExceeded() throws Exception {
+        var f=productFixture("final class Product","""
+                @org.springframework.beans.factory.annotation.Autowired Dependency field;
+                @org.springframework.beans.factory.annotation.Autowired void wire(Dependency first,Dependency second) {}
+                ""","");
+        var plan=beanPlan(f,true,4,"Dependency","Config","first","second");
+        assertEquals(6,plan.binding().dependencies().size());
+        assertEquals(2,plan.binding().groups().size());
+        assertEquals(UNKNOWN,plan.binding().environment().descriptorsComplete());
+        assertEquals(16,plan.binding().matches().size());
+        assertTrue(plan.gaps().stream().anyMatch(g -> g.reasonCode().equals("RESOURCE_LIMIT")));
+        var binding=bindingAt(f,plan,true);
+        assertEquals(6,binding.rows().size());
+        assertTrue(binding.rows().stream().anyMatch(r -> r.operation()==InjectionBindings.Operation.LIMIT_EXCEEDED));
+    }
+    @Test void productUnsupportedMembersAndUnknownTypesStayInTheReportingDenominator() throws Exception {
+        var f=productFixture("final class Product","""
+                @org.springframework.beans.factory.annotation.Autowired static Dependency field;
+                @org.springframework.beans.factory.annotation.Autowired void wire(Missing unknown) {}
+                ""","");
+        var plan=beanPlan(f,true,"Dependency","Config","first","second");
+        // An unresolved method signature has no fully evidenced declaration/parameter sites.
+        // Preserve its upstream observation and inventory obligation instead of inventing them.
+        assertEquals(2,plan.binding().dependencies().size());
+        assertEquals(UNKNOWN,plan.binding().environment().descriptorsComplete());
+        assertTrue(plan.binding().dependencies().stream().allMatch(d -> d.normalization()==InjectionBindingPlan.Normalization.INCOMPLETE));
+        assertTrue(f.source().frontend().observations().stream().anyMatch(o -> o.category().value().equals("java.parameter-type")
+                &&o.attribution()==com.evolution.analysis.contract.semantic.SemanticStatus.UNRESOLVED));
+        assertEquals(2,bindingAt(f,plan,true).rows().size());assertFalse(plan.gaps().isEmpty());
+        assertTrue(selected(evaluate(f,plan),true).isEmpty());
+    }
+    @Test void unsupportedBeanReaderMetadataCannotCertifyProductMemberSelection() throws Exception {
+        var f=productFixture("final class Product","@org.springframework.beans.factory.annotation.Autowired Dependency field;",
+                "@Deprecated");
+        var plan=beanPlan(f,true,"Dependency","Config","first","second");
+        assertEquals(2,plan.binding().dependencies().size());
+        var first=plan.binding().dependencies().stream().filter(d -> d.owner().equals(Optional.of(candidate(plan,"first").identity()))).findFirst().orElseThrow();
+        assertEquals(InjectionBindingPlan.Normalization.INCOMPLETE,first.normalization());
+        assertFalse(plan.gaps().isEmpty());assertTrue(bindingAt(f,plan,true).rows().stream().allMatch(r -> r.selected().isEmpty()));
     }
     @Test void requiredMethodFailureClearsTheEarlierTentativeSelection() throws Exception {
         var f=memberFixture("""
