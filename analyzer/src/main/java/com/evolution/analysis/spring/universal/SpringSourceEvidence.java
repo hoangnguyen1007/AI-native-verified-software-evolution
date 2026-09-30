@@ -9,10 +9,23 @@ import com.evolution.analysis.ingestion.IngestionEvidence;
 import com.evolution.analysis.spring.SpringFrameworkEvidence;
 import com.evolution.analysis.spring.condition.ConditionEvidence;
 import java.util.*;
+import java.util.regex.Pattern;
 
 /** Indexed exact M2 evidence. Package spelling alone never establishes framework origin. */
 public final class SpringSourceEvidence {
     public record Annotation(AnnotationUseRecord use,Optional<String> name,ConditionEvidence evidence) {}
+    /** Child-to-parent source declarations, including the verified prefix on failure.
+     * Interfaces and binary parents are not evidence of a closed instance-member inventory. */
+    public enum HierarchyProblem { NONE, SOURCE_DECLARATION_MISSING, SOURCE_TYPES_INCOMPLETE,
+        SOURCE_SHAPE_UNSUPPORTED, PARENT_EVIDENCE_MISSING, PARENT_EVIDENCE_CONFLICT, CYCLE, LIMIT }
+    public record SourceHierarchy(List<EntityIdentity> types,HierarchyProblem problem) {
+        public SourceHierarchy {types=List.copyOf(types);Objects.requireNonNull(problem);}
+        public boolean complete(){return problem==HierarchyProblem.NONE;}
+        public boolean limited(){return problem==HierarchyProblem.LIMIT;}
+    }
+    private static final Pattern ORDINARY_CLASS=Pattern.compile("^\\s*(?:(?:public|protected|private|static|abstract|final|strictfp)\\s+)*"
+            +"class\\s+[\\p{javaJavaIdentifierStart}][\\p{javaJavaIdentifierPart}]*"
+            +"(?:\\s+extends\\s+([\\p{javaJavaIdentifierStart}][\\p{javaJavaIdentifierPart}.$]*))?\\s*\\{");
     private final FrontendResult frontend;private final AnalysisManifest manifest;
     private final SpringFrameworkEvidence framework;
     private final Map<EntityIdentity,DeclarationRecord> declarations=new TreeMap<>();
@@ -77,6 +90,58 @@ public final class SpringSourceEvidence {
         var result=new TreeSet<EntityIdentity>();var pending=new ArrayDeque<EntityIdentity>();pending.add(type);
         while(!pending.isEmpty()&&result.size()<limit){var next=pending.removeFirst();if(result.add(next))pending.addAll(parents.getOrDefault(next,List.of()));}
         return Collections.unmodifiableSet(result);
+    }
+    /** Close only ordinary, non-generic source superclass chains from exact declaration,
+     * written-type and relationship evidence. Never infer closure from a truncated ancestry set. */
+    public SourceHierarchy sourceHierarchy(EntityIdentity type,int limit) {
+        if(limit<1)throw new IllegalArgumentException("Positive hierarchy limit required");
+        var chain=new ArrayList<EntityIdentity>();var seen=new HashSet<EntityIdentity>();var problem=HierarchyProblem.NONE;
+        EntityIdentity current=type;
+        while(true) {
+            if(chain.size()>=limit)return new SourceHierarchy(chain,HierarchyProblem.LIMIT);
+            if(!seen.add(current))return new SourceHierarchy(chain,HierarchyProblem.CYCLE);
+            var declaration=declarations.get(current);
+            if(declaration==null||declaration.entity().origin()!=EntityOrigin.PROJECT
+                    ||declaration.entity().kind()!=EntityKind.TYPE||declaration.entity().declaration().isEmpty())
+                return new SourceHierarchy(chain,HierarchyProblem.SOURCE_DECLARATION_MISSING);
+            chain.add(current);
+            var id=current;
+            boolean ordinary=frontend.typeDeclarations().stream().anyMatch(t -> t.type().equals(id)
+                    &&t.kind()==TypeDeclarationRecord.Kind.CLASS&&t.independent());
+            String header=declaration.spelling();
+            for(var annotation:annotations(current))header=header.replace(annotation.use().spelling()," ");
+            var matcher=ORDINARY_CLASS.matcher(header.replaceAll("(?s)/\\*.*?\\*/|//[^\\r\\n]*"," "));
+            boolean syntax=!header.contains("\\u")&&matcher.find();
+            if(problem==HierarchyProblem.NONE) {
+                if(declaration.status()!=SemanticStatus.RESOLVED)problem=HierarchyProblem.SOURCE_TYPES_INCOMPLETE;
+                else if(!ordinary||!syntax)problem=HierarchyProblem.SOURCE_SHAPE_UNSUPPORTED;
+            }
+            var span=declaration.entity().declaration().orElseThrow();
+            boolean diagnostics=frontend.diagnostics().stream().anyMatch(d -> d.span().filter(s -> s.document().equals(span.document())
+                    &&before(s.startLine(),s.startColumn(),span.endLine(),span.endColumn())
+                    &&before(span.startLine(),span.startColumn(),s.endLine(),s.endColumn())).isPresent());
+            if(problem==HierarchyProblem.NONE&&diagnostics)problem=HierarchyProblem.SOURCE_TYPES_INCOMPLETE;
+            var written=frontend.types().stream().filter(t -> t.owner().equals(Optional.of(id))&&t.role().value().equals("java.extends")).toList();
+            var edges=relations.stream().filter(r -> r.source().equals(id)&&r.kind().value().equals("java.extends"))
+                    .flatMap(r -> r.target() instanceof RelationshipTarget.Resolved t?java.util.stream.Stream.of(t.target()):java.util.stream.Stream.empty()).distinct().toList();
+            if(written.isEmpty()&&edges.isEmpty())return new SourceHierarchy(chain,
+                    problem!=HierarchyProblem.NONE?problem:matcher.group(1)==null?HierarchyProblem.NONE:HierarchyProblem.PARENT_EVIDENCE_MISSING);
+            if(syntax&&matcher.group(1)==null)return new SourceHierarchy(chain,HierarchyProblem.PARENT_EVIDENCE_CONFLICT);
+            if(written.size()!=1||edges.size()!=1)return new SourceHierarchy(chain,HierarchyProblem.PARENT_EVIDENCE_MISSING);
+            var parent=written.getFirst().type();
+            if(parent.target().isEmpty()||!parent.target().orElseThrow().equals(edges.getFirst()))return new SourceHierarchy(chain,HierarchyProblem.PARENT_EVIDENCE_CONFLICT);
+            if(problem==HierarchyProblem.NONE) {
+                if(parent.status()!=SemanticStatus.RESOLVED)problem=HierarchyProblem.SOURCE_TYPES_INCOMPLETE;
+                else if(parent.kind()!=JavaType.Kind.DECLARED||!parent.components().isEmpty())problem=HierarchyProblem.SOURCE_SHAPE_UNSUPPORTED;
+            }
+            current=edges.getFirst();
+            var terminal=declarations.get(current);
+            if(terminal!=null&&terminal.entity().origin()==EntityOrigin.JDK&&"java.lang.Object".equals(typeName(current)))
+                return new SourceHierarchy(chain,problem);
+        }
+    }
+    private static boolean before(int line,int column,int otherLine,int otherColumn) {
+        return line<otherLine||line==otherLine&&column<otherColumn;
     }
     public ConditionEvidence evidence(EntityIdentity entity) {
         var declaration=declarations.get(entity);

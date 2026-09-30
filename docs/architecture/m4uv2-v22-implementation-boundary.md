@@ -73,7 +73,7 @@ arbitrary target Config Data is loaded by Boot.
 ## Source to registration, binding and truth
 
 `UniversalIngestionPipeline.prepareSpring` continues one analyzed exact source set
-through `SourceToSpringPlan` (`spring.source-to-plan:m4uv2.2-method-qualifiers-v1`).
+through `SourceToSpringPlan` (`spring.source-to-plan:m4uv2.2-inherited-fields-v1`).
 `SpringBuildContext.fromExactRequest` retains the existing content preimage:
 snapshot, source plan, module/source set, assembly identity, ordered classpath,
 platform and policy. Legacy requests and foreign evidence are rejected.
@@ -103,7 +103,7 @@ ordinary source bean products' field/method
 resolved non-generic scalar dependencies. The tested
 exact execution tuple is Framework 6.2.0 / Boot 3.4.0. Unknown/composed annotations,
 inherited component metadata, unsupported scan drivers, missing constructor
-selection, lazy/provider/generic and inherited member descriptors are not silently
+selection, lazy/provider/generic and wider inherited member descriptors are not silently
 promoted. Empty qualifiers remain an incomplete descriptor with an explicit gap.
 Limits preserve inventory and qualify incomplete matching rather than inventing
 negative matches.
@@ -282,6 +282,50 @@ controls. Exhaustive/SAT agreement, witness replay, stable source points across
 product owners, deterministic identities and provider versions remain checked.
 Fresh verification commands/results belong in current state and the handoff;
 this slice does not close V2.2 or advance an acceptance gate.
+
+### Inherited scalar source-component fields (2026-09-30)
+
+`SourceToSpringPlan` provider `m4uv2.2-inherited-fields-v1` attaches acquired field
+sites to each scanned ordinary source component whose evidenced superclass chain
+contains the declaring type. `SpringInjectionSites` continues acquiring the original
+declaration sites; its method-qualifier provider version and M1/R0 point preimages
+are unchanged. A private ancestor field remains an injection site even when a child
+declares an annotated or unannotated field with the same name. A shared declaring
+point keeps its exact source document/span and identity; each component owner has
+a separate dependency identity, activation and obligation mapping. Ancestor
+constructors are never attached as child constructor requests.
+
+`SpringSourceEvidence.sourceHierarchy` supplies the child-to-parent source prefix
+and a typed closure problem. Complete chains require independent ordinary class
+shapes, resolved source declarations without overlapping diagnostics, the bounded
+non-generic declaration-header grammar, and agreement between written superclass
+types and resolved `java.extends` edges. Implicit termination and evidenced JDK
+`Object` termination are distinguished from missing parent evidence. Interfaces,
+binary/missing parents, generic/raw chains, conflicting evidence and cycles cannot
+prove closure. Traversal is bounded to `min(descriptorLimit, 64)` source classes;
+truncation keeps a resource gap and never becomes a terminal-class proof.
+
+Direct component metadata remains separately validated. Ancestor class annotations
+need inherited metadata/condition semantics and keep registration qualified.
+Unsupported/composed/impostor member annotations retain a footprint gap even when
+the direct-site provider cannot produce a descriptor. Acquired inherited methods
+retain incomplete requests and separate groups for every owner; override, bridge
+and invocation semantics are not inferred. Static, unavailable-type, qualifier,
+wrapper/aggregate/Resource and other existing site boundaries retain typed gaps.
+Known source-prefix requests survive incomplete hierarchy evidence. Descriptor
+fan-out counts toward the existing budgets, retains all acquired requests and
+obligation mappings, and cannot certify missing matches when exhausted.
+
+This slice does not extend bean-product runtime-type prediction. Products with
+inherited/wider types retain the previous runtime-footprint and registration gaps.
+It does not execute source constructors, methods, processors or analyzed targets.
+Actual pipeline controls cover cross-document/private/hidden fields, shared owners,
+conditional activation, qualifier mismatch and requiredness, incomplete hierarchies,
+metadata conflicts, inherited-method gaps and descriptor/traversal limits. Authored
+Framework 6.2.0 containers independently corroborate hidden-field injection and
+optional/required mismatch behavior. Exhaustive/SAT agreement, deterministic replay,
+full source provenance and revalidated witnesses remain checked. Fresh commands and
+results belong in current state; V2.2 and G3 remain open.
 
 `Result.evaluate` returns an `Evaluation` retaining acquisition plus the existing
 exhaustive M4D result. `Result.evaluateSymbolic` retains acquisition plus the

@@ -28,6 +28,14 @@ component/product owner, conditional activation, provenance và witness replay.
 Empty/malformed/composed/impostor metadata hoặc thiếu return evidence vẫn có gap;
 không đóng toàn bộ nhóm C hay V2.2. Kết quả kiểm chứng thuộc current state/handoff.
 
+Slice inherited fields ngày 2026-09-30 gắn scalar field của lớp cha nguồn vào từng
+ordinary component con khi superclass chain có đủ declaration/type/edge evidence.
+Giữ riêng lớp khai báo, component owner, hidden field cùng tên, conditional activation,
+qualifier/requiredness, spans và obligation fan-out. Hierarchy thiếu/binary/generic/raw,
+metadata kế thừa và method override chưa được chứng minh vẫn giữ typed gaps; không mở
+rộng runtime type của bean product. Ranh giới và giới hạn thuộc implementation boundary;
+kiểm chứng hai tầng thuộc current state/handoff. Các checkbox A–E vẫn chưa đóng toàn bộ.
+
 Entry: V2.1 exact/partial inputs, artifact lineage, coordinator contracts và controls ổn định. Đọc [conditional semantics](../../architecture/conditional-architecture-semantics.md), [v1 Spring](../../architecture/m4u2-universal-spring.md), [v2 architecture](../../architecture/m4-universal-v2.md), [matrix J/S/Q](../../architecture/m4-universal-v2-coverage.md) và target M4B/C/D contracts.
 
 Output: per-occurrence Java evidence; generated members tham gia resolution; complete source/artifact-to-Spring descriptors; qualified configuration spaces; versioned mechanism/effect packs; ordered registration/binding requests; truth regions/witnesses và requirements gửi lại coordinator.
