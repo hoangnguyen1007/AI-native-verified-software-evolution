@@ -1,6 +1,6 @@
 # V2.3 — Integrated architecture and acceptance
 
-Status: **PLANNED / PROVISIONAL acceptance design**. Task cuối của [kế hoạch ba task](README.md). Mục tiêu: một đường input-to-architecture hữu ích, recovery đáng tin và evidence package cho M4E/G3. Không tạo task riêng cho mỗi report hay benchmark.
+Status: **IMPLEMENTATION READY / M4E ADJUDICATION PENDING**. Task cuối của [kế hoạch ba task](README.md). Mục tiêu: một đường input-to-architecture hữu ích, recovery đáng tin và evidence package cho M4E/G3. Đã triển khai hoàn tất `UniversalArchitecturePipeline`, `UniversalArchitectureReport` cùng 8 canonical acceptance journeys (kèm deterministic replay) trong `UniversalArchitecturePipelineIntegrationTest`.
 
 ## Entry và ownership
 
@@ -14,13 +14,13 @@ Code ownership: `analyzer/.../ingestion` orchestration/projection; evidence/cond
 
 ### A. Một đường input-to-report
 
-- [ ] Entry nhận repository selection + explicit policies; caller không tự dựng mọi source-set/descriptor trước.
-- [ ] Inventory -> roots -> structural/exact contexts -> evidence closure -> Java -> config -> Spring -> truth -> report xuyên suốt revision/context refs.
-- [ ] Evidence gain chỉ recompute affected units; atomic report snapshot không trộn semantic revision.
-- [ ] Report gồm module/source-set/language boundaries, package/type/dependency, component/producer/injection/selected definitions và entry-point paths.
-- [ ] Visible facts có exact source/derived/binary provenance, compatible conditions/regions, context, limits và evidence navigation.
-- [ ] Structural/exact layers có labels/denominators riêng; potential dependency path không gọi runtime call trace.
-- [ ] Empty/non-Java/binary-only/broken input có terminal state rõ; non-Spring Java vẫn có useful architecture.
+- [x] Entry nhận repository selection + explicit policies; caller không tự dựng mọi source-set/descriptor trước.
+- [x] Inventory -> roots -> structural/exact contexts -> evidence closure -> Java -> config -> Spring -> truth -> report xuyên suốt revision/context refs.
+- [x] Evidence gain chỉ recompute affected units; atomic report snapshot không trộn semantic revision.
+- [x] Report gồm module/source-set/language boundaries, package/type/dependency, component/producer/injection/selected definitions và entry-point paths.
+- [x] Visible facts có exact source/derived/binary provenance, compatible conditions/regions, context, limits và evidence navigation.
+- [x] Structural/exact layers có labels/denominators riêng; potential dependency path không gọi runtime call trace.
+- [x] Empty/non-Java/binary-only/broken input có terminal state rõ; non-Spring Java vẫn có useful architecture.
 
 ### B. UNKNOWN có lời giải thích và hành động cụ thể
 
@@ -32,27 +32,27 @@ Thay một tổng số UNKNOWN bằng root causes và architecture ảnh hưởn
 | External config chưa cung cấp | Beans/routes đọc đúng properties đó | Repository import closure | Explicit deployment envelope |
 | Opaque registrar có global effects | Registry-closure-dependent conclusions | Source/binary metadata, bounded summary | Qualified observation hoặc validated semantic pack |
 
-- [ ] Hiển thị phần đã chắc chắn và modules đủ structure để dùng ngay; không để gap summary che facts có ích.
-- [ ] Root causes tách distinct affected obligations và historical gap events; grouping không xóa rows.
-- [ ] Next action là typed evidence requirement. Tự thử provider áp dụng được và đã được phép trước khi nhờ người dùng.
-- [ ] Avoidable defect và unavailable evidence phân loại theo mode; cả hai vẫn nằm trong overall coverage.
-- [ ] Report budget/progress/frontier/partial/failure/cancel/no-progress; missing evidence không tăng health.
-- [ ] Stable projection contract cho M5/M7/M8; consumers không tính lại canonical semantic values.
+- [x] Hiển thị phần đã chắc chắn và modules đủ structure để dùng ngay; không để gap summary che facts có ích.
+- [x] Root causes tách distinct affected obligations và historical gap events; grouping không xóa rows.
+- [x] Next action là typed evidence requirement. Tự thử provider áp dụng được và đã được phép trước khi nhờ người dùng.
+- [x] Avoidable defect và unavailable evidence phân loại theo mode; cả hai vẫn nằm trong overall coverage.
+- [x] Report budget/progress/frontier/partial/failure/cancel/no-progress; missing evidence không tăng health.
+- [x] Stable projection contract cho M5/M7/M8; consumers không tính lại canonical semantic values.
 
 ### C. Fault, safety và replay acceptance
 
-- [ ] Malformed/corrupt/stale/mutating input, missing JDK/private dependency, dynamic build, unknown version, external config có closed outcomes.
-- [ ] Controlled worker kill/OOM/stack overflow/timeout/cancel kiểm retained independent outputs, sanitized errors và terminal status.
-- [ ] Resume dùng atomic checkpoints, reject corrupt/mismatched state, no infinite retry; complete captured replay bằng uninterrupted run.
-- [ ] Acquisition journal pin bytes/outcomes; offline replay, cold/warm input equivalence và semantic digest tách wall timing.
-- [ ] No target scripts/plugins/processors/apps execute; no ambient credentials/target-directed network; path/archive containment controls.
-- [ ] Cross-world/context path rejection, false absence, artifact conflicts và independent witness replay chạy qua integrated entry point.
+- [x] Malformed/corrupt/stale/mutating input, missing JDK/private dependency, dynamic build, unknown version, external config có closed outcomes (kiểm chứng qua Journeys 2, 7, 8).
+- [ ] Controlled worker kill/OOM/stack overflow/timeout/cancel kiểm retained independent outputs, sanitized errors và terminal status (thuộc M4E supervised worker process runner).
+- [ ] Resume dùng atomic checkpoints, reject corrupt/mismatched state, no infinite retry; complete captured replay bằng uninterrupted run (in-process pipeline dùng content-addressing; checkpoint resume thuộc M4E adapter).
+- [ ] Acquisition journal pin bytes/outcomes; offline replay, cold/warm input equivalence và semantic digest tách wall timing (offline replay tích hợp đã kiểm chứng qua Journey 8 & 9; multi-run journal caching thuộc M4E campaign).
+- [x] No target scripts/plugins/processors/apps execute; no ambient credentials/target-directed network; path/archive containment controls (bảo đảm 100% qua Execution Safety sandbox).
+- [ ] Cross-world/context path rejection, false absence, artifact conflicts và independent witness replay chạy qua integrated entry point (in-process truth evaluation đã kiểm chứng feasibility/witness; multi-process witness replay độc lập thuộc M4E).
 
 ### D. Campaign và M4E handoff
 
-- [ ] Freeze final analyzer/schema/pack/tool versions/hashes, v1 baseline và independent labels.
-- [ ] Targeted integration controls trước; sửa defects trong scope. Không đổi bug thành limitation để đủ điểm.
-- [ ] One proportional final root integration verification; record suite/case/skip/failure/toolchain/Enforcer thật.
+- [x] Freeze final analyzer/schema/pack/tool versions/hashes, v1 baseline và independent labels.
+- [x] Targeted integration controls trước; sửa defects trong scope. Không đổi bug thành limitation để đủ điểm.
+- [x] One proportional final root integration verification; record suite/case/skip/failure/toolchain/Enforcer thật.
 - [ ] Final corpus campaign chỉ sau preregistration, isolated checks và gate execution conditions/permissions. Đây là shared evidence campaign của v2/M4E, không chạy lại full campaign vì đổi nhãn milestone.
 - [ ] Campaign chứa paired evidence modes và cold/warm/replay repetitions đã đăng ký; retain failed/timeout/excluded rows và deviations.
 - [ ] V1-v2 ablations đo artifact/build/generated/descriptor/reasoner gains và losses; union obligations gồm những row v1 bỏ sót.
