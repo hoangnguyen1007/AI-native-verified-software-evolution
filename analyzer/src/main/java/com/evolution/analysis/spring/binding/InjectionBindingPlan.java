@@ -15,12 +15,18 @@ public record InjectionBindingPlan(BeanRegistrationPlan registrationPlan, List<D
                                 List<Group> groups, Environment environment, Limits limits) {
         this(registrationPlan, dependencies, definitions, matches, groups, List.of(), environment, limits);
     }
-    /** Explicit M4A-to-descriptor provenance. Missing mappings remain normalization gaps. */
-    public record ObligationBinding(ContentDigest obligation, List<ContentDigest> dependencies, ConditionEvidence evidence) {
+    public enum Disposition { DESCRIPTORS, SUPPRESSED }
+    /** Explicit M4A provenance: either descriptors, or proof of suppression over the closed
+     * owner inventory. An empty descriptor list alone never establishes suppression. */
+    public record ObligationBinding(ContentDigest obligation, List<ContentDigest> dependencies, ConditionEvidence evidence, Disposition disposition) {
+        public ObligationBinding(ContentDigest obligation,List<ContentDigest> dependencies,ConditionEvidence evidence) {
+            this(obligation,dependencies,evidence,Disposition.DESCRIPTORS);
+        }
         public ObligationBinding {
-            Objects.requireNonNull(obligation); Objects.requireNonNull(evidence);
+            Objects.requireNonNull(obligation); Objects.requireNonNull(evidence);Objects.requireNonNull(disposition);
             dependencies = ContractChecks.sortedDistinct(dependencies, Comparator.naturalOrder(), "obligation descriptors");
-            if (dependencies.isEmpty()) throw new IllegalArgumentException("An injection mapping needs descriptors");
+            if (dependencies.isEmpty()!=(disposition==Disposition.SUPPRESSED))
+                throw new IllegalArgumentException("Only an explicitly suppressed obligation has no descriptors");
         }
     }
     public enum Shape { SINGLE, OPTIONAL, ARRAY, LIST, COLLECTION, SET, STRING_MAP, CUSTOM_COLLECTION, CUSTOM_MAP,
@@ -129,7 +135,7 @@ public record InjectionBindingPlan(BeanRegistrationPlan registrationPlan, List<D
         }
     }
     public ContentDigest identity() { return BindingIdentity.digest(canonicalForm()); }
-    public Object canonicalForm() { return Map.of("schema", "spring-injection-binding-plan-v1",
+    public Object canonicalForm() { return Map.of("schema", "spring-injection-binding-plan-v2",
             "registrationPlan", registrationPlan.identity(), "dependencies", dependencies, "definitions", definitions,
             "matches", matches, "groups", groups, "obligations", obligations, "environment", environment, "limits", limits); }
 }

@@ -34,11 +34,20 @@ class ConfigImportOracleTest {
                 "second.properties","spring.config.import=shared.properties\nvalue=second\n",
                 "shared.properties","value=shared\n"),List.of("value"));
     }
+    @Test void capturedConfigTreeValuesAndImportPrecedenceMatchBoot340() throws Exception {
+        compare(Map.of("application.properties","spring.config.import=configtree:tree/,last.properties\nservice.name=base\n",
+                "tree/service/name","tree\r\n", "tree/multiline","one\ntwo\n", "tree/spaces"," value \n",
+                "tree/empty","", "last.properties","service.name=last\n"),List.of("service.name","multiline","spaces","empty"));
+    }
     private void compare(Map<String,String> texts,List<String> keys) throws Exception {
         assertEquals("3.4.0",ConfigDataEnvironmentPostProcessor.class.getPackage().getImplementationVersion());
         var files=new TreeMap<String,SourceInput>();
         for(var row:texts.entrySet()) {
-            Path path=directory.resolve(row.getKey());Files.createDirectories(path.getParent());Files.writeString(path,row.getValue());
+            Path path=directory.resolve(row.getKey());Files.createDirectories(path.getParent());
+            // Map the authored capture's working-directory root to the oracle's temp root.
+            // Only fixed test text is loaded; neither production nor target code runs here.
+            String oracleText=row.getValue().replace("configtree:tree/","configtree:"+directory.resolve("tree").toString().replace('\\','/')+"/");
+            Files.writeString(path,oracleText);
             byte[] bytes=row.getValue().getBytes(StandardCharsets.UTF_8);
             files.put(row.getKey(),new SourceInput(SourceDocument.create(TestInputs.REPO,TestInputs.MODULE,row.getKey(),
                     ContentDigest.sha256(bytes),SourceClassification.MAIN),bytes));

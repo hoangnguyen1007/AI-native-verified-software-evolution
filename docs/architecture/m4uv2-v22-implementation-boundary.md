@@ -73,7 +73,7 @@ arbitrary target Config Data is loaded by Boot.
 ## Source to registration, binding and truth
 
 `UniversalIngestionPipeline.prepareSpring` continues one analyzed exact source set
-through `SourceToSpringPlan` (`spring.source-to-plan:m4uv2.2-resource-fields-v1`).
+through `SourceToSpringPlan` (`spring.source-to-plan:m4uv2.2-core-descriptors-v1`).
 `SpringBuildContext.fromExactRequest` retains the existing content preimage:
 snapshot, source plan, module/source set, assembly identity, ordered classpath,
 platform and policy. Legacy requests and foreign evidence are rejected.
@@ -415,9 +415,30 @@ conditional selection occurs in the source-to-M4C continuation. Inactive owners,
 conditional name absence, budget exhaustion, exhaustive/SAT agreement, deterministic
 replay and witness validation retain the existing contracts.
 
+### Inherited Resource fields, setter injection, and semantic closure (2026-09-30)
+
+`SourceToSpringPlan` provider `m4uv2.2-core-descriptors-v1` attaches direct and inherited
+scalar Jakarta Resource fields to bounded ordinary source components, respecting the closed
+superclass hierarchy, private/hidden field isolation, and conditional activation. Single-parameter
+setter methods annotated with `@Resource` acquire property-style names via
+`StringUtils.uncapitalizeAsProperty` and resolve to the most specific method across inheritance
+hierarchies without fabricating descriptors.
+
+`SourceDependencyShape` defines the neutral injection shape model across `DIRECT`, `ELEMENT`,
+`OPTIONAL`, and collection/array aggregate lanes. Element matches allow candidate matching
+against collection parameters (`List`, `Set`, arrays) while retaining element-type provenance.
+
+Proved method suppression across all candidate owners yields explicit `Disposition.SUPPRESSED`
+in `InjectionBindingPlan.ObligationBinding` with derivation proof `closed-owner-method-suppression`,
+versioned by `spring.injection-binding:m4uv2.2-obligation-dispositions-v1`. This closes the previous
+conservative `NORMALIZATION_REQUIRED` residual without manufacturing descriptors.
+
+`spring.config-data-ingestion:m4uv2.2` extends to directory/file property trees under `configtree:`
+locations, supporting directory traversal, file property values, bounds, and cycle handling.
+
 Attributes other than literal `name` (including explicit type/JNDI metadata),
 placeholder/expression names, legacy/unproved API namespaces or versions,
-static/setter/inherited/generic/wrapper/aggregate shapes, mixed/custom/composed
+generic/wrapper shapes, mixed/custom/composed
 annotations and unproved product runtime types retain typed gaps and upstream
 observations. Missing annotation/type evidence never fabricates a descriptor.
 Fixed authored Framework containers corroborate name/filter bypass, fallback,

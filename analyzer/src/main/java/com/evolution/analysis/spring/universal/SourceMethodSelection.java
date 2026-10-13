@@ -24,7 +24,7 @@ public final class SourceMethodSelection {
         }
         public ContentDigest identity(){return IngestionEvidence.digest(this);}
     }
-    private record Shape(String name,List<Object> parameters,Object returns,Set<String> modifiers) {}
+    private record Shape(String name,List<Object> parameters,List<Object> erasedParameters,Object returns,Set<String> modifiers) {}
     private final SpringSourceEvidence source;
     private final Map<EntityIdentity,Optional<Shape>> shapes=new HashMap<>();
     private final Map<EntityIdentity,List<EntityIdentity>> methods=new HashMap<>();
@@ -60,14 +60,14 @@ public final class SourceMethodSelection {
             // Missing shapes can hide an override even without an injection annotation.
             if(other.isEmpty()){unknown=true;evidence.add(source.evidence(candidate));continue;}
             var child=other.orElseThrow();
-            if(!child.name().equals(base.name())||!child.parameters().equals(base.parameters()))continue;
+            if(!child.name().equals(base.name())||!child.erasedParameters().equals(base.erasedParameters()))continue;
             evidence.add(source.evidence(candidate));
             // Covariant/visibility bridges and malformed static/access reductions need
             // stronger evidence. Never guess their reflective method inventory.
             if(child.modifiers().contains("static")||child.modifiers().contains("private")
                     ||publicMethod&&!child.modifiers().contains("public")
                     ||base.modifiers().contains("protected")&&!child.modifiers().contains("protected")&&!child.modifiers().contains("public")
-                    ||!child.returns().equals(base.returns())||unknown)
+                    ||!child.parameters().equals(base.parameters())||!child.returns().equals(base.returns())||unknown)
                 return decision(component,method,Status.UNKNOWN,null,evidence);
             return decision(component,method,Status.SUPPRESSED,candidate,evidence);
         }
@@ -103,25 +103,45 @@ public final class SourceMethodSelection {
         String name=matcher.group(2).codePoints().filter(c -> !Character.isIdentifierIgnorable(c)).collect(StringBuilder::new,StringBuilder::appendCodePoint,StringBuilder::append).toString();
         if(!name.equals(member.orElseThrow().name()))return Optional.empty();
         String rawParameters=matcher.group(3).strip();
-        if(rawParameters.contains("<")||rawParameters.contains(">")||rawParameters.contains("@")
-                ||(rawParameters.isEmpty()?0:rawParameters.split(",",-1).length)!=parameters.size())return Optional.empty();
-        var signature=new ArrayList<Object>();
+        if(rawParameters.contains("@")||parameterCount(rawParameters)!=parameters.size())return Optional.empty();
+        var signature=new ArrayList<Object>();var erased=new ArrayList<Object>();
         for(var p:parameters) {
             var types=source.frontend().types().stream().filter(t -> t.owner().equals(Optional.of(p.entity().identity()))&&t.role().value().equals("java.parameter-type")).toList();
             if(types.size()!=1)return Optional.empty();
             var key=typeKey(types.getFirst().type());if(key.isEmpty())return Optional.empty();signature.add(key.orElseThrow());
+            erased.add(erasedTypeKey(types.getFirst().type()));
         }
         var returns=source.frontend().types().stream().filter(t -> t.owner().equals(Optional.of(method))&&t.role().value().equals("java.returns")).toList();
         if(returns.size()!=1)return Optional.empty();
         var returnKey=typeKey(returns.getFirst().type());if(returnKey.isEmpty())return Optional.empty();
         var modifiers=matcher.group(1).isBlank()?Set.<String>of():Set.copyOf(Arrays.asList(matcher.group(1).strip().split("\\s+")));
         if(modifiers.contains("static")!=member.orElseThrow().staticMember()||modifiers.contains("abstract")!=member.orElseThrow().abstractMember())return Optional.empty();
-        return Optional.of(new Shape(name,List.copyOf(signature),returnKey.orElseThrow(),modifiers));
+        return Optional.of(new Shape(name,List.copyOf(signature),List.copyOf(erased),returnKey.orElseThrow(),modifiers));
+    }
+    private static int parameterCount(String text) {
+        if(text.isEmpty())return 0;
+        int depth=0,count=1;
+        for(int i=0;i<text.length();i++) {
+            char c=text.charAt(i);
+            if(c=='<'&&++depth>64)return -1;
+            if(c=='>'&&--depth<0)return -1;
+            if(c==','&&depth==0)count++;
+        }
+        return depth==0?count:-1;
+    }
+    private Object erasedTypeKey(JavaType type) {
+        if(type.kind()==JavaType.Kind.ARRAY)return List.of(JavaType.Kind.ARRAY,erasedTypeKey(type.components().getFirst()));
+        return type.target().<Object>map(t -> t).orElseGet(() -> List.of(type.kind(),type.spelling()));
     }
     private Optional<Object> typeKey(JavaType type) {
         if(type.status()!=SemanticStatus.RESOLVED)return Optional.empty();
         return switch(type.kind()) {
-            case DECLARED -> type.components().isEmpty()?Optional.of(type.target().orElseThrow()):Optional.empty();
+            case DECLARED -> {
+                if(type.qualifier().isPresent())yield Optional.empty();
+                if(type.components().isEmpty())yield Optional.of(type.target().orElseThrow());
+                var arguments=type.components().stream().map(this::typeKey).toList();
+                yield arguments.stream().anyMatch(Optional::isEmpty)?Optional.empty():Optional.of(List.of(type.target().orElseThrow(),arguments.stream().map(Optional::orElseThrow).toList()));
+            }
             case VOID,PRIMITIVE -> Optional.of(List.of(type.kind(),type.spelling()));
             case ARRAY -> typeKey(type.components().getFirst()).map(k -> List.of(JavaType.Kind.ARRAY,k));
             default -> Optional.empty();

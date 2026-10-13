@@ -16,7 +16,7 @@ import static com.evolution.analysis.ingestion.IngestionEvidence.Reason.*;
 
 /** Passive repository configuration ingestion. The policy explicitly selects one application's locations. */
 public final class ConfigDataIngestion {
-    public static final VersionedIdentifier PROVIDER = new VersionedIdentifier("spring.config-data-ingestion", "m4uv2.2");
+    public static final VersionedIdentifier PROVIDER = new VersionedIdentifier("spring.config-data-ingestion", "m4uv2.2-configtree-v1");
     public record Policy(List<String> locations, List<String> activeProfiles, Map<String,String> overrides,
                          int maxDocuments, int maxCharacters, int maxDepth, int maxProperties) {
         public Policy {
@@ -193,7 +193,10 @@ public final class ConfigDataIngestion {
             return List.copyOf(output.reversed());
         }
         private void visit(Document document,int depth) {
-            String key=document.path()+"#"+document.ordinal();
+            visit(document,depth,"");
+        }
+        private void visit(Document document,int depth,String contributor) {
+            String key=contributor+document.path()+"#"+document.ordinal();
             if(stack.contains(key)) { problem(CONFIG_IMPORT_REQUIRED,document,"cyclic-import");return; }
             if(!seen.add(key))return;
             if(depth>policy.maxDepth() || seen.size()>policy.maxDocuments()) {
@@ -220,6 +223,10 @@ public final class ConfigDataIngestion {
                     if(++edges>policy.maxProperties()) {problem(INPUT_LIMIT,document,"import-edges");break;}
                     boolean optional=raw.startsWith("optional:");
                     String relative=optional?raw.substring(9):raw;
+                    if(relative.startsWith("configtree:")) {
+                        readTree(relative.substring(11),optional,document,depth+1);
+                        continue;
+                    }
                     String path=relativePath(document.path(),relative);
                     if(path==null) {problem(CONFIG_IMPORT_REQUIRED,document,"external-or-unsupported-import");continue;}
                     if(!beforeProfiles) {
@@ -242,6 +249,53 @@ public final class ConfigDataIngestion {
             try {return listValue(d.properties(),"spring.config.activate.on-profile").stream()
                     .anyMatch(e -> matches(e,profiles,policy.maxDepth(),identity));}
             catch(IllegalArgumentException invalid) {return false;}
+        }
+        private void readTree(String suppliedLocation,boolean optional,Document importer,int depth) {
+            // Boot configtree locations are working-directory relative, unlike ordinary
+            // imports. Here that directory is the captured repository root, never the host.
+            String location=suppliedLocation.startsWith("./")?suppliedLocation.substring(2):suppliedLocation;
+            if(!location.endsWith("/")||location.startsWith("/")||location.contains(":")||location.contains("\\")
+                    ||location.contains("*")||location.contains("${")||location.contains("#{")
+                    ||Arrays.stream(location.split("/")).anyMatch(p -> p.isEmpty()||p.equals(".")||p.equals(".."))
+                    ||policy.locations().stream().noneMatch(root -> root.equals(".")||locationWithinTreeRoot(root,location))) {
+                problem(CONFIG_IMPORT_REQUIRED,importer,"unsupported-configtree-location");return;
+            }
+            String prefix=location;
+            var files=inputs.snapshot().files().stream().filter(f -> f.path().startsWith(prefix))
+                    .filter(f -> Arrays.stream(f.path().split("/")).noneMatch(p -> p.startsWith(".."))).toList();
+            if(files.isEmpty()) {if(!optional)problem(CONFIG_IMPORT_REQUIRED,importer,"missing-configtree");return;}
+            var names=new HashSet<String>();var duplicates=new HashSet<String>();
+            for(var file:files)if(!names.add(file.path().substring(prefix.length()).replace('/','.')))
+                duplicates.add(file.path().substring(prefix.length()).replace('/','.'));
+            if(!duplicates.isEmpty())problem(CONFIG_PRECEDENCE_UNKNOWN,importer,"configtree-key-collision");
+            // Files have independent source origins. Cross-file activation/import/profile
+            // directives need a whole-tree configuration contributor, so retain a gap.
+            for(var file:files.reversed()) {
+                String relative=file.path().substring(prefix.length());String name=relative.replace('/','.');
+                if(duplicates.contains(name))continue;
+                if(name.startsWith("spring.config.")||name.startsWith("spring.profiles")) {
+                    problem(CONFIG_IMPORT_REQUIRED,importer,"configtree-control-directive");continue;
+                }
+                if(name.isBlank()) {problem(MALFORMED_INPUT,importer,"configtree-blank-key");continue;}
+                var source=inputs.files().get(file.path());
+                if(source==null) {issue(issues,INPUT_UNAVAILABLE,file.path(),file.contentDigest());continue;}
+                if(relative.split("/").length>Math.min(100,policy.maxDepth())||!charged.contains(file.path())&&source.bytes().length>policy.maxCharacters()-characters) {
+                    problem(INPUT_LIMIT,importer,"configtree-depth-or-bytes");continue;
+                }
+                // Boot's value conversion uses the deployment default charset. ASCII is
+                // invariant across our supported target charsets; non-ASCII needs a supplied
+                // target-charset proof instead of borrowing the analyzer JVM default.
+                boolean ascii=true;for(byte value:source.bytes())if(value<0){ascii=false;break;}
+                if(!ascii) {issue(issues,CONFIG_FORMAT_UNSUPPORTED,file.path(),file.contentDigest());continue;}
+                String value=new String(source.bytes(),StandardCharsets.US_ASCII);
+                if(value.endsWith("\n")&&value.indexOf('\n')==value.length()-1)
+                    value=value.substring(0,value.length()-(value.endsWith("\r\n")?2:1));
+                visit(new Document(file.path(),0,Optional.empty(),Map.of(name,value),new ConditionEvidence.Source(
+                        source.document().identity(),file.contentDigest(),Optional.empty(),0),false),depth,"configtree:"+prefix+":");
+            }
+        }
+        private static boolean locationWithinTreeRoot(String root,String location) {
+            return location.equals(root+"/")||location.startsWith(root+"/");
         }
         private List<Document> read(String path,Optional<String> profile,boolean optional,Document importer) {
             if(cache.containsKey(path))return cache.get(path);

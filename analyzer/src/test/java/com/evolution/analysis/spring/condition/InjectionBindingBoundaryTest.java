@@ -215,6 +215,15 @@ class InjectionBindingBoundaryTest {
         r=resolve(f,p);
         assertEquals(1,r.obligations().stream().filter(o->o.status()==InjectionBindings.ObligationStatus.NORMALIZED).count());
         assertEquals(1,r.obligations().stream().filter(o->o.status()==InjectionBindings.ObligationStatus.NOT_INJECTION).count());
+        assertThrows(IllegalArgumentException.class,() -> new ObligationBinding(injection.identity(),List.of(),d.evidence()));
+        assertThrows(IllegalArgumentException.class,() -> new ObligationBinding(injection.identity(),List.of(d.identity()),d.evidence(),Disposition.SUPPRESSED));
+        var suppressed=new InjectionBindingPlan(p.registrationPlan(),List.of(),p.definitions(),List.of(),List.of(),
+                List.of(new ObligationBinding(injection.identity(),List.of(),d.evidence(),Disposition.SUPPRESSED)),p.environment(),p.limits());
+        var result=resolve(f,suppressed);
+        assertEquals(1,result.obligations().stream().filter(o -> o.status()==InjectionBindings.ObligationStatus.SUPPRESSED).count());
+        assertTrue(result.rows().isEmpty());assertNotEquals(p.identity(),suppressed.identity());
+        assertEquals(result.identity(),resolve(f,suppressed).identity());
+        assertEquals("m4uv2.2-obligation-dispositions-v1",BindingProcessing.PROVIDER.version());
     }
     @Test void aliasShadowShortcutThrowsAliasShadowShortcutUnsupported() throws Exception {
         var f = setup("a", "b"); var d = dependency(f, Shape.SINGLE, Name.of("b"), Required.REQUIRED);

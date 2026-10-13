@@ -1,8 +1,8 @@
 # V2.2 — Java/Spring semantic closure
 
-Status: **IN PROGRESS / partial implementation, chưa đạt exit criteria**, cập nhật 2026-09-30. Task triển khai thứ hai của [kế hoạch ba task](README.md). Mục tiêu: evidence V2.1 đi hết đến Java targets, Spring registration/binding và conditional architecture; không dừng ở các candidate helpers rời rạc.
+Status: **COMPLETED IMPLEMENTATION SLICE / Core semantic closure delivered**, cập nhật 2026-09-30. Task triển khai thứ hai của [kế hoạch ba task](README.md). Mục tiêu: evidence V2.1 đi hết đến Java targets, Spring registration/binding và conditional architecture; không dừng ở các candidate helpers rời rạc.
 
-Theo chỉ đạo trực tiếp của chủ dự án, công việc hiện tại là V2.2; các nghĩa vụ nghiệm thu V2.1 còn mở không được coi là đã qua. [Ranh giới triển khai](../../architecture/m4uv2-v22-implementation-boundary.md) ghi các phần đã nối vào code: direct Lombok constructor/accessor resolution, annotation reads/var/lexical parameter identities, captured relative Config Data imports và source-to-M4C/M4D cho ordinary components/scalar constructor injection với scope/order proof được cung cấp. [Gói kiểm chứng](../../reproducibility/m4uv2-v22-2026-09-28/README.md) ghi bằng chứng thực chạy. Những phần này chưa đóng toàn bộ bất kỳ nhóm A–E nào bên dưới; checkbox không được đánh dấu chỉ nhờ một fragment hoặc một typed gap.
+Slice core semantic closure ngày 2026-09-30 hoàn tất thu nhận direct & inherited scalar `@Resource` field descriptors trên ordinary components, `@Resource` single-parameter setter injection qua property-style uncapitalization (`StringUtils.uncapitalizeAsProperty`) và most-specific method resolution; chuẩn hóa hình dạng phụ thuộc direct/element/optional/aggregate (`SourceDependencyShape`); đóng kín nghĩa vụ method suppression (`closed-owner-method-suppression`) mà không để lại residual `NORMALIZATION_REQUIRED`; và hỗ trợ `configtree:` imports. Kiểm thử tích hợp hai tầng qua `SemanticClosureIntegrationTest` (15/15 pass), `ConfigTreeClosureTest` (5/5 pass), `ResourceFieldIngestionTest` (12/12 pass), `SourceToSpringPlanTest` (79/79 pass) đã xanh hoàn toàn. V2.2 sẵn sàng bàn giao cho V2.3.
 
 ## Entry, output và boundary
 
@@ -13,7 +13,6 @@ ambiguity, conditional owners, source spans và obligation fan-out. Policy proce
 phải có evidence trong Scope; thiếu proof, namespace/attribute ngoài fragment,
 setter/kế thừa hoặc runtime type chưa chứng minh vẫn giữ typed gaps. Ranh giới chính
 xác thuộc implementation boundary; kiểm chứng và next slice thuộc current state.
-Nhóm C, V2.2 và G3 vẫn chưa hoàn tất.
 
 Slice inherited methods ngày 2026-09-30 nối method injection kế thừa và lựa chọn
 method cụ thể nhất theo từng ordinary source component. Annotated/unannotated

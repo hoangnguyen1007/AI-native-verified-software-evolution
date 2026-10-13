@@ -63,9 +63,9 @@ final class BeanMethodIngestion {
                 var named=LiteralConditionAnnotation.strings(attributes,"name",List.of());
                 if(!value.isEmpty()&&!named.isEmpty()&&!value.equals(named))throw new IllegalArgumentException();
                 var supplied=value.isEmpty()?named:value;
-                // Alias ordering is a separate reader contract; keep multi-name declarations open.
-                if(supplied.size()>1||supplied.stream().anyMatch(String::isBlank))throw new IllegalArgumentException();
-                if(!supplied.isEmpty())names=BeanDefinitionCandidate.Names.exact(supplied.getFirst());
+                if(supplied.stream().anyMatch(String::isBlank))throw new IllegalArgumentException();
+                if(!supplied.isEmpty())names=new BeanDefinitionCandidate.Names(BeanDefinitionCandidate.NameStatus.EXACT,
+                        Optional.of(supplied.getFirst()),supplied.stream().skip(1).filter(n -> !n.equals(supplied.getFirst())).distinct().toList());
                 else if(syntax) {
                     // Match the frontend's Java identifier equality (JLS 3.8). Annotation
                     // string names remain literal; only the default method-derived name changes.
@@ -93,9 +93,13 @@ final class BeanMethodIngestion {
                         counts.merge(owner.value()+":"+methodName(source,d.entity().identity()),1,Integer::sum)));
         var nameCounts=new HashMap<String,Integer>();
         components.values().forEach(c -> c.declaredNameKey().primary().ifPresent(n -> nameCounts.merge(n,1,Integer::sum)));
-        result.values().forEach(m -> m.candidate().declaredNameKey().primary().ifPresent(n -> nameCounts.merge(n,1,Integer::sum)));
+        result.values().forEach(m -> {
+            m.candidate().declaredNameKey().primary().ifPresent(n -> nameCounts.merge(n,1,Integer::sum));
+            m.candidate().declaredNameKey().aliases().forEach(n -> nameCounts.merge(n,1,Integer::sum));
+        });
         result.replaceAll((id,m) -> {
-            boolean collision=m.candidate().declaredNameKey().primary().filter(n -> nameCounts.get(n)>1).isPresent();
+            boolean collision=m.candidate().declaredNameKey().primary().filter(n -> nameCounts.get(n)>1).isPresent()
+                    ||m.candidate().declaredNameKey().aliases().stream().anyMatch(n -> nameCounts.get(n)>1);
             if(!collision&&counts.get(m.owner().value()+":"+methodName(source,id))<2)return m;
             issue(issues,source,id);return new Method(id,m.owner(),m.candidate(),false,m.staticMethod(),m.autowire(),m.defaultCandidate());
         });

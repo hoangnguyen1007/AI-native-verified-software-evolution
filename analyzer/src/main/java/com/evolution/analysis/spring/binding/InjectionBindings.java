@@ -14,7 +14,7 @@ public final class InjectionBindings {
     public enum Operation { COMPLETE, INCOMPLETE, LIMIT_EXCEEDED, ERROR, NOT_INVOKED, DEFERRED }
     public enum Stage { NAME_SHORTCUT, STRICT, GENERIC_FALLBACK, SELF_REFERENCE, RESOURCE_NAME,
                         PRIMARY, NON_FALLBACK, DEPENDENCY_NAME, SUGGESTED_NAME, PRIORITY, UNIQUE, AGGREGATE }
-    public enum ObligationStatus { NORMALIZED, NORMALIZATION_REQUIRED, NOT_INJECTION }
+    public enum ObligationStatus { NORMALIZED, SUPPRESSED, NORMALIZATION_REQUIRED, NOT_INJECTION }
     public record ObligationRow(ContentDigest obligation, ObligationStatus status, List<ContentDigest> dependencies) {
         public ObligationRow { Objects.requireNonNull(obligation); Objects.requireNonNull(status); dependencies = List.copyOf(dependencies); }
     }
@@ -85,7 +85,7 @@ public final class InjectionBindings {
                     "semanticsContextIdentity", context, "injectionPointIdentity", point,
                     "beanCandidateIdentity", candidate, "bindingSemanticsVersion", BindingProcessing.SEMANTICS)));
         }
-        public Object canonicalForm() { return Map.of("schema", "spring-injection-binding-result-v1", "provider", BindingProcessing.PROVIDER,
+        public Object canonicalForm() { return Map.of("schema", "spring-injection-binding-result-v2", "provider", BindingProcessing.PROVIDER,
                 "input", input, "context", context, "registration", registration.identity(), "rows", rows,
                 "issues", issues, "capabilityGaps", gaps, "coverage", coverage(), "obligations", obligations); }
     }

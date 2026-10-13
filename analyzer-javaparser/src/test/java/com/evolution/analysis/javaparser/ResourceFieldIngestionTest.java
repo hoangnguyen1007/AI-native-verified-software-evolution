@@ -55,7 +55,7 @@ class ResourceFieldIngestionTest {
         assertEquals(InjectionBindings.Outcome.SELECTED,row.outcome());
         assertEquals(InjectionBindings.Stage.RESOURCE_NAME,row.selectionStage().orElseThrow());
         assertEquals("6.2.0",org.springframework.context.annotation.CommonAnnotationBeanPostProcessor.class.getPackage().getImplementationVersion());
-        assertEquals("m4uv2.2-resource-fields-v1",SourceToSpringPlan.PROVIDER.version());
+        assertEquals("m4uv2.2-core-descriptors-v1",SourceToSpringPlan.PROVIDER.version());
         var evidence=assertInstanceOf(ConditionEvidence.Source.class,dependency.evidence());
         assertTrue(evidence.span().isPresent());assertTrue(f.build().containsSource(evidence));
         assertTrue(plan.binding().obligations().stream().anyMatch(o -> o.dependencies().contains(dependency.identity())));
@@ -259,7 +259,6 @@ class ResourceFieldIngestionTest {
                 "@jakarta.annotation.Resource(name=\"#{beanName}\") Store store;",
                 "@jakarta.annotation.Resource(name=true) Store store;",
                 "@jakarta.annotation.Resource static Store store;",
-                "@jakarta.annotation.Resource void setStore(Store store) {}",
                 "@jakarta.annotation.Resource @org.springframework.beans.factory.annotation.Autowired Store store;",
                 "@jakarta.annotation.Resource @org.springframework.context.annotation.Lazy Store store;",
                 "@jakarta.annotation.Resource @jakarta.inject.Named(\"store\") Store store;",
@@ -280,7 +279,7 @@ class ResourceFieldIngestionTest {
     }
     @org.springframework.stereotype.Component static class StaticResourceClient {@jakarta.annotation.Resource static Store store;}
 
-    @Test void inheritedResourceAndUnprovedProductRuntimeTypeRemainExplicitGaps() throws Exception {
+    @Test void inheritedResourceClosesWhileUnprovedProductRuntimeTypeRetainsGap() throws Exception {
         var inherited=fixtures.sourceFixture("""
                 package app;
                 @org.springframework.context.annotation.ComponentScan("app") class App {}
@@ -289,8 +288,8 @@ class ResourceFieldIngestionTest {
                 @org.springframework.stereotype.Component class Client extends Base {}
                 """);
         var plan=plan(inherited,"Store","Client");assertEquals(1,plan.binding().dependencies().size());
-        assertEquals(InjectionBindingPlan.Normalization.INCOMPLETE,plan.binding().dependencies().getFirst().normalization());
-        assertFalse(plan.gaps().isEmpty());assertEquals(InjectionBindings.Outcome.UNKNOWN,fixtures.bindingAt(inherited,plan,true).rows().getFirst().outcome());
+        assertEquals(InjectionBindingPlan.Normalization.COMPLETE,plan.binding().dependencies().getFirst().normalization());
+        assertEquals(InjectionBindings.Outcome.SELECTED,fixtures.bindingAt(inherited,plan,true).rows().getFirst().outcome());
         var wider=fixtures.sourceFixture("""
                 package app;
                 @org.springframework.context.annotation.ComponentScan("app") class App {}

@@ -70,7 +70,8 @@ final class BindingResolution {
             if (obligation.primaryMechanism().startsWith("spring.injection.")) {
                 var mapping = mappings.get(obligation.identity());
                 boolean mapped = mapping != null && valid(mapping.evidence(), build) && !barriers.contains(BINDING_LIMIT);
-                status = mapped ? ObligationStatus.NORMALIZED : ObligationStatus.NORMALIZATION_REQUIRED;
+                status = !mapped ? ObligationStatus.NORMALIZATION_REQUIRED : mapping.disposition()==Disposition.SUPPRESSED
+                        ? ObligationStatus.SUPPRESSED : ObligationStatus.NORMALIZED;
                 if (mapping != null) references = mapping.dependencies();
                 if (!mapped) {
                     var observation = raw.get(obligation.rawObservationIdentity());

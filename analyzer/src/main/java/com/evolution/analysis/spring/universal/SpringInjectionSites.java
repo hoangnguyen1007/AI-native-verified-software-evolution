@@ -34,7 +34,7 @@ public final class SpringInjectionSites {
     public static Result acquire(SpringSourceEvidence source,ConstructorInjectionIngestion.Result constructors,FrameworkGeneration generation,int maxSites) {
         if(maxSites<1)throw new IllegalArgumentException("Positive injection limit required");
         if(!constructors.analysis().equals(source.frontend().analysis()))throw new IllegalArgumentException("Foreign constructor evidence");
-        var input=IngestionEvidence.digest(List.of("spring.injection-sites:m4uv2.2-resource-fields-v1",source.identity(),constructors.identity(),generation,maxSites));
+        var input=IngestionEvidence.digest(List.of("spring.injection-sites:m4uv2.2-core-descriptors-v1",source.identity(),constructors.identity(),generation,maxSites));
         var sites=new TreeMap<String,Site>();var issues=new ArrayList<UniversalSpringEvidence.Issue>();
         for(var row:constructors.rows())if(row.status()==ConstructorInjectionIngestion.Status.SELECTED)for(var p:row.parameters()) {
             var metadata=metadata(source,p.parameter(),generation,issues);
@@ -56,21 +56,24 @@ public final class SpringInjectionSites {
                     &&declaration.status()==SemanticStatus.RESOLVED
                     &&source.annotations(element).stream().allMatch(a -> a.name().filter(MEMBER_METADATA::contains).isPresent()
                         ||kind==Kind.METHOD&&source.javaOverride(a));
-            if(kind==Kind.RESOURCE)memberComplete=declaration.entity().kind()==EntityKind.FIELD
-                    &&shape.filter(m -> !m.staticMember()).isPresent()&&declaration.status()==SemanticStatus.RESOLVED
+            if(kind==Kind.RESOURCE)memberComplete=(declaration.entity().kind()==EntityKind.FIELD||declaration.entity().kind()==EntityKind.METHOD)
+                    &&shape.filter(m -> !m.staticMember()&&!m.abstractMember()&&!m.genericMethod()).isPresent()&&declaration.status()==SemanticStatus.RESOLVED
                     &&name.equals("jakarta.annotation.Resource")&&generation.consistent()
                     &&generation.frameworkVersion().filter("6.2.0"::equals).isPresent()
-                    &&source.annotationArtifact(annotation).filter(a -> a.coordinate().equals("jakarta.annotation:jakarta.annotation-api:2.0.0")).isPresent()
+                    &&source.annotationArtifact(annotation).filter(a -> a.coordinate().equals("jakarta.annotation:jakarta.annotation-api:2.0.0")
+                            &&a.contentDigest().value().equals("sha256:2f0a0a2a5fe653794bdb1b9531bc9bea53c92c11e0b693e74cf8e396aa2ff325")).isPresent()
                     &&source.annotations(element).stream().allMatch(a -> a.name().filter(n -> n.equals("jakarta.annotation.Resource")
-                            ||n.equals("org.springframework.beans.factory.annotation.Qualifier")).isPresent());
+                            ||n.equals("org.springframework.beans.factory.annotation.Qualifier")).isPresent()||source.javaOverride(a));
             var parameters=source.relationships().stream().filter(r->r.source().equals(element)&&r.kind().value().equals("java.has-parameter")&&r.target() instanceof RelationshipTarget.Resolved)
                     .map(r->((RelationshipTarget.Resolved)r.target()).target()).distinct().toList();
+            if(kind==Kind.RESOURCE&&declaration.entity().kind()==EntityKind.METHOD)memberComplete&=parameters.size()==1;
             List<EntityIdentity> targets=declaration.entity().kind()==EntityKind.FIELD||declaration.entity().kind()==EntityKind.PARAMETER?List.of(element):parameters;
             if(targets.isEmpty()&&kind!=Kind.CONSTRUCTOR&&kind!=Kind.BEAN_PARAMETER)issues.add(new UniversalSpringEvidence.Issue(UniversalSpringEvidence.Reason.ANNOTATION_UNSUPPORTED,element.value(),List.of(annotation.evidence())));
             for(var target:targets) {
                 boolean valid=namespace&&annotations.size()==1&&kind!=Kind.VALUE&&memberComplete;
                 Optional<String> resourceName=kind==Kind.FIELD||kind==Kind.RESOURCE&&declaration.entity().kind()==EntityKind.FIELD?
                         shape.map(MemberDeclarationRecord::name):Optional.empty();boolean required=true,resourceDefault=false;
+                if(kind==Kind.RESOURCE&&declaration.entity().kind()==EntityKind.METHOD)resourceName=shape.map(m -> resourceMethodName(m.name()));
                 try {
                     var values=LiteralConditionAnnotation.parse(annotation.use().spelling());
                     if(kind==Kind.RESOURCE){
@@ -84,7 +87,8 @@ public final class SpringInjectionSites {
                 }catch(IllegalArgumentException malformed){valid=false;}
                 var types=source.frontend().types().stream().filter(t->t.owner().equals(Optional.of(target))&&Set.of("java.parameter-type","java.field-type").contains(t.role().value())).map(TypeUseRecord::type).toList();
                 var metadata=metadata(source,target,generation,issues);
-                if(kind==Kind.METHOD)metadata=methodMetadata(source,element,target,metadata,generation,issues);
+                if(kind==Kind.METHOD||kind==Kind.RESOURCE&&declaration.entity().kind()==EntityKind.METHOD)
+                    metadata=methodMetadata(source,element,target,metadata,generation,issues);
                 valid&=metadata.valid()&&types.size()==1&&types.getFirst().status()==SemanticStatus.RESOLVED;
                 if(!valid)issues.add(new UniversalSpringEvidence.Issue(UniversalSpringEvidence.Reason.ANNOTATION_UNSUPPORTED,target.value(),List.of(annotation.evidence())));
                 sites.put(target.value(),new Site(kind==Kind.BEAN_PARAMETER?element:owner.orElseThrow(),target,kind,types.size()==1?Optional.of(types.getFirst()):Optional.empty(),resourceName,metadata.qualifier(),required,valid?Status.ACQUIRED:Status.UNKNOWN,source.evidence(target),resourceDefault));
@@ -98,6 +102,13 @@ public final class SpringInjectionSites {
         return new Result(input,result,issues,UniversalSpringEvidence.gaps(source.manifest().snapshot().identity(),input,issues));
     }
     private record Metadata(Optional<String> qualifier,boolean valid) {}
+    private static String resourceMethodName(String name) {
+        if(!name.startsWith("set")||name.length()<=3)return name;
+        String property=name.substring(3);
+        // Spring StringUtils.uncapitalizeAsProperty: preserve leading acronyms.
+        if(property.length()>1&&Character.isUpperCase(property.charAt(0))&&Character.isUpperCase(property.charAt(1)))return property;
+        return Character.toLowerCase(property.charAt(0))+property.substring(1);
+    }
     private static Metadata methodMetadata(SpringSourceEvidence source,EntityIdentity method,EntityIdentity parameter,
                                            Metadata parameterMetadata,FrameworkGeneration generation,List<UniversalSpringEvidence.Issue> issues) {
         // Framework 6.2.0 checks parameter qualifiers first. A matched parameter qualifier

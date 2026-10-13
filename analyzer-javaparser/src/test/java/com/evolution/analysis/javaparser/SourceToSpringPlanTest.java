@@ -298,14 +298,18 @@ class SourceToSpringPlanTest {
         int overrideCalls;
         @Override protected void wire(OracleInheritedStore z,OracleInheritedStore a){overrideCalls++;}
     }
-    @Test void fullySuppressedMethodRetainsAcquisitionEvidenceAndUnmappedObligation() throws Exception {
+    @Test void fullySuppressedMethodRetainsEvidenceAndExplicitSuppressedObligation() throws Exception {
         var f=inheritedFixture("@org.springframework.beans.factory.annotation.Autowired protected void wire(Store store) {}","@Override protected void wire(Store store) {}","");
         var plan=prepare(f,true);assertTrue(plan.binding().dependencies().isEmpty());assertTrue(plan.binding().groups().isEmpty());
         assertEquals(1,plan.methodSelections().size());assertEquals(SourceMethodSelection.Status.SUPPRESSED,plan.methodSelections().getFirst().status());
-        assertTrue(bindingAt(f,plan,true).obligations().stream().anyMatch(o -> o.status()==InjectionBindings.ObligationStatus.NORMALIZATION_REQUIRED));
-        assertFalse(bindingAt(f,plan,true).capabilityGaps().isEmpty());
+        assertTrue(bindingAt(f,plan,true).obligations().stream().anyMatch(o -> o.status().name().equals("SUPPRESSED")));
+        assertTrue(bindingAt(f,plan,true).obligations().stream().noneMatch(o -> o.status()==InjectionBindings.ObligationStatus.NORMALIZATION_REQUIRED));
         assertTrue(plan.inventory().rawObservations().stream().anyMatch(r -> r.spelling().contains("@org.springframework.beans.factory.annotation.Autowired")));
         assertEquals(plan.identity(),prepare(f,true).identity());
+        var open=prepare(f,true,UNKNOWN,100);
+        assertTrue(bindingAt(f,open,true).obligations().stream().noneMatch(o -> o.status()==InjectionBindings.ObligationStatus.SUPPRESSED));
+        assertTrue(bindingAt(f,open,true).obligations().stream().anyMatch(o -> o.status()==InjectionBindings.ObligationStatus.NORMALIZATION_REQUIRED));
+        var truth=evaluate(f,plan);assertTrue(truth.replays().stream().allMatch(TruthRegionEvaluation.WitnessReplay::valid));
     }
     @Test void packagePrivateAncestorMethodAcrossPackagesIsNotSuppressed() throws Exception {
         var f=sourceFixture(Map.of("base/Base.java","""
@@ -914,7 +918,7 @@ class SourceToSpringPlanTest {
         @org.springframework.context.annotation.Bean(autowireCandidate=false) OracleBeanStore excluded(){return new OracleBeanStore();}
         @org.springframework.context.annotation.Bean OracleBeanClient client(@org.springframework.beans.factory.annotation.Qualifier("named") OracleBeanStore store){return new OracleBeanClient(store);}
     }
-    @Test void missingReturnTypeAndUnsupportedAliasesRemainExplicitCandidatesWithGaps() throws Exception {
+    @Test void missingReturnTypeStaysQualifiedWhileIndependentAliasMetadataCloses() throws Exception {
         var f=sourceFixture("""
                 package app;
                 @org.springframework.context.annotation.ComponentScan("app") class App {}
@@ -925,10 +929,12 @@ class SourceToSpringPlanTest {
                 }
                 """);
         var plan=beanPlan(f,true,"Config","store","other");
-        assertEquals(3,plan.binding().registrationPlan().steps().size());assertFalse(plan.gaps().isEmpty());
+        assertEquals(5,plan.binding().registrationPlan().steps().size());assertFalse(plan.gaps().isEmpty());
         assertTrue(candidate(plan,"store").exposedTypes().isEmpty());
         assertTrue(plan.binding().registrationPlan().discoveryPlan().events().stream()
-                .filter(e -> e.kind()==RegistrationEvent.Kind.BEAN_METHOD).allMatch(e -> e.conditionMetadata()==UNKNOWN));
+                .filter(e -> e.candidate().filter(c -> c.declaredNameKey().primary().filter("store"::equals).isPresent()).isPresent())
+                .allMatch(e -> e.conditionMetadata()==UNKNOWN));
+        assertEquals(List.of("two"),candidate(plan,"one").declaredNameKey().aliases());
         assertTrue(evaluate(f,plan).regions().stream().noneMatch(r -> r.classification()==TruthRegionEvaluation.Classification.MUST));
     }
     @Test void producerNameCollisionCannotInventReaderOverrideBehavior() throws Exception {
@@ -1671,7 +1677,7 @@ class SourceToSpringPlanTest {
                 @org.springframework.beans.factory.annotation.Autowired void wire(Dependency z,Dependency a) {}
                 ""","@org.springframework.context.annotation.Profile(\"dev\")");
         var plan=beanPlan(f,true,"Dependency","Config","first","second");
-        assertEquals("m4uv2.2-resource-fields-v1",SourceToSpringPlan.PROVIDER.version());
+        assertEquals("m4uv2.2-core-descriptors-v1",SourceToSpringPlan.PROVIDER.version());
         assertEquals(6,plan.binding().dependencies().size());
         assertEquals(3,plan.binding().dependencies().stream().map(d -> d.point().identity()).distinct().count());
         assertEquals(6,plan.binding().dependencies().stream().map(InjectionBindingPlan.Dependency::identity).distinct().count());

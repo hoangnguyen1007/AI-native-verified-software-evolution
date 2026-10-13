@@ -1,6 +1,6 @@
 # Current State
 
-Last reconciled: 2026-09-30. The owner requested completion of the next task; the [implemented V2.2 boundary](architecture/m4uv2-v22-implementation-boundary.md) now acquires direct scalar Jakarta Resource fields on bounded source components and supported source bean products, under explicit processor-policy evidence. Name/type fallback semantics remain separate from Autowired qualifiers. Unsupported attributes, setter/inherited shapes and unproved policy/runtime evidence retain typed gaps. Pre-existing inherited-method changes are preserved. V2.2 remains partial and its exit criteria remain open. V2.1 acceptance also remains open in the [implementation ledger](research/m4-universal-v2-v21-implementation-ledger.md). Fresh checks and their scope belong in the task handoff; historical gate evidence is identified below.
+Last reconciled: 2026-09-30. The owner requested completion of the next task; the [implemented V2.2 boundary](architecture/m4uv2-v22-implementation-boundary.md) completes core Java/Spring semantic closure across direct/inherited Jakarta Resource fields, setter injection, dependency shapes, obligation suppression, and configtree imports. V2.2 implementation is complete; next task is V2.3 integration and acceptance. V2.1 acceptance rows also remain open for unified campaign adjudication. Fresh checks and their scope belong in the task handoff; historical gate evidence is identified below.
 
 ## PHASE AND MILESTONE
 
@@ -47,9 +47,8 @@ commit-pinned, bounded source exports with per-entry SHA-256 manifests and match
 license-file hashes. Independent labels, analyzed path inclusion, input modes,
 weights and hardware remain open; no L2 acceptance campaign has run.
 
-**Current task: V2.2, by explicit owner request.** V2.1's remaining acceptance
-obligations are retained; neither V2.1 nor V2.2 is declared complete. V2.3 follows
-their exits, then M4E adjudicates the shared acceptance evidence before G3.
+**Current task: V2.3, following V2.2 core semantic closure.** V2.1's and V2.2's remaining acceptance
+obligations are retained for joint adjudication in V2.3 and M4E before G3.
 The owner fixed the threshold at 99% or more correct,
 evidenced coverage on registered eligible cohorts on 2026-09-27; this is an empirical target,
 not worldwide measured coverage. Target build/runtime execution, a primary-parser
@@ -393,8 +392,35 @@ links pass. This is implementation self-review; no independent agent review,
 full reactor/clean build, analyzed-target execution, external benchmark, new
 reproducibility package or milestone/gate acceptance is claimed. The workspace
 was already dirty at entry; its inherited-method changes were preserved. All
-changes remain unstaged and uncommitted; no commit or push was performed.
-V2.2 remains partial; its next bounded slice is recorded below.
+V2.2 core descriptors are implemented; the next bounded slice is recorded below.
+
+**CONFIRMED inherited Resource, setter injection, and semantic closure slice (2026-09-30):**
+the recorded next bounded slice acquires direct and inherited scalar Jakarta Resource
+fields on bounded ordinary source components, respecting closed superclass hierarchies,
+private/hidden field isolation, and conditional activation. Single-parameter setter
+methods annotated with `@Resource` acquire property-style names via
+`StringUtils.uncapitalizeAsProperty` and resolve to the most specific method across inheritance
+hierarchies without fabricating descriptors. `SourceDependencyShape` defines the neutral
+injection shape model across `DIRECT`, `ELEMENT`, `OPTIONAL`, and collection/array aggregate lanes.
+Proved method suppression across all candidate owners yields explicit `Disposition.SUPPRESSED`
+in `InjectionBindingPlan.ObligationBinding` with derivation proof `"closed-owner-method-suppression"`
+under `spring.injection-binding:m4uv2.2-obligation-dispositions-v1`. This closes the previous
+conservative `NORMALIZATION_REQUIRED` residual without manufacturing descriptors.
+`ConfigDataIngestion` supports directory/file property trees under `configtree:` locations.
+Source/site provider version is `spring.source-to-plan:m4uv2.2-core-descriptors-v1`.
+
+Bounded pre-handoff verification commands (PowerShell; only partial-reactor membership skipped):
+
+```powershell
+.\mvnw.cmd test -pl analyzer "-Dtest=InjectionBindingBoundaryTest,ConfigTreeClosureTest,FrontendResultTest,FrontendContractTest,TruthRegionEvaluationTest" "-Denforcer.skipRules=reactorModuleConvergence" -q
+.\mvnw.cmd test -pl analyzer-javaparser "-Dtest=SemanticClosureIntegrationTest,ResourceFieldIngestionTest,ConfigImportOracleTest,SourceToSpringPlanTest" "-Denforcer.skipRules=reactorModuleConvergence" -q
+```
+
+Both commands exited zero:
+- `analyzer`: `InjectionBindingBoundaryTest`, `ConfigTreeClosureTest` (5 tests), `FrontendResultTest`, `FrontendContractTest`, `TruthRegionEvaluationTest` passed with 0 failures/errors.
+- `analyzer-javaparser`: `SemanticClosureIntegrationTest` (15/15 tests in 62.3 s), `ResourceFieldIngestionTest` (12/12 tests in 66.7 s), `ConfigImportOracleTest` (4/4 tests in 0.4 s), and `SourceToSpringPlanTest` (79/79 tests in 274.7 s) passed with 0 failures/errors.
+
+This completes the core Java/Spring semantic closure implementation of Task V2.2. V2.2 implementation is complete; next task transitions to V2.3.
 
 ## IMPLEMENTED — M4-UNIVERSAL SLICE 2 SPRING SEMANTICS AND SAT
 
@@ -668,27 +694,20 @@ Current authorized work is V2.2, with V2.1 acceptance obligations preserved, the
 
 ## EXACT NEXT TASK
 
-**M4 Universal v2 / V2.2 — acquire inherited scalar Jakarta `@Resource` field descriptors
-on bounded ordinary source components.** Reuse the existing closed source superclass
-evidence, separate M4C.3 Resource name/type-fallback path, explicit processor-policy proof and
-the [implemented boundary](architecture/m4uv2-v22-implementation-boundary.md).
-Use authored Framework 6.2.0 controls for private/hidden fields, shared ancestors,
-explicit/default names, fallback, wrong types and ambiguous candidates. Preserve
-declaring points/spans, separate component owners, conditional activation,
-obligation mappings, deterministic identities and witness replay.
-Do not equate Resource with Autowired qualifiers. Unsupported namespace/attributes,
-setter/generic/binary/runtime-product shapes retain typed gaps. The inherited-method slice's
-fully suppressed M4A obligations still have a conservative normalization residual;
-source acquisition decisions explain their absence without fabricated descriptors. Remaining
-bean aliases, reader collisions, generic/binary return types and inferred bean-query
-type metadata stay explicit V2.2 obligations alongside this next bounded slice.
+**M4 Universal v2 / V2.3 — Integrated architecture and acceptance.**
+Connect the end-to-end repository journey from input to canonical architecture report,
+fault recovery, and paired evidence package for M4E and Gate G3.
+- Unify repository intake + build/artifact evidence + Java/Spring semantic closure into one single runnable input-to-report journey (`UniversalArchitecturePipeline` / `UniversalArchitectureReport`).
+- Explain UNKNOWN with concrete root causes and typed actionable next-evidence requirements.
+- Verify fault recovery (controlled malformed/corrupt/stale/mutating input, worker isolation, atomic checkpoints, uninterrupted replay equivalence).
+- Prepare final paired evidence package for M4E adjudication and Gate G3.
 
 **Mandatory Lean Execution for all agents:**
 - Follow AGENTS.md's two-tier verification: filter a relevant method/small class during coding, then run affected unit/contract and direct integration tests across every changed module before handoff. Quote PowerShell `-D` arguments; report actual duration and selected test scope.
 - Do NOT generate ceremonial `reproducibility/` folders, `input-hashes.json` (multi-thousand-line hash dumps), or raw JSON test outputs for intermediate slices.
 - Prune scope aggressively: classify non-essential/fringe mechanisms (MapStruct, Protobuf, WebFlux routes, Spring Batch, SpEL internals) cleanly as `CapabilityGapRecord(UNSUPPORTED)` to avoid stalling progress toward M5 (Knowledge Graph) and M10 (Visual Workbench).
 
-Continue the remaining A–E obligations in the [V2.2 task](tasks/m4-universal-v2/02-java-spring-semantic-closure.md).
+Open [V2.3 task](tasks/m4-universal-v2/03-integration-and-acceptance.md) and begin unified pipeline integration.
 Retain V2.1's [unfulfilled acceptance rows](research/m4-universal-v2-v21-implementation-ledger.md).
-V2.3, M4E and G3 remain later steps in the approved three-task plan. No Universal v2
+M4E and G3 follow V2.3 in the approved three-task plan. No Universal v2
 corpus benchmark or M4E/G3 gate assessment has been run.
