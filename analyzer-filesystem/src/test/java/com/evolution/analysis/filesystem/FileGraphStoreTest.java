@@ -37,6 +37,17 @@ class FileGraphStoreTest {
         assertEquals(graph.edges(),restored.edges());assertEquals(graph.evidence(),restored.evidence());
         assertEquals(graph.outgoing(graph.contexts().getFirst().identity(),graph.edges().getFirst().source()),
                 restored.outgoing(graph.contexts().getFirst().identity(),graph.edges().getFirst().source()));
+        var request=new com.evolution.analysis.query.ArchitectureQuery.Request(graph.identity(),graph.contexts().getFirst().identity(),
+                com.evolution.analysis.query.ArchitectureQuery.Scope.ENTITY,com.evolution.analysis.query.ArchitectureQuery.Projection.BOUNDED_UNION,
+                com.evolution.analysis.query.ArchitectureQuery.Direction.OUTGOING,Set.of("fixture.dependency"),com.evolution.analysis.query.ArchitectureQuery.Population.all(),false,
+                Optional.empty(),com.evolution.analysis.query.ArchitectureQuery.Limits.defaults());
+        var expected=new com.evolution.analysis.query.ArchitectureQueryService(memory.load(graph.identity()).orElseThrow());
+        var actual=new com.evolution.analysis.query.ArchitectureQueryService(restored);
+        assertEquals(expected.edges(request,com.evolution.analysis.query.ArchitectureQuery.Page.first()),actual.edges(request,com.evolution.analysis.query.ArchitectureQuery.Page.first()));
+        assertEquals(expected.findPaths(request,graph.edges().getFirst().source(),graph.edges().getFirst().target().identities().getFirst()),
+                actual.findPaths(request,graph.edges().getFirst().source(),graph.edges().getFirst().target().identities().getFirst()));
+        assertEquals(expected.entities(request,"",new com.evolution.analysis.query.ArchitectureQuery.Page(1,Optional.empty())),
+                actual.entities(request,"",new com.evolution.analysis.query.ArchitectureQuery.Page(1,Optional.empty())));
     }
     @Test void corruptExistingSnapshotIsRejectedAndNeverOverwritten() throws Exception {
         var graph=graph();var store=new FileGraphStore(directory);store.save(graph);

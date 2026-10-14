@@ -4,9 +4,9 @@ Ngày lập: 2026-10-14. Vai trò lập kế hoạch: Lead Architect + Graph Arc
 
 **CONFIRMED — kiểm tra repository:** HEAD tại lúc lập kế hoạch là `046440c`, working tree sạch; [current state](../../current-state.md) và [G3 record](../../reproducibility/g3-spring-adjudication-record-2026-10-14.md) ghi M4 hoàn tất, G3 PASSED, M5 tiếp theo. Đây là trạng thái được ghi nhận, không phải lần tái kiểm chứng G3. G4 chưa bắt đầu.
 
-**PROVISIONAL:** đây là baseline kế hoạch được lập trước implementation; các phần M5.2/M5.3, metric catalog, hiệu năng và G4 chưa được chứng nhận. Trạng thái implementation M5.1 được cập nhật ngay bên dưới.
+**PROVISIONAL:** đây là baseline kế hoạch được lập trước implementation; metric catalog, numerical product budgets và G4 chưa được chứng nhận. Trạng thái implementation M5.1–M5.2 được cập nhật ngay bên dưới.
 
-**Cập nhật triển khai 2026-10-14:** M5.1 đã hoàn tất theo [contract graph/persistence](../../architecture/m5-canonical-graph.md), với 85 bounded tests pass, zero failures/errors/skips. Đoạn lập kế hoạch phía trên là trạng thái tại thời điểm tạo tài liệu; bước tiếp theo hiện tại là M5.2. M5.2/M5.3 và G4 chưa hoàn tất.
+**Cập nhật triển khai 2026-10-14:** M5.1 và M5.2 đã hoàn tất theo [contract graph/persistence](../../architecture/m5-canonical-graph.md) và [contract queries](../../architecture/m5-architecture-queries.md). Bounded verification M5.2 sau feedback hardening: 121 tests / 18 suites pass, zero failures/errors/skips. Đoạn lập kế hoạch phía trên là trạng thái lịch sử; bước tiếp theo là M5.3. Metrics và G4 chưa hoàn tất; đây là self-review, không independent adjudication.
 
 ## Đúng ba task, thực hiện tuần tự
 

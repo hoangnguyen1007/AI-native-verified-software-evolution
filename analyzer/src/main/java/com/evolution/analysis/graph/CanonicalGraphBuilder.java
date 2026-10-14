@@ -202,6 +202,8 @@ public final class CanonicalGraphBuilder {
                     "space",slice.space().map(s->s.identity()),"parameters",slice.parameters()));
             var oldContext=contexts.putIfAbsent(context,new Context(context,snapshot,Optional.of(discovery.buildContext().analysisIdentity()),contextPayload));
             if(oldContext!=null&&!oldContext.evidence().equals(contextPayload))throw new IllegalArgumentException("Conflicting Spring context");
+            // Embedded plan/result gaps must also participate in the graph's searchable denominator.
+            plan.gaps().forEach(g->gapRecord(context,g));
             var planPayload=artifact("spring.plan",Map.of("inputIdentity",plan.inputIdentity(),"inventory",plan.inventory(),
                     "conditions",plan.conditions(),"binding",plan.binding(),"discovery",Map.of("canonical",discovery.canonicalForm(),"build",discovery.buildContext(),
                     "events",discovery.events(),"precedence",discovery.precedence(),"initialDefinitions",discovery.initialDefinitions()),"gaps",plan.gaps(),"methodSelections",plan.methodSelections()));
@@ -250,6 +252,7 @@ public final class CanonicalGraphBuilder {
             slice.baseline().ifPresent(b->artifact("spring.baseline",b));
             slice.parameters().ifPresent(p->artifact("spring.evaluation-parameters",p));
             slice.explicitTruth().ifPresent(truth->{
+                truth.capabilityGaps().forEach(g->gapRecord(context,g));
                 artifact("spring.explicit-result",truth);
                 truth.worlds().forEach(w->node(w.identity().value(),context,"CONFIGURATION_WORLD",artifact("spring.world",w)));
                 for(var region:truth.regions()) {
@@ -264,6 +267,7 @@ public final class CanonicalGraphBuilder {
                     if(nodes.containsKey(key(context,r.witness().value())))link(context,"spring.has-replay",r.witness().value(),id,payload);});
             });
             slice.symbolicTruth().ifPresent(truth->{
+                truth.gaps().forEach(g->gapRecord(context,g));
                 artifact("spring.symbolic-result",truth);
                 truth.formulas().forEach(f->{var payload=artifact("spring.formula",f);node(f.identity().value(),context,"REGION_FORMULA",payload);
                     f.children().forEach(child->link(context,"spring.formula-input",f.identity().value(),child.value(),payload));});

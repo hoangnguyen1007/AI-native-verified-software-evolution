@@ -1,6 +1,6 @@
 # M5.2 — Conditional projections và architecture query services
 
-Trạng thái: **PROVISIONAL / chưa triển khai**. Điều kiện vào: M5.1 pass. Đọc [README](README.md), graph contract vừa triển khai và `ConfigurationReasoner`, `TruthRegionEvaluation`, `SymbolicTruthRegions`. Exit: query neutral, bounded và evidence-backed trên graph thật; không REST/UI/policy engine.
+Trạng thái: **IMPLEMENTED / bounded verification pass (2026-10-14)**. Điều kiện vào M5.1 đã đáp ứng. [Contract triển khai](../../architecture/m5-architecture-queries.md) định nghĩa API/semantics thực tế; numerical product budgets vẫn PROVISIONAL và G4 chưa adjudicate. Đọc [README](README.md), graph contract và `ConfigurationReasoner`, `TruthRegionEvaluation`, `SymbolicTruthRegions`. Exit: query neutral, bounded và evidence-backed trên graph thật; không REST/UI/policy engine.
 
 ## Ownership và API
 
@@ -110,8 +110,41 @@ Lệnh chính dự kiến (bổ sung core/store regression nêu trên theo affec
 
 Mở rộng `FileGraphStoreTest` với query parity hoặc ghi rõ tên suite thay thế thực tế; không chỉ chạy round-trip counts cũ rồi gọi là query parity.
 
-- [ ] Q01–Q12 pass, các stores cùng query results, giới hạn và statuses đã kiểm chứng.
-- [ ] Query version/limits/cycle counting/projection semantics được document; không storage/parser leakage.
-- [ ] Current-state ghi query đã có và metrics/G4 còn mở.
+- [x] Q01–Q12 có bounded assertions, các stores cùng query results, giới hạn và statuses đã kiểm chứng.
+- [x] Query version/limits/cycle counting/projection semantics được document; không storage/parser leakage.
+- [x] Current-state ghi query đã có và metrics/G4 còn mở.
+
+### Kết quả thực tế và handoff
+
+Từ HEAD `06bcbb5` với working tree sạch, đã thêm package `com.evolution.analysis.query` gồm request/result contracts, region catalog/algebra, bounded traversal và service; ba core suites mới và một adapter integration suite; mở rộng file-store query parity. Sửa đúng một thiếu sót graph consumer phát hiện: các typed Spring gaps có trong plan/evaluation payload nay cũng có CAPABILITY_GAP node để truy vấn nguyên nhân. Không đổi M1 preimage hoặc snapshot schema, không thêm dependency/database.
+
+Lệnh pre-handoff cuối (exit 0):
+
+```powershell
+.\mvnw.cmd test -pl analyzer "-Dtest=ArchitectureProjectionTest,ArchitectureQueryContractTest,ConditionalPathCycleTest,CanonicalGraphBuilderTest,CanonicalGraphContractTest,InMemoryGraphStoreTest,IdentityAndSourceContractTest,CanonicalSerializationTest,FrontendContractTest,FrontendResultTest,AnalysisAndAssessmentContractTest,TruthRegionEvaluationTest,SatConfigurationReasonerTest" "-Denforcer.skipRules=reactorModuleConvergence" -q
+.\mvnw.cmd package install -pl analyzer "-DskipTests" "-Denforcer.skipRules=reactorModuleConvergence" -q
+.\mvnw.cmd test -pl analyzer-filesystem "-Dtest=FileGraphStoreTest" "-Denforcer.skipRules=reactorModuleConvergence" -q
+.\mvnw.cmd test -pl analyzer-javaparser "-Dtest=ArchitectureQueryPipelineIntegrationTest,CanonicalGraphPipelineIntegrationTest,UniversalArchitecturePipelineIntegrationTest,UniversalArchitectureM4EAdjudicationTest" "-Denforcer.skipRules=reactorModuleConvergence" -q
+```
+
+**86 core / 13 suites + 6 filesystem / 1 suite + 26 adapter / 4 suites = 118 tests / 18 suites**, failures/errors/skips đều 0. Có 29 test mới, ngoài assertions parity trong suite file-store hiện có. Core/adapter suite time là 9.298 / 29.156 giây, không tính Maven startup; core command chạy bất đồng bộ không được đo end-to-end riêng. Filesystem command cuối mất 4.165 giây. Packaging/install skipTests chỉ refresh dependency, không là test evidence.
+
+Inner TDD core có command 3.672–6.257 giây; không phải mọi loop đều đạt <5 giây. Focused integration và cold compilation cũng vượt mục tiêu; không bỏ required checks để giữ số thời gian. IDE từng ghi bytecode stub `Unresolved compilation problems`, dù source hợp lệ. Sau khi xác nhận lỗi môi trường và source compile, đã dùng `dependency:build-classpath` (test scope, output dưới target) và JDK 21 `javac -encoding UTF-8 -proc:none --release 21` biên dịch có phạm vi các selected adapter test files cùng `SourceToSpringPlanTest.java` trước lần Maven test cuối. Không clean/full reactor hay chỉnh IDE/user settings.
+
+Q01/Q05: năm modes, OR support, incomplete space; Q02–Q04/Q06/Q10: prefix pruning, full conjunction, distinct prefixes, explicit universe/context mismatch, joint witnesses, small exhaustive oracle và 60 symbolic variables; Q07–Q08: iterative SCC/deep DAG, directed identity, quota 49/50/51, depth 20/21, global steps đúng 100000, solver/input/queue/operational guards; Q09: cursor identity/reload/store parity; Q11–Q12: occurrence spans, gap/provider references, registration→event và witness→replay, MAIN/TEST partitions, partial-source confidence và compatibility. R2 controller→repository/package-cycle/hidden-configuration controls có source thật. Prototype scope control giữ `ANNOTATION_UNSUPPORTED` và UNKNOWN từ M4, không chế definite binding hay scope violation.
+
+Không blocker còn lại trong M5.2. Self-review không phải independent review. Chưa có external corpus/performance certification, semantic replay mới cho joint path, numerical product-budget approval, metric implementation hoặc G4 acceptance. Không commit/push hay reproducibility package. Các giới hạn và thuật toán canonical simple-cycle tương đương Johnson là lựa chọn nội bộ có thể thay thế, đã document; không phát sinh yêu cầu đổi scope hay quyết định human mới cho slice này.
+
+### Rà soát góp ý Gemini — 2026-10-14
+
+| Finding | Quyết định và evidence |
+|---|---|
+| F1 — document metadata heap | **Sửa.** Không giữ full parsed `source.document` trong map; chỉ giữ module/classification, reserve 4 auxiliary units trước parse/retention và reuse khi describe. Test với budget thấp tái hiện COMPLETE sai trước sửa, nay PARTIAL/INPUT. Context scan cho exact inventory/filter vẫn cần thiết; chưa tuyên bố lazy pagination cho toàn query. |
+| F2 — DFS thiếu Johnson blocked-set | **Giữ thuật toán; chấp nhận giới hạn hiệu năng.** Dense SCC có thể sớm PARTIAL, đúng defensive-budget contract. Thêm regression infeasible-prefix-first → shared vertex → feasible cycle: blocked-state chỉ theo vertex trong SAT-pruned traversal có thể bỏ sót. Không tuyên bố độ phức tạp output-sensitive của Johnson; tối ưu sau cần đo lường và kiểm chứng region-aware. |
+| F3 — PACKAGE tuple parse | **Sửa.** Tái hiện exception, thêm bounded shape/arity validation và fallback có `INVALID_CANONICAL_NAME`; giữ evidence, không chế label. Controls gồm malformed JSON, non-array, empty/null/non-string tag, missing/extra components và package-parts sai kiểu. |
+| F4 — GC-sensitive heap guard | **Đồng ý với lưu ý; không đổi thuật toán guard.** Contract nay nói rõ headroom tức thời không phải SLA hoặc exact byte accounting. |
+| F5 — IDE stub/Maven handoff | **Đồng ý với Maven handoff; không ép clean/full reactor.** Sau sửa, chạy Maven `test` chuẩn ở cả 3 module (các selectors bên trên), không cần javac workaround trong lần rà soát này. Historical stub/workaround record được giữ nguyên; incremental Maven success không tự là bằng chứng clean build. |
+
+Verification mới nhất: **89 core / 13 suites + 6 filesystem / 1 suite + 26 adapter / 4 suites = 121 tests / 18 suites**, zero failures/errors/skips, tất cả command exit 0. Có thêm 3 regression methods so với checkpoint 118 tests phía trên. Hai regression ban đầu đỏ đúng lỗi (3.776 s); controls fix/region-cycle xanh (4.345 s); null-tag control tiếp tục bắt NPE trước khi shape validation được hoàn thiện. File-store command cuối 4.511 s. Core suite time 9.417 s và filesystem 0.309 s, không tính Maven startup; consumer artifact được refresh bằng package/install skipTests trước kiểm chứng. Không thêm dependency, đổi identity/schema, commit/push, external benchmark hoặc independent-review claim.
 
 **Exact next task:** M5.3, xây metric catalog/versioned results trên graph/query đầy đủ và lập evidence G4.
