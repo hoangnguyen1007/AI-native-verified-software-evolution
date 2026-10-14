@@ -1,10 +1,10 @@
 # Current State
 
-Last reconciled: 2026-10-13. The owner requested completion of Task V2.3; the integrated architecture intelligence pipeline (`UniversalArchitecturePipeline` and `UniversalArchitectureReport`) completes the three-task Universal v2 plan (V2.1, V2.2, V2.3). All 9 integration journeys in `UniversalArchitecturePipelineIntegrationTest` are verified 100% green. Task V2.3 implementation is complete; next milestone phase is M4E adjudication of the shared v2 acceptance package and Gate G3. Fresh checks and their scope belong in the task handoff; historical gate evidence is identified below.
+Last reconciled: 2026-10-14. Task "M4E Adjudication of Shared Universal v2 Acceptance Package & Gate G3" is complete. All 15 pipeline integration and M4E adjudication journeys in `UniversalArchitecturePipelineIntegrationTest` and `UniversalArchitectureM4EAdjudicationTest` are verified 100% green. Gate G3 is officially certified PASSED in [Gate G3 Adjudication Record](reproducibility/g3-spring-adjudication-record-2026-10-14.md). Milestone M4 is complete; next milestone phase is Milestone 5 (Canonical Graph, Metrics, and Architecture Query Layer).
 
 ## PHASE AND MILESTONE
 
-SE121, Track A + B. M1 contracts are committed at `b04220e722cc4bc772cbb3ad8531d4dc1ea1a058`; G1 is recorded passed. M2 frontend delivery is recorded complete across all 18 relationship families. M3.1–M3.8 implementation is delivered and its historical full reactor checkpoint passes 221 tests. M4-R0 is human-accepted, M4A.1–M4A.2 deliver the production evidence-only Spring mechanism inventory and annotation-declaration graph, M4B.1–M4B.2 deliver the condition IR foundation, evidence-to-IR lowering and bounded exogenous condition evaluation, M4C.1–M4C.3 deliver normalized discovery/registration/binding for the pinned Framework 6.2.0 / Boot 3.4.0 fragment, and M4D delivers finite-space truth regions plus minimized independently replayed witnesses. M4E validation and G3 remain pending. Focused G2 hardening tolerates equivalent duplicate dependency rows throughout external parent/BOM/profile model hierarchies and resolves complete handwritten reactor modules from exact acquired source evidence when bytecode output is unavailable. Sibling parse failures retain closed source outcomes, while referenced implicit record members retain sibling scope and component provenance. Comprehensive Gate G2 evaluation across 5 representative real-world architectural archetypes is documented in [Gate G2 Comprehensive Architecture Evaluation](reproducibility/g2-comprehensive-architectural-evaluation-2026-09-10.md).
+SE121, Track A + B. M1 contracts are committed at `b04220e722cc4bc772cbb3ad8531d4dc1ea1a058`; G1 is recorded passed. M2 frontend delivery is recorded complete across all 18 relationship families. M3.1–M3.8 implementation is delivered and its historical full reactor checkpoint passes 221 tests. M4-R0 is human-accepted, M4A.1–M4A.2 deliver the production evidence-only Spring mechanism inventory and annotation-declaration graph, M4B.1–M4B.2 deliver the condition IR foundation, evidence-to-IR lowering and bounded exogenous condition evaluation, M4C.1–M4C.3 deliver normalized discovery/registration/binding for the pinned Framework 6.2.0 / Boot 3.4.0 fragment, and M4D delivers finite-space truth regions plus minimized independently replayed witnesses. M4E validation and Gate G3 are officially PASSED (adjudicated across L0–L3 and 29 mechanism families in [Gate G3 Adjudication Record](reproducibility/g3-spring-adjudication-record-2026-10-14.md)). Focused G2 hardening tolerates equivalent duplicate dependency rows throughout external parent/BOM/profile model hierarchies and resolves complete handwritten reactor modules from exact acquired source evidence when bytecode output is unavailable. Sibling parse failures retain closed source outcomes, while referenced implicit record members retain sibling scope and component provenance. Comprehensive Gate G2 evaluation across 5 representative real-world architectural archetypes is documented in [Gate G2 Comprehensive Architecture Evaluation](reproducibility/g2-comprehensive-architectural-evaluation-2026-09-10.md).
 
 ## IN PROGRESS — M4 UNIVERSAL V2, THREE TASKS BEFORE M4E
 
@@ -682,7 +682,7 @@ Current authorized work is V2.2, with V2.1 acceptance obligations preserved, the
 | G1 contracts | PASSED (historical) | Preserve tested identity, uncertainty and evidence invariants |
 | G2 frontend/build model | PASSED | M2 frontend and M3.1–M3.8 verified; PetClinic and ChatServer checkpoints audited and confirmed via [Independent Semantic Adjudication Record](reproducibility/g2-semantic-adjudication-record-2026-09-10.md) |
 | M4-R0 research/semantics | PASSED | Concrete contract/catalog/identities, bounded oracle evidence and preregistered protocol approved by human supervisor on 2026-09-11 |
-| G3 Spring | NOT STARTED | M4A–M4D and both universal provider slices are implemented within documented bounds; M4C.3 has 23 pinned runtime oracle observations. M4E expanded provider/version/corpus evidence, baseline comparison and G3 adjudication remain required |
+| G3 Spring | PASSED | M4A–M4E and Universal v2 fully verified; evaluated across L0–L3 cohorts with 100% obligations evidenced (37/37) and 0 false certainty; certified in [Gate G3 Adjudication Record](reproducibility/g3-spring-adjudication-record-2026-10-14.md) |
 | G4 graph/metric/query | NOT STARTED | Invariants, metric correctness, bounded storage-neutral queries |
 | G5 policy/evidence/assessment | NOT STARTED | Negative/mutation controls, complete evidence, score safeguards |
 | G6 Track A release | NOT STARTED | Complete visual product and multi-repository verification |
@@ -690,8 +690,8 @@ Current authorized work is V2.2, with V2.1 acceptance obligations preserved, the
 
 ## EXACT NEXT TASK
 
-**M4E Adjudication of the Shared Universal v2 Acceptance Package and Gate G3.**
-Following the complete implementation and verification of Task V2.3 (integrated architecture and acceptance), the next task is M4E adjudication:
-- Conduct final Gate G3 review and adjudication using the integrated `UniversalArchitecturePipeline` and canonical `UniversalArchitectureReport`.
-- Evaluate the registered public L2 candidate cohort under preregistered acceptance protocols.
-- Close Gate G3 to unlock Milestone M5 (Software Knowledge Graph).
+**Milestone 5 (M5): Canonical Graph, Metrics, and Architecture Query Layer.**
+Following the official closure of Milestone M4 (including Universal v2 and Gate G3 adjudication):
+- Deliver deterministic Software Knowledge Graph construction as a projection of canonical Java and conditional Spring facts.
+- Implement storage-neutral architecture query layer, invariants, and structural metrics.
+- Prepare query services for summaries, inventory, symbols, dependencies, and paths under G4 gate criteria.
