@@ -8,7 +8,7 @@ import java.util.*;
 
 /** Storage/parser-neutral, immutable M5 query wire contract. No runtime-impact or policy verdicts. */
 public final class ArchitectureQuery {
-    public static final VersionedIdentifier VERSION = new VersionedIdentifier("architecture.query", "m5.2-v1");
+    public static final VersionedIdentifier VERSION = new VersionedIdentifier("architecture.query", "m5.3-v1");
     public enum Projection { REALIZED, MUST, MAY, BOUNDED_UNION, UNKNOWN_OVERLAY }
     public enum Scope { ENTITY, TYPE, PACKAGE, MODULE, SPRING_COMPONENT }
     public enum Direction { OUTGOING, INCOMING }
@@ -94,6 +94,10 @@ public final class ArchitectureQuery {
     }
     public record Neighborhood(List<EntityView> entities,List<EdgeView> edges) {
         public Neighborhood {entities=List.copyOf(entities);edges=List.copyOf(edges);}
+    }
+    /** Explicit full declared scope for domain metrics; bounded by input/solver/auxiliary limits, never a UI page. */
+    public record MetricProjection(List<EntityView> entities,List<EdgeView> edges,List<String> selectedDefinitions,List<String> unknownDefinitions) {
+        public MetricProjection {entities=List.copyOf(entities);edges=List.copyOf(edges);selectedDefinitions=List.copyOf(selectedDefinitions);unknownDefinitions=List.copyOf(unknownDefinitions);}
     }
     public record Compatibility(boolean sameArtifact,boolean comparisonCompatible,List<String> reasons) {
         public Compatibility {reasons=List.copyOf(reasons);}

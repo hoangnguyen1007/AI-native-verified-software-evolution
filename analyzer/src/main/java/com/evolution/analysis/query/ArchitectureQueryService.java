@@ -66,8 +66,9 @@ public final class ArchitectureQueryService {
                 var entity=describe(node,documents,contextPartition,budget);
                 descriptions.put(node.identity(),entity);
                 if(request.population().nodeKinds().isEmpty()||request.population().nodeKinds().contains(entity.kind())){
-                    if(!request.population().modules().isEmpty()&&entity.module().isEmpty()||!request.population().origins().isEmpty()&&entity.origin().isEmpty()
-                            ||!request.population().sourceSets().isEmpty()&&entity.sourceSet().isEmpty())budget.qualify("POPULATION_METADATA_UNAVAILABLE");
+                    boolean inducedOwner=project&&(request.scope()==Scope.PACKAGE||request.scope()==Scope.MODULE)&&entity.kind().equals(request.scope().name());
+                    if(!inducedOwner&&(!request.population().modules().isEmpty()&&entity.module().isEmpty()||!request.population().origins().isEmpty()&&entity.origin().isEmpty()
+                            ||!request.population().sourceSets().isEmpty()&&entity.sourceSet().isEmpty()))budget.qualify("POPULATION_METADATA_UNAVAILABLE");
                     if(included(entity,request.population()))entities.put(node.identity(),entity);
                 }
                 if(node.kind().equals("CAPABILITY_GAP")||node.kind().equals("PROVIDER_CONFLICT"))budget.qualify("UPSTREAM_CAPABILITY_GAP");
@@ -91,6 +92,16 @@ public final class ArchitectureQueryService {
                 }
             }
             var grouped=new TreeMap<String,LogicalEdge>();
+            // A package/module population is induced by eligible source types, not by whichever declaration's
+            // metadata happens to be last on the aggregate owner (which may also contain generated/test types).
+            if(request.scope()==Scope.PACKAGE||request.scope()==Scope.MODULE){
+                var eligibleOwners=new TreeMap<String,EntityView>();
+                for(var type:descriptions.values())if(type.kind().equals("TYPE")&&included(type,new Population(Set.of(),request.population().modules(),request.population().origins(),request.population().sourceSets()))){
+                    String owner=scope(type.identity(),request.scope(),owners,parent);var view=descriptions.get(owner);
+                    if(view!=null&&(request.population().nodeKinds().isEmpty()||request.population().nodeKinds().contains(view.kind())))eligibleOwners.put(owner,new EntityView(view.identity(),view.context(),view.kind(),view.canonicalName(),view.qualifiedName(),view.spelling(),type.module(),type.origin(),type.sourceSet(),view.evidence()));
+                }
+                entities.entrySet().removeIf(e->e.getValue().kind().equals(request.scope().name()));entities.putAll(eligibleOwners);
+            }
             for(var edge:graph.edges())if(edge.context().equals(request.context())&&request.relationshipKinds().contains(edge.kind())){
                 if(!budget.scan())break;
                 if(!catalog.preferred(edge))continue;
@@ -194,6 +205,24 @@ public final class ArchitectureQueryService {
         var p=new Prepared(request,true);var n=new TreeMap<String,Long>();var e=new TreeMap<String,Long>();
         p.entities.values().forEach(v->n.merge(v.kind(),1L,Long::sum));p.edges.forEach(v->v.kinds.forEach(k->e.merge(k,1L,Long::sum)));
         return result(p,"summary","",List.of(new Summary(n,e,graph.contexts().size(),graph.identity(),"Distinct context-qualified nodes; logical projected edges retain raw supports with explicit expansion limits. Counts are source dependencies, not runtime calls.")),Optional.empty(),Optional.of(1L));
+    }
+    public Result<MetricProjection> metricProjection(Request request){
+        var p=new Prepared(request,true);var vertices=p.entities.values().stream().filter(v->scopeIncludes(v,request.scope())).toList();
+        var active=new TreeSet<String>();var unknown=new TreeSet<String>();
+        if(p.catalog!=null&&request.scope()==Scope.SPRING_COMPONENT)for(var node:vertices){
+            if(!p.budget.scan())break;var region=p.catalog.activate(node.identity());
+            // Candidate metadata alone is not proof of activation; a definition fact must have been supplied.
+            if(!p.catalog.activation.containsKey(node.identity())){unknown.add(node.identity());p.budget.qualify("ACTIVATION_EVIDENCE_UNAVAILABLE");continue;}
+            var check=region.check(p.budget,request.realization());var c=region.classify(p.budget);
+            if(check.truth()==Truth.UNKNOWN||c==Classification.UNKNOWN){unknown.add(node.identity());p.budget.qualify("UNKNOWN_FEASIBILITY");}
+            boolean selected=switch(request.projection()){
+                case REALIZED->p.catalog.realizationValid&&check.truth()==Truth.SAT;case MUST->c==Classification.MUST;
+                case MAY->c==Classification.MAY||request.includeMust()&&c==Classification.MUST;
+                case BOUNDED_UNION->check.truth()==Truth.SAT;case UNKNOWN_OVERLAY->false;};
+            if(selected)active.add(node.identity());
+        }
+        p.budget.reserve((long)vertices.size()+p.edges.size()+active.size()+unknown.size());
+        return result(p,"metric-projection","full-declared-scope",List.of(new MetricProjection(vertices,p.edges.stream().map(e->e.view).toList(),List.copyOf(active),List.copyOf(unknown))),Optional.empty(),Optional.empty());
     }
     public Result<Path> findPaths(Request request,String source,String target){return traverse(request,source,Optional.of(target),false);}
     public Result<Path> shortestPath(Request request,String source,String target){return traverse(request,source,Optional.of(target),true);}

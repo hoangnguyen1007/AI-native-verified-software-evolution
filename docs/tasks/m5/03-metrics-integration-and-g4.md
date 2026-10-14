@@ -1,6 +1,6 @@
 # M5.3 — Metrics, end-to-end integration và bằng chứng G4
 
-Trạng thái: **PROVISIONAL / chưa triển khai**. Điều kiện vào: M5.1–M5.2 pass. Đọc [README](README.md), [product-outcome](../../architecture/product-outcome.md), [MetricEnvelope](../../../analyzer/src/main/java/com/evolution/analysis/contract/metrics/MetricEnvelope.java) và query contracts mới. Exit: kết quả metric có ích, traceable; integration hoàn chỉnh; G4 được trình review với evidence đúng phạm vi.
+Trạng thái 2026-10-14: **IMPLEMENTED — bounded verification pass; catalog PROVISIONAL, G4 chờ adjudication**. Điều kiện vào M5.1–M5.2 đã có. [Contract thực thi](../../architecture/m5-architecture-metrics.md) và [bảng evidence/commands/handoff](../../research/m5-g4-bounded-evidence.md) là kết quả bàn giao. Các phần thiết kế dưới đây giữ yêu cầu baseline; không phải bằng chứng gate đã pass. Đọc [README](README.md), [product-outcome](../../architecture/product-outcome.md), [MetricEnvelope](../../../analyzer/src/main/java/com/evolution/analysis/contract/metrics/MetricEnvelope.java). Exit implementation: metric có ích, traceable; integration đầy đủ trong phạm vi bounded; package G4 cụ thể để review.
 
 ## A. Metric catalog và envelope
 
@@ -96,9 +96,9 @@ Independent review nếu có phải read-only và có authorization delegation; 
 
 ## Exit và bước tiếp theo
 
-- [ ] Catalog đầy đủ phần M5, M01–M12 và G4 matrix có actual evidence; gaps không bị che.
-- [ ] Graph/query/metric contracts và `knowledge-graph.md` phản ánh implementation; current-state ghi đúng completion/gate status. Không sửa lịch sử evidence để làm đẹp.
-- [ ] Metric catalog approval và G4 adjudication tách khỏi implementation tests; không ghi PASSED khi còn thiếu chứng cứ bắt buộc.
-- [ ] Full handoff ghi trạng thái trước/sau, files, commands/results, evidence, decisions, limitations/blockers và exact next task.
+- [x] Catalog phần M5, M01–M12 và G4 matrix có actual bounded evidence; gaps không bị che.
+- [x] Graph/query/metric contracts và `knowledge-graph.md` phản ánh implementation; current-state ghi đúng completion/gate status.
+- [x] Metric catalog approval và G4 adjudication tách khỏi implementation tests; G4 vẫn IN PROGRESS.
+- [x] Handoff trong linked evidence package ghi trạng thái trước/sau, files, commands/results, evidence, decisions, limitations/blockers và exact next task.
 
 **Exact next task:** nếu còn thiếu approval/evidence, trình chính package G4 và catalog để adjudicate; chỉ sau G4 đạt và có authorization phù hợp mới chuyển M6 conditional policy/evidence/assessment. Không tự triển khai M6 trong task này.

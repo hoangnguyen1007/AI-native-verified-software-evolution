@@ -1,8 +1,18 @@
 # Current State
 
-Last reconciled: 2026-10-14. **M5.2 conditional projections and architecture queries are delivered; M5.3 is next.** Latest bounded verification after feedback hardening passes **121 tests across 18 suites**, with zero failures/errors/skips. M5/G4 remain in progress; metrics and G4 adjudication are not delivered by this slice.
+Last reconciled: 2026-10-14. **M5.3 metrics and bounded integration are implemented; catalog/G4 human review is next.** The final bounded set after feedback hardening passes **165 tests across 22 suites**, zero failures/errors/skips. M5.1–M5.3 implementation is delivered; G4 remains IN PROGRESS, with catalog approval, registered product budgets and formal adjudication separate from implementation tests.
 
 Preserved G3 checkpoint: Task "M4E Adjudication of Shared Universal v2 Acceptance Package & Gate G3" is complete. Gate G3 remains recorded PASSED in [Gate G3 Adjudication Record](reproducibility/g3-spring-adjudication-record-2026-10-14.md). The current bounded consumer regression reran its 15 integration/adjudication tests; it is not a new external G3 campaign.
+
+## IMPLEMENTED — M5.3 METRICS AND BOUNDED INTEGRATION
+
+`ArchitectureMetricsService`, `ArchitectureMetric` and the 19-entry **PROVISIONAL** `MetricCatalog` implement storage-neutral inventory/quality/physical LOC, Martin Ca/Ce/I/A/D, fan/hotspots/density/SCC/feasible cycles/layer crossings/reachability/concentration, Spring inventory/activation and verified supplied operational measurements. Full-scope metric projection is independent of UI pages. Production populations exclude test/generated/external types; exact operands and status rules prevent invented values for zero or unknown denominators. Unmapped semantic observations, missing shapes/source hashes and upstream gaps stay explicit. Metric identity binds graph/context/manifests/projection/population/versions/limits and excludes computedAt. M1 serialization and graph snapshot schema are unchanged; query version is `architecture.query:m5.3-v1` for constituent-type population semantics and the additive metric projection.
+
+Fresh bounded verification: analyzer **129 tests / 16 suites**, filesystem **6 / 1**, JavaParser **30 / 5**, all zero failures/errors/skips. Three metric suites cover 30 cases; the four-case source integration exercises multi-module/Spring acquisition, independent manifests, explicit/symbolic activation, file reload/query/metric parity, source spans and a partial sibling. Selected M1, graph/query/gap/SAT/truth and existing pipeline/adjudication regressions were rerun. Exact commands, timing, G4 assertion matrix and initial-delivery IDE compilation-stub recovery are recorded in [M5 G4 bounded evidence](research/m5-g4-bounded-evidence.md). No full reactor or external benchmark was run.
+
+Feedback hardening: Martin type-owner collection now runs only for Martin metrics and never for SPRING_COMPONENT; Java population validation is retained for non-Martin Java metrics. A complete mixed Java/Spring context proves exact COMPLETE density/SCC/cycles/hotspots/concentration without false COMPONENT_OWNER_UNAVAILABLE gaps. Unknown Spring activation and missing Java source population still retain genuine gaps. Direct golden tests now exercise fan-in/fan-out component/context totals and incoming reachability distances, empty/inapplicable subjects and bounded frontier. The actual explicit/symbolic integration asserts WITHHELD with preserved CONSTRUCTOR_SET_INCOMPLETE/CATEGORY_PARTIAL evidence instead of an unconstrained value-or-gap check. No formula, catalog or schema version changed in this repair.
+
+Contracts/state: [M5 metrics](architecture/m5-architecture-metrics.md), graph/query contracts, knowledge-graph and M5 task plan updated. JavaParser adds only a test-scoped filesystem adapter dependency; analyzer remains Pure Java without Neo4j. Implementation self-review only; no independent adjudication, formal reproducibility archive, gate promotion, commit or push. Catalog approval and registered product performance budgets remain required by ADR-002; upstream endpoint/registration-order/unsupported-mechanism gaps remain visible. No bounded implementation blocker remains. Exact next task: review/adjudicate the linked catalog/G4 package and authorize any remaining formal evidence campaign; do not begin M6 yet.
 
 ## IMPLEMENTED — M5.2 CONDITIONAL PROJECTIONS AND QUERIES
 
@@ -697,7 +707,7 @@ The initial Maven sandbox JUnit-cache denial and the final benchmark install-cac
 
 Current input boundaries: explicit strict portable charsets; configured Java 8 `rt.jar`, Java 9+ JMOD or verified cross-release `ct.sym` platform views; exact release dependencies from a single standard Maven2 cache plus explicit credential-free HTTPS repositories; exact reactor-output JARs supplied by the caller or complete owned/decoded handwritten sibling sources at the same logical classpath position; and non-preview parser-level selection through Java 26 (bounded M4U.1 controls, separate from platform API verification). V2.1 additionally supports lineage-checked supplied generated Java under declared source roots and explicit exact artifact captures. There is no toolchain discovery, class-directory module output, arbitrary generated-root acquisition, manifest `Class-Path` expansion, version-range/relocation/snapshot resolution or transport-authenticity claim beyond HTTPS. The existing dependency reader selects multi-release JAR entries deterministically for the analyzed release, and the V2.1 importer records a corresponding release-selected class entry digest view for captured dependency JARs; JPMS/module-path semantics remain unproven. Remaining explicit degraded frontend cases include array constructor references/array length, unsupported functional target/inference contexts and broader generated overload/builder/configuration cases. V2.2 now supplies bounded annotation-value field reads, inferred `var` detail and typed lambda/catch parameter identities; see its implemented boundary and verification package. These known boundaries remain limitations of the G2 checkpoint recorded as passed; they are not a reopened G2 blocker.
 
-Current next slice is M5.3 under the three-task M5 plan, following delivered M5.1–M5.2. G3 remains recorded passed; this slice does not reopen it or extend its framework/runtime claims. Finite SAT is implemented; arbitrary infinite spaces and global latency/coverage remain unproven. A new external G2 checkpoint still needs separate authorization and immutable evidence; preserved G2 runs stay unchanged. Policy criteria, metric/score thresholds, graph/query/UI performance budgets and frontend framework selection remain later decisions.
+Current next task is catalog/G4 adjudication after delivered M5.1–M5.3 bounded implementation. G3 remains recorded passed; this slice does not reopen it or extend its framework/runtime claims. Finite SAT is implemented; arbitrary infinite spaces and global latency/coverage remain unproven. A new external G2 checkpoint still needs separate authorization and immutable evidence; preserved G2 runs stay unchanged. Catalog approval, policy criteria, metric/score thresholds, graph/query/UI performance budgets and frontend framework selection remain decisions at their stated gates.
 
 ## QUALITY GATES
 
@@ -709,21 +719,13 @@ Current next slice is M5.3 under the three-task M5 plan, following delivered M5.
 | G2 frontend/build model | PASSED | M2 frontend and M3.1–M3.8 verified; PetClinic and ChatServer checkpoints audited and confirmed via [Independent Semantic Adjudication Record](reproducibility/g2-semantic-adjudication-record-2026-09-10.md) |
 | M4-R0 research/semantics | PASSED | Concrete contract/catalog/identities, bounded oracle evidence and preregistered protocol approved by human supervisor on 2026-09-11 |
 | G3 Spring | PASSED | M4A–M4E and Universal v2 fully verified; evaluated across L0–L3 cohorts with 100% obligations evidenced (37/37) and 0 false certainty; certified in [Gate G3 Adjudication Record](reproducibility/g3-spring-adjudication-record-2026-10-14.md) |
-| G4 graph/metric/query | IN PROGRESS — M5.1–M5.2 delivered | M5.3 metric correctness/integration/adjudication remain |
+| G4 graph/metric/query | IN PROGRESS — M5.1–M5.3 bounded implementation delivered | Catalog approval, registered budgets and formal G4 evidence/adjudication remain |
 | G5 policy/evidence/assessment | NOT STARTED | Negative/mutation controls, complete evidence, score safeguards |
 | G6 Track A release | NOT STARTED | Complete visual product and multi-repository verification |
 | G7 Track B | NOT STARTED | Compatible snapshots and labeled evolution events |
 
 ## EXACT NEXT TASK
 
-**M5.3 — Metrics, Integration and G4 Evidence.**
+**Human review/adjudication of the M5 metric catalog and G4 package.**
 
-**PROVISIONAL execution plan (2026-10-14):** [M5 three-task plan](tasks/m5/README.md)
-defines graph/persistence → conditional queries → metrics/integration/G4 evidence.
-M5.1–M5.2 are implemented and verified above. Continue with [M5.3](tasks/m5/03-metrics-integration-and-g4.md)
-using the context-qualified graph/store/query contracts; the remaining plan is not implementation or G4 acceptance.
-
-Following the official closure of Milestone M4 (including Universal v2 and Gate G3 adjudication):
-- Deliver deterministic Software Knowledge Graph construction as a projection of canonical Java and conditional Spring facts.
-- Implement storage-neutral architecture query layer, invariants, and structural metrics.
-- Prepare query services for summaries, inventory, symbols, dependencies, and paths under G4 gate criteria.
+Use the [implemented metric contract/catalog](architecture/m5-architecture-metrics.md) and [actual bounded evidence matrix](research/m5-g4-bounded-evidence.md). M5.1–M5.3 implementation is complete in the tested scope; approve/freeze the catalog and register/authorize any remaining formal G4 evidence campaign before gate adjudication. Product performance budgets are not inferred from defensive implementation caps. M6 conditional policy/evidence/assessment starts only after G4 passes and appropriate authorization exists.

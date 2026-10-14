@@ -1,6 +1,6 @@
 # M5.2 — Architecture query contract
 
-**CONFIRMED by implementation and bounded tests:** `architecture.query:m5.2-v1` is a Pure Java API in `analyzer`, over the immutable [M5.1 graph](m5-canonical-graph.md). It does not require a database, parser object, REST server or application startup. Numerical limits are defensive implementation choices, **PROVISIONAL** as product performance budgets. M5.3 metrics and G4 adjudication remain open.
+**CONFIRMED by implementation and bounded tests:** `architecture.query:m5.3-v1` is a Pure Java API in `analyzer`, over the immutable [M5.1 graph](m5-canonical-graph.md). It does not require a database, parser object, REST server or application startup. Numerical limits are defensive implementation choices, **PROVISIONAL** as product performance budgets. [M5.3 metrics](m5-architecture-metrics.md) are implemented; catalog approval and formal G4 adjudication remain open. The version advances from m5.2-v1 for constituent-type package/module populations and the additive full-scope metric projection; old request/cursor identities must be recomputed, while graph snapshots remain unchanged.
 
 ## Requests and public operations
 
@@ -21,7 +21,8 @@ Document population metadata is reserved against the auxiliary budget **before**
 | `spring`, `configurations` | Evidenced candidates, owner-qualified injection uses, registration, conditions, regions, worlds and witness/replay records |
 | `artifacts` | Explicit-family **graph-level provenance** catalog, including modeled-space descriptors; no cross-context region composition |
 | `comparisonPreparation` | Conservative compatibility descriptor, not snapshot delta or an M11 gate approval |
-| `metricCatalog`, `metric` | Optional M5.3 port; absent provider returns PARTIAL + `METRICS_PROVIDER_UNAVAILABLE`, without invented zeros |
+| `metricCatalog`, `metric` | M5.3 ArchitectureMetricsService supplies the optional port; absent provider returns PARTIAL + `METRICS_PROVIDER_UNAVAILABLE`, without invented zeros |
+| `metricProjection` | Full declared component population and logical edges, selected/unknown definition activation; input/solver/auxiliary bounds apply, independent of UI pagination |
 
 Metadata relationships describe structural provenance. Consumers choose dependency kinds explicitly; `graph.contains` or `spring.has-witness` is not a runtime dependency. Java dependency edges mean source dependencies in the selected exact build context. Endpoint inventory without evidenced coverage is qualified; no route is inferred from names. Policy violations/scores are outside this API.
 
@@ -75,4 +76,4 @@ The M5.2 consumer tests exposed a narrow M5.1 omission: Spring plan/evaluation g
 
 Core projection/query/path-cycle suites cover Q01–Q12 with negative controls, exhaustive small Boolean comparisons, a 60-variable symbolic case, long DAGs, depth 20/21, quota 49/50/51, exactly 100,000 global steps, solver/input/cancellation/memory/time guards, cursor replay and redaction. Adapter tests exercise actual Java/Spring extraction, package cycles, profile-hidden bindings, snapshot comparison and qualified partial sources. File-store tests compare query results after fresh-instance load with the in-memory store.
 
-The current M4 provider qualifies `@Scope("prototype")` as `ANNOTATION_UNSUPPORTED` in the tested source path. M5.2 retains its evidence and UNKNOWN binding overlay; it does not pretend to implement missing scope/lifetime semantics or issue a violation. Independent review, numerical product-budget approval, corpus performance evidence, M5.3 and G4 adjudication are not claimed by this slice.
+The current M4 provider qualifies `@Scope("prototype")` as `ANNOTATION_UNSUPPORTED` in the tested source path. M5.2 retains its evidence and UNKNOWN binding overlay; it does not pretend to implement missing scope/lifetime semantics or issue a violation. Independent review, numerical product-budget approval, corpus performance evidence and G4 adjudication are not claimed. M5.3 implementation and its actual bounded evidence are recorded in the [review package](../research/m5-g4-bounded-evidence.md).

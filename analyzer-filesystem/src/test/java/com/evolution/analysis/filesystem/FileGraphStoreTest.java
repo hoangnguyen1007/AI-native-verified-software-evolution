@@ -48,6 +48,10 @@ class FileGraphStoreTest {
                 actual.findPaths(request,graph.edges().getFirst().source(),graph.edges().getFirst().target().identities().getFirst()));
         assertEquals(expected.entities(request,"",new com.evolution.analysis.query.ArchitectureQuery.Page(1,Optional.empty())),
                 actual.entities(request,"",new com.evolution.analysis.query.ArchitectureQuery.Page(1,Optional.empty())));
+        var expectedMetrics=new com.evolution.analysis.metrics.ArchitectureMetricsService(graph);
+        var actualMetrics=new com.evolution.analysis.metrics.ArchitectureMetricsService(restored);
+        assertEquals(expectedMetrics.compute(request,"metric.inventory",request.context()).identity(),actualMetrics.compute(request,"metric.inventory",request.context()).identity());
+        assertEquals(expectedMetrics.queries().metric(request,"metric.inventory",request.context()),actualMetrics.queries().metric(request,"metric.inventory",request.context()));
     }
     @Test void corruptExistingSnapshotIsRejectedAndNeverOverwritten() throws Exception {
         var graph=graph();var store=new FileGraphStore(directory);store.save(graph);

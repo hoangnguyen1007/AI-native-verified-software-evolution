@@ -78,7 +78,7 @@ class ArchitectureQueryContractTest {
         assertEquals(2,overlay.items().size());assertTrue(overlay.items().stream().noneMatch(EdgeView::definite));assertFalse(overlay.gaps().isEmpty());
         assertFalse(com.evolution.analysis.contract.serialization.CanonicalJson.write(raw).contains("secret literal"));
         assertFalse(com.evolution.analysis.contract.serialization.CanonicalJson.write(service.evidence(f.request(),annotation.identity())).contains("secret-value"));
-        assertEquals("m5.2-v1",VERSION.version());assertNotEquals(f.request().identity(),ArchitectureProjectionTest.project(f.request(),Projection.MUST,false,Optional.empty()).identity());
+        assertEquals("m5.3-v1",VERSION.version());assertNotEquals(f.request().identity(),ArchitectureProjectionTest.project(f.request(),Projection.MUST,false,Optional.empty()).identity());
     }
     @Test void documentPopulationMetadataConsumesBudgetBeforeItIsRetained(){
         var f=new Fixture().node("type");var repo=RepositoryIdentity.fromCanonicalCoordinate("https://example.test/query.git");var module=ModuleDescriptor.create(repo,"module-a","a");

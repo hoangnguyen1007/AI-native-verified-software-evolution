@@ -8,6 +8,8 @@ Ngày lập: 2026-10-14. Vai trò lập kế hoạch: Lead Architect + Graph Arc
 
 **Cập nhật triển khai 2026-10-14:** M5.1 và M5.2 đã hoàn tất theo [contract graph/persistence](../../architecture/m5-canonical-graph.md) và [contract queries](../../architecture/m5-architecture-queries.md). Bounded verification M5.2 sau feedback hardening: 121 tests / 18 suites pass, zero failures/errors/skips. Đoạn lập kế hoạch phía trên là trạng thái lịch sử; bước tiếp theo là M5.3. Metrics và G4 chưa hoàn tất; đây là self-review, không independent adjudication.
 
+**Cập nhật mới nhất — M5.3:** metrics và bounded integration đã triển khai theo [contract metrics](../../architecture/m5-architecture-metrics.md); actual evidence và limitations nằm trong [package review G4](../../research/m5-g4-bounded-evidence.md). Catalog còn PROVISIONAL; G4 vẫn IN PROGRESS. Đoạn M5.2 phía trên là checkpoint lịch sử, không phải chỉ dẫn thực hiện lại.
+
 ## Đúng ba task, thực hiện tuần tự
 
 | Task | Kết quả phải sử dụng được | Phụ thuộc |
@@ -77,4 +79,4 @@ Prompt giao việc dùng cho từng lần:
 
 > Thực hiện trọn vẹn task M5.N tại `docs/tasks/m5/0N-...md`, tuân thủ `AGENTS.md` và README M5. Đọc source/test trước khi sửa; làm TDD và tự sửa lỗi trong phạm vi; giữ canonical identity, conditional semantics và closed denominator. Không tự chuyển sang task sau. Kết thúc bằng evidence kiểm chứng và trạng thái còn thiếu, không chỉ báo đã viết code.
 
-**Bước tiếp theo hiện tại:** giao M5.2; sử dụng graph contexts tách repository/Java analysis/Spring evaluation đã kiểm chứng, bắt đầu với prefix-region intersection và infeasible-path controls.
+**Bước tiếp theo hiện tại:** human review catalog/G4 package; đăng ký và authorize campaign formal G4 còn thiếu trước khi adjudicate. Chỉ chuyển M6 sau khi G4 pass và có authorization phù hợp.

@@ -5,14 +5,16 @@
 > Parser-neutral M1 identities and the ADR-004 conditional-semantics direction
 > are authoritative at their stated levels. M5.1 now implements the versioned neutral
 > graph and snapshot mapping described below. M5.2 implements bounded conditional
-> queries under its separate contract. Metric delivery, product performance budgets
-> and G4 acceptance remain pending.
+> queries under its separate contract. M5.3 implements metrics and bounded integration.
+> Catalog approval, product performance budgets and formal G4 acceptance remain pending.
 >
 > Do not promote a proposed node/edge shape merely because its domain meaning is accepted.
 
 The parser-neutral identity, source-evidence, semantic-status, uncertainty, derivation, manifest, metric-envelope, and assessment-status contracts are no longer hypotheses in this document. Their implemented authority is [M1 Semantic, Identity, Uncertainty, and Provenance Contracts](m1-contracts.md). [ADR-004](../decisions/ADR-004-staged-conditional-architecture-semantics.md) accepts conditional fact semantics for M4+. [M5.1 Canonical Graph](m5-canonical-graph.md) defines the implemented graph/node/evidence/context mapping and snapshot format. The earlier sketches below remain use-case guidance where compatible; their hypothetical identities are superseded by M1/M5.1.
 
 [M5.2 Architecture Queries](m5-architecture-queries.md) defines the implemented in-memory projection/query API, region arithmetic, budgets, safe evidence descriptors and compatibility preparation. Historical Cypher/query sketches below are use cases, not storage-dependent domain APIs or claims of implemented policy rules.
+
+[M5.3 Architecture Metrics](m5-architecture-metrics.md) defines the implemented versioned catalog, production populations, exact operands/statuses, full-scope computation and evidence links. [Bounded G4 evidence](../research/m5-g4-bounded-evidence.md) records actual integration results and remaining approval/verification boundaries.
 
 ## Purpose
 
@@ -195,7 +197,7 @@ See [Product Outcome, Metrics, Scoring, and Workbench Contract](product-outcome.
 
 Canonical identities follow the implemented [M1 identity contract](m1-contracts.md#stable-identity-contract): repository and typed scope prevent fully qualified names from colliding across modules or dependency origins; entity kind and canonical name/signature distinguish language-level symbols; relationship targets preserve resolved, candidate, or unresolved state; and occurrence identities include complete source evidence.
 
-M5.1 implements the versioned mapping and canonical snapshot round-trip; M5.2 implements bounded queries and infeasible-path controls. Metric delivery and formal G4 adjudication remain pending. Fully qualified name alone is not a canonical entity identity.
+M5.1 implements the versioned mapping and canonical snapshot round-trip; M5.2 implements bounded queries and infeasible-path controls; M5.3 implements metrics and bounded integration. Catalog approval and formal G4 adjudication remain pending. Fully qualified name alone is not a canonical entity identity.
 
 ## Schema Evolution
 
