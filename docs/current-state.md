@@ -1,6 +1,20 @@
 # Current State
 
-Last reconciled: 2026-10-14. Task "M4E Adjudication of Shared Universal v2 Acceptance Package & Gate G3" is complete. All 15 pipeline integration and M4E adjudication journeys in `UniversalArchitecturePipelineIntegrationTest` and `UniversalArchitectureM4EAdjudicationTest` are verified 100% green. Gate G3 is officially certified PASSED in [Gate G3 Adjudication Record](reproducibility/g3-spring-adjudication-record-2026-10-14.md). Milestone M4 is complete; next milestone phase is Milestone 5 (Canonical Graph, Metrics, and Architecture Query Layer).
+Last reconciled: 2026-10-14. **M5.1 canonical graph and snapshot persistence are delivered; M5.2 is next.** Final bounded verification passes **85 tests across 13 suites**, with zero failures/errors/skips. M5/G4 remain in progress; query projections, metrics and G4 adjudication are not delivered by this slice.
+
+Preserved G3 checkpoint: Task "M4E Adjudication of Shared Universal v2 Acceptance Package & Gate G3" is complete. Gate G3 remains recorded PASSED in [Gate G3 Adjudication Record](reproducibility/g3-spring-adjudication-record-2026-10-14.md). The current bounded consumer regression reran its 15 integration/adjudication tests; it is not a new external G3 campaign.
+
+## IMPLEMENTED — M5.1 CANONICAL GRAPH AND PERSISTENCE
+
+**CONFIRMED by implementation and bounded tests (2026-10-14):** `UniversalArchitecturePipeline.runWithEvidence` captures typed repository/build/frontend/Spring artifacts before summary reduction. `CanonicalGraphBuilder` produces an immutable Pure Java graph with repository, exact Java-analysis and separate Spring evaluation partitions, original M1/M4 identities, full occurrence/evidence ledgers, owner-qualified injection uses, condition/formula DAGs, explicit/symbolic regions and witness/replay records. Original `run` report APIs remain available. The pipeline manifest now binds the implemented graph schema descriptor. Revision/dirty provenance handling is repaired without changing M1 preimages.
+
+`GraphSnapshotCodec`, `InMemoryGraphStore` and `FileGraphStore` restore typed graph values and adjacency indexes with complete supplied evidence payloads. Content identity preserves provenance bytes; a separate semantic replay identity excludes defined telemetry labels. File publication is atomic create-if-absent, bounded and cancellation-aware; corrupt/unsafe/unavailable input is explicit. Graph-specific gaps preserve unavailable type-owner and referenced-attempt evidence. No Neo4j dependency was added. See [M5.1 contract](architecture/m5-canonical-graph.md) and [execution/check matrix](tasks/m5/01-canonical-graph-and-persistence.md).
+
+Final bounded verification: **57 analyzer tests / 9 suites**, **6 filesystem tests / 1 suite**, **22 adapter tests / 3 suites**, all zero failures/errors/skips. Surefire suite execution totals were **3.667 s / 0.282 s / 16.787 s**, respectively; these exclude Maven startup. Exact commands and test selectors are recorded in the task file. Core packaging/install refreshed the consumer dependency with tests skipped; that command is not test evidence.
+
+The first core control failed because projection was unimplemented (command **7.665 s**, exceeding the five-second inner-loop target). Subsequent controls and self-review repaired fixture expectations, missing reasoner imports, a symbolic digest-shape validation error and source-outcome assertions. An observed IDE-produced unresolved-compilation stub required explicit JDK 21 `javac -encoding UTF-8 -proc:none --release 21` compilation of all new graph sources and the changed pipeline into `analyzer/target/classes`, before packaging and final consumer verification. No clean/reactor build claim follows.
+
+Limitations: implementation self-review only; no independent review, external benchmark or G4 certification. The file adapter requires a caller-controlled existing output directory and filesystem hard-link publication support. Dependency/JDK binary bytes are identified by manifest hashes rather than archived. M5.2 owns projection/path/cycle queries; M5.3 owns metrics and final G4 evidence. Pre-existing task-plan changes were preserved; no commit/push or reproducibility package was created.
 
 ## PHASE AND MILESTONE
 
@@ -643,7 +657,7 @@ The human approved JavaParser + SymbolSolver as the primary SE121/M2 frontend on
 - R1 PoC: `benchmarks/poc/parser-eval/`. Independent experimental adapters/comparison: `benchmarks/semantic-frontend-evaluation/`.
 - M2 oracle pilot: `benchmarks/m2-ground-truth/`, separate from the reactor and legacy comparator, using JDK 21/Python standard libraries.
 - Production adapter pin: JavaParser/SymbolSolver 3.28.2, current provider `frontend.javaparser:3.28.2-m4uv2.2-injection-v1`. M4U.1 supplied bounded Lombok synthesis, parser-neutral type shapes and record constructor parameter evidence; V2.2 adds the bounded resolution/attribution and neutral member-shape changes described above. Historical M2 evidence remains unchanged. No general compiler-equivalence or scale claim is made.
-- Progressive effective-POM/source-plan projection, bounded filesystem/dependency acquisition, explicit platform/frontend assembly, capability-gap normalization and M4A–M4D bounded Spring semantics are implemented. M4U.1 adds passive POM-less/Gradle source plans, configuration baseline ingestion and component/constructor acquisition. M4U.2 adds the bounded Spring Data, version/namespace/metadata, SAT, route, hierarchy and SpEL providers described above. V2.1 supports supplied generated sources/artifacts with lineage; V2.2 adds a bounded source-to-plan continuation. General generated-root acquisition, complete source-to-Spring-descriptor normalization, M4E external validation, graph, policy engine, metric/scoring calculation, CLI, backend API and workbench remain unimplemented.
+- Progressive effective-POM/source-plan projection, bounded filesystem/dependency acquisition, explicit platform/frontend assembly, capability-gap normalization and bounded Spring semantics are implemented within their recorded contracts. Universal v2 and the G3 checkpoint are recorded complete above. M5.1 now adds canonical graph/persistence and the full-artifact capture boundary. Configuration-aware query services, policy engine, metric/scoring calculation, CLI, backend API and workbench remain future slices; deeper generated/runtime/framework evidence retains the documented provider boundaries.
 - `frontend/` and root `tests/` have no tracked product implementation.
 
 ## EVIDENCE AND LIMITS
@@ -671,7 +685,7 @@ The initial Maven sandbox JUnit-cache denial and the final benchmark install-cac
 
 Current input boundaries: explicit strict portable charsets; configured Java 8 `rt.jar`, Java 9+ JMOD or verified cross-release `ct.sym` platform views; exact release dependencies from a single standard Maven2 cache plus explicit credential-free HTTPS repositories; exact reactor-output JARs supplied by the caller or complete owned/decoded handwritten sibling sources at the same logical classpath position; and non-preview parser-level selection through Java 26 (bounded M4U.1 controls, separate from platform API verification). V2.1 additionally supports lineage-checked supplied generated Java under declared source roots and explicit exact artifact captures. There is no toolchain discovery, class-directory module output, arbitrary generated-root acquisition, manifest `Class-Path` expansion, version-range/relocation/snapshot resolution or transport-authenticity claim beyond HTTPS. The existing dependency reader selects multi-release JAR entries deterministically for the analyzed release, and the V2.1 importer records a corresponding release-selected class entry digest view for captured dependency JARs; JPMS/module-path semantics remain unproven. Remaining explicit degraded frontend cases include array constructor references/array length, unsupported functional target/inference contexts and broader generated overload/builder/configuration cases. V2.2 now supplies bounded annotation-value field reads, inferred `var` detail and typed lambda/catch parameter identities; see its implemented boundary and verification package. These known boundaries remain limitations of the G2 checkpoint recorded as passed; they are not a reopened G2 blocker.
 
-Current authorized work is V2.2, with V2.1 acceptance obligations preserved, then V2.3 and M4E/G3. Historical container equivalence, hierarchy/factory/runtime behavior beyond the documented fragment, complete source-to-descriptor normalization, library resources, external Config Data, OTHER abstraction and correlated opaque/order reasoning remain implementation boundaries targeted by the new plan. Finite SAT is implemented; arbitrary infinite spaces and global latency/coverage remain unproven. Passive provider expansion, registered baselines, representative evidence and G3 adjudication are distinct stages. A new external G2 checkpoint still needs separate authorization and immutable evidence; preserved G2 runs stay unchanged. Policy criteria, metric/score thresholds, graph/query/UI budgets and frontend framework selection remain later decisions.
+Current next slice is M5.2 under the three-task M5 plan, following delivered M5.1. G3 remains recorded passed; this slice does not reopen it or extend its framework/runtime claims. Finite SAT is implemented; arbitrary infinite spaces and global latency/coverage remain unproven. A new external G2 checkpoint still needs separate authorization and immutable evidence; preserved G2 runs stay unchanged. Policy criteria, metric/score thresholds, graph/query/UI performance budgets and frontend framework selection remain later decisions.
 
 ## QUALITY GATES
 
@@ -683,14 +697,20 @@ Current authorized work is V2.2, with V2.1 acceptance obligations preserved, the
 | G2 frontend/build model | PASSED | M2 frontend and M3.1–M3.8 verified; PetClinic and ChatServer checkpoints audited and confirmed via [Independent Semantic Adjudication Record](reproducibility/g2-semantic-adjudication-record-2026-09-10.md) |
 | M4-R0 research/semantics | PASSED | Concrete contract/catalog/identities, bounded oracle evidence and preregistered protocol approved by human supervisor on 2026-09-11 |
 | G3 Spring | PASSED | M4A–M4E and Universal v2 fully verified; evaluated across L0–L3 cohorts with 100% obligations evidenced (37/37) and 0 false certainty; certified in [Gate G3 Adjudication Record](reproducibility/g3-spring-adjudication-record-2026-10-14.md) |
-| G4 graph/metric/query | NOT STARTED | Invariants, metric correctness, bounded storage-neutral queries |
+| G4 graph/metric/query | IN PROGRESS — M5.1 delivered | M5.2 conditional projection/query controls and M5.3 metric correctness/integration/adjudication remain |
 | G5 policy/evidence/assessment | NOT STARTED | Negative/mutation controls, complete evidence, score safeguards |
 | G6 Track A release | NOT STARTED | Complete visual product and multi-repository verification |
 | G7 Track B | NOT STARTED | Compatible snapshots and labeled evolution events |
 
 ## EXACT NEXT TASK
 
-**Milestone 5 (M5): Canonical Graph, Metrics, and Architecture Query Layer.**
+**M5.2 — Conditional Projections and Architecture Query Services.**
+
+**PROVISIONAL execution plan (2026-10-14):** [M5 three-task plan](tasks/m5/README.md)
+defines graph/persistence → conditional queries → metrics/integration/G4 evidence.
+M5.1 is implemented and verified above. Continue with [M5.2](tasks/m5/02-conditional-projections-and-queries.md)
+using the context-qualified graph/store contract; the remaining plan is not implementation or G4 acceptance.
+
 Following the official closure of Milestone M4 (including Universal v2 and Gate G3 adjudication):
 - Deliver deterministic Software Knowledge Graph construction as a projection of canonical Java and conditional Spring facts.
 - Implement storage-neutral architecture query layer, invariants, and structural metrics.

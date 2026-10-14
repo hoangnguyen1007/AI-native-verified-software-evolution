@@ -414,7 +414,15 @@ class UniversalArchitecturePipelineIntegrationTest {
                 .build();
 
         var pipeline = new UniversalArchitecturePipeline();
-        var report = pipeline.run(input, policy);
+        var detailed = pipeline.runWithEvidence(input, policy);
+        var report = detailed.report();
+        var graph = new com.evolution.analysis.graph.CanonicalGraphBuilder().build(detailed.graphInput().orElseThrow());
+        assertTrue(graph.nodes().stream().anyMatch(n -> n.kind().equals("BEAN_PRODUCER")));
+        assertTrue(graph.nodes().stream().anyMatch(n -> n.kind().equals("INJECTION_POINT")));
+        assertTrue(graph.nodes().stream().anyMatch(n -> n.kind().equals("TRUTH_REGION")));
+        assertTrue(graph.nodes().stream().anyMatch(n -> n.kind().equals("REGION_FORMULA")));
+        var codec = new com.evolution.analysis.graph.GraphSnapshotCodec();
+        assertEquals(graph.identity(), codec.decode(codec.encode(graph), com.evolution.analysis.graph.GraphJson.Limits.defaults()).identity());
 
         assertNotNull(report);
         // Components & Entry Points

@@ -20,6 +20,8 @@ import com.evolution.analysis.spring.condition.*;
 import com.evolution.analysis.spring.registration.*;
 import com.evolution.analysis.spring.truth.SymbolicConfiguration;
 import com.evolution.analysis.spring.truth.TruthRegionEvaluation;
+import com.evolution.analysis.spring.truth.SatConfigurationReasoner;
+import com.evolution.analysis.spring.truth.ExhaustiveConfigurationReasoner;
 import com.evolution.analysis.spring.universal.*;
 import java.io.ByteArrayInputStream;
 import java.nio.file.Path;
@@ -193,21 +195,42 @@ public final class UniversalArchitecturePipeline {
     }
 
     public UniversalArchitectureReport run(RepositoryAcquisitionResult acquisition, Policy policy) {
+        return runWithEvidence(acquisition, policy).report();
+    }
+
+    /** Additive M5 boundary. Terminal decode failure remains explicit and has no fabricated graph input. */
+    public record DetailedResult(UniversalArchitectureReport report,
+            Optional<com.evolution.analysis.graph.CanonicalGraphInput> graphInput,
+            Optional<RepositoryAcquisitionResult> acquisition) {
+        public DetailedResult(UniversalArchitectureReport report,Optional<com.evolution.analysis.graph.CanonicalGraphInput> graphInput) {
+            this(report,graphInput,Optional.empty());
+        }
+        public DetailedResult {Objects.requireNonNull(report);Objects.requireNonNull(graphInput);Objects.requireNonNull(acquisition);}
+    }
+
+    public DetailedResult runWithEvidence(RepositoryAcquisitionResult acquisition, Policy policy) {
         Objects.requireNonNull(acquisition);
         Objects.requireNonNull(policy);
         var decoder = new RepositoryInputDecoder();
         var decoded = decoder.decode(acquisition, policy.decodePolicy());
         if (decoded.inputs().isEmpty()) {
-            return buildTerminalReport(decoded.identity(), acquisition.snapshot(), Optional.of(decoded.inventory()),
-                    decoded.issues(), decoded.gaps(), UniversalArchitectureReport.Status.TERMINAL_FAILURE);
+            return new DetailedResult(buildTerminalReport(decoded.identity(), acquisition.snapshot(), Optional.of(decoded.inventory()),
+                    decoded.issues(), decoded.gaps(), UniversalArchitectureReport.Status.TERMINAL_FAILURE), Optional.empty(), Optional.of(acquisition));
         }
-        return run(decoded.inputs().orElseThrow(), policy, Optional.of(decoded.inventory()), decoded.issues(), decoded.gaps());
+        var captured = new ArrayList<com.evolution.analysis.graph.CanonicalGraphInput>();
+        var report = run(decoded.inputs().orElseThrow(), policy, Optional.of(decoded.inventory()), decoded.issues(), decoded.gaps(), captured::add);
+        return new DetailedResult(report, captured.stream().findFirst().map(input -> new com.evolution.analysis.graph.CanonicalGraphInput(
+                input.repository(),input.build(),input.ingestion(),input.spring(),input.issues(),input.gaps(),Optional.of(acquisition))),Optional.of(acquisition));
     }
 
     public UniversalArchitectureReport run(RepositoryInputs inputs, Policy policy) {
+        return runWithEvidence(inputs, policy).report();
+    }
+
+    public DetailedResult runWithEvidence(RepositoryInputs inputs, Policy policy) {
         Objects.requireNonNull(inputs);
         Objects.requireNonNull(policy);
-        var req = new RepositoryAcquisitionRequest(inputs.snapshot().repository(), Optional.empty(), false, "pom.xml",
+        var req = new RepositoryAcquisitionRequest(inputs.snapshot().repository(), inputs.snapshot().revision(), inputs.snapshot().dirty(), "pom.xml",
                 new RepositoryAcquisitionPolicy(100, 100, 1000, 10000, 8, List.of()));
         var files = inputs.files().values().stream().map(f -> new AcquiredFile(f.document().path(), f.bytes())).toList();
         var rawSnapshot = RepositorySnapshot.create(inputs.snapshot().repository(),
@@ -226,7 +249,9 @@ public final class UniversalArchitecturePipeline {
                 List.of()
         );
         var inventory = RepositoryUnderstandingInventory.from(acquisitionResult);
-        return run(inputs, policy, Optional.of(inventory), List.of(), List.of());
+        var captured = new ArrayList<com.evolution.analysis.graph.CanonicalGraphInput>();
+        var report = run(inputs, policy, Optional.of(inventory), List.of(), List.of(), captured::add);
+        return new DetailedResult(report, captured.stream().findFirst());
     }
 
     private UniversalArchitectureReport run(
@@ -234,15 +259,18 @@ public final class UniversalArchitecturePipeline {
             Policy policy,
             Optional<RepositoryUnderstandingInventory> inventoryOpt,
             List<IngestionEvidence.Issue> initialIssues,
-            List<CapabilityGapRecord> initialGaps
+            List<CapabilityGapRecord> initialGaps,
+            java.util.function.Consumer<com.evolution.analysis.graph.CanonicalGraphInput> capture
     ) {
         long javaFilesCount = inputs.snapshot().files().stream().filter(f -> f.path().endsWith(".java")).count();
         if (inputs.snapshot().files().isEmpty() || javaFilesCount == 0) {
+            capture.accept(new com.evolution.analysis.graph.CanonicalGraphInput(inputs, Optional.empty(), Optional.empty(), List.of(), initialIssues, initialGaps));
             return buildEmptyOrNonJavaReport(inputs, policy, inventoryOpt, initialIssues, initialGaps);
         }
 
         var allIssues = new ArrayList<IngestionEvidence.Issue>(initialIssues);
         var allGaps = new TreeSet<CapabilityGapRecord>(initialGaps);
+        var springArtifacts = new ArrayList<com.evolution.analysis.graph.CanonicalGraphInput.SpringSlice>();
 
         // Map for resolving source paths from document identities
         Map<SourceDocumentIdentity, String> pathMap = new HashMap<>();
@@ -307,7 +335,7 @@ public final class UniversalArchitecturePipeline {
         }
         var analyzerComp = new ManifestComponent(new VersionedIdentifier("architecture.analyzer", "1"), ContentDigest.sha256Utf8("analyzer-component"));
         var rulesComp = new ManifestComponent(new VersionedIdentifier("architecture.rules", "1"), ContentDigest.sha256Utf8("rules-component"));
-        var schemaComp = new ManifestComponent(new VersionedIdentifier("architecture.schema", "1"), ContentDigest.sha256Utf8("schema-component"));
+        var schemaComp = com.evolution.analysis.graph.KnowledgeGraph.schemaComponent();
         var sourceIngestion = new UniversalSourceIngestion();
         var assembledSources = sourceIngestion.assemble(inputs, buildModel, resolutions, analyzerComp, rulesComp, schemaComp);
         allIssues.addAll(assembledSources.issues());
@@ -674,6 +702,9 @@ public final class UniversalArchitecturePipeline {
                         if (scope.isPresent()) {
                             var plan = pipeline.prepareSpring(pipelineResult, unit.sourceSet(), scope.get(), policy.maxTypes());
                             allGaps.addAll(plan.gaps());
+                            int artifactIndex = springArtifacts.size();
+                            springArtifacts.add(new com.evolution.analysis.graph.CanonicalGraphInput.SpringSlice(unit.sourceSet(), plan,
+                                    Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty()));
 
                             for (var cand : plan.binding().registrationPlan().discoveryPlan().initialDefinitions()) {
                                 String beanName = cand.declaredNameKey().primary().orElse(cand.definitionSlot());
@@ -722,6 +753,10 @@ public final class UniversalArchitecturePipeline {
                                         var symbolic = plan.evaluateSymbolic(space, baseline, policy.truthLimits(),
                                                 ContentDigest.sha256Utf8("symbolic-truth-evaluator"), 64, SymbolicConfiguration.Limits.defaults());
                                         allGaps.addAll(symbolic.capabilityGaps());
+                                        springArtifacts.set(artifactIndex, new com.evolution.analysis.graph.CanonicalGraphInput.SpringSlice(unit.sourceSet(), plan,
+                                                Optional.of(space), Optional.of(baseline), Optional.empty(), Optional.of(symbolic.truth()),
+                                                Optional.of(new com.evolution.analysis.graph.CanonicalGraphInput.EvaluationParameters(policy.truthLimits(),SatConfigurationReasoner.INSTANCE.policy(),
+                                                        ContentDigest.sha256Utf8("symbolic-truth-evaluator"),64,Optional.of(SymbolicConfiguration.Limits.defaults())))));
                                         for (var region : symbolic.truth().regions()) {
                                             truthRegions.add(new UniversalArchitectureReport.TruthRegionSummary(
                                                     region.fact().identity().value(),
@@ -735,6 +770,10 @@ public final class UniversalArchitecturePipeline {
                                         var evaluated = plan.evaluate(space, baseline, policy.truthLimits(),
                                                 ContentDigest.sha256Utf8("exhaustive-truth-evaluator"));
                                         allGaps.addAll(evaluated.capabilityGaps());
+                                        springArtifacts.set(artifactIndex, new com.evolution.analysis.graph.CanonicalGraphInput.SpringSlice(unit.sourceSet(), plan,
+                                                Optional.of(space), Optional.of(baseline), Optional.of(evaluated.truth()), Optional.empty(),
+                                                Optional.of(new com.evolution.analysis.graph.CanonicalGraphInput.EvaluationParameters(policy.truthLimits(),ExhaustiveConfigurationReasoner.INSTANCE.policy(),
+                                                        ContentDigest.sha256Utf8("exhaustive-truth-evaluator"),0,Optional.empty()))));
                                         for (var region : evaluated.truth().regions()) {
                                             truthRegions.add(new UniversalArchitectureReport.TruthRegionSummary(
                                                     region.fact().identity().value(),
@@ -838,6 +877,8 @@ public final class UniversalArchitecturePipeline {
                 summaryText
         );
 
+        capture.accept(new com.evolution.analysis.graph.CanonicalGraphInput(inputs, Optional.of(buildModel), Optional.of(pipelineResult),
+                springArtifacts, sortedIssues, sortedGaps));
         return new UniversalArchitectureReport(
                 inputs.identity(),
                 status,

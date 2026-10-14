@@ -3,12 +3,13 @@
 > **Epistemic status: MIXED**
 >
 > Parser-neutral M1 identities and the ADR-004 conditional-semantics direction
-> are authoritative at their stated levels. The physical/logical graph mapping,
-> storage adapter and projection performance remain hypotheses requiring R2/G4 validation.
+> are authoritative at their stated levels. M5.1 now implements the versioned neutral
+> graph and snapshot mapping described below. Query/metric semantics, projection
+> performance and G4 acceptance remain separate pending work.
 >
 > Do not promote a proposed node/edge shape merely because its domain meaning is accepted.
 
-The parser-neutral identity, source-evidence, semantic-status, uncertainty, derivation, manifest, metric-envelope, and assessment-status contracts are no longer hypotheses in this document. Their implemented authority is [M1 Semantic, Identity, Uncertainty, and Provenance Contracts](m1-contracts.md). [ADR-004](../decisions/ADR-004-staged-conditional-architecture-semantics.md) accepts conditional fact semantics for M4+; exact graph node/edge/index mapping and the Neo4j adapter remain hypotheses for M5.
+The parser-neutral identity, source-evidence, semantic-status, uncertainty, derivation, manifest, metric-envelope, and assessment-status contracts are no longer hypotheses in this document. Their implemented authority is [M1 Semantic, Identity, Uncertainty, and Provenance Contracts](m1-contracts.md). [ADR-004](../decisions/ADR-004-staged-conditional-architecture-semantics.md) accepts conditional fact semantics for M4+. [M5.1 Canonical Graph](m5-canonical-graph.md) defines the implemented graph/node/evidence/context mapping and snapshot format. The earlier sketches below remain use-case guidance where compatible; their hypothetical identities are superseded by M1/M5.1.
 
 ## Purpose
 
@@ -26,13 +27,9 @@ Java/Spring Boot repository as a labeled property graph. Source semantics are th
 
 **[CONFIRMED]** — from AGENTS.md.
 
-## Graph Database
+## Graph Storage
 
-**Neo4j Community** [PROVISIONAL — requires R2 validation]
-
-Alternatives if Neo4j proves inadequate:
-- In-memory graph model (for development/testing)
-- JanusGraph (if distributed scale needed — unlikely for SE121)
+**Implemented M5.1 baseline:** Pure Java immutable in-memory graph and adjacency indexes in `analyzer`, with a versioned canonical JSON snapshot codec and file adapter. Persistence round-trip requires no external database. Neo4j Community remains an optional secondary adapter hypothesis, requiring its own evidence and the same contracts; it is not a core dependency or M5 acceptance prerequisite.
 
 ## Evidence, Status, and Gap Classification
 
@@ -46,7 +43,7 @@ Every graph statement keeps three orthogonal dimensions rather than collapsing t
 
 There is no `UNKNOWN` derivation kind in the implemented M1 contract. Insufficient evidence remains an explicit semantic/provenance state and, where a stable reason/evidence need exists, a [capability gap](evidence-acquisition.md). Do not silently convert `INFERRED` to `DIRECT`, an unresolved candidate to an absent edge, or a runtime observation to source-direct evidence.
 
-## Node Types [HYPOTHESIS EXCEPT WHERE NOTED]
+## Historical Node Sketches [IMPLEMENTED MAPPING: M5.1 CONTRACT]
 
 ### Package
 
@@ -55,7 +52,7 @@ There is no `UNKNOWN` derivation kind in the implemented M1 contract. Insufficie
 | `qualifiedName` | String | e.g. `com.example.service` |
 | `sourceFile` | String | Directory path |
 
-**Identity:** `qualifiedName`
+**Identity:** M1 entity identity with origin, module/dependency scope, `PACKAGE` kind and canonical Java package name. `qualifiedName` is a display/search property.
 
 ### Class
 
@@ -69,7 +66,7 @@ There is no `UNKNOWN` derivation kind in the implemented M1 contract. Insufficie
 | `isAbstract` | Boolean | |
 | `isInterface` | Boolean | |
 
-**Identity:** `qualifiedName`
+**Identity:** M1 entity identity with origin, typed scope, `TYPE` kind and canonical Java symbol name; FQN alone is insufficient.
 
 Represents classes, interfaces, enums, records, and annotation types.
 
@@ -85,7 +82,7 @@ Represents classes, interfaces, enums, records, and annotation types.
 | `endLine` | Integer | End line |
 | `visibility` | String | public/protected/private/package |
 
-**Identity:** `qualifiedName` + `signature`
+**Identity:** M1 scoped entity identity using canonical method/constructor signature.
 
 ### Field
 
@@ -98,7 +95,7 @@ Represents classes, interfaces, enums, records, and annotation types.
 | `endLine` | Integer | End line |
 | `visibility` | String | public/protected/private/package |
 
-**Identity:** `qualifiedName`
+**Identity:** M1 scoped entity identity using the canonical field symbol name.
 
 ### Annotation
 
@@ -108,7 +105,7 @@ Represents classes, interfaces, enums, records, and annotation types.
 | `sourceFile` | String | Where used |
 | `startLine` | Integer | Start line |
 
-**Identity:** composite (annotation type + annotated element)
+**Identity:** annotation type and annotation-use occurrence are distinct; a use retains its owner scope and source-anchored canonical Java annotation-use name.
 
 ### Conditional Spring semantic concepts [ACCEPTED DIRECTION; SHAPE PROVISIONAL]
 
@@ -125,7 +122,7 @@ The earlier flat `SpringBean --INJECTS--> SpringBean` sketch is superseded. A st
 | `ConfigurationWitness` | Reproducible assignment and material registration-order identity that demonstrates a fact/finding outcome |
 | `CapabilityGap` | Projection/reference to the canonical evidence ledger for unresolved condition, order or provider questions |
 
-Exact canonical identities and node-versus-record mapping remain M4-R0/M5 decisions. Graph storage must not own condition evaluation or solver types. See [Conditional Architecture Semantics](conditional-architecture-semantics.md) and [M4 Spring Intelligence](m4-spring-intelligence.md).
+M5.1 preserves the implemented M4 identities and maps these concepts to separate context-qualified nodes and canonical evidence payloads. Graph storage does not own condition evaluation or solver types. See [M5.1 mapping](m5-canonical-graph.md), [Conditional Architecture Semantics](conditional-architecture-semantics.md) and [M4 Spring Intelligence](m4-spring-intelligence.md).
 
 ### Configuration declarations [PROVISIONAL]
 
@@ -139,7 +136,7 @@ Exact canonical identities and node-versus-record mapping remain M4-R0/M5 decisi
 
 The identity is not the key alone. A declaration occurrence is content-addressed from configuration-space/schema version, source identity, key, activation/precedence context and real occurrence evidence. Multiple declarations of one key remain distinct; effective values are derived per realized configuration and never overwrite their sources.
 
-## Relationship Types [HYPOTHESIS]
+## Historical Relationship Sketches [SEE M5.1 FOR IMPLEMENTED NAMESPACES]
 
 | Relationship | Source | Target | Evidence | Properties |
 |---|---|---|---|---|
@@ -164,7 +161,7 @@ The identity is not the key alone. A declaration occurrence is content-addressed
 | `RETURNS` | Method | Class | DIRECT | — |
 | `HAS_PARAMETER` | Method | Class | DIRECT | `paramName`, `position` |
 
-## Provenance Strategy [HYPOTHESIS]
+## Provenance Strategy [M5.1 PRESERVES CANONICAL SUPPORT]
 
 Each relationship should be traceable to answer:
 
@@ -195,7 +192,7 @@ See [Product Outcome, Metrics, Scoring, and Workbench Contract](product-outcome.
 
 Canonical identities follow the implemented [M1 identity contract](m1-contracts.md#stable-identity-contract): repository and typed scope prevent fully qualified names from colliding across modules or dependency origins; entity kind and canonical name/signature distinguish language-level symbols; relationship targets preserve resolved, candidate, or unresolved state; and occurrence identities include complete source evidence.
 
-The exact graph mapping of those canonical identities remains **HYPOTHESIS** until M5. Fully qualified name alone is not a canonical entity identity.
+M5.1 implements the versioned mapping and canonical snapshot round-trip; G4 query/metric and infeasible-path gates remain pending. Fully qualified name alone is not a canonical entity identity.
 
 ## Schema Evolution
 
@@ -210,12 +207,12 @@ Schema changes require:
 
 ## Validation Plan (R2 Experiment)
 
-To validate this schema, define 3 core architecture rules and trace the
+To validate the query boundary, cover these four architecture use cases and trace the
 graph path each rule requires:
 
 1. **Layered violation:** Controller → Repository (skipping Service)
    - Requires: DEPENDS_ON or CALLS between controller and repository classes
-   - Graph path: Class(Controller) → CALLS → Method → CALLS → Method(Repository)
+   - Graph path: Type(Controller) → DECLARES → Method → CALLS → Method ← DECLARES ← Type(Repository), or the supported derived type-to-type DEPENDS_ON edge
 
 2. **Circular dependency:** Package A → Package B → Package A
    - Requires: DEPENDS_ON aggregated at package level
@@ -235,8 +232,8 @@ the schema must be revised before implementation.
 
 ## Known Gaps [OPEN QUESTION]
 
-- Generic type parameters: not represented in current schema
-- Lambda expressions: method call targets unclear
+- Generic type parameters: M5.1 preserves neutral type-use/type-parameter facts; focused query and presentation semantics remain M5.2 work
+- Lambda expressions: M5.1 preserves existing attributed calls and typed gaps; unresolved frontend targets remain explicit, not invented
 - Reflection-based dependencies: not generally attributable from source-only static evidence; retain candidate/configuration evidence and an acquisition gap for possible bytecode, configuration, controlled runtime, or other providers
 - Exact node-versus-index representation of canonical condition formulas and large truth regions
 - Partial-order registration projection and witness-order identity
