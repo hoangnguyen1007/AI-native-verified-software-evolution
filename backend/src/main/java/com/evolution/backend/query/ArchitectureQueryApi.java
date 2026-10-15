@@ -1,0 +1,223 @@
+package com.evolution.backend.query;
+
+import com.evolution.analysis.contract.common.ContentDigest;
+import com.evolution.analysis.contract.serialization.CanonicalJson;
+import com.evolution.analysis.graph.*;
+import com.evolution.analysis.metrics.*;
+import com.evolution.analysis.policy.PolicyEvaluation;
+import com.evolution.analysis.query.*;
+import java.nio.ByteBuffer;
+import java.nio.charset.*;
+import java.util.*;
+import java.util.function.*;
+import static com.evolution.analysis.query.ArchitectureQuery.*;
+
+/** Replaceable HTTP/JSON adapter. Domain queries and all evidence arithmetic remain in analyzer. */
+public final class ArchitectureQueryApi {
+    public static final String VERSION = "architecture.http:m7.1-v1";
+    public static final List<String> OPERATIONS = List.of("summary","provenance","entities","entity","edges","dependencies",
+            "relationships","expand","paths","shortest-path","cycles","reachability","impact","evidence","explain","gaps",
+            "spring","configurations","artifacts","metric-catalog","metric","comparison-preparation");
+    public static final List<String> REPORT_OPERATIONS = List.of("rules","findings","finding","bundle","policy-metrics","assessment");
+    public record Response(int status, byte[] body) {
+        public Response { body = body.clone(); }
+        @Override public byte[] body() { return body.clone(); }
+    }
+    private static final class Failure extends RuntimeException {
+        final int status; final String code;
+        Failure(int status,String code) { this.status=status; this.code=code; }
+    }
+    private final GraphStore store;
+    private final PublishedReports reports;
+    private final ApiLimits limits;
+    private final BiFunction<KnowledgeGraph,Supplier<StopReason>,ArchitectureQueryService> factory;
+    public ArchitectureQueryApi(GraphStore store) { this(store,new PublishedReports(),ApiLimits.defaults()); }
+    public ArchitectureQueryApi(GraphStore store,PublishedReports reports,ApiLimits limits) {
+        this(store,reports,limits,(graph,guard) -> new ArchitectureMetricsService(graph,ArchitectureMetric.Limits.defaults(),guard,Optional.empty(),List.of()).queries());
+    }
+    /** Provider injection supports embedding and explicit absent-provider/cancellation contract checks. */
+    public ArchitectureQueryApi(GraphStore store,PublishedReports reports,ApiLimits limits,
+                                BiFunction<KnowledgeGraph,Supplier<StopReason>,ArchitectureQueryService> factory) {
+        this.store=Objects.requireNonNull(store); this.reports=Objects.requireNonNull(reports);
+        this.limits=Objects.requireNonNull(limits); this.factory=Objects.requireNonNull(factory);
+    }
+    public ApiLimits limits() { return limits; }
+    public Response handle(String method,String rawPath,String contentType,byte[] body,BooleanSupplier cancelled) {
+        try {
+            if (body.length > limits.requestBytes()) throw new Failure(413,"REQUEST_TOO_LARGE");
+            Object data = route(method,rawPath,contentType,body,cancelled);
+            byte[] canonicalData = BoundedJson.encode(data,limits.responseBytes());
+            return new Response(200,BoundedJson.encode(Map.of("apiVersion",VERSION,"queryVersion",ArchitectureQuery.VERSION,
+                    "resultIdentity",ContentDigest.sha256(canonicalData),"data",data),limits.responseBytes()));
+        } catch (Failure failure) { return error(failure.status,failure.code); }
+        catch (BoundedJson.TooLarge large) { return error(422,"RESPONSE_TOO_LARGE"); }
+        catch (GraphJson.LimitExceededException large) { return error(413,"JSON_LIMIT_EXCEEDED"); }
+        catch (GraphStoreException unavailable) { return error(503,"GRAPH_STORE_UNAVAILABLE"); }
+        catch (IllegalArgumentException invalid) { return error(400,"INVALID_REQUEST"); }
+        catch (RuntimeException failed) { return error(500,"INTERNAL_ERROR"); }
+    }
+    public Response error(int status,String code) {
+        return new Response(status,CanonicalJson.write(Map.of("apiVersion",VERSION,"queryVersion",ArchitectureQuery.VERSION,
+                "error",Map.of("code",code,"message",message(code)))).getBytes(StandardCharsets.UTF_8));
+    }
+    private static String message(String code) {
+        return switch (code) {
+            case "INVALID_REQUEST" -> "The request does not satisfy the API contract.";
+            case "GRAPH_NOT_FOUND" -> "The requested graph is unavailable.";
+            case "REPORT_NOT_FOUND", "REPORT_ARTIFACT_UNAVAILABLE" -> "The requested canonical report artifact is unavailable.";
+            case "NOT_FOUND" -> "The requested API operation is unavailable.";
+            case "METHOD_NOT_ALLOWED" -> "This route does not support the requested HTTP method.";
+            case "UNSUPPORTED_MEDIA_TYPE" -> "Use application/json with UTF-8 and no content encoding.";
+            case "NOT_ACCEPTABLE" -> "The API produces application/json.";
+            case "REQUEST_TOO_LARGE", "JSON_LIMIT_EXCEEDED" -> "The request exceeds the configured transport limit.";
+            case "RESPONSE_TOO_LARGE" -> "The complete response exceeds the transport limit; narrow the query or page.";
+            case "FORBIDDEN_ORIGIN" -> "The local API accepts only same-origin requests.";
+            case "BUSY" -> "The local API is at its concurrent request limit.";
+            case "GRAPH_STORE_UNAVAILABLE" -> "Graph storage could not supply a verified snapshot.";
+            default -> "The request could not be completed.";
+        };
+    }
+    private Object route(String method,String path,String contentType,byte[] body,BooleanSupplier cancelled) {
+        if (path.equals("/api/v1")) {
+            requireMethod(method,"GET"); requireEmpty(body);
+            return Map.of("operations",OPERATIONS,"reportOperations",REPORT_OPERATIONS,"transportLimits",limits,
+                    "queryLimits",Limits.defaults(),"graphSchema",KnowledgeGraph.SCHEMA);
+        }
+        String[] parts=path.split("/",-1);
+        if (parts.length<5 || !parts[0].isEmpty() || !parts[1].equals("api") || !parts[2].equals("v1") || !parts[3].equals("graphs"))
+            throw new Failure(404,"NOT_FOUND");
+        var graphId=new ContentDigest(parts[4]);
+        if (parts.length==5) {
+            requireMethod(method,"GET"); requireEmpty(body);
+            var graph=load(graphId);
+            return Map.of("graph",graph.identity(),"snapshot",graph.snapshot(),"contexts",graph.contexts(),"reports",reports.forGraph(graphId));
+        }
+        if (parts.length==7 && parts[5].equals("queries") && OPERATIONS.contains(parts[6])) {
+            requireMethod(method,"POST");
+            var input=decode(body,contentType);
+            QueryJson.object(input,"request","arguments","page");
+            if (input.containsKey("page") && input.get("page")==null) throw new IllegalArgumentException("Page object required");
+            var request=QueryJson.request(graphId,input.get("request"));
+            var page=QueryJson.page(input.get("page"));
+            var args=input.containsKey("arguments") ? GraphJson.object(input.get("arguments")) : Map.<String,Object>of();
+            long deadline=System.nanoTime()+limits.queryTimeoutMillis()*1_000_000;
+            var guard=ArchitectureQueryService.operationalGuard(cancelled,deadline,8_000_000);
+            var service=factory.apply(load(graphId),guard);
+            return query(parts[6],service,request,page,args,input.containsKey("page"));
+        }
+        if ((parts.length==7 || parts.length==8) && parts[5].equals("reports")) {
+            var reportId=new ContentDigest(parts[6]);
+            if (parts.length==7) { requireMethod(method,"GET"); requireEmpty(body); }
+            else if (REPORT_OPERATIONS.contains(parts[7])) requireMethod(method,"POST");
+            else throw new Failure(404,"NOT_FOUND");
+            var graph=load(graphId);
+            var report=reports.get(reportId).filter(r -> r.evaluation().graph().equals(graphId)).orElseThrow(() -> new Failure(404,"REPORT_NOT_FOUND"));
+            var partition=graph.contexts().stream().filter(c -> c.identity().equals(report.evaluation().context())).findFirst()
+                    .orElseThrow(() -> new Failure(404,"REPORT_NOT_FOUND"));
+            if (report.metrics().isPresent() && (!report.metrics().orElseThrow().context().snapshot().equals(partition.snapshot())
+                    || !report.metrics().orElseThrow().context().analysis().equals(partition.analysis())))
+                throw new Failure(404,"REPORT_NOT_FOUND");
+            if (report.evaluation().findings().stream().anyMatch(f -> !f.bundle().snapshot().equals(partition.snapshot())
+                    || !f.bundle().analysis().equals(partition.analysis()))) throw new Failure(404,"REPORT_NOT_FOUND");
+            if (parts.length==7) return Map.of("identity",reportId,"context",report.evaluation().context(),"evaluation",report.evaluation().identity(),
+                    "status",report.evaluation().status(),"gaps",report.evaluation().gaps(),"ruleCount",report.evaluation().rules().size(),
+                    "findingCount",report.evaluation().findings().size(),"hasMetrics",report.metrics().isPresent(),"hasAssessment",report.assessment().isPresent());
+            var input=decode(body,contentType);
+            QueryJson.object(input,"arguments","page");
+            if (input.containsKey("page") && input.get("page")==null) throw new IllegalArgumentException("Page object required");
+            var args=input.containsKey("arguments") ? GraphJson.object(input.get("arguments")) : Map.<String,Object>of();
+            return report(parts[7],reportId,report,args,QueryJson.page(input.get("page")),input.containsKey("page"));
+        }
+        throw new Failure(404,"NOT_FOUND");
+    }
+    private KnowledgeGraph load(ContentDigest identity) { return store.load(identity).orElseThrow(() -> new Failure(404,"GRAPH_NOT_FOUND")); }
+    private Object query(String op,ArchitectureQueryService q,Request r,Page p,Map<String,Object> a,boolean hasPage) {
+        boolean paged=Set.of("entities","edges","dependencies","relationships","explain","gaps","spring","configurations","artifacts","metric-catalog").contains(op);
+        if (hasPage && !paged) throw new IllegalArgumentException("Page not applicable");
+        switch (op) {
+            case "entities" -> QueryJson.object(a,"search");
+            case "entity","dependencies","expand","reachability","impact","explain" -> QueryJson.object(a,"identity");
+            case "paths","shortest-path" -> QueryJson.object(a,"source","target");
+            case "evidence" -> QueryJson.object(a,"reference");
+            case "spring" -> QueryJson.object(a,"kinds");
+            case "artifacts" -> QueryJson.object(a,"families");
+            case "metric" -> QueryJson.object(a,"metric","subject");
+            case "comparison-preparation" -> QueryJson.object(a,"graph","context");
+            default -> QueryJson.object(a);
+        }
+        return switch (op) {
+            case "summary" -> q.summary(r);
+            case "provenance" -> q.provenance(r);
+            case "entities" -> q.entities(r,a.containsKey("search") ? GraphJson.string(a.get("search")) : "",p);
+            case "entity" -> q.entity(r,QueryJson.text(a,"identity"));
+            case "edges" -> q.edges(r,p);
+            case "dependencies" -> q.dependencies(r,QueryJson.text(a,"identity"),p);
+            case "relationships" -> q.relationships(r,p);
+            case "expand" -> q.expand(r,QueryJson.text(a,"identity"));
+            case "paths" -> q.findPaths(r,QueryJson.text(a,"source"),QueryJson.text(a,"target"));
+            case "shortest-path" -> q.shortestPath(r,QueryJson.text(a,"source"),QueryJson.text(a,"target"));
+            case "cycles" -> q.findCycles(r);
+            case "reachability" -> q.reachability(r,QueryJson.text(a,"identity"));
+            case "impact" -> q.impact(r,QueryJson.text(a,"identity"));
+            case "evidence" -> q.evidence(r,new ContentDigest(QueryJson.text(a,"reference")));
+            case "explain" -> q.explain(r,QueryJson.text(a,"identity"),p);
+            case "gaps" -> q.gaps(r,p);
+            case "spring" -> q.spring(r,QueryJson.stringsRequired(a,"kinds"),p);
+            case "configurations" -> q.configurations(r,p);
+            case "artifacts" -> q.artifacts(r,QueryJson.stringsRequired(a,"families"),p);
+            case "metric-catalog" -> q.metricCatalog(r,p);
+            case "metric" -> q.metric(r,QueryJson.text(a,"metric"),QueryJson.text(a,"subject"));
+            case "comparison-preparation" -> q.comparisonPreparation(r,load(new ContentDigest(QueryJson.text(a,"graph"))),QueryJson.text(a,"context"));
+            default -> throw new Failure(404,"NOT_FOUND");
+        };
+    }
+    private Object report(String op,ContentDigest id,PublishedReports.Report report,Map<String,Object> args,Page page,boolean hasPage) {
+        boolean paged=op.equals("rules") || op.equals("findings");
+        if (hasPage && !paged) throw new IllegalArgumentException("Page not applicable");
+        QueryJson.object(args,op.equals("finding") || op.equals("bundle") ? new String[]{"identity"} : new String[0]);
+        var e=report.evaluation();
+        return switch (op) {
+            case "rules" -> reportPage(id,op,page,e.rules().stream().sorted(Comparator.comparing(r -> r.identity())).map(r -> (Object)Map.of("identity",r.identity(),"result",r)).toList(),e);
+            case "findings" -> reportPage(id,op,page,e.findings().stream().sorted(Comparator.comparing(PolicyEvaluation.Finding::identity)).map(f -> (Object)Map.of("identity",f.identity(),"key",f.key(),"bundleIdentity",f.bundle().identity(),"result",f)).toList(),e);
+            case "finding","bundle" -> {
+                var target=new ContentDigest(QueryJson.text(args,"identity"));
+                var finding=e.findings().stream().filter(f -> (op.equals("finding") ? f.identity() : f.bundle().identity()).equals(target)).findFirst()
+                        .orElseThrow(() -> new Failure(404,"REPORT_ARTIFACT_UNAVAILABLE"));
+                yield op.equals("finding") ? finding : finding.bundle();
+            }
+            case "policy-metrics" -> report.metrics().orElseThrow(() -> new Failure(404,"REPORT_ARTIFACT_UNAVAILABLE"));
+            case "assessment" -> report.assessment().orElseThrow(() -> new Failure(404,"REPORT_ARTIFACT_UNAVAILABLE"));
+            default -> throw new Failure(404,"NOT_FOUND");
+        };
+    }
+    private Object reportPage(ContentDigest report,String op,Page page,List<Object> rows,PolicyEvaluation.Result evaluation) {
+        var query=ContentDigest.sha256Utf8(CanonicalJson.write(List.of(VERSION,report,op,page.size())));
+        int start=0;
+        if (page.cursor().isPresent()) {
+            String decoded=new String(Base64.getUrlDecoder().decode(page.cursor().orElseThrow()),StandardCharsets.UTF_8);
+            String prefix=query.value()+"|";
+            if (!decoded.startsWith(prefix)) throw new IllegalArgumentException("Foreign report cursor");
+            start=Integer.parseInt(decoded.substring(prefix.length()));
+            if (start<1 || start>=rows.size() || start%page.size()!=0) throw new IllegalArgumentException("Invalid report cursor");
+        }
+        int end=Math.min(rows.size(),start+page.size());
+        Optional<String> cursor=end<rows.size() ? Optional.of(Base64.getUrlEncoder().withoutPadding().encodeToString((query.value()+"|"+end).getBytes(StandardCharsets.UTF_8))) : Optional.empty();
+        return Map.of("query",query,"items",rows.subList(start,end),"continuation",cursor,"returnedTotal",rows.size(),
+                "evaluationStatus",evaluation.status(),"gaps",evaluation.gaps(),"truncated",cursor.isPresent(),
+                "denominatorMeaning","Published observed rows; evaluation gaps may withhold completeness.");
+    }
+    private Map<String,Object> decode(byte[] bytes,String contentType) {
+        if (!jsonMediaType(contentType)) throw new Failure(415,"UNSUPPORTED_MEDIA_TYPE");
+        try {
+            String text=StandardCharsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT).onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(bytes)).toString();
+            return GraphJson.object(GraphJson.read(text,new GraphJson.Limits(limits.requestBytes(),limits.jsonDepth(),limits.jsonValues())));
+        } catch (CharacterCodingException invalid) { throw new IllegalArgumentException("Invalid UTF-8"); }
+    }
+    static boolean jsonMediaType(String value) {
+        if (value==null) return false;
+        String normalized=value.toLowerCase(Locale.ROOT).replace(" ","");
+        return normalized.equals("application/json") || normalized.equals("application/json;charset=utf-8");
+    }
+    private static void requireMethod(String actual,String required) { if (!actual.equals(required)) throw new Failure(405,"METHOD_NOT_ALLOWED"); }
+    private static void requireEmpty(byte[] bytes) { if (bytes.length!=0) throw new IllegalArgumentException("Body not applicable"); }
+}

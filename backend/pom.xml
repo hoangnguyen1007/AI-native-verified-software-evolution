@@ -13,8 +13,8 @@
     <artifactId>backend</artifactId>
     <name>Backend</name>
     <description>
-        API layer and graph persistence. Depends on analyzer domain model.
-        Graph DB driver will be added after R2 validation.
+        Read-only local HTTP and canonical JSON adapter over analyzer query services
+        and explicitly published policy/assessment results.
     </description>
 
     <dependencies>

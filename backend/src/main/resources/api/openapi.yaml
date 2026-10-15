@@ -1,0 +1,240 @@
+openapi: 3.1.0
+info:
+  title: Architecture Query API
+  version: m7.1-v1
+  description: Local read-only projection of canonical M5 queries and explicitly published M6 reports.
+servers:
+  - url: http://127.0.0.1:8080
+paths:
+  /api/v1:
+    get:
+      operationId: capabilities
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/graphs/{graph}:
+    parameters:
+      - {$ref: '#/components/parameters/Graph'}
+    get:
+      operationId: graphContextsAndReports
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/graphs/{graph}/queries/{operation}:
+    parameters:
+      - {$ref: '#/components/parameters/Graph'}
+      - in: path
+        name: operation
+        required: true
+        schema:
+          type: string
+          enum: [summary, provenance, entities, entity, edges, dependencies, relationships, expand, paths, shortest-path, cycles, reachability, impact, evidence, explain, gaps, spring, configurations, artifacts, metric-catalog, metric, comparison-preparation]
+    post:
+      operationId: query
+      description: Read-only POST supports structured filters. Arguments are operation-specific; see the M7.1 architecture contract. Domain PARTIAL/CANCELLED results use HTTP 200 and retain their gaps and bounds.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/QueryCall'}
+      responses:
+        '200': {$ref: '#/components/responses/QuerySuccess'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/graphs/{graph}/reports/{report}:
+    parameters:
+      - {$ref: '#/components/parameters/Graph'}
+      - {$ref: '#/components/parameters/Report'}
+    get:
+      operationId: publishedReportSummary
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/graphs/{graph}/reports/{report}/{operation}:
+    parameters:
+      - {$ref: '#/components/parameters/Graph'}
+      - {$ref: '#/components/parameters/Report'}
+      - in: path
+        name: operation
+        required: true
+        schema:
+          type: string
+          enum: [rules, findings, finding, bundle, policy-metrics, assessment]
+    post:
+      operationId: publishedReportArtifact
+      description: Returns supplied immutable canonical results. Missing reports/artifacts are 404; no policy execution or score recomputation occurs.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                arguments: {type: object, description: 'finding/bundle require identity; other operations require an empty object.'}
+                page: {$ref: '#/components/schemas/Page'}
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+components:
+  parameters:
+    Graph:
+      in: path
+      name: graph
+      required: true
+      schema: {$ref: '#/components/schemas/Digest'}
+    Report:
+      in: path
+      name: report
+      required: true
+      schema: {$ref: '#/components/schemas/Digest'}
+  responses:
+    Success:
+      description: Canonical data with SHA-256 of its canonical UTF-8 JSON. Cache-Control is no-store.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Envelope'}
+    QuerySuccess:
+      description: Canonical query result, including honest partial/withheld/cancellation states.
+      content:
+        application/json:
+          schema:
+            allOf:
+              - {$ref: '#/components/schemas/Envelope'}
+              - properties:
+                  data: {$ref: '#/components/schemas/QueryResult'}
+    Error:
+      description: '400 invalid request; 403 origin; 404 absent route/graph/report/artifact; 405 method; 406 Accept; 413 input limit; 415 media/encoding; 422 response limit; 500 internal; 503 storage/busy. Transport interruption may close the connection before a response is possible.'
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [apiVersion, queryVersion, error]
+            additionalProperties: false
+            properties:
+              apiVersion: {const: 'architecture.http:m7.1-v1'}
+              queryVersion: {$ref: '#/components/schemas/Version'}
+              error:
+                type: object
+                required: [code, message]
+                additionalProperties: false
+                properties:
+                  code: {type: string}
+                  message: {type: string}
+  schemas:
+    Digest: {type: string, pattern: '^sha256:[0-9a-f]{64}$'}
+    Version:
+      type: object
+      required: [id, version]
+      properties:
+        id: {const: architecture.query}
+        version: {const: m5.3-v1}
+    Envelope:
+      type: object
+      required: [apiVersion, queryVersion, resultIdentity, data]
+      additionalProperties: false
+      properties:
+        apiVersion: {const: 'architecture.http:m7.1-v1'}
+        queryVersion: {$ref: '#/components/schemas/Version'}
+        resultIdentity: {$ref: '#/components/schemas/Digest'}
+        data: {}
+    StringSet:
+      type: array
+      uniqueItems: true
+      items: {type: string, minLength: 1, maxLength: 8192, pattern: '\S'}
+    Population:
+      type: object
+      additionalProperties: false
+      properties:
+        nodeKinds: {$ref: '#/components/schemas/StringSet'}
+        modules: {$ref: '#/components/schemas/StringSet'}
+        origins: {$ref: '#/components/schemas/StringSet'}
+        sourceSets: {$ref: '#/components/schemas/StringSet'}
+    Realization:
+      type: object
+      additionalProperties: false
+      properties:
+        world: {type: [string, 'null'], minLength: 1, maxLength: 8192, pattern: '\S'}
+        assignment:
+          type: object
+          propertyNames: {minLength: 1, maxLength: 256, pattern: '\S'}
+          additionalProperties: {type: boolean}
+      oneOf:
+        - required: [world]
+          properties:
+            world: {type: string}
+            assignment: {maxProperties: 0}
+        - required: [assignment]
+          properties:
+            world: {type: 'null'}
+            assignment: {minProperties: 1}
+    Limits:
+      type: object
+      additionalProperties: false
+      properties:
+        maxDepth: {type: integer, minimum: 1, maximum: 20, default: 20}
+        maxSteps: {type: integer, minimum: 1, maximum: 100000, default: 100000}
+        maxResults: {type: integer, minimum: 1, maximum: 50, default: 50}
+        maxVertices: {type: integer, minimum: 1, maximum: 100000, default: 100000}
+        maxEdges: {type: integer, minimum: 1, maximum: 500000, default: 500000}
+        maxSolverSteps: {type: integer, minimum: 1, maximum: 10000000, default: 1000000}
+        maxFormulaNodes: {type: integer, minimum: 1, maximum: 100000, default: 100000}
+        maxAuxiliaryStates: {type: integer, minimum: 1, maximum: 500000, default: 200000}
+    Request:
+      type: object
+      required: [context, scope, projection, direction, relationshipKinds]
+      additionalProperties: false
+      properties:
+        graph: {$ref: '#/components/schemas/Digest'}
+        context: {type: string, minLength: 1, maxLength: 8192, pattern: '\S'}
+        scope: {enum: [ENTITY, TYPE, PACKAGE, MODULE, SPRING_COMPONENT]}
+        projection: {enum: [REALIZED, MUST, MAY, BOUNDED_UNION, UNKNOWN_OVERLAY]}
+        direction: {enum: [OUTGOING, INCOMING]}
+        relationshipKinds:
+          allOf:
+            - {$ref: '#/components/schemas/StringSet'}
+            - {minItems: 1}
+        population: {$ref: '#/components/schemas/Population'}
+        includeMust: {type: boolean, default: false}
+        realization:
+          anyOf:
+            - {$ref: '#/components/schemas/Realization'}
+            - {type: 'null'}
+        limits: {$ref: '#/components/schemas/Limits'}
+      allOf:
+        - if:
+            properties:
+              projection: {const: REALIZED}
+          then:
+            required: [realization]
+            properties:
+              realization: {$ref: '#/components/schemas/Realization'}
+          else:
+            properties:
+              realization: {type: 'null'}
+    Page:
+      type: object
+      additionalProperties: false
+      properties:
+        size: {type: integer, minimum: 1, maximum: 50, default: 50}
+        cursor: {type: [string, 'null'], minLength: 1, maxLength: 8192, pattern: '\S'}
+    QueryCall:
+      type: object
+      required: [request]
+      additionalProperties: false
+      properties:
+        request: {$ref: '#/components/schemas/Request'}
+        arguments: {type: object}
+        page: {$ref: '#/components/schemas/Page'}
+    QueryResult:
+      type: object
+      required: [query, status, operation, items, evidence, gaps, bounds, continuation, exactTotal]
+      properties:
+        query: {$ref: '#/components/schemas/Digest'}
+        status: {enum: [COMPLETE, PARTIAL, WITHHELD, NOT_APPLICABLE]}
+        operation: {enum: [COMPLETED, CANCELLED, RESOURCE_LIMIT]}
+        items: {type: array, maxItems: 50, items: {}}
+        evidence: {type: array, items: {$ref: '#/components/schemas/Digest'}}
+        gaps: {type: array, description: 'Original typed CapabilityGapRecord values and identities.', items: {type: object}}
+        bounds: {type: object, description: 'Original canonical Bounds: stop reason, counters, frontier and separate work/output flags.'}
+        continuation: {type: [string, 'null']}
+        exactTotal: {type: [integer, 'null'], minimum: 0}
