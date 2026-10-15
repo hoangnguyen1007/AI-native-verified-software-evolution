@@ -233,7 +233,7 @@ Exit gate G4: idempotency, uniqueness, provenance, persistence round-trip, metri
 
 ### M6 - Policy, Evidence, and Explainable Architecture Assessment
 
-Deliver schema-validated external policy representation compiled to a typed internal model, initially covering forbidden dependency, layer/module/package boundary, and cycle rules.
+**Status: DELIVERED; Gate G5 PASSED (2026-10-15).** See the [Gate G5 Adjudication Record](reproducibility/g5-adjudication-record-2026-10-15.md). Bounded implementation passes 250 tests across 30 suites with zero failures/errors/skips. The baseline score model parameters (5 dimensions, weights 25/20/20/25/10, caps 100, severity penalties 2/10/25, structural thresholds/saturation 0/1) are approved and frozen under ADR-002.
 
 Each policy result composes rule predicates with fact truth regions. Findings distinguish `MUST`, `MAY` and `UNKNOWN`; `NEVER` is a clean result within the modeled space rather than a warning. Each finding carries rule/version, source/target identities, supporting relationships, source spans, semantic status, graph path, configuration-space/affected-region identity, witness/counter-witness where applicable, evidence gaps and limitations. Severity and configuration quantifier remain orthogonal.
 

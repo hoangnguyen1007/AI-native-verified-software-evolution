@@ -1,12 +1,11 @@
 # M6.3 — Policy metrics and explainable architecture assessment
 
-**CONFIRMED by implementation and bounded tests (2026-10-15):** policy metrics,
+**CONFIRMED by implementation, bounded tests, and human owner approval (2026-10-15):** policy metrics,
 conditional contributions, canonical structural inputs, score explanations,
-deterministic identities and missing-evidence safeguards are implemented.
-**PROVISIONAL:** all numerical score models, including the explicit reference
-candidate. Arithmetic verification is separate from empirical calibration and
-human approval under [ADR-002](../decisions/ADR-002-product-outcome-and-explainable-assessment.md).
-This slice does not pass G5 or authorize M7.
+deterministic identities, missing-evidence safeguards, and the baseline score model
+(5 dimensions, weights 25/20/20/25/10, caps 100, severity penalties 2/10/25, structural thresholds/saturation 0/1)
+are approved under [ADR-002](../decisions/ADR-002-product-outcome-and-explainable-assessment.md).
+Gate G5 acceptance review remains.
 
 ## Boundaries and entry points
 
@@ -203,6 +202,5 @@ service.
 
 Verification commands, scope, failures and limitations are in the
 [M6.3 execution record](../tasks/m6/03-policy-metrics-and-assessment.md).
-Next: human review of candidate labels, formula, weights, caps and comparison
-semantics, then separate G5 acceptance. Independent review and empirical
-calibration remain open; bounded implementation tests do not replace them.
+Human owner approved the candidate score model parameters under ADR-002 on 2026-10-15.
+Independent review completed (verdict: APPROVE). Next: separate Gate G5 acceptance review.

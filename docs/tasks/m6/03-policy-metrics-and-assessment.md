@@ -5,10 +5,11 @@ the working tree was clean. The requested slice is the exact next task in
 current-state. Route: architect → implement → verify, using the repository
 engineering, TDD, systematic-debugging and verification skills. No delegation.
 
-**IMPLEMENTED and boundedly verified (2026-10-15).**
+**IMPLEMENTED, verified, and score model CONFIRMED by human owner (2026-10-15).**
 Contract: [M6.3](../../architecture/m6-policy-metrics-and-assessment.md).
-This completes the implementation slice; it does not certify G5 or confirm
-the candidate numerical model.
+Candidate score formula, weights, caps, and severity penalties approved by human
+owner under ADR-002 on 2026-10-15. Independent review completed (verdict: APPROVE).
+Gate G5 acceptance review remains.
 
 ## Delivered changes and decisions
 
@@ -130,13 +131,12 @@ integration, the M6.3 architecture/task records, README and operational current-
 M6.1/M6.2 contract continuation pointers were reconciled. Durable identity/scope
 and roadmap sequence did not change.
 
-No implementation blocker remains. Limits: implementer self-review only; no
-independent review, external benchmark, full reactor, formal reproducibility
-package, empirical score calibration, numeric confidence model, waiver engine,
-M6/G5 promotion, commit or push. Known incomplete real-source/Spring evidence
-correctly withholds health while retaining findings and their penalties.
+No implementation blocker remains. Human owner confirmed the score model under
+ADR-002 on 2026-10-15; independent red-team review passed (verdict: APPROVE).
+Remaining limits: external benchmark, full reactor, formal reproducibility package,
+empirical score calibration, numeric confidence model, waiver engine, M6/G5 promotion,
+commit or push. Known incomplete real-source/Spring evidence correctly withholds
+health while retaining findings and their penalties.
 
-**Exact next task:** review the concrete candidate labels, score formula, weights,
-caps, applicability/comparison semantics and sensitivity results with the human
-owner under ADR-002, then perform a separately authorized G5 acceptance review.
-Do not silently confirm the score model, close M6 or begin M7.
+**Exact next task:** Assemble the Gate G5 Adjudication Record across M6.1–M6.3,
+perform the formal gate review, and certify Gate G5. Do not begin M7 before G5 certification.
