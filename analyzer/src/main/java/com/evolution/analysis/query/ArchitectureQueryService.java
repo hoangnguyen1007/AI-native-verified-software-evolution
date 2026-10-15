@@ -28,6 +28,8 @@ public final class ArchitectureQueryService {
             return StopReason.NONE;};
     }
     public KnowledgeGraph graph(){return graph;}
+    /** Additive M6 assessment/metric orchestration shares this query service's cancellation and operational guard. */
+    public StopReason assessmentStopReason(){return Objects.requireNonNull(guard.get());}
     static final class LogicalEdge {
         final String source,target;final SortedSet<String> supports=new TreeSet<>(),kinds=new TreeSet<>(),regions=new TreeSet<>();
         final SortedSet<ContentDigest> evidence=new TreeSet<>();QueryRegion region;EdgeView view;

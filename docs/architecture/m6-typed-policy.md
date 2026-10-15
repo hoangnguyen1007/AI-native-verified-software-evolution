@@ -23,7 +23,8 @@ generated patch, target execution, database query or external network access.
 The implemented [M6.2 evaluator](m6-policy-evaluation.md) owns whole-rule
 quantification, bounded cycle evaluation over the selected induced population,
 finding identity/deduplication and Evidence Bundles. Explainable
-scoring, labeled weights/thresholds, sensitivity checks and G5 adjudication remain M6
+candidate scoring is implemented by [M6.3](m6-policy-metrics-and-assessment.md);
+human score calibration/approval and G5 adjudication remain M6
 obligations. An empty candidate list is not a policy result or a score of 100.
 
 ## External representation

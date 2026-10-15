@@ -122,7 +122,8 @@ agreement, explicit/symbolic equivalence, infeasible cycles, source corruption,
 unknown selectors, closed denominators, cancellation, resource limits, deterministic
 replay and actual source/Spring plus persistence integration.
 
-Implementation self-review is not independent review. Policy metrics, explainable
-assessment, labeled weights/thresholds, sensitivity and missing-evidence scoring
-checks remain the next M6 slice. No full reactor, external repository benchmark,
+Implementation self-review is not independent review. [M6.3](m6-policy-metrics-and-assessment.md)
+now implements policy metrics, explainable candidate assessment, authored labels,
+sensitivity and missing-evidence scoring checks. Human score calibration/approval
+and G5 acceptance remain open. No full reactor, external repository benchmark,
 formal reproducibility package, gate promotion, commit or push is claimed.

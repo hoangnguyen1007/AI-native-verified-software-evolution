@@ -6,6 +6,10 @@ import com.evolution.analysis.filesystem.FileGraphStore;
 import com.evolution.analysis.graph.*;
 import com.evolution.analysis.ingestion.UniversalArchitecturePipeline;
 import com.evolution.analysis.policy.*;
+import com.evolution.analysis.metrics.*;
+import com.evolution.analysis.assessment.*;
+import com.evolution.analysis.contract.assessment.AssessmentStatus;
+import java.math.BigDecimal;
 import com.evolution.analysis.query.*;
 import com.evolution.analysis.spring.condition.*;
 import com.evolution.analysis.spring.truth.*;
@@ -23,6 +27,9 @@ class M6PolicyIntegrationTest {
     @TempDir Path directory;
     static PolicyCompiler.Result compile(KnowledgeGraph graph,String yaml){return new PolicyCompiler().compile(yaml.getBytes(StandardCharsets.UTF_8),
             EvidenceContext.forSnapshot(graph.snapshot()),PolicyCompiler.Limits.defaults());}
+    static ArchitectureScoreModel scoreModel(){return new ArchitectureScoreModel(new VersionedIdentifier("test.source-policy-score","1"),
+            List.of(new ArchitectureScoreModel.Dimension("health.policy",BigDecimal.ONE,new BigDecimal("100"),Set.of(ArchitecturePolicy.Kind.values()),Optional.empty())),
+            Map.of("INFO",new BigDecimal("2"),"WARNING",new BigDecimal("10"),"ERROR",new BigDecimal("25")));}
     @Test void sourceMutationChangesCandidatesAndRetainsFullSourceSpansAfterFileReload(){
         String yaml="""
                 schema: architecture-policy:v1
@@ -55,6 +62,13 @@ class M6PolicyIntegrationTest {
             assertFalse(evaluation.upstreamEvidence().isEmpty());
             assertTrue(evaluation.upstreamEvidence().stream().anyMatch(e->e.family().equals("evidence.gap")));
             assertEquals(dependency?1:0,evaluation.findings().size());
+            var metrics=new PolicyMetricsService().compute(compiled,plan,evaluation,service,PolicyMetrics.Limits.defaults());
+            assertEquals(1,metrics.counts().declaredRules());assertEquals(dependency?1:0,metrics.counts().findings().size());
+            assertEquals(AssessmentStatus.WITHHELD,metrics.require("metric.policy-density").status());
+            var assessment=new ArchitectureAssessmentService().evaluate(metrics,evaluation,service,Optional.of(scoreModel()),List.of(),ArchitectureAssessment.Limits.defaults());
+            assertEquals(AssessmentStatus.WITHHELD,assessment.status());assertTrue(assessment.score().isEmpty());assertFalse(assessment.confidence().sufficient());
+            assertFalse(metrics.upstreamEvidence().isEmpty());
+            if(dependency)assertEquals(new BigDecimal("25"),assessment.dimensions().getFirst().uncappedPenalty());
             if(dependency){
                 var candidate=plan.rules().getFirst().candidates().getFirst();assertEquals(PolicySelector.Match.YES,candidate.eligibility());
                 assertEquals(Classification.MUST,service.condition(plan.rules().getFirst().request(),candidate.predicate()).items().getFirst().classification());
@@ -70,6 +84,9 @@ class M6PolicyIntegrationTest {
             assertEquals(plan,mapper.bind(compiled,new ArchitectureQueryService(restored),context,PolicyGraphMapper.Limits.defaults()));
             assertEquals(plan.identity(),mapper.bind(compiled,new ArchitectureQueryService(restored),context,PolicyGraphMapper.Limits.defaults()).identity());
             assertEquals(evaluation,new PolicyEvaluator().evaluate(compiled,plan,new ArchitectureQueryService(restored),PolicyEvaluation.Limits.defaults()));
+            var restoredMetrics=new PolicyMetricsService().compute(compiled,plan,evaluation,new ArchitectureQueryService(restored),PolicyMetrics.Limits.defaults());
+            assertEquals(metrics.identity(),restoredMetrics.identity());
+            assertEquals(assessment.identity(),new ArchitectureAssessmentService().evaluate(restoredMetrics,evaluation,new ArchitectureQueryService(restored),Optional.of(scoreModel()),List.of(),ArchitectureAssessment.Limits.defaults()).identity());
         }
         assertEquals(2,identities.size());
     }
@@ -128,6 +145,12 @@ class M6PolicyIntegrationTest {
             assertFalse(bundle.upstreamEvidence().isEmpty());
             assertEquals(bundle.region(),service.ruleCondition(bundle.request(),bundle.predicate()).items().getFirst());
             assertEquals(evaluated,new PolicyEvaluator().evaluate(compile(graph,yaml),plan,new ArchitectureQueryService(restored),PolicyEvaluation.Limits.defaults()));
+            var metrics=new PolicyMetricsService().compute(compile(graph,yaml),plan,evaluated,service,PolicyMetrics.Limits.defaults());
+            assertEquals(1L,metrics.counts().findingQuantifiers().get("MAY"));assertEquals(1L,metrics.counts().ruleQuantifiers().get("UNKNOWN"));
+            assertEquals(List.of(space.identity().value()),metrics.context().configurationSpaces());
+            var assessment=new ArchitectureAssessmentService().evaluate(metrics,evaluated,service,Optional.of(scoreModel()),List.of(),ArchitectureAssessment.Limits.defaults());
+            assertEquals(AssessmentStatus.WITHHELD,assessment.status());assertTrue(assessment.score().isEmpty());
+            assertEquals(new BigDecimal("25"),assessment.dimensions().getFirst().uncappedPenalty());
         }
     }
 }
