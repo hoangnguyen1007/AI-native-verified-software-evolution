@@ -219,6 +219,8 @@ Exit gate G3: `spring-mechanisms:v2` is fully accounted for; the approved semant
 
 ### M5 - Canonical Graph, Metrics, and Architecture Query Layer
 
+**Status: DELIVERED; Gate G4 PASSED (2026-10-15).** See the [Gate G4 Adjudication Record](reproducibility/g4-adjudication-record-2026-10-15.md). Bounded implementation passes 165 tests across 22 suites with zero failures/errors/skips. The 19-metric baseline in `MetricCatalog` and product performance budgets are approved and frozen under ADR-002.
+
 Deliver deterministic graph construction as a projection of canonical Java and conditional Spring facts, stable entity/occurrence/relationship/region identities, graph invariants, storage port, structural metric computation, focused configuration-aware projections, and query services for summaries, inventory, metrics, symbol lookup, dependencies, dependents, paths, cycles, evidence, impact, activation explanation and snapshot comparison preparation.
 
 Required projections include one realized configuration, `MUST` facts, condition-labeled `MAY` facts, bounded exploratory union and unknown/gap overlays. A union projection cannot be treated as one runtime application world. Graph storage does not own condition solving or policy quantification.

@@ -1,6 +1,6 @@
 # M5.3 — Metrics, end-to-end integration và bằng chứng G4
 
-Trạng thái 2026-10-14: **IMPLEMENTED — bounded verification pass; catalog PROVISIONAL, G4 chờ adjudication**. Điều kiện vào M5.1–M5.2 đã có. [Contract thực thi](../../architecture/m5-architecture-metrics.md) và [bảng evidence/commands/handoff](../../research/m5-g4-bounded-evidence.md) là kết quả bàn giao. Các phần thiết kế dưới đây giữ yêu cầu baseline; không phải bằng chứng gate đã pass. Đọc [README](README.md), [product-outcome](../../architecture/product-outcome.md), [MetricEnvelope](../../../analyzer/src/main/java/com/evolution/analysis/contract/metrics/MetricEnvelope.java). Exit implementation: metric có ích, traceable; integration đầy đủ trong phạm vi bounded; package G4 cụ thể để review.
+Trạng thái 2026-10-15: **COMPLETE — Gate G4 PASSED; catalog CONFIRMED**. Điều kiện vào M5.1–M5.2 đã có. [Contract thực thi](../../architecture/m5-architecture-metrics.md), [bảng evidence/commands/handoff](../../research/m5-g4-bounded-evidence.md) và [Gate G4 Adjudication Record](../../reproducibility/g4-adjudication-record-2026-10-15.md) là kết quả bàn giao. Đọc [README](README.md), [product-outcome](../../architecture/product-outcome.md), [MetricEnvelope](../../../analyzer/src/main/java/com/evolution/analysis/contract/metrics/MetricEnvelope.java). Milestone M5 đã hoàn tất trọn vẹn; mở khóa Milestone M6.
 
 ## A. Metric catalog và envelope
 
@@ -98,7 +98,7 @@ Independent review nếu có phải read-only và có authorization delegation; 
 
 - [x] Catalog phần M5, M01–M12 và G4 matrix có actual bounded evidence; gaps không bị che.
 - [x] Graph/query/metric contracts và `knowledge-graph.md` phản ánh implementation; current-state ghi đúng completion/gate status.
-- [x] Metric catalog approval và G4 adjudication tách khỏi implementation tests; G4 vẫn IN PROGRESS.
-- [x] Handoff trong linked evidence package ghi trạng thái trước/sau, files, commands/results, evidence, decisions, limitations/blockers và exact next task.
+- [x] Metric catalog approval và G4 adjudication hoàn tất; Gate G4 ghi nhận **PASSED** trong [Gate G4 Adjudication Record](../../reproducibility/g4-adjudication-record-2026-10-15.md).
+- [x] Handoff ghi trạng thái trước/sau, files, commands/results, evidence, decisions, limitations/blockers và exact next task.
 
-**Exact next task:** nếu còn thiếu approval/evidence, trình chính package G4 và catalog để adjudicate; chỉ sau G4 đạt và có authorization phù hợp mới chuyển M6 conditional policy/evidence/assessment. Không tự triển khai M6 trong task này.
+**Exact next task:** **Milestone M6.1: Typed Architecture Policy Representation, Rule Compiler & AST Mapping**. Không triển khai thêm code trong M5.
