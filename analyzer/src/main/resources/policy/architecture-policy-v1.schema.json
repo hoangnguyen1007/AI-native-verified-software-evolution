@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Architecture policy v1",
+  "description": "JSON-tree schema for the strict YAML compiler. Compiler additionally enforces bounded syntax, NFC IDs, literal-pattern grammar, unique rule/layer IDs, known layer references and scope/kind compatibility.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "id", "version", "rules"],
+  "properties": {
+    "schema": {"const": "architecture-policy:v1"},
+    "id": {"$ref": "#/$defs/id"},
+    "version": {"$ref": "#/$defs/version"},
+    "rules": {"type": "array", "minItems": 1, "maxItems": 256, "items": {"oneOf": [
+      {"$ref": "#/$defs/forbidden"}, {"$ref": "#/$defs/boundary"},
+      {"$ref": "#/$defs/layers"}, {"$ref": "#/$defs/acyclic"}
+    ]}}
+  },
+  "$defs": {
+    "id": {"type": "string", "maxLength": 512, "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)+$"},
+    "version": {"type": "string", "maxLength": 512, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:@/+~-]*$"},
+    "strings": {"type": "array", "minItems": 1, "maxItems": 128, "uniqueItems": true, "items": {"type": "string", "maxLength": 512}},
+    "selector": {
+      "type": "object", "minProperties": 1, "additionalProperties": false,
+      "properties": {
+        "packages": {"$ref": "#/$defs/strings"}, "names": {"$ref": "#/$defs/strings"},
+        "modules": {"allOf": [{"$ref": "#/$defs/strings"}], "items": {"pattern": "^module:sha256:[0-9a-f]{64}$"}},
+        "identities": {"allOf": [{"$ref": "#/$defs/strings"}], "items": {"pattern": "^(?:[a-z][a-z0-9.-]*:)?sha256:[0-9a-f]{64}$"}},
+        "origins": {"allOf": [{"$ref": "#/$defs/strings"}], "items": {"enum": ["PROJECT", "DEPENDENCY", "JDK", "SYNTHETIC"]}},
+        "sourceSets": {"allOf": [{"$ref": "#/$defs/strings"}], "items": {"enum": ["MAIN", "TEST", "GENERATED_MAIN", "GENERATED_TEST", "OTHER"]}}
+      }
+    },
+    "header": {
+      "type": "object", "required": ["id", "version", "kind", "severity", "scope", "relationships"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"}, "version": {"$ref": "#/$defs/version"},
+        "kind": {"enum": ["FORBIDDEN_DEPENDENCY", "BOUNDARY", "LAYER_BOUNDARY", "ACYCLIC"]},
+        "severity": {"enum": ["INFO", "WARNING", "ERROR"]},
+        "scope": {"enum": ["TYPE", "PACKAGE", "MODULE", "SPRING_COMPONENT"]},
+        "relationships": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["graph.depends-on", "spring.selected-binding", "spring.injection-candidate"]}}
+      },
+      "if": {"properties": {"scope": {"const": "SPRING_COMPONENT"}}},
+      "then": {"properties": {"relationships": {"items": {"enum": ["spring.selected-binding", "spring.injection-candidate"]}}}},
+      "else": {"properties": {"relationships": {"items": {"const": "graph.depends-on"}}}}
+    },
+    "forbidden": {
+      "allOf": [{"$ref": "#/$defs/header"}], "unevaluatedProperties": false,
+      "required": ["from", "to"], "properties": {"kind": {"const": "FORBIDDEN_DEPENDENCY"}, "from": {"$ref": "#/$defs/selector"}, "to": {"$ref": "#/$defs/selector"}}
+    },
+    "boundary": {
+      "allOf": [{"$ref": "#/$defs/header"}], "unevaluatedProperties": false,
+      "required": ["from", "allowed"], "properties": {"kind": {"const": "BOUNDARY"}, "from": {"$ref": "#/$defs/selector"}, "allowed": {"$ref": "#/$defs/selector"}}
+    },
+    "layer": {
+      "type": "object", "additionalProperties": false, "required": ["name", "select"],
+      "properties": {"name": {"$ref": "#/$defs/version"}, "select": {"$ref": "#/$defs/selector"}}
+    },
+    "layers": {
+      "allOf": [{"$ref": "#/$defs/header"}], "unevaluatedProperties": false,
+      "required": ["layers", "allowed"], "properties": {
+        "kind": {"const": "LAYER_BOUNDARY"},
+        "layers": {"type": "array", "minItems": 2, "maxItems": 64, "items": {"$ref": "#/$defs/layer"}},
+        "allowed": {"type": "array", "maxItems": 64, "items": {
+          "type": "object", "additionalProperties": false, "required": ["from", "to"],
+          "properties": {"from": {"$ref": "#/$defs/version"}, "to": {"type": "array", "maxItems": 128, "uniqueItems": true, "items": {"$ref": "#/$defs/version"}}}
+        }}
+      }
+    },
+    "acyclic": {
+      "allOf": [{"$ref": "#/$defs/header"}], "unevaluatedProperties": false,
+      "required": ["within"], "properties": {"kind": {"const": "ACYCLIC"}, "within": {"$ref": "#/$defs/selector"}}
+    }
+  }
+}

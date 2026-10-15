@@ -1,0 +1,41 @@
+schema: architecture-policy:v1
+id: example.architecture
+version: "1"
+rules:
+  - id: web.no-persistence
+    version: "1"
+    kind: FORBIDDEN_DEPENDENCY
+    severity: ERROR
+    scope: TYPE
+    relationships: [graph.depends-on]
+    from: {packages: [com.example.web.**]}
+    to: {packages: [com.example.persistence.**]}
+  - id: persistence.boundary
+    version: "1"
+    kind: BOUNDARY
+    severity: WARNING
+    scope: PACKAGE
+    relationships: [graph.depends-on]
+    from: {packages: [com.example.persistence.**]}
+    allowed: {packages: [com.example.persistence.**, java.**, javax.**, jakarta.**]}
+  - id: architecture.layers
+    version: "1"
+    kind: LAYER_BOUNDARY
+    severity: ERROR
+    scope: PACKAGE
+    relationships: [graph.depends-on]
+    layers:
+      - {name: web, select: {packages: [com.example.web.**]}}
+      - {name: service, select: {packages: [com.example.service.**]}}
+      - {name: persistence, select: {packages: [com.example.persistence.**]}}
+    allowed:
+      - {from: web, to: [service]}
+      - {from: service, to: [persistence]}
+      - {from: persistence, to: []}
+  - id: architecture.acyclic-packages
+    version: "1"
+    kind: ACYCLIC
+    severity: ERROR
+    scope: PACKAGE
+    relationships: [graph.depends-on]
+    within: {packages: [com.example.**]}

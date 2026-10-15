@@ -42,6 +42,14 @@ final class QueryRegion {
         return unknown();
     }
     private static Set<String> combine(Set<String> a,Set<String> b,boolean intersection){var s=new TreeSet<>(a);if(intersection)s.retainAll(b);else s.addAll(b);return s;}
+    QueryRegion negate(){
+        if(encoding==Encoding.EXPLICIT){var y=new TreeSet<>(universe);y.removeAll(possible);var p=new TreeSet<>(universe);p.removeAll(yes);
+            return explicit(domain,y,p,universe,closed,Classification.UNKNOWN);}
+        if(encoding==Encoding.SYMBOLIC)return symbolic(domain,and(universeFormula,not(possibleFormula)),and(universeFormula,not(trueFormula)),universeFormula,closed,Classification.UNKNOWN);
+        // A universal structural fact is true in the request's exact nonempty structural context.
+        if(encoding==Encoding.UNIVERSAL)return symbolic("structural",FALSE,FALSE,TRUE,true,Classification.NEVER);
+        return unknown();
+    }
     record Check(Truth truth,Optional<Witness> witness) {}
     Check check(QueryBudget budget,Optional<Realization> realization){
         if(encoding==Encoding.UNIVERSAL)return new Check(Truth.SAT,Optional.of(new Witness(Optional.empty(),Map.of(),identity(),true,false)));

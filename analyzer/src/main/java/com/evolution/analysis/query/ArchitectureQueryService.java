@@ -240,6 +240,33 @@ public final class ArchitectureQueryService {
         var p=new Prepared(request,true);var cycles=BoundedGraphTraversal.cycles(p);
         return result(p,"cycles","",cycles,Optional.empty(),p.budget.stop==StopReason.NONE&&p.budget.unknown==0&&p.budget.reasons.isEmpty()?Optional.of((long)cycles.size()):Optional.empty());
     }
+    public Result<ArchitectureCondition.Evaluation> condition(Request request,ArchitectureCondition.Predicate predicate){
+        Objects.requireNonNull(predicate);
+        if(request.projection()!=Projection.BOUNDED_UNION||request.direction()!=Direction.OUTGOING)
+            throw new IllegalArgumentException("Condition composition requires outgoing BOUNDED_UNION dependencies");
+        var p=new Prepared(request,true);var index=new HashMap<String,LogicalEdge>();
+        if(p.budget.reserve(2L*p.edges.size()))p.edges.forEach(e->index.put(e.view.identity(),e));
+        QueryRegion union=null;var evidence=new TreeSet<ContentDigest>();var regions=new TreeSet<String>();
+        for(var term:predicate.alternatives()){
+            QueryRegion joint=QueryRegion.universal();
+            for(var id:term.edges()){
+                if(!p.budget.step()){joint=QueryRegion.unknown();break;}
+                var edge=index.get(id);
+                if(edge==null){p.budget.qualify("PREDICATE_EDGE_UNAVAILABLE");joint=joint.combine(QueryRegion.unknown(),true,p.budget);}
+                else {joint=joint.combine(edge.region,true,p.budget);
+                    if(p.budget.reserve((long)edge.evidence.size()+edge.regions.size())){evidence.addAll(edge.evidence);regions.addAll(edge.regions);}}
+            }
+            union=union==null?joint:union.combine(joint,false,p.budget);
+        }
+        if(!p.budget.running())union=QueryRegion.unknown();
+        var classification=union.classify(p.budget);var yes=union.check(p.budget,Optional.empty());var no=union.negate().check(p.budget,Optional.empty());
+        if(!p.budget.running())classification=Classification.UNKNOWN;
+        if(classification==Classification.UNKNOWN)p.budget.qualify("PREDICATE_TRUTH_UNKNOWN");
+        var regionId=ContentDigest.sha256Utf8(CanonicalJson.write(List.of(ArchitectureCondition.VERSION,request.identity(),union.identity())));
+        Function<Witness,Witness> bind=w->new Witness(w.world(),w.assignment(),regionId,w.formulaReplayed(),w.semanticReplayed());
+        var value=new ArchitectureCondition.Evaluation(regionId,classification,yes.witness().map(bind),no.witness().map(bind),bounded(evidence,p.budget),bounded(regions,p.budget));
+        return result(p,"condition",List.of(ArchitectureCondition.VERSION,predicate),List.of(value),Optional.empty(),Optional.of(1L));
+    }
     public Result<EvidenceView> evidence(Request request,ContentDigest reference){
         var p=new Prepared(request,false);
         boolean allowed=p.nodes.values().stream().anyMatch(n->n.evidence().contains(reference))
@@ -365,6 +392,7 @@ public final class ArchitectureQueryService {
         for(var value:values){if(value instanceof EntityView v)evidence.addAll(v.evidence());else if(value instanceof EdgeView v)evidence.addAll(v.evidence());
             else if(value instanceof EvidenceView v)evidence.add(v.identity());else if(value instanceof Path v)v.edges().forEach(e->evidence.addAll(e.evidence()));
             else if(value instanceof RelationshipView v)evidence.addAll(v.evidence());
+            else if(value instanceof ArchitectureCondition.Evaluation v)evidence.addAll(v.evidence());
             else if(value instanceof Neighborhood v){v.entities().forEach(e->evidence.addAll(e.evidence()));v.edges().forEach(e->evidence.addAll(e.evidence()));}}
         var boundedEvidence=bounded(evidence,p.budget);
         gaps=p.budget.reasons.stream().map(reason->gap(p,query,reason)).toList();
