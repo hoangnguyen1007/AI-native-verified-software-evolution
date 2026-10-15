@@ -2,7 +2,7 @@
 
 This repository is the SE121 software architecture intelligence platform. The Java 21 Maven reactor contains parser-neutral contracts, the M2 JavaParser frontend, progressive effective-POM/source-plan modeling, bounded filesystem and dependency-artifact acquisition, exact Maven classpaths, deterministic source decoding, explicit analyzed-JDK symbol views, per-source-set frontend-input assembly, and normalized capability-gap/acquisition records. Gate G2 is formally PASSED following independent semantic adjudication across representative archetypes. Gate M4-R0 (Research and Semantics Gate) is PASSED following human review and acceptance. See [current state](docs/current-state.md) for verified scope and limitations.
 
-The active milestone is **M6: Policy, Evidence, and Explainable Architecture Assessment**. G3 and G4 are recorded PASSED; M5 graph/query/metrics are delivered. [M6.1](docs/architecture/m6-typed-policy.md) implements typed policy compilation, graph mapping and bounded conditional predicates. **Next: M6.2 — configuration-qualified policy evaluation and Evidence Bundles.** G5, whole-rule findings and scoring remain open. See [current state](docs/current-state.md) for verified scope, commands and limits; global coverage and market superiority remain unmeasured.
+The active milestone is **M6: Policy, Evidence, and Explainable Architecture Assessment**. G3 and G4 are recorded PASSED; M5 graph/query/metrics are delivered. [M6.1](docs/architecture/m6-typed-policy.md) implements typed policy compilation and mapping; [M6.2](docs/architecture/m6-policy-evaluation.md) adds configuration-qualified rule evaluation, findings and Evidence Bundles. **Next: M6.3 — policy metrics and explainable architecture assessment.** Scoring and G5 acceptance remain open. See [current state](docs/current-state.md) for verified scope, commands and limits; global coverage and market superiority remain unmeasured.
 
 ## Build prerequisites
 
@@ -56,7 +56,7 @@ The root reactor owns all shared build and test policy and builds in this order:
 5. `analyzer-javaparser` (isolated JavaParser/SymbolSolver adapter and semantic fixtures)
 6. `backend` (placeholder JAR, depends on `analyzer`, and has its own test boundary)
 
-The adapter accepts exact supplied source bytes and verified resolution inputs; it does not execute target builds. Bounded Spring, canonical graph, conditional query/metric and typed policy compiler foundations are implemented. Whole-rule findings, scoring, backend API, CLI and visual workbench remain later work.
+The adapter accepts exact supplied source bytes and verified resolution inputs; it does not execute target builds. Bounded Spring, canonical graph, conditional query/metric, typed policy compilation, configuration-qualified findings and Evidence Bundles are implemented. Scoring, backend API, CLI and visual workbench remain later work.
 
 The Maven adapter implements `BuildModelProvider` in the neutral `com.evolution.analysis.buildmodel` package. It models root/nested modules, relative parents, supplied artifact parents/BOMs, inheritance, properties, explicit/property/default profiles, dependency management, scopes, optional flags and exclusions. M3.2 adds per-module main/test candidate source plans with inherited directories, separate syntax/bytecode/API requirements, encoding declarations, plugin configuration and provenance. Result schema `build-model-result-v2` includes source-plan gaps in `hasGaps()`.
 

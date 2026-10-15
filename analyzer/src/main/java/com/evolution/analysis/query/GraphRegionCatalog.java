@@ -72,9 +72,32 @@ final class GraphRegionCatalog {
         }catch(IllegalArgumentException malformed){budget.qualify("INVALID_REGION_EVIDENCE");}
     }
     QueryRegion region(KnowledgeGraph.Edge edge){return edge.region().map(id->regions.getOrDefault(id,QueryRegion.unknown())).orElseGet(QueryRegion::universal);}
+    QueryRegion universe(){
+        if(regions.isEmpty())return expectedSpace.isPresent()?QueryRegion.unknown():QueryRegion.universal();
+        QueryRegion value=null;
+        for(String id:new TreeSet<>(regions.keySet())){
+            if(!budget.step())return QueryRegion.unknown();
+            if(!preferredNode(nodes.get(id)))continue;
+            var next=regions.get(id).universeRegion();
+            if(value!=null&&value.encoding==QueryRegion.Encoding.SYMBOLIC&&next.encoding==QueryRegion.Encoding.SYMBOLIC&&value.domain.equals(next.domain)){
+                if(!value.universeFormula.identity().equals(next.universeFormula.identity())){
+                    var difference=or(and(value.universeFormula,not(next.universeFormula)),and(next.universeFormula,not(value.universeFormula)));
+                    if(QueryRegion.solve(difference,budget).status()!=com.evolution.analysis.spring.truth.ConfigurationReasoner.Satisfiability.UNSATISFIABLE){
+                        budget.qualify("INCOMPATIBLE_REGION_CONTEXT");return QueryRegion.unknown();
+                    }
+                }
+                // Keep the first proved equivalent formula, avoiding a growing conjunction of universe aliases.
+                value=QueryRegion.symbolic(value.domain,value.universeFormula,value.universeFormula,value.universeFormula,value.closed&&next.closed,Classification.UNKNOWN);
+            }else value=value==null?next:value.combine(next,true,budget);
+        }
+        return value==null?QueryRegion.unknown():value;
+    }
     boolean preferred(KnowledgeGraph.Edge edge){
         if(edge.region().isEmpty())return true;
         var node=nodes.get(edge.region().orElseThrow());if(node==null)return true;
+        return preferredNode(node);
+    }
+    private boolean preferredNode(KnowledgeGraph.Node node){
         var preferred=payload(node,symbolic?"spring.symbolic-region":"spring.explicit-region");if(preferred.isPresent())return true;
         var alternate=payload(node,symbolic?"spring.explicit-region":"spring.symbolic-region");
         return alternate.isEmpty()||!preferredFacts.contains(com.evolution.analysis.contract.serialization.CanonicalJson.write(object(object(alternate.orElseThrow(),"region"),"fact")));

@@ -50,6 +50,21 @@ final class QueryRegion {
         if(encoding==Encoding.UNIVERSAL)return symbolic("structural",FALSE,FALSE,TRUE,true,Classification.NEVER);
         return unknown();
     }
+    QueryRegion universeRegion(){
+        return switch(encoding){
+            case EXPLICIT -> explicit(domain,universe,universe,universe,closed,Classification.UNKNOWN);
+            case SYMBOLIC -> symbolic(domain,universeFormula,universeFormula,universeFormula,closed,Classification.UNKNOWN);
+            case UNIVERSAL -> universal(); case UNKNOWN -> unknown();
+        };
+    }
+    QueryRegion uncertain(){
+        return switch(encoding){
+            case EXPLICIT -> explicit(domain,Set.of(),possible,universe,closed,Classification.UNKNOWN);
+            case SYMBOLIC -> symbolic(domain,FALSE,possibleFormula,universeFormula,closed,Classification.UNKNOWN);
+            case UNIVERSAL -> symbolic("structural",FALSE,TRUE,TRUE,true,Classification.UNKNOWN);
+            case UNKNOWN -> unknown();
+        };
+    }
     record Check(Truth truth,Optional<Witness> witness) {}
     Check check(QueryBudget budget,Optional<Realization> realization){
         if(encoding==Encoding.UNIVERSAL)return new Check(Truth.SAT,Optional.of(new Witness(Optional.empty(),Map.of(),identity(),true,false)));

@@ -240,6 +240,23 @@ public final class ArchitectureQueryService {
         var p=new Prepared(request,true);var cycles=BoundedGraphTraversal.cycles(p);
         return result(p,"cycles","",cycles,Optional.empty(),p.budget.stop==StopReason.NONE&&p.budget.unknown==0&&p.budget.reasons.isEmpty()?Optional.of((long)cycles.size()):Optional.empty());
     }
+    /** Rule-selected induced edges; unknown cycles remain inspectable without a fabricated witness. */
+    public Result<Path> policyCycles(Request request,Set<String> eligibleEdges){
+        Objects.requireNonNull(eligibleEdges);
+        if(eligibleEdges.size()>request.limits().maxEdges())throw new IllegalArgumentException("Induced edge budget exceeded");
+        if(request.projection()!=Projection.BOUNDED_UNION||request.direction()!=Direction.OUTGOING)
+            throw new IllegalArgumentException("Policy cycles require outgoing BOUNDED_UNION dependencies");
+        var p=new Prepared(request,true);
+        if(p.budget.reserve(eligibleEdges.size())){
+            var missing=new HashSet<>(eligibleEdges);p.edges.forEach(e->missing.remove(e.view.identity()));
+            if(!missing.isEmpty())p.budget.qualify("PREDICATE_EDGE_UNAVAILABLE");
+        }
+        p.edges.removeIf(e->!eligibleEdges.contains(e.view.identity()));
+        p.adjacency.values().forEach(v->v.removeIf(e->!eligibleEdges.contains(e.view.identity())));
+        var cycles=BoundedGraphTraversal.cycles(p,true);
+        return result(p,"policy-cycles",List.of(ArchitectureCondition.RULE_VERSION,new TreeSet<>(eligibleEdges)),cycles,Optional.empty(),
+                p.budget.stop==StopReason.NONE&&p.budget.unknown==0&&p.budget.reasons.isEmpty()?Optional.of((long)cycles.size()):Optional.empty());
+    }
     public Result<ArchitectureCondition.Evaluation> condition(Request request,ArchitectureCondition.Predicate predicate){
         Objects.requireNonNull(predicate);
         if(request.projection()!=Projection.BOUNDED_UNION||request.direction()!=Direction.OUTGOING)
@@ -266,6 +283,38 @@ public final class ArchitectureQueryService {
         Function<Witness,Witness> bind=w->new Witness(w.world(),w.assignment(),regionId,w.formulaReplayed(),w.semanticReplayed());
         var value=new ArchitectureCondition.Evaluation(regionId,classification,yes.witness().map(bind),no.witness().map(bind),bounded(evidence,p.budget),bounded(regions,p.budget));
         return result(p,"condition",List.of(ArchitectureCondition.VERSION,predicate),List.of(value),Optional.empty(),Optional.of(1L));
+    }
+    public Result<ArchitectureCondition.Evaluation> ruleCondition(Request request,ArchitectureCondition.RulePredicate predicate){
+        Objects.requireNonNull(predicate);
+        if(request.projection()!=Projection.BOUNDED_UNION||request.direction()!=Direction.OUTGOING)
+            throw new IllegalArgumentException("Rule composition requires outgoing BOUNDED_UNION dependencies");
+        var p=new Prepared(request,true);var index=new HashMap<String,LogicalEdge>();
+        if(p.budget.reserve(2L*p.edges.size()))p.edges.forEach(e->index.put(e.view.identity(),e));
+        var universe=p.catalog==null?QueryRegion.unknown():p.catalog.universe();
+        QueryRegion union=universe.negate();var evidence=new TreeSet<ContentDigest>();var regions=new TreeSet<String>();
+        for(var alternative:predicate.alternatives()){
+            QueryRegion joint=universe;
+            for(String id:alternative.term().edges()){
+                if(!p.budget.step()){joint=QueryRegion.unknown();break;}
+                var edge=index.get(id);
+                if(edge==null){p.budget.qualify("PREDICATE_EDGE_UNAVAILABLE");joint=QueryRegion.unknown();}
+                else{
+                    joint=joint.combine(edge.region,true,p.budget);
+                    if(p.budget.reserve((long)edge.evidence.size()+edge.regions.size())){evidence.addAll(edge.evidence);regions.addAll(edge.regions);}
+                }
+            }
+            if(!alternative.eligible()){joint=joint.uncertain();p.budget.qualify("PREDICATE_ELIGIBILITY_UNKNOWN");}
+            union=union.combine(joint,false,p.budget);
+        }
+        if(!predicate.complete()){union=union.combine(universe.uncertain(),false,p.budget);p.budget.qualify("RULE_DENOMINATOR_INCOMPLETE");}
+        if(!p.budget.running())union=QueryRegion.unknown();
+        var classification=union.classify(p.budget);var yes=union.check(p.budget,Optional.empty());var no=union.negate().check(p.budget,Optional.empty());
+        if(!p.budget.running())classification=Classification.UNKNOWN;
+        if(classification==Classification.UNKNOWN)p.budget.qualify("PREDICATE_TRUTH_UNKNOWN");
+        var regionId=ContentDigest.sha256Utf8(CanonicalJson.write(List.of(ArchitectureCondition.RULE_VERSION,request.identity(),union.identity())));
+        Function<Witness,Witness> bind=w->new Witness(w.world(),w.assignment(),regionId,w.formulaReplayed(),w.semanticReplayed());
+        var value=new ArchitectureCondition.Evaluation(regionId,classification,yes.witness().map(bind),no.witness().map(bind),bounded(evidence,p.budget),bounded(regions,p.budget));
+        return result(p,"rule-condition",List.of(ArchitectureCondition.RULE_VERSION,predicate),List.of(value),Optional.empty(),Optional.of(1L));
     }
     public Result<EvidenceView> evidence(Request request,ContentDigest reference){
         var p=new Prepared(request,false);

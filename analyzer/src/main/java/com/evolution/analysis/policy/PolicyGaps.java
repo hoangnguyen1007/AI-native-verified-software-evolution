@@ -15,9 +15,12 @@ final class PolicyGaps {
         var need = new EvidenceRequirement(EvidenceRequirement.Kind.CONFIGURATION, "policy.complete-input",
                 List.of(subject), EvidenceRequirement.AuthorizationClass.PASSIVE,
                 List.of("Supply schema-valid policy and compatible complete graph evidence within declared bounds."));
-        return CapabilityGapRecord.create(CATALOG, context, provider, "policy.architecture", reason, subject,
+        var catalog=provider.equals(PolicyEvaluation.VERSION)||provider.equals(PolicyEvaluation.EVIDENCE_VERSION)
+                ?new VersionedIdentifier("evidence.policy-gaps","m6.2-v1"):CATALOG;
+        return CapabilityGapRecord.create(catalog, context, provider, "policy.architecture", reason, subject,
                 List.of(), List.of(observation), List.of(need), List.of(), List.of(new AffectedOutput(AffectedOutput.Kind.POLICY, "policy.architecture")),
-                List.of(), List.of(), List.of("Incomplete policy compilation or mapping cannot establish conformance or a health score."));
+                List.of(), List.of(), List.of(catalog.equals(CATALOG)?"Incomplete policy compilation or mapping cannot establish conformance or a health score.":
+                        "Incomplete policy evidence cannot establish conformance or a health score."));
     }
     private PolicyGaps() {}
 }

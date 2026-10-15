@@ -20,8 +20,9 @@ bounded conjunction/disjunction of their logical edge regions to the query layer
 
 The compiler/mapper produce no violation, conformance verdict, score, metric,
 generated patch, target execution, database query or external network access.
-M6.2 owns whole-rule quantification, bounded cycle evaluation over the selected
-induced population, finding identity/deduplication and Evidence Bundles. Explainable
+The implemented [M6.2 evaluator](m6-policy-evaluation.md) owns whole-rule
+quantification, bounded cycle evaluation over the selected induced population,
+finding identity/deduplication and Evidence Bundles. Explainable
 scoring, labeled weights/thresholds, sensitivity checks and G5 adjudication remain M6
 obligations. An empty candidate list is not a policy result or a score of 100.
 
@@ -159,5 +160,6 @@ identity, Unicode/default/nested packages, typed kinds, canonical module/package
 ownership, layer overlaps, uncertainty, resource/cancellation closure, infeasible
 joint predicates, witnesses, source mutations and persistence. Exact commands and
 results are in the [M6.1 execution record](../tasks/m6/01-typed-policy-and-compiler.md).
-Self-review is not independent review. Full M6 evaluation, score acceptance and G5
-remain open; no external benchmark or full reactor was run for this slice.
+Self-review is not independent review. M6.2 policy evaluation is delivered
+separately; score acceptance and G5 remain open; no external benchmark or full
+reactor was run for this slice.

@@ -48,15 +48,28 @@ class M6PolicyIntegrationTest {
             var service=new ArchitectureQueryService(graph);var compiled=compile(graph,yaml);var mapper=new PolicyGraphMapper();
             var plan=mapper.bind(compiled,service,context,PolicyGraphMapper.Limits.defaults());identities.add(plan.identity());
             assertEquals(dependency?1:0,plan.rules().getFirst().candidates().size());
+            var evaluation=new PolicyEvaluator().evaluate(compiled,plan,service,PolicyEvaluation.Limits.defaults());
+            assertEquals(dependency?Classification.MUST:Classification.UNKNOWN,evaluation.rules().getFirst().classification(),
+                    evaluation.gaps().stream().map(g->g.reasonCode()).toList().toString());
+            assertTrue(evaluation.gaps().stream().anyMatch(g->g.reasonCode().equals("UPSTREAM_CAPABILITY_GAP")));
+            assertFalse(evaluation.upstreamEvidence().isEmpty());
+            assertTrue(evaluation.upstreamEvidence().stream().anyMatch(e->e.family().equals("evidence.gap")));
+            assertEquals(dependency?1:0,evaluation.findings().size());
             if(dependency){
                 var candidate=plan.rules().getFirst().candidates().getFirst();assertEquals(PolicySelector.Match.YES,candidate.eligibility());
                 assertEquals(Classification.MUST,service.condition(plan.rules().getFirst().request(),candidate.predicate()).items().getFirst().classification());
                 assertTrue(candidate.edge().evidence().stream().map(ref->service.evidence(plan.rules().getFirst().request(),ref))
                         .flatMap(r->r.items().stream()).anyMatch(e->e.metadata().containsKey("span")));
+                var bundle=evaluation.findings().getFirst().bundle();
+                assertFalse(bundle.sources().isEmpty());assertFalse(bundle.supports().isEmpty());
+                assertTrue(bundle.sources().stream().allMatch(s->s.span().startLine()>=1&&s.span().endColumn()>0));
+                assertEquals(bundle.region(),service.ruleCondition(bundle.request(),bundle.predicate()).items().getFirst());
+                assertEquals(graph.identity(),bundle.graph());assertEquals(graph.snapshot(),bundle.snapshot());
             }
             new FileGraphStore(directory).save(graph);var restored=new FileGraphStore(directory).load(graph.identity()).orElseThrow();
             assertEquals(plan,mapper.bind(compiled,new ArchitectureQueryService(restored),context,PolicyGraphMapper.Limits.defaults()));
             assertEquals(plan.identity(),mapper.bind(compiled,new ArchitectureQueryService(restored),context,PolicyGraphMapper.Limits.defaults()).identity());
+            assertEquals(evaluation,new PolicyEvaluator().evaluate(compiled,plan,new ArchitectureQueryService(restored),PolicyEvaluation.Limits.defaults()));
         }
         assertEquals(2,identities.size());
     }
@@ -106,6 +119,15 @@ class M6PolicyIntegrationTest {
             assertTrue(result.witness().isPresent());assertTrue(result.counterWitness().isPresent());assertFalse(result.witness().orElseThrow().semanticReplayed());
             var restored=new GraphSnapshotCodec().decode(new GraphSnapshotCodec().encode(graph),GraphJson.Limits.defaults());
             assertEquals(result,new ArchitectureQueryService(restored).condition(rule.request(),candidate.predicate()).items().getFirst());
+            var evaluated=new PolicyEvaluator().evaluate(compile(graph,yaml),plan,service,PolicyEvaluation.Limits.defaults());
+            assertEquals(1,evaluated.findings().size());var bundle=evaluated.findings().getFirst().bundle();
+            assertEquals(Classification.MAY,bundle.region().classification(),evaluated.gaps().stream().map(g->g.reasonCode()).toList().toString());
+            assertFalse(bundle.sources().isEmpty());assertEquals(List.of(space.identity().value()),bundle.configurationSpaces());
+            assertEquals(Classification.UNKNOWN,evaluated.rules().getFirst().classification());
+            assertTrue(evaluated.gaps().stream().anyMatch(g->g.reasonCode().equals("UPSTREAM_CAPABILITY_GAP")));
+            assertFalse(bundle.upstreamEvidence().isEmpty());
+            assertEquals(bundle.region(),service.ruleCondition(bundle.request(),bundle.predicate()).items().getFirst());
+            assertEquals(evaluated,new PolicyEvaluator().evaluate(compile(graph,yaml),plan,new ArchitectureQueryService(restored),PolicyEvaluation.Limits.defaults()));
         }
     }
 }

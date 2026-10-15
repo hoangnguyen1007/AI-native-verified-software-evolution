@@ -9,6 +9,50 @@ import static com.evolution.analysis.spring.truth.SymbolicConfiguration.*;
 import com.evolution.analysis.contract.assessment.AssessmentStatus;
 
 class ArchitectureConditionTest {
+    @Test void emptyClosedRuleIsCleanOnlyInsideANonemptyCompleteUniverse() {
+        var f=new Fixture().node("a");var service=new ArchitectureQueryService(f.graph());
+        var empty=new ArchitectureCondition.RulePredicate(List.of(),true);
+        assertEquals(Classification.NEVER,service.ruleCondition(f.request(),empty).items().getFirst().classification());
+        var noWorlds=new Fixture().node("a").node("b").explicit("a","b",Set.of(),Set.of(),Set.of(),true);
+        assertEquals(Classification.UNKNOWN,new ArchitectureQueryService(noWorlds.graph()).ruleCondition(noWorlds.request(),empty).items().getFirst().classification());
+    }
+    @Test void unknownEligibilityAndOpenDenominatorsPreserveKnownRegions(){
+        var p=variable("p");var f=new Fixture().node("a").node("b").node("c").edge("a","b",p,not(p),FALSE).edge("b","c",not(p),p,FALSE);
+        var service=new ArchitectureQueryService(f.graph());var edges=service.edges(f.request(),Page.first()).items();
+        var alternatives=edges.stream().map(e->new ArchitectureCondition.Alternative(new ArchitectureCondition.Term(List.of(e.identity())),true)).toList();
+        assertEquals(Classification.MUST,service.ruleCondition(f.request(),new ArchitectureCondition.RulePredicate(alternatives,true)).items().getFirst().classification());
+        var unknown=service.ruleCondition(f.request(),new ArchitectureCondition.RulePredicate(alternatives.stream().map(a->new ArchitectureCondition.Alternative(a.term(),false)).toList(),true)).items().getFirst();
+        assertEquals(Classification.UNKNOWN,unknown.classification());assertTrue(unknown.witness().isEmpty());assertTrue(unknown.counterWitness().isEmpty());
+        var incomplete=service.ruleCondition(f.request(),new ArchitectureCondition.RulePredicate(List.of(alternatives.getFirst()),false)).items().getFirst();
+        assertEquals(Classification.UNKNOWN,incomplete.classification());assertTrue(incomplete.witness().isPresent());assertTrue(incomplete.counterWitness().isEmpty());
+        assertEquals(Classification.MUST,service.ruleCondition(f.request(),new ArchitectureCondition.RulePredicate(alternatives,false)).items().getFirst().classification());
+    }
+    @Test void inducedCyclesExcludeOtherEdgesAndRetainUnknownPaths(){
+        var f=new Fixture().node("a").node("b").node("c").edge("a","b").edge("b","a").edge("c","c");
+        var service=new ArchitectureQueryService(f.graph());var eligible=service.edges(f.request(),Page.first()).items().stream().filter(e->!e.source().equals(id("c"))).map(EdgeView::identity).collect(java.util.stream.Collectors.toSet());
+        var cycles=service.policyCycles(f.request(),eligible);assertEquals(1,cycles.items().size());assertEquals(2,cycles.items().getFirst().edges().size());
+        var u=new Fixture().node("a").node("b").edge("a","b",FALSE,FALSE,TRUE).edge("b","a");service=new ArchitectureQueryService(u.graph());
+        var unknown=service.policyCycles(u.request(),service.edges(u.request(),Page.first()).items().stream().map(EdgeView::identity).collect(java.util.stream.Collectors.toSet()));
+        assertEquals(1,unknown.items().size());assertEquals(Truth.UNKNOWN,unknown.items().getFirst().feasibility());assertTrue(unknown.items().getFirst().witness().isEmpty());
+    }
+    @Test void ruleUniverseUsesPreferredEncodingWhenBothEquivalentRepresentationsExist(){
+        var p=variable("p");var f=new Fixture().node("a").node("b")
+                .explicit("a","b",Set.of("on"),Set.of(),Set.of("on","off"),true).edge("a","b",p,not(p),FALSE);
+        var service=new ArchitectureQueryService(f.graph());var edge=service.edges(f.request(),Page.first()).items().getFirst();
+        var predicate=new ArchitectureCondition.RulePredicate(List.of(new ArchitectureCondition.Alternative(new ArchitectureCondition.Term(List.of(edge.identity())),true)),true);
+        var result=service.ruleCondition(f.request(),predicate);assertEquals(Classification.MAY,result.items().getFirst().classification());
+        assertEquals(true,result.items().getFirst().witness().orElseThrow().assignment().get("p"));
+        assertFalse(result.gaps().stream().anyMatch(g->g.reasonCode().equals("INCOMPATIBLE_REGION_CONTEXT")));
+    }
+    @Test void conflictingSymbolicUniversesCannotNarrowThePolicySpaceIntoAMustVerdict(){
+        var p=variable("p");var f=new Fixture().node("a").node("b").node("c")
+                .edge("a","b",p,not(p),FALSE).edge("b","c",p,FALSE,FALSE);
+        var service=new ArchitectureQueryService(f.graph());var edge=service.edges(f.request(),Page.first()).items().stream()
+                .filter(e->e.source().equals(id("a"))).findFirst().orElseThrow();
+        var predicate=new ArchitectureCondition.RulePredicate(List.of(new ArchitectureCondition.Alternative(new ArchitectureCondition.Term(List.of(edge.identity())),true)),true);
+        var result=service.ruleCondition(f.request(),predicate);assertEquals(Classification.UNKNOWN,result.items().getFirst().classification());
+        assertTrue(result.gaps().stream().anyMatch(g->g.reasonCode().equals("INCOMPATIBLE_REGION_CONTEXT")));
+    }
     @Test void conjunctionUsesJointRegionAndDoesNotFlattenMayEdges() {
         var p=variable("p");var f=new Fixture().node("a").node("b").node("c")
                 .edge("a","b",p,not(p),FALSE).edge("b","c",not(p),p,FALSE);

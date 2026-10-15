@@ -89,6 +89,9 @@ final class BoundedGraphTraversal {
         CycleFrame(String vertex,QueryRegion region,List<LogicalEdge> edges){this.vertex=vertex;this.region=region;this.edges=edges;}
     }
     static List<Path> cycles(Prepared p){
+        return cycles(p,false);
+    }
+    static List<Path> cycles(Prepared p,boolean includeUnknown){
         var components=components(p);var result=new ArrayList<Path>();
         p.budget.cyclic=(int)components.stream().filter(c->c.size()>1||p.adjacency.getOrDefault(c.iterator().next(),List.of()).stream().anyMatch(e->e.target.equals(e.source))).count();
         for(var component:components){
@@ -110,9 +113,10 @@ final class BoundedGraphTraversal {
                     var region=frame.region.combine(edge.region,true,p.budget);var check=region.check(p.budget,p.request.realization());
                     if(check.truth()==Truth.UNSAT){p.budget.rejected++;continue;}
                     if(edge.target.equals(start)){
-                        if(check.truth()==Truth.SAT){
+                        if(check.truth()==Truth.SAT||includeUnknown&&check.truth()==Truth.UNKNOWN){
+                            if(check.truth()==Truth.UNKNOWN)qualify(p,start);
                             var cycleEdges=new ArrayList<>(edges);cycleEdges.add(edge);
-                            result.add(new Path(List.copyOf(vertices),cycleEdges.stream().map(e->e.view).toList(),Truth.SAT,check.witness()));
+                            result.add(new Path(List.copyOf(vertices),cycleEdges.stream().map(e->e.view).toList(),check.truth(),check.witness()));
                             if(result.size()==p.request.limits().maxResults()){p.budget.halt(StopReason.OUTPUT);p.budget.frontier(start);break;}
                         }else qualify(p,start);
                     }else{
