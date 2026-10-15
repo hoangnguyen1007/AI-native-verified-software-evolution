@@ -1,0 +1,12 @@
+schema: architecture-policy:v1
+id: application.architecture
+version: "1"
+rules:
+  - id: controller.no-repository
+    version: "1"
+    kind: FORBIDDEN_DEPENDENCY
+    severity: ERROR
+    scope: TYPE
+    relationships: [graph.depends-on]
+    from: {packages: [api]}
+    to: {packages: [data]}

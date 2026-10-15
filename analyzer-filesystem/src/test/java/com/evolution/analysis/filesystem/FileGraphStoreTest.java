@@ -12,6 +12,17 @@ import org.junit.jupiter.api.io.TempDir;
 import static org.junit.jupiter.api.Assertions.*;
 
 class FileGraphStoreTest {
+    @Test void streamingStorageKeepsCanonicalUtf8BytesAndBothSizeCeilings()throws Exception{
+        var original=graph();var unicode=GraphEvidence.capture("fixture.unicode",Map.of("text","Tiếng Việt 😀".repeat(10)));var evidence=new ArrayList<>(original.evidence());evidence.add(unicode);
+        var graph=new KnowledgeGraph(original.snapshot(),original.contexts(),original.nodes(),original.edges(),evidence);
+        String encoded=new GraphSnapshotCodec().encode(graph);byte[] bytes=encoded.getBytes(StandardCharsets.UTF_8);
+        new FileGraphStore(directory).save(graph);assertArrayEquals(bytes,Files.readAllBytes(file(graph)));
+        Path byteRoot=Files.createDirectory(directory.resolve("byte-limit")),charRoot=Files.createDirectory(directory.resolve("char-limit"));
+        var byteStore=new FileGraphStore(byteRoot,bytes.length-1,new GraphJson.Limits(encoded.length(),128,100_000));
+        var charStore=new FileGraphStore(charRoot,bytes.length,new GraphJson.Limits(encoded.length()-1,128,100_000));
+        for(var store:List.of(byteStore,charStore))assertEquals(GraphStoreException.Reason.LIMIT_EXCEEDED,assertThrows(GraphStoreException.class,()->store.save(graph)).reason());
+        try(var files=Files.list(byteRoot)){assertEquals(0,files.count());}try(var files=Files.list(charRoot)){assertEquals(0,files.count());}
+    }
     @TempDir Path directory;
     static KnowledgeGraph graph() {
         var repo=RepositoryIdentity.fromCanonicalCoordinate("https://example.test/file-graph.git");

@@ -9,9 +9,11 @@ import java.util.List;
 final class OriginalSource {
     private final SourceDocumentIdentity document;
     private final String text;
+    private final UnicodeSource translated;
     private final List<Integer> lines = new ArrayList<>();
-    OriginalSource(SourceDocumentIdentity document, String text) {
-        this.document = document; this.text = text; lines.add(0);
+    OriginalSource(SourceDocumentIdentity document, String text) {this(document,text,null);}
+    OriginalSource(SourceDocumentIdentity document,String text,UnicodeSource translated) {
+        this.document = document; this.text = text;this.translated=translated; lines.add(0);
         for (int i = 0; i < text.length(); i++) {
             char c = text.charAt(i);
             if (c == '\r') {
@@ -22,6 +24,8 @@ final class OriginalSource {
     }
     SourceSpan span(Node node) {
         var range = node.getRange().orElseThrow(() -> new IllegalArgumentException("missing source range"));
+        if(translated!=null)return span(translated.rawBoundary(translated.offset(range.begin.line,range.begin.column)),
+                translated.rawBoundary(translated.offset(range.end.line,range.end.column)+1));
         int start = offset(range.begin.line, range.begin.column);
         int last = offset(range.end.line, range.end.column);
         int end = last + 1;

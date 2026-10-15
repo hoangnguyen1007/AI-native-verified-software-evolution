@@ -1,5 +1,6 @@
 
 .env
+**/.evo/
 .env.local
 .env.*.local
 *.pem

@@ -1,6 +1,6 @@
 # M7.1 — Architecture query HTTP and JSON adapter
 
-**CONFIRMED scope:** the G5 adjudication authorizes M7.1, the query REST/HTTP API and JSON serialization layer. **CONFIRMED implementation:** a local, read-only adapter in `backend` delegates to canonical M5 services and reads explicitly published M6 results. The external wire contract `architecture.http:m7.1-v1` is **PROVISIONAL** pending consumer acceptance. M1 identities, graph snapshot schema, query version `architecture.query:m5.3-v1`, metric formulas and assessment semantics remain unchanged.
+**CONFIRMED scope:** the G5 adjudication authorizes M7.1, the query REST/HTTP API and JSON serialization layer. **CONFIRMED implementation:** a local, read-only adapter in `backend` delegates to canonical query services and reads explicitly published M6 results. The external wire contract `architecture.http:m7.1-v1` is **PROVISIONAL** pending consumer acceptance. M7.1 originally used `architecture.query:m5.3-v1`; the [M7.2 safety repair](m7-evo-cli.md) advances that query version to `architecture.query:m7.2-v2` to redact declaration-body spelling. Routes/envelopes, M1 identities, graph snapshot schema, metric formulas and assessment semantics remain unchanged. The packaged OpenAPI advertises the current query version.
 
 ## Boundary and implementation choice
 
@@ -8,7 +8,7 @@
 
 The existing backend was an empty Java JAR. The smallest implementation uses JDK 21 `HttpServer`, adding no production dependency. Spring Boot remains a viable replacement transport at M8; a new framework/runtime dependency and asynchronous job infrastructure are unnecessary for this slice. Replace this adapter when M8 needs authenticated remote deployment, job management, routing/static UI integration or measured operational requirements. No domain behavior moves into transport or storage.
 
-M7.1 implements neither CLI/export formats nor an asynchronous analysis/job API, UI, runtime-impact guarantee or snapshot evolution. M7.2 owns CLI work; M8 retains the complete backend/workbench contract. Structural impact is the existing incoming potential-dependency traversal.
+M7.1's original delivery implements neither CLI/export formats nor an asynchronous analysis/job API, UI, runtime-impact guarantee or snapshot evolution. M7.2 now supplies the local CLI and exports; M8 retains the complete backend/workbench contract. Structural impact is the existing incoming potential-dependency traversal.
 
 ## Routes and discovery
 

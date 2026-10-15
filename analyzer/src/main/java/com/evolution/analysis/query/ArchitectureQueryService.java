@@ -43,7 +43,22 @@ public final class ArchitectureQueryService {
         final List<LogicalEdge> edges=new ArrayList<>();final Map<String,List<LogicalEdge>> adjacency=new TreeMap<>();
         GraphRegionCatalog catalog;
         Prepared(Request request,boolean project){
+            this(request,project,false);
+        }
+        Prepared(Request request,boolean project,boolean contextOnly){
             this.request=request;validate(request);budget=new QueryBudget(request.limits(),guard);
+            if(contextOnly){
+                var selected=graph.contexts().stream().filter(c->c.identity().equals(request.context())).findFirst().orElseThrow();
+                for(var node:graph.nodes()){
+                    if(!budget.scan())break;
+                    if((node.kind().equals("CAPABILITY_GAP")||node.kind().equals("PROVIDER_CONFLICT"))
+                            &&(node.context().equals(request.context())||node.context().equals(graph.snapshot().value())
+                            ||selected.analysis().map(a->a.value().equals(node.context())).orElse(false))){
+                        budget.qualify("UPSTREAM_CAPABILITY_GAP");break;
+                    }
+                }
+                return;
+            }
             for(var node:graph.nodes())if(node.context().equals(request.context())){
                 if(!budget.scan())break;
                 if(nodes.size()>=request.limits().maxVertices()){budget.halt(StopReason.INPUT);break;}
@@ -345,7 +360,7 @@ public final class ArchitectureQueryService {
         var p=new Prepared(request,false);return page(p,operation,new TreeSet<>(kinds),p.entities.values().stream().filter(n->kinds.contains(n.kind())).toList(),EntityView::identity,page);
     }
     public Result<EvidenceView> provenance(Request request){
-        var p=new Prepared(request,false);var context=graph.contexts().stream().filter(c->c.identity().equals(request.context())).findFirst().orElseThrow();
+        var p=new Prepared(request,false,true);var context=graph.contexts().stream().filter(c->c.identity().equals(request.context())).findFirst().orElseThrow();
         return result(p,"provenance","",List.of(describeEvidence(graph.evidence(context.evidence()).orElseThrow(),p.budget)),Optional.empty(),Optional.of(1L));
     }
     /** Graph-level provenance catalog: no cross-context arithmetic. Useful for modeled-space/parameter descriptors. */
@@ -472,7 +487,7 @@ public final class ArchitectureQueryService {
             var evidence=graph.evidence(ref).orElseThrow();
             if(evidence.family().equals("java.declaration")){
                 var payload=read(evidence,budget);if(!(payload.get("entity") instanceof Map<?,?>))continue;var entity=GraphJson.object(payload.get("entity"));
-                name=Optional.ofNullable((String)entity.get("canonicalName"));spelling=Optional.ofNullable((String)payload.get("spelling"));origin=Optional.ofNullable((String)entity.get("origin"));
+                name=Optional.ofNullable((String)entity.get("canonicalName"));spelling=Optional.ofNullable((String)payload.get("spelling")).filter(ArchitectureQueryService::safeSpelling);origin=Optional.ofNullable((String)entity.get("origin"));
                 String scope=(String)entity.get("stableScope");if(scope!=null&&scope.startsWith("module:"))module=Optional.of(scope);
                 if(entity.get("declaration") instanceof Map<?,?> span){var document=documents.get(span.get("document"));if(document!=null)sourceSet=Optional.ofNullable(document.sourceSet());}
                 if(node.kind().equals("PACKAGE")&&name.isPresent()&&name.orElseThrow().startsWith("java:v1:")){
@@ -484,8 +499,15 @@ public final class ArchitectureQueryService {
             if(evidence.family().equals("source.document")){
                 var document=documents.get(node.identity());
                 if(document!=null){module=Optional.ofNullable(document.module());sourceSet=Optional.ofNullable(document.sourceSet());}
+                name=sourcePath(read(evidence,budget),budget);spelling=name;
             }
-            if(evidence.family().equals("module.descriptor")){module=Optional.of(node.identity());origin=Optional.of("PROJECT");}
+            if(evidence.family().equals("module.descriptor")||evidence.family().equals("build.module")){
+                var payload=read(evidence,budget);var descriptor=evidence.family().equals("build.module")?GraphJson.object(payload.get("descriptor")):payload;
+                module=Optional.of(node.identity());origin=Optional.of("PROJECT");
+                if(descriptor.get("path") instanceof String path)try{name=Optional.of(ContractChecks.modulePath(path));}
+                catch(IllegalArgumentException invalid){budget.qualify("INVALID_MODULE_PATH");}
+                spelling=name;
+            }
         }
         if(sourceSet.isEmpty())sourceSet=Optional.ofNullable((String)partition.get("sourceSet"));
         if(module.isEmpty())module=Optional.ofNullable((String)partition.get("module"));
@@ -531,6 +553,11 @@ public final class ArchitectureQueryService {
             !p.modules().isEmpty()&&e.module().isPresent()&&!p.modules().contains(e.module().orElseThrow())
             ||!p.origins().isEmpty()&&e.origin().isPresent()&&!p.origins().contains(e.origin().orElseThrow())
             ||!p.sourceSets().isEmpty()&&e.sourceSet().isPresent()&&!p.sourceSets().contains(e.sourceSet().orElseThrow()));}
+    private static Optional<String> sourcePath(Map<String,Object> payload,QueryBudget budget){
+        if(!(payload.get("path") instanceof String path))return Optional.empty();
+        try{return Optional.of(com.evolution.analysis.contract.common.ContractChecks.repositoryRelativePath(path,"source path"));}
+        catch(IllegalArgumentException invalid){budget.qualify("INVALID_SOURCE_PATH");return Optional.empty();}
+    }
     private Map<String,Object> read(GraphEvidence evidence,QueryBudget budget){
         try{return GraphJson.object(GraphJson.read(evidence.canonicalJson(),new GraphJson.Limits(8_000_000,128,budget.limits.maxAuxiliaryStates())));}
         catch(IllegalArgumentException malformed){budget.qualify("EVIDENCE_DESCRIPTOR_LIMIT");return Map.of();}
@@ -545,7 +572,7 @@ public final class ArchitectureQueryService {
             "actualTruth","assignmentFeasibility","valid","independentEvaluationDigest","branchEvidence","baselineConfigurationIdentity","feasibility","enumerationComplete","feasibleWorlds","unknownFeasibilityWorlds","declaredAssignments",
             "operationalStatus","exogenousEvaluationIdentity","bindingResultIdentity","facts","truth","abstractionVersion","feasibilityPolicy","precedencePolicy","profilePolicy",
             "discoveryEvent","operation","readerDecision","gateExpectation","gate","alias","eventIdentity","expressionIdentity","role","evidence",
-            "declaration","manifest","manifestVersion","modules","configuration","analyzer","ruleSet","graphSchema","classpath","contentDigest","artifactDigest","entryDigest","rawDigest",
+            "declaration","manifest","manifestVersion","modules","configuration","analyzer","ruleSet","graphSchema","classpath","contentDigest","artifactDigest","entryDigest","rawDigest","build","moduleSourceSet","sourceSet",
             "maxDepth","maxSteps","maxNodes","maxClauses","maxVariables","maxFacts","maxRegionCells","maxWitnessReplays","maxCartesianAssignments","maxExpressionVisits","maxExpressionDepth");
     private static final Set<String> SAFE_FAMILIES=Set.of("analysis.manifest","source.request","source.document","java.declaration","java.occurrence","java.type-use","java.type-shape","java.member-shape","java.annotation-use","java.source-outcome",
             "evidence.gap","evidence.attempt","evidence.conflict","evidence.resolution","spring.context","spring.producer","spring.candidate","spring.injection-dependency","spring.registration-event","spring.registration-step",
@@ -554,6 +581,20 @@ public final class ArchitectureQueryService {
         if(!SAFE_FAMILIES.contains(evidence.family()))return new EvidenceView(evidence.identity(),evidence.family(),true,Map.of());
         var value=new TreeMap<>(read(evidence,budget));if(!evidence.family().equals("java.declaration"))value.remove("spelling");
         var metadata=new TreeMap<>(GraphJson.object(sanitize(value,0,budget)));
+        if(evidence.family().equals("source.document"))sourcePath(value,budget).ifPresent(path->metadata.put("path",path));
+        if(evidence.family().equals("analysis.manifest")&&value.get("configuration") instanceof Map<?,?> configuration
+                &&configuration.get("values") instanceof Map<?,?> options){
+            Object module=options.get("java.module"),set=options.get("java.source-set");
+            if(value.get("modules") instanceof List<?> modules)for(var descriptor:modules){
+                if(!(descriptor instanceof Map<?,?> row)||!Objects.equals(row.get("identity"),module))continue;
+                if(module instanceof String id&&budget.reserve(2))metadata.put("module",id);
+                if(row.get("path") instanceof String path)try{
+                    String relative=ContractChecks.modulePath(path);if(budget.reserve(2))metadata.put("modulePath",relative);
+                }catch(IllegalArgumentException invalid){budget.qualify("INVALID_MODULE_PATH");}
+                break;
+            }
+            if(set instanceof String s&&Set.of("MAIN","TEST","GENERATED_MAIN","GENERATED_TEST").contains(s)&&budget.reserve(2))metadata.put("sourceSet",s);
+        }
         if(evidence.family().equals("spring.space")&&value.get("domains") instanceof List<?> domains){
             if(domains.size()>budget.limits.maxResults())budget.qualify("EVIDENCE_DESCRIPTOR_LIMIT");
             long permitted=Math.min(budget.limits.maxResults(),Math.max(0,(budget.limits.maxAuxiliaryStates()-budget.auxiliary-budget.descriptorUnits)/4));
@@ -566,8 +607,10 @@ public final class ArchitectureQueryService {
     private Object sanitize(Object value,int depth,QueryBudget budget){
         if(budget.auxiliary+budget.descriptorUnits>=budget.limits.maxAuxiliaryStates()){budget.qualify("EVIDENCE_DESCRIPTOR_LIMIT");return Map.of();}budget.descriptorUnits++;
         if(depth>20){budget.qualify("EVIDENCE_DESCRIPTOR_LIMIT");return Map.of();}
-        if(value instanceof Map<?,?> map){var safe=new TreeMap<String,Object>();for(var entry:map.entrySet())if(SAFE_FIELDS.contains(entry.getKey()))safe.put((String)entry.getKey(),sanitize(entry.getValue(),depth+1,budget));return safe;}
+        if(value instanceof Map<?,?> map){var safe=new TreeMap<String,Object>();for(var entry:map.entrySet())if(SAFE_FIELDS.contains(entry.getKey())&&(!entry.getKey().equals("spelling")||safeSpelling(entry.getValue())))safe.put((String)entry.getKey(),sanitize(entry.getValue(),depth+1,budget));return safe;}
         if(value instanceof List<?> list){if(list.size()>budget.limits.maxResults())budget.qualify("EVIDENCE_DESCRIPTOR_LIMIT");return list.stream().limit(budget.limits.maxResults()).map(v->sanitize(v,depth+1,budget)).toList();}
         return value;
     }
+    /** DeclarationRecord.spelling may contain an entire class/method body, not just a name. */
+    private static boolean safeSpelling(Object value){return value instanceof String text&&javax.lang.model.SourceVersion.isName(text,javax.lang.model.SourceVersion.RELEASE_21);}
 }

@@ -70,7 +70,7 @@ public final class KnowledgeGraph {
             checkEvidence(payloads,e.evidence());out.computeIfAbsent(key(e.context(),e.source()),k->new ArrayList<>()).add(e);
             e.target().identities().forEach(t->in.computeIfAbsent(key(e.context(),t),k->new ArrayList<>()).add(e));
         });
-        this.outgoing=freeze(out);this.incoming=freeze(in);this.identity=ContentDigest.sha256Utf8(CanonicalJson.write(canonicalForm()));
+        this.outgoing=freeze(out);this.incoming=freeze(in);this.identity=CanonicalJson.sha256(canonicalForm());
     }
     public SnapshotIdentity snapshot() {return snapshot;}
     public List<Context> contexts() {return contexts;}
@@ -85,7 +85,7 @@ public final class KnowledgeGraph {
         var contextValues=contexts.stream().map(c->List.of(c.identity(),c.snapshot(),c.analysis(),semantic.get(c.evidence()))).toList();
         var nodeValues=nodes.stream().map(n->List.of(n.identity(),n.context(),n.kind(),n.evidence().stream().map(semantic::get).distinct().sorted().toList())).toList();
         var edgeValues=edges.stream().map(e->List.of(e.identity(),e.context(),e.kind(),e.source(),e.target(),e.evidence().stream().map(semantic::get).distinct().sorted().toList(),e.region())).toList();
-        return ContentDigest.sha256Utf8(CanonicalJson.write(List.of(SCHEMA,"semantic-replay:v1",snapshot,contextValues,nodeValues,edgeValues,semantic.values().stream().distinct().sorted().toList())));
+        return CanonicalJson.sha256(List.of(SCHEMA,"semantic-replay:v1",snapshot,contextValues,nodeValues,edgeValues,semantic.values().stream().distinct().sorted().toList()));
     }
     public List<String> entityIdentities() {return nodes.stream().filter(n->n.identity().startsWith("entity:")).map(Node::identity).distinct().toList();}
     public List<Edge> outgoing(String context,String node) {return outgoing.getOrDefault(key(context,node),List.of());}

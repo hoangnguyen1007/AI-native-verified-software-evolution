@@ -127,7 +127,7 @@ components:
       required: [id, version]
       properties:
         id: {const: architecture.query}
-        version: {const: m5.3-v1}
+        version: {const: m7.2-v2}
     Envelope:
       type: object
       required: [apiVersion, queryVersion, resultIdentity, data]

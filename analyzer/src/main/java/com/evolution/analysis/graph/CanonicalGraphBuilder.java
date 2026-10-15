@@ -59,7 +59,13 @@ public final class CanonicalGraphBuilder {
                 unit.constructors().ifPresent(c->p.artifact("spring.constructors",c));
                 unit.spring().ifPresent(s->p.artifact("spring.universal",s));
             }
-            p.artifact("ingestion.outcomes",Map.of("identity",ingestion.identity(),"inputIdentity",ingestion.inputIdentity(),"issues",ingestion.issues(),"gaps",ingestion.gaps()));
+            // Index the lossless records instead of nesting the full repeated ledger in one giant payload.
+            // Individual issues/gaps retain their own canonical evidence and original provider identity.
+            ingestion.issues().forEach(i->p.artifact("ingestion.issue",i));
+            ingestion.gaps().forEach(g->p.gapRecord(repository,g));
+            p.artifact("ingestion.outcome-index",Map.of("schema","ingestion.outcome-index:m7.2-v1","identity",ingestion.identity(),"inputIdentity",ingestion.inputIdentity(),
+                    "issues",ingestion.issues().stream().map(i->i.identity().value()).sorted().distinct().toList(),
+                    "gaps",ingestion.gaps().stream().map(g->g.gapIdentity().value()).sorted().distinct().toList()));
         });
         for(var spring:input.spring())p.spring(spring);
         input.issues().forEach(i->p.node(i.identity().value(),repository,"ACQUISITION_ISSUE",p.artifact("ingestion.issue",i)));
@@ -118,7 +124,6 @@ public final class CanonicalGraphBuilder {
             frontend.derivedRelationships().forEach(r->r.supportingSpans().forEach(s->document(documents,s.document().value())));
             var prior=contexts.putIfAbsent(context,new Context(context,snapshot,Optional.of(manifest.identity()),manifestPayload));
             if(prior!=null&&!prior.evidence().equals(manifestPayload))throw new IllegalArgumentException("Conflicting manifest");
-            artifact("frontend.result",frontend);
             ledger(CapabilityGapNormalizer.normalize(EvidenceContext.forAnalysis(manifest),EvidenceNormalizationInput.builder().frontendResults(List.of(frontend)).build()));
             for(var module:manifest.modules())node(module.identity().value(),context,"MODULE",artifact("module.descriptor",module));
             for(var document:manifest.snapshot().documents())node(document.identity().value(),context,"SOURCE_DOCUMENT",artifact("source.document",document));
@@ -167,6 +172,18 @@ public final class CanonicalGraphBuilder {
                 String id=EntityIdentity.from(owner.origin(),owner.stableScope(),EntityKind.ANNOTATION_USE,a.canonicalName()).value();
                 node(id,context,"ANNOTATION_USE",payload);link(context,"graph.has-annotation-use",owner.identity().value(),id,payload);});
             frontend.typeDeclarations().forEach(t->artifact("java.type-shape",t));frontend.memberDeclarations().forEach(m->artifact("java.member-shape",m));
+            var index=new TreeMap<String,Object>();index.put("indexSchema","frontend.result-index:m7.2-v1");index.put("providerResultIdentity",CanonicalJson.sha256(frontend));
+            index.put("analysis",frontend.analysis());index.put("frontend",frontend.frontend());index.put("state",frontend.state());
+            index.put("coverage",frontend.coverage());index.put("sources",frontend.sources());index.put("diagnostics",frontend.diagnostics());
+            index.put("declarations",frontend.declarations().stream().map(v->artifact("java.declaration",v)).toList());
+            index.put("occurrences",frontend.occurrences().stream().map(v->artifact("java.occurrence",v)).toList());
+            index.put("observations",frontend.observations().stream().map(v->artifact("java.observation",v)).toList());
+            index.put("types",frontend.types().stream().map(v->artifact("java.type-use",v)).toList());
+            index.put("annotations",frontend.annotations().stream().map(v->artifact("java.annotation-use",v)).toList());
+            index.put("derivedRelationships",frontend.derivedRelationships().stream().map(v->artifact("java.derived-relationship",v)).toList());
+            index.put("typeDeclarations",frontend.typeDeclarations().stream().map(v->artifact("java.type-shape",v)).toList());
+            index.put("memberDeclarations",frontend.memberDeclarations().stream().map(v->artifact("java.member-shape",v)).toList());
+            artifact("frontend.result-index",index);
         }
         void relationship(String context,SemanticRelationship relation,ContentDigest payload) {
             Target target=switch(relation.target()) {
@@ -310,7 +327,8 @@ public final class CanonicalGraphBuilder {
             if(!ledger.context().snapshotIdentity().equals(snapshot))throw new IllegalArgumentException("Foreign evidence ledger snapshot");
             String context=ledger.context().analysisIdentity().map(AnalysisIdentity::value).orElse(snapshot.value());
             if(!contexts.containsKey(context))throw new IllegalArgumentException("Foreign evidence ledger analysis");
-            artifact("evidence.ledger",ledger);
+            artifact("evidence.ledger-index",Map.of("indexSchema","evidence.ledger-index:m7.2-v1","identity",ledger.identity(),"schemaVersion",ledger.schemaVersion(),"normalizer",ledger.normalizer(),
+                    "context",ledger.context(),"gaps",ledger.gaps().stream().map(g->g.gapIdentity()).toList(),"attempts",ledger.attempts(),"conflicts",ledger.conflicts(),"resolutions",ledger.resolutions()));
             ledger.gaps().forEach(g->gapRecord(context,g));
             ledger.attempts().forEach(a->node(a.attemptIdentity().value(),context,"ACQUISITION_ATTEMPT",artifact("evidence.attempt",a)));
             ledger.conflicts().forEach(c->node(c.conflictIdentity().value(),context,"PROVIDER_CONFLICT",artifact("evidence.conflict",c)));

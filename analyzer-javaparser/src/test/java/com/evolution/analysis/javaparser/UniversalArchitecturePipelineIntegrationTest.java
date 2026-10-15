@@ -46,6 +46,20 @@ class UniversalArchitecturePipelineIntegrationTest {
         return TestInputs.request("class PlatformStub {}").platform();
     }
 
+    @Test void pluginEffectsQualifyCapturedHandwrittenSourcesWithoutInventingGeneratedTypes(){
+        String pom="<project><modelVersion>4.0.0</modelVersion><groupId>fixture</groupId><artifactId>app</artifactId><version>1</version><properties><maven.compiler.release>21</maven.compiler.release><project.build.sourceEncoding>UTF-8</project.build.sourceEncoding></properties><build><plugins><plugin><artifactId>maven-enforcer-plugin</artifactId><version>3.6.3</version></plugin></plugins></build></project>";
+        var result=new UniversalArchitecturePipeline().runWithEvidence(inputs(Map.of("pom.xml",pom,"src/main/java/p/C.java","package p; public class C {}")),UniversalArchitecturePipeline.Policy.builder(new JavaParserFrontend(),JavaParserFrontend.PROVIDER).defaultPlatform(jdkPlatform()).mavenProvider(new MavenBuildModelProvider()).build());
+        assertEquals(1,result.report().types().size());assertNotEquals(UniversalArchitectureReport.Status.COMPLETE,result.report().status());
+        assertTrue(result.graphInput().orElseThrow().build().orElseThrow().modules().stream().flatMap(m->m.sourcePlan().sourceSets().stream()).anyMatch(s->s.gaps().contains(SourcePlanModel.Gap.PLUGIN_EFFECTS_NOT_EVALUATED)));
+    }
+    @Test void unsupportedCompilerConfigurationStillWithholdsHandwrittenSources(){
+        String pom="<project><modelVersion>4.0.0</modelVersion><groupId>fixture</groupId><artifactId>app</artifactId><version>1</version><build><plugins><plugin><artifactId>maven-compiler-plugin</artifactId><version>3.15.0</version><configuration><compilerArgs><arg>-Xplugin:unknown</arg></compilerArgs></configuration></plugin></plugins></build></project>";
+        var result=new UniversalArchitecturePipeline().runWithEvidence(inputs(Map.of("pom.xml",pom,"src/main/java/p/C.java","package p; public class C {}")),UniversalArchitecturePipeline.Policy.builder(new JavaParserFrontend(),JavaParserFrontend.PROVIDER).defaultPlatform(jdkPlatform()).mavenProvider(new MavenBuildModelProvider()).build());
+        assertTrue(result.report().types().isEmpty());assertNotEquals(UniversalArchitectureReport.Status.COMPLETE,result.report().status());
+        assertTrue(result.graphInput().orElseThrow().build().orElseThrow().modules().stream().flatMap(m->m.sourcePlan().sourceSets().stream()).anyMatch(s->s.gaps().contains(SourcePlanModel.Gap.UNSUPPORTED_COMPILER_CONFIGURATION)));
+        assertEquals("m7.2-qualified-sources-v1",UniversalSourceIngestion.PROVIDER.version());assertEquals("3.9.16-m7.2-compiler-bindings-v1",MavenBuildModelProvider.VERSION.version());
+    }
+
     private static SpringBuildContext testBuildContext(PlatformInput platform, List<BinaryInput> dependencies) {
         byte[] bytes = "package com.truth; public class TruthApp {}".getBytes(StandardCharsets.UTF_8);
         var doc = SourceDocument.create(REPO, MODULE, "TruthApp.java",

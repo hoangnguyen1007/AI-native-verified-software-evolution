@@ -1,0 +1,15 @@
+#!/bin/sh
+case "$0" in
+    */*) evo_launcher_dir=${0%/*} ;;
+    *) evo_launcher_dir=. ;;
+esac
+evo_root=$(CDPATH= cd -- "$evo_launcher_dir" && pwd) || exit 1
+evo_jar="$evo_root/cli/target/evo.jar"
+if [ ! -f "$evo_jar" ]; then
+    echo '[EVO_NOT_BUILT] Build the CLI as documented in cli/README.md.' >&2
+    exit 1
+fi
+if [ -n "$JAVA_HOME" ]; then
+    exec "$JAVA_HOME/bin/java" -Xmx4g -Dfile.encoding=UTF-8 -jar "$evo_jar" "$@"
+fi
+exec java -Xmx4g -Dfile.encoding=UTF-8 -jar "$evo_jar" "$@"

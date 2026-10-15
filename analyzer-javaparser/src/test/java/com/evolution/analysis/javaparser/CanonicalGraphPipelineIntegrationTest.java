@@ -40,6 +40,14 @@ class CanonicalGraphPipelineIntegrationTest {
         assertEquals(1,calls.size());assertEquals(2,calls.getFirst().evidence().size());
         assertTrue(graph.edges().stream().anyMatch(e->e.kind().equals("graph.depends-on")));
         assertTrue(graph.evidence().stream().anyMatch(e->e.family().equals("source.bytes")));
+        var frontend=detailed.graphInput().orElseThrow().ingestion().orElseThrow().units().stream().flatMap(u->u.frontend().stream()).findFirst().orElseThrow();
+        var indexed=graph.evidence().stream().filter(e->e.family().equals("frontend.result-index")).findFirst().orElseThrow();
+        var restoredFrontend=new TreeMap<>(GraphJson.object(GraphJson.read(indexed.canonicalJson(),GraphJson.Limits.defaults())));
+        restoredFrontend.remove("indexSchema");restoredFrontend.remove("providerResultIdentity");
+        for(String field:List.of("declarations","occurrences","observations","types","annotations","derivedRelationships","typeDeclarations","memberDeclarations")){
+            var records=GraphJson.array(restoredFrontend.get(field)).stream().map(id->GraphJson.read(graph.evidence(new ContentDigest(GraphJson.string(id))).orElseThrow().canonicalJson(),GraphJson.Limits.defaults())).toList();restoredFrontend.put(field,records);
+        }
+        assertEquals(com.evolution.analysis.contract.serialization.CanonicalJson.write(frontend),com.evolution.analysis.contract.serialization.CanonicalJson.write(restoredFrontend),"Index must reconstruct every canonical frontend field without loss");
         var codec=new GraphSnapshotCodec();var restored=codec.decode(codec.encode(graph),GraphJson.Limits.defaults());
         assertEquals(graph.identity(),restored.identity());assertEquals(graph.evidence(),restored.evidence());
         assertEquals(detailed.report().identity(),pipeline.run(input,policy()).identity());
@@ -58,6 +66,12 @@ class CanonicalGraphPipelineIntegrationTest {
                 .anyMatch(e->e.get("document").equals(failed.document().value())&&e.get("state").equals(failed.state().name())));
         assertFalse(detailed.graphInput().orElseThrow().gaps().isEmpty());
         assertTrue(graph.nodes().stream().anyMatch(n->n.kind().equals("CAPABILITY_GAP")));
+        var index=graph.evidence().stream().filter(e->e.family().equals("ingestion.outcome-index")).findFirst().orElseThrow();
+        var payload=GraphJson.object(GraphJson.read(index.canonicalJson(),GraphJson.Limits.defaults()));
+        var ingestion=detailed.graphInput().orElseThrow().ingestion().orElseThrow();
+        assertEquals(ingestion.gaps().stream().map(g->g.gapIdentity().value()).sorted().distinct().toList(),GraphJson.array(payload.get("gaps")));
+        assertTrue(graph.evidence().stream().noneMatch(e->e.family().equals("ingestion.outcomes")),"Do not embed the entire repeated gap ledger inside one bounded evidence payload");
+        for(var gap:ingestion.gaps())assertTrue(graph.evidence().stream().anyMatch(e->e.family().equals("evidence.gap")&&e.canonicalJson().contains(gap.gapIdentity().value())),"Every indexed gap must remain lossless");
     }
     @Test void emptyAndNonJavaInputsHaveHonestGraphStructure() {
         var detailed=new UniversalArchitecturePipeline().runWithEvidence(inputs(Map.of("README.md","Only documentation")),policy());

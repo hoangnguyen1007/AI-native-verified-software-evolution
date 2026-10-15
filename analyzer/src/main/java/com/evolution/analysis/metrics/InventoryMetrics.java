@@ -81,7 +81,7 @@ final class InventoryMetrics {
     }
     Optional<Map<String,Object>> frontend(){
         var analysis=input.graph.contexts().stream().filter(c->c.identity().equals(input.request.context())).findFirst().orElseThrow().analysis();if(analysis.isEmpty())return Optional.empty();
-        for(var evidence:input.graph.evidence())if(evidence.family().equals("frontend.result")&&evidence.canonicalJson().contains("\"analysis\":\""+analysis.orElseThrow().value()+"\"")){
+        for(var evidence:input.graph.evidence())if(Set.of("frontend.result","frontend.result-index").contains(evidence.family())&&evidence.canonicalJson().contains("\"analysis\":\""+analysis.orElseThrow().value()+"\"")){
             var row=input.read(evidence);if(analysis.orElseThrow().value().equals(row.get("analysis"))){input.references.add(evidence.identity());return Optional.of(row);}}
         return Optional.empty();
     }

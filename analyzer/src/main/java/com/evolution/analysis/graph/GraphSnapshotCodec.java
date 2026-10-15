@@ -12,8 +12,28 @@ public final class GraphSnapshotCodec {
     public String encode(KnowledgeGraph graph) {
         return CanonicalJson.write(Map.of("format",FORMAT,"identity",graph.identity(),"graph",graph.canonicalForm()));
     }
+    /** Trusted immutable graph input has already passed graph/evidence invariants. */
+    public void encodeTo(KnowledgeGraph graph,java.io.Writer writer,GraphJson.Limits limits)throws java.io.IOException {
+        var envelope=Map.of("format",FORMAT,"identity",graph.identity(),"graph",graph.canonicalForm());
+        if(!CanonicalJson.fitsStructure(envelope,limits.maxDepth(),limits.maxValues()))throw new GraphJson.LimitExceededException("Graph JSON structural limit");
+        CanonicalJson.writeTo(envelope,writer);
+    }
     public KnowledgeGraph decode(String json,GraphJson.Limits limits) {
-        var envelope=object(read(json,limits));fields(envelope,"format","identity","graph");
+        if(json.length()>limits.maxCharacters())throw new GraphJson.LimitExceededException("Graph JSON character limit");
+        try{return decode(new java.io.StringReader(json),limits);}catch(java.io.IOException impossible){throw new IllegalStateException(impossible);}
+    }
+    public KnowledgeGraph decode(java.io.Reader reader,GraphJson.Limits limits)throws java.io.IOException {
+        try{
+            var digest=java.security.MessageDigest.getInstance("SHA-256");Map<String,Object> envelope;
+            try(var writer=new java.io.OutputStreamWriter(new java.security.DigestOutputStream(java.io.OutputStream.nullOutputStream(),digest),java.nio.charset.StandardCharsets.UTF_8)){
+                var input=new java.io.FilterReader(reader){@Override public int read(char[] buffer,int offset,int length)throws java.io.IOException{int count=super.read(buffer,offset,length);if(count>0)writer.write(buffer,offset,count);return count;}};
+                envelope=object(GraphJson.read(input,limits));
+            }
+            return decodeEnvelope(envelope,new ContentDigest("sha256:"+java.util.HexFormat.of().formatHex(digest.digest())));
+        }catch(java.security.NoSuchAlgorithmException impossible){throw new IllegalStateException(impossible);}
+    }
+    private KnowledgeGraph decodeEnvelope(Map<String,Object> envelope,ContentDigest rawDigest){
+        fields(envelope,"format","identity","graph");
         if(!FORMAT.equals(string(envelope.get("format"))))throw new IllegalArgumentException("Unsupported graph snapshot version");
         var body=object(envelope.get("graph"));fields(body,"schema","snapshot","contexts","nodes","edges","evidence");
         if(!KnowledgeGraph.SCHEMA.equals(string(body.get("schema"))))throw new IllegalArgumentException("Unsupported graph schema");
@@ -40,7 +60,7 @@ public final class GraphSnapshotCodec {
         }).toList();
         var graph=new KnowledgeGraph(new SnapshotIdentity(string(body.get("snapshot"))),contexts,nodes,edges,evidence);
         if(!graph.identity().equals(digest(envelope.get("identity"))))throw new IllegalArgumentException("Graph snapshot digest mismatch");
-        if(!encode(graph).equals(json))throw new IllegalArgumentException("Noncanonical or duplicated graph snapshot data");
+        if(!CanonicalJson.sha256(Map.of("format",FORMAT,"identity",graph.identity(),"graph",graph.canonicalForm())).equals(rawDigest))throw new IllegalArgumentException("Noncanonical or duplicated graph snapshot data");
         return graph;
     }
     private static ContentDigest digest(Object value) {return new ContentDigest(string(value));}

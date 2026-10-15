@@ -97,7 +97,7 @@ final class ResolutionEnvironment {
     private static void verify(ContentDigest expected, byte[] bytes) {
         if (!ContentDigest.sha256(bytes).equals(expected)) throw new FrontendInputException("frontend.artifact-digest", "Artifact bytes differ from the manifest");
     }
-    private static JarTypeSolver jmodSolver(Path path) throws IOException {
+    private static com.github.javaparser.resolution.TypeSolver jmodSolver(Path path) throws IOException {
         ByteArrayOutputStream normalized = new ByteArrayOutputStream();
         Set<String> seen = new HashSet<>();
         try (ZipFile jmod = new ZipFile(path.toFile());
@@ -117,8 +117,19 @@ final class ResolutionEnvironment {
                 try (InputStream input = jmod.getInputStream(source)) { input.transferTo(jar); }
                 jar.closeEntry();
             }
+            if (seen.isEmpty()) {
+                // Aggregator/native-only JDK modules legitimately declare no Java types.
+                // Retain the original artifact/hash in the platform manifest; validate its descriptor.
+                var descriptor = jmod.getEntry("classes/module-info.class");
+                if (descriptor == null) throw new FrontendInputException("frontend.jmod-empty", "JMOD has no classes or module descriptor");
+                try (var input = jmod.getInputStream(descriptor)) {
+                    java.lang.module.ModuleDescriptor.read(input);
+                } catch (java.lang.module.InvalidModuleDescriptorException invalid) {
+                    throw new FrontendInputException("frontend.jmod-descriptor", "JMOD module descriptor is invalid");
+                }
+                return new MemoryTypeSolver();
+            }
         }
-        if (seen.isEmpty()) throw new FrontendInputException("frontend.jmod-empty", "JMOD contains no platform classes");
         return new JarTypeSolver(new ByteArrayInputStream(normalized.toByteArray()));
     }
     private static JarTypeSolver ctSymSolver(Path path, int release) throws IOException {

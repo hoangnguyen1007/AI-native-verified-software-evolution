@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <parent><groupId>com.evolution</groupId><artifactId>software-evolution-platform</artifactId><version>0.1.0-SNAPSHOT</version></parent>
+  <artifactId>cli</artifactId><name>evo architecture intelligence CLI</name>
+  <dependencies>
+    <dependency><groupId>com.evolution</groupId><artifactId>backend</artifactId><version>${project.version}</version></dependency>
+    <dependency><groupId>com.evolution</groupId><artifactId>analyzer-filesystem</artifactId><version>${project.version}</version></dependency>
+    <dependency><groupId>com.evolution</groupId><artifactId>analyzer-maven</artifactId><version>${project.version}</version></dependency>
+    <dependency><groupId>com.evolution</groupId><artifactId>analyzer-javaparser</artifactId><version>${project.version}</version></dependency>
+    <dependency><groupId>info.picocli</groupId><artifactId>picocli</artifactId><version>4.7.7</version></dependency>
+    <dependency><groupId>org.fusesource.jansi</groupId><artifactId>jansi</artifactId><version>2.4.2</version></dependency>
+    <dependency><groupId>org.junit.jupiter</groupId><artifactId>junit-jupiter</artifactId><scope>test</scope></dependency>
+  </dependencies>
+  <build><finalName>evo</finalName><plugins>
+    <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-jar-plugin</artifactId>
+      <configuration><forceCreation>true</forceCreation></configuration>
+    </plugin>
+    <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-shade-plugin</artifactId><version>3.6.0</version>
+      <executions><execution><phase>package</phase><goals><goal>shade</goal></goals><configuration>
+        <createDependencyReducedPom>false</createDependencyReducedPom>
+        <filters><filter><artifact>*:*</artifact><excludes><exclude>META-INF/*.SF</exclude><exclude>META-INF/*.RSA</exclude><exclude>META-INF/*.DSA</exclude><exclude>module-info.class</exclude><exclude>META-INF/versions/*/module-info.class</exclude></excludes></filter></filters>
+        <transformers><transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer"><mainClass>com.evolution.cli.EvoMain</mainClass></transformer><transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/></transformers>
+      </configuration></execution></executions>
+    </plugin>
+  </plugins></build>
+</project>

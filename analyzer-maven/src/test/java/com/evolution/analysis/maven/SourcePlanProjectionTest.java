@@ -20,6 +20,12 @@ class SourcePlanProjectionTest {
     }
     private static String value(Setting setting) { return setting.value().orElseThrow(() -> new AssertionError(setting)); }
 
+    @Test void projectVersionMetadataDoesNotBecomeAnImplicitCompilerParameter(){
+        var plan=plans("<properties><maven.compiler.plugin.version>3.15.0</maven.compiler.plugin.version><maven.compiler.company.tag>internal</maven.compiler.company.tag><maven.compiler.release>21</maven.compiler.release><project.build.sourceEncoding>UTF-8</project.build.sourceEncoding></properties><build><plugins>"+plugin("<release>21</release><encoding>UTF-8</encoding>")+"</plugins></build>");
+        assertFalse(plan.sourceSets().getFirst().gaps().contains(Gap.UNSUPPORTED_COMPILER_CONFIGURATION));
+        assertEquals("21",value(plan.sourceSets().getFirst().syntaxLevel()));
+    }
+
     @Test void defaultRootsAreExplicitCandidatesAndNoHostCompilerOrEncodingIsAssumed() {
         var plan = plans("");
         assertEquals(List.of(Kind.MAIN, Kind.TEST), plan.sourceSets().stream().map(SourceSetPlan::kind).toList());

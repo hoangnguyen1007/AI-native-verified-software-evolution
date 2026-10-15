@@ -49,7 +49,7 @@ final class Extraction {
         final OriginalSource source;
         final CompilationUnit ast;
         final Set<Diagnostic> diagnostics = new TreeSet<>();
-        Unit(SourceInput input, CompilationUnit ast) { this.input = input; this.ast = ast; source = new OriginalSource(input.document().identity(), input.text()); }
+        Unit(SourceInput input, CompilationUnit ast,UnicodeSource translated) { this.input = input; this.ast = ast; source = new OriginalSource(input.document().identity(), input.text(),translated); }
     }
     private record ReactorUnit(ReactorSourceInput input, Unit unit) {}
     private static final class MappingFailure extends RuntimeException {
@@ -167,7 +167,15 @@ final class Extraction {
 
     private Optional<Unit> parse(
             JavaParser parser, SourceInput input, Optional<ReactorSourceInput> reactor) {
-        var parsed = parser.parse(input.text());
+        UnicodeSource translated;
+        try{translated=UnicodeSource.translate(input.text());}
+        catch(IllegalArgumentException invalid){
+            var diagnostic=new Diagnostic(DiagnosticSeverity.ERROR,"java.unicode-escape-error","Invalid eligible Unicode escape",Optional.empty(),Map.of("document",input.document().identity().value()));
+            diagnostics.add(diagnostic);rejected.add(new SourceOutcome(input.document().identity(),SourceOutcome.State.ERROR,List.of(diagnostic)));
+            if(reactor.isPresent())reactorResolutionDegraded=true;return Optional.empty();
+        }
+        parser.getParserConfiguration().setPreprocessUnicodeEscapes(false);
+        var parsed = parser.parse(translated.text);
         if (!parsed.isSuccessful() || parsed.getResult().isEmpty()) {
             String code = reactor.isPresent() ? "java.reactor-source-parse-error" : "java.parse-error";
             var diagnostic = new Diagnostic(DiagnosticSeverity.ERROR, code,
@@ -186,7 +194,7 @@ final class Extraction {
         ast.findAll(SimpleName.class).forEach(n -> n.setIdentifier(semanticIdentifier(n.getIdentifier())));
         ast.findAll(Name.class).forEach(n -> n.setIdentifier(semanticIdentifier(n.getIdentifier())));
         ast.findAll(MethodReferenceExpr.class).forEach(n -> n.setIdentifier(semanticIdentifier(n.getIdentifier())));
-        var unit = new Unit(input, ast);
+        var unit = new Unit(input, ast,translated);
         units.put(ast, unit);
         return Optional.of(unit);
     }
@@ -616,7 +624,8 @@ final class Extraction {
     }
     OriginalSource source(Node node) { return unit(node).source; }
     Entity existing(JavaSymbolName symbol) {
-        var found=declarations.values().stream().filter(d -> d.entity().origin()==EntityOrigin.PROJECT && d.entity().canonicalName().equals(symbol.canonicalName())).findFirst().orElse(null);
+        String canonical=symbol.canonicalName();
+        var found=declarations.values().stream().filter(d -> d.entity().origin()==EntityOrigin.PROJECT && d.entity().canonicalName().equals(canonical)).findFirst().orElse(null);
         if (found==null || duplicateDeclarations.contains(found.entity().identity())) throw new MappingFailure(SemanticStatus.UNSUPPORTED,"java.implicit-callable");
         return found.entity();
     }
@@ -665,7 +674,7 @@ final class Extraction {
         unit(node).diagnostics.add(problem); diagnostics.add(problem);
     }
     boolean isImplicit(Entity entity) { return declarations.get(entity.identity()).derivation().kind()==DerivationKind.DERIVED; }
-    boolean hasDeclaration(JavaSymbolName name) { return declarations.values().stream().anyMatch(d->d.entity().canonicalName().equals(name.canonicalName())&&d.entity().stableScope().equals(EntityScope.project(request.module()))); }
+    boolean hasDeclaration(JavaSymbolName name) {String canonical=name.canonicalName();var scope=EntityScope.project(request.module());return declarations.values().stream().anyMatch(d->d.entity().canonicalName().equals(canonical)&&d.entity().stableScope().equals(scope)); }
     boolean hasLombokConfiguration(Node node) {
         String path=unit(node).input.document().path();
         return request.manifest().snapshot().files().stream().anyMatch(f->f.path().equals("lombok.config")

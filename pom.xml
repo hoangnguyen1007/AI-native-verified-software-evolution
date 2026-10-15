@@ -22,9 +22,12 @@
         <module>analyzer-filesystem</module>
         <module>analyzer-javaparser</module>
         <module>backend</module>
+        <module>cli</module>
     </modules>
 
     <properties>
+        <!-- Override for isolated trusted builds when an IDE also writes target/classes. -->
+        <platform.build.directory>target</platform.build.directory>
         <!-- Reproducible build contract -->
         <maven.compiler.release>21</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
@@ -59,6 +62,7 @@
     </dependencyManagement>
 
     <build>
+        <directory>${platform.build.directory}</directory>
         <pluginManagement>
             <plugins>
                 <plugin>

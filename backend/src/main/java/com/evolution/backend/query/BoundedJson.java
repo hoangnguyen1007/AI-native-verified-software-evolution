@@ -9,11 +9,12 @@ import java.nio.charset.StandardCharsets;
 import java.util.*;
 
 /** Preflight bounds canonical serialization allocation; final UTF-8 bytes have an exact ceiling. */
-final class BoundedJson {
-    static final class TooLarge extends RuntimeException {}
+public final class BoundedJson {
+    public static final class TooLarge extends RuntimeException {}
     private long remaining;
     private BoundedJson(int maximum) { remaining = maximum; }
-    static byte[] encode(Object value, int maximum) {
+    /** Shared by in-process presentation adapters; canonical byte semantics are unchanged. */
+    public static byte[] encode(Object value, int maximum) {
         new BoundedJson(maximum).visit(value,0);
         // The lower-bound preflight caps characters/values. JSON escaping expands at most sixfold.
         byte[] bytes = CanonicalJson.write(value).getBytes(StandardCharsets.UTF_8);

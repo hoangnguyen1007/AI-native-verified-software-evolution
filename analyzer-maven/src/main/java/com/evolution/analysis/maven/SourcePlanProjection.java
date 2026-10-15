@@ -13,6 +13,13 @@ final class SourcePlanProjection {
     private static final String COMPILER = "org.apache.maven.plugins:maven-compiler-plugin";
     private static final Set<String> SETTINGS = Set.of("source", "target", "release", "testSource", "testTarget",
             "testRelease", "encoding", "enablePreview", "generatedSourcesDirectory", "generatedTestSourcesDirectory");
+    // User-property bindings from the compiler 3.15.0 compile/testCompile descriptors.
+    // Arbitrary project properties (e.g. maven.compiler.plugin.version) are not Mojo parameters.
+    private static final Set<String> COMPILER_PROPERTIES=Set.of("compilerId","compilerReuseStrategy","compilerVersion",
+            "createMissingPackageInfoClass","debug","debuglevel","enablePreview","executable","failOnError","failOnWarning",
+            "forceJavacCompilerUse","forceLegacyJavacApi","fork","implicit","maxmem","meminitial","moduleVersion","optimize",
+            "outputDirectory","parameters","proc","release","showCompilationChanges","showDeprecation","showWarnings",
+            "skipMultiThreadWarning","source","target","testRelease","testSource","testTarget","useIncrementalCompilation","useModuleVersion","verbose");
     private final Model model;
     private final String pom;
     private final BuildModelRequest request;
@@ -84,7 +91,7 @@ final class SourcePlanProjection {
         model.getProperties().forEach((k, v) -> properties.put(k.toString(), v.toString()));
         properties.putAll(request.policy().userProperties());
         properties.forEach((key, value) -> {
-            if ((key.startsWith("maven.compiler.") && !SETTINGS.contains(key.substring("maven.compiler.".length())))
+            if ((key.startsWith("maven.compiler.") && COMPILER_PROPERTIES.contains(key.substring("maven.compiler.".length())) && !SETTINGS.contains(key.substring("maven.compiler.".length())))
                     || Set.of("maven.main.skip", "maven.test.skip").contains(key)) {
                 Setting declaration = request.policy().userProperties().containsKey(key)
                         ? setting("userProperties." + key, value, Origin.USER_PROPERTY) : modelSetting("properties." + key, value);

@@ -24,7 +24,7 @@ public record GraphEvidence(ContentDigest identity, String family, String canoni
     /** Semantic replay excludes only known provenance timestamps/revision labels, never configuration values. */
     public ContentDigest semanticIdentity() {
         Object form=GraphJson.read(canonicalJson,GraphJson.Limits.defaults());
-        if(Set.of("repository.snapshot","analysis.manifest","source.request","repository.acquisition","evidence.attempt","evidence.ledger").contains(family)) {
+        if(Set.of("repository.snapshot","analysis.manifest","source.request","repository.acquisition","evidence.attempt","evidence.ledger","evidence.ledger-index").contains(family)) {
             var copy=new TreeMap<>(GraphJson.object(form));
             switch(family) {
                 case "repository.snapshot" -> removeSnapshotLabels(copy);
@@ -33,7 +33,7 @@ public record GraphEvidence(ContentDigest identity, String family, String canoni
                     var manifest=new TreeMap<>(GraphJson.object(copy.get("manifest")));snapshotMember(manifest);copy.put("manifest",manifest);
                 }
                 case "evidence.attempt" -> removeTiming(copy);
-                case "evidence.ledger" -> copy.put("attempts",GraphJson.array(copy.get("attempts")).stream().map(a->{var row=new TreeMap<>(GraphJson.object(a));removeTiming(row);return row;}).toList());
+                case "evidence.ledger","evidence.ledger-index" -> copy.put("attempts",GraphJson.array(copy.get("attempts")).stream().map(a->{var row=new TreeMap<>(GraphJson.object(a));removeTiming(row);return row;}).toList());
                 default -> throw new IllegalStateException("Unknown semantic evidence family");
             }
             form=copy;

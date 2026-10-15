@@ -16,7 +16,7 @@ import static com.evolution.analysis.ingestion.IngestionEvidence.Reason.*;
 /** Connects declarative plans to the existing neutral frontend and configuration ports.
  * Resolution is an explicit exact input; a Gradle dependency declaration is never treated as a JAR. */
 public final class UniversalSourceIngestion {
-    public static final VersionedIdentifier PROVIDER=new VersionedIdentifier("source.universal-ingestion","m4uv2.1-v2");
+    public static final VersionedIdentifier PROVIDER=new VersionedIdentifier("source.universal-ingestion","m7.2-qualified-sources-v1");
     public record SourceSet(ModuleIdentity module,SourcePlanModel.Kind kind,String name) {
         public SourceSet { Objects.requireNonNull(module); Objects.requireNonNull(kind);
             name=ContractChecks.token(name,"source-set name"); }
@@ -81,6 +81,8 @@ public final class UniversalSourceIngestion {
         var snapshot=RepositorySnapshot.create(inputs.snapshot().repository(),inputs.snapshot().revision(),inputs.snapshot().dirty(),inputs.snapshot().files(),documents);
         var outcomes=new ArrayList<Outcome>();
         for(var plan:plans) {
+            if(plan.gaps().contains(SourcePlanModel.Gap.PLUGIN_EFFECTS_NOT_EVALUATED))
+                issues.add(new IngestionEvidence.Issue(SOURCE_INCOMPLETE,plan.module().value()+"#PLUGIN_EFFECTS_NOT_EVALUATED",List.of(identity)));
             var key=new SourceSet(plan.module(),plan.kind(),plan.name());var resolution=resolutions.get(key);Optional<FrontendRequest> request=Optional.empty();
             var resources=new ArrayList<SourcePlanModel.Setting>();
             if(plan.semanticRole()==SourceClassification.TEST)plans.stream().filter(p->p.module().equals(plan.module())&&p.kind()==SourcePlanModel.Kind.MAIN).forEach(p->resources.addAll(p.resourceRoots()));
@@ -90,7 +92,7 @@ public final class UniversalSourceIngestion {
             if(!owned.getOrDefault(key,List.of()).isEmpty()) {
                 if(resolution==null)issues.add(new IngestionEvidence.Issue(CLASSPATH_RESOLUTION_REQUIRED,key.toString(),List.of(identity)));
                 else if(buildClosureUnknown(build,inputs,key)||incomplete.contains(key)||plan.syntaxLevel().value().isEmpty()||plan.platformRelease().value().isEmpty()||plan.encoding().value().isEmpty()
-                        ||plan.gaps().stream().anyMatch(g->g!=SourcePlanModel.Gap.GENERATED_SOURCES_NOT_ACQUIRED))
+                        ||plan.gaps().stream().anyMatch(g->g!=SourcePlanModel.Gap.GENERATED_SOURCES_NOT_ACQUIRED&&g!=SourcePlanModel.Gap.PLUGIN_EFFECTS_NOT_EVALUATED))
                     issues.add(new IngestionEvidence.Issue(SOURCE_INCOMPLETE,key.toString(),List.of(identity)));
                 else try {
                     int level=Integer.parseInt(plan.syntaxLevel().value().orElseThrow()),release=Integer.parseInt(plan.platformRelease().value().orElseThrow());

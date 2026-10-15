@@ -18,6 +18,8 @@ final class TypeExtraction {
     private final Extraction context;
     private final List<TypeUseRecord> result = new ArrayList<>();
     private final Set<Type> handled = Collections.newSetFromMap(new IdentityHashMap<>());
+    private record WrittenType(Optional<EntityIdentity> owner,String role,com.evolution.analysis.contract.source.SourceSpan span,String syntax,boolean variadic) {}
+    private final Set<WrittenType> written=new HashSet<>();
     TypeExtraction(Extraction context) { this.context = context; }
 
     List<TypeUseRecord> extract(CompilationUnit unit) {
@@ -57,18 +59,24 @@ final class TypeExtraction {
                     || type.getParentNode().orElse(null) instanceof MethodReferenceExpr ? "type-argument" : "type-uses";
             add(() -> context.typeUseOwner(type),type,role,false);
         }
-        return List.copyOf(result);
+        // JavaParser clones the shared type of local multi-variable declarations with the same
+        // source span and semantic owner. Emit one identical type fact; all observation attempts remain.
+        return List.copyOf(new TreeSet<>(result));
     }
     private void add(Node owner, Type type, String role, boolean variadic) {
         add(() -> context.entity(owner),type,role,variadic);
     }
     private void add(Supplier<Entity> owner, Type type, String role, boolean variadic) {
         handled.addAll(type.findAll(Type.class));
-        var mapped = map(type,owner,role,false);
         Optional<EntityIdentity> identity;
         try { identity = Optional.of(owner.get().identity()); }
         catch (RuntimeException failure) { identity = Optional.empty(); }
-        result.add(new TypeUseRecord(identity,new RelationshipKind("java."+role),context.source(type).span(type),mapped,variadic));
+        var span=context.source(type).span(type);
+        // A shared local declaration header has multiple cloned AST types but one written use.
+        // Field/parameter obligations retain their different verified owners.
+        if(!written.add(new WrittenType(identity,role,span,type.toString(),variadic)))return;
+        var mapped = map(type,owner,role,false);
+        result.add(new TypeUseRecord(identity,new RelationshipKind("java."+role),span,mapped,variadic));
     }
     private JavaType map(Type type, Supplier<Entity> owner, String role, boolean argument) {
         String spelling = context.source(type).slice(context.source(type).span(type));

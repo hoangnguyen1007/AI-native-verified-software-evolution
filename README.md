@@ -2,7 +2,21 @@
 
 This repository is the SE121 software architecture intelligence platform. The Java 21 Maven reactor contains parser-neutral contracts, the M2 JavaParser frontend, progressive effective-POM/source-plan modeling, bounded filesystem and dependency-artifact acquisition, exact Maven classpaths, deterministic source decoding, explicit analyzed-JDK symbol views, per-source-set frontend-input assembly, and normalized capability-gap/acquisition records. Gate G2 is formally PASSED following independent semantic adjudication across representative archetypes. Gate M4-R0 (Research and Semantics Gate) is PASSED following human review and acceptance. See [current state](docs/current-state.md) for verified scope and limitations.
 
-The active milestone is **M7: Impact, CLI, and Interoperability**. G3, G4, and G5 are recorded PASSED. Milestone M6 delivered typed policy compilation/mapping ([M6.1](docs/architecture/m6-typed-policy.md)), configuration-qualified rule evaluation and Evidence Bundles ([M6.2](docs/architecture/m6-policy-evaluation.md)), and policy metrics and explainable assessment with a confirmed score baseline ([M6.3](docs/architecture/m6-policy-metrics-and-assessment.md)), certified in [Gate G5 Adjudication Record](docs/reproducibility/g5-adjudication-record-2026-10-15.md). **M7.1 is implemented:** [local HTTP/JSON query API](docs/architecture/m7-query-http-api.md), [OpenAPI](backend/src/main/resources/api/openapi.yaml), and explicitly supplied M6 report retrieval. **Next: M7.2 CLI tooling.** See [current state](docs/current-state.md) for verified scope, commands and limits; global coverage and market superiority remain unmeasured.
+The active milestone is **M7: Impact, CLI, and Interoperability**. G3, G4, and G5 are recorded PASSED. M6 delivered typed policy, configuration-qualified findings/Evidence Bundles and explainable assessment with a confirmed baseline, certified in [G5](docs/reproducibility/g5-adjudication-record-2026-10-15.md). **M7.1 and M7.2 are implemented:** [local HTTP/JSON API](docs/architecture/m7-query-http-api.md), [OpenAPI](backend/src/main/resources/api/openapi.yaml), and the [evo CLI](cli/README.md) with a bilingual command palette, an original multicolor pixel mark, direct commands, passive scan, canonical queries/reports and JSON/SARIF/GraphML exports. M7.2 also repairs Windows CMD rendering and real-source scanning, provides numbered references/command-specific visual reports, and uses bounded streaming snapshots with isolated packaging checks. The broader M7 local-workflow acceptance remains open; M8 owns the full visual workbench.
+
+## Try evo
+
+After the [targeted CLI build](cli/README.md#build-and-launch):
+
+```powershell
+.\evo.cmd --lang vi --color always
+.\evo.cmd scan . --repo https://example.org/team/application.git
+.\evo.cmd show
+.\evo.cmd find Controller
+.\evo.cmd impact <exact-symbol-id>
+```
+
+The palette keeps terminal scrollback; direct commands support `--json`, exact context/configuration selection and bounded results. `evo help` shows the short guide; `evo COMMAND --help` lists options. The [CLI guide](cli/README.md) defines input defaults, scope, installation, automation exit codes and remaining limits.
 
 ## Build prerequisites
 
@@ -55,8 +69,9 @@ The root reactor owns all shared build and test policy and builds in this order:
 4. `analyzer-filesystem` (isolated passive repository and configured-JDK acquisition; no link following, execution or network access)
 5. `analyzer-javaparser` (isolated JavaParser/SymbolSolver adapter and semantic fixtures)
 6. `backend` (local read-only HTTP/JSON adapter over `analyzer` services and supplied canonical reports, with its own test boundary)
+7. `cli` (`evo` composition root and presentation, using existing adapters/services without starting a backend server)
 
-The adapter accepts exact supplied source bytes and verified resolution inputs; it does not execute target builds. Bounded Spring, canonical graph, conditional query/metric, typed policy compilation, configuration-qualified findings, Evidence Bundles, policy metrics and scoring are implemented. The score baseline is human-approved; the HTTP adapter preserves emitted calibration/status unchanged. M7.1 adds local query/report HTTP APIs. CLI and the complete asynchronous backend/visual workbench remain later work.
+The adapter accepts exact supplied source bytes and verified resolution inputs; it does not execute target builds. Bounded Spring, canonical graph, conditional query/metric, typed policy compilation, configuration-qualified findings, Evidence Bundles, policy metrics and scoring are implemented. The score baseline is human-approved; presentation preserves emitted calibration/status unchanged. M7.1 adds local query/report HTTP APIs; M7.2 adds `evo`. The complete asynchronous backend/visual workbench remains M8 work.
 
 The Maven adapter implements `BuildModelProvider` in the neutral `com.evolution.analysis.buildmodel` package. It models root/nested modules, relative parents, supplied artifact parents/BOMs, inheritance, properties, explicit/property/default profiles, dependency management, scopes, optional flags and exclusions. M3.2 adds per-module main/test candidate source plans with inherited directories, separate syntax/bytecode/API requirements, encoding declarations, plugin configuration and provenance. Result schema `build-model-result-v2` includes source-plan gaps in `hasGaps()`.
 

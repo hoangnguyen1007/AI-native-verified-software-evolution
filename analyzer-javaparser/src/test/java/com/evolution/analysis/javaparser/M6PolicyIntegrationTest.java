@@ -95,7 +95,9 @@ class M6PolicyIntegrationTest {
                 "app/App.java","package app; @org.springframework.context.annotation.ComponentScan(\"app\") class App {}",
                 "app/Client.java","package app; @org.springframework.stereotype.Component @org.springframework.context.annotation.Profile(\"dev\") class Client { public Client(Store store){} }",
                 "app/Store.java","package app; @org.springframework.stereotype.Component public class Store { public Store(){} }"));
-        var spring=helper.beanPlan(fixture,true,"Store","Client");var version=new VersionedIdentifier("policy.authored-config","1");
+        var spring=helper.beanPlan(fixture,true,"Store","Client");
+        assertFalse(spring.binding().dependencies().isEmpty(),()->spring.gaps().stream().map(g->g.reasonCode()).distinct().toList().toString());
+        var version=new VersionedIdentifier("policy.authored-config","1");
         var proof=new ConditionEvidence.Derived(List.of(fixture.source().identity()),version,"finite-space");
         var variable=new FiniteDomain.Variable(FiniteDomain.Kind.PROFILE,"dev");
         var space=new ConfigurationSpace(fixture.build(),new ConfigurationEnvelope(ConfigurationEnvelope.Layer.REPOSITORY,List.of(),List.of(),fixture.source().identity()),Optional.empty(),

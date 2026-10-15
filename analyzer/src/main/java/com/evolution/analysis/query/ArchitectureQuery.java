@@ -8,7 +8,7 @@ import java.util.*;
 
 /** Storage/parser-neutral, immutable M5 query wire contract. No runtime-impact or policy verdicts. */
 public final class ArchitectureQuery {
-    public static final VersionedIdentifier VERSION = new VersionedIdentifier("architecture.query", "m5.3-v1");
+    public static final VersionedIdentifier VERSION = new VersionedIdentifier("architecture.query", "m7.2-v2");
     public enum Projection { REALIZED, MUST, MAY, BOUNDED_UNION, UNKNOWN_OVERLAY }
     public enum Scope { ENTITY, TYPE, PACKAGE, MODULE, SPRING_COMPONENT }
     public enum Direction { OUTGOING, INCOMING }
