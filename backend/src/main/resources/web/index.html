@@ -31,6 +31,8 @@
 <button role="tab" id="tab-graph" aria-controls="panel-graph" aria-selected="false" tabindex="-1" data-tab="graph">Dependency graph</button>
 <button role="tab" id="tab-policy" aria-controls="panel-policy" aria-selected="false" tabindex="-1" data-tab="policy">Rules & findings</button>
 <button role="tab" id="tab-spring" aria-controls="panel-spring" aria-selected="false" tabindex="-1" data-tab="spring">Spring</button>
+<button role="tab" id="tab-configurations" aria-controls="panel-configurations" aria-selected="false" tabindex="-1" data-tab="configurations">Configurations</button>
+<button role="tab" id="tab-metrics" aria-controls="panel-metrics" aria-selected="false" tabindex="-1" data-tab="metrics">Metrics & score</button>
 <button role="tab" id="tab-impact" aria-controls="panel-impact" aria-selected="false" tabindex="-1" data-tab="impact">Change impact</button>
 <button role="tab" id="tab-gaps" aria-controls="panel-gaps" aria-selected="false" tabindex="-1" data-tab="gaps">Limitations</button>
 </nav>
@@ -40,6 +42,8 @@
 <section role="tabpanel" id="panel-graph" aria-labelledby="tab-graph" tabindex="0" hidden></section>
 <section role="tabpanel" id="panel-policy" aria-labelledby="tab-policy" tabindex="0" hidden></section>
 <section role="tabpanel" id="panel-spring" aria-labelledby="tab-spring" tabindex="0" hidden></section>
+<section role="tabpanel" id="panel-configurations" aria-labelledby="tab-configurations" tabindex="0" hidden></section>
+<section role="tabpanel" id="panel-metrics" aria-labelledby="tab-metrics" tabindex="0" hidden></section>
 <section role="tabpanel" id="panel-impact" aria-labelledby="tab-impact" tabindex="0" hidden></section>
 <section role="tabpanel" id="panel-gaps" aria-labelledby="tab-gaps" tabindex="0" hidden></section>
 </section>
@@ -50,7 +54,7 @@
 <p class="muted">Paste an absolute local folder path or a public HTTPS Git URL.</p>
 <label for="repository-source">Repository location</label><input id="repository-source" required maxlength="4096" placeholder="C:/projects/my-app or https://github.com/team/repo" aria-describedby="source-help" autocomplete="off">
 <p id="source-help" class="muted small">GitHub, GitLab and Bitbucket. For private repositories, use a local checkout. Java analysis reads source and available dependencies without running your build.</p>
-<details><summary>Architecture rules (optional)</summary><label for="repository-policy">Policy YAML</label><textarea id="repository-policy" rows="6" maxlength="8192" placeholder="Paste your architecture policy YAML"></textarea><p class="muted small">Rules enable architecture checks and an assessment when sufficient evidence is available.</p></details>
+<details id="policy-settings"><summary>Architecture rules & scoring (optional)</summary><label for="repository-policy">Policy YAML</label><textarea id="repository-policy" rows="6" maxlength="8192" placeholder="Paste your architecture policy YAML"></textarea><p class="muted small">A score requires explicit rules and enough evidence. With no policy, structural metrics remain available and the score is unavailable.</p><button id="policy-example" class="text-button" type="button">Insert cycle-check example</button><p class="muted small">The example checks cycles between project classes. Review it for your repository; it is not a complete architecture policy.</p></details>
 <p id="connect-error" class="form-error" role="alert" hidden></p><div class="dialog-actions"><button type="button" class="button" data-close="connect-dialog">Cancel</button><button id="connect-submit" class="button primary" type="submit">Connect repository</button></div>
 </form></dialog>
 <dialog id="inspector" class="inspector" aria-labelledby="inspector-title"><div class="dialog-heading"><div><p class="eyebrow" id="inspector-kind">DETAILS</p><h2 id="inspector-title"></h2></div><button class="icon-button" data-close="inspector" aria-label="Close details">×</button></div><div id="inspector-body"></div><div class="dialog-actions"><button id="download-details" class="button">Download JSON</button><button class="button primary" data-close="inspector">Done</button></div></dialog>

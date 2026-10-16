@@ -21,6 +21,19 @@ import static com.evolution.backend.query.ArchitectureQueryApiTest.*;
 import static com.evolution.analysis.query.ArchitectureQuery.*;
 
 class PublishedReportsTest {
+    @Test void replayUsesPublishedFindingAndRetainsFormulaVersusRuntimeMeaning() {
+        var f=fixture();var published=new PublishedReports();var id=published.publish(f.report);
+        var api=new ArchitectureQueryApi(f.store(),published,ApiLimits.defaults());
+        var finding=f.report.evaluation().findings().getFirst();
+        var response=report(api,f,id,"replay",Map.of("arguments",Map.of("identity",finding.identity(),"counterWitness",false)));
+        assertEquals(200,response.status());
+        var data=GraphJson.object(body(response).get("data"));
+        var value=GraphJson.object(GraphJson.array(data.get("items")).getFirst());
+        assertEquals("SAT",value.get("actualTruth"));assertEquals(true,value.get("matched"));
+        assertEquals(true,value.get("formulaReplayed"));assertEquals(false,value.get("semanticReplayed"));
+        assertEquals(404,report(api,f,id,"replay",Map.of("arguments",Map.of("identity",ContentDigest.sha256Utf8("foreign"),"counterWitness",false))).status());
+        assertEquals(400,report(api,f,id,"replay",Map.of("arguments",Map.of("identity",finding.identity(),"counterWitness","false"))).status());
+    }
     @Test void batchPublicationIsAtomicAtCapacityAndIdempotentForExistingReports() {
         var f = fixture(); var published = new PublishedReports(); var batch = new ArrayList<PublishedReports.Report>();
         for (int i = 0; i < 33; i++) batch.add(new PublishedReports.Report(f.report.evaluation(),f.report.metrics(),

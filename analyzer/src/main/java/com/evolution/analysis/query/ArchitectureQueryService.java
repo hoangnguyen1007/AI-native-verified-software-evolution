@@ -193,6 +193,22 @@ public final class ArchitectureQueryService {
         var p=new Prepared(request,false);var value=p.entities.get(identity);if(value==null)p.budget.qualify("ENTITY_UNAVAILABLE");
         return result(p,"entity",identity,value==null?List.of():List.of(value),Optional.empty(),value==null?Optional.empty():Optional.of(1L));
     }
+    /** Direct recorded containment only. Does not infer ownership from display names or dependencies. */
+    public Result<EntityView> children(Request request,String identity,Page page){
+        var p=new Prepared(request,false);
+        if(!p.nodes.containsKey(identity)&&p.budget.running())throw new IllegalArgumentException("Parent outside context");
+        var children=new TreeMap<String,EntityView>();int count=0;
+        for(var edge:graph.edges())if(edge.context().equals(request.context())){
+            if(!p.budget.scan())break;if(++count>request.limits().maxEdges()){p.budget.halt(StopReason.INPUT);break;}
+            if(!edge.source().equals(identity)||!Set.of("graph.contains","graph.declares","graph.owns-source").contains(edge.kind()))continue;
+            if(edge.target().state()!=KnowledgeGraph.TargetState.RESOLVED){p.budget.qualify("UNRESOLVED_CONTAINMENT");continue;}
+            for(var target:edge.target().identities()){
+                var child=p.entities.get(target);
+                if(child!=null&&scopeIncludes(child,request.scope())&&p.budget.reserve(1))children.put(target,child);
+            }
+        }
+        return page(p,"children",identity,List.copyOf(children.values()),EntityView::identity,page);
+    }
     public Result<EdgeView> edges(Request request,Page page){var p=new Prepared(request,true);return page(p,"edges","",p.edges.stream().map(e->e.view).sorted(Comparator.comparing(EdgeView::identity)).toList(),EdgeView::identity,page);}
     public Result<EdgeView> dependencies(Request request,String source,Page page){
         var p=new Prepared(request,true);requireEndpoint(p,source);
@@ -302,6 +318,20 @@ public final class ArchitectureQueryService {
         return result(p,"condition",List.of(ArchitectureCondition.VERSION,predicate),List.of(value),Optional.empty(),Optional.of(1L));
     }
     public Result<ArchitectureCondition.Evaluation> ruleCondition(Request request,ArchitectureCondition.RulePredicate predicate){
+        var region=prepareRuleRegion(request,predicate);var p=region.prepared();var union=region.union();
+        var classification=union.classify(p.budget);var yes=union.check(p.budget,Optional.empty());var no=union.negate().check(p.budget,Optional.empty());
+        if(!p.budget.running())classification=Classification.UNKNOWN;
+        if(classification==Classification.UNKNOWN)p.budget.qualify("PREDICATE_TRUTH_UNKNOWN");
+        var regionId=ruleRegionIdentity(request,union);
+        Function<Witness,Witness> bind=w->new Witness(w.world(),w.assignment(),regionId,w.formulaReplayed(),w.semanticReplayed());
+        var value=new ArchitectureCondition.Evaluation(regionId,classification,yes.witness().map(bind),no.witness().map(bind),bounded(region.evidence(),p.budget),bounded(region.regions(),p.budget));
+        return result(p,"rule-condition",List.of(ArchitectureCondition.RULE_VERSION,predicate),List.of(value),Optional.empty(),Optional.of(1L));
+    }
+    private record RuleRegion(Prepared prepared,QueryRegion union,SortedSet<ContentDigest> evidence,SortedSet<String> regions) {}
+    private static ContentDigest ruleRegionIdentity(Request request,QueryRegion union){
+        return ContentDigest.sha256Utf8(CanonicalJson.write(List.of(ArchitectureCondition.RULE_VERSION,request.identity(),union.identity())));
+    }
+    private RuleRegion prepareRuleRegion(Request request,ArchitectureCondition.RulePredicate predicate){
         Objects.requireNonNull(predicate);
         if(request.projection()!=Projection.BOUNDED_UNION||request.direction()!=Direction.OUTGOING)
             throw new IllegalArgumentException("Rule composition requires outgoing BOUNDED_UNION dependencies");
@@ -325,13 +355,49 @@ public final class ArchitectureQueryService {
         }
         if(!predicate.complete()){union=union.combine(universe.uncertain(),false,p.budget);p.budget.qualify("RULE_DENOMINATOR_INCOMPLETE");}
         if(!p.budget.running())union=QueryRegion.unknown();
-        var classification=union.classify(p.budget);var yes=union.check(p.budget,Optional.empty());var no=union.negate().check(p.budget,Optional.empty());
-        if(!p.budget.running())classification=Classification.UNKNOWN;
-        if(classification==Classification.UNKNOWN)p.budget.qualify("PREDICATE_TRUTH_UNKNOWN");
-        var regionId=ContentDigest.sha256Utf8(CanonicalJson.write(List.of(ArchitectureCondition.RULE_VERSION,request.identity(),union.identity())));
-        Function<Witness,Witness> bind=w->new Witness(w.world(),w.assignment(),regionId,w.formulaReplayed(),w.semanticReplayed());
-        var value=new ArchitectureCondition.Evaluation(regionId,classification,yes.witness().map(bind),no.witness().map(bind),bounded(evidence,p.budget),bounded(regions,p.budget));
-        return result(p,"rule-condition",List.of(ArchitectureCondition.RULE_VERSION,predicate),List.of(value),Optional.empty(),Optional.of(1L));
+        return new RuleRegion(p,union,evidence,regions);
+    }
+    public Result<WitnessReplay> replayRuleWitness(Request request,ArchitectureCondition.RulePredicate predicate,Witness witness,boolean counterWitness){
+        Objects.requireNonNull(witness);var region=prepareRuleRegion(request,predicate);var p=region.prepared();var union=region.union();
+        var identity=ruleRegionIdentity(request,union);Truth actual=Truth.UNKNOWN;
+        if(!identity.equals(witness.jointRegion()))p.budget.qualify("WITNESS_REGION_MISMATCH");
+        else if(witness.world().isPresent()||!witness.assignment().isEmpty()){
+            var realization=new Realization(witness.world(),witness.assignment());
+            actual=union.check(p.budget,Optional.of(realization)).truth();
+        }else if(union.encoding==QueryRegion.Encoding.UNIVERSAL)actual=Truth.SAT;
+        else if(union.encoding==QueryRegion.Encoding.SYMBOLIC){
+            // Empty assignments are legitimate for a constant structural predicate, never for missing variables.
+            try{actual=!union.universeFormula.evaluate(Map.of())?Truth.UNKNOWN:union.trueFormula.evaluate(Map.of())?Truth.SAT:union.possibleFormula.evaluate(Map.of())?Truth.UNKNOWN:Truth.UNSAT;}
+            catch(NullPointerException missing){p.budget.qualify("INCOMPLETE_REALIZATION");}
+        }else p.budget.qualify("INCOMPLETE_REALIZATION");
+        if(!p.budget.running())actual=Truth.UNKNOWN;
+        Truth expected=counterWitness?Truth.UNSAT:Truth.SAT;boolean matched=actual==expected;
+        if(actual==Truth.UNKNOWN)p.budget.qualify("WITNESS_REPLAY_UNKNOWN");
+        var replay=new WitnessReplay(identity,witness,expected,actual,matched,actual!=Truth.UNKNOWN,false);
+        return result(p,"rule-witness-replay",List.of("m8.3-v1",predicate,witness,counterWitness),List.of(replay),Optional.empty(),Optional.of(1L));
+    }
+    /** Finite recorded worlds and solver-validated examples; never enumerates the Cartesian space. */
+    public Result<RealizationView> realizations(Request request,Page page){
+        var p=new Prepared(request,true);var values=new TreeMap<String,RealizationView>();
+        if(p.catalog!=null){
+            for(var region:new TreeMap<>(p.catalog.regions).values()){
+                if(!p.budget.step())break;
+                if(region.encoding==QueryRegion.Encoding.EXPLICIT)for(String world:new TreeSet<>(region.universe)){
+                    if(!p.budget.scan()||!p.budget.reserve(1))break;
+                    var node=p.nodes.get(world);if(node!=null)values.put(world,new RealizationView(world,"RECORDED_WORLD",new Realization(Optional.of(world),Map.of()),node.evidence()));
+                }
+                if(region.encoding==QueryRegion.Encoding.SYMBOLIC)for(var candidate:List.of(region.check(p.budget,Optional.empty()),region.negate().check(p.budget,Optional.empty())))
+                    candidate.witness().filter(w->!w.assignment().isEmpty()).ifPresent(w->{
+                        var variables=new TreeSet<String>();p.catalog.formulaNodes.values().forEach(f->{if("VARIABLE".equals(f.get("operator")))variables.add(GraphJson.string(f.get("variable")));});
+                        // Incomplete solver assignments are not offered as realized views.
+                        if(w.assignment().keySet().equals(variables)&&p.budget.reserve(1)){
+                            String id=KnowledgeGraph.derivedIdentity("realization",List.of(request.context(),w.assignment()));
+                            values.put(id,new RealizationView(id,"MODELED_EXAMPLE",new Realization(Optional.empty(),w.assignment()),List.of()));
+                        }
+                    });
+            }
+        }
+        return page(p,"realizations","recorded-and-modeled-examples",List.copyOf(values.values()),RealizationView::identity,page);
     }
     public Result<EvidenceView> evidence(Request request,ContentDigest reference){
         var p=new Prepared(request,false);
@@ -380,6 +446,11 @@ public final class ArchitectureQueryService {
         validate(request);
         if(metrics.isPresent())return metrics.orElseThrow().catalog(request,page);
         var p=new Prepared(request,false);p.budget.qualify("METRICS_PROVIDER_UNAVAILABLE");return result(p,"metric-catalog","",List.of(),Optional.empty(),Optional.empty());
+    }
+    public Result<Map<String,Object>> metricDefinition(Request request,String metric){
+        var p=new Prepared(request,false,true);var definition=metrics.flatMap(provider->provider.definition(metric));
+        if(definition.isEmpty())p.budget.qualify("METRIC_DEFINITION_UNAVAILABLE");
+        return result(p,"metric-definition",metric,definition.stream().toList(),Optional.empty(),Optional.empty());
     }
     public Result<Map<String,Object>> metric(Request request,String metric,String subject){
         validate(request);
@@ -458,6 +529,7 @@ public final class ArchitectureQueryService {
         for(var value:values){if(value instanceof EntityView v)evidence.addAll(v.evidence());else if(value instanceof EdgeView v)evidence.addAll(v.evidence());
             else if(value instanceof EvidenceView v)evidence.add(v.identity());else if(value instanceof Path v)v.edges().forEach(e->evidence.addAll(e.evidence()));
             else if(value instanceof RelationshipView v)evidence.addAll(v.evidence());
+            else if(value instanceof RealizationView v)evidence.addAll(v.evidence());
             else if(value instanceof ArchitectureCondition.Evaluation v)evidence.addAll(v.evidence());
             else if(value instanceof Neighborhood v){v.entities().forEach(e->evidence.addAll(e.evidence()));v.edges().forEach(e->evidence.addAll(e.evidence()));}}
         var boundedEvidence=bounded(evidence,p.budget);
@@ -501,12 +573,27 @@ public final class ArchitectureQueryService {
                 if(document!=null){module=Optional.ofNullable(document.module());sourceSet=Optional.ofNullable(document.sourceSet());}
                 name=sourcePath(read(evidence,budget),budget);spelling=name;
             }
+            if(evidence.family().equals("source.bytes")){
+                var payload=read(evidence,budget);
+                if(payload.get("document") instanceof Map<?,?> document){
+                    var descriptor=GraphJson.object(document);name=sourcePath(descriptor,budget);spelling=name;
+                    module=Optional.ofNullable((String)descriptor.get("module"));sourceSet=Optional.ofNullable((String)descriptor.get("classification"));origin=Optional.of("PROJECT");
+                }
+            }
             if(evidence.family().equals("module.descriptor")||evidence.family().equals("build.module")){
                 var payload=read(evidence,budget);var descriptor=evidence.family().equals("build.module")?GraphJson.object(payload.get("descriptor")):payload;
-                module=Optional.of(node.identity());origin=Optional.of("PROJECT");
-                if(descriptor.get("path") instanceof String path)try{name=Optional.of(ContractChecks.modulePath(path));}
+                module=Optional.ofNullable((String)descriptor.get("identity"));origin=Optional.of("PROJECT");
+                if(node.kind().equals("MODULE")&&descriptor.get("path") instanceof String path)try{name=Optional.of(ContractChecks.modulePath(path));}
                 catch(IllegalArgumentException invalid){budget.qualify("INVALID_MODULE_PATH");}
+                if(node.kind().equals("SOURCE_ROOT"))for(var root:sourceRoots(payload,budget))if(root.identity().equals(node.identity())){
+                    name=Optional.of(root.path());sourceSet=Optional.of(root.sourceSet());
+                }
                 spelling=name;
+            }
+            if(evidence.family().equals("spring.candidate")){
+                var payload=read(evidence,budget);if(payload.get("declaredNameKey") instanceof Map<?,?> names){
+                    var declared=GraphJson.object(names);if("EXACT".equals(declared.get("status"))&&declared.get("primary") instanceof String primary){name=Optional.of(primary);spelling=name;}
+                }
             }
         }
         if(sourceSet.isEmpty())sourceSet=Optional.ofNullable((String)partition.get("sourceSet"));
@@ -558,6 +645,23 @@ public final class ArchitectureQueryService {
         try{return Optional.of(com.evolution.analysis.contract.common.ContractChecks.repositoryRelativePath(path,"source path"));}
         catch(IllegalArgumentException invalid){budget.qualify("INVALID_SOURCE_PATH");return Optional.empty();}
     }
+    private record SourceRootDescriptor(String identity,String path,String sourceSet) {}
+    private List<SourceRootDescriptor> sourceRoots(Map<String,Object> payload,QueryBudget budget){
+        var values=new ArrayList<SourceRootDescriptor>();
+        try{
+            var descriptor=GraphJson.object(payload.get("descriptor"));var plan=GraphJson.object(payload.get("sourcePlan"));
+            for(var setValue:GraphJson.array(plan.get("sourceSets"))){
+                var set=GraphJson.object(setValue);String kind=GraphJson.string(set.get("kind")),name=GraphJson.string(set.get("name"));
+                for(var rootValue:GraphJson.array(set.get("sourceRoots"))){
+                    if(!budget.scan()||!budget.reserve(4))return values;
+                    var root=GraphJson.object(rootValue);if(!(root.get("value") instanceof String path))continue;
+                    String safe=ContractChecks.modulePath(path);
+                    values.add(new SourceRootDescriptor(KnowledgeGraph.derivedIdentity("source-root",List.of(descriptor.get("identity"),kind,name,path)),safe,kind));
+                }
+            }
+        }catch(IllegalArgumentException|NullPointerException malformed){budget.qualify("SOURCE_ROOT_METADATA_UNAVAILABLE");}
+        return values;
+    }
     private Map<String,Object> read(GraphEvidence evidence,QueryBudget budget){
         try{return GraphJson.object(GraphJson.read(evidence.canonicalJson(),new GraphJson.Limits(8_000_000,128,budget.limits.maxAuxiliaryStates())));}
         catch(IllegalArgumentException malformed){budget.qualify("EVIDENCE_DESCRIPTOR_LIMIT");return Map.of();}
@@ -578,6 +682,20 @@ public final class ArchitectureQueryService {
             "evidence.gap","evidence.attempt","evidence.conflict","evidence.resolution","spring.context","spring.producer","spring.candidate","spring.injection-dependency","spring.registration-event","spring.registration-step",
             "spring.condition","spring.condition-expression","spring.space","spring.evaluation-parameters","spring.world","spring.explicit-region","spring.symbolic-region","spring.fact-key","spring.witness","spring.witness-replay","spring.formula");
     private EvidenceView describeEvidence(GraphEvidence evidence,QueryBudget budget){
+        if(evidence.family().equals("source.bytes")){
+            var payload=read(evidence,budget);var metadata=new TreeMap<String,Object>();
+            if(payload.get("document") instanceof Map<?,?> document){var descriptor=GraphJson.object(document);sourcePath(descriptor,budget).ifPresent(path->metadata.put("path",path));
+                metadata.putAll(select(descriptor,Set.of("identity","module","contentDigest","classification")));}
+            return new EvidenceView(evidence.identity(),evidence.family(),true,metadata);
+        }
+        if(evidence.family().equals("build.module")){
+            var payload=read(evidence,budget);var metadata=new TreeMap<String,Object>();
+            if(payload.get("descriptor") instanceof Map<?,?> descriptor){var module=GraphJson.object(descriptor);metadata.putAll(select(module,Set.of("identity")));
+                if(module.get("path") instanceof String path)try{metadata.put("modulePath",ContractChecks.modulePath(path));}catch(IllegalArgumentException invalid){budget.qualify("INVALID_MODULE_PATH");}}
+            var roots=sourceRoots(payload,budget);if(roots.size()>budget.limits.maxResults())budget.qualify("EVIDENCE_DESCRIPTOR_LIMIT");
+            metadata.put("sourceRoots",roots.stream().limit(budget.limits.maxResults()).map(root->Map.of("identity",root.identity(),"path",root.path(),"sourceSet",root.sourceSet())).toList());
+            return new EvidenceView(evidence.identity(),evidence.family(),true,metadata);
+        }
         if(!SAFE_FAMILIES.contains(evidence.family()))return new EvidenceView(evidence.identity(),evidence.family(),true,Map.of());
         var value=new TreeMap<>(read(evidence,budget));if(!evidence.family().equals("java.declaration"))value.remove("spelling");
         var metadata=new TreeMap<>(GraphJson.object(sanitize(value,0,budget)));

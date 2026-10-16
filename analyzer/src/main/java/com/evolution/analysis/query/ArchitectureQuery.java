@@ -8,7 +8,7 @@ import java.util.*;
 
 /** Storage/parser-neutral, immutable M5 query wire contract. No runtime-impact or policy verdicts. */
 public final class ArchitectureQuery {
-    public static final VersionedIdentifier VERSION = new VersionedIdentifier("architecture.query", "m7.2-v2");
+    public static final VersionedIdentifier VERSION = new VersionedIdentifier("architecture.query", "m8.3-v1");
     public enum Projection { REALIZED, MUST, MAY, BOUNDED_UNION, UNKNOWN_OVERLAY }
     public enum Scope { ENTITY, TYPE, PACKAGE, MODULE, SPRING_COMPONENT }
     public enum Direction { OUTGOING, INCOMING }
@@ -66,6 +66,12 @@ public final class ArchitectureQuery {
                           boolean formulaReplayed,boolean semanticReplayed) {
         public Witness {assignment=Collections.unmodifiableMap(new TreeMap<>(assignment));}
     }
+    /** A replay checks the captured rule model only; it never executes the analyzed application. */
+    public record WitnessReplay(ContentDigest jointRegion, Witness witness, Truth expectedTruth, Truth actualTruth,
+                                boolean matched, boolean formulaReplayed, boolean semanticReplayed) {}
+    public record RealizationView(String identity, String kind, Realization realization, List<ContentDigest> evidence) {
+        public RealizationView { evidence=List.copyOf(evidence); }
+    }
     public record Path(List<String> vertices,List<EdgeView> edges,Truth feasibility,Optional<Witness> witness) {
         public Path {vertices=List.copyOf(vertices);edges=List.copyOf(edges);Objects.requireNonNull(feasibility);Objects.requireNonNull(witness);}
         public ContentDigest identity(){return ContentDigest.sha256Utf8(CanonicalJson.write(List.of(VERSION,vertices,edges.stream().map(EdgeView::identity).toList())));}
@@ -106,6 +112,7 @@ public final class ArchitectureQuery {
     public interface Metrics {
         Result<String> catalog(Request request,Page page);
         Result<Map<String,Object>> evaluate(Request request,String metric,String subject);
+        default Optional<Map<String,Object>> definition(String metric){return Optional.empty();}
     }
     private static Set<String> ordered(Set<String> values) {return Collections.unmodifiableSet(new TreeSet<>(values));}
     private ArchitectureQuery() {}

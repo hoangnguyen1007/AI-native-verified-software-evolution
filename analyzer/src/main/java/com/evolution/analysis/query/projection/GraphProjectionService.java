@@ -11,7 +11,7 @@ import static com.evolution.analysis.query.ArchitectureQuery.*;
 
 /** Projects canonical architecture query and policy results into visual workbench models. */
 public final class GraphProjectionService {
-    public static final VersionedIdentifier VERSION = new VersionedIdentifier("graph.projection", "m7.3-v1");
+    public static final VersionedIdentifier VERSION = new VersionedIdentifier("graph.projection", "m8.3-v1");
 
     private final ArchitectureQueryService queries;
 
@@ -31,8 +31,7 @@ public final class GraphProjectionService {
         // 2. Identify cycles
         var cycleParticipants = new HashSet<String>();
         var cycleEdgeIds = new HashSet<String>();
-        try {
-            var cycleResult = queries.findCycles(request);
+        var cycleResult = queries.findCycles(request);
             for (var cyclePath : cycleResult.items()) {
                 cycleParticipants.addAll(cyclePath.vertices());
                 for (var e : cyclePath.edges()) {
@@ -41,9 +40,6 @@ public final class GraphProjectionService {
                     cycleParticipants.add(e.target());
                 }
             }
-        } catch (RuntimeException ignored) {
-            // If cycle traversal was partial/skipped, cycles remain best-effort without failing projection
-        }
 
         // 3. Process policy violations
         var nodeViolations = new HashMap<String, Integer>();
@@ -177,7 +173,7 @@ public final class GraphProjectionService {
                 isCycle,
                 edge.supportCount(),
                 edge.supportsTruncated(),
-                Map.of("kinds", edge.kinds())
+                Map.of("kinds", edge.kinds(),"supports",edge.supports(),"regions",edge.regions(),"evidence",edge.evidence())
             ));
         }
 
@@ -190,12 +186,16 @@ public final class GraphProjectionService {
         metadata.put("totalEdges", edges.size());
         metadata.put("compoundNodesCount", compoundNodes.size());
         metadata.put("isTruncated", projectionResult.bounds().truncated());
+        metadata.put("status",projectionResult.status().name());
+        metadata.put("operation",projectionResult.operation().name());
+        metadata.put("bounds",projectionResult.bounds());metadata.put("gaps",projectionResult.gaps());
+        metadata.put("cycleStatus",cycleResult.status().name());metadata.put("cycleBounds",cycleResult.bounds());metadata.put("cycleGaps",cycleResult.gaps());
 
         ContentDigest graphId = ContentDigest.sha256Utf8(CanonicalJson.write(List.of(
             VERSION,
             request.identity(),
             allNodes.stream().map(VisualGraph.VisualNode::id).toList(),
-            edges.stream().map(VisualGraph.VisualEdge::id).toList()
+            edges.stream().map(VisualGraph.VisualEdge::id).toList(),projectionResult.identity(),cycleResult.identity(),policy.map(PolicyEvaluation.Result::identity)
         )));
 
         return new VisualGraph(graphId, allNodes, edges, metadata);
@@ -205,26 +205,15 @@ public final class GraphProjectionService {
         Objects.requireNonNull(request, "request");
         Objects.requireNonNull(seedEntity, "seedEntity");
 
-        // 1. Expand neighborhood
-        var neighborhood = queries.expand(request, seedEntity);
+        if(depth<1||depth>=request.limits().maxDepth())throw new IllegalArgumentException("Dependency steps exceed the request vertex-depth bound");
+        // A focused depth is a real traversal limit, not just a display label.
+        var l=request.limits();var limited=new Request(request.graph(),request.context(),request.scope(),request.projection(),request.direction(),request.relationshipKinds(),
+                request.population(),request.includeMust(),request.realization(),new Limits(depth+1,l.maxSteps(),l.maxResults(),l.maxVertices(),l.maxEdges(),l.maxSolverSteps(),l.maxFormulaNodes(),l.maxAuxiliaryStates()));
+        var neighborhood = queries.reachability(limited, seedEntity);
         var visitedNodes = new LinkedHashSet<String>();
         visitedNodes.add(seedEntity);
 
-        for (var nh : neighborhood.items()) {
-            for (var entity : nh.entities()) {
-                visitedNodes.add(entity.identity());
-            }
-        }
-
-        // If depth > 1, query reachability
-        if (depth > 1) {
-            try {
-                var reach = queries.reachability(request, seedEntity);
-                for (var path : reach.items()) {
-                    visitedNodes.addAll(path.vertices());
-                }
-            } catch (RuntimeException ignored) {}
-        }
+        for(var path:neighborhood.items())visitedNodes.addAll(path.vertices());
 
         // 2. Fetch full graph projection and filter down to visited nodes
         var fullGraph = project(request, policy);
@@ -238,13 +227,11 @@ public final class GraphProjectionService {
             }
         }
 
-        // Add parent compound nodes
-        for (var n : fullGraph.nodes()) {
-            if (neededParents.contains(n.id()) && !filteredNodes.contains(n)) {
-                filteredNodes.add(n);
-                n.parent().ifPresent(neededParents::add);
-            }
-        }
+        // Close all ancestor compounds irrespective of their original sort order.
+        var byId=new HashMap<String,VisualGraph.VisualNode>();fullGraph.nodes().forEach(n->byId.put(n.id(),n));
+        var included=new HashSet<>(visitedNodes);var pending=new ArrayDeque<>(new TreeSet<>(neededParents));
+        while(!pending.isEmpty()){var id=pending.removeFirst();var parent=byId.get(id);if(parent!=null&&included.add(id))parent.parent().ifPresent(pending::add);}
+        filteredNodes.clear();fullGraph.nodes().stream().filter(n->included.contains(n.id())).forEach(filteredNodes::add);
 
         var filteredEdges = new ArrayList<VisualGraph.VisualEdge>();
         for (var e : fullGraph.edges()) {
@@ -258,10 +245,14 @@ public final class GraphProjectionService {
         metadata.put("focusedDepth", depth);
         metadata.put("focusedNodes", filteredNodes.size());
         metadata.put("focusedEdges", filteredEdges.size());
+        metadata.put("focusStatus",neighborhood.status().name());metadata.put("focusBounds",neighborhood.bounds());metadata.put("focusGaps",neighborhood.gaps());
+        metadata.put("isTruncated",Boolean.TRUE.equals(metadata.get("isTruncated"))||neighborhood.bounds().truncated());
+        if(neighborhood.status()!=com.evolution.analysis.contract.assessment.AssessmentStatus.COMPLETE)metadata.put("status","PARTIAL");
 
         ContentDigest id = ContentDigest.sha256Utf8(CanonicalJson.write(List.of(
             VERSION,
             "focused",
+            request.identity(),fullGraph.id(),neighborhood.identity(),
             seedEntity,
             depth,
             filteredNodes.stream().map(VisualGraph.VisualNode::id).toList(),

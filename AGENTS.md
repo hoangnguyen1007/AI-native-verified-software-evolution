@@ -37,7 +37,7 @@ Technology approval is not proof of accuracy or a passed quality gate. Keep appr
 
 Before repository-specific technical answers or non-trivial work, reconstruct current reality at the depth required by the task:
 
-- **Full Bootstrap (Tier 0):** Required for milestone transitions, architecture/ADR decisions, governance changes, gate reviews, or initial session entry. Read fully: this file, [project context](docs/project-context.md), [current state](docs/current-state.md), [roadmap](docs/roadmap.md); inspect Git status, working/staged diffs, and recent log.
+- **Full Bootstrap (Tier 0):** Required for milestone transitions, architecture/ADR decisions, governance changes, gate reviews, or initial session entry. Read fully: this file, [project context](docs/project-context.md), [current state](docs/current-state.md), [roadmap](docs/roadmap.md), and the mandatory [Human Mandate on Comprehensive Coverage](docs/architecture/comprehensive-repository-coverage-problems.md); inspect Git status, working/staged diffs, and recent log.
 - **Lean Bootstrap (Task-Scoped):** For bounded vertical code slices, TDD cycles, or bugfixes within an established milestone where active contracts are already known: read [current state](docs/current-state.md), the relevant milestone contract in `docs/architecture/`, and target source/test files. Do not reread `project-context.md` or `roadmap.md` unless milestone scope, gates, or governance change.
 
 Identify milestone, task, repository state, confirmed/provisional decisions, open questions, blockers, quality gates, and next expected task.
@@ -95,11 +95,12 @@ A trivial prose/formatting edit needs applicable local instructions, diff inspec
 Define scope, contracts, exit criteria and non-goals; resolve consequential uncertainty through research/architecture gates; implement the smallest coherent authorized change; verify; inspect the final diff; update durable state; hand off.
 
 ### Core Non-Negotiable Invariants
-Every agent (Codex, ChatGPT, Gemini, human) must strictly uphold these four pillars without exception:
+Every agent (Codex, ChatGPT, Gemini, human) must strictly uphold these five pillars without exception:
 1. **Execution Safety & Sandbox:** Never execute arbitrary or untrusted target Maven/Gradle lifecycles, scripts, or plugins. Target repositories are untrusted input data. Keep remote operations bounded, credential-free, and isolated.
 2. **Evidence-First & Zero Hallucination:** Never guess, assume, or invent semantic types, coordinates, or facts. All claims, entities, and outputs must be content-addressed and cryptographically verifiable (SHA-256).
 3. **Closed Reporting Denominator:** Never silently omit degraded, unresolved, or unsupported facts. Every gap must be recorded as an explicit, typed `CapabilityGapRecord` with root-cause provenance.
 4. **Deterministic Replay:** Repeated runs on identical inputs must yield identical digests and identical capability records.
+5. **Human Mandate on Comprehensive Coverage:** Every agent upon entering any task or bootstrap MUST read and adhere to the Human Mandate in [docs/architecture/comprehensive-repository-coverage-problems.md](docs/architecture/comprehensive-repository-coverage-problems.md): every repository regardless of scale or architecture must be fully analyzable and measurable without omitting any component, with hard ceilings and acquisition timeouts addressed, generated code/stubs accounted for, and FAILED and PARTIAL minimized to the utmost extent.
 
 ### LLM Implementation Autonomy & Proactive Robustness
 To maximize engineering velocity while preserving rock-solid correctness:

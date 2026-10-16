@@ -21,8 +21,8 @@ public final class ArchitectureQueryApi {
     public static final String VERSION = "architecture.http:m7.1-v1";
     public static final List<String> OPERATIONS = List.of("summary","provenance","entities","entity","edges","dependencies",
             "relationships","expand","paths","shortest-path","cycles","reachability","impact","evidence","explain","gaps",
-            "spring","configurations","artifacts","metric-catalog","metric","comparison-preparation","visual-graph");
-    public static final List<String> REPORT_OPERATIONS = List.of("rules","findings","finding","bundle","policy-metrics","assessment","policy-impact","visual-graph");
+            "spring","configurations","artifacts","metric-catalog","metric","comparison-preparation","visual-graph","children","realizations","metric-definition");
+    public static final List<String> REPORT_OPERATIONS = List.of("rules","findings","finding","bundle","policy-metrics","assessment","policy-impact","visual-graph","replay");
     public record Response(int status, byte[] body) {
         public Response { body = body.clone(); }
         @Override public byte[] body() { return body.clone(); }
@@ -166,16 +166,17 @@ public final class ArchitectureQueryApi {
     }
     private KnowledgeGraph load(ContentDigest identity) { return store.load(identity).orElseThrow(() -> new Failure(404,"GRAPH_NOT_FOUND")); }
     private Object query(String op,ArchitectureQueryService q,Request r,Page p,Map<String,Object> a,boolean hasPage) {
-        boolean paged=Set.of("entities","edges","dependencies","relationships","explain","gaps","spring","configurations","artifacts","metric-catalog").contains(op);
+        boolean paged=Set.of("entities","edges","dependencies","relationships","explain","gaps","spring","configurations","artifacts","metric-catalog","children","realizations").contains(op);
         if (hasPage && !paged) throw new IllegalArgumentException("Page not applicable");
         switch (op) {
             case "entities" -> QueryJson.object(a,"search");
-            case "entity","dependencies","expand","reachability","impact","explain" -> QueryJson.object(a,"identity");
+            case "entity","dependencies","expand","reachability","impact","explain","children" -> QueryJson.object(a,"identity");
             case "paths","shortest-path" -> QueryJson.object(a,"source","target");
             case "evidence" -> QueryJson.object(a,"reference");
             case "spring" -> QueryJson.object(a,"kinds");
             case "artifacts" -> QueryJson.object(a,"families");
             case "metric" -> QueryJson.object(a,"metric","subject");
+            case "metric-definition" -> QueryJson.object(a,"metric");
             case "comparison-preparation" -> QueryJson.object(a,"graph","context");
             case "visual-graph" -> QueryJson.object(a,"seed","depth");
             default -> QueryJson.object(a);
@@ -185,6 +186,8 @@ public final class ArchitectureQueryApi {
             case "provenance" -> q.provenance(r);
             case "entities" -> q.entities(r,a.containsKey("search") ? GraphJson.string(a.get("search")) : "",p);
             case "entity" -> q.entity(r,QueryJson.text(a,"identity"));
+            case "children" -> q.children(r,QueryJson.text(a,"identity"),p);
+            case "realizations" -> q.realizations(r,p);
             case "edges" -> q.edges(r,p);
             case "dependencies" -> q.dependencies(r,QueryJson.text(a,"identity"),p);
             case "relationships" -> q.relationships(r,p);
@@ -201,6 +204,7 @@ public final class ArchitectureQueryApi {
             case "configurations" -> q.configurations(r,p);
             case "artifacts" -> q.artifacts(r,QueryJson.stringsRequired(a,"families"),p);
             case "metric-catalog" -> q.metricCatalog(r,p);
+            case "metric-definition" -> q.metricDefinition(r,QueryJson.text(a,"metric"));
             case "metric" -> q.metric(r,QueryJson.text(a,"metric"),QueryJson.text(a,"subject"));
             case "comparison-preparation" -> q.comparisonPreparation(r,load(new ContentDigest(QueryJson.text(a,"graph"))),QueryJson.text(a,"context"));
             case "visual-graph" -> {
@@ -219,6 +223,9 @@ public final class ArchitectureQueryApi {
         if (hasPage && !paged) throw new IllegalArgumentException("Page not applicable");
         if (op.equals("finding") || op.equals("bundle") || op.equals("policy-impact")) {
             QueryJson.object(args, "identity");
+        } else if (op.equals("replay")) {
+            QueryJson.object(args,"identity","counterWitness");
+            if(!(args.get("counterWitness") instanceof Boolean))throw new IllegalArgumentException("Explicit witness kind required");
         } else if (op.equals("visual-graph")) {
             QueryJson.object(args, "seed", "depth", "violationsOnly");
         } else {
@@ -235,6 +242,14 @@ public final class ArchitectureQueryApi {
                 yield op.equals("finding") ? finding : finding.bundle();
             }
             case "policy-metrics" -> report.metrics().orElseThrow(() -> new Failure(404,"REPORT_ARTIFACT_UNAVAILABLE"));
+            case "replay" -> {
+                var target=new ContentDigest(QueryJson.text(args,"identity"));boolean counter=Boolean.TRUE.equals(args.get("counterWitness"));
+                var bundle=e.findings().stream().filter(f->f.identity().equals(target)).findFirst()
+                        .orElseThrow(()->new Failure(404,"REPORT_ARTIFACT_UNAVAILABLE")).bundle();
+                var witness=(counter?bundle.region().counterWitness():bundle.region().witness())
+                        .orElseThrow(()->new Failure(404,"REPORT_ARTIFACT_UNAVAILABLE"));
+                yield service.replayRuleWitness(bundle.request(),bundle.predicate(),witness,counter);
+            }
             case "assessment" -> report.assessment().orElseThrow(() -> new Failure(404,"REPORT_ARTIFACT_UNAVAILABLE"));
             case "policy-impact" -> {
                 var target = QueryJson.text(args, "identity");

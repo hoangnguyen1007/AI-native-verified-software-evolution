@@ -15,6 +15,18 @@ import static org.junit.jupiter.api.Assertions.*;
 import static com.evolution.analysis.query.ArchitectureQuery.*;
 
 class GraphProjectionServiceTest {
+    @Test void focusedDepthIsAnActualLimitAndEdgesRetainEvidenceAndDegradedStatus() {
+        var f=new Fixture().type("app","p","A").type("app","p","B").type("app","p","C").type("app","p","D")
+                .edge("A","B").edge("B","C").edge("C","D");
+        var service=new GraphProjectionService(new ArchitectureQueryService(f.graph()));
+        var view=service.focusedSubgraph(f.request(),f.types.get("A"),2,Optional.empty());
+        assertTrue(view.nodes().stream().anyMatch(n->n.id().equals(f.types.get("C"))));
+        assertFalse(view.nodes().stream().anyMatch(n->n.id().equals(f.types.get("D"))));
+        assertFalse(((List<?>)view.edges().getFirst().properties().get("evidence")).isEmpty());
+        assertNotNull(view.metadata().get("status"));assertNotNull(view.metadata().get("focusBounds"));
+        assertEquals("m8.3-v1",GraphProjectionService.VERSION.version());
+        assertThrows(IllegalArgumentException.class,()->service.focusedSubgraph(f.request(),f.types.get("A"),0,Optional.empty()));
+    }
 
     static final class Fixture {
         final RepositoryIdentity repo = RepositoryIdentity.fromCanonicalCoordinate("https://example.test/repo");

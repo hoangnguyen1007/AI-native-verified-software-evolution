@@ -13,6 +13,17 @@ import static com.evolution.analysis.query.ArchitectureQuery.*;
 import static com.evolution.backend.query.QueryFixture.id;
 
 class ArchitectureQueryApiTest {
+    @Test void structureChildrenArePagedContextBoundAndNeverDependencyTargets() {
+        var f=new QueryFixture().node("parent").node("child").node("dependency").edge("parent","dependency");
+        f.edges.add(new KnowledgeGraph.Edge(id("contains"),f.context,"graph.declares",id("parent"),
+                new KnowledgeGraph.Target(KnowledgeGraph.TargetState.RESOLVED,List.of(id("child")),Optional.empty()),List.of(f.base.identity()),Optional.empty()));
+        var api=new ArchitectureQueryApi(f.store());
+        var response=call(api,f.request(),"children",Map.of("identity",id("parent")));
+        assertEquals(200,response.status());
+        var items=GraphJson.array(GraphJson.object(body(response).get("data")).get("items"));
+        assertEquals(1,items.size());assertEquals(id("child"),GraphJson.object(items.getFirst()).get("identity"));
+        assertEquals(400,call(api,f.request(),"children",Map.of("identity",id("foreign"))).status());
+    }
     static byte[] bytes(Object value) { return CanonicalJson.write(value).getBytes(StandardCharsets.UTF_8); }
     static Map<String,Object> body(ArchitectureQueryApi.Response response) {
         return GraphJson.object(GraphJson.read(new String(response.body(),StandardCharsets.UTF_8),GraphJson.Limits.defaults()));
@@ -47,7 +58,10 @@ class ArchitectureQueryApiTest {
         parity(api,r,"metric-catalog",Map.of(),q.metricCatalog(r,p)); parity(api,r,"metric",Map.of("metric","metric.inventory","subject",r.context()),q.metric(r,"metric.inventory",r.context()));
         parity(api,r,"comparison-preparation",Map.of("graph",r.graph(),"context",r.context()),q.comparisonPreparation(r,f.graph(),r.context()));
         parity(api,r,"visual-graph",Map.of(),new com.evolution.analysis.query.projection.GraphProjectionService(q).project(r,Optional.empty()));
-        assertEquals(23,ArchitectureQueryApi.OPERATIONS.size()); assertEquals("m7.2-v2",VERSION.version());
+        parity(api,r,"children",Map.of("identity",id("a")),q.children(r,id("a"),p));
+        parity(api,r,"realizations",Map.of(),q.realizations(r,p));
+        parity(api,r,"metric-definition",Map.of("metric","metric.inventory"),q.metricDefinition(r,"metric.inventory"));
+        assertEquals(26,ArchitectureQueryApi.OPERATIONS.size()); assertEquals("m8.3-v1",VERSION.version());
     }
     @Test void paginationKeepsTotalsAndBindsCursorToFiltersAcrossSnapshotReload() {
         var f=new QueryFixture(); for(int i=0;i<5;i++) f.node("n"+i);

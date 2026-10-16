@@ -92,6 +92,9 @@ public final class ArchitectureMetricsService implements Metrics {
         return input.count(subject,counts.getOrDefault("BEAN_DEFINITION_CANDIDATE",0L),detail,layers);
     }
     private void validate(Request request){if(!graph.identity().equals(request.graph())||graph.contexts().stream().noneMatch(c->c.identity().equals(request.context())))throw new IllegalArgumentException("Foreign metric graph/context");}
+    @Override public Optional<Map<String,Object>> definition(String metric){
+        return Optional.of(GraphJson.object(GraphJson.read(CanonicalJson.write(MetricCatalog.require(metric)),GraphJson.Limits.defaults())));
+    }
     @Override public ArchitectureQuery.Result<String> catalog(Request request,Page page){
         validate(request);var ids=MetricCatalog.entries().stream().map(e->e.metric().id()).toList();int size=Math.min(page.size(),request.limits().maxResults());
         var query=ArchitectureMetric.digest(List.of(ArchitectureMetric.VERSION,"catalog",MetricCatalog.identity(),request.identity(),size));int start=0;

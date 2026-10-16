@@ -1,6 +1,20 @@
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
 const model = require('../../main/resources/web/model.js');
+test('default packages have a useful label rather than an internal name tuple', () => {
+  assert.equal(model.label({kind:'PACKAGE',qualifiedName:'',canonicalName:'java:v1:["package",[]]'}),'(default package)');
+});
+test('configuration comparisons never promote an unloaded or partial page to absent', () => {
+  const edge={identity:'edge',source:'a',target:'b'};
+  assert.deepEqual(model.compareEdges({items:[edge],status:'COMPLETE'},{items:[],status:'PARTIAL'}).map(r=>[r.a,r.b]), [['Present','Not established']]);
+  assert.deepEqual(model.compareEdges({items:[edge],status:'COMPLETE'},{items:[],status:'COMPLETE'}).map(r=>[r.a,r.b]), [['Present','Absent in this view']]);
+  assert.equal(model.compareEdges({items:[],status:'COMPLETE',continuation:'next'},{items:[edge],status:'COMPLETE'})[0].a,'Not established');
+});
+test('a realized request carries the selected backend realization and cannot silently become union', () => {
+  const selection={realization:{world:'exact-world',assignment:{}}};
+  assert.deepEqual(model.realizationRequest(selection),{projection:'REALIZED',realization:selection.realization});
+  assert.throws(()=>model.realizationRequest(null));
+});
 test('missing assessments never become healthy scores', () => {
   assert.equal(model.assessment(null), 'Unavailable');
   assert.equal(model.assessment({score: null}), 'Unavailable');

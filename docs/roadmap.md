@@ -268,6 +268,16 @@ The UI must use stable query services, bounded payloads, pagination/cancellation
 
 Exit gate: a user can complete the registered end-to-end product journey on a pinned external repository, compare a realized view with conditional regions, replay a finding witness, drill from dashboard/score/violation/graph to exact evidence, and observe honest degraded behavior on a partial-evidence scenario. CLI, API, exports and UI agree on canonical values.
 
+### M8.4 — Comprehensive Repository Readiness Upgrade (Mandatory Pre-M9 Task)
+
+**Status: SCHEDULED (Mandatory before Milestone M9).**
+
+This task is established pursuant to the binding **Human Mandate on Comprehensive Coverage** ([docs/architecture/comprehensive-repository-coverage-problems.md](architecture/comprehensive-repository-coverage-problems.md)).
+
+- **Requirement:** Every repository, regardless of scale, complexity, or multi-module microservice architecture, must be fully analyzable and measurable without omitting any component, with hard ceilings and acquisition timeouts addressed, generated code/stubs (such as gRPC, Protobuf, and compiler-generated artifacts) accounted for, and `FAILED` and `PARTIAL` outcomes minimized to the utmost extent.
+- **Sequencing:** This task is a mandatory prerequisite that must be executed and verified immediately following M8.3, before Milestone M9 begins.
+- **Detailed Execution Plan:** Detailed planning and execution slices will be formulated upon formal entry into this task.
+
 ### M9 - Multi-Repository Evaluation and Hardening
 
 Deliver curated condition/registration/binding microfixtures, interaction fixtures, PetClinic, medium, multi-module and larger repositories; controlled partial-classpath/configuration experiments; architecture mutations with expected affected regions; metric golden cases; score sensitivity and missing-evidence experiments; graph/query/UI scale scenarios; accessibility/usability review of primary workflows; robustness matrix; repeated determinism/performance runs; and immutable raw results. Corpus inclusion, labels, baselines and primary metrics are registered before result interpretation.
@@ -309,9 +319,10 @@ M-1 Human approval [COMPLETE: 86c4ca2]
         -> M4E shared-evidence adjudication -> G3
   M4 + M5 -> M6 conditional policy/evidence/assessment
   M6 -> M7 Impact/CLI/export
-  M7 -> M8 Backend/complete workbench
-  M2 + M3 + M4 + M6 -> M9 External evaluation
-  M8 + M9 -> M10 Track A gate
+  M7 -> M8 Backend/complete workbench (M8.1-M8.3)
+  M8.3 -> M8.4 Comprehensive repository readiness upgrade
+  M8.4 + M2 + M3 + M4 + M6 -> M9 External evaluation
+  M9 -> M10 Track A gate
   M10 human approval -> M11 Conditional architecture evolution
   M11 -> M12 Technical integration
   M12 -> optional Track C -> post-M12 horizons D/E/F

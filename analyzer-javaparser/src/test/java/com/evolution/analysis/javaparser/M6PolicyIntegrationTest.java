@@ -146,6 +146,14 @@ class M6PolicyIntegrationTest {
             assertTrue(evaluated.gaps().stream().anyMatch(g->g.reasonCode().equals("UPSTREAM_CAPABILITY_GAP")));
             assertFalse(bundle.upstreamEvidence().isEmpty());
             assertEquals(bundle.region(),service.ruleCondition(bundle.request(),bundle.predicate()).items().getFirst());
+            assertTrue(service.replayRuleWitness(bundle.request(),bundle.predicate(),bundle.region().witness().orElseThrow(),false).items().getFirst().matched());
+            assertTrue(service.replayRuleWitness(bundle.request(),bundle.predicate(),bundle.region().counterWitness().orElseThrow(),true).items().getFirst().matched());
+            var choices=service.realizations(bundle.request(),Page.first());assertFalse(choices.items().isEmpty());
+            for(var choice:choices.items()){
+                var original=bundle.request();var realized=new Request(original.graph(),original.context(),original.scope(),Projection.REALIZED,original.direction(),original.relationshipKinds(),original.population(),false,Optional.of(choice.realization()),original.limits());
+                var selected=service.edges(realized,Page.first());
+                assertTrue(selected.gaps().stream().noneMatch(g->g.reasonCode().equals("REALIZATION_NOT_IN_MODELED_SPACE")));
+            }
             assertEquals(evaluated,new PolicyEvaluator().evaluate(compile(graph,yaml),plan,new ArchitectureQueryService(restored),PolicyEvaluation.Limits.defaults()));
             var metrics=new PolicyMetricsService().compute(compile(graph,yaml),plan,evaluated,service,PolicyMetrics.Limits.defaults());
             assertEquals(1L,metrics.counts().findingQuantifiers().get("MAY"));assertEquals(1L,metrics.counts().ruleQuantifiers().get("UNKNOWN"));
@@ -153,6 +161,13 @@ class M6PolicyIntegrationTest {
             var assessment=new ArchitectureAssessmentService().evaluate(metrics,evaluated,service,Optional.of(scoreModel()),List.of(),ArchitectureAssessment.Limits.defaults());
             assertEquals(AssessmentStatus.WITHHELD,assessment.status());assertTrue(assessment.score().isEmpty());
             assertEquals(new BigDecimal("25"),assessment.dimensions().getFirst().uncappedPenalty());
+            // Optional source-generated inputs for the isolated browser acceptance harness; never production fallback data.
+            if(Boolean.getBoolean("evo.workbench.exportFixtures")){
+                var directory=java.nio.file.Path.of("target/evo-build/workbench-fixtures");java.nio.file.Files.createDirectories(directory);
+                var name=slice.explicitTruth().isPresent()?"explicit":"symbolic";
+                java.nio.file.Files.writeString(directory.resolve(name+".graph.json"),new GraphSnapshotCodec().encode(graph));
+                java.nio.file.Files.writeString(directory.resolve(name+".policy.yaml"),yaml);
+            }
         }
     }
 }

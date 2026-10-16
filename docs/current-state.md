@@ -14,7 +14,7 @@ Preserved checkpoints: Gate G3 remains recorded PASSED in [Gate G3 Adjudication 
 
 Fresh bounded verification: **75 backend tests / 13 suites** and **58 CLI consumer tests / 8 suites**, zero failures/errors/skips; **4 Node presentation-contract tests** pass. Browser checks use real Java source and the owner's public MiniChatServer checkout, with genuine PARTIAL/gap outcomes rather than mock results. Desktop/mobile layout, search, evidence/dependency/impact, graph controls/export and cancellation have direct browser evidence. Full M8 acceptance, independent review, broad accessibility/performance certification, durable jobs/reports, private authentication and deep configuration comparison remain open. No full reactor, corpus benchmark, formal reproducibility package, commit or push.
 
-Exact next slice: **M8.3 — module/package/member exploration, witnessed Spring configuration comparison and registered end-to-end workbench acceptance**. Track B remains gated.
+Exact next slice: **M8.3 — module/package/member exploration, witnessed Spring configuration comparison and registered end-to-end workbench acceptance**, followed by mandatory pre-M9 **M8.4 — Comprehensive Repository Readiness Upgrade**. Track B remains gated.
 
 ## IMPLEMENTED — M8.1 ASYNCHRONOUS ANALYSIS JOBS AND BACKEND API
 
@@ -797,6 +797,8 @@ Current input boundaries: explicit strict portable charsets; configured Java 8 `
 
 M6/G5 and M7/G6 preparation remain recorded passed. M8.1 supplies asynchronous analysis; M8.2 now supplies the live English workbench and opt-in local/public-Git connections. Deep configuration comparison, durable job/report-history recovery, authenticated remote deployment and registered UI/performance acceptance remain pending. Finite SAT is implemented; arbitrary infinite spaces and global latency/coverage remain unproven. There is no unresolved blocker for the next bounded M8.3 inspection/acceptance slice.
 
+Human mandate and large-scale repository coverage problems (network acquisition timeouts, size/file count ceilings, unmodeled generated code/stubs such as gRPC/Protobuf, and minimizing PARTIAL/FAILED outcomes across multi-module microservice repositories) are formally recorded in [Comprehensive Repository Coverage Problem Statements](architecture/comprehensive-repository-coverage-problems.md).
+
 ## QUALITY GATES
 
 | Gate | State | Remaining acceptance boundary |
@@ -818,3 +820,5 @@ M6/G5 and M7/G6 preparation remain recorded passed. M8.1 supplies asynchronous a
 **M8.3 — Interactive structure explorer, deep Spring configuration space comparison views, and Track A visual acceptance.**
 
 Deliver the remaining deep visual inspections against canonical queries: module/package/type/member structure exploration, Spring profile and configuration-space comparison views, witness replay controls, and end-to-end Track A workbench acceptance on pinned repositories. Track B remains unauthorized until Track A gates pass and human approval is granted.
+
+**Mandatory Pre-M9 Task:** Immediately following M8.3 and strictly prior to starting Milestone M9, the platform must execute **M8.4 — Comprehensive Repository Readiness Upgrade** to fulfill the Human Mandate documented in [Comprehensive Repository Coverage Problem Statements](architecture/comprehensive-repository-coverage-problems.md). Detailed execution slices will be planned upon entry into M8.4.

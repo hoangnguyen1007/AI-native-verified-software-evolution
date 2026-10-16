@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Architecture Workbench API
-  version: m8.2-v1
+  version: m8.3-v1
   description: Local cancellable analysis, optional loopback repository connections and canonical query/report adapters. Connections require explicit embedding support.
 servers:
   - url: http://127.0.0.1:8080
@@ -28,7 +28,7 @@ paths:
         required: true
         schema:
           type: string
-          enum: [summary, provenance, entities, entity, edges, dependencies, relationships, expand, paths, shortest-path, cycles, reachability, impact, evidence, explain, gaps, spring, configurations, artifacts, metric-catalog, metric, comparison-preparation, visual-graph]
+          enum: [summary, provenance, entities, entity, edges, dependencies, relationships, expand, paths, shortest-path, cycles, reachability, impact, evidence, explain, gaps, spring, configurations, artifacts, metric-catalog, metric, comparison-preparation, visual-graph, children, realizations, metric-definition]
     post:
       operationId: query
       description: Read-only POST supports structured filters. Arguments are operation-specific; see the M7.1 architecture contract. Domain PARTIAL/CANCELLED results use HTTP 200 and retain their gaps and bounds.
@@ -58,10 +58,10 @@ paths:
         required: true
         schema:
           type: string
-          enum: [rules, findings, finding, bundle, policy-metrics, assessment, policy-impact, visual-graph]
+          enum: [rules, findings, finding, bundle, policy-metrics, assessment, policy-impact, visual-graph, replay]
     post:
       operationId: publishedReportArtifact
-      description: Returns supplied immutable canonical results. Missing reports/artifacts are 404; no policy execution or score recomputation occurs.
+      description: Returns immutable canonical results. Replay checks the published finding predicate and captured witness through bounded canonical region reasoning; it does not execute target code or recompute scores. Missing reports, findings and witnesses are 404.
       requestBody:
         required: true
         content:
@@ -70,7 +70,7 @@ paths:
               type: object
               additionalProperties: false
               properties:
-                arguments: {type: object, description: 'finding/bundle require identity; other operations require an empty object.'}
+                arguments: {type: object, description: 'finding/bundle/policy-impact require identity; replay requires finding identity and boolean counterWitness. See the workbench contract for visual-graph operands.'}
                 page: {$ref: '#/components/schemas/Page'}
       responses:
         '200': {$ref: '#/components/responses/Success'}
