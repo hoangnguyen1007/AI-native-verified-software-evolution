@@ -1,8 +1,18 @@
 # Current State
 
-Last reconciled: 2026-10-16. **Milestone M7 is active; M7.1 HTTP/JSON and M7.2 evo CLI are implemented and boundedly verified.** M6 is closed and G3/G4/G5 remain PASSED. The M5 catalog/budgets and M6 score baseline are human-approved. HTTP/CLI external presentation remains PROVISIONAL pending product acceptance. The complete M7 local-workflow gate and later product gates are not claimed.
+Last reconciled: 2026-10-16. **Milestone M7 is completed and Gate G6 (Track A Release Preparation Checkpoint) is certified PASSED.** M6 is closed and G3/G4/G5/G6 remain PASSED. The platform is authorized to advance to Milestone M8 (Backend API and Complete Architecture Workbench UI).
 
-Preserved checkpoints: Gate G3 remains recorded PASSED in [Gate G3 Adjudication Record](reproducibility/g3-spring-adjudication-record-2026-10-14.md); Gate G4 is certified PASSED in [Gate G4 Adjudication Record](reproducibility/g4-adjudication-record-2026-10-15.md).
+Preserved checkpoints: Gate G3 remains recorded PASSED in [Gate G3 Adjudication Record](reproducibility/g3-spring-adjudication-record-2026-10-14.md); Gate G4 is certified PASSED in [Gate G4 Adjudication Record](reproducibility/g4-adjudication-record-2026-10-15.md); Gate G5 is certified PASSED in [Gate G5 Adjudication Record](reproducibility/g5-adjudication-record-2026-10-15.md); Gate G6 is certified PASSED in [Gate G6 Adjudication Record](reproducibility/g6-adjudication-record-2026-10-16.md).
+
+## IMPLEMENTED — M7.3 VISUAL WORKBENCH FOUNDATION, POLICY IMPACT & LOCAL ACCEPTANCE
+
+**CONFIRMED implementation and verified test execution:**
+- `analyzer`: `PolicyImpactRecord` and `PolicyImpactService` (`policy.impact:m7.3-v1`) associate structural incoming reachability with configuration-qualified architectural rules and Evidence Bundles, classifying direct vs. transitive blast radiuses, worst severities, and truth region feasibility. `VisualGraph` and `GraphProjectionService` project hierarchical compound graphs (Module $\rightarrow$ Package $\rightarrow$ Type), cycle participant badges, and policy violation badges, supporting full graph, focused ego-network (`seed` + `depth`), and violation-only subgraphs.
+- `backend`: `ArchitectureQueryApi` exposes `/queries/visual-graph`, `/reports/{id}/policy-impact`, and `/reports/{id}/visual-graph` with strict schema validation in `openapi.yaml`.
+- `cli`: `EvoApp` supports `evo visual`, `evo impact <symbol> --policy <file>`, and `evo export cytoscape`. `Exports` produces standards-compliant Cytoscape.js (`format: "cytoscape.js"`) and GraphML. `TerminalReports` renders bilingual terminal visualizations with cycle and violation badges.
+- `acceptance`: `LocalWorkflowAcceptanceTest` verifies the full offline lifecycle (`scan` $\rightarrow$ `show` $\rightarrow$ `find` $\rightarrow$ `deps` $\rightarrow$ `check` $\rightarrow$ `findings` $\rightarrow$ `impact --policy` $\rightarrow$ `visual` $\rightarrow$ `export cytoscape/graphml/sarif/json`) with zero external network or database server requirements.
+
+Bounded verification covers **49 tests / 8 suites across analyzer, backend, and cli**, 100% PASS with zero errors or failures. [Contract](architecture/m7-visual-workbench-and-impact.md), [execution record](tasks/m7/03-visual-workbench-and-local-workflow.md).
 
 ## IMPLEMENTED — M7.2 EVO CLI
 

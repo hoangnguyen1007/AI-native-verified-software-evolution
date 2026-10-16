@@ -46,7 +46,8 @@ class ArchitectureQueryApiTest {
         parity(api,r,"configurations",Map.of(),q.configurations(r,p)); parity(api,r,"artifacts",Map.of("families",Set.of("fixture.context")),q.artifacts(r,Set.of("fixture.context"),p));
         parity(api,r,"metric-catalog",Map.of(),q.metricCatalog(r,p)); parity(api,r,"metric",Map.of("metric","metric.inventory","subject",r.context()),q.metric(r,"metric.inventory",r.context()));
         parity(api,r,"comparison-preparation",Map.of("graph",r.graph(),"context",r.context()),q.comparisonPreparation(r,f.graph(),r.context()));
-        assertEquals(22,ArchitectureQueryApi.OPERATIONS.size()); assertEquals("m7.2-v2",VERSION.version());
+        parity(api,r,"visual-graph",Map.of(),new com.evolution.analysis.query.projection.GraphProjectionService(q).project(r,Optional.empty()));
+        assertEquals(23,ArchitectureQueryApi.OPERATIONS.size()); assertEquals("m7.2-v2",VERSION.version());
     }
     @Test void paginationKeepsTotalsAndBindsCursorToFiltersAcrossSnapshotReload() {
         var f=new QueryFixture(); for(int i=0;i<5;i++) f.node("n"+i);

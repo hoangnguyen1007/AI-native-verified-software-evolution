@@ -36,4 +36,25 @@ class TerminalReportsTest {
             String plain=text.toString().replaceAll("\u001b\\[[0-9;]*m","");assertFalse(plain.contains("\u001b"));for(String row:plain.lines().toList())assertTrue(TerminalView.cells(row)<=width,width+": "+row);
         }
     }
+    @Test void policyImpactShowsChangedSymbolAffectedEntitiesAndAffectedRules(){
+        String text=render("impact",Map.of("status","AVAILABLE","changedEntity","sha256:1111111111111111111111111111111111111111111111111111111111111111",
+                "affectedEntities",List.of("sha256:1111111111111111111111111111111111111111111111111111111111111111","sha256:2222222222222222222222222222222222222222222222222222222222222222"),
+                "worstSeverity","ERROR","highestQuantifier","MUST",
+                "affectedRules",List.of(Map.of("ruleId","no-controller-to-repo","severity","ERROR","kind","FORBIDDEN_DEPENDENCY","directFindingsCount",1,"transitiveFindingsCount",0)),
+                "directFindings",List.of(Map.of("ruleId","no-controller-to-repo","severity","ERROR","direct",true,"classification","MUST","matchedEntities",List.of("sha256:1111111111111111111111111111111111111111111111111111111111111111")))));
+        assertTrue(text.contains("no-controller-to-repo"));
+        assertTrue(text.contains("ERROR"));
+        assertTrue(text.contains("MUST"));
+    }
+    @Test void visualGraphShowsHierarchyCycleAndViolationBadges(){
+        String text=render("visual",Map.of("status","AVAILABLE","id","sha256:3333333333333333333333333333333333333333333333333333333333333333",
+                "metadata",Map.of("scope","TYPE","projection","BOUNDED_UNION","totalNodes",5,"compoundNodesCount",2,"totalEdges",3),
+                "nodes",List.of(
+                        Map.of("id","n1","label","Controller","kind","TYPE","scope","TYPE","violationCount",1,"isCycleParticipant",false),
+                        Map.of("id","n2","label","Service","kind","TYPE","scope","TYPE","violationCount",0,"isCycleParticipant",true)),
+                "edges",List.of(
+                        Map.of("id","e1","source","n1","target","n2","kind","graph.depends-on","classification","MUST","isViolation",true,"isCycle",false))));
+        assertTrue(text.contains("Đỉnh có vi phạm chính sách") || text.contains("Nodes with policy violations"));
+        assertTrue(text.contains("cytoscape"));
+    }
 }

@@ -174,4 +174,24 @@ class EvoAppTest {
         assertEquals(0,new EvoApp(directory,new StringReader(script),new PrintWriter(out),new PrintWriter(err),true,Map.of("NO_COLOR","1")).execute("--graph",p.toString(),"--scope","entity"));
         assertTrue(out.toString().contains("SHOW"));assertTrue(out.toString().contains("Quan sát danh mục"));assertTrue(err.toString().contains("INVALID_USAGE"));assertTrue(err.toString().contains("INPUT_LIMIT"));
     }
+    @Test void visualGraphProjectionAndCytoscapeExport()throws Exception{
+        var f=new CliFixture().node("A").node("B").edge("A","B");var p=graph(f);
+        var visualJson=run("visual","--graph",p.toString(),"--scope","entity","--json");
+        assertEquals(0,visualJson.code);
+        assertTrue(visualJson.data().containsKey("nodes"));
+        assertTrue(visualJson.data().containsKey("edges"));
+
+        var visualText=run("visual","--graph",p.toString(),"--scope","entity");
+        assertEquals(0,visualText.code);
+        assertTrue(visualText.out.contains("Visual workbench") || visualText.out.contains("Phép chiếu"));
+
+        var cyOut=run("export","cytoscape","--graph",p.toString(),"--scope","entity");
+        assertEquals(0,cyOut.code);
+        var cy=GraphJson.object(GraphJson.read(cyOut.out.strip(),GraphJson.Limits.defaults()));
+        assertEquals("cytoscape.js",cy.get("format"));
+        assertTrue(cy.containsKey("elements"));
+        var elements=GraphJson.object(cy.get("elements"));
+        assertTrue(elements.containsKey("nodes"));
+        assertTrue(elements.containsKey("edges"));
+    }
 }

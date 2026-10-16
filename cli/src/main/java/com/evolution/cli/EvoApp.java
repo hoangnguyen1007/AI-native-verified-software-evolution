@@ -120,7 +120,8 @@ public final class EvoApp {
                 {"gaps","gaps","Explicit limitations / Hạn chế tường minh"},{"spring","spring","Spring inventory / Danh mục Spring"},{"config","configurations","Configurations & witnesses / Cấu hình & nhân chứng"},
                 {"provenance","provenance","Analysis provenance / Nguồn gốc phân tích"},{"metrics","metric-catalog","Metric catalog or one metric / Danh mục hoặc một metric"},{"query","","All canonical operations / Mọi thao tác canonical"},
                 {"check","rules","Check rules / Kiểm tra quy tắc"},{"score","assessment","Explain confidence / Giải thích độ tin cậy"},{"findings","findings","Observed findings / Phát hiện quan sát được"},
-                {"rules","rules","Closed rule denominator / Toàn bộ mẫu số luật"},{"bundle","bundle","Finding evidence bundle / Gói bằng chứng"},{"witness","bundle","Witness replay inputs / Đầu vào tái hiện nhân chứng"},{"replay","replay","Re-evaluate bundle formula / Đánh giá lại công thức"}};
+                {"rules","rules","Closed rule denominator / Toàn bộ mẫu số luật"},{"bundle","bundle","Finding evidence bundle / Gói bằng chứng"},{"witness","bundle","Witness replay inputs / Đầu vào tái hiện nhân chứng"},{"replay","replay","Re-evaluate bundle formula / Đánh giá lại công thức"},
+                {"visual","visual-graph","Visual workbench graph projection / Phép chiếu đồ thị trực quan"}};
         for(var row:commands){var child=new CommandLine(new Query(r,row[0],row[1]));child.getCommandSpec().name(row[0]).usageMessage().description(row[2]);command.addSubcommand(row[0],child);}
         command.addSubcommand("open",new Open(r));command.addSubcommand("use",new Use(r));command.addSubcommand("export",new Export(r));
         command.addSubcommand("next",new Next(r));
@@ -159,11 +160,13 @@ public final class EvoApp {
             String op=operation;var operands=new ArrayList<>(values);
             if(name.equals("query")){if(operands.isEmpty())throw new InputFailure("OPERATION_REQUIRED");op=operands.removeFirst();}
             if(name.equals("metrics")&&!operands.isEmpty())op="metric";
+            if(name.equals("impact")&&r.policy!=null)op="policy-impact";
             if(!Set.of("none","info","warning","error").contains(failOn))throw new InputFailure("INVALID_THRESHOLD");
             var store=new InMemoryGraphStore();store.save(graph);if(r.other!=null)store.save(Workspace.graph(resolve(r.other)));
             var reports=new PublishedReports();PublishedReports.Report report=null;byte[] policyToRemember=null;
-            if(!failOn.equals("none")&&!ArchitectureQueryApi.REPORT_OPERATIONS.contains(op))throw new InputFailure("THRESHOLD_NOT_APPLICABLE");
-            if(ArchitectureQueryApi.REPORT_OPERATIONS.contains(op)||op.equals("replay")){
+            boolean isReportOp=(ArchitectureQueryApi.REPORT_OPERATIONS.contains(op)&&!op.equals("visual-graph"))||op.equals("replay")||(op.equals("visual-graph")&&r.policy!=null);
+            if(!failOn.equals("none")&&!isReportOp)throw new InputFailure("THRESHOLD_NOT_APPLICABLE");
+            if(isReportOp){
                 Path policyFile=r.policy;if(name.equals("check")&&!operands.isEmpty())policyFile=Path.of(operands.removeFirst());
                 byte[] policyInput=policyBytes(r,policyFile);report=evaluate(r,graph,context,policyInput);reports.publish(report);
                 if(name.equals("check")&&policyFile!=null)policyToRemember=policyInput;
@@ -173,7 +176,7 @@ public final class EvoApp {
                 var bundle=report.evaluation().findings().stream().map(PolicyEvaluation.Finding::bundle).filter(b->b.identity().value().equals(id)).findFirst().orElseThrow(()->new InputFailure("BUNDLE_UNAVAILABLE"));
                 var replayed=new ArchitectureMetricsService(graph).queries().ruleCondition(bundle.request(),bundle.predicate());return emit(r,name,envelope(replayed),status(replayed));
             }
-            var body=body(r,graph,context,op,operands);String path="/api/v1/graphs/"+graph.identity().value();
+            var body=body(r,graph,context,op,operands,isReportOp);String path="/api/v1/graphs/"+graph.identity().value();
             path+=report==null?"/queries/"+op:"/reports/"+report.identity().value()+"/"+op;
             return queryResponse(r,name,op,graph,store,reports,report,failOn,path,body,policyToRemember);
         }
@@ -209,39 +212,40 @@ public final class EvoApp {
         }
     }
     private static int severity(String value){return switch(value.toUpperCase(Locale.ROOT)){case "INFO"->1;case "WARNING"->2;case "ERROR"->3;default->0;};}
-    private byte[] body(Root r,KnowledgeGraph graph,String context,String op,List<String> operands)throws IOException{
+    private byte[] body(Root r,KnowledgeGraph graph,String context,String op,List<String> operands,boolean isReportOp)throws IOException{
         if(r.request!=null){if(!operands.isEmpty()||matched(r,"--args","--scope","--view","--world","--assignment","--incoming","--kinds","--limit","--depth","--cursor"))throw new InputFailure("CONFLICTING_REQUEST");byte[] bytes=Workspace.read(resolve(r.request),65_536);
-            if(!ArchitectureQueryApi.REPORT_OPERATIONS.contains(op))r.activeRequest=QueryJson.request(graph.identity(),GraphJson.object(GraphJson.read(Workspace.utf8(bytes),GraphJson.Limits.defaults())).get("request"));return bytes;}
+            if(!isReportOp)r.activeRequest=QueryJson.request(graph.identity(),GraphJson.object(GraphJson.read(Workspace.utf8(bytes),GraphJson.Limits.defaults())).get("request"));return bytes;}
         Map<String,Object> args=new TreeMap<>();
         if(r.arguments!=null){if(!operands.isEmpty())throw new InputFailure("CONFLICTING_ARGUMENTS");args.putAll(GraphJson.object(GraphJson.read(r.arguments,new GraphJson.Limits(65_536,32,10_000))));}
         else {
             int required=0;
             switch(op){
                 case "entities"->{if(operands.size()>1)throw new InputFailure("INVALID_ARGUMENTS");args.put("search",operands.isEmpty()?"":operands.getFirst());required=operands.size();}
-                case "entity","dependencies","expand","impact","reachability","explain","finding","bundle"->{required=1;if(operands.size()==1)args.put("identity",operands.getFirst());}
+                case "entity","dependencies","expand","impact","policy-impact","reachability","explain","finding","bundle"->{required=1;if(operands.size()==1)args.put("identity",operands.getFirst());}
                 case "evidence"->{required=1;if(operands.size()==1)args.put("reference",operands.getFirst());}
                 case "paths","shortest-path"->{required=2;if(operands.size()==2){args.put("source",operands.get(0));args.put("target",operands.get(1));}}
                 case "metric"->{required=operands.size();if(operands.isEmpty()||operands.size()>2)throw new InputFailure("METRIC_REQUIRED");args.put("metric",operands.getFirst());args.put("subject",operands.size()==2?operands.get(1):context);}
                 case "spring"->args.put("kinds",List.of("BEAN_PRODUCER","BEAN_DEFINITION_CANDIDATE","INJECTION_USE","ENDPOINT"));
+                case "visual-graph"->{if(operands.size()>1)throw new InputFailure("INVALID_ARGUMENTS");if(operands.size()==1){args.put("seed",operands.getFirst());args.put("depth",r.depth);}required=operands.size();}
                 default->{}
             }
             if(operands.size()!=required)throw new InputFailure("INVALID_ARGUMENTS");
         }
         var data=new TreeMap<String,Object>();data.put("arguments",args);
-        if(!ArchitectureQueryApi.REPORT_OPERATIONS.contains(op)){
-            Scope scope=Scope.valueOf(r.scope.toUpperCase(Locale.ROOT).replace('-','_'));
-            Projection projection=switch(r.projection){case "union"->Projection.BOUNDED_UNION;case "unknown"->Projection.UNKNOWN_OVERLAY;default->Projection.valueOf(r.projection.toUpperCase(Locale.ROOT));};
-            if(r.world!=null&&r.assignment!=null)throw new InputFailure("ONE_REALIZATION_REQUIRED");Optional<Realization> realization=Optional.empty();
-            if(r.world!=null)realization=Optional.of(new Realization(Optional.of(r.world),Map.of()));
-            if(r.assignment!=null){var assignment=new TreeMap<String,Boolean>();GraphJson.object(Workspace.json(resolve(r.assignment),65_536)).forEach((k,v)->{if(!(v instanceof Boolean b))throw new IllegalArgumentException();assignment.put(k,b);});realization=Optional.of(new Realization(Optional.empty(),assignment));}
-            var defaults=Limits.defaults();r.activeRequest=new Request(graph.identity(),context,scope,projection,op.equals("impact")||r.incoming?Direction.INCOMING:Direction.OUTGOING,r.kinds,Population.all(),false,realization,
-                    new Limits(r.depth,defaults.maxSteps(),r.limit,defaults.maxVertices(),defaults.maxEdges(),defaults.maxSolverSteps(),defaults.maxFormulaNodes(),defaults.maxAuxiliaryStates()));data.put("request",r.activeRequest);
-        }
+        Scope scope=Scope.valueOf(r.scope.toUpperCase(Locale.ROOT).replace('-','_'));
+        Projection projection=switch(r.projection){case "union"->Projection.BOUNDED_UNION;case "unknown"->Projection.UNKNOWN_OVERLAY;default->Projection.valueOf(r.projection.toUpperCase(Locale.ROOT));};
+        if(r.world!=null&&r.assignment!=null)throw new InputFailure("ONE_REALIZATION_REQUIRED");Optional<Realization> realization=Optional.empty();
+        if(r.world!=null)realization=Optional.of(new Realization(Optional.of(r.world),Map.of()));
+        if(r.assignment!=null){var assignment=new TreeMap<String,Boolean>();GraphJson.object(Workspace.json(resolve(r.assignment),65_536)).forEach((k,v)->{if(!(v instanceof Boolean b))throw new IllegalArgumentException();assignment.put(k,b);});realization=Optional.of(new Realization(Optional.empty(),assignment));}
+        var defaults=Limits.defaults();r.activeRequest=new Request(graph.identity(),context,scope,projection,op.equals("impact")||op.equals("policy-impact")||r.incoming?Direction.INCOMING:Direction.OUTGOING,r.kinds,Population.all(),false,realization,
+                new Limits(r.depth,defaults.maxSteps(),r.limit,defaults.maxVertices(),defaults.maxEdges(),defaults.maxSolverSteps(),defaults.maxFormulaNodes(),defaults.maxAuxiliaryStates()));
+        if(!isReportOp)data.put("request",r.activeRequest);
         if(Set.of("entities","edges","dependencies","relationships","explain","gaps","spring","configurations","artifacts","metric-catalog","rules","findings").contains(op))data.put("page",new Page(r.limit,Optional.ofNullable(r.cursor)));
         else if(r.cursor!=null)throw new InputFailure("PAGE_NOT_APPLICABLE");
         if(r.arguments==null&&r.activeRequest!=null){
-            if(Set.of("entity","dependencies","expand","impact","reachability","explain").contains(op)&&args.containsKey("identity"))args.put("identity",resolveEntity(r,graph,r.activeRequest,GraphJson.string(args.get("identity"))));
+            if(Set.of("entity","dependencies","expand","impact","policy-impact","reachability","explain").contains(op)&&args.containsKey("identity"))args.put("identity",resolveEntity(r,graph,r.activeRequest,GraphJson.string(args.get("identity"))));
             if(Set.of("paths","shortest-path").contains(op))for(String key:List.of("source","target"))args.put(key,resolveEntity(r,graph,r.activeRequest,GraphJson.string(args.get(key))));
+            if(op.equals("visual-graph")&&args.containsKey("seed"))args.put("seed",resolveEntity(r,graph,r.activeRequest,GraphJson.string(args.get("seed"))));
         }
         return CanonicalJson.write(data).getBytes(StandardCharsets.UTF_8);
     }
@@ -352,18 +356,19 @@ public final class EvoApp {
     @Command(name="use",mixinStandardHelpOptions=true,description="Remember exact context / Ghi nhớ ngữ cảnh chính xác")
     private final class Use implements Callable<Integer>{final Root r;Use(Root r){this.r=r;}@Parameters(paramLabel="ID|N") String selected;
         public Integer call()throws Exception{r.validate();var graph=load(r);String context=findContext(graph,selected);if(r.graph==null)r.storage().rememberContext(graph,context);else r.storage().select(graph,Optional.of(context));if(interactiveDefaults!=null){interactiveDefaults.context=context;interactiveDefaults.graph=null;sessionGraph=graph;}return emit(r,"use",envelope(Map.of("graph",graph.identity(),"context",context,"selected",selected)),0);}}
-    @Command(name="export",mixinStandardHelpOptions=true,description="JSON, SARIF or bounded GraphML / Xuất báo cáo")
+    @Command(name="export",mixinStandardHelpOptions=true,description="JSON, SARIF, GraphML or Cytoscape / Xuất báo cáo")
     private final class Export implements Callable<Integer>{final Root r;Export(Root r){this.r=r;}
-        @Parameters(paramLabel="json|sarif|graphml") String format;
+        @Parameters(paramLabel="json|sarif|graphml|cytoscape") String format;
         @Option(names={"-o","--out"},paramLabel="FILE",description="Create new file; otherwise stdout / Tạo tệp mới hoặc stdout") Path target;
         @Option(names="--operation",paramLabel="NAME",description="JSON query operation / Thao tác JSON") String operation="summary";
         public Integer call()throws Exception{
-            r.validate();if(!Set.of("json","sarif","graphml").contains(format))throw new InputFailure("INVALID_FORMAT");var graph=load(r);String context=context(r,graph,true);byte[] bytes;int code;
+            r.validate();if(!Set.of("json","sarif","graphml","cytoscape").contains(format))throw new InputFailure("INVALID_FORMAT");var graph=load(r);String context=context(r,graph,true);byte[] bytes;int code;
             if(format.equals("sarif")){var report=evaluate(r,graph,context,r.policy);bytes=Exports.sarif(report);code=status(report.evaluation());}
-            else{String op=format.equals("graphml")?"edges":operation;var store=new InMemoryGraphStore();store.save(graph);if(r.other!=null)store.save(Workspace.graph(resolve(r.other)));var reports=new PublishedReports();String path="/api/v1/graphs/"+graph.identity().value();
-                if(ArchitectureQueryApi.REPORT_OPERATIONS.contains(op)){var report=evaluate(r,graph,context,r.policy);reports.publish(report);path+="/reports/"+report.identity().value()+"/"+op;}else path+="/queries/"+op;
-                var response=new ArchitectureQueryApi(store,reports,ApiLimits.defaults()).handle("POST",path,"application/json",body(r,graph,context,op,List.of()),()->false);var tree=GraphJson.object(GraphJson.read(Workspace.utf8(response.body()),GraphJson.Limits.defaults()));code=response.status()==200?status(tree.get("data")):2;
-                if(response.status()!=200)return emit(r,"export",tree,code);bytes=format.equals("graphml")?Exports.graphml(tree):response.body();}
+            else{String op=format.equals("graphml")?"edges":format.equals("cytoscape")?"visual-graph":operation;var store=new InMemoryGraphStore();store.save(graph);if(r.other!=null)store.save(Workspace.graph(resolve(r.other)));var reports=new PublishedReports();String path="/api/v1/graphs/"+graph.identity().value();
+                boolean isReportOp=ArchitectureQueryApi.REPORT_OPERATIONS.contains(op)&&(!op.equals("visual-graph")||r.policy!=null);
+                if(isReportOp){var report=evaluate(r,graph,context,r.policy);reports.publish(report);path+="/reports/"+report.identity().value()+"/"+op;}else path+="/queries/"+op;
+                var response=new ArchitectureQueryApi(store,reports,ApiLimits.defaults()).handle("POST",path,"application/json",body(r,graph,context,op,List.of(),isReportOp),()->false);var tree=GraphJson.object(GraphJson.read(Workspace.utf8(response.body()),GraphJson.Limits.defaults()));code=response.status()==200?status(tree.get("data")):2;
+                if(response.status()!=200)return emit(r,"export",tree,code);bytes=format.equals("graphml")?Exports.graphml(tree):format.equals("cytoscape")?Exports.cytoscape(tree):response.body();}
             if(bytes.length>32_000_000)throw new InputFailure("OUTPUT_LIMIT");
             if(target==null){out.print(Workspace.utf8(bytes));out.println();}else{Workspace.writeNew(resolve(target),bytes);return emit(r,"export",envelope(Map.of("format",format,"output",target.toString(),"content",ContentDigest.sha256(bytes),"bytes",bytes.length,"status",code==0?"COMPLETE":"PARTIAL")),code);}return code;
         }

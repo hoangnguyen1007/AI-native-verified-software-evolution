@@ -28,7 +28,7 @@ paths:
         required: true
         schema:
           type: string
-          enum: [summary, provenance, entities, entity, edges, dependencies, relationships, expand, paths, shortest-path, cycles, reachability, impact, evidence, explain, gaps, spring, configurations, artifacts, metric-catalog, metric, comparison-preparation]
+          enum: [summary, provenance, entities, entity, edges, dependencies, relationships, expand, paths, shortest-path, cycles, reachability, impact, evidence, explain, gaps, spring, configurations, artifacts, metric-catalog, metric, comparison-preparation, visual-graph]
     post:
       operationId: query
       description: Read-only POST supports structured filters. Arguments are operation-specific; see the M7.1 architecture contract. Domain PARTIAL/CANCELLED results use HTTP 200 and retain their gaps and bounds.
@@ -58,7 +58,7 @@ paths:
         required: true
         schema:
           type: string
-          enum: [rules, findings, finding, bundle, policy-metrics, assessment]
+          enum: [rules, findings, finding, bundle, policy-metrics, assessment, policy-impact, visual-graph]
     post:
       operationId: publishedReportArtifact
       description: Returns supplied immutable canonical results. Missing reports/artifacts are 404; no policy execution or score recomputation occurs.

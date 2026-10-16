@@ -41,6 +41,67 @@ final class Exports {
         for(Object edge:edges){var row=GraphJson.object(edge);xml.append("<edge id=\"").append(escape(GraphJson.string(row.get("identity")))).append("\" source=\"").append(escape(GraphJson.string(row.get("source")))).append("\" target=\"").append(escape(GraphJson.string(row.get("target")))).append("\"><data key=\"canonical\">").append(escape(CanonicalJson.write(row))).append("</data></edge>\n");}
         return xml.append("</graph>\n</graphml>\n").toString().getBytes(StandardCharsets.UTF_8);
     }
+    static byte[] cytoscape(Map<String,Object> envelope){
+        var data=GraphJson.object(envelope.get("data"));
+        if(data.containsKey("nodes")&&data.containsKey("edges")){
+            var cy=new LinkedHashMap<String,Object>();
+            cy.put("format","cytoscape.js");
+            var elements=new LinkedHashMap<String,Object>();
+            var rawNodes=GraphJson.array(data.get("nodes"));
+            var rawEdges=GraphJson.array(data.get("edges"));
+            var cyNodes=new ArrayList<Map<String,Object>>();
+            for(Object n:rawNodes){
+                var row=GraphJson.object(n);
+                var nodeData=new TreeMap<String,Object>();
+                nodeData.put("id",row.get("id"));
+                nodeData.put("label",row.get("label"));
+                nodeData.put("kind",row.get("kind"));
+                nodeData.put("scope",row.get("scope"));
+                if(row.get("parent")!=null)nodeData.put("parent",row.get("parent"));
+                if(row.get("origin")!=null)nodeData.put("origin",row.get("origin"));
+                if(row.get("sourceSet")!=null)nodeData.put("sourceSet",row.get("sourceSet"));
+                nodeData.put("violationCount",row.get("violationCount"));
+                if(row.get("worstSeverity")!=null)nodeData.put("worstSeverity",row.get("worstSeverity"));
+                nodeData.put("isCycle",row.get("isCycleParticipant"));
+                if(row.get("properties")!=null)nodeData.put("properties",row.get("properties"));
+                cyNodes.add(Map.of("data",nodeData));
+            }
+            var cyEdges=new ArrayList<Map<String,Object>>();
+            for(Object e:rawEdges){
+                var row=GraphJson.object(e);
+                var edgeData=new TreeMap<String,Object>();
+                edgeData.put("id",row.get("id"));
+                edgeData.put("source",row.get("source"));
+                edgeData.put("target",row.get("target"));
+                edgeData.put("kind",row.get("kind"));
+                edgeData.put("classification",row.get("classification"));
+                edgeData.put("isViolation",row.get("isViolation"));
+                edgeData.put("isCycle",row.get("isCycle"));
+                edgeData.put("supportCount",row.get("supportCount"));
+                if(row.get("properties")!=null)edgeData.put("properties",row.get("properties"));
+                cyEdges.add(Map.of("data",edgeData));
+            }
+            elements.put("nodes",cyNodes);
+            elements.put("edges",cyEdges);
+            cy.put("elements",elements);
+            if(data.containsKey("metadata"))cy.put("metadata",data.get("metadata"));
+            return BoundedJson.encode(cy,32_000_000);
+        }
+        var edges=GraphJson.array(data.get("items"));
+        var nodes=new TreeSet<String>();
+        var cyEdges=new ArrayList<Map<String,Object>>();
+        for(Object edge:edges){
+            var row=GraphJson.object(edge);
+            String src=GraphJson.string(row.get("source"));
+            String tgt=GraphJson.string(row.get("target"));
+            nodes.add(src);nodes.add(tgt);
+            cyEdges.add(Map.of("data",Map.of("id",row.get("identity"),"source",src,"target",tgt,"classification",row.getOrDefault("classification","MUST"))));
+        }
+        var cyNodes=new ArrayList<Map<String,Object>>();
+        for(String node:nodes)cyNodes.add(Map.of("data",Map.of("id",node,"label",node)));
+        var cy=Map.of("format","cytoscape.js","elements",Map.of("nodes",cyNodes,"edges",cyEdges));
+        return BoundedJson.encode(cy,32_000_000);
+    }
     private static String escape(String text){return text.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;").replace("\"","&quot;").replace("'","&apos;");}
     private Exports(){}
 }

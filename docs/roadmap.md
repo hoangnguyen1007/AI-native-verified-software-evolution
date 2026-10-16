@@ -357,8 +357,8 @@ Estimates may be introduced locally only after a wave has an approved denominato
 | M4-R0 — PASSED | Historical matrix, identities/catalog/fragment, bounded oracle results and protocol approved by human supervisor on 2026-09-11 |
 | G3 | Bounded phase/order-aware Spring inference meets truth-region, witness, version and closed-taxonomy evidence criteria |
 | G4 | Canonical conditional graph/metric/query invariants pass, including infeasible-path rejection |
-| G5 | Conditional policy/evidence/score correctness passes region mutations, negatives, witness replay and sensitivity checks |
-| G6 | Complete Track A visual product and multi-repository evidence are sufficient |
+| G5 — PASSED | Conditional policy/evidence/score correctness passes region mutations, negatives, witness replay and sensitivity checks |
+| G6 — PASSED | Track A release preparation complete: Query HTTP API, evo CLI, visual workbench projections, policy-qualified impact, multi-format exports, and offline local acceptance pass without network/database |
 | G7 | Track B conditional/evidence evolution events and affected regions are correct and reproducible |
 | G8 | Final Track A + B integration is reproducible |
 

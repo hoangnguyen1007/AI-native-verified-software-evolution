@@ -116,4 +116,18 @@ class PublishedReportsTest {
             else { assertFalse(GraphJson.array(data.get("gaps")).isEmpty()); assertEquals("PARTIAL",data.get("evaluationStatus")); }
         }
     }
+    @Test void policyImpactAndVisualGraphAreServedFromReport() {
+        var f=fixture(); var published=new PublishedReports(); var id=published.publish(f.report); var api=new ArchitectureQueryApi(f.store(),published,ApiLimits.defaults());
+        var bId = f.graph.nodes().stream().filter(n -> n.kind().equals("TYPE") && f.graph.evidence(n.evidence().getFirst()).orElseThrow().canonicalJson().contains("\"spelling\":\"B\"")).findFirst().orElseThrow().identity();
+        var impactResponse = report(api, f, id, "policy-impact", Map.of("arguments", Map.of("identity", bId)));
+        assertEquals(200, impactResponse.status());
+        var impactData = GraphJson.object(body(impactResponse).get("data"));
+        assertEquals(bId, impactData.get("changedEntity"));
+
+        var visualResponse = report(api, f, id, "visual-graph", Map.of());
+        assertEquals(200, visualResponse.status());
+        var visualData = GraphJson.object(body(visualResponse).get("data"));
+        assertNotNull(visualData.get("id"));
+        assertFalse(GraphJson.array(visualData.get("nodes")).isEmpty());
+    }
 }

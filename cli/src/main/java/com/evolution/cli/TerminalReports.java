@@ -35,6 +35,8 @@ final class TerminalReports {
         else if(data.containsKey("contexts")&&!data.containsKey("items"))contexts(data);
         else if(command.equals("score")&&data.containsKey("dimensions"))score(data);
         else if(data.containsKey("request")&&data.containsKey("region")&&data.containsKey("sources"))bundle(data);
+        else if(data.containsKey("changedEntity"))policyImpact(data);
+        else if(data.containsKey("nodes")&&data.containsKey("edges"))visualGraph(data);
         else if(command.equals("use")){field("Selected context","Ngữ cảnh đã chọn",data.get("selected"));field("Context ID","ID ngữ cảnh",shortId(data.get("context")));line("  "+tr("Next: show / find <text>","Tiếp theo: show / find <từ khóa>"));}
         else if(command.equals("export")){field("File","Tệp",data.get("output"));field("Format","Định dạng",data.get("format"));field("Bytes written","Byte đã ghi",data.get("bytes"));field("Content SHA-256","SHA-256 nội dung",shortId(data.get("content")));}
         else if(data.containsKey("items"))items(command,data);
@@ -232,5 +234,73 @@ final class TerminalReports {
             else line(pad+e.getKey()+"  "+(item instanceof String s&&s.contains("sha256:")?name(s):str(item)));
         }}else if(value instanceof List<?> rows){for(Object row:rows.stream().limit(8).toList())compact(row,depth+1);if(rows.size()>8)line("  "+tr("More rows: --details","Còn dòng khác: --details"));}
         else line(" ".repeat(2+depth*2)+name(value));
+    }
+    private void policyImpact(Map<String,Object> d){
+        section("Policy-qualified structural impact","Ảnh hưởng cấu trúc có điều kiện chính sách");
+        field("Changed symbol","Symbol thay đổi",name(d.get("changedEntity")));
+        var affected=list(d.getOrDefault("affectedEntities",d.get("directDependents")));
+        field("Reachable affected entities","Thực thể ảnh hưởng liên quan",affected.size());
+        if(!affected.isEmpty()&&affected.size()<=10)for(Object ent:affected)if(!ent.equals(d.get("changedEntity")))line("    "+arrow()+name(ent));
+        if(d.get("worstSeverity")!=null)field("Worst severity","Mức độ nghiêm trọng cao nhất",d.get("worstSeverity"));
+        if(d.get("highestQuantifier")!=null)field("Highest quantifier","Lượng từ cao nhất",d.get("highestQuantifier"));
+
+        var rules=list(d.getOrDefault("affectedRules",d.get("rules")));
+        section("Affected policy rules","Quy tắc kiến trúc bị ảnh hưởng ("+rules.size()+")");
+        if(rules.isEmpty()){line("  "+tr("No policy rules affected by this change.","Không có quy tắc chính sách nào bị ảnh hưởng."));}
+        else for(Object rObj:rules){
+            var r=map(rObj);
+            String ruleId=r.get("ruleId")!=null?str(r.get("ruleId")):str(map(r.get("header")).get("id"));
+            String sev=r.get("severity")!=null?str(r.get("severity")):str(map(r.get("header")).get("severity"));
+            v.heading("  ["+sev+"] "+ruleId);
+            if(r.containsKey("kind"))line("     "+tr("Scope / Kind","Phạm vi / Loại")+": "+str(r.get("kind")));
+            line("     "+tr("Direct findings","Phát hiện trực tiếp")+": "+str(r.get("directFindingsCount"))+" · "+tr("Transitive","Gián tiếp")+": "+str(r.get("transitiveFindingsCount")));
+        }
+
+        var directFindings=list(d.get("directFindings"));
+        var transFindings=list(d.get("transitiveFindings"));
+        var allFindings=new ArrayList<Object>();
+        allFindings.addAll(directFindings);
+        allFindings.addAll(transFindings);
+        if(allFindings.isEmpty()&&d.containsKey("findings"))allFindings.addAll(list(d.get("findings")));
+
+        if(!allFindings.isEmpty()){
+            section("Impact findings details","Chi tiết phát hiện ảnh hưởng ("+allFindings.size()+")");int n=0;
+            for(Object fObj:allFindings){
+                n++;var f=map(fObj);
+                String ruleId=f.get("ruleId")!=null?str(f.get("ruleId")):str(map(f.get("rule")).get("id"));
+                String sev=f.get("severity")!=null?str(f.get("severity")):str(map(f.get("rule")).get("severity"));
+                boolean isDirect=Boolean.TRUE.equals(f.get("direct"))||Boolean.TRUE.equals(f.get("isDirect"));
+                v.heading("  "+n+"  ["+sev+"] "+ruleId+" ("+(isDirect?tr("DIRECT","TRỰC TIẾP"):tr("TRANSITIVE","GIÁN TIẾP"))+")");
+                line("     "+tr("Quantifier","Lượng từ")+": "+str(f.getOrDefault("classification",f.get("quantifier"))));
+                var matched=list(f.get("matchedEntities"));
+                if(!matched.isEmpty())line("     "+tr("Matched entities","Thực thể khớp")+": "+matched.stream().map(this::name).toList());
+                else if(f.get("affectedVertex")!=null)line("     "+tr("Affected vertex","Đỉnh bị ảnh hưởng")+": "+name(f.get("affectedVertex")));
+                if(f.get("bundleIdentity")!=null)line("     "+tr("Evidence bundle","Gói bằng chứng")+": "+shortId(f.get("bundleIdentity")));
+                else{var bundle=map(f.get("bundle"));if(!bundle.isEmpty()&&bundle.get("identity")!=null)line("     "+tr("Evidence bundle","Gói bằng chứng")+": "+shortId(bundle.get("identity")));}
+            }
+        }
+        if(d.get("witness") instanceof Map<?,?> w&&!w.isEmpty()){section("Feasibility witness","Nhân chứng khả thi");compact(w,1);}
+    }
+    private void visualGraph(Map<String,Object> d){
+        section("Visual workbench graph projection","Phép chiếu đồ thị trực quan");
+        var meta=map(d.get("metadata"));field("Projection ID","ID phép chiếu",shortId(d.get("id")));
+        if(!meta.isEmpty()){
+            field("Scope","Phạm vi",str(meta.get("scope")));field("Projection","Phép chiếu",str(meta.get("projection")));
+            field("Total nodes","Tổng số đỉnh",str(meta.get("totalNodes")));
+            field("Compound hierarchy nodes","Đỉnh phân cấp (Module/Package)",str(meta.get("compoundNodesCount")));
+            field("Total edges","Tổng số cạnh",str(meta.get("totalEdges")));
+        }
+        var nodes=list(d.get("nodes"));var edges=list(d.get("edges"));
+        long violationNodes=nodes.stream().map(TerminalReports::map).filter(n->number(n.get("violationCount"))>0).count();
+        long cycleNodes=nodes.stream().map(TerminalReports::map).filter(n->Boolean.TRUE.equals(n.get("isCycleParticipant"))).count();
+        field("Nodes with policy violations","Đỉnh có vi phạm chính sách",violationNodes);
+        field("Nodes in dependency cycles","Đỉnh tham gia chu trình",cycleNodes);
+        long violationEdges=edges.stream().map(TerminalReports::map).filter(e->Boolean.TRUE.equals(e.get("isViolation"))).count();
+        long cycleEdges=edges.stream().map(TerminalReports::map).filter(e->Boolean.TRUE.equals(e.get("isCycle"))).count();
+        field("Violating dependency edges","Cạnh phụ thuộc vi phạm",violationEdges);
+        field("Cyclic dependency edges","Cạnh phụ thuộc chu trình",cycleEdges);
+        line("");line("  "+tr("Export options:","Tùy chọn xuất:"));
+        line("    evo export cytoscape -o graph.json");
+        line("    evo export graphml   -o graph.graphml");
     }
 }

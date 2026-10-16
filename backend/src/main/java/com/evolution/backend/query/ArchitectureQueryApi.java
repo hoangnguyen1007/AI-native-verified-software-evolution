@@ -5,7 +5,9 @@ import com.evolution.analysis.contract.serialization.CanonicalJson;
 import com.evolution.analysis.graph.*;
 import com.evolution.analysis.metrics.*;
 import com.evolution.analysis.policy.PolicyEvaluation;
+import com.evolution.analysis.policy.PolicyImpactService;
 import com.evolution.analysis.query.*;
+import com.evolution.analysis.query.projection.GraphProjectionService;
 import java.nio.ByteBuffer;
 import java.nio.charset.*;
 import java.util.*;
@@ -17,8 +19,8 @@ public final class ArchitectureQueryApi {
     public static final String VERSION = "architecture.http:m7.1-v1";
     public static final List<String> OPERATIONS = List.of("summary","provenance","entities","entity","edges","dependencies",
             "relationships","expand","paths","shortest-path","cycles","reachability","impact","evidence","explain","gaps",
-            "spring","configurations","artifacts","metric-catalog","metric","comparison-preparation");
-    public static final List<String> REPORT_OPERATIONS = List.of("rules","findings","finding","bundle","policy-metrics","assessment");
+            "spring","configurations","artifacts","metric-catalog","metric","comparison-preparation","visual-graph");
+    public static final List<String> REPORT_OPERATIONS = List.of("rules","findings","finding","bundle","policy-metrics","assessment","policy-impact","visual-graph");
     public record Response(int status, byte[] body) {
         public Response { body = body.clone(); }
         @Override public byte[] body() { return body.clone(); }
@@ -126,7 +128,10 @@ public final class ArchitectureQueryApi {
             QueryJson.object(input,"arguments","page");
             if (input.containsKey("page") && input.get("page")==null) throw new IllegalArgumentException("Page object required");
             var args=input.containsKey("arguments") ? GraphJson.object(input.get("arguments")) : Map.<String,Object>of();
-            return report(parts[7],reportId,report,args,QueryJson.page(input.get("page")),input.containsKey("page"));
+            long deadline=System.nanoTime()+limits.queryTimeoutMillis()*1_000_000;
+            var guard=ArchitectureQueryService.operationalGuard(cancelled,deadline,8_000_000);
+            var service=factory.apply(graph,guard);
+            return report(parts[7],reportId,report,args,QueryJson.page(input.get("page")),input.containsKey("page"),service);
         }
         throw new Failure(404,"NOT_FOUND");
     }
@@ -143,6 +148,7 @@ public final class ArchitectureQueryApi {
             case "artifacts" -> QueryJson.object(a,"families");
             case "metric" -> QueryJson.object(a,"metric","subject");
             case "comparison-preparation" -> QueryJson.object(a,"graph","context");
+            case "visual-graph" -> QueryJson.object(a,"seed","depth");
             default -> QueryJson.object(a);
         }
         return switch (op) {
@@ -168,13 +174,27 @@ public final class ArchitectureQueryApi {
             case "metric-catalog" -> q.metricCatalog(r,p);
             case "metric" -> q.metric(r,QueryJson.text(a,"metric"),QueryJson.text(a,"subject"));
             case "comparison-preparation" -> q.comparisonPreparation(r,load(new ContentDigest(QueryJson.text(a,"graph"))),QueryJson.text(a,"context"));
+            case "visual-graph" -> {
+                var projection = new GraphProjectionService(q);
+                if (a.containsKey("seed")) {
+                    int depth = a.containsKey("depth") && a.get("depth") instanceof Number n ? n.intValue() : 1;
+                    yield projection.focusedSubgraph(r, QueryJson.text(a, "seed"), depth, Optional.empty());
+                }
+                yield projection.project(r, Optional.empty());
+            }
             default -> throw new Failure(404,"NOT_FOUND");
         };
     }
-    private Object report(String op,ContentDigest id,PublishedReports.Report report,Map<String,Object> args,Page page,boolean hasPage) {
+    private Object report(String op,ContentDigest id,PublishedReports.Report report,Map<String,Object> args,Page page,boolean hasPage,ArchitectureQueryService service) {
         boolean paged=op.equals("rules") || op.equals("findings");
         if (hasPage && !paged) throw new IllegalArgumentException("Page not applicable");
-        QueryJson.object(args,op.equals("finding") || op.equals("bundle") ? new String[]{"identity"} : new String[0]);
+        if (op.equals("finding") || op.equals("bundle") || op.equals("policy-impact")) {
+            QueryJson.object(args, "identity");
+        } else if (op.equals("visual-graph")) {
+            QueryJson.object(args, "seed", "depth", "violationsOnly");
+        } else {
+            QueryJson.object(args);
+        }
         var e=report.evaluation();
         return switch (op) {
             case "rules" -> reportPage(id,op,page,e.rules().stream().sorted(Comparator.comparing(r -> r.identity())).map(r -> (Object)Map.of("identity",r.identity(),"result",r)).toList(),e);
@@ -187,6 +207,25 @@ public final class ArchitectureQueryApi {
             }
             case "policy-metrics" -> report.metrics().orElseThrow(() -> new Failure(404,"REPORT_ARTIFACT_UNAVAILABLE"));
             case "assessment" -> report.assessment().orElseThrow(() -> new Failure(404,"REPORT_ARTIFACT_UNAVAILABLE"));
+            case "policy-impact" -> {
+                var target = QueryJson.text(args, "identity");
+                var req = new Request(e.graph(), e.context(), Scope.TYPE, Projection.BOUNDED_UNION,
+                        Direction.INCOMING, Set.of("graph.depends-on"), Population.all(), false, Optional.empty(), Limits.defaults());
+                yield new PolicyImpactService(service).evaluate(req, e, target);
+            }
+            case "visual-graph" -> {
+                var projection = new GraphProjectionService(service);
+                var req = new Request(e.graph(), e.context(), Scope.TYPE, Projection.BOUNDED_UNION,
+                        Direction.OUTGOING, Set.of("graph.depends-on"), Population.all(), false, Optional.empty(), Limits.defaults());
+                if (Boolean.TRUE.equals(args.get("violationsOnly"))) {
+                    yield projection.violationsSubgraph(req, e);
+                }
+                if (args.containsKey("seed")) {
+                    int depth = args.containsKey("depth") && args.get("depth") instanceof Number n ? n.intValue() : 1;
+                    yield projection.focusedSubgraph(req, QueryJson.text(args, "seed"), depth, Optional.of(e));
+                }
+                yield projection.project(req, Optional.of(e));
+            }
             default -> throw new Failure(404,"NOT_FOUND");
         };
     }
