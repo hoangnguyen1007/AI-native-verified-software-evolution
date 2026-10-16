@@ -36,30 +36,83 @@ public final class ArchitectureHttpServer implements AutoCloseable {
         var expired=new AtomicBoolean();
         ScheduledFuture<?> deadline=deadlines.schedule(() -> { expired.set(true); exchange.close(); },api.limits().queryTimeoutMillis(),TimeUnit.MILLISECONDS);
         try (exchange) {
-            ArchitectureQueryApi.Response response;
-            if (!localOrigin(exchange)) response=api.error(403,"FORBIDDEN_ORIGIN");
-            else if (!(acquired=slots.tryAcquire())) response=api.error(503,"BUSY");
-            else if (exchange.getRequestURI().getRawQuery()!=null) response=api.error(400,"INVALID_REQUEST");
-            else if (!acceptable(exchange.getRequestHeaders().containsKey("Accept") ? String.join(",",exchange.getRequestHeaders().get("Accept")) : null)) response=api.error(406,"NOT_ACCEPTABLE");
-            else if (exchange.getRequestHeaders().containsKey("Content-Encoding")) response=api.error(415,"UNSUPPORTED_MEDIA_TYPE");
-            else if (exchange.getRequestHeaders().getOrDefault("Content-Type",List.of()).size()>1) response=api.error(415,"UNSUPPORTED_MEDIA_TYPE");
-            else {
-                // The exchange deadline bounds a stalled body/read/write as well as cooperative query work.
-                byte[] body=exchange.getRequestBody().readNBytes(api.limits().requestBytes()+1);
-                response=api.handle(exchange.getRequestMethod(),exchange.getRequestURI().getRawPath(),
-                        exchange.getRequestHeaders().getFirst("Content-Type"),body,() -> closed.get() || expired.get() || Thread.currentThread().isInterrupted());
+            String rawPath = exchange.getRequestURI().getRawPath();
+            if (!localOrigin(exchange)) {
+                sendJsonResponse(exchange, api.error(403,"FORBIDDEN_ORIGIN"));
+                return;
             }
-            var headers=exchange.getResponseHeaders();
-            headers.set("Content-Type","application/json; charset=utf-8");
-            headers.set("Cache-Control","no-store");
-            headers.set("X-Content-Type-Options","nosniff");
-            headers.set("Content-Security-Policy","default-src 'none'; frame-ancestors 'none'");
-            if (response.status()==405) headers.set("Allow",ArchitectureQueryApi.allowedMethods(exchange.getRequestURI().getRawPath()));
-            byte[] bytes=response.body();
-            // HEAD has a useful error status and headers but never an HTTP response body.
-            exchange.sendResponseHeaders(response.status(),exchange.getRequestMethod().equals("HEAD") ? -1 : bytes.length);
-            if (!exchange.getRequestMethod().equals("HEAD")) exchange.getResponseBody().write(bytes);
+            if (!(acquired=slots.tryAcquire())) {
+                sendJsonResponse(exchange, api.error(503,"BUSY"));
+                return;
+            }
+            if (rawPath.startsWith("/api/") || rawPath.equals("/api/v1")) {
+                ArchitectureQueryApi.Response response;
+                if (exchange.getRequestURI().getRawQuery()!=null) response=api.error(400,"INVALID_REQUEST");
+                else if (!acceptable(exchange.getRequestHeaders().containsKey("Accept") ? String.join(",",exchange.getRequestHeaders().get("Accept")) : null)) response=api.error(406,"NOT_ACCEPTABLE");
+                else if (exchange.getRequestHeaders().containsKey("Content-Encoding")) response=api.error(415,"UNSUPPORTED_MEDIA_TYPE");
+                else if (exchange.getRequestHeaders().getOrDefault("Content-Type",List.of()).size()>1) response=api.error(415,"UNSUPPORTED_MEDIA_TYPE");
+                else {
+                    byte[] body=exchange.getRequestBody().readNBytes(api.limits().requestBytes()+1);
+                    response=api.handle(exchange.getRequestMethod(),rawPath,
+                            exchange.getRequestHeaders().getFirst("Content-Type"),body,() -> closed.get() || expired.get() || Thread.currentThread().isInterrupted());
+                }
+                sendJsonResponse(exchange, response);
+            } else {
+                serveStatic(exchange, rawPath);
+            }
         } finally { if (deadline!=null) deadline.cancel(false); if (acquired) slots.release(); }
+    }
+    private void sendJsonResponse(HttpExchange exchange, ArchitectureQueryApi.Response response) throws IOException {
+        var headers=exchange.getResponseHeaders();
+        headers.set("Content-Type","application/json; charset=utf-8");
+        headers.set("Cache-Control","no-store");
+        headers.set("X-Content-Type-Options","nosniff");
+        headers.set("Content-Security-Policy","default-src 'none'; frame-ancestors 'none'");
+        if (response.status()==405) headers.set("Allow",ArchitectureQueryApi.allowedMethods(exchange.getRequestURI().getRawPath()));
+        byte[] bytes=response.body();
+        exchange.sendResponseHeaders(response.status(),exchange.getRequestMethod().equals("HEAD") ? -1 : bytes.length);
+        if (!exchange.getRequestMethod().equals("HEAD")) exchange.getResponseBody().write(bytes);
+    }
+    private void serveStatic(HttpExchange exchange, String rawPath) throws IOException {
+        if (!Set.of("GET","HEAD").contains(exchange.getRequestMethod())) {
+            var headers = exchange.getResponseHeaders();
+            headers.set("Allow", "GET, HEAD");
+            headers.set("Cache-Control", "no-store");
+            exchange.sendResponseHeaders(405, -1);
+            return;
+        }
+        if (rawPath.contains("..") || rawPath.contains("//")) {
+            exchange.sendResponseHeaders(400, -1);
+            return;
+        }
+        String path = rawPath.equals("/") ? "/index.html" : rawPath;
+        byte[] bytes;
+        try (var in = ArchitectureHttpServer.class.getResourceAsStream("/web" + path)) {
+            if (in == null) {
+                exchange.sendResponseHeaders(404, -1);
+                return;
+            }
+            bytes = in.readAllBytes();
+        }
+        var headers = exchange.getResponseHeaders();
+        headers.set("Content-Type", mimeType(path));
+        headers.set("Cache-Control", "no-cache");
+        headers.set("X-Content-Type-Options", "nosniff");
+        headers.set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'");
+        exchange.sendResponseHeaders(200, exchange.getRequestMethod().equals("HEAD") ? -1 : bytes.length);
+        if (!exchange.getRequestMethod().equals("HEAD")) {
+            exchange.getResponseBody().write(bytes);
+        }
+    }
+    private static String mimeType(String path) {
+        if (path.endsWith(".html")) return "text/html; charset=utf-8";
+        if (path.endsWith(".css")) return "text/css; charset=utf-8";
+        if (path.endsWith(".js")) return "application/javascript; charset=utf-8";
+        if (path.endsWith(".svg")) return "image/svg+xml";
+        if (path.endsWith(".json")) return "application/json; charset=utf-8";
+        if (path.endsWith(".png")) return "image/png";
+        if (path.endsWith(".ico")) return "image/x-icon";
+        return "application/octet-stream";
     }
     private boolean localOrigin(HttpExchange exchange) {
         var hosts=exchange.getRequestHeaders().get("Host");

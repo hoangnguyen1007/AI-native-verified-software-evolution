@@ -55,6 +55,9 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
     }
     @Override public AnalysisJobs.Outcome run(AnalysisJobs.Control control) throws Exception {
         control.stage(AnalysisJobs.Stage.ACQUISITION);
+        return runAcquired(control);
+    }
+    AnalysisJobs.Outcome runAcquired(AnalysisJobs.Control control) throws Exception {
         var source = safe(input.source()); var cache = safe(input.mavenCache());
         var excluded = new TreeSet<>(input.exclusions());
         if (!Files.isDirectory(source,LinkOption.NOFOLLOW_LINKS)) {

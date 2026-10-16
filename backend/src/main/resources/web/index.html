@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Evo Architecture Workbench</title><link rel="icon" href="/logo.svg" type="image/svg+xml"><link rel="stylesheet" href="/styles.css">
+<script defer src="/vendor/cytoscape-3.30.2.min.js"></script><script defer src="/model.js"></script><script defer src="/app.js"></script>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<div class="app-shell">
+<aside class="sidebar" id="sidebar" aria-label="Workspace">
+<a class="brand" href="/" aria-label="Evo home"><img src="/logo.svg" alt="" width="36" height="36"><span>evo<span class="brand-dot">.</span></span></a>
+<button class="button primary wide" data-action="connect">＋ Connect repository</button>
+<div class="sidebar-section"><p class="eyebrow">REPOSITORIES</p><div id="repositories" class="sidebar-list"><p class="muted small">Connecting to server…</p></div></div>
+<div class="sidebar-section history-section"><div class="section-heading"><p class="eyebrow">RECENT ANALYSES</p><button class="icon-button" data-action="refresh" aria-label="Refresh analysis history" title="Refresh history">↻</button></div><div id="history" class="sidebar-list"></div><button id="history-more" class="button subtle wide" hidden>Load more analyses</button></div>
+<div class="sidebar-bottom"><span class="connection-dot" id="connection-dot"></span><span id="connection-status">Connecting…</span></div>
+</aside>
+<div class="workspace">
+<header class="topbar"><button id="sidebar-toggle" class="icon-button" aria-label="Toggle sidebar" aria-expanded="true" aria-controls="sidebar">☰</button><span class="topbar-title">Architecture workspace</span><div class="topbar-actions"><button id="theme-toggle" class="button subtle" aria-label="Switch to light theme">Light theme</button></div></header>
+<main id="main" tabindex="-1">
+<div class="page-heading"><div><h1 id="repository-title">Explore your architecture</h1><p id="repository-description" class="muted">Connect a repository, run an analysis, then follow the evidence.</p></div><button id="analyze" class="button primary" disabled>Run analysis ↗</button></div>
+<div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
+<section id="job-panel" class="card job-panel" aria-label="Analysis progress" hidden><div class="section-heading"><div><span class="badge" id="job-state"></span><h2 id="job-title">Analysis</h2><p id="job-description" class="muted small"></p></div><button id="cancel-job" class="button danger" hidden>Cancel analysis</button></div><ol id="job-events" class="job-events"></ol><div class="job-links"><button id="job-diagnostics" class="text-button">Input diagnostics</button><button id="job-gaps" class="text-button">Analysis limitations</button><button id="job-receipt" class="text-button">View receipt</button></div></section>
+<div id="welcome" class="welcome card"><img src="/logo.svg" alt="" width="64" height="64"><h2>Start with your repository</h2><p class="muted">See how your Java code connects.<br>Find dependencies, inspect rules and trace each result to its evidence.</p><button class="button primary" data-action="connect">Connect repository →</button><p class="small muted">Local folders or public Git repositories. Source code is never executed.</p></div>
+<section id="analysis-workspace" hidden aria-label="Analysis results">
+<div class="context-bar"><label for="context">Analysis context</label><select id="context"></select><span class="muted small" id="context-hint">Choose one module and source set to inspect.</span><button id="provenance" class="text-button">View provenance</button></div>
+<form id="search-form" class="search-bar"><span aria-hidden="true">⌕</span><label class="sr-only" for="search">Search classes and symbols</label><input id="search" type="search" placeholder="Find a class or symbol…" autocomplete="off"><button class="button" type="submit">Search →</button></form>
+<nav id="tabs" class="tabs" aria-label="Analysis views" role="tablist">
+<button role="tab" id="tab-overview" aria-controls="panel-overview" aria-selected="true" data-tab="overview">Overview</button>
+<button role="tab" id="tab-structure" aria-controls="panel-structure" aria-selected="false" tabindex="-1" data-tab="structure">Structure</button>
+<button role="tab" id="tab-graph" aria-controls="panel-graph" aria-selected="false" tabindex="-1" data-tab="graph">Dependency graph</button>
+<button role="tab" id="tab-policy" aria-controls="panel-policy" aria-selected="false" tabindex="-1" data-tab="policy">Rules & findings</button>
+<button role="tab" id="tab-spring" aria-controls="panel-spring" aria-selected="false" tabindex="-1" data-tab="spring">Spring</button>
+<button role="tab" id="tab-impact" aria-controls="panel-impact" aria-selected="false" tabindex="-1" data-tab="impact">Change impact</button>
+<button role="tab" id="tab-gaps" aria-controls="panel-gaps" aria-selected="false" tabindex="-1" data-tab="gaps">Limitations</button>
+</nav>
+<div id="view-status" class="muted small" role="status" aria-live="polite"></div>
+<section role="tabpanel" id="panel-overview" aria-labelledby="tab-overview" tabindex="0"></section>
+<section role="tabpanel" id="panel-structure" aria-labelledby="tab-structure" tabindex="0" hidden></section>
+<section role="tabpanel" id="panel-graph" aria-labelledby="tab-graph" tabindex="0" hidden></section>
+<section role="tabpanel" id="panel-policy" aria-labelledby="tab-policy" tabindex="0" hidden></section>
+<section role="tabpanel" id="panel-spring" aria-labelledby="tab-spring" tabindex="0" hidden></section>
+<section role="tabpanel" id="panel-impact" aria-labelledby="tab-impact" tabindex="0" hidden></section>
+<section role="tabpanel" id="panel-gaps" aria-labelledby="tab-gaps" tabindex="0" hidden></section>
+</section>
+<footer class="footer">Evo · Repository architecture analysis</footer>
+</main></div></div>
+<dialog id="connect-dialog" aria-labelledby="connect-title">
+<form id="connect-form"><div class="dialog-heading"><div><h2 id="connect-title">Connect your code</h2></div><button type="button" class="icon-button" data-close="connect-dialog" aria-label="Close repository dialog">×</button></div>
+<p class="muted">Paste an absolute local folder path or a public HTTPS Git URL.</p>
+<label for="repository-source">Repository location</label><input id="repository-source" required maxlength="4096" placeholder="C:/projects/my-app or https://github.com/team/repo" aria-describedby="source-help" autocomplete="off">
+<p id="source-help" class="muted small">GitHub, GitLab and Bitbucket. For private repositories, use a local checkout. Java analysis reads source and available dependencies without running your build.</p>
+<details><summary>Architecture rules (optional)</summary><label for="repository-policy">Policy YAML</label><textarea id="repository-policy" rows="6" maxlength="8192" placeholder="Paste your architecture policy YAML"></textarea><p class="muted small">Rules enable architecture checks and an assessment when sufficient evidence is available.</p></details>
+<p id="connect-error" class="form-error" role="alert" hidden></p><div class="dialog-actions"><button type="button" class="button" data-close="connect-dialog">Cancel</button><button id="connect-submit" class="button primary" type="submit">Connect repository</button></div>
+</form></dialog>
+<dialog id="inspector" class="inspector" aria-labelledby="inspector-title"><div class="dialog-heading"><div><p class="eyebrow" id="inspector-kind">DETAILS</p><h2 id="inspector-title"></h2></div><button class="icon-button" data-close="inspector" aria-label="Close details">×</button></div><div id="inspector-body"></div><div class="dialog-actions"><button id="download-details" class="button">Download JSON</button><button class="button primary" data-close="inspector">Done</button></div></dialog>
+<noscript>This workspace needs JavaScript to connect to the local analysis API.</noscript>
+</body></html>

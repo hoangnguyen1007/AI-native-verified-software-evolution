@@ -5,6 +5,9 @@ import com.evolution.analysis.graph.InMemoryGraphStore;
 import com.evolution.analysis.contract.serialization.CanonicalJson;
 import com.evolution.analysis.contract.common.ContentDigest;
 import com.evolution.backend.analysis.AnalysisJobs;
+import com.evolution.backend.analysis.RepositoryConnections;
+import java.nio.file.*;
+import org.junit.jupiter.api.io.TempDir;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.net.http.*;
@@ -14,6 +17,25 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 class AnalysisJobApiTest {
+    @TempDir Path connectionRoot;
+    @Test void optInConnectionsRegisterRealSourcesWithoutExposingHostPaths() throws Exception {
+        var source=Files.createDirectory(connectionRoot.resolve("application"));
+        var store=new InMemoryGraphStore(); var reports=new PublishedReports();
+        try (var jobs=new AnalysisJobs(List.of(),store,reports,AnalysisJobs.Limits.defaults())) {
+            var disabled=new ArchitectureQueryApi(store,reports,ApiLimits.defaults(),jobs);
+            assertEquals(503,call(disabled,"GET","/api/v1/analysis/connections","").status());
+            var connections=new RepositoryConnections(jobs,Path.of(System.getProperty("java.home")),21,connectionRoot,connectionRoot,Optional.empty());
+            var api=new ArchitectureQueryApi(store,reports,ApiLimits.defaults(),jobs,connections);
+            var created=call(api,"POST","/api/v1/analysis/connections",CanonicalJson.write(Map.of("source",source.toString())));
+            assertEquals(201,created.status()); assertEquals("application",data(created).get("label"));
+            assertFalse(new String(created.body(),StandardCharsets.UTF_8).contains(connectionRoot.toString()));
+            assertEquals(1,jobs.setups().size());
+            assertEquals(200,call(api,"GET","/api/v1/analysis/connections","").status());
+            assertEquals(400,call(api,"POST","/api/v1/analysis/connections","{\"source\":\"https://user:secret@github.com/team/repo\"}").status());
+            assertEquals(400,call(api,"POST","/api/v1/analysis/connections","{\"source\":\"https://github.com/team/repo\",\"command\":\"exec\"}").status());
+            assertEquals(405,call(api,"DELETE","/api/v1/analysis/connections","").status());
+        }
+    }
     static Map<String,Object> data(ArchitectureQueryApi.Response response) {
         var body = GraphJson.object(GraphJson.read(new String(response.body(),StandardCharsets.UTF_8),GraphJson.Limits.defaults()));
         assertEquals(ContentDigest.sha256Utf8(CanonicalJson.write(body.get("data"))).value(),body.get("resultIdentity"));

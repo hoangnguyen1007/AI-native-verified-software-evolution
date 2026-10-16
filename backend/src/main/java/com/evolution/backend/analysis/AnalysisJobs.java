@@ -134,6 +134,12 @@ public final class AnalysisJobs implements AutoCloseable {
     public Limits limits() { return limits; }
     public boolean uses(GraphStore graphs, PublishedReports reports) { return this.graphs == graphs && this.reports == reports; }
     public synchronized List<Setup> setups() { return setups.values().stream().map(Registration::setup).toList(); }
+    /** Only an explicitly enabled local connection adapter may add immutable selections. */
+    public synchronized void register(Registration registration) {
+        if (closed) throw new Rejected("JOBS_CLOSED");
+        if (setups.size() >= 32) throw new Rejected("SETUP_CAPACITY");
+        if (setups.putIfAbsent(registration.setup().id(),registration) != null) throw new IllegalArgumentException("Duplicate setup");
+    }
     public synchronized Submission submit(String setup, String idempotencyKey) {
         identifier(setup); identifier(idempotencyKey);
         if (closed) throw new Rejected("JOBS_CLOSED");

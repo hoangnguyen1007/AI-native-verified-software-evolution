@@ -91,4 +91,32 @@ class ArchitectureHttpServerTest {
             assertEquals(200,send(server,"GET","/api/v1",null,"").statusCode());
         }
     }
+    @Test void staticWebAssetsAreServedForNonApiRoutes() throws Exception {
+        var api=new ArchitectureQueryApi(new QueryFixture().store());
+        try(var server=new ArchitectureHttpServer(api,0)) {
+            server.start();
+            var index=send(server,"GET","/",null,"");
+            assertEquals(200,index.statusCode());
+            assertEquals("text/html; charset=utf-8",index.headers().firstValue("Content-Type").orElseThrow());
+            assertTrue(index.body().contains("Evo Architecture Workbench"));
+            var csp=index.headers().firstValue("Content-Security-Policy").orElseThrow();
+            assertTrue(csp.contains("script-src 'self'")); assertTrue(csp.contains("connect-src 'self'"));
+            assertFalse(csp.contains("https:")); assertFalse(index.body().contains("onclick="));
+            for (var asset : List.of("/styles.css","/app.js","/model.js","/vendor/cytoscape-3.30.2.min.js")) {
+                assertEquals(200,send(server,"GET",asset,null,"").statusCode(),asset);
+                var head=send(server,"HEAD",asset,null,""); assertEquals(200,head.statusCode()); assertTrue(head.body().isEmpty());
+            }
+
+            var logo=send(server,"GET","/logo.svg",null,"");
+            assertEquals(200,logo.statusCode());
+            assertEquals("image/svg+xml",logo.headers().firstValue("Content-Type").orElseThrow());
+
+            var missing=send(server,"GET","/non-existent-file.xyz",null,"");
+            assertEquals(404,missing.statusCode());
+
+            var postRoot=send(server,"POST","/","text/plain","hello");
+            assertEquals(405,postRoot.statusCode());
+            assertEquals("GET, HEAD",postRoot.headers().firstValue("Allow").orElseThrow());
+        }
+    }
 }

@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: Architecture Workbench API
-  version: m8.1-v1
-  description: Local cancellable analysis jobs and unchanged canonical query/report adapters. Job routes require operator-registered setups.
+  version: m8.2-v1
+  description: Local cancellable analysis, optional loopback repository connections and canonical query/report adapters. Connections require explicit embedding support.
 servers:
   - url: http://127.0.0.1:8080
 paths:
@@ -74,6 +74,30 @@ paths:
                 page: {$ref: '#/components/schemas/Page'}
       responses:
         '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/analysis/connections:
+    get:
+      operationId: repositoryConnections
+      description: Registered display labels and public Git host allowlist. Local paths and credentials are never returned. Disabled adapters return 503.
+      responses:
+        '200': {$ref: '#/components/responses/JobSuccess'}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      operationId: connectRepository
+      description: Register an absolute local directory or credential-free public HTTPS GitHub, GitLab or Bitbucket repository. No target lifecycle runs. Git acquisition occurs only in a separately submitted cancellable job. Returns an immutable setup selection; repeat inputs reuse it. Private repositories require local checkout.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [source]
+              properties:
+                source: {type: string, minLength: 1, maxLength: 4096}
+                policy: {type: string, minLength: 1, maxLength: 8192, description: Optional policy YAML; the inherited transport text and request-byte limits apply.}
+      responses:
+        '201': {$ref: '#/components/responses/JobSuccess'}
         default: {$ref: '#/components/responses/Error'}
   /api/v1/analysis/setups:
     get:

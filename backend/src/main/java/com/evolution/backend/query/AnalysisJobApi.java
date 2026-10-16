@@ -4,6 +4,7 @@ import com.evolution.analysis.contract.common.ContentDigest;
 import com.evolution.analysis.graph.GraphJson;
 import com.evolution.analysis.query.ArchitectureQuery;
 import com.evolution.backend.analysis.AnalysisJobs;
+import com.evolution.backend.analysis.RepositoryConnections;
 import java.nio.ByteBuffer;
 import java.nio.charset.*;
 import java.util.*;
@@ -12,7 +13,9 @@ import java.util.function.BooleanSupplier;
 /** Strict additive job routes; submissions select only operator-registered setups. */
 final class AnalysisJobApi {
     private final AnalysisJobs jobs; private final ApiLimits limits;
-    AnalysisJobApi(AnalysisJobs jobs, ApiLimits limits) { this.jobs = jobs; this.limits = limits; }
+    private final RepositoryConnections connections;
+    AnalysisJobApi(AnalysisJobs jobs, ApiLimits limits) { this(jobs,limits,null); }
+    AnalysisJobApi(AnalysisJobs jobs, ApiLimits limits, RepositoryConnections connections) { this.jobs = jobs; this.limits = limits; this.connections=connections; }
     AnalysisJobs.Limits limits() { return jobs.limits(); }
     private static final class Failure extends RuntimeException {
         final int status; final String code;
@@ -22,7 +25,14 @@ final class AnalysisJobApi {
         try {
             if (cancelled.getAsBoolean()) throw new Failure(409,"REQUEST_CANCELLED");
             Object data; int status = 200;
-            if (path.equals("/api/v1/analysis/setups")) {
+            if (path.equals("/api/v1/analysis/connections")) {
+                if (connections==null) throw new Failure(503,"CONNECTIONS_UNAVAILABLE");
+                if (method.equals("GET")) { empty(body); data=Map.of("items",connections.list(),"remoteHosts",List.of("github.com","gitlab.com","bitbucket.org")); }
+                else {
+                    method(method,"POST"); var input=decode(body,contentType,"source","policy");
+                    data=connections.connect(QueryJson.text(input,"source"),QueryJson.optionalText(input,"policy")); status=201;
+                }
+            } else if (path.equals("/api/v1/analysis/setups")) {
                 method(method,"GET"); empty(body); data = Map.of("items",jobs.setups(),"versionControl","NOT_INSPECTED");
             } else if (path.equals("/api/v1/analysis/jobs")) {
                 if (method.equals("GET")) { empty(body); data = jobs.history(20,Optional.empty()); }

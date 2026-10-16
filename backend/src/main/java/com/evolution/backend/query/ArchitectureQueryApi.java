@@ -9,6 +9,7 @@ import com.evolution.analysis.policy.PolicyImpactService;
 import com.evolution.analysis.query.*;
 import com.evolution.analysis.query.projection.GraphProjectionService;
 import com.evolution.backend.analysis.AnalysisJobs;
+import com.evolution.backend.analysis.RepositoryConnections;
 import java.nio.ByteBuffer;
 import java.nio.charset.*;
 import java.util.*;
@@ -35,6 +36,7 @@ public final class ArchitectureQueryApi {
     private final ApiLimits limits;
     private final BiFunction<KnowledgeGraph,Supplier<StopReason>,ArchitectureQueryService> factory;
     private AnalysisJobApi jobs;
+    private RepositoryConnections connections;
     public ArchitectureQueryApi(GraphStore store) { this(store,new PublishedReports(),ApiLimits.defaults()); }
     public ArchitectureQueryApi(GraphStore store,PublishedReports reports,ApiLimits limits) {
         this(store,reports,limits,(graph,guard) -> new ArchitectureMetricsService(graph,ArchitectureMetric.Limits.defaults(),guard,Optional.empty(),List.of()).queries());
@@ -51,6 +53,11 @@ public final class ArchitectureQueryApi {
         this(store,reports,limits);
         if (!Objects.requireNonNull(jobs).uses(store,reports)) throw new IllegalArgumentException("Job and query publication stores differ");
         this.jobs = new AnalysisJobApi(Objects.requireNonNull(jobs),limits);
+    }
+    public ArchitectureQueryApi(GraphStore store,PublishedReports reports,ApiLimits limits,AnalysisJobs jobs,RepositoryConnections connections) {
+        this(store,reports,limits,jobs);
+        this.connections=Objects.requireNonNull(connections);
+        this.jobs=new AnalysisJobApi(jobs,limits,connections);
     }
     public Response handle(String method,String rawPath,String contentType,byte[] body,BooleanSupplier cancelled) {
         try {
@@ -73,6 +80,7 @@ public final class ArchitectureQueryApi {
                 "error",Map.of("code",code,"message",message(code)))).getBytes(StandardCharsets.UTF_8));
     }
     static String allowedMethods(String path) {
+        if (path.equals("/api/v1/analysis/connections")) return "GET, POST";
         if (path.equals("/api/v1/analysis/jobs")) return "GET, POST";
         if (path.equals("/api/v1/analysis/jobs/history") || path.startsWith("/api/v1/analysis/jobs/") && (path.endsWith("/cancel") || path.endsWith("/gaps") || path.endsWith("/input-diagnostics"))) return "POST";
         return path.contains("/queries/") || path.split("/",-1).length == 8 ? "POST" : "GET";
@@ -102,6 +110,7 @@ public final class ArchitectureQueryApi {
             capabilities.putAll(Map.of("operations",OPERATIONS,"reportOperations",REPORT_OPERATIONS,"transportLimits",limits,
                     "queryLimits",Limits.defaults(),"graphSchema",KnowledgeGraph.SCHEMA));
             capabilities.put("jobVersion",AnalysisJobs.VERSION); capabilities.put("analysisJobsEnabled",jobs != null);
+            capabilities.put("repositoryConnectionsEnabled",connections != null);
             if (jobs != null) capabilities.put("jobLimits",jobs.limits());
             return capabilities;
         }
