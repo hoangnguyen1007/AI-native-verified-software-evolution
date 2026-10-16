@@ -13,8 +13,7 @@
     <artifactId>backend</artifactId>
     <name>Backend</name>
     <description>
-        Read-only local HTTP and canonical JSON adapter over analyzer query services
-        and explicitly published policy/assessment results.
+        Local asynchronous analysis orchestration and canonical query/report HTTP adapters.
     </description>
 
     <dependencies>
@@ -25,7 +24,10 @@
             <version>${project.version}</version>
         </dependency>
 
-        <!-- Graph DB driver will be added after R2 validation -->
+        <!-- Passive adapters are composed here; target lifecycle code never runs. -->
+        <dependency><groupId>com.evolution</groupId><artifactId>analyzer-filesystem</artifactId><version>${project.version}</version></dependency>
+        <dependency><groupId>com.evolution</groupId><artifactId>analyzer-maven</artifactId><version>${project.version}</version></dependency>
+        <dependency><groupId>com.evolution</groupId><artifactId>analyzer-javaparser</artifactId><version>${project.version}</version></dependency>
 
         <!-- Testing -->
         <dependency>

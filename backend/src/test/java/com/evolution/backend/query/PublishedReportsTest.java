@@ -21,6 +21,16 @@ import static com.evolution.backend.query.ArchitectureQueryApiTest.*;
 import static com.evolution.analysis.query.ArchitectureQuery.*;
 
 class PublishedReportsTest {
+    @Test void batchPublicationIsAtomicAtCapacityAndIdempotentForExistingReports() {
+        var f = fixture(); var published = new PublishedReports(); var batch = new ArrayList<PublishedReports.Report>();
+        for (int i = 0; i < 33; i++) batch.add(new PublishedReports.Report(f.report.evaluation(),f.report.metrics(),
+                Optional.of(f.report.assessment().orElseThrow().withComputedAt(java.time.Instant.ofEpochSecond(i)))));
+        published.publishAll(batch.subList(0,31));
+        assertThrows(IllegalStateException.class,() -> published.publishAll(batch.subList(31,33)));
+        assertEquals(31,published.forGraph(f.graph.identity()).size()); assertTrue(published.get(batch.get(31).identity()).isEmpty());
+        assertEquals(List.of(batch.getFirst().identity(),batch.get(31).identity()),published.publishAll(List.of(batch.getFirst(),batch.get(31))));
+        assertEquals(32,published.forGraph(f.graph.identity()).size());
+    }
     private static final String POLICY="""
             schema: architecture-policy:v1
             id: test.http

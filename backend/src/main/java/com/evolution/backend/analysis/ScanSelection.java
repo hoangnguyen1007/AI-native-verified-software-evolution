@@ -1,4 +1,4 @@
-package com.evolution.cli;
+package com.evolution.backend.analysis;
 
 import java.io.IOException;
 import java.nio.file.*;
@@ -6,9 +6,9 @@ import java.util.*;
 import static java.nio.file.LinkOption.NOFOLLOW_LINKS;
 
 /** Explicit source selection. Every omitted path becomes a recorded acquisition exclusion. */
-final class ScanSelection {
-    record Plan(String policy,boolean includeTests,boolean allFiles,List<String> excluded) {}
-    static Plan plan(Path root,boolean includeTests,boolean allFiles,List<String> explicit)throws IOException{
+public final class ScanSelection {
+    public record Plan(String policy,boolean includeTests,boolean allFiles,List<String> excluded) {}
+    public static Plan plan(Path root,boolean includeTests,boolean allFiles,List<String> explicit)throws IOException{
         var excluded=new TreeSet<>(explicit);excluded.add(".git");excluded.add(".evo");
         if(!allFiles)visit(root,root,includeTests,excluded,new int[]{0},0);
         return new Plan("cli.source-selection:v1",includeTests,allFiles,List.copyOf(excluded));

@@ -249,6 +249,8 @@ Exit gate: the entire Track A analysis/evidence workflow runs locally without ba
 
 ### M8 - Backend API and Complete Architecture Workbench
 
+**Implementation sequence:** [M8.1 backend jobs/API](tasks/m8/01-analysis-jobs-and-backend.md) establishes registered passive analysis, bounded cancellation/progress/history and canonical publication. The next bounded slice is M8.2 analysis setup/history and overview UI; the remaining views and full acceptance criteria below still govern M8 completion.
+
 Deliver asynchronous cancellable analysis jobs and versioned query APIs plus the required workbench:
 
 - analysis setup/history and provenance;

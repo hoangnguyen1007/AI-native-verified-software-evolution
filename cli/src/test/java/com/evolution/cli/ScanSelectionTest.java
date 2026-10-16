@@ -1,4 +1,5 @@
 package com.evolution.cli;
+import com.evolution.backend.analysis.ScanSelection;
 
 import java.nio.file.*;
 import java.util.*;

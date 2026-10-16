@@ -1,4 +1,4 @@
-package com.evolution.cli;
+package com.evolution.backend.analysis;
 
 import com.evolution.analysis.acquisition.*;
 import com.evolution.analysis.buildmodel.*;
@@ -12,12 +12,12 @@ import java.nio.file.Path;
 import java.util.*;
 
 /** Passive composition of the existing Maven providers; no target lifecycle or network. */
-final class MavenScan {
-    static final BuildModelPolicy POLICY=new BuildModelPolicy(List.of(),List.of(),Map.of(),10_000_000,1000,128);
-    static Optional<MavenBuildModelResolution> model(RepositoryAcquisitionResult acquisition,Path cache){
+public final class MavenScan {
+    public static final BuildModelPolicy POLICY=new BuildModelPolicy(List.of(),List.of(),Map.of(),10_000_000,1000,128);
+    public static Optional<MavenBuildModelResolution> model(RepositoryAcquisitionResult acquisition,Path cache){
         return acquisition.buildModelRequest(POLICY).map(r->new MavenBuildModelResolver(cache).resolve(r,new MavenPomResolutionPolicy(256,4_000_000,32_000_000,16)));
     }
-    static List<String> outsideEntryBuild(RepositoryAcquisitionResult acquisition,MavenBuildModelResolution resolution,boolean tests){
+    public static List<String> outsideEntryBuild(RepositoryAcquisitionResult acquisition,MavenBuildModelResolution resolution,boolean tests){
         var model=resolution.model();
         if(!model.problems().isEmpty()||model.modules().stream().anyMatch(m->m.effectivePom().isEmpty()))return List.of();
         var poms=new HashSet<String>();var roots=new ArrayList<String>();
@@ -34,9 +34,9 @@ final class MavenScan {
                 ||(p.equals("pom.xml")||p.endsWith("/pom.xml"))&&!poms.contains(p)
                 ||p.endsWith(".gradle")||p.endsWith(".gradle.kts")).sorted().toList();
     }
-    record Inputs(Map<UniversalSourceIngestion.SourceSet,UniversalSourceIngestion.Resolution> resolutions,
+    public record Inputs(Map<UniversalSourceIngestion.SourceSet,UniversalSourceIngestion.Resolution> resolutions,
                   Map<MavenCoordinate,PomInput> externalPoms,List<CapabilityGapRecord> gaps,Map<String,Object> summary){}
-    static Inputs inputs(RepositoryAcquisitionResult acquisition,Optional<MavenBuildModelResolution> build,Path cache,Optional<PlatformInput> platform){
+    public static Inputs inputs(RepositoryAcquisitionResult acquisition,Optional<MavenBuildModelResolution> build,Path cache,Optional<PlatformInput> platform){
         if(build.isEmpty()||platform.isEmpty())return new Inputs(Map.of(),Map.of(),List.of(),Map.of("mode","NOT_APPLICABLE"));
         var resolved=build.orElseThrow();
         var classpath=new MavenLocalClasspathProvider(cache).resolve(new ClasspathResolutionRequest(resolved.request(),resolved.model(),new ClasspathResolutionPolicy(1024,2048,4_000_000,64_000_000,256_000_000,64)));

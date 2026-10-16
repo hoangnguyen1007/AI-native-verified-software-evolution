@@ -8,6 +8,7 @@ import com.evolution.analysis.policy.PolicyEvaluation;
 import com.evolution.analysis.policy.PolicyImpactService;
 import com.evolution.analysis.query.*;
 import com.evolution.analysis.query.projection.GraphProjectionService;
+import com.evolution.backend.analysis.AnalysisJobs;
 import java.nio.ByteBuffer;
 import java.nio.charset.*;
 import java.util.*;
@@ -33,6 +34,7 @@ public final class ArchitectureQueryApi {
     private final PublishedReports reports;
     private final ApiLimits limits;
     private final BiFunction<KnowledgeGraph,Supplier<StopReason>,ArchitectureQueryService> factory;
+    private AnalysisJobApi jobs;
     public ArchitectureQueryApi(GraphStore store) { this(store,new PublishedReports(),ApiLimits.defaults()); }
     public ArchitectureQueryApi(GraphStore store,PublishedReports reports,ApiLimits limits) {
         this(store,reports,limits,(graph,guard) -> new ArchitectureMetricsService(graph,ArchitectureMetric.Limits.defaults(),guard,Optional.empty(),List.of()).queries());
@@ -44,9 +46,17 @@ public final class ArchitectureQueryApi {
         this.limits=Objects.requireNonNull(limits); this.factory=Objects.requireNonNull(factory);
     }
     public ApiLimits limits() { return limits; }
+    /** Job and query adapters share the same canonical publication stores. */
+    public ArchitectureQueryApi(GraphStore store,PublishedReports reports,ApiLimits limits,AnalysisJobs jobs) {
+        this(store,reports,limits);
+        if (!Objects.requireNonNull(jobs).uses(store,reports)) throw new IllegalArgumentException("Job and query publication stores differ");
+        this.jobs = new AnalysisJobApi(Objects.requireNonNull(jobs),limits);
+    }
     public Response handle(String method,String rawPath,String contentType,byte[] body,BooleanSupplier cancelled) {
         try {
             if (body.length > limits.requestBytes()) throw new Failure(413,"REQUEST_TOO_LARGE");
+            if (rawPath.equals("/api/v1/analysis") || rawPath.startsWith("/api/v1/analysis/"))
+                return jobs == null ? error(503,"JOBS_UNAVAILABLE") : jobs.handle(method,rawPath,contentType,body,cancelled);
             Object data = route(method,rawPath,contentType,body,cancelled);
             byte[] canonicalData = BoundedJson.encode(data,limits.responseBytes());
             return new Response(200,BoundedJson.encode(Map.of("apiVersion",VERSION,"queryVersion",ArchitectureQuery.VERSION,
@@ -62,6 +72,11 @@ public final class ArchitectureQueryApi {
         return new Response(status,CanonicalJson.write(Map.of("apiVersion",VERSION,"queryVersion",ArchitectureQuery.VERSION,
                 "error",Map.of("code",code,"message",message(code)))).getBytes(StandardCharsets.UTF_8));
     }
+    static String allowedMethods(String path) {
+        if (path.equals("/api/v1/analysis/jobs")) return "GET, POST";
+        if (path.equals("/api/v1/analysis/jobs/history") || path.startsWith("/api/v1/analysis/jobs/") && (path.endsWith("/cancel") || path.endsWith("/gaps") || path.endsWith("/input-diagnostics"))) return "POST";
+        return path.contains("/queries/") || path.split("/",-1).length == 8 ? "POST" : "GET";
+    }
     private static String message(String code) {
         return switch (code) {
             case "INVALID_REQUEST" -> "The request does not satisfy the API contract.";
@@ -76,14 +91,19 @@ public final class ArchitectureQueryApi {
             case "FORBIDDEN_ORIGIN" -> "The local API accepts only same-origin requests.";
             case "BUSY" -> "The local API is at its concurrent request limit.";
             case "GRAPH_STORE_UNAVAILABLE" -> "Graph storage could not supply a verified snapshot.";
+            case "JOBS_UNAVAILABLE" -> "Analysis jobs are not configured in this local server.";
             default -> "The request could not be completed.";
         };
     }
     private Object route(String method,String path,String contentType,byte[] body,BooleanSupplier cancelled) {
         if (path.equals("/api/v1")) {
             requireMethod(method,"GET"); requireEmpty(body);
-            return Map.of("operations",OPERATIONS,"reportOperations",REPORT_OPERATIONS,"transportLimits",limits,
-                    "queryLimits",Limits.defaults(),"graphSchema",KnowledgeGraph.SCHEMA);
+            var capabilities = new TreeMap<String,Object>();
+            capabilities.putAll(Map.of("operations",OPERATIONS,"reportOperations",REPORT_OPERATIONS,"transportLimits",limits,
+                    "queryLimits",Limits.defaults(),"graphSchema",KnowledgeGraph.SCHEMA));
+            capabilities.put("jobVersion",AnalysisJobs.VERSION); capabilities.put("analysisJobsEnabled",jobs != null);
+            if (jobs != null) capabilities.put("jobLimits",jobs.limits());
+            return capabilities;
         }
         String[] parts=path.split("/",-1);
         if (parts.length<5 || !parts[0].isEmpty() || !parts[1].equals("api") || !parts[2].equals("v1") || !parts[3].equals("graphs"))

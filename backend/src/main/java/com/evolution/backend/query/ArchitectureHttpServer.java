@@ -54,8 +54,7 @@ public final class ArchitectureHttpServer implements AutoCloseable {
             headers.set("Cache-Control","no-store");
             headers.set("X-Content-Type-Options","nosniff");
             headers.set("Content-Security-Policy","default-src 'none'; frame-ancestors 'none'");
-            if (response.status()==405) headers.set("Allow",exchange.getRequestURI().getRawPath().contains("/queries/") ||
-                    exchange.getRequestURI().getRawPath().split("/",-1).length==8 ? "POST" : "GET");
+            if (response.status()==405) headers.set("Allow",ArchitectureQueryApi.allowedMethods(exchange.getRequestURI().getRawPath()));
             byte[] bytes=response.body();
             // HEAD has a useful error status and headers but never an HTTP response body.
             exchange.sendResponseHeaders(response.status(),exchange.getRequestMethod().equals("HEAD") ? -1 : bytes.length);

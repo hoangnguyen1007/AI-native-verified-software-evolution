@@ -17,6 +17,8 @@ import com.evolution.analysis.metrics.*;
 import com.evolution.analysis.policy.*;
 import com.evolution.analysis.query.*;
 import com.evolution.backend.query.*;
+import com.evolution.backend.analysis.MavenScan;
+import com.evolution.backend.analysis.ScanSelection;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;

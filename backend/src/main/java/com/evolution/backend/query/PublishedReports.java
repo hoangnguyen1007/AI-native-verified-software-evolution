@@ -36,12 +36,20 @@ public final class PublishedReports {
     }
     private final SortedMap<ContentDigest,Report> reports = new TreeMap<>();
     public synchronized ContentDigest publish(Report report) {
-        Objects.requireNonNull(report);
-        BoundedJson.encode(report,16_777_216);
-        var identity = report.identity();
-        if (!reports.containsKey(identity) && reports.size() >= 32) throw new IllegalStateException("Published report capacity");
-        reports.putIfAbsent(identity,report);
-        return identity;
+        return publishAll(List.of(report)).getFirst();
+    }
+    /** Validate a complete job's reports before publishing any member. */
+    public synchronized List<ContentDigest> publishAll(List<Report> batch) {
+        var additions = new TreeMap<ContentDigest,Report>();
+        var identities = new ArrayList<ContentDigest>();
+        for (var report : batch) {
+            Objects.requireNonNull(report); BoundedJson.encode(report,16_777_216);
+            var identity = report.identity(); identities.add(identity);
+            if (!reports.containsKey(identity)) additions.putIfAbsent(identity,report);
+        }
+        if (reports.size() + additions.size() > 32) throw new IllegalStateException("Published report capacity");
+        reports.putAll(additions);
+        return List.copyOf(identities);
     }
     public synchronized Optional<Report> get(ContentDigest identity) { return Optional.ofNullable(reports.get(identity)); }
     public synchronized List<ContentDigest> forGraph(ContentDigest graph) {

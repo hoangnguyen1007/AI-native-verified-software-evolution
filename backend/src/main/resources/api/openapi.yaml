@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
-  title: Architecture Query API
-  version: m7.1-v1
-  description: Local read-only projection of canonical M5 queries and explicitly published M6 reports.
+  title: Architecture Workbench API
+  version: m8.1-v1
+  description: Local cancellable analysis jobs and unchanged canonical query/report adapters. Job routes require operator-registered setups.
 servers:
   - url: http://127.0.0.1:8080
 paths:
@@ -75,8 +75,96 @@ paths:
       responses:
         '200': {$ref: '#/components/responses/Success'}
         default: {$ref: '#/components/responses/Error'}
+  /api/v1/analysis/setups:
+    get:
+      operationId: analysisSetups
+      responses:
+        '200': {$ref: '#/components/responses/JobSuccess'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/analysis/jobs:
+    get:
+      operationId: firstJobHistoryPage
+      description: First 20 jobs in submission order. Use POST history for explicit pagination. Membership freezes at the first page; state remains live.
+      responses:
+        '200': {$ref: '#/components/responses/JobHistory'}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      operationId: submitAnalysis
+      description: Select a registered setup. The required idempotency key prevents duplicate work after transport interruption. A job is independent of its submitting HTTP connection.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [setup, idempotencyKey]
+              properties:
+                setup: {$ref: '#/components/schemas/JobIdentifier'}
+                idempotencyKey: {$ref: '#/components/schemas/JobIdentifier'}
+      responses:
+        '202': {$ref: '#/components/responses/JobDetail'}
+        '200': {$ref: '#/components/responses/JobDetail'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/analysis/jobs/history:
+    post:
+      operationId: jobHistory
+      requestBody: {$ref: '#/components/requestBodies/JobPage'}
+      responses:
+        '200': {$ref: '#/components/responses/JobHistory'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/analysis/jobs/{job}:
+    parameters: [{$ref: '#/components/parameters/Job'}]
+    get:
+      operationId: analysisJob
+      responses:
+        '200': {$ref: '#/components/responses/JobDetail'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/analysis/jobs/{job}/cancel:
+    parameters: [{$ref: '#/components/parameters/Job'}]
+    post:
+      operationId: cancelAnalysis
+      description: Idempotent cancellation. Running work remains CANCELLING until the worker acknowledges termination. Terminal results do not change.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: object, additionalProperties: false}
+      responses:
+        '202': {$ref: '#/components/responses/JobDetail'}
+        '200': {$ref: '#/components/responses/JobDetail'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/analysis/jobs/{job}/gaps:
+    parameters: [{$ref: '#/components/parameters/Job'}]
+    post:
+      operationId: analysisJobGaps
+      description: Supplemental typed job/policy gaps after completion. Canonical graph gaps remain available through graph/context queries. Receipt gapCount is the unique union, not the sum of these overlapping populations.
+      requestBody: {$ref: '#/components/requestBodies/JobPage'}
+      responses:
+        '200': {$ref: '#/components/responses/JobSuccess'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/analysis/jobs/{job}/input-diagnostics:
+    parameters: [{$ref: '#/components/parameters/Job'}]
+    post:
+      operationId: analysisInputDiagnostics
+      description: Original typed acquisition problems with provider and acquisition SHA-256 references, including failures before a snapshot exists. No synthetic snapshot or analysis identity is invented.
+      requestBody: {$ref: '#/components/requestBodies/JobPage'}
+      responses:
+        '200': {$ref: '#/components/responses/JobSuccess'}
+        default: {$ref: '#/components/responses/Error'}
 components:
+  requestBodies:
+    JobPage:
+      required: true
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Page'}
   parameters:
+    Job:
+      in: path
+      name: job
+      required: true
+      schema: {type: string, format: uuid, pattern: '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'}
     Graph:
       in: path
       name: graph
@@ -88,6 +176,41 @@ components:
       required: true
       schema: {$ref: '#/components/schemas/Digest'}
   responses:
+    JobSuccess:
+      description: Bounded job data. Operational UUIDs, revisions and times never enter canonical analysis identities. History and job state are process-local; graph snapshots persist in the configured store.
+      content:
+        application/json:
+          schema:
+            allOf:
+              - {$ref: '#/components/schemas/Envelope'}
+              - required: [jobVersion]
+    JobDetail:
+      description: Current job state and published canonical artifact identities, when available.
+      content:
+        application/json:
+          schema:
+            allOf:
+              - {$ref: '#/components/schemas/Envelope'}
+              - required: [jobVersion]
+                properties:
+                  data: {$ref: '#/components/schemas/AnalysisJob'}
+    JobHistory:
+      description: Bounded history with stable membership and explicit total/continuation; item states remain live.
+      content:
+        application/json:
+          schema:
+            allOf:
+              - {$ref: '#/components/schemas/Envelope'}
+              - required: [jobVersion]
+                properties:
+                  data:
+                    type: object
+                    additionalProperties: false
+                    required: [items, total, continuation]
+                    properties:
+                      items: {type: array, maxItems: 50, items: {$ref: '#/components/schemas/AnalysisJob'}}
+                      total: {type: integer, minimum: 0, maximum: 256}
+                      continuation: {type: [string, 'null'], maxLength: 512}
     Success:
       description: Canonical data with SHA-256 of its canonical UTF-8 JSON. Cache-Control is no-store.
       content:
@@ -103,7 +226,7 @@ components:
               - properties:
                   data: {$ref: '#/components/schemas/QueryResult'}
     Error:
-      description: '400 invalid request; 403 origin; 404 absent route/graph/report/artifact; 405 method; 406 Accept; 413 input limit; 415 media/encoding; 422 response limit; 500 internal; 503 storage/busy. Transport interruption may close the connection before a response is possible.'
+      description: '400 invalid request; 403 origin; 404 absent route/graph/report/artifact/setup/job; 405 method; 406 Accept; 409 retry conflict/unfinished job/request cancelled; 413 input limit; 415 media/encoding; 422 response limit; 500 internal; 503 storage/busy/job queue/history full/closed/unconfigured. Transport interruption may close the connection before a response is possible.'
       content:
         application/json:
           schema:
@@ -113,6 +236,7 @@ components:
             properties:
               apiVersion: {const: 'architecture.http:m7.1-v1'}
               queryVersion: {$ref: '#/components/schemas/Version'}
+              jobVersion: {const: 'architecture.jobs:m8.1-v1'}
               error:
                 type: object
                 required: [code, message]
@@ -121,6 +245,55 @@ components:
                   code: {type: string}
                   message: {type: string}
   schemas:
+    JobIdentifier: {type: string, pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$', maxLength: 64}
+    JobStage: {type: string, enum: [QUEUED, ACQUISITION, PLATFORM, ANALYSIS, GRAPH, POLICY, PUBLICATION, FINISHED]}
+    AnalysisJob:
+      type: object
+      additionalProperties: false
+      required: [id, setup, state, stage, revision, submittedAt, startedAt, finishedAt, elapsedMillis, stop, error, events, result]
+      properties:
+        id: {type: string, format: uuid}
+        setup: {$ref: '#/components/schemas/JobIdentifier'}
+        state: {type: string, enum: [QUEUED, RUNNING, CANCELLING, SUCCEEDED, PARTIAL, EMPTY, FAILED, CANCELLED, TIMED_OUT]}
+        stage: {$ref: '#/components/schemas/JobStage'}
+        revision: {type: integer, minimum: 1}
+        submittedAt: {type: string, format: date-time}
+        startedAt: {type: [string, 'null'], format: date-time}
+        finishedAt: {type: [string, 'null'], format: date-time}
+        elapsedMillis: {type: integer, minimum: 0}
+        stop: {type: [string, 'null'], enum: [USER_CANCELLED, DEADLINE_EXCEEDED, SERVICE_CLOSED, PROVIDER_INTERRUPTED, null]}
+        error: {type: [string, 'null'], enum: [ANALYSIS_FAILED, RESULT_STORAGE_FAILED, RESULT_PUBLICATION_FAILED, null]}
+        events:
+          type: array
+          maxItems: 8
+          items:
+            type: object
+            additionalProperties: false
+            required: [stage, at]
+            properties:
+              stage: {$ref: '#/components/schemas/JobStage'}
+              at: {type: string, format: date-time}
+        result:
+          anyOf:
+            - {type: 'null'}
+            - {$ref: '#/components/schemas/AnalysisResult'}
+    AnalysisResult:
+      type: object
+      additionalProperties: false
+      required: [completion, graph, snapshot, analyses, contexts, reports, gapCount, graphGapCount, jobGapCount, inputProblemCount, acquisition, sourceReport]
+      properties:
+        completion: {type: string, enum: [COMPLETE, PARTIAL, EMPTY, FAILED]}
+        graph: {anyOf: [{$ref: '#/components/schemas/Digest'}, {type: 'null'}]}
+        snapshot: {type: [string, 'null']}
+        analyses: {type: array, uniqueItems: true, items: {type: string}}
+        contexts: {type: array, uniqueItems: true, items: {type: string}}
+        reports: {type: array, maxItems: 32, items: {$ref: '#/components/schemas/Digest'}}
+        gapCount: {type: integer, minimum: 0}
+        graphGapCount: {type: integer, minimum: 0}
+        jobGapCount: {type: integer, minimum: 0}
+        inputProblemCount: {type: integer, minimum: 0}
+        acquisition: {anyOf: [{$ref: '#/components/schemas/Digest'}, {type: 'null'}]}
+        sourceReport: {anyOf: [{$ref: '#/components/schemas/Digest'}, {type: 'null'}]}
     Digest: {type: string, pattern: '^sha256:[0-9a-f]{64}$'}
     Version:
       type: object
@@ -135,6 +308,7 @@ components:
       properties:
         apiVersion: {const: 'architecture.http:m7.1-v1'}
         queryVersion: {$ref: '#/components/schemas/Version'}
+        jobVersion: {const: 'architecture.jobs:m8.1-v1'}
         resultIdentity: {$ref: '#/components/schemas/Digest'}
         data: {}
     StringSet:
