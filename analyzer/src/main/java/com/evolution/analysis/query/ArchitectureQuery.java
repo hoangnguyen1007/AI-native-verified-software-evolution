@@ -69,8 +69,8 @@ public final class ArchitectureQuery {
     /** A replay checks the captured rule model only; it never executes the analyzed application. */
     public record WitnessReplay(ContentDigest jointRegion, Witness witness, Truth expectedTruth, Truth actualTruth,
                                 boolean matched, boolean formulaReplayed, boolean semanticReplayed) {}
-    public record RealizationView(String identity, String kind, Realization realization, List<ContentDigest> evidence) {
-        public RealizationView { evidence=List.copyOf(evidence); }
+    public record RealizationView(String identity, String kind, Realization realization, Map<String,Boolean> profiles,List<ContentDigest> evidence) {
+        public RealizationView { profiles=Collections.unmodifiableMap(new TreeMap<>(profiles));evidence=List.copyOf(evidence); }
     }
     public record Path(List<String> vertices,List<EdgeView> edges,Truth feasibility,Optional<Witness> witness) {
         public Path {vertices=List.copyOf(vertices);edges=List.copyOf(edges);Objects.requireNonNull(feasibility);Objects.requireNonNull(witness);}

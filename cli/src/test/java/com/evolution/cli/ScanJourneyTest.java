@@ -27,6 +27,9 @@ class ScanJourneyTest {
         var finding=GraphJson.object(GraphJson.array(findings.data().get("items")).getFirst());String bundle=GraphJson.string(finding.get("bundleIdentity"));
         var evidence=run("witness",bundle,"--json");assertTrue(evidence.data().containsKey("sources"));assertTrue(evidence.data().containsKey("request"));assertTrue(evidence.data().containsKey("region"));
         var replay=run("replay",bundle,"--json");assertTrue(replay.code==0||replay.code==3,replay.err);
+        var replayRequest=workspace.resolve("model-replay.json");Files.writeString(replayRequest,com.evolution.analysis.contract.serialization.CanonicalJson.write(Map.of("arguments",Map.of("identity",finding.get("identity"),"counterWitness",false))));
+        var modelReplay=run("query","replay","--request",replayRequest.toString(),"--json");assertTrue(modelReplay.code==0||modelReplay.code==3,modelReplay.err+modelReplay.out);
+        var replayResult=GraphJson.object(GraphJson.array(modelReplay.data().get("items")).getFirst());assertEquals(true,replayResult.get("matched"));assertEquals(false,replayResult.get("semanticReplayed"));
         var score=run("score","--json");assertEquals(3,score.code,score.out);assertEquals("WITHHELD",score.data().get("status"));assertNull(score.data().get("score"));
         var sarif=run("export","sarif");assertTrue(sarif.code==0||sarif.code==3,sarif.err);var tree=GraphJson.object(GraphJson.read(sarif.out.strip(),GraphJson.Limits.defaults()));assertEquals("2.1.0",tree.get("version"));
         var report=GraphJson.object(GraphJson.array(tree.get("runs")).getFirst());assertFalse(GraphJson.array(report.get("results")).isEmpty());assertTrue(GraphJson.object(report.get("properties")).containsKey("canonicalEvaluation"));

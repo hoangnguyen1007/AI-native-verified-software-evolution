@@ -25,7 +25,7 @@ def main():
             assert result.returncode in (0, 3), f"{name}: exit {result.returncode}; {result.stderr.decode('utf-8', errors='replace')[:600]}"
             assert b"\x1b" not in result.stdout and not result.stderr, f"{name}: contaminated canonical streams"
             tree = json.loads(result.stdout)
-            assert tree["queryVersion"]["version"] == "m7.2-v2"
+            assert tree["queryVersion"]["version"] == "m8.3-v1", f"{name}: unexpected query contract {tree['queryVersion']}"
             results[name] = result.returncode
             return tree["data"]
         scan = run("scan", "scan", str(fixture))

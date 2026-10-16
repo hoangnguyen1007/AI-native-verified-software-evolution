@@ -13,6 +13,22 @@ import static com.evolution.analysis.query.ArchitectureQuery.*;
 import static com.evolution.backend.query.QueryFixture.id;
 
 class ArchitectureQueryApiTest {
+    @Test void visualDepthCannotBeFractionalOverflowedOrIgnoredWithoutASeed(){
+        var f=new QueryFixture().node("a").node("b").edge("a","b");var api=new ArchitectureQueryApi(f.store());
+        for(Object depth:List.of(new java.math.BigDecimal("1.5"),new java.math.BigDecimal("4294967297"),"2",0))
+            assertEquals(400,call(api,f.request(),"visual-graph",Map.of("seed",id("a"),"depth",depth)).status());
+        assertEquals(400,call(api,f.request(),"visual-graph",Map.of("depth",2)).status());
+    }
+    @Test void configurationChoicesExposeProfileBooleansWhilePropertyValuesStayRedacted(){
+        var f=new QueryFixture().node("a").node("b").conditional("a","b","dev");
+        var proof=GraphEvidence.capture("spring.world",Map.of("assignment",Map.of("baseline",List.of(
+                Map.of("variable",Map.of("kind","PROFILE","name","dev"),"value",Map.of("kind","BOOLEAN","bool",true)),
+                Map.of("variable",Map.of("kind","PROPERTY","name","api.key"),"value",Map.of("kind","EXACT","exact","PRIVATE_SENTINEL"))))));
+        f.evidence.add(proof);f.nodes.replaceAll(node->node.identity().equals(id("dev"))?new KnowledgeGraph.Node(node.identity(),f.context,node.kind(),List.of(proof.identity())):node);
+        var response=call(new ArchitectureQueryApi(f.store()),f.request(),"realizations",Map.of());assertEquals(200,response.status());
+        String json=new String(response.body(),StandardCharsets.UTF_8);assertFalse(json.contains("PRIVATE_SENTINEL"));assertFalse(json.contains("api.key"));
+        assertTrue(json.contains("\"profiles\":{\"dev\":true}"));
+    }
     @Test void structureChildrenArePagedContextBoundAndNeverDependencyTargets() {
         var f=new QueryFixture().node("parent").node("child").node("dependency").edge("parent","dependency");
         f.edges.add(new KnowledgeGraph.Edge(id("contains"),f.context,"graph.declares",id("parent"),

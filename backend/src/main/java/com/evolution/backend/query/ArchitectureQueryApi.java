@@ -209,8 +209,8 @@ public final class ArchitectureQueryApi {
             case "comparison-preparation" -> q.comparisonPreparation(r,load(new ContentDigest(QueryJson.text(a,"graph"))),QueryJson.text(a,"context"));
             case "visual-graph" -> {
                 var projection = new GraphProjectionService(q);
+                int depth=visualDepth(a);
                 if (a.containsKey("seed")) {
-                    int depth = a.containsKey("depth") && a.get("depth") instanceof Number n ? n.intValue() : 1;
                     yield projection.focusedSubgraph(r, QueryJson.text(a, "seed"), depth, Optional.empty());
                 }
                 yield projection.project(r, Optional.empty());
@@ -228,6 +228,8 @@ public final class ArchitectureQueryApi {
             if(!(args.get("counterWitness") instanceof Boolean))throw new IllegalArgumentException("Explicit witness kind required");
         } else if (op.equals("visual-graph")) {
             QueryJson.object(args, "seed", "depth", "violationsOnly");
+            if(args.containsKey("violationsOnly")&&!(args.get("violationsOnly") instanceof Boolean))throw new IllegalArgumentException("Boolean required");
+            if(Boolean.TRUE.equals(args.get("violationsOnly"))&&args.containsKey("seed"))throw new IllegalArgumentException("Choose one graph selection");
         } else {
             QueryJson.object(args);
         }
@@ -259,19 +261,25 @@ public final class ArchitectureQueryApi {
             }
             case "visual-graph" -> {
                 var projection = new GraphProjectionService(service);
+                int depth=visualDepth(args);
                 var req = new Request(e.graph(), e.context(), Scope.TYPE, Projection.BOUNDED_UNION,
                         Direction.OUTGOING, Set.of("graph.depends-on"), Population.all(), false, Optional.empty(), Limits.defaults());
                 if (Boolean.TRUE.equals(args.get("violationsOnly"))) {
                     yield projection.violationsSubgraph(req, e);
                 }
                 if (args.containsKey("seed")) {
-                    int depth = args.containsKey("depth") && args.get("depth") instanceof Number n ? n.intValue() : 1;
                     yield projection.focusedSubgraph(req, QueryJson.text(args, "seed"), depth, Optional.of(e));
                 }
                 yield projection.project(req, Optional.of(e));
             }
             default -> throw new Failure(404,"NOT_FOUND");
         };
+    }
+    private static int visualDepth(Map<String,Object> args){
+        if(!args.containsKey("depth"))return 1;
+        if(!args.containsKey("seed")||!(args.get("depth") instanceof java.math.BigDecimal value))throw new IllegalArgumentException("Depth requires a seed and exact integer");
+        int depth;try{depth=value.intValueExact();}catch(ArithmeticException invalid){throw new IllegalArgumentException("Invalid graph depth");}
+        if(depth<1||depth>19)throw new IllegalArgumentException("Invalid dependency-step depth");return depth;
     }
     private Object reportPage(ContentDigest report,String op,Page page,List<Object> rows,PolicyEvaluation.Result evaluation) {
         var query=ContentDigest.sha256Utf8(CanonicalJson.write(List.of(VERSION,report,op,page.size())));

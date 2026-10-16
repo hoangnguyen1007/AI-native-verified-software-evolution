@@ -12,6 +12,16 @@ import static com.evolution.analysis.spring.truth.ConfigurationReasoner.Satisfia
 
 /** Symbolic exogenous truth regions over the exact finite-domain contract, without world enumeration. */
 public final class SymbolicTruthRegions {
+    /** Public provenance bridge for consumers displaying a baseline selection; the compiler owns its preimage. */
+    public static String baselineChoiceVariable(com.evolution.analysis.spring.condition.FiniteDomain.Variable variable,
+                                                com.evolution.analysis.spring.condition.FiniteDomain.Value value){
+        return choiceVariable(variable,value,Optional.empty());
+    }
+    private static String choiceVariable(com.evolution.analysis.spring.condition.FiniteDomain.Variable variable,
+                                         com.evolution.analysis.spring.condition.FiniteDomain.Value value,
+                                         Optional<ConfigurationSpace.SourceReference> source){
+        return IngestionEvidence.digest(List.of(variable,value,source)).value();
+    }
     public record Truth(Formula yes, Formula no) {
         public Truth { Objects.requireNonNull(yes); Objects.requireNonNull(no); }
         public Formula unknown() { return not(SymbolicConfiguration.or(yes,no)); }
@@ -214,7 +224,7 @@ public final class SymbolicTruthRegions {
             var selected=new LinkedHashMap<FiniteDomain.Value,Formula>();var formulas=new ArrayList<Formula>();
             if(values.size()>limits.maxNodes()||choices.size()+values.size()>limits.maxNodes()) {incomplete=true;issue(UniversalSpringEvidence.Reason.SOLVER_LIMIT,"domain-values");return selected;}
             for(var value:values) {
-                String key=IngestionEvidence.digest(List.of(variable,value,source)).value();var formula=variable(key);
+                String key=choiceVariable(variable,value,source);var formula=variable(key);
                 choices.put(key,new Choice(variable,value,source));selected.put(value,formula);formulas.add(formula);
                 if(value.kind()==FiniteDomain.ValueKind.OTHER){incomplete=true;issue(UniversalSpringEvidence.Reason.SYMBOLIC_INPUT_UNKNOWN,"other-value");}
             }

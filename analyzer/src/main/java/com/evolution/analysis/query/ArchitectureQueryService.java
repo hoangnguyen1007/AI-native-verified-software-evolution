@@ -383,8 +383,9 @@ public final class ArchitectureQueryService {
             for(var region:new TreeMap<>(p.catalog.regions).values()){
                 if(!p.budget.step())break;
                 if(region.encoding==QueryRegion.Encoding.EXPLICIT)for(String world:new TreeSet<>(region.universe)){
+                    if(values.containsKey(world))continue;
                     if(!p.budget.scan()||!p.budget.reserve(1))break;
-                    var node=p.nodes.get(world);if(node!=null)values.put(world,new RealizationView(world,"RECORDED_WORLD",new Realization(Optional.of(world),Map.of()),node.evidence()));
+                    var node=p.nodes.get(world);if(node!=null)values.put(world,new RealizationView(world,"RECORDED_WORLD",new Realization(Optional.of(world),Map.of()),profileBooleans(node,p.budget),node.evidence()));
                 }
                 if(region.encoding==QueryRegion.Encoding.SYMBOLIC)for(var candidate:List.of(region.check(p.budget,Optional.empty()),region.negate().check(p.budget,Optional.empty())))
                     candidate.witness().filter(w->!w.assignment().isEmpty()).ifPresent(w->{
@@ -392,12 +393,57 @@ public final class ArchitectureQueryService {
                         // Incomplete solver assignments are not offered as realized views.
                         if(w.assignment().keySet().equals(variables)&&p.budget.reserve(1)){
                             String id=KnowledgeGraph.derivedIdentity("realization",List.of(request.context(),w.assignment()));
-                            values.put(id,new RealizationView(id,"MODELED_EXAMPLE",new Realization(Optional.empty(),w.assignment()),List.of()));
-                        }
+                            values.put(id,new RealizationView(id,"MODELED_EXAMPLE",new Realization(Optional.empty(),w.assignment()),symbolicProfileBooleans(w.assignment(),p.budget),List.of()));
+                        }else if(!w.assignment().keySet().equals(variables))p.budget.qualify("INCOMPLETE_REALIZATION_EXAMPLE");
                     });
             }
         }
         return page(p,"realizations","recorded-and-modeled-examples",List.copyOf(values.values()),RealizationView::identity,page);
+    }
+    /** Only profile Boolean settings are displayable; property names/values and source choices stay private. */
+    private Map<String,Boolean> profileBooleans(KnowledgeGraph.Node node,QueryBudget budget){
+        var profiles=new TreeMap<String,Boolean>();var conflicting=new HashSet<String>();
+        for(var reference:node.evidence()){
+            var evidence=graph.evidence(reference).orElseThrow();if(!evidence.family().equals("spring.world"))continue;
+            var payload=read(evidence,budget);if(!(payload.get("assignment") instanceof Map<?,?> assignment))continue;
+            var baseline=assignment.get("baseline");if(!(baseline instanceof List<?> rows))continue;
+            for(var row:rows){
+                if(!budget.scan()||!budget.reserve(2))break;
+                Map<?,?> variable,value;
+                if(row instanceof List<?> pair&&pair.size()==2&&pair.get(0) instanceof Map<?,?> key&&pair.get(1) instanceof Map<?,?> val){variable=key;value=val;}
+                else if(row instanceof Map<?,?> entry&&entry.get("variable") instanceof Map<?,?> key&&entry.get("value") instanceof Map<?,?> val){variable=key;value=val;}
+                else{budget.qualify("INVALID_WORLD_EVIDENCE");continue;}
+                if("PROFILE".equals(variable.get("kind"))&&"BOOLEAN".equals(value.get("kind"))&&variable.get("name") instanceof String name&&value.get("bool") instanceof Boolean flag){
+                    if(profiles.size()==budget.limits.maxResults()){budget.qualify("EVIDENCE_DESCRIPTOR_LIMIT");break;}
+                    if(name.isBlank()||name.length()>256||name.chars().anyMatch(c->Character.isISOControl(c))){budget.qualify("PROFILE_LABEL_UNAVAILABLE");continue;}
+                    if(conflicting.contains(name))continue;
+                    var previous=profiles.putIfAbsent(name,flag);if(previous!=null&&!previous.equals(flag)){profiles.remove(name);conflicting.add(name);budget.qualify("PROFILE_LABEL_CONFLICT");}
+                }
+            }
+        }
+        return profiles;
+    }
+    private Map<String,Boolean> symbolicProfileBooleans(Map<String,Boolean> assignment,QueryBudget budget){
+        var profiles=new TreeMap<String,Boolean>();var conflicting=new HashSet<String>();
+        for(var evidence:graph.evidence())if(evidence.family().equals("spring.space")){
+            if(!budget.scan())break;var space=read(evidence,budget);if(!(space.get("domains") instanceof List<?> domains))continue;
+            for(var row:domains){
+                if(!budget.scan()||!budget.reserve(2))break;
+                if(!(row instanceof Map<?,?> domain)||!(domain.get("variable") instanceof Map<?,?> variable)||!"PROFILE".equals(variable.get("kind"))||!(variable.get("name") instanceof String name)||!(domain.get("values") instanceof List<?> values))continue;
+                for(var raw:values)if(raw instanceof Map<?,?> value&&"BOOLEAN".equals(value.get("kind"))&&value.get("bool") instanceof Boolean flag){
+                    // Exact upstream baseline-choice preimage from SymbolicTruthRegions.selection; no name-based inference.
+                    if(name.isBlank()||name.length()>256||name.chars().anyMatch(c->Character.isISOControl(c))){budget.qualify("PROFILE_LABEL_UNAVAILABLE");continue;}
+                    String key=com.evolution.analysis.spring.truth.SymbolicTruthRegions.baselineChoiceVariable(
+                            new com.evolution.analysis.spring.condition.FiniteDomain.Variable(com.evolution.analysis.spring.condition.FiniteDomain.Kind.PROFILE,name),
+                            com.evolution.analysis.spring.condition.FiniteDomain.Value.bool(flag));
+                    if(!Boolean.TRUE.equals(assignment.get(key)))continue;
+                    if(conflicting.contains(name))continue;
+                    if(!profiles.containsKey(name)&&profiles.size()==budget.limits.maxResults()){budget.qualify("EVIDENCE_DESCRIPTOR_LIMIT");break;}
+                    var previous=profiles.putIfAbsent(name,flag);if(previous!=null&&!previous.equals(flag)){profiles.remove(name);conflicting.add(name);budget.qualify("PROFILE_LABEL_CONFLICT");}
+                }
+            }
+        }
+        return profiles;
     }
     public Result<EvidenceView> evidence(Request request,ContentDigest reference){
         var p=new Prepared(request,false);

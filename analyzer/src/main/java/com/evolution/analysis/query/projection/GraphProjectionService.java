@@ -27,6 +27,16 @@ public final class GraphProjectionService {
         var projectionResult = queries.metricProjection(request);
         var entityItems = projectionResult.items().isEmpty() ? List.<EntityView>of() : projectionResult.items().getFirst().entities();
         var edgeItems = projectionResult.items().isEmpty() ? List.<EdgeView>of() : projectionResult.items().getFirst().edges();
+        var selectedDefinitions=new TreeSet<String>();var unknownDefinitions=new TreeSet<String>();
+        int observedDefinitionCount=entityItems.size();
+        if(request.scope()==Scope.SPRING_COMPONENT&&!projectionResult.items().isEmpty()){
+            var source=projectionResult.items().getFirst();selectedDefinitions.addAll(source.selectedDefinitions());unknownDefinitions.addAll(source.unknownDefinitions());
+            var included=new HashSet<>(selectedDefinitions);
+            if(request.projection()==Projection.BOUNDED_UNION||request.projection()==Projection.UNKNOWN_OVERLAY)included.addAll(unknownDefinitions);
+            if(request.projection()==Projection.UNKNOWN_OVERLAY)edgeItems.forEach(edge->{included.add(edge.source());included.add(edge.target());});
+            entityItems=entityItems.stream().filter(entity->included.contains(entity.identity())).toList();
+            edgeItems=edgeItems.stream().filter(edge->included.contains(edge.source())&&included.contains(edge.target())).toList();
+        }
 
         // 2. Identify cycles
         var cycleParticipants = new HashSet<String>();
@@ -149,7 +159,8 @@ public final class GraphProjectionService {
                 violations,
                 worst,
                 isCycle,
-                Map.of("evidenceCount", entity.evidence().size())
+                request.scope()==Scope.SPRING_COMPONENT?Map.of("evidenceCount",entity.evidence().size(),"activationStatus",selectedDefinitions.contains(entity.identity())?"SELECTED":unknownDefinitions.contains(entity.identity())?"UNKNOWN":"CONTEXT"):
+                        Map.of("evidenceCount", entity.evidence().size())
             ));
         }
 
@@ -190,6 +201,7 @@ public final class GraphProjectionService {
         metadata.put("operation",projectionResult.operation().name());
         metadata.put("bounds",projectionResult.bounds());metadata.put("gaps",projectionResult.gaps());
         metadata.put("cycleStatus",cycleResult.status().name());metadata.put("cycleBounds",cycleResult.bounds());metadata.put("cycleGaps",cycleResult.gaps());
+        if(request.scope()==Scope.SPRING_COMPONENT){metadata.put("observedDefinitionCount",observedDefinitionCount);metadata.put("selectedDefinitionCount",selectedDefinitions.size());metadata.put("unknownDefinitionCount",unknownDefinitions.size());}
 
         ContentDigest graphId = ContentDigest.sha256Utf8(CanonicalJson.write(List.of(
             VERSION,

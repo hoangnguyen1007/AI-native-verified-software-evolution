@@ -1,5 +1,7 @@
 # M8.2 — Live architecture workbench
 
+Historical M8.2 boundary. [M8.3](m8-structure-and-configurations.md) extends it with direct structure ownership, configuration comparison, model replay, metric/score drill-down and graph controls. M8.2 omissions below describe that earlier slice.
+
 **CONFIRMED requested scope:** operational English UI over real repositories, removal of fabricated/decorative product controls, responsive layout repairs and short user guidance. The workbench consumes existing canonical query/report services. It does not recompute metrics, policy verdicts or health scores.
 
 ## Input and connection boundary

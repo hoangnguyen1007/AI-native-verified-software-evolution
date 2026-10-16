@@ -149,10 +149,13 @@ class M6PolicyIntegrationTest {
             assertTrue(service.replayRuleWitness(bundle.request(),bundle.predicate(),bundle.region().witness().orElseThrow(),false).items().getFirst().matched());
             assertTrue(service.replayRuleWitness(bundle.request(),bundle.predicate(),bundle.region().counterWitness().orElseThrow(),true).items().getFirst().matched());
             var choices=service.realizations(bundle.request(),Page.first());assertFalse(choices.items().isEmpty());
+            assertTrue(choices.items().stream().allMatch(choice->choice.profiles().containsKey("dev")),"Actual explicit and symbolic evidence must preserve the displayed baseline profile setting");
             for(var choice:choices.items()){
                 var original=bundle.request();var realized=new Request(original.graph(),original.context(),original.scope(),Projection.REALIZED,original.direction(),original.relationshipKinds(),original.population(),false,Optional.of(choice.realization()),original.limits());
                 var selected=service.edges(realized,Page.first());
                 assertTrue(selected.gaps().stream().noneMatch(g->g.reasonCode().equals("REALIZATION_NOT_IN_MODELED_SPACE")));
+                var visual=new com.evolution.analysis.query.projection.GraphProjectionService(service).project(realized,Optional.empty());
+                assertEquals(Boolean.TRUE.equals(choice.profiles().get("dev"))?2:1,visual.nodes().stream().filter(node->node.kind().equals("BEAN_DEFINITION_CANDIDATE")).count(),"Inactive definitions must not appear as active Spring components");
             }
             assertEquals(evaluated,new PolicyEvaluator().evaluate(compile(graph,yaml),plan,new ArchitectureQueryService(restored),PolicyEvaluation.Limits.defaults()));
             var metrics=new PolicyMetricsService().compute(compile(graph,yaml),plan,evaluated,service,PolicyMetrics.Limits.defaults());

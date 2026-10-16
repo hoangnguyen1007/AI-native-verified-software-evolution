@@ -36,7 +36,7 @@
     GRAPH_STORE_UNAVAILABLE: 'The verified analysis snapshot could not be read.',
     REMOTE_FETCH_FAILED: 'The public repository could not be downloaded. Check the URL, network and Git installation. Private repositories require a local checkout.',
     REMOTE_TIMEOUT: 'Repository download exceeded two minutes. Use a local checkout.',
-    REMOTE_SIZE_LIMIT: 'Repository download exceeded the input limit. Use a smaller local selection.'
+    REMOTE_SIZE_LIMIT: 'Repository download reached the current acquisition limit. Connect a full local checkout; if it also reaches a limit, inspect input diagnostics for the exact blocker.'
   })[code] || `The request could not be completed (${code || 'connection unavailable'}).`;
   const model = {terminal, label, pageInfo, request, assessment, apiError, realizationRequest, compareEdges, completePage};
   if (typeof module !== 'undefined') module.exports = model;

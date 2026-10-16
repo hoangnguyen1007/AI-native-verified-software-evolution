@@ -173,7 +173,7 @@ public final class EvoApp {
                 byte[] policyInput=policyBytes(r,policyFile);report=evaluate(r,graph,context,policyInput);reports.publish(report);
                 if(name.equals("check")&&policyFile!=null)policyToRemember=policyInput;
             }
-            if(op.equals("replay")){
+            if(op.equals("replay")&&!(name.equals("query")&&r.request!=null)){
                 if(operands.size()!=1)throw new InputFailure("BUNDLE_REQUIRED");String id=operands.getFirst();
                 var bundle=report.evaluation().findings().stream().map(PolicyEvaluation.Finding::bundle).filter(b->b.identity().value().equals(id)).findFirst().orElseThrow(()->new InputFailure("BUNDLE_UNAVAILABLE"));
                 var replayed=new ArchitectureMetricsService(graph).queries().ruleCondition(bundle.request(),bundle.predicate());return emit(r,name,envelope(replayed),status(replayed));
@@ -223,7 +223,8 @@ public final class EvoApp {
             int required=0;
             switch(op){
                 case "entities"->{if(operands.size()>1)throw new InputFailure("INVALID_ARGUMENTS");args.put("search",operands.isEmpty()?"":operands.getFirst());required=operands.size();}
-                case "entity","dependencies","expand","impact","policy-impact","reachability","explain","finding","bundle"->{required=1;if(operands.size()==1)args.put("identity",operands.getFirst());}
+                case "entity","dependencies","expand","impact","policy-impact","reachability","explain","finding","bundle","children"->{required=1;if(operands.size()==1)args.put("identity",operands.getFirst());}
+                case "metric-definition"->{required=1;if(operands.size()==1)args.put("metric",operands.getFirst());}
                 case "evidence"->{required=1;if(operands.size()==1)args.put("reference",operands.getFirst());}
                 case "paths","shortest-path"->{required=2;if(operands.size()==2){args.put("source",operands.get(0));args.put("target",operands.get(1));}}
                 case "metric"->{required=operands.size();if(operands.isEmpty()||operands.size()>2)throw new InputFailure("METRIC_REQUIRED");args.put("metric",operands.getFirst());args.put("subject",operands.size()==2?operands.get(1):context);}
@@ -239,13 +240,18 @@ public final class EvoApp {
         if(r.world!=null&&r.assignment!=null)throw new InputFailure("ONE_REALIZATION_REQUIRED");Optional<Realization> realization=Optional.empty();
         if(r.world!=null)realization=Optional.of(new Realization(Optional.of(r.world),Map.of()));
         if(r.assignment!=null){var assignment=new TreeMap<String,Boolean>();GraphJson.object(Workspace.json(resolve(r.assignment),65_536)).forEach((k,v)->{if(!(v instanceof Boolean b))throw new IllegalArgumentException();assignment.put(k,b);});realization=Optional.of(new Realization(Optional.empty(),assignment));}
+        int queryDepth=r.depth;
+        if(op.equals("visual-graph")&&args.containsKey("seed")){
+            if(r.depth==20)throw new InputFailure("VISUAL_DEPTH_REQUIRES_1_TO_19_STEPS");
+            queryDepth=r.depth+1;
+        }
         var defaults=Limits.defaults();r.activeRequest=new Request(graph.identity(),context,scope,projection,op.equals("impact")||op.equals("policy-impact")||r.incoming?Direction.INCOMING:Direction.OUTGOING,r.kinds,Population.all(),false,realization,
-                new Limits(r.depth,defaults.maxSteps(),r.limit,defaults.maxVertices(),defaults.maxEdges(),defaults.maxSolverSteps(),defaults.maxFormulaNodes(),defaults.maxAuxiliaryStates()));
+                new Limits(queryDepth,defaults.maxSteps(),r.limit,defaults.maxVertices(),defaults.maxEdges(),defaults.maxSolverSteps(),defaults.maxFormulaNodes(),defaults.maxAuxiliaryStates()));
         if(!isReportOp)data.put("request",r.activeRequest);
-        if(Set.of("entities","edges","dependencies","relationships","explain","gaps","spring","configurations","artifacts","metric-catalog","rules","findings").contains(op))data.put("page",new Page(r.limit,Optional.ofNullable(r.cursor)));
+        if(Set.of("entities","edges","dependencies","relationships","explain","gaps","spring","configurations","artifacts","metric-catalog","rules","findings","children","realizations").contains(op))data.put("page",new Page(r.limit,Optional.ofNullable(r.cursor)));
         else if(r.cursor!=null)throw new InputFailure("PAGE_NOT_APPLICABLE");
         if(r.arguments==null&&r.activeRequest!=null){
-            if(Set.of("entity","dependencies","expand","impact","policy-impact","reachability","explain").contains(op)&&args.containsKey("identity"))args.put("identity",resolveEntity(r,graph,r.activeRequest,GraphJson.string(args.get("identity"))));
+            if(Set.of("entity","dependencies","expand","impact","policy-impact","reachability","explain","children").contains(op)&&args.containsKey("identity"))args.put("identity",resolveEntity(r,graph,r.activeRequest,GraphJson.string(args.get("identity"))));
             if(Set.of("paths","shortest-path").contains(op))for(String key:List.of("source","target"))args.put(key,resolveEntity(r,graph,r.activeRequest,GraphJson.string(args.get(key))));
             if(op.equals("visual-graph")&&args.containsKey("seed"))args.put("seed",resolveEntity(r,graph,r.activeRequest,GraphJson.string(args.get("seed"))));
         }
