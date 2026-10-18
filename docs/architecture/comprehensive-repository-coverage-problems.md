@@ -7,6 +7,14 @@
 - **Hạn chế tối đa các kết quả `FAILED` và `PARTIAL`, hướng tới việc kiểm tra và bao quát toàn vẹn mọi dự án.**
 - **Giải quyết triệt để các rào cản kỹ thuật khiến các dự án lớn, phức tạp hoặc đa module bị gián đoạn, từ chối hoặc rơi vào trạng thái thiếu hụt dữ liệu.**
 
+### Bổ sung chỉ đạo đã xác nhận — 2026-10-17
+
+Human yêu cầu lập kế hoạch M8.4 tối đa 4–6 bước, và đã chọn **semantic engine cho từng ngôn ngữ ngay trong M8.4**. Quy định cũ chỉ inventory ngoài Java được thay thế. Build cần được dùng để thu generated sources, bytecode và effective build context: **cấm chạy trực tiếp trên host; cho phép chạy trong sandbox đã kiểm chứng**, kết hợp phân tích tĩnh trước build. Không giữ các trần cứng tổng repo, số file hay thời gian tải làm điều kiện loại repo.
+
+[ADR-007](../decisions/ADR-007-isolated-build-and-polyglot-readiness.md), [hợp đồng M8.4](m8-repository-readiness.md) và [kế hoạch sáu bước](../tasks/m8/04-comprehensive-repository-readiness.md) cụ thể hóa chỉ đạo. “Toàn bộ” yêu cầu inventory/byte accounting không bỏ sót, mọi module/source set/language có disposition và semantic obligation, generated outputs có lineage, mọi context đã chọn có coverage rõ. Không lấy hash/build xanh/không có diagnostic làm chứng minh hiểu mọi hành vi. Giảm PARTIAL bằng đóng obligation có evidence, giữ lịch sử gap nhưng không đếm gap đã giải quyết như thiếu hụt hiện tại.
+
+Bỏ trần sản phẩm bằng streaming, lưu trên đĩa, checkpoint, backpressure và worker phù hợp; vẫn giữ cô lập CPU/RAM/disk/network, bounded API và watchdog. Khi thiếu tài nguyên/quyền/toolchain, giữ kết quả và điểm tiếp tục. Catalog ngôn ngữ đầu tiên không thành whitelist vĩnh viễn; claim nghiệm thu chỉ áp dụng cho khả năng/context/cohort được kiểm chứng, không giả mọi ngôn ngữ tương lai hay tài nguyên vô hạn đã được giải quyết.
+
 ---
 
 ## 2. Danh sách các vấn đề cốt lõi cần giải quyết (Core Problem Statements)

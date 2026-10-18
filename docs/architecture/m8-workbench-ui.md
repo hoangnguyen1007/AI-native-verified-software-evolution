@@ -2,6 +2,8 @@
 
 Historical M8.2 boundary. [M8.3](m8-structure-and-configurations.md) extends it with direct structure ownership, configuration comparison, model replay, metric/score drill-down and graph controls. M8.2 omissions below describe that earlier slice.
 
+[M8.4 readiness](m8-repository-readiness.md), planned 2026-10-17, supersedes these bounds as product requirements: full acquisition with continuation, broader policy-controlled hosts/authentication, isolated builds and per-language semantic coverage. The existing adapter behavior below remains unchanged until implementation.
+
 **CONFIRMED requested scope:** operational English UI over real repositories, removal of fabricated/decorative product controls, responsive layout repairs and short user guidance. The workbench consumes existing canonical query/report services. It does not recompute metrics, policy verdicts or health scores.
 
 ## Input and connection boundary

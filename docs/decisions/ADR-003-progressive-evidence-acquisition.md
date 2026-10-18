@@ -1,5 +1,7 @@
 # ADR-003: Progressive Evidence Acquisition and Capability Boundaries
 
+**Supersession, 2026-10-17:** progressive evidence and reconciliation remain in force. [ADR-007](ADR-007-isolated-build-and-polyglot-readiness.md) authorizes target execution inside the validated M8.4 sandbox and semantic engines beyond Java. Earlier execution/phase restrictions below describe the original decision; direct host target execution remains prohibited.
+
 - **Status:** ACCEPTED DIRECTION; individual provider designs and phase entry remain gated
 - **Date:** 2026-09-04
 - **Decision authority:** Human project owner

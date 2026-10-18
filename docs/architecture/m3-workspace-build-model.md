@@ -1,5 +1,7 @@
 # M3 Workspace and Build-Model Intelligence Contract
 
+**2026-10-17 supersession note:** implementation descriptions and gate statuses below are historical to their M3 checkpoints; current state records G2 passed. [M8.4](m8-repository-readiness.md) now authorizes isolated target builds and multiple selected repository build contexts under [ADR-007](../decisions/ADR-007-isolated-build-and-polyglot-readiness.md). Existing M3 providers remain passive; their old limits are not permanent platform ceilings.
+
 ## Status and Scope
 
 **PROVISIONAL Milestone M3 baseline; bounded M3.1–M3.8 slices are implemented.** M3.7 delivered progressive external Maven model-POM acquisition, qualified environment-profile baselines and cross-release `ct.sym`. M3.8 delivers bounded dependency POM/JAR acquisition into an isolated or explicitly selected local cache and a finite classpath-acquisition fixpoint. The implementation completion slice is closed; Gate G2 remains `WITHHELD` until the representative semantic denominator receives independent labels and adjudication. Later sections define target contracts for generated-source lineage and POM-less/non-Maven source plans.
@@ -118,7 +120,7 @@ M3.7 does not pretend one provider covers every repository. A POM-less repositor
 
 ## Core Invariants
 
-1. **No Arbitrary Lifecycle Execution:** Analysis never executes untrusted target Maven/Gradle lifecycle phases (`compile`, `test`, `package`) or arbitrary target plugins. Build understanding comes from passive inspection, bounded exact data acquisition, or safe isolated model parsing.
+1. **No Direct Host Lifecycle Execution:** M3's delivered providers remain passive. Untrusted target lifecycle phases (`compile`, `test`, `package`), plugins and executable model requests may only run through the separately validated M8.4 isolated provider, never directly on the host. Passive model parsing is not an execution sandbox.
 2. **Strict Module and Source-Set Isolation:** Every source file belongs to an explicit module and source-set (`main` vs `test`). Classpaths and language levels are computed per module and per source-set; dependency supersets across modules are forbidden.
 3. **Deterministic Classpath Ordering:** Classpaths are ordered lists of logical artifacts with SHA-256 digests. Local filesystem paths are machine locators, not identity inputs.
 4. **Platform Decoupling (`analyzer-runtime != analyzed-platform`):** The host analyzer runtime (Java 21) is decoupled from the analyzed repository target platform (e.g. Java 8, 11, 17, 21). Platform symbol views do not guarantee parser syntax support beyond verified versions.

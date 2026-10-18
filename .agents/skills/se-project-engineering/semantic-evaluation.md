@@ -1,13 +1,13 @@
-# Java/Spring Semantic and Benchmark Evidence
+# Language Semantic and Benchmark Evidence
 
 Read for semantic extraction, ground truth, frontend comparisons or semantic gate reviews. Use the relevant architecture/ADR as the contract; this checklist does not define new canonical schemas or authorize production features.
 
 ## Before an experiment
 
-- Pin repository snapshot, source inventory/hashes, Java release/runtime, source roots/module model and ordered exact classpath. Both compared frontends consume the same inputs.
-- Register relationship categories and independently labeled occurrences before scoring. Define supported/unsupported boundaries and positive, negative, unresolved, ambiguous, malformed/error and modern-Java cases.
+- Pin repository snapshot, source inventory/hashes, language/dialect and compiler/runtime, source sets/module model and ordered exact dependency/platform inputs. Java comparisons retain release/classpath controls; polyglot packs use their native equivalent. Both compared frontends consume the same inputs.
+- Register language-specific relationship categories and independently labeled occurrences before scoring. Define supported/unsupported boundaries and positive, negative, unresolved, ambiguous, malformed/error, generated and current/legacy language cases. Syntax-only indexing does not pass a semantic-engine gate.
 - Establish independent expectations: compiler bindings where applicable, hand-reviewed source/build evidence and reviewed labels. Neither candidate frontend is its own oracle. Capture oracle diagnostics; compiler recovery after an error is not automatically a valid binding.
-- Inspect runner, POM and test side effects. Root reactor verification excludes standalone benchmarks. Execute only controlled/trusted fixture builds; normal target analysis must not run arbitrary lifecycle plugins.
+- Inspect runner, build metadata and test side effects. Platform reactor verification excludes standalone benchmarks. Untrusted target builds, model requests, compiler hooks and indexers execute only inside the validated M8.4 sandbox; they must never run directly on the host. Controlled fixture builds remain available for verification. Static inspection and a successful exit do not establish semantic correctness or producer trust.
 
 ## Check each observation
 
@@ -19,7 +19,7 @@ Read for semantic extraction, ground truth, frontend comparisons or semantic gat
 | Resolution | Separate resolved, unresolved, ambiguous, unsupported and error; preserve candidates and exception evidence |
 | Provenance | Snapshot/path/full span identify the actual source occurrence; absent positions remain absent, never placeholders |
 | Mapping | Parser objects do not escape; M1 conversion preserves status, diagnostics, derivation and uncertainty |
-| Identity | Stable inputs and exact artifact hashes; distinguish source occurrence from target declaration |
+| Identity | Stable logical symbol identity is separate from analysis/provider identity, source occurrence, binary correspondence and exact artifact hashes; provider upgrades must not silently rename unchanged symbols |
 | Determinism | Same stable inputs yield identical canonical identities/order; runtime timing is separate |
 
 M1 source spans use one-based line/column and an exclusive end. Test duplicate text, multiline calls, tabs/Unicode and nested expressions where supported. A semantically resolved target can still have unusable provenance; track both dimensions and prevent a mapper from silently converting it into fully evidenced output. If the canonical contract cannot represent the observation, report/withhold the mapping rather than manufacture evidence.
@@ -38,4 +38,4 @@ For performance claims, use registered environments, fixed resource settings, re
 
 Store exact commands, corpus/configuration identifiers, tool versions, manifests, raw output and deviations. Derived tables must reference their source run. Keep existing raw artifacts immutable; fix a generator and rerun to a new identified output when necessary.
 
-Technology approval and empirical gate acceptance are different decisions. Apply approved JavaParser direction and registered replacement triggers from ADR-001. OpenRewrite remains an independent comparator; transformation execution is outside SE121.
+Technology approval and empirical gate acceptance are different decisions. Apply approved JavaParser direction and registered replacement triggers from ADR-001. M8.4 adds qualified native semantic packs and isolated build evidence under [ADR-007](../../../docs/decisions/ADR-007-isolated-build-and-polyglot-readiness.md); a captured index is producer-asserted until the trust/validation predicate is satisfied. OpenRewrite remains an independent comparator; transformation execution is outside SE121.

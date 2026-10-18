@@ -1,5 +1,7 @@
 # M8.1 — Local asynchronous analysis and workbench API
 
+**M8.4 planning note (2026-10-17):** this records implemented M8.1 behavior. The [readiness contract](m8-repository-readiness.md) plans durable jobs, resumable resource waiting, full acquisition and isolated builds through new versioned contracts. Its plan does not claim the process-local limits below are already removed.
+
 **CONFIRMED scope:** the owner requested completion of M8.1 after the recorded M7/G6 preparation checkpoint. The repository had no separate M8 task file. This slice implements M8's asynchronous cancellable backend foundation over the existing canonical query/report boundary. The complete visual workbench and its acceptance gate remain subsequent work. **PROVISIONAL external contract:** `architecture.jobs:m8.1-v1`, additive to `architecture.http:m7.1-v1` and `architecture.query:m7.2-v2`.
 
 ## Ownership and implementation choice

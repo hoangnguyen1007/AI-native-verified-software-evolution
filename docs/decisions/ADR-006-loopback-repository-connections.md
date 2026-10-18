@@ -1,5 +1,7 @@
 # ADR-006 — Opt-in loopback repository connections
 
+**Planned expansion, 2026-10-17:** the three-host/size/time bounds below describe the implemented M8.2 adapter. [ADR-007](ADR-007-isolated-build-and-polyglot-readiness.md) and [M8.4](../architecture/m8-repository-readiness.md) replace them with policy-controlled transport, full snapshot hydration and durable resource-aware acquisition. Implementation has not yet changed; existing limits must not be represented as already removed.
+
 Date: 2026-10-16. **CONFIRMED human direction:** repair M8.2 into an operational workbench, support both local repositories and Git URLs, use English and remove fabricated product data. **PROVISIONAL implementation choice:** the bounded connection adapter below; this does not approve authenticated remote deployment or claim support for every Git hosting/authentication scheme.
 
 ## Problem and decision

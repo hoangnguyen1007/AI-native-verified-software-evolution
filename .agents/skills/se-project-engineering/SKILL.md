@@ -17,7 +17,7 @@ Identify the requested outcome, current gate, approved decisions, affected contr
 - Implementation self-review: fix supported defects inside the authorized scope and reverify.
 - Documentation/configuration: validate links, structure, effective behavior or rendered output as relevant; do not invent production tests for prose.
 
-For Java/Spring extraction, ground truth, or semantic benchmark claims, read [semantic-evaluation.md](semantic-evaluation.md). It defines evidence checks, not a replacement for milestone contracts.
+For language semantics, Java/Spring extraction, ground truth, or semantic benchmark claims, read [semantic-evaluation.md](semantic-evaluation.md). It defines evidence checks, not a replacement for milestone contracts. M8.4 target builds/indexers require the validated isolated executor; platform verification commands below are not permission to run untrusted targets on the host.
 
 ## Verification selection
 

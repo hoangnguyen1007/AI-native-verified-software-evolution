@@ -1,5 +1,7 @@
 # ADR-005: M4 Universal v2 — active evidence closure before M4E
 
+**Supersession, 2026-10-17:** [ADR-007](ADR-007-isolated-build-and-polyglot-readiness.md) brings isolated target builds and language-specific semantic engines into M8.4. The passive-only/inventory-only restrictions below remain historical to M4 Universal v2, not current M8.4 prohibitions. Existing evidence and identity contracts are not retroactively changed.
+
 - Date: 2026-09-23; compact three-task plan finalized 2026-09-26.
 - **CONFIRMED:** owner requested a new M4 Universal v2 task and detailed supporting plans to minimize UNKNOWN/UNRESOLVED across repository shapes.
 - **PROVISIONAL:** the technical design is the adopted planning baseline, pending contract tests and empirical validation. This ADR does not claim that the owner reviewed every proposed schema or threshold.

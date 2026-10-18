@@ -2,15 +2,15 @@
 
 ## Mission
 
-Build a deterministic, evidence-first platform that understands Java and Spring Boot repositories, reconstructs architecture-relevant semantics across bounded configuration spaces, measures architecture structure and health, detects configuration-qualified architecture violations, explains every assessment through evidence and counterexample configurations, and presents the results through a complete visual workbench with a stable foundation for later verified software evolution.
+Build a deterministic, evidence-first platform that understands repositories through a protected Java/Spring Boot foundation and language-specific semantic engines, reconstructs architecture-relevant semantics across declared configuration spaces, measures architecture structure and health, detects configuration-qualified architecture violations, explains every assessment through evidence and counterexample configurations, and presents the results through a complete visual workbench with a stable foundation for later verified software evolution.
 
 ## Product Capability Philosophy
 
 **CONFIRMED by the human owner on 2026-09-04 and re-affirmed with full universal scope expansion on 2026-09-18:** the platform adapts to understand each repository as deeply as safely and truthfully possible; it does not require repositories to conform to one analyzer assumption. There are **no artificial restrictions or "forbidden zones"**; the platform must not be shackled by narrow academic assumptions or artificial boundaries that declare common real-world code "unsupported". Prefer maximum capability, minimum assumptions, progressive evidence acquisition, explicit uncertainty, and zero silent omission.
 
-The platform targets broad Java/Spring repository understanding: student/plain Java, legacy and modern apps, Maven/Gradle reactors, generated-code-heavy systems, enterprise monorepos, binary/resource inputs and incomplete environments. **CONFIRMED clarification (2026-09-23):** deep Java/Spring analysis plus inventory and evidenced boundaries for other languages in polyglot repositories; another language's semantic engine is not part of this request. [M4 Universal v2](architecture/m4-universal-v2.md) defines progressive evidence acquisition and automatic source-to-Spring integration. The existing 98–99% aspiration becomes an empirical target on preregistered cohorts, not a worldwide measured fact. Syntax, platform API, framework version and mechanism support are verified separately; finite SAT cannot guarantee infinite-domain or millisecond worst-case solving.
+The platform targets student/plain Java, legacy and modern apps, multi-build reactors, generated-code-heavy systems, enterprise monorepos, polyglot workspaces, binary/resource inputs and incomplete environments. **CONFIRMED human scope change (2026-10-17):** M8.4 includes actual semantic engines for individual non-Java languages, isolated target builds and comprehensive acquisition without fixed total-repository ceilings. This supersedes the inventory-only language clarification of 2026-09-23. [ADR-007](decisions/ADR-007-isolated-build-and-polyglot-readiness.md) and the [M8.4 contract](architecture/m8-repository-readiness.md) govern the expansion; implementation and empirical acceptance remain pending. The existing 98–99% aspiration is an empirical target on preregistered cohorts, not a worldwide measured fact. Syntax, platform API, framework version and mechanism support are verified separately; finite SAT cannot guarantee infinite-domain or millisecond worst-case solving.
 
-**Autonomous Reasoning & Capability-Driven Specification Mandate:** Documentation declares required capabilities, coverage outcomes, boundaries and verifiable invariants. Implementers choose internal algorithms and structures within those contracts. Universal v1 had two implementation slices. The owner's latest request for a compact v2 plan is represented by **three tasks: two implementation tasks and one integration/acceptance task**, each with internal checklists and its own [task file](tasks/m4-universal-v2/README.md). A checklist is not an additional task; smaller task count cannot remove coverage or correctness controls.
+**Autonomous Reasoning & Capability-Driven Specification Mandate:** Documentation declares required capabilities, coverage outcomes, boundaries and verifiable invariants. Implementers choose internal algorithms and structures within those contracts. Historical Universal v1 had two slices and [Universal v2](tasks/m4-universal-v2/README.md) had three tasks. The current [M8.4 plan](tasks/m8/04-comprehensive-repository-readiness.md) has exactly six steps with detailed internal checklists. A checklist is not an additional task; smaller task count cannot remove coverage or correctness controls.
 
 Milestone scope sequences implementation delivery, but never serves as a ceiling or artificial constraint on platform capabilities. When justified and authorized, providers synthesize and acquire build-model, dependency, generated-source, bytecode, configuration, controlled sandbox/build, runtime, or other evidence. All such evidence remains versioned, attributable, bounded by permissions and safety, and reconciled without fabrication or silent replacement of conflicting observations.
 
@@ -19,7 +19,7 @@ Milestone scope sequences implementation delivery, but never serves as a ceiling
 - Course phase: SE121 - Software Architecture Intelligence Platform
 - Intended SE121 North Star: Track A correctness foundation plus Track B architecture evolution
 - Future phases: SE122 and KLTN
-- Primary ecosystem: Java and Spring Boot
+- Protected foundation: Java and Spring Boot; language-specific semantic engines enter SE121 in M8.4
 
 ## Human-Approved Priorities
 
@@ -36,6 +36,8 @@ Research discipline remains required for ground truth, benchmarks, evidence, rep
 ## SE121 Scope
 
 - Semantic Java source analysis
+- Polyglot semantic engines, compiler-backed evidence and qualified cross-language relationships in M8.4
+- Comprehensive streaming snapshot acquisition, durable recovery and isolated target build evidence
 - Multi-module workspace intelligence
 - Safe Maven/build-model understanding
 - Spring semantic intelligence
@@ -62,7 +64,6 @@ Architecture-mutation fixtures used to evaluate rule detection are part of SE121
 - Sandbox verification of generated changes
 - Differential/mutation testing of generated patches
 - CI/CD verification and Verified Pull Requests
-- Another programming language
 
 These remain SE122/KLTN concerns unless a later explicit human decision changes scope. This scheduling does not make them forbidden platform capabilities or prevent preserving clean extension points during SE121.
 
@@ -74,8 +75,8 @@ These remain SE122/KLTN concerns unless a later explicit human decision changes 
 4. Every important semantic relationship and violation preserves inspectable evidence and provenance.
 5. Unresolved, ambiguous, partial, inferred, conditional, unsupported, and error outcomes remain explicit.
 6. Maven modules, source roots, dependency scopes, parent POMs, dependency management, and BOMs are represented where analysis needs them.
-7. Arbitrary untrusted Maven/Gradle lifecycle code is not executed during normal analysis. A future opt-in execution provider must be explicitly authorized, isolated, resource-bounded and fully provenance-recorded.
-8. Analysis identity is content-addressed from stable inputs, enabling determinism, compatible evolution, and future caching/incrementality without implementing a cache prematurely.
+7. Untrusted target lifecycles, scripts, plugins and executable model/index requests never run directly on the host. M8.4 authorizes isolated execution under validated sandbox, resource/egress and provenance contracts; static inspection and build success are not safety or semantic certificates.
+8. Analysis identity is content-addressed from captured stable inputs. M8.4 requires CAS/checkpoints and evidence-cache reuse for scalable readiness; temporal incremental architecture evolution remains separately gated. Build reproducibility is measured separately from deterministic analysis replay.
 9. Evidence acquisition is progressive and replaceable. Source analysis is the current baseline; unresolved or unsupported cases remain registered capability gaps that can justify additional build, generated-source, bytecode, configuration, sandbox or runtime providers at an approved gate.
 10. The system remains a modular monolith unless measured requirements justify otherwise.
 11. Architecture health and analyzer confidence are separate outputs; incomplete evidence can qualify or withhold an assessment but cannot improve it.
@@ -85,6 +86,8 @@ These remain SE122/KLTN concerns unless a later explicit human decision changes 
 15. M3 models one exact build/classpath/platform context. M4+ may model a bounded Spring configuration space inside it; one realized configuration never becomes a universal claim without proof over the modeled feasible space.
 16. Spring bean conditions that depend on definitions processed so far use versioned phase/order-aware transition semantics. Missing order, external configuration or dynamic behavior remains `UNKNOWN` or a typed capability gap.
 17. Canonical conditional facts own truth regions and witnesses. Graph, policy, API and UI are projections/consumers and must not flatten mutually infeasible facts into one application world.
+18. Total repository size/count/time are not comprehensive-mode admission ceilings. Bound worker/IPC/API resources and retain durable continuation when allocation is insufficient. Physical resources and inaccessible inputs remain explicit constraints, never silently omitted coverage.
+19. Inventory, selected build-context coverage, semantic correctness and operational completion are separate. Active unmet obligations determine residual coverage while resolved gaps remain auditable. Language engines need independent obligation censuses, stable logical symbol identity and trust-qualified evidence.
 
 ## Source Authority
 
@@ -125,7 +128,8 @@ Lower-authority claims cannot become confirmed without higher-authority evidence
 | Cytoscape.js workbench visualization | PROVISIONAL |
 | Complete visual architecture-intelligence workbench | CONFIRMED product outcome |
 | Explainable architecture score plus separate analysis confidence | CONFIRMED direction; exact formula PROVISIONAL |
-| Progressive evidence providers | M3/M4 passive baseline delivered; broader passive acquisition/import/coordinator PLANNED in Universal v2; target execution remains ASSESS/HOLD |
+| Progressive evidence providers | Passive baseline and Universal v2 imports delivered within recorded scope; M8.4 isolated target execution authorized, design PROVISIONAL and implementation pending |
+| Polyglot semantic engines and scalable readiness | CONFIRMED M8.4 scope expansion; native engine/CAS/VM adapter choices PROVISIONAL under ADR-007 |
 | Staged conditional architecture semantics for M4+ | ACCEPTED direction and bounded M4B–D implementation; empirical G3 acceptance pending; see ADR-004/current state |
 | Solver backend for configuration reasoning | Pure-Java DPLL and exhaustive backends implemented within recorded fragment; broader performance/coverage unmeasured |
 | Post-M12 context federation, cross-system assurance, and verified AI evolution | FUTURE HORIZONS; not SE121 commitments |
@@ -140,9 +144,11 @@ Lower-authority claims cannot become confirmed without higher-authority evidence
 - `docs/architecture/`: current contracts, semantics, boundaries, schemas, and invariants
 - `docs/architecture/m3-workspace-build-model.md`: provisional M3 workspace, safe Maven model, exact classpath, and platform decoupling contract
 - `docs/architecture/evidence-acquisition.md`: provisional M3+ capability-gap, acquisition-attempt, and provider-conflict contract
+- `docs/architecture/m8-repository-readiness.md`: M8.4 acquisition, isolated execution, polyglot semantics, resource and completion contracts
+- `docs/tasks/m8/04-comprehensive-repository-readiness.md`: six-step M8.4 implementation plan and exit criteria
 - `docs/architecture/m4-spring-intelligence.md`: provisional M4 Spring domain model and versioned closed mechanism denominator
 - `docs/architecture/m4-universal-v2.md`: planned adaptive intake/evidence/semantic integration contract; coverage catalog is the required-case companion
-- `docs/tasks/m4-universal-v2/`: exactly three upcoming execution tasks and their shared index
+- `docs/tasks/m4-universal-v2/`: historical three-task execution plan and shared index
 - `docs/architecture/m4-r0-semantics-gate.md`: reviewable R0 identity/fragment/version/order contract candidate spanning Spring 1.x XML through Boot 3.4.x
 - `docs/architecture/conditional-architecture-semantics.md`: canonical M4+ configuration-space, staged registration, truth-region, witness, policy and evolution semantics
 - `docs/architecture/product-outcome.md`: canonical product, metric, scoring, visualization, and acceptance contract

@@ -202,8 +202,8 @@ Every important relationship, metric input, violation, and score penalty preserv
 
 ## Safety and Scale Boundaries
 
-- Do not execute arbitrary untrusted Maven/Gradle lifecycle code during normal analysis. Any future execution-backed provider is opt-in, explicitly authorized, isolated, resource-bounded, network/filesystem constrained as appropriate, and records inputs, outputs and side effects.
-- Bound repository size, files, graph projections, traversal depth, result count, and job duration.
+- Never execute untrusted target lifecycle code, scripts, plugins or executable model/index requests directly on the host. M8.4 authorizes a validated isolated provider with constrained resources/network/filesystem and recorded inputs, outputs, side effects and trust qualification; see the [readiness contract](m8-repository-readiness.md).
+- Do not reject comprehensive analysis by a fixed total repository-size, file-count or elapsed-time ceiling. Use streaming storage, durable checkpoints, resource admission and continuation. Bound worker memory/CPU/disk, IPC/API payloads, graph projections and each traversal page; retain undiscovered frontiers when work is incomplete.
 - Use pagination, cancellation, aggregation, and progressive graph expansion.
 - Never render the complete raw graph by default.
 - Do not expose secrets, raw internal stack traces, or unsafe local paths through product surfaces.
@@ -223,20 +223,16 @@ Every important relationship, metric input, violation, and score penalty preserv
 
 ## Explicit Future Extension Points
 
-The architecture preserves boundaries for later phases even where SE121 does not implement the capability. These are scheduled omissions, not permanent exclusions:
+M8.4 now brings additional language/build providers, generated-source/binary acquisition and isolated build execution into SE121 under [ADR-007](../decisions/ADR-007-isolated-build-and-polyglot-readiness.md). Their plan is not an implementation claim. The following remain later/gated capabilities:
 
-- additional source/build-system frontends and declarative build-model providers;
-- generated-source and dependency-artifact acquisition;
-- selective bytecode and framework/configuration evidence;
-- explicitly authorized controlled build/sandbox and runtime-observation providers;
-- multi-build-context, AOT and deployment-configuration federation;
+- arbitrary runtime-observation providers beyond the registered build evidence contract;
+- deployment-configuration and AOT runtime-world federation beyond M8.4's selected build contexts;
 - cross-repository API/event/schema architecture assurance;
 
 - graph-guided RAG or AI diagnosis;
 - automated repair/refactoring;
 - transformation/sandbox verification;
-- verified pull requests or CI/CD product integration;
-- a second programming language.
+- verified pull requests or CI/CD product integration.
 
 ## Related Documents
 

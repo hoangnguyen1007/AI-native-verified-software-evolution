@@ -16,6 +16,8 @@ On 2026-09-09, [ADR-004](decisions/ADR-004-staged-conditional-architecture-seman
 
 Tracks and milestones define delivery order and acceptance claims, not permanent capability ceilings. Architecture work must preserve safe extension paths for deeper repository evidence even when the corresponding provider is not an SE121 deliverable.
 
+**CONFIRMED scope change (2026-10-17):** [ADR-007](decisions/ADR-007-isolated-build-and-polyglot-readiness.md) brings isolated target builds, comprehensive acquisition without fixed repository ceilings, and language-specific semantic engines into M8.4. The six-step plan is ready; implementation has not started. Historical gates are preserved and M10/Track B approval remains separate.
+
 ## Protected Principles
 
 1. Do not weaken Track A to reach Track B.
@@ -24,7 +26,7 @@ Tracks and milestones define delivery order and acceptance claims, not permanent
 4. Unknown/ambiguous/conditional semantics remain explicit.
 5. Canonical semantic and query contracts remain independent of parser and storage adapters.
 6. Multi-module workspace/build-model intelligence is a core capability.
-7. Analysis identity is content-addressed, but caching is deferred until a measured need.
+7. Analysis identity is content-addressed. M8.4 requires CAS/checkpoint/evidence caching to remove demonstrated scale constraints; broader temporal incremental analysis stays gated.
 8. Source-only analysis is a baseline, not a ceiling. Unresolved/unsupported cases are registered by reason and may trigger progressively stronger evidence providers; provider implementation remains gate- and evidence-driven.
 9. Evaluation runs throughout implementation rather than at the end.
 10. No SE122/KLTN production features enter SE121 silently.
@@ -151,7 +153,7 @@ Decouple analyzer execution from analyzed repository targets (**analyzer-runtime
 - **Platform provenance:** Record the exact analyzed platform version, vendor, source release, and symbol-view hash in the analysis manifest and provenance.
 - **Source-encoding evidence:** Resolve charset per module/source set from ordered authoritative evidence such as a supported BOM, build declaration (for example `<project.build.sourceEncoding>`), supported repository configuration, or explicit analysis configuration. If none exists, use only a declared analysis policy such as assumed UTF-8 or withhold/degrade the input; never inherit an ambient host default or present the assumption as repository fact. UTF-8 with BOM must be handled deterministically without corrupting source coordinates; byte sequences invalid under the selected charset or declared/byte mismatches yield explicit input-error/degraded outcomes rather than speculative charset guessing; original raw bytes and SHA-256 digests are strictly preserved alongside charset provenance.
 
-Do not execute arbitrary target lifecycle plugins. M3's initial Gradle path accepts an explicit classpath unless a separately approved safe approach exists; this is an M3 delivery boundary, not a prohibition on future declarative, tool-model, or explicitly authorized isolated build/sandbox providers.
+M3's delivered providers do not execute target lifecycle plugins; its initial Gradle path accepts an explicit classpath. M8.4 now authorizes a separate isolated build/model provider under ADR-007. Direct host execution remains prohibited; no M3 evidence is retroactively reclassified.
 
 Exit gate G2: pinned multi-module fixtures and a real repository reproduce module/source/classpath models without hidden dependency supersets, decouple the analyzer runtime from analyzed repository target platforms, account for registered input/acquisition gaps and provider failures, and pass an early representative real-repository semantic coverage checkpoint (measuring attempted, resolved, unresolved, ambiguous, unsupported, omitted/unmapped, error, and adjudicated incorrect outcomes across registered categories, with reason-level breakdowns for degraded facts) before treating the frontend foundation as mature.
 
@@ -206,7 +208,7 @@ Exactly three task files:
 2. [V2.2 — Java/Spring semantic closure](tasks/m4-universal-v2/02-java-spring-semantic-closure.md): Java/generated symbol resolution, config closure, automatic source-to-M4C descriptors, version/mechanism packs and dependency-local conditional reasoning.
 3. [V2.3 — Integrated architecture and acceptance](tasks/m4-universal-v2/03-integration-and-acceptance.md): input-to-report integration, root-cause uncertainty explanations, recovery/replay controls and one registered acceptance evidence campaign shared with M4E.
 
-The first two are implementation tasks; the third integrates and verifies. Internal checklists do not create additional tasks. Each supported capability needs positive and negative end-to-end evidence; returning a gap for every input satisfies accounting only. Architecture usefulness, correct resolution, false certainty, setup burden and residual uncertainty are measured separately. Scope covers Java/Spring repository diversity without silently adding another analyzed language, target execution or cross-build universal semantics.
+The first two are implementation tasks; the third integrates and verifies. Internal checklists do not create additional tasks. Each supported capability needs positive and negative end-to-end evidence; returning a gap for every input satisfies accounting only. Architecture usefulness, correct resolution, false certainty, setup burden and residual uncertainty are measured separately. This historical M4 scope covered Java/Spring without extra-language engines or target execution. M8.4 explicitly expands both under ADR-007; all-context universal semantics still requires evidence rather than inference from one build.
 
 Exit: integrated evidence closure and semantic journeys pass their controls; all registered categories/failures remain in denominators; applicable permitted providers have been attempted; residuals have exact causes/affected outputs; corpus claims use preregistered inputs/modes/labels and honest comparison. The 98–99% aspiration is evaluated on declared cohorts. V2 is not implemented by this plan and does not pass G3; M4E adjudicates its evidence.
 #### M4E — Validation and G3
@@ -249,7 +251,7 @@ Exit gate: the entire Track A analysis/evidence workflow runs locally without ba
 
 ### M8 - Backend API and Complete Architecture Workbench
 
-**Implementation sequence:** [M8.1 backend jobs/API](tasks/m8/01-analysis-jobs-and-backend.md) establishes registered passive analysis, bounded cancellation/progress/history and canonical publication. The next bounded slice is M8.2 analysis setup/history and overview UI; the remaining views and full acceptance criteria below still govern M8 completion.
+**Implementation sequence:** M8.1 jobs/API, M8.2 live workbench/connections and M8.3 structure/configuration/evidence views are implemented within their recorded bounds. M8.4 readiness is next; the full acceptance criteria below still govern M8 completion.
 
 Deliver asynchronous cancellable analysis jobs and versioned query APIs plus the required workbench:
 
@@ -270,13 +272,15 @@ Exit gate: a user can complete the registered end-to-end product journey on a pi
 
 ### M8.4 — Comprehensive Repository Readiness Upgrade (Mandatory Pre-M9 Task)
 
-**Status: SCHEDULED (Mandatory before Milestone M9).**
+**Status: PLAN READY / IMPLEMENTATION NOT STARTED (mandatory before M9).**
 
 This task is established pursuant to the binding **Human Mandate on Comprehensive Coverage** ([docs/architecture/comprehensive-repository-coverage-problems.md](architecture/comprehensive-repository-coverage-problems.md)).
 
 - **Requirement:** Every repository, regardless of scale, complexity, or multi-module microservice architecture, must be fully analyzable and measurable without omitting any component, with hard ceilings and acquisition timeouts addressed, generated code/stubs (such as gRPC, Protobuf, and compiler-generated artifacts) accounted for, and `FAILED` and `PARTIAL` outcomes minimized to the utmost extent.
 - **Sequencing:** This task is a mandatory prerequisite that must be executed and verified immediately following M8.3, before Milestone M9 begins.
-- **Detailed Execution Plan:** Detailed planning and execution slices will be formulated upon formal entry into this task.
+- **Confirmed expansion:** target builds run in validated isolated executors, never directly on host; non-Java semantic engines are M8.4 deliverables, superseding inventory-only scope.
+- **Detailed execution:** [six-step plan](tasks/m8/04-comprehensive-repository-readiness.md): (1) streaming full acquisition/CAS/journal, (2) multi-root/module/context readiness, (3) isolated native build/index execution, (4) generated-code and Java/Spring evidence closure, (5) language semantic engines and interop, (6) partitioned graph/product integration and registered acceptance. [Contract](architecture/m8-repository-readiness.md) and [research](research/2026-10-17-m8-readiness-design.md) define choices and exit controls.
+- **Claims:** complete inventory is distinct from selected-context semantic coverage and correctness. Physical resources stay finite; waits/checkpoints replace global repo rejection. Exact next task: M8.4.1, step 1 of the plan.
 
 ### M9 - Multi-Repository Evaluation and Hardening
 
@@ -414,9 +418,7 @@ Paper readiness, venue selection, extensive artifact badging, and elaborate defe
 
 ## Immediate Sequence
 
-1. Preserve completed M0–M2 and delivered M3.1–M3.8 contracts/evidence.
-2. Preserve the G2 decision and its immutable evidence; any new external checkpoint requires separate authorization.
-3. Preserve accepted M4-R0 and delivered M4A–M4D plus Universal v1 contracts and immutable evidence.
-4. Execute the [three-task Universal v2 plan](tasks/m4-universal-v2/README.md), starting with V2.1. Preserve conditional semantics, exact contexts, closed denominators and witness invariants.
-5. Complete the registered acceptance evidence shared by V2.3/M4E, then obtain M4E/G3 adjudication before treating conditional Spring facts as stable M5/M6 inputs; do not duplicate the full benchmark campaign.
-6. Continue M5–M10 Track A product work, obtain human approval, then execute M11 conditional architecture evolution and M12 integration.
+1. Preserve delivered M0–M8.3 contracts and immutable G2–G6 evidence within their original scopes.
+2. Execute the [six-step M8.4 plan](tasks/m8/04-comprehensive-repository-readiness.md), beginning with full inventory, streaming CAS and durable recovery. Validate the executor before target execution; qualify each semantic pack and evidence boundary.
+3. Complete registered M8.4 correctness/isolation/recovery/scale acceptance, then M9 broader multi-repository and product hardening. Required repeated trials and representative checkpoints are authorized within the plan and configured resource policy.
+4. Obtain M10 human Track A product approval before M11 conditional architecture evolution and M12 integration. No M8.4 plan or implementation result automatically authorizes Track B.

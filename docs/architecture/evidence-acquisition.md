@@ -1,5 +1,7 @@
 # Progressive Evidence Acquisition and Capability-Gap Contract
 
+**2026-10-17 extension:** [M8.4](m8-repository-readiness.md) authorizes isolated target build/index providers under [ADR-007](../decisions/ADR-007-isolated-build-and-polyglot-readiness.md), with trust qualification and active-obligation completion. This does not make the normalizers or historical M3 providers executable. Resolved gaps stay in audit history; current completion counts unmet requirements rather than all historical gap rows.
+
 ## Status and Scope
 
 **PROVISIONAL architecture contract for M3 and later; the bounded M3.6 core and M3.8 dependency-acquisition extension below are implemented.** This document refines [ADR-003](../decisions/ADR-003-progressive-evidence-acquisition.md). The implementation does not alter the M1 identity contract and does not authorize or invoke target builds.

@@ -1,8 +1,20 @@
 # Current State
 
-Last reconciled: 2026-10-16. **M8.3 structure/configuration/evidence workbench is implemented with bounded acceptance; mandatory M8.4 readiness work is next. M8 remains in progress.** Milestone M7 and Gate G6 remain recorded complete/PASSED. G3/G4/G5/G6 are preserved; M10 human Track A product acceptance is still pending.
+Last reconciled: 2026-10-17. **M8.3 is implemented with bounded acceptance; M8.4 has a six-step plan, with implementation not started. Exact next task: M8.4.1 streaming full acquisition and durable recovery. M8 remains in progress.** Milestone M7 and Gate G6 remain recorded complete/PASSED. G3/G4/G5/G6 are preserved; M10 human Track A product acceptance is still pending.
 
 Preserved checkpoints: Gate G3 remains recorded PASSED in [Gate G3 Adjudication Record](reproducibility/g3-spring-adjudication-record-2026-10-14.md); Gate G4 is certified PASSED in [Gate G4 Adjudication Record](reproducibility/g4-adjudication-record-2026-10-15.md); Gate G5 is certified PASSED in [Gate G5 Adjudication Record](reproducibility/g5-adjudication-record-2026-10-15.md); Gate G6 is certified PASSED in [Gate G6 Adjudication Record](reproducibility/g6-adjudication-record-2026-10-16.md).
+
+## PLANNED — M8.4 COMPREHENSIVE READINESS AND POLYGLOT SEMANTICS
+
+**CONFIRMED human direction (2026-10-17):** target builds are permitted inside a validated sandbox and prohibited directly on the host; remove fixed total-repository acquisition ceilings; include actual semantic engines for individual non-Java languages in M8.4. This supersedes earlier inventory-only language scope and execution ASSESS/HOLD wording for this milestone. Historical implementation notes below describe their original scopes, not current authorization.
+
+**PROVISIONAL design:** [six-step plan](tasks/m8/04-comprehensive-repository-readiness.md), [architecture contract](architecture/m8-repository-readiness.md), [research and alternatives](research/2026-10-17-m8-readiness-design.md), [ADR-007](decisions/ADR-007-isolated-build-and-polyglot-readiness.md). Steps: streaming CAS/inventory/journal; multi-root/module/context readiness; isolated native builds; generated and Java/Spring evidence closure; language semantic packs/interop; partitioned graph/product integration and acceptance. Full VM is the initial proposed isolation backend, with optional qualified gVisor optimization. Native compilers/indexers supply language semantics; syntax inventory alone cannot pass.
+
+Code inspection found coupled byte-array/list storage, file filters, single-entry-build selection, graph materialization, connection limits and process-local jobs. Raising constants alone would retain memory and omission failures. Planned completion separates complete inventory, selected build-context scope, active unmet obligations and operational recovery. Existing Java identities and historical gates remain intact; new language/graph/job formats require explicit compatibility checks.
+
+This planning change executes no target build, image provisioning, production test or benchmark. Isolation readiness, provider accuracy, performance and the new implementation remain unverified. Exact next task: implement step 1, starting with full-inventory/nested-root regression and streaming CAS/journal contracts. M9 follows verified M8.4; M10 and Track B human gates remain separate.
+
+Planning verification: whitespace/diff and local-link/six-step structure checks pass. Independent draft review produced four incorporated corrections; final changes received self-review, without a final independent re-review. The skill validator could not start because PyYAML is absent; unchanged frontmatter and links were checked separately. Details and remaining validations are in the plan's handoff.
 
 ## IMPLEMENTED — M8.3 STRUCTURE, CONFIGURATIONS AND EVIDENCE WORKBENCH
 
@@ -795,7 +807,7 @@ Confirmed: Track A + B target; Java 21/Maven/monorepo; primary JavaParser/Symbol
 
 Accepted direction and bounded multi-world evaluation delivered: [ADR-004](decisions/ADR-004-staged-conditional-architecture-semantics.md) makes bounded, phase/order-aware conditional architecture semantics the M4+ direction. M4A.1–M4A.2 provide evidence-only detection and gap normalization; M4B provides the condition IR, finite configuration-space identity and bounded exogenous evaluation; M4C provides normalized per-assignment discovery, registration and binding; M4D provides explicit truth regions and replayed witnesses. Existing `ConfigurationIdentity` remains one realized configuration; the separate implemented `ConfigurationSpaceIdentity` describes one finite modeled space inside an exact M3 build context. M5 becomes a projection of conditional facts, M6 evaluates configuration-qualified policy, and M11 compares conditional/evidence regions. M4U.2 now implements a replaceable pure-Java DPLL backend and symbolic signature execution within the approved SAT capability direction; this does not change G2/G3 status. See the [research review](research/2026-09-09-conditional-architecture-redirection-review.md) for the earlier decision context.
 
-Provisional: Neo4j Community adapter, Spring Boot API, implemented YAML external policy v1 pending format acceptance, Cytoscape.js and the M7.1 external HTTP wire contract. M5 metric formulas/catalog and budgets are human-approved at G4; M6.3 score model parameters are human-approved under ADR-002. G5 acceptance is PASSED. M7.1 uses a replaceable JDK local HTTP adapter and preserves domain calibration/status. Executing controlled build/sandbox, AOT or runtime producers remains ASSESS/HOLD and needs its separate security/authorization contract. Context federation, cross-system assurance and verified AI evolution remain future horizons.
+Provisional: Neo4j Community adapter, Spring Boot API, implemented YAML external policy v1 pending format acceptance, Cytoscape.js and the M7.1 external HTTP wire contract. M5 metric formulas/catalog and budgets are human-approved at G4; M6.3 score model parameters are human-approved under ADR-002. G5 acceptance is PASSED. M7.1 uses a replaceable JDK local HTTP adapter and preserves domain calibration/status. M8.4 isolated build/index/generator execution is now authorized under ADR-007, pending implementation and isolation validation; arbitrary runtime-observation producers remain separately gated. M8.4 preserves multiple repository build contexts; deployment-world federation, cross-system assurance and verified AI evolution remain future horizons.
 
 ## OPEN QUESTIONS AND BLOCKERS
 
@@ -825,8 +837,8 @@ Human mandate and large-scale repository coverage problems (network acquisition 
 
 ## EXACT NEXT TASK
 
-**M8.4 — Comprehensive Repository Readiness Upgrade.**
+**M8.4.1 — Streaming full acquisition, inventory and durable recovery**, step 1 of the [M8.4 plan](tasks/m8/04-comprehensive-repository-readiness.md).
 
-Begin by registering a bounded readiness plan and representative expectations against the mandatory coverage problems: acquisition timeout/size ceilings, generated sources/stubs, multi-module readiness and typed PARTIAL/FAILED causes. Preserve evidence provenance, closed denominators and passive-target safety; no arbitrary target builds are authorized. M8.3 bounded acceptance does not pass M10. Track B remains unauthorized until Track A gates pass and human approval is granted.
+Begin with regression controls for comprehensive inventory of `.proto`, `.py`, unknown extensions and nested build roots, then streaming CAS/inventory/journal contracts and resumable acquisition. Preserve evidence provenance, closed denominators and v1 compatibility. Target execution is authorized only through the validated M8.4 sandbox; no direct-host fallback. M8.3 bounded acceptance does not pass M10. Track B remains unauthorized until Track A gates pass and human approval is granted.
 
-**Mandatory Pre-M9 Task:** Immediately following M8.3 and strictly prior to starting Milestone M9, the platform must execute **M8.4 — Comprehensive Repository Readiness Upgrade** to fulfill the Human Mandate documented in [Comprehensive Repository Coverage Problem Statements](architecture/comprehensive-repository-coverage-problems.md). Detailed execution slices will be planned upon entry into M8.4.
+**Mandatory Pre-M9 Task:** execute and verify all six steps of M8.4 under the [Human Mandate](architecture/comprehensive-repository-coverage-problems.md), including actual polyglot engines and isolated builds. The plan is ready; none of its implementation or acceptance gates is claimed complete.

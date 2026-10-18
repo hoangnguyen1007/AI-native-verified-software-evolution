@@ -1,5 +1,7 @@
 # M4-UNIVERSAL-V2 — Adaptive Repository Understanding
 
+**Cập nhật phạm vi 2026-10-17:** tài liệu này giữ contract/checkpoint lịch sử M4 Universal v2. Chỉ đạo mới tại [ADR-007](../decisions/ADR-007-isolated-build-and-polyglot-readiness.md) và [M8.4](m8-repository-readiness.md) thay thế giới hạn chỉ inventory ngoài Java và chưa cho chạy target build: M8.4 triển khai semantic engine theo ngôn ngữ và isolated builds, tuyệt đối không chạy target trực tiếp trên host. Không diễn giải các giới hạn cũ dưới đây thành lệnh cấm cho M8.4.
+
 Ngày thiết kế: 2026-09-23; hoàn thiện kế hoạch ba task: 2026-09-26. **CONFIRMED — yêu cầu của chủ dự án:** thêm một task M4 Universal v2, giảm mạnh `UNKNOWN`/`UNRESOLVED`, tiếp nhận repo đa dạng và có kế hoạch riêng cho từng task sắp tới. **PROVISIONAL — thiết kế triển khai dưới đây:** chưa phải năng lực đã được implement hoặc kết quả benchmark.
 
 Đây là task mới sau hai slice Universal v1, trước M4E/G3. Không đổi kết quả lịch sử của M1–M4, không cấp quyền chạy build của repo đầu vào. [Kế hoạch và task files](../tasks/m4-universal-v2/README.md), [ma trận độ bao quát](m4-universal-v2-coverage.md), [protocol nghiệm thu](../research/m4-universal-v2-evaluation.md) là ba phần của hợp đồng này.
