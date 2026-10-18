@@ -1,11 +1,54 @@
 openapi: 3.1.0
 info:
   title: Architecture Workbench API
-  version: m8.3-v1
+  version: m8.4-acquisition-v2
   description: Local cancellable analysis, optional loopback repository connections and canonical query/report adapters. Connections require explicit embedding support.
 servers:
   - url: http://127.0.0.1:8080
 paths:
+  /api/v2/acquisitions/{revision}:
+    parameters:
+      - in: path
+        name: revision
+        required: true
+        schema: {type: string, pattern: '^[A-Za-z0-9._-]{1,256}$'}
+    post:
+      operationId: capturedInventoryPage
+      description: Read a bounded raw-name inventory page and optional sealed manifest. Acquisition and semantic coverage are separate; no snapshot is invented for an open frontier.
+      requestBody: {$ref: '#/components/requestBodies/JobPage'}
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v2/acquisitions/history:
+    post:
+      operationId: acquisitionJournalPage
+      description: Live disk-backed acquisition and evidence-revision journal. Counts and sequence offsets use 64-bit integers.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                after: {type: integer, format: int64, minimum: 0, default: 0}
+                size: {type: integer, minimum: 1, maximum: 1000, default: 20}
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v2/analysis/jobs/{job}/resume:
+    parameters: [{$ref: '#/components/parameters/Job'}]
+    post:
+      operationId: resumeAnalysis
+      description: Explicitly resume an interrupted or failed accepted job with its original identity and acquisition checkpoint. Ordinary idempotent submissions retain their original meaning. Published successful jobs are immutable.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: object, additionalProperties: false, maxProperties: 0}
+      responses:
+        '202': {$ref: '#/components/responses/JobDetail'}
+        default: {$ref: '#/components/responses/Error'}
   /api/v1:
     get:
       operationId: capabilities
@@ -78,13 +121,13 @@ paths:
   /api/v1/analysis/connections:
     get:
       operationId: repositoryConnections
-      description: Registered display labels and public Git host allowlist. Local paths and credentials are never returned. Disabled adapters return 503.
+      description: Registered display labels and public HTTPS endpoint policy. Local paths and credentials are never returned. Disabled adapters return 503.
       responses:
         '200': {$ref: '#/components/responses/JobSuccess'}
         default: {$ref: '#/components/responses/Error'}
     post:
       operationId: connectRepository
-      description: Register an absolute local directory or credential-free public HTTPS GitHub, GitLab or Bitbucket repository. No target lifecycle runs. Git acquisition occurs only in a separately submitted cancellable job. Returns an immutable setup selection; repeat inputs reuse it. Private repositories require local checkout.
+      description: Register an absolute local directory or HTTPS repository allowed by the endpoint policy. Authentication and SSH require explicit operator configuration. No target lifecycle runs. Acquisition captures the pinned full tree into CAS in a separately submitted cancellable job. Repeat inputs reuse the selection; inventory completion is separate from the bounded Java semantic view.
       requestBody:
         required: true
         content:

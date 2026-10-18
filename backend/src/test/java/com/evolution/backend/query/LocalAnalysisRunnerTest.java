@@ -17,6 +17,22 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class LocalAnalysisRunnerTest {
     @TempDir Path directory;
+    @Test void aSealedCaptureResumesAfterTheOriginalSourceDirectoryIsGone()throws Exception{
+        Path source=Files.createDirectory(directory.resolve("captured-source"));Files.writeString(source.resolve("Example.java"),"public class Example {}\n");Path cache=Files.createDirectory(directory.resolve("captured-cache")),state=directory.resolve("captured-state");
+        var repository=RepositoryIdentity.fromCanonicalCoordinate("urn:test:captured-replay");String id=UUID.randomUUID().toString();
+        try(var intake=new RepositoryIntake(state)){
+            assertTrue(intake.local(source,id,new com.evolution.analysis.acquisition.streaming.StreamingAcquisitionRequest(repository,Optional.empty(),true,List.of(".git")),()->false).manifest().isPresent());
+        }
+        Files.delete(source.resolve("Example.java"));Files.delete(source);
+        var runner=new LocalAnalysisRunner(new LocalAnalysisRunner.Input(source,repository,Path.of(System.getProperty("java.home")),21,cache,Optional.empty(),true,false,List.of(),Optional.empty(),LocalAnalysisRunner.SpringInput.absent()),state);var registration=runner.registration("captured");
+        try(var disk=new AnalysisJobDiskStore(directory.resolve("captured-jobs"))){
+            var view=new AnalysisJobs.View(id,"captured",AnalysisJobs.State.RUNNING,AnalysisJobs.Stage.ACQUISITION,2,java.time.Instant.now(),Optional.empty(),Optional.empty(),0,Optional.empty(),Optional.empty(),List.of(),Optional.empty());disk.save("resume",registration.setup(),view,List.of(),List.of());
+        }
+        var graphs=new InMemoryGraphStore();
+        try(var disk=new AnalysisJobDiskStore(directory.resolve("captured-jobs"));var jobs=new AnalysisJobs(List.of(registration),graphs,new PublishedReports(),new AnalysisJobs.Limits(1,1,4,0,1000),disk)){
+            var result=finishedReal(jobs,id);assertTrue(Set.of(AnalysisJobs.State.SUCCEEDED,AnalysisJobs.State.PARTIAL).contains(result.state()),()->CanonicalJson.write(result));assertEquals(1,graphs.load(result.result().orElseThrow().graph().orElseThrow()).orElseThrow().nodes().stream().filter(n->n.kind().equals("TYPE")).count());
+        }
+    }
     private static final String POLICY = """
             schema: architecture-policy:v1
             id: test.backend
@@ -103,7 +119,10 @@ class LocalAnalysisRunnerTest {
             var view = finishedReal(jobs,jobs.submit("maven","once").job().id()); assertTrue(Set.of(AnalysisJobs.State.SUCCEEDED,AnalysisJobs.State.PARTIAL).contains(view.state()),() -> CanonicalJson.write(view));
             var graph = store.load(view.result().orElseThrow().graph().orElseThrow()).orElseThrow();
             assertEquals(2,graph.nodes().stream().filter(n -> n.kind().equals("TYPE")).count());
-            assertTrue(graph.evidence().stream().anyMatch(e -> e.family().equals("repository.acquisition") && e.canonicalJson().contains("src/test")));
+            try(var intake=new RepositoryIntake(source.resolve(".evo/acquisition"),true)){
+                assertTrue(intake.inventory().page(view.id(),50,Optional.empty()).entries().stream().anyMatch(e->e.path().utf8().filter("src/test/java/IgnoredTest.java"::equals).isPresent()));
+                assertTrue(intake.inventory().manifest(view.id()).isPresent());
+            }
         }
     }
     @Test void failedAcquisitionKeepsTypedProviderProblemsWithoutInventingASnapshot() throws Exception {

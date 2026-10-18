@@ -14,6 +14,13 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 class AnalysisJobsTest {
+    @Test void semanticWorkerMemoryExhaustionRetainsFailureAndReleasesTheSlot()throws Exception{
+        var graph=new QueryFixture().graph();var store=new InMemoryGraphStore();
+        try(var jobs=new AnalysisJobs(List.of(registration("oversize",control->{throw new OutOfMemoryError("trusted worker control");}),registration("independent",control->output(graph))),store,new PublishedReports(),limits())){
+            var failed=finished(jobs,jobs.submit("oversize","oversize").job().id());assertEquals(AnalysisJobs.State.FAILED,failed.state());assertEquals("SEMANTIC_WORKER_REQUIRED",failed.error().orElseThrow());assertTrue(failed.result().isEmpty());
+            assertEquals(AnalysisJobs.State.SUCCEEDED,finished(jobs,jobs.submit("independent","next").job().id()).state());
+        }
+    }
     static AnalysisJobs.Registration registration(String id, AnalysisJobs.Runner runner) {
         return new AnalysisJobs.Registration(new AnalysisJobs.Setup(id,RepositoryIdentity.fromCanonicalCoordinate("urn:test:jobs"),21,false,Optional.empty(),Optional.empty()),runner);
     }

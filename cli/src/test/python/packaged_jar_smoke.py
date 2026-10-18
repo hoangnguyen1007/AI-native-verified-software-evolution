@@ -28,6 +28,12 @@ def main():
             assert tree["queryVersion"]["version"] == "m8.3-v1", f"{name}: unexpected query contract {tree['queryVersion']}"
             results[name] = result.returncode
             return tree["data"]
+        acquired = run("acquire", "acquire", str(fixture), "--resume", "packaged-acquisition")
+        assert acquired["semanticCoverage"] == "NOT_EVALUATED" and acquired["acquisition"]["manifest"]["files"] > 0
+        inventory = run("inventory", "inventory", "packaged-acquisition", "--limit", "1")
+        assert len(inventory["page"]["entries"]) == 1
+        resumed = run("resume", "acquire", str(fixture), "--resume", "packaged-acquisition")
+        assert resumed["acquisition"]["manifest"] == acquired["acquisition"]["manifest"]
         scan = run("scan", "scan", str(fixture))
         assert scan["metrics"]["declaredTypes"] > 0 and scan["snapshotSelected"]
         found = run("find", "find", "Controller")

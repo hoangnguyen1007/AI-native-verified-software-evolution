@@ -124,3 +124,7 @@ Metrics/policy dùng language applicability. Không áp nguyên xi Java Martin m
 Job state tách operational waiting/running/canceled/failed khỏi semantic partial/complete. `PARTIAL` được giảm bằng evidence closure, không bằng đổi nhãn trạng thái. Fully acquired nhưng unsupported language vẫn semantic partial. Pre-snapshot lỗi giữ typed acquisition receipt; không tạo fake semantic gap context. Complete theo ngôn ngữ/module không đủ suy ra root complete khi frontier, inaccessible input hoặc obligation còn mở.
 
 M8.4 acceptance gồm correctness/isolation/recovery/scale/interop controls tại bước 6; không thay G2–G6 lịch sử hay M10 approval. Mỗi claim phải chỉ rõ finite tested cohort, engine/tool versions và resource profile. Một test lớn hoặc một lượt build xanh không chứng minh “mọi repo toàn thế giới”.
+
+## Step-1 implementation contract
+
+The [M8.4.1 streaming acquisition contract](m8-streaming-acquisition.md) specifies the implemented CAS/inventory/journal lane, versioned compatibility boundary and product composition. Implementation and verification status are owned by [current state](../current-state.md) and the [six-step plan](../tasks/m8/04-comprehensive-repository-readiness.md); the provisional execution, semantic-engine and graph-scale designs above are not certified by step 1.

@@ -14,11 +14,11 @@ class ScanSelectionTest {
             Path file=root.resolve(p);Files.createDirectories(file.getParent());Files.writeString(file,"fixture");
         }
         Files.writeString(root.resolve("pom.xml"),"<project/>");Files.writeString(root.resolve("module/pom.xml"),"<project/>");
-        var result=ScanSelection.plan(root,false,false,List.of());
+        var result=ScanSelection.legacy(root,false,false,List.of());
         assertTrue(result.excluded().containsAll(List.of("module/target","docs/large-result.json","module/src/test")));
         assertFalse(result.excluded().contains("module/src/main/java/build"));
         assertFalse(result.excluded().contains("module/src/main/resources/data.json"));
-        assertEquals(result,ScanSelection.plan(root,false,false,List.of()));
+        assertEquals(result,ScanSelection.legacy(root,false,false,List.of()));
     }
     @Test void explicitAllFilesAndTestsRestoreRequestedInputScope()throws Exception{
         Files.createDirectories(root.resolve("src/test/java"));Files.writeString(root.resolve("src/test/java/T.java"),"class T {}");

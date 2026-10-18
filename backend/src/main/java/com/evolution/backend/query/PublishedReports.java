@@ -35,11 +35,15 @@ public final class PublishedReports {
         public ContentDigest identity() { return ContentDigest.sha256Utf8(CanonicalJson.write(this)); }
     }
     private final SortedMap<ContentDigest,Report> reports = new TreeMap<>();
+    private final PersistentReports disk;
+    public PublishedReports(){this(null);}
+    public PublishedReports(PersistentReports disk){this.disk=disk;}
     public synchronized ContentDigest publish(Report report) {
         return publishAll(List.of(report)).getFirst();
     }
     /** Validate a complete job's reports before publishing any member. */
     public synchronized List<ContentDigest> publishAll(List<Report> batch) {
+        if(disk!=null)try{return disk.publish(batch);}catch(java.io.IOException failure){throw new IllegalStateException("Report persistence unavailable",failure);}
         var additions = new TreeMap<ContentDigest,Report>();
         var identities = new ArrayList<ContentDigest>();
         for (var report : batch) {
@@ -51,8 +55,9 @@ public final class PublishedReports {
         reports.putAll(additions);
         return List.copyOf(identities);
     }
-    public synchronized Optional<Report> get(ContentDigest identity) { return Optional.ofNullable(reports.get(identity)); }
+    public synchronized Optional<Report> get(ContentDigest identity) { if(disk!=null)try{return disk.get(identity);}catch(java.io.IOException failure){throw new IllegalStateException("Report persistence unavailable",failure);}return Optional.ofNullable(reports.get(identity)); }
     public synchronized List<ContentDigest> forGraph(ContentDigest graph) {
+        if(disk!=null)try{return disk.forGraph(graph);}catch(java.io.IOException failure){throw new IllegalStateException("Report persistence unavailable",failure);}
         return reports.entrySet().stream().filter(e -> e.getValue().evaluation().graph().equals(graph)).map(Map.Entry::getKey).toList();
     }
 }

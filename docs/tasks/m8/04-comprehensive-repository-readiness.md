@@ -1,6 +1,6 @@
 # M8.4 — Kế hoạch nâng cấp khả năng đọc và phân tích repository toàn diện
 
-Ngày: **2026-10-17**. Trạng thái: **PLAN READY / IMPLEMENTATION NOT STARTED**. M8.3 đã có bounded acceptance; M8.4 bắt buộc trước M9. Kế hoạch có **đúng 6 bước**, checklist trong mỗi bước không tạo milestone/task bổ sung.
+Ngày lập kế hoạch: **2026-10-17**; cập nhật thực hiện: **2026-10-18**. Trạng thái: **BƯỚC 1 IMPLEMENTED / BOUNDED VERIFICATION; BƯỚC 2–6 PENDING**. M8.3 đã có bounded acceptance; M8.4 bắt buộc trước M9. Kế hoạch có **đúng 6 bước**, checklist trong mỗi bước không tạo milestone/task bổ sung. Bàn giao bước 1 ở cuối tài liệu; phần handoff lập kế hoạch là lịch sử.
 
 **CONFIRMED — yêu cầu human:** build mục tiêu được chạy trong sandbox, không trực tiếp trên host; bỏ các trần cứng cản repo lớn; phân tích mọi module/build root; thu nhận generated code; giảm FAILED/PARTIAL bằng bằng chứng thực. Human đã chọn **thêm semantic engine cho từng ngôn ngữ ngay trong M8.4**, thay thế phạm vi cũ chỉ inventory ngoài Java. **PROVISIONAL — lựa chọn kỹ thuật:** [hợp đồng kiến trúc](../../architecture/m8-repository-readiness.md), [nghiên cứu và phương án](../../research/2026-10-17-m8-readiness-design.md), [ADR-007](../../decisions/ADR-007-isolated-build-and-polyglot-readiness.md).
 
@@ -190,4 +190,52 @@ Trước: M8.3 implemented, Git clean ở `39cd969`, chưa có plan M8.4; target
 | Decisions requiring approval | Không cần hỏi lại scope đã được human chọn. Không tự mua hạ tầng, upload source hoặc đổi metric/score calibration; những thay đổi ngoài scope đó vẫn theo governance |
 | Git actions | Không commit, push, history rewrite hoặc xóa work |
 
-**Exact next task: M8.4.1 — implement bước 1**, bắt đầu bằng regression chứng minh comprehensive inventory giữ `.proto`/`.py`/unknown file và nested build root, sau đó streaming CAS/inventory+journal contracts, compatibility controls và resumable acquisition. Không triển khai sáu bước cùng một diff; mỗi bước hoàn thành vertical behavior và affected-consumer checks trước bước phụ thuộc.
+**Next task tại thời điểm lập kế hoạch: M8.4.1 — implement bước 1**, bắt đầu bằng regression chứng minh comprehensive inventory giữ `.proto`/`.py`/unknown file và nested build root, sau đó streaming CAS/inventory+journal contracts, compatibility controls và resumable acquisition. Không triển khai sáu bước cùng một diff; mỗi bước hoàn thành vertical behavior và affected-consumer checks trước bước phụ thuộc.
+
+## Thực hiện và bàn giao bước 1 — 2026-10-18
+
+**STATE BEFORE:** Git clean ở `0a21db2`; M8.3 bounded acceptance, M8.4 chưa triển khai. Human đã duyệt scope acquisition/build/polyglot qua ADR-007; lượt này chỉ thực hiện bước 1. Route: lead architect cho identity/storage boundary, implementer + TDD, verifier và self-review; không có independent reviewer.
+
+**CONFIRMED — implementation và kiểm thử trong phạm vi công bố:**
+
+| Exit / phần thay đổi | Kết quả và bằng chứng |
+|---|---|
+| Full inventory / CAS | `analyzer.acquisition.streaming` thêm raw-byte logical paths, SHA-256 content handles, long counts, inventory/selection identities, cursor và journal ports. `StreamingContentStore` stream/range/verify, atomic create-if-absent publication; không giữ toàn bytes trong heap. Comprehensive inventory giữ mọi extension, tests/unknown/nested roots, explicit exclusions; classification không loại nhầm Java package tên `build` hoặc `test` |
+| Frontier / recovery | `SqliteInventoryStore`: immutable hash-chained operation log + pinned SQLite index/WAL; corruption rebuild, read-only live pages, CAS journal transitions, seal chỉ sau frontier đóng và không còn gap. Process thực `Runtime.halt(71)` giữa log/index replay exactly once. Disk-reserve pressure, actual thread interruption/cancel, missing/corrupt sealed bytes và restart có controls; checkpoint giữ interrupt flag |
+| Git / transport | Pin commit/tree/blob, hydrate raw objects không checkout; independent object/CAS checksums; no vendor whitelist, kiểm toàn bộ resolved endpoints, DNS pinning/TLS/redirect policy, explicit scoped credential refs và configured strict SSH. Native HTTPS fixture có trusted local CA, shallow→full fallback, reset giữa large blob, idle stall termination, LFS thật, submodule exact closure, offline restart reuse. Không chạy target hooks/build |
+| Paths / archives | Raw case/NFC/non-UTF8/Windows-invalid Git names được giữ; v1 supplementary-Unicode ordering parity. Local depth 300, source mutation, links/cycles và missing LFS/submodule giữ obligations. ZIP/ZIP64 central/local/CRC reconciliation, traversal/duplicate/truncation controls; không extract trên host |
+| Product / durable state | `RepositoryIntake`, persistent connections, disk-backed jobs/backlog/frozen history và report CAS; setup drift và late output/cancellation guarded. Explicit v2 acquisition/history/resume HTTP + OpenAPI; CLI `acquire`/`inventory`, scan capture trước bounded semantic view. Oversized semantic work yêu cầu worker, OOM worker trả `SEMANTIC_WORKER_REQUIRED` và không giữ slot vô hạn |
+| Compatibility / migration | M1 golden identities giữ nguyên; v2 inventory tách v1 semantic selection. Bounded view ghi actual flags/exclusions và full parent digest. Scan receipt canonical chỉ bind immutable manifest, không bind UUID vận hành. V1 graph/query/formula unchanged; additive partition reference/cursor port, physical graph segmentation để bước 6 |
+| Scale / replay | Fresh JVM `-Xmx48m`: 160,000,001 content bytes và 1,000,001 generated entries; seal, reopen, cursor reconciliation. Repeated runs cho cùng manifest `sha256:6ec2d2c98c5281d8df20418302341954b68ae31eaf0902de0d5eee3c6fdf77c3`. Đây là storage/acquisition test, không là million-file semantic hoặc throughput gate |
+| Physical acquisition vượt trần cũ | Thư mục thật có 20,002 files, gồm single file 128,000,001 bytes; full inventory/count/cursor reconciliation pass. Bounded legacy consumer trả `COMPATIBILITY_WORKER_REQUIRED`, sealed manifest giữ nguyên. Fixture được tạo trong JUnit temp directory, không commit corpus |
+
+**Routine decisions trong scope:** SQLite JDBC `3.53.4.0` (license/binary SHA-256 trong [implementation contract](../../architecture/m8-streaming-acquisition.md)); raw byte ordering cho v2, UTF-16 ordering cho M1; immutable CAS/log làm authority và SQL làm rebuildable index. Không cần quyết định scope mới. Native Git tested `2.53.0.windows.3`; provider `source.git-cas:m8.4-v2`.
+
+### Verification commands and results
+
+Chạy trên trusted platform modules, không chạy lifecycle của repository mục tiêu. Output chuẩn ở từng `target/m84/surefire-reports`; không tạo formal reproducibility package. Các lệnh Maven dùng `-Denforcer.skipRules=reactorModuleConvergence` vì chạy module độc lập, và `-Dplatform.build.directory=target/m84` để tránh IDE-output contamination. Artifact install với `-DskipTests` chỉ refresh direct-consumer dependencies, không tính là test pass.
+
+```powershell
+.\mvnw.cmd test -pl analyzer "-Dtest=StreamingContractTest,IdentityAndSourceContractTest,CanonicalSerializationTest,RepositoryAcquisitionContractTest,RepositoryUnderstandingContractTest,CanonicalGraphContractTest,InMemoryGraphStoreTest" "-Denforcer.skipRules=reactorModuleConvergence" "-Dplatform.build.directory=target/m84" -q
+.\mvnw.cmd test -pl analyzer-filesystem "-Dtest=StreamingRepositoryAcquirerTest,StreamingStorageTest,ArchiveSnapshotAcquirerTest,LfsObjectAcquirerTest,GitSnapshotAcquirerTest,NativeHttpsAcquisitionTest,FilesystemRepositoryAcquirerTest,AcquisitionCheckpointStoreTest,FileGraphStoreTest" "-Denforcer.skipRules=reactorModuleConvergence" "-Dplatform.build.directory=target/m84" -q
+.\mvnw.cmd test -pl analyzer-filesystem "-Dtest=StreamingScaleTest" "-Denforcer.skipRules=reactorModuleConvergence" "-Dplatform.build.directory=target/m84" -q
+.\mvnw.cmd test -pl backend "-Dtest=DurableAnalysisJobsTest,PersistentReportsTest,AcquisitionApiTest,ComprehensiveSelectionTest,RepositoryConnectionsTest,AnalysisJobsTest,AnalysisJobApiTest,LocalAnalysisRunnerTest,ArchitectureQueryApiTest,PublishedReportsTest,WorkbenchApiMainTest" "-Denforcer.skipRules=reactorModuleConvergence" "-Dplatform.build.directory=target/m84" -q
+.\mvnw.cmd package -pl cli "-Denforcer.skipRules=reactorModuleConvergence" "-Dplatform.build.directory=target/m84" -q
+python cli/src/test/python/packaged_jar_smoke.py cli/target/m84/evo.jar
+node --test backend/src/test/js/workbench-model.test.cjs
+git diff --check
+```
+
+**PASS:** analyzer **31 tests / 7 suites**; filesystem **43 / 10** (9 compact/integration suites cộng scale worker); backend **61 / 11**; CLI **59 / 9** — tổng **194 Java cases / 37 suites**, zero failures/errors/skips trên tập checks nêu trên. Node **7/7**. Packaged JAR **10/10 journeys**, **1,212 platform classes**, zero IDE error stubs; `acquire`/`inventory`/`resume` exit 0, existing source/query/report journeys giữ expected PARTIAL exit 3 của fixture, không bị đổi thành complete giả. CLI package PASS.
+
+Scale suite lần cuối **147.994 s**, digest khớp các lần trước. Focused physical-directory/single-file case **199.543 s** (suite **199.598 s**); đây không phải inner-loop <5 s và không là throughput SLA. Kiểm thử stall cho phép cả native curl low-speed guard lẫn controller idle lease dừng request; không đòi một guard cụ thể phải thắng race. Operator-configured internal HTTPS path/port có red→green regression ở backend; public URLs không còn bị tự thêm `.git`.
+
+Document checks: `git diff --check` PASS; **179 local Markdown link targets** trên **68 changed/new files**, whitespace và đúng sáu step headings PASS. Generated verified JAR được đặt ở `cli/target/evo.jar` sau packaged smoke, SHA-256 `cbcdfc7d5b45a3513f09356621314aca963af95a1c6e1a10a33fde231c93db36`; JAR cũ được giữ trong `cli/target/`, source changes chưa commit.
+
+**New evidence / regression repairs:** red→green controls cho comprehensive file selection, canonical scan replay, worker OOM release và interrupted-checkpoint persistence; corrupt derived index rebuild khác corrupt authoritative CAS (trường hợp sau phải khôi phục bytes gốc, không overwrite evidence). Source-gone replay đọc exact captured closure; setup configuration đổi phải bị chặn. TDD method filters được dùng; Maven startup và một số integration cases vượt inner-loop target 5 giây. Không coi target đó đã đạt; scale/native transport/consumer checks là pre-handoff set cần thiết.
+
+**LIMITATIONS / BLOCKERS:** không blocker cho bước 1 trong tested adapter contract. Live SSH-server positive qualification chưa chạy (host có SSH client, không có sshd); policy/configuration fail-closed được kiểm. Archive ngoài ZIP/ZIP64 giữ typed requirement. Hardware power-loss durability, arbitrary remote/corpus interoperability và full semantic scale chưa chứng nhận. Local filesystem có mutation detection, không phải atomic OS snapshot. Physical graph/query segmentation, multi-root semantic planning, VM execution và actual language engines còn lần lượt ở bước 6/2/3/5; complete acquisition không được promote thành complete semantics. Không có independent final review, full reactor, external corpus gate hay M8/M10 promotion.
+
+**DURABLE STATE / FILES CHANGED:** streaming domain + filesystem adapters/tests; backend intake/jobs/connections/reports/API/OpenAPI; CLI commands/help/packaged tests; [implementation contract](../../architecture/m8-streaming-acquisition.md), readiness contract link, module READMEs, current-state, roadmap status link và task index. Không đổi M1 preimages, metric/score formulas, project scope hoặc historical gates. Không commit, push, xóa user work hoặc sửa raw generated evidence.
+
+**EXACT NEXT TASK: M8.4.2 — readiness planner cho mọi build root/module/environment.** Bắt đầu từ sealed inventory và fixture hai nested independent roots, thay first-entry semantic filtering bằng ownership/context coverage và requirement DAG. Native facts ban đầu dùng passive/captured models; target execution chỉ sau step-3 executor conformance. Các bước sau chưa được thực hiện trong lượt này.

@@ -12,6 +12,11 @@
     <name>Safe Filesystem Repository Acquisition</name>
     <dependencies>
         <dependency>
+            <groupId>org.xerial</groupId>
+            <artifactId>sqlite-jdbc</artifactId>
+            <version>3.53.4.0</version>
+        </dependency>
+        <dependency>
             <groupId>com.evolution</groupId>
             <artifactId>analyzer</artifactId>
             <version>${project.version}</version>

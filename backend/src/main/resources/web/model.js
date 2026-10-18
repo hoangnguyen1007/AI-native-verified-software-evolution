@@ -25,7 +25,7 @@
       b: right.has(id) ? 'Present' : completePage(b) ? 'Absent in this view' : 'Not established'}));
   };
   const apiError = code => ({
-    INVALID_REQUEST: 'Check the input. Use an existing local folder or a public HTTPS repository URL on GitHub, GitLab or Bitbucket.',
+    INVALID_REQUEST: 'Check the input. Use an existing local folder or a public HTTPS repository URL allowed by the endpoint policy.',
     CONNECTIONS_UNAVAILABLE: 'This server does not enable repository connections.',
     JOBS_UNAVAILABLE: 'Analysis is unavailable on this read-only server.',
     JOB_HISTORY_FULL: 'The server has reached its retained analysis limit. Restart it to begin a new session.',

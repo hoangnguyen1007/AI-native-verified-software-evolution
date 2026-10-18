@@ -62,6 +62,22 @@ public final class ArchitectureQueryApi {
     public Response handle(String method,String rawPath,String contentType,byte[] body,BooleanSupplier cancelled) {
         try {
             if (body.length > limits.requestBytes()) throw new Failure(413,"REQUEST_TOO_LARGE");
+            if(rawPath.startsWith("/api/v2/analysis/jobs/"))return jobs==null?error(503,"JOBS_UNAVAILABLE"):jobs.handle(method,rawPath,contentType,body,cancelled);
+            if(rawPath.startsWith("/api/v2/acquisitions/")){
+                if(connections==null)throw new Failure(503,"CONNECTIONS_UNAVAILABLE");if(!method.equals("POST"))throw new Failure(405,"METHOD_NOT_ALLOWED");
+                var input=decode(body,contentType);Object data;
+                try{
+                    if(rawPath.equals("/api/v2/acquisitions/history")){
+                        if(!Set.of("after","size").containsAll(input.keySet()))throw new IllegalArgumentException();
+                        long after=input.containsKey("after")?new java.math.BigDecimal(input.get("after").toString()).longValueExact():0;int size=input.containsKey("size")?new java.math.BigDecimal(input.get("size").toString()).intValueExact():20;
+                        data=connections.acquisitionHistory(after,size);
+                    }else{
+                        if(!Set.of("size","cursor").containsAll(input.keySet()))throw new IllegalArgumentException();var page=QueryJson.page(input);
+                        data=connections.acquisition(rawPath.substring("/api/v2/acquisitions/".length()),page.size(),page.cursor());
+                    }
+                }catch(java.io.IOException unavailable){throw new Failure(503,"ACQUISITION_STORE_UNAVAILABLE");}
+                byte[] encoded=BoundedJson.encode(data,limits.responseBytes());return new Response(200,BoundedJson.encode(Map.of("apiVersion","repository.acquisition-api:m8.4-v2","data",data,"resultIdentity",ContentDigest.sha256(encoded)),limits.responseBytes()));
+            }
             if (rawPath.equals("/api/v1/analysis") || rawPath.startsWith("/api/v1/analysis/"))
                 return jobs == null ? error(503,"JOBS_UNAVAILABLE") : jobs.handle(method,rawPath,contentType,body,cancelled);
             Object data = route(method,rawPath,contentType,body,cancelled);
@@ -111,6 +127,8 @@ public final class ArchitectureQueryApi {
                     "queryLimits",Limits.defaults(),"graphSchema",KnowledgeGraph.SCHEMA));
             capabilities.put("jobVersion",AnalysisJobs.VERSION); capabilities.put("analysisJobsEnabled",jobs != null);
             capabilities.put("repositoryConnectionsEnabled",connections != null);
+            capabilities.put("acquisitionVersion","repository.acquisition-api:m8.4-v2");
+            capabilities.put("acquisitionRoutes",List.of("/api/v2/acquisitions/history","/api/v2/acquisitions/{revision}","/api/v2/analysis/jobs/{id}/resume"));
             if (jobs != null) capabilities.put("jobLimits",jobs.limits());
             return capabilities;
         }

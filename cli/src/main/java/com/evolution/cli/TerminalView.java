@@ -93,6 +93,7 @@ final class TerminalView {
         action(7,"score","Explain confidence","Giải thích độ tin cậy");
         action(8,"export json","JSON / SARIF / GraphML","JSON / SARIF / GraphML");
         heading("Commands");
+        line("  "+tr("Acquisition","Thu nhận")+" acquire <input> · inventory <revision>");
         line("  "+tr("Snapshots","Snapshot")+"   open <file> · use <n> · provenance");
         line("  "+tr("Graph","Đồ thị")+"       reach <n> · paths <a> <b> · cycles");
         line("  "+tr("Evidence","Bằng chứng")+"   gaps · explain <n> · evidence <id>");

@@ -16,7 +16,7 @@ On 2026-09-09, [ADR-004](decisions/ADR-004-staged-conditional-architecture-seman
 
 Tracks and milestones define delivery order and acceptance claims, not permanent capability ceilings. Architecture work must preserve safe extension paths for deeper repository evidence even when the corresponding provider is not an SE121 deliverable.
 
-**CONFIRMED scope change (2026-10-17):** [ADR-007](decisions/ADR-007-isolated-build-and-polyglot-readiness.md) brings isolated target builds, comprehensive acquisition without fixed repository ceilings, and language-specific semantic engines into M8.4. The six-step plan is ready; implementation has not started. Historical gates are preserved and M10/Track B approval remains separate.
+**CONFIRMED scope change (2026-10-17):** [ADR-007](decisions/ADR-007-isolated-build-and-polyglot-readiness.md) brings isolated target builds, comprehensive acquisition without fixed repository ceilings, and language-specific semantic engines into M8.4. Execution follows the six-step plan; [current state](current-state.md) records implemented slices and the next task. Historical gates are preserved and M10/Track B approval remains separate.
 
 ## Protected Principles
 
@@ -251,7 +251,7 @@ Exit gate: the entire Track A analysis/evidence workflow runs locally without ba
 
 ### M8 - Backend API and Complete Architecture Workbench
 
-**Implementation sequence:** M8.1 jobs/API, M8.2 live workbench/connections and M8.3 structure/configuration/evidence views are implemented within their recorded bounds. M8.4 readiness is next; the full acceptance criteria below still govern M8 completion.
+**Implementation sequence:** M8.1 jobs/API, M8.2 live workbench/connections and M8.3 structure/configuration/evidence views are implemented within their recorded bounds. M8.4 execution follows its six-step plan; [current state](current-state.md) records completed slices. The full acceptance criteria below still govern M8 completion.
 
 Deliver asynchronous cancellable analysis jobs and versioned query APIs plus the required workbench:
 
@@ -272,7 +272,7 @@ Exit gate: a user can complete the registered end-to-end product journey on a pi
 
 ### M8.4 — Comprehensive Repository Readiness Upgrade (Mandatory Pre-M9 Task)
 
-**Status: PLAN READY / IMPLEMENTATION NOT STARTED (mandatory before M9).**
+**Status: IN PROGRESS (mandatory before M9); operational slice status is in [current state](current-state.md).**
 
 This task is established pursuant to the binding **Human Mandate on Comprehensive Coverage** ([docs/architecture/comprehensive-repository-coverage-problems.md](architecture/comprehensive-repository-coverage-problems.md)).
 
@@ -280,7 +280,7 @@ This task is established pursuant to the binding **Human Mandate on Comprehensiv
 - **Sequencing:** This task is a mandatory prerequisite that must be executed and verified immediately following M8.3, before Milestone M9 begins.
 - **Confirmed expansion:** target builds run in validated isolated executors, never directly on host; non-Java semantic engines are M8.4 deliverables, superseding inventory-only scope.
 - **Detailed execution:** [six-step plan](tasks/m8/04-comprehensive-repository-readiness.md): (1) streaming full acquisition/CAS/journal, (2) multi-root/module/context readiness, (3) isolated native build/index execution, (4) generated-code and Java/Spring evidence closure, (5) language semantic engines and interop, (6) partitioned graph/product integration and registered acceptance. [Contract](architecture/m8-repository-readiness.md) and [research](research/2026-10-17-m8-readiness-design.md) define choices and exit controls.
-- **Claims:** complete inventory is distinct from selected-context semantic coverage and correctness. Physical resources stay finite; waits/checkpoints replace global repo rejection. Exact next task: M8.4.1, step 1 of the plan.
+- **Claims:** complete inventory is distinct from selected-context semantic coverage and correctness. Physical resources stay finite; waits/checkpoints replace global repo rejection. The [current state](current-state.md#exact-next-task) identifies the next authorized slice.
 
 ### M9 - Multi-Repository Evaluation and Hardening
 

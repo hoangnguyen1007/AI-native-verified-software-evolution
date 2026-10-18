@@ -19,6 +19,8 @@ import com.evolution.analysis.query.*;
 import com.evolution.backend.query.*;
 import com.evolution.backend.analysis.MavenScan;
 import com.evolution.backend.analysis.ScanSelection;
+import com.evolution.backend.analysis.RepositoryIntake;
+import com.evolution.analysis.acquisition.streaming.*;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
@@ -116,6 +118,8 @@ public final class EvoApp {
                         "Exit: 0 complete, 1 operational, 2 input, 3 incomplete, 4 policy threshold, 130 cancelled");
         command.addSubcommand("help",CommandSpec.wrapWithoutInspection((Callable<Integer>)()->{help(command,r);return 0;}).name("help"));
         command.addSubcommand("scan",new Scan(r));
+        command.addSubcommand("acquire",new Acquire(r));
+        command.addSubcommand("inventory",new Inventory(r));
         String[][] commands={{"show","summary","Snapshot overview / Tổng quan"},{"find","entities","Search symbols / Tìm symbol"},{"deps","dependencies","Dependencies / Phụ thuộc"},
                 {"impact","impact","Potential structural impact / Ảnh hưởng cấu trúc tiềm năng"},{"paths","paths","Feasible paths / Đường đi khả thi"},{"cycles","cycles","Feasible cycles / Chu trình khả thi"},
                 {"reach","reachability","Bounded reachability / Khả năng đi tới có giới hạn"},{"evidence","evidence","Exact evidence / Bằng chứng chính xác"},{"explain","explain","Entity evidence / Bằng chứng thực thể"},
@@ -285,6 +289,37 @@ public final class EvoApp {
         var score=new ArchitectureAssessmentService().evaluate(metrics,evaluation,queries,Optional.of(ArchitectureScoreModel.candidate(Scope.valueOf(r.scope.toUpperCase(Locale.ROOT).replace('-','_')))),List.of(),ArchitectureAssessment.Limits.defaults());
         return new PublishedReports.Report(evaluation,Optional.of(metrics),Optional.of(score));
     }
+    @Command(name="acquire",mixinStandardHelpOptions=true,description="Durable full snapshot acquisition / Thu nhận toàn snapshot có phục hồi")
+    private final class Acquire implements Callable<Integer>{
+        final Root r;Acquire(Root r){this.r=r;}
+        @Parameters(paramLabel="DIR|HTTPS_URL|ZIP")String source;
+        @Option(names="--repo")String repository;
+        @Option(names="--resume",description="Continue the exact acquisition revision")String resume;
+        @Option(names="--ref",defaultValue="HEAD")String ref;
+        @Option(names="--exclude")List<String> excludes=new ArrayList<>();
+        public Integer call()throws Exception{
+            r.validate();String revision=resume==null?UUID.randomUUID().toString():resume;
+            if(!revision.matches("[A-Za-z0-9._-]{1,128}"))throw new InputFailure("INVALID_ACQUISITION_REVISION");
+            Path state=r.storage().root.resolve("acquisition");boolean remote=source.contains("://");Path local=remote?null:Workspace.safe(resolve(Path.of(source)));
+            String coordinate=repository!=null?repository:remote?source:local.toUri().toASCIIString();var repo=RepositoryIdentity.fromCanonicalCoordinate(coordinate);
+            var excluded=new TreeSet<>(excludes);if(!remote){excluded.add(".git");if(state.startsWith(local)&&!state.equals(local))excluded.add(local.relativize(state).toString().replace('\\','/'));}
+            var request=new StreamingAcquisitionRequest(repo,Optional.empty(),!remote,List.copyOf(excluded));
+            try(var intake=new RepositoryIntake(state)){
+                StreamingRepositoryAcquirer.Receipt receipt;
+                if(remote)receipt=intake.git(java.net.URI.create(source),ref,revision,request,new GitHostPolicy(),"git",()->Thread.currentThread().isInterrupted());
+                else if(Files.isRegularFile(local,LinkOption.NOFOLLOW_LINKS))receipt=intake.archive(local,revision,request,()->Thread.currentThread().isInterrupted());
+                else receipt=intake.local(local,revision,request,()->Thread.currentThread().isInterrupted());
+                return emit(r,"acquire",envelope(Map.of("acquisition",receipt,"selection",request,"semanticCoverage","NOT_EVALUATED")),receipt.manifest().isPresent()?0:3);
+            }
+        }
+    }
+    @Command(name="inventory",mixinStandardHelpOptions=true,description="Page captured inventory / Xem inventory đã thu nhận")
+    private final class Inventory implements Callable<Integer>{final Root r;Inventory(Root r){this.r=r;}@Parameters(paramLabel="REVISION")String revision;
+        public Integer call()throws Exception{r.validate();try(var intake=new RepositoryIntake(r.storage().root.resolve("acquisition"))){
+            var job=intake.journal().get(revision).orElseThrow(()->new InputFailure("ACQUISITION_NOT_FOUND"));
+            return emit(r,"inventory",envelope(Map.of("revision",revision,"state",job.state(),"manifest",intake.inventory().manifest(revision),"page",intake.inventory().page(revision,r.limit,Optional.ofNullable(r.cursor)))),0);
+        }}
+    }
     @Command(name="scan",mixinStandardHelpOptions=true,description="Passive repository analysis / Phân tích repository thụ động")
     private final class Scan implements Callable<Integer>{
         final Root r;Scan(Root r){this.r=r;}
@@ -307,17 +342,24 @@ public final class EvoApp {
             var selection=ScanSelection.plan(sourcePath,includeTests,allFiles,List.copyOf(excluded));excluded.addAll(selection.excluded());
             r.stage="acquisition";
             progress(r,"[1/4] Reading selected source/build/configuration files…","[1/4] Đọc mã nguồn, build và cấu hình đã chọn…");
-            var acquisition=new FilesystemRepositoryAcquirer().acquire(sourcePath,new RepositoryAcquisitionRequest(repo,Optional.ofNullable(revision),dirty,"pom.xml",new RepositoryAcquisitionPolicy(10_000,10_000,10_000_000,128_000_000,64,List.copyOf(excluded))));
+            String intakeRevision=UUID.randomUUID().toString();StreamingRepositoryAcquirer.Receipt captured;
+            RepositoryAcquisitionResult acquisition;
+            try(var intake=new RepositoryIntake(r.storage().root.resolve("acquisition"))){
+                captured=intake.local(sourcePath,intakeRevision,new StreamingAcquisitionRequest(repo,Optional.ofNullable(revision),dirty,List.copyOf(excluded)),()->Thread.currentThread().isInterrupted());
+                if(captured.manifest().isEmpty())return emit(r,"scan",envelope(Map.of("status",captured.state(),"acquisition",captured,"graphCreated",false)),3);
+                try{acquisition=intake.compatibility(intakeRevision,repo,Optional.ofNullable(revision),dirty,includeTests,allFiles,List.copyOf(excluded));}
+                catch(IOException budget){return emit(r,"scan",envelope(Map.of("status","WAITING_FOR_SEMANTIC_WORKER","acquisition",captured,"graphCreated",false,"reason","COMPATIBILITY_VIEW_UNAVAILABLE")),3);}
+            }
             var maven=MavenScan.model(acquisition,Workspace.safe(resolve(mavenCache)));
             if(!allFiles&&maven.isPresent()){
                 var outside=MavenScan.outsideEntryBuild(acquisition,maven.orElseThrow(),includeTests);
                 if(!outside.isEmpty()){
                     excluded.addAll(outside);selection=new ScanSelection.Plan(selection.policy(),includeTests,false,List.copyOf(excluded));
-                    acquisition=new FilesystemRepositoryAcquirer().acquire(sourcePath,new RepositoryAcquisitionRequest(repo,Optional.ofNullable(revision),dirty,"pom.xml",new RepositoryAcquisitionPolicy(10_000,10_000,10_000_000,128_000_000,64,List.copyOf(excluded))));
+                    try(var intake=new RepositoryIntake(r.storage().root.resolve("acquisition"))){acquisition=intake.compatibility(intakeRevision,repo,Optional.ofNullable(revision),dirty,includeTests,allFiles,List.copyOf(excluded));}
                     maven=MavenScan.model(acquisition,Workspace.safe(resolve(mavenCache)));
                 }
             }
-            var acquisitionInfo=Map.of("identity",acquisition.identity(),"status",acquisition.completion(),"files",acquisition.files().size(),"bytes",acquisition.files().stream().mapToLong(AcquiredFile::size).sum(),"problems",acquisition.problems(),"policy",acquisition.request().policy());
+            var acquisitionInfo=Map.of("identity",acquisition.identity(),"status",acquisition.completion(),"files",acquisition.files().size(),"bytes",acquisition.files().stream().mapToLong(AcquiredFile::size).sum(),"problems",acquisition.problems(),"policy",acquisition.request().policy(),"fullInventory",captured.manifest().orElseThrow(),"view","BOUNDED_SEMANTIC_COMPATIBILITY");
             if(acquisition.snapshot().isEmpty())return emit(r,"scan",envelope(Map.of("status","TERMINAL_FAILURE","stage","acquisition","acquisition",acquisitionInfo,"selection",selection,"graphCreated",false)),1);
             progress(r,"[2/4] Capturing exact JDK symbols…","[2/4] Thu nhận symbol JDK…");
             r.stage="platform";

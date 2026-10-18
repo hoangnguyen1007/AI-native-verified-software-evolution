@@ -29,9 +29,11 @@ public final class WorkbenchApiMain {
                 try (var stream = Files.newInputStream(path,LinkOption.NOFOLLOW_LINKS)) { policy = Optional.of(new LocalAnalysisRunner.PolicyInput(stream.readNBytes(262_145),Scope.TYPE)); }
             }
             var runner = new LocalAnalysisRunner(new LocalAnalysisRunner.Input(source,RepositoryIdentity.fromCanonicalCoordinate(args[1]),jdk,Integer.parseInt(args[3]),cache,
-                    Optional.empty(),true,false,exclusions,policy,LocalAnalysisRunner.SpringInput.absent()));
-            var store = new FileGraphStore(directory); var reports = new PublishedReports();
-            try (var jobs = new AnalysisJobs(List.of(runner.registration("local")),store,reports,AnalysisJobs.Limits.defaults())) {
+                    Optional.empty(),true,false,exclusions,policy,LocalAnalysisRunner.SpringInput.absent()),directory.resolve("acquisition"));
+            var store = new FileGraphStore(directory);
+            try (var reportDisk=new PersistentReports(directory.resolve("reports"));var disk = new AnalysisJobDiskStore(directory.resolve("jobs"))) {
+            var reports=new PublishedReports(reportDisk);
+            try(var jobs = new AnalysisJobs(List.of(runner.registration("local")),store,reports,AnalysisJobs.Limits.defaults(),disk)) {
                 var connections=new RepositoryConnections(jobs,jdk,Integer.parseInt(args[3]),cache,directory,policy);
                 connections.describe("local",source.getFileName().toString(),"LOCAL",RepositoryIdentity.fromCanonicalCoordinate(args[1]));
                 try (var server = new ArchitectureHttpServer(new ArchitectureQueryApi(store,reports,ApiLimits.defaults(),jobs,connections),args.length >= 7 ? Integer.parseInt(args[6]) : 8080)) {
@@ -41,6 +43,7 @@ public final class WorkbenchApiMain {
                 try { server.start(); System.out.println("Architecture workbench API: " + server.uri() + "/api/v1"); stopped.await(); }
                 finally { try { Runtime.getRuntime().removeShutdownHook(shutdown); } catch (IllegalStateException stopping) { /* Shutdown hook owns cleanup. */ } }
                 }
+            }
             }
         } catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
         catch (Exception failure) { System.err.println("Unable to start local workbench API; check the explicit inputs, storage limits and port."); System.exit(1); }

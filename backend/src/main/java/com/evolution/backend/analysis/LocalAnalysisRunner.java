@@ -1,6 +1,7 @@
 package com.evolution.backend.analysis;
 
 import com.evolution.analysis.acquisition.*;
+import com.evolution.analysis.acquisition.streaming.*;
 import com.evolution.analysis.assessment.*;
 import com.evolution.analysis.buildmodel.UniversalBuildIngestion;
 import com.evolution.analysis.contract.common.ContentDigest;
@@ -48,7 +49,9 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
         }
     }
     private final Input input;
-    public LocalAnalysisRunner(Input input) { this.input = Objects.requireNonNull(input); }
+    private final Path intakeDirectory;
+    public LocalAnalysisRunner(Input input) { this(input,input.source().resolve(".evo/acquisition")); }
+    public LocalAnalysisRunner(Input input,Path intakeDirectory) { this.input = Objects.requireNonNull(input); this.intakeDirectory=intakeDirectory.toAbsolutePath().normalize(); }
     public AnalysisJobs.Registration registration(String id) {
         return new AnalysisJobs.Registration(new AnalysisJobs.Setup(id,input.repository(),input.release(),input.includeTests(),
                 input.policy().map(p -> ContentDigest.sha256(p.bytes())),input.spring().space().map(s -> s.identity().value())),this);
@@ -60,18 +63,24 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
     AnalysisJobs.Outcome runAcquired(AnalysisJobs.Control control) throws Exception {
         var source = safe(input.source()); var cache = safe(input.mavenCache());
         var excluded = new TreeSet<>(input.exclusions());
-        if (!Files.isDirectory(source,LinkOption.NOFOLLOW_LINKS)) {
-            var unavailable = acquire(source,excluded);
+        boolean captured=false;
+        if(Files.isRegularFile(intakeDirectory.resolve("metadata/index.sqlite"),LinkOption.NOFOLLOW_LINKS))try(var intake=new RepositoryIntake(intakeDirectory,true)){captured=intake.inventory().manifest(control.id()).isPresent();}
+        if (!Files.isDirectory(source,LinkOption.NOFOLLOW_LINKS)&&!captured) {
+            var unavailable = new FilesystemRepositoryAcquirer().acquire(source,new RepositoryAcquisitionRequest(input.repository(),input.revision(),input.dirty(),"pom.xml",new RepositoryAcquisitionPolicy(1,1,1,1,1,List.copyOf(excluded))));
             return new AnalysisJobs.Outcome(AnalysisJobs.Completion.FAILED,Optional.empty(),List.of(),List.of(),Optional.of(unavailable.identity()),Optional.empty(),inputProblems(unavailable));
         }
         var selection = ScanSelection.plan(source,input.includeTests(),false,List.copyOf(excluded)); excluded.addAll(selection.excluded());
-        var acquisition = acquire(source,excluded); control.checkpoint();
+        var acquisition = acquire(source,excluded,control); control.checkpoint();
         var maven = MavenScan.model(acquisition,cache); control.checkpoint();
         if (maven.isPresent()) {
             var outside = MavenScan.outsideEntryBuild(acquisition,maven.orElseThrow(),input.includeTests());
-            if (!outside.isEmpty()) { excluded.addAll(outside); acquisition = acquire(source,excluded); control.checkpoint(); maven = MavenScan.model(acquisition,cache); }
+            if (!outside.isEmpty()) { excluded.addAll(outside); acquisition = acquire(source,excluded,control); control.checkpoint(); maven = MavenScan.model(acquisition,cache); }
         }
         if (acquisition.snapshot().isEmpty()) return new AnalysisJobs.Outcome(AnalysisJobs.Completion.FAILED,Optional.empty(),List.of(),List.of(),Optional.of(acquisition.identity()),Optional.empty(),inputProblems(acquisition));
+        return runCaptured(acquisition,control);
+    }
+    AnalysisJobs.Outcome runCaptured(RepositoryAcquisitionResult acquisition,AnalysisJobs.Control control)throws Exception {
+        var cache=safe(input.mavenCache());var maven=MavenScan.model(acquisition,cache);
         control.stage(AnalysisJobs.Stage.PLATFORM);
         var platform = new FilesystemJdkPlatformProvider().acquire(safe(input.jdk()),new PlatformSymbolRequest(input.release(),128,128_000_000,512_000_000));
         control.checkpoint();
@@ -124,9 +133,15 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
     private static List<AnalysisJobs.InputProblem> inputProblems(RepositoryAcquisitionResult acquisition) {
         return acquisition.problems().stream().map(p -> new AnalysisJobs.InputProblem(acquisition.provider(),acquisition.identity(),p)).toList();
     }
-    private RepositoryAcquisitionResult acquire(Path source,Set<String> excluded) {
-        return new FilesystemRepositoryAcquirer().acquire(source,new RepositoryAcquisitionRequest(input.repository(),input.revision(),input.dirty(),"pom.xml",
-                new RepositoryAcquisitionPolicy(10_000,10_000,10_000_000,128_000_000,64,List.copyOf(excluded))));
+    private RepositoryAcquisitionResult acquire(Path source,Set<String> excluded,AnalysisJobs.Control control)throws IOException {
+        var full=new TreeSet<>(input.exclusions());full.add(".git");
+        if(intakeDirectory.startsWith(source))full.add(source.relativize(intakeDirectory).toString().replace('\\','/'));
+        try(var intake=new RepositoryIntake(intakeDirectory)){
+            var request=new StreamingAcquisitionRequest(input.repository(),input.revision(),input.dirty(),List.copyOf(full));
+            var receipt=intake.local(source,control.id(),request,control);control.checkpoint();
+            if(receipt.manifest().isEmpty())throw new IOException(receipt.reason());
+            return intake.compatibility(control.id(),input.repository(),input.revision(),input.dirty(),input.includeTests(),false,List.copyOf(excluded));
+        }
     }
     static Path safe(Path input) throws IOException {
         Path path = input.toAbsolutePath().normalize();

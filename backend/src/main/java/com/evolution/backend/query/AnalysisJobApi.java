@@ -27,7 +27,7 @@ final class AnalysisJobApi {
             Object data; int status = 200;
             if (path.equals("/api/v1/analysis/connections")) {
                 if (connections==null) throw new Failure(503,"CONNECTIONS_UNAVAILABLE");
-                if (method.equals("GET")) { empty(body); data=Map.of("items",connections.list(),"remoteHosts",List.of("github.com","gitlab.com","bitbucket.org")); }
+                if (method.equals("GET")) { empty(body); data=Map.of("items",connections.list(),"remoteHosts",List.of("PUBLIC_HTTPS_BY_ENDPOINT_POLICY")); }
                 else {
                     method(method,"POST"); var input=decode(body,contentType,"source","policy");
                     data=connections.connect(QueryJson.text(input,"source"),QueryJson.optionalText(input,"policy")); status=201;
@@ -52,12 +52,13 @@ final class AnalysisJobApi {
                 else if (parts[6].equals("cancel")) { method(method,"POST"); decode(body,contentType); var view = jobs.cancel(id); data = view; status = AnalysisJobs.terminal(view.state()) ? 200 : 202; }
                 else if (parts[6].equals("gaps")) { method(method,"POST"); var page = QueryJson.page(decode(body,contentType,"size","cursor")); data = jobs.gaps(id,page.size(),page.cursor()); }
                 else if (parts[6].equals("input-diagnostics")) { method(method,"POST"); var page = QueryJson.page(decode(body,contentType,"size","cursor")); data = jobs.inputProblems(id,page.size(),page.cursor()); }
+                else if(parts[6].equals("resume")&&path.startsWith("/api/v2/")){method(method,"POST");decode(body,contentType);data=jobs.resume(id);status=202;}
                 else throw new Failure(404,"NOT_FOUND");
             }
             return response(status,data);
         } catch (Failure failure) { return error(failure.status,failure.code); }
         catch (AnalysisJobs.Rejected rejected) {
-            int status = switch (rejected.code()) { case "SETUP_NOT_FOUND","JOB_NOT_FOUND" -> 404; case "IDEMPOTENCY_CONFLICT","JOB_NOT_FINISHED" -> 409; default -> 503; };
+            int status = switch (rejected.code()) { case "SETUP_NOT_FOUND","JOB_NOT_FOUND" -> 404; case "IDEMPOTENCY_CONFLICT","JOB_NOT_FINISHED","JOB_ALREADY_PUBLISHED","SETUP_CONFIGURATION_CHANGED" -> 409; default -> 503; };
             return error(status,rejected.code());
         } catch (BoundedJson.TooLarge large) { return error(422,"RESPONSE_TOO_LARGE"); }
         catch (GraphJson.LimitExceededException large) { return error(413,"JSON_LIMIT_EXCEEDED"); }

@@ -108,3 +108,9 @@ python cli/src/test/python/windows_console_smoke.py
 ```
 
 It creates an isolated hidden console with VT initially off, reads actual screen cells/color attributes and checks UTF-8, width, cleanup, actual full-prefix palette commands, numbered dependencies/impact, language switching and redirected JSON. See the [Windows rendering investigation](../docs/research/m7-windows-terminal-rendering.md), [M7.2 contract](../docs/architecture/m7-evo-cli.md) and [verification record](../docs/tasks/m7/02-evo-cli.md). External-corpus acceptance, native executable packaging and the M8 visual workbench remain separate.
+
+## Durable full acquisition
+
+`evo acquire <directory|HTTPS-URL|ZIP> --json` captures all selected bytes and inventory on disk. Use the returned revision with `evo inventory <revision> --limit 20 --json` and its cursor. `evo acquire <same-input> --resume <revision> --json` continues interrupted work. `--exclude` records a narrower selection; `--ref` pins the requested Git ref before hydration. Acquisition does not imply semantic coverage.
+
+`scan` now captures full inventory before creating the bounded Java compatibility view. A larger input is retained for an appropriate semantic worker rather than truncated to that view. See the [M8.4.1 contract](../docs/architecture/m8-streaming-acquisition.md) for identities, authentication policy, archive support, resource waiting and migration boundaries.

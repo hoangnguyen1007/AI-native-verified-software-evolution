@@ -12,6 +12,7 @@ import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.function.BooleanSupplier;
+import java.io.IOException;
 
 /** Bounded local job orchestration. Operational IDs/times never enter canonical analysis identities. */
 public final class AnalysisJobs implements AutoCloseable {
@@ -23,10 +24,10 @@ public final class AnalysisJobs implements AutoCloseable {
     public record Limits(int workers, int queued, int history, long timeoutMillis, long shutdownMillis) {
         public Limits {
             if (workers < 1 || workers > 4 || queued < 1 || queued > 32 || history < workers + queued || history > 256
-                    || timeoutMillis < 1 || timeoutMillis > 3_600_000 || shutdownMillis < 1 || shutdownMillis > 5_000)
+                    || timeoutMillis < 0 || shutdownMillis < 1 || shutdownMillis > 5_000)
                 throw new IllegalArgumentException("Invalid job limits");
         }
-        public static Limits defaults() { return new Limits(1, 4, 64, 900_000, 1_000); }
+        public static Limits defaults() { return new Limits(1, 4, 64, 0, 1_000); }
     }
     /** Public setup metadata contains identities and explicit policies, never host paths or source/configuration values. */
     public record Setup(String id, RepositoryIdentity repository, int release, boolean includeTests,
@@ -94,34 +95,46 @@ public final class AnalysisJobs implements AutoCloseable {
         private Control(Job job) { this.job = job; }
         @Override public boolean getAsBoolean() { return job.stop != null || Thread.currentThread().isInterrupted(); }
         public void checkpoint() { if (getAsBoolean()) throw new CancellationException(); }
+        public String id() { return job.id.toString(); }
         public void stage(Stage stage) {
             synchronized (AnalysisJobs.this) {
                 checkpoint();
                 if (stage == Stage.FINISHED || stage.ordinal() <= job.stage.ordinal()) throw new IllegalArgumentException("Invalid progress transition");
                 job.stage = stage; job.events.add(new Event(stage, Instant.now())); job.revision++;
+                persist(job);
             }
         }
     }
     private static final class Job {
-        final UUID id = UUID.randomUUID(); final Registration registration; final int sequence;
-        final Instant submitted = Instant.now(); final List<Event> events = new ArrayList<>();
+        final UUID id; final Registration registration; final int sequence;
+        final Instant submitted; final List<Event> events = new ArrayList<>();
+        String retry;
         final long submittedNanos = System.nanoTime(); long finishedNanos;
         State state = State.QUEUED; Stage stage = Stage.QUEUED; long revision = 1;
         volatile Stop stop; Instant started, finished; Thread thread; Runnable task;
         ScheduledFuture<?> deadline; Result result; String error;
         List<CapabilityGapRecord> gaps = List.of();
         List<InputProblem> inputProblems = List.of();
-        Job(Registration registration, int sequence) { this.registration = registration; this.sequence = sequence; events.add(new Event(stage, submitted)); }
+        Job(Registration registration, int sequence) { this(registration,sequence,null); }
+        Job(Registration registration,int sequence,AnalysisJobDiskStore.Saved previous){
+            this.registration=registration;this.sequence=sequence;this.id=previous==null?UUID.randomUUID():UUID.fromString(previous.view().id());this.submitted=previous==null?Instant.now():previous.view().submittedAt();
+            if(previous!=null)this.revision=previous.view().revision()+1;events.add(new Event(stage,Instant.now()));
+        }
     }
     private final SortedMap<String, Registration> setups = new TreeMap<>();
     private final LinkedHashMap<UUID, Job> jobs = new LinkedHashMap<>();
     private final Map<String, Job> retries = new HashMap<>();
     private final UUID session = UUID.randomUUID();
     private final GraphStore graphs; private final PublishedReports reports; private final Limits limits;
+    private final AnalysisJobDiskStore disk;
     private final ThreadPoolExecutor executor; private final ScheduledThreadPoolExecutor deadlines;
     private boolean closed;
     public AnalysisJobs(List<Registration> registrations, GraphStore graphs, PublishedReports reports, Limits limits) {
+        this(registrations,graphs,reports,limits,null);
+    }
+    public AnalysisJobs(List<Registration> registrations,GraphStore graphs,PublishedReports reports,Limits limits,AnalysisJobDiskStore disk){
         this.graphs = Objects.requireNonNull(graphs); this.reports = Objects.requireNonNull(reports); this.limits = Objects.requireNonNull(limits);
+        this.disk=disk;
         if (registrations.size() > 32) throw new IllegalArgumentException("Setup capacity exceeded");
         for (var registration : registrations) if (setups.putIfAbsent(registration.setup().id(), registration) != null)
             throw new IllegalArgumentException("Duplicate setup");
@@ -129,6 +142,7 @@ public final class AnalysisJobs implements AutoCloseable {
                 new ArrayBlockingQueue<>(limits.queued()), runnable -> daemon(runnable, "architecture-analysis"), new ThreadPoolExecutor.AbortPolicy());
         deadlines = new ScheduledThreadPoolExecutor(1, runnable -> daemon(runnable, "architecture-analysis-deadlines"));
         deadlines.setRemoveOnCancelPolicy(true);
+        if(disk!=null){try{for(var registration:setups.values())disk.recover(registration.setup());}catch(IOException failure){executor.shutdownNow();deadlines.shutdownNow();throw new Rejected("JOB_STORAGE_UNAVAILABLE");}dispatchPending();}
     }
     private static Thread daemon(Runnable runnable, String name) { var thread = new Thread(runnable, name); thread.setDaemon(true); return thread; }
     public Limits limits() { return limits; }
@@ -139,6 +153,7 @@ public final class AnalysisJobs implements AutoCloseable {
         if (closed) throw new Rejected("JOBS_CLOSED");
         if (setups.size() >= 32) throw new Rejected("SETUP_CAPACITY");
         if (setups.putIfAbsent(registration.setup().id(),registration) != null) throw new IllegalArgumentException("Duplicate setup");
+        if(disk!=null){try{disk.recover(registration.setup());}catch(IOException failure){throw new Rejected("JOB_STORAGE_UNAVAILABLE");}dispatchPending();}
     }
     public synchronized Submission submit(String setup, String idempotencyKey) {
         identifier(setup); identifier(idempotencyKey);
@@ -150,31 +165,67 @@ public final class AnalysisJobs implements AutoCloseable {
         }
         var registration = setups.get(setup);
         if (registration == null) throw new Rejected("SETUP_NOT_FOUND");
-        if (jobs.size() >= limits.history()) throw new Rejected("JOB_HISTORY_FULL");
-        var job = new Job(registration, jobs.size() + 1); job.task = () -> execute(job);
+        AnalysisJobDiskStore.Saved previous=null;
+        if(disk!=null)try{
+            previous=disk.retry(idempotencyKey).orElse(null);
+            if(previous!=null){if(!previous.view().setup().equals(setup)||!disk.intent(UUID.fromString(previous.view().id())).equals(registration.setup()))throw new Rejected("IDEMPOTENCY_CONFLICT");if(terminal(previous.view().state()))return new Submission(previous.view(),false);}
+        }catch(IOException failure){throw new Rejected("JOB_STORAGE_UNAVAILABLE");}
+        if (disk==null&&jobs.size() >= limits.history()) throw new Rejected("JOB_HISTORY_FULL");
+        var job = new Job(registration, jobs.size() + 1,previous);job.retry=idempotencyKey; job.task = () -> execute(job);
+        persist(job);
         // The monitor prevents the worker from observing a job before admission is committed.
-        try { executor.execute(job.task); }
-        catch (RejectedExecutionException full) { throw new Rejected("JOB_QUEUE_FULL"); }
-        jobs.put(job.id, job); retries.put(idempotencyKey, job);
+        try { executor.execute(job.task); jobs.put(job.id, job); retries.put(idempotencyKey, job); }
+        catch (RejectedExecutionException full) { if(disk==null)throw new Rejected("JOB_QUEUE_FULL"); }
         return new Submission(view(job), true);
     }
-    public synchronized View get(UUID id) { return view(find(id)); }
-    public synchronized View cancel(UUID id) { var job = find(id); stop(job, Stop.USER_CANCELLED); return view(job); }
+    public synchronized View get(UUID id) { var active=jobs.get(id);return active!=null?view(active):saved(id).view(); }
+    /** Explicit v2 continuation; ordinary retry keys keep their original idempotent meaning. */
+    public synchronized View resume(UUID id){
+        if(closed)throw new Rejected("JOBS_CLOSED");var active=jobs.get(id);AnalysisJobDiskStore.Saved previous;
+        if(active!=null){if(!terminal(active.state))return view(active);previous=new AnalysisJobDiskStore.Saved("analysis-job-storage:m8.4-v2",active.retry,view(active),active.gaps,active.inputProblems);}
+        else previous=saved(id);
+        var registration=setups.get(previous.view().setup());if(registration==null)throw new Rejected("SETUP_NOT_FOUND");
+        if(disk!=null)try{if(!disk.intent(id).equals(registration.setup()))throw new Rejected("SETUP_CONFIGURATION_CHANGED");}catch(IOException failure){throw new Rejected("JOB_STORAGE_UNAVAILABLE");}
+        if(previous.view().state()==State.SUCCEEDED||previous.view().state()==State.PARTIAL||previous.view().state()==State.EMPTY)throw new Rejected("JOB_ALREADY_PUBLISHED");
+        var job=new Job(registration,jobs.size()+1,previous);job.retry=previous.retry();job.task=()->execute(job);persist(job);
+        try{executor.execute(job.task);}catch(RejectedExecutionException full){if(disk==null)throw new Rejected("JOB_QUEUE_FULL");return view(job);}
+        jobs.put(id,job);retries.put(job.retry,job);return view(job);
+    }
+    public synchronized View cancel(UUID id) { var job=jobs.get(id);if(job==null){var previous=saved(id);var v=previous.view();if(terminal(v.state()))return v;
+        var next=new View(v.id(),v.setup(),State.CANCELLED,Stage.FINISHED,v.revision()+1,v.submittedAt(),v.startedAt(),Optional.of(Instant.now()),v.elapsedMillis(),Optional.of(Stop.USER_CANCELLED),Optional.empty(),v.events(),v.result());
+        try{disk.save(previous.retry(),disk.intent(id),next,previous.gaps(),previous.inputProblems());}catch(IOException failure){throw new Rejected("JOB_STORAGE_UNAVAILABLE");}return next;}
+        stop(job, Stop.USER_CANCELLED); return view(job); }
+    private AnalysisJobDiskStore.Saved saved(UUID id){if(disk==null)throw new Rejected("JOB_NOT_FOUND");try{return disk.get(id).orElseThrow(()->new Rejected("JOB_NOT_FOUND"));}catch(IOException failure){throw new Rejected("JOB_STORAGE_UNAVAILABLE");}}
+    private AnalysisJobDiskStore.Saved savedLedgers(UUID id){if(disk==null)throw new Rejected("JOB_NOT_FOUND");try{return disk.get(id,true).orElseThrow(()->new Rejected("JOB_NOT_FOUND"));}catch(IOException failure){throw new Rejected("JOB_STORAGE_UNAVAILABLE");}}
+    private void persist(Job job){if(disk!=null){boolean interrupted=Thread.interrupted();try{disk.save(job.retry,job.registration.setup(),view(job),job.gaps,job.inputProblems);}catch(IOException failure){throw new Rejected("JOB_STORAGE_UNAVAILABLE");}finally{if(interrupted)Thread.currentThread().interrupt();}}}
+    private synchronized void dispatchPending(){
+        if(disk==null||closed)return;
+        try{while(jobs.size()<limits.workers()+limits.queued()){
+            AnalysisJobDiskStore.Saved candidate=null;
+            for(var setup:setups.keySet())for(var saved:disk.queued(setup))if(!jobs.containsKey(UUID.fromString(saved.view().id()))){if(candidate==null||saved.view().submittedAt().isBefore(candidate.view().submittedAt()))candidate=saved;break;}
+            if(candidate==null)return;var selected=candidate;var registration=setups.get(selected.view().setup());var intended=disk.intent(UUID.fromString(selected.view().id()));
+            if(!intended.equals(registration.setup())){var v=selected.view();var rejected=new View(v.id(),v.setup(),State.FAILED,Stage.FINISHED,v.revision()+1,v.submittedAt(),v.startedAt(),Optional.of(Instant.now()),v.elapsedMillis(),Optional.empty(),Optional.of("SETUP_CONFIGURATION_CHANGED"),v.events(),v.result());disk.save(selected.retry(),intended,rejected,selected.gaps(),selected.inputProblems());continue;}
+            var job=new Job(registration,jobs.size()+1,selected);job.retry=selected.retry();job.task=()->execute(job);
+            try{executor.execute(job.task);}catch(RejectedExecutionException full){return;}jobs.put(job.id,job);retries.put(job.retry,job);
+        }}catch(IOException unavailable){throw new Rejected("JOB_STORAGE_UNAVAILABLE");}
+    }
     private Job find(UUID id) { var job = jobs.get(Objects.requireNonNull(id)); if (job == null) throw new Rejected("JOB_NOT_FOUND"); return job; }
     private void stop(Job job, Stop reason) {
         if (terminal(job.state) || job.stop != null) return;
         job.stop = reason; job.revision++;
         if (job.state == State.QUEUED) { executor.remove(job.task); finish(job, State.CANCELLED); }
         else { job.state = State.CANCELLING; if (job.thread != null) job.thread.interrupt(); }
+        persist(job);
     }
     private void execute(Job job) {
+        var control = new Control(job);
+        try {
         synchronized (this) {
             if (terminal(job.state)) return;
             job.thread = Thread.currentThread(); job.state = State.RUNNING; job.started = Instant.now(); job.revision++;
-            job.deadline = deadlines.schedule(() -> { synchronized (AnalysisJobs.this) { stop(job, Stop.DEADLINE_EXCEEDED); } }, limits.timeoutMillis(), TimeUnit.MILLISECONDS);
+            persist(job);
+            if(limits.timeoutMillis()>0)job.deadline = deadlines.schedule(() -> { synchronized (AnalysisJobs.this) { stop(job, Stop.DEADLINE_EXCEEDED); } }, limits.timeoutMillis(), TimeUnit.MILLISECONDS);
         }
-        var control = new Control(job);
-        try {
             var outcome = job.registration.runner().run(control); control.checkpoint();
             control.stage(Stage.PUBLICATION);
             // Storage observes the stop token. Cancellation can still win until the publication transaction below.
@@ -193,14 +244,14 @@ public final class AnalysisJobs implements AutoCloseable {
                         graph.stream().flatMap(g -> g.contexts().stream()).flatMap(c -> c.analysis().stream()).distinct().sorted().toList(),
                         graph.stream().flatMap(g -> g.contexts().stream()).map(KnowledgeGraph.Context::identity).sorted().toList(), ids,
                         allGaps.size(), graphGaps.size(), job.gaps.size(), job.inputProblems.size(), outcome.acquisition(), outcome.sourceReport());
-                finish(job, switch (completion) { case COMPLETE -> State.SUCCEEDED; case PARTIAL -> State.PARTIAL; case EMPTY -> State.EMPTY; case FAILED -> State.FAILED; });
                 if (completion == Completion.FAILED) job.error = "ANALYSIS_FAILED";
+                finish(job, switch (completion) { case COMPLETE -> State.SUCCEEDED; case PARTIAL -> State.PARTIAL; case EMPTY -> State.EMPTY; case FAILED -> State.FAILED; });
             }
-        } catch (Exception | LinkageError | AssertionError failure) {
+        } catch (Exception | LinkageError | AssertionError | OutOfMemoryError failure) {
             synchronized (this) {
                 if (job.stop == null && (failure instanceof InterruptedException || failure instanceof CancellationException)) job.stop = Stop.PROVIDER_INTERRUPTED;
                 if (job.stop != null) finish(job, job.stop == Stop.DEADLINE_EXCEEDED ? State.TIMED_OUT : State.CANCELLED);
-                else { job.error = failure instanceof GraphStoreException ? "RESULT_STORAGE_FAILED" : job.stage == Stage.PUBLICATION ? "RESULT_PUBLICATION_FAILED" : "ANALYSIS_FAILED"; finish(job, State.FAILED); }
+                else { job.error = failure instanceof GraphStoreException ? "RESULT_STORAGE_FAILED" : failure instanceof OutOfMemoryError||failure instanceof IOException&&"COMPATIBILITY_WORKER_REQUIRED".equals(failure.getMessage())?"SEMANTIC_WORKER_REQUIRED":job.stage == Stage.PUBLICATION ? "RESULT_PUBLICATION_FAILED" : "ANALYSIS_FAILED"; finish(job, State.FAILED); }
             }
         } finally {
             synchronized (this) { if (job.deadline != null) job.deadline.cancel(false); job.thread = null; }
@@ -209,6 +260,8 @@ public final class AnalysisJobs implements AutoCloseable {
     }
     private void finish(Job job, State state) {
         job.state = state; job.stage = Stage.FINISHED; job.finished = Instant.now(); job.finishedNanos = System.nanoTime(); job.events.add(new Event(Stage.FINISHED, job.finished)); job.revision++;
+        try{persist(job);}catch(Rejected unavailable){job.state=State.FAILED;job.error="JOB_STORAGE_UNAVAILABLE";job.result=null;return;}
+        if(disk!=null){jobs.remove(job.id);retries.remove(job.retry);try{dispatchPending();}catch(Rejected unavailable){/* Accepted queued receipts remain durable until storage recovers. */}}
     }
     public static boolean terminal(State state) { return state != State.QUEUED && state != State.RUNNING && state != State.CANCELLING; }
     private View view(Job job) {
@@ -219,6 +272,17 @@ public final class AnalysisJobs implements AutoCloseable {
     }
     /** A high-water mark freezes membership. Live state/revisions remain explicitly operational. */
     public synchronized Page<View> history(int size, Optional<String> cursor) {
+        if(disk!=null){
+            checkSize(size);long after=0,high=0;
+            if(cursor.isPresent()){
+                String encoded=cursor.orElseThrow();if(encoded.length()>512)throw new IllegalArgumentException("Invalid durable history cursor");
+                String[] parts=new String(Base64.getUrlDecoder().decode(encoded),java.nio.charset.StandardCharsets.UTF_8).split("\\|",-1);
+                if(parts.length!=5||!parts[0].equals(disk.namespace())||!parts[1].equals(Integer.toString(size)))throw new IllegalArgumentException("Foreign durable history cursor");
+                high=Long.parseLong(parts[2]);after=Long.parseLong(parts[3]);if(high<1||after<1||after>high||!durableCursor(size,high,after).equals(encoded))throw new IllegalArgumentException("Invalid durable history cursor");
+            }
+            try{var page=disk.history(after,size,high);if(page.total()>Integer.MAX_VALUE)throw new Rejected("V2_HISTORY_REQUIRED");return new Page<>(page.items().stream().map(saved->{var active=jobs.get(UUID.fromString(saved.view().id()));return active==null?saved.view():view(active);}).toList(),(int)page.total(),page.continuation().map(next->durableCursor(size,page.highWaterSequence(),next)));}
+            catch(IOException failure){throw new Rejected("JOB_STORAGE_UNAVAILABLE");}
+        }
         checkSize(size); int high = jobs.size(), offset = 0;
         if (cursor.isPresent()) { var decoded = cursor(cursor.orElseThrow(), "history", size); high = decoded[0]; offset = decoded[1]; }
         final int bound = high;
@@ -228,6 +292,7 @@ public final class AnalysisJobs implements AutoCloseable {
         return new Page<>(items, high, next < high ? Optional.of(cursor("history", size, high, next)) : Optional.empty());
     }
     public synchronized Page<CapabilityGapRecord> gaps(UUID id, int size, Optional<String> cursor) {
+        if(disk!=null&&!jobs.containsKey(id))return savedPage(savedLedgers(id).gaps(),id.toString(),size,cursor);
         checkSize(size); var job = find(id);
         if (!terminal(job.state)) throw new Rejected("JOB_NOT_FINISHED");
         int offset = 0;
@@ -237,6 +302,7 @@ public final class AnalysisJobs implements AutoCloseable {
         return new Page<>(items, job.gaps.size(), next < job.gaps.size() ? Optional.of(cursor(id.toString(), size, job.gaps.size(), next)) : Optional.empty());
     }
     public synchronized Page<InputProblem> inputProblems(UUID id, int size, Optional<String> cursor) {
+        if(disk!=null&&!jobs.containsKey(id))return savedPage(savedLedgers(id).inputProblems(),id+"/input",size,cursor);
         checkSize(size); var job = find(id);
         if (!terminal(job.state)) throw new Rejected("JOB_NOT_FINISHED");
         String operation = id + "/input"; int offset = 0;
@@ -246,6 +312,11 @@ public final class AnalysisJobs implements AutoCloseable {
         return new Page<>(items,job.inputProblems.size(),next < job.inputProblems.size() ? Optional.of(cursor(operation,size,job.inputProblems.size(),next)) : Optional.empty());
     }
     private void checkSize(int size) { if (size < 1 || size > 50) throw new IllegalArgumentException("Invalid page size"); }
+    private String durableCursor(int size,long high,long after){String prefix=disk.namespace()+"|"+size+"|"+high+"|"+after;return Base64.getUrlEncoder().withoutPadding().encodeToString((prefix+"|"+ContentDigest.sha256Utf8(prefix).value().substring(7)).getBytes(java.nio.charset.StandardCharsets.UTF_8));}
+    private <T>Page<T> savedPage(List<T> items,String operation,int size,Optional<String> cursor){
+        checkSize(size);int offset=0;if(cursor.isPresent()){var decoded=cursor(cursor.orElseThrow(),operation,size);if(decoded[0]!=items.size())throw new IllegalArgumentException("Invalid cursor");offset=decoded[1];}
+        if(offset>=items.size()&&offset!=0)throw new IllegalArgumentException("Invalid cursor");var selected=items.stream().skip(offset).limit(size).toList();int next=offset+selected.size();return new Page<>(selected,items.size(),next<items.size()?Optional.of(cursor(operation,size,items.size(),next)):Optional.empty());
+    }
     private String cursor(String operation, int size, int high, int offset) {
         String prefix = session + ":" + operation + ":" + size + ":" + high + ":" + offset;
         return Base64.getUrlEncoder().withoutPadding().encodeToString((prefix + ":" + ContentDigest.sha256Utf8(prefix).value().substring(7)).getBytes(java.nio.charset.StandardCharsets.UTF_8));
@@ -260,7 +331,7 @@ public final class AnalysisJobs implements AutoCloseable {
     }
     public static void identifier(String value) { if (value == null || !value.matches("[A-Za-z0-9][A-Za-z0-9._-]{0,63}")) throw new IllegalArgumentException("Invalid identifier"); }
     @Override public void close() {
-        synchronized (this) { if (closed) return; closed = true; for (var job : jobs.values()) stop(job, Stop.SERVICE_CLOSED); }
+        synchronized (this) { if (closed) return; closed = true; for (var job : List.copyOf(jobs.values())) stop(job, Stop.SERVICE_CLOSED); }
         executor.shutdownNow(); deadlines.shutdownNow();
         try { executor.awaitTermination(limits.shutdownMillis(), TimeUnit.MILLISECONDS); }
         catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }

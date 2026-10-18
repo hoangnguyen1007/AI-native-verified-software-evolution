@@ -1,5 +1,6 @@
 package com.evolution.backend.analysis;
 
+import com.evolution.analysis.acquisition.streaming.InventoryEntry;
 import java.io.IOException;
 import java.nio.file.*;
 import java.util.*;
@@ -9,6 +10,11 @@ import static java.nio.file.LinkOption.NOFOLLOW_LINKS;
 public final class ScanSelection {
     public record Plan(String policy,boolean includeTests,boolean allFiles,List<String> excluded) {}
     public static Plan plan(Path root,boolean includeTests,boolean allFiles,List<String> explicit)throws IOException{
+        var excluded=new TreeSet<>(explicit);excluded.add(".git");
+        return new Plan("repository.selection:m8.4-v2",includeTests,true,List.copyOf(excluded));
+    }
+    /** Explicit bounded semantic compatibility selection; never the comprehensive inventory denominator. */
+    public static Plan legacy(Path root,boolean includeTests,boolean allFiles,List<String> explicit)throws IOException{
         var excluded=new TreeSet<>(explicit);excluded.add(".git");excluded.add(".evo");
         if(!allFiles)visit(root,root,includeTests,excluded,new int[]{0},0);
         return new Plan("cli.source-selection:v1",includeTests,allFiles,List.copyOf(excluded));
@@ -37,6 +43,10 @@ public final class ScanSelection {
         if(Set.of(".gitignore",".gitattributes",".classpath",".project","spring.factories","dockerfile","package.json").contains(name))return true;
         if(name.endsWith(".json"))return path.contains("/resources/")||name.startsWith("application")||name.startsWith("bootstrap");
         return List.of(".java",".xml",".properties",".yml",".yaml",".toml",".imports",".gradle",".kts",".kt",".scala",".groovy",".js",".ts",".cs",".c",".cpp",".h").stream().anyMatch(name::endsWith);
+    }
+    public static boolean semanticInput(InventoryEntry entry,boolean includeTests,boolean allFiles){
+        if(allFiles)return true;
+        return entry.path().utf8().map(path->{String rooted="/"+path;if(!includeTests&&(rooted.contains("/src/test/")||rooted.contains("/src/integrationTest/")))return false;return input(path);}).orElse(false);
     }
     private ScanSelection(){}
 }
