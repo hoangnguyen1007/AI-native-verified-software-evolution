@@ -17,6 +17,25 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class LocalAnalysisRunnerTest {
     @TempDir Path directory;
+    @Test void nestedIndependentMavenRootsKeepBothTypesAndReadinessGaps()throws Exception{
+        Path source=Files.createDirectory(directory.resolve("multi")),cache=Files.createDirectory(directory.resolve("multi-cache"));
+        String pom="<project><modelVersion>4.0.0</modelVersion><groupId>t</groupId><artifactId>%s</artifactId><version>1</version><properties><maven.compiler.release>21</maven.compiler.release><project.build.sourceEncoding>UTF-8</project.build.sourceEncoding></properties></project>";
+        for(var file:Map.of("pom.xml",pom.formatted("outer"),"nested/pom.xml",pom.formatted("nested"),"src/main/java/A.java","class A {}", "nested/src/main/java/B.java","class B {}", "broken/pom.xml","<project>").entrySet()){
+            Path path=source.resolve(file.getKey());Files.createDirectories(path.getParent());Files.writeString(path,file.getValue());
+        }
+        var runner=new LocalAnalysisRunner(new LocalAnalysisRunner.Input(source,RepositoryIdentity.fromCanonicalCoordinate("urn:test:multi-root-analysis"),Path.of(System.getProperty("java.home")),21,cache,Optional.empty(),true,true,List.of(),Optional.empty(),LocalAnalysisRunner.SpringInput.absent()));
+        var graphs=new InMemoryGraphStore();
+        try(var jobs=new AnalysisJobs(List.of(runner.registration("multi")),graphs,new PublishedReports(),new AnalysisJobs.Limits(1,1,4,90_000,1000))){
+            var result=finishedReal(jobs,jobs.submit("multi","first").job().id());
+            assertEquals(AnalysisJobs.State.PARTIAL,result.state(),()->CanonicalJson.write(result));
+            var graph=graphs.load(result.result().orElseThrow().graph().orElseThrow()).orElseThrow();
+            assertEquals(2,graph.nodes().stream().filter(node->node.kind().equals("TYPE")).count());
+            var allGaps=new ArrayList<com.evolution.analysis.evidence.CapabilityGapRecord>();Optional<String> cursor=Optional.empty();
+            do{var page=jobs.gaps(UUID.fromString(result.id()),50,cursor);allGaps.addAll(page.items());cursor=page.continuation();}while(cursor.isPresent());
+            assertTrue(allGaps.stream().anyMatch(gap->gap.reasonCode().equals("NATIVE_BUILD_VALIDATION_REQUIRED")));
+            assertTrue(graph.evidence().stream().anyMatch(evidence->evidence.canonicalJson().contains("\"readiness.plan\"")));
+        }
+    }
     @Test void aSealedCaptureResumesAfterTheOriginalSourceDirectoryIsGone()throws Exception{
         Path source=Files.createDirectory(directory.resolve("captured-source"));Files.writeString(source.resolve("Example.java"),"public class Example {}\n");Path cache=Files.createDirectory(directory.resolve("captured-cache")),state=directory.resolve("captured-state");
         var repository=RepositoryIdentity.fromCanonicalCoordinate("urn:test:captured-replay");String id=UUID.randomUUID().toString();

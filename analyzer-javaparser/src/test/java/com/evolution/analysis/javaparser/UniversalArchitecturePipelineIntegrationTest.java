@@ -57,7 +57,7 @@ class UniversalArchitecturePipelineIntegrationTest {
         var result=new UniversalArchitecturePipeline().runWithEvidence(inputs(Map.of("pom.xml",pom,"src/main/java/p/C.java","package p; public class C {}")),UniversalArchitecturePipeline.Policy.builder(new JavaParserFrontend(),JavaParserFrontend.PROVIDER).defaultPlatform(jdkPlatform()).mavenProvider(new MavenBuildModelProvider()).build());
         assertTrue(result.report().types().isEmpty());assertNotEquals(UniversalArchitectureReport.Status.COMPLETE,result.report().status());
         assertTrue(result.graphInput().orElseThrow().build().orElseThrow().modules().stream().flatMap(m->m.sourcePlan().sourceSets().stream()).anyMatch(s->s.gaps().contains(SourcePlanModel.Gap.UNSUPPORTED_COMPILER_CONFIGURATION)));
-        assertEquals("m7.2-qualified-sources-v1",UniversalSourceIngestion.PROVIDER.version());assertEquals("3.9.16-m7.2-compiler-bindings-v1",MavenBuildModelProvider.VERSION.version());
+        assertEquals("m8.4-readiness-scope-v1",UniversalSourceIngestion.PROVIDER.version());assertEquals("3.9.16-m7.2-compiler-bindings-v1",MavenBuildModelProvider.VERSION.version());
     }
 
     private static SpringBuildContext testBuildContext(PlatformInput platform, List<BinaryInput> dependencies) {

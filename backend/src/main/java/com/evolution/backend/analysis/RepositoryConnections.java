@@ -96,6 +96,10 @@ public final class RepositoryConnections {
     public Object acquisitionHistory(long after,int size)throws IOException{
         try(var intake=new RepositoryIntake(directory.resolve("acquisition"),true)){return intake.journal().historyPage(after,size);}
     }
+    public Object readiness(String revision,String section,int size,Optional<String> cursor)throws IOException{
+        if(!revision.matches("[A-Za-z0-9._-]{1,256}"))throw new IllegalArgumentException("Invalid acquisition revision");
+        try(var intake=new RepositoryIntake(directory.resolve("acquisition"))){return intake.readinessPage(revision,section,size,cursor);}
+    }
     private LocalAnalysisRunner.Input input(Path source,RepositoryIdentity repository,Optional<String> revision,boolean dirty,Optional<LocalAnalysisRunner.PolicyInput> policy) {
         var normalized=directory.toAbsolutePath().normalize();
         var exclusions=normalized.startsWith(source) ? List.of(source.relativize(normalized).toString().replace('\\','/')) : List.<String>of();
@@ -103,18 +107,18 @@ public final class RepositoryConnections {
     }
     private AnalysisJobs.Outcome cloneAndRun(String url,RepositoryIdentity repository,Optional<LocalAnalysisRunner.PolicyInput> policy,AnalysisJobs.Control control) throws Exception {
         control.stage(AnalysisJobs.Stage.ACQUISITION);
-        String code;
+        String code="REMOTE_FETCH_FAILED";RepositoryAcquisitionResult acquisition=null;Optional<String> pin=Optional.empty();
         try(var intake=new RepositoryIntake(directory.resolve("acquisition"))) {
             var request=new StreamingAcquisitionRequest(repository,Optional.empty(),false,List.of());
             var receipt=intake.git(URI.create(url),"HEAD",control.id(),request,hostPolicy,gitExecutable,control);
             control.checkpoint();
             if(receipt.manifest().isPresent()) {
-                var pin=intake.pinnedCommit(control.id());
-                var acquisition=intake.compatibility(control.id(),repository,pin,false,false,false,List.of());
-                return new LocalAnalysisRunner(input(directory,repository,pin,false,policy)).runCaptured(acquisition,control);
+                pin=intake.pinnedCommit(control.id());
+                acquisition=intake.compatibility(control.id(),repository,pin,false,false,false,List.of());
             }
             code=receipt.reason();
         } catch(IOException unavailable) { code="REMOTE_FETCH_FAILED"; }
+        if(acquisition!=null)return new LocalAnalysisRunner(input(directory,repository,pin,false,policy),directory.resolve("acquisition")).runCaptured(acquisition,control);
         var digest=ContentDigest.sha256Utf8(CanonicalJson.write(List.of(PROVIDER,repository,code)));
         var problem=new RepositoryAcquisitionResult.Problem(RepositoryAcquisitionResult.Reason.ROOT_READ_FAILED,code,RepositoryAcquisitionResult.Requirement.REPOSITORY_SELECTION);
         return new AnalysisJobs.Outcome(AnalysisJobs.Completion.FAILED,Optional.empty(),List.of(),List.of(),Optional.of(digest),Optional.empty(),List.of(new AnalysisJobs.InputProblem(PROVIDER,digest,problem)));

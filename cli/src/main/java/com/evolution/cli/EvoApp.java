@@ -18,6 +18,7 @@ import com.evolution.analysis.policy.*;
 import com.evolution.analysis.query.*;
 import com.evolution.backend.query.*;
 import com.evolution.backend.analysis.MavenScan;
+import com.evolution.analysis.readiness.*;
 import com.evolution.backend.analysis.ScanSelection;
 import com.evolution.backend.analysis.RepositoryIntake;
 import com.evolution.analysis.acquisition.streaming.*;
@@ -120,6 +121,7 @@ public final class EvoApp {
         command.addSubcommand("scan",new Scan(r));
         command.addSubcommand("acquire",new Acquire(r));
         command.addSubcommand("inventory",new Inventory(r));
+        command.addSubcommand("readiness",new Readiness(r));
         String[][] commands={{"show","summary","Snapshot overview / Tổng quan"},{"find","entities","Search symbols / Tìm symbol"},{"deps","dependencies","Dependencies / Phụ thuộc"},
                 {"impact","impact","Potential structural impact / Ảnh hưởng cấu trúc tiềm năng"},{"paths","paths","Feasible paths / Đường đi khả thi"},{"cycles","cycles","Feasible cycles / Chu trình khả thi"},
                 {"reach","reachability","Bounded reachability / Khả năng đi tới có giới hạn"},{"evidence","evidence","Exact evidence / Bằng chứng chính xác"},{"explain","explain","Entity evidence / Bằng chứng thực thể"},
@@ -320,6 +322,19 @@ public final class EvoApp {
             return emit(r,"inventory",envelope(Map.of("revision",revision,"state",job.state(),"manifest",intake.inventory().manifest(revision),"page",intake.inventory().page(revision,r.limit,Optional.ofNullable(r.cursor)))),0);
         }}
     }
+    @Command(name="readiness",mixinStandardHelpOptions=true,description="Plan all build roots, contexts and native evidence requirements / Lập kế hoạch readiness")
+    private final class Readiness implements Callable<Integer>{
+        final Root r;Readiness(Root r){this.r=r;}
+        @Parameters(paramLabel="REVISION")String revision;
+        @Option(names="--section",defaultValue="requirements")String section;
+        @Option(names="--source-set")List<String> sourceSets=new ArrayList<>();
+        @Option(names="--variant")List<String> variants=new ArrayList<>();
+        public Integer call()throws Exception{
+            r.validate();var requested=new TreeMap<String,List<String>>();if(!sourceSets.isEmpty())requested.put("sourceSet",sourceSets);if(!variants.isEmpty())requested.put("variant",variants);
+            var policy=new ReadinessPlanner.Policy(requested,true,1_000_000);
+            try(var intake=new RepositoryIntake(r.storage().root.resolve("acquisition"))){return emit(r,"readiness",envelope(intake.readinessPage(revision,section,r.limit,Optional.ofNullable(r.cursor),policy)),0);}
+        }
+    }
     @Command(name="scan",mixinStandardHelpOptions=true,description="Passive repository analysis / Phân tích repository thụ động")
     private final class Scan implements Callable<Integer>{
         final Root r;Scan(Root r){this.r=r;}
@@ -333,6 +348,7 @@ public final class EvoApp {
         @Option(names="--include-tests",description="Include test source trees / Gồm mã nguồn kiểm thử") boolean includeTests;
         @Option(names="--all-files",description="Capture all files, including assets and outputs / Thu thập mọi tệp") boolean allFiles;
         @Option(names="--maven-cache",paramLabel="DIR",description="Passive Maven2 cache / Cache Maven2 chỉ đọc") Path mavenCache=Path.of(System.getProperty("user.home"),".m2","repository");
+        @Option(names="--artifact-repository",paramLabel="HTTPS_URI",description="Explicit credential-free dependency repository; repeatable") List<java.net.URI> artifactRepositories=new ArrayList<>();
         public Integer call()throws Exception{
             r.validate();if(matched(r,"--graph","--context","--request","--args","--other","--policy","--view","--scope","--world","--assignment","--incoming","--kinds","--limit","--depth","--cursor"))throw new InputFailure("QUERY_FLAGS_NOT_APPLICABLE");
             sessionGraph=null;
@@ -343,28 +359,21 @@ public final class EvoApp {
             r.stage="acquisition";
             progress(r,"[1/4] Reading selected source/build/configuration files…","[1/4] Đọc mã nguồn, build và cấu hình đã chọn…");
             String intakeRevision=UUID.randomUUID().toString();StreamingRepositoryAcquirer.Receipt captured;
-            RepositoryAcquisitionResult acquisition;
+            RepositoryAcquisitionResult acquisition;ReadinessPlan readiness;
             try(var intake=new RepositoryIntake(r.storage().root.resolve("acquisition"))){
                 captured=intake.local(sourcePath,intakeRevision,new StreamingAcquisitionRequest(repo,Optional.ofNullable(revision),dirty,List.copyOf(excluded)),()->Thread.currentThread().isInterrupted());
                 if(captured.manifest().isEmpty())return emit(r,"scan",envelope(Map.of("status",captured.state(),"acquisition",captured,"graphCreated",false)),3);
+                readiness=intake.readiness(intakeRevision,ReadinessPlanner.Policy.comprehensive(),()->Thread.currentThread().isInterrupted());
                 try{acquisition=intake.compatibility(intakeRevision,repo,Optional.ofNullable(revision),dirty,includeTests,allFiles,List.copyOf(excluded));}
                 catch(IOException budget){return emit(r,"scan",envelope(Map.of("status","WAITING_FOR_SEMANTIC_WORKER","acquisition",captured,"graphCreated",false,"reason","COMPATIBILITY_VIEW_UNAVAILABLE")),3);}
-            }
-            var maven=MavenScan.model(acquisition,Workspace.safe(resolve(mavenCache)));
-            if(!allFiles&&maven.isPresent()){
-                var outside=MavenScan.outsideEntryBuild(acquisition,maven.orElseThrow(),includeTests);
-                if(!outside.isEmpty()){
-                    excluded.addAll(outside);selection=new ScanSelection.Plan(selection.policy(),includeTests,false,List.copyOf(excluded));
-                    try(var intake=new RepositoryIntake(r.storage().root.resolve("acquisition"))){acquisition=intake.compatibility(intakeRevision,repo,Optional.ofNullable(revision),dirty,includeTests,allFiles,List.copyOf(excluded));}
-                    maven=MavenScan.model(acquisition,Workspace.safe(resolve(mavenCache)));
-                }
             }
             var acquisitionInfo=Map.of("identity",acquisition.identity(),"status",acquisition.completion(),"files",acquisition.files().size(),"bytes",acquisition.files().stream().mapToLong(AcquiredFile::size).sum(),"problems",acquisition.problems(),"policy",acquisition.request().policy(),"fullInventory",captured.manifest().orElseThrow(),"view","BOUNDED_SEMANTIC_COMPATIBILITY");
             if(acquisition.snapshot().isEmpty())return emit(r,"scan",envelope(Map.of("status","TERMINAL_FAILURE","stage","acquisition","acquisition",acquisitionInfo,"selection",selection,"graphCreated",false)),1);
             progress(r,"[2/4] Capturing exact JDK symbols…","[2/4] Thu nhận symbol JDK…");
             r.stage="platform";
             var platform=new FilesystemJdkPlatformProvider().acquire(Workspace.safe(resolve(jdk)),new PlatformSymbolRequest(release,128,128_000_000,512_000_000));var defaults=UniversalBuildIngestion.Policy.defaults();
-            var mavenInputs=MavenScan.inputs(acquisition,maven,Workspace.safe(resolve(mavenCache)),platform.platform());
+            var cachePath=Workspace.safe(resolve(mavenCache));
+            var mavenInputs=MavenScan.inputs(acquisition,MavenScan.models(acquisition,cachePath),cachePath,platform.platform(),new com.evolution.analysis.dependency.DependencyAcquisitionPolicy(1024,64_000_000,256_000_000,16,artifactRepositories,5000,15000,0));
             r.stage="analysis";
             // Supply fallback evidence without Builder.defaultPlatform's Maven user-property overrides.
             // Declared Maven release/encoding must keep their authority over CLI defaults.
@@ -372,12 +381,13 @@ public final class EvoApp {
                     new UniversalBuildIngestion.Policy(Optional.of(release),Optional.of(release),Optional.of("UTF-8"),defaults.maxFiles(),defaults.maxCharacters(),defaults.maxTokens(),defaults.maxDepth()),
                     new RepositoryInputDecoder.Policy("UTF-8",10_000,10_000_000),frontend(r),JavaParserFrontend.PROVIDER,
                     mavenInputs.resolutions(),platform.platform(),Optional.of(new MavenBuildModelProvider()),mavenInputs.externalPoms(),MavenScan.POLICY,
-                    1000,100,UniversalArchitecturePipeline.TruthEvaluationMode.AUTO,Map.of(),Optional.empty(),Optional.empty(),com.evolution.analysis.spring.truth.TruthRegionEvaluation.Limits.conservative());
+                    1000,100,UniversalArchitecturePipeline.TruthEvaluationMode.AUTO,Map.of(),Optional.empty(),Optional.empty(),com.evolution.analysis.spring.truth.TruthRegionEvaluation.Limits.conservative()).withReadiness(readiness.identity());
             progress(r,"[3/4] Analyzing Java / Spring and building the graph…","[3/4] Phân tích Java / Spring và dựng đồ thị…");
             var detailed=new UniversalArchitecturePipeline().runWithEvidence(acquisition,policy);var data=new TreeMap<String,Object>();data.put("status",detailed.report().status());data.put("reportIdentity",detailed.report().identity());data.put("gaps",detailed.report().gaps());
             data.put("acquisition",acquisitionInfo);data.put("selection",selection);data.put("metrics",detailed.report().metrics());
             data.put("dependencies",mavenInputs.summary());
-            var scanGaps=new TreeSet<>(detailed.report().gaps());scanGaps.addAll(mavenInputs.gaps());data.put("gaps",List.copyOf(scanGaps));
+            data.put("readiness",Map.of("identity",readiness.identity(),"selection",readiness.selection().identity(),"roots",readiness.roots().size(),"contexts",readiness.contexts().size(),"requirements",readiness.requirements().size(),"ownership",readiness.ownership()));
+            var scanGaps=new TreeSet<>(detailed.report().gaps());scanGaps.addAll(mavenInputs.gaps());scanGaps.addAll(readiness.gaps(acquisition.snapshot().orElseThrow().identity()));data.put("gaps",List.copyOf(scanGaps));
             if(!scanGaps.isEmpty()&&detailed.report().status()==UniversalArchitectureReport.Status.COMPLETE)data.put("status","PARTIAL");
             data.put("issues",detailed.report().issues());data.put("rootCauses",detailed.report().rootCauses());
             data.put("platform",Map.of("status",platform.status(),"identity",platform.identity(),"problems",platform.problems()));

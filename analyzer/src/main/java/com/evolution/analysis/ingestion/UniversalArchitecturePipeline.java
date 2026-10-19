@@ -60,9 +60,18 @@ public final class UniversalArchitecturePipeline {
             Map<UniversalSourceIngestion.SourceSet, SourceToSpringPlan.Scope> springScopes,
             Optional<ConfigurationSpace> configurationSpace,
             Optional<ConfigurationAssignment> baselineConfiguration,
-            TruthRegionEvaluation.Limits truthLimits
+            TruthRegionEvaluation.Limits truthLimits,
+            Optional<ContentDigest> readinessPlan
     ) {
+        public Policy(UniversalBuildIngestion.Policy buildPolicy,RepositoryInputDecoder.Policy decodePolicy,SemanticFrontend frontend,VersionedIdentifier frontendProvider,
+                Map<UniversalSourceIngestion.SourceSet,UniversalSourceIngestion.Resolution> resolutions,Optional<PlatformInput> defaultPlatform,Optional<BuildModelProvider> mavenProvider,
+                Map<MavenCoordinate,PomInput> externalPoms,BuildModelPolicy mavenPolicy,int maxTypes,int maxParameters,TruthEvaluationMode truthEvaluationMode,
+                Map<UniversalSourceIngestion.SourceSet,SourceToSpringPlan.Scope> springScopes,Optional<ConfigurationSpace> configurationSpace,Optional<ConfigurationAssignment> baselineConfiguration,TruthRegionEvaluation.Limits truthLimits){
+            this(buildPolicy,decodePolicy,frontend,frontendProvider,resolutions,defaultPlatform,mavenProvider,externalPoms,mavenPolicy,maxTypes,maxParameters,truthEvaluationMode,springScopes,configurationSpace,baselineConfiguration,truthLimits,Optional.empty());
+        }
+        public Policy withReadiness(ContentDigest plan){return new Policy(buildPolicy,decodePolicy,frontend,frontendProvider,resolutions,defaultPlatform,mavenProvider,externalPoms,mavenPolicy,maxTypes,maxParameters,truthEvaluationMode,springScopes,configurationSpace,baselineConfiguration,truthLimits,Optional.of(plan));}
         public Policy {
+            Objects.requireNonNull(readinessPlan);
             Objects.requireNonNull(buildPolicy);
             Objects.requireNonNull(decodePolicy);
             Objects.requireNonNull(frontend);
@@ -337,7 +346,8 @@ public final class UniversalArchitecturePipeline {
         var rulesComp = new ManifestComponent(new VersionedIdentifier("architecture.rules", "1"), ContentDigest.sha256Utf8("rules-component"));
         var schemaComp = com.evolution.analysis.graph.KnowledgeGraph.schemaComponent();
         var sourceIngestion = new UniversalSourceIngestion();
-        var assembledSources = sourceIngestion.assemble(inputs, buildModel, resolutions, analyzerComp, rulesComp, schemaComp);
+        var assembledSources = sourceIngestion.assemble(inputs, buildModel, resolutions, analyzerComp, rulesComp, schemaComp,
+                policy.readinessPlan().map(identity->Map.of("readiness.plan",identity.value())).orElse(Map.of()));
         allIssues.addAll(assembledSources.issues());
         allGaps.addAll(assembledSources.gaps());
 

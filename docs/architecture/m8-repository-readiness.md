@@ -128,3 +128,7 @@ M8.4 acceptance gồm correctness/isolation/recovery/scale/interop controls tạ
 ## Step-1 implementation contract
 
 The [M8.4.1 streaming acquisition contract](m8-streaming-acquisition.md) specifies the implemented CAS/inventory/journal lane, versioned compatibility boundary and product composition. Implementation and verification status are owned by [current state](../current-state.md) and the [six-step plan](../tasks/m8/04-comprehensive-repository-readiness.md); the provisional execution, semantic-engine and graph-scale designs above are not certified by step 1.
+
+## Step-2 implementation contract
+
+The [M8.4.2 passive readiness planner](m8-build-readiness-planner.md) specifies multi-root discovery, context selection, complete ownership disposition, durable requirement DAG/recipes, capture satisfaction and CLI/API integration. Native build/model observations remain pending until the validated step-3 executor supplies them.

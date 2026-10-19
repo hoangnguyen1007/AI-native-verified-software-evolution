@@ -10,7 +10,7 @@ import static com.evolution.analysis.buildmodel.SourcePlanModel.*;
 
 /** Passive router with an injected Maven provider; no target script, plugin, process or network execution. */
 public final class UniversalBuildIngestion {
-    public static final VersionedIdentifier PROVIDER=new VersionedIdentifier("build.universal-ingestion","m4uv2.1-v2");
+    public static final VersionedIdentifier PROVIDER=new VersionedIdentifier("build.universal-ingestion","m8.4-multi-root-v1");
     public record Policy(Optional<Integer> syntaxLevel, Optional<Integer> platformRelease, Optional<String> encoding,
                          int maxFiles,int maxCharacters,int maxTokens,int maxDepth) {
         public Policy { Objects.requireNonNull(syntaxLevel);Objects.requireNonNull(platformRelease);Objects.requireNonNull(encoding);
@@ -86,8 +86,11 @@ public final class UniversalBuildIngestion {
                     modeledMaven.add(module.pomPath());
                     if(module.effectivePom().isEmpty()){issue(issues,INPUT_UNAVAILABLE,module.pomPath(),result.identity());continue;}
                     var effective=module.effectivePom().orElseThrow();
-                    modules.add(new UniversalBuildModel.Module(module.module(),UniversalBuildModel.Tool.MAVEN,Optional.of(module.pomPath()),
-                            Optional.of(effective.coordinate()),effective.sourcePlan(),List.of(),effective.inputs()));
+                    var projected=new UniversalBuildModel.Module(module.module(),UniversalBuildModel.Tool.MAVEN,Optional.of(module.pomPath()),
+                            Optional.of(effective.coordinate()),effective.sourcePlan(),List.of(),effective.inputs());
+                    var prior=modules.stream().filter(candidate->candidate.descriptor().identity().equals(projected.descriptor().identity())).findFirst();
+                    if(prior.isEmpty())modules.add(projected);
+                    else if(!prior.orElseThrow().equals(projected))issue(issues,AMBIGUOUS_INPUT,module.pomPath(),result.identity());
                 }
                 if(result.hasGaps())for(var problem:result.problems())issue(issues,SOURCE_INCOMPLETE,problem.subject(),result.identity());
                 continue;

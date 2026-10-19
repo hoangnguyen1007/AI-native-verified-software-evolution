@@ -10,6 +10,31 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class RepositoryConnectionsTest {
     @TempDir Path root;
+    @Test void sealedRemoteReplayReleasesTheAcquisitionWriterBeforePlanning()throws Exception{
+        var held=new java.util.concurrent.CountDownLatch(1);var release=new java.util.concurrent.CountDownLatch(1);
+        var repo=com.evolution.analysis.contract.identity.RepositoryIdentity.fromCanonicalCoordinate("https://example.test/captured.git");
+        var blocker=new AnalysisJobs.Registration(new AnalysisJobs.Setup("held",repo,21,false,Optional.empty(),Optional.empty()),control->{held.countDown();release.await(30,java.util.concurrent.TimeUnit.SECONDS);return new AnalysisJobs.Outcome(AnalysisJobs.Completion.EMPTY,Optional.empty(),List.of(),List.of(),Optional.empty(),Optional.empty());});
+        var graphs=new InMemoryGraphStore();
+        try(var jobs=new AnalysisJobs(List.of(blocker),graphs,new PublishedReports(),AnalysisJobs.Limits.defaults())){
+            jobs.submit("held","block");assertTrue(held.await(5,java.util.concurrent.TimeUnit.SECONDS));
+            var connections=new RepositoryConnections(jobs,Path.of(System.getProperty("java.home")),21,root,root,Optional.empty(),root.resolve("missing-git").toString());
+            var selection=connections.connect("https://example.test/captured.git",Optional.empty());var job=jobs.submit(selection.setup(),"remote").job();
+            var content=new com.evolution.analysis.filesystem.StreamingContentStore(root.resolve("acquisition/content"));
+            var request=new com.evolution.analysis.acquisition.streaming.StreamingAcquisitionRequest(repo,Optional.empty(),false,List.of());
+            var pin=content.put(new java.io.ByteArrayInputStream("1".repeat(40).getBytes(java.nio.charset.StandardCharsets.US_ASCII)),()->false);
+            var source=content.put(new java.io.ByteArrayInputStream("class Captured {}".getBytes(java.nio.charset.StandardCharsets.UTF_8)),()->false);
+            try(var inventory=new com.evolution.analysis.filesystem.SqliteInventoryStore(root.resolve("acquisition/metadata"),content)){
+                var row=inventory.create(job.id(),com.evolution.analysis.contract.serialization.CanonicalJson.sha256(List.of(request.identity(),"https://example.test/captured.git","HEAD")),Optional.of(pin));
+                inventory.entries(job.id(),List.of(new com.evolution.analysis.filesystem.SqliteInventoryStore.Observation(new com.evolution.analysis.acquisition.streaming.InventoryEntry(com.evolution.analysis.acquisition.streaming.LogicalPath.utf8("Captured.java"),com.evolution.analysis.acquisition.streaming.InventoryEntry.Kind.FILE,"100644",com.evolution.analysis.acquisition.streaming.InventoryEntry.Population.SOURCE,com.evolution.analysis.acquisition.streaming.InventoryEntry.Disposition.ACQUIRED,Optional.of(source),Optional.empty(),Optional.empty(),List.of(),Optional.empty()),"captured-fixture")));
+                row=inventory.transition(job.id(),row.revision(),com.evolution.analysis.acquisition.streaming.JobJournal.State.RUNNING,"FRONTIER_CLOSED",Optional.of(pin));
+                inventory.seal(job.id(),repo,request.identity());inventory.transition(job.id(),row.revision(),com.evolution.analysis.acquisition.streaming.JobJournal.State.COMPLETE,"PINNED_COMMIT",Optional.of(pin));
+            }
+            release.countDown();long deadline=System.nanoTime()+90_000_000_000L;
+            while(!AnalysisJobs.terminal(job.state())&&System.nanoTime()<deadline){Thread.sleep(20);job=jobs.get(UUID.fromString(job.id()));}
+            assertEquals(AnalysisJobs.State.PARTIAL,job.state(),()->com.evolution.analysis.contract.serialization.CanonicalJson.write(jobs.history(50,Optional.empty())));
+            assertEquals(1,graphs.load(job.result().orElseThrow().graph().orElseThrow()).orElseThrow().nodes().stream().filter(node->node.kind().equals("TYPE")).count());
+        }finally{release.countDown();}
+    }
     @Test void connectsActualLocalDirectoriesAndReusesTheSameSelection() throws Exception {
         var source = Files.createDirectory(root.resolve("application"));
         var cache = Files.createDirectory(root.resolve("cache"));

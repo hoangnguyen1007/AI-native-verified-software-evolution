@@ -22,6 +22,10 @@ class AcquisitionApiTest {
             var body=GraphJson.object(GraphJson.read(new String(response.body(),StandardCharsets.UTF_8),GraphJson.Limits.defaults()));assertEquals("repository.acquisition-api:m8.4-v2",body.get("apiVersion"));
             var data=GraphJson.object(body.get("data"));assertEquals("NOT_EVALUATED",data.get("semanticCoverage"));var page=GraphJson.object(data.get("inventory"));assertEquals(1,GraphJson.array(page.get("entries")).size());assertNotNull(page.get("continuation"));
             assertEquals(400,api.handle("POST","/api/v2/acquisitions/captured","application/json","{\"size\":1,\"extra\":true}".getBytes(StandardCharsets.UTF_8),()->false).status());
+            var readiness=api.handle("POST","/api/v2/acquisitions/captured/readiness","application/json","{\"section\":\"requirements\",\"size\":1}".getBytes(StandardCharsets.UTF_8),()->false);
+            assertEquals(200,readiness.status(),new String(readiness.body(),StandardCharsets.UTF_8));
+            var planned=GraphJson.object(GraphJson.object(GraphJson.read(new String(readiness.body(),StandardCharsets.UTF_8),GraphJson.Limits.defaults())).get("data"));
+            assertEquals("repository-readiness:m8.4-v1",planned.get("schema"));assertEquals(1,GraphJson.array(planned.get("rows")).size());assertNotNull(planned.get("continuation"));
         }
     }
 }

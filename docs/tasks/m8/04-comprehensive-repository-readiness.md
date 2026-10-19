@@ -1,6 +1,6 @@
 # M8.4 — Kế hoạch nâng cấp khả năng đọc và phân tích repository toàn diện
 
-Ngày lập kế hoạch: **2026-10-17**; cập nhật thực hiện: **2026-10-18**. Trạng thái: **BƯỚC 1 IMPLEMENTED / BOUNDED VERIFICATION; BƯỚC 2–6 PENDING**. M8.3 đã có bounded acceptance; M8.4 bắt buộc trước M9. Kế hoạch có **đúng 6 bước**, checklist trong mỗi bước không tạo milestone/task bổ sung. Bàn giao bước 1 ở cuối tài liệu; phần handoff lập kế hoạch là lịch sử.
+Ngày lập kế hoạch: **2026-10-17**; cập nhật thực hiện: **2026-10-19**. Trạng thái: **BƯỚC 1–2 IMPLEMENTED / BOUNDED VERIFICATION; BƯỚC 3–6 PENDING**. M8.3 đã có bounded acceptance; M8.4 bắt buộc trước M9. Kế hoạch có **đúng 6 bước**, checklist trong mỗi bước không tạo milestone/task bổ sung. Bàn giao thực hiện từng bước ở cuối tài liệu; phần handoff lập kế hoạch là lịch sử.
 
 **CONFIRMED — yêu cầu human:** build mục tiêu được chạy trong sandbox, không trực tiếp trên host; bỏ các trần cứng cản repo lớn; phân tích mọi module/build root; thu nhận generated code; giảm FAILED/PARTIAL bằng bằng chứng thực. Human đã chọn **thêm semantic engine cho từng ngôn ngữ ngay trong M8.4**, thay thế phạm vi cũ chỉ inventory ngoài Java. **PROVISIONAL — lựa chọn kỹ thuật:** [hợp đồng kiến trúc](../../architecture/m8-repository-readiness.md), [nghiên cứu và phương án](../../research/2026-10-17-m8-readiness-design.md), [ADR-007](../../decisions/ADR-007-isolated-build-and-polyglot-readiness.md).
 
@@ -239,3 +239,56 @@ Document checks: `git diff --check` PASS; **179 local Markdown link targets** tr
 **DURABLE STATE / FILES CHANGED:** streaming domain + filesystem adapters/tests; backend intake/jobs/connections/reports/API/OpenAPI; CLI commands/help/packaged tests; [implementation contract](../../architecture/m8-streaming-acquisition.md), readiness contract link, module READMEs, current-state, roadmap status link và task index. Không đổi M1 preimages, metric/score formulas, project scope hoặc historical gates. Không commit, push, xóa user work hoặc sửa raw generated evidence.
 
 **EXACT NEXT TASK: M8.4.2 — readiness planner cho mọi build root/module/environment.** Bắt đầu từ sealed inventory và fixture hai nested independent roots, thay first-entry semantic filtering bằng ownership/context coverage và requirement DAG. Native facts ban đầu dùng passive/captured models; target execution chỉ sau step-3 executor conformance. Các bước sau chưa được thực hiện trong lượt này.
+
+## Thực hiện và bàn giao bước 2 — 2026-10-19
+
+**STATE BEFORE:** Git clean ở `f0870a5`; bước 1 đã commit, bước 2 pending. Scope và execution boundary theo ADR-007 không thay đổi. Route: lead architect cho ranh giới readiness/identity; implementer + TDD, verifier và implementation self-review. Không có independent reviewer.
+
+**CONFIRMED — implementation và kiểm thử trong phạm vi công bố:**
+
+| Exit / phần thay đổi | Kết quả và bằng chứng |
+|---|---|
+| Mọi build root / module | `ReadinessDiscovery`, passive native-family adapter và secure Maven adapter phát hiện các root độc lập/lồng nhau. Maven aggregation khác parent, missing sibling và duplicate GAV có requirement; Gradle include/composite/buildSrc/custom source sets được giữ; Bazel package BUILD nằm dưới workspace root. IDE/plain, Ant/sbt và polyglot markers có native-model discovery obligations, không bị chuyển giả sang Maven |
+| Context / ownership denominator | `BuildContextSelection` versioned, partition discovered/selected/unselected và unknown dimensions; main/test/custom/variant không bị gộp. Profile-only module không lọt vào baseline. Authored captured exclusive variants giữ cả hai source populations. Streaming JSON-lines ownership ledger có đúng một disposition trên mỗi inventory entry, gồm unknown/raw paths và explicit exclusions; unresolved source roots không bị thay bằng default giả |
+| Preflight / requirements / recipes | Source/target/release/encoding/preview khác build JDK và analyzed platform. Wrapper/config/lock digests, generator/platform/archetype requirements được giữ. Mọi selected buildable context có build-validation obligation dù static pass không có gap. Recipes chứa declared inputs, expected outputs, tool/config pins, root execution scope, broker/network/resource policy, side effects và satisfaction checks; không có host execution method |
+| DAG / independent recovery | Validated requirement DAG, deterministic priority/tie-break và joint module SCC groups. Recipe giữ root scope khi chưa chứng minh plugin effects. Regression thực giữ đúng hai source types từ outer + nested independent Maven roots dù sibling POM malformed; lỗi của root kia không còn xóa phần lành |
+| Provider ladder / exactness | Luồng Maven sản phẩm duyệt mọi captured root và dùng dependency acquisition fixpoint sẵn có; CLI `--artifact-repository` mở explicit supported artifact lane. Range/SNAPSHOT/relocation/variant vẫn cần native resolver, không bịa version/classpath superset. Conflicting overlapping captured inputs được withhold kèm gap |
+| Captured-model satisfaction | `CapturedBuildEvidence` kiểm exact context/selection/closure, provider version, toolchain, ordered classpath/module path, args và generated inputs. Producer assertions, receipt/exit 0 riêng lẻ, wrong variant/order/version/toolchain không đóng requirement. No-compile phase cần proof + native semantic validation. Protected verifier là port; chưa có real executor qualification |
+| Durable product journey | Readiness report + ownership ledger ở CAS, separate journal marker sau publication, restart/cache identity checks. CLI `readiness` và v2 API phân trang roots/modules/contexts/requirements/recipes/groups/selection/unknown. Analysis manifest bind `readiness.plan`. Scan canonical receipt loại UUID vận hành. Authored offline sealed-Git replay kiểm release acquisition writer trước planning; không phải fresh remote qualification |
+
+**FILES CHANGED / DURABLE STATE:** core readiness contracts/planner/capture controls và build/source ingestion; Maven adapter; backend readiness CAS/journal, multi-root dependency composition, runner/connections/API/OpenAPI; CLI command/scan/distributable smoke; affected tests, module READMEs, [implementation contract](../../architecture/m8-build-readiness-planner.md), current-state và task index. Không đổi M1 entity/snapshot preimages, metric/score formulas, roadmap sequence hay historical gates.
+
+### Verification commands and results
+
+Chỉ chạy trusted platform modules; không chạy lifecycle/model/index của target. Native Maven reports ở `target/m842/surefire-reports`. Artifact install với `-DskipTests` refresh dependency cho consumer, không tính là test pass. Skip riêng reactor-membership Enforcer rule cho selected-module runs; các rule khác giữ nguyên.
+
+```powershell
+.\mvnw.cmd test -pl analyzer "-Dtest=ReadinessPlanTest,CapturedBuildEvidenceTest,PassiveReadinessDiscoveryTest,UniversalBuildIngestionTest,ScopedIngestionRecoveryTest,SourcePlanContractTest,IdentityAndSourceContractTest,StreamingContractTest,CanonicalSerializationTest" "-Denforcer.skipRules=reactorModuleConvergence" "-Dplatform.build.directory=target/m842" -q
+.\mvnw.cmd test -pl analyzer-maven "-Dtest=MavenReadinessDiscoveryTest,UniversalMavenIngestionTest,MavenBuildModelProviderTest,MavenLocalClasspathProviderTest,MavenDependencyArtifactResolverTest,SourcePlanProjectionTest,PlatformReactorModelTest" "-Denforcer.skipRules=reactorModuleConvergence" "-Dplatform.build.directory=target/m842" -q
+.\mvnw.cmd test -pl analyzer-javaparser "-Dtest=UniversalArchitecturePipelineIntegrationTest,UniversalIngestionPipelineTest,CanonicalGraphPipelineIntegrationTest" "-Denforcer.skipRules=reactorModuleConvergence" "-Dplatform.build.directory=target/m842" -q
+.\mvnw.cmd test -pl backend "-Dtest=ReadinessReportsTest,ComprehensiveSelectionTest,AcquisitionApiTest,LocalAnalysisRunnerTest,RepositoryConnectionsTest,AnalysisJobsTest,AnalysisJobApiTest,ArchitectureQueryApiTest,PublishedReportsTest,WorkbenchApiMainTest,DurableAnalysisJobsTest,PersistentReportsTest,ApiSpecificationTest" "-Denforcer.skipRules=reactorModuleConvergence" "-Dplatform.build.directory=target/m842" -q
+.\mvnw.cmd package -pl cli "-Denforcer.skipRules=reactorModuleConvergence" "-Dplatform.build.directory=target/m842" -q
+python cli/src/test/python/packaged_jar_smoke.py cli/target/m842/evo.jar
+node --test backend/src/test/js/workbench-model.test.cjs
+git diff --check
+```
+
+| Trusted module | Java cases / suites | Final result |
+|---|---|---|
+| analyzer | 53 / 9 | PASS; identity/serialization/streaming, source plans, scoped recovery and readiness controls |
+| analyzer-maven | 53 / 7 | PASS; native-family discovery, source-root unknowns, existing passive model/classpath/acquisition contracts |
+| analyzer-javaparser | 21 / 3 | PASS; source → semantic → graph integration and provider/version assertions |
+| backend | 67 / 13 | PASS; persisted/reopened readiness, API/OpenAPI, source analysis, connections, job/report durability |
+| cli | 59 / 9 | PASS; complete module, acquire/readiness/restart and canonical scan replay |
+
+Tổng **253 Java cases / 41 suites**, zero failures/errors/skips. Node **7/7**. Đây là bounded pre-handoff set, không phải full reactor hoặc corpus gate. Inner loops dùng method/class filters; Maven startup và real-source/JDK/report journeys vượt target 5 giây. Không tuyên bố target đó đã đạt; suite timings trong native reports không bao gồm toàn command wall time.
+
+Packaged JAR smoke **11/11 journeys PASS**, **1,243 platform classes**, zero IDE error stubs. `acquire`, `inventory`, `readiness`, `resume` exit 0; source/query/policy/assessment journeys giữ expected PARTIAL exit 3, không giả native validation đã complete. Verified distributable được copy tới `cli/target/evo.jar`, SHA-256 `e8b98c8171b6853f9219af21d30b6e3710b5b85edb30fc592344aef7a316bc68`; bản cũ giữ ở `cli/target/evo.before-m842.6b571a11affd.jar`. `git diff --check`, **155 local Markdown targets** trên bảy changed/new documents và đúng sáu step headings PASS.
+
+**NEW EVIDENCE / REPAIRS:** red→green cho first-entry filtering, malformed independent-root suppression, profile-only baseline leakage, Gradle appended defaults, Bazel workspace grouping, unresolved/unsafe replacement roots và operational UUID trong canonical scan output. Các invariant/capture controls khác được bổ sung quanh implementation; không tuyên bố mọi assertion đều có observed-red. Provider assertion trong consumer được update theo version mới. POM-only platform fixture được đồng bộ đủ module CLI đang được root POM khai báo; OpenAPI fixture kiểm đủ 17 routes. Không sửa raw generated evidence để làm xanh.
+
+**DECISIONS MADE / REQUIRING APPROVAL:** chọn additive readiness schema/provider v1, separate CAS/journal report, conservative full-inventory input closure, candidate passive projections và isolated root recipes trong scope đã được duyệt. Không cần quyết định human mới; không mua infrastructure, tải VM image hoặc upload source. Cache footprint rộng có thể invalidate nhiều hơn cần thiết; không tự giả independence để tối ưu.
+
+**LIMITATIONS / BLOCKERS:** không blocker cho passive step-2 exit trong tested contract. Real VM isolation và native effective manifests chưa được kiểm; protected capture verifier trong tests là authored fixture, không phải executor certificate. Dynamic profiles/variants/targets, SDK/toolchains, generated outputs và language engines giữ active requirements. Metadata plan hiện materialize root/module/context working set; report decoding có bounded worker, oversized report giữ bytes và báo `READINESS_REPORT_WORKER_REQUIRED`. Physical planning/semantic/graph scale và workbench readiness views cần step-6 integration qualification. Không independent review, broad remote/corpus acceptance hoặc M8/M10 gate promotion. Không commit, push, history rewrite hay xóa user work.
+
+**EXACT NEXT TASK: M8.4.3 — validated isolated native build/index executor.** Dùng sealed inventory + readiness selection/DAG/recipes, implement disposable VM/controller, broker/cache, resource/network policy và protected capture/import. Chạy real positive/adversarial isolation fixtures trước target execution. Không có VM thì giữ blocker/evidence đúng; tuyệt đối không host fallback. Bước 3–6 chưa hoàn tất trong task này.

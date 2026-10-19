@@ -17,7 +17,7 @@ class PlatformReactorModelTest {
         Path root = Path.of("..").toAbsolutePath().normalize();
         var poms = new TreeMap<String, PomInput>();
         for (String path : List.of("pom.xml", "analyzer/pom.xml", "analyzer-maven/pom.xml", "analyzer-filesystem/pom.xml",
-                "analyzer-javaparser/pom.xml", "backend/pom.xml")) {
+                "analyzer-javaparser/pom.xml", "backend/pom.xml", "cli/pom.xml")) {
             poms.put(path, new PomInput(Files.readAllBytes(root.resolve(path))));
         }
         var snapshot = RepositorySnapshot.create(
@@ -28,7 +28,7 @@ class PlatformReactorModelTest {
         var result = new MavenBuildModelProvider().build(request);
         assertTrue(result.problems().isEmpty(), () -> result.problems().toString());
         assertTrue(result.hasGaps()); // Candidate plans explicitly withhold generated-file acquisition/plugin effects.
-        assertEquals(6, result.modules().size());
+        assertEquals(7, result.modules().size());
         for (var module : result.modules()) {
             var effective = module.effectivePom().orElseThrow();
             assertEquals("21", effective.properties().get("maven.compiler.release"));

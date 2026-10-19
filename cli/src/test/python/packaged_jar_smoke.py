@@ -32,6 +32,9 @@ def main():
         assert acquired["semanticCoverage"] == "NOT_EVALUATED" and acquired["acquisition"]["manifest"]["files"] > 0
         inventory = run("inventory", "inventory", "packaged-acquisition", "--limit", "1")
         assert len(inventory["page"]["entries"]) == 1
+        readiness = run("readiness", "readiness", "packaged-acquisition", "--section", "roots", "--limit", "1")
+        assert readiness["schema"] == "repository-readiness:m8.4-v1" and readiness["total"] > 0
+        assert readiness["semanticCoverage"] == "NOT_EVALUATED"
         resumed = run("resume", "acquire", str(fixture), "--resume", "packaged-acquisition")
         assert resumed["acquisition"]["manifest"] == acquired["acquisition"]["manifest"]
         scan = run("scan", "scan", str(fixture))

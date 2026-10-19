@@ -8,6 +8,20 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class ComprehensiveSelectionTest {
     @TempDir Path root;
+    @Test void nestedIndependentRootIsNeverExcludedFromSemanticSelection() throws Exception {
+        Path source=Files.createDirectory(root.resolve("multi"));
+        String pom="<project><modelVersion>4.0.0</modelVersion><groupId>test</groupId><artifactId>%s</artifactId><version>1</version></project>";
+        for(String path:List.of("pom.xml","nested/pom.xml","src/main/java/A.java","nested/src/main/java/B.java")){
+            Path file=source.resolve(path);Files.createDirectories(file.getParent());
+            Files.writeString(file,path.endsWith("pom.xml")?pom.formatted(path.startsWith("nested")?"nested":"outer"):"class Example {}");
+        }
+        var repo=com.evolution.analysis.contract.identity.RepositoryIdentity.fromCanonicalCoordinate("urn:test:multi-root");
+        try(var intake=new RepositoryIntake(root.resolve("state"))){
+            intake.local(source,"capture",new com.evolution.analysis.acquisition.streaming.StreamingAcquisitionRequest(repo,java.util.Optional.empty(),true,List.of()),()->false);
+            var acquisition=intake.compatibility("capture",repo,java.util.Optional.empty(),true,true,false,List.of());
+            assertEquals(java.util.Set.of("pom.xml","nested/pom.xml"),new java.util.HashSet<>(MavenScan.models(acquisition,root).stream().map(model->model.request().rootPom()).toList()));
+        }
+    }
     @Test void inventoryRetainsEveryLanguageSourceSetAndIndependentBuild() throws Exception {
         for (String path : List.of("api/schema.proto", "worker/main.py", "odd/data.unrecognized",
                 "nested/pom.xml", "src/test/Example.java", "target/generated/File.java", "assets/image.bin", ".evo/real-project.py")) {

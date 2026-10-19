@@ -16,7 +16,7 @@ import static com.evolution.analysis.ingestion.IngestionEvidence.Reason.*;
 /** Connects declarative plans to the existing neutral frontend and configuration ports.
  * Resolution is an explicit exact input; a Gradle dependency declaration is never treated as a JAR. */
 public final class UniversalSourceIngestion {
-    public static final VersionedIdentifier PROVIDER=new VersionedIdentifier("source.universal-ingestion","m7.2-qualified-sources-v1");
+    public static final VersionedIdentifier PROVIDER=new VersionedIdentifier("source.universal-ingestion","m8.4-readiness-scope-v1");
     public record SourceSet(ModuleIdentity module,SourcePlanModel.Kind kind,String name) {
         public SourceSet { Objects.requireNonNull(module); Objects.requireNonNull(kind);
             name=ContractChecks.token(name,"source-set name"); }
@@ -43,12 +43,16 @@ public final class UniversalSourceIngestion {
     }
     public Result assemble(RepositoryInputs inputs,UniversalBuildModel build,Map<SourceSet,Resolution> resolutions,
                            ManifestComponent analyzer,ManifestComponent rules,ManifestComponent schema) {
+        return assemble(inputs,build,resolutions,analyzer,rules,schema,Map.of());
+    }
+    public Result assemble(RepositoryInputs inputs,UniversalBuildModel build,Map<SourceSet,Resolution> resolutions,
+                           ManifestComponent analyzer,ManifestComponent rules,ManifestComponent schema,Map<String,String> readinessOptions) {
         var descriptors=build.modules().stream().map(UniversalBuildModel.Module::descriptor).toList();
         if(!build.repositoryInputIdentity().equals(inputs.identity()))throw new IllegalArgumentException("Build and source inputs differ");
         if(descriptors.stream().anyMatch(m->!m.repository().equals(inputs.snapshot().repository())))throw new IllegalArgumentException("Build belongs to another repository");
         var resolutionKeys=resolutions.entrySet().stream().map(e->Map.of("set",e.getKey(),"platform",e.getValue().platform().entry(),
                 "classpath",e.getValue().binaries().stream().map(BinaryInput::entry).toList(),"evidence",e.getValue().exactClasspathEvidence())).sorted(Comparator.comparing(IngestionEvidence::digest)).toList();
-        var identity=IngestionEvidence.digest(List.of(PROVIDER,inputs.identity(),build.identity(),resolutionKeys,analyzer,rules,schema));
+        var identity=IngestionEvidence.digest(readinessOptions.isEmpty()?List.of(PROVIDER,inputs.identity(),build.identity(),resolutionKeys,analyzer,rules,schema):List.of(PROVIDER,inputs.identity(),build.identity(),resolutionKeys,analyzer,rules,schema,readinessOptions));
         var plans=build.modules().stream().flatMap(m->m.sourcePlan().sourceSets().stream()).toList();
         var issues=new ArrayList<IngestionEvidence.Issue>();var rows=new ArrayList<SourceRow>();
         Map<SourceSet,List<SourceInput>> owned=new HashMap<>();Set<SourceSet> incomplete=new HashSet<>();
@@ -104,6 +108,7 @@ public final class UniversalSourceIngestion {
                     var options=new TreeMap<>(FrontendRequest.options(frontendPlan,plan.module(),set,sourceInputs.stream().map(SourceInput::document).toList(),resolution.platform()));
                     options.put("ingestion.build-model",build.identity().value());options.put("ingestion.source-input",identity.value());
                     options.put("ingestion.source-set-name",plan.name());
+                    options.putAll(readinessOptions);
                     var classpath=new ArrayList<ClasspathEntry>();classpath.add(resolution.platform().entry());resolution.binaries().forEach(b->classpath.add(b.entry()));
                     var manifest=AnalysisManifest.create(new VersionedIdentifier("analysis.manifest","1"),snapshot,descriptors,classpath,
                             AnalysisConfiguration.create(new VersionedIdentifier("analysis.configuration","1"),options),analyzer,rules,schema);
@@ -133,6 +138,13 @@ public final class UniversalSourceIngestion {
     private static boolean affects(IngestionEvidence.Issue issue,UniversalBuildModel build,
                                    RepositoryInputs inputs,ModuleIdentity target) {
         String subject=issue.subject().split("#",2)[0];
+        if(subject.equals("pom.xml")||subject.endsWith("/pom.xml")){
+            var affected=build.mavenModels().stream().filter(model->model.modules().stream().anyMatch(module->module.pomPath().equals(subject))
+                    ||model.problems().stream().anyMatch(problem->problem.subject().equals(subject))).toList();
+            if(!affected.isEmpty())return affected.stream().anyMatch(model->model.modules().stream().anyMatch(module->module.module().identity().equals(target)))
+                    ||build.mavenModels().stream().flatMap(model->model.modules().stream()).filter(module->module.module().identity().equals(target))
+                        .flatMap(module->module.effectivePom().stream()).flatMap(pom->pom.inputs().stream()).anyMatch(evidence->evidence.logicalId().equals(subject)||evidence.logicalId().equals("workspace:"+subject));
+        }
         var owner=build.modules().stream().filter(m->m.buildFile().filter(subject::equals).isPresent()).findFirst();
         if(owner.isEmpty()||!Set.of(UniversalBuildModel.Tool.GRADLE_GROOVY,
                 UniversalBuildModel.Tool.GRADLE_KOTLIN).contains(owner.orElseThrow().tool()))return true;

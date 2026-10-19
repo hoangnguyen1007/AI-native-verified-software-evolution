@@ -5,6 +5,10 @@ import com.evolution.analysis.acquisition.streaming.*;
 import com.evolution.analysis.contract.common.*;
 import com.evolution.analysis.contract.identity.RepositoryIdentity;
 import com.evolution.analysis.filesystem.*;
+import com.evolution.analysis.buildmodel.PassiveReadinessDiscovery;
+import com.evolution.analysis.maven.MavenReadinessDiscovery;
+import com.evolution.analysis.readiness.*;
+import com.evolution.analysis.ingestion.IngestionEvidence;
 import java.io.*;
 import java.net.URI;
 import java.nio.file.*;
@@ -22,6 +26,33 @@ public final class RepositoryIntake implements AutoCloseable {
     public RepositoryIntake(Path root,boolean readOnly)throws IOException{this.root=root.toAbsolutePath().normalize();content=new StreamingContentStore(this.root.resolve("content"));inventory=new SqliteInventoryStore(this.root.resolve("metadata"),content,readOnly);}
     public InventoryReader inventory(){return inventory;}
     public JobJournal journal(){return inventory;}
+    public ReadinessPlan readiness(String revision,ReadinessPlanner.Policy policy,BooleanSupplier cancelled)throws IOException{
+        if(cancelled.getAsBoolean()||Thread.currentThread().isInterrupted())throw new IOException("READINESS_CANCELLED");
+        var manifest=inventory.manifest(revision).orElseThrow(()->new IOException("SEALED_INVENTORY_REQUIRED"));
+        var request=IngestionEvidence.digest(List.of(ReadinessPlan.PROVIDER,manifest,policy));
+        try(var reports=new ReadinessReports(root.resolve("readiness"),content)){
+            var saved=reports.get(request);if(saved.isPresent())return saved.orElseThrow();
+            var plan=new ReadinessPlanner(List.of(new PassiveReadinessDiscovery(),new MavenReadinessDiscovery())).plan(revision,inventory,content,policy,cancelled);
+            reports.save(request,plan,cancelled);return plan;
+        }
+    }
+    public Object readinessPage(String revision,String section,int size,Optional<String> cursor)throws IOException{
+        return readinessPage(revision,section,size,cursor,ReadinessPlanner.Policy.comprehensive());
+    }
+    public Object readinessPage(String revision,String section,int size,Optional<String> cursor,ReadinessPlanner.Policy policy)throws IOException{
+        if(size<1||size>200)throw new IllegalArgumentException("Invalid readiness page");
+        var plan=readiness(revision,policy,()->Thread.currentThread().isInterrupted());
+        List<?> rows=switch(section){case "roots"->plan.roots();case "modules"->plan.modules();case "contexts"->plan.contexts();case "requirements"->plan.requirements();case "recipes"->plan.recipes();case "compilation-groups"->plan.compilationGroups();case "unknown"->plan.selection().unknown();case "selection"->plan.contexts().stream().map(context->Map.of("context",context.id(),"selected",plan.selection().selected().contains(context.id()))).toList();default->throw new IllegalArgumentException("Invalid readiness section");};
+        int offset=0;
+        if(cursor.isPresent()){
+            String[] parts=cursor.orElseThrow().split(":",-1);if(parts.length!=3||!parts[0].equals(plan.identity().value().substring(7))||!parts[1].equals(section))throw new IllegalArgumentException("Foreign readiness cursor");
+            try{offset=Integer.parseInt(parts[2]);}catch(NumberFormatException invalid){throw new IllegalArgumentException("Invalid readiness cursor");}
+            if(offset<0||offset>rows.size())throw new IllegalArgumentException("Invalid readiness cursor");
+        }
+        int end=(int)Math.min(rows.size(),(long)offset+size);
+        return Map.of("schema",plan.schema(),"identity",plan.identity(),"inventory",plan.inventory(),"selection",Map.of("identity",plan.selection().identity(),"discovered",plan.selection().discovered().size(),"selected",plan.selection().selected().size(),"unselected",plan.selection().unselected().size(),"unknownDimensions",plan.selection().unknown().size()),
+                "ownership",plan.ownership(),"section",section,"rows",rows.subList(offset,end),"total",rows.size(),"continuation",end<rows.size()?Optional.of(plan.identity().value().substring(7)+":"+section+":"+end):Optional.empty(),"semanticCoverage","NOT_EVALUATED");
+    }
     public Optional<String> pinnedCommit(String revision)throws IOException{
         var job=inventory.get(revision);if(job.isEmpty()||job.orElseThrow().payload().isEmpty())return Optional.empty();
         try(var input=content.open(job.orElseThrow().payload().orElseThrow())){String pin=new String(input.readNBytes(129),java.nio.charset.StandardCharsets.US_ASCII);return pin.matches("[0-9a-f]{40}|[0-9a-f]{64}")?Optional.of(pin):Optional.empty();}

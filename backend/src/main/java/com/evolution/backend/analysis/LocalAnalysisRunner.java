@@ -16,6 +16,7 @@ import com.evolution.analysis.javaparser.JavaParserFrontend;
 import com.evolution.analysis.maven.MavenBuildModelProvider;
 import com.evolution.analysis.metrics.*;
 import com.evolution.analysis.policy.*;
+import com.evolution.analysis.readiness.*;
 import com.evolution.analysis.query.ArchitectureQuery.Scope;
 import com.evolution.analysis.query.ArchitectureQueryService;
 import com.evolution.analysis.spring.condition.*;
@@ -71,20 +72,17 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
         }
         var selection = ScanSelection.plan(source,input.includeTests(),false,List.copyOf(excluded)); excluded.addAll(selection.excluded());
         var acquisition = acquire(source,excluded,control); control.checkpoint();
-        var maven = MavenScan.model(acquisition,cache); control.checkpoint();
-        if (maven.isPresent()) {
-            var outside = MavenScan.outsideEntryBuild(acquisition,maven.orElseThrow(),input.includeTests());
-            if (!outside.isEmpty()) { excluded.addAll(outside); acquisition = acquire(source,excluded,control); control.checkpoint(); maven = MavenScan.model(acquisition,cache); }
-        }
         if (acquisition.snapshot().isEmpty()) return new AnalysisJobs.Outcome(AnalysisJobs.Completion.FAILED,Optional.empty(),List.of(),List.of(),Optional.of(acquisition.identity()),Optional.empty(),inputProblems(acquisition));
         return runCaptured(acquisition,control);
     }
     AnalysisJobs.Outcome runCaptured(RepositoryAcquisitionResult acquisition,AnalysisJobs.Control control)throws Exception {
-        var cache=safe(input.mavenCache());var maven=MavenScan.model(acquisition,cache);
+        var cache=safe(input.mavenCache());
+        ReadinessPlan readiness;
+        try(var intake=new RepositoryIntake(intakeDirectory)){readiness=intake.readiness(control.id(),ReadinessPlanner.Policy.comprehensive(),control);}
         control.stage(AnalysisJobs.Stage.PLATFORM);
         var platform = new FilesystemJdkPlatformProvider().acquire(safe(input.jdk()),new PlatformSymbolRequest(input.release(),128,128_000_000,512_000_000));
         control.checkpoint();
-        var dependencies = MavenScan.inputs(acquisition,maven,cache,platform.platform()); control.checkpoint();
+        var dependencies = MavenScan.inputs(acquisition,Optional.empty(),cache,platform.platform()); control.checkpoint();
         var defaults = UniversalBuildIngestion.Policy.defaults(); var frontend = new JavaParserFrontend();
         SemanticFrontend guarded = request -> { control.checkpoint(); var result = frontend.analyze(request); control.checkpoint(); return result; };
         var policy = new UniversalArchitecturePipeline.Policy(
@@ -92,10 +90,11 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
                 new RepositoryInputDecoder.Policy("UTF-8",10_000,10_000_000),guarded,JavaParserFrontend.PROVIDER,
                 dependencies.resolutions(),platform.platform(),Optional.of(new MavenBuildModelProvider()),dependencies.externalPoms(),MavenScan.POLICY,
                 1000,100,UniversalArchitecturePipeline.TruthEvaluationMode.AUTO,input.spring().scopes(),input.spring().space(),input.spring().baseline(),
-                com.evolution.analysis.spring.truth.TruthRegionEvaluation.Limits.conservative());
+                com.evolution.analysis.spring.truth.TruthRegionEvaluation.Limits.conservative()).withReadiness(readiness.identity());
         control.stage(AnalysisJobs.Stage.ANALYSIS);
         var detailed = new UniversalArchitecturePipeline().runWithEvidence(acquisition,policy); control.checkpoint();
         var gaps = new TreeSet<>(detailed.report().gaps()); gaps.addAll(dependencies.gaps());
+        gaps.addAll(readiness.gaps(acquisition.snapshot().orElseThrow().identity()));
         gaps.addAll(CapabilityGapNormalizer.normalize(EvidenceContext.forSnapshot(acquisition.snapshot().orElseThrow().identity()),
                 EvidenceNormalizationInput.builder().repositoryAcquisitions(List.of(acquisition)).platformResults(List.of(platform)).build()).gaps());
         if (detailed.graphInput().isEmpty()) return new AnalysisJobs.Outcome(AnalysisJobs.Completion.FAILED,Optional.empty(),List.of(),List.copyOf(gaps),Optional.of(acquisition.identity()),Optional.of(detailed.report().identity()),inputProblems(acquisition));

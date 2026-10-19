@@ -71,6 +71,11 @@ public final class ArchitectureQueryApi {
                         if(!Set.of("after","size").containsAll(input.keySet()))throw new IllegalArgumentException();
                         long after=input.containsKey("after")?new java.math.BigDecimal(input.get("after").toString()).longValueExact():0;int size=input.containsKey("size")?new java.math.BigDecimal(input.get("size").toString()).intValueExact():20;
                         data=connections.acquisitionHistory(after,size);
+                    }else if(rawPath.endsWith("/readiness")){
+                        if(!Set.of("section","size","cursor").containsAll(input.keySet()))throw new IllegalArgumentException();
+                        var paging=new TreeMap<String,Object>(input);Object section=paging.remove("section");var page=QueryJson.page(paging);
+                        if(section!=null&&!(section instanceof String))throw new IllegalArgumentException();
+                        data=connections.readiness(rawPath.substring("/api/v2/acquisitions/".length(),rawPath.length()-"/readiness".length()),section==null?"requirements":(String)section,page.size(),page.cursor());
                     }else{
                         if(!Set.of("size","cursor").containsAll(input.keySet()))throw new IllegalArgumentException();var page=QueryJson.page(input);
                         data=connections.acquisition(rawPath.substring("/api/v2/acquisitions/".length()),page.size(),page.cursor());
@@ -128,7 +133,8 @@ public final class ArchitectureQueryApi {
             capabilities.put("jobVersion",AnalysisJobs.VERSION); capabilities.put("analysisJobsEnabled",jobs != null);
             capabilities.put("repositoryConnectionsEnabled",connections != null);
             capabilities.put("acquisitionVersion","repository.acquisition-api:m8.4-v2");
-            capabilities.put("acquisitionRoutes",List.of("/api/v2/acquisitions/history","/api/v2/acquisitions/{revision}","/api/v2/analysis/jobs/{id}/resume"));
+            capabilities.put("readinessVersion",com.evolution.analysis.readiness.ReadinessPlan.SCHEMA);
+            capabilities.put("acquisitionRoutes",List.of("/api/v2/acquisitions/history","/api/v2/acquisitions/{revision}","/api/v2/acquisitions/{revision}/readiness","/api/v2/analysis/jobs/{id}/resume"));
             if (jobs != null) capabilities.put("jobLimits",jobs.limits());
             return capabilities;
         }

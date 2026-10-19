@@ -18,5 +18,8 @@ class AcquireCommandTest {
         assertTrue(captured.value().toString().contains("NOT_EVALUATED"));
         var page=run("inventory","journey","--json","--limit","2");assertEquals(0,page.exit(),page.errors());assertTrue(page.value().toString().contains("continuation"));
         var replay=run("acquire",source.toString(),"--resume","journey","--json");assertEquals(0,replay.exit(),replay.errors());assertEquals(captured.value(),replay.value());
+        var readiness=run("readiness","journey","--json","--limit","1");assertEquals(0,readiness.exit(),readiness.errors());
+        var plan=GraphJson.object(readiness.value().get("data"));assertEquals("repository-readiness:m8.4-v1",plan.get("schema"));assertEquals(1,GraphJson.array(plan.get("rows")).size());
+        assertEquals(readiness.value(),run("readiness","journey","--json","--limit","1").value());
     }
 }
