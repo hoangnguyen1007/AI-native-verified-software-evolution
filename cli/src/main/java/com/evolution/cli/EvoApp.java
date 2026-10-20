@@ -41,6 +41,7 @@ public final class EvoApp {
     private final Path directory;private final BufferedReader input;private final PrintWriter out,err;
     private final boolean terminal;private final Map<String,String> environment;
     private final TerminalSession.Profile terminalProfile;
+    private final com.evolution.analysis.execution.RegisteredExecutionPort executions;
     private String sessionLang="en",sessionColor="auto";private boolean sessionAscii;
     private Root interactiveDefaults;
     private KnowledgeGraph sessionGraph;
@@ -51,7 +52,16 @@ public final class EvoApp {
         this(directory,input,out,err,terminal,environment,TerminalSession.Profile.suppliedWriter());
     }
     EvoApp(Path directory,Reader input,PrintWriter out,PrintWriter err,boolean terminal,Map<String,String> environment,TerminalSession.Profile terminalProfile) {
+        this(directory,input,out,err,terminal,environment,terminalProfile,null);
+    }
+    public static EvoApp withExecutions(Path directory,Reader input,PrintWriter out,PrintWriter err,boolean terminal,
+            Map<String,String> environment,com.evolution.analysis.execution.RegisteredExecutionPort executions){
+        return new EvoApp(directory,input,out,err,terminal,environment,TerminalSession.Profile.suppliedWriter(),Objects.requireNonNull(executions));
+    }
+    private EvoApp(Path directory,Reader input,PrintWriter out,PrintWriter err,boolean terminal,Map<String,String> environment,
+            TerminalSession.Profile terminalProfile,com.evolution.analysis.execution.RegisteredExecutionPort executions) {
         this.directory=directory.toAbsolutePath().normalize();this.input=new BufferedReader(input);this.out=out;this.err=err;
+        this.executions=executions;
         this.terminal=terminal;this.environment=Map.copyOf(environment);
         this.terminalProfile=Objects.requireNonNull(terminalProfile);
     }
@@ -119,6 +129,8 @@ public final class EvoApp {
                         "Exit: 0 complete, 1 operational, 2 input, 3 incomplete, 4 policy threshold, 130 cancelled");
         command.addSubcommand("help",CommandSpec.wrapWithoutInspection((Callable<Integer>)()->{help(command,r);return 0;}).name("help"));
         command.addSubcommand("scan",new Scan(r));
+        command.addSubcommand("execution",new Execution(r));
+        command.addSubcommand("core-mvp",new CoreMvp(r));
         command.addSubcommand("acquire",new Acquire(r));
         command.addSubcommand("inventory",new Inventory(r));
         command.addSubcommand("readiness",new Readiness(r));
@@ -321,6 +333,36 @@ public final class EvoApp {
             var job=intake.journal().get(revision).orElseThrow(()->new InputFailure("ACQUISITION_NOT_FOUND"));
             return emit(r,"inventory",envelope(Map.of("revision",revision,"state",job.state(),"manifest",intake.inventory().manifest(revision),"page",intake.inventory().page(revision,r.limit,Optional.ofNullable(r.cursor)))),0);
         }}
+    }
+    @Command(name="core-mvp",mixinStandardHelpOptions=true,description="Run the approved offline Hyper-V build pipeline / Build offline Core MVP trong Hyper-V")
+    private final class CoreMvp implements Callable<Integer>{
+        final Root r;CoreMvp(Root r){this.r=r;}
+        @Parameters(paramLabel="REGISTERED_ROOT")Path root;
+        public Integer call()throws Exception{
+            r.validate();com.evolution.analysis.execution.mvp.CoreMvpRegistrations.require(resolve(root));
+            var result=com.evolution.analysis.execution.mvp.HyperVMvpLauncher.run(resolve(root));
+            return emit(r,"core-mvp",Map.of("apiVersion","execution.core-mvp-api:m8.4-v1","data",result,"resultIdentity",ContentDigest.sha256Utf8(CanonicalJson.write(result))),0);
+        }
+    }
+    @Command(name="execution",mixinStandardHelpOptions=true,description="Operate a registered isolated execution / Điều khiển execution cô lập đã đăng ký")
+    private final class Execution implements Callable<Integer>{
+        final Root r;Execution(Root r){this.r=r;}
+        @Parameters(index="0",paramLabel="submit|status|cancel|recover")String operation;
+        @Parameters(index="1",paramLabel="REGISTRATION")String registration;
+        public Integer call()throws Exception{
+            r.validate();var op=com.evolution.analysis.execution.RegisteredExecutionPort.Operation.valueOf(operation.toUpperCase(Locale.ROOT));
+            var id=new ContentDigest(registration);
+            if(executions==null)return error(r,3,"EXECUTIONS_UNAVAILABLE","No registered isolated executor is configured.","Chưa cấu hình executor cô lập đã đăng ký.");
+            com.evolution.analysis.execution.RegisteredExecutionPort.View view;
+            try{view=executions.execute(op,id);}catch(com.evolution.analysis.execution.RegisteredExecutionPort.Rejected rejected){
+                return error(r,2,"EXECUTION_"+rejected.failure().name(),"Execution registration or durable receipt does not match.","Đăng ký execution hoặc receipt bền vững không khớp.");
+            }catch(IOException unavailable){return error(r,3,"EXECUTIONS_UNAVAILABLE","Execution state is unavailable.","Không truy cập được trạng thái execution.");}
+            if(!id.equals(view.registration()))return error(r,3,"EXECUTION_SCOPE_MISMATCH","Execution receipt scope does not match.","Receipt execution không khớp phạm vi.");
+            var data=CanonicalJson.write(view);
+            if(r.json)out.println(CanonicalJson.write(Map.of("apiVersion",com.evolution.analysis.execution.RegisteredExecutionPort.VERSION,"data",view,"resultIdentity",ContentDigest.sha256Utf8(data))));
+            else out.println(view.attemptPhase()+" / "+view.taskPhase()+" / "+view.availability()+(view.reason().isEmpty()?"":" / "+view.reason()));
+            return switch(view.taskPhase()){case SUCCEEDED,CANCELLED -> 0;case FAILED -> 1;default -> 3;};
+        }
     }
     @Command(name="readiness",mixinStandardHelpOptions=true,description="Plan all build roots, contexts and native evidence requirements / Lập kế hoạch readiness")
     private final class Readiness implements Callable<Integer>{

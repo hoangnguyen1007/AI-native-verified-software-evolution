@@ -32,6 +32,7 @@ public final class ArchitectureQueryApi {
         Failure(int status,String code) { this.status=status; this.code=code; }
     }
     private final GraphStore store;
+    private com.evolution.analysis.execution.RegisteredExecutionPort executions;
     private final PublishedReports reports;
     private final ApiLimits limits;
     private final BiFunction<KnowledgeGraph,Supplier<StopReason>,ArchitectureQueryService> factory;
@@ -48,6 +49,19 @@ public final class ArchitectureQueryApi {
         this.limits=Objects.requireNonNull(limits); this.factory=Objects.requireNonNull(factory);
     }
     public ApiLimits limits() { return limits; }
+    /** Operator composition only. Request JSON cannot register an executor or launch policy. */
+    public static ArchitectureQueryApi withExecutions(GraphStore store,PublishedReports reports,ApiLimits limits,
+            com.evolution.analysis.execution.RegisteredExecutionPort executions){
+        return withExecutions(new ArchitectureQueryApi(store,reports,limits),executions);
+    }
+    /** Preserve existing analysis jobs, connections and query factory when adding execution access. */
+    public static ArchitectureQueryApi withExecutions(ArchitectureQueryApi existing,
+            com.evolution.analysis.execution.RegisteredExecutionPort executions){
+        Objects.requireNonNull(existing);
+        if(existing.executions!=null)throw new IllegalArgumentException("EXECUTION_PORT_ALREADY_CONFIGURED");
+        var api=new ArchitectureQueryApi(existing.store,existing.reports,existing.limits,existing.factory);
+        api.jobs=existing.jobs;api.connections=existing.connections;api.executions=Objects.requireNonNull(executions);return api;
+    }
     /** Job and query adapters share the same canonical publication stores. */
     public ArchitectureQueryApi(GraphStore store,PublishedReports reports,ApiLimits limits,AnalysisJobs jobs) {
         this(store,reports,limits);
@@ -62,6 +76,7 @@ public final class ArchitectureQueryApi {
     public Response handle(String method,String rawPath,String contentType,byte[] body,BooleanSupplier cancelled) {
         try {
             if (body.length > limits.requestBytes()) throw new Failure(413,"REQUEST_TOO_LARGE");
+            if(rawPath.startsWith("/api/v2/executions/"))return execution(method,rawPath,contentType,body,cancelled);
             if(rawPath.startsWith("/api/v2/analysis/jobs/"))return jobs==null?error(503,"JOBS_UNAVAILABLE"):jobs.handle(method,rawPath,contentType,body,cancelled);
             if(rawPath.startsWith("/api/v2/acquisitions/")){
                 if(connections==null)throw new Failure(503,"CONNECTIONS_UNAVAILABLE");if(!method.equals("POST"))throw new Failure(405,"METHOD_NOT_ALLOWED");
@@ -100,7 +115,32 @@ public final class ArchitectureQueryApi {
         return new Response(status,CanonicalJson.write(Map.of("apiVersion",VERSION,"queryVersion",ArchitectureQuery.VERSION,
                 "error",Map.of("code",code,"message",message(code)))).getBytes(StandardCharsets.UTF_8));
     }
+    private Response execution(String method,String path,String contentType,byte[] body,BooleanSupplier cancelled){
+        if(!method.equals("POST"))throw new Failure(405,"METHOD_NOT_ALLOWED");
+        var operation=switch(path){
+            case "/api/v2/executions/submit" -> com.evolution.analysis.execution.RegisteredExecutionPort.Operation.SUBMIT;
+            case "/api/v2/executions/status" -> com.evolution.analysis.execution.RegisteredExecutionPort.Operation.STATUS;
+            case "/api/v2/executions/cancel" -> com.evolution.analysis.execution.RegisteredExecutionPort.Operation.CANCEL;
+            case "/api/v2/executions/recover" -> com.evolution.analysis.execution.RegisteredExecutionPort.Operation.RECOVER;
+            default -> throw new Failure(404,"NOT_FOUND");
+        };
+        var input=decode(body,contentType);
+        if(!input.keySet().equals(Set.of("registration"))||!(input.get("registration") instanceof String id))throw new Failure(400,"INVALID_REQUEST");
+        var registration=new ContentDigest(id);
+        if(cancelled.getAsBoolean())throw new Failure(409,"REQUEST_CANCELLED");
+        if(executions==null)throw new Failure(503,"EXECUTIONS_UNAVAILABLE");
+        try{
+            var data=executions.execute(operation,registration);
+            if(!data.registration().equals(registration))throw new Failure(503,"EXECUTION_SCOPE_MISMATCH");
+            var canonical=BoundedJson.encode(data,limits.responseBytes());
+            return new Response(200,BoundedJson.encode(Map.of("apiVersion",com.evolution.analysis.execution.RegisteredExecutionPort.VERSION,
+                    "resultIdentity",ContentDigest.sha256(canonical),"data",data),limits.responseBytes()));
+        }catch(com.evolution.analysis.execution.RegisteredExecutionPort.Rejected rejected){
+            throw new Failure(rejected.failure()==com.evolution.analysis.execution.RegisteredExecutionPort.Failure.SCOPE_CONFLICT?409:404,"EXECUTION_"+rejected.failure().name());
+        }catch(java.io.IOException unavailable){throw new Failure(503,"EXECUTIONS_UNAVAILABLE");}
+    }
     static String allowedMethods(String path) {
+        if(path.startsWith("/api/v2/executions/"))return "POST";
         if (path.equals("/api/v1/analysis/connections")) return "GET, POST";
         if (path.equals("/api/v1/analysis/jobs")) return "GET, POST";
         if (path.equals("/api/v1/analysis/jobs/history") || path.startsWith("/api/v1/analysis/jobs/") && (path.endsWith("/cancel") || path.endsWith("/gaps") || path.endsWith("/input-diagnostics"))) return "POST";

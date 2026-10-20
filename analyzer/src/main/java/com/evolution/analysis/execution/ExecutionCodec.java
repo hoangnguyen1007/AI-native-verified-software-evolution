@@ -16,7 +16,7 @@ public final class ExecutionCodec {
     private static final Set<Class<?>> RECORDS=Set.of(ExecutionPlan.class,ExecutionPlan.Table.class,ExecutionPlan.ScopedRef.class,
             ExecutionPlan.ContextRef.class,ExecutionPlan.Binding.class,ExecutionPlan.Candidate.class,ExecutionGraph.Task.class,
             ExecutionGraph.Edge.class,ExecutionGraph.CapturedInput.class,ExecutionGraph.TaskInput.class,ExecutionState.class,
-            AdmissionQueue.State.class,AdmissionQueue.Ticket.class,AdmissionQueue.Request.class,AdmissionQueue.Queued.class,AdmissionQueue.Retired.class,ResourceBudget.Resources.class,
+            AdmissionQueue.State.class,AdmissionQueue.Ticket.class,AdmissionQueue.Request.class,AdmissionQueue.Queued.class,AdmissionQueue.Retired.class,AdmissionQueue.StorageHold.class,ResourceBudget.Resources.class,
             ExecutionAttempt.class,SandboxExecutor.Launch.class,SandboxExecutor.Handle.class,
             NativeCaptureParser.Envelope.class,com.evolution.analysis.readiness.CapturedBuildEvidence.Manifest.class,
             com.evolution.analysis.readiness.CapturedBuildEvidence.Observation.class,VersionedIdentifier.class,ContentHandle.class);
@@ -46,7 +46,17 @@ public final class ExecutionCodec {
         if(cls.isEnum())return Enum.valueOf((Class)cls,GraphJson.string(value));
         if(cls==ExecutionGraph.Input.class){var obj=GraphJson.object(value);return convert(value,switch(GraphJson.string(obj.get("kind"))){case "CAPTURED"->ExecutionGraph.CapturedInput.class;case "TASK_OUTPUT"->ExecutionGraph.TaskInput.class;default->throw new IllegalArgumentException("INVALID_INPUT_KIND");});}
         if(!RECORDS.contains(cls))throw new IllegalArgumentException("UNREGISTERED_RECORD");
-        var object=GraphJson.object(value);var fields=cls.getRecordComponents();var names=new HashSet<String>();for(var field:fields)names.add(field.getName());
+        var object=GraphJson.object(value);
+        if(cls==AdmissionQueue.State.class&&"execution-admission:m8.4-v1".equals(object.get("schema"))){
+            if(!object.keySet().equals(Set.of("schema","revision","nextSequence","capacity","maxBypasses","lastJob","pending","active","retired")))throw new IllegalArgumentException("UNKNOWN_OR_MISSING_FIELDS");
+            for(var row:GraphJson.array(object.get("retired"))){
+                var retired=(AdmissionQueue.Retired)convert(row,AdmissionQueue.Retired.class);var r=retired.request().resources();
+                // v1 did not retain storage history. Never infer freed bytes from its retired watermark.
+                if(r.disk()>0||r.log()>0||retired.request().ticket().fence()>1)throw new IllegalArgumentException("ADMISSION_STORAGE_RECONCILIATION_REQUIRED");
+            }
+            object=new LinkedHashMap<>(object);object.put("schema","execution-admission:m8.4-v2");object.put("retained",List.of());
+        }
+        var fields=cls.getRecordComponents();var names=new HashSet<String>();for(var field:fields)names.add(field.getName());
         if(!object.keySet().equals(names))throw new IllegalArgumentException("UNKNOWN_OR_MISSING_FIELDS");
         var args=new Object[fields.length];var types=new Class<?>[fields.length];
         for(int i=0;i<fields.length;i++){args[i]=convert(object.get(fields[i].getName()),fields[i].getGenericType());types[i]=fields[i].getType();}

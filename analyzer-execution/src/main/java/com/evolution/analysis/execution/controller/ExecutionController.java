@@ -25,9 +25,14 @@ public final class ExecutionController {
     private final ControllerTerminationLedger terminations;
     private final StreamingContentStore content;
     private final Consumer<Checkpoint> checkpoint;
+    @FunctionalInterface public interface LaunchGuard {void beforeLaunch(SandboxExecutor.Launch launch)throws IOException;}
+    private final LaunchGuard launchGuard;
     public ExecutionController(DurableAttemptStore attempts,DurableAdmissionQueue queue,ExecutionJournal tasks,QualifiedSandboxExecutor executor,ControllerTerminationLedger terminations,StreamingContentStore content){this(attempts,queue,tasks,executor,terminations,content,p->{});}
     public ExecutionController(DurableAttemptStore attempts,DurableAdmissionQueue queue,ExecutionJournal tasks,QualifiedSandboxExecutor executor,ControllerTerminationLedger terminations,StreamingContentStore content,Consumer<Checkpoint> checkpoint){
-        this.attempts=Objects.requireNonNull(attempts);this.queue=Objects.requireNonNull(queue);this.tasks=Objects.requireNonNull(tasks);this.executor=Objects.requireNonNull(executor);this.terminations=Objects.requireNonNull(terminations);this.content=Objects.requireNonNull(content);this.checkpoint=Objects.requireNonNull(checkpoint);
+        this(attempts,queue,tasks,executor,terminations,content,checkpoint,launch->{});
+    }
+    public ExecutionController(DurableAttemptStore attempts,DurableAdmissionQueue queue,ExecutionJournal tasks,QualifiedSandboxExecutor executor,ControllerTerminationLedger terminations,StreamingContentStore content,Consumer<Checkpoint> checkpoint,LaunchGuard launchGuard){
+        this.attempts=Objects.requireNonNull(attempts);this.queue=Objects.requireNonNull(queue);this.tasks=Objects.requireNonNull(tasks);this.executor=Objects.requireNonNull(executor);this.terminations=Objects.requireNonNull(terminations);this.content=Objects.requireNonNull(content);this.checkpoint=Objects.requireNonNull(checkpoint);this.launchGuard=Objects.requireNonNull(launchGuard);
     }
     public synchronized ExecutionAttempt enqueue(SandboxExecutor.Launch launch,AdmissionQueue.Request admission,ExecutionState expected)throws IOException{
         var a=attempts.create(ExecutionAttempt.prepare(launch,admission,expected));checkpoint.accept(Checkpoint.INTENT);
@@ -39,6 +44,20 @@ public final class ExecutionController {
         }
         queue.submit(queue.get().revision(),admission);checkpoint.accept(Checkpoint.QUEUE_SUBMITTED);
         return step(a,QUEUED,a.handle(),Optional.empty(),a.stop(),"");
+    }
+    public record Snapshot(Optional<ExecutionAttempt> attempt,ExecutionState task){}
+    /** Read persisted state; no guest command or implicit recovery is triggered by a status query. */
+    public synchronized Snapshot snapshot(SandboxExecutor.Launch launch)throws IOException{
+        var current=attempts.find(launch.attempt());
+        if(current.isPresent()&&!current.orElseThrow().launch().equals(launch))throw new RegisteredExecutionPort.Rejected(RegisteredExecutionPort.Failure.SCOPE_CONFLICT);
+        var task=tasks.get(launch.plan(),launch.task()).orElseThrow(()->new IOException("TASK_NOT_FOUND"));
+        if(task.fence()>launch.fence()||task.fence()==launch.fence()&&!task.attempt().equals(Optional.of(launch.attempt())))
+            throw new RegisteredExecutionPort.Rejected(RegisteredExecutionPort.Failure.SCOPE_CONFLICT);
+        return new Snapshot(current,task);
+    }
+    /** A slow remote probe cannot hold the durable controller lock ahead of cancellation. */
+    public SandboxExecutor.Availability availability(){
+        try{return executor.probe().availability();}catch(IOException unavailable){return SandboxExecutor.Availability.UNAVAILABLE;}
     }
     public synchronized ExecutionAttempt start(String attempt)throws IOException{
         var a=attempts.get(attempt);
@@ -56,6 +75,7 @@ public final class ExecutionController {
         var current=lease(a);
         if(!owned(a,current)||current.phase()!=ExecutionState.Phase.LEASED)return quarantine(a,"TASK_LEASE_SCOPE_MISMATCH");
         if(a.phase()==RESERVED)a=step(a,LEASED,a.handle(),Optional.empty(),a.stop(),"");
+        try{launchGuard.beforeLaunch(a.launch());}catch(IOException rejected){return quarantine(a,"LAUNCH_GUARD_REJECTED");}
         a=step(a,LAUNCH_INTENT,a.handle(),Optional.empty(),a.stop(),"");checkpoint.accept(Checkpoint.LAUNCH_INTENT);
         SandboxExecutor.Handle handle;
         try{handle=executor.launch(a.launch());}catch(IOException unavailable){return quarantine(a,"LAUNCH_DISPOSITION_UNKNOWN");}
@@ -69,6 +89,11 @@ public final class ExecutionController {
     }
     /** Recovery always fences/reaps old work, never silently starts it again. */
     public synchronized ExecutionAttempt recover(String attempt)throws IOException{return stop(attempt,ExecutionAttempt.Stop.RECOVERY);}
+    /** Composition boundaries must bind the full launch, not a possibly reused attempt label. */
+    public synchronized ExecutionAttempt recover(SandboxExecutor.Launch launch)throws IOException{
+        if(!attempts.get(launch.attempt()).launch().equals(launch))throw new IOException("RECOVERY_LAUNCH_SCOPE_MISMATCH");
+        return recover(launch.attempt());
+    }
     public synchronized ExecutionAttempt cancel(String attempt)throws IOException{return stop(attempt,ExecutionAttempt.Stop.CANCEL);}
     /** Finish seals worker quiescence for collection, never publishes success or semantic acceptance. */
     public synchronized ExecutionAttempt finish(String attempt)throws IOException{
@@ -108,18 +133,22 @@ public final class ExecutionController {
                 terminations.require(a.launch(),proof);checkpoint.accept(Checkpoint.DRIVER_STOPPED);
             }
         }catch(IOException unavailable){return quarantine(a,"TERMINATION_UNCONFIRMED");}
-        a=step(a,QUIESCENT,a.handle(),Optional.of(proof),winner,retainsStorage(a)?"RETAINED_STORAGE_ACCOUNTING_REQUIRED":"");checkpoint.accept(Checkpoint.QUIESCENCE_COMMITTED);
+        a=step(a,QUIESCENT,a.handle(),Optional.of(proof),winner,"");checkpoint.accept(Checkpoint.QUIESCENCE_COMMITTED);
         return release(a);
     }
     private ExecutionAttempt release(ExecutionAttempt a)throws IOException{
         var proof=a.termination().orElseThrow();terminations.require(a.launch(),proof);
         var current=task(a);var state=queue.get();
         boolean active=state.active().stream().anyMatch(q->q.request().ticket().equals(a.admission().ticket()));
-        boolean retired=state.retired().stream().anyMatch(q->q.request().ticket().equals(a.admission().ticket()));
+        var hold=state.retained().stream().filter(q->q.request().ticket().equals(a.admission().ticket())).findFirst();
+        var retiredRow=state.retired().stream().filter(q->q.request().ticket().equals(a.admission().ticket())).findFirst()
+                .or(()->hold.map(h->new AdmissionQueue.Retired(h.request(),h.sequence(),h.termination())));
+        boolean retired=retiredRow.isPresent();
         if(active||retired){
             if(retired){
-                var prior=state.retired().stream().filter(r->r.request().ticket().equals(a.admission().ticket())).findFirst().orElseThrow();
+                var prior=retiredRow.orElseThrow();
                 if(!prior.request().equals(a.admission())||!prior.termination().equals(proof))throw new IOException("ADMISSION_TERMINATION_CONFLICT");
+                if(retainsStorage(a)&&hold.isEmpty())throw new IOException("ADMISSION_STORAGE_HOLD_MISSING");
             }
             if(!owned(a,current)&&!(retired&&!active&&current.fence()>a.launch().fence()))throw new IOException("TASK_LEASE_SCOPE_MISMATCH");
             if(owned(a,current)&&current.termination().isPresent()&&!current.termination().orElseThrow().equals(proof))throw new IOException("TASK_TERMINATION_CONFLICT");
@@ -142,18 +171,16 @@ public final class ExecutionController {
                 }
             }
             checkpoint.accept(Checkpoint.TASK_QUIESCENT);
-            // VM Off proves no execution, not removal of overlays, spools or exports. Until a
-            // separate durable storage ledger exists, retain the entire reservation conservatively.
-            // Recovery repeats this check; a restart must not turn retained bytes into free capacity.
-            if(active&&retainsStorage(a))return a;
-            queue.release(state.revision(),a.admission().ticket(),Optional.of(proof));
+            // One admission commit atomically retires compute and retains the full disk/log bounds.
+            if(a.launchPossible())queue.release(state.revision(),a.admission().ticket(),Optional.of(proof));
+            else queue.releaseUnlaunched(state.revision(),a.admission().ticket(),Optional.of(proof));
         }else{
             for(var pending:state.pending())if(pending.request().ticket().equals(a.admission().ticket())&&!pending.request().equals(a.admission()))throw new IOException("ADMISSION_REQUEST_CONFLICT");
             queue.cancelPending(state.revision(),a.admission().ticket());
             if(a.stop()==ExecutionAttempt.Stop.CANCEL&&current.equals(a.expectedTask())&&(current.phase()==ExecutionState.Phase.READY||current.phase()==ExecutionState.Phase.WAITING_FOR_INPUT||current.phase()==ExecutionState.Phase.WAITING_FOR_RESOURCES))advance(a,current,ExecutionState.Phase.CANCELLED,Optional.empty());
         }
         checkpoint.accept(Checkpoint.RESERVATION_RELEASED);
-        var closed=step(a,RELEASED,a.handle(),a.termination(),a.stop(),"");checkpoint.accept(Checkpoint.ATTEMPT_CLOSED);return closed;
+        var closed=step(a,RELEASED,a.handle(),a.termination(),a.stop(),retainsStorage(a)?"STORAGE_RESERVATION_RETAINED":"");checkpoint.accept(Checkpoint.ATTEMPT_CLOSED);return closed;
     }
     private static boolean retainsStorage(ExecutionAttempt a){
         var resources=a.admission().resources();

@@ -70,6 +70,7 @@ public final class HyperVWorkerControl implements SandboxExecutor {
         if(!binding.equals(request))throw new IOException("HYPERV_LAUNCH_SCOPE_MISMATCH");
         var observed=call("Find");
         if(observed.state().equals("Absent"))return new Recovery(Optional.empty(),Optional.of(proof(observed)),"");
+        if(observed.state().equals("Off"))observed=fenceOff(observed);
         return new Recovery(Optional.of(new Handle(binding.attempt(),binding.fence(),observed.vmId())),observed.state().equals("Off")?Optional.of(proof(observed)):Optional.empty(),"");
     }
     private void exact(Handle handle)throws IOException{
@@ -78,13 +79,20 @@ public final class HyperVWorkerControl implements SandboxExecutor {
     @Override public Status inspect(Handle handle)throws IOException{
         exact(handle);var observed=call("Find");
         if(!observed.vmId().equals(handle.backendId()))throw new IOException("HYPERV_WORKER_ID_MISMATCH");
+        if(observed.state().equals("Off"))observed=fenceOff(observed);
         return status(handle,observed);
+    }
+    private Observation fenceOff(Observation observed)throws IOException{
+        // An Off snapshot alone can race a stale Start. Stop installs the driver's durable barrier.
+        var stopped=call("Stop");
+        if(!stopped.vmId().equals(observed.vmId()))throw new IOException("HYPERV_WORKER_ID_MISMATCH");
+        return stopped;
     }
     private Status status(Handle handle,Observation observed)throws IOException{return new Status(handle,!observed.state().equals("Off"),observed.state().equals("Off")?Optional.of(proof(observed)):Optional.empty(),Optional.empty(),observed.state().equals("Off")?"OUTPUT_CENSUS_REQUIRED":"");}
     @Override public Status terminate(Handle handle)throws IOException{
         exact(handle);var observed=call("Find");
         if(!observed.vmId().equals(handle.backendId()))throw new IOException("HYPERV_WORKER_ID_MISMATCH");
-        if(!observed.state().equals("Off"))observed=call("Stop");
+        observed=call("Stop");
         if(!observed.vmId().equals(handle.backendId()))throw new IOException("HYPERV_WORKER_ID_MISMATCH");
         return status(handle,observed);
     }

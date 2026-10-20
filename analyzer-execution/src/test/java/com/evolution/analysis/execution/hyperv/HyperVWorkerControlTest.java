@@ -28,7 +28,7 @@ class HyperVWorkerControlTest {
             var driver=new HyperVWorkerControl(Path.of("pwsh"),script,ContentDigest.sha256(Files.readAllBytes(script)),root,launch(),cas,ledger,(args,source,deadline)->{calls.incrementAndGet();return CanonicalJson.write(observation("Off"));});
             assertEquals(SandboxExecutor.Availability.UNQUALIFIED,driver.probe().availability());assertThrows(IOException.class,()->driver.launch(launch()));assertEquals(0,calls.get());
             var found=driver.recover(launch());ledger.require(launch(),found.termination().orElseThrow());
-            var stopped=driver.terminate(found.handle().orElseThrow());assertFalse(stopped.running());assertTrue(stopped.export().isEmpty());assertEquals("OUTPUT_CENSUS_REQUIRED",stopped.reason());assertEquals(2,calls.get());
+            var stopped=driver.terminate(found.handle().orElseThrow());assertFalse(stopped.running());assertTrue(stopped.export().isEmpty());assertEquals("OUTPUT_CENSUS_REQUIRED",stopped.reason());assertEquals(4,calls.get());
         }
     }
     @Test void authoritativeAbsenceDiffersFromUnavailableServiceAndForgedScope()throws Exception{
@@ -51,10 +51,10 @@ class HyperVWorkerControlTest {
             var driver=new HyperVWorkerControl(Path.of("pwsh"),script,ContentDigest.sha256(Files.readAllBytes(script)),workspace,launch(),cas,ledger,(args,source,deadline)->{
                 calls.incrementAndGet();assertTrue(args.stream().mapToInt(String::length).sum()<2048);assertTrue(source.length()>60000);assertFalse(source.contains(workspace.toString()));assertTrue(source.contains(Base64.getEncoder().encodeToString(workspace.toAbsolutePath().normalize().toString().getBytes(java.nio.charset.StandardCharsets.UTF_8))));return CanonicalJson.write(observation("Off"));
             });
-            driver.recover(launch());assertEquals(1,calls.get());Files.writeString(script,"changed");
-            assertThrows(IOException.class,()->driver.recover(launch()));assertEquals(1,calls.get());
+            driver.recover(launch());assertEquals(2,calls.get());Files.writeString(script,"changed");
+            assertThrows(IOException.class,()->driver.recover(launch()));assertEquals(2,calls.get());
             Files.writeString(script,"#"+"x".repeat(140000));
-            assertEquals("HYPERV_DRIVER_PIN_UNAVAILABLE",assertThrows(IOException.class,()->driver.recover(launch())).getMessage());assertEquals(1,calls.get());
+            assertEquals("HYPERV_DRIVER_PIN_UNAVAILABLE",assertThrows(IOException.class,()->driver.recover(launch())).getMessage());assertEquals(2,calls.get());
         }
     }
     @Test void staleOrForeignHandleCannotReachStopAndNonOffStateNeverProvesQuiescence()throws Exception{
@@ -65,6 +65,40 @@ class HyperVWorkerControlTest {
             assertThrows(IOException.class,()->driver.terminate(new SandboxExecutor.Handle(ATTEMPT,1,"foreign-vm")));assertEquals(1,calls.size());
             var found=driver.recover(launch());assertTrue(found.termination().isEmpty());
             var status=driver.terminate(found.handle().orElseThrow());assertTrue(status.running());assertTrue(status.termination().isEmpty());assertTrue(calls.getLast().contains("-Action 'Stop'"));
+        }
+    }
+    @Test void offRecoveryAndTerminationMustFenceAConcurrentLateStartBeforeIssuingProof()throws Exception{
+        var cas=new StreamingContentStore(root.resolve("cas"));Path script=root.resolve("driver.ps1");Files.writeString(script,"# platform fixture");
+        var actions=new ArrayList<String>();
+        try(var ledger=new ControllerTerminationLedger(root.resolve("ledger"),cas,HyperVWorkerControl.PROVIDER)){
+            var driver=new HyperVWorkerControl(Path.of("pwsh"),script,ContentDigest.sha256(Files.readAllBytes(script)),root,launch(),cas,ledger,(args,source,deadline)->{
+                actions.add(source.contains("-Action 'Stop'")?"Stop":"Find");return CanonicalJson.write(observation("Off"));
+            });
+            var recovered=driver.recover(launch());
+            assertEquals(List.of("Find","Stop"),actions);
+            ledger.require(launch(),recovered.termination().orElseThrow());
+            driver.terminate(recovered.handle().orElseThrow());
+            assertEquals(List.of("Find","Stop","Find","Stop"),actions);
+            driver.inspect(recovered.handle().orElseThrow());
+            assertEquals(List.of("Find","Stop","Find","Stop","Find","Stop"),actions);
+        }
+    }
+    @Test void offSnapshotCannotMaskFailedStopOrChangedVmOrUnconfirmedTermination()throws Exception{
+        var cas=new StreamingContentStore(root.resolve("cas"));Path script=root.resolve("driver.ps1");Files.writeString(script,"# platform fixture");
+        try(var ledger=new ControllerTerminationLedger(root.resolve("ledger"),cas,HyperVWorkerControl.PROVIDER)){
+            var failure=new HyperVWorkerControl(Path.of("pwsh"),script,ContentDigest.sha256(Files.readAllBytes(script)),root,launch(),cas,ledger,(args,source,deadline)->{
+                if(source.contains("-Action 'Stop'"))throw new IOException("WORKER_STOP_INTENT_UNCONFIRMED");
+                return CanonicalJson.write(observation("Off"));
+            });
+            assertEquals("WORKER_STOP_INTENT_UNCONFIRMED",assertThrows(IOException.class,()->failure.recover(launch())).getMessage());
+            assertThrows(IOException.class,()->failure.inspect(new SandboxExecutor.Handle(ATTEMPT,1,VM)));
+            var mismatch=new HyperVWorkerControl(Path.of("pwsh"),script,ContentDigest.sha256(Files.readAllBytes(script)),root,launch(),cas,ledger,(args,source,deadline)->{
+                var value=observation("Off");if(source.contains("-Action 'Stop'"))value.put("vmId",UUID.randomUUID().toString());return CanonicalJson.write(value);
+            });
+            assertEquals("HYPERV_WORKER_ID_MISMATCH",assertThrows(IOException.class,()->mismatch.recover(launch())).getMessage());
+            var unconfirmed=new HyperVWorkerControl(Path.of("pwsh"),script,ContentDigest.sha256(Files.readAllBytes(script)),root,launch(),cas,ledger,(args,source,deadline)->CanonicalJson.write(observation(source.contains("-Action 'Stop'")?"Saved":"Off")));
+            assertTrue(unconfirmed.recover(launch()).termination().isEmpty());
+            assertTrue(unconfirmed.inspect(new SandboxExecutor.Handle(ATTEMPT,1,VM)).termination().isEmpty());
         }
     }
 }

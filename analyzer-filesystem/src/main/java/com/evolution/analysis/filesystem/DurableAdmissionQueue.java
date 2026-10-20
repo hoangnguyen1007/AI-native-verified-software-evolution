@@ -40,7 +40,7 @@ public final class DurableAdmissionQueue implements AutoCloseable {
         try(var input=content.open(handle)){
             var state=ExecutionCodec.read(input,AdmissionQueue.State.class,new GraphJson.Limits(maxBytes,48,maxBytes));
             if(state.revision()!=record.revision()||!state.policy().equals(policy))throw new IOException("ADMISSION_STATE_CORRUPT");return state;
-        }catch(IllegalArgumentException|ArithmeticException invalid){throw new IOException("ADMISSION_STATE_CORRUPT",invalid);}
+        }catch(IllegalArgumentException|ArithmeticException invalid){throw new IOException("ADMISSION_STORAGE_RECONCILIATION_REQUIRED".equals(invalid.getMessage())?"ADMISSION_STORAGE_RECONCILIATION_REQUIRED":"ADMISSION_STATE_CORRUPT",invalid);}
     }
     public synchronized AdmissionQueue.State get()throws IOException{return decode(journal.get(ID).orElseThrow(()->new IOException("ADMISSION_STATE_MISSING")));}
     private AdmissionQueue.State expected(long revision)throws IOException {
@@ -66,6 +66,11 @@ public final class DurableAdmissionQueue implements AutoCloseable {
     public synchronized AdmissionQueue.State cancelPending(long revision,AdmissionQueue.Ticket ticket)throws IOException {
         var previous=expected(revision);
         try{return commit(previous,AdmissionQueue.cancelPending(previous,ticket));}catch(IllegalArgumentException|ArithmeticException invalid){throw new IOException("ADMISSION_COMMAND_REJECTED",invalid);}
+    }
+    /** Trusted controller boundary only: the launch intent must prove no backend launch was possible. */
+    public synchronized AdmissionQueue.State releaseUnlaunched(long revision,AdmissionQueue.Ticket ticket,Optional<ContentDigest> proof)throws IOException {
+        var previous=expected(revision);
+        try{return commit(previous,AdmissionQueue.releaseUnlaunched(previous,ticket,proof));}catch(IllegalArgumentException|ArithmeticException invalid){throw new IOException("ADMISSION_COMMAND_REJECTED",invalid);}
     }
     @Override public void close()throws IOException{journal.close();}
 }

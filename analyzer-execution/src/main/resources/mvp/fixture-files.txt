@@ -1,0 +1,4 @@
+mvp/native/maven-generated/app/pom.xml
+mvp/native/maven-generated/app/src/main/java/fixture/Caller.java
+mvp/native/maven-generated/model/pom.xml
+mvp/native/maven-generated/pom.xml

@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-"""Root-owned guest launcher. Commands are supplied only by the authenticated controller.
+"""Root-owned offline candidate launcher. Commands come only from the authenticated controller.
 Target output is producer data; this process never holds an attestation signing key.
 """
 import json
@@ -57,6 +57,10 @@ def build_command(request, root):
                '--property=MemoryMax=' + str(request['memoryBytes']), '--property=MemorySwapMax=0',
                '--property=TasksMax=' + str(request['tasksMax']), '--property=CPUQuota=' + str(request['cpuPercent']) + '%',
                '--property=NoNewPrivileges=yes', '--property=PrivateTmp=yes',
+               '--property=PrivateDevices=yes', '--property=RestrictNamespaces=yes',
+               '--property=PrivateNetwork=yes',
+               '--property=TemporaryFileSystem=/tmp:rw,size=64M,mode=1777 /var/tmp:rw,size=64M,mode=1777',
+               '--property=InaccessiblePaths=/var/lib/evo /var/lib/cloud /etc/ssh',
                '--property=ProtectSystem=strict', '--property=ProtectHome=yes',
                '--property=RestrictSUIDSGID=yes', '--property=RestrictRealtime=yes',
                '--property=CapabilityBoundingSet=', '--property=UMask=0077',
@@ -78,8 +82,17 @@ def main():
     import pwd
     account = pwd.getpwnam('evobuild')
     home = root / 'home'
-    home.mkdir(mode=0o700, exist_ok=True)
-    os.chown(home, account.pw_uid, account.pw_gid)
+    # Ownership changes must act on the opened directory, never a target-replaceable pathname.
+    try:
+        home.mkdir(mode=0o700, exist_ok=True)
+        descriptor = os.open(home, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            os.fchown(descriptor, account.pw_uid, account.pw_gid)
+        finally:
+            os.close(descriptor)
+    except OSError:
+        print('INVALID_EXECUTION_HOME', file=sys.stderr)
+        return 64
     command = build_command(request, root)
     # Controller must independently enforce log/disk budgets, lease, and whole-VM termination.
     return subprocess.run(command, check=False).returncode

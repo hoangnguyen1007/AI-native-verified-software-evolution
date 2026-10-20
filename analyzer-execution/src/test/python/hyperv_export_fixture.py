@@ -7,7 +7,6 @@ from pathlib import Path
 import subprocess
 import time
 import uuid
-import paramiko
 
 
 def unique(pairs):
@@ -19,17 +18,59 @@ def unique(pairs):
     return value
 
 
+def export_request(attempt, supplied=None):
+    if not isinstance(attempt, str) or len(attempt) != 32 or any(c not in '0123456789abcdef' for c in attempt):
+        raise ValueError('NONCANONICAL_WORK_ATTEMPT')
+    if supplied is not None and not isinstance(supplied, dict):
+        raise ValueError('INVALID_EXPORT_REQUEST')
+    request = dict(attempt=attempt, nonce=uuid.uuid4().hex, work='/work/' + attempt, maxRowBytes=65536,
+                   maxObjectBytes=134217728, maxCaptureBytes=536870912) if supplied is None else dict(supplied)
+    if set(request) != {'attempt', 'nonce', 'work', 'maxRowBytes', 'maxObjectBytes', 'maxCaptureBytes'}:
+        raise ValueError('INVALID_EXPORT_REQUEST')
+    nonce = request['nonce']
+    if request['attempt'] != attempt or request['work'] != '/work/' + attempt or not isinstance(nonce, str) or len(nonce) != 32 or any(c not in '0123456789abcdef' for c in nonce):
+        raise ValueError('EXPORT_REQUEST_SCOPE_MISMATCH')
+    values = [request[k] for k in ('maxRowBytes', 'maxObjectBytes', 'maxCaptureBytes')]
+    if any(type(v) is not int or v < 0 or v > 9223372036854775807 for v in values) or not 1024 <= values[0] <= 1048576:
+        raise ValueError('INVALID_EXPORT_BUDGET')
+    return request
+
+
+def account_object(used, handle, max_object, max_total):
+    """Referenced-byte accounting; the same object referenced twice consumes two reservations."""
+    if any(type(value) is not int or value < 0 or value > 9223372036854775807 for value in (used, max_object, max_total)):
+        raise ValueError('INVALID_CAPTURE_BUDGET')
+    if not isinstance(handle, dict) or set(handle) != {'digest', 'size'}:
+        raise ValueError('INVALID_CAPTURE_HANDLE')
+    size, digest = handle['size'], handle['digest']
+    if type(size) is not int or size < 0 or size > max_object or not isinstance(digest, str) or len(digest) != 71 or not digest.startswith('sha256:') or any(c not in '0123456789abcdef' for c in digest[7:]):
+        raise ValueError('INVALID_CAPTURE_HANDLE')
+    if used > max_total or size > max_total - used:
+        raise ValueError('CAPTURE_BUDGET_EXHAUSTED')
+    return used + size
+
+
 def main():
+    import paramiko
     parser = argparse.ArgumentParser()
     parser.add_argument('--config', type=Path, required=True)
     parser.add_argument('--root', type=Path, required=True)
     parser.add_argument('--owner', type=Path, required=True)
     parser.add_argument('--work-attempt', required=True)
+    parser.add_argument('--request', type=Path, help='Controller-precommitted export request and collector pin')
     args = parser.parse_args()
     attempt = uuid.UUID(hex=args.work_attempt).hex
     if attempt != args.work_attempt:
         raise ValueError('NONCANONICAL_WORK_ATTEMPT')
-    nonce = uuid.uuid4().hex
+    supplied = None
+    if args.request is not None:
+        if args.request.stat().st_size > 8192:
+            raise ValueError('EXPORT_REQUEST_WORKER_REQUIRED')
+        supplied = json.loads(args.request.read_text(encoding='utf-8-sig'), object_pairs_hook=unique)
+        if set(supplied) != {'request', 'collectorPin'}:
+            raise ValueError('INVALID_PRECOMMITTED_EXPORT')
+    request = export_request(attempt, None if supplied is None else supplied['request'])
+    nonce = request['nonce']
     args.root.mkdir()  # Preserve all earlier runs; a new output root is mandatory.
     repo = Path(__file__).resolve().parents[4]
     config = json.loads(args.config.read_text(encoding='utf-8-sig'), object_pairs_hook=unique)
@@ -91,6 +132,8 @@ def main():
                        allow_agent=False, look_for_keys=False, timeout=5)
         source = repo / 'analyzer-execution/src/main/resources/guest/export.py'
         expected_pin = hashlib.sha256(source.read_bytes()).hexdigest()
+        if supplied is not None and supplied['collectorPin'] != 'sha256:' + expected_pin:
+            raise ValueError('PRECOMMITTED_COLLECTOR_PIN_MISMATCH')
         remote_source = '/tmp/evo-export-' + uuid.uuid4().hex + '.py'
         with client.open_sftp() as transfer:
             transfer.put(str(source), remote_source)
@@ -99,8 +142,6 @@ def main():
         before = command('sudo -n sha256sum /usr/local/lib/evo/export.py').decode().split()[0]
         if before != expected_pin:
             raise ValueError('COLLECTOR_PIN_MISMATCH')
-        request = dict(attempt=attempt, nonce=nonce, work='/work/' + attempt, maxRowBytes=65536,
-                       maxObjectBytes=134217728, maxCaptureBytes=536870912)
         with (args.root / 'request.json').open('x', encoding='utf-8') as initial:
             json.dump(dict(request=request, collectorPin='sha256:' + expected_pin), initial, sort_keys=True)
             initial.flush()
@@ -139,16 +180,23 @@ def main():
                     digest = handle['digest'][7:]
                     if len(digest) != 64 or any(c not in '0123456789abcdef' for c in digest):
                         raise ValueError('INVALID_CAPTURE_DIGEST')
+                    next_total = account_object(captured_bytes, handle, request['maxObjectBytes'], request['maxCaptureBytes'])
                     download(base + '/objects/' + digest, objects / digest, handle, request['maxObjectBytes'])
-                    captured_bytes += handle['size']
+                    captured_bytes = next_total
         if (count, pending, rejected, logical_bytes, captured_bytes) != (census['entries'], census['pending'], census['rejected'], census['logicalBytes'], census['capturedBytes']):
             raise ValueError('CENSUS_DENOMINATOR_MISMATCH')
         after = command('sudo -n sha256sum /usr/local/lib/evo/export.py').decode().split()[0]
         if before != after:
             raise ValueError('COLLECTOR_CHANGED')
     except Exception as failure:
+        known = {'INVALID_CAPTURE_BUDGET', 'INVALID_CAPTURE_HANDLE', 'CAPTURE_BUDGET_EXHAUSTED',
+                 'CAPTURE_CONTENT_EXCEEDS_DECLARATION', 'CAPTURE_CONTENT_MISMATCH', 'EXISTING_CAPTURE_MISMATCH',
+                 'CENSUS_ROW_WORKER_REQUIRED', 'CENSUS_DENOMINATOR_MISMATCH', 'CENSUS_SCOPE_MISMATCH',
+                 'EXPORT_SCOPE_MISMATCH', 'PRECOMMITTED_COLLECTOR_PIN_MISMATCH', 'COLLECTOR_PIN_MISMATCH',
+                 'COLLECTOR_CHANGED', 'CONTROL_RESPONSE_WORKER_REQUIRED', 'GUEST_EXPORT_OPERATION_UNAVAILABLE'}
+        reason = str(failure) if str(failure) in known else 'GUEST_EXPORT_OPERATION_UNAVAILABLE'
         with (args.root / 'failure.json').open('x', encoding='utf-8') as failed:
-            json.dump(dict(schema='authored-export-failure:m8.4-v1', failureType=type(failure).__name__, qualified=False), failed)
+            json.dump(dict(schema='authored-export-failure:m8.4-v1', failureType=type(failure).__name__, reasonCode=reason, qualified=False), failed)
         raise
     finally:
         client.close()

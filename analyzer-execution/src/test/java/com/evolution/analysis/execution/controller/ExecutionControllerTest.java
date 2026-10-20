@@ -28,8 +28,8 @@ class ExecutionControllerTest {
     static class Backend implements SandboxExecutor {
         Map<String,Launch> workers=new HashMap<>();Map<String,Handle> handles=new HashMap<>();Set<String> running=new HashSet<>();
         ControllerTerminationLedger ledger;StreamingContentStore cas;ContentDigest certificate;int launches,stops;
-        boolean unknown,foreign,noProof,untrustedProof;
-        public Probe probe(){return new Probe(Availability.AVAILABLE,"",VERSION,Optional.of(certificate));}
+        boolean unknown,foreign,noProof,untrustedProof,unavailableProbe;
+        public Probe probe()throws IOException{if(unavailableProbe)throw new IOException("PRIVATE_SENTINEL");return new Probe(Availability.AVAILABLE,"",VERSION,Optional.of(certificate));}
         public Handle launch(Launch l)throws IOException{launches++;workers.put(l.attempt(),l);var h=new Handle(l.attempt(),l.fence(),"owned-"+l.attempt());handles.put(l.attempt(),h);running.add(l.attempt());return h;}
         public Recovery recover(Launch l)throws IOException{
             if(unknown)return new Recovery(Optional.empty(),Optional.empty(),"PARTITION");
@@ -75,12 +75,16 @@ class ExecutionControllerTest {
         Harness()throws Exception{this(new Backend());}
         Harness(Backend backend)throws Exception{this.backend=backend;cas=new StreamingContentStore(root.resolve("cas"));pin=cas.put(new ByteArrayInputStream(new byte[]{1}),()->false);key=KeyPairGenerator.getInstance("Ed25519").generateKeyPair();backend.cas=cas;}
         Open open(Consumer<ExecutionController.Checkpoint> checkpoint)throws Exception{return new Open(this,checkpoint);}
+        Open open(Consumer<ExecutionController.Checkpoint> checkpoint,ExecutionController.LaunchGuard guard)throws Exception{return new Open(this,checkpoint,guard);}
         Open open()throws Exception{return open(p->{});}
     }
     class Open implements AutoCloseable {
         final DurableAttemptStore attempts;final DurableAdmissionQueue queue;final DurableExecutionJournal tasks;
         final ControllerTerminationLedger ledger;final ExecutionController controller;final ContentDigest profile;final Harness h;
         Open(Harness h,Consumer<ExecutionController.Checkpoint> checkpoint)throws Exception{
+            this(h,checkpoint,launch->{});
+        }
+        Open(Harness h,Consumer<ExecutionController.Checkpoint> checkpoint,ExecutionController.LaunchGuard guard)throws Exception{
             this.h=h;attempts=new DurableAttemptStore(root.resolve("attempts"),h.cas);queue=new DurableAdmissionQueue(root.resolve("admission"),h.cas,CAPACITY,2,1000000);tasks=new DurableExecutionJournal(root.resolve("tasks"),h.cas);ledger=new ControllerTerminationLedger(root.resolve("terminations"),h.cas,VERSION);h.backend.ledger=ledger;
             var gate=new SandboxQualificationGate(new SandboxQualificationGate.Suite(VERSION,List.of("authored")),VERSION,Map.of("harness",h.key.getPublic()),h.cas,Clock.fixed(NOW,ZoneOffset.UTC),Duration.ofHours(1),Set::of,Set::of);
             var descriptor=new SandboxQualificationGate.Profile(VERSION,h.pin,h.pin,Optional.empty(),"linux","x86_64",d("e"),d("t"),d("r"),d("n"),Optional.empty());
@@ -88,7 +92,7 @@ class ExecutionControllerTest {
             var signature=Signature.getInstance("Ed25519");signature.initSign(h.key.getPrivate());signature.update(CanonicalJson.write(Map.of("keyId","harness","payload",cert)).getBytes(StandardCharsets.UTF_8));
             var token=gate.evaluate(descriptor,cert,new EvidenceVerifier.SignatureEnvelope("harness",Base64.getEncoder().encodeToString(signature.sign()))).profile().orElseThrow();
             profile=token.descriptor().identity();h.backend.certificate=cert.identity();
-            controller=new ExecutionController(attempts,queue,tasks,new QualifiedSandboxExecutor(h.backend,gate,Optional.of(token)),ledger,h.cas,checkpoint);
+            controller=new ExecutionController(attempts,queue,tasks,new QualifiedSandboxExecutor(h.backend,gate,Optional.of(token)),ledger,h.cas,checkpoint,guard);
         }
         ExecutionAttempt prepare(String attempt,String task)throws IOException{
             // This simulated backend creates no worker disk or log allocation.
@@ -111,17 +115,20 @@ class ExecutionControllerTest {
             try(var open=h.open()){
                 prepared=open.prepare("retained","task",resources);open.enqueue(prepared);open.controller.start("retained");
                 var stopped=open.controller.finish("retained");
-                assertEquals(ExecutionAttempt.Phase.QUIESCENT,stopped.phase());
-                assertEquals("RETAINED_STORAGE_ACCOUNTING_REQUIRED",stopped.reason());
-                assertEquals(1,open.queue.get().active().size());assertTrue(h.backend.running.isEmpty());
+                assertEquals(ExecutionAttempt.Phase.RELEASED,stopped.phase());
+                assertEquals("STORAGE_RESERVATION_RETAINED",stopped.reason());
+                assertTrue(open.queue.get().active().isEmpty());assertEquals(1,open.queue.get().retained().size());assertTrue(h.backend.running.isEmpty());
                 assertEquals(ExecutionState.Phase.COLLECTING,open.tasks.get(prepared.launch().plan(),prepared.launch().task()).orElseThrow().phase());
             }
             try(var open=h.open()){
-                assertEquals(ExecutionAttempt.Phase.QUIESCENT,open.controller.recover("retained").phase());
-                assertEquals(1,open.queue.get().active().size());
+                assertEquals(ExecutionAttempt.Phase.RELEASED,open.controller.recover("retained").phase());
+                assertTrue(open.queue.get().active().isEmpty());assertEquals(1,open.queue.get().retained().size());
                 var next=open.prepare("waiting","independent",resources);open.enqueue(next);
                 assertEquals(ExecutionAttempt.Phase.QUEUED,open.controller.start("waiting").phase());
                 assertEquals(1,h.backend.launches);
+                var compute=open.prepare("compute","compute");open.enqueue(compute);
+                assertEquals(ExecutionAttempt.Phase.RUNNING,open.controller.start("compute").phase());
+                open.controller.cancel("compute");assertEquals(1,open.queue.get().retained().size());
             }
         }
     }
@@ -134,6 +141,21 @@ class ExecutionControllerTest {
         try(var open=h.open()){
             assertEquals(ExecutionAttempt.Phase.RELEASED,open.controller.cancel("never-launched").phase());
             assertTrue(open.queue.get().active().isEmpty());assertEquals(0,h.backend.launches);
+            assertTrue(open.queue.get().retained().isEmpty());
+        }
+    }
+    @Test void crashDuringComputeToStorageHandoffCannotLoseOrDoubleCountStorage()throws Exception{
+        var base=root;
+        for(var point:List.of(ExecutionController.Checkpoint.QUIESCENCE_COMMITTED,ExecutionController.Checkpoint.TASK_QUIESCENT,ExecutionController.Checkpoint.RESERVATION_RELEASED,ExecutionController.Checkpoint.ATTEMPT_CLOSED)){
+            root=base.resolve(point.name());Files.createDirectories(root);var h=new Harness();ExecutionAttempt a;
+            try(var open=h.open()){a=open.prepare("retained","task",CAPACITY);open.enqueue(a);open.controller.start("retained");}
+            try(var open=h.open(crashAt(point))){assertThrows(Crash.class,()->open.controller.cancel("retained"));}
+            try(var open=h.open()){
+                assertEquals(ExecutionAttempt.Phase.RELEASED,open.controller.recover("retained").phase());
+                assertTrue(open.queue.get().active().isEmpty());assertEquals(1,open.queue.get().retained().size());
+                assertEquals(CAPACITY,open.queue.get().retained().getFirst().request().resources());
+                assertEquals(1,h.backend.launches);assertFalse(open.tasks.get(a.launch().plan(),a.launch().task()).orElseThrow().reservesWorker());
+            }
         }
     }
     @Test void recoveryAcrossEveryLaunchCommitBoundaryNeverRelaunchesOrLosesReservation()throws Exception{

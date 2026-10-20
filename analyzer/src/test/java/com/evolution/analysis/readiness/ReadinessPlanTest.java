@@ -10,6 +10,15 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 class ReadinessPlanTest {
+    @Test void ownershipDenominatorRejectsNegativeAndOverflowedCounts(){
+        var ledger=new ContentHandle(ContentDigest.sha256(new byte[0]),0);
+        assertThrows(IllegalArgumentException.class,()->new OwnershipSummary(0,Map.of("OWNED",-1L,"UNOWNED",1L),ledger));
+        assertThrows(IllegalArgumentException.class,()->new OwnershipSummary(1,Map.of("OWNED",Long.MAX_VALUE,"UNOWNED",Long.MAX_VALUE,"AMBIGUOUS",3L),ledger));
+        assertThrows(IllegalArgumentException.class,()->new OwnershipSummary(-1,Map.of("OWNED",-1L),ledger));
+        assertThrows(IllegalArgumentException.class,()->new OwnershipSummary(1,Map.of("SILENTLY_SKIPPED",1L),ledger));
+        assertEquals(Long.MAX_VALUE,new OwnershipSummary(Long.MAX_VALUE,Map.of("OWNED",Long.MAX_VALUE),ledger).entries());
+        assertEquals(0,new OwnershipSummary(0,Map.of(),ledger).entries());
+    }
     @Test void selectionCannotHideOrDuplicateDiscoveredContexts(){
         assertThrows(IllegalArgumentException.class,()->new BuildContextSelection(BuildContextSelection.SCHEMA,Map.of(),List.of("a","b"),List.of("a"),List.of(),List.of()));
         assertThrows(IllegalArgumentException.class,()->new BuildContextSelection(BuildContextSelection.SCHEMA,Map.of(),List.of("a"),List.of("a"),List.of("a"),List.of()));

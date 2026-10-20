@@ -62,11 +62,12 @@ public final class ArtifactBrokerServer implements AutoCloseable {
             exchange.getResponseHeaders().set("Content-Type","application/octet-stream");
             exchange.getResponseHeaders().set("Content-Length",Long.toString(handle.size()));
             exchange.getResponseHeaders().set("Cache-Control","no-store");
+            broker.requireActive(grant,fence);
             if(exchange.getRequestMethod().equals("HEAD")){exchange.sendResponseHeaders(200,-1);return;}
             exchange.sendResponseHeaders(200,handle.size()==0?-1:handle.size());
             try(var source=content.open(handle);var sink=exchange.getResponseBody()){
                 byte[] buffer=new byte[65536];int count;
-                while((count=source.read(buffer))!=-1){if(closed.get())throw new IOException("BROKER_CLOSED");sink.write(buffer,0,count);}
+                while((count=source.read(buffer))!=-1){if(closed.get())throw new IOException("BROKER_CLOSED");broker.requireActive(grant,fence);sink.write(buffer,0,count);}
             }
         }catch(IOException|RuntimeException unavailable){
             // Never expose endpoint credentials, target bytes or backend exception details in HTTP diagnostics.

@@ -6,6 +6,36 @@ import unittest
 RUNNER = Path(__import__('os').environ['EVO_GUEST_RUNNER_TEST_PATH']) if 'EVO_GUEST_RUNNER_TEST_PATH' in __import__('os').environ else Path(__file__).resolve().parents[2] / 'main/resources/guest/runner.py'
 
 class RunnerValidationTest(unittest.TestCase):
+    @unittest.skipIf(__import__('os').name == 'nt', 'POSIX directory-handle ownership conformance')
+    def test_home_replaced_by_symlink_cannot_retarget_root_ownership_change(self):
+        import io
+        import json
+        import os
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        module = self.load()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / 'work'
+            root.mkdir()
+            sentinel = Path(tmp) / 'foreign'
+            sentinel.mkdir()
+            home = root / 'home'
+            original = Path.mkdir
+            def replace_after_mkdir(path, *args, **kwargs):
+                original(path, *args, **kwargs)
+                if path == home:
+                    home.rmdir()
+                    home.symlink_to(sentinel, target_is_directory=True)
+            request = dict(attempt='a'*32,argv=['/usr/bin/java','-version'],memoryBytes=268435456,
+                           tasksMax=32,cpuPercent=25,work=str(root))
+            with patch.object(module.sys,'stdin',SimpleNamespace(buffer=io.BytesIO(json.dumps(request).encode()))), \
+                 patch.object(module,'validate_request',return_value=root), \
+                 patch('pwd.getpwnam',return_value=SimpleNamespace(pw_uid=os.getuid(),pw_gid=os.getgid())), \
+                 patch.object(Path,'mkdir',replace_after_mkdir), \
+                 patch.object(module.subprocess,'run',return_value=SimpleNamespace(returncode=0)) as native:
+                self.assertEqual(64,module.main())
+                native.assert_not_called()
+
     def test_import_is_inert(self):
         spec = importlib.util.spec_from_file_location('guest_runner', RUNNER)
         module = importlib.util.module_from_spec(spec)
@@ -47,6 +77,12 @@ class RunnerValidationTest(unittest.TestCase):
         self.assertEqual(['/usr/bin/java','-version'],target[-2:])
         self.assertTrue(any(value.startswith('HOME=/work/') for value in target))
         self.assertNotIn('JAVA_TOOL_OPTIONS',str(target))
+
+    def test_offline_candidate_separates_target_network_from_guest_control_services(self):
+        module=self.load()
+        command=module.build_command(dict(attempt='a'*32,argv=['/usr/bin/java','-version'],memoryBytes=268435456,tasksMax=32,cpuPercent=25),__import__('pathlib').PurePosixPath('/work')/('a'*32))
+        self.assertIn('--property=PrivateNetwork=yes',command)
+        self.assertIn('--property=RestrictNamespaces=yes',command)
 
     @unittest.skipIf(__import__('os').name == 'nt', 'POSIX guest symlink conformance')
     def test_symlink_workspace_and_home_are_rejected(self):

@@ -1,6 +1,6 @@
 # M8.4 — Kế hoạch nâng cấp khả năng đọc và phân tích repository toàn diện
 
-Ngày lập kế hoạch: **2026-10-17**; cập nhật thực hiện: **2026-10-19**. Trạng thái: **BƯỚC 1–2 IMPLEMENTED / BOUNDED VERIFICATION; BƯỚC 3 PHA 1 DESIGN COMPLETE, PHA 2 IMPLEMENTATION/ACCEPTANCE PENDING; BƯỚC 4–6 PENDING**. M8.3 đã có bounded acceptance; M8.4 bắt buộc trước M9. Kế hoạch có **đúng 6 bước**, checklist và hai pha trong bước 3 không tạo milestone/task bổ sung. Bàn giao thực hiện từng bước ở cuối tài liệu; phần handoff lập kế hoạch là lịch sử.
+Ngày lập kế hoạch: **2026-10-17**; cập nhật thực hiện: **2026-10-20**. Trạng thái: **BƯỚC 1–2 IMPLEMENTED / BOUNDED VERIFICATION; BƯỚC 3 PHA 1 DESIGN COMPLETE, PHA 2 IMPLEMENTATION/ACCEPTANCE PENDING; BƯỚC 4–6 PENDING**. M8.3 đã có bounded acceptance; M8.4 bắt buộc trước M9. Kế hoạch có **đúng 6 bước**, checklist và hai pha trong bước 3 không tạo milestone/task bổ sung. Bàn giao thực hiện từng bước ở cuối tài liệu; phần handoff lập kế hoạch là lịch sử.
 
 **CONFIRMED — yêu cầu human:** build mục tiêu được chạy trong sandbox, không trực tiếp trên host; bỏ các trần cứng cản repo lớn; phân tích mọi module/build root; thu nhận generated code; giảm FAILED/PARTIAL bằng bằng chứng thực. Human đã chọn **thêm semantic engine cho từng ngôn ngữ ngay trong M8.4**, thay thế phạm vi cũ chỉ inventory ngoài Java. **PROVISIONAL — lựa chọn kỹ thuật:** [hợp đồng kiến trúc](../../architecture/m8-repository-readiness.md), [nghiên cứu và phương án](../../research/2026-10-17-m8-readiness-design.md), [ADR-007](../../decisions/ADR-007-isolated-build-and-polyglot-readiness.md).
 
@@ -54,15 +54,17 @@ Không cam kết “100% mọi ngôn ngữ, mọi chương trình, vô hạn dun
 - Exact manifests kiểm bằng native tool observations trong executor của bước 3; trước đó kiểm planner bằng fixtures/captured models. Wrong version/order/variant/toolchain negatives phải fail satisfaction, không làm “exact”.
 - Deliver readiness report + module/build DAG + recipe list + root-cause requirements. Bộ planner usable ở passive mode; build-dependent obligations còn pending cho đến executor được kiểm chứng.
 
-## Bước 3 — Build và index thật trong sandbox cô lập
+## Bước 3 — CLOSED / CORE MVP: build offline Hyper-V và xuất generated code
 
 **Mục tiêu:** lấy effective build facts, compiler outputs và generated inputs một cách tự động khi cần; không target execution trên host. Phạm vi: `SandboxExecutor`/`BuildEvidenceProvider` ports, adapter mới, artifact broker/cache và durable scheduler.
 
-**CONFIRMED human sequencing (2026-10-19):** làm Pha 1 — thiết kế schema, hợp đồng và thuật toán DAG trước; Pha 2 — TDD, adapter, parser và test cases tiếp nối trong cùng bước 3. **Pha 1 đã hoàn tất thiết kế PROVISIONAL:** [hợp đồng execution](../../architecture/m8-isolated-execution.md), [typed record catalog](../../architecture/m8-isolated-execution-schemas.md), [JSON Schema cho execution graph](../../architecture/schemas/m8-execution-plan-v1.schema.json), [ma trận kiểm chứng Pha 2](04-step3-verification-matrix.md). Các checklist/exit bên dưới vẫn bắt buộc; thiết kế không đóng bước 3 hay mở execution lane.
+**CONFIRMED human sequencing (2026-10-19):** Phase 1 design precedes Phase 2 implementation within the same step. **Superseding human acceptance (2026-10-20):** close Step 3 at Core MVP scope—wire the launcher, build offline inside Hyper-V and export generated code. Advanced security campaigns and the original full-production 98-case denominator are withdrawn as Step-3 closure requirements; they are not marked PASS or rescheduled as new tasks. ADR-007 records the decision.
 
-**Pha 2 đang triển khai:** execution kernel, journal/tables, broker, native recipe/parser và output-object importer đã có code/test; candidate Hyper-V đã chạy fixture Java và Maven generator reactor, gồm broker-offline replay. [Bản ghi Pha 2](04-step3-phase2-execution.md) phân biệt checks đã qua và acceptance còn mở. Production execution lane vẫn **UNQUALIFIED**; chưa đóng Bước 3.
+**COMPLETE / CLOSED — Core MVP (2026-10-20):** `evo core-mvp <registered-root> --json` invokes the packaged launcher/pipeline, builds the Maven generator/consumer offline in a fresh owned VM, exports and verifies 664 entries / 428 objects / 7,615,532 bytes, materializes `Generated.java`, observes exact VM Off and durably replays the same CAS publication. Three output SHA-256 oracles match; native command and replay exit 0. The [execution record](04-step3-phase2-execution.md) owns the exact attempt, hashes and verification. This closes the approved Core MVP, not unrestricted executor or semantic certification. Steps 4–6 are unchanged and not automatically started.
 
-**Công việc chi tiết**
+**Thiết kế phạm vi rộng ban đầu — lịch sử, không còn là exit Core MVP**
+
+Các checklist bên dưới được giữ để truy vết quyết định trước khi Human thu hẹp nghiệm thu; không sinh task bổ sung và không chặn việc đóng Core MVP.
 
 - Implement backend disposable VM đầu tiên. Với Windows: Hyper-V nếu environment hỗ trợ; Linux executor qua KVM/QEMU hoặc configured remote VM là đường triển khai tương đương. Không suy ra `docker.exe`/`wsl.exe` tồn tại nghĩa isolation đã sẵn sàng. Driver/container image versions và image digest được pin; không dùng tag `latest` làm evidence identity.
 - Source/captured artifacts đưa vào guest bằng immutable copy/volume, writable overlay riêng. Host không expose writable checkout/home/cache/socket/agent. Controller ngoài guest enforce CPU/RAM/process/disk/network, progress lease, cancellation và cleanup đúng namespace job. Guest thất bại không làm coordinator chết.
@@ -73,7 +75,7 @@ Không cam kết “100% mọi ngôn ngữ, mọi chương trình, vô hạn dun
 - Kiểm output như dữ liệu không tin cậy: path containment, digest, size, schema, origin, context, forged capture và cache poisoning. Artifact receipt chứng minh attempt/output lineage; không tự chứng minh semantic statement của target-controlled plugin đúng.
 - Enforce trust classes và promotion predicate trong contract: captured bytes / producer assertion / validated observation. Exact compile/model facts cần protected capture ngoài target-controlled process/tool binaries hoặc independently validated controlled replay; semantic extraction chạy trong fresh isolated worker trên immutable input. In-process plugin-generated index/args không đủ tự xác nhận. Không capture được thì giữ unmet evidence requirement.
 
-**Kiểm chứng và exit**
+**Exit phạm vi rộng ban đầu — đã được thay thế bởi nghiệm thu Core MVP ở trên**
 
 - Trước repo thật: authored adversarial fixtures thử đọc host sentinel, ghi host source/cache, truy cập metadata/private network, fork/log/disk bomb, spawn child sống sau cancel, forged receipt, poisoned artifact, unsafe extraction và missing sandbox. Không thành công bất kỳ host escape/side-effect case đã đăng ký.
 - Malicious build plugin sửa classpath/capture agent/index rồi exit 0: receipt vẫn có thể capture bytes, nhưng forged facts không đạt promotion, không đóng obligation và không contaminate shared semantic cache. Test này bắt buộc qua executor thật.
@@ -296,6 +298,33 @@ Packaged JAR smoke **11/11 journeys PASS**, **1,243 platform classes**, zero IDE
 **LIMITATIONS / BLOCKERS:** không blocker cho passive step-2 exit trong tested contract. Real VM isolation và native effective manifests chưa được kiểm; protected capture verifier trong tests là authored fixture, không phải executor certificate. Dynamic profiles/variants/targets, SDK/toolchains, generated outputs và language engines giữ active requirements. Metadata plan hiện materialize root/module/context working set; report decoding có bounded worker, oversized report giữ bytes và báo `READINESS_REPORT_WORKER_REQUIRED`. Physical planning/semantic/graph scale và workbench readiness views cần step-6 integration qualification. Không independent review, broad remote/corpus acceptance hoặc M8/M10 gate promotion. Không commit, push, history rewrite hay xóa user work.
 
 **EXACT NEXT TASK: M8.4.3 — validated isolated native build/index executor.** Dùng sealed inventory + readiness selection/DAG/recipes, implement disposable VM/controller, broker/cache, resource/network policy và protected capture/import. Chạy real positive/adversarial isolation fixtures trước target execution. Không có VM thì giữ blocker/evidence đúng; tuyệt đối không host fallback. Bước 3–6 chưa hoàn tất trong task này.
+
+## Hoàn thiện và kiểm chứng lại bước 2 — 2026-10-20
+
+**CONFIRMED scope / state before:** Human yêu cầu hoàn thành Bước 2; Bước 2 đã implemented theo hợp đồng passive readiness. HEAD `d5c099c` cùng các thay đổi Bước 3 chưa commit từ lượt trước; toàn bộ được giữ nguyên. Lượt này đối chiếu lại các exit ở trên, sửa invariant ownership và kiểm chứng lại product journey. Không mở execution lane, không coi pending native observations của Bước 3 là blocker của passive Bước 2.
+
+**WORK COMPLETED / FILES CHANGED:** `ReadinessPlan.OwnershipSummary` chặn tổng âm, count âm, disposition ngoài enum, ledger null và cộng tràn long. Trước sửa, count OWNED=-1 và UNOWNED=1 vượt qua kiểm tra tổng bằng 0; test đã thấy RED ở chính assertion đó. Bộ regression còn kiểm Long.MAX_VALUE + Long.MAX_VALUE + 3 không được wrap thành tổng 1, denominator âm, unknown disposition, empty zero và positive Long.MAX_VALUE. Không giả test arithmetic boundary là thực nghiệm inventory Long.MAX_VALUE entries. Valid schema/provider/canonical bytes không đổi. Production change chỉ ở core readiness contract; test ở `ReadinessPlanTest`. Cập nhật implementation contract, current-state và bản ghi này; không sửa code Bước 3 trong lượt này.
+
+**Exit assessment:** fixtures và direct consumers tiếp tục kiểm multi-root/nested/broken sibling, parent khác aggregator, Maven/Gradle/native-family discovery, exclusive context selection, main/test/custom ownership, prerequisite DAG/SCC candidates, recipes, exact captured-model negative controls, durable report/reopen, API paging, canonical scan replay và CLI readiness. Bước 2 hoàn tất trong published passive contract. Captured bytes/build success không được nâng thành semantic truth. Native tool observations, protected capture verification, disposable executor qualification, generated/language closure và integrated scale acceptance giữ đúng ranh giới Bước 3–6. Đây không phải nghiệm thu mọi repository/ngôn ngữ hay milestone gate.
+
+**Final commands:** Maven 3.9.16 / Oracle JDK 21.0.12.1, Windows x64. Process PATH dùng Git 2.53 đã ghi nhận cho các checks Git-backed. Python dùng UTF-8 I/O. Không dùng clean, không thay image/evidence VM.
+
+```powershell
+.\mvnw.cmd install -pl analyzer "-Dtest=ReadinessPlanTest,CapturedBuildEvidenceTest,PassiveReadinessDiscoveryTest,UniversalBuildIngestionTest,ScopedIngestionRecoveryTest,SourcePlanContractTest,IdentityAndSourceContractTest,StreamingContractTest,CanonicalSerializationTest" "-Denforcer.skipRules=reactorModuleConvergence" "-Dplatform.build.directory=target/m842-final" -q
+.\mvnw.cmd install -pl analyzer-maven "-Dtest=MavenReadinessDiscoveryTest,UniversalMavenIngestionTest,MavenBuildModelProviderTest,MavenLocalClasspathProviderTest,MavenDependencyArtifactResolverTest,SourcePlanProjectionTest,PlatformReactorModelTest" "-Denforcer.skipRules=reactorModuleConvergence" "-Dplatform.build.directory=target/m842-final" -q
+.\mvnw.cmd install -pl analyzer-javaparser "-Dtest=UniversalArchitecturePipelineIntegrationTest,UniversalIngestionPipelineTest,CanonicalGraphPipelineIntegrationTest" "-Denforcer.skipRules=reactorModuleConvergence" "-Dplatform.build.directory=target/m842-final" -q
+.\mvnw.cmd install -pl backend "-Dtest=ReadinessReportsTest,ComprehensiveSelectionTest,AcquisitionApiTest,LocalAnalysisRunnerTest,RepositoryConnectionsTest,AnalysisJobsTest,AnalysisJobApiTest,ArchitectureQueryApiTest,PublishedReportsTest,WorkbenchApiMainTest,DurableAnalysisJobsTest,PersistentReportsTest,ApiSpecificationTest" "-Denforcer.skipRules=reactorModuleConvergence" "-Dplatform.build.directory=target/m842-final" -q
+.\mvnw.cmd package -pl cli "-Denforcer.skipRules=reactorModuleConvergence" "-Dplatform.build.directory=target/m842-final" -q
+& 'E:\New folder\python.exe' cli/src/test/python/packaged_jar_smoke.py cli/target/m842-final/evo.jar
+node --test backend/src/test/js/workbench-model.test.cjs
+git diff --check
+```
+
+All exit 0. Fresh reports: analyzer **55/9 suites**, Maven **53/7**, JavaParser **21/3**, backend **67/13**, CLI **59/9** = **255 Java tests / 41 suites**, zero failures/errors/skips. Node **7/7**. Packaged JAR **11/11 journeys PASS**, **1,312 platform classes**, zero IDE error stubs. acquire/inventory/readiness/resume exit 0; scan/find/show/deps/impact/policy/assessment giữ expected PARTIAL exit 3 vì native semantics chưa được xác thực. Đây là bounded pre-handoff set, không phải full reactor hay corpus campaign. Focused regression command vượt năm giây do Maven startup/compilation; không tuyên bố đạt inner-loop time target.
+
+**Verified distributable:** `cli/target/evo.jar` đã được refresh từ artifact kiểm chứng; SHA-256 `943e973cb49d055300cd9ca286bd4645f41f79bb45df9401f3daddff30ac2489`, kiểm tra hash sau copy khớp. Bản cũ giữ nguyên ở `cli/target/evo.before-m842-final.e8b98c8171b6.jar`. Không sửa raw test evidence, không commit/push, không independent review hoặc gate promotion. Không chạy untrusted target lifecycle trên host và không khởi động/thay đổi VM.
+
+**EXACT NEXT TASK:** tiếp tục Bước 3 Pha 2 theo [bản ghi hiện tại](04-step3-phase2-execution.md): luồng prepare → native Maven → owned guest export → independently observed VM stop → durable byte publication/replay đã qua trong fresh authored Hyper-V fixture, đủ ba known output roles và retained storage qua controller restart. Tiếp theo hoàn thiện image sanitization và qualified provisioning/build transport, watchdog/grant integration, protected native/compiler validation theo các acceptance còn mở. Production vẫn UNQUALIFIED cho tới khi đủ các qualification predicates; không có quyết định human mới cần xin cho phạm vi đã duyệt.
 
 ## Thiết kế và bàn giao bước 3 — Pha 1 — 2026-10-19
 

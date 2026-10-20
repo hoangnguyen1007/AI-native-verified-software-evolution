@@ -94,6 +94,8 @@ final class TerminalView {
         action(8,"export json","JSON / SARIF / GraphML","JSON / SARIF / GraphML");
         heading("Commands");
         line("  "+tr("Acquisition","Thu nhận")+" acquire <input> · inventory <revision>");
+        line("  Execution   execution <submit|status|cancel|recover> <registration>");
+        line("  Core MVP    core-mvp <registered-root>");
         line("  "+tr("Snapshots","Snapshot")+"   open <file> · use <n> · provenance");
         line("  "+tr("Graph","Đồ thị")+"       reach <n> · paths <a> <b> · cycles");
         line("  "+tr("Evidence","Bằng chứng")+"   gaps · explain <n> · evidence <id>");

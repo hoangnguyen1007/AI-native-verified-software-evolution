@@ -55,7 +55,18 @@ public record ReadinessPlan(String schema, InventoryManifest inventory, BuildCon
         public Ownership {contexts=BuildContextSelection.sorted(contexts);}
     }
     public record OwnershipSummary(long entries, Map<String,Long> counts, ContentHandle ledger) {
-        public OwnershipSummary {counts=Map.copyOf(counts);if(counts.values().stream().mapToLong(Long::longValue).sum()!=entries)throw new IllegalArgumentException("Open ownership denominator");}
+        public OwnershipSummary {
+            counts=Map.copyOf(counts);Objects.requireNonNull(ledger);
+            if(entries<0)throw new IllegalArgumentException("Negative ownership denominator");
+            long total=0;
+            for(var entry:counts.entrySet()){
+                Disposition.valueOf(entry.getKey());
+                if(entry.getValue()<0)throw new IllegalArgumentException("Negative ownership count");
+                try{total=Math.addExact(total,entry.getValue());}
+                catch(ArithmeticException overflow){throw new IllegalArgumentException("Ownership denominator overflow",overflow);}
+            }
+            if(total!=entries)throw new IllegalArgumentException("Open ownership denominator");
+        }
     }
     public ReadinessPlan {
         if(!SCHEMA.equals(schema))throw new IllegalArgumentException("Unsupported readiness plan");

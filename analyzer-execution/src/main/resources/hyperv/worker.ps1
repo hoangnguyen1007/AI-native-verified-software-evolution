@@ -69,12 +69,25 @@ function Write-OwnerAtomically([object]$Owner,[string]$Destination) {
     # Atomic replacement retains the previous complete ownership record if publication fails.
     [IO.File]::Move($temporary,$Destination,$true)
 }
+function Open-LifecycleLock([string]$Path) {
+    $waiting=[Diagnostics.Stopwatch]::StartNew()
+    while($true){
+        if(Test-Path -LiteralPath $Path){Assert-Contained $Path $root}
+        try{return [IO.File]::Open($Path,[IO.FileMode]::OpenOrCreate,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)}
+        catch [IO.IOException]{
+            $code=$_.Exception.HResult -band 0xffff
+            if($code -notin @(32,33)){throw}
+            if($waiting.ElapsedMilliseconds -ge 20000){throw 'WORKER_LIFECYCLE_BUSY'}
+            Start-Sleep -Milliseconds 25
+        }
+    }
+}
 $root=Assert-SafeDirectory $Workspace
 $inputRoot=if([string]::IsNullOrEmpty($BaseRoot)){$root}else{Assert-SafeDirectory $BaseRoot}
 $name='evo-worker-'+$Attempt.ToString('N')
 $marker=Join-Path $root ('owner-'+$Attempt.ToString('N')+'.json')
 if(($LaunchDigest -and ($LaunchDigest -notmatch '^sha256:[a-f0-9]{64}$' -or $Fence -lt 1)) -or (-not $LaunchDigest -and $Fence -ne 0)){throw 'INVALID_LAUNCH_BINDING'}
-if(($Action -eq 'Bind' -or $Action -eq 'Find') -and -not $LaunchDigest){throw 'LAUNCH_BINDING_REQUIRED'}
+if($Action -in @('Bind','Find','Start','Stop') -and -not $LaunchDigest){throw 'LAUNCH_BINDING_REQUIRED'}
 if($Action -eq 'Find' -and -not (Test-Path -LiteralPath $marker)){
     # Enumerating successfully is essential: a service/permission failure must never mean ABSENT.
     $candidate=@(Get-VM -ErrorAction Stop | Where-Object {$null -ne $_ -and $_.Name -eq $name})
@@ -192,8 +205,37 @@ if($LaunchDigest){
         }
     }elseif(-not $bound -or $owner.launch -ne $LaunchDigest -or $owner.fence -ne $Fence){throw 'WORKER_LAUNCH_BINDING_MISMATCH'}
 }
-if($Action -eq 'Start'){Start-VM -VM $vm | Out-Null}
-if($Action -eq 'Stop' -and $vm.State.ToString() -ne 'Off'){Stop-VM -VM $vm -TurnOff -Confirm:$false | Out-Null}
+if($Action -in @('Start','Stop')){
+    $terminal=Join-Path $root ('stop-'+$Attempt.ToString('N')+'.json')
+    $intentFailure=$null
+    if($Action -eq 'Stop'){
+        # Publish a permanent, fail-closed barrier even when the VM is already Off.
+        # A partial record also bars Start; it is never interpreted as permission.
+        try{
+            if(Test-Path -LiteralPath $terminal){Assert-Contained $terminal $root}
+            $bytes=[Text.Encoding]::UTF8.GetBytes(([ordered]@{schema='hyperv-worker-stop:m8.4-v1';attempt=$Attempt.ToString();launch=$LaunchDigest;fence=$Fence;vmId=$vm.Id.ToString()} | ConvertTo-Json -Compress))
+            # Every successful Stop flushes its own barrier, including a recovered partial write.
+            # An overlapping writer is an unconfirmed stop, not proof based on its file existence.
+            $stopFile=[IO.File]::Open($terminal,[IO.FileMode]::OpenOrCreate,[IO.FileAccess]::Write,[IO.FileShare]::Read)
+            try{$stopFile.Write($bytes,0,$bytes.Length);$stopFile.SetLength($bytes.Length);$stopFile.Flush($true)}finally{$stopFile.Dispose()}
+        }catch{$intentFailure=$_}
+    }
+    $lifecycle=Open-LifecycleLock (Join-Path $root ('lifecycle-'+$Attempt.ToString('N')+'.lock'))
+    try{
+        # Refresh after the lock: a prior Start/Stop may have changed the VM state.
+        $vm=Get-VM -Id ([Guid]$owner.vmId) -ErrorAction Stop
+        if($vm.Name -ne $name){throw 'WORKER_VM_ID_MISMATCH'}
+        if($Action -eq 'Start'){
+            if(Test-Path -LiteralPath $terminal){throw 'WORKER_ATTEMPT_TERMINAL'}
+            if($vm.State.ToString() -eq 'Off'){Start-VM -VM $vm | Out-Null}
+            elseif($vm.State.ToString() -ne 'Running'){throw 'WORKER_START_STATE_UNCONFIRMED'}
+        }elseif($vm.State.ToString() -ne 'Off'){
+            # A storage error must not prevent the independent supervisor stopping the VM.
+            Stop-VM -VM $vm -TurnOff -Confirm:$false | Out-Null
+        }
+        if($null -ne $intentFailure){throw 'WORKER_STOP_INTENT_UNCONFIRMED'}
+    }finally{$lifecycle.Dispose()}
+}
 $vm=Get-VM -Id $vm.Id
 $result=[ordered]@{schema='hyperv-worker-state:m8.4-v1';attempt=$Attempt.ToString();name=$vm.Name;vmId=$vm.Id.ToString();state=$vm.State.ToString();processors=[long]$vm.ProcessorCount;memoryBytes=[long]$vm.MemoryStartup;isolationQualified=$false}
 if($LaunchDigest){$result.launch=$LaunchDigest;$result.fence=$Fence}

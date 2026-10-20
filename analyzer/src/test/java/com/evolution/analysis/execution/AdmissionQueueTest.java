@@ -7,6 +7,72 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 class AdmissionQueueTest {
+    @Test void retainedStorageWaiterDoesNotBecomeAnUndrainableAgingBarrier(){
+        var a=new AdmissionQueue.Request(new AdmissionQueue.Ticket(d("a"),d("task"),1),d("a"),new ResourceBudget.Resources(1,10,10,1,0,0),0);
+        var state=AdmissionQueue.dispatch(AdmissionQueue.submit(initial(1),a)).state();
+        state=AdmissionQueue.release(state,a.ticket(),Optional.of(d("off-a")));
+        var blocked=new AdmissionQueue.Request(new AdmissionQueue.Ticket(d("blocked"),d("task"),1),d("blocked"),new ResourceBudget.Resources(1,1,1,1,0,0),0);
+        state=AdmissionQueue.submit(state,blocked);
+        for(int i=0;i<3;i++){
+            var compute=request("compute","task-"+i,10);
+            var chosen=AdmissionQueue.dispatch(AdmissionQueue.submit(state,compute));
+            assertEquals(List.of(compute.ticket()),chosen.admitted());
+            assertEquals("WAITING_FOR_RETAINED_STORAGE",chosen.waiting().getFirst().reason());
+            state=AdmissionQueue.release(chosen.state(),compute.ticket(),Optional.of(d("off-"+i)));
+        }
+    }
+    @Test void quiescentWorkersReleaseComputeButRetainedStorageStillLimitsAdmission(){
+        var a=new AdmissionQueue.Request(new AdmissionQueue.Ticket(d("a"),d("task"),1),d("a"),new ResourceBudget.Resources(2,10,6,1,2,0),0);
+        var b=new AdmissionQueue.Request(new AdmissionQueue.Ticket(d("b"),d("task"),1),d("b"),new ResourceBudget.Resources(2,5,4,1,1,0),0);
+        var c=new AdmissionQueue.Request(new AdmissionQueue.Ticket(d("c"),d("task"),1),d("b"),new ResourceBudget.Resources(2,5,1,1,1,0),0);
+        var state=AdmissionQueue.dispatch(AdmissionQueue.submit(initial(2),a)).state();
+        state=AdmissionQueue.release(state,a.ticket(),Optional.of(d("off-a")));
+        state=AdmissionQueue.submit(AdmissionQueue.submit(state,b),c);
+        var result=AdmissionQueue.dispatch(state);
+        assertEquals(List.of(b.ticket()),result.admitted());
+        assertEquals(List.of(c.ticket()),result.state().pending().stream().map(q->q.request().ticket()).toList());
+        var replay=ExecutionCodec.read(CanonicalJson.write(result.state()),AdmissionQueue.State.class);
+        assertTrue(AdmissionQueue.dispatch(replay).admitted().isEmpty());
+    }
+    @Test void retainedStorageSurvivesRetryWatermarksAndDuplicateLateRelease(){
+        var first=new AdmissionQueue.Request(new AdmissionQueue.Ticket(d("job"),d("task"),1),d("job"),new ResourceBudget.Resources(1,10,4,1,2,0),0);
+        var state=AdmissionQueue.dispatch(AdmissionQueue.submit(initial(2),first)).state();
+        state=AdmissionQueue.release(state,first.ticket(),Optional.of(d("off-1")));
+        assertEquals(new ResourceBudget.Resources(0,0,4,0,2,0),state.retained().getFirst().resources());
+        var second=new AdmissionQueue.Request(new AdmissionQueue.Ticket(d("job"),d("task"),2),d("job"),first.resources(),0);
+        state=AdmissionQueue.dispatch(AdmissionQueue.submit(state,second)).state();
+        state=AdmissionQueue.release(state,second.ticket(),Optional.of(d("off-2")));
+        assertEquals(2,state.retained().size());assertEquals(1,state.retired().size());
+        assertEquals(state,AdmissionQueue.release(state,first.ticket(),Optional.of(d("off-1"))));
+        var retained=state;
+        assertThrows(IllegalArgumentException.class,()->AdmissionQueue.release(retained,first.ticket(),Optional.of(d("wrong"))));
+        assertThrows(IllegalArgumentException.class,()->AdmissionQueue.releaseUnlaunched(retained,first.ticket(),Optional.of(d("off-1"))));
+        var tooMuch=new AdmissionQueue.Request(new AdmissionQueue.Ticket(d("other"),d("task"),1),d("other"),new ResourceBudget.Resources(1,1,3,1,0,0),0);
+        assertTrue(AdmissionQueue.dispatch(AdmissionQueue.submit(state,tooMuch)).admitted().isEmpty());
+        var computeOnly=request("fresh","compute",10);
+        assertEquals(List.of(computeOnly.ticket()),AdmissionQueue.dispatch(AdmissionQueue.submit(state,computeOnly)).admitted());
+    }
+    @Test void logCapacityAndLongOverflowRemainAccounted(){
+        var capacity=new ResourceBudget.Resources(10,10,Long.MAX_VALUE,10,10,10);
+        var first=new AdmissionQueue.Request(new AdmissionQueue.Ticket(d("job"),d("task"),1),d("job"),new ResourceBudget.Resources(1,10,Long.MAX_VALUE,1,10,0),0);
+        var state=AdmissionQueue.dispatch(AdmissionQueue.submit(AdmissionQueue.initial(capacity,2),first)).state();
+        state=AdmissionQueue.release(state,first.ticket(),Optional.of(d("off")));
+        var disk=new AdmissionQueue.Request(new AdmissionQueue.Ticket(d("disk"),d("task"),1),d("disk"),new ResourceBudget.Resources(1,1,1,1,0,0),0);
+        var log=new AdmissionQueue.Request(new AdmissionQueue.Ticket(d("log"),d("task"),1),d("log"),new ResourceBudget.Resources(1,1,0,1,1,0),0);
+        assertTrue(AdmissionQueue.dispatch(AdmissionQueue.submit(AdmissionQueue.submit(state,disk),log)).admitted().isEmpty());
+        assertEquals(state,ExecutionCodec.read(CanonicalJson.write(state),AdmissionQueue.State.class));
+    }
+    @Test void legacyMigrationDoesNotInventFreedStorageOrAcceptUnknownFields(){
+        var a=new AdmissionQueue.Request(new AdmissionQueue.Ticket(d("job"),d("task"),1),d("job"),new ResourceBudget.Resources(1,10,4,1,2,0),0);
+        var active=AdmissionQueue.dispatch(AdmissionQueue.submit(initial(2),a)).state();
+        var legacy=new java.util.TreeMap<>(com.evolution.analysis.graph.GraphJson.object(com.evolution.analysis.graph.GraphJson.read(CanonicalJson.write(active),com.evolution.analysis.graph.GraphJson.Limits.defaults())));
+        legacy.remove("retained");legacy.put("schema","execution-admission:m8.4-v1");
+        assertEquals(active,ExecutionCodec.read(CanonicalJson.write(legacy),AdmissionQueue.State.class));
+        legacy.put("retained",List.of());assertThrows(IllegalArgumentException.class,()->ExecutionCodec.read(CanonicalJson.write(legacy),AdmissionQueue.State.class));
+        legacy.remove("retained");legacy.put("active",List.of());legacy.put("retired",List.of(new AdmissionQueue.Retired(a,0,d("old-proof"))));
+        assertEquals("ADMISSION_STORAGE_RECONCILIATION_REQUIRED",assertThrows(IllegalArgumentException.class,()->ExecutionCodec.read(CanonicalJson.write(legacy),AdmissionQueue.State.class)).getMessage());
+        legacy.put("schema","execution-admission:m8.4-v2");assertThrows(IllegalArgumentException.class,()->ExecutionCodec.read(CanonicalJson.write(legacy),AdmissionQueue.State.class));
+    }
     static ContentDigest d(String s){return ContentDigest.sha256Utf8(s);}
     static ResourceBudget.Resources resources(long memory){return new ResourceBudget.Resources(0,memory,0,1,0,0);}
     static AdmissionQueue.Request request(String job,String task,long memory){return new AdmissionQueue.Request(new AdmissionQueue.Ticket(d(job),d(task),1),d(job),resources(memory),0);}

@@ -14,6 +14,8 @@ The platform targets student/plain Java, legacy and modern apps, multi-build rea
 
 Milestone scope sequences implementation delivery, but never serves as a ceiling or artificial constraint on platform capabilities. When justified and authorized, providers synthesize and acquire build-model, dependency, generated-source, bytecode, configuration, controlled sandbox/build, runtime, or other evidence. All such evidence remains versioned, attributable, bounded by permissions and safety, and reconciled without fabrication or silent replacement of conflicting observations.
 
+**CONFIRMED bounded delivery acceptance (2026-10-20):** M8.4 Step 3 is accepted as Core MVP—offline Hyper-V build, wired launcher/pipeline, generated-source/artifact export and verified durable publication/replay. The owner removes advanced security campaigns from that step’s closure criteria. This does not narrow the platform’s comprehensive long-term capability mission, fabricate an unrestricted isolation certificate, or change the existing Steps 4–6. Host fallback and false semantic promotion remain prohibited.
+
 ## Academic Context
 
 - Course phase: SE121 - Software Architecture Intelligence Platform

@@ -8,4 +8,22 @@
     <dependency><groupId>com.evolution</groupId><artifactId>analyzer-filesystem</artifactId><version>${project.version}</version></dependency>
     <dependency><groupId>org.junit.jupiter</groupId><artifactId>junit-jupiter</artifactId><scope>test</scope></dependency>
   </dependencies>
+  <build>
+    <resources>
+      <resource>
+        <directory>src/main/resources</directory>
+        <excludes><exclude>**/__pycache__/**</exclude><exclude>**/*.pyc</exclude><exclude>**/*.pyo</exclude></excludes>
+      </resource>
+    </resources>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId><artifactId>maven-jar-plugin</artifactId>
+        <!-- Also exclude stale copied resources from incremental builds; no clean is required. -->
+        <configuration>
+          <forceCreation>true</forceCreation>
+          <excludes><exclude>**/__pycache__/**</exclude><exclude>**/*.pyc</exclude><exclude>**/*.pyo</exclude></excludes>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
 </project>

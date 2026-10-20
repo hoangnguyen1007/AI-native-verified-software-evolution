@@ -26,16 +26,24 @@ public final class ArtifactBroker {
     }
     @FunctionalInterface public interface Recorder {void append(Material material)throws IOException;}
     @FunctionalInterface public interface Transfer {InputStream open(URI endpoint,BooleanSupplier cancelled)throws IOException;}
+    /** Controller authority is consulted for cache reuse, transfer and every streamed read.
+     * A process-local Grant alone cannot express durable cancellation or task fencing. */
+    @FunctionalInterface public interface Authority {void require(String attempt,long fence)throws IOException;}
     public static final class Grant {
         private final ArtifactBroker owner;
         private final String attempt;private final long fence;private final Instant expiry;private long remaining;private boolean revoked;
         private Grant(ArtifactBroker owner,String attempt,long fence,Instant expiry,long remaining){this.owner=owner;this.attempt=attempt;this.fence=fence;this.expiry=expiry;this.remaining=remaining;}
     }
-    private final List<Rule> rules;private final boolean offline;private final RepositoryContentStore content;private final Transfer transfer;private final Recorder recorder;private final Clock clock;
+    private final List<Rule> rules;private final boolean offline;private final RepositoryContentStore content;private final Transfer transfer;private final Recorder recorder;private final Clock clock;private final Authority authority;
     public ArtifactBroker(List<Rule> rules,boolean offline,RepositoryContentStore content,GitHostPolicy hostPolicy,Recorder recorder){
         this(rules,offline,content,(uri,cancelled)->new PinnedHttps(hostPolicy).request(uri,"GET",Map.of(),new byte[0],cancelled),recorder,Clock.systemUTC());
     }
-    public ArtifactBroker(List<Rule> rules,boolean offline,RepositoryContentStore content,Transfer transfer,Recorder recorder,Clock clock){this.rules=List.copyOf(rules);this.offline=offline;this.content=Objects.requireNonNull(content);this.transfer=Objects.requireNonNull(transfer);this.recorder=Objects.requireNonNull(recorder);this.clock=Objects.requireNonNull(clock);}
+    public ArtifactBroker(List<Rule> rules,boolean offline,RepositoryContentStore content,GitHostPolicy hostPolicy,Recorder recorder,Authority authority){
+        this(rules,offline,content,(uri,cancelled)->new PinnedHttps(hostPolicy).request(uri,"GET",Map.of(),new byte[0],cancelled),recorder,Clock.systemUTC(),authority);
+    }
+    /** Process-local composition for authored fixtures. Qualified orchestration must supply authority. */
+    public ArtifactBroker(List<Rule> rules,boolean offline,RepositoryContentStore content,Transfer transfer,Recorder recorder,Clock clock){this(rules,offline,content,transfer,recorder,clock,(attempt,fence)->{});}
+    public ArtifactBroker(List<Rule> rules,boolean offline,RepositoryContentStore content,Transfer transfer,Recorder recorder,Clock clock,Authority authority){this.rules=List.copyOf(rules);this.offline=offline;this.content=Objects.requireNonNull(content);this.transfer=Objects.requireNonNull(transfer);this.recorder=Objects.requireNonNull(recorder);this.clock=Objects.requireNonNull(clock);this.authority=Objects.requireNonNull(authority);}
     public synchronized Grant grant(String attempt,long fence,Duration duration,long bytes){
         ExecutionGraph.text(attempt);if(fence<1||duration.isNegative()||duration.isZero()||bytes<0)throw new IllegalArgumentException("INVALID_BROKER_GRANT");
         return new Grant(this,attempt,fence,clock.instant().plus(duration),bytes);
@@ -48,7 +56,9 @@ public final class ArtifactBroker {
     }
     private synchronized void active(Grant grant,long fence)throws IOException {
         if(grant==null||grant.owner!=this||grant.revoked||grant.fence!=fence||!clock.instant().isBefore(grant.expiry))throw new IOException("BROKER_GRANT_INVALID");
+        try{authority.require(grant.attempt,fence);}catch(IOException|RuntimeException denied){throw new IOException("BROKER_GRANT_INVALID",denied);}
     }
+    void requireActive(Grant grant,long fence)throws IOException{active(grant,fence);}
     private synchronized void consume(Grant grant,long fence,int bytes)throws IOException {
         active(grant,fence);if(bytes>grant.remaining)throw new IOException("BROKER_RESOURCE_EXHAUSTED");grant.remaining-=bytes;
     }
@@ -64,11 +74,12 @@ public final class ArtifactBroker {
         }
         if(offline)return record(grant,endpoint,State.UNAVAILABLE,Optional.empty(),"OFFLINE_MATERIAL_MISSING");
         State outcome;Optional<ContentHandle> capturedContent;String outcomeReason;
-        try(var remote=transfer.open(endpoint,cancelled)){
+        BooleanSupplier stopped=()->{if(cancelled.getAsBoolean())return true;try{active(grant,fence);return false;}catch(IOException denied){return true;}};
+        try(var remote=transfer.open(endpoint,stopped)){
             var limited=new FilterInputStream(remote){
                 private void check(int count)throws IOException{if(cancelled.getAsBoolean())throw new IOException("BROKER_CANCELLED");consume(grant,fence,Math.max(count,0));}
-                @Override public int read()throws IOException{int b=in.read();check(b<0?0:1);return b;}
-                @Override public int read(byte[] b,int offset,int length)throws IOException{int n=in.read(b,offset,length);check(n);return n;}
+                @Override public int read()throws IOException{check(0);int b=in.read();check(b<0?0:1);return b;}
+                @Override public int read(byte[] b,int offset,int length)throws IOException{check(0);int n=in.read(b,offset,length);check(n);return n;}
             };
             var captured=content.put(limited,cancelled);active(grant,fence);
             boolean mismatch=expected.isPresent()&&!expected.orElseThrow().equals(captured);
@@ -88,7 +99,9 @@ public final class ArtifactBroker {
             try{display=Optional.of(new URI(uri.getScheme(),null,uri.getHost(),uri.getPort(),uri.getPath(),null,null));}
             catch(java.net.URISyntaxException invalid){/* The original request identity remains, without leaking raw credentials. */}
         }
-        var material=new Material(grant.attempt,grant.fence,ContentDigest.sha256Utf8(uri.toASCIIString()),display,state,handle,reason);recorder.append(material);return material;
+        var material=new Material(grant.attempt,grant.fence,ContentDigest.sha256Utf8(uri.toASCIIString()),display,state,handle,reason);recorder.append(material);
+        if(state==State.ACQUIRED||state==State.REUSED)active(grant,grant.fence);
+        return material;
     }
     private static int port(URI uri){return uri.getPort()==-1?443:uri.getPort();}
     private static void validate(URI uri){

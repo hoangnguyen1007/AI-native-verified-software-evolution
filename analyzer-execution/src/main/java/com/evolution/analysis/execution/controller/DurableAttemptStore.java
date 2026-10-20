@@ -34,6 +34,9 @@ public final class DurableAttemptStore implements AutoCloseable {
         return decode(journal.create(id(prepared.launch().attempt()),CanonicalJson.sha256(prepared),Optional.of(put(prepared))));
     }
     public synchronized ExecutionAttempt get(String attempt)throws IOException{return decode(journal.get(id(attempt)).orElseThrow(()->new IOException("ATTEMPT_NOT_FOUND")));}
+    public synchronized Optional<ExecutionAttempt> find(String attempt)throws IOException{
+        var row=journal.get(id(attempt));return row.isEmpty()?Optional.empty():Optional.of(decode(row.orElseThrow()));
+    }
     public synchronized ExecutionAttempt commit(ExecutionAttempt previous,ExecutionAttempt next)throws IOException{
         if(!get(previous.launch().attempt()).equals(previous))throw new IOException("ATTEMPT_REVISION_CONFLICT");
         try{previous.verifySuccessor(next);}catch(IllegalArgumentException|ArithmeticException invalid){throw new IOException("ATTEMPT_TRANSITION_REJECTED",invalid);}

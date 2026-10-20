@@ -22,6 +22,8 @@ function Set-VM {param($VM,$AutomaticCheckpointsEnabled,$AutomaticStartAction,$A
 function Set-VMProcessor {param($VM,$Count,$Maximum) if($VM.State -ne 'Off'){throw 'LIVE_WORKER_RECONFIGURATION'};$global:driverTestMutations++}
 function Set-VMMemory {param($VM,$DynamicMemoryEnabled,$StartupBytes) if($VM.State -ne 'Off'){throw 'LIVE_WORKER_RECONFIGURATION'};$global:driverTestMutations++}
 function Set-VMFirmware {param($VM,$EnableSecureBoot) if($VM.State -ne 'Off'){throw 'LIVE_WORKER_RECONFIGURATION'};$global:driverTestMutations++}
+function Start-VM {param($VM) $global:driverTestMutations++;$VM.State='Running'}
+function Stop-VM {param($VM,[switch]$TurnOff,$Confirm) $global:driverTestMutations++;$VM.State='Off'}
 $driver=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../main/resources/hyperv/worker.ps1'))
 $attempt=[Guid]::NewGuid()
 # First creation persists ownership before resource creation, then publishes the VM identity.
@@ -75,6 +77,10 @@ ${function:Get-VM}=$savedGetVm
 $before=$global:driverTestMutations
 & $driver -Action Stop -Workspace $testRoot -Attempt $attempt -LaunchDigest $launch -Fence 1 | Out-Null
 if($before -ne $global:driverTestMutations){throw 'OFF_STOP_MUTATED_WORKER'}
+Expect-Reason {& $driver -Action Start -Workspace $testRoot -Attempt $attempt -LaunchDigest $launch -Fence 1} 'WORKER_ATTEMPT_TERMINAL'
+if($before -ne $global:driverTestMutations){throw 'TERMINAL_START_MUTATED_WORKER'}
+Expect-Reason {& $driver -Action Start -Workspace $testRoot -Attempt $attempt} 'LAUNCH_BINDING_REQUIRED'
+Expect-Reason {& $driver -Action Stop -Workspace $testRoot -Attempt $attempt} 'LAUNCH_BINDING_REQUIRED'
 $validMarker=Get-Content -LiteralPath $marker -Raw
 $malformed=$validMarker | ConvertFrom-Json
 $malformed.launch=@($launch)
@@ -93,7 +99,7 @@ $emptyBase=New-Item -ItemType Directory -Path (Join-Path $testRoot 'different-ba
 Expect-Reason {& $driver -Action Create -Workspace $testRoot -BaseRoot $emptyBase.FullName -Attempt ([Guid]::NewGuid()) -ExportedDisk $global:driverTestBase} 'PATH_OUTSIDE_WORKSPACE'
 $link=New-Item -ItemType Junction -Path (Join-Path $testRoot 'alias') -Target $emptyBase.FullName
 Expect-Reason {& $driver -Action Inspect -Workspace $link.FullName -Attempt $attempt} 'WORKSPACE_REPARSE_POINT'
-'PASS 21 driver controls: original 10 plus missing binding, live bind refusal, exact binding, exact recovery, stale fence, conflicting binding, authoritative absence, unavailable host, idempotent Off stop, array binding, fractional fence'
+'PASS 24 driver controls: original 21 plus terminal restart refusal and mandatory Start/Stop binding'
 
 # Retain the tiny test directory for failure inspection; no recursive cleanup is performed.
 'RUNTIME '+$testRoot

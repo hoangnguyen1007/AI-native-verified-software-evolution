@@ -42,7 +42,7 @@ public final class HyperVRecoveryFixtureMain {
             }else{
                 if(!attempts.get(launch.attempt()).launch().equals(launch))throw new IOException("FIXTURE_INPUT_REVISION_CHANGED");
                 result=controller.recover(launch.attempt());
-                if(result.phase()!=ExecutionAttempt.Phase.QUIESCENT||queue.get().active().size()!=1||!result.reason().equals("RETAINED_STORAGE_ACCOUNTING_REQUIRED")||tasks.get(launch.plan(),launch.task()).orElseThrow().reservesWorker())throw new IOException("REAL_RECOVERY_NOT_CONFIRMED");
+                if(result.phase()!=ExecutionAttempt.Phase.RELEASED||!queue.get().active().isEmpty()||queue.get().retained().size()!=1||!result.reason().equals("STORAGE_RESERVATION_RETAINED")||tasks.get(launch.plan(),launch.task()).orElseThrow().reservesWorker())throw new IOException("REAL_RECOVERY_NOT_CONFIRMED");
                 Files.writeString(root.resolve("recovery-result.json"),CanonicalJson.write(result),StandardOpenOption.CREATE_NEW);
             }
             System.out.println(CanonicalJson.write(Map.of("schema","authored-hyperv-recovery:m8.4-v1","mode",args[0],"attempt",launch.attempt(),"launchDigest",CanonicalJson.sha256(launch),"phase",result.phase(),"activeReservations",queue.get().active().size(),"taskPhase",tasks.get(launch.plan(),launch.task()).orElseThrow().phase(),"termination",result.termination(),"qualified",false)));

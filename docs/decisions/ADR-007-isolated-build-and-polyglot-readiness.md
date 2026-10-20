@@ -1,6 +1,14 @@
 # ADR-007 — Isolated build evidence and polyglot repository readiness
 
-Date: **2026-10-17**. **Status: ACCEPTED HUMAN DIRECTION; IMPLEMENTATION DESIGN PROVISIONAL; NOT IMPLEMENTED.**
+Date: **2026-10-17**. **Status: ACCEPTED HUMAN DIRECTION; Step 3 Core MVP accepted/implemented (2026-10-20); broader M8.4 delivery status is in current state.**
+
+## Human-approved Step-3 Core MVP amendment — 2026-10-20
+
+**CONFIRMED direct human decision:** accept and close M8.4 Step 3 at Core MVP scope: the Hyper-V VM builds offline and exports generated code; wire the launcher into the pipeline and remove advanced security tests from this step's acceptance. This supersedes the original full-production Step-3 exit denominator. It creates no new task, milestone or security backlog, and does not relabel unexecuted controls as PASS.
+
+The accepted implementation path is an explicit operator registration → pinned Hyper-V launcher → bounded offline Maven recipe inside a fresh worker → opaque export → SHA-256/CAS validation → durable publication/replay. Generated source bytes remain `PRODUCER_ASSERTION` evidence, distinct from independently validated semantic statements. Core MVP reports use their own scope/schema; they do not mint a full conformance token or open unrestricted repository execution. Host fallback, ambient credentials/source/home exposure, unbounded worker state, missing lineage and invented semantic success remain disallowed.
+
+Alternatives: retain all 98 original acceptance obligations (superseded by the human's narrower delivery decision); claim they passed without observations (rejected); or accept the bounded demonstrated Core MVP with an explicit scope (accepted). Existing tests/evidence remain intact for history and regression; advanced campaigns are not Step-3 closure conditions. The broader M8.4 acquisition/language/coverage mission and existing Steps 4–6 are unchanged. This decision is delivery acceptance, not empirical proof of every sandbox threat or native build family.
 
 ## Authority and problem
 
