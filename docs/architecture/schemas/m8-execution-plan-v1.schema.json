@@ -1,0 +1,128 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:evolution:execution-plan:m8.4-v1",
+  "title": "M8.4.3 provisional execution graph records",
+  "description": "Structural validation only. Domain validators must verify canonical order, digests, references, coverage, DAG, policies and evidence predicates.",
+  "oneOf": [
+    { "$ref": "#/$defs/plan" },
+    { "$ref": "#/$defs/task" },
+    { "$ref": "#/$defs/edge" },
+    { "$ref": "#/$defs/binding" }
+  ],
+  "$defs": {
+    "digest": { "type": "string", "minLength": 71, "maxLength": 71, "pattern": "^sha256:[0-9a-f]{64}$" },
+    "id": { "type": "string", "minLength": 1 },
+    "count": { "type": "integer", "minimum": 0, "maximum": 9223372036854775807 },
+    "nullableDigest": { "oneOf": [{ "$ref": "#/$defs/digest" }, { "type": "null" }] },
+    "nullableId": { "oneOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }] },
+    "ids": { "type": "array", "items": { "$ref": "#/$defs/id" }, "uniqueItems": true },
+    "handle": {
+      "type": "object", "additionalProperties": false, "required": ["digest", "size"],
+      "properties": { "digest": { "$ref": "#/$defs/digest" }, "size": { "$ref": "#/$defs/count" } }
+    },
+    "version": {
+      "type": "object", "additionalProperties": false, "required": ["id", "version"],
+      "properties": { "id": { "$ref": "#/$defs/id" }, "version": { "$ref": "#/$defs/id" } }
+    },
+    "table": {
+      "type": "object", "additionalProperties": false, "required": ["schema", "content", "rows"],
+      "properties": {
+        "schema": { "$ref": "#/$defs/id" }, "content": { "$ref": "#/$defs/handle" }, "rows": { "$ref": "#/$defs/count" }
+      }
+    },
+    "scopedRef": {
+      "type": "object", "additionalProperties": false, "required": ["plan", "localId"],
+      "properties": { "plan": { "$ref": "#/$defs/digest" }, "localId": { "$ref": "#/$defs/id" } }
+    },
+    "plan": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema", "readiness", "inventory", "selection", "planner", "policy", "tasks", "edges", "bindings", "parent", "discovery"],
+      "properties": {
+        "schema": { "const": "execution-plan:m8.4-v1" },
+        "readiness": { "$ref": "#/$defs/digest" }, "inventory": { "$ref": "#/$defs/digest" },
+        "selection": { "$ref": "#/$defs/digest" }, "planner": { "$ref": "#/$defs/version" },
+        "policy": { "$ref": "#/$defs/digest" },
+        "tasks": { "allOf": [{ "$ref": "#/$defs/table" }, { "properties": { "schema": { "const": "execution-task-table:m8.4-v1" } } }] },
+        "edges": { "allOf": [{ "$ref": "#/$defs/table" }, { "properties": { "schema": { "const": "execution-edge-table:m8.4-v1" } } }] },
+        "bindings": { "allOf": [{ "$ref": "#/$defs/table" }, { "properties": { "schema": { "const": "execution-binding-table:m8.4-v1" } } }] },
+        "parent": { "$ref": "#/$defs/nullableDigest" },
+        "discovery": { "oneOf": [{ "$ref": "#/$defs/handle" }, { "type": "null" }] }
+      },
+      "allOf": [{
+        "if": { "properties": { "parent": { "type": "null" } } },
+        "then": { "properties": { "discovery": { "type": "null" } } },
+        "else": { "properties": { "discovery": { "$ref": "#/$defs/handle" } } }
+      }]
+    },
+    "capturedInput": {
+      "type": "object", "additionalProperties": false, "required": ["role", "kind", "content"],
+      "properties": {
+        "role": { "$ref": "#/$defs/id" }, "kind": { "const": "CAPTURED" }, "content": { "$ref": "#/$defs/handle" }
+      }
+    },
+    "taskInput": {
+      "type": "object", "additionalProperties": false, "required": ["role", "kind", "task", "outputRole", "selector"],
+      "properties": {
+        "role": { "$ref": "#/$defs/id" }, "kind": { "const": "TASK_OUTPUT" }, "task": { "$ref": "#/$defs/digest" },
+        "outputRole": { "$ref": "#/$defs/id" }, "selector": { "$ref": "#/$defs/id" }
+      }
+    },
+    "task": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema", "kind", "root", "contexts", "recipe", "inputs", "outputRoles", "resourceClass", "predicate"],
+      "properties": {
+        "schema": { "const": "execution-task:m8.4-v1" },
+        "kind": { "enum": ["NATIVE_RUN", "COLLECT", "VALIDATE", "RECONCILE"] },
+        "root": { "$ref": "#/$defs/id" }, "contexts": { "$ref": "#/$defs/ids" },
+        "recipe": { "$ref": "#/$defs/digest" },
+        "inputs": { "type": "array", "uniqueItems": true, "items": { "oneOf": [{ "$ref": "#/$defs/capturedInput" }, { "$ref": "#/$defs/taskInput" }] } },
+        "outputRoles": { "$ref": "#/$defs/ids" }, "resourceClass": { "$ref": "#/$defs/id" },
+        "predicate": { "$ref": "#/$defs/version" }
+      }
+    },
+    "edge": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema", "predecessor", "consumer", "condition", "outputRoles"],
+      "properties": {
+        "schema": { "const": "execution-edge:m8.4-v1" },
+        "predecessor": { "$ref": "#/$defs/digest" }, "consumer": { "$ref": "#/$defs/digest" },
+        "condition": { "enum": ["AFTER_TERMINATION", "AFTER_VALIDATION"] }, "outputRoles": { "$ref": "#/$defs/ids" }
+      },
+      "allOf": [{
+        "if": { "properties": { "condition": { "const": "AFTER_VALIDATION" } } },
+        "then": { "properties": { "outputRoles": { "minItems": 1 } } }
+      }]
+    },
+    "candidate": {
+      "type": "object", "additionalProperties": false, "required": ["task", "outputRole", "predicate", "evidenceRole"],
+      "properties": {
+        "task": { "$ref": "#/$defs/digest" }, "outputRole": { "$ref": "#/$defs/id" },
+        "predicate": { "$ref": "#/$defs/version" }, "evidenceRole": { "$ref": "#/$defs/id" }
+      }
+    },
+    "binding": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema", "requirement", "mode", "candidates", "decision", "reason"],
+      "properties": {
+        "schema": { "const": "execution-binding:m8.4-v1" }, "requirement": { "$ref": "#/$defs/scopedRef" },
+        "mode": { "enum": ["ALL_OF", "ANY_EQUIVALENT", "REUSE", "PENDING"] },
+        "candidates": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/candidate" } },
+        "decision": { "$ref": "#/$defs/nullableDigest" }, "reason": { "$ref": "#/$defs/nullableId" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "mode": { "enum": ["ALL_OF", "ANY_EQUIVALENT"] } } },
+          "then": { "properties": { "candidates": { "minItems": 1 }, "decision": { "type": "null" }, "reason": { "type": "null" } } }
+        },
+        {
+          "if": { "properties": { "mode": { "const": "REUSE" } } },
+          "then": { "properties": { "candidates": { "maxItems": 0 }, "decision": { "$ref": "#/$defs/digest" }, "reason": { "type": "null" } } }
+        },
+        {
+          "if": { "properties": { "mode": { "const": "PENDING" } } },
+          "then": { "properties": { "candidates": { "maxItems": 0 }, "decision": { "type": "null" }, "reason": { "$ref": "#/$defs/id" } } }
+        }
+      ]
+    }
+  }
+}

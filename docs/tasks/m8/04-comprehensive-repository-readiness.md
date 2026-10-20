@@ -1,6 +1,6 @@
 # M8.4 — Kế hoạch nâng cấp khả năng đọc và phân tích repository toàn diện
 
-Ngày lập kế hoạch: **2026-10-17**; cập nhật thực hiện: **2026-10-19**. Trạng thái: **BƯỚC 1–2 IMPLEMENTED / BOUNDED VERIFICATION; BƯỚC 3–6 PENDING**. M8.3 đã có bounded acceptance; M8.4 bắt buộc trước M9. Kế hoạch có **đúng 6 bước**, checklist trong mỗi bước không tạo milestone/task bổ sung. Bàn giao thực hiện từng bước ở cuối tài liệu; phần handoff lập kế hoạch là lịch sử.
+Ngày lập kế hoạch: **2026-10-17**; cập nhật thực hiện: **2026-10-19**. Trạng thái: **BƯỚC 1–2 IMPLEMENTED / BOUNDED VERIFICATION; BƯỚC 3 PHA 1 DESIGN COMPLETE, PHA 2 IMPLEMENTATION/ACCEPTANCE PENDING; BƯỚC 4–6 PENDING**. M8.3 đã có bounded acceptance; M8.4 bắt buộc trước M9. Kế hoạch có **đúng 6 bước**, checklist và hai pha trong bước 3 không tạo milestone/task bổ sung. Bàn giao thực hiện từng bước ở cuối tài liệu; phần handoff lập kế hoạch là lịch sử.
 
 **CONFIRMED — yêu cầu human:** build mục tiêu được chạy trong sandbox, không trực tiếp trên host; bỏ các trần cứng cản repo lớn; phân tích mọi module/build root; thu nhận generated code; giảm FAILED/PARTIAL bằng bằng chứng thực. Human đã chọn **thêm semantic engine cho từng ngôn ngữ ngay trong M8.4**, thay thế phạm vi cũ chỉ inventory ngoài Java. **PROVISIONAL — lựa chọn kỹ thuật:** [hợp đồng kiến trúc](../../architecture/m8-repository-readiness.md), [nghiên cứu và phương án](../../research/2026-10-17-m8-readiness-design.md), [ADR-007](../../decisions/ADR-007-isolated-build-and-polyglot-readiness.md).
 
@@ -57,6 +57,10 @@ Không cam kết “100% mọi ngôn ngữ, mọi chương trình, vô hạn dun
 ## Bước 3 — Build và index thật trong sandbox cô lập
 
 **Mục tiêu:** lấy effective build facts, compiler outputs và generated inputs một cách tự động khi cần; không target execution trên host. Phạm vi: `SandboxExecutor`/`BuildEvidenceProvider` ports, adapter mới, artifact broker/cache và durable scheduler.
+
+**CONFIRMED human sequencing (2026-10-19):** làm Pha 1 — thiết kế schema, hợp đồng và thuật toán DAG trước; Pha 2 — TDD, adapter, parser và test cases tiếp nối trong cùng bước 3. **Pha 1 đã hoàn tất thiết kế PROVISIONAL:** [hợp đồng execution](../../architecture/m8-isolated-execution.md), [typed record catalog](../../architecture/m8-isolated-execution-schemas.md), [JSON Schema cho execution graph](../../architecture/schemas/m8-execution-plan-v1.schema.json), [ma trận kiểm chứng Pha 2](04-step3-verification-matrix.md). Các checklist/exit bên dưới vẫn bắt buộc; thiết kế không đóng bước 3 hay mở execution lane.
+
+**Pha 2 đang triển khai:** execution kernel, journal/tables, broker, native recipe/parser và output-object importer đã có code/test; candidate Hyper-V đã chạy fixture Java và Maven generator reactor, gồm broker-offline replay. [Bản ghi Pha 2](04-step3-phase2-execution.md) phân biệt checks đã qua và acceptance còn mở. Production execution lane vẫn **UNQUALIFIED**; chưa đóng Bước 3.
 
 **Công việc chi tiết**
 
@@ -292,3 +296,32 @@ Packaged JAR smoke **11/11 journeys PASS**, **1,243 platform classes**, zero IDE
 **LIMITATIONS / BLOCKERS:** không blocker cho passive step-2 exit trong tested contract. Real VM isolation và native effective manifests chưa được kiểm; protected capture verifier trong tests là authored fixture, không phải executor certificate. Dynamic profiles/variants/targets, SDK/toolchains, generated outputs và language engines giữ active requirements. Metadata plan hiện materialize root/module/context working set; report decoding có bounded worker, oversized report giữ bytes và báo `READINESS_REPORT_WORKER_REQUIRED`. Physical planning/semantic/graph scale và workbench readiness views cần step-6 integration qualification. Không independent review, broad remote/corpus acceptance hoặc M8/M10 gate promotion. Không commit, push, history rewrite hay xóa user work.
 
 **EXACT NEXT TASK: M8.4.3 — validated isolated native build/index executor.** Dùng sealed inventory + readiness selection/DAG/recipes, implement disposable VM/controller, broker/cache, resource/network policy và protected capture/import. Chạy real positive/adversarial isolation fixtures trước target execution. Không có VM thì giữ blocker/evidence đúng; tuyệt đối không host fallback. Bước 3–6 chưa hoàn tất trong task này.
+
+## Thiết kế và bàn giao bước 3 — Pha 1 — 2026-10-19
+
+**STATE BEFORE:** Git sạch tại `f702449`; M8.4.1–2 đã commit, executor/native evidence chưa triển khai. Human yêu cầu thiết kế schema/hợp đồng/DAG trước Pha 2 trong cùng bước 3, rồi nhấn mạnh tính chính xác và nhất quán. Route: `lead-architect` + `graph-architect`, workflow architect, self-review và `verification-before-completion`; không có independent reviewer.
+
+**WORK COMPLETED / FILES CHANGED:** thêm hợp đồng execution, typed schema catalog, JSON Schema cho bốn loại execution graph record và ma trận Pha 2; cập nhật liên kết/handoff trong hai hợp đồng readiness, task plan và current-state. Tổng 8 file tài liệu/schema, không thay production/test code. Tài liệu mới được liên kết ở đầu bước 3; không tạo bước thứ bảy hoặc sửa ADR/scope/roadmap/formula/gate lịch sử.
+
+| Phần thiết kế | Kết quả / quyết định PROVISIONAL trong scope |
+|---|---|
+| Schema và identity | Typed plan/task/edge/requirement binding, recipe/tool/environment/policy, attempt/receipt, material/output, compiler observation, promotion/reconciliation. SHA-256 domain separation, ordered manifests, raw paths, large tables/cursors và v1 compatibility. Machine schema chỉ bao phủ execution graph; các record còn lại là đặc tả typed cho Pha 2 |
+| DAG | Phân biệt obligation/module/execution graphs; native bootstrap không chờ chính model/dependency evidence nó cần thu. Iterative SCC, Kahn priority, cycle witness, conservative grouping và kiểm lại cycle sau contraction. SCC không tự hợp thức hóa native cycle |
+| Recovery | Lease/fence, launch idempotency, atomic publication, late-result rejection, crash/disk-full/remote partition, cancel/quiescence, retry cause và fair resource admission; không hứa exactly-once execution |
+| Trust / safety | Qualified disposable VM, broker-only acquisition, private writable state, hostile-output quarantine, fresh isolated validator và category-specific promotion. VM qualification khác capture qualification; target exit 0/receipt không chứng minh semantic fact |
+| Closed denominator | Giữ mọi requirement/context/target/output; failed stage không xóa output hợp lệ hoặc root độc lập. Closed zero-output manifest khác thiếu evidence; compilation N/A không làm semantic validation N/A. Conflicts/revocation cập nhật active view bằng append-only decisions |
+| Handoff Pha 2 | 98 nghĩa vụ D/J/S/B/O/N/T/I, trace đầy đủ các checklist/exit của bước 3, positive/negative/native/adversarial và direct-consumer controls; chưa gọi chúng là 98 tests đã pass |
+
+**COMMANDS ACTUALLY RUN / RESULTS:**
+
+- `git status --short`, `git diff --stat`, `git diff --cached --stat`, `git log -6 --oneline`, targeted `git diff` và `git diff --check`: kiểm baseline, scope và whitespace; không commit/push.
+- `python -` với inline `jsonschema.Draft202012Validator`: final meta-schema PASS, **10 positive structural samples PASS, 22 negative samples rejected** (unknown version/field/kind, malformed/trailing-newline digest, duplicate context, invalid tagged input, binding-mode constraints, edge role, parent/discovery pair, numeric bounds). Self-review bổ sung exact digest length rồi chạy lại toàn bộ structural samples; không kiểm cryptographic/reference/permission predicates bằng JSON Schema.
+- `python -` với disposable reference-model experiment: duyệt **4.096 đồ thị bốn đỉnh không self-loop**, đối chiếu iterative SCC với transitive closure; **543 DAGs** đối chiếu Kahn priority với toàn bộ permutation orders. Thêm **4 self-loop, 1 contraction-cycle, 1 downstream-tail** control đều PASS. Đây là kiểm mô hình thiết kế, không phải test của production implementation chưa có.
+- `python -` kiểm local Markdown targets, table columns/escaped pipes, code fences, trailing whitespace, 98 unique matrix IDs và đúng sáu step headings: PASS. `git diff --check`: PASS. Những đoạn kiểm inline không phải reusable production test suite; Pha 2 phải chuyển invariant thành tests trước implementation.
+- Đối chiếu lại bốn nguồn chính thức về Hyper-V, Maven reactor, Gradle lifecycle và provenance; links và giới hạn suy luận ở cuối hợp đồng execution. Không tải/cài image, gọi native target build, kiểm conformance VM hoặc chạy Maven reactor trong Pha 1.
+
+**NEW EVIDENCE / SELF-REVIEW:** nhận diện từ source các ranh giới cần nối đúng: `runnable(completed)` không xác thực evidence; verifier Boolean là port/test seam; module SCC projection bỏ unknown endpoint; capture gate đòi output digest không rỗng; reconciler hiện dùng compilation applicability cho cả hai validation kinds. Thiết kế ghi migration/control tương ứng, không âm thầm sửa hoặc tuyên bố đã fix production. Self-review bổ sung exact ContextRef, phá profile/qualification hash cycle, raw link-target bytes, tách attempt provenance khỏi semantic projection và schema/formatting consistency.
+
+**LIMITATIONS / BLOCKERS / APPROVAL:** không blocker còn lại cho deliverable thiết kế Pha 1; không cần quyết định scope/permission mới. Các lựa chọn internal/additive vẫn PROVISIONAL đến khi implement và kiểm chứng. Chưa kiểm VM thực, native compiler/parser, cryptographic trust verifier, nguồn độc lập hay hiệu năng production; không có independent review. Bước 3 chưa hoàn tất, execution lane chưa được mở. Không suy ra “mọi trường hợp thực tế đã đúng” từ kiểm đồ thị nhỏ/schema.
+
+**DURABLE STATE / EXACT NEXT TASK:** current-state và trạng thái đầu task đã đồng bộ: **M8.4.3 Pha 2 — TDD, adapter, parser và test cases**, bắt đầu domain/schema/DAG controls D01–D18; tiếp nối journal/fencing, real VM conformance, broker/output validation, native capture và tích hợp theo ma trận. Dùng nguyên các contract Pha 1 trong context hiện tại; chỉ mở lại quyết định khi có bằng chứng mâu thuẫn. Thiếu VM thì tiếp tục phần triển khai độc lập nhưng giữ executor acceptance pending; tuyệt đối không host fallback. M8.4 bước 4–6 và M10/Track B vẫn theo gate riêng.

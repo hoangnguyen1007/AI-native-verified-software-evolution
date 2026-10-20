@@ -20,6 +20,7 @@
         <module>analyzer</module>
         <module>analyzer-maven</module>
         <module>analyzer-filesystem</module>
+        <module>analyzer-execution</module>
         <module>analyzer-javaparser</module>
         <module>backend</module>
         <module>cli</module>

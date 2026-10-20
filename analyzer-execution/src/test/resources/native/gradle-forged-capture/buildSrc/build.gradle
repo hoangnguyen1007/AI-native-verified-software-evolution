@@ -1,0 +1,4 @@
+plugins { id 'java-gradle-plugin' }
+gradlePlugin { plugins { fixtureRoot { id = 'fixture.root'; implementationClass = 'fixture.RootPlugin' } } }
+
+dependencies { implementation localGroovy() }

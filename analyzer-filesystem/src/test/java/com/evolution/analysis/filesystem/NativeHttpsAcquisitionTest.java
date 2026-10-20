@@ -74,6 +74,7 @@ class NativeHttpsAcquisitionTest {
             var asset=store.observation("root",LogicalPath.utf8("asset.bin")).orElseThrow().entry();assertEquals(ContentDigest.sha256(lfs),asset.content().orElseThrow().digest());assertTrue(asset.target().orElseThrow().startsWith("lfs-pointer:sha256:"));
             assertTrue(store.observation("root",LogicalPath.utf8("module/main.py")).isPresent());assertTrue(store.observation("root",LogicalPath.utf8("module")).orElseThrow().entry().target().orElseThrow().startsWith("closure:sha256:"));
             assertThrows(IOException.class,()->new PinnedHttps(policy).request(URI.create(base+"/redirect"),"GET",Map.of(),new byte[0],()->false));
+            try(var response=new PinnedHttps(policy).exchange(URI.create(base+"/redirect"),"GET",Map.of(),new byte[0],()->false)){assertEquals(302,response.status());assertTrue(response.headers().values().contains("https://127.0.0.1/private"));}
         }finally{server.stop(0);threads.shutdownNow();}
         int before=requests.get();try(var store=new SqliteInventoryStore(root.resolve("metadata"),cas)){
             assertEquals(JobJournal.State.COMPLETE,new GitSnapshotAcquirer(cas,store,policy,"missing-git",1000).acquire(root.resolve("workspace"),"root",uri,"HEAD",request,()->false).state());assertEquals(before,requests.get());

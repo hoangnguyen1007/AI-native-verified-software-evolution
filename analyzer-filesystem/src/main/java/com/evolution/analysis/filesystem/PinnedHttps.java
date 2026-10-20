@@ -9,10 +9,23 @@ import javax.net.ssl.*;
 
 /** Small streaming HTTP/1.1 broker. DNS addresses are checked before the TCP connect; TLS still verifies the hostname.
  * Redirects are rejected. Headers and metadata are bounded, response payloads are streamed. */
-final class PinnedHttps {
+public final class PinnedHttps {
     private final GitHostPolicy policy;
-    PinnedHttps(GitHostPolicy policy){this.policy=policy;}
-    InputStream request(URI uri,String method,Map<String,String> headers,byte[] body,BooleanSupplier cancelled)throws IOException{
+    public PinnedHttps(GitHostPolicy policy){this.policy=Objects.requireNonNull(policy);}
+    public record Response(int status,Map<String,String> headers,InputStream body) implements AutoCloseable {
+        public Response {headers=Collections.unmodifiableMap(new TreeMap<>(headers));Objects.requireNonNull(body);}
+        @Override public void close()throws IOException{body.close();}
+    }
+    public InputStream request(URI uri,String method,Map<String,String> headers,byte[] body,BooleanSupplier cancelled)throws IOException{
+        var response=exchange(uri,method,headers,body,cancelled);
+        if(response.status()<200||response.status()>=300){
+            response.close();throw new IOException(response.status()==401||response.status()==403?"LFS_ACCESS_REQUIRED":"LFS_HTTP_UNAVAILABLE");
+        }
+        return response.body();
+    }
+    /** One policy-checked exchange; never follows a redirect or transfers credentials to another endpoint. */
+    public Response exchange(URI uri,String method,Map<String,String> headers,byte[] body,BooleanSupplier cancelled)throws IOException{
+        if(!Set.of("GET","HEAD","POST").contains(method))throw new IOException("HTTP_METHOD_DENIED");
         if(!"https".equals(uri.getScheme())||uri.getRawUserInfo()!=null||uri.getFragment()!=null)throw new IOException("ENDPOINT_DENIED");
         var endpoint=policy.endpoint(uri);Socket tcp=new Socket();
         try{
@@ -30,7 +43,8 @@ final class PinnedHttps {
                 if(h.getKey().equalsIgnoreCase("authorization")&&auth.isPresent())throw new IOException("AUTHORIZATION_CONFLICT");text.append(h.getKey()).append(": ").append(h.getValue()).append("\r\n");
             }
             text.append("\r\n");var output=socket.getOutputStream();output.write(text.toString().getBytes(StandardCharsets.US_ASCII));output.write(body);output.flush();
-            var input=new BufferedInputStream(socket.getInputStream(),65536);String status=line(input,8192);if(!status.matches("HTTP/1\\.[01] 2[0-9][0-9](?: .*)?"))throw new IOException(status.contains(" 401 ")||status.contains(" 403 ")?"LFS_ACCESS_REQUIRED":"LFS_HTTP_UNAVAILABLE");
+            var input=new BufferedInputStream(socket.getInputStream(),65536);String status=line(input,8192);if(!status.matches("HTTP/1\\.[01] [1-5][0-9][0-9](?: .*)?"))throw new IOException("HTTP_STATUS_INVALID");
+            int code=Integer.parseInt(status.substring(9,12));
             var response=new TreeMap<String,String>(String.CASE_INSENSITIVE_ORDER);int length=0;String line;
             while(!(line=line(input,8192)).isEmpty()){
                 length+=line.length();if(length>65536)throw new IOException("HTTP_HEADERS_OVERSIZE");int colon=line.indexOf(':');if(colon<1||response.put(line.substring(0,colon),line.substring(colon+1).strip())!=null)throw new IOException("HTTP_HEADERS_INVALID");
@@ -43,12 +57,12 @@ final class PinnedHttps {
                 long size;try{size=Long.parseLong(response.get("Content-Length"));if(size<0)throw new NumberFormatException();}catch(NumberFormatException invalid){throw new IOException("HTTP_LENGTH_INVALID");}framed=new GitSnapshotAcquirer.LimitedInput(input,size);
             }
             final InputStream payload=framed;
-            return new FilterInputStream(payload){
+            return new Response(code,response,new FilterInputStream(payload){
                 private void check()throws IOException{if(cancelled.getAsBoolean()||Thread.currentThread().isInterrupted())throw new IOException("CANCELLED_CHECKPOINT");}
                 @Override public int read()throws IOException{check();return super.read();}
                 @Override public int read(byte[] b,int off,int len)throws IOException{check();return super.read(b,off,len);}
                 @Override public void close()throws IOException{socket.close();}
-            };
+            });
         }catch(IOException|RuntimeException failure){tcp.close();throw failure;}
     }
     static String line(InputStream in,int max)throws IOException{

@@ -38,13 +38,13 @@ public final class CapturedBuildEvidence {
     public static ReadinessPlan reconcile(ReadinessPlan plan,Collection<Validated> captures){
         var requirements=new ArrayList<ReadinessPlan.Requirement>();
         for(var requirement:plan.requirements()){
-            var matches=captures.stream().map(Validated::observation).filter(observation->observation.manifest().selection().equals(plan.selection().identity()))
+            var matches=captures.stream().map(Validated::observation).distinct().filter(observation->observation.manifest().selection().equals(plan.selection().identity()))
                     .filter(observation->plan.contexts().stream().anyMatch(context->context.id().equals(requirement.subject())
                             &&context.identity().equals(observation.manifest().context())&&context.inputClosure().equals(observation.manifest().inputClosure())))
                     .filter(observation->requirement.kind()==ReadinessPlan.Kind.BUILD_VALIDATION||requirement.kind()==ReadinessPlan.Kind.SEMANTIC_VALIDATION).toList();
             if(matches.size()==1){
                 var capture=matches.getFirst();requirements.add(new ReadinessPlan.Requirement(requirement.id(),requirement.kind(),requirement.subject(),requirement.reason(),requirement.prerequisites(),requirement.evidence(),
-                        capture.compilationApplicable()?ReadinessPlan.State.SATISFIED:ReadinessPlan.State.NOT_APPLICABLE,Optional.of(capture.identity())));
+                        capture.compilationApplicable()||requirement.kind()==ReadinessPlan.Kind.SEMANTIC_VALIDATION?ReadinessPlan.State.SATISFIED:ReadinessPlan.State.NOT_APPLICABLE,Optional.of(capture.identity())));
             }else requirements.add(requirement);
         }
         return new ReadinessPlan(plan.schema(),plan.inventory(),plan.selection(),plan.roots(),plan.modules(),plan.contexts(),requirements,plan.recipes(),plan.ownership());

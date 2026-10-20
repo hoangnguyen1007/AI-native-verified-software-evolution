@@ -1,0 +1,4 @@
+rootProject.name = 'generated-reactor'
+include 'model', 'app'
+includeBuild 'support'
+if (providers.gradleProperty('brokenSibling').isPresent()) { include 'broken' }

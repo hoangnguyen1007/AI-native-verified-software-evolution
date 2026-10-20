@@ -132,3 +132,7 @@ The [M8.4.1 streaming acquisition contract](m8-streaming-acquisition.md) specifi
 ## Step-2 implementation contract
 
 The [M8.4.2 passive readiness planner](m8-build-readiness-planner.md) specifies multi-root discovery, context selection, complete ownership disposition, durable requirement DAG/recipes, capture satisfaction and CLI/API integration. Native build/model observations remain pending until the validated step-3 executor supplies them.
+
+## Step-3 Phase-1 execution design
+
+The [M8.4.3 execution contract](m8-isolated-execution.md) and [typed schema catalog](m8-isolated-execution-schemas.md) specify separate requirement/module/execution graphs, native bootstrap, conservative SCC grouping, fenced attempts, brokered materials, hostile-output validation and per-claim promotion. The [Phase-2 matrix](../tasks/m8/04-step3-verification-matrix.md) maps the original step-3 checklist to required controls. This is a PROVISIONAL implementation specification; design validation does not certify a VM, native adapter or semantic provider. Implementation and real isolation/native acceptance remain Phase 2 of the same step.

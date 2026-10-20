@@ -1,0 +1,19 @@
+dependencies { implementation project(':model'); implementation 'fixture:helper:1' }
+sourceSets {
+    integration {
+        java.srcDir('src/integration/java')
+        compileClasspath += sourceSets.main.output + configurations.compileClasspath
+        runtimeClasspath += output + compileClasspath
+    }
+}
+tasks.named('compileJava') { dependsOn rootProject.tasks.named('fixtureMarker') }
+tasks.register('runCaller', JavaExec) {
+    dependsOn tasks.named('classes')
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'fixture.Caller'
+}
+tasks.register('runIntegration', JavaExec) {
+    dependsOn tasks.named('integrationClasses')
+    classpath = sourceSets.integration.runtimeClasspath
+    mainClass = 'fixture.IntegrationCaller'
+}

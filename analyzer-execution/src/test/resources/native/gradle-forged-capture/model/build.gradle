@@ -1,0 +1,11 @@
+def generated = layout.buildDirectory.dir('generated/sources/evo')
+tasks.register('generateModel') {
+    outputs.dir(generated)
+    doLast {
+        def output = generated.get().file('fixture/Generated.java').asFile
+        output.parentFile.mkdirs()
+        output.text = 'package fixture; public class Generated { public static int value() { return 42; } }'
+    }
+}
+sourceSets.main.java.srcDir(generated)
+tasks.named('compileJava') { dependsOn tasks.named('generateModel') }
