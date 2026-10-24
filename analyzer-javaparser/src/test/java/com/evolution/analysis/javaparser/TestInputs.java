@@ -37,9 +37,10 @@ final class TestInputs {
         var snapshot = RepositorySnapshot.create(REPO, Optional.empty(), false, documents.stream().map(SnapshotFile::from).toList(), documents);
         var entries = new ArrayList<ClasspathEntry>(); entries.add(platform.entry()); dependencies.forEach(d -> entries.add(d.entry()));
         var component = new ManifestComponent(new VersionedIdentifier("test.fixture", "1"), ContentDigest.sha256Utf8("test-fixture-components-v1"));
+        var options=new TreeMap<>(FrontendRequest.options(plan,MODULE.identity(),SourceClassification.MAIN,documents,platform));options.putAll(FrontendRequest.binaryOriginOptions(dependencies));
         var manifest = AnalysisManifest.create(new VersionedIdentifier("analysis.manifest", "1"), snapshot, List.of(MODULE), entries,
                 AnalysisConfiguration.create(new VersionedIdentifier("analysis.configuration", "1"),
-                        FrontendRequest.options(plan, MODULE.identity(), SourceClassification.MAIN, documents, platform)),
+                        options),
                 component, component, component);
         return new FrontendRequest(manifest, MODULE.identity(), SourceClassification.MAIN, plan,
                 sources, platform, dependencies);

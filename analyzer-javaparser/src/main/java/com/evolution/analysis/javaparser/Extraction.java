@@ -4,6 +4,7 @@ import com.evolution.analysis.contract.common.VersionedIdentifier;
 import com.evolution.analysis.contract.identity.*;
 import com.evolution.analysis.contract.semantic.*;
 import com.evolution.analysis.contract.source.SourceSpan;
+import com.evolution.analysis.contract.source.SourceClassification;
 import com.evolution.analysis.frontend.*;
 import com.github.javaparser.*;
 import com.github.javaparser.ast.*;
@@ -43,6 +44,7 @@ final class Extraction {
     private final List<SourceOutcome> rejected = new ArrayList<>();
     private boolean reactorResolutionDegraded;
     final LombokExtraction lombok = new LombokExtraction(this);
+    private NativeMemberExtraction nativeMembers;
 
     private static final class Unit {
         final SourceInput input;
@@ -69,6 +71,8 @@ final class Extraction {
         for (var unit : orderedUnits) for (var node : unit.ast.stream().filter(this::isDeclaration).toList()) {
             try { entity(node); } catch (RuntimeException exception) { /* Recorded in the declaration observation pass below. */ }
         }
+        nativeMembers=new NativeMemberExtraction(this,request,environment);
+        nativeMembers.declarations();
         var implicit = new ImplicitExtraction(this);
         for (var unit : orderedUnits) implicit.declarations(unit.ast);
         for (var unit : orderedUnits) {
@@ -79,6 +83,7 @@ final class Extraction {
             var references = new ReferenceResolution(environment.solver);
             for (var node : unit.ast.findAll(MethodReferenceExpr.class)) observe(node,"method-references",() -> callable(references.resolve(node),node),() -> owner(node));
             types.addAll(new TypeExtraction(this).extract(unit.ast));
+            new ExpressionTypeExtraction(this).extract(unit.ast);
             new FieldExtraction(this).extract(unit.ast);
             new AnnotationExtraction(this).extract(unit.ast);
             implicit.relationships(unit.ast);
@@ -340,7 +345,7 @@ final class Extraction {
         }
         throw new MappingFailure(SemanticStatus.UNSUPPORTED, "java.erasure");
     }
-    private JavaSymbolName typeName(ResolvedReferenceTypeDeclaration type) {
+    JavaSymbolName typeName(ResolvedReferenceTypeDeclaration type) {
         if (type.toAst().isPresent()) {
             Node ast = type.toAst().orElseThrow(); unit(ast); return typeOwnerName(ast);
         }
@@ -354,7 +359,7 @@ final class Extraction {
             return symbol;
         }
         return type.containerType().map(t -> JavaSymbolName.memberType(typeName(t), type.getName()))
-                .orElseGet(() -> JavaSymbolName.topLevelType(type.getPackageName(), type.getName()));
+                .orElseGet(() -> {String pkg=type.getPackageName();if(pkg==null){if(!type.getQualifiedName().equals(type.getName()))throw new MappingFailure(SemanticStatus.UNSUPPORTED,"java.binary-package-evidence");pkg="";}return JavaSymbolName.topLevelType(pkg,type.getName());});
     }
     private Node enclosingType(Node node) {
         for (Node parent = node.getParentNode().orElse(null); parent != null; parent = parent.getParentNode().orElse(null))
@@ -425,6 +430,10 @@ final class Extraction {
                 : node instanceof InitializerDeclaration ? EntityKind.INITIALIZER : EntityKind.FIELD;
         Optional<SourceSpan> span = node instanceof CompilationUnit ? Optional.empty() : Optional.of(unit(node).source.span(node));
         Derivation derivation = node instanceof CompilationUnit ? new Derivation(DerivationKind.DERIVED, new VersionedIdentifier("java.package-scope", "1"), List.of(request.module().value())) : DIRECT;
+        String overlay=request.manifest().configuration().values().get("java.generated-overlay");
+        var document=unit(node).input.document();
+        if(!(node instanceof CompilationUnit)&&overlay!=null&&Set.of(SourceClassification.GENERATED_MAIN,SourceClassification.GENERATED_TEST).contains(document.classification()))
+            derivation=new Derivation(DerivationKind.DERIVED,new VersionedIdentifier("java.generated-source-import","m8.4-v1"),List.of(overlay,document.contentDigest().value()));
         ModuleIdentity module = sourceNodes.contains(node) ? request.module() : unit(node).input.document().module();
         var entity = register(symbol, kind, span, span.map(s -> unit(node).source.slice(s)).orElse(""), derivation, module);
         checkDeclarationTypes(node, entity);
@@ -499,12 +508,14 @@ final class Extraction {
         return callable(resolved);
     }
     private Entity resolveCall(Expression expression) {
+        var nativeCall=nativeMembers.resolve(expression);if(nativeCall.isPresent())return nativeCall.orElseThrow();
         var generated=lombok.resolve(expression);
         if(generated.isPresent())return generated.orElseThrow();
         return expression instanceof MethodCallExpr call ? callable(call.resolve(),call)
                 : callable(((ObjectCreationExpr)expression).resolve());
     }
     Entity callable(ResolvedMethodLikeDeclaration resolved) {
+        if(nativeMembers!=null){var nativeDeclaration=nativeMembers.callable(resolved);if(nativeDeclaration.isPresent())return nativeDeclaration.orElseThrow();}
         if (resolved.toAst().isPresent() && (sourceNodes.contains(resolved.toAst().orElseThrow())
                 || reactorNodes.contains(resolved.toAst().orElseThrow()))) {
             Node node = resolved.toAst().orElseThrow();
@@ -542,7 +553,7 @@ final class Extraction {
         var origin = environment.origin(type.getQualifiedName());
         if (environment.duplicateExternal(type.getQualifiedName())) diagnostics.add(new Diagnostic(DiagnosticSeverity.WARNING, "java.duplicate-binary-type", "Ordered classpath selected the first definition", Optional.empty(), Map.of("type", typeName(type).canonicalName())));
         var entity = Entity.create(origin.kind(), origin.scope(), resolved instanceof ResolvedConstructorDeclaration ? EntityKind.CONSTRUCTOR : EntityKind.METHOD, symbol.canonicalName(), Optional.empty());
-        declarations.putIfAbsent(entity.identity(), new DeclarationRecord(entity, resolved.getName(), SemanticStatus.RESOLVED, DIRECT, List.of(), List.of()));
+        declarations.putIfAbsent(entity.identity(), new DeclarationRecord(entity, resolved.getName(), SemanticStatus.RESOLVED, environment.nativeDerivation(type.getQualifiedName()), List.of(), List.of()));
         return entity;
     }
 
@@ -582,7 +593,7 @@ final class Extraction {
         var origin = environment.origin(type.getQualifiedName());
         if (environment.duplicateExternal(type.getQualifiedName())) diagnostics.add(new Diagnostic(DiagnosticSeverity.WARNING,"java.duplicate-binary-type","Ordered classpath selected the first definition",Optional.empty(),Map.of("type",typeName(type).canonicalName())));
         var entity = Entity.create(origin.kind(),origin.scope(),EntityKind.FIELD,JavaSymbolName.field(typeName(type),resolved.getName()).canonicalName(),Optional.empty());
-        declarations.putIfAbsent(entity.identity(),new DeclarationRecord(entity,resolved.getName(),SemanticStatus.RESOLVED,DIRECT,List.of(),List.of()));
+        declarations.putIfAbsent(entity.identity(),new DeclarationRecord(entity,resolved.getName(),SemanticStatus.RESOLVED,environment.nativeDerivation(type.getQualifiedName()),List.of(),List.of()));
         return entity;
     }
     Entity fieldOwner(Node node) {
@@ -597,6 +608,10 @@ final class Extraction {
     boolean isTypeName(Node context, String name) {
         try { return com.github.javaparser.symbolsolver.javaparsermodel.JavaParserFactory.getContext(context,environment.solver).solveType(name).isSolved(); }
         catch (RuntimeException failure) { return false; }
+    }
+    ResolvedTypeDeclaration resolveTypeName(Node node,String name){
+        var result=com.github.javaparser.symbolsolver.javaparsermodel.JavaParserFactory.getContext(node,environment.solver).solveType(name);
+        if(!result.isSolved())throw new UnsolvedSymbolException(name);return result.getCorrespondingDeclaration();
     }
     void unmapped(Node node, String category, SemanticStatus status, String code) {
         observe(node,category,() -> { throw new MappingFailure(status,code); },() -> { throw new MappingFailure(status,code); });
@@ -619,7 +634,7 @@ final class Extraction {
         var reference = type.asReferenceType();
         var origin = environment.origin(reference.getQualifiedName());
         var entity = Entity.create(origin.kind(), origin.scope(), EntityKind.TYPE, typeName(reference).canonicalName(), Optional.empty());
-        declarations.putIfAbsent(entity.identity(), new DeclarationRecord(entity, reference.getQualifiedName(), SemanticStatus.RESOLVED, DIRECT, List.of(), List.of()));
+        declarations.putIfAbsent(entity.identity(), new DeclarationRecord(entity, reference.getQualifiedName(), SemanticStatus.RESOLVED, environment.nativeDerivation(reference.getQualifiedName()), List.of(), List.of()));
         return entity;
     }
     OriginalSource source(Node node) { return unit(node).source; }
@@ -629,6 +644,19 @@ final class Extraction {
         if (found==null || duplicateDeclarations.contains(found.entity().identity())) throw new MappingFailure(SemanticStatus.UNSUPPORTED,"java.implicit-callable");
         return found.entity();
     }
+    Entity sourceDeclaration(Entity expected){var value=declarations.get(expected.identity());if(value==null||duplicateDeclarations.contains(expected.identity())||!value.entity().equals(expected))throw new FrontendInputException("frontend.native-source-declaration","Correspondence does not match the actual handwritten declaration");return value.entity();}
+    Node sourceDeclarationNode(Entity entity){sourceDeclaration(entity);var matches=nodes.entrySet().stream().filter(e->e.getValue().equals(entity)).map(Map.Entry::getKey).toList();if(matches.size()!=1)throw new FrontendInputException("frontend.native-source-declaration","Correspondence source node is missing or ambiguous");return matches.getFirst();}
+    List<Entity> sourceMembers(JavaSymbolName type){return nodes.entrySet().stream().filter(e->{try{return typeNameOfOwner(e.getKey()).equals(type);}catch(RuntimeException absent){return false;}}).map(Map.Entry::getValue).filter(e->Set.of(EntityKind.FIELD,EntityKind.METHOD,EntityKind.CONSTRUCTOR).contains(e.kind())).distinct().toList();}
+    private JavaSymbolName typeNameOfOwner(Node node){return name(enclosingType(node));}
+    boolean nativeOwner(TypeDeclaration<?> type){return nativeMembers!=null&&nativeMembers.owns(name(type));}
+    JavaSymbolName callableName(ResolvedMethodLikeDeclaration resolved){var parameters=new ArrayList<ErasedType>();for(int i=0;i<resolved.getNumberOfParams();i++)parameters.add(erased(resolved.getParam(i).getType(),new HashSet<>()));return resolved instanceof ResolvedConstructorDeclaration?JavaSymbolName.constructor(typeName(resolved.declaringType()),parameters):JavaSymbolName.method(typeName(resolved.declaringType()),resolved.getName(),parameters);}
+    Entity nativeDeclaration(JavaSymbolName symbol,EntityKind kind,JavaEvidenceMapping mapping){
+        var entity=Entity.create(EntityOrigin.PROJECT,EntityScope.project(request.module()),kind,symbol.canonicalName(),Optional.empty());
+        if(declarations.containsKey(entity.identity()))throw new FrontendInputException("frontend.native-member-conflict","An augmentation would overwrite an existing declaration");
+        var derivation=new Derivation(DerivationKind.DERIVED,new VersionedIdentifier("java.native-correspondence","m8.4-v1"),List.of(mapping.record().identity().value(),mapping.record().text("proof"),mapping.source().identity().value()));
+        declarations.put(entity.identity(),new DeclarationRecord(entity,mapping.spelling(),SemanticStatus.RESOLVED,derivation,List.of(),List.of()));return entity;
+    }
+    record JavaEvidenceMapping(com.evolution.analysis.javaevidence.JavaEvidenceRecord record,Entity source,String spelling){}
     private Entity reactorImplicit(JavaSymbolName symbol, EntityKind kind, Node ownerNode,
             Node evidenceNode, String spelling, String rule) {
         Entity owner = entity(ownerNode);
@@ -683,9 +711,9 @@ final class Extraction {
     boolean isLombok(Entity entity,String name) {
         int dot=name.lastIndexOf('.');
         if(entity.origin()!=EntityOrigin.DEPENDENCY||!entity.canonicalName().equals(JavaSymbolName.topLevelType(name.substring(0,dot),name.substring(dot+1)).canonicalName()))return false;
-        return request.dependencies().stream().anyMatch(b->b.entry().logicalName().equals("org.projectlombok:lombok:1.18.46@jar")
-                &&b.entry().contentDigest().value().equals("sha256:01f7b1a015e33e2b62d5f5f37053306357ab1415fd181fcba7794f5d198c1126")
-                &&entity.stableScope().equals(EntityScope.external(EntityOrigin.DEPENDENCY,b.entry().logicalName(),b.entry().contentDigest())));
+        return request.dependencies().stream().anyMatch(b->b.originEntry().logicalName().equals("org.projectlombok:lombok:1.18.46@jar")
+                &&b.originEntry().contentDigest().value().equals("sha256:01f7b1a015e33e2b62d5f5f37053306357ab1415fd181fcba7794f5d198c1126")
+                &&entity.stableScope().equals(EntityScope.external(EntityOrigin.DEPENDENCY,b.originEntry().logicalName(),b.originEntry().contentDigest())));
     }
     void synthesisGap(Node node,String code) {
         var problem=new Diagnostic(DiagnosticSeverity.WARNING,code,"Generated-member evidence is incomplete",Optional.of(source(node).span(node)),Map.of());

@@ -26,11 +26,13 @@ final class ResolutionEnvironment {
     final Set<Diagnostic> diagnostics = new TreeSet<>();
     private final ClasspathEntry platformEntry;
     private final List<Artifact> artifacts = new ArrayList<>();
+    private final Map<ContentDigest,JarTypeSolver> memberEvidence=new TreeMap<>();
     private final Map<Integer, MemoryTypeSolver> reactorSources = new TreeMap<>();
     private record Artifact(BinaryInput input, JarTypeSolver solver) {}
     record Origin(EntityOrigin kind, EntityScope scope) {}
 
     ResolutionEnvironment(FrontendRequest request) {
+        request.originClasspath();
         platformEntry = request.platform().entry();
         try {
             var platformPaths = new HashSet<Path>();
@@ -64,6 +66,14 @@ final class ResolutionEnvironment {
                 verify(input.entry(), bytes);
                 var jar = jarSolver(bytes, request.platform().release(), input.entry().logicalName());
                 artifacts.add(new Artifact(input, jar));
+            }
+            if(request.correspondence().isPresent()){
+                var binding=request.correspondence().orElseThrow();
+                for(var view:binding.binaryViews().entrySet()){
+                    if(view.getValue().size()>32_000_000)throw new FrontendInputException("frontend.native-member-worker","A larger member-evidence worker is required");
+                    byte[] bytes;try(var in=binding.openBinaryView(view.getKey())){bytes=in.readNBytes(Math.toIntExact(view.getValue().size()+1));}
+                    verify(view.getValue().digest(),bytes);var memberSolver=jarSolver(bytes,request.platform().release(),"native-member:"+view.getKey().value());memberSolver.setParent(solver);memberEvidence.put(view.getKey(),memberSolver);
+                }
             }
             Map<Integer, ReactorSourceInput> sourcePositions = new TreeMap<>();
             request.reactorSources().forEach(input -> sourcePositions.put(input.order(), input));
@@ -183,6 +193,11 @@ final class ResolutionEnvironment {
 
     /** Materializes the exact target-release class view so SymbolSolver never guesses MR-JAR selection. */
     private static NormalizedJar normalizeJar(byte[] bytes, int targetRelease) throws IOException {
+        if(bytes.length>=22&&bytes[0]=='P'&&bytes[1]=='K'&&bytes[2]==5&&bytes[3]==6){
+            var end=java.nio.ByteBuffer.wrap(bytes).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+            if(end.getShort(4)==0&&end.getShort(6)==0&&end.getShort(8)==0&&end.getShort(10)==0&&end.getInt(12)==0&&end.getInt(16)==0&&Short.toUnsignedInt(end.getShort(20))==bytes.length-22)
+                return new NormalizedJar(bytes,Optional.empty());
+        }
         if (bytes.length < 4 || bytes[0] != 'P' || bytes[1] != 'K' || bytes[2] != 3 || bytes[3] != 4)
             throw new FrontendInputException("frontend.jar-format", "Dependency is not a JAR archive");
         var physical = new ArrayList<PhysicalJarEntry>();
@@ -252,10 +267,30 @@ final class ResolutionEnvironment {
                     return new Origin(EntityOrigin.PROJECT,
                             EntityScope.project(artifact.input().reactorModule().orElseThrow()));
                 }
-                return origin(EntityOrigin.DEPENDENCY, artifact.input().entry());
+                return origin(EntityOrigin.DEPENDENCY, artifact.input().originEntry());
             }
         }
         throw new IllegalArgumentException("selected declaration has no verified origin");
+    }
+    com.github.javaparser.resolution.declarations.ResolvedReferenceTypeDeclaration nativeType(ContentDigest slot,String qualifiedName){
+        var witness=memberEvidence.get(slot);if(witness!=null){var selected=witness.tryToSolveType(qualifiedName);if(selected.isSolved())return selected.getCorrespondingDeclaration();}
+        for(var artifact:artifacts)if(artifact.input().nativeOrigin().filter(o->o.slot().equals(slot)).isPresent()){
+            var selected=artifact.solver().tryToSolveType(qualifiedName);if(selected.isSolved())return selected.getCorrespondingDeclaration();
+        }
+        throw new FrontendInputException("frontend.native-member-owner","Correspondence owner is absent from the selected solver view");
+    }
+    Set<String> nativeClasses(ContentDigest slot){if(memberEvidence.containsKey(slot))return Set.copyOf(memberEvidence.get(slot).getKnownClasses());for(var artifact:artifacts)if(artifact.input().nativeOrigin().filter(o->o.slot().equals(slot)).isPresent())return Set.copyOf(artifact.solver().getKnownClasses());throw new FrontendInputException("frontend.native-member-slot","Correspondence slot is absent");}
+    boolean privateMemberSlot(ContentDigest slot,String qualifiedName){return memberEvidence.containsKey(slot)&&memberEvidence.get(slot).getKnownClasses().contains(qualifiedName);}
+    Optional<ContentDigest> selectedNativeSlot(String qualifiedName){if(platform.tryToSolveType(qualifiedName).isSolved())return Optional.empty();for(var artifact:artifacts)if(artifact.solver().getKnownClasses().contains(qualifiedName))return artifact.input().nativeOrigin().map(BinaryInput.NativeOrigin::slot);return Optional.empty();}
+    com.evolution.analysis.contract.semantic.Derivation nativeDerivation(String qualifiedName){
+        if(!platform.tryToSolveType(qualifiedName).isSolved())for(var artifact:artifacts)if(artifact.solver().getKnownClasses().contains(qualifiedName)){
+            var input=artifact.input();var origin=input.nativeOrigin();
+            if(input.reactorModule().isPresent()&&origin.flatMap(BinaryInput.NativeOrigin::proof).isPresent())return new com.evolution.analysis.contract.semantic.Derivation(
+                    com.evolution.analysis.contract.semantic.DerivationKind.DERIVED,new com.evolution.analysis.contract.common.VersionedIdentifier("java.native-binary-import","m8.4-v1"),
+                    List.of(origin.orElseThrow().slot().value(),com.evolution.analysis.contract.serialization.CanonicalJson.sha256(origin.orElseThrow().canonicalForm()).value(),input.originEntry().contentDigest().value()));
+            break;
+        }
+        return new com.evolution.analysis.contract.semantic.Derivation(com.evolution.analysis.contract.semantic.DerivationKind.DIRECT,new com.evolution.analysis.contract.common.VersionedIdentifier("java.source","1"),List.of());
     }
     boolean duplicateExternal(String name) {
         int count = platform.tryToSolveType(name).isSolved() ? 1 : 0;

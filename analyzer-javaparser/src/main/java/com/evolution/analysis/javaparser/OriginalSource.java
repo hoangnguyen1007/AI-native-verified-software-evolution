@@ -24,6 +24,14 @@ final class OriginalSource {
     }
     SourceSpan span(Node node) {
         var range = node.getRange().orElseThrow(() -> new IllegalArgumentException("missing source range"));
+        // JavaParser's catch-parameter range can begin at the terminal type name,
+        // while its original qualifier nodes still retain the full written type.
+        if(node instanceof com.github.javaparser.ast.body.Parameter parameter
+                &&parameter.getParentNode().orElse(null) instanceof com.github.javaparser.ast.stmt.CatchClause){
+            for(var part:parameter.getType().stream().toList())if(part.getRange().isPresent()){
+                var written=part.getRange().orElseThrow();if(written.begin.compareTo(range.begin)<0)range=new com.github.javaparser.Range(written.begin,range.end);
+            }
+        }
         if(translated!=null)return span(translated.rawBoundary(translated.offset(range.begin.line,range.begin.column)),
                 translated.rawBoundary(translated.offset(range.end.line,range.end.column)+1));
         int start = offset(range.begin.line, range.begin.column);
@@ -57,7 +65,17 @@ final class OriginalSource {
         if (result > limit) throw new IllegalArgumentException("source column outside line");
         return result;
     }
-    int start(Node node) { var span = span(node); return offset(span.startLine(), span.startColumn()); }
+    int start(Node node) {
+        var span=span(node);
+        // M1 catch symbols already use the original parser anchor. Fuller display
+        // provenance must not silently rename those unchanged logical symbols.
+        if(node instanceof com.github.javaparser.ast.body.Parameter parameter
+                &&parameter.getParentNode().orElse(null) instanceof com.github.javaparser.ast.stmt.CatchClause){
+            var begin=node.getRange().orElseThrow().begin;
+            return translated==null?offset(begin.line,begin.column):translated.rawBoundary(translated.offset(begin.line,begin.column));
+        }
+        return offset(span.startLine(),span.startColumn());
+    }
     String slice(SourceSpan span) {
         if (!document.equals(span.document())) throw new IllegalArgumentException("foreign source span");
         return text.substring(offset(span.startLine(), span.startColumn()), offset(span.endLine(), span.endColumn()));

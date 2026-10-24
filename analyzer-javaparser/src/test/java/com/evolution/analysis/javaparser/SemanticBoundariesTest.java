@@ -8,6 +8,15 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 class SemanticBoundariesTest {
+    @Test void fullerCatchDeclarationSpansPreserveTheExistingM1IdentityAnchor(){
+        String source="class C { void f(){ try{} catch(java.io.IOException failure){} } }";
+        var request=TestInputs.request(source);var result=new JavaParserFrontend().analyze(request);
+        var owner=JavaSymbolName.method(JavaSymbolName.topLevelType("","C"),"f",List.of());
+        var expected=JavaSymbolName.catchParameter(owner,request.sources().getFirst().document().identity(),source.indexOf("IOException failure"),"failure");
+        var parameter=result.declarations().stream().map(d->d.entity()).filter(e->e.kind()==EntityKind.PARAMETER).findFirst().orElseThrow();
+        assertEquals(expected.canonicalName(),parameter.canonicalName());
+        assertEquals("java.io.IOException failure",new OriginalSource(request.sources().getFirst().document().identity(),source).slice(parameter.declaration().orElseThrow()));
+    }
     private static FrontendResult analyze(String source) { return new JavaParserFrontend().analyze(TestInputs.request(source)); }
     private static List<com.evolution.analysis.contract.semantic.RelationshipOccurrence> calls(FrontendResult result) {
         return result.occurrences().stream().filter(o -> o.relationship().kind().value().equals("java.calls")).toList();

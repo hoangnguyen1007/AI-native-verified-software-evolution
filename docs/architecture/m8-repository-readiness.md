@@ -138,3 +138,7 @@ The [M8.4.2 passive readiness planner](m8-build-readiness-planner.md) specifies 
 ## Step-3 Phase-1 execution design
 
 The [M8.4.3 execution contract](m8-isolated-execution.md) and [typed schema catalog](m8-isolated-execution-schemas.md) specify separate requirement/module/execution graphs, native bootstrap, conservative SCC grouping, fenced attempts, brokered materials, hostile-output validation and per-claim promotion. The [Phase-2 matrix](../tasks/m8/04-step3-verification-matrix.md) maps the original step-3 checklist to required controls. This is a PROVISIONAL implementation specification; design validation does not certify a VM, native adapter or semantic provider. Implementation and real isolation/native acceptance remain Phase 2 of the same step.
+
+## Step-4 Phase-1 generated and Java/Spring evidence design
+
+The [closure contract](m8-java-evidence-closure.md), [schema catalog](m8-java-evidence-schemas.md) and [structural JSON Schema](schemas/m8-java-evidence-v1.schema.json) define additive lineage, immutable overlays, exact ordered resolution, source/binary correspondence and current gap reconciliation. Human requested design before TDD implementation; Phase 1 was structurally verified on 2026-10-21. The [verification matrix](../tasks/m8/04-step4-verification-matrix.md) and [implementation prompt](../tasks/m8/04-step4-phase2-prompt.md) govern Phase 2 of the same Step 4. Existing M1 schemas and the Step-3 Core MVP acceptance/trust boundary remain intact; design checks do not establish native generator or semantic completion.

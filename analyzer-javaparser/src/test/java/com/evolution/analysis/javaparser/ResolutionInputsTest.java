@@ -17,6 +17,23 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class ResolutionInputsTest {
     @TempDir Path temp;
+    @Test void capturedEmptyJarIsAnExactEmptySearchSlot()throws Exception{
+        Path path=temp.resolve("empty.jar");try(var output=new JarOutputStream(Files.newOutputStream(path))){}
+        var binary=new BinaryInput(new ClasspathEntry(ClasspathEntryKind.DEPENDENCY,"empty:fixture:1",ContentDigest.sha256(Files.readAllBytes(path))),path);
+        var result=new JavaParserFrontend().analyze(TestInputs.request(Map.of("fixture/C.java","class C { int count(){ return 1; } }"),List.of(binary)));
+        assertTrue(result.declarations().stream().anyMatch(d->d.entity().kind()==EntityKind.TYPE));assertTrue(result.diagnostics().stream().noneMatch(d->d.severity()==DiagnosticSeverity.ERROR));
+    }
+    @Test void unprovedNativeOriginCannotBorrowFrameworkIdentity()throws Exception{
+        var original=jar("native-original","package dep; public class Library { public static int number(){return 1;} }");
+        Path view=temp.resolve("derived.jar");try(var source=new JarFile(original.path().toFile());var output=new JarOutputStream(Files.newOutputStream(view))){
+            for(var entry:source.stream().toList()){output.putNextEntry(new JarEntry(entry.getName()));try(var input=source.getInputStream(entry)){input.transferTo(output);}output.closeEntry();}
+            output.putNextEntry(new JarEntry("META-INF/view-correspondence.txt"));output.write("authored contract fixture".getBytes(java.nio.charset.StandardCharsets.UTF_8));output.closeEntry();
+        }
+        var nativeEntry=new ClasspathEntry(ClasspathEntryKind.DEPENDENCY,"org.springframework:spring-beans:6.2.0@jar",original.entry().contentDigest());
+        var solverEntry=new ClasspathEntry(ClasspathEntryKind.DEPENDENCY,"captured-slot@CLASS_PATH:0",ContentDigest.sha256(Files.readAllBytes(view)));
+        var binary=new BinaryInput(solverEntry,view,Optional.empty(),Optional.of(new BinaryInput.NativeOrigin(nativeEntry,ContentDigest.sha256Utf8("authored-slot"))));
+        var rejected=assertThrows(FrontendInputException.class,()->TestInputs.request(Map.of("fixture/C.java","class C {}"),List.of(binary)));assertEquals("frontend.native-origin-unverified",rejected.diagnostic().code());
+    }
     private Path compileClass(String directory, String code) throws Exception {
         Path root = temp.resolve(directory); Files.createDirectories(root.resolve("dep"));
         Path source = root.resolve("dep/Library.java"); Files.writeString(source, code);
@@ -25,7 +42,7 @@ class ResolutionInputsTest {
         assertEquals(0, exit);
         return root.resolve("dep/Library.class");
     }
-    private BinaryInput jar(String name, String code) throws Exception {
+    BinaryInput jar(String name, String code) throws Exception {
         Path root = temp.resolve(name); Files.createDirectories(root);
         Path source = root.resolve("Library.java"); Files.writeString(source,code);
         // Only test-owned fixed source, no annotation processors or target build lifecycle.

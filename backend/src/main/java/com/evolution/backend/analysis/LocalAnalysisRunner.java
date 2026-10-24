@@ -100,7 +100,7 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
         if (detailed.graphInput().isEmpty()) return new AnalysisJobs.Outcome(AnalysisJobs.Completion.FAILED,Optional.empty(),List.of(),List.copyOf(gaps),Optional.of(acquisition.identity()),Optional.of(detailed.report().identity()),inputProblems(acquisition));
         control.stage(AnalysisJobs.Stage.GRAPH);
         var captured = detailed.graphInput().orElseThrow(); gaps.addAll(captured.gaps());
-        var graph = new CanonicalGraphBuilder().build(new CanonicalGraphInput(captured.repository(),captured.build(),captured.ingestion(),captured.spring(),captured.issues(),List.copyOf(gaps),captured.acquisition()));
+        var graph = new CanonicalGraphBuilder().build(new CanonicalGraphInput(captured.repository(),captured.build(),captured.ingestion(),captured.spring(),captured.issues(),List.copyOf(gaps),captured.acquisition(),captured.javaEvidence()));
         control.checkpoint();
         var reports = new ArrayList<PublishedReports.Report>();
         if (input.policy().isPresent()) {

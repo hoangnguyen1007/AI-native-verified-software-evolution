@@ -66,4 +66,13 @@ class OriginalSourceTest {
         var source = new OriginalSource(DOCUMENT,text);
         assertEquals(expression, source.slice(source.span(call)));
     }
+    @Test void catchParameterDeclarationRetainsItsWrittenQualifiedType(){
+        for(String written:java.util.List.of("java.io.IOException failure","final java.io.IOException failure",
+                "java.io.IOException | java.lang.RuntimeException failure","java."+"\\u"+"0069o.IOException failure")){
+            String text="class C { void f(){ try{} catch("+written+"){} } }";
+            var parameter=parser().parse(text).getResult().orElseThrow().findFirst(com.github.javaparser.ast.stmt.CatchClause.class).orElseThrow().getParameter();
+            var source=new OriginalSource(DOCUMENT,text);
+            assertEquals(written,source.slice(source.span(parameter)));
+        }
+    }
 }

@@ -437,7 +437,7 @@ public final class EvoApp {
                     "versionControl","NOT_INSPECTED","callerRevision",Optional.ofNullable(revision),"callerDirty",dirty));
             if(detailed.graphInput().isPresent()){
                 r.stage="graph";progress(r,"[4/4] Saving a verified snapshot…","[4/4] Lưu snapshot đã kiểm tra…");var input=detailed.graphInput().orElseThrow();
-                var graph=new CanonicalGraphBuilder().build(new CanonicalGraphInput(input.repository(),input.build(),input.ingestion(),input.spring(),input.issues(),List.copyOf(scanGaps),input.acquisition()));
+                var graph=new CanonicalGraphBuilder().build(new CanonicalGraphInput(input.repository(),input.build(),input.ingestion(),input.spring(),input.issues(),List.copyOf(scanGaps),input.acquisition(),input.javaEvidence()));
                 if(r.debug){err.println("[DEBUG] graph nodes="+graph.nodes().size()+" edges="+graph.edges().size()+" evidence="+graph.evidence().size()+" payloadChars="+graph.evidence().stream().mapToLong(e->e.canonicalJson().length()).sum());for(var e:graph.evidence().stream().sorted(Comparator.comparingInt((GraphEvidence e)->e.canonicalJson().length()).reversed()).limit(4).toList())err.println("  "+e.family()+" chars="+e.canonicalJson().length());}
                 boolean usable=detailed.report().status()!=UniversalArchitectureReport.Status.TERMINAL_FAILURE;Optional<String> selected=usable?autoContext(graph):Optional.empty();r.stage="storage";
                 if(usable)r.storage().select(graph,selected);else r.storage().publish(graph);

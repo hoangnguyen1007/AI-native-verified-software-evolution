@@ -25,6 +25,9 @@
             <groupId>com.evolution</groupId><artifactId>analyzer-filesystem</artifactId><version>${project.version}</version><scope>test</scope>
         </dependency>
         <dependency>
+            <groupId>com.evolution</groupId><artifactId>analyzer-execution</artifactId><version>${project.version}</version><scope>test</scope>
+        </dependency>
+        <dependency>
             <groupId>org.junit.jupiter</groupId><artifactId>junit-jupiter</artifactId><scope>test</scope>
         </dependency>
         <dependency>

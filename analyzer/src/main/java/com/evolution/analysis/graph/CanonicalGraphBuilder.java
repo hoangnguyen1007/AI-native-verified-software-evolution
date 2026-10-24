@@ -37,6 +37,7 @@ public final class CanonicalGraphBuilder {
     public KnowledgeGraph build(CanonicalGraphInput input,Collection<EvidenceAcquisitionLedger> ledgers) {
         Objects.requireNonNull(input);
         var p=new Projection(input.repository().snapshot().identity());
+        input.javaEvidence().ifPresent(binding->{try{binding.requireCurrent();}catch(java.io.IOException unavailable){throw new IllegalArgumentException("Unavailable post-analysis Java evidence");}p.javaBase=Optional.of(binding.base());binding.evidence().forEach(e->p.evidence.put(e.identity(),e));});
         String repository=p.repository(input);
         input.ingestion().ifPresent(ingestion->{
             p.artifact("source.ownership",Map.of("inputIdentity",ingestion.sourceIngestion().inputIdentity(),
@@ -49,6 +50,9 @@ public final class CanonicalGraphBuilder {
                     if(!request.manifest().snapshot().identity().equals(p.snapshot))throw new IllegalArgumentException("Foreign frontend snapshot");
                     p.artifact("source.request",Map.of("manifest",request.manifest(),"module",request.module(),"sourceSet",request.sourceSet(),"plan",request.plan()));
                     request.sources().forEach(s->p.artifact("source.bytes",s));
+                    request.originClasspath(); // Revalidate native capabilities before persisting their provenance.
+                    request.dependencies().forEach(binary->binary.nativeOrigin().ifPresent(origin->{p.artifact("java.evidence.binary-origin",origin.canonicalForm());origin.proof().ifPresent(proof->proof.evidence().forEach(e->p.evidence.put(e.identity(),e)));}));
+                    request.correspondence().ifPresent(binding->{try{if(!binding.current())throw new IllegalArgumentException("Revoked source/native correspondence");}catch(java.io.IOException unavailable){throw new IllegalArgumentException("Unavailable source/native correspondence");}binding.evidence().forEach(e->p.evidence.put(e.identity(),e));});
                 });
             }
             for(var unit:ingestion.units()) {
@@ -83,6 +87,7 @@ public final class CanonicalGraphBuilder {
         final Map<String,ContentDigest> statements=new HashMap<>();
         final Map<String,String> injectionUses=new HashMap<>();
         final Map<String,ContentDigest> requiredAttempts=new TreeMap<>();
+        Optional<SnapshotIdentity> javaBase=Optional.empty();
         Projection(SnapshotIdentity snapshot) {this.snapshot=snapshot;}
         ContentDigest artifact(String family,Object value) {
             var artifact=GraphEvidence.capture(family,value);var old=evidence.putIfAbsent(artifact.identity(),artifact);
@@ -346,7 +351,7 @@ public final class CanonicalGraphBuilder {
             edges.put(key,new Edge(old.identity(),old.context(),old.kind(),old.source(),old.target(),List.copyOf(supports),old.region()));
         }
         void gapRecord(String context,CapabilityGapRecord gap) {
-            if(!gap.context().snapshotIdentity().equals(snapshot))throw new IllegalArgumentException("Foreign graph capability gap snapshot");
+            if(!gap.context().snapshotIdentity().equals(snapshot)&&!javaBase.filter(gap.context().snapshotIdentity()::equals).isPresent())throw new IllegalArgumentException("Foreign graph capability gap snapshot");
             var payload=artifact("evidence.gap",gap);node(gap.gapIdentity().value(),context,"CAPABILITY_GAP",payload);
             String expectedContext=gap.context().analysisIdentity().map(AnalysisIdentity::value).orElse(snapshot.value());
             gap.acquisitionAttemptReferences().forEach(ref->requiredAttempts.put(key(expectedContext,ref.value()),payload));

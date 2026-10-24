@@ -30,14 +30,19 @@ public final class CoreMvpBuildPipeline {
         if(expected.isEmpty())throw new IllegalArgumentException("CORE_MVP_OUTPUTS_REQUIRED");
     }
     public ContentHandle run(Path directory)throws IOException{
+        return run(directory,true);
+    }
+    /** Replay is a non-execution entry point even when the publication is concurrently absent. */
+    public ContentHandle replay(Path directory)throws IOException{return run(directory,false);}
+    private ContentHandle run(Path directory,boolean mayLaunch)throws IOException{
         var root=directory.toRealPath();var lockPath=root.resolve("core-mvp.lock");
         try(var channel=FileChannel.open(lockPath,StandardOpenOption.CREATE,StandardOpenOption.WRITE)){
             FileLock lock;try{lock=channel.tryLock();}catch(OverlappingFileLockException busy){throw new IOException("CORE_MVP_ALREADY_RUNNING",busy);}
             if(lock==null)throw new IOException("CORE_MVP_ALREADY_RUNNING");
-            try(lock){return execute(root);}
+            try(lock){return execute(root,mayLaunch);}
         }
     }
-    private ContentHandle execute(Path root)throws IOException{
+    private ContentHandle execute(Path root,boolean mayLaunch)throws IOException{
         var setup=read(root.resolve("setup.json"),65536);
         if(!"CORE_MVP".equals(setup.get("acceptanceScope"))||!"HUMAN".equals(setup.get("approvedBy")))throw new IOException("CORE_MVP_APPROVAL_REQUIRED");
         String attempt=UUID.fromString(text(setup,"attempt")).toString(),workAttempt=attempt.replace("-","");
@@ -50,6 +55,7 @@ public final class CoreMvpBuildPipeline {
             var document=handle(GraphJson.object(saved.get("document")));
             verifyPublication(root,document,identity);return document;
         }
+        if(!mayLaunch)throw new IOException("CORE_MVP_CAPTURE_REQUIRED");
         var intent=root.resolve("core-mvp-intent.json");
         if(!Files.exists(intent)){
             var request=Map.of("attempt",workAttempt,"nonce",UUID.randomUUID().toString().replace("-",""),"work","/work/"+workAttempt,"maxRowBytes",65536,"maxObjectBytes",134217728,"maxCaptureBytes",536870912);

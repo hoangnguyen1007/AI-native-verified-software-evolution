@@ -14,7 +14,13 @@ import java.util.*;
 public record CanonicalGraphInput(RepositoryInputs repository, Optional<UniversalBuildModel> build,
         Optional<UniversalIngestionPipeline.Result> ingestion, List<SpringSlice> spring,
         List<IngestionEvidence.Issue> issues, List<CapabilityGapRecord> gaps,
-        Optional<com.evolution.analysis.acquisition.RepositoryAcquisitionResult> acquisition) {
+        Optional<com.evolution.analysis.acquisition.RepositoryAcquisitionResult> acquisition,
+        Optional<com.evolution.analysis.javaevidence.JavaEvidenceGraph> javaEvidence) {
+    public CanonicalGraphInput(RepositoryInputs repository,Optional<UniversalBuildModel> build,
+            Optional<UniversalIngestionPipeline.Result> ingestion,List<SpringSlice> spring,
+            List<IngestionEvidence.Issue> issues,List<CapabilityGapRecord> gaps,Optional<com.evolution.analysis.acquisition.RepositoryAcquisitionResult> acquisition){
+        this(repository,build,ingestion,spring,issues,gaps,acquisition,Optional.empty());
+    }
     public CanonicalGraphInput(RepositoryInputs repository,Optional<UniversalBuildModel> build,
             Optional<UniversalIngestionPipeline.Result> ingestion,List<SpringSlice> spring,
             List<IngestionEvidence.Issue> issues,List<CapabilityGapRecord> gaps) {
@@ -67,6 +73,7 @@ public record CanonicalGraphInput(RepositoryInputs repository, Optional<Universa
     public CanonicalGraphInput {
         Objects.requireNonNull(repository);Objects.requireNonNull(build);Objects.requireNonNull(ingestion);
         Objects.requireNonNull(acquisition);
+        Objects.requireNonNull(javaEvidence);javaEvidence.ifPresent(value->{if(!value.derived().equals(repository.snapshot().identity()))throw new IllegalArgumentException("Foreign Java evidence view");value.validateFor(ingestion);});
         acquisition.ifPresent(a->{if(a.snapshot().isEmpty()||!a.snapshot().orElseThrow().identity().equals(repository.snapshot().identity()))throw new IllegalArgumentException("Foreign acquisition snapshot");});
         spring=List.copyOf(spring);issues=List.copyOf(issues);gaps=List.copyOf(gaps);
         build.ifPresent(b->{if(!b.repositoryInputIdentity().equals(repository.identity()))throw new IllegalArgumentException("Foreign graph build inputs");});

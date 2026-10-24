@@ -43,11 +43,11 @@ public final class UniversalIngestionPipeline {
                 gaps.addAll(CapabilityGapNormalizer.normalize(EvidenceContext.forAnalysis(request.manifest()),
                         EvidenceNormalizationInput.builder().frontendResults(List.of(result)).build()).gaps());
                 var framework=framework(request);
-                var components=new ComponentScanIngestion().scan(request.manifest(),result,framework,maxTypes);
+                var components=new ComponentScanIngestion().scan(request,result,framework,maxTypes);
                 scanned=Optional.of(components);gaps.addAll(components.gaps());
                 var constructors=new ConstructorInjectionIngestion().ingest(result,components,framework,maxParameters);
                 gaps.addAll(constructors.gaps());
-                var spring=UniversalSpringSemantics.analyze(new SpringSourceEvidence(request.manifest(),result,framework),framework,
+                var spring=UniversalSpringSemantics.analyze(new SpringSourceEvidence(request,result,framework),framework,
                         components,constructors,source.configuration(),source.metadata(),Math.max(maxTypes,maxParameters));
                 gaps.addAll(spring.gaps());
                 units.add(new Unit(source.sourceSet(),Status.ANALYZED,Optional.of(result),Optional.of(components),Optional.of(constructors),Optional.of(spring)));
@@ -72,7 +72,7 @@ public final class UniversalIngestionPipeline {
         if(unit.status()!=Status.ANALYZED||input.request().isEmpty())
             throw new IllegalArgumentException("Spring plans require an analyzed exact source set");
         var request=input.request().orElseThrow();
-        var source=new SpringSourceEvidence(request.manifest(),unit.frontend().orElseThrow(),framework(request));
+        var source=new SpringSourceEvidence(request,unit.frontend().orElseThrow(),framework(request));
         var build=SpringBuildContext.fromExactRequest(request,pipeline.sourceIngestion().identity());
         var normalized=SourceToSpringPlan.normalize(build,source,unit.components().orElseThrow(),unit.constructors().orElseThrow(),scope,limit);
         var inherited=new TreeSet<>(pipeline.gaps());inherited.addAll(normalized.gaps());
@@ -80,19 +80,6 @@ public final class UniversalIngestionPipeline {
                 normalized.binding(),List.copyOf(inherited),normalized.methodSelections());
     }
     private static SpringFrameworkEvidence framework(FrontendRequest request) {
-        var artifacts=new ArrayList<SpringFrameworkEvidence.Artifact>();
-        for(var entry:request.manifest().classpath()) {
-            String name=entry.logicalName();
-            if(name.matches("[^:@]+:[^:@]+:[^:@]+@jar"))
-                artifacts.add(new SpringFrameworkEvidence.Artifact(name.substring(0,name.length()-4),name,entry.contentDigest()));
-        }
-        var versions=artifacts.stream().filter(a->a.groupId().equals("org.springframework")).map(SpringFrameworkEvidence.Artifact::version).distinct().toList();
-        var bootVersions=artifacts.stream().filter(a->a.groupId().equals("org.springframework.boot")).map(SpringFrameworkEvidence.Artifact::version).distinct().toList();
-        boolean compatible=versions.size()<=1&&bootVersions.size()<=1;
-        if(!versions.isEmpty()&&!bootVersions.isEmpty())compatible&=switch(versions.getFirst()) {
-            case "5.3.31"->bootVersions.equals(List.of("2.7.18"));case "6.1.14"->bootVersions.equals(List.of("3.3.5"));
-            case "6.2.0"->bootVersions.equals(List.of("3.4.0"));default->false;
-        };
-        return new SpringFrameworkEvidence(compatible,Optional.of(request.plan().classpathManifest()),artifacts);
+        return SpringFrameworkEvidence.fromRequest(request);
     }
 }

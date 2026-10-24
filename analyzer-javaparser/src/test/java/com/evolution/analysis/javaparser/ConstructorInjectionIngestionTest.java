@@ -24,7 +24,7 @@ class ConstructorInjectionIngestionTest {
         }
         assertTrue(r.issues().isEmpty(),r.issues().toString());
         assertEquals(r.identity(),provider.ingest(fixture.frontend(),discovery,fixture.framework(),100).identity());
-        assertEquals("m7.2-written-types-compat-v2",ConstructorInjectionIngestion.PROVIDER.version());
+        assertEquals("m8.4-native-wiring-compat-v1",ConstructorInjectionIngestion.PROVIDER.version());
     }
     @Test void overloadedOrIncompleteConstructorSetsRemainUnknown()throws Exception {
         var fixture=ComponentIngestionTest.fixture(Map.of("fixture/App.java","""

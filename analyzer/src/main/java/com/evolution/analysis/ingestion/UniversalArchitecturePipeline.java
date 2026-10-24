@@ -263,6 +263,30 @@ public final class UniversalArchitecturePipeline {
         return new DetailedResult(report, captured.stream().findFirst());
     }
 
+    /** Additive native-evidence lane: consume the exact prepared model rather than rediscovering it. */
+    public DetailedResult runWithEvidence(com.evolution.analysis.javaevidence.JavaEvidenceAssembler.Prepared prepared,Policy policy){
+        return runWithEvidence(prepared,policy,Optional.empty(),Optional.empty());
+    }
+    public DetailedResult runWithEvidence(com.evolution.analysis.javaevidence.JavaEvidenceAssembler.Prepared prepared,Policy policy,com.evolution.analysis.javaevidence.JavaSemanticEvidence.Bundle semantic){
+        return runWithEvidence(prepared,policy,Optional.of(Objects.requireNonNull(semantic)),Optional.empty());
+    }
+    public DetailedResult runWithEvidence(com.evolution.analysis.javaevidence.JavaEvidenceAssembler.Prepared prepared,Policy policy,com.evolution.analysis.javaevidence.JavaCompilerAttribution.Bundle compiler,Optional<com.evolution.analysis.javaevidence.JavaSemanticEvidence.Bundle> semantic){
+        return runWithEvidence(prepared,policy,semantic,Optional.of(Objects.requireNonNull(compiler)));
+    }
+    private DetailedResult runWithEvidence(com.evolution.analysis.javaevidence.JavaEvidenceAssembler.Prepared prepared,Policy policy,Optional<com.evolution.analysis.javaevidence.JavaSemanticEvidence.Bundle> semantic,Optional<com.evolution.analysis.javaevidence.JavaCompilerAttribution.Bundle> compiler){
+        Objects.requireNonNull(prepared);Objects.requireNonNull(policy);
+        var invalidated=prepared.invalidationGaps();
+        if(!invalidated.isEmpty()){
+            var gaps=new ArrayList<CapabilityGapRecord>(prepared.activeGaps());gaps.addAll(invalidated);
+            var graphInput=new com.evolution.analysis.graph.CanonicalGraphInput(prepared.inputs(),Optional.empty(),Optional.empty(),List.of(),List.of(),gaps,Optional.empty(),Optional.of(prepared.graph()));
+            return new DetailedResult(buildTerminalReport(prepared.view().identity(),Optional.of(prepared.inputs().snapshot()),Optional.empty(),List.of(),gaps,UniversalArchitectureReport.Status.TERMINAL_FAILURE),Optional.of(graphInput));
+        }
+        var captured=new ArrayList<com.evolution.analysis.graph.CanonicalGraphInput>();
+        var currentGaps=new ArrayList<CapabilityGapRecord>(prepared.activeGaps());
+        var report=run(prepared.inputs(),policy,Optional.empty(),List.of(),currentGaps,captured::add,Optional.of(prepared),semantic,compiler);
+        return new DetailedResult(report,captured.stream().findFirst());
+    }
+
     private UniversalArchitectureReport run(
             RepositoryInputs inputs,
             Policy policy,
@@ -271,10 +295,21 @@ public final class UniversalArchitecturePipeline {
             List<CapabilityGapRecord> initialGaps,
             java.util.function.Consumer<com.evolution.analysis.graph.CanonicalGraphInput> capture
     ) {
+        return run(inputs,policy,inventoryOpt,initialIssues,initialGaps,capture,Optional.empty(),Optional.empty(),Optional.empty());
+    }
+
+    private UniversalArchitectureReport run(RepositoryInputs inputs,Policy policy,Optional<RepositoryUnderstandingInventory> inventoryOpt,
+            List<IngestionEvidence.Issue> initialIssues,List<CapabilityGapRecord> initialGaps,
+            java.util.function.Consumer<com.evolution.analysis.graph.CanonicalGraphInput> capture,
+            Optional<com.evolution.analysis.javaevidence.JavaEvidenceAssembler.Prepared> prepared,
+            Optional<com.evolution.analysis.javaevidence.JavaSemanticEvidence.Bundle> semantic,
+            Optional<com.evolution.analysis.javaevidence.JavaCompilerAttribution.Bundle> compiler){
         long javaFilesCount = inputs.snapshot().files().stream().filter(f -> f.path().endsWith(".java")).count();
         if (inputs.snapshot().files().isEmpty() || javaFilesCount == 0) {
-            capture.accept(new com.evolution.analysis.graph.CanonicalGraphInput(inputs, Optional.empty(), Optional.empty(), List.of(), initialIssues, initialGaps));
-            return buildEmptyOrNonJavaReport(inputs, policy, inventoryOpt, initialIssues, initialGaps);
+            var emptyGaps=new ArrayList<CapabilityGapRecord>(initialGaps);
+            prepared.ifPresent(value->emptyGaps.add(com.evolution.analysis.javaevidence.JavaEvidenceGaps.create(value.view().object("scope"),com.evolution.analysis.javaevidence.JavaEvidenceGaps.Reason.SEMANTIC_MAPPING_UNPROVEN,value.view().identity(),value.view().identity())));
+            capture.accept(new com.evolution.analysis.graph.CanonicalGraphInput(inputs, Optional.empty(), Optional.empty(), List.of(), initialIssues, emptyGaps,Optional.empty(),prepared.map(com.evolution.analysis.javaevidence.JavaEvidenceAssembler.Prepared::graph)));
+            return buildEmptyOrNonJavaReport(inputs, policy, inventoryOpt, initialIssues, emptyGaps);
         }
 
         var allIssues = new ArrayList<IngestionEvidence.Issue>(initialIssues);
@@ -287,13 +322,14 @@ public final class UniversalArchitecturePipeline {
 
         // 1. Build Ingestion
         var buildIngestion = new UniversalBuildIngestion();
-        var buildModel = buildIngestion.ingest(inputs, policy.buildPolicy(), policy.mavenProvider(), policy.externalPoms(), policy.mavenPolicy());
+        var buildModel = prepared.map(com.evolution.analysis.javaevidence.JavaEvidenceAssembler.Prepared::model)
+                .orElseGet(()->buildIngestion.ingest(inputs, policy.buildPolicy(), policy.mavenProvider(), policy.externalPoms(), policy.mavenPolicy()));
         allIssues.addAll(buildModel.issues());
         allGaps.addAll(buildModel.gaps());
 
         // 2. Source Ingestion Resolutions & Assembly
-        var resolutions = new HashMap<UniversalSourceIngestion.SourceSet, UniversalSourceIngestion.Resolution>(policy.resolutions());
-        if (policy.defaultPlatform().isPresent()) {
+        var resolutions = new HashMap<UniversalSourceIngestion.SourceSet, UniversalSourceIngestion.Resolution>(prepared.map(com.evolution.analysis.javaevidence.JavaEvidenceAssembler.Prepared::resolutions).orElse(policy.resolutions()));
+        if (prepared.isEmpty()&&policy.defaultPlatform().isPresent()) {
             var platform = policy.defaultPlatform().get();
             for (var module : buildModel.modules()) {
                 for (var plan : module.sourcePlan().sourceSets()) {
@@ -306,6 +342,9 @@ public final class UniversalArchitecturePipeline {
             }
         }
         // Check Maven declared dependencies against available binary resolutions
+        // In the captured lane, the validated manifest already closes this named context.
+        // Passive declarations can belong to an inactive source set or variant.
+        if(prepared.isEmpty()) {
         for (var mavenResult : buildModel.mavenModels()) {
             for (var mod : mavenResult.modules()) {
                 if (mod.effectivePom().isPresent()) {
@@ -342,20 +381,66 @@ public final class UniversalArchitecturePipeline {
                 }
             }
         }
+        }
         var analyzerComp = new ManifestComponent(new VersionedIdentifier("architecture.analyzer", "1"), ContentDigest.sha256Utf8("analyzer-component"));
         var rulesComp = new ManifestComponent(new VersionedIdentifier("architecture.rules", "1"), ContentDigest.sha256Utf8("rules-component"));
         var schemaComp = com.evolution.analysis.graph.KnowledgeGraph.schemaComponent();
         var sourceIngestion = new UniversalSourceIngestion();
+        var inputOptions=new TreeMap<String,String>();policy.readinessPlan().ifPresent(identity->inputOptions.put("readiness.plan",identity.value()));
+        prepared.ifPresent(value->inputOptions.putAll(value.options()));
+        compiler.ifPresent(bundle->inputOptions.putAll(bundle.options(prepared.orElseThrow().policy())));
         var assembledSources = sourceIngestion.assemble(inputs, buildModel, resolutions, analyzerComp, rulesComp, schemaComp,
-                policy.readinessPlan().map(identity->Map.of("readiness.plan",identity.value())).orElse(Map.of()));
+                inputOptions);
         allIssues.addAll(assembledSources.issues());
         allGaps.addAll(assembledSources.gaps());
 
         // 3. Semantic Frontend Pipeline
         var pipeline = new UniversalIngestionPipeline();
-        var pipelineResult = pipeline.run(assembledSources, policy.frontend(), policy.frontendProvider(), policy.maxTypes(), policy.maxParameters());
+        var compilerResults=new ArrayList<com.evolution.analysis.javaevidence.JavaCompilerAttribution.Result>();
+        com.evolution.analysis.frontend.SemanticFrontend executionFrontend=policy.frontend();var executionProvider=policy.frontendProvider();
+        if(compiler.isPresent()){
+            executionProvider=com.evolution.analysis.javaevidence.JavaCompilerAttribution.PROVIDER;
+            executionFrontend=request->{
+                var primary=policy.frontend().analyze(request).validateFor(request);
+                if(!primary.frontend().equals(policy.frontendProvider()))throw new com.evolution.analysis.frontend.FrontendInputException("frontend.provider-identity","Primary provider differs from the requested provider");
+                var value=prepared.orElseThrow();
+                try{
+                    var applied=new com.evolution.analysis.javaevidence.JavaCompilerAttribution().apply(value.view().object("scope"),value.view().identity(),value.policy(),request,primary,compiler.orElseThrow());
+                    compilerResults.add(applied);allGaps.addAll(applied.gaps());return applied.frontend();
+                }catch(java.io.IOException|RuntimeException unavailable){
+                    // Malformed optional captures must not discard the independently analyzed primary facts.
+                    var reason=com.evolution.analysis.javaevidence.JavaEvidenceGaps.Reason.VALIDATION_REJECTED;
+                    if("JAVA_COMPILER_CANCELLED_WITH_FRONTIER".equals(unavailable.getMessage()))reason=com.evolution.analysis.javaevidence.JavaEvidenceGaps.Reason.CANCELLED_WITH_FRONTIER;
+                    if("JAVA_COMPILER_WORKER_CAPACITY_REQUIRED".equals(unavailable.getMessage()))reason=com.evolution.analysis.javaevidence.JavaEvidenceGaps.Reason.WORKER_CAPACITY_REQUIRED;
+                    allGaps.add(com.evolution.analysis.javaevidence.JavaEvidenceGaps.create(value.view().object("scope"),reason,value.view().identity(),compiler.orElseThrow().index().digest()));
+                    return com.evolution.analysis.javaevidence.JavaCompilerAttribution.unavailable(primary);
+                }
+            };
+        }
+        var pipelineResult = pipeline.run(assembledSources, executionFrontend, executionProvider, policy.maxTypes(), policy.maxParameters());
         allIssues.addAll(pipelineResult.issues());
         allGaps.addAll(pipelineResult.gaps());
+
+        var javaGraph=prepared.map(com.evolution.analysis.javaevidence.JavaEvidenceAssembler.Prepared::graph);
+        for(var applied:compilerResults)try{javaGraph=Optional.of(javaGraph.orElseThrow().withCompilerAttribution(applied));}catch(java.io.IOException revoked){throw new com.evolution.analysis.frontend.FrontendInputException("frontend.compiler-evidence-revoked","Compiler evidence is no longer current");}
+        if(prepared.isPresent()){
+            var value=prepared.orElseThrow();var reason=com.evolution.analysis.javaevidence.JavaEvidenceGaps.Reason.SEMANTIC_MAPPING_UNPROVEN;
+            boolean reconciled=false;
+            if(semantic.isPresent())try{
+                var requests=assembledSources.outcomes().stream().flatMap(o->o.request().stream()).toList();
+                var results=pipelineResult.units().stream().flatMap(u->u.frontend().stream()).toList();
+                if(requests.size()==1&&results.size()==1){
+                    var post=new com.evolution.analysis.javaevidence.JavaSemanticEvidence().reconcile(value.view().object("scope"),value.view().identity(),value.policy(),requests.getFirst(),results.getFirst(),semantic.orElseThrow(),compilerResults.stream().map(r->r.compilerProvider().id()).collect(java.util.stream.Collectors.toSet()));
+                    javaGraph=Optional.of(javaGraph.orElseThrow().withPostAnalysis(post));allGaps.addAll(post.gaps());reconciled=true;
+                }
+            }catch(java.io.IOException|RuntimeException unavailable){
+                // Untrusted payload/availability failures cannot erase the independently analyzed facts.
+                reason=com.evolution.analysis.javaevidence.JavaEvidenceGaps.Reason.VALIDATION_REJECTED;
+                if(unavailable instanceof java.io.IOException&&"JAVA_SEMANTIC_WORKER_CAPACITY_REQUIRED".equals(unavailable.getMessage()))reason=com.evolution.analysis.javaevidence.JavaEvidenceGaps.Reason.WORKER_CAPACITY_REQUIRED;
+                if(unavailable instanceof java.io.IOException&&"JAVA_SEMANTIC_CANCELLED_WITH_FRONTIER".equals(unavailable.getMessage()))reason=com.evolution.analysis.javaevidence.JavaEvidenceGaps.Reason.CANCELLED_WITH_FRONTIER;
+            }
+            if(!reconciled)allGaps.add(com.evolution.analysis.javaevidence.JavaEvidenceGaps.create(value.view().object("scope"),reason,value.view().identity(),semantic.map(b->b.census().digest()).orElse(value.view().identity())));
+        }
 
         // 4. Extract Structural and Semantic Architecture
         var modules = new ArrayList<UniversalArchitectureReport.ModuleBoundary>();
@@ -844,7 +929,7 @@ public final class UniversalArchitecturePipeline {
         long failedUnitsCount = pipelineResult.units().stream()
                 .filter(u -> u.status() == UniversalIngestionPipeline.Status.FAILED || u.status() == UniversalIngestionPipeline.Status.REJECTED)
                 .count();
-        if (analyzedUnitsCount > 0 && failedUnitsCount == 0 && sortedIssues.isEmpty()) {
+        if (analyzedUnitsCount > 0 && failedUnitsCount == 0 && sortedIssues.isEmpty()&&(prepared.isEmpty()||sortedGaps.isEmpty())) {
             status = UniversalArchitectureReport.Status.COMPLETE;
         } else if (analyzedUnitsCount > 0) {
             status = UniversalArchitectureReport.Status.PARTIAL;
@@ -888,9 +973,9 @@ public final class UniversalArchitecturePipeline {
         );
 
         capture.accept(new com.evolution.analysis.graph.CanonicalGraphInput(inputs, Optional.of(buildModel), Optional.of(pipelineResult),
-                springArtifacts, sortedIssues, sortedGaps));
+                springArtifacts, sortedIssues, sortedGaps,Optional.empty(),javaGraph));
         return new UniversalArchitectureReport(
-                inputs.identity(),
+                prepared.map(value->value.view().identity()).orElse(inputs.identity()),
                 status,
                 inventoryOpt,
                 modules,
@@ -931,7 +1016,7 @@ public final class UniversalArchitecturePipeline {
         var resourcePolicy = new SourceToSpringPlan.ResourcePolicy(proof);
 
         var framework = extractSpringFramework(req);
-        var sourceEvidence = new SpringSourceEvidence(req.manifest(), frontend, framework);
+        var sourceEvidence = new SpringSourceEvidence(req, frontend, framework);
 
         var scope = new SourceToSpringPlan.Scope(
                 "architecture-scope",
@@ -950,25 +1035,7 @@ public final class UniversalArchitecturePipeline {
     }
 
     private static SpringFrameworkEvidence extractSpringFramework(FrontendRequest request) {
-        var artifacts = new ArrayList<SpringFrameworkEvidence.Artifact>();
-        for (var entry : request.manifest().classpath()) {
-            String name = entry.logicalName();
-            if (name.matches("[^:@]+:[^:@]+:[^:@]+@jar")) {
-                artifacts.add(new SpringFrameworkEvidence.Artifact(name.substring(0, name.length() - 4), name, entry.contentDigest()));
-            }
-        }
-        var versions = artifacts.stream().filter(a -> a.groupId().equals("org.springframework")).map(SpringFrameworkEvidence.Artifact::version).distinct().toList();
-        var bootVersions = artifacts.stream().filter(a -> a.groupId().equals("org.springframework.boot")).map(SpringFrameworkEvidence.Artifact::version).distinct().toList();
-        boolean compatible = versions.size() <= 1 && bootVersions.size() <= 1;
-        if (!versions.isEmpty() && !bootVersions.isEmpty()) {
-            compatible &= switch (versions.getFirst()) {
-                case "5.3.31" -> bootVersions.equals(List.of("2.7.18"));
-                case "6.1.14" -> bootVersions.equals(List.of("3.3.5"));
-                case "6.2.0" -> bootVersions.equals(List.of("3.4.0"));
-                default -> false;
-            };
-        }
-        return new SpringFrameworkEvidence(compatible, Optional.of(request.plan().classpathManifest()), artifacts);
+        return SpringFrameworkEvidence.fromRequest(request);
     }
 
     private List<UniversalArchitectureReport.RootCauseExplanation> classifyRootCauses(

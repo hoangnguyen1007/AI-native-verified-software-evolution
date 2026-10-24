@@ -16,6 +16,7 @@ final class ImplicitExtraction {
             try {
                 var symbol=context.name(type);
                 if (type instanceof RecordDeclaration record) record(record);
+                else if (context.nativeOwner(type)) { /* The validated native member census owns implicit/processor additions. */ }
                 else if (type instanceof ClassOrInterfaceDeclaration c && context.lombok.declarations(c)) { /* Processor-owned constructor set. */ }
                 else if (type instanceof ClassOrInterfaceDeclaration c && !c.isInterface() && c.getConstructors().isEmpty()
                         || type instanceof EnumDeclaration e && e.getConstructors().isEmpty())

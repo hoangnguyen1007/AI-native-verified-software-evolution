@@ -36,10 +36,16 @@ public final class ComponentScanIngestion {
     private static final String BOOT="org.springframework.boot.autoconfigure.SpringBootApplication",SCAN="org.springframework.context.annotation.ComponentScan";
     private record Annotation(AnnotationUseRecord use,Optional<EntityIdentity> target,Optional<String> trustedName){}
     public Result scan(AnalysisManifest manifest,FrontendResult frontend,SpringFrameworkEvidence framework,int maxTypes) {
+        return scan(manifest,frontend,framework,maxTypes,manifest.classpath());
+    }
+    public Result scan(FrontendRequest request,FrontendResult frontend,SpringFrameworkEvidence framework,int maxTypes){
+        return scan(request.manifest(),frontend,framework,maxTypes,request.originClasspath());
+    }
+    private Result scan(AnalysisManifest manifest,FrontendResult frontend,SpringFrameworkEvidence framework,int maxTypes,List<com.evolution.analysis.contract.analysis.ClasspathEntry> origins){
         if(maxTypes<1)throw new IllegalArgumentException("Positive component limit required");
         if(!manifest.identity().equals(frontend.analysis()))throw new IllegalArgumentException("Frontend belongs to another analysis");
         var snapshot=manifest.snapshot();
-        for(var artifact:framework.artifacts())if(manifest.classpath().stream().noneMatch(c->c.logicalName().equals(artifact.classpathLogicalName())&&c.contentDigest().equals(artifact.contentDigest())))
+        for(var artifact:framework.artifacts())if(origins.stream().noneMatch(c->c.logicalName().equals(artifact.classpathLogicalName())&&c.contentDigest().equals(artifact.contentDigest())))
             throw new IllegalArgumentException("Framework evidence is not in the exact analysis classpath");
         var identity=IngestionEvidence.digest(List.of(PROVIDER,manifest.identity(),IngestionEvidence.digest(frontend),framework.identity(),maxTypes));
         Map<EntityIdentity,DeclarationRecord> declarations=new HashMap<>();frontend.declarations().forEach(d->declarations.put(d.entity().identity(),d));

@@ -36,13 +36,19 @@ public final class SpringSourceEvidence {
     private final List<SemanticRelationship> relations;
     private final ContentDigest identity;
     public SpringSourceEvidence(AnalysisManifest manifest,FrontendResult frontend,SpringFrameworkEvidence framework) {
+        this(manifest,frontend,framework,manifest.classpath());
+    }
+    public SpringSourceEvidence(FrontendRequest request,FrontendResult frontend,SpringFrameworkEvidence framework){
+        this(request.manifest(),frontend,framework,request.originClasspath());
+    }
+    private SpringSourceEvidence(AnalysisManifest manifest,FrontendResult frontend,SpringFrameworkEvidence framework,List<com.evolution.analysis.contract.analysis.ClasspathEntry> origins){
         this.manifest=Objects.requireNonNull(manifest);this.frontend=Objects.requireNonNull(frontend);this.framework=Objects.requireNonNull(framework);
         var relationships=new ArrayList<SemanticRelationship>();
         frontend.occurrences().stream().filter(o->o.status()==SemanticStatus.RESOLVED).forEach(o->relationships.add(o.relationship()));
         frontend.derivedRelationships().stream().filter(d->d.status()==SemanticStatus.RESOLVED).forEach(d->relationships.add(d.relationship()));
         relations=relationships.stream().distinct().sorted().toList();
         if(!manifest.identity().equals(frontend.analysis()))throw new IllegalArgumentException("Foreign frontend evidence");
-        for(var artifact:framework.artifacts())if(manifest.classpath().stream().noneMatch(c->c.logicalName().equals(artifact.classpathLogicalName())&&c.contentDigest().equals(artifact.contentDigest())))
+        for(var artifact:framework.artifacts())if(origins.stream().noneMatch(c->c.logicalName().equals(artifact.classpathLogicalName())&&c.contentDigest().equals(artifact.contentDigest())))
             throw new IllegalArgumentException("Artifact evidence is outside the exact classpath");
         identity=IngestionEvidence.digest(List.of("spring.source-index:m4u.2-v1",manifest.identity(),IngestionEvidence.digest(frontend),framework.identity()));
         for(var declaration:frontend.declarations()) {

@@ -78,4 +78,8 @@ class CoreMvpBuildPipelineTest {
         var fake=setup();pipeline(fake).run(root);fake.changed=true;
         assertEquals("CORE_MVP_INPUTS_CHANGED",assertThrows(IOException.class,()->pipeline(fake).run(root)).getMessage());assertEquals(1,fake.launches);
     }
+    @Test void evidenceReplayCannotStartANewBuildWhenPublicationIsMissing()throws Exception{
+        var fake=setup();assertEquals("CORE_MVP_CAPTURE_REQUIRED",assertThrows(IOException.class,()->pipeline(fake).replay(root)).getMessage());
+        assertEquals(0,fake.launches);assertEquals(0,fake.observations);assertFalse(Files.exists(root.resolve("core-mvp-intent.json")));
+    }
 }

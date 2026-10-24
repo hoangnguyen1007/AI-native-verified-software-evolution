@@ -25,8 +25,9 @@ public final class UniversalSourceIngestion {
                     kind==SourcePlanModel.Kind.TEST?"test":"");
         }
     }
-    public record Resolution(PlatformInput platform,List<BinaryInput> binaries,ContentDigest exactClasspathEvidence) {
-        public Resolution { Objects.requireNonNull(platform);binaries=List.copyOf(binaries);Objects.requireNonNull(exactClasspathEvidence); }
+    public record Resolution(PlatformInput platform,List<BinaryInput> binaries,ContentDigest exactClasspathEvidence,Optional<com.evolution.analysis.javaevidence.JavaSourceCorrespondence.Verified> correspondence) {
+        public Resolution(PlatformInput platform,List<BinaryInput> binaries,ContentDigest exactClasspathEvidence){this(platform,binaries,exactClasspathEvidence,Optional.empty());}
+        public Resolution { Objects.requireNonNull(platform);binaries=List.copyOf(binaries);Objects.requireNonNull(exactClasspathEvidence);Objects.requireNonNull(correspondence); }
     }
     public enum Status { OWNED, UNOWNED, OVERLAPPING, INPUT_UNAVAILABLE, CLASSIFICATION_CONFLICT }
     public record SourceRow(String path,Status status,List<SourceSet> claims) {public SourceRow{claims=List.copyOf(claims);}}
@@ -50,8 +51,12 @@ public final class UniversalSourceIngestion {
         var descriptors=build.modules().stream().map(UniversalBuildModel.Module::descriptor).toList();
         if(!build.repositoryInputIdentity().equals(inputs.identity()))throw new IllegalArgumentException("Build and source inputs differ");
         if(descriptors.stream().anyMatch(m->!m.repository().equals(inputs.snapshot().repository())))throw new IllegalArgumentException("Build belongs to another repository");
-        var resolutionKeys=resolutions.entrySet().stream().map(e->Map.of("set",e.getKey(),"platform",e.getValue().platform().entry(),
-                "classpath",e.getValue().binaries().stream().map(BinaryInput::entry).toList(),"evidence",e.getValue().exactClasspathEvidence())).sorted(Comparator.comparing(IngestionEvidence::digest)).toList();
+        var resolutionKeys=resolutions.entrySet().stream().map(e->{
+            var key=new TreeMap<String,Object>();key.put("set",e.getKey());key.put("platform",e.getValue().platform().entry());key.put("classpath",e.getValue().binaries().stream().map(BinaryInput::entry).toList());key.put("evidence",e.getValue().exactClasspathEvidence());
+            var nativeOrigins=FrontendRequest.binaryOriginOptions(e.getValue().binaries());if(!nativeOrigins.isEmpty())key.put("nativeOrigins",nativeOrigins);
+            var correspondence=FrontendRequest.correspondenceOptions(e.getValue().correspondence());if(!correspondence.isEmpty())key.put("correspondence",correspondence);
+            return key;
+        }).sorted(Comparator.comparing(IngestionEvidence::digest)).toList();
         var identity=IngestionEvidence.digest(readinessOptions.isEmpty()?List.of(PROVIDER,inputs.identity(),build.identity(),resolutionKeys,analyzer,rules,schema):List.of(PROVIDER,inputs.identity(),build.identity(),resolutionKeys,analyzer,rules,schema,readinessOptions));
         var plans=build.modules().stream().flatMap(m->m.sourcePlan().sourceSets().stream()).toList();
         var issues=new ArrayList<IngestionEvidence.Issue>();var rows=new ArrayList<SourceRow>();
@@ -108,11 +113,13 @@ public final class UniversalSourceIngestion {
                     var options=new TreeMap<>(FrontendRequest.options(frontendPlan,plan.module(),set,sourceInputs.stream().map(SourceInput::document).toList(),resolution.platform()));
                     options.put("ingestion.build-model",build.identity().value());options.put("ingestion.source-input",identity.value());
                     options.put("ingestion.source-set-name",plan.name());
+                    options.putAll(FrontendRequest.binaryOriginOptions(resolution.binaries()));
+                    options.putAll(FrontendRequest.correspondenceOptions(resolution.correspondence()));
                     options.putAll(readinessOptions);
                     var classpath=new ArrayList<ClasspathEntry>();classpath.add(resolution.platform().entry());resolution.binaries().forEach(b->classpath.add(b.entry()));
                     var manifest=AnalysisManifest.create(new VersionedIdentifier("analysis.manifest","1"),snapshot,descriptors,classpath,
                             AnalysisConfiguration.create(new VersionedIdentifier("analysis.configuration","1"),options),analyzer,rules,schema);
-                    request=Optional.of(new FrontendRequest(manifest,plan.module(),set,frontendPlan,sourceInputs,resolution.platform(),resolution.binaries()));
+                    request=Optional.of(new FrontendRequest(manifest,plan.module(),set,frontendPlan,sourceInputs,resolution.platform(),resolution.binaries(),List.of(),resolution.correspondence()));
                 }catch(IllegalArgumentException failure){issues.add(new IngestionEvidence.Issue(SOURCE_INCOMPLETE,key.toString(),List.of(identity)));}
             }
             var metadata=new ArrayList<AutoConfigurationMetadata.Resource>();

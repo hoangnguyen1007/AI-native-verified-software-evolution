@@ -31,6 +31,24 @@ public record SpringFrameworkEvidence(boolean completeClasspath,
         return new SpringFrameworkEvidence(manifest.status() == ExactClasspathResult.Status.COMPLETE,
                 Optional.of(manifest.identity()), artifacts);
     }
+    /** Framework identity follows the native artifact, not a per-slot solver filename. */
+    public static SpringFrameworkEvidence fromRequest(com.evolution.analysis.frontend.FrontendRequest request){
+        var artifacts=new ArrayList<Artifact>();var seen=new LinkedHashMap<String,Artifact>();boolean compatible=true;
+        boolean nativeView=request.dependencies().stream().anyMatch(b->b.nativeOrigin().isPresent());
+        for(var entry:request.originClasspath()){
+            String name=entry.logicalName();if(!name.matches("[^:@]+:[^:@]+:[^:@]+@jar"))continue;
+            var artifact=new Artifact(name.substring(0,name.length()-4),name,entry.contentDigest());
+            if(nativeView){var previous=seen.putIfAbsent(name,artifact);if(previous!=null){if(!previous.equals(artifact))compatible=false;continue;}}
+            artifacts.add(artifact);
+        }
+        var versions=artifacts.stream().filter(a->a.groupId().equals("org.springframework")).map(Artifact::version).distinct().toList();
+        var boot=artifacts.stream().filter(a->a.groupId().equals("org.springframework.boot")).map(Artifact::version).distinct().toList();
+        compatible&=versions.size()<=1&&boot.size()<=1;
+        if(!versions.isEmpty()&&!boot.isEmpty())compatible&=switch(versions.getFirst()){
+            case "5.3.31"->boot.equals(List.of("2.7.18"));case "6.1.14"->boot.equals(List.of("3.3.5"));case "6.2.0"->boot.equals(List.of("3.4.0"));default->false;
+        };
+        return new SpringFrameworkEvidence(compatible,Optional.of(request.plan().classpathManifest()),artifacts);
+    }
 
     public ContentDigest identity() {
         return ContentDigest.sha256Utf8(CanonicalJson.write(this));

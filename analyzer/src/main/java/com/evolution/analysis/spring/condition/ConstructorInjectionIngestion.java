@@ -14,7 +14,7 @@ import static com.evolution.analysis.ingestion.IngestionEvidence.Reason.*;
 
 /** Constructor-site acquisition. Candidate matching and conditional activation remain downstream. */
 public final class ConstructorInjectionIngestion {
-    public static final VersionedIdentifier PROVIDER=new VersionedIdentifier("spring.constructor-ingestion","m7.2-written-types-compat-v2");
+    public static final VersionedIdentifier PROVIDER=new VersionedIdentifier("spring.constructor-ingestion","m8.4-native-wiring-compat-v1");
     public enum Status { SELECTED, NOT_SELECTED, UNKNOWN }
     public record Parameter(EntityIdentity constructor,EntityIdentity parameter,int index,JavaType type,ConditionEvidence evidence) {
         public Parameter {Objects.requireNonNull(constructor);Objects.requireNonNull(parameter);Objects.requireNonNull(type);Objects.requireNonNull(evidence);if(index<0)throw new IllegalArgumentException("Negative parameter index");}
@@ -48,7 +48,13 @@ public final class ConstructorInjectionIngestion {
                 new VersionedIdentifier("frontend.javaparser","3.28.2-m4uv2.2"),
                 new VersionedIdentifier("frontend.javaparser","3.28.2-m4uv2.2-injection-v1"),
                 new VersionedIdentifier("frontend.javaparser","3.28.2-m7.2-platform-v1"),
-                new VersionedIdentifier("frontend.javaparser","3.28.2-m7.2-written-types-v2")).contains(frontend.frontend());
+                new VersionedIdentifier("frontend.javaparser","3.28.2-m7.2-written-types-v2"),
+                new VersionedIdentifier("frontend.javaparser","3.28.2-m8.4-captured-input-v1"),
+                new VersionedIdentifier("frontend.javaparser","3.28.2-m8.4-expression-types-v1"),
+                new VersionedIdentifier("frontend.javaparser","3.28.2-m8.4-expression-types-v2"),
+                new VersionedIdentifier("frontend.javaparser","3.28.2-m8.4-expression-types-v3"),
+                new VersionedIdentifier("frontend.javaparser","3.28.2-m8.4-native-constructors-v1"),
+                new VersionedIdentifier("frontend.javaparser","3.28.2-m8.4-native-wiring-v1")).contains(frontend.frontend());
         for(var component:discovery.rows()) {
             var evidence=new ConditionEvidence.Derived(List.of(identity,component.evidence().identity()),PROVIDER,"constructor-selection:"+component.type().value());
             if(component.status()!=ComponentScanIngestion.Status.INCLUDED) {

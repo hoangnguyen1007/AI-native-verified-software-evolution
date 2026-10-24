@@ -1,0 +1,2655 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:evo:schema:m8-java-evidence:v1",
+  "title": "M8.4 Step 4 Java evidence records (PROVISIONAL structural contract)",
+  "description": "Shape validation only. Hashes, references, table ordering, authority and semantic predicates require the companion contract.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/java-evidence-input"
+    },
+    {
+      "$ref": "#/$defs/java-generation-lineage"
+    },
+    {
+      "$ref": "#/$defs/java-output-row"
+    },
+    {
+      "$ref": "#/$defs/java-generated-overlay"
+    },
+    {
+      "$ref": "#/$defs/java-resolution-slot"
+    },
+    {
+      "$ref": "#/$defs/java-resolution-manifest"
+    },
+    {
+      "$ref": "#/$defs/java-evidence-proof"
+    },
+    {
+      "$ref": "#/$defs/java-closure-requirement"
+    },
+    {
+      "$ref": "#/$defs/java-closure-decision"
+    },
+    {
+      "$ref": "#/$defs/java-closure-ledger"
+    },
+    {
+      "$ref": "#/$defs/java-closure-current-row"
+    },
+    {
+      "$ref": "#/$defs/java-closure-projection"
+    },
+    {
+      "$ref": "#/$defs/java-evidence-binding"
+    },
+    {
+      "$ref": "#/$defs/java-source-map-row"
+    },
+    {
+      "$ref": "#/$defs/java-semantic-input-view"
+    },
+    {
+      "$ref": "#/$defs/java-source-membership"
+    },
+    {
+      "$ref": "#/$defs/java-correspondence"
+    }
+  ],
+  "$defs": {
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "minLength": 71,
+      "maxLength": 71
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "u64": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9223372036854775807
+    },
+    "version": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "version": {
+          "$ref": "#/$defs/id"
+        }
+      },
+      "required": [
+        "id",
+        "version"
+      ],
+      "additionalProperties": false
+    },
+    "handle": {
+      "type": "object",
+      "properties": {
+        "digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "size": {
+          "$ref": "#/$defs/u64"
+        }
+      },
+      "required": [
+        "digest",
+        "size"
+      ],
+      "additionalProperties": false
+    },
+    "path": {
+      "type": "object",
+      "properties": {
+        "rawBase64": {
+          "type": "string",
+          "minLength": 4,
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$"
+        }
+      },
+      "required": [
+        "rawBase64"
+      ],
+      "additionalProperties": false
+    },
+    "snapshot": {
+      "type": "string",
+      "pattern": "^snapshot:sha256:[0-9a-f]{64}$",
+      "minLength": 80,
+      "maxLength": 80
+    },
+    "module": {
+      "type": "string",
+      "pattern": "^module:sha256:[0-9a-f]{64}$",
+      "minLength": 78,
+      "maxLength": 78
+    },
+    "scope": {
+      "type": "object",
+      "properties": {
+        "inventory": {
+          "$ref": "#/$defs/digest"
+        },
+        "baseSnapshot": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/snapshot"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "readiness": {
+          "$ref": "#/$defs/digest"
+        },
+        "selection": {
+          "$ref": "#/$defs/digest"
+        },
+        "context": {
+          "$ref": "#/$defs/digest"
+        },
+        "logicalScope": {
+          "$ref": "#/$defs/digest"
+        },
+        "module": {
+          "$ref": "#/$defs/module"
+        },
+        "sourceSet": {
+          "$ref": "#/$defs/id"
+        },
+        "variant": {
+          "$ref": "#/$defs/id"
+        }
+      },
+      "required": [
+        "inventory",
+        "baseSnapshot",
+        "readiness",
+        "selection",
+        "context",
+        "logicalScope",
+        "module",
+        "sourceSet",
+        "variant"
+      ],
+      "additionalProperties": false
+    },
+    "locator": {
+      "type": "object",
+      "properties": {
+        "container": {
+          "$ref": "#/$defs/handle"
+        },
+        "members": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "$ref": "#/$defs/path"
+              },
+              "ordinal": {
+                "$ref": "#/$defs/u64"
+              },
+              "content": {
+                "$ref": "#/$defs/handle"
+              }
+            },
+            "required": [
+              "path",
+              "ordinal",
+              "content"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0
+        },
+        "path": {
+          "$ref": "#/$defs/path"
+        }
+      },
+      "required": [
+        "container",
+        "members",
+        "path"
+      ],
+      "additionalProperties": false
+    },
+    "check": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/id"
+        },
+        "outcome": {
+          "enum": [
+            "PASS",
+            "FAIL",
+            "UNKNOWN"
+          ]
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/handle"
+          },
+          "minItems": 0,
+          "uniqueItems": true
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "outcome",
+        "evidence",
+        "reason"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "const": "PASS"
+              }
+            },
+            "required": [
+              "outcome"
+            ]
+          },
+          "then": {
+            "properties": {
+              "evidence": {
+                "minItems": 1
+              },
+              "reason": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "FAIL",
+                  "UNKNOWN"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "reason": {
+                "not": {
+                  "type": "null"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "state": {
+      "enum": [
+        "PENDING",
+        "NARROWED",
+        "SATISFIED",
+        "NOT_APPLICABLE",
+        "CONFLICTED",
+        "REOPENED"
+      ]
+    },
+    "counts": {
+      "type": "object",
+      "properties": {
+        "total": {
+          "$ref": "#/$defs/u64"
+        },
+        "pending": {
+          "$ref": "#/$defs/u64"
+        },
+        "narrowed": {
+          "$ref": "#/$defs/u64"
+        },
+        "satisfied": {
+          "$ref": "#/$defs/u64"
+        },
+        "notApplicable": {
+          "$ref": "#/$defs/u64"
+        },
+        "conflicted": {
+          "$ref": "#/$defs/u64"
+        },
+        "reopened": {
+          "$ref": "#/$defs/u64"
+        },
+        "active": {
+          "$ref": "#/$defs/u64"
+        }
+      },
+      "required": [
+        "total",
+        "pending",
+        "narrowed",
+        "satisfied",
+        "notApplicable",
+        "conflicted",
+        "reopened",
+        "active"
+      ],
+      "additionalProperties": false
+    },
+    "java-evidence-input": {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "java-evidence-input:m8.4-v1"
+        },
+        "role": {
+          "enum": [
+            "SOURCE",
+            "SCHEMA",
+            "CONFIG",
+            "TOOL",
+            "PLATFORM",
+            "MATERIAL",
+            "ENVIRONMENT",
+            "ARGFILE",
+            "SOURCE_MEMBERSHIP",
+            "CORRESPONDENCE"
+          ]
+        },
+        "content": {
+          "$ref": "#/$defs/handle"
+        },
+        "locator": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/locator"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "provider": {
+          "$ref": "#/$defs/version"
+        }
+      },
+      "required": [
+        "schema",
+        "role",
+        "content",
+        "locator",
+        "provider"
+      ],
+      "additionalProperties": false
+    },
+    "java-generation-lineage": {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "java-generation-lineage:m8.4-v1"
+        },
+        "scope": {
+          "$ref": "#/$defs/scope"
+        },
+        "generator": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/version"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "compiler": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/version"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "toolchain": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/digest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "recipe": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/digest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "configuration": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/digest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "environment": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/digest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "nativeResolution": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/digest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "inputs": {
+          "type": "object",
+          "properties": {
+            "schema": {
+              "const": "java-evidence-input-table:m8.4-v1"
+            },
+            "content": {
+              "$ref": "#/$defs/handle"
+            },
+            "rows": {
+              "$ref": "#/$defs/u64"
+            }
+          },
+          "required": [
+            "schema",
+            "content",
+            "rows"
+          ],
+          "additionalProperties": false
+        },
+        "outputCensus": {
+          "$ref": "#/$defs/handle"
+        },
+        "inputClosure": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/digest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "closure": {
+          "enum": [
+            "COMPLETE",
+            "OPEN"
+          ]
+        },
+        "gaps": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/gapIdentity"
+          },
+          "minItems": 0,
+          "uniqueItems": true
+        },
+        "compilerApplicability": {
+          "enum": [
+            "APPLICABLE",
+            "NOT_APPLICABLE",
+            "UNKNOWN"
+          ]
+        },
+        "compilerApplicabilityProof": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/digest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "schema",
+        "scope",
+        "generator",
+        "compiler",
+        "toolchain",
+        "recipe",
+        "configuration",
+        "environment",
+        "nativeResolution",
+        "inputs",
+        "outputCensus",
+        "inputClosure",
+        "closure",
+        "gaps",
+        "compilerApplicability",
+        "compilerApplicabilityProof"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "closure": {
+                "const": "COMPLETE"
+              }
+            },
+            "required": [
+              "closure"
+            ]
+          },
+          "then": {
+            "properties": {
+              "generator": {
+                "not": {
+                  "type": "null"
+                }
+              },
+              "toolchain": {
+                "not": {
+                  "type": "null"
+                }
+              },
+              "recipe": {
+                "not": {
+                  "type": "null"
+                }
+              },
+              "configuration": {
+                "not": {
+                  "type": "null"
+                }
+              },
+              "environment": {
+                "not": {
+                  "type": "null"
+                }
+              },
+              "nativeResolution": {
+                "not": {
+                  "type": "null"
+                }
+              },
+              "inputClosure": {
+                "not": {
+                  "type": "null"
+                }
+              },
+              "gaps": {
+                "maxItems": 0
+              },
+              "inputs": {
+                "properties": {
+                  "rows": {
+                    "minimum": 1
+                  }
+                }
+              },
+              "compilerApplicability": {
+                "enum": [
+                  "APPLICABLE",
+                  "NOT_APPLICABLE"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "closure": {
+                "const": "OPEN"
+              }
+            },
+            "required": [
+              "closure"
+            ]
+          },
+          "then": {
+            "properties": {
+              "gaps": {
+                "minItems": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "compilerApplicability": {
+                "const": "APPLICABLE"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "compiler": {
+                "$ref": "#/$defs/version"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "compilerApplicability": {
+                "const": "NOT_APPLICABLE"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "compiler": {
+                "type": "null"
+              },
+              "compilerApplicabilityProof": {
+                "$ref": "#/$defs/digest"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "java-output-row": {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "java-output-row:m8.4-v1"
+        },
+        "key": {
+          "$ref": "#/$defs/digest"
+        },
+        "scope": {
+          "$ref": "#/$defs/scope"
+        },
+        "role": {
+          "$ref": "#/$defs/id"
+        },
+        "expectation": {
+          "enum": [
+            "REQUIRED",
+            "OPTIONAL",
+            "OBSERVED"
+          ]
+        },
+        "locator": {
+          "$ref": "#/$defs/locator"
+        },
+        "kind": {
+          "enum": [
+            "FILE",
+            "DIRECTORY",
+            "LINK",
+            "SPECIAL"
+          ]
+        },
+        "content": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/handle"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "lineage": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/digest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "rootProof": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/digest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "category": {
+          "enum": [
+            "JAVA_SOURCE",
+            "RESOURCE",
+            "CLASS",
+            "ARCHIVE",
+            "NON_JAVA_SOURCE",
+            "OTHER"
+          ]
+        },
+        "disposition": {
+          "enum": [
+            "ACCEPTED",
+            "RETAINED",
+            "ABSENT",
+            "REJECTED",
+            "UNAVAILABLE",
+            "NOT_REACHED"
+          ]
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "schema",
+        "key",
+        "scope",
+        "role",
+        "expectation",
+        "locator",
+        "kind",
+        "content",
+        "lineage",
+        "rootProof",
+        "category",
+        "disposition",
+        "reason"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "disposition": {
+                "const": "ACCEPTED"
+              }
+            },
+            "required": [
+              "disposition"
+            ]
+          },
+          "then": {
+            "properties": {
+              "kind": {
+                "const": "FILE"
+              },
+              "content": {
+                "$ref": "#/$defs/handle"
+              },
+              "lineage": {
+                "$ref": "#/$defs/digest"
+              },
+              "rootProof": {
+                "$ref": "#/$defs/digest"
+              },
+              "reason": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "disposition": {
+                "enum": [
+                  "ABSENT",
+                  "UNAVAILABLE",
+                  "NOT_REACHED"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "content": {
+                "type": "null"
+              },
+              "reason": {
+                "$ref": "#/$defs/id"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "disposition": {
+                "enum": [
+                  "REJECTED",
+                  "RETAINED"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "reason": {
+                "not": {
+                  "type": "null"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "java-generated-overlay": {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "java-generated-overlay:m8.4-v1"
+        },
+        "scope": {
+          "$ref": "#/$defs/scope"
+        },
+        "outputCensus": {
+          "$ref": "#/$defs/handle"
+        },
+        "lineages": {
+          "type": "object",
+          "properties": {
+            "schema": {
+              "const": "java-generation-lineage-table:m8.4-v1"
+            },
+            "content": {
+              "$ref": "#/$defs/handle"
+            },
+            "rows": {
+              "$ref": "#/$defs/u64"
+            }
+          },
+          "required": [
+            "schema",
+            "content",
+            "rows"
+          ],
+          "additionalProperties": false
+        },
+        "outputs": {
+          "type": "object",
+          "properties": {
+            "schema": {
+              "const": "java-output-row-table:m8.4-v1"
+            },
+            "content": {
+              "$ref": "#/$defs/handle"
+            },
+            "rows": {
+              "$ref": "#/$defs/u64"
+            }
+          },
+          "required": [
+            "schema",
+            "content",
+            "rows"
+          ],
+          "additionalProperties": false
+        },
+        "provider": {
+          "$ref": "#/$defs/version"
+        },
+        "census": {
+          "enum": [
+            "SEALED",
+            "OPEN"
+          ]
+        },
+        "closure": {
+          "enum": [
+            "COMPLETE",
+            "PARTIAL"
+          ]
+        },
+        "frontier": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/digest"
+          },
+          "minItems": 0,
+          "uniqueItems": true
+        },
+        "gaps": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/gapIdentity"
+          },
+          "minItems": 0,
+          "uniqueItems": true
+        },
+        "counts": {
+          "type": "object",
+          "properties": {
+            "total": {
+              "$ref": "#/$defs/u64"
+            },
+            "accepted": {
+              "$ref": "#/$defs/u64"
+            },
+            "retained": {
+              "$ref": "#/$defs/u64"
+            },
+            "absent": {
+              "$ref": "#/$defs/u64"
+            },
+            "rejected": {
+              "$ref": "#/$defs/u64"
+            },
+            "unavailable": {
+              "$ref": "#/$defs/u64"
+            },
+            "notReached": {
+              "$ref": "#/$defs/u64"
+            }
+          },
+          "required": [
+            "total",
+            "accepted",
+            "retained",
+            "absent",
+            "rejected",
+            "unavailable",
+            "notReached"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "schema",
+        "scope",
+        "outputCensus",
+        "lineages",
+        "outputs",
+        "provider",
+        "census",
+        "closure",
+        "frontier",
+        "gaps",
+        "counts"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "closure": {
+                "const": "COMPLETE"
+              }
+            },
+            "required": [
+              "closure"
+            ]
+          },
+          "then": {
+            "properties": {
+              "census": {
+                "const": "SEALED"
+              },
+              "frontier": {
+                "maxItems": 0
+              },
+              "gaps": {
+                "maxItems": 0
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "census": {
+                "const": "OPEN"
+              }
+            },
+            "required": [
+              "census"
+            ]
+          },
+          "then": {
+            "properties": {
+              "frontier": {
+                "minItems": 1
+              }
+            }
+          }
+        }
+      ]
+    },
+    "java-resolution-slot": {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "java-resolution-slot:m8.4-v1"
+        },
+        "scope": {
+          "$ref": "#/$defs/scope"
+        },
+        "space": {
+          "enum": [
+            "CLASS_PATH",
+            "MODULE_PATH",
+            "PROCESSOR_PATH",
+            "RESOURCE_PATH",
+            "RUNTIME_PATH",
+            "BINARY_EVIDENCE"
+          ]
+        },
+        "ordinal": {
+          "$ref": "#/$defs/u64"
+        },
+        "logicalName": {
+          "$ref": "#/$defs/id"
+        },
+        "kind": {
+          "enum": [
+            "JAR",
+            "CLASS_DIRECTORY",
+            "NESTED_ARCHIVE",
+            "REACTOR_SOURCE",
+            "PLATFORM"
+          ]
+        },
+        "original": {
+          "$ref": "#/$defs/handle"
+        },
+        "tree": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "schema": {
+                  "const": "java-output-row-table:m8.4-v1"
+                },
+                "content": {
+                  "$ref": "#/$defs/handle"
+                },
+                "rows": {
+                  "$ref": "#/$defs/u64"
+                }
+              },
+              "required": [
+                "schema",
+                "content",
+                "rows"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "selectedView": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/handle"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "origin": {
+          "anyOf": [
+            {
+              "enum": [
+                "PROJECT",
+                "JDK",
+                "DEPENDENCY"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "module": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/module"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "proof": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/digest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "disposition": {
+          "enum": [
+            "ACCEPTED",
+            "WITHHELD"
+          ]
+        },
+        "gaps": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/gapIdentity"
+          },
+          "minItems": 0,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "schema",
+        "scope",
+        "space",
+        "ordinal",
+        "logicalName",
+        "kind",
+        "original",
+        "tree",
+        "selectedView",
+        "origin",
+        "module",
+        "proof",
+        "disposition",
+        "gaps"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "CLASS_DIRECTORY"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "tree": {
+                "not": {
+                  "type": "null"
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "origin": {
+                "const": "PROJECT"
+              }
+            },
+            "required": [
+              "origin"
+            ]
+          },
+          "then": {
+            "properties": {
+              "module": {
+                "not": {
+                  "type": "null"
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "disposition": {
+                "const": "ACCEPTED"
+              }
+            },
+            "required": [
+              "disposition"
+            ]
+          },
+          "then": {
+            "properties": {
+              "origin": {
+                "not": {
+                  "type": "null"
+                }
+              },
+              "proof": {
+                "$ref": "#/$defs/digest"
+              },
+              "gaps": {
+                "maxItems": 0
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "disposition": {
+                "const": "WITHHELD"
+              }
+            },
+            "required": [
+              "disposition"
+            ]
+          },
+          "then": {
+            "properties": {
+              "gaps": {
+                "minItems": 1
+              }
+            }
+          }
+        }
+      ]
+    },
+    "java-resolution-manifest": {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "java-resolution-manifest:m8.4-v1"
+        },
+        "scope": {
+          "$ref": "#/$defs/scope"
+        },
+        "overlay": {
+          "$ref": "#/$defs/digest"
+        },
+        "compiler": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/version"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sourceLanguage": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "bytecodeTarget": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "release": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "preview": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "encoding": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "platform": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/digest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sourceMembership": {
+          "type": "object",
+          "properties": {
+            "schema": {
+              "const": "java-evidence-input-table:m8.4-v1"
+            },
+            "content": {
+              "$ref": "#/$defs/handle"
+            },
+            "rows": {
+              "$ref": "#/$defs/u64"
+            }
+          },
+          "required": [
+            "schema",
+            "content",
+            "rows"
+          ],
+          "additionalProperties": false
+        },
+        "slots": {
+          "type": "object",
+          "properties": {
+            "schema": {
+              "const": "java-resolution-slot-table:m8.4-v1"
+            },
+            "content": {
+              "$ref": "#/$defs/handle"
+            },
+            "rows": {
+              "$ref": "#/$defs/u64"
+            }
+          },
+          "required": [
+            "schema",
+            "content",
+            "rows"
+          ],
+          "additionalProperties": false
+        },
+        "arguments": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 0
+        },
+        "argfiles": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/handle"
+          },
+          "minItems": 0
+        },
+        "contextProof": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/digest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "enum": [
+            "EXACT",
+            "WITHHELD"
+          ]
+        },
+        "gaps": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/gapIdentity"
+          },
+          "minItems": 0,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "schema",
+        "scope",
+        "overlay",
+        "compiler",
+        "sourceLanguage",
+        "bytecodeTarget",
+        "release",
+        "preview",
+        "encoding",
+        "platform",
+        "sourceMembership",
+        "slots",
+        "arguments",
+        "argfiles",
+        "contextProof",
+        "status",
+        "gaps"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "EXACT"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "compiler": {
+                "not": {
+                  "type": "null"
+                }
+              },
+              "sourceLanguage": {
+                "not": {
+                  "type": "null"
+                }
+              },
+              "bytecodeTarget": {
+                "not": {
+                  "type": "null"
+                }
+              },
+              "preview": {
+                "not": {
+                  "type": "null"
+                }
+              },
+              "encoding": {
+                "not": {
+                  "type": "null"
+                }
+              },
+              "platform": {
+                "not": {
+                  "type": "null"
+                }
+              },
+              "contextProof": {
+                "not": {
+                  "type": "null"
+                }
+              },
+              "gaps": {
+                "maxItems": 0
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "WITHHELD"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "gaps": {
+                "minItems": 1
+              }
+            }
+          }
+        }
+      ]
+    },
+    "java-evidence-proof": {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "java-evidence-proof:m8.4-v1"
+        },
+        "scope": {
+          "$ref": "#/$defs/scope"
+        },
+        "question": {
+          "$ref": "#/$defs/id"
+        },
+        "subject": {
+          "$ref": "#/$defs/id"
+        },
+        "predicate": {
+          "$ref": "#/$defs/version"
+        },
+        "validator": {
+          "$ref": "#/$defs/version"
+        },
+        "policy": {
+          "$ref": "#/$defs/digest"
+        },
+        "answer": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/handle"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "inputClosure": {
+          "$ref": "#/$defs/digest"
+        },
+        "inputs": {
+          "type": "object",
+          "properties": {
+            "schema": {
+              "const": "java-evidence-input-table:m8.4-v1"
+            },
+            "content": {
+              "$ref": "#/$defs/handle"
+            },
+            "rows": {
+              "$ref": "#/$defs/u64"
+            }
+          },
+          "required": [
+            "schema",
+            "content",
+            "rows"
+          ],
+          "additionalProperties": false
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/check"
+          },
+          "minItems": 1
+        },
+        "outcome": {
+          "enum": [
+            "ACCEPT",
+            "REJECT",
+            "INCOMPLETE"
+          ]
+        },
+        "trust": {
+          "enum": [
+            "CAPTURED_BYTES",
+            "PRODUCER_ASSERTION",
+            "VALIDATED_OBSERVATION"
+          ]
+        },
+        "limitations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/id"
+          },
+          "minItems": 0,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "schema",
+        "scope",
+        "question",
+        "subject",
+        "predicate",
+        "validator",
+        "policy",
+        "answer",
+        "inputClosure",
+        "inputs",
+        "checks",
+        "outcome",
+        "trust",
+        "limitations"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "const": "ACCEPT"
+              }
+            },
+            "required": [
+              "outcome"
+            ]
+          },
+          "then": {
+            "properties": {
+              "answer": {
+                "$ref": "#/$defs/handle"
+              },
+              "checks": {
+                "items": {
+                  "properties": {
+                    "outcome": {
+                      "const": "PASS"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "trust": {
+                "const": "VALIDATED_OBSERVATION"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "outcome": {
+                "const": "ACCEPT"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "java-closure-requirement": {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "java-closure-requirement:m8.4-v1"
+        },
+        "scope": {
+          "$ref": "#/$defs/scope"
+        },
+        "question": {
+          "$ref": "#/$defs/id"
+        },
+        "subject": {
+          "$ref": "#/$defs/id"
+        },
+        "category": {
+          "$ref": "#/$defs/id"
+        },
+        "predicate": {
+          "$ref": "#/$defs/version"
+        },
+        "gapRefs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/gapIdentity"
+          },
+          "minItems": 0,
+          "uniqueItems": true
+        },
+        "occurrences": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/handle"
+          },
+          "minItems": 0,
+          "uniqueItems": true
+        },
+        "readinessRefs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/id"
+          },
+          "minItems": 0,
+          "uniqueItems": true
+        },
+        "prerequisites": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/digest"
+          },
+          "minItems": 0,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "schema",
+        "scope",
+        "question",
+        "subject",
+        "category",
+        "predicate",
+        "gapRefs",
+        "occurrences",
+        "readinessRefs",
+        "prerequisites"
+      ],
+      "additionalProperties": false
+    },
+    "java-closure-decision": {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "java-closure-decision:m8.4-v1"
+        },
+        "requirement": {
+          "$ref": "#/$defs/digest"
+        },
+        "state": {
+          "$ref": "#/$defs/state"
+        },
+        "proofs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/digest"
+          },
+          "minItems": 0,
+          "uniqueItems": true
+        },
+        "prerequisites": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/digest"
+          },
+          "minItems": 0,
+          "uniqueItems": true
+        },
+        "conflicts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/digest"
+          },
+          "minItems": 0,
+          "uniqueItems": true
+        },
+        "supersedes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/digest"
+          },
+          "minItems": 0,
+          "uniqueItems": true
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "schema",
+        "requirement",
+        "state",
+        "proofs",
+        "prerequisites",
+        "conflicts",
+        "supersedes",
+        "reason"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "enum": [
+                  "SATISFIED",
+                  "NOT_APPLICABLE"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "proofs": {
+                "minItems": 1
+              },
+              "conflicts": {
+                "maxItems": 0
+              },
+              "reason": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "enum": [
+                  "PENDING",
+                  "NARROWED",
+                  "CONFLICTED",
+                  "REOPENED"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "reason": {
+                "not": {
+                  "type": "null"
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "CONFLICTED"
+              }
+            },
+            "required": [
+              "state"
+            ]
+          },
+          "then": {
+            "properties": {
+              "conflicts": {
+                "minItems": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "REOPENED"
+              }
+            },
+            "required": [
+              "state"
+            ]
+          },
+          "then": {
+            "properties": {
+              "supersedes": {
+                "minItems": 1
+              }
+            }
+          }
+        }
+      ]
+    },
+    "java-closure-ledger": {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "java-closure-ledger:m8.4-v1"
+        },
+        "scope": {
+          "$ref": "#/$defs/scope"
+        },
+        "census": {
+          "$ref": "#/$defs/digest"
+        },
+        "requirements": {
+          "type": "object",
+          "properties": {
+            "schema": {
+              "const": "java-closure-requirement-table:m8.4-v1"
+            },
+            "content": {
+              "$ref": "#/$defs/handle"
+            },
+            "rows": {
+              "$ref": "#/$defs/u64"
+            }
+          },
+          "required": [
+            "schema",
+            "content",
+            "rows"
+          ],
+          "additionalProperties": false
+        },
+        "decisions": {
+          "type": "object",
+          "properties": {
+            "schema": {
+              "const": "java-closure-decision-table:m8.4-v1"
+            },
+            "content": {
+              "$ref": "#/$defs/handle"
+            },
+            "rows": {
+              "$ref": "#/$defs/u64"
+            }
+          },
+          "required": [
+            "schema",
+            "content",
+            "rows"
+          ],
+          "additionalProperties": false
+        },
+        "bindings": {
+          "type": "object",
+          "properties": {
+            "schema": {
+              "const": "java-evidence-binding-table:m8.4-v1"
+            },
+            "content": {
+              "$ref": "#/$defs/handle"
+            },
+            "rows": {
+              "$ref": "#/$defs/u64"
+            }
+          },
+          "required": [
+            "schema",
+            "content",
+            "rows"
+          ],
+          "additionalProperties": false
+        },
+        "previous": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/digest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "schema",
+        "scope",
+        "census",
+        "requirements",
+        "decisions",
+        "bindings",
+        "previous"
+      ],
+      "additionalProperties": false
+    },
+    "java-closure-current-row": {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "java-closure-current-row:m8.4-v1"
+        },
+        "requirement": {
+          "$ref": "#/$defs/digest"
+        },
+        "state": {
+          "$ref": "#/$defs/state"
+        },
+        "answers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/digest"
+          },
+          "minItems": 0,
+          "uniqueItems": true
+        },
+        "proofContents": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/digest"
+          },
+          "minItems": 0,
+          "uniqueItems": true
+        },
+        "blockers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/digest"
+          },
+          "minItems": 0,
+          "uniqueItems": true
+        },
+        "conflicts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/digest"
+          },
+          "minItems": 0,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "schema",
+        "requirement",
+        "state",
+        "answers",
+        "proofContents",
+        "blockers",
+        "conflicts"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "enum": [
+                  "SATISFIED",
+                  "NOT_APPLICABLE"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "answers": {
+                "minItems": 1
+              },
+              "proofContents": {
+                "minItems": 1
+              },
+              "blockers": {
+                "maxItems": 0
+              },
+              "conflicts": {
+                "maxItems": 0
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "CONFLICTED"
+              }
+            },
+            "required": [
+              "state"
+            ]
+          },
+          "then": {
+            "properties": {
+              "conflicts": {
+                "minItems": 1
+              }
+            }
+          }
+        }
+      ]
+    },
+    "java-closure-projection": {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "java-closure-projection:m8.4-v1"
+        },
+        "scope": {
+          "$ref": "#/$defs/scope"
+        },
+        "census": {
+          "$ref": "#/$defs/digest"
+        },
+        "validator": {
+          "$ref": "#/$defs/version"
+        },
+        "policy": {
+          "$ref": "#/$defs/digest"
+        },
+        "current": {
+          "type": "object",
+          "properties": {
+            "schema": {
+              "const": "java-closure-current-row-table:m8.4-v1"
+            },
+            "content": {
+              "$ref": "#/$defs/handle"
+            },
+            "rows": {
+              "$ref": "#/$defs/u64"
+            }
+          },
+          "required": [
+            "schema",
+            "content",
+            "rows"
+          ],
+          "additionalProperties": false
+        },
+        "denominator": {
+          "enum": [
+            "CLOSED",
+            "OPEN"
+          ]
+        },
+        "counts": {
+          "$ref": "#/$defs/counts"
+        }
+      },
+      "required": [
+        "schema",
+        "scope",
+        "census",
+        "validator",
+        "policy",
+        "current",
+        "denominator",
+        "counts"
+      ],
+      "additionalProperties": false
+    },
+    "java-evidence-binding": {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "java-evidence-binding:m8.4-v1"
+        },
+        "stableRecord": {
+          "$ref": "#/$defs/digest"
+        },
+        "publication": {
+          "$ref": "#/$defs/handle"
+        },
+        "attempts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/id"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "authority": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/handle"
+          },
+          "minItems": 0,
+          "uniqueItems": true
+        },
+        "legacyResolutions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/digest"
+          },
+          "minItems": 0,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "schema",
+        "stableRecord",
+        "publication",
+        "attempts",
+        "authority",
+        "legacyResolutions"
+      ],
+      "additionalProperties": false
+    },
+    "java-source-map-row": {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "java-source-map-row:m8.4-v1"
+        },
+        "scope": {
+          "$ref": "#/$defs/scope"
+        },
+        "locator": {
+          "$ref": "#/$defs/locator"
+        },
+        "content": {
+          "$ref": "#/$defs/handle"
+        },
+        "projectedPath": {
+          "$ref": "#/$defs/id"
+        },
+        "projectedDocument": {
+          "type": "string",
+          "pattern": "^source:sha256:[0-9a-f]{64}$",
+          "minLength": 78,
+          "maxLength": 78
+        },
+        "role": {
+          "enum": [
+            "GENERATED_MAIN",
+            "GENERATED_TEST",
+            "UNCLASSIFIED"
+          ]
+        },
+        "lineage": {
+          "$ref": "#/$defs/digest"
+        },
+        "supportingSources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/handle"
+          },
+          "minItems": 0,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "schema",
+        "scope",
+        "locator",
+        "content",
+        "projectedPath",
+        "projectedDocument",
+        "role",
+        "lineage",
+        "supportingSources"
+      ],
+      "additionalProperties": false
+    },
+    "java-semantic-input-view": {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "java-semantic-input-view:m8.4-v1"
+        },
+        "scope": {
+          "$ref": "#/$defs/scope"
+        },
+        "baseInventory": {
+          "$ref": "#/$defs/digest"
+        },
+        "overlay": {
+          "$ref": "#/$defs/digest"
+        },
+        "model": {
+          "$ref": "#/$defs/digest"
+        },
+        "sourcePlan": {
+          "$ref": "#/$defs/digest"
+        },
+        "resolution": {
+          "$ref": "#/$defs/digest"
+        },
+        "sourceMap": {
+          "type": "object",
+          "properties": {
+            "schema": {
+              "const": "java-source-map-row-table:m8.4-v1"
+            },
+            "content": {
+              "$ref": "#/$defs/handle"
+            },
+            "rows": {
+              "$ref": "#/$defs/u64"
+            }
+          },
+          "required": [
+            "schema",
+            "content",
+            "rows"
+          ],
+          "additionalProperties": false
+        },
+        "correspondence": {
+          "type": "object",
+          "properties": {
+            "schema": {
+              "const": "java-evidence-input-table:m8.4-v1"
+            },
+            "content": {
+              "$ref": "#/$defs/handle"
+            },
+            "rows": {
+              "$ref": "#/$defs/u64"
+            }
+          },
+          "required": [
+            "schema",
+            "content",
+            "rows"
+          ],
+          "additionalProperties": false
+        },
+        "preAnalysisClosure": {
+          "$ref": "#/$defs/digest"
+        },
+        "providers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/version"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "policy": {
+          "$ref": "#/$defs/digest"
+        },
+        "derivedSnapshot": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/snapshot"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "schema",
+        "scope",
+        "baseInventory",
+        "overlay",
+        "model",
+        "sourcePlan",
+        "resolution",
+        "sourceMap",
+        "correspondence",
+        "preAnalysisClosure",
+        "providers",
+        "policy",
+        "derivedSnapshot"
+      ],
+      "additionalProperties": false
+    },
+    "java-source-membership": {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "java-source-membership:m8.4-v1"
+        },
+        "scope": {
+          "$ref": "#/$defs/scope"
+        },
+        "sourceEvidence": {
+          "$ref": "#/$defs/handle"
+        },
+        "content": {
+          "$ref": "#/$defs/handle"
+        },
+        "rootProof": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/digest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sourceSet": {
+          "$ref": "#/$defs/id"
+        },
+        "role": {
+          "enum": [
+            "MAIN",
+            "TEST",
+            "GENERATED_MAIN",
+            "GENERATED_TEST",
+            "UNCLASSIFIED"
+          ]
+        },
+        "disposition": {
+          "enum": [
+            "INCLUDED",
+            "EXCLUDED",
+            "UNKNOWN"
+          ]
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "schema",
+        "scope",
+        "sourceEvidence",
+        "content",
+        "rootProof",
+        "sourceSet",
+        "role",
+        "disposition",
+        "reason"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "disposition": {
+                "const": "INCLUDED"
+              }
+            },
+            "required": [
+              "disposition"
+            ]
+          },
+          "then": {
+            "properties": {
+              "rootProof": {
+                "not": {
+                  "type": "null"
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "disposition": {
+                "enum": [
+                  "EXCLUDED",
+                  "UNKNOWN"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "reason": {
+                "not": {
+                  "type": "null"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "java-correspondence": {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "java-correspondence:m8.4-v1"
+        },
+        "scope": {
+          "$ref": "#/$defs/scope"
+        },
+        "sourceEvidence": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/handle"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "binaryOrGeneratedEvidence": {
+          "$ref": "#/$defs/handle"
+        },
+        "sourceContent": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/handle"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "outputContent": {
+          "$ref": "#/$defs/handle"
+        },
+        "outcome": {
+          "enum": [
+            "SAME_DECLARATION",
+            "AUGMENTS",
+            "CONFLICT",
+            "UNKNOWN"
+          ]
+        },
+        "predicate": {
+          "$ref": "#/$defs/version"
+        },
+        "proof": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/digest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "supportingSpans": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/handle"
+          },
+          "minItems": 0,
+          "uniqueItems": true
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "schema",
+        "scope",
+        "sourceEvidence",
+        "binaryOrGeneratedEvidence",
+        "sourceContent",
+        "outputContent",
+        "outcome",
+        "predicate",
+        "proof",
+        "supportingSpans",
+        "reason"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "SAME_DECLARATION",
+                  "AUGMENTS"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "proof": {
+                "not": {
+                  "type": "null"
+                }
+              },
+              "sourceEvidence": {
+                "not": {
+                  "type": "null"
+                }
+              },
+              "sourceContent": {
+                "not": {
+                  "type": "null"
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "CONFLICT",
+                  "UNKNOWN"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "reason": {
+                "not": {
+                  "type": "null"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "gapIdentity": {
+      "type": "string",
+      "pattern": "^gap:sha256:[0-9a-f]{64}$",
+      "minLength": 75,
+      "maxLength": 75
+    }
+  }
+}
