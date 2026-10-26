@@ -9,10 +9,10 @@ import java.util.*;
 /** Additive pins for the named implementation classes, not a transitive dependency certificate. */
 final class CapturedAnalysisComponents {
     static GraphEvidence prepared(UniversalArchitecturePipeline.Policy policy)throws IOException{
-        return capture(List.of(policy.frontend().getClass(),PreparedJavaAnalysisRunner.class,PreparedAnalysisPublication.class,
+        return capture(List.of(policy.frontend().getClass(),PreparedJavaAnalysisRunner.class,PreparedAnalysisPublication.class,CapturedJavaReader.class,CapturedJavaExecution.class,
                 com.evolution.analysis.ingestion.UniversalArchitecturePipeline.class,com.evolution.analysis.ingestion.UniversalIngestionPipeline.class,
                 com.evolution.analysis.ingestion.UniversalSourceIngestion.class,com.evolution.analysis.graph.CanonicalGraphBuilder.class,
-                com.evolution.analysis.javaevidence.JavaReadinessClosure.class,com.evolution.analysis.javaevidence.JavaSemanticProjection.class,
+                com.evolution.analysis.javaevidence.JavaReadinessClosure.class,com.evolution.analysis.javaevidence.JavaSemanticProjection.class,com.evolution.analysis.javaevidence.JavaSpringSemanticProjection.class,
                 com.evolution.analysis.javaevidence.JavaEvidenceAuthority.class,com.evolution.analysis.javaevidence.JavaEvidenceLedger.class,
                 com.evolution.analysis.spring.condition.SpringBuildContext.class,com.evolution.analysis.spring.SpringFrameworkEvidence.class,
                 com.evolution.analysis.spring.condition.ComponentScanIngestion.class,com.evolution.analysis.spring.condition.ConditionEvidenceLowering.class,

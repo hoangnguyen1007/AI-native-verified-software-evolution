@@ -134,7 +134,7 @@ public final class PreparedJavaRepositoryRunner implements AnalysisJobs.Runner {
             });
             if(outcome!=null)for(var gap:outcome.gaps())if(seen.add(gap.gapIdentity().value())&&!gap.catalog().id().equals("evidence.java-readiness"))
                 addCause(delta,causeLabels,gap.catalog(),gap.detectingProvider(),gap.reasonCode(),true);
-            String state=!selected?"UNSELECTED":failures.containsKey(context.id())||outcome!=null&&graph.isEmpty()?"FAILED":outcome==null?"PENDING":
+            String state=!selected?"UNSELECTED":failures.containsKey(context.id())||outcome!=null&&(outcome.completion()==AnalysisJobs.Completion.FAILED||graph.isEmpty())?"FAILED":outcome==null?"PENDING":
                     outcome.completion()==AnalysisJobs.Completion.COMPLETE&&active.isEmpty()?"COMPLETE":"PARTIAL";
             String reason=failures.getOrDefault(context.id(),state.equals("PENDING")?"CONTEXT_PROVIDER_REQUIRED":state.equals("FAILED")?"CONTEXT_ANALYSIS_FAILED":state.equals("PARTIAL")?"CONTEXT_ACTIVE_GAPS":state.equals("UNSELECTED")?"CONTEXT_NOT_SELECTED":"");
             rows.put(context.id(),new ContextRow(context.root(),context.module(),context.sourceSet(),context.variant(),state,graph.map(KnowledgeGraph::identity),graph.map(KnowledgeGraph::snapshot),(long)active.size(),reason));

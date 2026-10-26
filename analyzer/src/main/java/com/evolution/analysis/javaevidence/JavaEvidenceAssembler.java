@@ -15,12 +15,17 @@ import java.util.function.BooleanSupplier;
 
 /** Produces a derived, per-named-source-set view only from a validated compiler census. */
 public final class JavaEvidenceAssembler {
+    /** Exact passive reconstruction inputs, retained independently of the derived view. */
+    public record ReplayInputs(UniversalBuildModel model,ModuleDescriptor module,PlatformInput platform,
+            JavaEvidenceRecord manifest,JavaEvidenceLedger.Published closure,JavaEvidenceTables.Table correspondence) {}
     public static final class Prepared {
+        private final ReplayInputs replay;
+        public ReplayInputs replayInputs(){return Objects.requireNonNull(replay);}
         private final RepositoryInputs base,inputs;private final UniversalBuildModel model;private final UniversalSourceIngestion.SourceSet sourceSet;
         private final UniversalSourceIngestion.Resolution resolution;private final JavaEvidenceRecord view,overlay;private final JavaEvidenceLedger.Published closure;private final JavaEvidenceGraph graph;
         private final List<JavaEvidenceAuthority.Verified> proofInputs;
         private final com.evolution.analysis.readiness.ReadinessPlan readiness;
-        private Prepared(RepositoryInputs base,RepositoryInputs inputs,UniversalBuildModel model,UniversalSourceIngestion.SourceSet sourceSet,UniversalSourceIngestion.Resolution resolution,JavaEvidenceRecord view,JavaEvidenceRecord overlay,JavaEvidenceLedger.Published closure,JavaEvidenceGraph graph,List<JavaEvidenceAuthority.Verified> proofInputs,com.evolution.analysis.readiness.ReadinessPlan readiness){this.base=base;this.inputs=inputs;this.model=model;this.sourceSet=sourceSet;this.resolution=resolution;this.view=view;this.overlay=overlay;this.closure=closure;this.graph=graph;this.proofInputs=List.copyOf(proofInputs);this.readiness=Objects.requireNonNull(readiness);}
+        private Prepared(RepositoryInputs base,RepositoryInputs inputs,UniversalBuildModel model,UniversalSourceIngestion.SourceSet sourceSet,UniversalSourceIngestion.Resolution resolution,JavaEvidenceRecord view,JavaEvidenceRecord overlay,JavaEvidenceLedger.Published closure,JavaEvidenceGraph graph,List<JavaEvidenceAuthority.Verified> proofInputs,com.evolution.analysis.readiness.ReadinessPlan readiness,ReplayInputs replay){this.replay=Objects.requireNonNull(replay);this.base=base;this.inputs=inputs;this.model=model;this.sourceSet=sourceSet;this.resolution=resolution;this.view=view;this.overlay=overlay;this.closure=closure;this.graph=graph;this.proofInputs=List.copyOf(proofInputs);this.readiness=Objects.requireNonNull(readiness);}
         public RepositoryInputs base(){return base;}public RepositoryInputs inputs(){return inputs;}public UniversalBuildModel model(){return model;}
         public JavaEvidenceRecord view(){return view;}public JavaEvidenceRecord overlay(){return overlay;}
         public List<com.evolution.analysis.evidence.CapabilityGapRecord> activeGaps(){return JavaEvidencePreAnalysis.activeGaps(closure);}
@@ -28,7 +33,7 @@ public final class JavaEvidenceAssembler {
         public com.evolution.analysis.readiness.ReadinessPlan readiness(){return readiness;}
         /** Attach a separately verified historical census without changing the semantic input view. */
         public Prepared withGapClosure(JavaEvidenceGapClosure closure)throws IOException{
-            return new Prepared(base,inputs,model,sourceSet,resolution,view,overlay,this.closure,graph.withGapClosure(closure),proofInputs,readiness);
+            return new Prepared(base,inputs,model,sourceSet,resolution,view,overlay,this.closure,graph.withGapClosure(closure),proofInputs,readiness,replay);
         }
         public ContentDigest policy(){return closure.projection().digest("policy");}
         public List<com.evolution.analysis.evidence.CapabilityGapRecord> invalidationGaps(){
@@ -153,7 +158,7 @@ public final class JavaEvidenceAssembler {
         for(var proof:proofInputs)graphEvidence.add(com.evolution.analysis.graph.GraphEvidence.capture("java.evidence.proof",proof.record().fields()));
         var graph=new JavaEvidenceGraph(base.snapshot().identity(),snapshot.identity(),graphEvidence);
         tables.putCanonical(readiness,cancelled);
-        return new Prepared(base,inputs,build,new UniversalSourceIngestion.SourceSet(module.identity(),kind,namedSet),new UniversalSourceIngestion.Resolution(platform,resolution.binaries().orElseThrow(),manifest.identity(),correspondenceBinding),viewRecord,overlay,preAnalysisClosure,graph,proofInputs,readiness);
+        return new Prepared(base,inputs,build,new UniversalSourceIngestion.SourceSet(module.identity(),kind,namedSet),new UniversalSourceIngestion.Resolution(platform,resolution.binaries().orElseThrow(),manifest.identity(),correspondenceBinding),viewRecord,overlay,preAnalysisClosure,graph,proofInputs,readiness,new ReplayInputs(original,module,platform,manifest,preAnalysisClosure,correspondence));
     }
     private ContentHandle put(String bytes,BooleanSupplier cancelled)throws IOException{return content.put(new ByteArrayInputStream(bytes.getBytes(StandardCharsets.UTF_8)),cancelled);}
     private static void decode(Map<String,SourceInput> sources,List<SourceDocument> unavailable,List<com.evolution.analysis.graph.GraphEvidence> evidence,SourceDocument document,byte[] raw,SourceInput.Decoding decoding){

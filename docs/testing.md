@@ -56,18 +56,23 @@ With `$pipeline`, `$failure`, `$spring` and `$coreMvp` set to those absolute pat
 
 Run the three selected modules in one invocation, with current platform dependencies installed. Reactor order compiles the JavaParser test fixture before backend uses it. The backend profile binds `native.fixture.classes` to that invocation's JavaParser test output automatically; no production artifact includes those test classes. For an absolute/external `platform.build.directory`, override `native.fixture.classes` explicitly with the corresponding trusted JavaParser test-classes directory.
 
-The current complete selection is **17 tests / 5 suites**:
+The current complete selection is **22 tests / 5 suites**:
 
 - `NativePreparedPipelineIntegrationTest`: 10.
 - `NativeSemanticProjectionTest`: 2.
 - `NativeSpringContinuationTest`: 3.
-- `PreparedJavaAnalysisRunnerTest`: 1.
+- `PreparedJavaAnalysisRunnerTest`: 6 (one existing registered runner, four parameterized fresh-JVM captures and the dedicated custom readiness/R03 product control).
 - `NativeCoreMvpEvidenceReaderTest`: 1.
 
-Check the current invocation's Surefire reports in each selected module's build directory: all five suites, 17 executed, zero failures/errors/skips. Use a dedicated output directory to distinguish this campaign from historical reports; on a reused directory check report timestamps against this invocation. `-Dtest`, `-Dtest.groups`, `-Dtest.excludedGroups` or other selection overrides change the evidence and must not be reported as the complete campaign without checking that denominator. When adding/removing native cases, update this denominator. Native replay under the public test policy still does not establish production semantic qualification or unrestricted executor certification.
+Check the current invocation's Surefire reports in each selected module's build directory: all five suites, 22 executed, zero failures/errors/skips. Use a dedicated output directory to distinguish this campaign from historical reports; on a reused directory check report timestamps against this invocation. `-Dtest`, `-Dtest.groups`, `-Dtest.excludedGroups` or other selection overrides change the evidence and must not be reported as the complete campaign without checking that denominator. When adding/removing native cases, update this denominator. Native replay under the public test policy still does not establish production semantic qualification or unrestricted executor certification.
 
 The original Prompt 1 closeout used explicit fixture properties and recorded zero skips; it remains historical bounded evidence. Its historical commands predate these profiles. For current execution, use the selections above. The [execution record](tasks/m8/04-step4-phase2-execution.md) records both the closeout and this QC follow-up.
 
 ## Basis
 
 JUnit 5.11 distinguishes [tag filtering from conditional disabling](https://junit.org/junit5/docs/5.11.0/user-guide/index.html#writing-tests-tagging-and-filtering). Surefire 3.5.5 supports [JUnit tag expressions through `groups` / `excludedGroups`](https://maven.apache.org/surefire-archives/surefire-3.5.5/maven-surefire-plugin/examples/junit-platform.html#filtering-by-tags). Native preflight uses Maven Enforcer's [required-file rule](https://maven.apache.org/enforcer/enforcer-rules/requireFilesExist.html); the native readers provide the authenticity checks. Java 21 defines [`Deflater.NO_COMPRESSION`](https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/util/zip/Deflater.html#NO_COMPRESSION) for the adapter's temporary ZIP representation.
+
+
+The five product captures are Protobuf caller/producer, Lombok native member augmentation, native Spring MapStruct and custom generated Java/resources. Setup prepares existing signed public-test evidence outside product processes; every product replay excludes test-classes and tests JARs. Product code verifies the external registry/pins/signatures and never loads a signer or issues a claim. Repeating the same capture checks complete graph/root/gap/publication equality with distinct job UUID/time, as a bounded subset of R03.
+
+The dedicated custom case additionally registers six readiness obligations and checks both child/root receive authenticated proofs, then verifies withdrawal reopens a requirement and prevents success. It changes attempt/time bindings inside a second capture and reverses registry arrival. Source/Java and DEFAULT_SCOPE_TRUTH_NONE Spring semantic projections agree; actual source-anchored Spring outputs, exact root coverage and current-gap meaning agree; full child/root graphs and semantic-audit bindings differ. Unsupported matcher shapes fail explicitly. Explicit configuration truth is not claimed by that additive projection version; native truth-region/witness/version/order/UNKNOWN suites remain separate checks. Causal closure-event permutation is covered by JavaEvidenceLedgerTest. Qualification remains PUBLIC_TEST_POLICY_ONLY. [Review follow-up](tasks/m8/04-step4-phase2-execution.md#review-follow-up--2026-10-26) records the final 605-case/70-suite refresh and its limits.

@@ -84,6 +84,25 @@ class PreparedJavaRepositoryRunnerTest {
         assertEquals("FAILED",result.contexts().get(first.id()).state());assertEquals("COMPLETE",result.contexts().get(second.id()).state());
         assertFalse(new GraphSnapshotCodec().encode(result.graph()).contains("private failure details"));
     }
+    @Test void failedOutcomeWithRetainedGraphRemainsFailedAndKeepsItsHealthySibling()throws Exception{
+        var plan=plan();var first=plan.contexts().getFirst();var second=plan.contexts().getLast();
+        var failed=child(plan,first,false);var healthy=child(plan,second,false);var graphs=new InMemoryGraphStore();
+        var result=runner(plan,Map.of(first.id(),cancelled->new AnalysisJobs.Outcome(AnalysisJobs.Completion.FAILED,
+                Optional.of(failed),List.of(),List.of(),Optional.empty(),Optional.empty()),
+                second.id(),cancelled->outcome(healthy)),graphs).runCaptured(()->false);
+        assertEquals("FAILED",result.contexts().get(first.id()).state());
+        assertEquals("CONTEXT_ANALYSIS_FAILED",result.contexts().get(first.id()).reason());
+        assertEquals("COMPLETE",result.contexts().get(second.id()).state());
+        assertEquals(failed.identity(),graphs.load(failed.identity()).orElseThrow().identity());
+        assertEquals(healthy.identity(),graphs.load(healthy.identity()).orElseThrow().identity());
+        var summary=result.graph().evidence().stream().filter(e->e.family().equals("java.evidence.repository-coverage")).findFirst().orElseThrow();
+        var counts=GraphJson.object(GraphJson.object(GraphJson.read(summary.canonicalJson(),GraphJson.Limits.defaults())).get("counts"));
+        assertEquals(new java.math.BigDecimal(1),counts.get("FAILED"));
+        assertEquals(new java.math.BigDecimal(1),counts.get("COMPLETE"));
+        assertEquals(counts.get("total"),List.of("PENDING","COMPLETE","PARTIAL","FAILED","UNSELECTED").stream()
+                .map(k->(java.math.BigDecimal)counts.get(k)).reduce(java.math.BigDecimal.ZERO,java.math.BigDecimal::add));
+        assertFalse(result.complete());
+    }
     @Test void cancellationRetainsTheExactPendingFrontierAndReplayUsesCapturedTasksOnly()throws Exception{
         var plan=plan();var content=new StreamingContentStore(directory.resolve("cas"));var store=new JavaEvidencePublicationStore(directory.resolve("publication"),content);var key=ContentDigest.sha256Utf8("root registration");
         var calls=new AtomicInteger();var tasks=new TreeMap<String,PreparedJavaRepositoryRunner.ContextTask>();

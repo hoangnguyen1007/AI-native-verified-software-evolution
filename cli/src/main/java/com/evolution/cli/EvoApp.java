@@ -131,6 +131,7 @@ public final class EvoApp {
         command.addSubcommand("scan",new Scan(r));
         command.addSubcommand("execution",new Execution(r));
         command.addSubcommand("core-mvp",new CoreMvp(r));
+        command.addSubcommand("captured-java",new CapturedJava(r));
         command.addSubcommand("acquire",new Acquire(r));
         command.addSubcommand("inventory",new Inventory(r));
         command.addSubcommand("readiness",new Readiness(r));
@@ -314,6 +315,15 @@ public final class EvoApp {
         var metrics=new PolicyMetricsService().compute(compiled,plan,evaluation,queries,PolicyMetrics.Limits.defaults());
         var score=new ArchitectureAssessmentService().evaluate(metrics,evaluation,queries,Optional.of(ArchitectureScoreModel.candidate(Scope.valueOf(r.scope.toUpperCase(Locale.ROOT).replace('-','_')))),List.of(),ArchitectureAssessment.Limits.defaults());
         return new PublishedReports.Report(evaluation,Optional.of(metrics),Optional.of(score));
+    }
+    @Command(name="captured-java",mixinStandardHelpOptions=true,description="Analyze a registered captured Java context without building")
+    private final class CapturedJava implements Callable<Integer>{
+        final Root r;CapturedJava(Root r){this.r=r;}
+        @Parameters(paramLabel="REGISTERED_DIR")Path registration;
+        public Integer call()throws Exception{
+            r.validate();var result=com.evolution.backend.analysis.CapturedJavaExecution.run(resolve(registration),()->Thread.currentThread().isInterrupted());
+            return emit(r,"captured-java",envelope(result),result.semantic().get("state")==com.evolution.backend.analysis.AnalysisJobs.State.SUCCEEDED?0:3);
+        }
     }
     @Command(name="acquire",mixinStandardHelpOptions=true,description="Durable full snapshot acquisition / Thu nhận toàn snapshot có phục hồi")
     private final class Acquire implements Callable<Integer>{

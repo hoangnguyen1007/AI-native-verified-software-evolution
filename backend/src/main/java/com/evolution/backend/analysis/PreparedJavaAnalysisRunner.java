@@ -91,6 +91,12 @@ public final class PreparedJavaAnalysisRunner implements AnalysisJobs.Runner {
             String reason=code!=null&&code.matches("JAVA_SEMANTIC_PROJECTION_[A-Z_]+")?code:"JAVA_SEMANTIC_PROJECTION_UNAVAILABLE";
             evidence.add(com.evolution.analysis.graph.GraphEvidence.capture("java.evidence.semantic-projection-withheld",Map.of("reason",reason,"inputView",prepared.view().identity(),"scope","CAPTURED_JAVA_CONTEXT")));
         }
+        if(projection.isPresent())try{
+            evidence.add(new JavaSpringSemanticProjection().project(prepared,detailed,policy,projection.orElseThrow()));
+        }catch(java.io.IOException|IllegalArgumentException withheld){
+            String code=withheld.getMessage();String reason=code!=null&&code.matches("JAVA_SPRING_PROJECTION_[A-Z_]+")?code:"JAVA_SPRING_PROJECTION_UNAVAILABLE";
+            evidence.add(com.evolution.analysis.graph.GraphEvidence.capture("java.evidence.spring-semantic-projection-withheld",Map.of("scope","DEFAULT_SCOPE_TRUTH_NONE","reason",reason)));
+        }
         graph=new com.evolution.analysis.graph.KnowledgeGraph(graph.snapshot(),graph.contexts(),graph.nodes(),graph.edges(),evidence);control.checkpoint();
         if(!prepared.policy().equals(authorityPolicy.get()))return revoked();
         try{if(!components.identity().equals(CapturedAnalysisComponents.prepared(policy).identity()))return revoked();}catch(java.io.IOException unavailable){return revoked();}

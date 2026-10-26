@@ -32,7 +32,7 @@ class JavaEvidencePublicationStoreTest {
         var content=new StreamingContentStore(root.resolve("cas"));var key=ContentDigest.sha256Utf8("crash control");
         var first=content.put(new ByteArrayInputStream(new byte[]{1,2}),()->false);var store=new JavaEvidencePublicationStore(root.resolve("publications"),content);
         var initial=store.commit(key,Optional.empty(),Map.of("graph",first));
-        for(var boundary:Map.of("before-cas",90,"before-pointer",91).entrySet()){
+        for(var boundary:Map.of("before-cas",90,"before-pointer",91,"before-table",93,"after-table",94,"before-ledger",95,"after-ledger",96).entrySet()){
             assertEquals(boundary.getValue().intValue(),faultWorker(boundary.getKey()).exit());
             assertEquals(initial,new JavaEvidencePublicationStore(root.resolve("publications"),new StreamingContentStore(root.resolve("cas"))).load(key).orElseThrow());
         }

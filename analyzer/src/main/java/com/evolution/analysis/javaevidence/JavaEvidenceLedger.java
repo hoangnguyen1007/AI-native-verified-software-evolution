@@ -38,6 +38,9 @@ public final class JavaEvidenceLedger {
             this.proofs=Map.copyOf(proofs);this.revoked=Set.copyOf(revoked);this.closedProducers=Set.copyOf(closedProducers);
         }
         public JavaEvidenceRecord ledger(){return ledger;}public JavaEvidenceRecord projection(){return projection;}public View current(){return current;}
+        public ContentHandle census(){return census;}
+        public Set<ContentDigest> closedProducers(){return closedProducers;}
+        public Set<ContentDigest> revoked(){return revoked;}
         /** Revalidate immutable inputs at use; a saved current row is not a live capability. */
         public View revalidate(ContentDigest policy,Set<ContentDigest> newlyRevoked)throws IOException{
             tables.requireContent(census);

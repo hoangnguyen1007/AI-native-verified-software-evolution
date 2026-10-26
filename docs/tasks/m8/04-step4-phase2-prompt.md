@@ -1,8 +1,10 @@
 # Prompt bàn giao — M8.4 Bước 4, Phase 2 (GPT-6.1 sol)
 
-Đây là prompt gốc đã được thực thi và đóng; giữ lại để truy vết phạm vi và exit criteria, không phải yêu cầu triển khai còn mở.
+**PROMPT 2 / STEP 4 COMPLETE / CLOSED — REVIEW FOLLOW-UP, 2026-10-26:** unchanged **70 original IDs / 70 full registered controls PASS / 0 FAIL / 0 NOT RUN**. Readiness proofs reach both product runners; nested multi-release selection authenticates raw leaf before selected release view; R03 changes captured attempt/time bindings and compares actual Spring/root/current-gap meaning and typed projections with distinct full graph/audit bindings. The former same-capture evidence is retained as a subset.
 
-**CLOSED — 2026-10-26:** Prompt 1 / Phase-2 implementation and registered controlled acceptance are complete. The unchanged matrix is **70 bounded PASS / 0 FAIL / 0 NOT RUN**; **594 Java cases / 69 suites / zero failures/errors/skips**, 15 Python controls and schema checks pass. Native v5 closes the expected native obligations and replays 2,412 claims with the final JAR; the fresh registered offline Core MVP build, complete 951-entry publication and byte-evidence reader also pass. Producer trust remains PRODUCER_ASSERTION / qualified=false, Java fixture authority PUBLIC_TEST_POLICY_ONLY. Genuine unsupported/unknown outcomes remain represented; no universal semantic or production-security certificate is claimed. See the [closeout record](04-step4-phase2-execution.md#prompt-1-closeout--2026-10-26) for exact commands, hashes, failures and scope. Steps 5–6 remain pending; no commit/push or automatic phase transition.
+Fresh final checks: **605 JUnit cases / 70 suites / zero failures/errors/skips**, including **22 native / 5 suites**; 15 Python controls, schema, packaged source-only and captured CLI/query journeys pass. No registered blocker remains. [Review execution](04-step4-phase2-execution.md#review-follow-up--2026-10-26) owns repairs, exact commands/counts, retained evidence, new JAR/hash, DEFAULT_SCOPE_TRUTH_NONE and public-test/producer trust limits. Self-review only; no new independent review. **Stop here: no automatic Step 5, commit or push.** The historical implementation prompt below is retained for context, not an instruction to repeat completed work.
+
+The original implementation prompt follows for scope/history; its full checklist is unchanged and does not reinstate earlier missing counts as current truth.
 
 ```text
 Bạn là GPT-6.1 sol, làm việc tại D:\UIT\AI-native-verified-software-evolution.

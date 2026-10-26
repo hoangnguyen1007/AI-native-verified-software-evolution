@@ -89,4 +89,30 @@ class JavaBinaryViewsTest {
         var tree=tables.write("java-output-row",List.of(row).iterator(),()->false);var adapter=new JavaBinaryViews(store,root.resolve("views"),new JavaBinaryViews.Budget(100,10000,10000));var binary=adapter.materialize(slot(outer,"NESTED_ARCHIVE",tree.wire(),0));assertEquals(leaf.digest(),binary.entry().contentDigest());assertArrayEquals(leafBytes.toByteArray(),Files.readAllBytes(binary.path()));assertTrue(store.verify(outer));
         var foreign=new LinkedHashMap<>(scope());foreign.put("sourceSet","integrationTest");fields.put("scope",foreign);var wrong=new JavaEvidenceCodec().create(fields);var badTree=tables.write("java-output-row",List.of(wrong).iterator(),()->false);assertThrows(IOException.class,()->adapter.materialize(slot(outer,"NESTED_ARCHIVE",badTree.wire(),0)));
     }
+    @Test void nestedMultiReleaseLeafIsVerifiedBeforeItsSeparateReleaseProjection()throws Exception{
+        var store=new StreamingContentStore(root.resolve("cas"));var tables=new JavaEvidenceTables(store,10000);
+        var manifest=new Manifest();manifest.getMainAttributes().putValue("Manifest-Version","1.0");manifest.getMainAttributes().putValue("Multi-Release","true");
+        var leafBytes=new ByteArrayOutputStream();try(var jar=new JarOutputStream(leafBytes,manifest)){
+            for(var entry:Map.of("pkg/C.class","base","META-INF/versions/9/pkg/C.class","java9","META-INF/versions/17/pkg/C.class","java17").entrySet()){
+                jar.putNextEntry(new JarEntry(entry.getKey()));jar.write(entry.getValue().getBytes(java.nio.charset.StandardCharsets.UTF_8));jar.closeEntry();
+            }
+        }
+        var leaf=store.put(new ByteArrayInputStream(leafBytes.toByteArray()),()->false);var outerBytes=new ByteArrayOutputStream();
+        try(var jar=new JarOutputStream(outerBytes)){jar.putNextEntry(new JarEntry("BOOT-INF/lib/leaf.jar"));jar.write(leafBytes.toByteArray());jar.closeEntry();}
+        var outer=store.put(new ByteArrayInputStream(outerBytes.toByteArray()),()->false);
+        var fields=new LinkedHashMap<String,Object>();fields.put("schema","java-output-row:m8.4-v1");fields.put("key",D);fields.put("scope",scope());fields.put("role","nested-library");fields.put("expectation","OBSERVED");
+        fields.put("locator",Map.of("container",outer,"members",List.of(Map.of("ordinal",0,"path",LogicalPath.utf8("BOOT-INF/lib/leaf.jar"),"content",leaf)),"path",LogicalPath.utf8("app.jar")));
+        fields.put("kind","FILE");fields.put("content",leaf);fields.put("lineage",D);fields.put("rootProof",D);fields.put("category","ARCHIVE");fields.put("disposition","ACCEPTED");fields.put("reason",null);
+        fields.put("key",JavaGeneratedOverlay.outputKey(new JavaEvidenceCodec().create(fields)));var row=new JavaEvidenceCodec().create(fields);
+        var tree=tables.write("java-output-row",List.of(row).iterator(),()->false);var adapter=new JavaBinaryViews(store,root.resolve("views"),new JavaBinaryViews.Budget(100,100000,100000));
+        for(int release:List.of(9,17)){
+            var projected=adapter.selectedReleaseView(leaf,release);assertNotEquals(leaf,projected);
+            var nested=new LinkedHashMap<>(slot(outer,"NESTED_ARCHIVE",tree.wire(),release).fields());nested.put("selectedView",projected);
+            var result=adapter.materialize(new JavaEvidenceCodec().create(nested),release);
+            assertEquals(outer.digest(),result.originEntry().contentDigest());assertEquals(projected.digest(),result.entry().contentDigest());
+            try(var jar=new JarFile(result.path().toFile())){assertEquals("java"+release,new String(jar.getInputStream(jar.getJarEntry("pkg/C.class")).readAllBytes(),java.nio.charset.StandardCharsets.UTF_8));}
+            nested.put("selectedView",leaf);assertEquals("JAVA_BINARY_DERIVED_VIEW_MISMATCH",assertThrows(IOException.class,()->adapter.materialize(new JavaEvidenceCodec().create(nested),release)).getMessage());
+        }
+        assertTrue(store.verify(leaf));assertTrue(store.verify(outer));
+    }
 }

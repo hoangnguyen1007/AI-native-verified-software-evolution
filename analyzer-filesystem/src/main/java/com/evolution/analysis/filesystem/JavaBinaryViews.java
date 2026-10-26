@@ -127,7 +127,9 @@ public final class JavaBinaryViews implements JavaResolutionPlanner.BinaryMateri
             for(Object value:GraphJson.array(row.object("locator").get("members"))){var member=GraphJson.object(value);var expected=JavaEvidenceRecord.handle(member.get("content"));String name=JavaGeneratedOverlay.path(member.get("path")).utf8().orElseThrow(()->new IOException("JAVA_NESTED_RAW_PATH"));long ordinal=((java.math.BigDecimal)member.get("ordinal")).longValueExact();current=member(current,name,ordinal);if(!current.equals(expected))throw new IOException("JAVA_NESTED_CONTENT_MISMATCH");}
             if(!current.equals(JavaEvidenceRecord.handle(row.fields().get("content"))))throw new IOException("JAVA_NESTED_LEAF_MISMATCH");selected[0]=current;
         },()->false);
-        if(selected[0]==null||slot.fields().get("selectedView")!=null&&!selected[0].equals(JavaEvidenceRecord.handle(slot.fields().get("selectedView"))))throw new IOException("JAVA_NESTED_VIEW_MISMATCH");return selected[0];
+        // Locator steps and the row content authenticate the original leaf above.
+        // selectedView may instead name its release projection, checked by materialize().
+        if(selected[0]==null)throw new IOException("JAVA_NESTED_VIEW_MISMATCH");return selected[0];
     }
     private ContentHandle member(ContentHandle container,String wanted,long wantedOrdinal)throws IOException{
         if(!content.verify(container))throw new IOException("JAVA_NESTED_CONTENT_UNAVAILABLE");

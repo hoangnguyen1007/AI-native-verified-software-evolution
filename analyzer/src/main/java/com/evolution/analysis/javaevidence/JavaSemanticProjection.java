@@ -86,6 +86,20 @@ public final class JavaSemanticProjection {
         return new Result(semantic,audit.identity(),canonical,CanonicalJson.sha256(inputs),component,actual.state(),audit);
     }
     static Map<String,String> semanticOptions(Map<String,String> options){var values=new TreeMap<>(options);REFERENCES.forEach(values::remove);return Collections.unmodifiableMap(values);}
+    /** Rebind already verified neutral facts for an additive semantic replay. No frontend,
+     * compiler, build, signing or source/binary inference is performed here. */
+    public FrontendResult replayFrontend(JavaEvidenceAssembler.Prepared prepared,UniversalArchitecturePipeline.DetailedResult detailed,
+            com.evolution.analysis.contract.identity.AnalysisIdentity analysis)throws IOException{
+        project(prepared,detailed); // Keep exactly the same admissibility and current-proof gate.
+        var input=detailed.graphInput().orElseThrow();var ingestion=input.ingestion().orElseThrow();
+        var actual=ingestion.units().stream().flatMap(u->u.frontend().stream()).findFirst().orElseThrow();
+        var request=ingestion.sourceIngestion().outcomes().stream().flatMap(o->o.request().stream()).filter(r->r.manifest().identity().equals(actual.analysis())).findFirst().orElseThrow();
+        var normalizer=new Normalizer(prepared,request,input.javaEvidence().orElseThrow().evidence());
+        var declarations=new ArrayList<DeclarationRecord>();for(var d:actual.declarations())declarations.add(new DeclarationRecord(d.entity(),d.spelling(),d.status(),normalizer.derivation(d.derivation()),d.uncertainties(),d.diagnostics()));
+        var occurrences=new ArrayList<RelationshipOccurrence>();for(var o:actual.occurrences())occurrences.add(new RelationshipOccurrence(o.identity(),o.relationship(),o.span(),o.ordinal(),o.status(),normalizer.derivation(o.derivation()),o.uncertainties(),o.diagnostics()));
+        var derived=new ArrayList<DerivedRelationshipRecord>();for(var d:actual.derivedRelationships())derived.add(new DerivedRelationshipRecord(d.relationship(),d.status(),normalizer.derivation(d.derivation()),d.supportingSpans(),d.uncertainties(),d.diagnostics()));
+        return new FrontendResult(analysis,actual.frontend(),actual.state(),declarations,occurrences,actual.observations(),actual.sources(),actual.coverage(),actual.diagnostics(),actual.types(),actual.annotations(),derived,actual.typeDeclarations(),actual.memberDeclarations());
+    }
     static Object semanticSlot(JavaEvidenceRecord slot)throws IOException{return Normalizer.semanticSlot(slot);}
     private static Map<String,Object> read(GraphEvidence evidence){return GraphJson.object(GraphJson.read(evidence.canonicalJson(),GraphJson.Limits.defaults()));}
     private static Map<String,Object> selected(Map<String,Object> value,List<String> fields){var result=new TreeMap<String,Object>();for(String field:fields)if(value.containsKey(field))result.put(field,value.get(field));return result;}

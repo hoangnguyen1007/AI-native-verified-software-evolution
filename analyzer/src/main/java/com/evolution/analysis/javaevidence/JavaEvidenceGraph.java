@@ -33,6 +33,7 @@ public final class JavaEvidenceGraph {
         return new JavaEvidenceGraph(base,derived,combined,postAnalysis,compiler,Optional.of(closure),Optional.of(current));
     }
     public List<com.evolution.analysis.evidence.CapabilityGapRecord> gapHistory(){return gapClosure.map(JavaEvidenceGapClosure::history).orElse(List.of());}
+    public Optional<JavaEvidenceGapClosure> gapClosure(){return gapClosure;}
     public Set<String> historicalGapIds(){return gapCurrent.map(c->c.historicalGaps().stream().map(g->g.gapIdentity().value()).collect(java.util.stream.Collectors.toUnmodifiableSet())).orElse(Set.of());}
     public List<com.evolution.analysis.evidence.CapabilityGapRecord> activeGaps(Collection<com.evolution.analysis.evidence.CapabilityGapRecord> gaps){
         var result=new TreeSet<com.evolution.analysis.evidence.CapabilityGapRecord>(gaps);result.addAll(gapHistory());gapCurrent.ifPresent(c->result.addAll(c.unmetGaps()));var historical=historicalGapIds();result.removeIf(g->historical.contains(g.gapIdentity().value()));return List.copyOf(result);

@@ -15,6 +15,11 @@ import org.junit.jupiter.api.io.TempDir;
 import static org.junit.jupiter.api.Assertions.*;
 
 class EvoAppTest {
+    @Test void capturedJavaHasAnExplicitCommandAndMissingRegistrationCannotStartABuild()throws Exception{
+        var help=run("captured-java","--help");assertEquals(0,help.code());assertTrue(help.out().contains("REGISTERED_DIR"));
+        Path absent=directory.resolve("absent-registration");var result=run("captured-java",absent.toString(),"--json");
+        assertEquals(1,result.code());assertTrue(result.err().contains("OPERATION_FAILED"));assertFalse(Files.exists(absent));
+    }
     @Test void gapHistoryFlagKeepsClosedRowsSeparateFromCurrentResiduals()throws Exception{
         var f=new CliFixture().node("A");
         f.nodes.add(new KnowledgeGraph.Node(CliFixture.id("old-gap"),f.context,"HISTORICAL_CAPABILITY_GAP",List.of(f.base.identity())));

@@ -86,7 +86,8 @@ final class NativePipelineWiringFixture {
     Result execute(String name)throws IOException {
         return execute(name,Map.of());
     }
-    Result execute(String name,Map<String,String> replayAudit)throws IOException {
+    Result execute(String name,Map<String,String> replayAudit)throws IOException {return execute(name,replayAudit,false);}
+    Result execute(String name,Map<String,String> replayAudit,boolean closeReadiness)throws IOException {
         if(!Set.of("captureReplayAttempt","captureReplayRecordedAt").containsAll(replayAudit.keySet()))throw new IOException("NATIVE_WIRING_REPLAY_AUDIT_KEYS");
         if(name.startsWith("lombok-"))requireLombokVersion("1.18.36");
         proofs.clear();envelopes.clear();var selected=GraphJson.array(checked.get("contexts")).stream().map(GraphJson::object).filter(c->name.equals(c.get("name"))).findFirst().orElseThrow();var validation=GraphJson.object(selected.get("validation"));var index=handle(validation.get("capture"));var raw=read(index);
@@ -102,7 +103,12 @@ final class NativePipelineWiringFixture {
         var environment=new TreeMap<String,String>();environment.put("compiler",nativePlatform.runtime());environment.put("capturedContext",CanonicalJson.sha256(validation).value());environment.putAll(replayAudit);
         var context=ReadinessPlanner.context(name,name+"-root","main","native-pipeline-fixture-v1",List.of(module.path()),environment,List.of(),inventory,true);
         var selection=new BuildContextSelection(BuildContextSelection.SCHEMA,Map.of(),List.of(context.id()),List.of(context.id()),List.of(),List.of());
-        var readiness=new ReadinessPlan(ReadinessPlan.SCHEMA,inventory,selection,List.of(new ReadinessPlan.Root(name+"-root",module.path(),ReadinessPlan.Family.PLAIN,List.of(),List.of())),List.of(new ReadinessPlan.Module(name,name+"-root",module.path(),name+"-root",List.of("java"),List.of(),List.of())),List.of(context),List.of(),List.of(),new ReadinessPlan.OwnershipSummary(files.size(),Map.of("OWNED",(long)files.size()),put(Map.of("scope",module,"capture",index))));
+        var readinessRequirements=new ArrayList<ReadinessPlan.Requirement>();
+        if(closeReadiness){
+            for(var kind:List.of(ReadinessPlan.Kind.MODEL,ReadinessPlan.Kind.TOOLCHAIN,ReadinessPlan.Kind.DEPENDENCIES))readinessRequirements.add(ReadinessPlanner.requirement(kind,name+"-root","Native captured fixture validates exact root inputs",List.of(),List.of()));
+            for(var kind:List.of(ReadinessPlan.Kind.PLATFORM,ReadinessPlan.Kind.GENERATION,ReadinessPlan.Kind.BUILD_VALIDATION))readinessRequirements.add(ReadinessPlanner.requirement(kind,context.id(),"Native captured fixture validates exact context outputs",List.of(),List.of()));
+        }
+        var readiness=new ReadinessPlan(ReadinessPlan.SCHEMA,inventory,selection,List.of(new ReadinessPlan.Root(name+"-root",module.path(),ReadinessPlan.Family.PLAIN,List.of(),List.of())),List.of(new ReadinessPlan.Module(name,name+"-root",module.path(),name+"-root",List.of("java"),List.of(),List.of())),List.of(context),readinessRequirements,List.of(),new ReadinessPlan.OwnershipSummary(files.size(),Map.of("OWNED",(long)files.size()),put(Map.of("scope",module,"capture",index))));
         scope=JavaEvidenceScopes.scope(readiness,context,module);
         closure=put(Map.of("schema","native-prepared-fixture-inputs:m8.4-v1","scope",scope,"cohort",cohortHandle,"capture",index,"context",validation,"platform",checked.get("platform"),"tool",signer.tool()));
         var inputRows=new ArrayList<JavaEvidenceRecord>();inputRows.add(input("CONFIG",closure));inputRows.add(input("TOOL",signer.tool()));inputRows.add(input("CORRESPONDENCE",cohortHandle));sourceBytes.values().forEach(h->inputRows.add(input("SOURCE",h)));inputs=table("java-evidence-input",inputRows);
@@ -117,6 +123,7 @@ final class NativePipelineWiringFixture {
         String outputPrefix=workRelative("file://"+directories.get(name))+"/";
         for(var entry:outputs.entrySet())if(entry.getKey().startsWith(outputPrefix)||name.equals("custom-producer")&&entry.getKey().startsWith("custom/generated/resources/"))outputRows.add(output(entry.getKey(),entry.getValue(),entry.getKey().endsWith(".class")?"CLASS":"RESOURCE",lineage.identity(),lineageProof.identity()));
         if(outputRows.isEmpty())throw new IOException("NATIVE_WIRING_EMPTY_SUCCESS_OUTPUTS");
+        for(var requirement:readinessRequirements)proof(JavaReadinessClosure.QUESTION,JavaReadinessClosure.subject(readiness,requirement).value(),JavaReadinessClosure.answer(readiness,requirement,JavaReadinessClosure.State.SATISFIED),List.of(put(readiness),readiness.ownership().ledger(),cohortHandle,closure));
         var overlay=new JavaGeneratedOverlay(content,2_000_000).importOverlay(scope,cohortHandle,table("java-generation-lineage",List.of(lineage)),table("java-output-row",outputRows),proofs,true,20000,()->false).overlay();
         var members=new ArrayList<JavaEvidenceRecord>();
         for(var file:files.values())if(file.document().path().endsWith(".java"))members.add(membership(put(file.document()),new ContentHandle(file.document().contentDigest(),file.bytes().length),lineageProof.identity(),"MAIN"));

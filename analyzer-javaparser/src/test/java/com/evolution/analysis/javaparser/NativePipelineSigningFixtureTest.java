@@ -25,7 +25,7 @@ class NativePipelineSigningFixtureTest {
     private Map<String,List<ContentHandle>> checks(String question,ContentHandle evidence){var result=new TreeMap<String,List<ContentHandle>>();JavaEvidenceAuthority.requiredChecks(question).forEach(name->result.put(name,List.of(evidence)));return result;}
     @Test void allRegisteredQuestionsReplayButNeitherProductionNorOldFixtureScopesCanBeSigned()throws Exception {
         var data=data();var signer=new NativePipelineSigningFixture(data.content());var replay=new NativePipelineSigningFixture(data.content());
-        for(String question:List.of("java.output-bytes","java.generated-lineage","java.resolution-context","java.binary-shape","java.source-binary-correspondence","java.semantic-occurrence","java.generator-not-applicable","java.build-validation")){
+        for(String question:List.of("java.output-bytes","java.generated-lineage","java.resolution-context","java.binary-shape","java.source-binary-correspondence","java.semantic-occurrence","java.generator-not-applicable","java.build-validation",JavaReadinessClosure.QUESTION)){
             var issued=signer.issue(data.scope(),question,data.closure().digest().value(),data.closure(),data.answer(),data.inputs(),checks(question,data.answer()));
             assertEquals(issued.verified().identity(),replay.replay(issued.envelope()).verified().identity());assertTrue(issued.verified().current());
         }

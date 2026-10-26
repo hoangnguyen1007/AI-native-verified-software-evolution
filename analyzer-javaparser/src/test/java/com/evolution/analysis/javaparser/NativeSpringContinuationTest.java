@@ -55,6 +55,9 @@ class NativeSpringContinuationTest {
         var proof=new ConditionEvidence.Derived(List.of(source.identity()),version,"explicit-finite-test-container-not-native-runtime-closure");
         var scope=new SourceToSpringPlan.Scope("declared-native-source-container",source.identity(),included,COMPLETE,COMPLETE,COMPLETE,COMPLETE,COMPLETE,RegistrationPlan.OverridePolicy.FORBID,proof);
         var plan=new UniversalIngestionPipeline().prepareSpring(ingestion,unit.sourceSet(),scope,1000);
+        assertEquals(RegistrationPlan.OrderStatus.COMPLETE,plan.binding().registrationPlan().discoveryPlan().orderStatus());
+        assertEquals("m8.4-framework-registration-v1",BeanRegistrationProcessing.PROVIDER.version());
+        assertEquals("m8.4-framework-registration-v1",BeanRegistrationProcessing.SEMANTICS.version());
         assertEquals(2,plan.binding().registrationPlan().discoveryPlan().events().stream().filter(e->e.kind()==RegistrationEvent.Kind.COMPONENT&&e.candidate().isPresent()).count());
         assertTrue(plan.inventory().problems().stream().noneMatch(p->Set.of(SpringMechanismInventory.ProblemReason.CONSTRUCTOR_SET_INCOMPLETE,SpringMechanismInventory.ProblemReason.GENERATED_MEMBER_NOT_ACQUIRED).contains(p.reason())),"Real generated component bytes supply constructor/bean metadata inside their evidenced scan container");
         var build=plan.binding().registrationPlan().discoveryPlan().buildContext();var variable=new FiniteDomain.Variable(FiniteDomain.Kind.PROFILE,"blue");
@@ -86,6 +89,11 @@ class NativeSpringContinuationTest {
         var open=new SourceToSpringPlan.Scope("declared-native-source-container",source.identity(),List.of(),UNKNOWN,UNKNOWN,UNKNOWN,UNKNOWN,UNKNOWN,RegistrationPlan.OverridePolicy.FORBID,proof);
         var uncertain=new UniversalIngestionPipeline().prepareSpring(ingestion,unit.sourceSet(),open,1000);
         assertFalse(uncertain.gaps().isEmpty());
+        assertEquals(RegistrationPlan.OrderStatus.MISSING_EVIDENCE,uncertain.binding().registrationPlan().discoveryPlan().orderStatus());
+        var unknownTruth=uncertain.evaluate(space,baseline,limits,artifact).truth();
+        var unknownDefinitions=unknownTruth.regions().stream().filter(r->r.fact().kind()==ConditionalFactKey.Kind.DEFINITION_PRESENT).toList();
+        assertEquals(2,unknownDefinitions.size(),"Missing order cannot erase the native generated-bean denominator");
+        assertTrue(unknownDefinitions.stream().allMatch(r->r.classification()==TruthRegionEvaluation.Classification.UNKNOWN));
         var missing=new ComponentScanIngestion().scan(result.request(),result.frontend(),new SpringFrameworkEvidence(false,Optional.empty(),List.of()),1000);
         assertFalse(missing.gaps().isEmpty());assertTrue(missing.rows().stream().noneMatch(r->r.status()==ComponentScanIngestion.Status.INCLUDED));
     }

@@ -20,7 +20,7 @@ import java.util.*;
 final class NativePipelineSigningFixture {
     private static final String CONTROLLER_PRIVATE="MC4CAQAwBQYDK2VwBCIEICbM3nuWFWbt9r/sFEej7R2T0K8MUpKCuhAjzExIVSh1",CONTROLLER_PUBLIC="MCowBQYDK2VwAyEAw8eO+AJdUxvn+6U2uTRlt0hxLuXB6F2Wqq8cUcAoJxs=";
     private static final String VALIDATOR_PRIVATE="MC4CAQAwBQYDK2VwBCIEIOkjbwO3RHX2j7eV2Q22XKAZI6oErJHiKgHjZEmiM/H7",VALIDATOR_PUBLIC="MCowBQYDK2VwAyEAq58LVuStl6kF+NO0q3rauqzI9PoIdxtRmeOIdm+EthY=";
-    private static final Set<String> QUESTIONS=Set.of("java.output-bytes","java.generated-lineage","java.resolution-context","java.binary-shape","java.source-binary-correspondence","java.semantic-occurrence","java.generator-not-applicable","java.build-validation",JavaEvidenceGapClosure.QUESTION);
+    private static final Set<String> QUESTIONS=Set.of("java.output-bytes","java.generated-lineage","java.resolution-context","java.binary-shape","java.source-binary-correspondence","java.semantic-occurrence","java.generator-not-applicable","java.build-validation",JavaEvidenceGapClosure.QUESTION,JavaReadinessClosure.QUESTION);
     record Issued(EvidenceVerifier.VerifiedClaim authenticated,JavaEvidenceAuthority.Verified verified,ContentHandle envelope){}
     private final RepositoryContentStore content;private final KeyPair controller,validator;
     private final EvidenceVerifier verifier;private final JavaEvidenceAuthority authority;private final ContentHandle tool;

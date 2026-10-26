@@ -35,6 +35,7 @@ public final class JavaEvidenceGapClosure {
     public Map<String,Object> scope(){return publication.ledger().object("scope");}
     public ContentDigest policy(){return publication.projection().digest("policy");}
     public List<CapabilityGapRecord> history(){return history;}
+    public JavaEvidenceLedger.Published publication(){return publication;}
     public Current current(ContentDigest policy)throws IOException {
         var view=publication.revalidate(policy,Set.of());
         var requirements=publication.requirements();
