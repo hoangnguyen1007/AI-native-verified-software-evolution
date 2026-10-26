@@ -12,7 +12,10 @@ import java.util.function.BooleanSupplier;
 
 /** Exact native order or an explicit scoped gap; never a dependency superset. */
 public final class JavaResolutionPlanner {
-    @FunctionalInterface public interface BinaryMaterializer {BinaryInput materialize(JavaEvidenceRecord slot)throws IOException;}
+    @FunctionalInterface public interface BinaryMaterializer {
+        BinaryInput materialize(JavaEvidenceRecord slot)throws IOException;
+        default BinaryInput materialize(JavaEvidenceRecord slot,int release)throws IOException{return materialize(slot);}
+    }
     public record Result(Optional<List<BinaryInput>> binaries,List<CapabilityGapRecord> gaps){public Result{binaries=binaries.map(List::copyOf);gaps=List.copyOf(gaps);}}
     private final RepositoryContentStore content;private final JavaEvidenceTables tables;
     public JavaResolutionPlanner(RepositoryContentStore content,int rowCharacters){this.content=content;tables=new JavaEvidenceTables(content,rowCharacters);}
@@ -47,12 +50,15 @@ public final class JavaResolutionPlanner {
                     var originProof=proofs.get(slot.digest("proof"));
                     if(originProof==null||!originProof.identity().equals(slot.digest("proof"))||!originProof.current()||!originProof.record().text("question").equals("java.binary-shape")||!originProof.record().text("subject").equals(JavaEvidenceRecord.handle(slot.fields().get("original")).digest().value())||!originProof.record().fields().get("scope").equals(scope))reason=JavaEvidenceGaps.Reason.CORRESPONDENCE_UNPROVEN;
                     else try{
-                        var binary=materializer.materialize(slot);var kind=slot.text("origin").equals("PROJECT")?com.evolution.analysis.contract.analysis.ClasspathEntryKind.MODULE_OUTPUT:com.evolution.analysis.contract.analysis.ClasspathEntryKind.DEPENDENCY;
+                        var binary=materializer.materialize(slot,platform.release());var kind=slot.text("origin").equals("PROJECT")?com.evolution.analysis.contract.analysis.ClasspathEntryKind.MODULE_OUTPUT:com.evolution.analysis.contract.analysis.ClasspathEntryKind.DEPENDENCY;
                         var original=new com.evolution.analysis.contract.analysis.ClasspathEntry(kind,slot.text("logicalName"),JavaEvidenceRecord.handle(slot.fields().get("original")).digest());
                         if(binary.nativeOrigin().isEmpty()||!binary.nativeOrigin().orElseThrow().slot().equals(slot.identity())||!binary.originEntry().equals(original)||!binary.reactorModule().map(com.evolution.analysis.contract.identity.ModuleIdentity::value).equals(Optional.ofNullable(slot.fields().get("module")).map(GraphJson::string)))reason=JavaEvidenceGaps.Reason.CORRESPONDENCE_UNPROVEN;
                         else if(space.equals("CLASS_PATH"))binaries.add(binary.withValidatedOrigin(slot,originProof,nativeCensus));
                         else if(!slot.text("origin").equals("PROJECT")||!Objects.equals(slot.fields().get("module"),scope.get("module"))||slot.fields().get("selectedView")==null)reason=JavaEvidenceGaps.Reason.CORRESPONDENCE_UNPROVEN;
-                    }catch(IOException unavailable){reason=JavaEvidenceGaps.Reason.BINARY_FORMAT_INVALID;}
+                    }catch(IOException unavailable){
+                        if(cancelled.getAsBoolean()||Thread.currentThread().isInterrupted()||unavailable instanceof InterruptedIOException)throw unavailable;
+                        reason=materializationReason(unavailable);
+                    }
                 }
             }
             if(reason==null&&!content.verify(JavaEvidenceRecord.handle(slot.fields().get("original"))))reason=JavaEvidenceGaps.Reason.CONTENT_HASH_MISMATCH;
@@ -63,5 +69,15 @@ public final class JavaResolutionPlanner {
         return new Result(gaps.isEmpty()?Optional.of(binaries):Optional.empty(),List.copyOf(gaps));
     }
     private static String scopeValue(JavaEvidenceRecord record,String field){return record.text(field);}
+    private static JavaEvidenceGaps.Reason materializationReason(IOException failure){
+        String code=Objects.toString(failure.getMessage(),"");
+        if(code.contains("WORKER"))return JavaEvidenceGaps.Reason.WORKER_CAPACITY_REQUIRED;
+        if(code.equals("JAVA_ARCHIVE_MEMBER_AMBIGUOUS_OR_OVERSIZED")||code.equals("JAVA_ARCHIVE_MANIFEST_AMBIGUOUS")||code.equals("JAVA_NESTED_SELECTION_AMBIGUOUS"))return JavaEvidenceGaps.Reason.ARCHIVE_MEMBER_AMBIGUOUS;
+        if(code.equals("JAVA_ARCHIVE_UNSAFE_MEMBER")||code.equals("JAVA_BINARY_VIEW_UNSAFE"))return JavaEvidenceGaps.Reason.UNSAFE_OUTPUT_LOCATOR;
+        if(code.equals("JAVA_BINARY_CONTENT_UNAVAILABLE")||code.equals("JAVA_BINARY_VIEW_UNAVAILABLE")||code.equals("JAVA_NESTED_CONTENT_UNAVAILABLE")||code.equals("JAVA_BINARY_VIEW_CHANGED"))return JavaEvidenceGaps.Reason.CONTENT_HASH_MISMATCH;
+        if(code.equals("JAVA_BINARY_RELEASE_REQUIRED"))return JavaEvidenceGaps.Reason.BINARY_VERSION_UNSUPPORTED;
+        if(failure instanceof java.util.zip.ZipException||code.startsWith("JAVA_BINARY_")||code.startsWith("JAVA_ARCHIVE_")||code.startsWith("JAVA_NESTED_"))return JavaEvidenceGaps.Reason.BINARY_FORMAT_INVALID;
+        return JavaEvidenceGaps.Reason.STORAGE_UNAVAILABLE;
+    }
     private static Result withheld(JavaEvidenceRecord record,JavaEvidenceGaps.Reason reason){return new Result(Optional.empty(),List.of(JavaEvidenceGaps.create(record.object("scope"),reason,record.identity(),record.identity())));}
 }

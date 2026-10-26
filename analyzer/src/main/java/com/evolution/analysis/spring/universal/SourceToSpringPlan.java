@@ -22,7 +22,7 @@ import static com.evolution.analysis.spring.registration.RegistrationEvent.Compl
  * evidenced container/order closure, never final definitions, dependency descriptors or matches.
  * An unproved scope stays open. This is not an application bootstrap detector. */
 public final class SourceToSpringPlan {
-    public static final VersionedIdentifier PROVIDER=new VersionedIdentifier("spring.source-to-plan","m4uv2.2-core-descriptors-v1");
+    public static final VersionedIdentifier PROVIDER=new VersionedIdentifier("spring.source-to-plan","m8.4-source-marker-closure-v1");
 
     /** Evidence that the standard Framework 6.2.0 CommonAnnotationBeanPostProcessor is
      * enabled for this container with default type fallback, local resource factory,

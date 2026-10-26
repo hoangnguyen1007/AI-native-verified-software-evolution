@@ -114,7 +114,7 @@ class M5ArchitectureIntegrationTest {
                 @org.springframework.stereotype.Component @org.springframework.context.annotation.Profile("dev") class Client { Client(Store store){} }
                 @org.springframework.stereotype.Component class Store {}
                 """);var plan=helper.beanPlan(fixture,true,"Client","Store");var space=space(fixture);var proof=space.domains().getFirst().evidence();
-        var acquisitionGaps=Set.of("CONSTRUCTOR_SET_INCOMPLETE","CATEGORY_PARTIAL");
+        var acquisitionGaps=Set.of("CATEGORY_PARTIAL"); // Store has a source-proven language default constructor.
         assertEquals(acquisitionGaps,plan.gaps().stream().map(g->g.reasonCode()).collect(java.util.stream.Collectors.toSet()));
         var baseline=new ConfigurationAssignment(Map.of(space.domains().getFirst().variable(),FiniteDomain.Value.bool(false)),proof);var limits=TruthRegionEvaluation.Limits.conservative();var artifact=ContentDigest.sha256Utf8("fixture.m5-evaluator");
         for(boolean symbolic:List.of(false,true)){

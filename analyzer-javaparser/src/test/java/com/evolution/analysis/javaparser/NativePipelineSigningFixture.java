@@ -20,7 +20,7 @@ import java.util.*;
 final class NativePipelineSigningFixture {
     private static final String CONTROLLER_PRIVATE="MC4CAQAwBQYDK2VwBCIEICbM3nuWFWbt9r/sFEej7R2T0K8MUpKCuhAjzExIVSh1",CONTROLLER_PUBLIC="MCowBQYDK2VwAyEAw8eO+AJdUxvn+6U2uTRlt0hxLuXB6F2Wqq8cUcAoJxs=";
     private static final String VALIDATOR_PRIVATE="MC4CAQAwBQYDK2VwBCIEIOkjbwO3RHX2j7eV2Q22XKAZI6oErJHiKgHjZEmiM/H7",VALIDATOR_PUBLIC="MCowBQYDK2VwAyEAq58LVuStl6kF+NO0q3rauqzI9PoIdxtRmeOIdm+EthY=";
-    private static final Set<String> QUESTIONS=Set.of("java.output-bytes","java.generated-lineage","java.resolution-context","java.binary-shape","java.source-binary-correspondence","java.semantic-occurrence","java.generator-not-applicable","java.build-validation");
+    private static final Set<String> QUESTIONS=Set.of("java.output-bytes","java.generated-lineage","java.resolution-context","java.binary-shape","java.source-binary-correspondence","java.semantic-occurrence","java.generator-not-applicable","java.build-validation",JavaEvidenceGapClosure.QUESTION);
     record Issued(EvidenceVerifier.VerifiedClaim authenticated,JavaEvidenceAuthority.Verified verified,ContentHandle envelope){}
     private final RepositoryContentStore content;private final KeyPair controller,validator;
     private final EvidenceVerifier verifier;private final JavaEvidenceAuthority authority;private final ContentHandle tool;
@@ -30,8 +30,11 @@ final class NativePipelineSigningFixture {
         try{
             controller=keys(CONTROLLER_PRIVATE,CONTROLLER_PUBLIC);validator=keys(VALIDATOR_PRIVATE,VALIDATOR_PUBLIC);
             var pins=new TreeMap<String,ContentDigest>();
-            for(Class<?> type:List.of(javassist.bytecode.ClassFile.class,JavaEvidenceCodec.class,NativeSourceBinaryFixtureMapping.class,JavaEvidenceAssembler.class,JavaResolutionPlanner.class,JavaSemanticEvidence.class,JavaGeneratedOverlay.class,JavaSourceCorrespondence.class,NativePipelineWiringFixture.class,NativePipelineSigningFixture.class,NativeFixtureClaims.class,NativeJavaSymbolMapping.class,NativeFixtureOwnership.class,NativeMemberExtraction.class,Extraction.class,OriginalSource.class,UnicodeSource.class,JavaParserFrontend.class,NativeContextValidator.class,OccurrenceCensusVerifier.class,CapturedJavacReader.class,EvidenceVerifier.class,JavaEvidenceAuthority.class)){
-                try(var in=type.getResourceAsStream(type.getSimpleName()+".class")){if(in==null)throw new IOException("FIXTURE_VALIDATOR_CLASS_MISSING");pins.put(type.getName(),ContentDigest.sha256(in.readAllBytes()));}
+            var pending=new ArrayDeque<Class<?>>(List.of(javassist.bytecode.ClassFile.class,JavaEvidenceCodec.class,JavaEvidenceTables.class,JavaEvidenceLedger.class,JavaEvidenceGapClosure.class,com.evolution.analysis.graph.CanonicalGraphBuilder.class,NativeSourceBinaryFixtureMapping.class,JavaEvidenceAssembler.class,JavaResolutionPlanner.class,JavaSemanticEvidence.class,JavaGeneratedOverlay.class,JavaSourceCorrespondence.class,NativePipelineWiringFixture.class,NativePipelineSigningFixture.class,NativeFixtureClaims.class,NativeJavaSymbolMapping.class,NativeFixtureOwnership.class,NativeMemberExtraction.class,Extraction.class,OriginalSource.class,UnicodeSource.class,JavaParserFrontend.class,NativeContextValidator.class,OccurrenceCensusVerifier.class,CapturedJavacReader.class,EvidenceVerifier.class,JavaEvidenceAuthority.class));
+            while(!pending.isEmpty()){
+                var type=pending.removeFirst();if(pins.containsKey(type.getName()))continue;
+                try(var in=type.getResourceAsStream("/"+type.getName().replace('.','/')+".class")){if(in==null)throw new IOException("FIXTURE_VALIDATOR_CLASS_MISSING");pins.put(type.getName(),ContentDigest.sha256(in.readAllBytes()));}
+                pending.addAll(Arrays.asList(type.getDeclaredClasses()));
             }
             try(var in=OccurrenceCensusVerifier.class.getResourceAsStream("NativeEndpointComparison.class")){if(in==null)throw new IOException("FIXTURE_VALIDATOR_CLASS_MISSING");pins.put("com.evolution.analysis.execution.javac.NativeEndpointComparison",ContentDigest.sha256(in.readAllBytes()));}
             try(var in=JavaEvidenceCodec.class.getResourceAsStream(JavaEvidenceCodec.RESOURCE)){if(in==null)throw new IOException("FIXTURE_SCHEMA_MISSING");pins.put("java-evidence.schema",ContentDigest.sha256(in.readAllBytes()));}

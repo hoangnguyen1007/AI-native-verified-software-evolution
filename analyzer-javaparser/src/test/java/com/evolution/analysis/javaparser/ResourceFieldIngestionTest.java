@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 /** Actual passive source journey; containers execute only fixed authored controls. */
+@org.junit.jupiter.api.Tag("integration")
 class ResourceFieldIngestionTest {
     private final SourceToSpringPlanTest fixtures=new SourceToSpringPlanTest();
     private SourceToSpringPlan.Result plan(SourceToSpringPlanTest.Fixture f,String... order) {
@@ -55,7 +56,7 @@ class ResourceFieldIngestionTest {
         assertEquals(InjectionBindings.Outcome.SELECTED,row.outcome());
         assertEquals(InjectionBindings.Stage.RESOURCE_NAME,row.selectionStage().orElseThrow());
         assertEquals("6.2.0",org.springframework.context.annotation.CommonAnnotationBeanPostProcessor.class.getPackage().getImplementationVersion());
-        assertEquals("m4uv2.2-core-descriptors-v1",SourceToSpringPlan.PROVIDER.version());
+        assertEquals("m8.4-source-marker-closure-v1",SourceToSpringPlan.PROVIDER.version());
         var evidence=assertInstanceOf(ConditionEvidence.Source.class,dependency.evidence());
         assertTrue(evidence.span().isPresent());assertTrue(f.build().containsSource(evidence));
         assertTrue(plan.binding().obligations().stream().anyMatch(o -> o.dependencies().contains(dependency.identity())));

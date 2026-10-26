@@ -7,8 +7,8 @@ import java.util.*;
 
 /** M4C.2 catalog; M4C.1 identities and historical gaps remain unchanged. */
 public final class BeanRegistrationProcessing {
-    public static final VersionedIdentifier PROVIDER = new VersionedIdentifier("spring.bean-registration", "m4c.2");
-    public static final VersionedIdentifier SEMANTICS = new VersionedIdentifier("spring.bean-registration-semantics", "m4c.2-v1");
+    public static final VersionedIdentifier PROVIDER = new VersionedIdentifier("spring.bean-registration", "m8.4-framework-registration-v1");
+    public static final VersionedIdentifier SEMANTICS = new VersionedIdentifier("spring.bean-registration-semantics", "m8.4-framework-registration-v1");
     public static final VersionedIdentifier GAPS = new VersionedIdentifier("evidence.spring-bean-registration-gaps", "m4c.2-v1");
     public enum Reason {
         VERSION_FRAGMENT_NOT_VALIDATED, CONTEXT_MISMATCH, SOURCE_EVIDENCE_MISMATCH,

@@ -19,6 +19,7 @@ MATERIALS = frozenset({
     'protoc-gen-grpc-java', 'protobuf-java.jar', 'grpc-api.jar', 'grpc-stub.jar',
     'grpc-protobuf.jar', 'grpc-protobuf-lite.jar', 'guava.jar', 'failureaccess.jar',
     'javax.annotation-api.jar'})
+SPRING_MATERIALS = frozenset({'spring-aop.jar', 'spring-context.jar', 'spring-beans.jar', 'spring-core.jar', 'spring-expression.jar', 'spring-jcl.jar'})
 
 
 def unique(pairs):
@@ -45,7 +46,7 @@ def verify_materials(root):
     seen = set()
     for row in manifest['files']:
         if (set(row) != {'path', 'size', 'digest', 'origin', 'publisherSha1', 'trust'}
-                or row['path'] not in MATERIALS or row['path'] in seen
+                or row['path'] not in MATERIALS | SPRING_MATERIALS or row['path'] in seen
                 or type(row['size']) is not int or not 0 < row['size'] <= 67108864):
             raise ValueError('NATIVE_MATERIAL_DENOMINATOR')
         seen.add(row['path'])
@@ -55,7 +56,7 @@ def verify_materials(root):
         digest = file_digest(path)
         if digest != row['digest']:
             raise ValueError('NATIVE_MATERIAL_CONTENT')
-    if seen != MATERIALS:
+    if seen not in (MATERIALS, MATERIALS | SPRING_MATERIALS):
         raise ValueError('NATIVE_MATERIAL_DENOMINATOR')
     return manifest
 
@@ -105,6 +106,8 @@ def main():
         raise ValueError('NATIVE_COHORT_SCOPE')
     materials = inputs / 'materials'
     manifest = verify_materials(materials)
+    spring = SPRING_MATERIALS <= {row['path'] for row in manifest['files']}
+    spring_cp = [materials / name for name in sorted(SPRING_MATERIALS)] if spring else []
     source = inputs / 'source'
     logs = work / 'logs'
     logs.mkdir()
@@ -166,8 +169,8 @@ def main():
     javac('mapstruct-model', list((source / 'mapstruct/model').rglob('*.java')), mapper_model)
     mapper_classes = destination('mapstruct/mapper/classes')
     mapper_generated = destination('mapstruct/generated')
-    javac('mapstruct-generate', list((source / 'mapstruct/mapper').rglob('*.java')), mapper_classes,
-          [mapper_model, materials / 'mapstruct.jar'], (materials / 'mapstruct-processor.jar', 'org.mapstruct.ap.MappingProcessor'), mapper_generated)
+    javac('mapstruct-generate', list((source / ('mapstruct/springmapper' if spring else 'mapstruct/mapper')).rglob('*.java')), mapper_classes,
+          [mapper_model, materials / 'mapstruct.jar'] + spring_cp, (materials / 'mapstruct-processor.jar', 'org.mapstruct.ap.MappingProcessor'), mapper_generated)
     mapper_client = destination('mapstruct/client/classes')
     javac('mapstruct-client', list((source / 'mapstruct/client').rglob('*.java')), mapper_client, [mapper_model, mapper_classes])
     stage('mapstruct-consumer', ['/usr/bin/java', '-cp', ':'.join(map(str, [mapper_client, mapper_model, mapper_classes])), 'fixture.MapStructCaller'])
@@ -175,9 +178,9 @@ def main():
     generator = destination('custom/generator/classes')
     javac('custom-generator-compile', list((source / 'custom/generator').rglob('*.java')), generator)
     custom_generated = work / 'custom/generated'
-    stage('custom-generate', ['/usr/bin/java', '-cp', generator, 'Generate', custom_generated])
+    stage('custom-generate', ['/usr/bin/java', '-cp', generator, 'Generate', custom_generated] + (['spring'] if spring else []))
     custom_classes = destination('custom/producer/classes')
-    javac('custom-producer', list((custom_generated / 'java').rglob('*.java')), custom_classes)
+    javac('custom-producer', list((custom_generated / 'java').rglob('*.java')), custom_classes, spring_cp)
     custom_client = destination('custom/client/classes')
     javac('custom-client', list((source / 'custom/client').rglob('*.java')), custom_client, [custom_classes])
     broken = destination('custom/broken/classes')

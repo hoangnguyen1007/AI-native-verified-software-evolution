@@ -12,7 +12,7 @@ import static com.evolution.analysis.spring.condition.ConditionProcessing.Reason
 
 /** Passive evidence-to-IR boundary. Every M4A obligation is classified in the output denominator. */
 public final class ConditionEvidenceLowering {
-    public static final VersionedIdentifier PROVIDER = new VersionedIdentifier("spring.condition-lowering", "m4u.2");
+    public static final VersionedIdentifier PROVIDER = new VersionedIdentifier("spring.condition-lowering", "m8.4-native-origin-v1");
     public record Limits(int maxLoweredRows, int maxMetadataCharacters, int maxProfileDepth) {
         public Limits { if (maxLoweredRows < 1 || maxMetadataCharacters < 1 || maxProfileDepth < 1) throw new IllegalArgumentException("Positive lowering limits required"); }
         public static Limits conservative() { return new Limits(10000, 16384, 256); }

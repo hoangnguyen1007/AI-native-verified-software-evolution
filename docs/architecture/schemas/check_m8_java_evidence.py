@@ -25,6 +25,10 @@ def strict_object(pairs):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dependency-path", type=Path)
+    parser.add_argument("--write-codec-positives", type=Path,
+                        help="Create deterministic authored positive-shape test data; never semantic evidence")
+    parser.add_argument("--check-codec-positives", type=Path,
+                        help="Check the saved production-codec fixture against this generator without rewriting it")
     args = parser.parse_args()
     if args.dependency_path:
         sys.path.insert(0, str(args.dependency_path.resolve()))
@@ -124,6 +128,7 @@ def main():
                supportingSpans=[], reason=None),
     ]
     positive = negative = 0
+    positive_shapes = []
 
     def accept(value):
         nonlocal positive
@@ -131,6 +136,7 @@ def main():
         if errors:
             raise AssertionError(f"positive rejected: {value['schema']}: {errors[0].message[:200]}")
         positive += 1
+        positive_shapes.append(copy.deepcopy(value))
 
     def reject(value, label):
         nonlocal negative
@@ -215,6 +221,13 @@ def main():
             negative += 1
         else:
             raise AssertionError("duplicate raw key accepted")
+    fixture = ''.join(json.dumps(value, sort_keys=True, separators=(',', ':'), ensure_ascii=True) + '\n'
+                      for value in positive_shapes).encode('utf-8')
+    if args.write_codec_positives:
+        with args.write_codec_positives.open('xb') as output:
+            output.write(fixture)
+    if args.check_codec_positives and args.check_codec_positives.read_bytes() != fixture:
+        raise AssertionError('saved production-codec fixture differs from the schema generator')
     print(f"PASS: meta-schema; {len(samples)} record kinds; "
           f"{positive} positive shapes; {negative} rejected shapes/duplicate-key controls.")
     print("Scope: design/structure only; no CAS, authority, production codec or native semantic claim.")

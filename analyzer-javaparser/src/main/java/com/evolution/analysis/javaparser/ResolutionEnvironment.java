@@ -112,6 +112,9 @@ final class ResolutionEnvironment {
         Set<String> seen = new HashSet<>();
         try (ZipFile jmod = new ZipFile(path.toFile());
                 JarOutputStream jar = new JarOutputStream(normalized)) {
+            // Temporary solver archive: avoid recompression CPU while retaining exact
+            // class bytes and ZIP CRCs. The provider may materialize it as a temp file.
+            jar.setLevel(java.util.zip.Deflater.NO_COMPRESSION);
             List<? extends java.util.zip.ZipEntry> entries = jmod.stream()
                     .filter(entry -> !entry.isDirectory()
                             && entry.getName().startsWith("classes/")

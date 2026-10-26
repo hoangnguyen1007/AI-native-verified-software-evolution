@@ -921,7 +921,7 @@ public final class UniversalArchitecturePipeline {
 
         // Group root causes
         var sortedIssues = allIssues.stream().distinct().sorted(Comparator.comparing(IngestionEvidence.Issue::identity)).toList();
-        var sortedGaps = List.copyOf(allGaps);
+        var sortedGaps = javaGraph.map(value->value.activeGaps(allGaps)).orElseGet(()->List.copyOf(allGaps));
         var rootCauses = classifyRootCauses(sortedIssues, sortedGaps);
 
         // Status determination
@@ -929,7 +929,7 @@ public final class UniversalArchitecturePipeline {
         long failedUnitsCount = pipelineResult.units().stream()
                 .filter(u -> u.status() == UniversalIngestionPipeline.Status.FAILED || u.status() == UniversalIngestionPipeline.Status.REJECTED)
                 .count();
-        if (analyzedUnitsCount > 0 && failedUnitsCount == 0 && sortedIssues.isEmpty()&&(prepared.isEmpty()||sortedGaps.isEmpty())) {
+        if (analyzedUnitsCount > 0 && failedUnitsCount == 0 && sortedIssues.isEmpty()&&(prepared.isEmpty()||sortedGaps.isEmpty()&&javaGraph.orElseThrow().closedGapDenominator())) {
             status = UniversalArchitectureReport.Status.COMPLETE;
         } else if (analyzedUnitsCount > 0) {
             status = UniversalArchitectureReport.Status.PARTIAL;

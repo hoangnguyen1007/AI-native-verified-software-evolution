@@ -80,6 +80,26 @@ class NativeInputBoundaryTest(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, 'NATIVE_MATERIAL_DENOMINATOR'):
                     self.plan()
 
+    def test_spring_materials_are_an_explicit_all_or_none_native_variant(self):
+        for name in ['spring-aop.jar', 'spring-context.jar', 'spring-beans.jar', 'spring-core.jar', 'spring-expression.jar', 'spring-jcl.jar']:
+            path = self.materials / name
+            path.write_bytes(b'authored-transport-control:' + name.encode())
+            self.rows.append(dict(path=name, size=path.stat().st_size, digest=fixture.digest(path),
+                                  origin='https://repo.maven.apache.org/maven2/authored-contract-data',
+                                  publisherSha1='0' * 40, trust='PRODUCER_ASSERTION'))
+        self.write_manifest()
+        self.assertEqual(22, len(self.plan()))
+        control = fixture.load_module('native_spring_context_control', fixture.INDEX_CONTROL)
+        contexts = control.contexts('/work/' + 'a' * 32, '/opt/evo-inputs/' + 'a' * 32, spring=True)
+        mapper = next(row for row in contexts if row['name'] == 'mapstruct-mapper')
+        producer = next(row for row in contexts if row['name'] == 'custom-producer')
+        self.assertTrue(any('/springmapper/' in path for path in mapper['sources']))
+        self.assertEqual(4, len(producer['sources']))
+        self.rows.pop()
+        self.write_manifest()
+        with self.assertRaisesRegex(ValueError, 'NATIVE_MATERIAL_DENOMINATOR'):
+            self.plan()
+
     def test_transport_does_not_upload_extra_private_materials_or_unregistered_files(self):
         (self.materials / 'controller-ed25519').write_text('not-a-key; forbidden transport input')
         with self.assertRaisesRegex(ValueError, 'FIXTURE_MATERIAL_DENOMINATOR'):

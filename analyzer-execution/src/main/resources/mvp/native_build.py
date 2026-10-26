@@ -10,7 +10,137 @@ from pathlib import Path
 import subprocess
 import time
 import uuid
+import re
+import tempfile
 from capture import unique, export_request
+
+
+def material_cache(spec, workspace):
+    """Read only explicitly registered public-artifact bytes, never a host home/cache."""
+    if spec is None:
+        return None
+    if set(spec) != {'schema', 'root', 'manifest'} or spec['schema'] != 'core-mvp-cache-inputs:m8.4-v1':
+        raise ValueError('AUTHORED_CACHE_INPUT_SCHEMA')
+    root = Path(spec['root']).resolve(strict=True)
+    if (root.parent != (Path(workspace).resolve() / '.evo/executor').resolve()
+            or not re.fullmatch('m844-core-mvp-cache-[a-f0-9]{8,32}', root.name)):
+        raise ValueError('AUTHORED_CACHE_INPUT_ROOT')
+    manifest = root / 'materials.json'
+    if manifest.is_symlink() or manifest.stat().st_size != spec['manifest']['size'] or manifest.stat().st_size > 1048576:
+        raise ValueError('AUTHORED_CACHE_INPUT_MANIFEST')
+    raw = manifest.read_bytes()
+    if 'sha256:' + hashlib.sha256(raw).hexdigest() != spec['manifest']['digest']:
+        raise ValueError('AUTHORED_CACHE_INPUT_MANIFEST')
+    value = json.loads(raw, object_pairs_hook=unique)
+    if set(value) != {'schema', 'repository', 'files'} or value['schema'] != 'core-mvp-public-cache:m8.4-v1' or value['repository'] != 'https://repo.maven.apache.org/maven2/':
+        raise ValueError('AUTHORED_CACHE_INPUT_MANIFEST')
+    paths = set()
+    rows = []
+    for row in value['files']:
+        if set(row) != {'path', 'size', 'digest'}:
+            raise ValueError('AUTHORED_CACHE_INPUT_ROW')
+        name = row['path']
+        if (not isinstance(name, str) or not re.fullmatch('[A-Za-z0-9_./-]+\\.(?:jar|pom)', name)
+                or name.startswith('/') or any(part in ('', '.', '..') for part in name.split('/'))
+                or name in paths or type(row['size']) is not int or row['size'] < 0
+                or not re.fullmatch('sha256:[a-f0-9]{64}', row['digest'])):
+            raise ValueError('AUTHORED_CACHE_INPUT_ROW')
+        paths.add(name)
+        source = root / 'repository' / name
+        if any(p.is_symlink() or (hasattr(p, 'is_junction') and p.is_junction()) for p in [source, *source.parents] if p != root.parent):
+            raise ValueError('AUTHORED_CACHE_INPUT_ALIAS')
+        if source.resolve().is_relative_to(root / 'repository') is False or not source.is_file() or source.stat().st_size != row['size']:
+            raise ValueError('AUTHORED_CACHE_INPUT_BYTES')
+        with source.open('rb') as stream:
+            if 'sha256:' + hashlib.file_digest(stream, 'sha256').hexdigest() != row['digest']:
+                raise ValueError('AUTHORED_CACHE_INPUT_BYTES')
+        rows.append((source, row))
+    observed = {p.relative_to(root / 'repository').as_posix() for p in (root / 'repository').rglob('*') if p.is_file() and p.suffix in ('.jar', '.pom')}
+    if not paths or observed != paths:
+        raise ValueError('AUTHORED_CACHE_INPUT_DENOMINATOR')
+    return sorted(rows, key=lambda pair: pair[1]['path'])
+
+
+def upload_material_cache(client, rows, work, inputs):
+    made = {work}
+    with client.open_sftp() as sftp:
+        for source, row in rows:
+            relative = 'm2/' + row['path']
+            # Freeze and validate a private byte snapshot before opening a remote file.
+            # A changed path or file cannot disclose unregistered bytes to the guest.
+            with tempfile.TemporaryFile(mode='w+b') as captured:
+                digest = hashlib.sha256()
+                size = 0
+                with source.open('rb') as local:
+                    while block := local.read(65536):
+                        size += len(block)
+                        if size > row['size']:
+                            raise ValueError('AUTHORED_CACHE_INPUT_CHANGED')
+                        digest.update(block)
+                        captured.write(block)
+                if size != row['size'] or 'sha256:' + digest.hexdigest() != row['digest']:
+                    raise ValueError('AUTHORED_CACHE_INPUT_CHANGED')
+                current = work
+                for part in relative.split('/')[:-1]:
+                    current += '/' + part
+                    if current not in made:
+                        sftp.mkdir(current)
+                        made.add(current)
+                captured.seek(0)
+                with sftp.open(work + '/' + relative, 'wx') as remote:
+                    while block := captured.read(65536):
+                        remote.write(block)
+                inputs[relative] = digest.hexdigest()
+
+
+def verify_inputs(checked, work, inputs):
+    names = sorted(inputs)
+    if any(not re.fullmatch('[A-Za-z0-9_./-]+', name) or any(p in ('', '.', '..') for p in name.split('/')) for name in names):
+        raise ValueError('AUTHORED_INPUT_PATH')
+    for start in range(0, len(names), 32):
+        batch = names[start:start + 32]
+        actual = {}
+        for line in checked('sudo -n sha256sum -- ' + ' '.join(work + '/' + name for name in batch)).decode('ascii').splitlines():
+            digest, path = line.split(maxsplit=1)
+            if path in actual:
+                raise ValueError('AUTHORED_INPUT_CHANGED')
+            actual[path] = digest
+        if actual != {work + '/' + name: inputs[name] for name in batch}:
+            raise ValueError('AUTHORED_INPUT_CHANGED')
+
+
+def copy_native_cache(checked, probe, work, attempt):
+    """Copy the fixed captured cache, including when bounded /work hides image data.
+
+    All commands run through the registered guest control channel. The private,
+    read-only image view is unmounted before any target lifecycle can start.
+    """
+    if not re.fullmatch('[a-f0-9]{32}', attempt) or work != '/work/' + attempt:
+        raise ValueError('AUTHORED_CACHE_SCOPE_MISMATCH')
+    cache = '/work/6c3f72f1f2ef4561adfdab60f493549d/m2'
+    status = probe('sudo -n test -d ' + cache)
+    if status == 0:
+        checked('sudo -n test ! -L ' + cache)
+        checked('sudo -n cp -a -- ' + cache + ' ' + work + '/m2')
+        return cache, 'DIRECT_IMAGE_PATH'
+    if status != 1:
+        raise RuntimeError('AUTHORED_CACHE_PROBE_FAILED')
+    private = '/run/evo-core-mvp-cache-' + attempt
+    view = private + '/image'
+    checked('sudo -n install -d -m 0700 ' + private + ' ' + view)
+    mounted = False
+    try:
+        checked('sudo -n mount --bind / ' + view)
+        mounted = True
+        checked('sudo -n mount -o remount,bind,ro ' + view)
+        source = view + cache
+        checked('sudo -n test -d ' + source)
+        checked('sudo -n test ! -L ' + source)
+        checked('sudo -n cp -a -- ' + source + ' ' + work + '/m2')
+    finally:
+        if mounted:
+            checked('sudo -n umount ' + view)
+    return cache, 'IMAGE_ROOT_READONLY_BIND'
 
 
 def parse_arguments(argv=None):
@@ -37,6 +167,8 @@ def main():
         raise ValueError('AUTHORED_OWNER_SCOPE_MISMATCH')
     resources = Path(__file__).resolve().parents[1]
     repo = Path.cwd().resolve()
+    profile = json.loads((args.root / 'profile.json').read_bytes(), object_pairs_hook=unique)
+    cache_rows = material_cache(profile.get('cacheInputs'), repo)
     spec=importlib.util.spec_from_file_location('native_host_storage',resources/'hyperv/host_storage.py')
     storage=importlib.util.module_from_spec(spec);spec.loader.exec_module(storage)
     volume=None
@@ -136,10 +268,11 @@ def main():
                 target.write(settings)
             inputs['settings.xml'] = hashlib.sha256(settings).hexdigest()
         # The source is a previously censused authored Maven cache in this independent image.
-        cache = '/work/6c3f72f1f2ef4561adfdab60f493549d/m2'
-        checked('sudo -n test -d ' + cache)
-        checked('sudo -n test ! -L ' + cache)
-        checked('sudo -n cp -a -- ' + cache + ' ' + work + '/m2')
+        if cache_rows is None:
+            cache, cache_access = copy_native_cache(checked, lambda command: remote(command)[0], work, attempt)
+        else:
+            upload_material_cache(client, cache_rows, work, inputs)
+            cache, cache_access = profile['cacheInputs']['manifest']['digest'], 'SEALED_ARTIFACT_INPUTS'
         checked('sudo -n chown -R evobuild:evobuild ' + work)
         runner = resources / 'guest/runner.py'
         runner_pin = hashlib.sha256(runner.read_bytes()).hexdigest()
@@ -162,11 +295,8 @@ def main():
         for relative in ['model/target/generated-sources/evo/fixture/Generated.java', 'model/target/classes/fixture/Generated.class', 'app/target/classes/fixture/Caller.class']:
             raw = checked('sudo -n cat -- ' + work + '/' + relative)
             outputs[relative] = dict(digest='sha256:' + hashlib.sha256(raw).hexdigest(), size=len(raw))
-        for relative, expected in inputs.items():
-            actual = checked('sudo -n sha256sum -- ' + work + '/' + relative).decode().split()[0]
-            if actual != expected:
-                raise ValueError('AUTHORED_INPUT_CHANGED')
-        result = dict(schema='authored-offline-maven-publication-run:m8.4-v1', attempt=attempt, argv=native['argv'], buildExit=code, consumerExit=consumer_code, inputs=inputs, outputs=outputs, runnerPin='sha256:' + runner_pin, cacheOrigin=cache, qualified=False, semanticTrust='PRODUCER_ASSERTION')
+        verify_inputs(checked, work, inputs)
+        result = dict(schema='authored-offline-maven-publication-run:m8.4-v1', attempt=attempt, argv=native['argv'], buildExit=code, consumerExit=consumer_code, inputs=inputs, outputs=outputs, runnerPin='sha256:' + runner_pin, cacheOrigin=cache, cacheAccess=cache_access, qualified=False, semanticTrust='PRODUCER_ASSERTION')
         with (args.root / 'native-result.json').open('x', encoding='utf-8') as target:
             json.dump(result, target, sort_keys=True)
         successful = True  # Immediate handoff to the export helper, which always stops this worker.

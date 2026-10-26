@@ -14,9 +14,12 @@ import stat
 import sys
 
 
-def contexts(work, sealed):
+def contexts(work, sealed, spring=False):
+    if type(spring) is not bool:
+        raise ValueError('NATIVE_SPRING_VARIANT_REQUIRED')
     w, s = PurePosixPath(work), PurePosixPath(sealed) / 'source'
     m = PurePosixPath(sealed) / 'materials'
+    spring_cp = [m / (name + '.jar') for name in ['spring-aop', 'spring-beans', 'spring-context', 'spring-core', 'spring-expression', 'spring-jcl']] if spring else []
     jars = [m / (name + '.jar') for name in ['failureaccess', 'grpc-api', 'grpc-protobuf',
             'grpc-protobuf-lite', 'grpc-stub', 'guava', 'javax.annotation-api', 'protobuf-java']]
     rows = []
@@ -32,12 +35,13 @@ def contexts(work, sealed):
     add('lombok-model', [s / 'lombok/model/fixture/Person.java'], [m / 'lombok.jar'])
     add('lombok-client', [s / 'lombok/client/fixture/LombokCaller.java'], [w / 'lombok/model/classes'])
     add('mapstruct-model', [s / 'mapstruct/model/fixture/Input.java', s / 'mapstruct/model/fixture/Output.java'])
-    add('mapstruct-mapper', [s / 'mapstruct/mapper/fixture/PersonMapper.java', w / 'mapstruct/generated/fixture/PersonMapperImpl.java'],
-        [w / 'mapstruct/model/classes', m / 'mapstruct.jar'])
+    add('mapstruct-mapper', [s / ('mapstruct/springmapper' if spring else 'mapstruct/mapper') / 'fixture/PersonMapper.java', w / 'mapstruct/generated/fixture/PersonMapperImpl.java'],
+        [w / 'mapstruct/model/classes', m / 'mapstruct.jar'] + spring_cp)
     add('mapstruct-client', [s / 'mapstruct/client/fixture/MapStructCaller.java'],
         [w / 'mapstruct/model/classes', w / 'mapstruct/mapper/classes'])
     add('custom-generator', [s / 'custom/generator/Generate.java'])
-    add('custom-producer', [w / 'custom/generated/java/fixture/Generated.java'])
+    add('custom-producer', [w / 'custom/generated/java/fixture/Generated.java'] +
+        ([w / 'custom/generated/java/fixture' / (name + '.java') for name in ['Choice', 'BlueChoice', 'OtherChoice']] if spring else []), spring_cp)
     add('custom-client', [s / 'custom/client/fixture/CustomCaller.java'], [w / 'custom/producer/classes'])
     add('custom-broken', [s / 'custom/broken/fixture/Broken.java'], expected='ERROR')
     return rows
@@ -116,7 +120,7 @@ def main():
                 != {p.relative_to(tool).as_posix(): handle(p) for p in regular_tree(tool)}):
             raise ValueError('INDEX_TOOL_CLASSES_CHANGED')
         exits = json.loads(sys.stdin.read(65537))
-        rows = contexts(str(work), str(sealed))
+        rows = contexts(str(work), str(sealed), spring=(sealed / 'materials/spring-context.jar').is_file())
         if set(exits) != {r['name'] for r in rows} or any(type(v) is not int for v in exits.values()):
             raise ValueError('INDEX_CONTEXT_DENOMINATOR')
         freeze(work / 'index')

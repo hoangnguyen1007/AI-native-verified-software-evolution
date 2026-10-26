@@ -16,6 +16,7 @@ public final class ArchitectureQuery {
     public enum Truth { SAT, UNSAT, UNKNOWN }
     public enum Classification { MUST, MAY, NEVER, UNKNOWN }
     public enum StopReason { NONE, DEPTH, STEPS, OUTPUT, INPUT, SOLVER, CANCELLED, MEMORY, TIME, UNKNOWN_EVIDENCE }
+    public enum GapView { CURRENT, HISTORY, ALL }
     public record Limits(int maxDepth, long maxSteps, int maxResults, int maxVertices, int maxEdges,
                          long maxSolverSteps, int maxFormulaNodes, int maxAuxiliaryStates) {
         public Limits {

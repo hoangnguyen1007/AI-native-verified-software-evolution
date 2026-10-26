@@ -234,6 +234,7 @@ public final class ArchitectureQueryApi {
         if (hasPage && !paged) throw new IllegalArgumentException("Page not applicable");
         switch (op) {
             case "entities" -> QueryJson.object(a,"search");
+            case "gaps" -> QueryJson.object(a,"view");
             case "entity","dependencies","expand","reachability","impact","explain","children" -> QueryJson.object(a,"identity");
             case "paths","shortest-path" -> QueryJson.object(a,"source","target");
             case "evidence" -> QueryJson.object(a,"reference");
@@ -263,7 +264,7 @@ public final class ArchitectureQueryApi {
             case "impact" -> q.impact(r,QueryJson.text(a,"identity"));
             case "evidence" -> q.evidence(r,new ContentDigest(QueryJson.text(a,"reference")));
             case "explain" -> q.explain(r,QueryJson.text(a,"identity"),p);
-            case "gaps" -> q.gaps(r,p);
+            case "gaps" -> q.gaps(r,a.containsKey("view")?GapView.valueOf(QueryJson.text(a,"view")):GapView.CURRENT,p);
             case "spring" -> q.spring(r,QueryJson.stringsRequired(a,"kinds"),p);
             case "configurations" -> q.configurations(r,p);
             case "artifacts" -> q.artifacts(r,QueryJson.stringsRequired(a,"families"),p);

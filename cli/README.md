@@ -4,6 +4,8 @@
 
 ## Build and launch
 
+Captured Step-4 graphs distinguish active residuals from closed gap history. Use `evo gaps --gap-view CURRENT`, `evo gaps --gap-view HISTORY` or `evo gaps --gap-view ALL` with the usual graph/context/JSON options. The default is CURRENT. History preserves original gap identities and evidence; its presence does not increase the active gap count. These views describe the saved graph's policy/input revision. They do not re-certify an old capture against a changed authority registry.
+
 Use JDK 21 and the platform's Maven Wrapper. These commands build trusted platform modules, never an analyzed repository. On a fresh checkout, install the required module artifacts individually, then package the CLI:
 
 ```powershell
@@ -115,4 +117,4 @@ It creates an isolated hidden console with VT initially off, reads actual screen
 
 `scan` now captures full inventory before creating the bounded Java compatibility view. A larger input is retained for an appropriate semantic worker rather than truncated to that view. See the [M8.4.1 contract](../docs/architecture/m8-streaming-acquisition.md) for identities, authentication policy, archive support, resource waiting and migration boundaries.
 
-`evo readiness <revision> --section requirements --limit 20 --json` plans every captured build root and candidate context, with a durable ownership ledger and native validation requirements. Sections also include `roots`, `modules`, `contexts`, `recipes`, `compilation-groups`, `selection` and `unknown`. `--source-set main` and `--variant baseline` record explicit context selection. `scan` binds the plan digest into analysis identity and reports pending native build validation; it does not execute target builds. `--artifact-repository HTTPS_URI` explicitly enables supported exact release artifact acquisition. Dynamic dependency resolution and native tool execution await the validated executor. See the [readiness contract](../docs/architecture/m8-build-readiness-planner.md).
+`evo readiness <revision> --section requirements --limit 20 --json` plans every captured build root and candidate context, with a durable ownership ledger and native validation requirements. Sections also include `roots`, `modules`, `contexts`, `recipes`, `compilation-groups`, `selection` and `unknown`. `--source-set main` and `--variant baseline` record explicit context selection. `scan` binds the plan digest into analysis identity and reports pending native build validation; it does not execute target builds. `--artifact-repository HTTPS_URI` explicitly enables supported exact release artifact acquisition. Step 3 has a registered Hyper-V Core MVP execution lane; general dynamic dependency/native semantic qualification and automatic captured-context composition remain separate obligations. See the [readiness contract](../docs/architecture/m8-build-readiness-planner.md).

@@ -30,10 +30,27 @@
         <dependency><groupId>com.evolution</groupId><artifactId>analyzer-javaparser</artifactId><version>${project.version}</version></dependency>
 
         <!-- Testing -->
+        <dependency><groupId>com.evolution</groupId><artifactId>analyzer-execution</artifactId><version>${project.version}</version><scope>test</scope></dependency>
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>
             <scope>test</scope>
         </dependency>
     </dependencies>
+
+    <!-- Explicit platform test classes only; never included in production artifacts. -->
+    <profiles>
+        <profile>
+            <id>native-campaign</id>
+            <properties>
+                <!-- Reactor order compiles this trusted fixture before backend tests.
+                     Override for absolute/external platform.build.directory values. -->
+                <native.fixture.classes>${maven.multiModuleProjectDirectory}/analyzer-javaparser/${platform.build.directory}/test-classes</native.fixture.classes>
+            </properties>
+            <build><plugins><plugin>
+                <groupId>org.apache.maven.plugins</groupId><artifactId>maven-surefire-plugin</artifactId>
+                <configuration><additionalClasspathElements><additionalClasspathElement>${native.fixture.classes}</additionalClasspathElement></additionalClasspathElements></configuration>
+            </plugin></plugins></build>
+        </profile>
+    </profiles>
 </project>

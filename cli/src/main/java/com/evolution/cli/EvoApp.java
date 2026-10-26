@@ -172,9 +172,12 @@ public final class EvoApp {
         final Root r;final String name,operation;
         @Parameters(arity="0..3",paramLabel="VALUE",description="Symbol ID, search, metric or operation / ID, tìm kiếm, metric hoặc thao tác") List<String> values=new ArrayList<>();
         @Option(names="--fail-on",paramLabel="none|info|warning|error",description="CI policy threshold / Ngưỡng chính sách CI") String failOn="none";
+        @Option(names="--gap-view",paramLabel="CURRENT|HISTORY|ALL",description="Current residuals or immutable gap history / Khoảng trống hiện tại hoặc lịch sử") String gapView;
         Query(Root r,String name,String operation){this.r=r;this.name=name;this.operation=operation;}
         public Integer call() throws Exception {
-            r.validate();var graph=load(r);String context=context(r,graph,false);
+            r.validate();
+            if(gapView!=null&&(!Set.of("gaps","query").contains(name)||r.request!=null||r.arguments!=null))throw new InputFailure("GAP_VIEW_NOT_APPLICABLE");
+            var graph=load(r);String context=context(r,graph,false);
             if(name.equals("show")&&context==null)return emit(r,name,discovery(graph),0);
             if(context==null)throw new InputFailure("CONTEXT_REQUIRED");
             String op=operation;var operands=new ArrayList<>(values);
@@ -196,7 +199,16 @@ public final class EvoApp {
                 var bundle=report.evaluation().findings().stream().map(PolicyEvaluation.Finding::bundle).filter(b->b.identity().value().equals(id)).findFirst().orElseThrow(()->new InputFailure("BUNDLE_UNAVAILABLE"));
                 var replayed=new ArchitectureMetricsService(graph).queries().ruleCondition(bundle.request(),bundle.predicate());return emit(r,name,envelope(replayed),status(replayed));
             }
-            var body=body(r,graph,context,op,operands,isReportOp);String path="/api/v1/graphs/"+graph.identity().value();
+            var body=body(r,graph,context,op,operands,isReportOp);
+            if(gapView!=null){
+                if(!op.equals("gaps"))throw new InputFailure("GAP_VIEW_NOT_APPLICABLE");
+                try{gapView=com.evolution.analysis.query.ArchitectureQuery.GapView.valueOf(gapView.toUpperCase(Locale.ROOT)).name();}
+                catch(IllegalArgumentException invalid){throw new InputFailure("INVALID_GAP_VIEW");}
+                var payload=new TreeMap<>(GraphJson.object(GraphJson.read(new String(body,StandardCharsets.UTF_8),GraphJson.Limits.defaults())));
+                var arguments=new TreeMap<>(GraphJson.object(payload.get("arguments")));arguments.put("view",gapView);payload.put("arguments",arguments);
+                body=CanonicalJson.write(payload).getBytes(StandardCharsets.UTF_8);
+            }
+            String path="/api/v1/graphs/"+graph.identity().value();
             path+=report==null?"/queries/"+op:"/reports/"+report.identity().value()+"/"+op;
             return queryResponse(r,name,op,graph,store,reports,report,failOn,path,body,policyToRemember);
         }

@@ -13,6 +13,19 @@ import static com.evolution.analysis.query.ArchitectureQuery.*;
 import static com.evolution.backend.query.QueryFixture.id;
 
 class ArchitectureQueryApiTest {
+    @Test void currentAndHistoricalGapViewsAreExplicitAndKeepTheirDenominators(){
+        var f=new QueryFixture().node("a");
+        f.nodes.add(new KnowledgeGraph.Node(id("old-gap"),f.context,"HISTORICAL_CAPABILITY_GAP",List.of(f.evidence.getFirst().identity())));
+        f.nodes.add(new KnowledgeGraph.Node(id("active-gap"),f.context,"CAPABILITY_GAP",List.of(f.evidence.getFirst().identity())));
+        var api=new ArchitectureQueryApi(f.store());
+        var current=new String(call(api,f.request(),"gaps",Map.of()).body(),StandardCharsets.UTF_8);
+        var history=new String(call(api,f.request(),"gaps",Map.of("view","HISTORY")).body(),StandardCharsets.UTF_8);
+        var all=new String(call(api,f.request(),"gaps",Map.of("view","ALL")).body(),StandardCharsets.UTF_8);
+        assertTrue(current.contains(id("active-gap")));assertFalse(current.contains(id("old-gap")));
+        assertTrue(history.contains(id("old-gap")));assertFalse(history.contains(id("active-gap")));
+        assertTrue(all.contains(id("old-gap")));assertTrue(all.contains(id("active-gap")));
+        assertEquals(400,call(api,f.request(),"gaps",Map.of("view","INVENTED")).status());
+    }
     @Test void visualDepthCannotBeFractionalOverflowedOrIgnoredWithoutASeed(){
         var f=new QueryFixture().node("a").node("b").edge("a","b");var api=new ArchitectureQueryApi(f.store());
         for(Object depth:List.of(new java.math.BigDecimal("1.5"),new java.math.BigDecimal("4294967297"),"2",0))

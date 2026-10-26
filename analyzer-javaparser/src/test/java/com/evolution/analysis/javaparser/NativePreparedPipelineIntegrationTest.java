@@ -10,7 +10,7 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 /** Requires the explicitly selected immutable native CAS; never executes a target. */
-@org.junit.jupiter.api.condition.EnabledIfSystemProperty(named="native.fixture.root",matches=".+")
+@org.junit.jupiter.api.Tag("native-campaign")
 class NativePreparedPipelineIntegrationTest {
     @Test void nativeConsumerGraphHasThePreparedViewAndPostAnalysisClosure()throws Exception {
         var fixture=new NativePipelineWiringFixture(Path.of(System.getProperty("native.fixture.root")));
@@ -18,6 +18,17 @@ class NativePreparedPipelineIntegrationTest {
         assertTrue(graph.evidence().stream().anyMatch(e->e.family().equals("java.evidence.view")),"Native inputs must pass through the prepared evidence lane");
         assertTrue(graph.evidence().stream().anyMatch(e->e.family().equals("java.evidence.post-projection")),"Native semantic claims must reach post-analysis reconciliation");
         assertClosed(result);
+        var repositoryRequest=Request.dependencies(graph.identity(),graph.snapshot().value());
+        var query=new ArchitectureQueryService(graph);
+        var history=query.gaps(repositoryRequest,GapView.HISTORY,Page.first());
+        assertFalse(history.items().isEmpty(),"Closed native history must reach the production graph query");
+        assertTrue(history.items().stream().allMatch(n->n.kind().equals("HISTORICAL_CAPABILITY_GAP")));
+        var currentIds=query.gaps(repositoryRequest,Page.first()).items().stream().map(EntityView::identity).collect(java.util.stream.Collectors.toSet());
+        assertTrue(history.items().stream().noneMatch(n->currentIds.contains(n.identity())));
+        assertTrue(result.pipeline().report().gaps().stream().noneMatch(g->history.items().stream().anyMatch(n->n.identity().equals(g.gapIdentity().value()))));
+        var delta=query.artifacts(repositoryRequest,Set.of("java.evidence.gap-closure"),Page.first()).items().getFirst().metadata();
+        assertEquals("BOUND_GAP_HISTORY",delta.get("population"));assertTrue(((Number)delta.get("historyGapCount")).longValue()>0);assertEquals(0,((Number)delta.get("activeHistoryGapCount")).longValue());
+        assertEquals(com.evolution.analysis.ingestion.UniversalArchitectureReport.Status.PARTIAL,result.pipeline().report().status(),"Genuine provider/Spring residuals must survive native closure");
         var caller=result.request().sources().stream().filter(s->s.document().path().endsWith("ProtoCaller.java")).findFirst().orElseThrow();
         var expected=com.evolution.analysis.frontend.JavaSymbolName.method(com.evolution.analysis.frontend.JavaSymbolName.topLevelType("fixture.proto","Request"),"newBuilder",List.of());
         var call=result.frontend().occurrences().stream().filter(o->o.relationship().kind().value().equals("java.calls")&&o.span().equals(new com.evolution.analysis.contract.source.SourceSpan(caller.document().identity(),4,16,4,50))).findFirst().orElseThrow();
@@ -47,6 +58,16 @@ class NativePreparedPipelineIntegrationTest {
     @Test void nativeProjectImportsCarryDerivedEvidenceFromTheValidatedBinarySlot()throws Exception {
         var result=new NativePipelineWiringFixture(Path.of(System.getProperty("native.fixture.root"))).execute("lombok-client");
         var imported=result.frontend().declarations().stream().filter(d->d.entity().origin()==EntityOrigin.PROJECT&&d.entity().declaration().isEmpty()&&d.entity().kind()!=EntityKind.PACKAGE).toList();
+        var graph=result.graph();var query=new ArchitectureQueryService(graph);
+        var binaryImports=imported.stream().filter(d->d.derivation().method().id().equals("java.native-binary-import")).toList();
+        assertFalse(binaryImports.isEmpty(),"The fixture must actually import native PROJECT members");
+        for(var declaration:binaryImports){
+            String context=graph.nodes().stream().filter(n->n.identity().equals(declaration.entity().identity().value())).findFirst().orElseThrow().context();
+            var request=Request.dependencies(graph.identity(),context);
+            var shown=query.explain(request,declaration.entity().identity().value(),Page.first()).items();
+            assertTrue(shown.stream().anyMatch(e->e.family().equals("java.evidence.binary-origin")&&e.metadata().get("original") instanceof Map<?,?>),"A class-only declaration must expose its exact captured artifact");
+            assertTrue(shown.stream().filter(e->e.family().equals("java.evidence.binary-origin")).noneMatch(e->e.metadata().containsKey("span")));
+        }
         assertFalse(imported.isEmpty());assertTrue(imported.stream().allMatch(d->d.derivation().kind()==DerivationKind.DERIVED),"Native PROJECT members must retain their validated transformation evidence");
     }
     @Test void generatedMapStructAndCustomResourcesUseImmutablePreparedOverlays()throws Exception {
@@ -56,7 +77,12 @@ class NativePreparedPipelineIntegrationTest {
             assertNotEquals(result.prepared().base().snapshot().identity(),result.prepared().inputs().snapshot().identity());
             assertTrue(result.prepared().inputs().snapshot().documents().stream().anyMatch(d->d.classification()==com.evolution.analysis.contract.source.SourceClassification.GENERATED_MAIN));
             assertTrue(result.graph().evidence().stream().anyMatch(e->e.family().equals("java.evidence.source-map")));
+            var query=new ArchitectureQueryService(result.graph());
+            var repositoryRequest=Request.dependencies(result.graph().identity(),result.graph().snapshot().value());
+            var maps=query.artifacts(repositoryRequest,Set.of("java.evidence.source-map"),Page.first()).items();
+            assertTrue(maps.stream().anyMatch(e->e.metadata().get("originalPath") instanceof String),"Captured generated paths must survive public query redaction");
             var generated=result.prepared().inputs().snapshot().documents().stream().filter(d->d.classification()==com.evolution.analysis.contract.source.SourceClassification.GENERATED_MAIN).map(d->d.identity()).collect(java.util.stream.Collectors.toSet());
+            for(var document:generated)assertTrue(query.explain(repositoryRequest,document.value(),Page.first()).items().stream().anyMatch(e->e.family().equals("java.evidence.source-map")&&document.value().equals(e.metadata().get("projectedDocument"))));
             assertTrue(result.frontend().declarations().stream().filter(d->d.entity().declaration().filter(s->generated.contains(s.document())).isPresent()).allMatch(d->d.derivation().kind()==DerivationKind.DERIVED));
         }
     }
@@ -90,7 +116,6 @@ class NativePreparedPipelineIntegrationTest {
         assertThrows(java.io.IOException.class,()->fixture.requireLombokVersion("1.18.46"));assertThrows(java.io.IOException.class,fixture::readWithChangedLombokConfiguration);
     }
     @Test
-    @org.junit.jupiter.api.condition.EnabledIfSystemProperty(named="native.failure.root",matches=".+")
     void actualProcessorFailureRetainsTheGeneratedFileAndWithholdsWholeGenerationClosure()throws Exception {
         var partial=new NativePartialProcessorFixture(Path.of(System.getProperty("native.failure.root"))).verify();
         assertEquals("PARTIAL",partial.overlay().text("closure"));assertEquals("SEALED",partial.overlay().text("census"));

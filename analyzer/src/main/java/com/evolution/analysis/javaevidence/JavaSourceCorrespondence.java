@@ -110,7 +110,7 @@ public final class JavaSourceCorrespondence {
         public List<Mapping> mappings(){return mappings;}
         public Map<String,Object> scope(){return scope;}
         public JavaEvidenceTables.Table table(){return table;}
-        public boolean current()throws IOException{for(var reference:references)if(!content.verify(reference))return false;for(var proof:proofs)if(!proof.current())return false;return true;}
+        public boolean current()throws IOException{for(var reference:references)if(!content.verify(reference))return false;return JavaEvidenceAuthority.allCurrent(proofs);}
         public Optional<ContentDigest> policy(){return proofs.stream().findFirst().map(p->p.record().digest("policy"));}
         public List<JavaEvidenceAuthority.Verified> proofs(){return proofs;}
         public Object canonicalForm(){return Map.of("schema","java-source-binary-binding:m8.4-v1","scope",scope,"table",table.wire());}

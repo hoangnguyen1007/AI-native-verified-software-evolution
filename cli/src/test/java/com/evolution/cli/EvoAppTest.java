@@ -15,6 +15,17 @@ import org.junit.jupiter.api.io.TempDir;
 import static org.junit.jupiter.api.Assertions.*;
 
 class EvoAppTest {
+    @Test void gapHistoryFlagKeepsClosedRowsSeparateFromCurrentResiduals()throws Exception{
+        var f=new CliFixture().node("A");
+        f.nodes.add(new KnowledgeGraph.Node(CliFixture.id("old-gap"),f.context,"HISTORICAL_CAPABILITY_GAP",List.of(f.base.identity())));
+        f.nodes.add(new KnowledgeGraph.Node(CliFixture.id("active-gap"),f.context,"CAPABILITY_GAP",List.of(f.base.identity())));
+        var path=graph(f);
+        var current=run("gaps","--graph",path.toString(),"--json");
+        var history=run("gaps","--gap-view","HISTORY","--graph",path.toString(),"--json");
+        assertFalse(current.out().contains(CliFixture.id("old-gap")));assertTrue(current.out().contains(CliFixture.id("active-gap")));
+        assertTrue(history.out().contains(CliFixture.id("old-gap")),history.err());assertFalse(history.out().contains(CliFixture.id("active-gap")));
+        assertFalse(run("show","--gap-view","HISTORY","--graph",path.toString(),"--json").err().isEmpty());
+    }
     @Test void paletteNextUsesExactCursorAndStopsAtLastPage()throws Exception{
         var p=graph(new CliFixture().node("A").node("B").node("C"));var out=new StringWriter();var err=new StringWriter();
         String script="find -n 1\nnext\nevo next\nnext\nquit\n";
@@ -158,6 +169,7 @@ class EvoAppTest {
         var graph=new KnowledgeGraph(f.snapshot,List.of(new KnowledgeGraph.Context(f.context,f.snapshot,Optional.empty(),f.base.identity()),new KnowledgeGraph.Context(second,f.snapshot,Optional.empty(),f.base.identity())),f.nodes,f.edges,f.evidence);
         Path path=directory.resolve("multi.json");Files.writeString(path,new GraphSnapshotCodec().encode(graph));
         assertEquals(0,run("open",path.toString(),"--json").code);assertEquals(2,run("find","--json").code);assertTrue(run("show","--json").data().containsKey("contexts"));
+        assertEquals(2,run("show","--gap-view","HISTORY","--json").code,"Discovery cannot silently ignore a gap-only option");
         var request=directory.resolve("request.json");var r=new ArchitectureQuery.Request(graph.identity(),f.context,f.request().scope(),f.request().projection(),f.request().direction(),f.request().relationshipKinds(),f.request().population(),false,Optional.empty(),f.request().limits());Files.writeString(request,CanonicalJson.write(Map.of("request",r)));
         assertEquals(0,run("show","--request",request.toString(),"--json").code);
         assertEquals(0,run("use","2","--json").code);assertEquals(0,run("show","--scope","entity","--json").code);

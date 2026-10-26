@@ -1,8 +1,8 @@
 # Prompt bàn giao — M8.4 Bước 4, Phase 2 (GPT-6.1 sol)
 
-Sao chép toàn bộ phần trong khối dưới vào một prompt mới ở repository này. Đây là yêu cầu triển khai trong cùng Bước 4; các vòng TDD là công việc nội bộ, không phải task/milestone mới.
+Đây là prompt gốc đã được thực thi và đóng; giữ lại để truy vết phạm vi và exit criteria, không phải yêu cầu triển khai còn mở.
 
-**Checkpoint 2026-10-23:** Phase 2 vẫn IN PROGRESS, matrix 11 bounded PASS / 59 full NOT RUN. Đã có implementation, native generators thật, strict v1/v2 reader, NativeContextValidator và OccurrenceCensusVerifier. Capture mới 60cd96d0 có đủ 18 nhóm / 2.284 observations, 388 declarations / 44 type arguments; 69 JMOD inventory / 49 selected named modules, 11 contexts / 118 artifact bindings đã đối chiếu và replay bằng CAS. Source qualifier/catch-span mapping được sửa, giữ khóa M1 cũ; provider hiện tại `3.28.2-m8.4-expression-types-v3`. Native bytes đã đi qua candidate architecture graphs, chưa phải prepared native-evidence lane. Bốn raw import sites đã có disposition theo M2, giữ nguyên raw capture; eligible-location accounting đóng 8/11 contexts. V6 có 1.951 named target signatures khớp / 319 cần mapping, 1.834 callers khớp / 436 cần mapping, 1.120 resolved sites còn cần origin proof; đây không phải số gaps. Không có native VerifiedClaim được cấp. Operator profile/public key hiện có là Core MVP/SSH; requiredChecks và mẫu ký test không phải validator native đã qualification. Lombok còn `lombok.artifact-unverified`; còn protected context/lineage/correspondence/occurrence qualification, N01–N06 đầy đủ và product/root/partition/recovery/R03. Giữ 29 raw gaps và các revision cũ, không tự ký producer assertion thành proof. Đọc execution record để lấy selectors, digest và kết quả cuối; không làm lại Phase 1, không hỏi lại hạ tầng đã có, không dùng mock thay native acceptance.
+**CLOSED — 2026-10-26:** Prompt 1 / Phase-2 implementation and registered controlled acceptance are complete. The unchanged matrix is **70 bounded PASS / 0 FAIL / 0 NOT RUN**; **594 Java cases / 69 suites / zero failures/errors/skips**, 15 Python controls and schema checks pass. Native v5 closes the expected native obligations and replays 2,412 claims with the final JAR; the fresh registered offline Core MVP build, complete 951-entry publication and byte-evidence reader also pass. Producer trust remains PRODUCER_ASSERTION / qualified=false, Java fixture authority PUBLIC_TEST_POLICY_ONLY. Genuine unsupported/unknown outcomes remain represented; no universal semantic or production-security certificate is claimed. See the [closeout record](04-step4-phase2-execution.md#prompt-1-closeout--2026-10-26) for exact commands, hashes, failures and scope. Steps 5–6 remain pending; no commit/push or automatic phase transition.
 
 ```text
 Bạn là GPT-6.1 sol, làm việc tại D:\UIT\AI-native-verified-software-evolution.
@@ -29,6 +29,12 @@ Nguồn sự thật:
    phần native-output/trust/acceptance liên quan.
 8. docs/tasks/m8/04-step4-phase2-execution.md — checkpoint implementation,
    verification và các phần code/native acceptance chưa hoàn thành.
+
+Ưu tiên phần Implementation audit và checkpoint mới nhất trong matrix/execution;
+các đoạn 11/59, 17/53, provider cũ và NEXT TASK cũ trong lịch sử không phải
+trạng thái hiện hành. Không dừng ở việc chạy lại P02: phần này đã được kiểm.
+Hoàn thiện phần implementation còn thiếu, rồi kiểm acceptance còn thiếu;
+không chuyển mọi full NOT RUN thành PASS chỉ vì có test cùng tên.
 
 Human đã đóng Bước 3 ở Core MVP: registered Hyper-V offline build/export,
 CAS/replay, PRODUCER_ASSERTION, qualified=false. Không mở lại chiến dịch an ninh

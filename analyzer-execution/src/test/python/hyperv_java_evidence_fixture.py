@@ -45,8 +45,8 @@ def input_plan(material_root, indexer=False):
             or not re.fullmatch('m844-native-materials-[a-f0-9]{8,32}', material_root.name)):
         raise ValueError('FIXTURE_MATERIAL_ROOT')
     recipe = load_module('fixed_native_recipe', FIXTURE / 'recipe.py')
-    recipe.verify_materials(material_root)
-    if {p.name for p in material_root.iterdir()} != recipe.MATERIALS | {'materials.json'}:
+    manifest = recipe.verify_materials(material_root)
+    if {p.name for p in material_root.iterdir()} != {row['path'] for row in manifest['files']} | {'materials.json'}:
         raise ValueError('FIXTURE_MATERIAL_DENOMINATOR')
     paths = []
     for base, prefix in [(FIXTURE, 'source'), (material_root, 'materials')]:
@@ -85,6 +85,9 @@ def preflight(root):
     profile = json.loads((root / 'profile.json').read_bytes(), object_pairs_hook=unique)
     spec = profile['nativeFixture']
     plan = input_plan(spec['materials'], spec.get('indexer', False))
+    spring = any(row['path'] == 'materials/spring-context.jar' for _, row in plan)
+    if spec.get('spring', False) is not spring:
+        raise ValueError('FIXTURE_SPRING_VARIANT_CHANGED')
     if (spec['schema'] != 'm844-authored-native-fixture:v1' or spec['controller'] != digest(__file__)
             or spec['inputs'] != [row for _, row in plan] or profile['qualified'] is not False):
         raise ValueError('FIXTURE_INPUTS_CHANGED')
@@ -147,7 +150,8 @@ def main():
                       driver=str(RESOURCES / 'hyperv/worker.ps1'), driverPin=digest(RESOURCES / 'hyperv/worker.ps1'),
                       controlPid=os.getpid(), runtimeMillis=900000, overlayBytes=2147483648,
                       logBytes=16777216, logs=[str(root / 'native-cohort.log'), str(root / 'index-tool-compile.log')]
-                      + [str(root / ('index-' + r['name'] + '.log')) for r in load_module('index_contexts', INDEX_CONTROL).contexts(work, '/opt/evo-inputs/' + work_attempt)], pollMillis=100)
+                      + [str(root / ('index-' + r['name'] + '.log')) for r in load_module('index_contexts', INDEX_CONTROL).contexts(work, '/opt/evo-inputs/' + work_attempt,
+                          spring=json.loads((root / 'profile.json').read_bytes(), object_pairs_hook=unique)['nativeFixture'].get('spring', False))], pollMillis=100)
         with (root / 'supervisor-config.json').open('x') as stream:
             json.dump(config, stream, sort_keys=True)
         with (root / 'supervisor-private.log').open('xb') as errors:
@@ -266,7 +270,8 @@ def main():
             if indexed and build_exit == 0:
                 index_control('prepare-index')
                 exits = {}
-                for row in load_module('index_contexts_run', INDEX_CONTROL).contexts(work, sealed):
+                for row in load_module('index_contexts_run', INDEX_CONTROL).contexts(work, sealed,
+                        spring=json.loads((root / 'profile.json').read_bytes(), object_pairs_hook=unique)['nativeFixture'].get('spring', False)):
                     argv = ['/usr/bin/java', '-Xmx640m', '-cp', '/opt/evo-index-tools/' + work_attempt + '/classes',
                             'com.evolution.analysis.execution.javac.CapturedJavacIndex', work, row['output'],
                             ':'.join(row['classpath']), '1000000'] + row['sources']

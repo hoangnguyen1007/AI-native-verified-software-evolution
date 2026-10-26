@@ -7,7 +7,50 @@ import java.util.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 class JavaEvidenceLedgerTest {
+    @Test void oneVerificationPassNeverBorrowsTheSameHandleFromAnotherContentStore()throws Exception{
+        var a=new JavaEvidenceTestStore.AuthorityFixture();var b=new JavaEvidenceTestStore.AuthorityFixture();
+        var ah=a.store.put("same captured bytes");var bh=b.store.put("same captured bytes");assertEquals(ah,bh);
+        var ap=a.proof("java.output-bytes","same subject","same answer",List.of(ah));
+        var bp=b.proof("java.output-bytes","same subject","same answer",List.of(bh));
+        b.store.blobs.remove(bh.digest());var batch=new JavaEvidenceAuthority.CurrentBatch();
+        assertTrue(batch.current(ap));assertFalse(batch.current(bp));
+        assertTrue(new JavaEvidenceAuthority.CurrentBatch().current(ap));
+        Thread.currentThread().interrupt();
+        try{assertThrows(java.io.IOException.class,()->batch.current(ap));}finally{Thread.interrupted();}
+    }
+    @Test void sharedCapturedBytesAreCheckedOncePerRevalidationAndAgainOnTheNextUse()throws Exception{
+        var f=new JavaEvidenceTestStore.AuthorityFixture();var shared=f.store.put("shared captured material"+"x".repeat(65536));
+        var a=requirement("a",List.of());var b=requirement("b",List.of());var ak=JavaEvidenceLedger.requirementKey(a);var bk=JavaEvidenceLedger.requirementKey(b);
+        var ap=f.proof("java.output-bytes","a","answer-a",List.of(shared));var bp=f.proof("java.output-bytes","b","answer-b",List.of(shared));
+        var published=new JavaEvidenceLedger().publish(scope(),f.store.put("independent census"),f.verifier.policyIdentity(),List.of(a,b),
+                List.of(decision(ak,ap,List.of()),decision(bk,bp,List.of())),List.of(),Optional.empty(),Map.of(ap.identity(),ap,bp.identity(),bp),Set.of(),Set.of(ak,bk),new JavaEvidenceTables(f.store,100000),()->false);
+        f.store.verificationCounts.clear();assertEquals(0,published.revalidate(f.verifier.policyIdentity(),Set.of()).active());
+        assertEquals(1,f.store.verificationCounts.get(shared),"Hash the shared immutable handle once in this verification pass");
+        var original=f.store.blobs.get(shared.digest());f.store.blobs.put(shared.digest(),new byte[]{1});f.store.verificationCounts.clear();
+        assertEquals(2,published.revalidate(f.verifier.policyIdentity(),Set.of()).active());
+        assertTrue(f.store.verificationCounts.get(shared)>0,"A later use must detect corrupt material without trusting the old pass");
+        f.store.blobs.put(shared.digest(),original);assertEquals(0,published.revalidate(f.verifier.policyIdentity(),Set.of()).active());
+    }
     private static final String D=JavaEvidenceCodecTest.D;
+    @Test void disappearedOccurrenceCannotLeaveThePublishedRequirementSatisfied()throws Exception{
+        var f=new JavaEvidenceTestStore.AuthorityFixture();var occurrence=f.store.put("independently enumerated occurrence");var fields=new LinkedHashMap<>(requirement("site",List.of()).fields());fields.put("occurrences",List.of(occurrence));var req=new JavaEvidenceCodec().create(fields);var key=JavaEvidenceLedger.requirementKey(req);var proof=f.proof("java.output-bytes","site","scoped answer",List.of());
+        var published=new JavaEvidenceLedger().publish(scope(),f.store.put("complete census"),f.verifier.policyIdentity(),List.of(req),List.of(decision(key,proof,List.of())),List.of(),Optional.empty(),Map.of(proof.identity(),proof),Set.of(),Set.of(key),new JavaEvidenceTables(f.store,100000),()->false);assertEquals(0,published.current().active());
+        f.store.blobs.remove(occurrence.digest());assertEquals(1,published.revalidate(f.verifier.policyIdentity(),Set.of()).active());assertEquals(0,published.current().active(),"The old immutable result remains audit-only");
+    }
+    @Test void narrowedRequirementsKeepEveryOccurrenceAndManyGapsUntilTheWholeQuestionCloses()throws Exception{
+        var f=new JavaEvidenceTestStore.AuthorityFixture();var first=JavaEvidenceGaps.create(scope(),JavaEvidenceGaps.Reason.GENERATOR_INPUT_MISSING,new ContentDigest(D),ContentDigest.sha256Utf8("first"));var second=JavaEvidenceGaps.create(scope(),JavaEvidenceGaps.Reason.GENERATOR_INPUT_MISSING,new ContentDigest(D),ContentDigest.sha256Utf8("second"));
+        var fields=new LinkedHashMap<>(requirement("shared generator",List.of()).fields());fields.put("gapRefs",List.of(first.gapIdentity().value(),second.gapIdentity().value()));fields.put("occurrences",List.of(f.store.put("site1"),f.store.put("site2")));var req=new JavaEvidenceCodec().create(fields);var key=JavaEvidenceLedger.requirementKey(req);var proof=f.proof("java.output-bytes","shared generator","subset checked",List.of());
+        var narrowedFields=new LinkedHashMap<>(decision(key,proof,List.of()).fields());narrowedFields.put("state","NARROWED");narrowedFields.put("reason","ONE_OF_TWO_OCCURRENCES_PROVEN");var narrowed=new JavaEvidenceCodec().create(narrowedFields);var ledger=new JavaEvidenceLedger();
+        var current=ledger.fold(List.of(req),List.of(narrowed),Map.of(proof.identity(),proof),Set.of(),Set.of(key));assertEquals(JavaEvidenceLedger.State.NARROWED,current.rows().get(key).state());assertEquals(1,current.active());assertEquals(2,req.fields().get("occurrences") instanceof List<?> occurrences?occurrences.size():-1);assertTrue(JavaEvidenceLedger.gapDispositions(List.of(first,second),List.of(req),current).stream().allMatch(JavaEvidenceLedger.GapDisposition::active));
+        var complete=ledger.fold(List.of(req),List.of(decision(key,proof,List.of())),Map.of(proof.identity(),proof),Set.of(),Set.of(key));assertEquals(0,complete.active());assertEquals(2,JavaEvidenceLedger.gapDispositions(List.of(first,second),List.of(req),complete).size());assertTrue(JavaEvidenceLedger.gapDispositions(List.of(first,second),List.of(req),complete).stream().noneMatch(JavaEvidenceLedger.GapDisposition::active));
+        assertEquals(JavaEvidenceLedger.State.PENDING,ledger.fold(List.of(req),List.of(narrowed),Map.of(),Set.of(),Set.of(key)).rows().get(key).state());
+    }
+    @Test void generatorApplicabilityCannotMakeSemanticValidationInapplicable()throws Exception{
+        var f=new JavaEvidenceTestStore.AuthorityFixture();var generator=JavaEvidencePreAnalysis.requirement(scope(),"java.generator-not-applicable",D);var gk=JavaEvidenceLedger.requirementKey(generator);var proof=f.proof("java.generator-not-applicable",D,"scoped generator census",List.of());
+        var fields=new LinkedHashMap<>(decision(gk,proof,List.of()).fields());fields.put("state","NOT_APPLICABLE");var decision=new JavaEvidenceCodec().create(fields);var ledger=new JavaEvidenceLedger();assertEquals(JavaEvidenceLedger.State.NOT_APPLICABLE,ledger.fold(List.of(generator),List.of(decision),Map.of(proof.identity(),proof),Set.of(),Set.of(gk)).rows().get(gk).state());
+        var semantic=JavaEvidencePreAnalysis.requirement(scope(),"java.semantic-occurrence",D);var sk=JavaEvidenceLedger.requirementKey(semantic);fields.put("requirement",sk);var borrowed=new JavaEvidenceCodec().create(fields);assertEquals(JavaEvidenceLedger.State.PENDING,ledger.fold(List.of(semantic),List.of(borrowed),Map.of(proof.identity(),proof),Set.of(),Set.of(sk)).rows().get(sk).state());
+        var semanticProof=f.proof("java.semantic-occurrence",D,"semantic answer",List.of());fields.put("proofs",List.of(semanticProof.identity()));assertEquals(JavaEvidenceLedger.State.PENDING,ledger.fold(List.of(semantic),List.of(new JavaEvidenceCodec().create(fields)),Map.of(semanticProof.identity(),semanticProof),Set.of(),Set.of(sk)).rows().get(sk).state());
+    }
     static Map<String,Object> scope(){return Map.of("inventory",D,"baseSnapshot","snapshot:"+D,"readiness",D,"selection",D,"context",D,"logicalScope",D,"module","module:"+D,"sourceSet","main","variant","baseline");}
     static JavaEvidenceRecord requirement(String subject,List<String> prerequisites){return new JavaEvidenceCodec().create(Map.of("schema","java-closure-requirement:m8.4-v1","scope",scope(),"question","java.output-bytes","subject",subject,"category","generation","predicate",Map.of("id","java.output-bytes","version","m8.4-step4-v1"),"gapRefs",List.of(),"occurrences",List.of(),"readinessRefs",List.of(),"prerequisites",prerequisites));}
     @Test void aDisappearedDiagnosticOrNakedSatisfiedDecisionCannotCloseTheCensus(){

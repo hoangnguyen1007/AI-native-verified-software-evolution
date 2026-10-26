@@ -19,14 +19,21 @@ public final class JavaEvidenceAssembler {
         private final RepositoryInputs base,inputs;private final UniversalBuildModel model;private final UniversalSourceIngestion.SourceSet sourceSet;
         private final UniversalSourceIngestion.Resolution resolution;private final JavaEvidenceRecord view,overlay;private final JavaEvidenceLedger.Published closure;private final JavaEvidenceGraph graph;
         private final List<JavaEvidenceAuthority.Verified> proofInputs;
-        private Prepared(RepositoryInputs base,RepositoryInputs inputs,UniversalBuildModel model,UniversalSourceIngestion.SourceSet sourceSet,UniversalSourceIngestion.Resolution resolution,JavaEvidenceRecord view,JavaEvidenceRecord overlay,JavaEvidenceLedger.Published closure,JavaEvidenceGraph graph,List<JavaEvidenceAuthority.Verified> proofInputs){this.base=base;this.inputs=inputs;this.model=model;this.sourceSet=sourceSet;this.resolution=resolution;this.view=view;this.overlay=overlay;this.closure=closure;this.graph=graph;this.proofInputs=List.copyOf(proofInputs);}
+        private final com.evolution.analysis.readiness.ReadinessPlan readiness;
+        private Prepared(RepositoryInputs base,RepositoryInputs inputs,UniversalBuildModel model,UniversalSourceIngestion.SourceSet sourceSet,UniversalSourceIngestion.Resolution resolution,JavaEvidenceRecord view,JavaEvidenceRecord overlay,JavaEvidenceLedger.Published closure,JavaEvidenceGraph graph,List<JavaEvidenceAuthority.Verified> proofInputs,com.evolution.analysis.readiness.ReadinessPlan readiness){this.base=base;this.inputs=inputs;this.model=model;this.sourceSet=sourceSet;this.resolution=resolution;this.view=view;this.overlay=overlay;this.closure=closure;this.graph=graph;this.proofInputs=List.copyOf(proofInputs);this.readiness=Objects.requireNonNull(readiness);}
         public RepositoryInputs base(){return base;}public RepositoryInputs inputs(){return inputs;}public UniversalBuildModel model(){return model;}
         public JavaEvidenceRecord view(){return view;}public JavaEvidenceRecord overlay(){return overlay;}
         public List<com.evolution.analysis.evidence.CapabilityGapRecord> activeGaps(){return JavaEvidencePreAnalysis.activeGaps(closure);}
         public JavaEvidenceGraph graph(){return graph;}
+        public com.evolution.analysis.readiness.ReadinessPlan readiness(){return readiness;}
+        /** Attach a separately verified historical census without changing the semantic input view. */
+        public Prepared withGapClosure(JavaEvidenceGapClosure closure)throws IOException{
+            return new Prepared(base,inputs,model,sourceSet,resolution,view,overlay,this.closure,graph.withGapClosure(closure),proofInputs,readiness);
+        }
         public ContentDigest policy(){return closure.projection().digest("policy");}
         public List<com.evolution.analysis.evidence.CapabilityGapRecord> invalidationGaps(){
             var result=new ArrayList<com.evolution.analysis.evidence.CapabilityGapRecord>();
+            try{graph.requireCurrent();}catch(IOException missing){result.add(JavaEvidenceGaps.create(view.object("scope"),JavaEvidenceGaps.Reason.EVIDENCE_REVOKED,view.identity(),view.identity()));}
             for(var proof:proofInputs){boolean current;try{current=proof.current();}catch(IOException missing){current=false;}if(!current)result.add(JavaEvidenceGaps.create(view.object("scope"),JavaEvidenceGaps.Reason.EVIDENCE_REVOKED,view.identity(),proof.identity()));}
             resolution.correspondence().ifPresent(binding->{boolean current;try{current=binding.current();}catch(IOException missing){current=false;}if(!current)result.add(JavaEvidenceGaps.create(view.object("scope"),JavaEvidenceGaps.Reason.EVIDENCE_REVOKED,view.identity(),binding.table().content().digest()));});
             return List.copyOf(result);
@@ -61,6 +68,7 @@ public final class JavaEvidenceAssembler {
         var resources=new ArrayList<JavaEvidenceRecord>();tables.read(outputTable,row->{if(row.text("category").equals("RESOURCE")&&row.text("disposition").equals("ACCEPTED"))resources.add(row);},cancelled);
         var handwritten=new HashMap<ContentDigest,SourceInput>();for(var input:base.files().values())if(input.document().path().endsWith(".java"))handwritten.put(CanonicalJson.sha256(input.document()),input);
         var seen=new HashSet<ContentDigest>();var sources=new TreeMap<String,SourceInput>();var sourceMaps=new ArrayList<JavaEvidenceRecord>();var membershipPayloads=new ArrayList<JavaEvidenceRecord>();
+        var unavailableDocuments=new ArrayList<SourceDocument>();var decodingEvidence=new ArrayList<com.evolution.analysis.graph.GraphEvidence>();
         String namespace=namespace(base);String logical=GraphJson.string(scope.get("logicalScope")).substring(7);String namedSet=GraphJson.string(scope.get("sourceSet"));
         tables.read(memberships,row->{
             if(!row.text("role").equals("SOURCE_MEMBERSHIP"))throw new IOException("JAVA_MEMBERSHIP_ROW_ROLE");
@@ -74,11 +82,13 @@ public final class JavaEvidenceAssembler {
             String path=origin!=null?origin.document().path():namespace+"/"+logical+"/"+HexFormat.of().formatHex(JavaGeneratedOverlay.path(output.object("locator").get("path")).bytes())+".java";
             SourceClassification role;try{role=SourceClassification.valueOf(payload.text("role"));}catch(IllegalArgumentException unknown){throw new IOException("JAVA_SOURCE_ROLE_UNPROVEN");}
             if(origin!=null&&origin.document().classification()!=role)throw new IOException("JAVA_ORIGINAL_DOCUMENT_CLASSIFICATION_CHANGED");
+            if(origin!=null&&!origin.document().module().equals(module.identity()))throw new IOException("JAVA_ORIGINAL_SOURCE_MODULE_CHANGED");
             if(output!=null&&!Set.of(SourceClassification.GENERATED_MAIN,SourceClassification.GENERATED_TEST).contains(role))throw new IOException("JAVA_GENERATED_CLASSIFICATION_REQUIRED");
             byte[] raw;try(var in=content.open(bytesHandle)){raw=in.readNBytes(sourceBytes+1);}if(raw.length!=bytesHandle.size())throw new IOException("JAVA_SOURCE_CHANGED");
-            var doc=SourceDocument.create(base.snapshot().repository(),module,path,bytesHandle.digest(),role);
+            var doc=origin!=null?origin.document():SourceDocument.create(base.snapshot().repository(),module,path,bytesHandle.digest(),role);
             var decoding=new SourceInput.Decoding("source-decoding-v1",manifest.text("encoding"),SourceInput.EncodingOrigin.BUILD_DECLARATION,List.of(new SourceInput.Evidence("captured-compiler",manifest.identity())),SourceInput.Bom.detect(raw),SourceInput.LineEndings.from(""));
-            if(sources.putIfAbsent(path,new SourceInput(doc,raw,decoding))!=null)throw new IOException("JAVA_SOURCE_VIEW_COLLISION");
+            if(sources.containsKey(path)||unavailableDocuments.stream().anyMatch(d->d.path().equals(path)))throw new IOException("JAVA_SOURCE_VIEW_COLLISION");
+            decode(sources,unavailableDocuments,decodingEvidence,doc,raw,decoding);
             if(output!=null){var map=new LinkedHashMap<String,Object>();map.put("schema","java-source-map-row:m8.4-v1");map.put("scope",scope);map.put("locator",output.fields().get("locator"));map.put("content",bytesHandle);map.put("projectedPath",path);map.put("projectedDocument",doc.identity());map.put("role",role.name());map.put("lineage",output.fields().get("lineage"));map.put("supportingSources",List.of());sourceMaps.add(codec.create(map));}
         },cancelled);
         var expected=new HashSet<>(handwritten.keySet());expected.addAll(generated.keySet());if(!seen.equals(expected))throw new IOException("JAVA_SOURCE_CENSUS_INCOMPLETE");
@@ -95,11 +105,12 @@ public final class JavaEvidenceAssembler {
             if(sources.containsKey(path)||binaryFiles.stream().anyMatch(f->f.path().equals(path)))throw new IOException("JAVA_RESOURCE_VIEW_COLLISION");
             if(JavaGeneratedResources.textConsumer(mapping.relativePath())){
                 String encoding=mapping.encoding().orElseThrow(()->new IOException("JAVA_GENERATED_RESOURCE_ENCODING_REQUIRED"));if(bytesHandle.size()>sourceBytes)throw new IOException("JAVA_RESOURCE_WORKER_CAPACITY_REQUIRED");byte[] raw;try(var in=content.open(bytesHandle)){raw=in.readNBytes(sourceBytes+1);}if(raw.length!=bytesHandle.size())throw new IOException("JAVA_RESOURCE_CHANGED");
-                var decoding=new SourceInput.Decoding("source-decoding-v1",encoding,SourceInput.EncodingOrigin.BUILD_DECLARATION,List.of(new SourceInput.Evidence("captured-generator-resource",proof.identity())),SourceInput.Bom.detect(raw),SourceInput.LineEndings.from(""));sources.put(path,new SourceInput(document,raw,decoding));
+                var decoding=new SourceInput.Decoding("source-decoding-v1",encoding,SourceInput.EncodingOrigin.BUILD_DECLARATION,List.of(new SourceInput.Evidence("captured-generator-resource",proof.identity())),SourceInput.Bom.detect(raw),SourceInput.LineEndings.from(""));decode(sources,unavailableDocuments,decodingEvidence,document,raw,decoding);
             }else{binaryFiles.add(SnapshotFile.from(document));binaryDocuments.add(document);}
             var map=new LinkedHashMap<String,Object>();map.put("schema","java-source-map-row:m8.4-v1");map.put("scope",scope);map.put("locator",resource.fields().get("locator"));map.put("content",bytesHandle);map.put("projectedPath",path);map.put("projectedDocument",document.identity());map.put("role","UNCLASSIFIED");map.put("lineage",resource.fields().get("lineage"));map.put("supportingSources",List.of());sourceMaps.add(codec.create(map));
         }
         var files=new ArrayList<>(sources.values().stream().map(s->SnapshotFile.from(s.document())).toList());files.addAll(binaryFiles);var docs=new ArrayList<>(sources.values().stream().map(SourceInput::document).toList());docs.addAll(binaryDocuments);
+        docs.addAll(unavailableDocuments);files.addAll(unavailableDocuments.stream().map(SnapshotFile::from).toList());
         var snapshot=RepositorySnapshot.create(base.snapshot().repository(),base.snapshot().revision(),base.snapshot().dirty(),files,docs);var inputs=new RepositoryInputs(snapshot,sources);
         var owner=original.modules().stream().filter(m->m.descriptor().identity().equals(module.identity())).findFirst().orElseThrow(()->new IOException("JAVA_BUILD_MODULE_UNAVAILABLE"));
         if(!resourceOrders.isEmpty()){
@@ -128,6 +139,7 @@ public final class JavaEvidenceAssembler {
         var viewRecord=codec.create(view);tables.put(viewRecord,cancelled);tables.put(preAnalysis,cancelled);tables.put(manifest,cancelled);tables.put(overlay,cancelled);
         put(CanonicalJson.write(build),cancelled);put(CanonicalJson.write(plans),cancelled);
         var graphEvidence=new ArrayList<com.evolution.analysis.graph.GraphEvidence>();
+        graphEvidence.addAll(decodingEvidence);
         graphEvidence.add(com.evolution.analysis.graph.GraphEvidence.capture("java.evidence.base-snapshot",base.snapshot()));
         for(var item:Map.of("view",viewRecord,"overlay",overlay,"resolution",manifest,"closure-ledger",preAnalysisClosure.ledger(),"closure-projection",preAnalysis).entrySet())graphEvidence.add(com.evolution.analysis.graph.GraphEvidence.capture("java.evidence."+item.getKey(),item.getValue().fields()));
         for(var item:Map.of("source-map",sourceMap,"lineage",JavaEvidenceTables.Table.from(overlay.fields().get("lineages")),"output",outputTable,"requirement",JavaEvidenceTables.Table.from(preAnalysisClosure.ledger().fields().get("requirements")),"decision",JavaEvidenceTables.Table.from(preAnalysisClosure.ledger().fields().get("decisions")),"current",JavaEvidenceTables.Table.from(preAnalysis.fields().get("current")),"resolution-slot",JavaEvidenceTables.Table.from(manifest.fields().get("slots")),"membership-input",memberships,"binding",JavaEvidenceTables.Table.from(preAnalysisClosure.ledger().fields().get("bindings"))).entrySet()){
@@ -140,9 +152,17 @@ public final class JavaEvidenceAssembler {
         var proofInputs=proofs.values().stream().filter(p->p.record().fields().get("scope").equals(scope)).sorted(Comparator.comparing(JavaEvidenceAuthority.Verified::identity)).toList();
         for(var proof:proofInputs)graphEvidence.add(com.evolution.analysis.graph.GraphEvidence.capture("java.evidence.proof",proof.record().fields()));
         var graph=new JavaEvidenceGraph(base.snapshot().identity(),snapshot.identity(),graphEvidence);
-        return new Prepared(base,inputs,build,new UniversalSourceIngestion.SourceSet(module.identity(),kind,namedSet),new UniversalSourceIngestion.Resolution(platform,resolution.binaries().orElseThrow(),manifest.identity(),correspondenceBinding),viewRecord,overlay,preAnalysisClosure,graph,proofInputs);
+        tables.putCanonical(readiness,cancelled);
+        return new Prepared(base,inputs,build,new UniversalSourceIngestion.SourceSet(module.identity(),kind,namedSet),new UniversalSourceIngestion.Resolution(platform,resolution.binaries().orElseThrow(),manifest.identity(),correspondenceBinding),viewRecord,overlay,preAnalysisClosure,graph,proofInputs,readiness);
     }
     private ContentHandle put(String bytes,BooleanSupplier cancelled)throws IOException{return content.put(new ByteArrayInputStream(bytes.getBytes(StandardCharsets.UTF_8)),cancelled);}
+    private static void decode(Map<String,SourceInput> sources,List<SourceDocument> unavailable,List<com.evolution.analysis.graph.GraphEvidence> evidence,SourceDocument document,byte[] raw,SourceInput.Decoding decoding){
+        try{sources.put(document.path(),new SourceInput(document,raw,decoding));}
+        catch(FrontendInputException invalid){
+            if(!invalid.diagnostic().code().startsWith("frontend.encoding"))throw invalid;
+            unavailable.add(document);evidence.add(com.evolution.analysis.graph.GraphEvidence.capture("java.evidence.source-decoding",Map.of("document",document,"content",new ContentHandle(document.contentDigest(),raw.length),"decoding",decoding,"diagnostic",invalid.diagnostic(),"outcome","UNAVAILABLE")));
+        }
+    }
     private static SourcePlanModel.Setting setting(String selector,String value,JavaEvidenceRecord evidence){return new SourcePlanModel.Setting("java.native."+selector,Optional.of(value),Optional.of(value),SourcePlanModel.Status.DECLARED,SourcePlanModel.Origin.EFFECTIVE_MODEL,List.of(new BuildModelResult.PomEvidence("captured:"+evidence.identity().value(),evidence.identity())));}
     static String namespace(RepositoryInputs base){for(long suffix=0;;suffix=Math.addExact(suffix,1)){String candidate=".evo-generated"+(suffix==0?"":"-"+suffix);if(base.snapshot().files().stream().noneMatch(f->f.path().equals(candidate)||f.path().startsWith(candidate+"/")))return candidate;}}
 }

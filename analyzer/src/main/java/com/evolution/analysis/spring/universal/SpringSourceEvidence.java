@@ -15,7 +15,7 @@ import java.util.regex.Pattern;
 public final class SpringSourceEvidence {
     public record Annotation(AnnotationUseRecord use,Optional<String> name,ConditionEvidence evidence) {}
     /** Child-to-parent source declarations, including the verified prefix on failure.
-     * Interfaces and binary parents are not evidence of a closed instance-member inventory. */
+     * Only exactly empty source marker interfaces can be discharged without an inherited-member provider. */
     public enum HierarchyProblem { NONE, SOURCE_DECLARATION_MISSING, SOURCE_TYPES_INCOMPLETE,
         SOURCE_SHAPE_UNSUPPORTED, PARENT_EVIDENCE_MISSING, PARENT_EVIDENCE_CONFLICT, CYCLE, LIMIT }
     public record SourceHierarchy(List<EntityIdentity> types,HierarchyProblem problem) {
@@ -25,7 +25,9 @@ public final class SpringSourceEvidence {
     }
     private static final Pattern ORDINARY_CLASS=Pattern.compile("^\\s*(?:(?:public|protected|private|static|abstract|final|strictfp)\\s+)*"
             +"class\\s+[\\p{javaJavaIdentifierStart}][\\p{javaJavaIdentifierPart}]*"
-            +"(?:\\s+extends\\s+([\\p{javaJavaIdentifierStart}][\\p{javaJavaIdentifierPart}.$]*))?\\s*\\{");
+            +"(?:\\s+extends\\s+([\\p{javaJavaIdentifierStart}][\\p{javaJavaIdentifierPart}.$]*))?"
+            +"(?:\\s+implements\\s+([\\p{javaJavaIdentifierStart}][\\p{javaJavaIdentifierPart}.$]*(?:\\s*,\\s*[\\p{javaJavaIdentifierStart}][\\p{javaJavaIdentifierPart}.$]*)*))?\\s*\\{");
+    private static final Pattern EMPTY_MARKER=Pattern.compile("^\\s*(?:(?:public|protected|private|static|strictfp)\\s+)*interface\\s+[\\p{javaJavaIdentifierStart}][\\p{javaJavaIdentifierPart}]*\\s*\\{\\s*}\\s*$");
     private final FrontendResult frontend;private final AnalysisManifest manifest;
     private final SpringFrameworkEvidence framework;
     private final Map<EntityIdentity,DeclarationRecord> declarations=new TreeMap<>();
@@ -144,6 +146,23 @@ public final class SpringSourceEvidence {
                     &&before(s.startLine(),s.startColumn(),span.endLine(),span.endColumn())
                     &&before(span.startLine(),span.startColumn(),s.endLine(),s.endColumn())).isPresent());
             if(problem==HierarchyProblem.NONE&&diagnostics)problem=HierarchyProblem.SOURCE_TYPES_INCOMPLETE;
+            if(problem==HierarchyProblem.NONE){
+                var implemented=frontend.types().stream().filter(t->t.owner().equals(Optional.of(id))&&t.role().value().equals("java.implements")).toList();
+                var interfaceEdges=relations.stream().filter(r->r.source().equals(id)&&r.kind().value().equals("java.implements"))
+                        .flatMap(r->r.target() instanceof RelationshipTarget.Resolved target?java.util.stream.Stream.of(target.target()):java.util.stream.Stream.empty()).distinct().toList();
+                int declared=matcher.group(2)==null?0:matcher.group(2).split(",").length;
+                if(declared>limit-chain.size())problem=HierarchyProblem.LIMIT;
+                else if(implemented.size()!=declared||interfaceEdges.size()!=declared)problem=HierarchyProblem.PARENT_EVIDENCE_MISSING;
+                else {
+                    var targets=new HashSet<EntityIdentity>();
+                    for(var implementedType:implemented){var value=implementedType.type();
+                        if(value.status()!=SemanticStatus.RESOLVED||value.target().isEmpty()){problem=HierarchyProblem.SOURCE_TYPES_INCOMPLETE;break;}
+                        if(value.kind()!=JavaType.Kind.DECLARED||!value.components().isEmpty()||!emptySourceMarker(value.target().orElseThrow())){problem=HierarchyProblem.SOURCE_SHAPE_UNSUPPORTED;break;}
+                        targets.add(value.target().orElseThrow());
+                    }
+                    if(problem==HierarchyProblem.NONE&&!targets.equals(new HashSet<>(interfaceEdges)))problem=HierarchyProblem.PARENT_EVIDENCE_CONFLICT;
+                }
+            }
             var written=frontend.types().stream().filter(t -> t.owner().equals(Optional.of(id))&&t.role().value().equals("java.extends")).toList();
             var edges=relations.stream().filter(r -> r.source().equals(id)&&r.kind().value().equals("java.extends"))
                     .flatMap(r -> r.target() instanceof RelationshipTarget.Resolved t?java.util.stream.Stream.of(t.target()):java.util.stream.Stream.empty()).distinct().toList();
@@ -162,6 +181,16 @@ public final class SpringSourceEvidence {
             if(terminal!=null&&terminal.entity().origin()==EntityOrigin.JDK&&"java.lang.Object".equals(typeName(current)))
                 return new SourceHierarchy(chain,problem);
         }
+    }
+    private boolean emptySourceMarker(EntityIdentity type){
+        var declaration=declarations.get(type);
+        if(declaration==null||declaration.status()!=SemanticStatus.RESOLVED||declaration.entity().origin()!=EntityOrigin.PROJECT||declaration.entity().declaration().isEmpty()
+                ||!declaration.uncertainties().isEmpty()||!declaration.diagnostics().isEmpty()||!annotations(type).isEmpty()
+                ||frontend.typeDeclarations().stream().noneMatch(shape->shape.type().equals(type)&&shape.kind()==TypeDeclarationRecord.Kind.INTERFACE&&shape.independent()))return false;
+        String text=declaration.spelling();if(text.contains("\\u")||!EMPTY_MARKER.matcher(text.replaceAll("(?s)/\\*.*?\\*/|//[^\\r\\n]*"," ")).matches())return false;
+        if(relations.stream().anyMatch(r->r.source().equals(type)&&Set.of("java.extends","java.implements","java.declares").contains(r.kind().value())))return false;
+        var span=declaration.entity().declaration().orElseThrow();
+        return frontend.diagnostics().stream().noneMatch(d->d.span().filter(s->s.document().equals(span.document())&&before(s.startLine(),s.startColumn(),span.endLine(),span.endColumn())&&before(span.startLine(),span.startColumn(),s.endLine(),s.endColumn())).isPresent());
     }
     private static boolean before(int line,int column,int otherLine,int otherColumn) {
         return line<otherLine||line==otherLine&&column<otherColumn;

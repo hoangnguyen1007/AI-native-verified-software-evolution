@@ -34,9 +34,14 @@ public final class SpringBuildContext {
         snapshot = request.manifest().snapshot().identity();
         analysis = request.manifest().identity();
         classpathManifest = request.plan().classpathManifest();
-        binaries = request.dependencies().stream().map(BinaryInput::entry).toList();
+        // Revalidate protected native origins before matching framework/artifact evidence.
+        // The canonical request below still binds the exact ordered solver entries; its
+        // native-origin option binds the distinct original artifacts without changing M3 preimages.
+        request.originClasspath();
+        binaries = request.dependencies().stream().map(BinaryInput::originEntry).toList();
         Set<ContentDigest> exactArtifacts = new HashSet<>();
         binaries.forEach(entry -> exactArtifacts.add(entry.contentDigest()));
+        request.dependencies().forEach(binary -> exactArtifacts.add(binary.entry().contentDigest()));
         request.platform().artifacts().forEach(artifact -> exactArtifacts.add(artifact.contentDigest()));
         artifactDigests = Set.copyOf(exactArtifacts);
         Map<SourceDocumentIdentity, ContentDigest> sourceEvidence = new HashMap<>();

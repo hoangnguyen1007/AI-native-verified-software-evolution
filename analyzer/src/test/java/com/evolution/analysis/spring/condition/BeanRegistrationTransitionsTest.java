@@ -17,6 +17,18 @@ import static com.evolution.analysis.spring.registration.BeanRegistrationTransit
  * Covers the deferred-verification checklist from the M4C.2 architecture contract.
  */
 class BeanRegistrationTransitionsTest {
+    @Test void frameworkProfileRegistrationNeedsNoBootButAutoConfigurationStillDoes()throws Exception{
+        var pins=ConditionLoweringTest.pins("6.2.0","3.4.0").stream().filter(a->a.groupId().equals("org.springframework")).toList();
+        var f=RegistrationDiscoveryTest.fixture("@Profile(\"dev\")",pins);
+        var component=event(f,"component",Kind.COMPONENT,null,RequiredPhase.ORDINARY);
+        var ordinary=rp(f,plan(f,List.of(component)),List.of(regStep("reg",component,Optional.empty(),f.source().evidence())),List.of("reg"));
+        assertEquals(REGISTERED,out(eval(f,ordinary,true),"reg"));assertEquals(SKIPPED,out(eval(f,ordinary,false),"reg"));
+        var auto=event(f,"auto",Kind.AUTO_CONFIGURATION,null,RequiredPhase.ORDINARY);
+        var boot=rp(f,plan(f,List.of(auto)),List.of(regStep("reg",auto,Optional.empty(),f.source().evidence())),List.of("reg"));
+        assertEquals(BeanRegistrationTransitions.Outcome.UNKNOWN,out(eval(f,boot,true),"reg"));
+        assertTrue(eval(f,boot,true).capabilityGaps().stream().anyMatch(g->g.reasonCode().equals("VERSION_FRAGMENT_NOT_VALIDATED")));
+        assertEquals("m8.4-framework-registration-v1",BeanRegistrationProcessing.PROVIDER.version());
+    }
 
     // ---- Fixture helpers -------------------------------------------------
 

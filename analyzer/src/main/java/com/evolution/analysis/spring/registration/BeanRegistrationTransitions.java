@@ -205,8 +205,16 @@ public final class BeanRegistrationTransitions {
             if (source.issues().stream().anyMatch(i -> i.event().isEmpty()
                     && (i.reason() == RegistrationProcessing.Reason.SOURCE_EVIDENCE_MISMATCH || i.reason() == RegistrationProcessing.Reason.MISSING_SOURCE_SPAN)))
                 stop(SOURCE_EVIDENCE_MISMATCH, "discovery-plan", null);
-            boolean version = source.inventory().frameworkEvidence().acceptedConditionFragment(true)
-                    && source.inventory().frameworkEvidence().artifacts().stream().anyMatch(a -> a.coordinate().equals("org.springframework.boot:spring-boot-autoconfigure:3.4.0"));
+            // Ordinary framework definition readers do not require Spring Boot. Keep
+            // the established 6.2.0 registration fragment and exact artifact hashes;
+            // Boot discovery still requires its own complete, validated tuple.
+            var framework = source.inventory().frameworkEvidence();
+            boolean bootRequired = source.events().stream().anyMatch(e -> e.kind() == RegistrationEvent.Kind.AUTO_CONFIGURATION)
+                    || source.inventory().obligations().stream().anyMatch(o -> o.primaryMechanism().startsWith("spring.boot.")
+                            || o.primaryMechanism().equals("spring.condition.bean-state")
+                            || o.primaryMechanism().equals("spring.condition.property"));
+            boolean version = framework.acceptedConditionFragment(bootRequired)
+                    && framework.artifacts().stream().anyMatch(a -> a.coordinate().equals("org.springframework:spring-beans:6.2.0"));
             if (!version) stop(VERSION_FRAGMENT_NOT_VALIDATED, "registration-fragment", null);
             if (discovery.exogenousEvaluation().assignmentFeasibility() != TRUE) stop(INVALID_CONFIGURATION, "assignment", null);
             if (discovery.rows().stream().anyMatch(r -> r.outcome() == DiscoveryTransitions.Outcome.ERROR)) {

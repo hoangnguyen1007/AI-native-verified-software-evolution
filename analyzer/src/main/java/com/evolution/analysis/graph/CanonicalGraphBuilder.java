@@ -37,8 +37,23 @@ public final class CanonicalGraphBuilder {
     public KnowledgeGraph build(CanonicalGraphInput input,Collection<EvidenceAcquisitionLedger> ledgers) {
         Objects.requireNonNull(input);
         var p=new Projection(input.repository().snapshot().identity());
-        input.javaEvidence().ifPresent(binding->{try{binding.requireCurrent();}catch(java.io.IOException unavailable){throw new IllegalArgumentException("Unavailable post-analysis Java evidence");}p.javaBase=Optional.of(binding.base());binding.evidence().forEach(e->p.evidence.put(e.identity(),e));});
+        input.javaEvidence().ifPresent(binding->{try{binding.requireCurrent();}catch(java.io.IOException unavailable){throw new IllegalArgumentException("Unavailable post-analysis Java evidence");}p.javaBase=Optional.of(binding.base());p.historicalGaps=binding.historicalGapIds();binding.evidence().forEach(p::nativeEvidence);});
         String repository=p.repository(input);
+        input.javaEvidence().ifPresent(binding->{
+            for(var evidence:binding.evidence())if(evidence.family().equals("java.evidence.gap-disposition")){
+                var row=GraphJson.object(GraphJson.read(evidence.canonicalJson(),GraphJson.Limits.defaults()));
+                p.gapDispositions.put(GraphJson.string(row.get("gap")),evidence.identity());
+            }
+            for(var evidence:binding.evidence())if(evidence.family().equals("java.evidence.source-map")){
+                var row=GraphJson.object(GraphJson.read(evidence.canonicalJson(),GraphJson.Limits.defaults()));
+                String document=GraphJson.string(row.get("projectedDocument"));
+                var source=input.repository().snapshot().documents().stream().filter(d->d.identity().value().equals(document)).findFirst()
+                        .orElseThrow(()->new IllegalArgumentException("Foreign generated source map"));
+                p.node(document,repository,"SOURCE_DOCUMENT",p.artifact("source.document",source));
+                p.node(document,repository,"SOURCE_DOCUMENT",evidence.identity());
+            }
+            binding.gapHistory().forEach(g->p.gapRecord(repository,g));
+        });
         input.ingestion().ifPresent(ingestion->{
             p.artifact("source.ownership",Map.of("inputIdentity",ingestion.sourceIngestion().inputIdentity(),
                     "sources",ingestion.sourceIngestion().sources(),"issues",ingestion.sourceIngestion().issues(),
@@ -51,8 +66,8 @@ public final class CanonicalGraphBuilder {
                     p.artifact("source.request",Map.of("manifest",request.manifest(),"module",request.module(),"sourceSet",request.sourceSet(),"plan",request.plan()));
                     request.sources().forEach(s->p.artifact("source.bytes",s));
                     request.originClasspath(); // Revalidate native capabilities before persisting their provenance.
-                    request.dependencies().forEach(binary->binary.nativeOrigin().ifPresent(origin->{p.artifact("java.evidence.binary-origin",origin.canonicalForm());origin.proof().ifPresent(proof->proof.evidence().forEach(e->p.evidence.put(e.identity(),e)));}));
-                    request.correspondence().ifPresent(binding->{try{if(!binding.current())throw new IllegalArgumentException("Revoked source/native correspondence");}catch(java.io.IOException unavailable){throw new IllegalArgumentException("Unavailable source/native correspondence");}binding.evidence().forEach(e->p.evidence.put(e.identity(),e));});
+                    request.dependencies().forEach(binary->binary.nativeOrigin().ifPresent(origin->{p.nativeEvidence(GraphEvidence.capture("java.evidence.binary-origin",origin.canonicalForm()));origin.proof().ifPresent(proof->proof.evidence().forEach(p::nativeEvidence));}));
+                    request.correspondence().ifPresent(binding->{try{if(!binding.current())throw new IllegalArgumentException("Revoked source/native correspondence");}catch(java.io.IOException unavailable){throw new IllegalArgumentException("Unavailable source/native correspondence");}binding.evidence().forEach(p::nativeEvidence);});
                 });
             }
             for(var unit:ingestion.units()) {
@@ -88,7 +103,14 @@ public final class CanonicalGraphBuilder {
         final Map<String,String> injectionUses=new HashMap<>();
         final Map<String,ContentDigest> requiredAttempts=new TreeMap<>();
         Optional<SnapshotIdentity> javaBase=Optional.empty();
+        Set<String> historicalGaps=Set.of();
+        final Map<String,ContentDigest> gapDispositions=new HashMap<>();
+        final Map<String,Set<ContentDigest>> nativeSupports=new HashMap<>();
         Projection(SnapshotIdentity snapshot) {this.snapshot=snapshot;}
+        void nativeEvidence(GraphEvidence value){
+            evidence.put(value.identity(),value);
+            nativeSupports.computeIfAbsent(ContentDigest.sha256Utf8(value.canonicalJson()).value(),key->new TreeSet<>()).add(value.identity());
+        }
         ContentDigest artifact(String family,Object value) {
             var artifact=GraphEvidence.capture(family,value);var old=evidence.putIfAbsent(artifact.identity(),artifact);
             if(old!=null&&!old.equals(artifact))throw new IllegalArgumentException("Conflicting provider artifact");return artifact.identity();
@@ -139,6 +161,8 @@ public final class CanonicalGraphBuilder {
                     throw new IllegalArgumentException("Foreign project entity scope");
                 statement(context,"java.declaration",entity.identity().value(),payload);
                 node(entity.identity().value(),context,entity.kind().name(),payload);
+                for(String support:declaration.derivation().inputIdentities())for(var reference:nativeSupports.getOrDefault(support,Set.of()))
+                    node(entity.identity().value(),context,entity.kind().name(),reference);
                 byCanonical.put(entity.stableScope().value()+"|"+entity.canonicalName(),entity);byId.put(entity.identity().value(),entity);
                 entity.declaration().ifPresent(span->{if(!nodes.containsKey(key(context,span.document().value())))throw new IllegalArgumentException("Declaration source absent from manifest");});
             }
@@ -352,7 +376,9 @@ public final class CanonicalGraphBuilder {
         }
         void gapRecord(String context,CapabilityGapRecord gap) {
             if(!gap.context().snapshotIdentity().equals(snapshot)&&!javaBase.filter(gap.context().snapshotIdentity()::equals).isPresent())throw new IllegalArgumentException("Foreign graph capability gap snapshot");
-            var payload=artifact("evidence.gap",gap);node(gap.gapIdentity().value(),context,"CAPABILITY_GAP",payload);
+            var payload=artifact("evidence.gap",gap);node(gap.gapIdentity().value(),context,historicalGaps.contains(gap.gapIdentity().value())?"HISTORICAL_CAPABILITY_GAP":"CAPABILITY_GAP",payload);
+            var disposition=gapDispositions.get(gap.gapIdentity().value());
+            if(disposition!=null)node(gap.gapIdentity().value(),context,historicalGaps.contains(gap.gapIdentity().value())?"HISTORICAL_CAPABILITY_GAP":"CAPABILITY_GAP",disposition);
             String expectedContext=gap.context().analysisIdentity().map(AnalysisIdentity::value).orElse(snapshot.value());
             gap.acquisitionAttemptReferences().forEach(ref->requiredAttempts.put(key(expectedContext,ref.value()),payload));
         }

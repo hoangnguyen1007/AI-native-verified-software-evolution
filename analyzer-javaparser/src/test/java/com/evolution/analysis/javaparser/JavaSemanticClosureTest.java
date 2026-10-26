@@ -7,6 +7,13 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 class JavaSemanticClosureTest {
+    @Test void arrayLengthRetainsAnExplicitUnsupportedOccurrenceWithoutInventingADeclaredField(){
+        var result=new JavaParserFrontend().analyze(TestInputs.request("class C { int size(String[] values) { return values.length; } int ok() { return 1; } }"));
+        var reads=result.observations().stream().filter(o->o.category().value().equals("java.reads-field")).toList();
+        assertEquals(1,reads.size());assertEquals(SemanticStatus.UNSUPPORTED,reads.getFirst().attribution());
+        assertTrue(result.declarations().stream().noneMatch(d->d.entity().kind()==EntityKind.FIELD));
+        assertTrue(result.declarations().stream().anyMatch(d->d.entity().kind()==EntityKind.METHOD&&d.spelling().contains("ok")));
+    }
     @Test void annotationArgumentsAndDefaultsReadTheirExactConstantDeclaration() {
         var request=TestInputs.request("class Constants { static final String NAME=\"x\"; } @interface Label { String value() default Constants.NAME; } @Label(Constants.NAME) class C {}");
         var result=new JavaParserFrontend().analyze(request);

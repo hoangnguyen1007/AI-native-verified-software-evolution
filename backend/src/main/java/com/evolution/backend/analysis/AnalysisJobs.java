@@ -71,10 +71,26 @@ public final class AnalysisJobs implements AutoCloseable {
                     if (report.evaluation().findings().stream().anyMatch(f -> !f.bundle().snapshot().equals(context.snapshot()) || !f.bundle().analysis().equals(context.analysis())))
                         throw new IllegalArgumentException("Foreign finding provenance");
                 }
-                for (var gap : gaps) if (!gap.context().snapshotIdentity().equals(g.snapshot()))
+                for (var gap : gaps) if (!gap.context().snapshotIdentity().equals(g.snapshot())
+                        &&!isCapturedBaseGap(g,gap))
                     throw new IllegalArgumentException("Foreign gap output");
             }
         }
+    }
+    private static boolean isCapturedBaseGap(KnowledgeGraph graph,CapabilityGapRecord gap){
+        String base=gap.context().snapshotIdentity().value();
+        boolean bound=graph.evidence().stream().filter(e->e.family().equals("java.evidence.view")).anyMatch(e->{
+            var view=GraphJson.object(GraphJson.read(e.canonicalJson(),GraphJson.Limits.defaults()));
+            return graph.snapshot().value().equals(view.get("derivedSnapshot"))&&base.equals(GraphJson.object(view.get("scope")).get("baseSnapshot"));
+        });
+        if(!bound)return false;
+        boolean captured=graph.evidence().stream().filter(e->e.family().equals("java.evidence.base-snapshot"))
+                .anyMatch(e->base.equals(GraphJson.object(GraphJson.read(e.canonicalJson(),GraphJson.Limits.defaults())).get("identity")));
+        if(!captured)return false;
+        String raw=CanonicalJson.write(gap);
+        return graph.nodes().stream().filter(n->n.identity().equals(gap.gapIdentity().value())&&n.kind().equals("CAPABILITY_GAP"))
+                .flatMap(n->n.evidence().stream()).map(graph::evidence).flatMap(Optional::stream)
+                .anyMatch(e->e.family().equals("evidence.gap")&&e.canonicalJson().equals(raw));
     }
     public record Result(Completion completion, Optional<ContentDigest> graph, Optional<SnapshotIdentity> snapshot,
                          List<AnalysisIdentity> analyses, List<String> contexts, List<ContentDigest> reports,

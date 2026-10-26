@@ -28,7 +28,7 @@ class SpringMechanismM4A2Test {
                 fixture.frontend(), validatedFramework531(), List.of(), List.of()));
 
         assertEquals("spring-mechanism-inventory-v2", inventory.schemaVersion());
-        assertEquals(new VersionedIdentifier("spring.mechanism-scanner", "m4a.2-source-spelling-v2"), inventory.provider());
+        assertEquals(new VersionedIdentifier("spring.mechanism-scanner", "m8.4-language-constructors-v1"), inventory.provider());
         assertEquals(3, inventory.annotationDeclarations().size());
         assertEquals(4, inventory.annotationMetaEdges().size());
         assertEquals(1, inventory.annotationCycles().size());

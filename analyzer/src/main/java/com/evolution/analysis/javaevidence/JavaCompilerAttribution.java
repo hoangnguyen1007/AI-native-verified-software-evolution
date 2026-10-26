@@ -30,7 +30,7 @@ public final class JavaCompilerAttribution {
         public VersionedIdentifier compilerProvider(){return compilerProvider;}
         public FrontendResult frontend(){return frontend;}public ContentDigest view(){return view;}public SnapshotIdentity snapshot(){return snapshot;}
         public List<CapabilityGapRecord> gaps(){return gaps;}public List<GraphEvidence> evidence(){return evidence;}
-        public boolean current()throws IOException{for(var ref:reader.references)if(!reader.bundle.content().verify(ref))return false;for(var proof:reader.checked)if(!proof.current())return false;return true;}
+        public boolean current()throws IOException{for(var ref:reader.references)if(!reader.bundle.content().verify(ref))return false;return JavaEvidenceAuthority.allCurrent(reader.checked);}
     }
     public Result apply(Map<String,Object> scope,ContentDigest view,ContentDigest policy,FrontendRequest request,FrontendResult primary,Bundle bundle)throws IOException{
         primary.validateFor(request);request.originClasspath();

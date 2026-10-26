@@ -4,6 +4,7 @@ import com.evolution.analysis.buildmodel.*;
 import com.evolution.analysis.contract.analysis.*;
 import com.evolution.analysis.contract.common.*;
 import com.evolution.analysis.contract.source.*;
+import com.evolution.analysis.contract.semantic.EntityKind;
 import com.evolution.analysis.frontend.*;
 import com.evolution.analysis.ingestion.*;
 import com.evolution.analysis.spring.*;
@@ -18,6 +19,7 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 import static com.evolution.analysis.spring.registration.RegistrationEvent.Completeness.*;
 
+@org.junit.jupiter.api.Tag("integration")
 class SourceToSpringPlanTest {
     @org.springframework.stereotype.Component("store") @org.springframework.context.annotation.Profile("dev")
     @org.springframework.beans.factory.annotation.Qualifier("chosen")
@@ -29,6 +31,27 @@ class SourceToSpringPlanTest {
     }
     record Fixture(UniversalIngestionPipeline pipeline,UniversalIngestionPipeline.Result result,
                    UniversalSourceIngestion.SourceSet key,SpringSourceEvidence source,SpringBuildContext build) {}
+    @Test void aSourceProvenEmptyMarkerInterfaceAndLanguageDefaultConstructorDoNotEraseProfileRegions()throws Exception{
+        var f=sourceFixture("""
+                package app;
+                @org.springframework.context.annotation.ComponentScan("app") class App {}
+                interface Marker {}
+                @org.springframework.stereotype.Component @org.springframework.context.annotation.Profile("dev")
+                class Tagged implements Marker {}
+                """);
+        var type=f.source().declarations().values().stream().map(DeclarationRecord::entity).filter(e->"app.Tagged".equals(f.source().typeName(e.identity()))).findFirst().orElseThrow();
+        assertTrue(f.source().sourceHierarchy(type.identity(),16).complete(),"An exactly acquired empty source interface has no inherited member/annotation frontier");
+        var constructor=f.source().declarations().values().stream().filter(d->d.entity().kind()==EntityKind.CONSTRUCTOR&&d.entity().canonicalName().contains("Tagged")).findFirst().orElseThrow();
+        assertTrue(constructor.entity().declaration().isEmpty(),"Language-derived constructors retain absent declaration spans");
+        var plan=prepare(f,true);
+        assertTrue(plan.gaps().stream().noneMatch(g->g.reasonCode().equals("CONSTRUCTOR_SET_INCOMPLETE")));
+        var truth=evaluate(f,plan);assertEquals(1,truth.regions().stream().filter(r->r.fact().kind()==ConditionalFactKey.Kind.DEFINITION_PRESENT&&r.classification()==TruthRegionEvaluation.Classification.MAY).count());
+        for(String marker:List.of("interface Marker { void work(); }","interface Marker<T> {}","interface Marker extends Missing {}")){
+            var unsupported=sourceFixture("package app; "+marker+" class Tagged implements Marker {}");
+            var owner=unsupported.source().declarations().values().stream().map(DeclarationRecord::entity).filter(e->"app.Tagged".equals(unsupported.source().typeName(e.identity()))).findFirst().orElseThrow();
+            assertFalse(unsupported.source().sourceHierarchy(owner.identity(),16).complete(),marker);
+        }
+    }
     private Fixture fixture(String qualifier) throws Exception {
         String text="""
                 package app;
@@ -234,7 +257,7 @@ class SourceToSpringPlanTest {
     @Test void unsupportedSourceHierarchiesNeverCertifyMemberClosure() throws Exception {
         for(String header:List.of("class Base<T> {} class Client extends Base<Store>",
                 "class Base<T> {} class Client extends Base", "class Client extends Missing",
-                "class Client extends java.util.ArrayList<Store>","interface Base {} class Client implements Base")) {
+                "class Client extends java.util.ArrayList<Store>","interface Base { void work(); } class Client implements Base")) {
             // Component annotation belongs to Client in each variant.
             var split=header.lastIndexOf("class Client");
             var f=sourceFixture("""
@@ -1677,7 +1700,7 @@ class SourceToSpringPlanTest {
                 @org.springframework.beans.factory.annotation.Autowired void wire(Dependency z,Dependency a) {}
                 ""","@org.springframework.context.annotation.Profile(\"dev\")");
         var plan=beanPlan(f,true,"Dependency","Config","first","second");
-        assertEquals("m4uv2.2-core-descriptors-v1",SourceToSpringPlan.PROVIDER.version());
+        assertEquals("m8.4-source-marker-closure-v1",SourceToSpringPlan.PROVIDER.version());
         assertEquals(6,plan.binding().dependencies().size());
         assertEquals(3,plan.binding().dependencies().stream().map(d -> d.point().identity()).distinct().count());
         assertEquals(6,plan.binding().dependencies().stream().map(InjectionBindingPlan.Dependency::identity).distinct().count());

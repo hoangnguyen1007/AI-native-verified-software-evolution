@@ -131,9 +131,20 @@ class JavaEvidencePipelineIntegrationTest {
         }
     }
     @Test void capturedGeneratedDocumentReachesTheActualPipelineWithExactConstructorAndImmutableCaller()throws Exception{
+        capturedGeneratedDocument(false);
+    }
+    @Test void aConsistentlyReboundCensusCannotSilentlyMoveAnOriginalSourceToAnotherModule()throws Exception{
+        var failure=assertThrows(IOException.class,()->capturedGeneratedDocument(true));
+        assertEquals("JAVA_ORIGINAL_SOURCE_MODULE_CHANGED",failure.getMessage());
+    }
+    @Test void malformedGeneratedEncodingRetainsItsCapturedDocumentAndSoundSiblingBytes()throws Exception{capturedGeneratedDocument(false,true);}
+    private void capturedGeneratedDocument(boolean foreignOwner)throws Exception{capturedGeneratedDocument(foreignOwner,false);}
+    private void capturedGeneratedDocument(boolean foreignOwner,boolean invalidEncoding)throws Exception{
         content=new StreamingContentStore(root.resolve("cas"));tables=new JavaEvidenceTables(content,100000);
         var module=ModuleDescriptor.create(TestInputs.REPO,".","fixture");var files=new TreeMap<String,SourceInput>();
         for(var entry:Map.of("build.gradle","plugins { java }\ndependencies { testRuntimeOnly 'fixture:provided:1' }\n","src/main/java/Client.java","class Client { Generated value = new Generated(1); int n(){ return dep.Library.number(); } }",".evo-generated/readme.txt","original namespace occupant").entrySet()){byte[] raw=entry.getValue().getBytes(StandardCharsets.UTF_8);files.put(entry.getKey(),new SourceInput(SourceDocument.create(TestInputs.REPO,module,entry.getKey(),ContentDigest.sha256(raw),SourceClassification.MAIN),raw));}
+        if(foreignOwner){var caller=files.get("src/main/java/Client.java");var other=ModuleDescriptor.create(TestInputs.REPO,"other","other");
+            files.put(caller.document().path(),new SourceInput(SourceDocument.create(TestInputs.REPO,other,caller.document().path(),caller.document().contentDigest(),caller.document().classification()),caller.bytes()));}
         var documents=files.values().stream().map(SourceInput::document).toList();var base=new RepositoryInputs(RepositorySnapshot.create(TestInputs.REPO,Optional.empty(),false,documents.stream().map(SnapshotFile::from).toList(),documents),files);var baseIdentity=base.identity();
         var original=new UniversalBuildIngestion().ingest(base,new UniversalBuildIngestion.Policy(Optional.of(21),Optional.of(21),Optional.of("UTF-8"),100,10000,1000,16),Optional.empty(),Map.of(),new BuildModelPolicy(List.of(),List.of(),Map.of(),10000,100,16));
         assertTrue(original.modules().getFirst().dependencies().stream().anyMatch(d->d.configuration().equals("testRuntimeOnly")));
@@ -147,7 +158,7 @@ class JavaEvidencePipelineIntegrationTest {
         var census=put("authored captured census");var tool=put("authored generator binary");var input=record("java-evidence-input","role","TOOL","content",tool,"locator",null,"provider",new VersionedIdentifier("fixture.generator","1"));
         var lineage=record("java-generation-lineage","scope",scope,"generator",new VersionedIdentifier("fixture.generator","1"),"compiler",new VersionedIdentifier("fixture.compiler","21"),"compilerApplicability","APPLICABLE","compilerApplicabilityProof",null,"toolchain",closure,"recipe",closure,"configuration",closure,"environment",closure,"nativeResolution",closure,"inputs",table("java-evidence-input",List.of(input)).wire(),"outputCensus",census,"inputClosure",closure,"closure","COMPLETE","gaps",List.of());
         var layout=Map.of("schema","java-generated-root-layout:m8.4-v1","scope",scope,"roots",List.of(Map.of("kind","RESOURCE","role","DECLARED_RESOURCE","sourceSet","main","root",LogicalPath.utf8("src/main/resources"),"encoding","UTF-8"),Map.of("kind","RESOURCE","role","generated-resource","sourceSet","main","root",LogicalPath.utf8("custom/generated-resources"),"encoding","UTF-8")));
-        var rootProof=proof("java.generated-lineage",lineage.identity().value(),CanonicalJson.write(layout));var generated=put("class Generated { Generated(int value) {} }");
+        var rootProof=proof("java.generated-lineage",lineage.identity().value(),CanonicalJson.write(layout));var generated=invalidEncoding?content.put(new ByteArrayInputStream(new byte[]{(byte)0xc3,0x28}),()->false):put("class Generated { Generated(int value) {} }");
         var locator=Map.of("container",census,"members",List.of(),"path",LogicalPath.utf8("custom/generated/Generated.java"));
         var row=record("java-output-row","key",closure,"scope",scope,"role","generated-java","expectation","REQUIRED","locator",locator,"kind","FILE","content",generated,"lineage",lineage.identity(),"rootProof",rootProof.identity(),"category","JAVA_SOURCE","disposition","ACCEPTED","reason",null);
         var outputFields=new LinkedHashMap<>(row.fields());outputFields.put("key",JavaGeneratedOverlay.outputKey(row));row=codec.create(outputFields);
@@ -170,12 +181,22 @@ class JavaEvidencePipelineIntegrationTest {
         var pre=new JavaEvidenceLedger().publish(scope,put(CanonicalJson.write(requirements)),verifier.policyIdentity(),requirements,List.of(),List.of(),Optional.empty(),proofs,Set.of(),Set.of(),tables,()->false);
         var prepared=new JavaEvidenceAssembler(content,100000).prepare(base,readiness,nativeContext,original,module,imported.overlay(),manifest,platform,proofs,new com.evolution.analysis.filesystem.JavaBinaryViews(content,root.resolve("binary-views"),new com.evolution.analysis.filesystem.JavaBinaryViews.Budget(100,100000,100000)),pre,100,10000,()->false);
         assertEquals(baseIdentity,base.identity());assertEquals(client.document().identity(),prepared.inputs().files().get(client.document().path()).document().identity());
+        if(invalidEncoding){
+            assertTrue(content.verify(generated));assertTrue(prepared.inputs().snapshot().documents().stream().anyMatch(d->d.contentDigest().equals(generated.digest())));assertTrue(prepared.inputs().files().values().stream().noneMatch(s->s.document().contentDigest().equals(generated.digest())));
+            var policy=UniversalArchitecturePipeline.Policy.builder(new JavaParserFrontend(),JavaParserFrontend.PROVIDER).truthEvaluationMode(UniversalArchitecturePipeline.TruthEvaluationMode.NONE).build();var result=new UniversalArchitecturePipeline().runWithEvidence(prepared,policy);
+            assertFalse(result.report().gaps().isEmpty());assertTrue(result.report().issues().stream().anyMatch(i->Set.of(IngestionEvidence.Reason.INPUT_UNAVAILABLE,IngestionEvidence.Reason.SOURCE_INCOMPLETE).contains(i.reason())));assertEquals(client.document().identity(),prepared.inputs().files().get(client.document().path()).document().identity());return;
+        }
         var policy=UniversalArchitecturePipeline.Policy.builder(new JavaParserFrontend(),JavaParserFrontend.PROVIDER).truthEvaluationMode(UniversalArchitecturePipeline.TruthEvaluationMode.NONE).build();
         var result=new UniversalArchitecturePipeline().runWithEvidence(prepared,policy);var graphInput=result.graphInput().orElseThrow();
         assertTrue(result.report().issues().stream().noneMatch(i->i.reason()==IngestionEvidence.Reason.CLASSPATH_RESOLUTION_REQUIRED),"The validated main context must not acquire an inactive testRuntimeOnly dependency");
         assertEquals("true",graphInput.ingestion().orElseThrow().sourceIngestion().outcomes().stream().filter(o->o.sourceSet().name().equals("main")).findFirst().orElseThrow().configuration().properties().get("feature.generated"));
         var frontend=graphInput.ingestion().orElseThrow().units().stream().flatMap(u->u.frontend().stream()).findFirst().orElseThrow();
         var request=graphInput.ingestion().orElseThrow().sourceIngestion().outcomes().stream().flatMap(o->o.request().stream()).findFirst().orElseThrow();var framework=com.evolution.analysis.spring.SpringFrameworkEvidence.fromRequest(request);assertEquals(1,framework.artifacts().size());assertEquals("org.springframework:spring-beans:6.2.0@jar",framework.artifacts().getFirst().classpathLogicalName());assertFalse(framework.verifiedArtifact(framework.artifacts().getFirst()),"Authored bytes cannot obtain framework trust from their coordinates");
+        var springBuild=com.evolution.analysis.spring.condition.SpringBuildContext.fromExactRequest(request,graphInput.ingestion().orElseThrow().sourceIngestion().identity());
+        assertTrue(springBuild.containsFrameworkEvidence(framework),"The protected native origin must match without mistaking a per-slot solver view for its artifact");
+        assertTrue(springBuild.containsArtifact(binaryBytes.digest()));
+        var wrongFramework=new com.evolution.analysis.spring.SpringFrameworkEvidence(true,Optional.of(request.plan().classpathManifest()),List.of(new com.evolution.analysis.spring.SpringFrameworkEvidence.Artifact("org.springframework:spring-beans:6.2.0",ContentDigest.sha256Utf8("other native bytes"))));
+        assertFalse(springBuild.containsFrameworkEvidence(wrongFramework));
         assertEquals(2,request.dependencies().size());assertEquals(request.dependencies().getFirst().originEntry(),request.dependencies().getLast().originEntry());assertNotEquals(request.dependencies().getFirst().path(),request.dependencies().getLast().path());assertThrows(FrontendInputException.class,()->rebind(request,List.of(request.dependencies().getFirst()),true));assertThrows(FrontendInputException.class,()->rebind(request,List.of(request.dependencies().getLast(),request.dependencies().getFirst()),true));assertThrows(FrontendInputException.class,()->rebind(request,request.dependencies(),false));
         var binary=request.dependencies().getFirst();assertThrows(FrontendInputException.class,()->new BinaryInput(new com.evolution.analysis.contract.analysis.ClasspathEntry(binary.entry().kind(),binary.entry().logicalName(),ContentDigest.sha256Utf8("foreign view")),binary.path(),binary.reactorModule(),binary.nativeOrigin()));
         var library=frontend.declarations().stream().map(DeclarationRecord::entity).filter(e->e.canonicalName().equals(JavaSymbolName.method(JavaSymbolName.topLevelType("dep","Library"),"number",List.of()).canonicalName())).findFirst().orElseThrow();assertEquals(com.evolution.analysis.contract.identity.EntityScope.external(EntityOrigin.DEPENDENCY,"org.springframework:spring-beans:6.2.0@jar",binaryBytes.digest()),library.stableScope());assertTrue(library.declaration().isEmpty());

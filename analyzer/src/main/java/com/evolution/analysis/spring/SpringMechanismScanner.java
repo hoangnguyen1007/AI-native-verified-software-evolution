@@ -866,10 +866,20 @@ public final class SpringMechanismScanner {
                     .sorted().toList();
             boolean explicit = constructors.stream().anyMatch(value -> injectedCallables.contains(value.entity().identity()));
             boolean exactConstructorSet = constructors.stream().allMatch(value ->
-                    value.status() == SemanticStatus.RESOLVED && value.entity().declaration().isPresent());
+                    value.status() == SemanticStatus.RESOLVED && (value.entity().declaration().isPresent()
+                            || knownLanguageDefaultConstructor(frontend,output.declarations.get(beanType),value)));
             if (constructors.size() == 1 && exactConstructorSet
                     && !explicit && !generatedTypes.contains(beanType)) {
                 DeclarationRecord constructor = constructors.getFirst();
+                if(constructor.entity().declaration().isEmpty()){
+                    // The exact language default has no parameters and creates no injection request.
+                    // Its raw supporting observation is the real owner declaration; the separate
+                    // frontend constructor record keeps its absent span and language derivation.
+                    RawObservation supporting=declarationRaw(output.declarations.get(beanType),Optional.empty(),
+                            "spring.language-default-constructor:"+constructor.entity().canonicalName(),output);
+                    output.markers.add(supporting.identity());
+                    continue;
+                }
                 RawObservation raw = declarationRaw(constructor, Optional.of(beanType),
                         "spring.implicit-constructor:" + constructor.entity().canonicalName(), output);
                 output.obligations.add(SemanticObligation.create(raw.identity(), 0,
@@ -889,6 +899,21 @@ public final class SpringMechanismScanner {
                         "The exact constructor set is incomplete; no implicit injection point is invented."));
             }
         }
+    }
+    /** A language-derived zero-argument constructor has supporting owner evidence, never a fabricated member span. */
+    private static boolean knownLanguageDefaultConstructor(FrontendResult frontend,DeclarationRecord owner,DeclarationRecord constructor){
+        if(owner==null||owner.status()!=SemanticStatus.RESOLVED||owner.entity().origin()!=EntityOrigin.PROJECT||owner.entity().declaration().isEmpty()
+                ||!frontend.frontend().equals(new VersionedIdentifier("frontend.javaparser","3.28.2-m8.4-native-wiring-v1"))
+                ||constructor.entity().origin()!=EntityOrigin.PROJECT||!constructor.entity().stableScope().equals(owner.entity().stableScope())
+                ||!constructor.uncertainties().isEmpty()||!constructor.diagnostics().isEmpty()
+                ||constructor.derivation().kind()!=DerivationKind.DERIVED||!constructor.derivation().method().equals(new VersionedIdentifier("java.default-constructor","1"))
+                ||!constructor.derivation().inputIdentities().equals(List.of(owner.entity().identity().value()))
+                ||JavaTypeName.fromCanonical(owner.entity().canonicalName()).isEmpty()
+                ||!constructor.entity().canonicalName().equals("java:v1:[\"constructor\","+owner.entity().canonicalName().substring("java:v1:".length())+",[]]"))return false;
+        if(frontend.typeDeclarations().stream().noneMatch(shape->shape.type().equals(owner.entity().identity())&&shape.kind()==TypeDeclarationRecord.Kind.CLASS&&shape.independent()))return false;
+        return frontend.derivedRelationships().stream().anyMatch(edge->edge.status()==SemanticStatus.RESOLVED&&edge.relationship().kind().value().equals("java.declares")
+                &&edge.relationship().source().equals(owner.entity().identity())&&edge.relationship().target() instanceof RelationshipTarget.Resolved target&&target.target().equals(constructor.entity().identity())
+                &&edge.derivation().equals(constructor.derivation())&&edge.supportingSpans().contains(owner.entity().declaration().orElseThrow()));
     }
 
     private static boolean hasCompleteParameterType(FrontendResult frontend, EntityIdentity parameter) {

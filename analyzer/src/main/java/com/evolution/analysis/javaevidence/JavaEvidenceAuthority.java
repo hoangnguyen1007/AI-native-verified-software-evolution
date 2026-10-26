@@ -20,7 +20,10 @@ public final class JavaEvidenceAuthority {
         Map.entry("java.source-binary-correspondence",Set.of("OWNER_SIGNATURE_MATCH","TRANSFORM_LINEAGE","MAPPING_CENSUS_CLOSED")),
         Map.entry("java.semantic-occurrence",Set.of("INPUT_VIEW_MATCH","OCCURRENCE_CENSUS","TARGET_MAPPING","ORIGIN_PROVEN","PROVENANCE_VALID")),
         Map.entry("java.generator-not-applicable",Set.of("GENERATOR_CENSUS_CLOSED","APPLICABILITY_PROVEN")),
-        Map.entry("java.build-validation",Set.of("NATIVE_STAGE_VALIDATED","TARGET_CENSUS_CLOSED","COMPILATION_APPLICABILITY")));
+        Map.entry("java.compiler-not-applicable",Set.of("COMPILER_CENSUS_CLOSED","APPLICABILITY_PROVEN")),
+        Map.entry("java.build-validation",Set.of("NATIVE_STAGE_VALIDATED","TARGET_CENSUS_CLOSED","COMPILATION_APPLICABILITY")),
+        Map.entry("java.gap-requirement-binding",Set.of("GAP_QUESTION_MATCH","REQUIREMENT_CENSUS_CLOSED","MAPPING_VALIDATED")),
+        Map.entry("java.readiness-requirement",Set.of("READINESS_REQUIREMENT_MATCH","READINESS_INPUT_CLOSURE","READINESS_CENSUS_CLOSED","APPLICABILITY_VALIDATED")));
     public static Set<String> requiredChecks(String predicate){
         var extra=EXTRA.get(predicate);if(extra==null)throw new IllegalArgumentException("UNKNOWN_JAVA_PREDICATE");
         var result=new TreeSet<>(COMMON);result.addAll(extra);return Collections.unmodifiableSet(result);
@@ -33,17 +36,60 @@ public final class JavaEvidenceAuthority {
         public JavaEvidenceRecord record(){return record;}
         public ContentDigest identity(){return identity;}
         public ContentDigest answer(){return JavaEvidenceRecord.handle(record.fields().get("answer")).digest();}
-        public boolean current()throws IOException{
-            byte[] bytes=record.json().getBytes(java.nio.charset.StandardCharsets.UTF_8);
-            var references=new LinkedHashSet<com.evolution.analysis.acquisition.streaming.ContentHandle>();references.add(new com.evolution.analysis.acquisition.streaming.ContentHandle(identity,bytes.length));references.add(JavaEvidenceRecord.handle(record.fields().get("answer")));references.add(JavaEvidenceRecord.handle(record.object("inputs").get("content")));
-            for(Object value:GraphJson.array(record.fields().get("checks")))for(Object item:GraphJson.array(GraphJson.object(value).get("evidence")))references.add(JavaEvidenceRecord.handle(item));
-            for(var reference:references)if(!content.verify(reference))return false;
-            return inputsCurrent(record,content);
+        /** A protected check/input must actually cite the required captured object. */
+        public boolean covers(com.evolution.analysis.acquisition.streaming.ContentHandle handle)throws IOException{
+            for(Object value:GraphJson.array(record.fields().get("checks")))for(Object item:GraphJson.array(GraphJson.object(value).get("evidence")))
+                if(handle.equals(JavaEvidenceRecord.handle(item)))return true;
+            boolean[] found={false};
+            new JavaEvidenceTables(content,2_000_000).read(JavaEvidenceTables.Table.from(record.fields().get("inputs")),
+                    row->{if(handle.equals(JavaEvidenceRecord.handle(row.fields().get("content"))))found[0]=true;},()->false);
+            return found[0];
         }
+        public boolean current()throws IOException{return new CurrentBatch().current(this);}
         public Set<ContentDigest> adjudicationInputs(){
             var result=new TreeSet<ContentDigest>();
             for(Object value:GraphJson.array(record.fields().get("checks"))){var check=GraphJson.object(value);if("NO_CONTRADICTION".equals(check.get("name")))for(Object item:GraphJson.array(check.get("evidence")))result.add(JavaEvidenceRecord.handle(item).digest());}
             return Collections.unmodifiableSet(result);
+        }
+    }
+    static boolean allCurrent(Iterable<Verified> proofs)throws IOException{
+        var batch=new CurrentBatch();for(var proof:proofs)if(!batch.current(proof))return false;return true;
+    }
+    /** One immutable-input verification pass. Never retained on a capability or ledger.
+     * Store identity is part of the memo scope: equal handles in another CAS are checked there. */
+    static final class CurrentBatch {
+        private final Map<RepositoryContentStore,CheckedStore> stores=new IdentityHashMap<>();
+        boolean current(Verified token)throws IOException{
+            var checked=stores.computeIfAbsent(token.content,CheckedStore::new);var record=token.record;
+            byte[] bytes=record.json().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            var references=new LinkedHashSet<com.evolution.analysis.acquisition.streaming.ContentHandle>();
+            references.add(new com.evolution.analysis.acquisition.streaming.ContentHandle(token.identity,bytes.length));
+            references.add(JavaEvidenceRecord.handle(record.fields().get("answer")));references.add(JavaEvidenceRecord.handle(record.object("inputs").get("content")));
+            for(Object value:GraphJson.array(record.fields().get("checks")))for(Object item:GraphJson.array(GraphJson.object(value).get("evidence")))references.add(JavaEvidenceRecord.handle(item));
+            for(var reference:references)if(!checked.verify(reference))return false;
+            var table=JavaEvidenceTables.Table.from(record.fields().get("inputs"));var previous=checked.inputs.get(table);
+            if(previous!=null)return previous;
+            boolean valid=inputsCurrent(record,checked);checked.inputs.put(table,valid);return valid;
+        }
+    }
+    private static final class CheckedStore implements RepositoryContentStore {
+        private final RepositoryContentStore delegate;
+        private final Map<com.evolution.analysis.acquisition.streaming.ContentHandle,Boolean> checked=new HashMap<>();
+        private final Map<JavaEvidenceTables.Table,Boolean> inputs=new HashMap<>();
+        CheckedStore(RepositoryContentStore delegate){this.delegate=delegate;}
+        public boolean verify(com.evolution.analysis.acquisition.streaming.ContentHandle handle)throws IOException{
+            if(Thread.currentThread().isInterrupted())throw new IOException("JAVA_EVIDENCE_CHECK_CANCELLED");
+            var previous=checked.get(handle);if(previous!=null)return previous;
+            boolean valid=delegate.verify(handle);checked.put(handle,valid);return valid;
+        }
+        public java.io.InputStream open(com.evolution.analysis.acquisition.streaming.ContentHandle handle)throws IOException{
+            if(!verify(handle))throw new IOException("JAVA_EVIDENCE_CONTENT_UNAVAILABLE");return delegate.open(handle);
+        }
+        public java.io.InputStream range(com.evolution.analysis.acquisition.streaming.ContentHandle handle,long offset,long length)throws IOException{
+            if(!verify(handle))throw new IOException("JAVA_EVIDENCE_CONTENT_UNAVAILABLE");return delegate.range(handle,offset,length);
+        }
+        public com.evolution.analysis.acquisition.streaming.ContentHandle put(java.io.InputStream input,java.util.function.BooleanSupplier cancelled)throws IOException{
+            throw new IOException("JAVA_EVIDENCE_CHECK_READ_ONLY");
         }
     }
     private final ContentDigest policy;

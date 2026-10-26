@@ -28,8 +28,53 @@ public final class JavaEvidenceLedger {
     public record GapDisposition(CapabilityGapRecord gap,List<ContentDigest> requirements,boolean active){public GapDisposition{requirements=List.copyOf(requirements);}}
     public static final class Published {
         private final JavaEvidenceRecord ledger,projection;private final View current;
-        private Published(JavaEvidenceRecord ledger,JavaEvidenceRecord projection,View current){this.ledger=ledger;this.projection=projection;this.current=current;}
+        private final JavaEvidenceTables tables;
+        private final ContentHandle census;
+        private final Map<ContentDigest,JavaEvidenceAuthority.Verified> proofs;
+        private final Set<ContentDigest> revoked,closedProducers;
+        private Published(JavaEvidenceRecord ledger,JavaEvidenceRecord projection,View current,JavaEvidenceTables tables,ContentHandle census,
+                Map<ContentDigest,JavaEvidenceAuthority.Verified> proofs,Set<ContentDigest> revoked,Set<ContentDigest> closedProducers){
+            this.ledger=ledger;this.projection=projection;this.current=current;this.tables=tables;this.census=census;
+            this.proofs=Map.copyOf(proofs);this.revoked=Set.copyOf(revoked);this.closedProducers=Set.copyOf(closedProducers);
+        }
         public JavaEvidenceRecord ledger(){return ledger;}public JavaEvidenceRecord projection(){return projection;}public View current(){return current;}
+        /** Revalidate immutable inputs at use; a saved current row is not a live capability. */
+        public View revalidate(ContentDigest policy,Set<ContentDigest> newlyRevoked)throws IOException{
+            tables.requireContent(census);
+            tables.requireContent(new ContentHandle(ledger.identity(),ledger.json().getBytes(java.nio.charset.StandardCharsets.UTF_8).length));
+            tables.requireContent(new ContentHandle(projection.identity(),projection.json().getBytes(java.nio.charset.StandardCharsets.UTF_8).length));
+            var requirements=new ArrayList<JavaEvidenceRecord>();var decisions=new ArrayList<JavaEvidenceRecord>();
+            tables.read(JavaEvidenceTables.Table.from(ledger.fields().get("requirements")),requirements::add,()->false);
+            tables.read(JavaEvidenceTables.Table.from(ledger.fields().get("decisions")),decisions::add,()->false);
+            tables.read(JavaEvidenceTables.Table.from(ledger.fields().get("bindings")),row->{},()->false);
+            tables.read(JavaEvidenceTables.Table.from(projection.fields().get("current")),row->{},()->false);
+            var allRevoked=new HashSet<>(revoked);allRevoked.addAll(newlyRevoked);
+            allRevoked.addAll(unavailableOccurrenceProofs(requirements,decisions,tables));
+            boolean settled=current.rows().values().stream().allMatch(row->!active(row.state()));
+            if(settled&&projection.digest("policy").equals(policy)&&allRevoked.equals(revoked)){
+                boolean unchanged=true;
+                var batch=new JavaEvidenceAuthority.CurrentBatch();
+                for(var proof:proofs.values())try{if(!batch.current(proof)){unchanged=false;break;}}catch(IOException missing){unchanged=false;break;}
+                // The immutable proof/producer census and all referenced bytes are unchanged.
+                // Reuse the already folded answer; never cache verification across uses.
+                if(unchanged)return current;
+            }
+            return new JavaEvidenceLedger().fold(requirements,decisions,proofs,allRevoked,closedProducers,Optional.of(policy));
+        }
+        public List<JavaEvidenceRecord> requirements()throws IOException{
+            var rows=new ArrayList<JavaEvidenceRecord>();
+            var table=JavaEvidenceTables.Table.from(ledger.fields().get("requirements"));Optional<JavaEvidenceTables.Cursor> cursor=Optional.empty();
+            while(true){var page=tables.scan(table,cursor,256,rows::add,()->false);if(page.state()==JavaEvidenceTables.ScanState.END)break;
+                if(page.state()==JavaEvidenceTables.ScanState.CANCELLED)throw new IOException("JAVA_EVIDENCE_CANCELLED_WITH_FRONTIER");cursor=Optional.of(page.cursor());}
+            return List.copyOf(rows);
+        }
+        public List<com.evolution.analysis.graph.GraphEvidence> evidence()throws IOException{
+            var result=new ArrayList<com.evolution.analysis.graph.GraphEvidence>();
+            for(String name:List.of("requirements","decisions","bindings"))tables.read(JavaEvidenceTables.Table.from(ledger.fields().get(name)),
+                    row->result.add(com.evolution.analysis.graph.GraphEvidence.capture("java.evidence.gap-closure-"+name,row.fields())),()->false);
+            for(var proof:proofs.values())result.add(com.evolution.analysis.graph.GraphEvidence.capture("java.evidence.proof",proof.record().fields()));
+            return List.copyOf(result);
+        }
     }
     public static List<GapDisposition> gapDispositions(Collection<CapabilityGapRecord> history,List<JavaEvidenceRecord> requirements,View current){
         var bindings=new HashMap<String,Set<ContentDigest>>();
@@ -40,7 +85,8 @@ public final class JavaEvidenceLedger {
     public Published publish(Map<String,Object> scope,ContentHandle census,ContentDigest trustPolicy,List<JavaEvidenceRecord> requirements,List<JavaEvidenceRecord> decisions,List<JavaEvidenceRecord> bindings,
             Optional<JavaEvidenceRecord> previous,Map<ContentDigest,JavaEvidenceAuthority.Verified> proofs,Set<ContentDigest> revoked,Set<ContentDigest> closedProducers,JavaEvidenceTables tables,BooleanSupplier cancelled)throws IOException{
         tables.requireContent(census);for(var requirement:requirements)JavaGeneratedOverlay.sameScope(scope,requirement);
-        var current=fold(requirements,decisions,proofs,revoked,closedProducers,Optional.of(trustPolicy));
+        var effectiveRevocations=new HashSet<>(revoked);effectiveRevocations.addAll(unavailableOccurrenceProofs(requirements,decisions,tables));
+        var current=fold(requirements,decisions,proofs,effectiveRevocations,closedProducers,Optional.of(trustPolicy));
         for(var conflict:current.conflicts().values())tables.putCanonical(conflict,cancelled);
         var required=new ArrayList<>(requirements);required.sort(JavaEvidenceTables::compare);var history=decisions.stream().distinct().sorted(Comparator.comparing(JavaEvidenceRecord::identity)).toList();var audit=bindings.stream().distinct().sorted(Comparator.comparing(JavaEvidenceRecord::identity)).toList();
         var requirementTable=tables.write("java-closure-requirement",required.iterator(),cancelled);var decisionTable=tables.write("java-closure-decision",history.iterator(),cancelled);var bindingTable=tables.write("java-evidence-binding",audit.iterator(),cancelled);
@@ -58,13 +104,23 @@ public final class JavaEvidenceLedger {
         var currentTable=tables.write("java-closure-current-row",rows.iterator(),cancelled);var counts=new TreeMap<String,Long>();counts.put("total",(long)current.rows().size());counts.put("active",current.active());current.counts().forEach((state,count)->counts.put(state==State.NOT_APPLICABLE?"notApplicable":state.name().toLowerCase(Locale.ROOT),count));
         // Bind the current captured trust policy; differing policies cannot be silently coalesced.
         var projection=codec.create(Map.of("schema","java-closure-projection:m8.4-v1","scope",scope,"census",census.digest(),"validator",new com.evolution.analysis.contract.common.VersionedIdentifier("evidence.java-closure-reconciler","m8.4-step4-v1"),"policy",trustPolicy,"current",currentTable.wire(),"denominator",closedProducers.containsAll(current.rows().keySet())?"CLOSED":"OPEN","counts",counts));
-        var ledgerRecord=codec.create(ledger);tables.put(ledgerRecord,cancelled);tables.put(projection,cancelled);return new Published(ledgerRecord,projection,current);
+        var ledgerRecord=codec.create(ledger);tables.put(ledgerRecord,cancelled);tables.put(projection,cancelled);return new Published(ledgerRecord,projection,current,tables,census,proofs,revoked,closedProducers);
     }
     public static ContentDigest requirementKey(JavaEvidenceRecord requirement){
         kind(requirement,"java-closure-requirement");var fields=new TreeMap<String,Object>();
         fields.put("schema","java-requirement-key:m8.4-v1");
         for(String field:List.of("scope","question","subject","category","predicate"))fields.put(field,requirement.fields().get(field));
         return CanonicalJson.sha256(fields);
+    }
+    private static Set<ContentDigest> unavailableOccurrenceProofs(List<JavaEvidenceRecord> requirements,List<JavaEvidenceRecord> decisions,JavaEvidenceTables tables)throws IOException{
+        var unavailable=new HashSet<ContentDigest>();var checked=new HashMap<ContentHandle,Boolean>();
+        for(var requirement:requirements)for(Object value:GraphJson.array(requirement.fields().get("occurrences"))){
+            if(Thread.currentThread().isInterrupted())throw new IOException("JAVA_EVIDENCE_CHECK_CANCELLED");
+            var handle=JavaEvidenceRecord.handle(value);Boolean valid=checked.get(handle);
+            if(valid==null){try{tables.requireContent(handle);valid=true;}catch(IOException missing){if(Thread.currentThread().isInterrupted())throw missing;valid=false;}checked.put(handle,valid);}
+            if(!valid)unavailable.add(requirementKey(requirement));
+        }
+        var revoked=new HashSet<ContentDigest>();for(var decision:decisions)if(unavailable.contains(decision.digest("requirement")))revoked.addAll(refs(decision,"proofs"));return Set.copyOf(revoked);
     }
     /** closedProducers is the independently reconciled producer census, never provider-emitted rows. */
     public View fold(List<JavaEvidenceRecord> requirements,List<JavaEvidenceRecord> decisions,Map<ContentDigest,JavaEvidenceAuthority.Verified> proofs,Set<ContentDigest> revoked,Set<ContentDigest> closedProducers){
@@ -86,6 +142,7 @@ public final class JavaEvidenceLedger {
         var supersededDecisions=new HashSet<ContentDigest>();
         byDecision.values().forEach(decision->supersededDecisions.addAll(refs(decision,"supersedes")));
         var result=new TreeMap<ContentDigest,Current>();var conflictRecords=new TreeMap<ContentDigest,ProviderConflictRecord>();
+        var batch=new JavaEvidenceAuthority.CurrentBatch();
         for(var key:order(byRequirement,id->refs(byRequirement.get(id),"prerequisites"))){
             var requirement=byRequirement.get(key);var history=perRequirement.getOrDefault(key,List.of());var superseded=new HashSet<ContentDigest>();
             history.forEach(d->superseded.addAll(refs(d,"supersedes")));
@@ -98,7 +155,7 @@ public final class JavaEvidenceLedger {
                 invalidated|=state==State.REOPENED;
                 if(state==State.NARROWED)for(var proofId:refs(head,"proofs")){
                     var token=proofs.get(proofId);if(token==null||!proofId.equals(token.identity())||revoked.contains(proofId)||!matches(requirement,token.record())||trustPolicy.filter(p->!p.equals(token.record().digest("policy"))).isPresent())continue;
-                    try{narrowed|=token.current();}catch(IOException unavailable){/* Missing evidence cannot narrow. */}
+                    try{narrowed|=batch.current(token);}catch(IOException unavailable){/* Missing evidence cannot narrow. */}
                 }
                 if(state!=State.SATISFIED&&state!=State.NOT_APPLICABLE){
                     boolean noAnswer=state==State.PENDING&&refs(head,"proofs").isEmpty()&&refs(head,"conflicts").isEmpty()&&Set.of("PRODUCER_REJECTED","PRODUCER_UNAVAILABLE","PRODUCER_FAILED","PRODUCER_DENIED").contains(head.fields().get("reason"));
@@ -110,7 +167,7 @@ public final class JavaEvidenceLedger {
                     var token=proofs.get(proofId);
                     if(token==null||!proofId.equals(token.identity())||!matches(requirement,token.record())){valid=false;continue;}
                     if(trustPolicy.isPresent()&&!token.record().digest("policy").equals(trustPolicy.orElseThrow())){valid=false;invalidated=true;continue;}
-                    try{if(!token.current()){valid=false;invalidated=true;continue;}}catch(java.io.IOException unavailable){valid=false;invalidated=true;continue;}
+                    try{if(!batch.current(token)){valid=false;invalidated=true;continue;}}catch(java.io.IOException unavailable){valid=false;invalidated=true;continue;}
                     if(state==State.NOT_APPLICABLE&&!token.record().text("question").equals("java.generator-not-applicable")){valid=false;continue;}
                     accepted.add(proofId);answers.add(token.answer());
                 }
@@ -127,7 +184,7 @@ public final class JavaEvidenceLedger {
             var referenced=List.copyOf(accepted);
             for(var entry:new TreeMap<>(proofs).entrySet()){
                 var token=entry.getValue();if(!entry.getKey().equals(token.identity())||revoked.contains(token.identity())||!matches(requirement,token.record())||trustPolicy.filter(p->!p.equals(token.record().digest("policy"))).isPresent())continue;
-                boolean current;try{current=token.current();}catch(IOException missing){current=false;}if(!current)continue;
+                boolean current;try{current=batch.current(token);}catch(IOException missing){current=false;}if(!current)continue;
                 boolean adjudicated=referenced.stream().map(proofs::get).filter(Objects::nonNull).anyMatch(p->!p.answer().equals(token.answer())&&p.adjudicationInputs().contains(token.answer()));
                 if(!adjudicated){accepted.add(token.identity());answers.add(token.answer());}
             }

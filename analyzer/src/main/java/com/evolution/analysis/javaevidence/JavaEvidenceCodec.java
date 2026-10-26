@@ -13,6 +13,10 @@ import java.util.regex.Pattern;
 public final class JavaEvidenceCodec {
     public static final String RESOURCE="/java-evidence/m8-java-evidence-v1.schema.json";
     private static final Map<String,Object> SCHEMA=loadSchema();
+    private static final Set<String> RECORD_KINDS=GraphJson.array(SCHEMA.get("oneOf")).stream()
+            .map(GraphJson::object).map(rule->GraphJson.string(rule.get("$ref")).substring("#/$defs/".length()))
+            .collect(java.util.stream.Collectors.toUnmodifiableSet());
+    static boolean recordKind(String kind){return RECORD_KINDS.contains(kind);}
     private final GraphJson.Limits limits;
     public JavaEvidenceCodec(){this(new GraphJson.Limits(2_000_000,64,200_000));}
     public JavaEvidenceCodec(GraphJson.Limits limits){this.limits=Objects.requireNonNull(limits);}

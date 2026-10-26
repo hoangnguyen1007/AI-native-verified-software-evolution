@@ -64,6 +64,15 @@ class CoreMvpBuildPipelineTest {
         assertEquals("CORE_MVP_RECOVERY_REQUIRED",assertThrows(IOException.class,()->pipeline(fake).run(root)).getMessage());
         assertEquals(1,fake.launches);assertFalse(Files.exists(root.resolve("core-mvp-publication.json")));
     }
+    @Test void javaEvidenceBridgeReplaysTheWholeCensusWithoutBuildingOrPromotingTrust()throws Exception{
+        var fake=setup();var publication=pipeline(fake).run(root);var request=GraphJson.object(CoreMvpBuildPipeline.read(root.resolve("export-request.json"),65536).get("request"));
+        var scope=new com.evolution.analysis.execution.output.OutputCensus.Scope(ATTEMPT.replace("-",""),GraphJson.string(request.get("nonce")),new com.evolution.analysis.execution.output.OutputCensus.Budget(65536,134217728,536870912));
+        var rows=new ArrayList<com.evolution.analysis.execution.output.OutputCensus.RowOutcome>();var content=new StreamingContentStore(root.resolve("cas"));var reader=new CoreMvpEvidenceReader();
+        var capture=reader.readCaptured(content,publication,scope,rows::add,()->false);assertEquals(1,rows.size());assertEquals(1,capture.result().observed().orElseThrow().entries());assertEquals(Map.of(NAME,handle(SOURCE)),capture.roles());assertEquals("PRODUCER_ASSERTION",capture.trust());assertEquals(com.evolution.analysis.execution.EvidenceVerifier.Trust.PRODUCER_ASSERTION,capture.result().effectiveTrust());assertEquals(1,fake.launches);
+        var foreign=new com.evolution.analysis.execution.output.OutputCensus.Scope("b".repeat(32),scope.nonce(),scope.budget());assertThrows(IOException.class,()->reader.readCaptured(content,publication,foreign,row->{},()->false));
+        Map<String,Object> report;try(var in=content.open(publication)){report=GraphJson.object(GraphJson.read(new InputStreamReader(in,StandardCharsets.UTF_8),GraphJson.Limits.defaults()));}
+        var forged=new TreeMap<>(report);forged.put("qualified",true);var forgedBytes=content.put(new ByteArrayInputStream(CanonicalJson.write(forged).getBytes(StandardCharsets.UTF_8)),()->false);assertThrows(IOException.class,()->reader.readCaptured(content,forgedBytes,scope,row->{},()->false));assertTrue(content.verify(publication));assertEquals(1,fake.launches);
+    }
     @Test void wrongOutputCannotCloseTheApprovedArtifactRoles()throws Exception{
         var fake=setup();fake.wrongOutput=true;
         assertEquals("CORE_MVP_OUTPUT_DIGEST_MISMATCH",assertThrows(IOException.class,()->pipeline(fake).run(root)).getMessage());

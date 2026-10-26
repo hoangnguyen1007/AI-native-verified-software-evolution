@@ -460,7 +460,16 @@ public final class ArchitectureQueryService {
         if(refs.isEmpty())p.budget.qualify("EVIDENCE_UNAVAILABLE");
         return evidencePage(p,"explain",identity,refs.stream().map(r->graph.evidence(r).orElseThrow()).toList(),page);
     }
-    public Result<EntityView> gaps(Request request,Page page){return inventory(request,Set.of("CAPABILITY_GAP","ACQUISITION_ATTEMPT","PROVIDER_CONFLICT"),page,"gaps");}
+    public Result<EntityView> gaps(Request request,Page page){return gaps(request,GapView.CURRENT,page);}
+    public Result<EntityView> gaps(Request request,GapView view,Page page){
+        Objects.requireNonNull(view);
+        var kinds=switch(view){
+            case CURRENT->Set.of("CAPABILITY_GAP","ACQUISITION_ATTEMPT","PROVIDER_CONFLICT");
+            case HISTORY->Set.of("HISTORICAL_CAPABILITY_GAP");
+            case ALL->Set.of("CAPABILITY_GAP","HISTORICAL_CAPABILITY_GAP","ACQUISITION_ATTEMPT","PROVIDER_CONFLICT");
+        };
+        return inventory(request,kinds,page,"gaps");
+    }
     public Result<EntityView> spring(Request request,Set<String> kinds,Page page){
         if(!Set.of("BEAN_PRODUCER","BEAN_DEFINITION_CANDIDATE","INJECTION_POINT","INJECTION_USE","REGISTRATION_EVENT","REGISTRATION_TRANSITION","ENDPOINT").containsAll(kinds)||kinds.isEmpty())throw new IllegalArgumentException("Explicit Spring inventory kinds required");
         var p=new Prepared(request,false);
@@ -723,11 +732,82 @@ public final class ArchitectureQueryService {
             "operationalStatus","exogenousEvaluationIdentity","bindingResultIdentity","facts","truth","abstractionVersion","feasibilityPolicy","precedencePolicy","profilePolicy",
             "discoveryEvent","operation","readerDecision","gateExpectation","gate","alias","eventIdentity","expressionIdentity","role","evidence",
             "declaration","manifest","manifestVersion","modules","configuration","analyzer","ruleSet","graphSchema","classpath","contentDigest","artifactDigest","entryDigest","rawDigest","build","moduleSourceSet","sourceSet",
-            "maxDepth","maxSteps","maxNodes","maxClauses","maxVariables","maxFacts","maxRegionCells","maxWitnessReplays","maxCartesianAssignments","maxExpressionVisits","maxExpressionDepth");
+            "maxDepth","maxSteps","maxNodes","maxClauses","maxVariables","maxFacts","maxRegionCells","maxWitnessReplays","maxCartesianAssignments","maxExpressionVisits","maxExpressionDepth",
+            "gap","requirements","active","denominator","counts","ledger","pending","narrowed","satisfied","notApplicable","conflicted","reopened");
     private static final Set<String> SAFE_FAMILIES=Set.of("analysis.manifest","source.request","source.document","java.declaration","java.occurrence","java.type-use","java.type-shape","java.member-shape","java.annotation-use","java.source-outcome",
             "evidence.gap","evidence.attempt","evidence.conflict","evidence.resolution","spring.context","spring.producer","spring.candidate","spring.injection-dependency","spring.registration-event","spring.registration-step",
-            "spring.condition","spring.condition-expression","spring.space","spring.evaluation-parameters","spring.world","spring.explicit-region","spring.symbolic-region","spring.fact-key","spring.witness","spring.witness-replay","spring.formula");
+            "spring.condition","spring.condition-expression","spring.space","spring.evaluation-parameters","spring.world","spring.explicit-region","spring.symbolic-region","spring.fact-key","spring.witness","spring.witness-replay","spring.formula",
+            "java.evidence.gap-disposition","java.evidence.gap-closure");
     private EvidenceView describeEvidence(GraphEvidence evidence,QueryBudget budget){
+        if(evidence.family().equals("java.evidence.repository-coverage")){
+            var payload=read(evidence,budget);var metadata=new TreeMap<>(select(payload,Set.of("plan","readiness","policy","implementation","semanticAccuracy","rootCausePopulation")));
+            if(payload.get("counts") instanceof Map<?,?> counts)metadata.put("counts",select(GraphJson.object(counts),Set.of("total","PENDING","COMPLETE","PARTIAL","FAILED","UNSELECTED","readinessRequirements","readinessActive","rootCauseBefore","rootCauseAfter")));
+            if(payload.get("rootCauseDelta") instanceof List<?> delta){
+                if(delta.size()>budget.limits.maxResults())budget.qualify("EVIDENCE_DESCRIPTOR_LIMIT");
+                metadata.put("rootCauseDelta",delta.stream().limit(budget.limits.maxResults()).map(GraphJson::object).map(row->select(row,Set.of("catalog","provider","reasonCode","before","after"))).toList());
+            }
+            return new EvidenceView(evidence.identity(),evidence.family(),true,metadata);
+        }
+        if(evidence.family().equals("java.evidence.context-result")){
+            var payload=read(evidence,budget);var metadata=new TreeMap<>(select(payload,Set.of("context")));
+            if(payload.get("result") instanceof Map<?,?> result)metadata.put("result",select(GraphJson.object(result),Set.of("sourceSet","variant","state","graph","snapshot","activeGaps","reason")));
+            return new EvidenceView(evidence.identity(),evidence.family(),true,metadata);
+        }
+        if(evidence.family().equals("java.evidence.semantic-projection")){
+            return new EvidenceView(evidence.identity(),evidence.family(),true,select(read(evidence,budget),
+                    Set.of("version","component","semanticIdentity","auditIdentity","scope","inputIdentity","state")));
+        }
+        if(evidence.family().equals("java.evidence.readiness-coverage")){
+            var payload=read(evidence,budget);var metadata=new TreeMap<String,Object>();
+            metadata.putAll(select(payload,Set.of("readiness","selection","policy","semanticCoverage")));
+            if(payload.get("counts") instanceof Map<?,?> counts)metadata.put("counts",select(GraphJson.object(counts),Set.of("total","active","rootCount","moduleCount","contextCount","selectedContextCount","frontierCount","PENDING","SATISFIED","NOT_APPLICABLE","CONFLICTED","REOPENED")));
+            return new EvidenceView(evidence.identity(),evidence.family(),true,metadata);
+        }
+        if(evidence.family().equals("java.evidence.gap-closure")){
+            var payload=read(evidence,budget);var metadata=new TreeMap<String,Object>();
+            metadata.putAll(select(payload,Set.of("denominator","active","historyGapCount","activeHistoryGapCount","population","ledger","policy")));
+            if(payload.get("scope") instanceof Map<?,?> scope)metadata.put("scope",select(GraphJson.object(scope),Set.of("baseSnapshot","context","logicalScope","module","sourceSet","variant")));
+            if(payload.get("rootCauseDelta") instanceof List<?> delta){
+                if(delta.size()>budget.limits.maxResults())budget.qualify("EVIDENCE_DESCRIPTOR_LIMIT");
+                metadata.put("rootCauseDelta",delta.stream().limit(budget.limits.maxResults()).map(GraphJson::object)
+                        .map(row->select(row,Set.of("catalog","provider","reasonCode","before","after"))).toList());
+            }else budget.qualify("GAP_DELTA_UNAVAILABLE");
+            return new EvidenceView(evidence.identity(),evidence.family(),true,metadata);
+        }
+        if(evidence.family().equals("java.evidence.correspondence-endpoint")){
+            var payload=read(evidence,budget);
+            return new EvidenceView(evidence.identity(),evidence.family(),true,select(payload,Set.of("slot","package","owners","kind","name","descriptor")));
+        }
+        if(evidence.family().equals("java.evidence.source-map")){
+            var payload=read(evidence,budget);var metadata=new TreeMap<String,Object>();
+            metadata.putAll(select(payload,Set.of("projectedDocument","projectedPath","role","lineage")));
+            if(payload.get("content") instanceof Map<?,?> content)metadata.put("content",select(GraphJson.object(content),Set.of("digest","size")));
+            if(payload.get("locator") instanceof Map<?,?> value){
+                var locator=GraphJson.object(value);
+                if(locator.get("path") instanceof Map<?,?> path){
+                    try{
+                        var raw=new com.evolution.analysis.acquisition.streaming.LogicalPath(GraphJson.string(GraphJson.object(path).get("rawBase64")));
+                        metadata.put("originalPathBytes",raw.rawBase64());
+                        raw.utf8().ifPresent(name->{try{metadata.put("originalPath",ContractChecks.repositoryRelativePath(name,"generated path"));}catch(IllegalArgumentException nonportable){/* Raw logical name remains available. */}});
+                    }catch(IllegalArgumentException invalid){budget.qualify("GENERATED_SOURCE_MAP_UNAVAILABLE");}
+                }
+                metadata.put("capturedLocator",ContentDigest.sha256Utf8(CanonicalJson.write(locator)));
+            }
+            return new EvidenceView(evidence.identity(),evidence.family(),true,metadata);
+        }
+        if(evidence.family().equals("java.evidence.view")){
+            var payload=read(evidence,budget);var metadata=new TreeMap<String,Object>();
+            metadata.putAll(select(payload,Set.of("baseInventory","derivedSnapshot","overlay","resolution","sourceMap","correspondence","policy")));
+            if(payload.get("scope") instanceof Map<?,?> scope)metadata.put("scope",select(GraphJson.object(scope),Set.of("baseSnapshot","context","logicalScope","module","sourceSet","variant")));
+            return new EvidenceView(evidence.identity(),evidence.family(),true,metadata);
+        }
+        if(evidence.family().equals("java.evidence.binary-origin")){
+            var payload=read(evidence,budget);var metadata=new TreeMap<String,Object>();
+            metadata.putAll(select(payload,Set.of("slot")));
+            if(payload.get("proof") instanceof Map<?,?> proof)metadata.put("proof",select(GraphJson.object(proof),Set.of("resolution","shape","context")));
+            if(payload.get("original") instanceof Map<?,?> original)metadata.put("original",select(GraphJson.object(original),Set.of("kind","contentDigest")));
+            return new EvidenceView(evidence.identity(),evidence.family(),true,metadata);
+        }
         if(evidence.family().equals("source.bytes")){
             var payload=read(evidence,budget);var metadata=new TreeMap<String,Object>();
             if(payload.get("document") instanceof Map<?,?> document){var descriptor=GraphJson.object(document);sourcePath(descriptor,budget).ifPresent(path->metadata.put("path",path));

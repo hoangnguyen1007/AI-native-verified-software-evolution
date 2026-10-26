@@ -37,6 +37,11 @@
 
         <!-- Testing -->
         <junit.version>5.11.0</junit.version>
+        <!-- Default: every self-contained test, including integration tests.
+             Captured native evidence is selected explicitly; see docs/testing.md. -->
+        <test.excludedGroups>native-campaign</test.excludedGroups>
+        <test.groups></test.groups>
+        <test.fast>false</test.fast>
 
         <!-- Build plugins -->
         <maven.clean.plugin.version>3.5.0</maven.clean.plugin.version>
@@ -118,6 +123,11 @@
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-surefire-plugin</artifactId>
                     <version>${maven.surefire.plugin.version}</version>
+                    <configuration>
+                        <groups>${test.groups}</groups>
+                        <excludedGroups>${test.excludedGroups}</excludedGroups>
+                        <failIfNoTests>true</failIfNoTests>
+                    </configuration>
                 </plugin>
             </plugins>
         </pluginManagement>
@@ -165,4 +175,48 @@
             </plugin>
         </plugins>
     </build>
+
+    <profiles>
+        <profile>
+            <id>fast-tests</id>
+            <properties>
+                <test.fast>true</test.fast>
+                <test.excludedGroups>native-campaign | integration</test.excludedGroups>
+            </properties>
+        </profile>
+        <profile>
+            <id>native-campaign</id>
+            <properties>
+                <test.groups>native-campaign</test.groups>
+                <test.excludedGroups></test.excludedGroups>
+            </properties>
+            <build><plugins><plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-enforcer-plugin</artifactId>
+                <executions><execution>
+                    <id>require-native-campaign-fixtures</id>
+                    <goals><goal>enforce</goal></goals>
+                    <configuration><rules>
+                        <requireProperty>
+                            <property>test.fast</property><regex>false</regex>
+                            <regexMessage>native-campaign and fast-tests are separate test selections; do not combine them.</regexMessage>
+                        </requireProperty>
+                        <requireFilesExist>
+                            <message>Native campaign requires explicit captured inputs: -Dnative.fixture.root, -Dnative.failure.root, -Dnative.spring.root and -Dnative.coremvp.root. See docs/testing.md. No target build is launched to fill missing inputs.</message>
+                            <files>
+                                <file>${native.fixture.root}/native-context-check-v2.json</file>
+                                <file>${native.fixture.root}/native-wiring-inputs-v1.json</file>
+                                <file>${native.failure.root}/native-byte-import.json</file>
+                                <file>${native.failure.root}/native-input-import.json</file>
+                                <file>${native.spring.root}/native-context-check-v2.json</file>
+                                <file>${native.spring.root}/native-wiring-inputs-v1.json</file>
+                                <file>${native.coremvp.root}/setup.json</file>
+                                <file>${native.coremvp.root}/export-request.json</file>
+                            </files>
+                        </requireFilesExist>
+                    </rules></configuration>
+                </execution></executions>
+            </plugin></plugins></build>
+        </profile>
+    </profiles>
 </project>

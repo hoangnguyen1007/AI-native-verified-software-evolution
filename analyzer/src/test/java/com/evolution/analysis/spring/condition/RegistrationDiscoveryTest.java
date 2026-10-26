@@ -11,9 +11,12 @@ import static com.evolution.analysis.spring.registration.RegistrationEvent.*;
 class RegistrationDiscoveryTest {
     record Fixture(ConditionLoweringTest.Fixture source, ConditionEvidenceLowering.Result lowering, ConfigurationSpace space) {}
     static Fixture fixture(String annotation) throws Exception {
+        return fixture(annotation, ConditionLoweringTest.pins("6.2.0", "3.4.0"));
+    }
+    static Fixture fixture(String annotation, List<com.evolution.analysis.spring.SpringFrameworkEvidence.Artifact> artifacts) throws Exception {
         String type = annotation.startsWith("@Profile") ? ConditionLoweringTest.PROFILE : annotation.startsWith("@ConditionalOnMissingBean")
                 ? "org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean" : "org.springframework.context.annotation.Conditional";
-        var source = ConditionLoweringTest.fixture(List.of(new ConditionLoweringTest.Spec(type, annotation)));
+        var source = ConditionLoweringTest.fixture(List.of(new ConditionLoweringTest.Spec(type, annotation)), artifacts);
         var lowering = ConditionLoweringTest.lower(source);
         var evidence = source.evidence();
         var profile = new FiniteDomain(new FiniteDomain.Variable(FiniteDomain.Kind.PROFILE, "dev"),

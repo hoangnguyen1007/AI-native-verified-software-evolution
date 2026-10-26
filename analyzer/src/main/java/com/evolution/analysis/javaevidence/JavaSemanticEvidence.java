@@ -83,7 +83,7 @@ public final class JavaSemanticEvidence {
         private Result(ContentDigest view,ContentDigest frontend,SnapshotIdentity snapshot,JavaEvidenceLedger.Published publication,List<CapabilityGapRecord> gaps,List<GraphEvidence> evidence,Set<ContentHandle> references,List<JavaEvidenceAuthority.Verified> proofs,Bundle bundle){this.view=view;this.frontend=frontend;this.snapshot=snapshot;this.publication=publication;this.gaps=List.copyOf(gaps);this.evidence=List.copyOf(evidence);this.references=Set.copyOf(references);this.proofs=List.copyOf(proofs);this.bundle=bundle;}
         public ContentDigest frontend(){return frontend;}
         public long active(){return publication.current().active();}public ContentDigest view(){return view;}public SnapshotIdentity snapshot(){return snapshot;}public JavaEvidenceLedger.Published publication(){return publication;}public List<CapabilityGapRecord> gaps(){return gaps;}public List<GraphEvidence> evidence(){return evidence;}
-        public boolean current()throws IOException{for(var reference:references)if(!bundle.content().verify(reference))return false;for(var proof:proofs)if(!proof.current())return false;return true;}
+        public boolean current()throws IOException{for(var reference:references)if(!bundle.content().verify(reference))return false;return JavaEvidenceAuthority.allCurrent(proofs);}
     }
     private record Expected(Map<String,Object> fields,ContentHandle payload,String category,Optional<SourceSpan> span){}
     public static Map<String,Object> answerFields(Map<String,Object> fields){var result=new TreeMap<>(fields);result.remove("proof");return Collections.unmodifiableMap(result);}

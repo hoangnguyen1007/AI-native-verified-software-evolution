@@ -49,6 +49,8 @@ Scope, direction and the five projections retain the M5 contract. Pages default 
 
 `impact` requires INCOMING. Metrics use the real `ArchitectureMetricsService` port with its own defensive limits; HTTP never computes a metric. Internal full-scope metric projections and policy predicates are not exposed as unbounded raw graph endpoints. Comparison preparation remains compatibility metadata, not a delta or Track B authorization.
 
+Step-4 additive gap view (2026-10-24): `gaps` accepts optional `arguments.view` of `CURRENT` (default), `HISTORY` or `ALL`. Current rows include active capability gaps, attempts and conflicts; history rows expose `HISTORICAL_CAPABILITY_GAP` nodes with unchanged gap identities and original payloads. A continuation belongs to its exact view. These are captured graph-revision dispositions, not live re-certification of an old snapshot. The artifact catalog exposes scoped `java.evidence.gap-closure` root-cause deltas for the explicitly labeled bound-history population, generated `java.evidence.source-map` descriptors and class-only artifact/correspondence coordinates. Unrelated provider/Spring gaps remain active; no score formula changes.
+
 Example query after obtaining the context from graph discovery:
 
 ```json

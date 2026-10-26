@@ -47,6 +47,8 @@ sh ./mvnw -B -ntp clean verify
 
 Do not replace the wrapper commands with `mvn`; the build intentionally enforces the wrapper's exact Maven version.
 
+**Test scope:** default `test` / `verify` runs all self-contained tests, including Spring integration tests. Captured native acceptance is **NOT RUN** by that selection. Use `-Pfast-tests` for local iteration or the explicit `-Pnative-campaign` with provisioned captures for native replay. Missing campaign inputs and zero-test selections fail rather than silently passing. See [test selection and required handoff checks](docs/testing.md) for commands, fixture requirements and the 17-test native denominator.
+
 ## Working with multiple JDKs
 
 JDK 17, 21, and 25 can coexist on one machine. This repository must be opened and built with JDK 21; other repositories can select another installed JDK independently.
