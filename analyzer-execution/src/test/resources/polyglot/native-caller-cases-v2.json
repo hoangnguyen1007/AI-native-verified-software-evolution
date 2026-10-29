@@ -1,0 +1,162 @@
+{
+  "schema": "authored-native-cases:m8.4-v1",
+  "cases": {
+    "python-architecture": {
+      "language": "python",
+      "files": {
+        "main.py": "from typing import Final\nclass Base: pass\nclass Derived(Base):\n    counter: int = 0\n    @staticmethod\n    def twice(n: int) -> int: return n * 2\n    def run(self) -> int:\n        self.counter += 1\n        if self.counter > 0: return Derived.twice(4)\n        return 0\n"
+      },
+      "expected": {
+        "call": "Derived.twice(4)",
+        "targetName": "twice",
+        "origin": "PROJECT",
+        "status": "RESOLVED",
+        "categoryControls": {
+          "A01": {
+            "written": false
+          },
+          "A02": {
+            "written": true
+          },
+          "A03": {
+            "written": true
+          },
+          "A04": {
+            "written": true
+          },
+          "A05": {
+            "written": true
+          },
+          "A06": {
+            "written": true
+          },
+          "A07": {
+            "written": true
+          },
+          "A08": {
+            "written": true
+          },
+          "A09": {
+            "written": true
+          },
+          "A10": {
+            "written": true
+          },
+          "A11": {
+            "written": false
+          },
+          "A12": {
+            "written": false
+          }
+        },
+        "callerName": "run"
+      }
+    },
+    "go-architecture": {
+      "language": "go",
+      "files": {
+        "main.go": "package fixture\nimport \"unsafe\"\ntype Base struct { Value int }; type Derived struct { Base }\nvar counter int\n//go:generate unused-qualification-control\nfunc twice(n int) int { return n*2 }\nfunc run() int { counter+=1; _=unsafe.Sizeof(counter); if counter>0 {return twice(4)}; return 0 }\n"
+      },
+      "expected": {
+        "call": "twice(4)",
+        "targetName": "twice",
+        "origin": "PROJECT",
+        "status": "RESOLVED",
+        "categoryControls": {
+          "A01": {
+            "written": false
+          },
+          "A02": {
+            "written": true
+          },
+          "A03": {
+            "written": true
+          },
+          "A04": {
+            "written": true
+          },
+          "A05": {
+            "written": true
+          },
+          "A06": {
+            "written": true
+          },
+          "A07": {
+            "written": true
+          },
+          "A08": {
+            "written": true
+          },
+          "A09": {
+            "written": true
+          },
+          "A10": {
+            "written": true
+          },
+          "A11": {
+            "written": false
+          },
+          "A12": {
+            "written": false
+          }
+        },
+        "callerName": "run"
+      }
+    },
+    "rust-architecture": {
+      "language": "rust",
+      "files": {
+        "lib.rs": "mod zlib;\ntrait Base {fn value(&self)->i32;}\n#[derive(Clone)] struct Derived {counter:i32}\nimpl Base for Derived {fn value(&self)->i32 {self.counter}}\nfn twice(n:i32)->i32 {n*2}\nfn run()->i32 {let mut counter=0; counter+=1; if counter>0 {twice(4)} else {0}}\n",
+        "zlib.rs": "pub const VALUE:i32=1;\n"
+      },
+      "expected": {
+        "call": "twice(4)",
+        "targetName": "twice",
+        "origin": "PROJECT",
+        "status": "RESOLVED",
+        "categoryControls": {
+          "A01": {
+            "written": false
+          },
+          "A02": {
+            "written": true
+          },
+          "A03": {
+            "written": true
+          },
+          "A04": {
+            "written": true
+          },
+          "A05": {
+            "written": true
+          },
+          "A06": {
+            "written": true
+          },
+          "A07": {
+            "written": true
+          },
+          "A08": {
+            "written": true
+          },
+          "A09": {
+            "written": true
+          },
+          "A10": {
+            "written": true
+          },
+          "A11": {
+            "written": false
+          },
+          "A12": {
+            "written": false
+          }
+        },
+        "callerName": "run"
+      }
+    }
+  },
+  "replays": {
+    "go-architecture-replay": "go-architecture"
+  }
+}

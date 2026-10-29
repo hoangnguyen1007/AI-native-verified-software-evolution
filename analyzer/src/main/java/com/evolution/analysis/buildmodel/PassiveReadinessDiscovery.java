@@ -125,8 +125,8 @@ public final class PassiveReadinessDiscovery implements ReadinessDiscovery {
         if(Set.of("build.gradle","build.gradle.kts","settings.gradle","settings.gradle.kts").contains(name))return Family.GRADLE;
         if(Set.of(".classpath",".project").contains(name)||name.endsWith(".iml"))return Family.IDE;
         return switch(name){case "build.xml"->Family.ANT;case "WORKSPACE","WORKSPACE.bazel","MODULE.bazel","BUILD","BUILD.bazel"->Family.BAZEL;case "build.sbt"->Family.SBT;
-            case "package.json"->Family.NODE;case "pyproject.toml","setup.py"->Family.PYTHON;case "Cargo.toml"->Family.CARGO;case "go.mod"->Family.GO;
+            case "package.json","deno.json","deno.jsonc"->Family.NODE;case "pyproject.toml","setup.py"->Family.PYTHON;case "Cargo.toml"->Family.CARGO;case "go.mod","go.work"->Family.GO;
             case "composer.json"->Family.COMPOSER;case "Gemfile"->Family.RUBY;case "pubspec.yaml"->Family.DART;case "Package.swift"->Family.SWIFT;
-            case "CMakeLists.txt"->Family.CMAKE;case "Makefile"->Family.MAKE;default->name.endsWith(".csproj")||name.endsWith(".sln")?Family.DOTNET:null;};
+            case "CMakeLists.txt"->Family.CMAKE;case "Makefile"->Family.MAKE;default->name.endsWith(".csproj")||name.endsWith(".vbproj")||name.endsWith(".fsproj")||name.endsWith(".sln")||name.endsWith(".slnx")?Family.DOTNET:null;};
     }
 }

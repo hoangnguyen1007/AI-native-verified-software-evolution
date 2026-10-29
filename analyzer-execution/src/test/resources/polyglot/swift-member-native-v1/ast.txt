@@ -1,0 +1,125 @@
+(source_file "/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift"
+  (import_decl range=[/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:1:1 - line:1:8] module="Swift")
+  (class_decl range=[/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:2:1 - line:2:13] "Base" interface type="Base.Type" access=internal non_resilient
+    (destructor_decl implicit range=[/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:2:7 - line:2:7] "deinit" interface type="(Base) -> () -> ()" access=internal
+      (parameter "self")
+      (parameter_list)
+      (brace_stmt implicit range=[/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:2:7 - line:2:7]))
+    (constructor_decl implicit range=[/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:2:7 - line:2:7] "init()" interface type="(Base.Type) -> () -> Base" access=internal designated
+      (parameter "self")
+      (parameter_list)
+      (brace_stmt implicit range=[/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:2:7 - line:2:7]
+        (return_stmt implicit range=[/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:2:7 - line:2:7]))))
+  (class_decl range=[/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:1 - line:3:170] "Derived" interface type="Derived.Type" access=internal non_resilient inherits="Base"
+    (pattern_binding_decl range=[/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:22 - line:3:38] trailing_semi
+      (pattern_typed type="Int"
+        (pattern_named type="Int" "counter")
+        (type_unqualified_ident id="Int" bind="Swift.(file).Int"))
+      (original_init=integer_literal_expr type="Int" location=/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:38 range=[/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:38 - line:3:38] value="0" builtin_initializer="Swift.(file).Int.init(_builtinIntegerLiteral:)" initializer="**NULL**")
+      (processed_init=integer_literal_expr type="Int" location=/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:38 range=[/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:38 - line:3:38] value="0" builtin_initializer="Swift.(file).Int.init(_builtinIntegerLiteral:)" initializer="**NULL**"))
+    (var_decl range=[/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:26 - line:3:26] "counter" interface type="Int" access=internal readImpl=stored writeImpl=stored readWriteImpl=stored
+      (accessor_decl implicit range=[/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:26 - line:3:26] <anonymous @ 0x55cb39ded0d0> interface type="(Derived) -> () -> Int" access=internal get for="counter"
+        (parameter "self" interface type="Derived")
+        (parameter_list)
+        (brace_stmt implicit range=[/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:26 - line:3:26]
+          (return_stmt implicit
+            (member_ref_expr implicit type="Int" decl="Fixture.(file).Derived.counter@/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:26" direct_to_storage
+              (declref_expr implicit type="Derived" decl="Fixture.(file).Derived.<anonymous>.self@/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:26" function_ref=unapplied)))))
+      (accessor_decl implicit range=[/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:26 - line:3:26] <anonymous @ 0x55cb39ded348> interface type="(Derived) -> (Int) -> ()" access=internal set for="counter"
+        (parameter "self" interface type="Derived")
+        (parameter_list range=[/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:26 - line:3:26]
+          (parameter "value" interface type="Int"))
+        (brace_stmt implicit range=[/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:26 - line:3:26]
+          (assign_expr implicit type="()"
+            (member_ref_expr implicit type="@lvalue Int" decl="Fixture.(file).Derived.counter@/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:26" direct_to_storage
+              (declref_expr implicit type="Derived" decl="Fixture.(file).Derived.<anonymous>.self@/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:26" function_ref=unapplied))
+            (declref_expr implicit type="Int" decl="Fixture.(file).Derived.<anonymous>.value@/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:26" function_ref=unapplied))))
+      (accessor_decl implicit range=[/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:26 - line:3:26] <anonymous @ 0x55cb39ded520> interface type="(Derived) -> () -> ()" access=internal _modify for="counter"
+        (parameter "self" interface type="Derived")
+        (parameter_list)
+        (brace_stmt implicit range=[/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:26 - line:3:26]
+          (yield_stmt implicit range=[/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:26 - line:3:26]
+            (inout_expr implicit type="inout Int"
+              (member_ref_expr implicit type="@lvalue Int" decl="Fixture.(file).Derived.counter@/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:26" direct_to_impl
+                (declref_expr implicit type="Derived" decl="Fixture.(file).Derived.<anonymous>.self@/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:26" function_ref=unapplied)))))))
+    (func_decl range=[/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:67 - line:3:96] trailing_semi "twice(_:)" interface type="(Derived) -> (Int) -> Int" access=internal
+      (parameter "self")
+      (parameter_list range=[/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:77 - line:3:85]
+        (parameter "n" interface type="Int"))
+      (result=type_unqualified_ident id="Int" bind="Swift.(file).Int")
+      (brace_stmt range=[/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:92 - line:3:96]
+        (return_stmt implicit range=[/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:93 - line:3:95]
+          (binary_expr type="Int" location=/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:94 range=[/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:93 - line:3:95] nothrow isolation_crossing="none"
+            (dot_syntax_call_expr implicit type="(Int, Int) -> Int" location=/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:94 range=[/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:94 - line:3:94] nothrow isolation_crossing="none"
+              (declref_expr type="(Int.Type) -> (Int, Int) -> Int" location=/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:94 range=[/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:94 - line:3:94] decl="Swift.(file).Int extension.*" function_ref=single)
+              (argument_list implicit
+                (argument
+                  (type_expr implicit type="Int.Type" location=/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:94 range=[/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:94 - line:3:94] typerepr="Int"))))
+            (argument_list implicit
+              (argument
+                (declref_expr type="Int" location=/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:93 range=[/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:93 - line:3:93] decl="Fixture.(file).Derived.twice(_:).n@/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:80" function_ref=unapplied))
+              (argument
+                (integer_literal_expr type="Int" location=/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:95 range=[/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:95 - line:3:95] value="2" builtin_initializer="Swift.(file).Int.init(_builtinIntegerLiteral:)" initializer="**NULL**")))))))
+    (func_decl range=[/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:99 - line:3:168] "run()" interface type="(Derived) -> () -> Int" access=internal
+      (parameter "self" interface type="Derived")
+      (parameter_list range=[/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:107 - line:3:108])
+      (result=type_unqualified_ident id="Int" bind="Swift.(file).Int")
+      (brace_stmt range=[/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:115 - line:3:168]
+        (binary_expr type="()" location=/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:123 range=[/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:116 - line:3:125] nothrow isolation_crossing="none"
+          (dot_syntax_call_expr implicit type="(inout Int, Int) -> ()" location=/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:123 range=[/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:123 - line:3:123] nothrow isolation_crossing="none"
+            (declref_expr type="(Int.Type) -> (inout Int, Int) -> ()" location=/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:123 range=[/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:123 - line:3:123] decl="Swift.(file).Int.+=" function_ref=single)
+            (argument_list implicit
+              (argument
+                (type_expr implicit type="Int.Type" location=/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:123 range=[/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:123 - line:3:123] typerepr="Int"))))
+          (argument_list implicit
+            (argument inout
+              (inout_expr implicit type="inout Int" location=/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:116 range=[/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:116 - line:3:116]
+                (member_ref_expr type="@lvalue Int" location=/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:116 range=[/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:116 - line:3:116] decl="Fixture.(file).Derived.counter@/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:26"
+                  (declref_expr implicit type="Derived" location=/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:116 range=[/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:116 - line:3:116] decl="Fixture.(file).Derived.run().self@/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:104" function_ref=unapplied))))
+            (argument
+              (integer_literal_expr type="Int" location=/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:125 range=[/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:125 - line:3:125] value="1" builtin_initializer="Swift.(file).Int.init(_builtinIntegerLiteral:)" initializer="**NULL**"))))
+        (if_stmt range=[/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:128 - line:3:157] trailing_semi
+          (conditions=array
+            (binary_expr type="Bool" location=/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:138 range=[/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:131 - line:3:139] nothrow isolation_crossing="none"
+              (dot_syntax_call_expr implicit type="(Int, Int) -> Bool" location=/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:138 range=[/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:138 - line:3:138] nothrow isolation_crossing="none"
+                (declref_expr type="(Int.Type) -> (Int, Int) -> Bool" location=/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:138 range=[/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:138 - line:3:138] decl="Swift.(file).Int extension.>" function_ref=single)
+                (argument_list implicit
+                  (argument
+                    (type_expr implicit type="Int.Type" location=/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:138 range=[/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:138 - line:3:138] typerepr="Int"))))
+              (argument_list implicit
+                (argument
+                  (load_expr implicit type="Int" location=/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:131 range=[/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:131 - line:3:131]
+                    (member_ref_expr type="@lvalue Int" location=/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:131 range=[/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:131 - line:3:131] decl="Fixture.(file).Derived.counter@/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:26"
+                      (declref_expr implicit type="Derived" location=/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:131 range=[/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:131 - line:3:131] decl="Fixture.(file).Derived.run().self@/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:104" function_ref=unapplied))))
+                (argument
+                  (integer_literal_expr type="Int" location=/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:139 range=[/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:139 - line:3:139] value="0" builtin_initializer="Swift.(file).Int.init(_builtinIntegerLiteral:)" initializer="**NULL**")))))
+          (brace_stmt range=[/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:141 - line:3:157]
+            (return_stmt range=[/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:142 - line:3:156]
+              (call_expr type="Int" location=/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:149 range=[/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:149 - line:3:156] nothrow isolation_crossing="none"
+                (dot_syntax_call_expr implicit type="(Int) -> Int" location=/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:149 range=[/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:149 - line:3:149] nothrow isolation_crossing="none"
+                  (declref_expr type="(Derived) -> (Int) -> Int" location=/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:149 range=[/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:149 - line:3:149] decl="Fixture.(file).Derived.twice@/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:72" function_ref=single)
+                  (argument_list implicit
+                    (argument
+                      (declref_expr implicit type="Derived" location=/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:149 range=[/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:149 - line:3:149] decl="Fixture.(file).Derived.run().self@/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:104" function_ref=unapplied))))
+                (argument_list
+                  (argument
+                    (integer_literal_expr type="Int" location=/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:155 range=[/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:155 - line:3:155] value="4" builtin_initializer="Swift.(file).Int.init(_builtinIntegerLiteral:)" initializer="**NULL**")))))))
+        (return_stmt range=[/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:160 - line:3:167]
+          (integer_literal_expr type="Int" location=/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:167 range=[/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:167 - line:3:167] value="0" builtin_initializer="Swift.(file).Int.init(_builtinIntegerLiteral:)" initializer="**NULL**"))))
+    (destructor_decl implicit range=[/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:7 - line:3:7] "deinit" interface type="(Derived) -> () -> ()" access=internal
+      (parameter "self")
+      (parameter_list)
+      (brace_stmt implicit range=[/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:7 - line:3:7]))
+    (constructor_decl implicit range=[/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:20 - line:3:20] "init()" interface type="(Derived.Type) -> () -> Derived" access=internal override="Fixture.(file).Base.init()@/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:2:7" designated
+      (parameter "self" interface type="Derived")
+      (parameter_list)
+      (brace_stmt implicit
+        (rebind_self_in_constructor_expr implicit type="()"
+          (call_expr implicit type="Base" nothrow isolation_crossing="none"
+            (dot_syntax_call_expr implicit type="() -> Base" nothrow isolation_crossing="none"
+              (other_constructor_ref_expr implicit type="(Base) -> () -> Base" decl="Fixture.(file).Base.init()@/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:2:7")
+              (argument_list implicit
+                (argument
+                  (super_ref_expr implicit type="Base"))))
+            (argument_list implicit)))
+        (return_stmt implicit)))))

@@ -1,6 +1,6 @@
 # ADR-007 — Isolated build evidence and polyglot repository readiness
 
-Date: **2026-10-17**. **Status: ACCEPTED HUMAN DIRECTION; Step 3 Core MVP accepted/implemented (2026-10-20); broader M8.4 delivery status is in current state.**
+Date: **2026-10-17**. **Status: ACCEPTED HUMAN DIRECTION; Step 3 Core MVP accepted/implemented (2026-10-20); Step 5 / Task 1 CLOSED / CORE MVP (2026-10-29); broader M8.4 delivery status is in current state.**
 
 ## Human-approved Step-3 Core MVP amendment — 2026-10-20
 
@@ -9,6 +9,14 @@ Date: **2026-10-17**. **Status: ACCEPTED HUMAN DIRECTION; Step 3 Core MVP accept
 The accepted implementation path is an explicit operator registration → pinned Hyper-V launcher → bounded offline Maven recipe inside a fresh worker → opaque export → SHA-256/CAS validation → durable publication/replay. Generated source bytes remain `PRODUCER_ASSERTION` evidence, distinct from independently validated semantic statements. Core MVP reports use their own scope/schema; they do not mint a full conformance token or open unrestricted repository execution. Host fallback, ambient credentials/source/home exposure, unbounded worker state, missing lineage and invented semantic success remain disallowed.
 
 Alternatives: retain all 98 original acceptance obligations (superseded by the human's narrower delivery decision); claim they passed without observations (rejected); or accept the bounded demonstrated Core MVP with an explicit scope (accepted). Existing tests/evidence remain intact for history and regression; advanced campaigns are not Step-3 closure conditions. The broader M8.4 acquisition/language/coverage mission and existing Steps 4–6 are unchanged. This decision is delivery acceptance, not empirical proof of every sandbox threat or native build family.
+
+## Human-approved Step-5 Task-1 Core MVP amendment — 2026-10-29
+
+**CONFIRMED direct human decision:** in response to the explicit scope question, the owner selected **“Chấp nhận Core MVP và đóng Task 1”**. Accept and close M8.4 Step 5 / Bước 1 at the demonstrated Core MVP scope: 18 implemented adapters with protected Java and existing scoped native non-Java journeys; explicit unsupported/partial outcomes; durable replay; embedded-source and cross-provider paths; and tested authentication/publication mechanisms.
+
+Full A01–A12 pack/method qualification and production validation-method registration are removed from **Task 1's closure criteria**. This supersedes the original broader Task-1 exit, creates no replacement task and does not convert category controls, test signers or unexecuted cases into production certification. The accepted path consumes captured/registered contexts; automatic ecosystem execution/model capture, general transformed/multilayer source maps and broader semantic capability remain recorded limitations, not newly certified features. `REQUIRED_UNQUALIFIED`, `PRODUCER_ASSERTION`, `qualified=false`, current gaps and live revocation/promotion guards retain their actual meanings.
+
+Alternatives: retain the full original Task-1 exit (not selected); claim qualification without evidence (rejected); or accept the demonstrated bounded implementation with explicit limits (selected by the human). No new code, VM campaign, certificate or unrestricted executor is required for this acceptance. Step 5 remains in progress; Bước 2–3 and later milestone gates retain their scopes. The comprehensive coverage mandate and execution safety remain in force. [Execution record](../tasks/m8/04-step5-step1-execution.md) owns the evidence; [current state](../current-state.md) owns the next task.
 
 ## Authority and problem
 

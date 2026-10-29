@@ -1,0 +1,22 @@
+{
+ "schema":"authored-native-cases:m8.4-v1",
+ "cases":{
+  "dart-positive":{"language":"dart","files":{"service.dart":"T twice<T extends num>(T n) => (n*2) as T;\n","main.dart":"import \"service.dart\";\r\nint run() { const marker=\"😀\"; return twice(4); }\r\n"},"expected":{"call":"twice(4)","targetName":"twice","origin":"PROJECT","status":"RESOLVED","signatureContains":"typeparams=1"}},
+  "dart-negative":{"language":"dart","files":{"main.dart":"void run(dynamic target) { missing(3); target.work(); }\n"},"expected":{"call":"missing(3)","status":"UNRESOLVED","diagnosticError":true}},
+  "dart-syntax":{"language":"dart","files":{"main.dart":"int broken( {\n"},"expected":{"diagnosticError":true,"noExactTargets":true}},
+  "dart-bom":{"language":"dart","files":{"main.dart":"﻿int twice(int n)=>n*2;\r\nint run(){var count=1;count+=2;return twice(count);}\r\n"},"expected":{"call":"twice(count)","targetName":"twice","origin":"PROJECT","status":"RESOLVED"}},
+  "php-positive":{"language":"php","files":{"service.php":"<?php namespace Fixture; function twice(int $n): int { return $n*2; }\n","main.php":"<?php namespace Fixture;\r\nfunction run(): int { $marker=\"😀\"; return twice(4); }\r\n"},"expected":{"call":"twice(4)","targetName":"twice","origin":"PROJECT","status":"RESOLVED"}},
+  "php-negative":{"language":"php","files":{"main.php":"<?php function run($target) { missing(3); $target->work(); }\n"},"expected":{"call":"missing(3)","status":"UNRESOLVED","diagnosticError":true}},
+  "php-syntax":{"language":"php","files":{"main.php":"<?php function broken( {\n"},"expected":{"diagnosticError":true,"noExactTargets":true}},
+  "rust-positive":{"language":"rust","files":{"service.rs":"pub fn twice<T>(n:T)->T { n }\n","lib.rs":"mod service;\r\npub fn run()->i32{let marker=\"😀\";service::twice(4)}\r\n"},"expected":{"call":"service::twice(4)","targetName":"twice","origin":"PROJECT","status":"RESOLVED"}},
+  "rust-negative":{"language":"rust","files":{"lib.rs":"pub fn run(f:fn(i32)->i32)->i32 { missing(3); f(4) }\n"},"expected":{"call":"missing(3)","status":"UNRESOLVED","diagnosticError":true}},
+  "rust-syntax":{"language":"rust","files":{"lib.rs":"pub fn broken( {\n"},"expected":{"diagnosticError":true,"noExactTargets":true}},
+  "ruby-positive":{"language":"ruby","files":{"service.rb":"# typed: true\nclass Counter\n def self.twice(n)\n  n*2\n end\nend\n","main.rb":"# typed: true\r\nclass Counter\r\n def self.run\r\n  marker=\"😀\"; twice(4)\r\n end\r\nend\r\n"},"expected":{"call":"twice(4)","targetName":"twice","origin":"PROJECT","status":"RESOLVED"}},
+  "ruby-negative":{"language":"ruby","files":{"main.rb":"# typed: true\nclass Counter\n def self.run(target)\n  missing(3)\n  target.work()\n end\nend\n"},"expected":{"call":"missing(3)","status":"UNRESOLVED","diagnosticError":true}},
+  "ruby-syntax":{"language":"ruby","files":{"main.rb":"# typed: true\ndef broken(\n"},"expected":{"diagnosticError":true,"noExactTargets":true}},
+  "swift-positive":{"language":"swift","files":{"service.swift":"func twice<T>(_ n: T) -> T { n }\n","main.swift":"func run() -> Int { let marker=\"😀\"; return twice(4) }\r\n"},"expected":{"call":"twice(4)","targetName":"twice","origin":"PROJECT","status":"RESOLVED"}},
+  "swift-negative":{"language":"swift","files":{"main.swift":"func run(_ callback: (Int)->Int) -> Int { missing(3); return callback(4) }\n"},"expected":{"call":"missing(3)","status":"UNRESOLVED","diagnosticError":true}},
+  "swift-syntax":{"language":"swift","files":{"main.swift":"func broken( {\n"},"expected":{"diagnosticError":true,"noExactTargets":true}}
+ },
+ "replays":{"dart-replay":"dart-positive","php-replay":"php-positive","rust-replay":"rust-positive","ruby-replay":"ruby-positive","swift-replay":"swift-positive"}
+}

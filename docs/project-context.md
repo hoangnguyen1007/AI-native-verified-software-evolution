@@ -16,6 +16,8 @@ Milestone scope sequences implementation delivery, but never serves as a ceiling
 
 **CONFIRMED bounded delivery acceptance (2026-10-20):** M8.4 Step 3 is accepted as Core MVP—offline Hyper-V build, wired launcher/pipeline, generated-source/artifact export and verified durable publication/replay. The owner removes advanced security campaigns from that step’s closure criteria. This does not narrow the platform’s comprehensive long-term capability mission, fabricate an unrestricted isolation certificate, or change the existing Steps 4–6. Host fallback and false semantic promotion remain prohibited.
 
+**CONFIRMED bounded delivery acceptance (2026-10-29): M8.4 Step 5 / Bước 1 is CLOSED / CORE MVP**, accepted by the human for the delivered 18 adapters and scoped native journeys, explicit unsupported outcomes, replay, embedded/cross-provider paths and authentication mechanisms. Full A01–A12 qualification and production-method registration are withdrawn from this task's closure criteria, without treating them as passed or creating replacement tasks. Existing semantic gaps and unqualified trust markers remain truthful. This is delivery acceptance, not universal language/repository completeness or Step-5/milestone promotion. See the amendment to [ADR-007](decisions/ADR-007-isolated-build-and-polyglot-readiness.md).
+
 ## Academic Context
 
 - Course phase: SE121 - Software Architecture Intelligence Platform

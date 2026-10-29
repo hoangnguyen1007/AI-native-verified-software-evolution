@@ -1,11 +1,95 @@
 openapi: 3.1.0
 info:
   title: Architecture Workbench API
-  version: m8.4-readiness-v1
-  description: Local cancellable analysis, optional loopback repository connections and canonical query/report adapters. Connections require explicit embedding support.
+  version: m8.4-polyglot-v1
+  description: Local cancellable analysis, optional loopback repository connections and canonical query/report adapters. Connections and producer semantic publication queries require explicit operator composition.
 servers:
   - url: http://127.0.0.1:8080
 paths:
+  /api/v1/semantic/root-gaps:
+    post:
+      operationId: semanticRootGaps
+      description: Paged source/context census gaps. Publication does not establish semantic authority.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf: [{$ref: '#/components/schemas/SemanticPageQuery'}]
+              unevaluatedProperties: false
+      responses:
+        '200': {$ref: '#/components/responses/SemanticSuccess'}
+        default: {$ref: '#/components/responses/SemanticError'}
+  /api/v1/semantic/answers:
+    post:
+      operationId: semanticAnswerPage
+      description: Read the published question view, immutable same-input revisions or deterministic conflict witnesses. These are captured producer projections. Live opaque proofs are recomputed by analysis/resume; reading saved state does not restore semantic authority or close root coverage.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - {$ref: '#/components/schemas/SemanticPageQuery'}
+                - type: object
+                  required: [context]
+                  properties:
+                    context: {type: string, minLength: 1, maxLength: 8192}
+                    view: {type: string, enum: [CURRENT, HISTORY, CONFLICTS], default: CURRENT}
+              unevaluatedProperties: false
+      responses:
+        '200': {$ref: '#/components/responses/SemanticSuccess'}
+        default: {$ref: '#/components/responses/SemanticError'}
+  /api/v1/semantic/summary:
+    post:
+      operationId: semanticRootSummary
+      description: Operator-enabled read-only producer publication. Rechecks selected contexts, referenced bytes and current policy. Completeness remains withheld; this endpoint never starts native analysis.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [plan]
+              properties:
+                plan: {$ref: '#/components/schemas/Digest'}
+      responses:
+        '200': {$ref: '#/components/responses/SemanticSuccess'}
+        default: {$ref: '#/components/responses/SemanticError'}
+  /api/v1/semantic/contexts:
+    post:
+      operationId: semanticContextPage
+      description: Read selected contexts including missing and failed providers. Cursor binds the immutable publication and table; counts are decimal strings. Changed publications invalidate continuations.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf: [{$ref: '#/components/schemas/SemanticPageQuery'}]
+              unevaluatedProperties: false
+      responses:
+        '200': {$ref: '#/components/responses/SemanticSuccess'}
+        default: {$ref: '#/components/responses/SemanticError'}
+  /api/v1/semantic/gaps:
+    post:
+      operationId: semanticContextGapPage
+      description: Read typed current gaps of one selected context. This is the current producer receipt, not adjudicated conflict history or a semantic-method certificate.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - {$ref: '#/components/schemas/SemanticPageQuery'}
+                - type: object
+                  required: [context]
+                  properties:
+                    context: {type: string, minLength: 1, maxLength: 8192}
+              unevaluatedProperties: false
+      responses:
+        '200': {$ref: '#/components/responses/SemanticSuccess'}
+        default: {$ref: '#/components/responses/SemanticError'}
   /api/v2/acquisitions/{revision}/readiness:
     parameters:
       - in: path
@@ -243,6 +327,7 @@ paths:
         '200': {$ref: '#/components/responses/JobSuccess'}
         default: {$ref: '#/components/responses/Error'}
 components:
+  # The semantic adapter has its own version and does not add queryVersion.
   requestBodies:
     JobPage:
       required: true
@@ -266,6 +351,36 @@ components:
       required: true
       schema: {$ref: '#/components/schemas/Digest'}
   responses:
+    SemanticSuccess:
+      description: Canonical semantic.query:m8.4-v1 summary or context/gap/answer page. An operator-composed live validator rechecks signatures, registered methods, exact input closures, current policy and revocations before returning VALIDATED_OBSERVATION and CURRENT_POLICY_VALIDATED. Authenticated results may remain incomplete because semantic gaps persist. Without that capability, trust is PRODUCER_ASSERTION, qualification UNQUALIFIED and complete false. Retained history can remain readable when the current provider is missing or failed; it never changes that operational state. Revision, coverage counts, gap counts and pagination row counts are lossless decimal strings. The data identity hashes canonical UTF-8 JSON.
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required: [apiVersion, resultIdentity, data]
+            properties:
+              apiVersion: {const: 'semantic.query:m8.4-v1'}
+              resultIdentity: {$ref: '#/components/schemas/Digest'}
+              data: {type: object}
+    SemanticError:
+      description: 400 invalid shape/cursor/size; 403 local-origin guard; 404 absent plan/context/route; 405 method; 406 Accept; 409 stale cursor, revoked policy or cancellation; 413 request/JSON limit; 415 media; 422 response limit; 503 unavailable/corrupt publication or absent operator composition. Shared HTTP transport errors retain the architecture envelope version. No worker is started.
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required: [apiVersion, error]
+            properties:
+              apiVersion: {type: string, enum: ['semantic.query:m8.4-v1', 'architecture.http:m7.1-v1']}
+              queryVersion: {type: string}
+              error:
+                type: object
+                additionalProperties: false
+                required: [code, message]
+                properties:
+                  code: {type: string}
+                  message: {type: string}
     JobSuccess:
       description: Bounded job data. Operational UUIDs, revisions and times never enter canonical analysis identities. History and job state are process-local; graph snapshots persist in the configured store.
       content:
@@ -335,6 +450,31 @@ components:
                   code: {type: string}
                   message: {type: string}
   schemas:
+    SemanticCount: {type: string, pattern: '^(0|[1-9][0-9]{0,18})$', description: Exact nonnegative signed-64-bit decimal counter; never binary floating point.}
+    SemanticCursor:
+      type: object
+      additionalProperties: false
+      required: [publication, table]
+      properties:
+        publication: {$ref: '#/components/schemas/Digest'}
+        table:
+          type: object
+          additionalProperties: false
+          required: [table, rows, previousKey]
+          properties:
+            table: {$ref: '#/components/schemas/Digest'}
+            rows: {$ref: '#/components/schemas/SemanticCount'}
+            previousKey: {type: [string, 'null']}
+    SemanticPageQuery:
+      type: object
+      required: [plan]
+      properties:
+        plan: {$ref: '#/components/schemas/Digest'}
+        size: {type: integer, minimum: 1, maximum: 50, default: 20}
+        cursor:
+          oneOf:
+            - {$ref: '#/components/schemas/SemanticCursor'}
+            - {type: 'null'}
     JobIdentifier: {type: string, pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$', maxLength: 64}
     JobStage: {type: string, enum: [QUEUED, ACQUISITION, PLATFORM, ANALYSIS, GRAPH, POLICY, PUBLICATION, FINISHED]}
     AnalysisJob:

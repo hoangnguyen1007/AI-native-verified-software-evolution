@@ -6,6 +6,7 @@ import java.io.*;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.file.*;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.security.*;
 import java.util.*;
 import java.util.concurrent.CancellationException;
@@ -23,13 +24,24 @@ public final class StreamingContentStore implements RepositoryContentStore {
     }
     static Path directory(Path path) throws IOException {
         Path absolute = path.toAbsolutePath().normalize();
-        safe(absolute); Files.createDirectories(absolute); safe(absolute);
-        if (!Files.isDirectory(absolute, LinkOption.NOFOLLOW_LINKS) || !absolute.equals(absolute.toRealPath())) throw new IOException("UNSAFE_STORAGE");
-        return absolute;
+        safe(absolute); Files.createDirectories(absolute);
+        return existingDirectory(absolute);
+    }
+    /** Require existing storage without following linked ancestors; canonicalize
+     * benign platform aliases such as Windows 8.3 names only after validation. */
+    public static Path existingDirectory(Path path) throws IOException {
+        Path absolute=path.toAbsolutePath().normalize();safe(absolute);
+        if(!Files.isDirectory(absolute,LinkOption.NOFOLLOW_LINKS))throw new IOException("UNSAFE_STORAGE");
+        return absolute.toRealPath();
     }
     static void safe(Path path) throws IOException {
-        for (Path p = path.toAbsolutePath().normalize(); p != null; p = p.getParent())
-            if (Files.isSymbolicLink(p)) throw new IOException("UNSAFE_PATH");
+        for (Path p = path.toAbsolutePath().normalize(); p != null; p = p.getParent()) {
+            try {
+                var attributes=Files.readAttributes(p,BasicFileAttributes.class,LinkOption.NOFOLLOW_LINKS);
+                // Windows junctions are reparse points (isOther), not symbolic links.
+                if(attributes.isSymbolicLink()||attributes.isOther())throw new IOException("UNSAFE_PATH");
+            }catch(NoSuchFileException missing){/* Prospective storage paths may not exist yet. */}
+        }
     }
     static MessageDigest sha256() {
         try { return MessageDigest.getInstance("SHA-256"); } catch (NoSuchAlgorithmException impossible) { throw new IllegalStateException(impossible); }

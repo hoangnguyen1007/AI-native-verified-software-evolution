@@ -34,8 +34,10 @@ public final class ReadinessPlanner {
                 String path=entry.path().utf8().orElseThrow();
                 String readinessReason=path.endsWith("/module-info.java")||path.equals("module-info.java")?"JPMS_MANIFEST_REQUIRED":path.endsWith(".jsp")?"JSP_GENERATION_REQUIRED":path.endsWith(".fxml")?"JAVAFX_PLATFORM_REQUIRED":path.endsWith(".aj")?"WOVEN_BYTECODE_REQUIRED":filename(path).equals("AndroidManifest.xml")?"ANDROID_SDK_REQUIRED":null;
                 if(readinessReason!=null)issues.add(requirement(Kind.PLATFORM,path,readinessReason,List.of(),List.of(new Evidence(path,entry.content().orElseThrow().digest()))));
-                if(language(path).isPresent())sourceAnchors.computeIfAbsent(anchor(path),key->new TreeSet<>()).add(sourceSet(path));
-                language(path).ifPresent(language->languageHints.computeIfAbsent(anchor(path),key->new TreeSet<>()).add(language));
+                var sourceHint=sourceHint(entry,content);
+                if(sourceHint.unavailable())issues.add(requirement(Kind.DISCOVERY,path,"SOURCE_CLASSIFICATION_INPUT_UNAVAILABLE",List.of(),List.of(new Evidence(path,entry.content().orElseThrow().digest()))));
+                if(sourceHint.language().isPresent())sourceAnchors.computeIfAbsent(anchor(path),key->new TreeSet<>()).add(sourceSet(path));
+                sourceHint.language().ifPresent(language->languageHints.computeIfAbsent(anchor(path),key->new TreeSet<>()).add(language));
                 if(!descriptor(path))continue;
                 var handle=entry.content().orElseThrow();
                 if(handle.size()>policy.descriptorWorkerBytes()){
@@ -129,7 +131,7 @@ public final class ReadinessPlanner {
                     List.of("guest-overlay","broker-cache-downloads"),List.of("exact-input-closure","independent-protected-observation","context-and-toolchain-match","output-digests-and-paths")));
         }
         OwnershipSummary summary;
-        try(var stream=new OwnershipStream(revision,inventory,List.copyOf(modules.values()),List.copyOf(contexts.values()),cancelled)){
+        try(var stream=new OwnershipStream(revision,inventory,content,List.copyOf(modules.values()),List.copyOf(contexts.values()),cancelled)){
             var ledger=content.put(stream,cancelled);summary=new OwnershipSummary(stream.total,stream.counts,ledger);
         }
         if(summary.counts().getOrDefault("UNOWNED",0L)>0||summary.counts().getOrDefault("AMBIGUOUS",0L)>0||summary.counts().getOrDefault("UNAVAILABLE",0L)>0)
@@ -146,8 +148,24 @@ public final class ReadinessPlanner {
     }
     private static <T> void put(Map<String,T> values,String key,T value){if(values.putIfAbsent(key,value)!=null&&!values.get(key).equals(value))throw new IllegalArgumentException("Conflicting discovery provider");}
     private static String dimension(Context context,String dimension){return switch(dimension){case "root"->context.root();case "module","target"->context.module();case "sourceSet"->context.sourceSet();case "variant","profile"->context.variant();default->context.environment().getOrDefault(dimension,"UNKNOWN");};}
-    public static boolean descriptor(String path){String name=filename(path);return Set.of("pom.xml","build.gradle","build.gradle.kts","settings.gradle","settings.gradle.kts","gradle-wrapper.properties","maven-wrapper.properties","gradle.properties","maven.config","jvm.config","extensions.xml","toolchains.xml",".classpath",".project","build.xml","WORKSPACE","WORKSPACE.bazel","MODULE.bazel","BUILD","BUILD.bazel","build.sbt","package.json","package-lock.json","pnpm-workspace.yaml","pnpm-lock.yaml","yarn.lock","pyproject.toml","setup.py","requirements.txt","Cargo.toml","Cargo.lock","go.mod","go.sum","composer.json","composer.lock","Gemfile","Gemfile.lock","pubspec.yaml","pubspec.lock","Package.swift","CMakeLists.txt","Makefile","rust-toolchain.toml","global.json",".java-version",".tool-versions","libs.versions.toml").contains(name)||name.endsWith(".csproj")||name.endsWith(".sln")||name.endsWith(".iml");}
-    public static Optional<String> language(String path){String name=filename(path);int dot=name.lastIndexOf('.');if(dot<0)return Optional.empty();return Optional.ofNullable(Map.ofEntries(Map.entry("java","java"),Map.entry("kt","kotlin"),Map.entry("scala","scala"),Map.entry("groovy","groovy"),Map.entry("py","python"),Map.entry("js","javascript"),Map.entry("jsx","javascript"),Map.entry("ts","typescript"),Map.entry("tsx","typescript"),Map.entry("rs","rust"),Map.entry("go","go"),Map.entry("cs","csharp"),Map.entry("c","c"),Map.entry("h","c"),Map.entry("cpp","cpp"),Map.entry("hpp","cpp"),Map.entry("rb","ruby"),Map.entry("php","php"),Map.entry("swift","swift"),Map.entry("dart","dart"),Map.entry("sql","sql"),Map.entry("proto","protobuf"),Map.entry("jsp","jsp"),Map.entry("aj","aspectj")).get(name.substring(dot+1)));}
+    public static boolean descriptor(String path){String name=filename(path);return com.evolution.analysis.polyglot.LanguageDiscovery.buildDescriptor(name)||Set.of("pom.xml","build.gradle","build.gradle.kts","settings.gradle","settings.gradle.kts","gradle-wrapper.properties","maven-wrapper.properties","gradle.properties","maven.config","jvm.config","extensions.xml","toolchains.xml",".classpath",".project","build.xml","WORKSPACE","WORKSPACE.bazel","MODULE.bazel","BUILD","BUILD.bazel","build.sbt","package.json","package-lock.json","pnpm-workspace.yaml","pnpm-lock.yaml","yarn.lock","pyproject.toml","setup.py","requirements.txt","Cargo.toml","Cargo.lock","go.mod","go.sum","composer.json","composer.lock","Gemfile","Gemfile.lock","pubspec.yaml","pubspec.lock","Package.swift","CMakeLists.txt","Makefile","rust-toolchain.toml","global.json",".java-version",".tool-versions","libs.versions.toml").contains(name)||name.endsWith(".csproj")||name.endsWith(".sln")||name.endsWith(".iml");}
+    /** Legacy readiness hints only; semantic selection uses evidence-qualified LanguageDiscovery. */
+    public static Optional<String> language(String path){
+        var hints=com.evolution.analysis.polyglot.LanguageDiscovery.hints(path);
+        // Preserve the old readiness-only .h hint for historical plans. It is never a semantic proof.
+        if(filename(path).endsWith(".h"))return Optional.of("c");
+        if(hints.stream().anyMatch(Set.of("json","yaml","toml","xml","hcl","html","css","scss","sass","less","notebook")::contains))return Optional.empty();
+        return hints.size()==1?Optional.of(hints.getFirst()):Optional.empty();
+    }
+    private record SourceHint(Optional<String> language,boolean unavailable){}
+    /** Preserve legacy filename hints; add captured shebang evidence for names
+     * that have no recognized suffix. This discovers inputs, never executes them. */
+    private static SourceHint sourceHint(InventoryEntry entry,RepositoryContentStore content){
+        var path=entry.path().utf8();if(path.isEmpty())return new SourceHint(Optional.empty(),true);var legacy=language(path.orElseThrow());
+        if(legacy.isPresent()||entry.population()==InventoryEntry.Population.DOCUMENTATION||!com.evolution.analysis.polyglot.LanguageDiscovery.hints(path.orElseThrow()).isEmpty())return new SourceHint(legacy,false);
+        try{var bytes=entry.content().orElseThrow();if(!content.verify(bytes))return new SourceHint(Optional.empty(),true);try(var prefix=content.open(bytes)){return new SourceHint(com.evolution.analysis.polyglot.LanguageDiscovery.detect(path.orElseThrow(),prefix.readNBytes(8192),Optional.empty()).language(),false);}}
+        catch(IOException unavailable){return new SourceHint(Optional.empty(),true);}
+    }
     private static String anchor(String path){String rooted="/"+path;int src=rooted.indexOf("/src/");return src<0?directory(path):src==0?".":rooted.substring(1,src);}
     private static String sourceSet(String path){String rooted="/"+path;int src=rooted.indexOf("/src/");if(src<0)return "unclassified";String rest=rooted.substring(src+5);int slash=rest.indexOf('/');return slash<0?"unclassified":rest.substring(0,slash);}
     public static String directory(String path){int slash=path.lastIndexOf('/');return slash<0?".":path.substring(0,slash);}
@@ -155,10 +173,10 @@ public final class ReadinessPlanner {
     public static boolean within(String path,String directory){return directory.equals(".")||path.equals(directory)||path.startsWith(directory+"/");}
     private static void check(BooleanSupplier cancelled)throws IOException{if(cancelled.getAsBoolean()||Thread.currentThread().isInterrupted())throw new IOException("READINESS_CANCELLED");}
     private static final class OwnershipStream extends InputStream {
-        final String revision;final InventoryReader inventory;final List<Module> modules;final List<Context> contexts;final BooleanSupplier cancelled;
+        final String revision;final InventoryReader inventory;final RepositoryContentStore content;final List<Module> modules;final List<Context> contexts;final BooleanSupplier cancelled;
         final Map<String,Long> counts=new TreeMap<>();long total;Optional<String> cursor=Optional.empty();boolean ended;
         Iterator<InventoryEntry> entries=Collections.emptyIterator();byte[] pending=new byte[0];int offset;
-        OwnershipStream(String revision,InventoryReader inventory,List<Module> modules,List<Context> contexts,BooleanSupplier cancelled){this.revision=revision;this.inventory=inventory;this.modules=modules;this.contexts=contexts;this.cancelled=cancelled;}
+        OwnershipStream(String revision,InventoryReader inventory,RepositoryContentStore content,List<Module> modules,List<Context> contexts,BooleanSupplier cancelled){this.revision=revision;this.inventory=inventory;this.content=content;this.modules=modules;this.contexts=contexts;this.cancelled=cancelled;}
         private boolean fill()throws IOException{
             while(offset==pending.length){
                 check(cancelled);
@@ -166,7 +184,7 @@ public final class ReadinessPlanner {
                     if(ended)return false;
                     var page=inventory.page(revision,512,cursor);entries=page.entries().iterator();cursor=page.continuation();ended=cursor.isEmpty();if(!entries.hasNext())continue;
                 }
-                var entry=entries.next();var ownership=ownership(entry,modules,contexts);counts.merge(ownership.disposition().name(),1L,Math::addExact);total=Math.addExact(total,1);
+                var entry=entries.next();var ownership=ownership(entry,content,modules,contexts);counts.merge(ownership.disposition().name(),1L,Math::addExact);total=Math.addExact(total,1);
                 pending=(CanonicalJson.write(ownership)+"\n").getBytes(StandardCharsets.UTF_8);offset=0;
             }
             return true;
@@ -174,13 +192,15 @@ public final class ReadinessPlanner {
         @Override public int read()throws IOException{return fill()?Byte.toUnsignedInt(pending[offset++]):-1;}
         @Override public int read(byte[] output,int start,int length)throws IOException{Objects.checkFromIndexSize(start,length,output.length);if(length==0)return 0;if(!fill())return -1;int count=Math.min(length,pending.length-offset);System.arraycopy(pending,offset,output,start,count);offset+=count;return count;}
     }
-    private static Ownership ownership(InventoryEntry entry,List<Module> modules,List<Context> contexts){
+    private static Ownership ownership(InventoryEntry entry,RepositoryContentStore content,List<Module> modules,List<Context> contexts){
         if(entry.disposition()==InventoryEntry.Disposition.EXCLUDED)return new Ownership(entry.path(),Disposition.EXCLUDED,List.of(),"EXPLICIT_SELECTION");
         if(entry.disposition()!=InventoryEntry.Disposition.ACQUIRED)return new Ownership(entry.path(),Disposition.UNAVAILABLE,List.of(),"ACQUISITION_GAP");
         if(entry.path().utf8().isEmpty())return new Ownership(entry.path(),Disposition.UNAVAILABLE,List.of(),"RAW_PATH_PROVIDER_REQUIRED");
         String path=entry.path().utf8().orElseThrow();
         if(entry.kind()!=InventoryEntry.Kind.FILE)return new Ownership(entry.path(),Disposition.NON_SOURCE,List.of(),"INVENTORIED");
-        if(language(path).isEmpty()){
+        var hint=sourceHint(entry,content);
+        if(hint.unavailable())return new Ownership(entry.path(),Disposition.UNAVAILABLE,List.of(),"SOURCE_CLASSIFICATION_INPUT_UNAVAILABLE");
+        if(hint.language().isEmpty()){
             boolean unknown=entry.population()==InventoryEntry.Population.UNKNOWN||entry.population()==InventoryEntry.Population.SOURCE;
             return new Ownership(entry.path(),unknown?Disposition.UNAVAILABLE:Disposition.NON_SOURCE,List.of(),unknown?"FILE_CLASSIFICATION_REQUIRED":"INVENTORIED");
         }

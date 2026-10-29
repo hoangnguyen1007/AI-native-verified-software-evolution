@@ -1,0 +1,117 @@
+{
+  "schema": "authored-native-cases:m8.4-v1",
+  "cases": {
+    "swift-relations": {
+      "language": "swift",
+      "files": {
+        "main.swift": "protocol P {}\nprotocol Q: P {}\nclass Base { func value() -> Int { 1 } }\nclass Child: Base, Q { override func value() -> Int { 2 } }\nextension Base { func extra() -> Int { 3 } }\n"
+      },
+      "expected": {
+        "relationControls": [
+          {
+            "category": "A05",
+            "role": "heritage",
+            "written": "P",
+            "status": "RESOLVED",
+            "relation": "REFINES_PROTOCOL",
+            "ownerName": "Q",
+            "targetNames": [
+              "P"
+            ]
+          },
+          {
+            "category": "A05",
+            "role": "heritage",
+            "written": "Base,",
+            "status": "RESOLVED",
+            "relation": "INHERITS",
+            "ownerName": "Child",
+            "targetNames": [
+              "Base"
+            ]
+          },
+          {
+            "category": "A05",
+            "role": "heritage",
+            "written": "Q",
+            "status": "RESOLVED",
+            "relation": "CONFORMS_TO",
+            "ownerName": "Child",
+            "targetNames": [
+              "Q"
+            ]
+          },
+          {
+            "category": "A05",
+            "role": "override",
+            "written": "override",
+            "status": "RESOLVED",
+            "relation": "OVERRIDES",
+            "ownerName": "value",
+            "targetNames": [
+              "value"
+            ],
+            "targetDeclaration": "func value() -> Int { 1 }"
+          },
+          {
+            "category": "A05",
+            "role": "heritage",
+            "written": "extension Base { func extra() -> Int { 3 } }",
+            "status": "RESOLVED",
+            "relation": "EXTENDS_TYPE",
+            "ownerName": "<extension>",
+            "targetNames": [
+              "Base"
+            ]
+          }
+        ]
+      }
+    },
+    "swift-crossfile-generic": {
+      "language": "swift",
+      "files": {
+        "models.swift": "protocol P {}\nclass Base<T> {}\n",
+        "main.swift": "class Child: Base<Int>, P {}\n"
+      },
+      "expected": {
+        "relationControls": [
+          {
+            "category": "A05",
+            "role": "heritage",
+            "written": "Base<Int>,",
+            "status": "RESOLVED",
+            "relation": "INHERITS",
+            "ownerName": "Child",
+            "targetNames": [
+              "Base"
+            ]
+          },
+          {
+            "category": "A05",
+            "role": "heritage",
+            "written": "P",
+            "status": "RESOLVED",
+            "relation": "CONFORMS_TO",
+            "ownerName": "Child",
+            "targetNames": [
+              "P"
+            ]
+          }
+        ]
+      }
+    },
+    "swift-missing-heritage": {
+      "language": "swift",
+      "files": {
+        "main.swift": "class Broken: Missing {}\n"
+      },
+      "expected": {
+        "diagnosticError": true
+      }
+    }
+  },
+  "replays": {
+    "swift-relations-replay": "swift-relations",
+    "swift-crossfile-generic-replay": "swift-crossfile-generic"
+  }
+}

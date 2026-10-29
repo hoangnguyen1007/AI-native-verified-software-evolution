@@ -1,0 +1,280 @@
+{
+  "schema": "authored-native-cases:m8.4-v1",
+  "cases": {
+    "dart-heritage": {
+      "language": "dart",
+      "files": {
+        "main.dart": "class Base<T> {}\nmixin Named {}\nabstract class Contract {}\nclass Child extends Base<int> with Named implements Contract {}\n"
+      },
+      "expected": {
+        "relationControls": [
+          {
+            "category": "A05",
+            "role": "extends",
+            "written": "Base<int>",
+            "status": "RESOLVED",
+            "relation": "EXTENDS",
+            "targetNames": [
+              "Base"
+            ],
+            "ownerName": "Child"
+          },
+          {
+            "category": "A05",
+            "role": "with-mixin",
+            "written": "Named",
+            "status": "RESOLVED",
+            "relation": "WITH_MIXIN",
+            "targetNames": [
+              "Named"
+            ],
+            "ownerName": "Child"
+          },
+          {
+            "category": "A05",
+            "role": "implements",
+            "written": "Contract",
+            "status": "RESOLVED",
+            "relation": "IMPLEMENTS",
+            "targetNames": [
+              "Contract"
+            ],
+            "ownerName": "Child"
+          }
+        ]
+      }
+    },
+    "dart-missing": {
+      "language": "dart",
+      "files": {
+        "main.dart": "class Child extends Missing {}\n"
+      },
+      "expected": {
+        "relationControls": [
+          {
+            "category": "A05",
+            "role": "extends",
+            "written": "Missing",
+            "status": "UNRESOLVED",
+            "relation": "EXTENDS",
+            "targetNames": []
+          }
+        ],
+        "diagnosticError": true
+      }
+    },
+    "php-heritage": {
+      "language": "php",
+      "files": {
+        "main.php": "<?php namespace Fixture; interface I {} trait T {} class Base {} class Child extends Base implements I { use T; }\n"
+      },
+      "expected": {
+        "relationControls": [
+          {
+            "category": "A05",
+            "role": "extends",
+            "written": "Base",
+            "status": "RESOLVED",
+            "relation": "EXTENDS",
+            "targetNames": [
+              "Base"
+            ],
+            "ownerName": "Child"
+          },
+          {
+            "category": "A05",
+            "role": "implements",
+            "written": "I",
+            "status": "RESOLVED",
+            "relation": "IMPLEMENTS",
+            "targetNames": [
+              "I"
+            ],
+            "ownerName": "Child"
+          },
+          {
+            "category": "A05",
+            "role": "uses-trait",
+            "written": "T",
+            "status": "RESOLVED",
+            "relation": "USES_TRAIT",
+            "targetNames": [
+              "T"
+            ],
+            "ownerName": "Child"
+          }
+        ]
+      }
+    },
+    "php-promotion": {
+      "language": "php",
+      "files": {
+        "main.php": "<?php namespace Fixture; class C { function __construct(public int $count) {} function read():int{return $this->count;} }\n"
+      },
+      "expected": {
+        "relationControls": [
+          {
+            "category": "A08",
+            "role": "promoted-property",
+            "written": "public int $count",
+            "status": "RESOLVED",
+            "relation": "PROMOTES_PROPERTY",
+            "targetNames": [
+              "count"
+            ],
+            "generationMechanism": "PHP_CONSTRUCTOR_PROPERTY_PROMOTION",
+            "ownerName": "C"
+          }
+        ]
+      }
+    },
+    "php-missing": {
+      "language": "php",
+      "files": {
+        "main.php": "<?php class Child extends Missing {}\n"
+      },
+      "expected": {
+        "relationControls": [
+          {
+            "category": "A05",
+            "role": "extends",
+            "written": "Missing",
+            "status": "UNRESOLVED",
+            "relation": null,
+            "targetNames": []
+          }
+        ],
+        "diagnosticError": true
+      }
+    },
+    "rust-heritage": {
+      "language": "rust",
+      "files": {
+        "lib.rs": "trait Parent {} trait Child: Parent {} struct S; impl Parent for S {} impl Child for S {} impl S {}\n"
+      },
+      "expected": {
+        "relationControls": [
+          {
+            "category": "A05",
+            "role": "type-bound",
+            "written": "Parent",
+            "status": "RESOLVED",
+            "relation": "SUPERTRAIT",
+            "targetNames": [
+              "Parent"
+            ],
+            "ownerName": "Child"
+          },
+          {
+            "category": "A05",
+            "role": "implementation",
+            "written": "impl Parent for S {}",
+            "status": "RESOLVED",
+            "relation": "IMPLEMENTS_TRAIT",
+            "targetNames": [
+              "Parent"
+            ],
+            "ownerName": "S"
+          },
+          {
+            "category": "A05",
+            "role": "implementation",
+            "written": "impl Child for S {}",
+            "status": "RESOLVED",
+            "relation": "IMPLEMENTS_TRAIT",
+            "targetNames": [
+              "Child"
+            ],
+            "ownerName": "S"
+          }
+        ]
+      }
+    },
+    "rust-generic": {
+      "language": "rust",
+      "files": {
+        "lib.rs": "trait Shape<T> {} struct Arg; struct S; impl Shape<Arg> for S {}\n"
+      },
+      "expected": {
+        "relationControls": [
+          {
+            "category": "A05",
+            "role": "implementation",
+            "written": "impl Shape<Arg> for S {}",
+            "status": "RESOLVED",
+            "relation": "IMPLEMENTS_TRAIT",
+            "targetNames": [
+              "Shape"
+            ],
+            "ownerName": "S"
+          }
+        ]
+      }
+    },
+    "rust-missing": {
+      "language": "rust",
+      "files": {
+        "lib.rs": "struct S; impl Missing for S {}\n"
+      },
+      "expected": {
+        "relationControls": [
+          {
+            "category": "A05",
+            "role": "implementation",
+            "written": "impl Missing for S {}",
+            "status": "UNRESOLVED",
+            "relation": "IMPLEMENTS_TRAIT",
+            "targetNames": []
+          }
+        ],
+        "diagnosticError": true
+      }
+    },
+    "ruby-heritage": {
+      "language": "ruby",
+      "files": {
+        "main.rb": "# typed: true\nclass Base\nend\nclass Child < Base\n  def run; 1; end\nend\n"
+      },
+      "expected": {
+        "relationControls": [
+          {
+            "category": "A05",
+            "role": "heritage",
+            "written": "Base",
+            "status": "CONDITIONAL",
+            "relation": "DECLARED_SUPERCLASS",
+            "targetNames": [
+              "Base"
+            ],
+            "ownerName": "Child"
+          }
+        ]
+      }
+    },
+    "ruby-missing": {
+      "language": "ruby",
+      "files": {
+        "main.rb": "# typed: true\nclass Child < Missing\nend\n"
+      },
+      "expected": {
+        "relationControls": [
+          {
+            "category": "A05",
+            "role": "heritage",
+            "written": "Missing",
+            "status": "UNRESOLVED",
+            "relation": "DECLARED_SUPERCLASS",
+            "targetNames": []
+          }
+        ],
+        "diagnosticError": true
+      }
+    }
+  },
+  "replays": {
+    "dart-heritage-replay": "dart-heritage",
+    "php-heritage-replay": "php-heritage",
+    "rust-heritage-replay": "rust-heritage",
+    "ruby-heritage-replay": "ruby-heritage"
+  }
+}

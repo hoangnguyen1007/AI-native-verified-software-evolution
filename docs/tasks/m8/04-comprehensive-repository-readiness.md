@@ -1,6 +1,6 @@
 # M8.4 — Kế hoạch nâng cấp khả năng đọc và phân tích repository toàn diện
 
-Ngày lập kế hoạch: **2026-10-17**; cập nhật thực hiện: **2026-10-26**. Trạng thái: **BƯỚC 1–2 IMPLEMENTED / BOUNDED VERIFICATION; BƯỚC 3 CLOSED / CORE MVP; BƯỚC 4 PROMPT 2 COMPLETE / CLOSED (REVIEW FOLLOW-UP); BƯỚC 5–6 PENDING**. M8.3 đã có bounded acceptance; M8.4 bắt buộc trước M9. Kế hoạch có **đúng 6 bước**, checklist và các phase bên trong bước 3–4 không tạo milestone/task bổ sung. Bàn giao thực hiện từng bước ở cuối tài liệu; phần handoff lập kế hoạch là lịch sử.
+Ngày lập kế hoạch: **2026-10-17**; cập nhật nghiệm thu: **2026-10-29**. Trạng thái: **BƯỚC 1–2 IMPLEMENTED / BOUNDED VERIFICATION; BƯỚC 3 CLOSED / CORE MVP; BƯỚC 4 PROMPT 2 COMPLETE / CLOSED (REVIEW FOLLOW-UP); BƯỚC 5 IN PROGRESS; BƯỚC 6 PENDING**. Bên trong Step 5, **Bước 1 CLOSED / CORE MVP** theo quyết định human; **Bước 2–3 PLANNED**. [Bản ghi nghiệm thu Task 1](04-step5-step1-execution.md) ghi 18 adapter, native/replay, integration và giới hạn; qualification đầy đủ A01–A12 và đăng ký phương thức production được rút khỏi điều kiện đóng Task 1. M8.3 đã có bounded acceptance; M8.4 bắt buộc trước M9. Kế hoạch giữ **đúng 6 bước** và Step 5 giữ đúng ba bước; không tự tạo task thay thế hoặc promote gate. Bàn giao thực hiện từng bước ở cuối tài liệu; phần handoff lập kế hoạch là lịch sử.
 
 **CONFIRMED — yêu cầu human:** build mục tiêu được chạy trong sandbox, không trực tiếp trên host; bỏ các trần cứng cản repo lớn; phân tích mọi module/build root; thu nhận generated code; giảm FAILED/PARTIAL bằng bằng chứng thực. Human đã chọn **thêm semantic engine cho từng ngôn ngữ ngay trong M8.4**, thay thế phạm vi cũ chỉ inventory ngoài Java. **PROVISIONAL — lựa chọn kỹ thuật:** [hợp đồng kiến trúc](../../architecture/m8-repository-readiness.md), [nghiên cứu và phương án](../../research/2026-10-17-m8-readiness-design.md), [ADR-007](../../decisions/ADR-007-isolated-build-and-polyglot-readiness.md).
 
@@ -116,6 +116,8 @@ Các checklist bên dưới được giữ để truy vết quyết định trư
 - Deliver source → build → generated/binary → exact Java/Spring graph journey. Với fixtures expected-complete, không còn gap do chưa acquire generated/reactor output; unsupported runtime semantics vẫn giữ đúng trạng thái.
 
 ## Bước 5 — Semantic engines cho từng ngôn ngữ và liên kết xuyên ngôn ngữ
+
+**Cập nhật lập kế hoạch theo yêu cầu Human (2026-10-26):** [kế hoạch chi tiết đúng ba bước triển khai](04-step5-polyglot-frontend-plan.md), với [nghiên cứu lựa chọn engine/frontend](../../research/2026-10-26-m845-polyglot-frontend-design.md). Trọng tâm là architectural semantics đủ dùng trên mọi baseline language, frontend/framework coverage và evidence-backed interop; không đào sâu bằng cách tự viết lại mọi compiler. Cả ba bước đều triển khai chức năng, kiểm chứng trong từng bước. Catalog/checklist/exit bên dưới giữ nguyên; đây là PLANNED, chưa có engine mới hoặc gate được nghiệm thu.
 
 **Mục tiêu:** triển khai non-Java semantic analysis thực, dùng native compiler/indexer sau contract chung; không đổi nhãn syntax inventory thành semantic coverage. Phạm vi: polyglot domain catalogs/identities, language adapter modules/workers, graph/query mapping, interop providers.
 

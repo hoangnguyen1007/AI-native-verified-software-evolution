@@ -1,0 +1,5 @@
+# Host-side platform worker/SDK controls; no analyzed repository dependencies.
+cryptography==50.0.2
+paramiko==5.1.0
+pycdlib==1.22.0
+zstandard==0.23.0

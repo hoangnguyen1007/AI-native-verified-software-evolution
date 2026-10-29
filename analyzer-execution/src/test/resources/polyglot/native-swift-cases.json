@@ -1,0 +1,44 @@
+{
+  "schema": "authored-native-cases:m8.4-v1",
+  "cases": {
+    "swift-positive": {
+      "language": "swift",
+      "files": {
+        "service.swift": "func twice<T>(_ n: T) -> T { n }\n",
+        "main.swift": "func run() -> Int { let marker=\"😀\"; return twice(4) }\r\n"
+      },
+      "expected": {
+        "call": "twice(4)",
+        "targetName": "twice",
+        "callerName": "run",
+        "origin": "PROJECT",
+        "status": "RESOLVED"
+      }
+    },
+    "swift-negative": {
+      "language": "swift",
+      "files": {
+        "main.swift": "func run(_ callback: (Int)->Int) -> Int { missing(3); return callback(4) }\n"
+      },
+      "expected": {
+        "call": "missing(3)",
+        "callerName": "run",
+        "status": "UNRESOLVED",
+        "diagnosticError": true
+      }
+    },
+    "swift-syntax": {
+      "language": "swift",
+      "files": {
+        "main.swift": "func broken( {\n"
+      },
+      "expected": {
+        "diagnosticError": true,
+        "noExactTargets": true
+      }
+    }
+  },
+  "replays": {
+    "swift-replay": "swift-positive"
+  }
+}

@@ -1,0 +1,7 @@
+
+/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src/main.swift:3:149: warning: 'twice' is deprecated
+1 | import Swift
+2 | class Base {}
+3 | class Derived:Base { var counter:Int=0; @available(*, deprecated) func twice(_ n:Int)->Int {n*2}; func run()->Int {counter+=1; if counter>0 {return twice(4)}; return 0} }
+  |                                                                                                                                                     `- warning: 'twice' is deprecated
+4 | 

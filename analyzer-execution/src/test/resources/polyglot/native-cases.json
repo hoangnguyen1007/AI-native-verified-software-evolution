@@ -1,0 +1,23 @@
+{
+ "schema":"authored-native-cases:m8.4-v1",
+ "cases":{
+  "c-positive":{"language":"c","files":{"main.c":"int twice(int n) { return n*2; }\r\nint run(void) { const char *marker=\"😀\"; return twice(4); }\r\n"},"expected":{"call":"twice(4)","targetName":"twice","origin":"PROJECT","status":"RESOLVED"}},
+  "c-negative":{"language":"c","files":{"main.c":"int run(void) { return missing(3); }\n"},"expected":{"diagnosticError":true,"noExactTargets":true}},
+  "cpp-positive":{"language":"cpp","files":{"main.cpp":"int twice(int n) { return n*2; }\nconst char *twice(const char *s) { return s; }\nint run() { return twice(4); }\n"},"expected":{"call":"twice(4)","targetName":"twice","origin":"PROJECT","status":"RESOLVED","signatureContains":"int (int)"}},
+  "cpp-negative":{"language":"cpp","files":{"main.cpp":"int run() { return missing(3); }\n"},"expected":{"diagnosticError":true,"noExactTargets":true}},
+  "objectivec-positive":{"language":"objectivec","files":{"main.m":"__attribute__((objc_root_class))\n@interface Counter\n+ (int)twice:(int)n;\n@end\n@implementation Counter\n+ (int)twice:(int)n { return n*2; }\n@end\nint run(void) { return [Counter twice:4]; }\n"},"expected":{"call":"[Counter twice:4]","role":"message-send","targetName":"twice:","origin":"PROJECT","status":"CONDITIONAL"}},
+  "objectivec-negative":{"language":"objectivec","files":{"main.m":"int run(void) { return missing(3); }\n"},"expected":{"diagnosticError":true,"noExactTargets":true}},
+  "csharp-positive":{"language":"csharp","files":{"main.cs":"namespace Fixture;\r\nclass Counter { static int Twice(int n)=>n*2; static string Twice(string s)=>s+s; static int Run() { var marker=\"😀\"; return Twice(4); } }\r\n"},"expected":{"call":"Twice(4)","targetName":"Twice","origin":"PROJECT","status":"RESOLVED","signatureContains":"System.Int32"}},
+  "csharp-negative":{"language":"csharp","files":{"main.cs":"class Counter { int Run()=>Missing(3); }\n"},"expected":{"call":"Missing(3)","status":"UNRESOLVED","diagnosticError":true}},
+  "visualbasic-positive":{"language":"visualbasic","files":{"main.vb":"Namespace Fixture\nModule Counter\n Function Twice(n As Integer) As Integer\n  Return n*2\n End Function\n Function Twice(s As String) As String\n  Return s+s\n End Function\n Function Run() As Integer\n  Dim marker = \"😀\"\n  Return Twice(4)\n End Function\nEnd Module\nEnd Namespace\n"},"expected":{"call":"Twice(4)","targetName":"Twice","origin":"PROJECT","status":"RESOLVED","signatureContains":"System.Int32"}},
+  "visualbasic-negative":{"language":"visualbasic","files":{"main.vb":"Module Counter\nFunction Run() As Integer\nReturn Missing(3)\nEnd Function\nEnd Module\n"},"expected":{"call":"Missing(3)","status":"UNRESOLVED","diagnosticError":true}},
+  "python-positive":{"language":"python","files":{"main.py":"from service import twice\r\ndef run() -> int:\r\n    marker=\"😀\"; return twice(4)\r\n","service.py":"def twice(n: int) -> int:\n    return n*2\n"},"expected":{"call":"twice(4)","targetName":"twice","origin":"PROJECT","status":"RESOLVED"}},
+  "python-negative":{"language":"python","files":{"main.py":"def run(target):\n    missing(3)\n    target.work()\n"},"expected":{"call":"missing(3)","status":"UNRESOLVED","diagnosticError":true}},
+  "python-syntax":{"language":"python","files":{"main.py":"def broken( {\n"},"expected":{"diagnosticError":true,"noExactTargets":true}},
+  "go-positive":{"language":"go","files":{"main.go":"package app\r\nfunc run() int { const marker=\"😀\"; return twice(4) }\r\n","service.go":"package app\nfunc twice[T ~int](n T) T { return n*2 }\n"},"expected":{"call":"twice(4)","targetName":"twice","origin":"PROJECT","status":"RESOLVED","signatureContains":"typeparams=1"}},
+  "go-negative":{"language":"go","files":{"main.go":"package app\nfunc run() int { return missing(3) }\n"},"expected":{"call":"missing(3)","status":"UNRESOLVED","diagnosticError":true}},
+  "go-interface":{"language":"go","files":{"main.go":"package app\ntype Worker interface { Work() int }\nfunc run(w Worker) int { return w.Work() }\n"},"expected":{"call":"w.Work()","targetName":"Work","origin":"PROJECT","status":"CONDITIONAL"}},
+  "go-syntax":{"language":"go","files":{"main.go":"package app\nfunc broken( {\n"},"expected":{"diagnosticError":true,"noExactTargets":true}}
+ },
+ "replays":{"c-replay":"c-positive","cpp-replay":"cpp-positive","objectivec-replay":"objectivec-positive","csharp-replay":"csharp-positive","visualbasic-replay":"visualbasic-positive","python-replay":"python-positive","go-replay":"go-positive"}
+}

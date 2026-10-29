@@ -31,6 +31,21 @@ The JMOD adapter also avoids recompressing its temporary solver JAR: it uses com
 
 Use `-Denforcer.skipRules=reactorModuleConvergence` for an intentional module-only invocation with current platform dependencies already installed; this leaves the other enforcement rules active. Do not use a full reactor merely to time a TDD method. `-Dplatform.build.directory=target/<name>` isolates outputs when an IDE writes the default `target/` directory.
 
+## Python worker/SDK controls
+
+Install the host test dependencies from the checked-in [requirements file](../analyzer-execution/src/test/python/requirements.txt) into an explicit virtual environment. From the repository root in PowerShell:
+
+```powershell
+python -m venv .venv
+$workerPython = (Resolve-Path '.venv/Scripts/python.exe').Path
+& $workerPython -m pip install -r analyzer-execution/src/test/python/requirements.txt
+& $workerPython -m unittest discover -s analyzer-execution/src/test/python -p 'test_polyglot_sdk*.py' -q
+```
+
+On POSIX use `.venv/bin/python`. This setup gives the tests `pycdlib`, `cryptography`, `paramiko` and `zstandard` through the selected interpreter; no machine-specific cache path is required. For an already provisioned `pip --target` directory, set `PYTHONPATH` explicitly to that directory instead. Tests do not discover or inject another user's cache into `sys.path`.
+
+These controls do not provision a VM or qualify a native language pack. The separate `test_*_native.py` suites require their real pinned SDKs. In particular, `test_python_native.py` needs Node on the host PATH and Pyright 1.1.396 at `.evo/tools/m845-pyright-api-1.1.396/package`; missing prerequisites fail with a named error. They analyze fixed first-party fixture strings only. Analyzed repository code/builds/index requests still run exclusively in the registered isolated lane.
+
 ## Captured native campaign
 
 Prepare four explicit absolute paths, using forward slashes on Windows:

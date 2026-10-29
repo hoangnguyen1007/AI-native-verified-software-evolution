@@ -1,0 +1,18 @@
+{
+  "schema": "authored-jvm-cases:m8.4-v1",
+  "cases": {
+    "kotlin-overload": {"language":"kotlin","files":{"main.kt":"package fixture\r\nfun twice(n:Int):Int=n*2\r\nfun twice(s:String):String=s+s\r\nfun run():Int { val marker=\"😀\"; return twice(4) }\r\n"},"expected":{"call":"twice(4)","targetName":"twice","signatureContains":"kotlin.Int","origin":"PROJECT"}},
+    "kotlin-missing": {"language":"kotlin","files":{"main.kt":"package fixture\nfun run():Int=missing(3)\n"},"expected":{"call":"missing(3)","status":"UNRESOLVED","diagnosticError":true}},
+    "kotlin-syntax": {"language":"kotlin","files":{"main.kt":"package fixture\nfun broken( {\n"},"expected":{"syntaxError":true}},
+    "kotlin-multifile": {"language":"kotlin","files":{"service.kt":"package fixture\nfun twice(n:Int):Int=n*2\n","main.kt":"package fixture\nfun run():Int=twice(4)\n"},"expected":{"call":"twice(4)","targetName":"twice","signatureContains":"kotlin.Int","origin":"PROJECT"}},
+    "scala-overload": {"language":"scala","files":{"main.scala":"package fixture\r\nobject Counter {\r\n def twice(n:Int):Int=n*2\r\n def twice(s:String):String=s+s\r\n def run():Int={val marker=\"😀\";twice(4)}\r\n}\r\n"},"expected":{"call":"twice(4)","targetName":"twice","signatureContains":"scala.Int","origin":"PROJECT"}},
+    "scala-missing": {"language":"scala","files":{"main.scala":"object Counter { def run():Int=missing(3) }\n"},"expected":{"call":"missing(3)","status":"UNRESOLVED","diagnosticError":true}},
+    "scala-syntax": {"language":"scala","files":{"main.scala":"object Counter { def broken( {\n"},"expected":{"syntaxError":true}},
+    "scala-multifile": {"language":"scala","files":{"service.scala":"package fixture\nobject Service { def twice(n:Int):Int=n*2 }\n","main.scala":"package fixture\nobject Main { def run():Int=Service.twice(4) }\n"},"expected":{"call":"Service.twice(4)","targetName":"twice","signatureContains":"scala.Int","origin":"PROJECT"}},
+    "groovy-static": {"language":"groovy","files":{"main.groovy":"package fixture\r\nimport groovy.transform.CompileStatic\r\n@CompileStatic\r\nclass Counter {\r\n static int twice(int n) { n*2 }\r\n static int run() { def marker=\"😀\"; twice(4) }\r\n}\r\n"},"expected":{"call":"twice(4)","targetName":"twice","signatureContains":"int","origin":"PROJECT"}},
+    "groovy-dynamic": {"language":"groovy","files":{"main.groovy":"class Counter { def run(target) { target.work() } }\n"},"expected":{"call":"target.work()","status":"UNRESOLVED"}},
+    "groovy-syntax": {"language":"groovy","files":{"main.groovy":"class Counter { def broken( {\n"},"expected":{"syntaxError":true}},
+    "groovy-multifile": {"language":"groovy","files":{"Service.groovy":"package fixture\nclass Service { static int twice(int n) { n*2 } }\n","Main.groovy":"package fixture\nimport groovy.transform.CompileStatic\n@CompileStatic\nclass Main { static int run() { Service.twice(4) } }\n"},"expected":{"call":"Service.twice(4)","targetName":"twice","signatureContains":"int","origin":"PROJECT"}}
+  },
+  "replays": {"kotlin-replay":"kotlin-overload","scala-replay":"scala-overload","groovy-replay":"groovy-static"}
+}

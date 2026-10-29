@@ -1,0 +1,99 @@
+{
+  "schema": "authored-typescript-architecture-cases:m8.4-v1",
+  "cases": {
+    "typescript-architecture": {
+      "language": "typescript",
+      "path": "main.ts",
+      "text": "export function mark(value:any, context:any):void {}\n@mark export class Base { counter:number=0; twice(n:number):number {return n*2;} }\nexport class Derived extends Base { run():number { this.counter+=1; if(this.counter>0) return this.twice(4); return 0; } }\n",
+      "expected": {
+        "call": "this.twice(4)",
+        "targetName": "twice",
+        "categoryControls": {
+          "A01": {
+            "written": false
+          },
+          "A02": {
+            "written": true
+          },
+          "A03": {
+            "written": true
+          },
+          "A04": {
+            "written": true
+          },
+          "A05": {
+            "written": true
+          },
+          "A06": {
+            "written": true
+          },
+          "A07": {
+            "written": true
+          },
+          "A08": {
+            "written": true
+          },
+          "A09": {
+            "written": false
+          },
+          "A10": {
+            "written": true
+          },
+          "A11": {
+            "written": false
+          },
+          "A12": {
+            "written": false
+          }
+        }
+      }
+    },
+    "javascript-architecture": {
+      "language": "javascript",
+      "path": "main.js",
+      "text": "/** @param {number} n @returns {number} */\nexport function twice(n) {return n*2;}\nexport class Base { constructor() {this.counter=0;} }\nexport class Derived extends Base { run() {this.counter+=1; if(this.counter>0) return twice(4); return 0;} }\n",
+      "expected": {
+        "call": "twice(4)",
+        "targetName": "twice",
+        "categoryControls": {
+          "A01": {
+            "written": false
+          },
+          "A02": {
+            "written": true
+          },
+          "A03": {
+            "written": true
+          },
+          "A04": {
+            "written": true
+          },
+          "A05": {
+            "written": true
+          },
+          "A06": {
+            "written": true
+          },
+          "A07": {
+            "written": true
+          },
+          "A08": {
+            "written": false
+          },
+          "A09": {
+            "written": false
+          },
+          "A10": {
+            "written": true
+          },
+          "A11": {
+            "written": false
+          },
+          "A12": {
+            "written": false
+          }
+        }
+      }
+    }
+  }
+}

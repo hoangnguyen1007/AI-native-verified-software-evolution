@@ -1,0 +1,49 @@
+package com.evolution.analysis.polyglot;
+
+import com.evolution.analysis.contract.common.*;
+import com.evolution.analysis.contract.identity.*;
+import com.evolution.analysis.contract.serialization.CanonicalJson;
+import com.evolution.analysis.evidence.*;
+import com.evolution.analysis.graph.GraphJson;
+import java.io.*;
+import java.nio.charset.StandardCharsets;
+import java.util.*;
+import org.junit.jupiter.api.Test;
+import static org.junit.jupiter.api.Assertions.*;
+
+class SourceMappedSemanticProviderTest {
+    static String resource(String name)throws IOException{try(var input=SourceMappedSemanticProviderTest.class.getResourceAsStream("/polyglot/typescript-native-v3/"+name)){return new String(Objects.requireNonNull(input).readAllBytes(),StandardCharsets.UTF_8);}}
+    static final class Fixture {
+        final SemanticTablesTest.Memory content=new SemanticTablesTest.Memory();final SemanticTables tables=new SemanticTables(content,65536);final String text=resource("main.ts"),prefix="\uFEFF<script>\r\n";final LanguageSemanticRequest base;final LanguageSemanticProvider nativeProvider;final EmbeddedSourceMap.Document original,generated;
+        Fixture()throws Exception{var bytes=content.text(text);var capture=CapturedSemanticProvider.read(content.text(resource("capture.ndjson")),tables,content,65536,()->false);var meta=GraphJson.object(GraphJson.read(resource("fixture.json"),GraphJson.Limits.defaults()));var inventory=new ContentDigest(GraphJson.string(meta.get("inventory")));base=new LanguageSemanticRequest(EvidenceContext.forSnapshot(SnapshotIdentity.from(RepositoryIdentity.fromCanonicalCoordinate("urn:test:typescript-native"),inventory)),inventory,"root","app","main","baseline","typescript","5.9.3",capture.documents(),capture.census(),content.text("[]"),new VersionedIdentifier("frontend.typescript-capture","m8.4-v1"),capture.toolset(),ContentDigest.sha256Utf8("unqualified-policy"),ContentDigest.sha256Utf8("work"));nativeProvider=new CapturedSemanticProvider(capture,tables,content);generated=new EmbeddedSourceMap.Document("main.ts",bytes,"UTF-8");original=new EmbeddedSourceMap.Document("view.html",content.text(prefix+text+"</script>"),"UTF-8");}
+        SourceMappedSemanticProvider provider(boolean full)throws Exception{var map=new EmbeddedSourceMap(generated,Map.of(original.path(),original),List.of(new EmbeddedSourceMap.Segment(0,full?text.length():1,original.path(),prefix.length(),prefix.length()+(full?text.length():1))),"authored-exact-copy-control:m8.4-v1");var handle=content.text(CanonicalJson.write(map));var maps=tables.write(SemanticTables.Kind.DOCUMENT,List.of(new SemanticTables.Row(SemanticTables.Kind.DOCUMENT,"main.ts",base.scope(),Map.of("map",handle))).iterator(),()->false);return SourceMappedSemanticProvider.create(base,nativeProvider.analyze(base,()->false),maps,content,tables,SemanticRootCensusTest.MemoryIndex::new,()->false);}
+        SemanticTables.Row call(SemanticTables.Table output)throws IOException{try(var reader=tables.open(output,()->false)){SemanticTables.Row row;while((row=reader.next())!=null)if(row.key().endsWith(":A06:call"))return row;}throw new AssertionError("missing native call");}
+    }
+    @Test void capturedNativeCallMapsToOriginalContainerWithoutChangingItsNativeIdentity()throws Exception{
+        var f=new Fixture();var mapper=f.provider(true);var output=mapper.analyze(mapper.request(),()->false);var nativeCall=f.call(f.nativeProvider.analyze(f.base,()->false));var projected=f.call(output);assertEquals(nativeCall.fields().get("targets"),projected.fields().get("targets"));assertEquals(nativeCall.fields().get("span"),projected.fields().get("span"));var projection=GraphJson.object(projected.fields().get("sourceProjection"));assertEquals("FULL",projection.get("precision"));assertEquals(nativeCall.identity().value(),projection.get("nativeObservation"));var mapping=GraphJson.object(projection.get("mapping"));var piece=GraphJson.object(GraphJson.array(mapping.get("pieces")).getFirst());var range=GraphJson.object(piece.get("range"));var original=f.prefix+f.text+"</script>";assertEquals("twice(4)",original.substring(((java.math.BigDecimal)range.get("start")).intValueExact(),((java.math.BigDecimal)range.get("end")).intValueExact()));assertNotEquals(f.base.inputClosure(),mapper.request().inputClosure());assertEquals(output,mapper.analyze(mapper.request(),()->false));
+    }
+    @Test void unmappedNativeRangeRetainsResolvedBindingButProducesTypedEvidenceGap()throws Exception{
+        var f=new Fixture();var mapper=f.provider(false);var output=mapper.analyze(mapper.request(),()->false);var call=f.call(output);assertEquals("RESOLVED",call.fields().get("status"));assertEquals("UNMAPPED",GraphJson.object(call.fields().get("sourceProjection")).get("precision"));var gaps=new ArrayList<CapabilityGapRecord>();var coverage=new SemanticReconciler().reconcile(mapper.request(),output,f.tables,f.content,Map.of(),Set.of(),mapper.request()::policy,gaps::add,()->false);assertFalse(coverage.complete());assertTrue(gaps.stream().anyMatch(g->g.reasonCode().equals("SEMANTIC_SOURCE_MAPPING_INCOMPLETE")));
+    }
+    @Test void changedOriginalBytesForeignRequestAndCancellationCannotPublishMappedFacts()throws Exception{
+        var f=new Fixture();var mapper=f.provider(true);assertThrows(IOException.class,()->mapper.analyze(f.base,()->false));assertThrows(IOException.class,()->mapper.analyze(mapper.request(),()->true));f.content.blobs.remove(f.original.content().digest());assertThrows(IOException.class,()->mapper.analyze(mapper.request(),()->false));
+    }
+    @Test void storedPrecisionNativeTargetsOffsetsAndDroppedRowsAreRevalidated()throws Exception{
+        var f=new Fixture();var mapper=f.provider(true);var output=mapper.analyze(mapper.request(),()->false);var rows=new ArrayList<SemanticTables.Row>();try(var reader=f.tables.open(output,()->false)){SemanticTables.Row row;while((row=reader.next())!=null)rows.add(row);}
+        for(String mutation:List.of("precision","native","offset","omission")){
+            var changed=new ArrayList<>(rows);var original=changed.getFirst();var fields=new TreeMap<>(original.fields());var projection=new TreeMap<>(GraphJson.object(fields.get("sourceProjection")));
+            switch(mutation){case "precision"->projection.put("precision","UNMAPPED");case "native"->fields.put("targets",List.of(ContentDigest.sha256Utf8("foreign-target").value()));case "offset"->projection.put("mapRowOffset","1");case "omission"->changed.removeFirst();default->throw new AssertionError();}
+            if(!mutation.equals("omission")){fields.put("sourceProjection",projection);changed.set(0,new SemanticTables.Row(original.kind(),original.key(),original.scope(),fields));}
+            var corrupted=f.tables.write(SemanticTables.Kind.OBSERVATION,changed.iterator(),()->false);assertThrows(IOException.class,()->new SemanticReconciler().reconcile(mapper.request(),corrupted,f.tables,f.content,Map.of(),Set.of(),mapper.request()::policy,g->{},()->false),mutation);
+        }
+        f.content.blobs.remove(f.original.content().digest());assertThrows(IOException.class,()->new SemanticReconciler().reconcile(mapper.request(),output,f.tables,f.content,Map.of(),Set.of(),mapper.request()::policy,g->{},()->false));
+    }
+    @Test void mappedNativeHistoryFoldsWithoutTreatingBootstrapAsAnEmptyNativeExport()throws Exception{
+        var f=new Fixture();var mapper=f.provider(true);var output=mapper.analyze(mapper.request(),()->false);var ledger=new SemanticAnswerLedger(f.content,f.tables);var history=ledger.append(mapper.request(),output,Optional.empty(),()->false);var result=ledger.fold(mapper.request(),history,(r,o)->Map.of(),Set.of(),mapper.request()::policy,g->{},()->false);assertEquals(0,result.unavailableRevisions());assertEquals(f.base.census().rows(),result.questions());assertFalse(result.answersComplete());assertEquals(result.questions(),result.counts().get("NARROWED"));
+    }
+    @Test void nativePointsRetainMappedPointsAndCannotManufactureFullSpans()throws Exception {
+        var f=new Fixture();var full=f.provider(true);Map<String,Object> resolution;try(var input=f.content.open(full.request().resolution())){resolution=GraphJson.object(GraphJson.read(new InputStreamReader(input,StandardCharsets.UTF_8),GraphJson.Limits.defaults()));}var rows=new ArrayList<SemanticTables.Row>();int offset=-1;
+        try(var reader=f.tables.open(f.nativeProvider.analyze(f.base,()->false),()->false)){SemanticTables.Row row;while((row=reader.next())!=null){var fields=new TreeMap<>(row.fields());if(row.key().endsWith(":A06:call")){var span=new TreeMap<>(GraphJson.object(fields.get("span")));offset=((java.math.BigDecimal)span.get("start")).intValueExact();span.put("end",span.get("start"));span.put("endLine",span.get("startLine"));span.put("endColumn",span.get("startColumn"));fields.put("span",span);}rows.add(new SemanticTables.Row(row.kind(),row.key(),row.scope(),fields));}}
+        var nativePoints=f.tables.write(SemanticTables.Kind.OBSERVATION,rows.iterator(),()->false);var mapper=SourceMappedSemanticProvider.create(f.base,nativePoints,LanguageSemanticRequest.table(resolution.get("maps")),f.content,f.tables,SemanticRootCensusTest.MemoryIndex::new,()->false);var output=mapper.analyze(mapper.request(),()->false);var projection=GraphJson.object(f.call(output).fields().get("sourceProjection"));assertEquals("POINT_ONLY",projection.get("precision"));var mapping=GraphJson.object(projection.get("mapping"));var point=GraphJson.object(GraphJson.object(GraphJson.array(mapping.get("points")).getFirst()).get("point"));assertEquals(offset+f.prefix.length(),((java.math.BigDecimal)point.get("offset")).intValueExact());var coverage=new SemanticReconciler().reconcile(mapper.request(),output,f.tables,f.content,Map.of(),Set.of(),mapper.request()::policy,g->{},()->false);assertTrue(coverage.sourceMappingGaps()>0);assertFalse(coverage.complete());
+    }
+}

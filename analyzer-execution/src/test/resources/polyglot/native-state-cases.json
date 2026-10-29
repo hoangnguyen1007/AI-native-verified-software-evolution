@@ -1,0 +1,9 @@
+{
+  "schema": "authored-native-cases:m8.4-v1",
+  "cases": {
+    "c-state": {"language": "c", "files": {"main.c": "int state; int run(void) { state=1; state+=2; ++state; return state; }\n"}, "expected": {"stateSymbol": "state", "accessModes": ["WRITE", "READ_WRITE", "READ_WRITE", "READ"]}},
+    "cpp-state": {"language": "cpp", "files": {"main.cpp": "int state; int run(void) { state=1; state+=2; ++state; return state; }\n"}, "expected": {"stateSymbol": "state", "accessModes": ["WRITE", "READ_WRITE", "READ_WRITE", "READ"]}},
+    "objectivec-state": {"language": "objectivec", "files": {"main.m": "int state; int run(void) { state=1; state+=2; ++state; return state; }\n"}, "expected": {"stateSymbol": "state", "accessModes": ["WRITE", "READ_WRITE", "READ_WRITE", "READ"]}}
+  },
+  "replays": {"cpp-state-replay": "cpp-state"}
+}

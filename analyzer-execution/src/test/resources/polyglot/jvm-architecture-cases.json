@@ -1,0 +1,155 @@
+{
+  "schema": "authored-jvm-cases:m8.4-v1",
+  "cases": {
+    "kotlin-architecture": {
+      "language": "kotlin",
+      "files": {
+        "main.kt": "package fixture\nimport kotlin.Deprecated\nopen class Base\nclass Derived:Base() { var counter:Int=0; @Deprecated(\"control\") fun twice(n:Int):Int=n*2; fun run():Int {counter+=1; if(counter>0) return twice(4); return 0} }\n"
+      },
+      "expected": {
+        "call": "twice(4)",
+        "targetName": "twice",
+        "origin": "PROJECT",
+        "categoryControls": {
+          "A01": {
+            "written": false
+          },
+          "A02": {
+            "written": true
+          },
+          "A03": {
+            "written": true
+          },
+          "A04": {
+            "written": true
+          },
+          "A05": {
+            "written": true
+          },
+          "A06": {
+            "written": true
+          },
+          "A07": {
+            "written": true
+          },
+          "A08": {
+            "written": true
+          },
+          "A09": {
+            "written": true
+          },
+          "A10": {
+            "written": true
+          },
+          "A11": {
+            "written": false
+          },
+          "A12": {
+            "written": false
+          }
+        }
+      }
+    },
+    "scala-architecture": {
+      "language": "scala",
+      "files": {
+        "main.scala": "package fixture\nimport scala.deprecated\nclass Base\nclass Derived extends Base { var counter:Int=0; @deprecated(\"control\",\"1\") def twice(n:Int):Int=n*2; def run():Int={counter+=1; if(counter>0) twice(4) else 0} }\n"
+      },
+      "expected": {
+        "call": "twice(4)",
+        "targetName": "twice",
+        "origin": "PROJECT",
+        "categoryControls": {
+          "A01": {
+            "written": false
+          },
+          "A02": {
+            "written": true
+          },
+          "A03": {
+            "written": true
+          },
+          "A04": {
+            "written": true
+          },
+          "A05": {
+            "written": true
+          },
+          "A06": {
+            "written": true
+          },
+          "A07": {
+            "written": true
+          },
+          "A08": {
+            "written": true
+          },
+          "A09": {
+            "written": true
+          },
+          "A10": {
+            "written": true
+          },
+          "A11": {
+            "written": false
+          },
+          "A12": {
+            "written": false
+          }
+        }
+      }
+    },
+    "groovy-architecture": {
+      "language": "groovy",
+      "files": {
+        "main.groovy": "package fixture\nimport groovy.transform.CompileStatic\nclass Base {}\n@CompileStatic class Derived extends Base {int counter=0; @Deprecated int twice(int n) {n*2}; int run() {counter+=1; if(counter>0) return twice(4); return 0} }\n"
+      },
+      "expected": {
+        "call": "twice(4)",
+        "targetName": "twice",
+        "origin": "PROJECT",
+        "categoryControls": {
+          "A01": {
+            "written": false
+          },
+          "A02": {
+            "written": true
+          },
+          "A03": {
+            "written": true
+          },
+          "A04": {
+            "written": true
+          },
+          "A05": {
+            "written": true
+          },
+          "A06": {
+            "written": true
+          },
+          "A07": {
+            "written": true
+          },
+          "A08": {
+            "written": true
+          },
+          "A09": {
+            "written": true
+          },
+          "A10": {
+            "written": true
+          },
+          "A11": {
+            "written": false
+          },
+          "A12": {
+            "written": false
+          }
+        }
+      }
+    }
+  },
+  "replays": {
+    "kotlin-architecture-replay": "kotlin-architecture"
+  }
+}

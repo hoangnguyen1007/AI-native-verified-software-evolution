@@ -1,0 +1,69 @@
+{
+  "captureManifest": {
+    "digest": "sha256:2a40e517602a8309243be62bd4b3af50497048c433a64ce19fd2ce189310039b",
+    "size": 56371
+  },
+  "records": {
+    "ast.txt": {
+      "digest": "sha256:8f690c3631d35550cc72c7f4b30add9866da8a337ee7c56efb2a95ce39ab1481",
+      "size": 21502
+    },
+    "diagnostics.txt": {
+      "digest": "sha256:8494edefc0c991fce0a944df002c6d5191f33f31caf9a5510a0ce4ce39ff3a6b",
+      "size": 543
+    },
+    "syntax.json": {
+      "digest": "sha256:55ac51da1c475480ee314141553f81ea70e43373dad6e44e442f78362c8f2d16",
+      "size": 18102
+    },
+    "version.txt": {
+      "digest": "sha256:b0b8f2656fe883af86488be98fdaefd77793688fde6cb5521d77b437c3558928",
+      "size": 75
+    }
+  },
+  "request": {
+    "censusEngine": {
+      "digest": "sha256:6cda8448b0b3125a5773fd39131f34b459b03cf865567397c6624561cc864f77",
+      "size": 2173
+    },
+    "compiler": {
+      "digest": "sha256:687f863ae0bb8dd4b0db174c6a33fe224a73d09b26ae5f876276fa0babcefcc1",
+      "path": "/opt/evo-toolset/swift/usr/bin/swiftc",
+      "resolvedPath": "/opt/evo-toolset/swift/usr/bin/swift-driver",
+      "size": 37876192
+    },
+    "dialect": "6",
+    "files": [
+      {
+        "path": "main.swift",
+        "sha256": "sha256:fb13005215308b9b7fff58a4877e7ddeb125ae4960afbc158dff4c5678b3b430",
+        "text": "import Swift\nclass Base {}\nclass Derived:Base { var counter:Int=0; @available(*, deprecated) func twice(_ n:Int)->Int {n*2}; func run()->Int {counter+=1; if counter>0 {return twice(4)}; return 0} }\n"
+      }
+    ],
+    "language": "swift",
+    "moduleCachePolicy": "PRIVATE_UNIT_TMPFS_64M_EPHEMERAL",
+    "moduleName": "Fixture",
+    "packageScope": "app",
+    "provider": {
+      "id": "frontend.swift-native",
+      "version": "m8.4-v1"
+    },
+    "repositoryScope": "urn:test:authored-swift",
+    "schema": "native-swift-request:m8.4-v1",
+    "scope": "sha256:f28de9273fa96df4d54373319efc994953db5319527038b4b125e92686f6bbc9",
+    "sourceMaterialization": "native-source-layout:m8.4-v1",
+    "sourceRoot": "/opt/evo-native-inputs/781b38270148b615fc77c6ea6cc5098fcb4439bb52a49d4aa32d67479639ed01/src",
+    "syntaxHeaders": "/opt/evo-toolset/swift-headers",
+    "syntaxLibraries": "/opt/evo-toolset/swift/usr/lib/swift/host",
+    "syntaxRuntime": {
+      "digest": "sha256:687f863ae0bb8dd4b0db174c6a33fe224a73d09b26ae5f876276fa0babcefcc1",
+      "path": "/opt/evo-toolset/swift/usr/bin/swift",
+      "resolvedPath": "/opt/evo-toolset/swift/usr/bin/swift-driver",
+      "size": 37876192
+    },
+    "tool": "sha256:8f1eeb8f5064c76a6985de5dec12dbf131d9c653085e9cf85b9761d5b26d1101",
+    "variant": "default",
+    "workRoot": "/work/d248befc6dd2466da76b44b517651620/native/swift-architecture/state"
+  },
+  "schema": "native-swift-member-fixture:m8.4-v1"
+}

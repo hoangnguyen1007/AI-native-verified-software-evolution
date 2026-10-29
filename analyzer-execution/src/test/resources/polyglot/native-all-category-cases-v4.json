@@ -1,0 +1,738 @@
+{
+  "schema": "authored-native-cases:m8.4-v1",
+  "cases": {
+    "c-architecture": {
+      "language": "c",
+      "files": {
+        "main.c": "#include \"zlib.h\"\nint counter=0;\n__attribute__((annotate(\"architectural\"))) int twice(int n) { return n*2; }\nint run(void) { counter+=1; if(counter>0) return twice(4); return 0; }\n",
+        "zlib.h": "typedef int Counter;\n"
+      },
+      "expected": {
+        "call": "twice(4)",
+        "targetName": "twice",
+        "origin": "PROJECT",
+        "status": "RESOLVED",
+        "categoryControls": {
+          "A01": {
+            "written": false
+          },
+          "A02": {
+            "written": true
+          },
+          "A03": {
+            "written": true
+          },
+          "A04": {
+            "written": true
+          },
+          "A05": {
+            "written": false
+          },
+          "A06": {
+            "written": true
+          },
+          "A07": {
+            "written": true
+          },
+          "A08": {
+            "written": true
+          },
+          "A09": {
+            "written": true
+          },
+          "A10": {
+            "written": true
+          },
+          "A11": {
+            "written": false
+          },
+          "A12": {
+            "written": false
+          }
+        },
+        "callerName": "run"
+      }
+    },
+    "cpp-architecture": {
+      "language": "cpp",
+      "files": {
+        "main.cpp": "#include \"zlib.hpp\"\nstruct Derived: Base { int counter=0; int run() { counter+=1; if(counter>0) return twice(4); return 0; } };\n[[deprecated]] int twice(int n) { return n*2; }\n",
+        "zlib.hpp": "int twice(int n); struct Base { virtual ~Base() = default; };\n"
+      },
+      "expected": {
+        "call": "twice(4)",
+        "targetName": "twice",
+        "origin": "PROJECT",
+        "status": "RESOLVED",
+        "categoryControls": {
+          "A01": {
+            "written": false
+          },
+          "A02": {
+            "written": true
+          },
+          "A03": {
+            "written": true
+          },
+          "A04": {
+            "written": true
+          },
+          "A05": {
+            "written": true
+          },
+          "A06": {
+            "written": true
+          },
+          "A07": {
+            "written": true
+          },
+          "A08": {
+            "written": true
+          },
+          "A09": {
+            "written": true
+          },
+          "A10": {
+            "written": true
+          },
+          "A11": {
+            "written": false
+          },
+          "A12": {
+            "written": false
+          }
+        },
+        "callerName": "run"
+      }
+    },
+    "objectivec-architecture": {
+      "language": "objectivec",
+      "files": {
+        "main.m": "#include \"zlib.h\"\n__attribute__((objc_root_class)) @interface Base @end\n@implementation Base @end\n@interface Derived: Base @end\n@implementation Derived @end\nint counter=0; __attribute__((annotate(\"architectural\"))) int twice(int n) { return n*2; }\nint run(void) { counter+=1; if(counter>0) return twice(4); return 0; }\n",
+        "zlib.h": "typedef int Counter;\n"
+      },
+      "expected": {
+        "call": "twice(4)",
+        "targetName": "twice",
+        "origin": "PROJECT",
+        "status": "RESOLVED",
+        "categoryControls": {
+          "A01": {
+            "written": false
+          },
+          "A02": {
+            "written": true
+          },
+          "A03": {
+            "written": true
+          },
+          "A04": {
+            "written": true
+          },
+          "A05": {
+            "written": true
+          },
+          "A06": {
+            "written": true
+          },
+          "A07": {
+            "written": true
+          },
+          "A08": {
+            "written": true
+          },
+          "A09": {
+            "written": true
+          },
+          "A10": {
+            "written": true
+          },
+          "A11": {
+            "written": false
+          },
+          "A12": {
+            "written": false
+          }
+        },
+        "callerName": "run"
+      }
+    },
+    "python-architecture": {
+      "language": "python",
+      "files": {
+        "main.py": "from typing import Final\nclass Base: pass\nclass Derived(Base):\n    counter: int = 0\n    @staticmethod\n    def twice(n: int) -> int: return n * 2\n    def run(self) -> int:\n        self.counter += 1\n        if self.counter > 0: return Derived.twice(4)\n        return 0\n"
+      },
+      "expected": {
+        "call": "Derived.twice(4)",
+        "targetName": "twice",
+        "origin": "PROJECT",
+        "status": "RESOLVED",
+        "categoryControls": {
+          "A01": {
+            "written": false
+          },
+          "A02": {
+            "written": true
+          },
+          "A03": {
+            "written": true
+          },
+          "A04": {
+            "written": true
+          },
+          "A05": {
+            "written": true
+          },
+          "A06": {
+            "written": true
+          },
+          "A07": {
+            "written": true
+          },
+          "A08": {
+            "written": true
+          },
+          "A09": {
+            "written": true
+          },
+          "A10": {
+            "written": true
+          },
+          "A11": {
+            "written": false
+          },
+          "A12": {
+            "written": false
+          }
+        },
+        "callerName": "run"
+      }
+    },
+    "go-architecture": {
+      "language": "go",
+      "files": {
+        "main.go": "package fixture\nimport \"unsafe\"\ntype Base struct { Value int }; type Derived struct { Base }\nvar counter int\n//go:generate unused-qualification-control\nfunc twice(n int) int { return n*2 }\nfunc run() int { counter+=1; _=unsafe.Sizeof(counter); if counter>0 {return twice(4)}; return 0 }\n"
+      },
+      "expected": {
+        "call": "twice(4)",
+        "targetName": "twice",
+        "origin": "PROJECT",
+        "status": "RESOLVED",
+        "categoryControls": {
+          "A01": {
+            "written": false
+          },
+          "A02": {
+            "written": true
+          },
+          "A03": {
+            "written": true
+          },
+          "A04": {
+            "written": true
+          },
+          "A05": {
+            "written": true
+          },
+          "A06": {
+            "written": true
+          },
+          "A07": {
+            "written": true
+          },
+          "A08": {
+            "written": true
+          },
+          "A09": {
+            "written": true
+          },
+          "A10": {
+            "written": true
+          },
+          "A11": {
+            "written": false
+          },
+          "A12": {
+            "written": false
+          }
+        },
+        "callerName": "run"
+      }
+    },
+    "csharp-architecture": {
+      "language": "csharp",
+      "files": {
+        "main.cs": "using System;\nclass Base {}\nclass Derived:Base { int counter; [Obsolete] static int Twice(int n) {return n*2;} int Run() {counter+=1; if(counter>0) return Twice(4); return 0;} }\n"
+      },
+      "expected": {
+        "call": "Twice(4)",
+        "targetName": "Twice",
+        "origin": "PROJECT",
+        "status": "RESOLVED",
+        "categoryControls": {
+          "A01": {
+            "written": false
+          },
+          "A02": {
+            "written": true
+          },
+          "A03": {
+            "written": true
+          },
+          "A04": {
+            "written": true
+          },
+          "A05": {
+            "written": true
+          },
+          "A06": {
+            "written": true
+          },
+          "A07": {
+            "written": true
+          },
+          "A08": {
+            "written": true
+          },
+          "A09": {
+            "written": true
+          },
+          "A10": {
+            "written": true
+          },
+          "A11": {
+            "written": false
+          },
+          "A12": {
+            "written": false
+          }
+        },
+        "callerName": "Run"
+      }
+    },
+    "visualbasic-architecture": {
+      "language": "visualbasic",
+      "files": {
+        "main.vb": "Imports System\nPublic Class Base\nEnd Class\nPublic Class Derived\n Inherits Base\n Private counter As Integer\n <Obsolete> Public Shared Function Twice(n As Integer) As Integer\n Return n*2\n End Function\n Public Function Run() As Integer\n counter+=1\n If counter>0 Then\n Return Twice(4)\n End If\n Return 0\n End Function\nEnd Class\n"
+      },
+      "expected": {
+        "call": "Twice(4)",
+        "targetName": "Twice",
+        "origin": "PROJECT",
+        "status": "RESOLVED",
+        "categoryControls": {
+          "A01": {
+            "written": false
+          },
+          "A02": {
+            "written": true
+          },
+          "A03": {
+            "written": true
+          },
+          "A04": {
+            "written": true
+          },
+          "A05": {
+            "written": true
+          },
+          "A06": {
+            "written": true
+          },
+          "A07": {
+            "written": true
+          },
+          "A08": {
+            "written": true
+          },
+          "A09": {
+            "written": true
+          },
+          "A10": {
+            "written": true
+          },
+          "A11": {
+            "written": false
+          },
+          "A12": {
+            "written": false
+          }
+        },
+        "callerName": "Run"
+      }
+    },
+    "dart-architecture": {
+      "language": "dart",
+      "files": {
+        "main.dart": "import 'dart:math';\nclass Base {}\nclass Derived extends Base { int counter=0; @deprecated int twice(int n)=>n*2; int run() {counter+=1; if(counter>0) return twice(4); return max(counter,0);} }\n"
+      },
+      "expected": {
+        "call": "twice(4)",
+        "targetName": "twice",
+        "origin": "PROJECT",
+        "status": "CONDITIONAL",
+        "categoryControls": {
+          "A01": {
+            "written": false
+          },
+          "A02": {
+            "written": true
+          },
+          "A03": {
+            "written": true
+          },
+          "A04": {
+            "written": true
+          },
+          "A05": {
+            "written": true
+          },
+          "A06": {
+            "written": true
+          },
+          "A07": {
+            "written": true
+          },
+          "A08": {
+            "written": true
+          },
+          "A09": {
+            "written": true
+          },
+          "A10": {
+            "written": true
+          },
+          "A11": {
+            "written": false
+          },
+          "A12": {
+            "written": false
+          }
+        },
+        "callerName": "run"
+      }
+    },
+    "php-architecture": {
+      "language": "php",
+      "files": {
+        "main.php": "<?php\nnamespace Fixture;\nuse Attribute;\n#[Attribute] class Marker {}\nclass Base {}\nclass Derived extends Base { public int $counter=0; #[Marker] public static function twice(int $n): int {return $n*2;} public function run(): int { $this->counter+=1; if($this->counter>0) return self::twice(4); return 0; } }\n"
+      },
+      "expected": {
+        "call": "self::twice(4)",
+        "targetName": "twice",
+        "origin": "PROJECT",
+        "status": "RESOLVED",
+        "categoryControls": {
+          "A01": {
+            "written": false
+          },
+          "A02": {
+            "written": true
+          },
+          "A03": {
+            "written": true
+          },
+          "A04": {
+            "written": true
+          },
+          "A05": {
+            "written": true
+          },
+          "A06": {
+            "written": true
+          },
+          "A07": {
+            "written": true
+          },
+          "A08": {
+            "written": true
+          },
+          "A09": {
+            "written": true
+          },
+          "A10": {
+            "written": true
+          },
+          "A11": {
+            "written": false
+          },
+          "A12": {
+            "written": false
+          }
+        },
+        "callerName": "run"
+      }
+    },
+    "ruby-architecture": {
+      "language": "ruby",
+      "files": {
+        "main.rb": "# typed: true\nclass Base; end\nclass Derived < Base\n extend T::Sig\n sig {params(n: Integer).returns(Integer)}\n def self.twice(n); n*2; end\n sig {returns(Integer)}\n def self.run\n  counter=1\n  if counter>0\n   twice(4)\n  else\n   0\n  end\n end\nend\nrequire_relative 'zlib'\n",
+        "zlib.rb": "# typed: true\nmodule FixtureResource; end\n"
+      },
+      "expected": {
+        "call": "twice(4)",
+        "targetName": "twice",
+        "origin": "PROJECT",
+        "status": "RESOLVED",
+        "categoryControls": {
+          "A01": {
+            "written": false
+          },
+          "A02": {
+            "written": true
+          },
+          "A03": {
+            "written": true
+          },
+          "A04": {
+            "written": true
+          },
+          "A05": {
+            "written": true
+          },
+          "A06": {
+            "written": true
+          },
+          "A07": {
+            "written": true
+          },
+          "A08": {
+            "written": true
+          },
+          "A09": {
+            "written": true
+          },
+          "A10": {
+            "written": true
+          },
+          "A11": {
+            "written": false
+          },
+          "A12": {
+            "written": false
+          }
+        },
+        "callerName": "run"
+      }
+    },
+    "rust-architecture": {
+      "language": "rust",
+      "files": {
+        "lib.rs": "mod zlib;\ntrait Base {fn value(&self)->i32;}\n#[derive(Clone)] struct Derived {counter:i32}\nimpl Base for Derived {fn value(&self)->i32 {self.counter}}\nfn twice(n:i32)->i32 {n*2}\nfn run()->i32 {let mut counter=0; counter+=1; if counter>0 {twice(4)} else {0}}\n",
+        "zlib.rs": "pub const VALUE:i32=1;\n"
+      },
+      "expected": {
+        "call": "twice(4)",
+        "targetName": "twice",
+        "origin": "PROJECT",
+        "status": "RESOLVED",
+        "categoryControls": {
+          "A01": {
+            "written": false
+          },
+          "A02": {
+            "written": true
+          },
+          "A03": {
+            "written": true
+          },
+          "A04": {
+            "written": true
+          },
+          "A05": {
+            "written": true
+          },
+          "A06": {
+            "written": true
+          },
+          "A07": {
+            "written": true
+          },
+          "A08": {
+            "written": true
+          },
+          "A09": {
+            "written": true
+          },
+          "A10": {
+            "written": true
+          },
+          "A11": {
+            "written": false
+          },
+          "A12": {
+            "written": false
+          }
+        },
+        "callerName": "run"
+      }
+    },
+    "swift-architecture": {
+      "language": "swift",
+      "files": {
+        "main.swift": "import Swift\nclass Base {}\nclass Derived:Base { var counter:Int=0; @available(*, deprecated) func twice(_ n:Int)->Int {n*2}; func run()->Int {counter+=1; if counter>0 {return twice(4)}; return 0} }\n"
+      },
+      "expected": {
+        "call": "twice(4)",
+        "targetName": "twice",
+        "origin": "PROJECT",
+        "status": "CONDITIONAL",
+        "categoryControls": {
+          "A01": {
+            "written": false
+          },
+          "A02": {
+            "written": true
+          },
+          "A03": {
+            "written": true
+          },
+          "A04": {
+            "written": true
+          },
+          "A05": {
+            "written": true
+          },
+          "A06": {
+            "written": true
+          },
+          "A07": {
+            "written": true
+          },
+          "A08": {
+            "written": true
+          },
+          "A09": {
+            "written": true
+          },
+          "A10": {
+            "written": true
+          },
+          "A11": {
+            "written": false
+          },
+          "A12": {
+            "written": false
+          }
+        },
+        "callerName": "run"
+      }
+    },
+    "typescript-architecture": {
+      "language": "typescript",
+      "files": {
+        "main.ts": "export function mark(value:any, context:any):void {}\n@mark export class Base { counter:number=0; twice(n:number):number {return n*2;} }\nexport class Derived extends Base { run():number { this.counter+=1; if(this.counter>0) return this.twice(4); return 0; } }\n"
+      },
+      "expected": {
+        "call": "this.twice(4)",
+        "targetName": "twice",
+        "categoryControls": {
+          "A01": {
+            "written": false
+          },
+          "A02": {
+            "written": true
+          },
+          "A03": {
+            "written": true
+          },
+          "A04": {
+            "written": true
+          },
+          "A05": {
+            "written": true
+          },
+          "A06": {
+            "written": true
+          },
+          "A07": {
+            "written": true
+          },
+          "A08": {
+            "written": true
+          },
+          "A09": {
+            "written": false
+          },
+          "A10": {
+            "written": true
+          },
+          "A11": {
+            "written": false
+          },
+          "A12": {
+            "written": false
+          }
+        },
+        "origin": "PROJECT",
+        "status": "CONDITIONAL",
+        "callerName": "run"
+      }
+    },
+    "javascript-architecture": {
+      "language": "javascript",
+      "files": {
+        "main.js": "/** @param {number} n @returns {number} */\nexport function twice(n) {return n*2;}\nexport class Base { constructor() {this.counter=0;} }\nexport class Derived extends Base { run() {this.counter+=1; if(this.counter>0) return twice(4); return 0;} }\n"
+      },
+      "expected": {
+        "call": "twice(4)",
+        "targetName": "twice",
+        "categoryControls": {
+          "A01": {
+            "written": false
+          },
+          "A02": {
+            "written": true
+          },
+          "A03": {
+            "written": true
+          },
+          "A04": {
+            "written": true
+          },
+          "A05": {
+            "written": true
+          },
+          "A06": {
+            "written": true
+          },
+          "A07": {
+            "written": true
+          },
+          "A08": {
+            "written": false
+          },
+          "A09": {
+            "written": false
+          },
+          "A10": {
+            "written": true
+          },
+          "A11": {
+            "written": false
+          },
+          "A12": {
+            "written": false
+          }
+        },
+        "origin": "PROJECT",
+        "status": "RESOLVED",
+        "callerName": "run"
+      }
+    }
+  },
+  "replays": {
+    "cpp-architecture-replay": "cpp-architecture",
+    "go-architecture-replay": "go-architecture",
+    "typescript-architecture-replay": "typescript-architecture"
+  },
+  "adjudication": {
+    "previousExpectations": "sha256:6056b6d0731e47f9ad8fab33c05e61f7be4ab148f2d2383928474ee9bcca5c84",
+    "reason": "Instance calls with an unknown self receiver may be overridden. Keep the declared slot and conditional runtime target, rather than claiming one runtime implementation.",
+    "references": [
+      "https://dart.dev/language/extend",
+      "https://raw.githubusercontent.com/swiftlang/swift-book/main/TSPL.docc/LanguageGuide/Inheritance.md"
+    ],
+    "scope": "Only receiver-call expected status changed; native source/input bytes and failed results are preserved."
+  }
+}

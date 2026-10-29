@@ -132,6 +132,7 @@ public final class EvoApp {
         command.addSubcommand("execution",new Execution(r));
         command.addSubcommand("core-mvp",new CoreMvp(r));
         command.addSubcommand("captured-java",new CapturedJava(r));
+        command.addSubcommand("semantic",new SemanticInspect(r));
         command.addSubcommand("acquire",new Acquire(r));
         command.addSubcommand("inventory",new Inventory(r));
         command.addSubcommand("readiness",new Readiness(r));
@@ -147,6 +148,25 @@ public final class EvoApp {
         command.addSubcommand("open",new Open(r));command.addSubcommand("use",new Use(r));command.addSubcommand("export",new Export(r));
         command.addSubcommand("next",new Next(r));
         command.addSubcommand("completion",new Completion(command,r));
+    }
+    @Command(name="semantic",mixinStandardHelpOptions=true,description="Read captured semantic contexts and gaps / Đọc context và khoảng trống ngữ nghĩa")
+    private final class SemanticInspect implements Callable<Integer>{
+        final Root r;SemanticInspect(Root r){this.r=r;}
+        @Parameters(arity="0..1",defaultValue="summary",paramLabel="summary|contexts|gaps|root-gaps|answers") String operation;
+        @Option(names="--semantic-store",required=true,paramLabel="DIR",description="Existing semantic publication directory / Thư mục kết quả đã lưu") Path store;
+        @Option(names="--plan",required=true,paramLabel="SHA256",description="Exact selected-context plan / Kế hoạch context chính xác") String plan;
+        @Option(names="--semantic-policy",paramLabel="SHA256",description="Current policy; required without --semantic-authority / Chính sách hiện tại") String policy;
+        @Option(names="--semantic-authority",paramLabel="DIR",description="Operator public keys, registered methods and signed claims / Khóa công khai và bằng chứng đã ký") Path authority;
+        @Option(names="--context-key",paramLabel="KEY",description="Context key for gaps / Khóa context cần đọc gap") String key;
+        @Option(names="--answer-view",paramLabel="CURRENT|HISTORY|CONFLICTS",description="Semantic answer view / Phép chiếu câu trả lời") String answerView;
+        public Integer call()throws Exception{
+            boolean selected=Set.of("gaps","answers").contains(operation);if(!Set.of("summary","contexts","gaps","root-gaps","answers").contains(operation)||!selected&&key!=null||selected&&key==null||!operation.equals("answers")&&answerView!=null)throw new InputFailure("INVALID_SEMANTIC_QUERY");
+            if(policy==null&&authority==null)throw new InputFailure("SEMANTIC_POLICY_OR_AUTHORITY_REQUIRED");
+            Path path;try{path=StreamingContentStore.existingDirectory(resolve(store));for(var directory:List.of(path.resolve("cas"),path.resolve("publications")))StreamingContentStore.existingDirectory(directory);}catch(IOException unavailable){throw new IOException("SEMANTIC_STORE_UNAVAILABLE",unavailable);}
+            var content=new StreamingContentStore(path.resolve("cas"));var tables=new com.evolution.analysis.polyglot.SemanticTables(content,65536);var trust=policy==null?com.evolution.analysis.filesystem.SemanticAuthorityStore.policy(resolve(authority)):new ContentDigest(policy);Optional<com.evolution.analysis.polyglot.SemanticPublicationValidation> validation=Optional.empty();if(authority!=null){var configured=new com.evolution.analysis.filesystem.SemanticAuthorityStore(resolve(authority),content,tables,trust);validation=Optional.of(configured.validation(()->com.evolution.analysis.filesystem.SqliteSemanticCensusIndex.temporary(path.resolve("semantic-work"),65536)));}var queries=new SemanticPublicationStore(path.resolve("publications"),content,tables,validation).queries(()->trust);var identity=new ContentDigest(plan);var cursor=Optional.ofNullable(r.cursor).map(value->com.evolution.analysis.polyglot.SemanticQueryService.cursor(GraphJson.read(value,new GraphJson.Limits(65536,16,65536))));Object data;
+            if(operation.equals("summary")){if(r.cursor!=null)throw new InputFailure("CURSOR_NOT_APPLICABLE");data=queries.summary(identity,()->false);}else data=operation.equals("contexts")?queries.contexts(identity,r.limit,cursor,()->false):operation.equals("root-gaps")?queries.rootGaps(identity,r.limit,cursor,()->false):operation.equals("answers")?queries.answers(identity,key,answerView==null?"CURRENT":answerView,r.limit,cursor,()->false):queries.gaps(identity,key,r.limit,cursor,()->false);
+            boolean complete=data instanceof com.evolution.analysis.polyglot.SemanticQueryService.Summary summary?summary.complete():((com.evolution.analysis.polyglot.SemanticQueryService.Page<?>)data).summary().complete();return emit(r,"semantic",Map.of("apiVersion",com.evolution.analysis.polyglot.SemanticQueryService.VERSION,"resultIdentity",CanonicalJson.sha256(data),"data",data),complete?0:3);
+        }
     }
     @Command(name="completion",mixinStandardHelpOptions=true,description="Generate shell completion / Tạo script hoàn thành lệnh")
     private final class Completion implements Callable<Integer>{

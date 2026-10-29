@@ -23,6 +23,8 @@ Not SE121 delivery commitments without an explicit phase change: AI diagnosis/RA
 
 ## Authority and decisions
 
+**CONFIRMED human acceptance scope change (2026-10-29):** M8.4 Step 5 / Bước 1 (Task 1) is **CLOSED / CORE MVP**. The human explicitly accepted the delivered 18 adapters and existing scoped native journeys, explicit unsupported outcomes, durable replay, embedded/cross-provider paths and authentication mechanisms. Full A01–A12 qualification and production validation-method registration are withdrawn from this task's closure criteria; they are not passing evidence or newly created tasks. Preserve actual capability gaps, unqualified pack/method markers, isolated execution and truthful trust labels. This acceptance does not close Step 5, M8.4 or a later gate. The amendment to ADR-007 and the Task-1 execution record own the decision and evidence.
+
 Platform instructions and execution permissions apply first. Within the project, explicit human decisions take precedence; this file is the canonical operating contract. Roles, workflows, skills, and examples specialize it, never override scope, safety, or existing authorization. Report material conflicts; do not stop for a routine detail already authorized.
 
 Evidence authority: human decisions > supplied official project/academic documents > verified repository evidence/experiments > official technical specifications > peer-reviewed research > AI proposals.

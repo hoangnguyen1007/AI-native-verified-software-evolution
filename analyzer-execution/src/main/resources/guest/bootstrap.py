@@ -47,6 +47,10 @@ def validate_public_key(value):
         raise ValueError('INVALID_CONTROLLER_KEY')
 
 
+def source_accounts(accounts):
+    return sorted(account.pw_name for account in accounts if 1000<=account.pw_uid<65534 and account.pw_name not in ('evoctl','evobuild'))
+
+
 def checked(argv):
     result = subprocess.run(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                             stderr=subprocess.DEVNULL, timeout=90, check=False,
@@ -91,7 +95,7 @@ def main():
     # Durable intent first; a failed bootstrap may not be silently retried as a clean image.
     write_exclusive(marker, json.dumps(dict(schema='guest-worker-bootstrap-intent:m8.4-v1', request=request), sort_keys=True))
     checked(['/usr/sbin/usermod', '-L', '-G', '', 'evobuild'])
-    checked(['/usr/sbin/usermod', '-L', 'nguyen'])
+    for name in source_accounts(pwd.getpwall()):checked(['/usr/sbin/usermod','-L',name])
     # Old authored work stays present and root-only. No evidence or user source is deleted.
     work = Path('/work')
     work.mkdir(mode=0o711, exist_ok=True)

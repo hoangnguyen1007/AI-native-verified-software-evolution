@@ -272,6 +272,8 @@ Exit gate: a user can complete the registered end-to-end product journey on a pi
 
 ### M8.4 — Comprehensive Repository Readiness Upgrade (Mandatory Pre-M9 Task)
 
+**CONFIRMED human delivery adjustment (2026-10-29):** Step 5 / Bước 1 is **CLOSED / CORE MVP** for the demonstrated 18-adapter/native-capture, explicit-gap, replay, embedded/cross-provider and authentication paths. Full A01–A12 qualification and production-method registration are withdrawn from that task's exit, without being certified or turned into replacement tasks. ADR-007 owns the acceptance amendment. Step 5 continues with its existing Bước 2–3; M8.4 and later gates are unchanged.
+
 **Status: IN PROGRESS (mandatory before M9); operational slice status is in [current state](current-state.md).**
 
 This task is established pursuant to the binding **Human Mandate on Comprehensive Coverage** ([docs/architecture/comprehensive-repository-coverage-problems.md](architecture/comprehensive-repository-coverage-problems.md)).
