@@ -52,7 +52,7 @@ def commands(registration):
     if not isinstance(names,list) or len(set(names))!=len(names) or set(names)-set((*BASE_PROBES,*EXTRA_PROBES)):raise ValueError('SDK_PROBE_PROFILE_NOT_REGISTERED')
     if 'probeScope' in registration:
         if registration['probeScope']!='EXACT_NATIVE_CONTEXTS':raise ValueError('SDK_PROBE_SCOPE_UNSUPPORTED')
-        contexts=registration.get('nativeCampaign',{}).get('contexts',{});languages={context['language'] for context in contexts.values()};required={'c':{'clang'},'cpp':{'clang'},'objectivec':{'clang'},'csharp':{'dotnet'},'visualbasic':{'dotnet'},'python':{'node'},'go':{'go'},'dart':{'dart'},'php':{'php'},'ruby':{'ruby','ruby-parse-shape','ruby-symbol-shape'},'rust':{'rust','rust-parse-shape'},'swift':{'swift','swift-parse-shape','swift-typed-shape'},'typescript':{'node'},'javascript':{'node'}}
+        contexts=registration.get('nativeCampaign',{}).get('contexts',{});languages={context['language'] for context in contexts.values()};required={'c':{'clang'},'cpp':{'clang'},'objectivec':{'clang'},'csharp':{'dotnet'},'visualbasic':{'dotnet'},'python':{'node'},'go':{'go'},'dart':{'dart'},'php':{'php'},'ruby':{'ruby','ruby-parse-shape','ruby-symbol-shape'},'rust':{'rust','rust-parse-shape'},'swift':{'swift','swift-parse-shape','swift-typed-shape'},'typescript':{'node'},'javascript':{'node'},'frontendarchitecture':{'node'}}
         if not languages or not languages<=required.keys() or set(names)!=set().union(*(required[language] for language in languages)):raise ValueError('SDK_NATIVE_PROBE_DENOMINATOR_MISMATCH')
     elif not set(BASE_PROBES)<=set(names):raise ValueError('SDK_PROBE_PROFILE_NOT_REGISTERED')
     if set(names)&{'kotlin','scala','groovy'} and not java:raise ValueError('SDK_IMAGE_JAVA_RUNTIME_REQUIRED')

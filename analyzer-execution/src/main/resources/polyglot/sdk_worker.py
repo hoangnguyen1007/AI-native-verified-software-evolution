@@ -23,6 +23,8 @@ CONTROLS=tuple(dict.fromkeys((*base.CONTROLS,'polyglot/sdk_worker.py','polyglot/
                             'polyglot/dart_engine.py','polyglot/dart/dart_engine.dart','polyglot/php_engine.py','polyglot/php/php_engine.php',
                             'polyglot/rust_engine.py','polyglot/native_lsp_projection.py','polyglot/ruby_engine.py','polyglot/swift_engine.py','polyglot/swift_indexstore.py','polyglot/swift/SwiftCensus.swift','polyglot/worker-sdk.ps1')))
 SCOPE='AUTHORED_NATIVE_SDK_AND_FRONTEND'
+ARCHITECTURE_CONTROLS=('common.cjs','worker.cjs','tools.cjs','tool-tree.cjs','toolchain.json','resources.cjs','javascript.cjs','structured.cjs','frameworks.cjs','census.cjs','dsl.cjs','routing.cjs','routing-toolchain.json','configuration.cjs','schema-models.cjs','source-maps.cjs','contract-models.cjs','federation.cjs','templates.cjs','nuxt-toolchain.json','nuxt-config.cjs','nuxt-schema-runner.cjs','vue-toolchain.json','vue-context.cjs')
+CONTROLS=(*CONTROLS,'polyglot/architecture_guest.py',*('polyglot/architecture/'+name for name in ARCHITECTURE_CONTROLS))
 
 
 def private_controller_identity(root):
@@ -47,6 +49,18 @@ def image_runtime_names(sdk):
 
 def register(args):
     capacity=work_bytes(getattr(args,'work_bytes',2147483648))
+    campaign=None;sealed=None
+    if getattr(args,'campaign',None):
+        campaign=read_campaign(args.campaign);validate_campaign(campaign);sealed=pin_campaign_assets(campaign_assets(campaign))
+        from architecture_guest import inspect as inspect_architecture,scratch_budget
+        expanded=compressed=0
+        for role,asset in sealed.items():
+            if role in ('architecture','architecture-routing','architecture-nuxt','architecture-vue'):
+                expanded+=inspect_architecture(asset['path'],'nuxt-config-v1' if role=='architecture-nuxt' else 'base')['logicalBytes'];compressed+=asset['size']
+        if expanded:
+            from native_guest import captured_bytes
+            source=sum(len(captured_bytes(file,item['language'])) for item in campaign['contexts'].values() for file in item['request']['files'])
+            scratch_budget(expanded,compressed,source)
     selected=base.read(args.template/'setup.json')
     if selected.get('acceptanceScope')=='AUTHORED_NATIVE_SDK_TEMPLATE':
         from sdk_template import validate as validate_native_template
@@ -82,15 +96,6 @@ def register(args):
     profile.update(schema='polyglot-sdk-worker-profile:m8.4-v1',acceptanceScope=SCOPE,controls=controls,seed=base.digest(seed),sdk=media,
                    workPolicy=dict(workBytes=capacity,memoryBytes=2147483648,tasksMax=256,cpuPercent=100,overlayBytes=1073741824,runtimeMillis=900000))
     if getattr(args,'campaign',None):
-        campaign=base.read(args.campaign)
-        validate_campaign(campaign)
-        sealed={}
-        assets=campaign_assets(campaign)
-        for name,item in assets.items():
-            path=base.unaliased(item['path']);target=root/'campaign'/name
-            target.parent.mkdir(exist_ok=True)
-            with base.frozen(path,{k:item[k] for k in ('size','digest')}) as source,target.open('xb') as out:__import__('shutil').copyfileobj(source,out,65536)
-            sealed[name]=dict(path=str(target),**base.handle(target))
         # Captured source text is data. No context can choose an executable or compiler entry point.
         sealed=dict(schema=campaign['schema'],contexts=campaign['contexts'],assets=sealed) if 'assets' in campaign else dict(schema=campaign['schema'],contexts=campaign['contexts'],**sealed)
         base.write(root/'campaign.json',sealed);profile['campaign']=base.handle(root/'campaign.json')
@@ -99,7 +104,13 @@ def register(args):
     request.update(schema='hyperv-polyglot-provision-request:m8.4-v1',attempt=str(attempt),workspace=str(root),launch=base.digest(root/'profile.json'),driverPin=base.digest(RESOURCES/'polyglot/worker-sdk.ps1'),seed=dict(path=str(seed),**base.handle(seed)),
                    tools=dict(root=media['root'],path=str(sdk),**media['media']),resources=dict(processors=2,memoryBytes=3221225472))
     base.write(root/'provision-request.json',request)
-    template.update(attempt=str(attempt),root=str(root),vmName='evo-worker-'+attempt.hex,acceptanceScope=SCOPE,authorization='HUMAN_TASK_M845_STEP1',workspace=str(args.workspace.resolve()),python=sys.executable,pythonPin=base.digest(sys.executable))
+    authorization='HUMAN_TASK_M845_STEP2' if getattr(args,'campaign',None) and any(item['language']=='frontendarchitecture' for item in campaign['contexts'].values()) else 'HUMAN_TASK_M845_STEP1'
+    template.update(attempt=str(attempt),root=str(root),vmName='evo-worker-'+attempt.hex,acceptanceScope=SCOPE,authorization=authorization,workspace=str(args.workspace.resolve()),python=sys.executable,pythonPin=base.digest(sys.executable))
+    if getattr(args,'evidence_root',None):
+        evidence_parent=base.unaliased(args.evidence_root).resolve(strict=True)
+        evidence=evidence_parent/('polyglot-sdk-'+attempt.hex);evidence.mkdir()
+        subprocess.run(['icacls',str(evidence),'/inheritance:r','/grant:r','*'+receipt['owner']+':(OI)(CI)F','*S-1-5-18:(OI)(CI)F'],check=True,stdout=subprocess.DEVNULL)
+        template['captureRoot']=str(evidence/'capture')
     template.pop('approvedBy',None);base.write(root/'setup.json',template)
     base.write(root/'controller-config.json',dict(workerHost=template['guestAddress'],hostKeyAlias=template['guestAddress'],identityFile=template['identityFile'],knownHostsFile=str(root/'known_hosts')))
     sys.path.insert(0,str(RESOURCES/'mvp'));from capture import export_request
@@ -130,6 +141,28 @@ def validate_campaign(value):
 def campaign_assets(value):return value['assets'] if 'assets' in value else {name:value[name] for name in ('platform','adapters')}
 
 
+def pin_campaign_assets(assets):
+    result={}
+    for name,item in assets.items():
+        path=base.unaliased(item['path']);pin={k:item[k] for k in ('size','digest')}
+        with base.frozen(path,pin):pass
+        path.chmod(0o444)
+        result[name]=dict(path=str(path),**pin)
+    return result
+
+
+def capture_destination(root,setup):
+    path=base.unaliased(setup.get('captureRoot',root/'capture'))
+    if path.name!='capture' or not path.parent.is_dir():raise ValueError('SDK_CAPTURE_DESTINATION')
+    return path
+
+
+def read_campaign(path):
+    # A single authored worker batch includes captured SDK declarations, unlike
+    # small control metadata. This is a per-worker transport bound, not repo admission.
+    return base.read(path,maximum=64*1024*1024)
+
+
 def validate_registration(root):
     setup=base.read(root/'setup.json');profile=base.read(root/'profile.json');attempt=str(uuid.UUID(setup['attempt']))
     registered=base.read(Path.home()/'.evo/polyglot-sdk-workers/registrations'/(attempt+'.json'))
@@ -140,17 +173,28 @@ def validate_registration(root):
             or base.handle(base.unaliased(profile['sdk']['path']))!=profile['sdk']['media']
             or base.digest(sys.executable)!=setup['pythonPin'] or base.digest(setup['powershell'])!=setup['powershellPin']):raise ValueError('SDK_WORKER_REGISTRATION_CHANGED')
     if base.digest(setup['hostStorage']['receipt'])!=setup['hostStorage']['receiptDigest']:raise ValueError('SDK_HOST_VOLUME_CHANGED')
+    capture_destination(root,setup)
     if 'controllerTransport' in profile:
         identity=base.unaliased(setup['identityFile']);identity.relative_to(root.resolve());transport=profile['controllerTransport']
         if set(transport)!={'private','public'} or base.handle(identity)!=transport['private'] or base.handle(str(identity)+'.pub')!=transport['public']:raise ValueError('SDK_CONTROLLER_TRANSPORT_CHANGED')
     if 'campaign' in profile:
         if base.handle(root/'campaign.json')!=profile['campaign']:raise ValueError('SDK_JVM_CAMPAIGN_CHANGED')
-        campaign=base.read(root/'campaign.json');validate_campaign(campaign)
+        campaign=read_campaign(root/'campaign.json');validate_campaign(campaign)
         for item in campaign_assets(campaign).values():
             if base.handle(base.unaliased(item['path']))!={key:item[key] for key in ('size','digest')}:raise ValueError('SDK_NATIVE_TOOL_CHANGED')
     for name,version in profile['runtimeLibraries'].items():
         if __import__('importlib.metadata').metadata.version(name)!=version:raise ValueError('SDK_CONTROL_LIBRARY_CHANGED')
     return setup,profile
+
+
+def management_abort(root,attempt):
+    result=Path(root)/'supervisor-result.json'
+    if not result.exists():return
+    value=base.read(base.unaliased(result));state=value.get('state',{})
+    if uuid.UUID(state.get('attempt','')).hex!=uuid.UUID(attempt).hex:raise ValueError('SDK_SUPERVISOR_SCOPE')
+    reason=value.get('reason','')
+    if not re.fullmatch('[A-Z_0-9]{1,96}',reason):raise ValueError('SDK_SUPERVISOR_REASON')
+    if reason!='CONTROLLER_PROTOCOL_COMPLETE':raise RuntimeError('SDK_SUPERVISOR_STOPPED:'+reason)
 
 
 def probe(root,setup,profile):
@@ -160,8 +204,12 @@ def probe(root,setup,profile):
     def remote(command,data=None,timeout=60,allowed=(0,)):
         stdin,out,err=client.exec_command(command,timeout=timeout)
         if data is not None:stdin.write(data)
-        stdin.channel.shutdown_write();channel=out.channel;end=time.monotonic()+timeout;stdout=bytearray();stderr=bytearray()
+        stdin.channel.shutdown_write();channel=out.channel;end=time.monotonic()+timeout;stdout=bytearray();stderr=bytearray();next_supervisor=0
         while not channel.exit_status_ready() or channel.recv_ready() or channel.recv_stderr_ready():
+            if time.monotonic()>=next_supervisor:
+                try:management_abort(root,attempt)
+                except Exception:channel.close();raise
+                next_supervisor=time.monotonic()+.25
             if time.monotonic()>end:channel.close();raise RuntimeError('SDK_MANAGEMENT_WATCHDOG')
             if channel.recv_ready():stdout.extend(channel.recv(65536))
             if channel.recv_stderr_ready():stderr.extend(channel.recv_stderr(65536))
@@ -184,6 +232,9 @@ def probe(root,setup,profile):
         transfers=[('polyglot/sdk_guest.py','sdk_guest.py'),('polyglot/guest_semantic_runner.py','guest_semantic_runner.py'),('guest/runner.py','base-runner.py'),('polyglot/jvm_guest.py','jvm_guest.py')]
         transfers.extend(('polyglot/'+name,name) for name in ('native_guest.py','native_protocol.py','lsp_client.py','typescript_engine.py','typescript-worker.cjs','typescript-tool.json','python_engine.py','go_engine.py','clang_engine.py','dart_engine.py','php_engine.py','rust_engine.py','native_lsp_projection.py','ruby_engine.py','swift_engine.py','swift_indexstore.py'))
         transfers.extend([('polyglot/dart/dart_engine.dart','dart_engine.dart'),('polyglot/php/php_engine.php','php_engine.php'),('polyglot/swift/SwiftCensus.swift','SwiftCensus.swift')])
+        transfers.append(('polyglot/architecture_guest.py','architecture_guest.py'))
+        transfers.extend(('polyglot/architecture/'+name,'architecture/'+name) for name in ARCHITECTURE_CONTROLS)
+        remote('install -d -m 0700 '+staging+'/architecture');remote('sudo -n install -d -m 0755 '+control+'/architecture')
         with client.open_sftp() as sftp:
             for source,name in transfers:
                 path=root/'control-sources'/source
@@ -202,7 +253,7 @@ def probe(root,setup,profile):
         if 'campaign' in profile:
             prepared=transfer_campaign(root,control,client,remote);registry['nativeCampaign' if prepared['schema']=='authored-native-campaign:m8.4-v1' else 'campaign']=prepared
         base.write(root/'guest-registration.json',registry)
-        remote('sudo -n tee '+control+'/registration.json',json.dumps(registry));remote('sudo -n chmod 0444 '+control+'/registration.json');remote('sudo -n chown root:root '+work);remote('sudo -n chmod 0755 '+work)
+        remote('sudo -n tee '+control+'/registration.json > /dev/null',json.dumps(registry));remote('sudo -n chmod 0444 '+control+'/registration.json');remote('sudo -n chown root:root '+work);remote('sudo -n chmod 0755 '+work)
         raw=remote('sudo -n /usr/bin/python3 '+control+'/sdk_guest.py',json.dumps(dict(schema='sdk-worker-control-request:m8.4-v1',attempt=attempt,recipe='probe-versions')),600,allowed=(0,2))
         result=json.loads(raw,object_pairs_hook=base.unique);base.write(root/'sdk-probe-result.json',result)
         if set(result['results'])!=set(registry.get('probeNames',('node','go','dotnet','dart','ruby','clang','kotlin','scala','groovy'))) or result['qualified'] is not False:raise ValueError('SDK_PROBE_DENOMINATOR_CHANGED')
@@ -214,7 +265,7 @@ def probe(root,setup,profile):
 
 
 def transfer_campaign(root,control,client,remote):
-    campaign=base.read(root/'campaign.json');validate_campaign(campaign)
+    campaign=read_campaign(root/'campaign.json');validate_campaign(campaign)
     if 'assets' in campaign:return transfer_native_campaign(root,control,campaign,client,remote)
     target=dict(schema='registered-jvm-campaign:m8.4-v1',contexts={})
     with client.open_sftp() as sftp:
@@ -246,10 +297,12 @@ def transfer_native_campaign(root,control,campaign,client,remote):
     target=dict(schema=campaign['schema'],contexts=campaign['contexts'],assets={});attempt=base.read(root/'setup.json')['attempt']
     with client.open_sftp() as sftp:
         for name,item in sorted(campaign['assets'].items()):
-            stage=remote_staging(attempt,name);path=control+'/asset-'+name
+            stage=remote_staging(attempt,'asset-'+name);path=control+'/asset-'+name
             with base.frozen(item['path'],{k:item[k] for k in ('size','digest')}) as source,sftp.open(stage,'wx') as out:__import__('shutil').copyfileobj(source,out,65536)
             remote('sudo -n install -m '+('0555' if name=='go' else '0444')+' '+stage+' '+path)
             if remote('sudo -n sha256sum '+path).decode('ascii').split()[0]!=item['digest'][7:]:raise ValueError('NATIVE_ASSET_TRANSFER_CHANGED')
+            # The verified root-owned input remains; temporary transport bytes are not analysis outputs.
+            remote('rm -- '+stage)
             target['assets'][name]=dict(path=path,size=item['size'],digest=item['digest'])
     return target
 
@@ -290,7 +343,7 @@ def run(root):
             if watcher is not None:base.write(root/'controller-protocol-complete.json',dict(attempt=attempt,fence=owner['fence'],launch=owner['launch']))
         if watcher is not None and watcher.wait(timeout=45)!=0:raise RuntimeError('SDK_SUPERVISOR_FAILED')
     def start():provision('Start');wait_bootstrap(root,setup,uuid.UUID(attempt).hex)
-    def capture():checked([sys.executable,str(RESOURCES/'mvp/capture.py'),'--root',str(root/'capture'),'--config',str(root/'controller-config.json'),'--owner',str(owner_path),'--work-attempt',uuid.UUID(attempt).hex,'--request',str(root/'export-request.json')])
+    def capture():checked([sys.executable,str(RESOURCES/'mvp/capture.py'),'--root',str(capture_destination(root,setup)),'--config',str(root/'controller-config.json'),'--owner',str(owner_path),'--work-attempt',uuid.UUID(attempt).hex,'--request',str(root/'export-request.json')])
     base.write(root/'polyglot-launch-intent.json',dict(schema='polyglot-sdk-launch-intent:m8.4-v1',attempt=attempt,profile=base.digest(root/'profile.json')))
     sequence(lambda:provision('Prepare'),supervise,start,lambda:probe(root,setup,profile),capture,stop)
     if base.handle(profile['sdk']['path'])!=profile['sdk']['media']:raise ValueError('SDK_MEDIA_CHANGED_DURING_EXECUTION')
@@ -303,6 +356,7 @@ def main():
     parser=argparse.ArgumentParser();commands=parser.add_subparsers(dest='command',required=True);create=commands.add_parser('register')
     for name in ('template','workspace','media'):create.add_argument('--'+name,type=Path,required=True)
     create.add_argument('--campaign',type=Path)
+    create.add_argument('--evidence-root',type=Path)
     create.add_argument('--work-bytes',type=int,default=2147483648)
     launch=commands.add_parser('run');launch.add_argument('--root',type=Path,required=True);args=parser.parse_args()
     print(json.dumps(register(args) if args.command=='register' else run(args.root.resolve()),sort_keys=True))

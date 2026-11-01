@@ -46,6 +46,31 @@ On POSIX use `.venv/bin/python`. This setup gives the tests `pycdlib`, `cryptogr
 
 These controls do not provision a VM or qualify a native language pack. The separate `test_*_native.py` suites require their real pinned SDKs. In particular, `test_python_native.py` needs Node on the host PATH and Pyright 1.1.396 at `.evo/tools/m845-pyright-api-1.1.396/package`; missing prerequisites fail with a named error. They analyze fixed first-party fixture strings only. Analyzed repository code/builds/index requests still run exclusively in the registered isolated lane.
 
+## Frontend architecture MVP
+
+This is the explicit M8.4 Step-5/Task-2 captured-context lane, separate from the campaign below. [The execution record](tasks/m8/04-step5-step2-execution.md) owns actual passes/remaining exits; [the contract](architecture/m8-frontend-architecture.md) describes requests and query semantics. Source → capture → `ArchitectureCapture.read` → `ArchitectureCaptureQuery.page` is usable; automatic whole-repository HTTP/UI/federation is not claimed by this lane.
+
+Authored host controls require Node **24.22.1 on Windows** and provisioned exact SDK bytes at `.evo/tools/m845-architecture`; routing controls additionally require `.evo/tools/m845-native-routing-v2`. The [base pin](../analyzer-execution/src/main/resources/polyglot/architecture/toolchain.json) and [routing pin](../analyzer-execution/src/main/resources/polyglot/architecture/routing-toolchain.json), with adjacent lockfiles, define runtime/lock/installed-tree identities. Vue declaration controls also require their checked-in fixture pin and matching external SDK. Full SFC controls additionally use `.evo/tools/m845-vue-language-3.3.13`; native Nuxt controls use the compact `.evo/tools/m845-nuxt-schema-v1` closure. Their adjacent `vue-toolchain.json` and `nuxt-toolchain.json` pin exact bytes. The Nuxt closure preserves 16 resolved packages from the verified existing SDK (3,377,526 bytes / 222 files), rather than transferring the unrelated 279-MB tool tree. Use the verified operator bundles; an arbitrary fresh npm installation/OS may have a different tree and is not interchangeable. SDKs, package caches and raw captures stay outside Git. Missing/changed prerequisites fail explicitly; there is no host target-build fallback.
+
+```powershell
+# One affected data-only/native-parser selection on fixed platform-authored inputs.
+node --test "--test-name-pattern=literal template fragments|native source-map chains|Vue native SFC/script/template compilation|invalid checker context cannot|mutually exclusive browser and server" analyzer-execution/src/test/resources/polyglot/architecture-worker.test.cjs
+python -m unittest discover -s analyzer-execution/src/test/python -p test_architecture_guest.py -q
+
+# Reader unit checks. No SDK or VM is needed for these immutable compact fixtures.
+.\mvnw.cmd -q -pl analyzer "-Denforcer.skipRules=reactorModuleConvergence" "-Dtest=ArchitectureCaptureTest,ArchitectureCaptureAuditTest" test
+```
+
+`ArchitectureNativeCaptureIT` is selected explicitly, with **both** `architecture.captureRoot` and `architecture.labels` pointing to a completed immutable worker root and its precommitted independent labels. It verifies output census, source bytes (including binary), frozen controls, VM Off identity, CAS import, bounded navigation and cold reopen. If the sealed label file registers `occurrences`, it also checks the independently source-bound predicates, complete outcome partition, audit paging/cold replay and the declared determinism pair. Predicate and label counts are separate from JUnit counts. It does not start a worker or obtain missing SDKs. The exact two-module command and current receipt are in the execution record. Reuse captures for data-only consumer changes; a new VM is needed only for changed native behavior that existing evidence cannot establish. Native guest Node is separately pinned **22.23.4 on Linux**. `qualified=false` and method gaps remain expected and must not be removed to make a check green.
+
+`ArchitectureNativeReplayIT` is a separate, explicitly selected recovery check. Its required properties are `architecture.replayRoot`, `architecture.replayLabels` and `architecture.replayedOutput`. It admits reproduced fixed-authored bytes only when their SHA-256 **and length** equal both authenticated VM-reported native outputs, checks frozen controls/Off/input binding, and runs the independent label/audit/CAS checks. It rejects changed bytes and reports `INCOMPLETE_NATIVE_DIGEST_MATCHED_REPLAY`; it cannot certify or replace the original full output census. The execution record identifies the one recovered fixture and its immutable producer revision. Ordinary analyzed repositories still have no host execution fallback.
+
+Temporary SDK uploads are removed from the guest work tree only after the installed root-owned destination hash is verified. The installed input and original host cache remain; a hash failure keeps staging. This avoids re-exporting temporary tool transport data. The corresponding full VM export is a separate check from semantic replay.
+
+Worker setup reuses existing hash-frozen SDK archives and streams the required `package/` envelope/expansion preflight before creating a VM. The current 1-GiB authored scratch class admits `expanded SDK bytes + 2 × archive bytes + 3 × captured source bytes + 256 MiB` for OS/metadata/output headroom. This planning allowance does not replace the live overlay supervisor or certify arbitrary workload capacity; a larger tool bundle requires an appropriate registered profile/media strategy, not a smaller source denominator. A stopped scoped supervisor aborts management waiting instead of spending the remaining SSH watchdog interval.
+
+Pass `--evidence-root <existing private-cache parent>` to `sdk_worker.py register` to create an owner/System-only capture child on D:. Its path is pinned in setup; SDKs and raw captures stay outside Git. Z: contains only necessary registered worker state. Never repeat an unchanged environmental failure or start all language profiles for a frontend slice. A data-only replay needs neither a VM nor Z: writable space.
+
 ## Captured native campaign
 
 Prepare four explicit absolute paths, using forward slashes on Windows:

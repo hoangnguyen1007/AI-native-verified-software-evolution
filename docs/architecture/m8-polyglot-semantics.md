@@ -108,3 +108,7 @@ The scoped SDK lifecycle driver retains the original image identity, direct-atta
 The execution note in the [task plan](../tasks/m8/04-step5-polyglot-frontend-plan.md) owns exact commands/counts and limitations. New common contracts, actual TS capture import, dropped-call/empty-export controls, predicate/revocation checks and disk CAS restart/corruption controls are self-verification, not independent review or all-language acceptance.
 
 Next: the existing Bước 2 frontend/config/schema architecture work remains PLANNED; this closeout does not start it. Task 1 is CLOSED / CORE MVP by human acceptance, not by changing capability/trust predicates. The fixture recipe does not register production validators. Historical tests retain their recorded scopes, and unavailable old receipts are not re-created or reported as freshly verified.
+
+## Step-5 Bước-2 architecture lane
+
+The additive [frontend/schema/resource capture boundary](m8-frontend-architecture.md) and [execution record](../tasks/m8/04-step5-step2-execution.md) describe the completed captured-context MVP and its verified original scoped exits. Its native attempts and document/category census do not requalify Task 1 or establish production semantic completeness.

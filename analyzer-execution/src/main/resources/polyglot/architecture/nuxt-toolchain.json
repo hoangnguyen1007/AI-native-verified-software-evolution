@@ -1,0 +1,24 @@
+{
+  "schema": "architecture-nuxt-config-tools:m8.4-v1",
+  "runtimes": [
+    {
+      "version": "24.22.1",
+      "platform": "win32"
+    },
+    {
+      "version": "22.23.4",
+      "platform": "linux"
+    }
+  ],
+  "lock": "sha256:0bebf936ddb56ab2610c863913eb215eeb8e6cd0d1248e353e9d966a97be0c6c",
+  "tree": {
+    "digest": "sha256:32df94799160e8e8e2369d234b4b32e378ac89d588a2c521f17f449cc8e07bd2",
+    "files": 222,
+    "bytes": 3377526
+  },
+  "packages": {
+    "@nuxt/schema": "4.6.3",
+    "untyped": "2.0.0"
+  },
+  "bundled": {}
+}

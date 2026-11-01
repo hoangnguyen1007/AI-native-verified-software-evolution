@@ -1,0 +1,7 @@
+{
+  "schema":"architecture-vue-context-tools:m8.4-v1",
+  "runtimes":[{"version":"24.22.1","platform":"win32"},{"version":"22.23.4","platform":"linux"}],
+  "lock":"sha256:4747f3e2e110e31d5dccb787b432beaaa71d56e51eff9d504a38673eed814e93",
+  "tree":{"digest":"sha256:63820d7e645e4f4ffefb3bb0caa4c4e7d2be74e7fdd54dab10ccf4b884347f05","files":1004,"bytes":41436532},
+  "packages":{"vue-tsc":"3.3.13","@vue/language-core":"3.3.13","@volar/typescript":"2.4.28","typescript":"5.9.3","vue":"3.5.22","@vue/compiler-sfc":"3.5.22"}
+}

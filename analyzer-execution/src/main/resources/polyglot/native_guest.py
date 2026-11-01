@@ -5,6 +5,7 @@ Only root-prepared inputs/tool handles are accepted. There is no application com
 MSBuild/npm/pip hook or caller-selected entry point. All source remains immutable.
 """
 import hashlib
+import base64
 import importlib.util
 import json
 import os
@@ -20,8 +21,9 @@ PROFILES={'csharp':('native-roslyn-request:m8.4-v1','12.0'), 'visualbasic':('nat
           'c':('native-clang-request:m8.4-v1','c17'), 'cpp':('native-clang-request:m8.4-v1','c++20'), 'objectivec':('native-clang-request:m8.4-v1','gnu17'),
           'python':('native-python-request:m8.4-v1','3.10'), 'go':('native-go-request:m8.4-v1','1.24'),
           'dart':('native-dart-request:m8.4-v1','3.7'),'php':('native-php-request:m8.4-v1','8.1'),'rust':('native-rust-request:m8.4-v1','2021'),
-          'ruby':('native-ruby-request:m8.4-v1','sorbet-0.6'),'swift':('native-swift-request:m8.4-v1','6'),'typescript':('native-typescript-request:m8.4-v1','5.9.3'),'javascript':('native-typescript-request:m8.4-v1','5.9.3')}
-REQUIRED={'csharp':{'roslyn'},'visualbasic':{'roslyn'},'c':set(),'cpp':set(),'objectivec':set(),'python':{'pyright'},'go':{'go'},'dart':set(),'php':set(),'rust':set(),'ruby':set(),'swift':set(),'typescript':{'typescript'},'javascript':{'typescript'}}
+          'ruby':('native-ruby-request:m8.4-v1','sorbet-0.6'),'swift':('native-swift-request:m8.4-v1','6'),'typescript':('native-typescript-request:m8.4-v1','5.9.3'),'javascript':('native-typescript-request:m8.4-v1','5.9.3'),
+          'frontendarchitecture':('architecture-request:m8.4-v1','m8.4-v1')}
+REQUIRED={'csharp':{'roslyn'},'visualbasic':{'roslyn'},'c':set(),'cpp':set(),'objectivec':set(),'python':{'pyright'},'go':{'go'},'dart':set(),'php':set(),'rust':set(),'ruby':set(),'swift':set(),'typescript':{'typescript'},'javascript':{'typescript'},'frontendarchitecture':{'architecture'}}
 
 
 def logical(path):
@@ -30,18 +32,35 @@ def logical(path):
     path.encode('utf8',errors='strict');return path
 
 
+def captured_bytes(source,language):
+    if isinstance(source.get('text'),str) and 'data' not in source:return source['text'].encode('utf8',errors='strict')
+    if language=='frontendarchitecture' and isinstance(source.get('data'),str) and 'text' not in source:
+        try:raw=base64.b64decode(source['data'],validate=True)
+        except Exception as error:raise ValueError('NATIVE_BINARY_ENCODING') from error
+        if base64.b64encode(raw).decode('ascii')!=source['data']:raise ValueError('NATIVE_BINARY_ENCODING')
+        return raw
+    raise ValueError('NATIVE_SOURCE_ENCODING')
+
+
 def validate(campaign):
     if set(campaign)!={'schema','assets','contexts'} or campaign['schema']!='authored-native-campaign:m8.4-v1' or not campaign['contexts']:raise ValueError('NATIVE_CAMPAIGN_SCHEMA')
-    if set(campaign['assets'])-{'roslyn','go','pyright','typescript'}:raise ValueError('NATIVE_CAMPAIGN_ASSET_ROLE')
+    if set(campaign['assets'])-{'roslyn','go','pyright','typescript','architecture','architecture-routing','architecture-nuxt','architecture-vue'}:raise ValueError('NATIVE_CAMPAIGN_ASSET_ROLE')
     required=set()
     for name,item in campaign['contexts'].items():
         if not re.fullmatch('[a-z][a-z0-9-]{0,63}',name) or set(item)!={'language','request'} or item['language'] not in PROFILES:raise ValueError('NATIVE_CONTEXT_NOT_REGISTERED')
         request=item['request'];schema,dialect=PROFILES[item['language']]
         if request['schema']!=schema or request['language']!=item['language'] or request['dialect']!=dialect:raise ValueError('NATIVE_CONTEXT_TUPLE_MISMATCH')
         required.update(REQUIRED[item['language']]);paths=set()
+        if item['language']=='frontendarchitecture' and (request.get('context',{}).get('routeModels') or request.get('context',{}).get('federationModels')):required.add('architecture-routing')
+        if item['language']=='frontendarchitecture' and request.get('context',{}).get('nativeNuxtConfig') is True:
+            if not any(m.get('framework')=='nuxt' and m.get('config') for m in request['context'].get('routeModels',[])):raise ValueError('NATIVE_NUXT_CONTEXT_REQUIRED')
+            required.update(('architecture-routing','architecture-nuxt'))
+        if item['language']=='frontendarchitecture' and request.get('context',{}).get('nativeVue') is True:
+            if not any(p.get('id') in ('vue','nuxt') for p in request.get('profiles',[])):raise ValueError('NATIVE_VUE_CONTEXT_REQUIRED')
+            required.add('architecture-vue')
         for source in request['files']:
             path=logical(source['path'])
-            if path in paths or 'sha256:'+hashlib.sha256(source['text'].encode('utf8',errors='strict')).hexdigest()!=source['sha256']:raise ValueError('NATIVE_CONTEXT_SOURCE_MEMBERSHIP_OR_HASH')
+            if path in paths or 'sha256:'+hashlib.sha256(captured_bytes(source,item['language'])).hexdigest()!=source['sha256']:raise ValueError('NATIVE_CONTEXT_SOURCE_MEMBERSHIP_OR_HASH')
             paths.add(path)
         if not paths:raise ValueError('NATIVE_CONTEXT_SOURCE_MEMBERSHIP_REQUIRED')
     if set(campaign['assets'])!=required:raise ValueError('NATIVE_CAMPAIGN_EXACT_ASSET_MEMBERSHIP')
@@ -91,6 +110,18 @@ def prepare(registration,base):
     extras={}
     if 'pyright' in campaign['assets']:extras['pyright']=str(unpack_pyright(campaign['assets']['pyright']['path'],tools/'pyright'))
     if 'typescript' in campaign['assets']:extras['typescript']=str(unpack_pyright(campaign['assets']['typescript']['path'],tools/'typescript','5.9.3'))
+    if 'architecture' in campaign['assets']:
+        from architecture_guest import unpack
+        extras['architecture']=str(unpack(campaign['assets']['architecture']['path'],tools/'architecture'))
+    if 'architecture-routing' in campaign['assets']:
+        from architecture_guest import unpack
+        extras['architecture-routing']=str(unpack(campaign['assets']['architecture-routing']['path'],tools/'architecture-routing'))
+    if 'architecture-nuxt' in campaign['assets']:
+        from architecture_guest import unpack
+        extras['architecture-nuxt']=str(unpack(campaign['assets']['architecture-nuxt']['path'],tools/'architecture-nuxt','nuxt-config-v1'))
+    if 'architecture-vue' in campaign['assets']:
+        from architecture_guest import unpack
+        extras['architecture-vue']=str(unpack(campaign['assets']['architecture-vue']['path'],tools/'architecture-vue'))
     python=registration['runtime']['python']['path'];wrapper=tools/'python-isolated'
     if not re.fullmatch('/[A-Za-z0-9_./+-]+',python):raise ValueError('NATIVE_IMAGE_INTERPRETER_PATH')
     wrapper.write_text('#!/bin/sh\nexec '+python+' -I -S "$@"\n',encoding='utf8');wrapper.chmod(0o555)
@@ -109,14 +140,14 @@ def prepare(registration,base):
     import pwd
     user=pwd.getpwnam('evobuild');prepared={}
     for name,item in sorted(campaign['contexts'].items()):
-        context=base/'native-inputs'/name;context.mkdir(parents=True);request=dict(item['request']);source=source_location(request)
+        language=item['language'];context=base/'native-inputs'/name;context.mkdir(parents=True);request=dict(item['request']);source=source_location(request)
         reuse=source.exists();source.mkdir(parents=True,exist_ok=True)
         if source.is_symlink() or any(parent.is_symlink() for parent in source.parents):raise ValueError('NATIVE_SOURCE_LAYOUT_ALIAS')
         request['sourceRoot']=str(source);request['sourceMaterialization']='native-source-layout:m8.4-v1'
         expected={logical(entry['path']) for entry in request['files']}
         if reuse and {p.relative_to(source).as_posix() for p in source.rglob('*') if p.is_file()}!=expected:raise ValueError('NATIVE_SOURCE_LAYOUT_MEMBERSHIP')
         for entry in request['files']:
-            file=source/logical(entry['path']);raw=entry['text'].encode('utf8')
+            file=source/logical(entry['path']);raw=captured_bytes(entry,language)
             if reuse:
                 if file.is_symlink() or file.read_bytes()!=raw:raise ValueError('NATIVE_SOURCE_LAYOUT_BYTES_CHANGED')
             else:
@@ -127,7 +158,6 @@ def prepare(registration,base):
         source.chmod(0o555)
         work=Path(registration['work'])/'native'/name;work.mkdir(parents=True,mode=0o755);home=work/'home';home.mkdir(mode=0o700);os.chown(home,user.pw_uid,user.pw_gid)
         state=work/'state';state.mkdir(mode=0o700);os.chown(state,user.pw_uid,user.pw_gid);request['workRoot']=str(state)
-        language=item['language']
         if language in ('csharp','visualbasic'):
             request['compilerVersion']='4.11.0.0';request['references']=[dict(path=str(path),size=path.stat().st_size,sha256=digest(path),origin='PLATFORM') for path in sorted((sdk/'dotnet/packs/Microsoft.NETCore.App.Ref/8.0.13/ref/net8.0').glob('*.dll'))]
             if not request['references']:raise ValueError('ROSLYN_CAPTURED_REFERENCE_PLATFORM_REQUIRED')
@@ -166,6 +196,10 @@ def command(registration,base,name):
     if language=='rust':return [python,'-I',str(base/'rust_engine.py'),'--request',request,'--analyzer',str(sdk/'rust-analyzer/bin/rust-analyzer'),'--compiler',str(sdk/'rust/bin/rustc')]
     if language=='ruby':return [python,'-I',str(base/'ruby_engine.py'),'--request',request,'--sorbet',str(sdk/'sorbet/libexec/sorbet')]
     if language=='swift':return [python,'-I',str(base/'swift_engine.py'),'--request',request,'--compiler',str(sdk/'swift/usr/bin/swiftc'),'--census',str(base/'SwiftCensus.swift')]
+    if language=='frontendarchitecture':
+        args=[str(sdk/'node/bin/node'),str(base/'architecture/worker.cjs'),request,native['extras']['architecture'],*(native['extras'].get(role,'') for role in ('architecture-routing','architecture-nuxt','architecture-vue'))]
+        while args[-1]=='':args.pop()
+        return args
     raise ValueError('NATIVE_ENTRYPOINT_NOT_REGISTERED')
 
 

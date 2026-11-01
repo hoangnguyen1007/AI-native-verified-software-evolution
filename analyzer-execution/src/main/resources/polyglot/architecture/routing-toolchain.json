@@ -1,0 +1,30 @@
+{
+  "schema": "architecture-routing-tools:m8.4-v1",
+  "runtimes": [
+    {
+      "version": "24.22.1",
+      "platform": "win32"
+    },
+    {
+      "version": "22.23.4",
+      "platform": "linux"
+    }
+  ],
+  "lock": "sha256:56fd6926482837d2c6871292806fc376e63e3907eca4f4ddae7c2547c1976c09",
+  "tree": {
+    "digest": "sha256:9c991e55f84f6d8707c84bbf4525eeffbc294943fb44a5e1a6e2cbff1a486ebe",
+    "files": 13265,
+    "bytes": 216162345
+  },
+  "packages": {
+    "next": "15.5.28",
+    "unrouting": "0.3.1",
+    "@sveltejs/kit": "2.37.1",
+    "svelte": "5.39.6",
+    "@react-router/fs-routes": "7.9.4",
+    "@react-router/dev": "7.9.4",
+    "react": "19.1.1",
+    "react-dom": "19.1.1",
+    "typescript": "5.9.3"
+  }
+}
