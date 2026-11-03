@@ -133,6 +133,7 @@ public final class EvoApp {
         command.addSubcommand("core-mvp",new CoreMvp(r));
         command.addSubcommand("captured-java",new CapturedJava(r));
         command.addSubcommand("semantic",new SemanticInspect(r));
+        command.addSubcommand("bridges",new BridgeInspect(r));
         command.addSubcommand("acquire",new Acquire(r));
         command.addSubcommand("inventory",new Inventory(r));
         command.addSubcommand("readiness",new Readiness(r));
@@ -148,6 +149,30 @@ public final class EvoApp {
         command.addSubcommand("open",new Open(r));command.addSubcommand("use",new Use(r));command.addSubcommand("export",new Export(r));
         command.addSubcommand("next",new Next(r));
         command.addSubcommand("completion",new Completion(command,r));
+    }
+    @Command(name="bridges",mixinStandardHelpOptions=true,description="Inspect captured cross-context architecture / Đọc liên kết kiến trúc liên context")
+    private final class BridgeInspect implements Callable<Integer>{
+        final Root r;BridgeInspect(Root r){this.r=r;}
+        @Parameters(arity="0..1",defaultValue="summary",paramLabel="summary|page|impact|topology|publish") String operation;
+        @Option(names="--bridge-store",required=true,paramLabel="DIR") Path store;
+        @Option(names="--read-policy",required=true,paramLabel="FILE") Path readPolicy;
+        @Option(names="--bridge-scope",paramLabel="SHA256") String bridgeScope;
+        @Option(names="--section",paramLabel="PARTITIONS|ENDPOINTS|REQUIREMENTS|RELATIONS|GAPS|FACTS|NATIVE_GAPS|ARTIFACTS") String section;
+        @Option(names="--category",paramLabel="B01..B08|A01..A12|F01..F12") String category;
+        @Option(names="--partition",paramLabel="KEY") String partition;
+        @Option(names="--symbol",paramLabel="SHA256") String symbol;
+        @Option(names="--document",paramLabel="CAPTURED_PATH") String document;
+        @Option(names="--target-symbol",paramLabel="SHA256",description="Exact scoped bridge identity for potential impact / Symbol liên context chính xác") String targetSymbol;
+        @Option(names="--bridge-input",paramLabel="FILE",description="Publish an exact prepared CAS input descriptor / Công bố đầu vào CAS đã chuẩn bị") Path bridgeInput;
+        @Option(names="--parent",paramLabel="SHA256",description="Expected publication fence / Fence bản công bố trước") String parent;
+        public Integer call()throws Exception{
+            if(!Set.of("summary","page","impact","topology","publish").contains(operation)||operation.equals("publish")!=(bridgeInput!=null)||Set.of("impact","topology").contains(operation)!=(targetSymbol!=null)||!operation.equals("publish")&&parent!=null||!operation.equals("page")&&(section!=null||category!=null||partition!=null||symbol!=null||document!=null)||operation.equals("page")&&section==null||!operation.equals("publish")&&bridgeScope==null||!operation.equals("page")&&r.cursor!=null)throw new InputFailure("INVALID_BRIDGE_QUERY");
+            Path path=resolve(store);if(!operation.equals("publish")){path=StreamingContentStore.existingDirectory(path);StreamingContentStore.existingDirectory(path.resolve("cas"));StreamingContentStore.existingDirectory(path.resolve("bridges"));}
+            var policy=new BridgeReadPolicy(resolve(readPolicy));var content=new StreamingContentStore(path.resolve("cas"));var tables=new com.evolution.analysis.polyglot.SemanticTables(content,65536);var publications=new BridgePublicationStore(path.resolve("bridges"),content,tables,policy::policy,policy::revoked);Object data;
+            if(operation.equals("publish")){var input=com.evolution.analysis.polyglot.ArchitectureBridges.input(GraphJson.read(Workspace.utf8(Workspace.read(resolve(bridgeInput),65536)),new GraphJson.Limits(65536,32,65536)));if(bridgeScope!=null&&!input.scope().value().equals(bridgeScope))throw new InputFailure("BRIDGE_INPUT_SCOPE_MISMATCH");data=publications.commit(input,Optional.ofNullable(parent).map(ContentDigest::new),()->false);}
+            else{var queries=publications.queries();var scope=new ContentDigest(bridgeScope);data=operation.equals("summary")?queries.summary(scope,()->false):operation.equals("topology")?queries.topology(scope,new ContentDigest(targetSymbol),r.depth,r.limit,1000,()->false):operation.equals("impact")?queries.impact(scope,new ContentDigest(targetSymbol),r.depth,r.limit,1000,()->false):queries.page(scope,new com.evolution.analysis.polyglot.BridgeQueryService.Selection(com.evolution.analysis.polyglot.BridgeQueryService.Section.valueOf(section),Optional.ofNullable(category),Optional.ofNullable(partition),Optional.ofNullable(symbol),Optional.ofNullable(document)),r.limit,Optional.ofNullable(r.cursor).map(v->com.evolution.analysis.polyglot.BridgeQueryService.cursor(GraphJson.read(v,new GraphJson.Limits(65536,16,65536)))),()->false);}
+            return emit(r,"bridges",Map.of("apiVersion",com.evolution.analysis.polyglot.BridgeQueryService.VERSION,"resultIdentity",CanonicalJson.sha256(data),"data",data),3);
+        }
     }
     @Command(name="semantic",mixinStandardHelpOptions=true,description="Read captured semantic contexts and gaps / Đọc context và khoảng trống ngữ nghĩa")
     private final class SemanticInspect implements Callable<Integer>{

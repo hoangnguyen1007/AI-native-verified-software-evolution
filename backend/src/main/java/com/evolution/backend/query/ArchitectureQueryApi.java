@@ -38,6 +38,7 @@ public final class ArchitectureQueryApi {
     private final BiFunction<KnowledgeGraph,Supplier<StopReason>,ArchitectureQueryService> factory;
     private AnalysisJobApi jobs;
     private SemanticQueryApi semantics;
+    private BridgeQueryApi bridges;
     private RepositoryConnections connections;
     public ArchitectureQueryApi(GraphStore store) { this(store,new PublishedReports(),ApiLimits.defaults()); }
     public ArchitectureQueryApi(GraphStore store,PublishedReports reports,ApiLimits limits) {
@@ -61,10 +62,13 @@ public final class ArchitectureQueryApi {
         Objects.requireNonNull(existing);
         if(existing.executions!=null)throw new IllegalArgumentException("EXECUTION_PORT_ALREADY_CONFIGURED");
         var api=new ArchitectureQueryApi(existing.store,existing.reports,existing.limits,existing.factory);
-        api.jobs=existing.jobs;api.connections=existing.connections;api.semantics=existing.semantics;api.executions=Objects.requireNonNull(executions);return api;
+        api.jobs=existing.jobs;api.connections=existing.connections;api.semantics=existing.semantics;api.bridges=existing.bridges;api.executions=Objects.requireNonNull(executions);return api;
     }
     public static ArchitectureQueryApi withSemanticQueries(ArchitectureQueryApi existing,com.evolution.analysis.polyglot.SemanticQueryService queries){
-        Objects.requireNonNull(existing);if(existing.semantics!=null)throw new IllegalArgumentException("SEMANTIC_QUERY_SERVICE_ALREADY_CONFIGURED");var api=new ArchitectureQueryApi(existing.store,existing.reports,existing.limits,existing.factory);api.jobs=existing.jobs;api.connections=existing.connections;api.executions=existing.executions;api.semantics=new SemanticQueryApi(queries,existing.limits);return api;
+        Objects.requireNonNull(existing);if(existing.semantics!=null)throw new IllegalArgumentException("SEMANTIC_QUERY_SERVICE_ALREADY_CONFIGURED");var api=new ArchitectureQueryApi(existing.store,existing.reports,existing.limits,existing.factory);api.jobs=existing.jobs;api.connections=existing.connections;api.executions=existing.executions;api.bridges=existing.bridges;api.semantics=new SemanticQueryApi(queries,existing.limits);return api;
+    }
+    public static ArchitectureQueryApi withBridgeQueries(ArchitectureQueryApi existing,com.evolution.analysis.polyglot.BridgeQueryService queries){
+        Objects.requireNonNull(existing);if(existing.bridges!=null)throw new IllegalArgumentException("BRIDGE_QUERY_SERVICE_ALREADY_CONFIGURED");var api=new ArchitectureQueryApi(existing.store,existing.reports,existing.limits,existing.factory);api.jobs=existing.jobs;api.connections=existing.connections;api.executions=existing.executions;api.semantics=existing.semantics;api.bridges=new BridgeQueryApi(queries,existing.limits);return api;
     }
     /** Job and query adapters share the same canonical publication stores. */
     public ArchitectureQueryApi(GraphStore store,PublishedReports reports,ApiLimits limits,AnalysisJobs jobs) {
@@ -79,6 +83,7 @@ public final class ArchitectureQueryApi {
     }
     public Response handle(String method,String rawPath,String contentType,byte[] body,BooleanSupplier cancelled) {
         try {
+            if(rawPath.startsWith("/api/v1/bridges/"))return bridges==null?error(503,"BRIDGE_QUERIES_UNAVAILABLE"):bridges.handle(method,rawPath,contentType,body,cancelled);
             if(rawPath.startsWith("/api/v1/semantic/"))return semantics==null?SemanticQueryApi.unavailable(limits):semantics.handle(method,rawPath,contentType,body,cancelled);
             if (body.length > limits.requestBytes()) throw new Failure(413,"REQUEST_TOO_LARGE");
             if(rawPath.startsWith("/api/v2/executions/"))return execution(method,rawPath,contentType,body,cancelled);
@@ -145,6 +150,7 @@ public final class ArchitectureQueryApi {
         }catch(java.io.IOException unavailable){throw new Failure(503,"EXECUTIONS_UNAVAILABLE");}
     }
     static String allowedMethods(String path) {
+        if(path.startsWith("/api/v1/bridges/"))return "POST";
         if(path.startsWith("/api/v2/executions/"))return "POST";
         if (path.equals("/api/v1/analysis/connections")) return "GET, POST";
         if (path.equals("/api/v1/analysis/jobs")) return "GET, POST";

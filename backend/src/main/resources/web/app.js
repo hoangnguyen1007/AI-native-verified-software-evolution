@@ -579,7 +579,16 @@
     return inspect(label, 'ANALYSIS EVIDENCE', (signal, cursor) => api('/analysis/jobs/' + job.id + '/' + op, {size: 20, ...(cursor ? {cursor} : {})}, signal), [{label: 'View graph limitations', run: async () => { closeInspector(); if (state.graph) await loadTab('gaps'); else notice('No graph was published for this analysis. Input diagnostics retain acquisition failures.'); }}]);
   }));
   $('download-details').addEventListener('click', () => download(state.details, 'evo-evidence.json'));
-  function applyTheme(theme) { document.documentElement.dataset.theme = theme; $('theme-toggle').textContent = theme === 'dark' ? 'Light theme' : 'Dark theme'; $('theme-toggle').setAttribute('aria-label', 'Switch to ' + (theme === 'dark' ? 'light' : 'dark') + ' theme'); try { localStorage.setItem('evo_theme', theme); } catch (_) {} }
+  function applyTheme(theme) {
+    document.documentElement.dataset.theme = theme;
+    const label = 'Switch to ' + (theme === 'dark' ? 'light' : 'dark') + ' theme';
+    const paths = theme === 'dark' ? '<circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/>' : '<path d="M20 15.5A8 8 0 0 1 8.5 4 8 8 0 1 0 20 15.5Z"/>';
+    $('theme-toggle').innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true">' + paths + '</svg>';
+    $('theme-toggle').className = 'icon-button';
+    $('theme-toggle').setAttribute('aria-label', label);
+    $('theme-toggle').setAttribute('data-tooltip', '');
+    try { localStorage.setItem('evo_theme', theme); } catch (_) {}
+  }
   let theme = 'dark'; try { theme = localStorage.getItem('evo_theme') === 'light' ? 'light' : 'dark'; } catch (_) {} applyTheme(theme);
   $('theme-toggle').addEventListener('click', () => { applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'); if (state.tab === 'graph' && state.context) safe(() => loadTab('graph')); });
   $('sidebar-toggle').addEventListener('click', () => { const shell = document.querySelector('.app-shell'), mobile = window.matchMedia('(max-width:760px)').matches; shell.classList.toggle(mobile ? 'mobile-sidebar-open' : 'sidebar-collapsed'); $('sidebar-toggle').setAttribute('aria-expanded', mobile ? shell.classList.contains('mobile-sidebar-open') : !shell.classList.contains('sidebar-collapsed')); state.cy?.resize(); });

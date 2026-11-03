@@ -1,6 +1,7 @@
 """Pinned Pyright + native AST controls over authored strings only."""
 import hashlib
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -25,7 +26,7 @@ class PythonNativeControls(unittest.TestCase):
     def analyze(self,files):
         node_path=shutil.which('node')
         if not node_path:raise RuntimeError('Node runtime required on host')
-        sdk=WORKSPACE/'.evo/tools/m845-pyright-api-1.1.396/package';node=Path(node_path).resolve();python=Path(sys.executable).resolve()
+        sdk=Path(os.environ.get('EVO_PYRIGHT_SDK',str(WORKSPACE/'.evo/tools/m845-pyright-api-1.1.396/package')));node=Path(node_path).resolve();python=Path(sys.executable).resolve()
         if not (sdk/'langserver.index.js').is_file():raise RuntimeError('Pinned real Pyright SDK required')
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory);sources=root/'sources';sources.mkdir();work=root/'work'

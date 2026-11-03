@@ -37,6 +37,8 @@ public final class SemanticTables {
     @FunctionalInterface public interface Consumer {void accept(Row row)throws IOException;}
     private final RepositoryContentStore content;private final int rowBytes;
     public SemanticTables(RepositoryContentStore content,int rowBytes){this.content=Objects.requireNonNull(content);if(rowBytes<1||rowBytes>64_000_000)throw new IllegalArgumentException("SEMANTIC_WORKER_BUDGET");this.rowBytes=rowBytes;}
+    /** Rebind I/O instrumentation while retaining the exact worker-row policy. */
+    public SemanticTables withContent(RepositoryContentStore replacement){return new SemanticTables(replacement,rowBytes);}
     public Table write(Kind kind,Iterator<Row> rows,BooleanSupplier cancelled)throws IOException{
         try(var stream=new Rows(kind,rows,cancelled)){var handle=content.put(stream,cancelled);return new Table("semantic-table:m8.4-v1",kind,handle,stream.count);}
     }

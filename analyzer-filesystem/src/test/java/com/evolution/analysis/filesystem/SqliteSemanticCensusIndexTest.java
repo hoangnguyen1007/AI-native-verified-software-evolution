@@ -10,6 +10,14 @@ import org.junit.jupiter.api.io.TempDir;
 import static org.junit.jupiter.api.Assertions.*;
 
 class SqliteSemanticCensusIndexTest {
+    @Test void halfOpenLookupSeeksAcrossPagesAndRetainsMutationAndEmptyRangeSemantics()throws Exception{
+        var scope=ContentDigest.sha256Utf8("range fixture");
+        try(var index=SqliteSemanticCensusIndex.temporary(directory,8192)){
+            for(int i=0;i<1600;i++){String key=String.format(Locale.ROOT,"%04d",i);index.put("lookup",key,new SemanticTables.Row(SemanticTables.Kind.OBSERVATION,key,scope,Map.of()));}
+            try(var rows=index.range("lookup","0300","1400")){for(int i=300;i<1400;i++){var row=rows.next();assertNotNull(row);assertEquals(String.format(Locale.ROOT,"%04d",i),row.key());if(i==800)index.put("other","one",row);}assertNull(rows.next());}
+            try(var rows=index.range("lookup","x","z")){assertNull(rows.next());}assertThrows(IllegalArgumentException.class,()->index.range("lookup","z","a"));
+        }
+    }
     @TempDir Path directory;
     @Test void pagingKeepsLiveMarksInsertionsAndIndependentReaders()throws Exception {
         var scope=ContentDigest.sha256Utf8("paging-context");

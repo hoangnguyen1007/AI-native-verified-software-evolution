@@ -23,7 +23,7 @@ CONTROLS=tuple(dict.fromkeys((*base.CONTROLS,'polyglot/sdk_worker.py','polyglot/
                             'polyglot/dart_engine.py','polyglot/dart/dart_engine.dart','polyglot/php_engine.py','polyglot/php/php_engine.php',
                             'polyglot/rust_engine.py','polyglot/native_lsp_projection.py','polyglot/ruby_engine.py','polyglot/swift_engine.py','polyglot/swift_indexstore.py','polyglot/swift/SwiftCensus.swift','polyglot/worker-sdk.ps1')))
 SCOPE='AUTHORED_NATIVE_SDK_AND_FRONTEND'
-ARCHITECTURE_CONTROLS=('common.cjs','worker.cjs','tools.cjs','tool-tree.cjs','toolchain.json','resources.cjs','javascript.cjs','structured.cjs','frameworks.cjs','census.cjs','dsl.cjs','routing.cjs','routing-toolchain.json','configuration.cjs','schema-models.cjs','source-maps.cjs','contract-models.cjs','federation.cjs','templates.cjs','nuxt-toolchain.json','nuxt-config.cjs','nuxt-schema-runner.cjs','vue-toolchain.json','vue-context.cjs')
+ARCHITECTURE_CONTROLS=('common.cjs','worker.cjs','tools.cjs','tool-tree.cjs','toolchain.json','resources.cjs','javascript.cjs','structured.cjs','frameworks.cjs','census.cjs','dsl.cjs','routing.cjs','routing-toolchain.json','configuration.cjs','schema-models.cjs','source-maps.cjs','contract-models.cjs','federation.cjs','templates.cjs','nuxt-toolchain.json','nuxt-config.cjs','nuxt-schema-runner.cjs','vue-toolchain.json','vue-context.cjs','bridge-models.cjs','bridge-toolchain.json')
 CONTROLS=(*CONTROLS,'polyglot/architecture_guest.py',*('polyglot/architecture/'+name for name in ARCHITECTURE_CONTROLS))
 
 

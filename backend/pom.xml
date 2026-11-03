@@ -29,7 +29,14 @@
         <dependency><groupId>com.evolution</groupId><artifactId>analyzer-maven</artifactId><version>${project.version}</version></dependency>
         <dependency><groupId>com.evolution</groupId><artifactId>analyzer-javaparser</artifactId><version>${project.version}</version></dependency>
 
+        <!-- First-party generated-code journey; no target lifecycle/plugin execution. -->
+        <dependency><groupId>io.grpc</groupId><artifactId>grpc-protobuf</artifactId><version>1.63.0</version><scope>test</scope></dependency>
+        <dependency><groupId>io.grpc</groupId><artifactId>grpc-stub</artifactId><version>1.63.0</version><scope>test</scope></dependency>
+        <dependency><groupId>com.google.protobuf</groupId><artifactId>protobuf-java</artifactId><version>3.25.1</version><scope>test</scope></dependency>
+        <dependency><groupId>javax.annotation</groupId><artifactId>javax.annotation-api</artifactId><version>1.3.2</version><scope>test</scope></dependency>
         <!-- Testing -->
+        <dependency><groupId>org.springframework</groupId><artifactId>spring-web</artifactId><version>6.2.0</version><scope>test</scope></dependency>
+        <dependency><groupId>org.springframework</groupId><artifactId>spring-context</artifactId><version>6.2.0</version><scope>test</scope></dependency>
         <dependency><groupId>com.evolution</groupId><artifactId>analyzer-execution</artifactId><version>${project.version}</version><scope>test</scope></dependency>
         <dependency>
             <groupId>org.junit.jupiter</groupId>

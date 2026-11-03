@@ -24,6 +24,7 @@ public final class SqliteSemanticCensusIndex implements SemanticRootCensus.Index
             public Optional<SemanticTables.Row> get(String space,String key)throws IOException{return delegate.get(space,key);}
             public void mark(String space,String key)throws IOException{delegate.mark(space,key);}
             public SemanticRootCensus.Rows rows(String space,boolean unmarkedOnly)throws IOException{return delegate.rows(space,unmarkedOnly);}
+            public SemanticRootCensus.Rows range(String space,String lower,String upper)throws IOException{return delegate.range(space,lower,upper);}
             public void close()throws IOException{if(closed)return;closed=true;try{delegate.close();}finally{Files.deleteIfExists(file);}}
         };
     }
@@ -57,9 +58,14 @@ public final class SqliteSemanticCensusIndex implements SemanticRootCensus.Index
         check();
         var reader=new PagedRows(space,unmarkedOnly);readers.add(reader);return reader;
     }
+    @Override public SemanticRootCensus.Rows range(String space,String lower,String upper)throws IOException{
+        check();if(lower.compareTo(upper)>=0)throw new IllegalArgumentException("SEMANTIC_INDEX_RANGE");
+        var reader=new PagedRows(space,false,lower,upper);readers.add(reader);return reader;
+    }
     private final class PagedRows implements SemanticRootCensus.Rows {
-        final String space;final boolean unmarkedOnly;final ArrayDeque<BufferedRow> buffer=new ArrayDeque<>();String previous;boolean end;
-        PagedRows(String space,boolean unmarkedOnly){this.space=space;this.unmarkedOnly=unmarkedOnly;}
+        final String space,lower,upper;final boolean unmarkedOnly;final ArrayDeque<BufferedRow> buffer=new ArrayDeque<>();String previous;boolean end;
+        PagedRows(String space,boolean unmarkedOnly){this(space,unmarkedOnly,null,null);}
+        PagedRows(String space,boolean unmarkedOnly,String lower,String upper){this.space=space;this.unmarkedOnly=unmarkedOnly;this.lower=lower;this.upper=upper;}
         public SemanticTables.Row next()throws IOException {
             check();if(end)return null;if(buffer.isEmpty())refill();
             if(buffer.isEmpty()){close();return null;}
@@ -69,9 +75,9 @@ public final class SqliteSemanticCensusIndex implements SemanticRootCensus.Index
             // Close each SQL result before consumers mutate this private connection.
             // Bound both row count and encoded text; one admitted large row may
             // exceed the page text budget and is still governed by rowBytes.
-            String sql="SELECT k,row FROM census_rows WHERE space=?"+(unmarkedOnly?" AND marked=0":"")+(previous==null?"":" AND k>?")+" ORDER BY k LIMIT "+PAGE_ROWS;
+            String sql="SELECT k,row FROM census_rows WHERE space=?"+(unmarkedOnly?" AND marked=0":"")+(lower==null?"":" AND k>=? AND k<?")+(previous==null?"":" AND k>?")+" ORDER BY k LIMIT "+PAGE_ROWS;
             try(var query=connection.prepareStatement(sql)) {
-                query.setString(1,space);if(previous!=null)query.setString(2,previous);
+                int parameter=1;query.setString(parameter++,space);if(lower!=null){query.setString(parameter++,lower);query.setString(parameter++,upper);}if(previous!=null)query.setString(parameter,previous);
                 try(var result=query.executeQuery()) {
                     long chars=0;while(result.next()) {
                         String encoded=result.getString(2);if(!buffer.isEmpty()&&chars+encoded.length()>PAGE_CHARS)break;

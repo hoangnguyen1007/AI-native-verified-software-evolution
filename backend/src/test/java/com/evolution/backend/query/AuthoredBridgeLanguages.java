@@ -1,0 +1,53 @@
+package com.evolution.backend.query;
+
+import com.evolution.analysis.acquisition.streaming.*;
+import com.evolution.analysis.contract.common.*;
+import com.evolution.analysis.contract.serialization.CanonicalJson;
+import com.evolution.analysis.evidence.EvidenceContext;
+import com.evolution.analysis.graph.GraphJson;
+import com.evolution.analysis.polyglot.*;
+import java.io.*;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.*;
+import java.util.*;
+import java.util.concurrent.TimeUnit;
+import static org.junit.jupiter.api.Assertions.*;
+
+/** Fixed SDK, platform-owned adapters and authored inputs only; no target hooks.
+ * A caller creates fresh analysis state while reusing this verified SDK instance. */
+final class AuthoredBridgeLanguages {
+    record Captured(LanguageSemanticRequest request,NativeSemanticCapture capture){}
+    private final Path repository,sdk,work,sources,classes,node,python,javaExecutable;
+    private final RepositoryContentStore content;private final SemanticTables tables;
+    private int attempts;
+    private final ContentDigest tool;private final String parserVersion;
+    AuthoredBridgeLanguages(Path work,RepositoryContentStore content,SemanticTables tables,Map<String,String> files)throws Exception{
+        this.work=work;this.content=content;this.tables=tables;repository=Path.of("..").toRealPath();sdk=required("bridge.languages");node=required("bridge.node");python=required("bridge.python");javaExecutable=Path.of(System.getProperty("java.home"),"bin",System.getProperty("os.name").startsWith("Windows")?"java.exe":"java");
+        Files.createDirectories(work);sources=Files.createDirectory(work.resolve("sources"));classes=Files.createDirectory(work.resolve("adapters"));
+        for(var entry:files.entrySet()){LogicalPath.utf8(entry.getKey());Path path=sources.resolve(entry.getKey()).normalize();assertTrue(path.startsWith(sources));Files.createDirectories(path.getParent());Files.writeString(path,entry.getValue(),StandardCharsets.UTF_8);}
+        Map<String,Object> pins;try(var stream=Objects.requireNonNull(getClass().getResourceAsStream("/bridge-language-tools.json"))){pins=GraphJson.object(GraphJson.read(new InputStreamReader(stream,StandardCharsets.UTF_8),GraphJson.Limits.defaults()));}
+        var jarFiles=new ArrayList<Path>();for(Object value:GraphJson.array(pins.get("artifacts"))){var item=GraphJson.object(value);var path=sdk.resolve(GraphJson.string(item.get("file")));assertEquals(((java.math.BigDecimal)item.get("size")).longValueExact(),Files.size(path));assertEquals(item.get("sha256"),ContentDigest.sha256(Files.readAllBytes(path)).value().substring(7));if(path.toString().endsWith(".jar"))jarFiles.add(path);}
+        assertEquals(pins.get("pyrightTree"),CanonicalJson.sha256(tree(sdk.resolve("pyright"))).value());
+        var engine=repository.resolve("analyzer-execution/src/main/resources/polyglot");String compileClasspath=System.getProperty("java.class.path")+File.pathSeparator+String.join(File.pathSeparator,jarFiles.stream().map(Path::toString).toList());
+        var compiler=Objects.requireNonNull(javax.tools.ToolProvider.getSystemJavaCompiler(),"JDK compiler required");var compileLog=new ByteArrayOutputStream();int compiled=compiler.run(null,compileLog,compileLog,"-proc:none","-cp",compileClasspath,"-d",classes.toString(),engine.resolve("jvm/NeutralJvm.java").toString(),engine.resolve("jvm/KotlinEngine.java").toString());assertEquals(0,compiled,"Platform adapter compilation failed");
+        parserVersion=version(python,"--version").replace("Python ","").trim();
+        var sourcePins=new TreeMap<String,ContentDigest>();for(String name:List.of("jvm/NeutralJvm.java","jvm/KotlinEngine.java","python_engine.py","native_protocol.py","lsp_client.py","guest_semantic_runner.py"))sourcePins.put(name,ContentDigest.sha256(Files.readAllBytes(engine.resolve(name))));
+        tool=CanonicalJson.sha256(List.of("authored-bridge-language-toolset:m8.4-v1",pins,sourcePins,tree(classes),ContentDigest.sha256(Files.readAllBytes(node)),ContentDigest.sha256(Files.readAllBytes(python)),ContentDigest.sha256(Files.readAllBytes(Path.of(com.evolution.analysis.polyglot.LanguageProfile.class.getProtectionDomain().getCodeSource().getLocation().toURI()))),parserVersion,Runtime.version().toString()));
+    }
+    Captured capture(String language,String module,Map<String,String> files,EvidenceContext root,ContentDigest inventory,ContentDigest policy)throws Exception{
+        return capture(language,module,module,"main",files,root,inventory,policy);
+    }
+    Captured capture(String language,String module,String buildRoot,String sourceSet,Map<String,String> files,EvidenceContext root,ContentDigest inventory,ContentDigest policy)throws Exception{
+        String dialect=language.equals("kotlin")?"1.9.25":"3.10";var provider=new VersionedIdentifier("frontend."+language+"-native",language.equals("kotlin")?"1.9.25-m8.4-v2":"m8.4-v3");var emptyDocs=tables.write(SemanticTables.Kind.DOCUMENT,Collections.emptyIterator(),()->false);var emptyCensus=tables.write(SemanticTables.Kind.CENSUS,Collections.emptyIterator(),()->false);var resolution=put(CanonicalJson.write(Map.of("schema","authored-language-inputs:m8.4-v1","tool",tool,"runtime",parserVersion,"dialect",dialect)));var prototype=new LanguageSemanticRequest(root,inventory,buildRoot,module,sourceSet,"authored",language,dialect,emptyDocs,emptyCensus,resolution,provider,tool,policy,ContentDigest.sha256Utf8("authored-bridge-native-bounded:v1"));
+        var request=new TreeMap<String,Object>();request.put("schema",language.equals("kotlin")?"native-jvm-request:m8.4-v1":"native-python-request:m8.4-v1");request.put("language",language);request.put("dialect",dialect);request.put("scope",prototype.scope());request.put("tool",tool);request.put("provider",provider);request.put("repositoryScope","urn:fixture:bridge-journey");request.put("packageScope",module);request.put("sourceRoot",sources.toString());var inputs=new ArrayList<Object>();for(var entry:files.entrySet()){assertEquals(entry.getValue(),Files.readString(sources.resolve(entry.getKey())));put(entry.getValue());inputs.add(Map.of("path",entry.getKey(),"text",entry.getValue(),"sha256",ContentDigest.sha256Utf8(entry.getValue()),"role",sourceSet.equals("main")?"main":sourceSet.equals("test")?"test":"custom"));}request.put("files",inputs);
+        List<String> argv;Path engine=repository.resolve("analyzer-execution/src/main/resources/polyglot");String attempt=language+"-"+module+"-"+sourceSet+"-"+(++attempts);Path requestFile=work.resolve(attempt+"-request.json");
+        if(language.equals("kotlin")){request.put("classpath",List.of(sdk.resolve("kotlin-stdlib-1.9.25.jar").toString()));request.put("platformArtifacts",request.get("classpath"));argv=List.of(javaExecutable.toString(),"-Xmx768m","-Dfile.encoding=UTF-8","-cp",System.getProperty("java.class.path")+File.pathSeparator+classes+File.pathSeparator+sdk+"/*","evo.polyglot.KotlinEngine",requestFile.toString());}
+        else{request.put("parserVersion",parserVersion);request.put("node",handle(node));request.put("python",handle(python));request.put("server",handle(sdk.resolve("pyright/langserver.index.js")));request.put("cli",handle(sdk.resolve("pyright/index.js")));var moduleNames=new TreeMap<String,String>();files.keySet().forEach(path->moduleNames.put(path,path.replace('/','.').replaceAll("\\.py$","")));String builtin="@sdk/stdlib/builtins.pyi",builtinText=Files.readString(sdk.resolve("pyright/dist/typeshed-fallback/stdlib/builtins.pyi"));Path builtinPath=sources.resolve(builtin);Files.createDirectories(builtinPath.getParent());Files.writeString(builtinPath,builtinText,StandardCharsets.UTF_8);put(builtinText);inputs.add(Map.of("path",builtin,"text",builtinText,"sha256",ContentDigest.sha256Utf8(builtinText),"role","resolutionOnly"));moduleNames.put(builtin,"builtins");request.put("stdlibDocuments",Map.of("builtins.pyi",builtin));request.put("resolutionOnlyCensus","sdk-support:m8.4-v1");request.put("moduleNames",moduleNames);Path output=Files.createDirectory(work.resolve(attempt+"-pyright-work"));request.put("workRoot",output.toString());argv=List.of(python.toString(),"-I","-B",engine.resolve("python_engine.py").toString(),"--request",requestFile.toString(),"--node",node.toString(),"--sdk",sdk.resolve("pyright").toString(),"--python",python.toString());}
+        Files.writeString(requestFile,CanonicalJson.write(request),StandardCharsets.UTF_8);Path raw=work.resolve(attempt+".ndjson"),errors=work.resolve(attempt+".stderr");var process=new ProcessBuilder(argv).directory(repository.toFile()).redirectOutput(raw.toFile()).redirectError(errors.toFile()).start();if(!process.waitFor(90,TimeUnit.SECONDS)){process.destroyForcibly();fail("Authored language fixture watchdog: "+language);}assertEquals(0,process.exitValue(),"Native "+language+" failed; inspect local "+errors.getFileName());assertTrue(Files.size(raw)<16_000_000);ContentHandle exported;try(var stream=Files.newInputStream(raw)){exported=content.put(stream,()->false);}var capture=NativeSemanticCapture.read(exported,tables,content,4_000_000,()->false);var selected=new LanguageSemanticRequest(root,inventory,buildRoot,module,sourceSet,"authored",language,dialect,capture.documents(),capture.census(),resolution,provider,tool,policy,prototype.workPolicy());return new Captured(selected,capture);
+    }
+    private static Path required(String name)throws IOException{String value=System.getProperty(name);assertNotNull(value,"Explicit "+name+" required");return Path.of(value).toRealPath();}
+    private static String version(Path tool,String flag)throws Exception{var process=new ProcessBuilder(tool.toString(),flag).redirectErrorStream(true).start();assertTrue(process.waitFor(10,TimeUnit.SECONDS));assertEquals(0,process.exitValue());return new String(process.getInputStream().readNBytes(4096),StandardCharsets.UTF_8);}
+    private static List<Object> tree(Path root)throws IOException{var rows=new ArrayList<Object>();try(var files=Files.walk(root)){for(var path:files.sorted(Comparator.comparing(path->root.relativize(path).toString().replace('\\','/'))).toList()){if(Files.isSymbolicLink(path))throw new IOException("AUTHORED_SDK_LINK");if(Files.isRegularFile(path))rows.add(List.of(root.relativize(path).toString().replace('\\','/'),Files.size(path),ContentDigest.sha256(Files.readAllBytes(path)).value().substring(7)));}}return rows;}
+    private static ContentHandle handle(Path path)throws IOException{return new ContentHandle(ContentDigest.sha256(Files.readAllBytes(path)),Files.size(path));}
+    private ContentHandle put(String text)throws IOException{return content.put(new ByteArrayInputStream(text.getBytes(StandardCharsets.UTF_8)),()->false);}
+}

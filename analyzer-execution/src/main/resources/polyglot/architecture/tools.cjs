@@ -5,7 +5,7 @@ const path=require('node:path');
 const {createRequire}=require('node:module');
 const {pathToFileURL}=require('node:url');
 const {digest,sha}=require('./common.cjs');
-async function load(root,routingRoot,nuxtRoot,vueRoot) {
+async function load(root,routingRoot,nuxtRoot,vueRoot,bridgeRoot) {
   if(!root)throw Error('ARCHITECTURE_PINNED_TOOL_ROOT_REQUIRED');
   const pin=require('./toolchain.json');
   if(!pin.runtimes.some(r=>r.version===process.versions.node&&r.platform===process.platform))throw Error('ARCHITECTURE_NODE_VERSION_MISMATCH');
@@ -26,6 +26,7 @@ async function load(root,routingRoot,nuxtRoot,vueRoot) {
   if(routingRoot){result.routing=await require('./routing.cjs').load(routingRoot);identities.push(['native-routing',result.routing.identity]);}
   if(nuxtRoot){result.nuxtConfig=require('./nuxt-config.cjs').load(nuxtRoot);identities.push(['native-nuxt-configuration',result.nuxtConfig.identity]);}
   if(vueRoot){result.vueContext=require('./vue-context.cjs').load(vueRoot);identities.push(['native-vue-context',result.vueContext.identity]);}
+  if(bridgeRoot){result.bridgeNative=require('./bridge-models.cjs').load(bridgeRoot);identities.push(['native-bridges',result.bridgeNative.identity]);}
   const extractor=fs.readdirSync(__dirname).filter(name=>name.endsWith('.cjs')).sort().map(name=>[name,sha(fs.readFileSync(path.join(__dirname,name)))]);
   result.identity=digest(['architecture-tools:m8.4-v1',pin,identities,extractor]);return result;
 }

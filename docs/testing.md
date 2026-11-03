@@ -108,6 +108,45 @@ Check the current invocation's Surefire reports in each selected module's build 
 
 The original Prompt 1 closeout used explicit fixture properties and recorded zero skips; it remains historical bounded evidence. Its historical commands predate these profiles. For current execution, use the selections above. The [execution record](tasks/m8/04-step4-phase2-execution.md) records both the closeout and this QC follow-up.
 
+## M8.4 Step 5 / Bước 3 — bounded bridge checks
+
+The [Step-3 execution record](tasks/m8/04-step5-step3-execution.md#verification) owns the exact selected Maven commands, counts and retained fixture paths. Use `target/step5-bridges`; run changed-module checks and direct consumers, not the full reactor. `BridgeAssemblyTest`, `ArchitectureBridgesTest`, `OpenApiBridgeDescriptorsTest`, `SpringBridgeImportTest`, `BridgePublicationStoreTest`, `BridgeQueryApiTest` and `BridgeCliTest` cover the new boundary. The two explicit execution ITs only read existing native captures. The ABI IT executes the checked-in trusted platform fixture; it is not a target-build fallback.
+
+```powershell
+$bridgeNodeCommand = Get-Command node -ErrorAction SilentlyContinue
+$bridgeNode = if ($bridgeNodeCommand) { $bridgeNodeCommand.Source } else {
+  Join-Path $env:USERPROFILE '.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node.exe'
+}
+if (-not (Test-Path -LiteralPath $bridgeNode -PathType Leaf)) {
+  throw 'Provide an absolute Node.js executable path in $bridgeNode.'
+}
+& $bridgeNode --version
+& $bridgeNode --check backend/src/main/resources/web/bridges.js
+& $bridgeNode --test backend/src/test/js/bridge-model.test.cjs backend/src/test/js/workbench-model.test.cjs
+```
+
+Windows: Node may be present only in the Codex terminal's process PATH. On the verified workstation, Node v24.22.1 resolves from the Codex runtime directory while the saved user/machine PATHs have no Node entry. The commands above invoke the resolved/fallback executable directly; they do not change system PATH or install packages. Set `$bridgeNode` to another verified absolute runtime when using a different workstation.
+
+Inner loops select one method or a small pure class. The retained `ArchitectureNativeCaptureIT` (~34 seconds) is a pre-handoff integration consumer, not a mandatory inner-loop command. Select `SpringBridgeImportTest#lookalikeMappingAnnotationsNeverBecomeSpringEndpoints` for its mapping defect, and run both Spring cases before handoff. The five-second target is not a correctness ceiling; report actual Maven wall time and separate it from Surefire body time. Reuse verified SDK inputs, retain fresh analysis state and keep production byte validation unchanged.
+
+`BridgeJourneyIT` is explicitly selected with pinned Node/architecture/routing SDK paths; its exact command and candidate/qualification limits are in the Step-3 record. It verifies native route/component/client → OpenAPI ← Spring ownership through real loopback HTTP, with actual Kotlin compiler and Python/Pyright acquisition, an actually attempted malformed sibling, nested roots, test/custom contexts, real generated SDK/server outputs and native B03/B04/B05/B07 projections. Its scoped native result is distinct from production semantic qualification.
+
+`BridgeWorkbenchPreview` is a test-only real-store/API preview, optionally taking the portable native fixture directory and a loopback port. Its intentionally missing provider/census demonstrates withheld assessment. It is not the required Java/Kotlin/TS/Python mixed-repository journey. All bridge evidence remains unqualified producer evidence; Task-1/Task-2 acceptance is unchanged.
+
+`BridgeMixedReplayIT` is a data-only consumer of the same retained fixture: it checks every M1 source hash across eight contexts, the exact recovered call obligation, withdrawal, native-name search and qualified topology without rerunning any SDK or generator. Specify `-Dbridge.fixtureRoot=<existing authored fixture>` explicitly. The historical v1 has 32 sources; the quality follow-up v3 includes captured tsconfig and requires `-Dbridge.expectedSources=33` (default remains 32 for historical evidence). A new `BridgeJourneyIT` run may use `-Dbridge.fixture=<new exact directory>` when native inputs/behavior change and a persistent fixture is needed for API/CLI/UI/export parity; it refuses an existing directory. Do not create duplicate captures to repeat unchanged checks.
+
+The native journey requires the fixed SDK roots in addition to `$bridgeNode`: `bridge.tools` (existing architecture SDK), `bridge.routing` (existing native-routing SDK), `bridge.languages` (Kotlin/Pyright plus protoc/gRPC binaries), `bridge.native` (the pinned AsyncAPI/protobufjs-cli SDK), and `bridge.python` (an absolute Python executable). Compact pins live in `bridge-language-tools.json`, `bridge-generator-tools.json` and `architecture/bridge-toolchain.json`; tools/caches and the authored fixture stay outside Git. Acquisition uses official Maven Central/npm artifacts, no install hooks, and SHA-256 pins; this is not a restored worker or a production method certificate.
+
+```powershell
+.\mvnw.cmd -q -pl backend "-Dplatform.build.directory=target/step5-bridges" "-Denforcer.skipRules=reactorModuleConvergence" "-Dtest=BridgeJourneyIT" "-Dbridge.node=$bridgeNode" "-Dbridge.python=$bridgePython" "-Dbridge.tools=$bridgeTools" "-Dbridge.routing=$bridgeRouting" "-Dbridge.languages=$bridgeLanguages" "-Dbridge.native=$bridgeNative" test
+.\mvnw.cmd -q -pl backend "-Dplatform.build.directory=target/step5-bridges" "-Denforcer.skipRules=reactorModuleConvergence" "-Dtest=BridgeMixedReplayIT" "-Dbridge.fixtureRoot=$bridgeFixture" test
+& $bridgeNode --test analyzer-execution/src/test/resources/polyglot/architecture-bridges.test.cjs
+```
+
+The final native journey body took 114.848 seconds; it is a pre-handoff integration, not a five-second inner loop. Narrow pure tests such as `BridgeTopologyTest` and `LanguageBridgeImportTest` are used for query/import iterations. `BridgeApiMain` accepts an optional fourth `warm-scope` argument to finish cold replay before starting the loopback server. Warm queries still rehash the complete transitive read set. The `topology` API/CLI retains bounded paths, conditional cycles and boundary crossings; its result is explicitly non-exhaustive.
+
+The [quality follow-up](tasks/m8/04-step5-step3-execution.md#quality-follow-up--2026-11-02) supersedes the blanket exit claim and owns the newer 51-case selection, native config/SDK controls, fixture v3 and its timings. `PythonBridgeNativeIT` uses the same `bridge.node`, `bridge.python` and `bridge.languages` properties; it checks real SDK declaration targets, local builtin shadowing, changed support-byte rejection and core import. Existing Python native controls can reuse a verified SDK via process-local `EVO_PYRIGHT_SDK` (pinned Pyright 1.1.396), avoiding their historical cache path; Node must still resolve in that test process. These controls do not run target applications or establish production method qualification. Bridge stats distinguish concrete bindings from evidence obligations; always verify both denominators and raw outcomes when comparing captures.
+
 ## Basis
 
 JUnit 5.11 distinguishes [tag filtering from conditional disabling](https://junit.org/junit5/docs/5.11.0/user-guide/index.html#writing-tests-tagging-and-filtering). Surefire 3.5.5 supports [JUnit tag expressions through `groups` / `excludedGroups`](https://maven.apache.org/surefire-archives/surefire-3.5.5/maven-surefire-plugin/examples/junit-platform.html#filtering-by-tags). Native preflight uses Maven Enforcer's [required-file rule](https://maven.apache.org/enforcer/enforcer-rules/requireFilesExist.html); the native readers provide the authenticity checks. Java 21 defines [`Deflater.NO_COMPRESSION`](https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/util/zip/Deflater.html#NO_COMPRESSION) for the adapter's temporary ZIP representation.

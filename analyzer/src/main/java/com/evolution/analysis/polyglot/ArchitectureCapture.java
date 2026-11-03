@@ -26,6 +26,11 @@ public final class ArchitectureCapture {
         }
     }
     public record Result(ContentHandle raw,ContentDigest identity,SemanticTables.Table facts,SemanticTables.Table obligations,SemanticTables.Table artifacts,long documents,long census,long factCount,long gapCount) {}
+    /** Strict data-only request codec for replaying a referenced child capture. */
+    public static Request request(Object value){
+        var row=GraphJson.object(value);if(!row.keySet().equals(Set.of("context","scope","repository","app","configuration","profiles","documents","tool")))throw new IllegalArgumentException("ARCHITECTURE_REQUEST_FIELDS");var context=GraphJson.object(row.get("context"));if(!context.keySet().equals(Set.of("snapshotIdentity","analysisIdentity")))throw new IllegalArgumentException("ARCHITECTURE_REQUEST_CONTEXT");
+        return new Request(new EvidenceContext(new com.evolution.analysis.contract.identity.SnapshotIdentity(GraphJson.string(context.get("snapshotIdentity"))),Optional.ofNullable(context.get("analysisIdentity")).map(v->new com.evolution.analysis.contract.identity.AnalysisIdentity(GraphJson.string(v)))),new ContentDigest(GraphJson.string(row.get("scope"))),GraphJson.string(row.get("repository")),GraphJson.string(row.get("app")),GraphJson.object(row.get("configuration")),GraphJson.array(row.get("profiles")).stream().map(GraphJson::object).toList(),LanguageSemanticRequest.table(row.get("documents")),new ContentDigest(GraphJson.string(row.get("tool"))));
+    }
     public static ContentDigest inputClosure(Request request,SemanticTables tables,BooleanSupplier cancelled)throws IOException {
         var manifest=new ArrayList<Map<String,Object>>();
         try(var reader=tables.open(request.documents(),cancelled)){SemanticTables.Row row;while((row=reader.next())!=null){

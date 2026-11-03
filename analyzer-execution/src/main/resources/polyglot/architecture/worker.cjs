@@ -9,7 +9,7 @@ const structured=require('./structured.cjs');
 const census=require('./census.cjs');
 const dsl=require('./dsl.cjs');
 async function analyze(input,options={}) {
-  const tools=options.tools||await load(options.toolsRoot,options.routingRoot,options.nuxtRoot,options.vueRoot);
+  const tools=options.tools||await load(options.toolsRoot,options.routingRoot,options.nuxtRoot,options.vueRoot,options.bridgeRoot);
   const s=create(input,tools);
   const expected=census.enumerate(s);
   frameworks.validate(s);
@@ -23,6 +23,7 @@ async function analyze(input,options={}) {
   s.scriptViews=await frameworks.scriptInputs(s);
   javascript.analyze(s);
   structured.analyze(s);
+  await require('./bridge-models.cjs').analyze(s);
   require('./templates.cjs').analyze(s);
   dsl.analyze(s);
   await frameworks.analyze(s);
@@ -41,9 +42,9 @@ module.exports={analyze};
 if(require.main===module){
   const fs=require('node:fs');
   (async()=>{
-    const [requestFile,toolsRoot,routingRoot,nuxtRoot,vueRoot]=process.argv.slice(2);if(!requestFile||!toolsRoot||![4,5,6,7].includes(process.argv.length))throw Error('REGISTERED_ARCHITECTURE_ARGUMENTS_REQUIRED');
+    const [requestFile,toolsRoot,routingRoot,nuxtRoot,vueRoot,bridgeRoot]=process.argv.slice(2);if(!requestFile||!toolsRoot||![4,5,6,7,8].includes(process.argv.length))throw Error('REGISTERED_ARCHITECTURE_ARGUMENTS_REQUIRED');
     if(fs.statSync(requestFile).size>90*1024*1024)throw Error('ARCHITECTURE_REQUEST_WORKER_REQUIRED');
     const input=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(fs.readFileSync(requestFile)));
-    process.stdout.write(canonical(await analyze(input,{toolsRoot,routingRoot,nuxtRoot,vueRoot})));
+    process.stdout.write(canonical(await analyze(input,{toolsRoot,routingRoot,nuxtRoot,vueRoot,bridgeRoot})));
   })().catch(()=>{process.stderr.write('ARCHITECTURE_CAPTURE_FAILED\n');process.exitCode=2;});
 }

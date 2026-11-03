@@ -10,13 +10,26 @@ function compile(s,views,excerptOnly){
   const ts=s.tools.typescript;
   const sources=new Map([...s.files].filter(([name,f])=>f.text!==null&&/\.[cm]?[jt]sx?$/.test(name)).map(([name,f])=>['/'+name,f]));
   for(const [name,view] of views)sources.set(name,view);
-  const roots=[...sources].filter(([name,f])=>!['dependency','toolchain'].includes(f.role)&&(!excerptOnly||views.has(name))).map(([name])=>name).sort();
+  let roots=[...sources].filter(([name,f])=>!['dependency','toolchain'].includes(f.role)&&!(s.input.context.workerRoots||[]).includes(name.slice(1))&&(!excerptOnly||views.has(name))).map(([name])=>name).sort();
   if(!roots.length)return;
-  const configured=s.input.context.compilerOptions||{target:'ES2022',module:'ESNext',moduleResolution:'Bundler',jsx:'preserve',allowJs:true,checkJs:true,strict:true};
-  if(['plugins','outDir','outFile'].some(k=>k in configured))throw Error('EXECUTION_OR_EMIT_OPTION_FORBIDDEN');
-  const parsed=ts.convertCompilerOptionsFromJson(configured,'/');if(parsed.errors.length)throw Error('COMPILER_OPTIONS_INVALID');
   const lookup=n=>sources.get(posix.normalize(n))||s.files.get(posix.normalize(n).slice(1));
   const names=[...new Set([...s.files.keys()].map(n=>'/'+n).concat([...sources.keys()]))];
+  let parsed;
+  if(s.input.context.tsconfig){
+    if(s.input.context.compilerOptions)throw Error('TSCONFIG_AND_INLINE_OPTIONS_CONFLICT');
+    const name=posix.normalize('/'+s.input.context.tsconfig),file=lookup(name);if(!file?.text)throw Error('CAPTURED_TSCONFIG_REQUIRED');
+    const configHost={useCaseSensitiveFileNames:true,fileExists:n=>!!lookup(n),readFile:n=>lookup(n)?.text,readDirectory:(root,extensions,excludes,includes,depth)=>ts.matchFiles(root,extensions,excludes,includes,true,'/',depth,dir=>{
+      const prefix=posix.normalize(dir).replace(/\/$/,'')+'/',files=[],directories=new Set();for(const name of names)if(name.startsWith(prefix)){const rest=name.slice(prefix.length),slash=rest.indexOf('/');if(slash<0)files.push(rest);else directories.add(rest.slice(0,slash));}return {files:files.sort(),directories:[...directories].sort()};},n=>posix.normalize(n))};
+    const json=ts.readConfigFile(name,configHost.readFile);if(json.error)throw Error('CAPTURED_TSCONFIG_INVALID');
+    parsed=ts.parseJsonConfigFileContent(json.config,configHost,posix.dirname(name),undefined,name);if(parsed.errors.length)throw Error('CAPTURED_TSCONFIG_INVALID');if(parsed.projectReferences?.length)throw Error('TSCONFIG_PROJECT_REFERENCE_CONTEXT_REQUIRED');
+    if(!excerptOnly){const selected=new Set(parsed.fileNames);roots=roots.filter(name=>selected.has(name));}
+    s.native.push({path:file.path,engine:'typescript',version:ts.version,mode:'captured-tsconfig-no-execution',diagnostics:[]});
+  }else{
+    const configured=s.input.context.compilerOptions||{target:'ES2022',module:'ESNext',moduleResolution:'Bundler',jsx:'preserve',allowJs:true,checkJs:true,strict:true};
+    parsed=ts.convertCompilerOptionsFromJson(configured,'/');if(parsed.errors.length)throw Error('COMPILER_OPTIONS_INVALID');
+  }
+  if(['plugins','outDir','outFile','tsBuildInfoFile'].some(k=>k in parsed.options))throw Error('EXECUTION_OR_EMIT_OPTION_FORBIDDEN');
+  if(!roots.length)return;
   const host=captureHost(ts,lookup,names,parsed.options);
   const program=ts.createProgram({rootNames:roots,options:{...parsed.options,noEmit:true},host}),checker=program.getTypeChecker();
   const diagnostics=ts.getPreEmitDiagnostics(program);s.program=program;s.checker=checker;s.ts=ts;s.compilerHost=host;s.compilerOptions={...parsed.options,noEmit:true};s.rootNames=roots;
@@ -157,7 +170,7 @@ function compile(s,views,excerptOnly){
 }
 function analyze(s){
   try{compile(s,new Map(),false);}catch(error){
-    const reason=['COMPILER_OPTIONS_INVALID','EXECUTION_OR_EMIT_OPTION_FORBIDDEN'].includes(error.message)?error.message:'NATIVE_CHECKER_FAILED';
+    const reason=['COMPILER_OPTIONS_INVALID','EXECUTION_OR_EMIT_OPTION_FORBIDDEN','CAPTURED_TSCONFIG_REQUIRED','CAPTURED_TSCONFIG_INVALID','TSCONFIG_AND_INLINE_OPTIONS_CONFLICT','TSCONFIG_PROJECT_REFERENCE_CONTEXT_REQUIRED'].includes(error.message)?error.message:'NATIVE_CHECKER_FAILED';
     for(const file of s.files.values())if(file.text!==null&&!['dependency','toolchain'].includes(file.role)&&/\.[cm]?[jt]sx?$/.test(file.path))s.gap(file,'F12',reason,0,file.text.length,{errorKind:error.constructor.name});
     // A failed context must not lend partially initialized bindings to another provider.
     for(const field of ['program','checker','ts','compilerHost','compilerOptions','rootNames','binding'])delete s[field];

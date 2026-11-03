@@ -15,7 +15,7 @@ import tokenize
 import urllib.parse
 
 sys.path.insert(0,str(Path(__file__).resolve().parent))
-from native_protocol import Output
+from native_protocol import Output, logical
 from guest_semantic_runner import require_file
 from lsp_client import LspClient
 
@@ -24,6 +24,15 @@ def analyze(file,node,sdk,python):
     out=Output(file,'native-python-request:m8.4-v1','python',('3.10',));r=out.request;sdk=Path(sdk)
     if r['parserVersion']!=sys.version.split()[0] or json.loads((sdk/'package.json').read_bytes())['version']!='1.1.396':raise ValueError('PYTHON_NATIVE_TUPLE_MISMATCH')
     for path,handle in [(node,r['node']),(python,r['python']),(sdk/'langserver.index.js',r['server']),(sdk/'index.js',r['cli'])]:require_file(path,handle)
+    enhanced=r['provider']['version']=='m8.4-v3'
+    if r.get('stdlibDocuments') and not enhanced:raise ValueError('PYRIGHT_STDLIB_PROFILE_VERSION')
+    support_documents=set(r.get('stdlibDocuments',{}).values())
+    if support_documents and r.get('resolutionOnlyCensus')!='sdk-support:m8.4-v1':raise ValueError('PYRIGHT_STDLIB_CENSUS_POLICY_REQUIRED')
+    native_stdlib=(sdk/'dist/typeshed-fallback/stdlib').resolve()
+    for relative,name in r.get('stdlibDocuments',{}).items():
+        logical(relative);source=out.sources.get(name);native=(native_stdlib/relative).absolute()
+        if not relative.endswith('.pyi') or source is None or source.role!='resolutionOnly' or native.resolve()!=native or not native.is_relative_to(native_stdlib) or native.read_bytes()!=source.raw:raise ValueError('PYRIGHT_STDLIB_BYTES_OR_SCOPE_MISMATCH')
+        out.physical[native]=source
     nodes={};declarations={};parse_trees={};module_names=r['moduleNames']
     if set(module_names)!=set(out.sources):raise ValueError('PYTHON_MODULE_MEMBERSHIP_REQUIRED')
     for source in out.sources.values():
@@ -40,7 +49,8 @@ def analyze(file,node,sdk,python):
         def walk(n,parents=(),owners=()):
             scope=module_names[source.path]+('::'+'::'.join(owners) if owners else '')
             def site(category,role,target=n):
-                a,b=bounds(target);out.site(source,category,role,a,b,native=(target,parents,scope))
+                a,b=bounds(target);
+                if source.path not in support_documents:out.site(source,category,role,a,b,native=(target,parents,scope))
             if hasattr(n,'lineno') and getattr(n,'end_lineno',None) is not None:
                 start,end=bounds(n);nodes[source.path][id(n)]=(start,end,parents,scope)
                 if isinstance(n,(ast.FunctionDef,ast.AsyncFunctionDef,ast.ClassDef,ast.arg)) or isinstance(n,ast.Name) and isinstance(n.ctx,(ast.Store,ast.Param)):
@@ -71,14 +81,18 @@ def analyze(file,node,sdk,python):
         if isinstance(n,(ast.FunctionDef,ast.AsyncFunctionDef)):
             args=n.args;signature+='('+','.join(['posonly:'+p.arg for p in args.posonlyargs]+['pos:'+p.arg for p in args.args]+(['*'+args.vararg.arg] if args.vararg else [])+['kwonly:'+p.arg for p in args.kwonlyargs]+(['**'+args.kwarg.arg] if args.kwarg else []))+')'
         if kind in ('VARIABLE','PARAMETER') or sum(d['name']==decl['name'] and d['owner']==decl['owner'] for d in declarations[source.path])>1:signature+='@'+str(decl['span']['start'])
-        return out.symbol(decl['owner'],signature,decl['name'],kind,'GENERATED' if source.role=='generated' else 'PROJECT',decl['span'])
+        return out.symbol(decl['owner'],signature,decl['name'],kind,'PLATFORM' if source.path in support_documents else 'GENERATED' if source.role=='generated' else 'PROJECT',decl['span'])
+    # Bind only native SDK locators whose complete bytes were captured as
+    # resolution input. Pyright supplies declaration positions; spelling is not a resolver.
     config={'python':{'pythonPath':str(python)},'python.analysis':{'autoSearchPaths':False,'useLibraryCodeForTypes':False,'diagnosticMode':'openFilesOnly','typeCheckingMode':'basic','pythonVersion':'3.10'}}
     output=Path(r['workRoot']);output.mkdir(exist_ok=True)
     with (output/'pyright-lsp.stderr').open('xb') as errors,LspClient([str(node),str(sdk/'langserver.index.js'),'--stdio'],out.root,errors,config) as client:
         initialized=client.request('initialize',dict(processId=None,rootUri=out.root.as_uri(),capabilities={'general':{'positionEncodings':['utf-16']},'workspace':{'configuration':True}},initializationOptions=None,workspaceFolders=[dict(uri=out.root.as_uri(),name='captured')]))
         if initialized['capabilities'].get('positionEncoding','utf-16')!='utf-16':raise ValueError('PYRIGHT_POSITION_ENCODING_UNSUPPORTED')
         client.notify('initialized',{});client.notify('workspace/didChangeConfiguration',{'settings':config})
-        for source in out.sources.values():client.notify('textDocument/didOpen',dict(textDocument=dict(uri=source.physical.as_uri(),languageId='python',version=1,text=source.text)))
+        for source in out.sources.values():
+            if source.path in support_documents:continue
+            client.notify('textDocument/didOpen',dict(textDocument=dict(uri=source.physical.as_uri(),languageId='python',version=1,text=source.text)))
         cache={}
         def query(source,n):
             data=nodes[source.path].get(id(n))
@@ -134,7 +148,7 @@ def analyze(file,node,sdk,python):
             if category=='A07':extra['access']='READ_WRITE' if parents and isinstance(parents[-1],ast.AugAssign) and parents[-1].target is n else 'WRITE' if isinstance(n.ctx,ast.Store) else 'DELETE' if isinstance(n.ctx,ast.Del) else 'READ'
             return out.fact(status,values,nativeHover=hover,**extra)
         # A separate deterministic CLI diagnostic view avoids depending on notification timing.
-        command=[str(node),str(sdk/'index.js'),'--outputjson','--pythonversion','3.10','--pythonplatform','Linux','--pythonpath',str(python),*[str(source.physical) for source in out.sources.values()]]
+        command=[str(node),str(sdk/'index.js'),'--outputjson','--pythonversion','3.10','--pythonplatform','Linux','--pythonpath',str(python),*[str(source.physical) for source in out.sources.values() if source.path not in support_documents]]
         with (output/'pyright-cli.json').open('xb') as diagnostics,(output/'pyright-cli.stderr').open('xb') as errors:
             result=subprocess.run(command,cwd=out.root,stdin=subprocess.DEVNULL,stdout=diagnostics,stderr=errors,timeout=120)
         if result.returncode not in (0,1):raise ValueError('PYRIGHT_NATIVE_DIAGNOSTIC_OPERATION_FAILED')

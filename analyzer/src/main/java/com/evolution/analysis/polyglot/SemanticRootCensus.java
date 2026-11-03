@@ -26,6 +26,11 @@ public final class SemanticRootCensus {
         Optional<SemanticTables.Row> get(String space,String key)throws IOException;
         void mark(String space,String key)throws IOException;
         Rows rows(String space,boolean unmarkedOnly)throws IOException;
+        /** Ordered half-open key range. Disk adapters override this with a seek. */
+        default Rows range(String space,String lower,String upper)throws IOException{
+            if(lower.compareTo(upper)>=0)throw new IllegalArgumentException("SEMANTIC_INDEX_RANGE");var source=rows(space,false);
+            return new Rows(){boolean end;public SemanticTables.Row next()throws IOException{if(end)return null;SemanticTables.Row row;while((row=source.next())!=null){if(row.key().compareTo(upper)>=0){end=true;return null;}if(row.key().compareTo(lower)>=0)return row;}end=true;return null;}public void close()throws IOException{source.close();}};
+        }
         @Override void close()throws IOException;
     }
     public interface Rows extends AutoCloseable {SemanticTables.Row next()throws IOException;@Override void close()throws IOException;}

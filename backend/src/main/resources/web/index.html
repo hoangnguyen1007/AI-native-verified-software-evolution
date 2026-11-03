@@ -9,22 +9,32 @@
 <a class="skip-link" href="#main">Skip to content</a>
 <div class="app-shell">
 <aside class="sidebar" id="sidebar" aria-label="Workspace">
-<a class="brand" href="/" aria-label="Evo home"><img src="/logo.svg" alt="" width="36" height="36"><span>evo<span class="brand-dot">.</span></span></a>
+<a class="brand" href="/" aria-label="Evo home"><img src="/logo.svg" alt="" width="32" height="32"><span>evo<span class="brand-dot">.</span></span></a>
 <button class="button primary wide" data-action="connect">＋ Connect repository</button>
 <div class="sidebar-section"><p class="eyebrow">REPOSITORIES</p><div id="repositories" class="sidebar-list"><p class="muted small">Connecting to server…</p></div></div>
 <div class="sidebar-section history-section"><div class="section-heading"><p class="eyebrow">RECENT ANALYSES</p><button class="icon-button" data-action="refresh" aria-label="Refresh analysis history" title="Refresh history">↻</button></div><div id="history" class="sidebar-list"></div><button id="history-more" class="button subtle wide" hidden>Load more analyses</button></div>
 <div class="sidebar-bottom"><span class="connection-dot" id="connection-dot"></span><span id="connection-status">Connecting…</span></div>
 </aside>
 <div class="workspace">
-<header class="topbar"><button id="sidebar-toggle" class="icon-button" aria-label="Toggle sidebar" aria-expanded="true" aria-controls="sidebar">☰</button><span class="topbar-title">Architecture workspace</span><div class="topbar-actions"><button id="theme-toggle" class="button subtle" aria-label="Switch to light theme">Light theme</button></div></header>
+<header class="topbar">
+<button id="sidebar-toggle" class="icon-button" aria-label="Toggle sidebar" aria-expanded="true" aria-controls="sidebar">☰</button>
+<div class="topbar-nav" role="navigation" aria-label="View switcher">
+<a href="/" class="topbar-nav-link active" aria-current="page"><span class="nav-icon">⊞</span> <span class="nav-text">Architecture Workbench</span></a>
+<a href="/bridges.html" class="topbar-nav-link"><span class="nav-icon">⇄</span> <span class="nav-text">Polyglot Bridges</span></a>
+</div>
+<span class="topbar-title sr-only">Architecture workspace</span>
+<div class="topbar-actions">
+<button id="theme-toggle" class="icon-button" aria-label="Switch to light theme" data-tooltip><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/></svg></button>
+</div>
+</header>
 <main id="main" tabindex="-1">
 <div class="page-heading"><div><h1 id="repository-title">Explore your architecture</h1><p id="repository-description" class="muted">Connect a repository, run an analysis, then follow the evidence.</p></div><button id="analyze" class="button primary" disabled>Run analysis ↗</button></div>
 <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
 <section id="job-panel" class="card job-panel" aria-label="Analysis progress" hidden><div class="section-heading"><div><span class="badge" id="job-state"></span><h2 id="job-title">Analysis</h2><p id="job-description" class="muted small"></p></div><button id="cancel-job" class="button danger" hidden>Cancel analysis</button></div><ol id="job-events" class="job-events"></ol><div class="job-links"><button id="job-diagnostics" class="text-button">Input diagnostics</button><button id="job-gaps" class="text-button">Analysis limitations</button><button id="job-receipt" class="text-button">View receipt</button></div></section>
-<div id="welcome" class="welcome card"><img src="/logo.svg" alt="" width="64" height="64"><h2>Start with your repository</h2><p class="muted">See how your Java code connects.<br>Find dependencies, inspect rules and trace each result to its evidence.</p><button class="button primary" data-action="connect">Connect repository →</button><p class="small muted">Local folders or public Git repositories. Source code is never executed.</p></div>
+<div id="welcome" class="welcome card"><img src="/logo.svg" alt="" width="56" height="56"><h2>Start with your repository</h2><p class="muted">Inspect how your software connects across modules, rules, and configurations.<br>Find dependencies, verify architecture rules, and trace each result to its verified source.</p><button class="button primary" data-action="connect">Connect repository →</button><p class="small muted">Local folders or public Git repositories. Source code is never executed directly on the host.</p></div>
 <section id="analysis-workspace" hidden aria-label="Analysis results">
 <div class="context-bar"><label for="context">Analysis context</label><select id="context"></select><span class="muted small" id="context-hint">Choose one module and source set to inspect.</span><button id="provenance" class="text-button">View provenance</button></div>
-<form id="search-form" class="search-bar"><span aria-hidden="true">⌕</span><label class="sr-only" for="search">Search classes and symbols</label><input id="search" type="search" placeholder="Find a class or symbol…" autocomplete="off"><button class="button" type="submit">Search →</button></form>
+<form id="search-form" class="search-bar"><span aria-hidden="true">⌕</span><label class="sr-only" for="search">Search classes and symbols</label><input id="search" type="search" placeholder="Find a class, component, or symbol (e.g. UserController)…" autocomplete="off"><button class="button" type="submit">Search →</button></form>
 <nav id="tabs" class="tabs" aria-label="Analysis views" role="tablist">
 <button role="tab" id="tab-overview" aria-controls="panel-overview" aria-selected="true" data-tab="overview">Overview</button>
 <button role="tab" id="tab-structure" aria-controls="panel-structure" aria-selected="false" tabindex="-1" data-tab="structure">Structure</button>

@@ -31,7 +31,7 @@ public final class NeutralJvm {
             if(!hash.value().equals(row.get("sha256")))throw new IllegalArgumentException("NATIVE_JVM_SOURCE_HASH");
             Path physical=sourceRoot.resolve(path).normalize();if(!physical.startsWith(sourceRoot)||!physical.toRealPath().equals(physical))throw new IllegalArgumentException("NATIVE_JVM_SOURCE_ALIAS");
             if(!Arrays.equals(Files.readAllBytes(physical),bytes))throw new IllegalArgumentException("NATIVE_JVM_SOURCE_CHANGED");
-            String role=GraphJson.string(row.getOrDefault("role","main"));if(!Set.of("main","test","generated","resolutionOnly").contains(role))throw new IllegalArgumentException("NATIVE_JVM_SOURCE_ROLE");
+            String role=GraphJson.string(row.getOrDefault("role","main"));if(!Set.of("main","test","custom","generated","resolutionOnly").contains(role))throw new IllegalArgumentException("NATIVE_JVM_SOURCE_ROLE");
             if(sources.putIfAbsent(path,new Source(path,content,hash,physical,new SourceCoordinates(bytes,"UTF-8"),role))!=null)throw new IllegalArgumentException("NATIVE_JVM_DUPLICATE_SOURCE");
         }
         if(sources.isEmpty())throw new IllegalArgumentException("NATIVE_JVM_EMPTY_SOURCE_MEMBERSHIP");

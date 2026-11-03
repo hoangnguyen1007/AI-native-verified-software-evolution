@@ -36,7 +36,7 @@ class Source:
         self.physical=root/self.path
         if not _captured and (self.physical.resolve()!=self.physical or any(p.is_symlink() for p in (self.physical,*self.physical.parents)) or self.physical.read_bytes()!=self.raw):raise ValueError('NATIVE_SOURCE_BYTES_OR_ALIAS')
         self.role=item.get('role','main')
-        if self.role not in ('main','test','generated','resolutionOnly'):raise ValueError('NATIVE_SOURCE_ROLE')
+        if self.role not in ('main','test','custom','generated','resolutionOnly'):raise ValueError('NATIVE_SOURCE_ROLE')
         self.bounds={'UTF8':[0],'UTF16':[0],'UTF32':[0]};self.positions=[(1,1)];line=column=1
         for index,char in enumerate(self.text):
             for encoding,step in [('UTF8',len(char.encode('utf8'))),('UTF16',len(char.encode('utf-16-le'))//2),('UTF32',1)]:self.bounds[encoding].append(self.bounds[encoding][-1]+step)
@@ -104,6 +104,9 @@ class Output:
         by_source={path:set() for path in self.sources}
         for site in self.sites:by_source[site['source'].path].add(site['category'])
         for source in self.sources.values():
+            if r.get('language')=='python' and r['provider']['version']=='m8.4-v3' and source.path in r.get('stdlibDocuments',{}).values() and source.role=='resolutionOnly' and r.get('resolutionOnlyCensus')=='sdk-support:m8.4-v1':
+                for category in CATEGORIES:self.site(source,category,'resolution-input')
+                continue
             if source.path in self.traversed and source.path not in self.failed and 'A08' in by_source[source.path]:self.site(source,'A08','implicit-generation-census')
             for category in ('A01','A11','A12'):self.site(source,category,'scope')
             for category in CATEGORIES:
@@ -117,6 +120,7 @@ class Output:
             source=site['source'];category=site['category'];role=site['role'];span=site['span']
             obligation=dict(kind='CENSUS',key=key(site),scope=r['scope'],fields=dict(document=source.path,category=category,role=role,span=span));census.append(obligation)
             if category=='A11':value=self.fact('ERROR' if source.path not in self.traversed or any(d['severity']=='ERROR' for d in self.diagnostics.get(source.path,[])) else 'RESOLVED',reason='NATIVE_DIAGNOSTIC_TRAVERSAL_UNAVAILABLE' if source.path not in self.traversed else None,diagnostics=self.diagnostics.get(source.path,[]))
+            elif role=='resolution-input':value=self.fact('RESOLVED' if category in ('A01','A12') else 'NOT_APPLICABLE',reason='SDK_SUPPORT_INPUT_NOT_SELECTED_ANALYSIS_UNIT')
             elif role=='scope':value=self.fact('RESOLVED')
             elif role in ('opaque-syntax','opaque-location') or source.path in self.failed:value=self.fact('ERROR',reason='NATIVE_PARSE_OR_LOCATION_INCOMPLETE')
             elif role in ('syntax-absent','implicit-generation-census') and category=='A08':value=self.fact('UNSUPPORTED',reason='NATIVE_IMPLICIT_GENERATION_CENSUS_REQUIRED')

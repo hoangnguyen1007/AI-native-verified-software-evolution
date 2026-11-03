@@ -1,0 +1,1 @@
+{"lock":"sha256:e7ed7a57717cfe02198ca37395149e2df026d7f405bfe12aa699ddcefafd6fc0","qualification":"UNQUALIFIED_NATIVE_METHOD","schema":"architecture-bridge-tools:m8.4-v1","tree":{"bytes":43655659,"digest":"sha256:675b8753526f70d8d4869062f0170b28585641f1ee82ef287383a1ac3726944e","files":10204},"versions":{"@asyncapi/parser":"3.6.6","protobufjs":"8.8.1","protobufjs-cli":"2.7.1"}}

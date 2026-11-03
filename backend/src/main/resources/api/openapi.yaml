@@ -6,6 +6,119 @@ info:
 servers:
   - url: http://127.0.0.1:8080
 paths:
+  /api/v1/bridges/catalog:
+    post:
+      operationId: bridgeCatalog
+      description: Bounded saved-analysis navigation labels from immutable metadata. SAVED_UNVERIFIED is not a semantic validation result; selecting a scope still performs full replay and live policy checks. Unreadable publications remain explicit entries.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                after: {$ref: '#/components/schemas/Digest'}
+                size: {type: integer, minimum: 1, maximum: 20, default: 5}
+      responses:
+        '200': {$ref: '#/components/responses/BridgeSuccess'}
+        default: {$ref: '#/components/responses/BridgeError'}
+  /api/v1/bridges/summary:
+    post:
+      operationId: bridgeSummary
+      description: Whole captured selection accounting, separate semantic/audit identities and withheld assessment. The operator supplies the store and live read policy.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/BridgeScopeQuery'}
+      responses:
+        '200': {$ref: '#/components/responses/BridgeSuccess'}
+        default: {$ref: '#/components/responses/BridgeError'}
+  /api/v1/bridges/page:
+    post:
+      operationId: bridgePage
+      description: Bounded scan over partitions, endpoints, requirements, relations or typed gaps; native FACTS, NATIVE_GAPS and ARTIFACTS require an exact partition. Native tables retain original source/context/status and F01–F12/A01–A12 categories. Empty filtered pages can have continuation. Root gaps also apply to filtered views; paging never shrinks global accounting.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - {$ref: '#/components/schemas/BridgeScopeFields'}
+                - type: object
+                  required: [section]
+                  properties:
+                    section: {type: string, enum: [PARTITIONS, ENDPOINTS, REQUIREMENTS, RELATIONS, GAPS, FACTS, NATIVE_GAPS, ARTIFACTS, DOCUMENTS]}
+                    category: {type: string, pattern: '^(B0[1-8]|[AF](0[1-9]|1[0-2]))$', description: 'B01–B08 for bridge views; F01–F12 or A01–A12 for native facts/obligations; absent for artifacts.'}
+                    partition: {type: string}
+                    symbol: {$ref: '#/components/schemas/Digest'}
+                    document: {type: string, description: 'Exact captured logical source path; accepted for native views and ENDPOINTS.'}
+                    search: {type: string, minLength: 1, maxLength: 256, description: 'Case-insensitive captured names and paths. Search/source-filter pages scan at most 500 rows and return at most size matches; continuation preserves remaining work. Global accounting is unchanged.'}
+                    size: {type: integer, minimum: 1, maximum: 50, default: 20}
+                    cursor: {$ref: '#/components/schemas/BridgeCursor'}
+              unevaluatedProperties: false
+              if:
+                properties: {section: {enum: [FACTS, NATIVE_GAPS, ARTIFACTS, DOCUMENTS]}}
+                required: [section]
+              then:
+                required: [partition]
+                properties:
+                  category: {type: string, pattern: '^[AF](0[1-9]|1[0-2])$'}
+                if: {properties: {section: {enum: [ARTIFACTS, DOCUMENTS]}}}
+                then: {not: {required: [category]}}
+              else:
+                properties:
+                  category: {type: string, pattern: '^B0[1-8]$'}
+                if: {required: [document]}
+                then: {properties: {section: {const: ENDPOINTS}}}
+      responses:
+        '200': {$ref: '#/components/responses/BridgeSuccess'}
+        default: {$ref: '#/components/responses/BridgeError'}
+  /api/v1/bridges/impact:
+    post:
+      operationId: bridgePotentialImpact
+      description: Bounded incoming structural/contract paths with independent hop qualifications and an explicit unknown/resource frontier. This does not prove runtime breakage or jointly feasible execution.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - {$ref: '#/components/schemas/BridgeScopeFields'}
+                - type: object
+                  required: [target]
+                  properties:
+                    target: {$ref: '#/components/schemas/Digest'}
+                    depth: {type: integer, minimum: 1, maximum: 20, default: 3}
+                    nodes: {type: integer, minimum: 1, maximum: 50, default: 20}
+                    scanBudget: {type: integer, minimum: 1, maximum: 1000, default: 1000}
+              unevaluatedProperties: false
+      responses:
+        '200': {$ref: '#/components/responses/BridgeSuccess'}
+        default: {$ref: '#/components/responses/BridgeError'}
+  /api/v1/bridges/topology:
+    post:
+      operationId: bridgeBoundedTopology
+      description: Bounded incoming paths, cross-context boundaries and observed cycles with joint captured feature checks. The traversal is not exhaustive; incompatible selections and unknown regions are explicit, with no runtime-cycle or policy-violation assertion.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - {$ref: '#/components/schemas/BridgeScopeFields'}
+                - type: object
+                  required: [target]
+                  properties:
+                    target: {$ref: '#/components/schemas/Digest'}
+                    depth: {type: integer, minimum: 1, maximum: 20, default: 3}
+                    nodes: {type: integer, minimum: 1, maximum: 50, default: 20}
+                    scanBudget: {type: integer, minimum: 1, maximum: 1000, default: 1000}
+              unevaluatedProperties: false
+      responses:
+        '200': {$ref: '#/components/responses/BridgeSuccess'}
+        default: {$ref: '#/components/responses/BridgeError'}
   /api/v1/semantic/root-gaps:
     post:
       operationId: semanticRootGaps
@@ -351,6 +464,28 @@ components:
       required: true
       schema: {$ref: '#/components/schemas/Digest'}
   responses:
+    BridgeSuccess:
+      description: architecture.bridge-query:m8.4-v1 data. Counts/revision/cursor positions are lossless decimal strings. Summary accounting separates concrete bindings from endpoint-free evidence obligations, retaining their per-state sum and original outcomes. Context states describe captured children, not method qualification. Canonical data identity includes the complete selected view. Trust remains PRODUCER_ASSERTION; qualified and complete remain false, assessment WITHHELD. Exact declaration matching is distinct from semantic authority, deployed reachability and observed traffic.
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required: [apiVersion, resultIdentity, data]
+            properties:
+              apiVersion: {const: 'architecture.bridge-query:m8.4-v1'}
+              resultIdentity: {$ref: '#/components/schemas/Digest'}
+              data: {type: object}
+    BridgeError:
+      description: Invalid selection/budget (400), absent scope (404), stale cursor, revoked policy or cancellation (409), request/JSON/response limits (413/422), unavailable/corrupt capture or absent operator composition (503). The shared HTTP transport retains its existing media/origin/deadline errors. No worker or target code is launched.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [apiVersion, error]
+            properties:
+              apiVersion: {type: string, enum: ['architecture.bridge-query:m8.4-v1', 'architecture.http:m7.1-v1']}
+              error: {type: object, required: [code], properties: {code: {type: string}}}
     SemanticSuccess:
       description: Canonical semantic.query:m8.4-v1 summary or context/gap/answer page. An operator-composed live validator rechecks signatures, registered methods, exact input closures, current policy and revocations before returning VALIDATED_OBSERVATION and CURRENT_POLICY_VALIDATED. Authenticated results may remain incomplete because semantic gaps persist. Without that capability, trust is PRODUCER_ASSERTION, qualification UNQUALIFIED and complete false. Retained history can remain readable when the current provider is missing or failed; it never changes that operational state. Revision, coverage counts, gap counts and pagination row counts are lossless decimal strings. The data identity hashes canonical UTF-8 JSON.
       content:
@@ -450,6 +585,28 @@ components:
                   code: {type: string}
                   message: {type: string}
   schemas:
+    BridgeScopeFields:
+      type: object
+      required: [scope]
+      properties:
+        scope: {$ref: '#/components/schemas/Digest'}
+    BridgeScopeQuery:
+      allOf: [{$ref: '#/components/schemas/BridgeScopeFields'}]
+      unevaluatedProperties: false
+    BridgeCursor:
+      type: object
+      additionalProperties: false
+      required: [request, position]
+      properties:
+        request: {$ref: '#/components/schemas/Digest'}
+        position:
+          type: object
+          additionalProperties: false
+          required: [table, rows, previousKey]
+          properties:
+            table: {$ref: '#/components/schemas/Digest'}
+            rows: {type: string, pattern: '^(0|[1-9][0-9]{0,18})$'}
+            previousKey: {type: [string, 'null']}
     SemanticCount: {type: string, pattern: '^(0|[1-9][0-9]{0,18})$', description: Exact nonnegative signed-64-bit decimal counter; never binary floating point.}
     SemanticCursor:
       type: object
