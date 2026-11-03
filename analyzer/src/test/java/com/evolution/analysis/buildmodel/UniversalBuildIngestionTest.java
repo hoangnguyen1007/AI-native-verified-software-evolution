@@ -4,6 +4,28 @@ import java.util.*;
 import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 class UniversalBuildIngestionTest {
+    @Test void nestedGradleIncludesRetainImplicitParentProjectAndDynamicPathsRemainGaps(){
+        var nested=load(Map.of("settings.gradle","include ':platform:api'\nproject(':platform:api').projectDir = new File(settingsDir, 'services/api')\n"));
+        assertEquals(Set.of(".","platform","services/api"),nested.modules().stream().map(m->m.descriptor().path()).collect(java.util.stream.Collectors.toSet()));
+        var dynamic=load(Map.of("settings.gradle.kts","include(\":api\")\nproject(\":api\").projectDir = file(\"$custom/api\")\n"));
+        assertEquals(Set.of(".","api"),dynamic.modules().stream().map(m->m.descriptor().path()).collect(java.util.stream.Collectors.toSet()));
+        assertTrue(dynamic.issues().stream().anyMatch(i->i.reason()==IngestionEvidence.Reason.DYNAMIC_BUILD_LOGIC));
+        var unsafe=load(Map.of("settings.gradle","include ':api'\nproject(':api').projectDir = file('../escape')\n"));
+        assertTrue(unsafe.issues().stream().anyMatch(i->i.reason()==IngestionEvidence.Reason.UNSAFE_PATH));
+        var parent=load(Map.of("settings.gradle","include ':platform:api'\nproject(':platform').projectDir = file('shared')\nincludeBuild \"$external/build\"\n"));
+        assertEquals("platform",parent.modules().stream().filter(m->m.descriptor().path().equals("shared")).findFirst().orElseThrow().descriptor().displayName());
+        assertTrue(parent.modules().stream().noneMatch(m->m.descriptor().path().contains("$")));
+    }
+    @Test void gradleProjectDirectoryRemappingAndIncludedBuildsKeepTheirOwnModules() {
+        var r=load(Map.of("settings.gradle.kts","include(\":api\")\nproject(\":api\").projectDir = file(\"modules/http\")\nincludeBuild(\"build-logic\")\n",
+                "build.gradle.kts","plugins { java }\n",
+                "modules/http/src/main/java/Api.java","interface Api {}",
+                "build-logic/settings.gradle.kts","rootProject.name = \"logic\"\n",
+                "build-logic/src/main/java/Plugin.java","class Plugin {}"));
+        assertEquals(Set.of(".","modules/http","build-logic"),r.modules().stream().map(m->m.descriptor().path()).collect(java.util.stream.Collectors.toSet()));
+        assertEquals(UniversalBuildModel.Tool.GRADLE_KOTLIN,r.modules().stream().filter(m->m.descriptor().path().equals("modules/http")).findFirst().orElseThrow().tool());
+        assertEquals("api",r.modules().stream().filter(m->m.descriptor().path().equals("modules/http")).findFirst().orElseThrow().descriptor().displayName());
+    }
     @Test void plainJavaGetsSourcePlansWithoutInventedCoordinates() {
         var r=load(Map.of("src/example/C.java","package example; class C {}"));
         assertEquals(UniversalBuildModel.Tool.PLAIN_JAVA,r.modules().getFirst().tool());

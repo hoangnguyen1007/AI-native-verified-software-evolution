@@ -34,6 +34,8 @@ final class ResolutionEnvironment {
     ResolutionEnvironment(FrontendRequest request) {
         request.originClasspath();
         platformEntry = request.platform().entry();
+        // Recovery consumes captured source bytes only and never attributes a binary/platform target.
+        if(request.sourceRecovery())return;
         try {
             var platformPaths = new HashSet<Path>();
             for (var artifact : request.platform().artifacts()) {

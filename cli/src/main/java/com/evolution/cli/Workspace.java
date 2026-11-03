@@ -14,8 +14,6 @@ import static java.nio.file.LinkOption.NOFOLLOW_LINKS;
 
 /** Explicit, bounded local session storage. Snapshots and policy inputs are immutable. */
 final class Workspace {
-    static final int GRAPH_BYTES=1_000_000_000;
-    static final GraphJson.Limits GRAPH_LIMITS=new GraphJson.Limits(GRAPH_BYTES,128,16_000_000);
     final Path root;
     Workspace(Path directory) { root=directory.toAbsolutePath().normalize().resolve(".evo"); }
     static Path safe(Path path) throws IOException {
@@ -40,7 +38,8 @@ final class Workspace {
         return GraphJson.read(utf8(read(file,limit)),new GraphJson.Limits(limit,128,2_000_000));
     }
     static KnowledgeGraph graph(Path file) throws IOException {
-        return FileGraphStore.readSnapshot(safe(file),GRAPH_BYTES,GRAPH_LIMITS);
+        file=safe(file);long bytes=Math.max(1,Files.size(file));
+        return FileGraphStore.readSnapshot(file,bytes,new GraphJson.StreamLimits(bytes,128,bytes));
     }
     private void create() throws IOException {
         safe(root); Files.createDirectories(root); safe(root);
@@ -50,7 +49,9 @@ final class Workspace {
     }
     KnowledgeGraph selectedGraph() throws IOException {
         var id=new ContentDigest(GraphJson.string(selection().get("graph")));
-        return new FileGraphStore(root,GRAPH_BYTES,GRAPH_LIMITS).load(id).orElseThrow(()->new IOException("GRAPH_UNAVAILABLE"));
+        var graph=graph(root.resolve(id.value().substring(7)+".graph.json"));
+        if(!graph.identity().equals(id))throw new GraphStoreException(GraphStoreException.Reason.CORRUPT_SNAPSHOT);
+        return graph;
     }
     void select(KnowledgeGraph graph,Optional<String> context) throws IOException {
         if(context.isPresent()&&graph.contexts().stream().noneMatch(c->c.identity().equals(context.orElseThrow()))) throw new IllegalArgumentException("Foreign context");
@@ -58,7 +59,10 @@ final class Workspace {
         var data=new TreeMap<String,Object>();data.put("graph",graph.identity());data.put("context",context);
         atomicSelection(CanonicalJson.write(data).getBytes(StandardCharsets.UTF_8));
     }
-    void publish(KnowledgeGraph graph)throws IOException {create();new FileGraphStore(root,GRAPH_BYTES,GRAPH_LIMITS).save(graph);}
+    void publish(KnowledgeGraph graph)throws IOException {
+        create();long bytes=Math.max(1,Files.getFileStore(root).getUsableSpace());
+        new FileGraphStore(root,bytes,new GraphJson.StreamLimits(bytes,128,bytes)).save(graph);
+    }
     void rememberContext(KnowledgeGraph verified,String context)throws IOException {
         if(verified.contexts().stream().noneMatch(c->c.identity().equals(context)))throw new IllegalArgumentException("Foreign context");
         if(!verified.identity().value().equals(selection().get("graph")))throw new IOException("SELECTION_CHANGED");

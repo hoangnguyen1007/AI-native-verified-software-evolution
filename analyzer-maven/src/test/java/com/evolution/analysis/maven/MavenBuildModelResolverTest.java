@@ -29,6 +29,32 @@ class MavenBuildModelResolverTest {
     @TempDir
     Path temporary;
 
+    @Test void remotelyAcquiredParentAndBomAreDurableAndReplayWithoutNetwork() throws Exception {
+        Files.createDirectories(cacheRoot());
+        var parent=new MavenCoordinate("external","parent","1");
+        var bom=new MavenCoordinate("external","bom","1");
+        byte[] parentBytes=pom("external","parent","1","<packaging>pom</packaging><dependencyManagement><dependencies><dependency><groupId>external</groupId><artifactId>bom</artifactId><version>1</version><type>pom</type><scope>import</scope></dependency></dependencies></dependencyManagement>").getBytes(StandardCharsets.UTF_8);
+        byte[] bomBytes=pom("external","bom","1","<packaging>pom</packaging>").getBytes(StandardCharsets.UTF_8);
+        var fetched=new ArrayList<URI>();
+        var provider=new MavenDependencyArtifactProvider(cacheRoot(),(uri,max,connect,timeout)->{
+            fetched.add(uri);
+            if(fetched.size()==1)return new MavenDependencyArtifactProvider.RemoteResponse(503,new byte[0]);
+            return new MavenDependencyArtifactProvider.RemoteResponse(200,uri.getPath().endsWith("parent-1.pom")?parentBytes:bomBytes);
+        },millis->{});
+        var initial=request(Map.of("pom.xml","<project><modelVersion>4.0.0</modelVersion><parent><groupId>external</groupId><artifactId>parent</artifactId><version>1</version><relativePath/></parent><artifactId>app</artifactId></project>"));
+        var policy=new MavenPomResolutionPolicy(100,100_000,5_000_000,16,List.of(URI.create("https://repo.example.test/maven/")),1000,2000);
+        var result=new MavenBuildModelResolver(cacheRoot(),(uri,max,connect,timeout)->{throw new AssertionError("uncached transport");},Optional.of(provider)).resolve(initial,policy);
+        assertEquals(3,fetched.size());assertTrue(result.problems().isEmpty(),()->result.problems().toString());
+        assertEquals(1,result.attempts().stream().filter(a->a.origin()==MavenBuildModelResolution.Origin.REMOTE_REPOSITORY&&a.outcome()==MavenBuildModelResolution.AttemptOutcome.FAILED).count());
+        assertTrue(result.model().modules().getFirst().effectivePom().isPresent());
+        assertEquals(Set.of(parent,bom),result.request().artifactPoms().keySet());
+        assertArrayEquals(parentBytes,Files.readAllBytes(cacheRoot().resolve("external/parent/1/parent-1.pom")));
+        var replay=new MavenBuildModelResolver(cacheRoot(),(uri,max,connect,timeout)->{throw new AssertionError("offline replay made a request");}).resolve(initial,RESOLUTION_POLICY);
+        assertEquals(result.model().identity(),replay.model().identity());
+        assertEquals(result.request().identity(),replay.request().identity());
+        assertEquals(3,fetched.size());
+    }
+
     @Test
     void resolvesExternalParentAndItsImportedBomFromSelectedLocalCache() throws IOException {
         MavenCoordinate parent = new MavenCoordinate("external", "parent", "1");

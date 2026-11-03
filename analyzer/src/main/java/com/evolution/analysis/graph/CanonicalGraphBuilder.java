@@ -201,9 +201,15 @@ public final class CanonicalGraphBuilder {
                 String id=EntityIdentity.from(owner.origin(),owner.stableScope(),EntityKind.ANNOTATION_USE,a.canonicalName()).value();
                 node(id,context,"ANNOTATION_USE",payload);link(context,"graph.has-annotation-use",owner.identity().value(),id,payload);});
             frontend.typeDeclarations().forEach(t->artifact("java.type-shape",t));frontend.memberDeclarations().forEach(m->artifact("java.member-shape",m));
-            var index=new TreeMap<String,Object>();index.put("indexSchema","frontend.result-index:m7.2-v1");index.put("providerResultIdentity",CanonicalJson.sha256(frontend));
+            frontend.constructorCandidates().forEach(c->{var payload=artifact("java.lombok-constructor-candidate",c);
+                String id=derivedIdentity("constructor-candidate",payload);node(id,context,"CONSTRUCTOR_INJECTION_CANDIDATE",payload);
+                link(context,"graph.has-constructor-candidate",c.owner().value(),id,payload);
+                link(context,"graph.candidate-field",id,c.field().value(),payload);});
+            var index=new TreeMap<String,Object>();index.put("indexSchema","frontend.result-index:m8.4-v2");index.put("providerResultIdentity",CanonicalJson.sha256(frontend));
             index.put("analysis",frontend.analysis());index.put("frontend",frontend.frontend());index.put("state",frontend.state());
-            index.put("coverage",frontend.coverage());index.put("sources",frontend.sources());index.put("diagnostics",frontend.diagnostics());
+            index.put("coverage",frontend.coverage());
+            index.put("sources",frontend.sources().stream().map(s->Map.of("document",s.document(),"state",s.state(),"evidence",artifact("java.source-outcome",s))).toList());
+            index.put("diagnostics",frontend.diagnostics().stream().map(d->artifact("java.diagnostic",d)).toList());
             index.put("declarations",frontend.declarations().stream().map(v->artifact("java.declaration",v)).toList());
             index.put("occurrences",frontend.occurrences().stream().map(v->artifact("java.occurrence",v)).toList());
             index.put("observations",frontend.observations().stream().map(v->artifact("java.observation",v)).toList());
@@ -212,6 +218,7 @@ public final class CanonicalGraphBuilder {
             index.put("derivedRelationships",frontend.derivedRelationships().stream().map(v->artifact("java.derived-relationship",v)).toList());
             index.put("typeDeclarations",frontend.typeDeclarations().stream().map(v->artifact("java.type-shape",v)).toList());
             index.put("memberDeclarations",frontend.memberDeclarations().stream().map(v->artifact("java.member-shape",v)).toList());
+            index.put("constructorCandidates",frontend.constructorCandidates().stream().map(v->artifact("java.lombok-constructor-candidate",v)).toList());
             artifact("frontend.result-index",index);
         }
         void relationship(String context,SemanticRelationship relation,ContentDigest payload) {

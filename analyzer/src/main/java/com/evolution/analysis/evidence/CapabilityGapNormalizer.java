@@ -306,12 +306,16 @@ public final class CapabilityGapNormalizer {
 
     private static void normalize(EvidenceContext context, FrontendResult result,
             List<AcquisitionAttemptRecord> attempts, List<CapabilityGapRecord> gaps) {
-        ContentDigest resultIdentity = ContentDigest.sha256Utf8(CanonicalJson.write(result));
+        ContentDigest resultIdentity = CanonicalJson.sha256(result);
         if (result.state() != FrontendResult.State.COMPLETED) {
             CapabilityGapCatalog.Entry entry = CapabilityGapCatalog.entryFor(result.state());
+            // Recovery's full diagnostic census remains in observations/source outcomes and the
+            // graph's diagnostic index. The context-state gap cites the run-level cause rather
+            // than nesting the entire census again in one unbounded aggregate record.
+            var recovery=result.diagnostics().stream().filter(d->d.code().equals("java.source-recovery")).toList();
             addGap(context, result.frontend(), resultIdentity, "java.frontend-state", result.state(), entry,
                     subject(EvidenceSubject.Kind.PROVIDER, result.frontend().id() + ":" + result.frontend().version()),
-                    List.of(), result.diagnostics(), attempts, gaps);
+                    List.of(), recovery.isEmpty()?result.diagnostics():recovery, attempts, gaps);
         }
         for (SourceOutcome source : result.sources()) {
             if (source.state() != SourceOutcome.State.PROCESSED) {

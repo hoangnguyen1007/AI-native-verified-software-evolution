@@ -27,7 +27,7 @@ public final class IngestionEvidence {
         }
         public ContentDigest identity() { return digest(this); }
     }
-    public static ContentDigest digest(Object value) { return ContentDigest.sha256Utf8(CanonicalJson.write(value)); }
+    public static ContentDigest digest(Object value) { return CanonicalJson.sha256(value); }
     public static List<CapabilityGapRecord> gaps(SnapshotIdentity snapshot, VersionedIdentifier provider,
                                                 ContentDigest input, Collection<Issue> issues) {
         return issues.stream().distinct().map(issue -> {

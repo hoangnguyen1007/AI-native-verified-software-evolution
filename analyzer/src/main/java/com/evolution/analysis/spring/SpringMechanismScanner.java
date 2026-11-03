@@ -903,7 +903,9 @@ public final class SpringMechanismScanner {
     /** A language-derived zero-argument constructor has supporting owner evidence, never a fabricated member span. */
     private static boolean knownLanguageDefaultConstructor(FrontendResult frontend,DeclarationRecord owner,DeclarationRecord constructor){
         if(owner==null||owner.status()!=SemanticStatus.RESOLVED||owner.entity().origin()!=EntityOrigin.PROJECT||owner.entity().declaration().isEmpty()
-                ||!frontend.frontend().equals(new VersionedIdentifier("frontend.javaparser","3.28.2-m8.4-native-wiring-v1"))
+                ||!Set.of(new VersionedIdentifier("frontend.javaparser","3.28.2-m8.4-native-wiring-v1"),
+                        new VersionedIdentifier("frontend.javaparser","3.28.2-m8.4-source-recovery-v2"),
+                        new VersionedIdentifier("frontend.javaparser","3.28.2-m8.4-lombok-candidates-v3")).contains(frontend.frontend())
                 ||constructor.entity().origin()!=EntityOrigin.PROJECT||!constructor.entity().stableScope().equals(owner.entity().stableScope())
                 ||!constructor.uncertainties().isEmpty()||!constructor.diagnostics().isEmpty()
                 ||constructor.derivation().kind()!=DerivationKind.DERIVED||!constructor.derivation().method().equals(new VersionedIdentifier("java.default-constructor","1"))

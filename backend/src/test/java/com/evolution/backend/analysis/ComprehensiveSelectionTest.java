@@ -8,6 +8,22 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class ComprehensiveSelectionTest {
     @TempDir Path root;
+    @Test void metadataPolicyUsesCentralByDefaultAndOfflineDoesNotCreateCache() throws Exception {
+        assertEquals(List.of(java.net.URI.create("https://repo.maven.apache.org/maven2/")),MavenScan.DEFAULT_REPOSITORIES);
+        Path source=Files.createDirectory(root.resolve("source"));
+        Files.writeString(source.resolve("pom.xml"),"<project><modelVersion>4.0.0</modelVersion><groupId>test</groupId><artifactId>app</artifactId><version>1</version></project>");
+        var repo=com.evolution.analysis.contract.identity.RepositoryIdentity.fromCanonicalCoordinate("urn:test:metadata");
+        try(var intake=new RepositoryIntake(root.resolve("state"))){
+            intake.local(source,"capture",new com.evolution.analysis.acquisition.streaming.StreamingAcquisitionRequest(repo,java.util.Optional.empty(),true,List.of()),()->false);
+            var acquisition=intake.compatibility("capture",repo,java.util.Optional.empty(),true,true,false,List.of());
+            Path offline=root.resolve("offline-cache");
+            var local=MavenScan.models(acquisition,offline,List.of());
+            assertFalse(Files.exists(offline));assertEquals(MavenScan.pomPolicy(List.of()).identity(),local.getFirst().policyIdentity());
+            Path online=root.resolve("new/cache");
+            var result=MavenScan.models(acquisition,online);
+            assertTrue(Files.isDirectory(online));assertEquals(MavenScan.pomPolicy(MavenScan.DEFAULT_REPOSITORIES).identity(),result.getFirst().policyIdentity());
+        }
+    }
     @Test void nestedIndependentRootIsNeverExcludedFromSemanticSelection() throws Exception {
         Path source=Files.createDirectory(root.resolve("multi"));
         String pom="<project><modelVersion>4.0.0</modelVersion><groupId>test</groupId><artifactId>%s</artifactId><version>1</version></project>";

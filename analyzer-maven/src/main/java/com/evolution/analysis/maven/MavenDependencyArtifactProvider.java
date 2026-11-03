@@ -8,7 +8,6 @@ import com.evolution.analysis.dependency.DependencyAcquisitionResult.*;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.io.InputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -21,6 +20,7 @@ import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.time.Duration;
 import java.util.*;
+import java.util.concurrent.*;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipException;
 import java.util.zip.ZipInputStream;
@@ -31,7 +31,8 @@ import java.util.zip.ZipInputStream;
  */
 public final class MavenDependencyArtifactProvider implements DependencyArtifactProvider {
     public static final VersionedIdentifier VERSION =
-            new VersionedIdentifier("dependency.artifact-cache", "m3.8");
+            new VersionedIdentifier("dependency.artifact-cache", "m3.9-parallel");
+    private static final JdkRemoteArtifactTransport SHARED_TRANSPORT = new JdkRemoteArtifactTransport();
     private static final int MAX_ARCHIVE_ENTRIES = 1_000_000;
     private static final long MAX_EXPANDED_ARCHIVE_BYTES = 1_000_000_000L;
 
@@ -40,7 +41,7 @@ public final class MavenDependencyArtifactProvider implements DependencyArtifact
     private final RetryDelay retryDelay;
 
     public MavenDependencyArtifactProvider(Path selectedCacheRoot) {
-        this(selectedCacheRoot, new JdkRemoteArtifactTransport(), Thread::sleep);
+        this(selectedCacheRoot, SHARED_TRANSPORT, Thread::sleep);
     }
 
     MavenDependencyArtifactProvider(
@@ -69,25 +70,68 @@ public final class MavenDependencyArtifactProvider implements DependencyArtifact
             return DependencyAcquisitionResult.create(request, VERSION, outcomes, attempts, 0);
         }
 
-        Budget budget = new Budget(request.policy());
-        for (DependencyAcquisitionRequest.Requirement requirement : request.requirements()) {
-            ArtifactCoordinate coordinate = requirement.coordinate();
-            if (coordinate.gav().version().endsWith("-SNAPSHOT")) {
-                outcomes.add(failed(requirement, FailureReason.SNAPSHOT_UNSUPPORTED));
-                continue;
+        if(request.requirements().size()==1||request.policy().maxConcurrentDownloads()==1) {
+            long consumed=0;
+            for(var requirement:request.requirements()) {
+                var result=Thread.currentThread().isInterrupted()
+                        ?new TaskResult(failed(requirement,FailureReason.FETCH_TIMEOUT),List.of(),0)
+                        :acquireOne(root,requirement,request.policy(),request.policy().maxTotalBytes()-consumed);
+                outcomes.add(result.outcome());consumed+=result.consumed();
+                appendAttempts(attempts,counter,result.attempts());
             }
-            try {
-                Optional<Artifact> cached = readCached(root, requirement, budget, attempts, counter);
-                if (cached.isPresent()) {
-                    outcomes.add(success(requirement, cached.orElseThrow()));
-                    continue;
-                }
-                outcomes.add(acquireRemote(root, requirement, request.policy(), budget, attempts, counter));
-            } catch (AcquisitionFailure failure) {
-                outcomes.add(failed(requirement, failure.reason));
-            }
+            return DependencyAcquisitionResult.create(request,VERSION,outcomes,attempts,consumed);
         }
-        return DependencyAcquisitionResult.create(request, VERSION, outcomes, attempts, budget.consumed());
+        // Reserve each task's worst-case transfer before dispatch. Commit in input order, not
+        // completion order: timing cannot change byte admission, failures or ledger ordinals.
+        long perTask = request.policy().maxArtifactBytes() * (request.policy().maxRetries()+1L)
+                * Math.max(1,request.policy().remoteRepositories().size());
+        long consumed=0,reserved=0;int next=0;boolean interrupted=Thread.interrupted();
+        var pending=new ArrayDeque<Pending>();var activeCoordinates=new HashSet<ArtifactCoordinate>();
+        var executor=Executors.newFixedThreadPool(request.policy().maxConcurrentDownloads());
+        try {
+            while(next<request.requirements().size()||!pending.isEmpty()) {
+                while(!interrupted&&next<request.requirements().size()&&pending.size()<request.policy().maxConcurrentDownloads()) {
+                    var requirement=request.requirements().get(next);
+                    long available=request.policy().maxTotalBytes()-consumed-reserved;
+                    if(!pending.isEmpty()&&(available<perTask||activeCoordinates.contains(requirement.coordinate())))break;
+                    long allowance=Math.min(available,perTask);
+                    pending.addLast(new Pending(requirement,allowance,executor.submit(()->acquireOne(root,requirement,request.policy(),allowance))));
+                    activeCoordinates.add(requirement.coordinate());reserved+=allowance;next++;
+                }
+                if(pending.isEmpty()) {
+                    while(next<request.requirements().size())outcomes.add(failed(request.requirements().get(next++),FailureReason.FETCH_TIMEOUT));
+                    break;
+                }
+                var task=pending.removeFirst();TaskResult result;
+                for(;;)try {result=task.future().get();break;}
+                catch(InterruptedException e){interrupted=true;/* Drain accepted work before returning a closed ledger. */}
+                catch(ExecutionException e){throw new IllegalStateException("Artifact acquisition task failed unexpectedly",e.getCause());}
+                consumed+=result.consumed();reserved-=task.allowance();activeCoordinates.remove(task.requirement().coordinate());
+                outcomes.add(result.outcome());
+                appendAttempts(attempts,counter,result.attempts());
+            }
+        } finally {
+            executor.shutdownNow();if(interrupted)Thread.currentThread().interrupt();
+        }
+        return DependencyAcquisitionResult.create(request, VERSION, outcomes, attempts, consumed);
+    }
+
+    private static void appendAttempts(List<Attempt> destination,AttemptCounter counter,List<Attempt> source) {
+        for(var attempt:source)destination.add(new Attempt(counter.next(),attempt.coordinate(),attempt.origin(),attempt.subject(),attempt.outcome(),attempt.contentDigest()));
+    }
+
+    private record Pending(DependencyAcquisitionRequest.Requirement requirement,long allowance,Future<TaskResult> future) {}
+    private record TaskResult(Outcome outcome,List<Attempt> attempts,long consumed) {}
+    private TaskResult acquireOne(Path root,DependencyAcquisitionRequest.Requirement requirement,DependencyAcquisitionPolicy policy,long allowance) {
+        var attempts=new ArrayList<Attempt>();var counter=new AttemptCounter();
+        if(requirement.coordinate().gav().version().endsWith("-SNAPSHOT"))return new TaskResult(failed(requirement,FailureReason.SNAPSHOT_UNSUPPORTED),attempts,0);
+        if(allowance==0)return new TaskResult(failed(requirement,FailureReason.SIZE_EXCEEDED),attempts,0);
+        var budget=new Budget(policy.withLimits(1,allowance));Outcome outcome;
+        try {
+            var cached=readCached(root,requirement,budget,attempts,counter);
+            outcome=cached.isPresent()?success(requirement,cached.orElseThrow()):acquireRemote(root,requirement,policy,budget,attempts,counter);
+        }catch(AcquisitionFailure failure){outcome=failed(requirement,failure.reason);}
+        return new TaskResult(outcome,attempts,budget.consumed());
     }
 
     private Optional<Artifact> readCached(
@@ -488,39 +532,67 @@ public final class MavenDependencyArtifactProvider implements DependencyArtifact
 
     static final class RemoteLimitExceeded extends Exception {}
 
-    private static final class JdkRemoteArtifactTransport implements RemoteArtifactTransport {
+    static final class JdkRemoteArtifactTransport implements RemoteArtifactTransport {
+        private final Map<Integer,HttpClient> clients=new HashMap<>();
+        synchronized ClientLease lease(int timeout) {
+            HttpClient existing=clients.get(timeout);
+            if(existing!=null)return new ClientLease(existing,true);
+            var client=HttpClient.newBuilder().connectTimeout(Duration.ofMillis(timeout)).followRedirects(HttpClient.Redirect.NEVER).build();
+            boolean pooled=clients.size()<16;if(pooled)clients.put(timeout,client);
+            return new ClientLease(client,pooled);
+        }
+        record ClientLease(HttpClient client,boolean pooled) implements AutoCloseable {
+            public void close(){if(!pooled)client.shutdown();}
+        }
         @Override
         public RemoteResponse fetch(URI uri, long maxBytes, int connectTimeoutMillis, int readTimeoutMillis)
                 throws IOException, InterruptedException, RemoteLimitExceeded {
-            HttpClient client = HttpClient.newBuilder()
-                    .connectTimeout(Duration.ofMillis(connectTimeoutMillis))
-                    .followRedirects(HttpClient.Redirect.NEVER)
-                    .build();
-            HttpRequest request = HttpRequest.newBuilder(uri)
-                    .timeout(Duration.ofMillis(readTimeoutMillis))
-                    .header("Accept", "application/java-archive,application/xml,text/xml,application/octet-stream")
-                    .GET().build();
-            HttpResponse<InputStream> response = client.send(request, HttpResponse.BodyHandlers.ofInputStream());
-            try (InputStream input = response.body()) {
-                OptionalLong declared = response.headers().firstValueAsLong("Content-Length");
-                if (declared.isPresent() && declared.getAsLong() > maxBytes) throw new RemoteLimitExceeded();
-                return new RemoteResponse(response.statusCode(), readRemote(input, maxBytes));
+            try(var lease=lease(connectTimeoutMillis)) {
+                HttpRequest request = HttpRequest.newBuilder(uri)
+                        .timeout(Duration.ofMillis(readTimeoutMillis))
+                        .header("Accept", "application/java-archive,application/xml,text/xml,application/octet-stream")
+                        .GET().build();
+                var future=lease.client().sendAsync(request,info->{
+                    var body=new BoundedBodySubscriber(maxBytes);
+                    if(info.headers().firstValueAsLong("Content-Length").orElse(0)>maxBytes)body.rejectOversized();
+                    return body;
+                });
+                try {
+                    var response=future.get(readTimeoutMillis,TimeUnit.MILLISECONDS);
+                    return new RemoteResponse(response.statusCode(),response.body());
+                }catch(TimeoutException e){throw new HttpTimeoutException("Artifact response deadline exceeded");}
+                catch(ExecutionException e){
+                    if(e.getCause() instanceof RemoteLimitExceeded limit)throw limit;
+                    if(e.getCause() instanceof IOException io)throw io;
+                    throw new IOException("Artifact HTTP transport failed",e.getCause());
+                }finally{future.cancel(true);}
             }
         }
+    }
 
-        private static byte[] readRemote(InputStream input, long maxBytes)
-                throws IOException, RemoteLimitExceeded {
-            var output = new ByteArrayOutputStream((int) Math.min(8192, maxBytes));
-            byte[] buffer = new byte[8192];
-            long count = 0;
-            int read;
-            while ((read = input.read(buffer)) >= 0) {
-                count += read;
-                if (count > maxBytes) throw new RemoteLimitExceeded();
-                output.write(buffer, 0, read);
-            }
-            return output.toByteArray();
+    /** Back pressure and the byte cap cover the entire response, including chunked bodies. */
+    static final class BoundedBodySubscriber implements HttpResponse.BodySubscriber<byte[]> {
+        private final long maximum;private long count;
+        private final ByteArrayOutputStream output=new ByteArrayOutputStream();
+        private final CompletableFuture<byte[]> body=new CompletableFuture<>();
+        private Flow.Subscription subscription;
+        BoundedBodySubscriber(long maximum){this.maximum=maximum;}
+        void rejectOversized(){body.completeExceptionally(new RemoteLimitExceeded());}
+        public CompletionStage<byte[]> getBody(){return body;}
+        public void onSubscribe(Flow.Subscription value){
+            if(subscription!=null||body.isDone()){value.cancel();return;}subscription=value;value.request(1);
         }
+        public void onNext(List<ByteBuffer> buffers){
+            if(body.isDone())return;
+            for(var buffer:buffers){
+                if(buffer.remaining()>maximum-count){subscription.cancel();body.completeExceptionally(new RemoteLimitExceeded());return;}
+                int amount=buffer.remaining();count+=amount;
+                byte[] bytes=new byte[amount];buffer.get(bytes);output.writeBytes(bytes);
+            }
+            subscription.request(1);
+        }
+        public void onError(Throwable failure){body.completeExceptionally(failure);}
+        public void onComplete(){body.complete(output.toByteArray());}
     }
 
     private static final class Budget {

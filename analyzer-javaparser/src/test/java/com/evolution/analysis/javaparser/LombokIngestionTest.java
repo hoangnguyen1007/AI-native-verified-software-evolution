@@ -8,6 +8,36 @@ import java.util.*;
 import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 class LombokIngestionTest {
+    @Test void recoveryRetainsOrderedConstructorCandidatesWithoutInventingConstructors() {
+        var base=TestInputs.request("import lombok.RequiredArgsConstructor; @RequiredArgsConstructor class C { final Missing first; @lombok.NonNull Other second; static Missing ignored; final int initialized=1; }");
+        var request=recovery(base);
+        var result=new JavaParserFrontend().analyze(request);
+        assertEquals(2,result.constructorCandidates().size());
+        assertEquals(List.of("Missing","Other"),result.constructorCandidates().stream().sorted(Comparator.comparingInt(LombokConstructorCandidate::fieldOrder)).map(c->c.type().spelling()).toList());
+        assertTrue(result.constructorCandidates().stream().allMatch(c->c.status()==LombokConstructorCandidate.Status.CANDIDATE&&c.supportingSpans().size()==2));
+        assertFalse(result.declarations().stream().anyMatch(d->d.entity().kind()==EntityKind.CONSTRUCTOR));
+        assertEquals(result,new JavaParserFrontend().analyze(request));
+        var graph=new com.evolution.analysis.graph.CanonicalGraphBuilder().build(request.manifest(),result);
+        assertEquals(2,graph.nodes().stream().filter(n->n.kind().equals("CONSTRUCTOR_INJECTION_CANDIDATE")).count());
+        var codec=new com.evolution.analysis.graph.GraphSnapshotCodec();
+        var restored=codec.decode(codec.encode(graph),com.evolution.analysis.graph.GraphJson.Limits.defaults());
+        assertEquals(graph.identity(),restored.identity());assertEquals(codec.encode(graph),codec.encode(restored));
+    }
+    static FrontendRequest recovery(FrontendRequest base) {
+        var old=base.manifest();var options=new TreeMap<>(old.configuration().values());
+        options.put(FrontendRequest.RESOLUTION_MODE,FrontendRequest.SOURCE_RECOVERY);
+        var config=AnalysisConfiguration.create(old.configuration().schema(),options);
+        var manifest=AnalysisManifest.create(old.manifestVersion(),old.snapshot(),old.modules(),old.classpath(),config,old.analyzer(),old.ruleSet(),old.graphSchema());
+        return new FrontendRequest(manifest,base.module(),base.sourceSet(),base.plan(),base.sources(),base.platform(),base.dependencies());
+    }
+    @Test void recoveryRejectsImpostorsAndSuppressedDataConstructors() {
+        for(String source:List.of("package lombok; @interface RequiredArgsConstructor {} @RequiredArgsConstructor class C { final Missing field; }",
+                "@lombok.Data class C { final Missing field; C(Missing v){field=v;} }",
+                "class C { String text=\"@lombok.RequiredArgsConstructor\"; final Missing field; }",
+                "import other.RequiredArgsConstructor; @RequiredArgsConstructor class C { final Missing field; }")) {
+            assertTrue(new JavaParserFrontend().analyze(recovery(TestInputs.request(source))).constructorCandidates().isEmpty());
+        }
+    }
     @Test void unsupportedGeneratorTargetsAndGeneratorsRemainExplicit()throws Exception {
         for(String source:List.of("class C { @lombok.Builder C(String value) {} }",
                 "class C { @lombok.Builder static C create(String value) { return new C(); } }",

@@ -456,10 +456,13 @@ public final class EvoApp {
         @Option(names="--exclude",paramLabel="PATH",description="Additional recorded exclusion; repeatable / Loại trừ có ghi nhận") List<String> excludes=new ArrayList<>();
         @Option(names="--include-tests",description="Include test source trees / Gồm mã nguồn kiểm thử") boolean includeTests;
         @Option(names="--all-files",description="Capture all files, including assets and outputs / Thu thập mọi tệp") boolean allFiles;
-        @Option(names="--maven-cache",paramLabel="DIR",description="Passive Maven2 cache / Cache Maven2 chỉ đọc") Path mavenCache=Path.of(System.getProperty("user.home"),".m2","repository");
+        @Option(names="--maven-cache",paramLabel="DIR",description="Selected Maven2 artifact cache / Cache artifact Maven2") Path mavenCache=Path.of(System.getProperty("user.home"),".m2","repository");
+        @Option(names="--offline",description="Use captured/local artifacts only; disable metadata and dependency downloads") boolean offline;
         @Option(names="--artifact-repository",paramLabel="HTTPS_URI",description="Explicit credential-free dependency repository; repeatable") List<java.net.URI> artifactRepositories=new ArrayList<>();
         public Integer call()throws Exception{
             r.validate();if(matched(r,"--graph","--context","--request","--args","--other","--policy","--view","--scope","--world","--assignment","--incoming","--kinds","--limit","--depth","--cursor"))throw new InputFailure("QUERY_FLAGS_NOT_APPLICABLE");
+            if(offline&&!artifactRepositories.isEmpty())throw new InputFailure("OFFLINE_REPOSITORY_CONFLICT");
+            var repositories=offline?List.<java.net.URI>of():artifactRepositories.isEmpty()?MavenScan.DEFAULT_REPOSITORIES:List.copyOf(artifactRepositories);
             sessionGraph=null;
             var sourcePath=Workspace.safe(resolve(source));var repo=RepositoryIdentity.fromCanonicalCoordinate(repository!=null?repository:"urn:evo:local:"+ContentDigest.sha256Utf8(sourcePath.toString()).value().substring(7));
             var excluded=new TreeSet<>(List.of(".git",".evo"));excluded.addAll(excludes);Path session=r.storage().root;
@@ -482,7 +485,7 @@ public final class EvoApp {
             r.stage="platform";
             var platform=new FilesystemJdkPlatformProvider().acquire(Workspace.safe(resolve(jdk)),new PlatformSymbolRequest(release,128,128_000_000,512_000_000));var defaults=UniversalBuildIngestion.Policy.defaults();
             var cachePath=Workspace.safe(resolve(mavenCache));
-            var mavenInputs=MavenScan.inputs(acquisition,MavenScan.models(acquisition,cachePath),cachePath,platform.platform(),new com.evolution.analysis.dependency.DependencyAcquisitionPolicy(1024,64_000_000,256_000_000,16,artifactRepositories,5000,15000,0));
+            var mavenInputs=MavenScan.inputs(acquisition,MavenScan.models(acquisition,cachePath,repositories),cachePath,platform.platform(),new com.evolution.analysis.dependency.DependencyAcquisitionPolicy(1024,64_000_000,256_000_000,64,repositories,5000,15000,1));
             r.stage="analysis";
             // Supply fallback evidence without Builder.defaultPlatform's Maven user-property overrides.
             // Declared Maven release/encoding must keep their authority over CLI defaults.

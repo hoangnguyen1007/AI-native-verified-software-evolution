@@ -13,6 +13,12 @@ import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
 class DependencyAcquisitionContractTest {
+    @Test void concurrencyIsBoundedAndIncludedInPolicyIdentity() {
+        var serial=new DependencyAcquisitionPolicy(10,100,1000,2,List.of(CENTRAL),1000,2000,1,1);
+        var parallel=new DependencyAcquisitionPolicy(10,100,1000,2,List.of(CENTRAL),1000,2000,1,4);
+        assertNotEquals(serial.identity(),parallel.identity());assertEquals(4,parallel.withLimits(2,200).maxConcurrentDownloads());
+        for(int invalid:List.of(0,17))assertThrows(IllegalArgumentException.class,()->new DependencyAcquisitionPolicy(10,100,1000,2,List.of(CENTRAL),1000,2000,1,invalid));
+    }
     private static final ArtifactCoordinate JAR =
             new ArtifactCoordinate(new MavenCoordinate("example", "library", "1.0"), "jar", "");
     private static final ArtifactCoordinate POM = JAR.asPom();

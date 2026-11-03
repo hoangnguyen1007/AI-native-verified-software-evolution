@@ -23,6 +23,7 @@ class LombokSynthesisOracleTest {
                 @lombok.Value class Value { String name; int count; }
                 @lombok.Builder class Built { String name; int count; }
                 """;
+        Files.writeString(temporary.resolve("lombok.config"),"config.stopBubbling = true\n");
         Path file=temporary.resolve("Controls.java");Files.writeString(file,source);
         // Only these fixed authored controls execute a processor; repository inputs never do.
         var output=new java.io.ByteArrayOutputStream();
@@ -32,12 +33,19 @@ class LombokSynthesisOracleTest {
         assertEquals(0,exit,"Trusted Lombok oracle compilation failed");
         var binary=new BinaryInput(new ClasspathEntry(ClasspathEntryKind.DEPENDENCY,"org.projectlombok:lombok:1.18.46@jar",digest),jar);
         var frontend=new JavaParserFrontend().analyze(TestInputs.request(Map.of("fixture/Controls.java",source),List.of(binary)));
+        assertTrue(frontend.constructorCandidates().isEmpty());
+        var recovery=new JavaParserFrontend().analyze(LombokIngestionTest.recovery(TestInputs.request(Map.of("fixture/Controls.java",source),List.of())));
         try(var loader=new java.net.URLClassLoader(new java.net.URL[]{temporary.toUri().toURL()},ClassLoader.getPlatformClassLoader())) {
             for(String name:List.of("Required","All","Empty","Data","Value","Built","Built$BuiltBuilder")) {
                 var compiled=Class.forName(name,false,loader);var actual=compiled.getDeclaredConstructors();assertEquals(1,actual.length);
                 var parameters=Arrays.stream(actual[0].getParameterTypes()).map(c->c.isPrimitive()?ErasedType.primitive(c.getName()):ErasedType.declared(JavaSymbolName.topLevelType(c.getPackageName(),c.getSimpleName()))).toList();
                 var owner=symbol(compiled);String expected=JavaSymbolName.constructor(owner,parameters).canonicalName();
                 assertTrue(frontend.declarations().stream().anyMatch(d->d.entity().canonicalName().equals(expected)),name);
+                if(!name.contains("$")&&!name.equals("Empty")) {
+                    var ownerId=recovery.declarations().stream().filter(d->d.entity().canonicalName().equals(owner.canonicalName())).findFirst().orElseThrow().entity().identity();
+                    var candidates=recovery.constructorCandidates().stream().filter(c->c.owner().equals(ownerId)).sorted(Comparator.comparingInt(LombokConstructorCandidate::fieldOrder)).toList();
+                    assertEquals(Arrays.stream(actual[0].getParameterTypes()).map(Class::getSimpleName).toList(),candidates.stream().map(c->c.type().spelling()).toList(),name);
+                }
                 var expectedMethods=Arrays.stream(compiled.getDeclaredMethods()).filter(m->!m.isSynthetic()).map(m->JavaSymbolName.method(owner,m.getName(),Arrays.stream(m.getParameterTypes()).map(c->c.isPrimitive()?ErasedType.primitive(c.getName()):ErasedType.declared(symbol(c))).toList()).canonicalName()).collect(java.util.stream.Collectors.toCollection(TreeSet::new));
                 var methods=frontend.declarations().stream().filter(d->d.entity().kind()==EntityKind.METHOD&&d.entity().canonicalName().startsWith("java:v1:[\"method\","+owner.canonicalName().substring(8)+","))
                         .map(d->d.entity().canonicalName()).collect(java.util.stream.Collectors.toCollection(TreeSet::new));

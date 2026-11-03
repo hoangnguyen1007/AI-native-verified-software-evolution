@@ -30,6 +30,74 @@ class MavenDependencyArtifactProviderTest {
     @TempDir
     Path temporary;
 
+    @Test void interruptedCallerRetainsClosedOutcomesWithoutStartingDownloads() throws Exception {
+        var coordinates=List.of(JAR,new ArtifactCoordinate(new MavenCoordinate("example","other","1"),"jar",""));
+        var provider=provider(cache(),(uri,max,connect,read)->{throw new AssertionError("Interrupted acquisition contacted network");});
+        Thread.currentThread().interrupt();
+        try {
+            var result=provider.acquire(DependencyAcquisitionRequest.of(coordinates,policy(0)));
+            assertTrue(Thread.currentThread().isInterrupted());assertEquals(2,result.outcomes().size());
+            assertTrue(result.outcomes().stream().allMatch(o->o.failureReason().orElseThrow()==DependencyAcquisitionResult.FailureReason.FETCH_TIMEOUT));
+        }finally{Thread.interrupted();}
+    }
+
+    @Test void pooledClientsReuseConnectionsAndChunkedBodiesRemainBounded() {
+        var transport=new MavenDependencyArtifactProvider.JdkRemoteArtifactTransport();
+        try(var first=transport.lease(1000);var second=transport.lease(1000)) {
+            assertSame(first.client(),second.client());assertTrue(first.pooled());
+        }
+        for(int i=0;i<15;i++)try(var ignored=transport.lease(2000+i)){assertTrue(ignored.pooled());}
+        try(var overflow=transport.lease(3000)){assertFalse(overflow.pooled());}
+        var canceled=new java.util.concurrent.atomic.AtomicBoolean();
+        var subscriber=new MavenDependencyArtifactProvider.BoundedBodySubscriber(3);
+        subscriber.onSubscribe(new java.util.concurrent.Flow.Subscription(){public void request(long n){}public void cancel(){canceled.set(true);}});
+        subscriber.onNext(List.of(java.nio.ByteBuffer.wrap(new byte[]{1,2})));
+        subscriber.onNext(List.of(java.nio.ByteBuffer.wrap(new byte[]{3,4})));
+        assertTrue(canceled.get());assertThrows(java.util.concurrent.CompletionException.class,()->subscriber.getBody().toCompletableFuture().join());
+    }
+
+    @Test void failedArtifactDoesNotCancelPeersAndReservationsDoNotStrandAvailableBytes() throws Exception {
+        byte[] bytes=jar("example/C.class",new byte[]{1});
+        var coordinates=java.util.stream.IntStream.range(0,3).mapToObj(i->new ArtifactCoordinate(new MavenCoordinate("example","budget"+i,"1"),"jar","")).toList();
+        var policy=new DependencyAcquisitionPolicy(3,bytes.length,2L*bytes.length+5,1,List.of(REPOSITORY),1000,2000,0,4);
+        var provider=provider(cache(),(uri,max,connect,read)->uri.getPath().contains("budget0")
+                ?new MavenDependencyArtifactProvider.RemoteResponse(404,new byte[5]):new MavenDependencyArtifactProvider.RemoteResponse(200,bytes));
+        var result=provider.acquire(DependencyAcquisitionRequest.of(coordinates,policy));
+        assertEquals(DependencyAcquisitionResult.FailureReason.ARTIFACT_NOT_FOUND,result.outcomes().getFirst().failureReason().orElseThrow());
+        assertTrue(result.outcomes().subList(1,3).stream().allMatch(o->o.artifact().isPresent()));
+        assertEquals(policy.maxTotalBytes(),result.bytesConsumed());
+    }
+
+    @Test void exhaustedBudgetRetainsAnOutcomeForEveryCoordinate() throws Exception {
+        byte[] bytes=jar("example/C.class",new byte[]{1});
+        var coordinates=java.util.stream.IntStream.range(0,3).mapToObj(i->new ArtifactCoordinate(new MavenCoordinate("example","limited"+i,"1"),"jar","")).toList();
+        var policy=new DependencyAcquisitionPolicy(3,bytes.length,bytes.length,1,List.of(REPOSITORY),1000,2000,0,4);
+        var calls=new AtomicInteger();var provider=provider(cache(),(uri,max,connect,read)->{calls.incrementAndGet();return new MavenDependencyArtifactProvider.RemoteResponse(200,bytes);});
+        var result=provider.acquire(DependencyAcquisitionRequest.of(coordinates,policy));
+        assertEquals(1,calls.get());assertEquals(3,result.outcomes().size());assertEquals(bytes.length,result.bytesConsumed());
+        assertTrue(result.outcomes().subList(1,3).stream().allMatch(o->o.failureReason().orElseThrow()==DependencyAcquisitionResult.FailureReason.SIZE_EXCEEDED));
+    }
+
+    @Test void downloadsOverlapButLedgerAndByteBudgetRemainOrdered() throws Exception {
+        byte[] bytes=jar("example/C.class",new byte[]{1,2,3});
+        var coordinates=java.util.stream.IntStream.range(0,4).mapToObj(i->new ArtifactCoordinate(new MavenCoordinate("example","parallel"+i,"1.0"),"jar","")).toList();
+        var request=new DependencyAcquisitionRequest(coordinates.stream().map(c->new DependencyAcquisitionRequest.Requirement(c,Optional.of(ContentDigest.sha256(bytes)))).toList(),policy(0));
+        ContentDigest first=null;
+        for(int run=0;run<2;run++) {
+            var entered=new java.util.concurrent.CountDownLatch(4);
+            var provider=provider(cache(),(uri,max,connect,read)->{
+                entered.countDown();
+                if(!entered.await(3,java.util.concurrent.TimeUnit.SECONDS))throw new IOException("Downloads were serialized");
+                return new MavenDependencyArtifactProvider.RemoteResponse(200,bytes);
+            });
+            var result=provider.acquire(request);
+            assertFalse(result.hasFailures());assertEquals(4L*bytes.length,result.bytesConsumed());
+            assertEquals(coordinates,result.outcomes().stream().map(o->o.requirement().coordinate()).toList());
+            for(int i=0;i<result.attempts().size();i++)assertEquals(i,result.attempts().get(i).ordinal());
+            if(first==null)first=result.identity();else assertEquals(first,result.identity());
+        }
+    }
+
     @Test
     void returnsVerifiedCachedJarWithoutContactingTheNetwork() throws Exception {
         Path cache = cache();

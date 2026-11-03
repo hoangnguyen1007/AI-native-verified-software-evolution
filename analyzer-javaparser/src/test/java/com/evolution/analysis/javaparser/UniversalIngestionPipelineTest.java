@@ -65,6 +65,12 @@ class UniversalIngestionPipelineTest {
             assertTrue(main.configuration().assignment().isPresent());
             assertEquals(result.identity(),new UniversalSourceIngestion().assemble(input,build,Map.of(key,resolution),component,component,component).identity());
             assertTrue(new UniversalSourceIngestion().assemble(input,build,Map.of(),component,component,component).outcomes().stream().allMatch(o->o.request().isEmpty()));
+            var recovered=new UniversalSourceIngestion().assemble(input,build,Map.of(),component,component,component,Map.of(),Optional.of(base.platform()));
+            var recoveredMain=recovered.outcomes().stream().flatMap(o->o.request().stream()).findFirst().orElseThrow();
+            assertTrue(recoveredMain.sourceRecovery());assertFalse(recovered.gaps().isEmpty());
+            var syntax=new JavaParserFrontend().analyze(recoveredMain);
+            assertTrue(syntax.declarations().stream().anyMatch(d->d.entity().kind()==com.evolution.analysis.contract.semantic.EntityKind.TYPE&&d.entity().declaration().isPresent()));
+            assertEquals(1,syntax.sources().size());
         }
     }
 }

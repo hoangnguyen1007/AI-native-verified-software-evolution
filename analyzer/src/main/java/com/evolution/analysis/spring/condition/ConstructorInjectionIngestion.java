@@ -54,7 +54,9 @@ public final class ConstructorInjectionIngestion {
                 new VersionedIdentifier("frontend.javaparser","3.28.2-m8.4-expression-types-v2"),
                 new VersionedIdentifier("frontend.javaparser","3.28.2-m8.4-expression-types-v3"),
                 new VersionedIdentifier("frontend.javaparser","3.28.2-m8.4-native-constructors-v1"),
-                new VersionedIdentifier("frontend.javaparser","3.28.2-m8.4-native-wiring-v1")).contains(frontend.frontend());
+                new VersionedIdentifier("frontend.javaparser","3.28.2-m8.4-native-wiring-v1"),
+                new VersionedIdentifier("frontend.javaparser","3.28.2-m8.4-source-recovery-v2"),
+                new VersionedIdentifier("frontend.javaparser","3.28.2-m8.4-lombok-candidates-v3")).contains(frontend.frontend());
         for(var component:discovery.rows()) {
             var evidence=new ConditionEvidence.Derived(List.of(identity,component.evidence().identity()),PROVIDER,"constructor-selection:"+component.type().value());
             if(component.status()!=ComponentScanIngestion.Status.INCLUDED) {

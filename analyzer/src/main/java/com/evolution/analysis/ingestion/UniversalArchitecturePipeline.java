@@ -35,7 +35,7 @@ import javax.xml.stream.*;
  */
 public final class UniversalArchitecturePipeline {
     public static final VersionedIdentifier PROVIDER =
-            new VersionedIdentifier("architecture.pipeline", "m4uv2.3-v1");
+            new VersionedIdentifier("architecture.pipeline", "m4uv2.3-lombok-v2");
 
     public enum TruthEvaluationMode {
         AUTO,
@@ -335,8 +335,11 @@ public final class UniversalArchitecturePipeline {
                 for (var plan : module.sourcePlan().sourceSets()) {
                     var key = new UniversalSourceIngestion.SourceSet(plan.module(), plan.kind(), plan.name());
                     if (!resolutions.containsKey(key)) {
+                        boolean declaredDependencies=!module.dependencies().isEmpty()||buildModel.mavenModels().stream()
+                                .flatMap(m->m.modules().stream()).filter(m->m.module().identity().equals(plan.module()))
+                                .flatMap(m->m.effectivePom().stream()).anyMatch(p->!p.dependencies().isEmpty());
                         resolutions.put(key, new UniversalSourceIngestion.Resolution(platform, List.of(),
-                                ContentDigest.sha256Utf8("declared-platform-policy-" + key)));
+                                ContentDigest.sha256Utf8("declared-platform-policy-" + key),Optional.empty(),!declaredDependencies));
                     }
                 }
             }
@@ -390,7 +393,7 @@ public final class UniversalArchitecturePipeline {
         prepared.ifPresent(value->inputOptions.putAll(value.options()));
         compiler.ifPresent(bundle->inputOptions.putAll(bundle.options(prepared.orElseThrow().policy())));
         var assembledSources = sourceIngestion.assemble(inputs, buildModel, resolutions, analyzerComp, rulesComp, schemaComp,
-                inputOptions);
+                inputOptions,policy.defaultPlatform());
         allIssues.addAll(assembledSources.issues());
         allGaps.addAll(assembledSources.gaps());
 
@@ -520,6 +523,14 @@ public final class UniversalArchitecturePipeline {
                     ));
                 }
 
+                var candidateFieldNames=frontend.constructorCandidates().isEmpty()?Map.<EntityIdentity,String>of()
+                        :frontend.memberDeclarations().stream().collect(java.util.stream.Collectors.toMap(MemberDeclarationRecord::member,MemberDeclarationRecord::name));
+                for(var candidate:frontend.constructorCandidates()) {
+                    injectionSites.add(new UniversalArchitectureReport.InjectionSiteRecord(
+                            typeIdentityToFqn.getOrDefault(candidate.owner(),candidate.owner().value()),
+                            candidateFieldNames.getOrDefault(candidate.field(),candidate.field().value()),candidate.type().spelling(),
+                            "LOMBOK_CONSTRUCTOR_CANDIDATE",List.of(),true));
+                }
                 // Main methods
                 for (var memberDecl : frontend.memberDeclarations()) {
                     if (memberDecl.name().equals("main") && memberDecl.staticMember()) {
@@ -915,7 +926,7 @@ public final class UniversalArchitecturePipeline {
                 .toList();
 
         var distinctProducers = deduplicate(producers, Comparator.comparing(p -> p.factoryType() + "#" + p.methodName() + ":" + p.beanName()));
-        var distinctInjectionSites = deduplicate(injectionSites, Comparator.comparing(s -> s.owner() + "#" + s.memberName() + ":" + s.targetType()));
+        var distinctInjectionSites = deduplicate(injectionSites, Comparator.comparing(com.evolution.analysis.contract.serialization.CanonicalJson::write));
         var distinctEntryPoints = deduplicate(entryPoints, Comparator.comparing(e -> e.declaringType() + ":" + e.detail()));
         var distinctTruthRegions = deduplicate(truthRegions, Comparator.comparing(UniversalArchitectureReport.TruthRegionSummary::factKey));
 
@@ -929,7 +940,9 @@ public final class UniversalArchitecturePipeline {
         long failedUnitsCount = pipelineResult.units().stream()
                 .filter(u -> u.status() == UniversalIngestionPipeline.Status.FAILED || u.status() == UniversalIngestionPipeline.Status.REJECTED)
                 .count();
-        if (analyzedUnitsCount > 0 && failedUnitsCount == 0 && sortedIssues.isEmpty()&&(prepared.isEmpty()||sortedGaps.isEmpty()&&javaGraph.orElseThrow().closedGapDenominator())) {
+        boolean completedFrontends=pipelineResult.units().stream().flatMap(u->u.frontend().stream()).allMatch(f->f.state()==FrontendResult.State.COMPLETED);
+        if (analyzedUnitsCount > 0 && failedUnitsCount == 0 && completedFrontends && sortedIssues.isEmpty() && sortedGaps.isEmpty()
+                &&(prepared.isEmpty()||javaGraph.orElseThrow().closedGapDenominator())) {
             status = UniversalArchitectureReport.Status.COMPLETE;
         } else if (analyzedUnitsCount > 0) {
             status = UniversalArchitectureReport.Status.PARTIAL;

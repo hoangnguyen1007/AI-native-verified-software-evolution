@@ -303,12 +303,13 @@ M3.8 delivers a bounded, credential-free, policy-controlled provider plus a fini
 
 ### Logical Contracts and Provider Schema
 
-- **Provider Identity:** `dependency.artifact-cache:m3.8`.
+- **Provider Identity:** `dependency.artifact-cache:m3.9-parallel` (2026-11-03 follow-up; previous captured results retain their original provider).
 - **Fixpoint Resolver Identity:** `dependency.maven-fixpoint:3.9.16-m3.8` with result schema `maven-dependency-artifact-resolution-v1`.
 - **Request Input (`dependency-acquisition-request-v1`):**
   - Ordered, duplicate-free exact coordinates (`groupId:artifactId:version`, extension and optional classifier) with an optional expected SHA-256.
   - Explicit target cache directory and explicit credential-free HTTPS release repositories. Maven Central is an available policy value, not ambient discovery.
   - Positive coordinate, artifact-byte, total-byte, timeout and retry bounds; retries may not exceed two.
+  - `maxConcurrentDownloads` is identity-bound, defaults to four through the compatible constructor, and accepts 1–16. Single-coordinate requests avoid executor overhead.
 - **Result Output (`dependency-acquisition-result-v1`):**
   - An ordered outcome for every requested coordinate:
     - `CACHED`: Artifact was already present in local cache and verified against expected SHA-256.
@@ -317,6 +318,7 @@ M3.8 delivers a bounded, credential-free, policy-controlled provider plus a fini
     - `FAILED`: Acquisition failed with a typed cache, containment, link, mutation, digest, format, size, transport, authorization, not-found or snapshot reason.
   - Exact SHA-256, byte count and portable cache-relative path for every resolved artifact; ordered local/remote attempt provenance, finite limits, repository identity and declared side effects for every outcome.
 - **Cache and transport safety:** standard Maven2 paths are containment-checked without following links; cached invalidity is reported and never overwritten. Remote redirects and authentication are rejected. Downloads use a provider-owned same-directory temporary file, validate secure XML for POMs or a complete ZIP/JAR for binary artifacts, force bytes to storage, re-read and revalidate, then atomically promote. Only the provider's own temporary file may be cleaned up.
+- **Parallel transport:** production providers share a bounded HTTP client pool keyed by connection timeout. The response deadline covers the complete body; declared-length and chunked bodies retain byte caps. Ordered dispatch reserves each coordinate's maximum retry/repository transfer, commits results in request order and releases unused reservations before admitting more work. Cache hits, retries and unsuccessful response bytes remain in the same total budget; insufficient budget reduces concurrency before returning typed size outcomes. Attempt ordinals and result identities do not depend on completion order. Interruption stops new admission, drains accepted bounded work and preserves a closed outcome ledger and the caller's interrupt flag.
 - **Fixpoint closure:** `MavenDependencyArtifactResolver` alternates passive Maven classpath resolution with exact missing-artifact acquisition until no requirement remains or a pass/count/byte/failure bound terminates the result. Each acquired JAR becomes an exact `BinaryInput`; unresolved coordinates stay explicit.
 - **Evidence normalization:** M3.8 dependency failures and attempts are exhaustively mapped by `evidence.capability-gap-catalog:m3.8-v2` and `evidence.gap-normalizer:m3.8`. The version bump prevents the expanded mapping from masquerading as the historical M3.6 catalog; `LOCAL_WRITE` explicitly represents cache-promotion authority.
 
@@ -382,6 +384,16 @@ with sibling scope and derivation from the exact component declaration. Duplicat
 rejected, and a sibling source that precedes a duplicate binary type retains first-declaration
 precedence with `java.duplicate-binary-type`. Generated-only Protobuf/gRPC modules remain
 `GENERATED_SOURCES_NOT_ACQUIRED`; source fallback never fabricates their missing types.
+
+### M8.4 passive scan recovery and metadata acquisition
+
+The product scan now explicitly configures [Maven Central](https://maven.apache.org/guides/introduction/introduction-to-repositories.html) for cache-first exact release POM/JAR acquisition. Parent/BOM acquisition precedes dependency classpath planning and uses the validated atomic artifact-cache provider. Acquired POM bytes are rebound into the effective-model request; a subsequent offline run can replay that model from the selected cache. Failed remote attempts remain recorded even when a retry succeeds. `--offline` supplies an empty remote policy; explicit repository options replace the default and never authorize target-declared endpoints or lifecycle execution.
+
+An incomplete model/classpath/compiler context no longer suppresses independently readable source declarations. Versioned `SOURCE_RECOVERY` requests retain source hashes, actual decoding, selected syntax fallback, declaration/type/annotation syntax, original spans and unresolved call observations. They do not attribute build-dependent targets, derive implicit/generated members or certify Spring classpath closure. Missing Maven effective models retain convention-qualified main/test plans and absent coordinates. Gradle project paths, literal directory remapping, implicit parents and included roots remain separate descriptors; dynamic behavior stays a native-model requirement. Unowned/overlapping/unavailable files keep their existing explicit inventory dispositions. A missing analyzed platform still requires a separately supplied platform input; no ambient host-symbol substitution is introduced.
+
+Recovery explicitly withholds Spring interpretation using `CONTEXT_INCOMPLETE`; written annotations and configuration remain retained as source evidence. `frontend.result-index:m8.4-v2` references individual `java.diagnostic` and `java.source-outcome` payloads instead of embedding aggregate diagnostic tables. Source index rows retain document/state fields for quality-metric compatibility, while their evidence references retain full outcomes. The exact frontend result identity and all per-observation outcomes remain available; the recovery state gap carries its run-level cause without repeating the entire source diagnostic census. Earlier inline indexes remain readable.
+
+Whole snapshot I/O has additive long resource budgets. Existing bounded integer APIs remain available; the CLI selects available storage bytes for writes and the actual immutable frame size for reads. `graph-snapshot:m5.1-v1` canonical bytes, identities, exact field validation, corruption rejection, cancellation and create-if-absent publication remain unchanged. The decoder constructs individual typed rows and releases temporary JSON maps, retaining finite depth/token/payload controls without a fixed total snapshot-size admission ceiling. The typed graph still occupies JVM memory; this is not an implementation or acceptance claim for the separate paged `PartitionedGraphReader` port.
 
 When build-model discovery encounters incomplete inputs, it emits typed gaps under the [Capability-Gap Contract](evidence-acquisition.md):
 

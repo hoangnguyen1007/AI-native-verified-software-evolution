@@ -5,6 +5,7 @@ import com.evolution.analysis.contract.identity.*;
 import com.evolution.analysis.contract.semantic.*;
 import com.evolution.analysis.contract.source.*;
 import com.evolution.analysis.contract.analysis.*;
+import com.evolution.analysis.contract.serialization.CanonicalJson;
 import com.evolution.analysis.frontend.*;
 import com.evolution.analysis.evidence.*;
 import java.util.*;
@@ -13,6 +14,36 @@ import static org.junit.jupiter.api.Assertions.*;
 import static com.evolution.analysis.graph.CanonicalGraphBuilderTest.*;
 
 class CanonicalGraphContractTest {
+    public record ProviderRow(String name,List<Integer> values,Optional<String> detail) {}
+    @Test void streamedIngestionHashesRemainCompatibleWithCanonicalUtf8Bytes(){
+        for(Object value:List.of(occurrences().frontend(),Map.of("source","Xin chào\r\n𝄞","nested",List.of("☃",42))))
+            assertEquals(ContentDigest.sha256Utf8(CanonicalJson.write(value)),com.evolution.analysis.ingestion.IngestionEvidence.digest(value));
+    }
+    @Test void sourceRecoveryIndexesEveryDiagnosticWithoutRepeatingTheAggregateInOneGap(){
+        var fixture=occurrences();var original=fixture.frontend();
+        var recovery=new Diagnostic(DiagnosticSeverity.WARNING,"java.source-recovery","Incomplete context",Optional.empty(),Map.of());
+        var local=new Diagnostic(DiagnosticSeverity.WARNING,"java.unresolved","Written call remains unresolved",fixture.frontend().observations().getFirst().span(),Map.of());
+        var frontend=new FrontendResult(original.analysis(),original.frontend(),original.state(),original.declarations(),original.occurrences(),original.observations(),original.sources(),original.coverage(),List.of(recovery,local));
+        var graph=new CanonicalGraphBuilder().build(fixture.manifest(),frontend);
+        var index=GraphJson.object(GraphJson.read(graph.evidence().stream().filter(e->e.family().equals("frontend.result-index")).findFirst().orElseThrow().canonicalJson(),GraphJson.Limits.defaults()));
+        assertEquals("frontend.result-index:m8.4-v2",index.get("indexSchema"));
+        var diagnosticRefs=GraphJson.array(index.get("diagnostics"));assertEquals(2,diagnosticRefs.size());
+        for(var ref:diagnosticRefs)assertEquals("java.diagnostic",graph.evidence(new ContentDigest((String)ref)).orElseThrow().family());
+        assertEquals(Set.of("java.source-recovery","java.unresolved"),diagnosticRefs.stream().map(ref->GraphJson.object(GraphJson.read(graph.evidence(new ContentDigest((String)ref)).orElseThrow().canonicalJson(),GraphJson.Limits.defaults())).get("code")).collect(java.util.stream.Collectors.toSet()));
+        var state=CapabilityGapNormalizer.normalize(EvidenceContext.forAnalysis(fixture.manifest()),EvidenceNormalizationInput.builder().frontendResults(List.of(frontend)).build()).gaps().stream()
+                .filter(g->g.observationReferences().stream().anyMatch(r->r.observationKind().equals("java.frontend-state"))).findFirst().orElseThrow();
+        assertEquals(List.of(recovery),state.diagnostics());
+        var source=GraphJson.object(GraphJson.array(index.get("sources")).getFirst());
+        assertEquals("java.source-outcome",graph.evidence(new ContentDigest((String)source.get("evidence"))).orElseThrow().family());
+    }
+    @Test void repeatedProviderRecordShapesPreserveCanonicalBytesAndDistinctPayloads(){
+        var first=GraphEvidence.capture("fixture.record",new ProviderRow("one",List.of(1,2),Optional.empty()));
+        assertEquals("{\"detail\":null,\"name\":\"one\",\"values\":[1,2]}",first.canonicalJson());
+        var second=GraphEvidence.capture("fixture.record",new ProviderRow("two",List.of(3),Optional.of("present")));
+        assertEquals("{\"detail\":\"present\",\"name\":\"two\",\"values\":[3]}",second.canonicalJson());
+        assertNotEquals(first.identity(),second.identity());
+        assertEquals(first,GraphEvidence.capture("fixture.record",new ProviderRow("one",List.of(1,2),Optional.empty())));
+    }
     @Test void rejectsForeignManifestAndMissingEvidenceOrEndpoints() {
         var manifest=manifest();var frontend=frontend(manifest);
         var changed=AnalysisManifest.create(VERSION,manifest.snapshot(),manifest.modules(),List.of(),

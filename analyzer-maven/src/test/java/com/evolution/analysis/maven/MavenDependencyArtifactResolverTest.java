@@ -167,7 +167,7 @@ class MavenDependencyArtifactResolverTest {
 
     private static final class RecordingTransport implements MavenDependencyArtifactProvider.RemoteArtifactTransport {
         private final Map<String, byte[]> responses;
-        private final Set<String> requestedPaths = new TreeSet<>();
+        private final Set<String> requestedPaths = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
         private RecordingTransport(Map<String, byte[]> responses) { this.responses = Map.copyOf(responses); }
 

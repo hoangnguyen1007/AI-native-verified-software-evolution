@@ -15,12 +15,19 @@ import static com.evolution.analysis.graph.GraphStoreException.Reason.*;
 /** Bounded canonical snapshot I/O in an explicitly supplied existing directory. No database needed. */
 public final class FileGraphStore implements GraphStore {
     private final Path directory;
-    private final int maxBytes;
-    private final GraphJson.Limits jsonLimits;
+    private final long maxBytes;
+    private final GraphJson.StreamLimits jsonLimits;
     public FileGraphStore(Path directory) {this(directory,64_000_000,GraphJson.Limits.defaults());}
     public FileGraphStore(Path directory,int maxBytes,GraphJson.Limits jsonLimits) {
+        this(directory,(long)maxBytes,legacyLimits(maxBytes,jsonLimits));
+    }
+    private static GraphJson.StreamLimits legacyLimits(int maximum,GraphJson.Limits limits){
+        if(maximum<1||maximum==Integer.MAX_VALUE)throw new IllegalArgumentException("Bounded positive graph store byte limit required");
+        return GraphJson.StreamLimits.from(Objects.requireNonNull(limits));
+    }
+    public FileGraphStore(Path directory,long maxBytes,GraphJson.StreamLimits jsonLimits) {
         Objects.requireNonNull(directory);Objects.requireNonNull(jsonLimits);
-        if(maxBytes<1 || maxBytes==Integer.MAX_VALUE)throw new IllegalArgumentException("Bounded positive graph store byte limit required");
+        if(maxBytes<1 || maxBytes==Long.MAX_VALUE)throw new IllegalArgumentException("Finite positive graph store byte budget required");
         this.directory=directory.toAbsolutePath().normalize();this.maxBytes=maxBytes;this.jsonLimits=jsonLimits;
         checkDirectory();
     }
@@ -89,6 +96,9 @@ public final class FileGraphStore implements GraphStore {
         var graph=readPath(source);if(!graph.identity().equals(identity))throw new GraphStoreException(CORRUPT_SNAPSHOT);return Optional.of(graph);
     }
     public static KnowledgeGraph readSnapshot(Path file,int maximum,GraphJson.Limits limits){
+        Path source=file.toAbsolutePath().normalize();return new FileGraphStore(source.getParent(),maximum,limits).readPath(source);
+    }
+    public static KnowledgeGraph readSnapshot(Path file,long maximum,GraphJson.StreamLimits limits){
         Path source=file.toAbsolutePath().normalize();return new FileGraphStore(source.getParent(),maximum,limits).readPath(source);
     }
     private KnowledgeGraph readPath(Path source){

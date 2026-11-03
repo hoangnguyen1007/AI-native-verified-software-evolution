@@ -12,6 +12,14 @@ import org.junit.jupiter.api.io.TempDir;
 import static org.junit.jupiter.api.Assertions.*;
 
 class FileGraphStoreTest {
+    @Test void graphStorageCanRepresentResourceBudgetsBeyondAnInt()throws Exception{
+        long budget=4_000_000_000L;var original=graph();
+        var store=new FileGraphStore(directory,budget,new GraphJson.StreamLimits(budget,128,budget));
+        store.save(original);
+        assertEquals(new GraphSnapshotCodec().encode(original),Files.readString(file(original)));
+        assertEquals(original.identity(),new FileGraphStore(directory,budget,new GraphJson.StreamLimits(budget,128,budget)).load(original.identity()).orElseThrow().identity());
+        assertEquals(GraphStoreException.Reason.LIMIT_EXCEEDED,assertThrows(GraphStoreException.class,()->new FileGraphStore(directory,10L,new GraphJson.StreamLimits(10,128,10)).load(original.identity())).reason());
+    }
     @Test void streamingStorageKeepsCanonicalUtf8BytesAndBothSizeCeilings()throws Exception{
         var original=graph();var unicode=GraphEvidence.capture("fixture.unicode",Map.of("text","Tiếng Việt 😀".repeat(10)));var evidence=new ArrayList<>(original.evidence());evidence.add(unicode);
         var graph=new KnowledgeGraph(original.snapshot(),original.contexts(),original.nodes(),original.edges(),evidence);

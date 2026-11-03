@@ -12,19 +12,29 @@ import com.evolution.analysis.dependency.DependencyAcquisitionPolicy;
 import java.nio.file.Path;
 import java.util.*;
 
-/** Passive composition of the existing Maven providers; no target lifecycle or network. */
+/** Passive metadata/artifact acquisition; target lifecycles and target-declared repositories stay inert. */
 public final class MavenScan {
+    public static final List<java.net.URI> DEFAULT_REPOSITORIES=List.of(java.net.URI.create("https://repo.maven.apache.org/maven2/"));
     public static final BuildModelPolicy POLICY=new BuildModelPolicy(List.of(),List.of(),Map.of(),10_000_000,1000,128);
+    public static MavenPomResolutionPolicy pomPolicy(List<java.net.URI> repositories){
+        return new MavenPomResolutionPolicy(1000,4_000_000,64_000_000,64,repositories,5000,15000);
+    }
     public static Optional<MavenBuildModelResolution> model(RepositoryAcquisitionResult acquisition,Path cache){
-        return acquisition.buildModelRequest(POLICY).map(r->new MavenBuildModelResolver(cache).resolve(r,new MavenPomResolutionPolicy(256,4_000_000,32_000_000,16)));
+        prepareCache(cache,DEFAULT_REPOSITORIES);
+        return acquisition.buildModelRequest(POLICY).map(r->new MavenBuildModelResolver(cache).resolve(r,pomPolicy(DEFAULT_REPOSITORIES)));
     }
     public static List<MavenBuildModelResolution> models(RepositoryAcquisitionResult acquisition,Path cache){
+        return models(acquisition,cache,DEFAULT_REPOSITORIES);
+    }
+    public static List<MavenBuildModelResolution> models(RepositoryAcquisitionResult acquisition,Path cache,List<java.net.URI> repositories){
+        var policy=pomPolicy(repositories);
         if(acquisition.snapshot().isEmpty())return List.of();
+        if(!acquisition.workspacePoms().isEmpty())prepareCache(cache,repositories);
         var poms=acquisition.workspacePoms();var modeled=new HashSet<String>();var results=new ArrayList<MavenBuildModelResolution>();
         for(String path:new TreeSet<>(poms.keySet())){
             if(modeled.contains(path))continue;
             var request=new BuildModelRequest(acquisition.snapshot().orElseThrow(),path,poms,Map.of(),POLICY);
-            var result=new MavenBuildModelResolver(cache).resolve(request,new MavenPomResolutionPolicy(256,4_000_000,32_000_000,16));
+            var result=new MavenBuildModelResolver(cache).resolve(request,policy);
             results.add(result);result.model().modules().stream().map(BuildModelResult.ModuleModel::pomPath).forEach(modeled::add);
         }
         return List.copyOf(results);
@@ -32,10 +42,10 @@ public final class MavenScan {
     public record Inputs(Map<UniversalSourceIngestion.SourceSet,UniversalSourceIngestion.Resolution> resolutions,
                   Map<MavenCoordinate,PomInput> externalPoms,List<CapabilityGapRecord> gaps,Map<String,Object> summary){}
     public static Inputs inputs(RepositoryAcquisitionResult acquisition,Optional<MavenBuildModelResolution> build,Path cache,Optional<PlatformInput> platform){
-        return inputs(acquisition,models(acquisition,cache),cache,platform,new DependencyAcquisitionPolicy(1024,64_000_000,256_000_000,16,List.of(),5000,15000,0));
+        return inputs(acquisition,models(acquisition,cache),cache,platform,new DependencyAcquisitionPolicy(1024,64_000_000,256_000_000,64,DEFAULT_REPOSITORIES,5000,15000,1));
     }
     public static Inputs inputs(RepositoryAcquisitionResult acquisition,List<MavenBuildModelResolution> builds,Path cache,Optional<PlatformInput> platform,DependencyAcquisitionPolicy acquisitionPolicy){
-        if(builds.isEmpty()||platform.isEmpty())return new Inputs(Map.of(),Map.of(),List.of(),Map.of("mode","NOT_APPLICABLE"));
+        if(builds.isEmpty())return new Inputs(Map.of(),Map.of(),List.of(),Map.of("mode","NOT_APPLICABLE"));
         var resolutions=new HashMap<UniversalSourceIngestion.SourceSet,UniversalSourceIngestion.Resolution>();
         var external=new HashMap<MavenCoordinate,PomInput>();var gaps=new TreeSet<CapabilityGapRecord>();var summaries=new ArrayList<Object>();
         var conflicts=new ArrayList<com.evolution.analysis.ingestion.IngestionEvidence.Issue>();
@@ -43,10 +53,11 @@ public final class MavenScan {
         for(var resolved:builds){
         var request=new ClasspathResolutionRequest(resolved.request(),resolved.model(),new ClasspathResolutionPolicy(1024,2048,4_000_000,64_000_000,256_000_000,64));
         var acquired=new MavenDependencyArtifactResolver(cache).resolve(request,acquisitionPolicy);var classpath=acquired.classpath();
-        for(var manifest:classpath.manifests())if(manifest.sourceSet()!=SourcePlanModel.Kind.CUSTOM){
+        for(var manifest:classpath.manifests())if(platform.isPresent()&&manifest.sourceSet()!=SourcePlanModel.Kind.CUSTOM){
             var binaries=manifest.entries().stream().map(e->new BinaryInput(e.classpathEntry(),cache.resolve(e.repositoryPath()))).toList();
             var key=new UniversalSourceIngestion.SourceSet(manifest.module(),manifest.sourceSet());
-            var value=new UniversalSourceIngestion.Resolution(platform.orElseThrow(),binaries,manifest.identity());
+            var value=new UniversalSourceIngestion.Resolution(platform.orElseThrow(),binaries,manifest.identity(),Optional.empty(),
+                    manifest.status()==ExactClasspathResult.Status.COMPLETE&&manifest.reactorEntries().isEmpty());
             if(conflictedSets.contains(key))continue;
             var prior=resolutions.putIfAbsent(key,value);if(prior!=null&&!prior.equals(value)){
                 resolutions.remove(key);conflictedSets.add(key);conflicts.add(new com.evolution.analysis.ingestion.IngestionEvidence.Issue(com.evolution.analysis.ingestion.IngestionEvidence.Reason.AMBIGUOUS_INPUT,key.toString(),List.of(prior.exactClasspathEvidence(),value.exactClasspathEvidence())));
@@ -60,10 +71,29 @@ public final class MavenScan {
                 external.remove(coordinate);conflictedPoms.add(coordinate);conflicts.add(new com.evolution.analysis.ingestion.IngestionEvidence.Issue(com.evolution.analysis.ingestion.IngestionEvidence.Reason.AMBIGUOUS_INPUT,coordinate.notation(),List.of(prior.digest(),pom.digest())));
             }
         });
-        summaries.add(Map.of("root",resolved.request().rootPom(),"build",resolved.identity(),"classpath",classpath.identity(),"acquisition",acquired.identity(),"artifacts",classpath.artifacts().size(),"problems",classpath.manifests().stream().flatMap(m->m.problems().stream()).distinct().toList()));
+        summaries.add(Map.of("root",resolved.request().rootPom(),"build",resolved.identity(),"pomPolicy",resolved.policyIdentity(),
+                "poms",resolved.acquiredPoms().size(),"pomAttempts",resolved.attempts().size(),"pomProblems",resolved.problems(),
+                "classpath",classpath.identity(),"acquisition",acquired.identity(),"artifacts",classpath.artifacts().size(),"problems",classpath.manifests().stream().flatMap(m->m.problems().stream()).distinct().toList()));
         }
         gaps.addAll(com.evolution.analysis.ingestion.IngestionEvidence.gaps(acquisition.snapshot().orElseThrow().identity(),new VersionedIdentifier("build.product-readiness","m8.4-v1"),acquisition.identity(),conflicts));
         return new Inputs(Map.copyOf(resolutions),Map.copyOf(external),List.copyOf(gaps),Map.of("mode",acquisitionPolicy.remoteRepositories().isEmpty()?"PASSIVE_CACHE_THEN_ISOLATED_REQUIREMENT":"EXPLICIT_ARTIFACT_ACQUISITION","policy",acquisitionPolicy.identity(),"roots",summaries));
+    }
+    /** Create only the caller-selected cache, without traversing existing aliases/links.
+     * Unavailable storage remains a typed acquisition result rather than aborting source analysis. */
+    private static void prepareCache(Path cache,List<java.net.URI> repositories){
+        if(repositories.isEmpty())return;
+        var absolute=cache.toAbsolutePath().normalize();
+        try {
+            var parents=new ArrayDeque<Path>();
+            for(Path p=absolute;p!=null;p=p.getParent())parents.push(p);
+            while(!parents.isEmpty()){
+                Path p=parents.pop();
+                if(!java.nio.file.Files.exists(p,java.nio.file.LinkOption.NOFOLLOW_LINKS)){
+                    try{java.nio.file.Files.createDirectory(p);}catch(java.nio.file.FileAlreadyExistsException concurrent){/* Recheck below. */}
+                }
+                if(java.nio.file.Files.isSymbolicLink(p)||!java.nio.file.Files.isDirectory(p,java.nio.file.LinkOption.NOFOLLOW_LINKS)||!p.toRealPath().equals(p))return;
+            }
+        }catch(java.io.IOException|SecurityException unavailable){/* Provider reports the exact typed cache failure. */}
     }
     private MavenScan(){}
 }

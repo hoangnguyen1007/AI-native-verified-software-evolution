@@ -127,8 +127,8 @@ public record EvidenceAcquisitionLedger(
     private static ContentDigest derive(VersionedIdentifier normalizer, EvidenceContext context,
             List<CapabilityGapRecord> gaps, List<AcquisitionAttemptRecord> attempts,
             List<ProviderConflictRecord> conflicts, List<GapResolutionRecord> resolutions) {
-        return ContentDigest.sha256Utf8(CanonicalJson.write(Map.of(
+        return CanonicalJson.sha256(Map.of(
                 "schema", SCHEMA, "normalizer", normalizer, "context", context,
-                "gaps", gaps, "attempts", attempts, "conflicts", conflicts, "resolutions", resolutions)));
+                "gaps", gaps, "attempts", attempts, "conflicts", conflicts, "resolutions", resolutions));
     }
 }

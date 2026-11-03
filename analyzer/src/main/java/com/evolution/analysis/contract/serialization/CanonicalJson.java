@@ -53,6 +53,9 @@ public final class CanonicalJson {
     public static void writeTo(Object value,Writer writer)throws IOException {append(value,writer);}
     /** Count the exact JSON value/depth denominator without materializing a second object tree. */
     public static boolean fitsStructure(Object value,int maxDepth,int maxValues){
+        return fitsStructure(value,maxDepth,(long)maxValues);
+    }
+    public static boolean fitsStructure(Object value,int maxDepth,long maxValues){
         if(maxDepth<1||maxValues<1)throw new IllegalArgumentException("Positive structural limits required");
         return fits(value,0,maxDepth,new long[]{maxValues});
     }

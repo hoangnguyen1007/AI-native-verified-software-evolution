@@ -5,6 +5,8 @@ import com.evolution.analysis.classpath.ClasspathResolutionPolicy;
 import com.evolution.analysis.classpath.ExactClasspathResult;
 import com.evolution.analysis.contract.common.ContentDigest;
 import com.evolution.analysis.contract.common.VersionedIdentifier;
+import com.evolution.analysis.dependency.*;
+import com.evolution.analysis.classpath.ArtifactCoordinate;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -23,20 +25,26 @@ import java.util.*;
  */
 public final class MavenBuildModelResolver {
     public static final VersionedIdentifier VERSION =
-            new VersionedIdentifier("build.maven-local-inputs", "3.9.16-m3.7");
+            new VersionedIdentifier("build.maven-local-inputs", "3.9.16-m8.4-cached-poms-v2");
 
     private final Path selectedCacheRoot;
     private final MavenBuildModelProvider modelProvider;
     private final RemotePomTransport remoteTransport;
+    private final Optional<DependencyArtifactProvider> artifactProvider;
 
     public MavenBuildModelResolver(Path selectedCacheRoot) {
-        this(selectedCacheRoot, new JdkRemotePomTransport());
+        this(selectedCacheRoot, new JdkRemotePomTransport(),Optional.of(new MavenDependencyArtifactProvider(selectedCacheRoot)));
     }
 
     MavenBuildModelResolver(Path selectedCacheRoot, RemotePomTransport remoteTransport) {
+        this(selectedCacheRoot,remoteTransport,Optional.empty());
+    }
+
+    MavenBuildModelResolver(Path selectedCacheRoot,RemotePomTransport remoteTransport,Optional<DependencyArtifactProvider> artifactProvider) {
         this.selectedCacheRoot = Objects.requireNonNull(selectedCacheRoot);
         this.modelProvider = new MavenBuildModelProvider();
         this.remoteTransport = Objects.requireNonNull(remoteTransport);
+        this.artifactProvider = Objects.requireNonNull(artifactProvider);
     }
 
     public MavenBuildModelResolution resolve(BuildModelRequest initial, MavenPomResolutionPolicy policy) {
@@ -117,7 +125,7 @@ public final class MavenBuildModelResolver {
                 RemoteAcquisition remote = new RemoteAcquisition(
                         Optional.empty(), Optional.empty(), List.of(), List.of());
                 if (!acquiredCoordinate && !policy.remoteRepositories().isEmpty()) {
-                    remote = acquireRemote(coordinate, policy, acquiredBytes);
+                    remote = acquireRemote(coordinate, policy, acquiredBytes,initial);
                     attempts.addAll(remote.attempts());
                     if (remote.input().isPresent()) {
                         PomInput input = remote.input().orElseThrow();
@@ -156,7 +164,8 @@ public final class MavenBuildModelResolver {
     }
 
     private RemoteAcquisition acquireRemote(
-            MavenCoordinate coordinate, MavenPomResolutionPolicy policy, long acquiredBytes) {
+            MavenCoordinate coordinate, MavenPomResolutionPolicy policy, long acquiredBytes,BuildModelRequest initial) {
+        if(artifactProvider.isPresent())return acquireCached(coordinate,policy,acquiredBytes,initial);
         var attempts = new ArrayList<MavenBuildModelResolution.Attempt>();
         var problems = new ArrayList<MavenBuildModelResolution.Problem>();
         if (coordinate.version().endsWith("-SNAPSHOT")) {
@@ -224,6 +233,39 @@ public final class MavenBuildModelResolver {
             }
         }
         return new RemoteAcquisition(Optional.empty(), Optional.empty(), attempts, problems);
+    }
+
+    /** Use the existing validated atomic artifact cache for production metadata acquisition. */
+    private RemoteAcquisition acquireCached(MavenCoordinate coordinate,MavenPomResolutionPolicy policy,long acquiredBytes,BuildModelRequest initial) {
+        long allowed=Math.min(policy.maxPomBytes(),policy.maxTotalBytes()-acquiredBytes);
+        if(allowed<1)return new RemoteAcquisition(Optional.empty(),Optional.empty(),List.of(),List.of(
+                new MavenBuildModelResolution.Problem(MavenBuildModelResolution.ProblemReason.TOTAL_BYTE_LIMIT,coordinate.notation())));
+        var artifact=new ArtifactCoordinate(coordinate,"pom","");
+        var acquisition=artifactProvider.orElseThrow().acquire(DependencyAcquisitionRequest.of(List.of(artifact),
+                new DependencyAcquisitionPolicy(1,allowed,allowed,1,policy.remoteRepositories(),policy.connectTimeoutMillis(),policy.requestTimeoutMillis(),1)));
+        var attempts=acquisition.attempts().stream()
+                .filter(a->a.origin()==DependencyAcquisitionResult.Origin.REMOTE_REPOSITORY||a.outcome()==DependencyAcquisitionResult.AttemptOutcome.SUCCEEDED)
+                .map(a->new MavenBuildModelResolution.Attempt(coordinate,
+                MavenBuildModelResolution.Origin.valueOf(a.origin().name()),a.origin()==DependencyAcquisitionResult.Origin.REMOTE_REPOSITORY?a.subject()+"#attempt="+a.ordinal():a.subject(),
+                MavenBuildModelResolution.AttemptOutcome.valueOf(a.outcome().name()),a.contentDigest())).toList();
+        var material=acquisition.outcomes().getFirst().artifact();
+        if(material.isPresent())try {
+            var captured=material.orElseThrow();
+            // Revalidate the published bytes through the same link/containment/budget checks as local POMs.
+            var cache=new LocalArtifactCache(selectedCacheRoot,initial,cachePolicy(policy));
+            var bytes=cache.pom(coordinate).bytes();
+            if(!ContentDigest.sha256(bytes).equals(captured.contentDigest()))throw new IOException();
+            String location=acquisition.attempts().stream().filter(a->a.outcome()==DependencyAcquisitionResult.AttemptOutcome.SUCCEEDED)
+                    .reduce((a,b)->b).orElseThrow().subject();
+            return new RemoteAcquisition(Optional.of(new PomInput(bytes)),Optional.of(new MavenBuildModelResolution.AcquiredPom(
+                    coordinate,MavenBuildModelResolution.Origin.valueOf(captured.origin().name()),location,captured.contentDigest(),captured.size())),attempts,List.of());
+        }catch(IOException|LocalArtifactCache.Failure|LocalArtifactCache.RootFailure unavailable) {
+            return new RemoteAcquisition(Optional.empty(),Optional.empty(),attempts,List.of(new MavenBuildModelResolution.Problem(
+                    MavenBuildModelResolution.ProblemReason.POM_READ_FAILED,coordinate.notation())));
+        }
+        return new RemoteAcquisition(Optional.empty(),Optional.empty(),attempts,List.of(new MavenBuildModelResolution.Problem(
+                coordinate.version().endsWith("-SNAPSHOT")?MavenBuildModelResolution.ProblemReason.REMOTE_SNAPSHOT_UNSUPPORTED:
+                        MavenBuildModelResolution.ProblemReason.REMOTE_REQUEST_FAILED,coordinate.notation())));
     }
 
     private static MavenBuildModelResolution.Attempt remoteAttempt(

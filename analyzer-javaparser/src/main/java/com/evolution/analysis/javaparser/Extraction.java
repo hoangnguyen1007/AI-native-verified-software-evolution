@@ -66,15 +66,18 @@ final class Extraction {
 
     FrontendResult run() {
         parse();
-        indexTypes();
+        if(request.sourceRecovery())diagnostics.add(new Diagnostic(DiagnosticSeverity.WARNING,"java.source-recovery",
+                "Source declarations and written syntax retained; build-dependent attribution requires a complete context",
+                Optional.empty(),Map.of("mode",FrontendRequest.SOURCE_RECOVERY)));
+        if(!request.sourceRecovery())indexTypes();
         // Materialize declaration identities before emitting edges, so collisions can be withheld.
         for (var unit : orderedUnits) for (var node : unit.ast.stream().filter(this::isDeclaration).toList()) {
             try { entity(node); } catch (RuntimeException exception) { /* Recorded in the declaration observation pass below. */ }
         }
         nativeMembers=new NativeMemberExtraction(this,request,environment);
-        nativeMembers.declarations();
+        if(!request.sourceRecovery())nativeMembers.declarations();
         var implicit = new ImplicitExtraction(this);
-        for (var unit : orderedUnits) implicit.declarations(unit.ast);
+        if(!request.sourceRecovery())for (var unit : orderedUnits) implicit.declarations(unit.ast);
         for (var unit : orderedUnits) {
             for (var node : unit.ast.stream().filter(this::isDeclaration).toList()) observe(node, "declares", () -> entity(node), () -> owner(node));
             for (var node : unit.ast.findAll(MethodCallExpr.class)) observe(node, "calls", () -> resolveCall(node), () -> owner(node));
@@ -86,9 +89,12 @@ final class Extraction {
             new ExpressionTypeExtraction(this).extract(unit.ast);
             new FieldExtraction(this).extract(unit.ast);
             new AnnotationExtraction(this).extract(unit.ast);
-            implicit.relationships(unit.ast);
-            lombok.relationships(unit.ast);
+            if(!request.sourceRecovery()) {
+                implicit.relationships(unit.ast);
+                lombok.relationships(unit.ast);
+            }
         }
+        var constructorCandidates=LombokCandidates.extract(this,orderedUnits.stream().map(u->u.ast).toList(),types);
         var outcomes = new ArrayList<>(rejected);
         for (var unit : orderedUnits) outcomes.add(new SourceOutcome(unit.input.document().identity(),
                 unit.diagnostics.isEmpty() ? SourceOutcome.State.PROCESSED : SourceOutcome.State.PARTIAL, List.copyOf(unit.diagnostics)));
@@ -105,11 +111,11 @@ final class Extraction {
             return new CategoryCoverage(kind, c.equals("calls") ? CategoryCoverage.Support.IMPLEMENTED : CategoryCoverage.Support.PARTIAL, attempted, emitted, attempted - emitted);
         }).toList();
         return new FrontendResult(request.manifest().identity(), VERSION,
-                !reactorResolutionDegraded && outcomes.stream().allMatch(s -> s.state() == SourceOutcome.State.PROCESSED)
+                !request.sourceRecovery() && !reactorResolutionDegraded && outcomes.stream().allMatch(s -> s.state() == SourceOutcome.State.PROCESSED)
                         ? FrontendResult.State.COMPLETED : FrontendResult.State.PARTIAL,
                 declarations.values().stream().filter(d -> !duplicateDeclarations.contains(d.entity().identity())).toList(),
                 List.copyOf(occurrences.values()), observations, outcomes, coverage, List.copyOf(diagnostics), types, annotations,
-                List.copyOf(derived),typeDeclarations(),memberDeclarations());
+                List.copyOf(derived),typeDeclarations(),memberDeclarations(),constructorCandidates);
     }
 
     private List<MemberDeclarationRecord> memberDeclarations() {
@@ -617,12 +623,14 @@ final class Extraction {
         observe(node,category,() -> { throw new MappingFailure(status,code); },() -> { throw new MappingFailure(status,code); });
     }
     ResolvedTypeDeclaration resolveNamed(com.github.javaparser.ast.type.ClassOrInterfaceType type) {
+        if(request.sourceRecovery())throw new UnsolvedSymbolException(type.getNameWithScope());
         var resolved = com.github.javaparser.symbolsolver.javaparsermodel.JavaParserFactory.getContext(type, environment.solver)
                 .solveType(type.getNameWithScope());
         if (!resolved.isSolved()) throw new UnsolvedSymbolException(type.getNameWithScope());
         return resolved.getCorrespondingDeclaration();
     }
     Entity typeEntity(ResolvedTypeDeclaration type) {
+        if(request.sourceRecovery())throw new UnsolvedSymbolException(type.getName());
         if (type.toAst().isPresent()) {
             Node declaration = type.toAst().orElseThrow();
             if (reactorNodes.contains(declaration) && type.isReferenceType()) {
@@ -783,7 +791,12 @@ final class Extraction {
         catch (RuntimeException exception) { span = Optional.empty(); spanFailure = exception; }
         Entity source = null, target = null; SemanticStatus status = SemanticStatus.RESOLVED;
         var local = new ArrayList<Diagnostic>();
-        try { source = ownerSupplier.get(); target = targetSupplier.get(); }
+        try {
+            source = ownerSupplier.get();
+            if(request.sourceRecovery()&&!Set.of("declares","has-parameter").contains(category))
+                throw new MappingFailure(SemanticStatus.UNRESOLVED,"java.build-context-required");
+            target = targetSupplier.get();
+        }
         catch (UnsolvedSymbolException exception) { status = SemanticStatus.UNRESOLVED; local.add(diagnostic("java.unresolved", status, span)); }
         catch (MappingFailure failure) { status = failure.status; local.add(diagnostic(failure.code, status, span)); }
         catch (UnsupportedOperationException exception) { status = SemanticStatus.UNSUPPORTED; local.add(diagnostic("java.adapter-unsupported", status, span)); }

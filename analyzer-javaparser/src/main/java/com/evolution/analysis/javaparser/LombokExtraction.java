@@ -136,6 +136,9 @@ final class LombokExtraction {
             generated.add(new Generated(setter,name,List.of(f),List.of(parameter),"lombok.builder-setter",true));
         }
     }
+    boolean hasGeneratedConstructor(ClassOrInterfaceDeclaration type) {
+        return generatedOwners.entrySet().stream().anyMatch(e->e.getValue()==type&&e.getKey().kind()==EntityKind.CONSTRUCTOR);
+    }
     private void constructor(ClassOrInterfaceDeclaration type,List<VariableDeclarator> fields,String rule) {
         var name=JavaSymbolName.constructor(context.name(type),fields.stream().map(f->context.erasedParameter(f.getType())).toList());
         if(context.hasDeclaration(name)){context.synthesisGap(type,"lombok.constructor-collision");return;}

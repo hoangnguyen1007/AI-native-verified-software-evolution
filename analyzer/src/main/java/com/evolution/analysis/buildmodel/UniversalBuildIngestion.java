@@ -10,7 +10,7 @@ import static com.evolution.analysis.buildmodel.SourcePlanModel.*;
 
 /** Passive router with an injected Maven provider; no target script, plugin, process or network execution. */
 public final class UniversalBuildIngestion {
-    public static final VersionedIdentifier PROVIDER=new VersionedIdentifier("build.universal-ingestion","m8.4-multi-root-v1");
+    public static final VersionedIdentifier PROVIDER=new VersionedIdentifier("build.universal-ingestion","m8.4-gradle-recovery-v2");
     public record Policy(Optional<Integer> syntaxLevel, Optional<Integer> platformRelease, Optional<String> encoding,
                          int maxFiles,int maxCharacters,int maxTokens,int maxDepth) {
         public Policy { Objects.requireNonNull(syntaxLevel);Objects.requireNonNull(platformRelease);Objects.requireNonNull(encoding);
@@ -55,8 +55,13 @@ public final class UniversalBuildIngestion {
         }
         // Literal settings include rows are the project denominator, including projects with no build file.
         Map<String,String> projectNames=new HashMap<>();
+        Map<String,UniversalBuildModel.Tool> gradleProjects=new HashMap<>();
+        Map<String,BuildModelResult.PomEvidence> settingsEvidence=new HashMap<>();
         for(var entry:scripts.entrySet())if(filename(entry.getKey()).startsWith("settings.")) {
             String root=directory(entry.getKey());
+            var settingsTool=entry.getKey().endsWith(".kts")?UniversalBuildModel.Tool.GRADLE_KOTLIN:UniversalBuildModel.Tool.GRADLE_GROOVY;
+            var settingsInput=new BuildModelResult.PomEvidence(entry.getKey(),inputs.files().get(entry.getKey()).document().contentDigest());
+            gradleProjects.put(root,settingsTool);settingsEvidence.put(root,settingsInput);
             for(var statement:entry.getValue()) {
                 if(statement.key().equals("include")&&statement.body().isEmpty()&&!statement.strings().isEmpty()
                         && statement.syntax().matches("include(?:\\(#(?:,#)*\\)|#(?:,#)*)")) {
@@ -65,10 +70,37 @@ public final class UniversalBuildIngestion {
                         String relative=project.replaceFirst("^:","").replace(':','/');String dir=join(root,relative);
                         if(!directories.contains(dir)&&directories.size()>=policy.maxFiles()){issue(issues,INPUT_LIMIT,entry.getKey()+"#"+statement.offset(),identity);continue;}
                         directories.add(dir);projectNames.put(dir,relative.substring(relative.lastIndexOf('/')+1));
+                        gradleProjects.put(dir,settingsTool);settingsEvidence.put(dir,settingsInput);
+                        // Gradle also creates intermediate project descriptors for nested project paths.
+                        for(int slash=relative.indexOf('/');slash>=0;slash=relative.indexOf('/',slash+1)){
+                            String parent=join(root,relative.substring(0,slash));
+                            if(!directories.contains(parent)&&directories.size()>=policy.maxFiles()){issue(issues,INPUT_LIMIT,entry.getKey()+"#"+statement.offset(),identity);break;}
+                            directories.add(parent);projectNames.putIfAbsent(parent,filename(parent));gradleProjects.putIfAbsent(parent,settingsTool);settingsEvidence.putIfAbsent(parent,settingsInput);
+                        }
                     }catch(IllegalArgumentException failure){issue(issues,UNSAFE_PATH,entry.getKey()+"#"+statement.offset(),inputs.files().get(entry.getKey()).document().contentDigest());}
+                } else if(statement.syntax().matches("includeBuild(?:\\(#\\)|#)")&&statement.body().isEmpty()) {
+                    try {
+                        if(statement.strings().getFirst().contains("$")){issue(issues,DYNAMIC_BUILD_LOGIC,entry.getKey()+"#"+statement.offset(),settingsInput.digest());continue;}
+                        String dir=join(root,statement.strings().getFirst());
+                        if(directories.size()>=policy.maxFiles()&&!directories.contains(dir)){issue(issues,INPUT_LIMIT,entry.getKey()+"#"+statement.offset(),identity);continue;}
+                        directories.add(dir);gradleProjects.putIfAbsent(dir,settingsTool);settingsEvidence.putIfAbsent(dir,settingsInput);
+                    }catch(IllegalArgumentException failure){issue(issues,UNSAFE_PATH,entry.getKey()+"#"+statement.offset(),settingsInput.digest());}
+                } else if(projectDirectoryAssignment(statement.syntax())) {
+                    // Applied after all include rows, independently of statement order.
                 } else if(statement.syntax().equals("rootProject.name=#")&&!statement.strings().getFirst().contains("$")&&!statement.strings().getFirst().isBlank())projectNames.put(root,statement.strings().getFirst());
                 else issue(issues,DYNAMIC_BUILD_LOGIC,entry.getKey()+"#"+statement.offset(),inputs.files().get(entry.getKey()).document().contentDigest());
             }
+            for(var statement:entry.getValue())if(projectDirectoryAssignment(statement.syntax()))try {
+                var strings=statement.strings();String project=strings.getFirst();
+                if(strings.stream().anyMatch(s->s.contains("$"))){issue(issues,DYNAMIC_BUILD_LOGIC,entry.getKey()+"#"+statement.offset(),settingsInput.digest());continue;}
+                if(!project.startsWith(":"))throw new IllegalArgumentException();
+                String oldDir=join(root,project.substring(1).replace(':','/')),newDir=join(root,strings.get(1));
+                if(!gradleProjects.containsKey(oldDir)){issue(issues,DYNAMIC_BUILD_LOGIC,entry.getKey()+"#"+statement.offset(),settingsInput.digest());continue;}
+                if(!oldDir.equals(newDir)&&gradleProjects.containsKey(newDir)){issue(issues,AMBIGUOUS_INPUT,entry.getKey()+"#"+statement.offset(),settingsInput.digest());continue;}
+                String name=projectNames.getOrDefault(oldDir,filename(oldDir));projectNames.remove(oldDir);gradleProjects.remove(oldDir);settingsEvidence.remove(oldDir);
+                if(!scripts.containsKey(join(oldDir,"build.gradle"))&&!scripts.containsKey(join(oldDir,"build.gradle.kts"))&&!poms.containsKey(join(oldDir,"pom.xml")))directories.remove(oldDir);
+                directories.add(newDir);projectNames.put(newDir,name);gradleProjects.put(newDir,settingsTool);settingsEvidence.put(newDir,settingsInput);
+            }catch(IllegalArgumentException failure){issue(issues,UNSAFE_PATH,entry.getKey()+"#"+statement.offset(),settingsInput.digest());}
         }
         if(directories.isEmpty())directories.add(".");
         Set<String> modeledMaven=new HashSet<>();
@@ -84,7 +116,16 @@ public final class UniversalBuildIngestion {
                 var result=maven.orElseThrow().build(new BuildModelRequest(inputs.snapshot(),pom,poms,externalPoms,mavenPolicy));mavenResults.add(result);
                 for(var module:result.modules()) {
                     modeledMaven.add(module.pomPath());
-                    if(module.effectivePom().isEmpty()){issue(issues,INPUT_UNAVAILABLE,module.pomPath(),result.identity());continue;}
+                    if(module.effectivePom().isEmpty()){
+                        issue(issues,INPUT_UNAVAILABLE,module.pomPath(),result.identity());
+                        var evidence=Optional.ofNullable(poms.get(module.pomPath()))
+                                .map(p->List.of(new BuildModelResult.PomEvidence(module.pomPath(),p.digest())))
+                                .orElse(List.of());
+                        var fallback=new Projection(module.module().path(),policy,evidence,issues,identity,Optional.empty());
+                        modules.add(new UniversalBuildModel.Module(module.module(),UniversalBuildModel.Tool.MAVEN,Optional.of(module.pomPath()),
+                                Optional.empty(),fallback.plan(module.module(),UniversalBuildModel.Tool.MAVEN),List.of(),evidence));
+                        continue;
+                    }
                     var effective=module.effectivePom().orElseThrow();
                     var projected=new UniversalBuildModel.Module(module.module(),UniversalBuildModel.Tool.MAVEN,Optional.of(module.pomPath()),
                             Optional.of(effective.coordinate()),effective.sourcePlan(),List.of(),effective.inputs());
@@ -96,11 +137,12 @@ public final class UniversalBuildIngestion {
                 continue;
             }
             Optional<String> build=hasKotlin?Optional.of(kotlin):hasGroovy?Optional.of(groovy):Optional.empty();
-            var tool=hasKotlin?UniversalBuildModel.Tool.GRADLE_KOTLIN:hasGroovy?UniversalBuildModel.Tool.GRADLE_GROOVY:UniversalBuildModel.Tool.PLAIN_JAVA;
+            var tool=hasKotlin?UniversalBuildModel.Tool.GRADLE_KOTLIN:hasGroovy?UniversalBuildModel.Tool.GRADLE_GROOVY:gradleProjects.getOrDefault(dir,UniversalBuildModel.Tool.PLAIN_JAVA);
             var catalog=catalogs.entrySet().stream().filter(e->e.getKey().equals(".")
                     ||dir.equals(e.getKey())||dir.startsWith(e.getKey()+"/"))
                     .max(Comparator.comparingInt(e->e.getKey().length())).map(Map.Entry::getValue);
             var evidence=new ArrayList<BuildModelResult.PomEvidence>();
+            if(settingsEvidence.containsKey(dir))evidence.add(settingsEvidence.get(dir));
             build.flatMap(p->Optional.ofNullable(inputs.files().get(p)))
                     .ifPresent(f->evidence.add(new BuildModelResult.PomEvidence(f.document().path(),f.document().contentDigest())));
             catalog.ifPresent(c->evidence.add(c.evidence()));
@@ -119,6 +161,12 @@ public final class UniversalBuildIngestion {
         }
         var sorted=issues.stream().distinct().sorted(Comparator.comparing(IngestionEvidence.Issue::identity)).toList();
         return new UniversalBuildModel(identity,inputs.identity(),modules,mavenResults,sorted,IngestionEvidence.gaps(inputs.snapshot().identity(),PROVIDER,identity,sorted));
+    }
+
+    private static boolean projectDirectoryAssignment(String syntax){
+        return syntax.equals("project(#).projectDir=file(#)")||syntax.equals("project(#).projectDir=newFile(settingsDir,#)")
+                ||syntax.equals("project(#).projectDir=File(settingsDir,#)")||syntax.equals("project(#).projectDir=newFile(rootDir,#)")
+                ||syntax.equals("project(#).projectDir=File(rootDir,#)");
     }
 
     private static final class Projection {
@@ -259,7 +307,8 @@ public final class UniversalBuildIngestion {
         void gap(DeclarativeScript.Statement s){issue(issues,DYNAMIC_BUILD_LOGIC,dir+"#"+s.offset(),identity);}
         SourcePlanModel plan(ModuleDescriptor descriptor,UniversalBuildModel.Tool tool) {
             if(syntax.isEmpty()||platform.isEmpty()||encoding.isEmpty())issue(issues,COMPILER_CONFIGURATION_MISSING,dir,identity);
-            var origin=tool==UniversalBuildModel.Tool.PLAIN_JAVA?Origin.PLAIN_JAVA_CONVENTION:Origin.GRADLE_CONVENTION;
+            var origin=tool==UniversalBuildModel.Tool.PLAIN_JAVA?Origin.PLAIN_JAVA_CONVENTION:
+                    tool==UniversalBuildModel.Tool.MAVEN?Origin.MAVEN_CONVENTION:Origin.GRADLE_CONVENTION;
             var sets=new ArrayList<SourceSetPlan>();
             for(var kind:List.of(Kind.MAIN,Kind.TEST)) {
                 var gaps=new ArrayList<Gap>();if(syntax.isEmpty())gaps.add(Gap.MISSING_SOURCE_LEVEL);if(platform.isEmpty())gaps.add(Gap.MISSING_PLATFORM_RELEASE);if(encoding.isEmpty())gaps.add(Gap.MISSING_ENCODING);

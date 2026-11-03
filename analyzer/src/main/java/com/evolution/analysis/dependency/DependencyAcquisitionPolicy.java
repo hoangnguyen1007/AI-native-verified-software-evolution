@@ -15,7 +15,7 @@ public record DependencyAcquisitionPolicy(
         List<URI> remoteRepositories,
         int connectTimeoutMillis,
         int readTimeoutMillis,
-        int maxRetries) {
+        int maxRetries, int maxConcurrentDownloads) {
     public static final URI MAVEN_CENTRAL = URI.create("https://repo.maven.apache.org/maven2/");
     private static final int MAX_COORDINATES = 100_000;
     private static final int MAX_REPOSITORIES = 16;
@@ -29,7 +29,8 @@ public record DependencyAcquisitionPolicy(
                 || maxPasses < 1 || maxPasses > MAX_PASSES
                 || connectTimeoutMillis < 1 || connectTimeoutMillis > 120_000
                 || readTimeoutMillis < 1 || readTimeoutMillis > 300_000
-                || maxRetries < 0 || maxRetries > MAX_RETRIES) {
+                || maxRetries < 0 || maxRetries > MAX_RETRIES
+                || maxConcurrentDownloads < 1 || maxConcurrentDownloads > 16) {
             throw new IllegalArgumentException("Dependency acquisition limits must be positive and finite");
         }
         remoteRepositories = List.copyOf(remoteRepositories);
@@ -37,6 +38,11 @@ public record DependencyAcquisitionPolicy(
             throw new IllegalArgumentException("At most 16 explicitly authorized repositories are supported");
         }
         remoteRepositories.forEach(DependencyAcquisitionPolicy::validateRepository);
+    }
+
+    public DependencyAcquisitionPolicy(int maxCoordinates,long maxArtifactBytes,long maxTotalBytes,int maxPasses,
+            List<URI> remoteRepositories,int connectTimeoutMillis,int readTimeoutMillis,int maxRetries) {
+        this(maxCoordinates,maxArtifactBytes,maxTotalBytes,maxPasses,remoteRepositories,connectTimeoutMillis,readTimeoutMillis,maxRetries,4);
     }
 
     public ContentDigest identity() {
@@ -48,12 +54,13 @@ public record DependencyAcquisitionPolicy(
                 "remoteRepositories", remoteRepositories.stream().map(URI::toASCIIString).toList(),
                 "connectTimeoutMillis", connectTimeoutMillis,
                 "readTimeoutMillis", readTimeoutMillis,
-                "maxRetries", maxRetries)));
+                "maxRetries", maxRetries,
+                "maxConcurrentDownloads",maxConcurrentDownloads)));
     }
 
     public DependencyAcquisitionPolicy withLimits(int coordinates, long totalBytes) {
         return new DependencyAcquisitionPolicy(coordinates, maxArtifactBytes, totalBytes, maxPasses,
-                remoteRepositories, connectTimeoutMillis, readTimeoutMillis, maxRetries);
+                remoteRepositories, connectTimeoutMillis, readTimeoutMillis, maxRetries,maxConcurrentDownloads);
     }
 
     private static void validateRepository(URI repository) {

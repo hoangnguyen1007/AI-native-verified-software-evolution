@@ -13,10 +13,10 @@ import com.evolution.analysis.spring.universal.AutoConfigurationMetadata;
 import java.util.*;
 import static com.evolution.analysis.ingestion.IngestionEvidence.Reason.*;
 
-/** Connects declarative plans to the existing neutral frontend and configuration ports.
- * Resolution is an explicit exact input; a Gradle dependency declaration is never treated as a JAR. */
+/** Connects declarative plans to neutral frontend/configuration ports, retaining source recovery
+ * when build closure is unavailable. A Gradle dependency declaration is never treated as a JAR. */
 public final class UniversalSourceIngestion {
-    public static final VersionedIdentifier PROVIDER=new VersionedIdentifier("source.universal-ingestion","m8.4-readiness-scope-v1");
+    public static final VersionedIdentifier PROVIDER=new VersionedIdentifier("source.universal-ingestion","m8.4-source-recovery-v2");
     public record SourceSet(ModuleIdentity module,SourcePlanModel.Kind kind,String name) {
         public SourceSet { Objects.requireNonNull(module); Objects.requireNonNull(kind);
             name=ContractChecks.token(name,"source-set name"); }
@@ -25,8 +25,10 @@ public final class UniversalSourceIngestion {
                     kind==SourcePlanModel.Kind.TEST?"test":"");
         }
     }
-    public record Resolution(PlatformInput platform,List<BinaryInput> binaries,ContentDigest exactClasspathEvidence,Optional<com.evolution.analysis.javaevidence.JavaSourceCorrespondence.Verified> correspondence) {
+    /** complete describes the context closure, separately from the exact identities of available bytes. */
+    public record Resolution(PlatformInput platform,List<BinaryInput> binaries,ContentDigest exactClasspathEvidence,Optional<com.evolution.analysis.javaevidence.JavaSourceCorrespondence.Verified> correspondence,boolean complete) {
         public Resolution(PlatformInput platform,List<BinaryInput> binaries,ContentDigest exactClasspathEvidence){this(platform,binaries,exactClasspathEvidence,Optional.empty());}
+        public Resolution(PlatformInput platform,List<BinaryInput> binaries,ContentDigest exactClasspathEvidence,Optional<com.evolution.analysis.javaevidence.JavaSourceCorrespondence.Verified> correspondence){this(platform,binaries,exactClasspathEvidence,correspondence,true);}
         public Resolution { Objects.requireNonNull(platform);binaries=List.copyOf(binaries);Objects.requireNonNull(exactClasspathEvidence);Objects.requireNonNull(correspondence); }
     }
     public enum Status { OWNED, UNOWNED, OVERLAPPING, INPUT_UNAVAILABLE, CLASSIFICATION_CONFLICT }
@@ -48,11 +50,22 @@ public final class UniversalSourceIngestion {
     }
     public Result assemble(RepositoryInputs inputs,UniversalBuildModel build,Map<SourceSet,Resolution> resolutions,
                            ManifestComponent analyzer,ManifestComponent rules,ManifestComponent schema,Map<String,String> readinessOptions) {
+        return assemble(inputs,build,resolutions,analyzer,rules,schema,readinessOptions,Optional.empty());
+    }
+    public Result assemble(RepositoryInputs inputs,UniversalBuildModel build,Map<SourceSet,Resolution> resolutions,
+                           ManifestComponent analyzer,ManifestComponent rules,ManifestComponent schema,Map<String,String> readinessOptions,
+                           Optional<PlatformInput> recoveryPlatform) {
+        var available=new HashMap<>(resolutions);
+        if(recoveryPlatform.isPresent())for(var module:build.modules())for(var plan:module.sourcePlan().sourceSets()) {
+            var key=new SourceSet(plan.module(),plan.kind(),plan.name());
+            available.putIfAbsent(key,new Resolution(recoveryPlatform.orElseThrow(),List.of(),
+                    IngestionEvidence.digest(List.of("unavailable-classpath",inputs.identity(),build.identity(),key)),Optional.empty(),false));
+        }
         var descriptors=build.modules().stream().map(UniversalBuildModel.Module::descriptor).toList();
         if(!build.repositoryInputIdentity().equals(inputs.identity()))throw new IllegalArgumentException("Build and source inputs differ");
         if(descriptors.stream().anyMatch(m->!m.repository().equals(inputs.snapshot().repository())))throw new IllegalArgumentException("Build belongs to another repository");
-        var resolutionKeys=resolutions.entrySet().stream().map(e->{
-            var key=new TreeMap<String,Object>();key.put("set",e.getKey());key.put("platform",e.getValue().platform().entry());key.put("classpath",e.getValue().binaries().stream().map(BinaryInput::entry).toList());key.put("evidence",e.getValue().exactClasspathEvidence());
+        var resolutionKeys=available.entrySet().stream().map(e->{
+            var key=new TreeMap<String,Object>();key.put("set",e.getKey());key.put("platform",e.getValue().platform().entry());key.put("classpath",e.getValue().binaries().stream().map(BinaryInput::entry).toList());key.put("evidence",e.getValue().exactClasspathEvidence());key.put("complete",e.getValue().complete());
             var nativeOrigins=FrontendRequest.binaryOriginOptions(e.getValue().binaries());if(!nativeOrigins.isEmpty())key.put("nativeOrigins",nativeOrigins);
             var correspondence=FrontendRequest.correspondenceOptions(e.getValue().correspondence());if(!correspondence.isEmpty())key.put("correspondence",correspondence);
             return key;
@@ -92,7 +105,7 @@ public final class UniversalSourceIngestion {
         for(var plan:plans) {
             if(plan.gaps().contains(SourcePlanModel.Gap.PLUGIN_EFFECTS_NOT_EVALUATED))
                 issues.add(new IngestionEvidence.Issue(SOURCE_INCOMPLETE,plan.module().value()+"#PLUGIN_EFFECTS_NOT_EVALUATED",List.of(identity)));
-            var key=new SourceSet(plan.module(),plan.kind(),plan.name());var resolution=resolutions.get(key);Optional<FrontendRequest> request=Optional.empty();
+            var key=new SourceSet(plan.module(),plan.kind(),plan.name());var resolution=available.get(key);Optional<FrontendRequest> request=Optional.empty();
             var resources=new ArrayList<SourcePlanModel.Setting>();
             if(plan.semanticRole()==SourceClassification.TEST)plans.stream().filter(p->p.module().equals(plan.module())&&p.kind()==SourcePlanModel.Kind.MAIN).forEach(p->resources.addAll(p.resourceRoots()));
             resources.addAll(plan.resourceRoots());
@@ -100,19 +113,23 @@ public final class UniversalSourceIngestion {
             var defaults=ConfigDataIngestion.Policy.defaults();var config=new ConfigDataIngestion().ingest(inputs,new ConfigDataIngestion.Policy(locations,List.of(),Map.of(),defaults.maxDocuments(),defaults.maxCharacters(),defaults.maxDepth(),defaults.maxProperties()));
             if(!owned.getOrDefault(key,List.of()).isEmpty()) {
                 if(resolution==null)issues.add(new IngestionEvidence.Issue(CLASSPATH_RESOLUTION_REQUIRED,key.toString(),List.of(identity)));
-                else if(buildClosureUnknown(build,inputs,key)||incomplete.contains(key)||plan.syntaxLevel().value().isEmpty()||plan.platformRelease().value().isEmpty()||plan.encoding().value().isEmpty()
-                        ||plan.gaps().stream().anyMatch(g->g!=SourcePlanModel.Gap.GENERATED_SOURCES_NOT_ACQUIRED&&g!=SourcePlanModel.Gap.PLUGIN_EFFECTS_NOT_EVALUATED))
-                    issues.add(new IngestionEvidence.Issue(SOURCE_INCOMPLETE,key.toString(),List.of(identity)));
                 else try {
-                    int level=Integer.parseInt(plan.syntaxLevel().value().orElseThrow()),release=Integer.parseInt(plan.platformRelease().value().orElseThrow());
-                    if(resolution.platform().release()!=release)throw new IllegalArgumentException();
+                    boolean recovery=!resolution.complete()||buildClosureUnknown(build,inputs,key)||incomplete.contains(key)
+                            ||plan.syntaxLevel().value().isEmpty()||plan.platformRelease().value().isEmpty()||plan.encoding().value().isEmpty()
+                            ||plan.gaps().stream().anyMatch(g->g!=SourcePlanModel.Gap.GENERATED_SOURCES_NOT_ACQUIRED&&g!=SourcePlanModel.Gap.PLUGIN_EFFECTS_NOT_EVALUATED);
+                    int level=Integer.parseInt(plan.syntaxLevel().value().orElse(Integer.toString(resolution.platform().release())));
+                    int release=Integer.parseInt(plan.platformRelease().value().orElse(Integer.toString(resolution.platform().release())));
+                    recovery|=resolution.platform().release()!=release;
                     var sourceInputs=owned.get(key).stream().sorted(Comparator.comparing(s->s.document().path())).toList();
-                    if(sourceInputs.stream().anyMatch(s->!s.decoding().charset().equalsIgnoreCase(plan.encoding().value().orElseThrow())))throw new IllegalArgumentException();
+                    if(plan.encoding().value().isPresent()&&sourceInputs.stream().anyMatch(s->!s.decoding().charset().equalsIgnoreCase(plan.encoding().value().orElseThrow())))recovery=true;
+                    if(recovery)issues.add(new IngestionEvidence.Issue(SOURCE_INCOMPLETE,key.toString(),List.of(identity)));
+                    if(!resolution.complete())issues.add(new IngestionEvidence.Issue(CLASSPATH_RESOLUTION_REQUIRED,key.toString(),List.of(identity)));
                     var frontendPlan=new FrontendPlan(Optional.of(level),plan.bytecodeTarget().value().map(Integer::valueOf),false,resolution.exactClasspathEvidence(),inputs.identity());
                     var set=plan.semanticRole();
                     var options=new TreeMap<>(FrontendRequest.options(frontendPlan,plan.module(),set,sourceInputs.stream().map(SourceInput::document).toList(),resolution.platform()));
                     options.put("ingestion.build-model",build.identity().value());options.put("ingestion.source-input",identity.value());
                     options.put("ingestion.source-set-name",plan.name());
+                    if(recovery)options.put(FrontendRequest.RESOLUTION_MODE,FrontendRequest.SOURCE_RECOVERY);
                     options.putAll(FrontendRequest.binaryOriginOptions(resolution.binaries()));
                     options.putAll(FrontendRequest.correspondenceOptions(resolution.correspondence()));
                     options.putAll(readinessOptions);

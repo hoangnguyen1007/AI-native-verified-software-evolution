@@ -15,6 +15,12 @@ import org.junit.jupiter.api.io.TempDir;
 import static org.junit.jupiter.api.Assertions.*;
 
 class EvoAppTest {
+    @Test void scanOfflineFlagIsExplicitAndConflictingRepositoriesFailBeforeAcquisition()throws Exception{
+        var help=run("scan","--help");assertEquals(0,help.code());assertTrue(help.out().contains("--offline"));
+        var conflict=run("scan","--offline","--artifact-repository","https://repo.example.test/maven/","--json");
+        assertNotEquals(0,conflict.code());assertTrue(conflict.err().contains("OFFLINE_REPOSITORY_CONFLICT"));
+        assertFalse(Files.exists(directory.resolve(".evo/acquisition")));
+    }
     @Test void capturedJavaHasAnExplicitCommandAndMissingRegistrationCannotStartABuild()throws Exception{
         var help=run("captured-java","--help");assertEquals(0,help.code());assertTrue(help.out().contains("REGISTERED_DIR"));
         Path absent=directory.resolve("absent-registration");var result=run("captured-java",absent.toString(),"--json");

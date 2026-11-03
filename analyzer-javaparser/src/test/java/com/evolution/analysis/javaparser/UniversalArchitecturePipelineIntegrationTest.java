@@ -46,18 +46,66 @@ class UniversalArchitecturePipelineIntegrationTest {
         return TestInputs.request("class PlatformStub {}").platform();
     }
 
+    @Test void recoveryLombokCandidatesReachReportAndGraphWithoutVerifiedInjection() {
+        var input=inputs(Map.of("build.gradle.kts","plugins { id(\"org.springframework.boot\") version \"3.4.1\" }\n",
+                "src/main/java/p/Service.java","package p; @org.springframework.stereotype.Service @lombok.RequiredArgsConstructor class Service { @org.springframework.beans.factory.annotation.Autowired final MissingRepository repository; }"));
+        var result=new UniversalArchitecturePipeline().runWithEvidence(input,UniversalArchitecturePipeline.Policy.builder(new JavaParserFrontend(),JavaParserFrontend.PROVIDER).defaultPlatform(jdkPlatform()).build());
+        assertTrue(result.report().injectionSites().stream().anyMatch(s->s.siteKind().equals("LOMBOK_CONSTRUCTOR_CANDIDATE")&&s.memberName().equals("repository")&&s.targetType().equals("MissingRepository")));
+        assertTrue(result.report().injectionSites().stream().anyMatch(s->s.siteKind().equals("FIELD")&&s.memberName().equals("repository")&&s.targetType().equals("MissingRepository")));
+        assertNotEquals(UniversalArchitectureReport.Status.COMPLETE,result.report().status());
+        var graph=new com.evolution.analysis.graph.CanonicalGraphBuilder().build(result.graphInput().orElseThrow());
+        assertTrue(graph.nodes().stream().anyMatch(n->n.kind().equals("CONSTRUCTOR_INJECTION_CANDIDATE")));
+        assertTrue(result.graphInput().orElseThrow().ingestion().orElseThrow().units().stream().allMatch(u->u.spring().isEmpty()));
+    }
+
+    @Test void dynamicGradleKeepsSourceDeclarationsAndUnresolvedApiEvidence() {
+        var input=inputs(Map.of("settings.gradle.kts","include(\":api\")\n",
+                "build.gradle.kts","subprojects { apply(plugin = \"java\") }\n",
+                "api/build.gradle.kts","plugins { id(\"org.springframework.boot\") version \"3.4.1\" }\n",
+                "api/src/main/java/p/Api.java","package p; import missing.Service; @Service public interface Api { void invoke(); }",
+                "api/src/main/java/p/Client.java","package p; class Client { void helper() {} void run() { helper(); External.call(); } }"));
+        var policy=UniversalArchitecturePipeline.Policy.builder(new JavaParserFrontend(),JavaParserFrontend.PROVIDER)
+                .defaultPlatform(jdkPlatform()).build();
+        var first=new UniversalArchitecturePipeline().runWithEvidence(input,policy);
+        assertEquals(Set.of(JavaSymbolName.topLevelType("p","Api").canonicalName(),JavaSymbolName.topLevelType("p","Client").canonicalName()),first.report().types().stream().map(UniversalArchitectureReport.TypeRecord::qualifiedName).collect(java.util.stream.Collectors.toSet()));
+        var units=first.graphInput().orElseThrow().ingestion().orElseThrow().units();
+        var frontend=units.stream().flatMap(u->u.frontend().stream()).findFirst().orElseThrow();
+        assertTrue(units.stream().allMatch(u->u.spring().isEmpty()));
+        assertTrue(first.report().gaps().stream().anyMatch(g->g.reasonCode().equals("CONTEXT_INCOMPLETE")&&g.mechanismCategory().equals("spring.universal")));
+        assertEquals(2,frontend.sources().size());
+        assertEquals(1,frontend.annotations().size());
+        assertTrue(frontend.observations().stream().anyMatch(o->o.category().value().equals("java.calls")&&o.attribution()==com.evolution.analysis.contract.semantic.SemanticStatus.UNRESOLVED&&o.span().isPresent()));
+        assertEquals(2,frontend.observations().stream().filter(o->o.category().value().equals("java.calls")).count());
+        assertTrue(frontend.observations().stream().filter(o->o.category().value().equals("java.calls")).allMatch(o->o.attribution()==com.evolution.analysis.contract.semantic.SemanticStatus.UNRESOLVED));
+        assertFalse(com.evolution.analysis.spring.SpringFrameworkEvidence.fromRequest(first.graphInput().orElseThrow().ingestion().orElseThrow().sourceIngestion().outcomes().stream().flatMap(o->o.request().stream()).findFirst().orElseThrow()).completeClasspath());
+        assertNotEquals(UniversalArchitectureReport.Status.TERMINAL_FAILURE,first.report().status());
+        assertFalse(first.report().gaps().isEmpty());
+        assertEquals(first.report().identity(),new UniversalArchitecturePipeline().run(input,policy).identity());
+    }
+
+    @Test void missingMavenParentKeepsLocalTypesWithoutInventingEffectiveCoordinates() {
+        var input=inputs(Map.of("pom.xml","<project><modelVersion>4.0.0</modelVersion><parent><groupId>missing</groupId><artifactId>parent</artifactId><version>1</version><relativePath/></parent><artifactId>app</artifactId></project>",
+                "src/main/java/p/Local.java","package p; public class Local {}"));
+        var result=new UniversalArchitecturePipeline().runWithEvidence(input,UniversalArchitecturePipeline.Policy.builder(new JavaParserFrontend(),JavaParserFrontend.PROVIDER)
+                .defaultPlatform(jdkPlatform()).mavenProvider(new MavenBuildModelProvider()).build());
+        assertEquals(1,result.report().types().size());
+        assertTrue(result.graphInput().orElseThrow().build().orElseThrow().modules().getFirst().coordinate().isEmpty());
+        assertFalse(result.report().gaps().isEmpty());
+    }
+
     @Test void pluginEffectsQualifyCapturedHandwrittenSourcesWithoutInventingGeneratedTypes(){
         String pom="<project><modelVersion>4.0.0</modelVersion><groupId>fixture</groupId><artifactId>app</artifactId><version>1</version><properties><maven.compiler.release>21</maven.compiler.release><project.build.sourceEncoding>UTF-8</project.build.sourceEncoding></properties><build><plugins><plugin><artifactId>maven-enforcer-plugin</artifactId><version>3.6.3</version></plugin></plugins></build></project>";
         var result=new UniversalArchitecturePipeline().runWithEvidence(inputs(Map.of("pom.xml",pom,"src/main/java/p/C.java","package p; public class C {}")),UniversalArchitecturePipeline.Policy.builder(new JavaParserFrontend(),JavaParserFrontend.PROVIDER).defaultPlatform(jdkPlatform()).mavenProvider(new MavenBuildModelProvider()).build());
         assertEquals(1,result.report().types().size());assertNotEquals(UniversalArchitectureReport.Status.COMPLETE,result.report().status());
         assertTrue(result.graphInput().orElseThrow().build().orElseThrow().modules().stream().flatMap(m->m.sourcePlan().sourceSets().stream()).anyMatch(s->s.gaps().contains(SourcePlanModel.Gap.PLUGIN_EFFECTS_NOT_EVALUATED)));
     }
-    @Test void unsupportedCompilerConfigurationStillWithholdsHandwrittenSources(){
+    @Test void unsupportedCompilerConfigurationRetainsSourceRecoveryWithoutSemanticPromotion(){
         String pom="<project><modelVersion>4.0.0</modelVersion><groupId>fixture</groupId><artifactId>app</artifactId><version>1</version><build><plugins><plugin><artifactId>maven-compiler-plugin</artifactId><version>3.15.0</version><configuration><compilerArgs><arg>-Xplugin:unknown</arg></compilerArgs></configuration></plugin></plugins></build></project>";
         var result=new UniversalArchitecturePipeline().runWithEvidence(inputs(Map.of("pom.xml",pom,"src/main/java/p/C.java","package p; public class C {}")),UniversalArchitecturePipeline.Policy.builder(new JavaParserFrontend(),JavaParserFrontend.PROVIDER).defaultPlatform(jdkPlatform()).mavenProvider(new MavenBuildModelProvider()).build());
-        assertTrue(result.report().types().isEmpty());assertNotEquals(UniversalArchitectureReport.Status.COMPLETE,result.report().status());
+        assertEquals(1,result.report().types().size());assertNotEquals(UniversalArchitectureReport.Status.COMPLETE,result.report().status());
+        assertTrue(result.graphInput().orElseThrow().ingestion().orElseThrow().sourceIngestion().outcomes().stream().flatMap(o->o.request().stream()).allMatch(FrontendRequest::sourceRecovery));
         assertTrue(result.graphInput().orElseThrow().build().orElseThrow().modules().stream().flatMap(m->m.sourcePlan().sourceSets().stream()).anyMatch(s->s.gaps().contains(SourcePlanModel.Gap.UNSUPPORTED_COMPILER_CONFIGURATION)));
-        assertEquals("m8.4-readiness-scope-v1",UniversalSourceIngestion.PROVIDER.version());assertEquals("3.9.16-m7.2-compiler-bindings-v1",MavenBuildModelProvider.VERSION.version());
+        assertEquals("m8.4-source-recovery-v2",UniversalSourceIngestion.PROVIDER.version());assertEquals("3.9.16-m7.2-compiler-bindings-v1",MavenBuildModelProvider.VERSION.version());
     }
 
     private static SpringBuildContext testBuildContext(PlatformInput platform, List<BinaryInput> dependencies) {
@@ -124,8 +172,9 @@ class UniversalArchitecturePipelineIntegrationTest {
         var report = pipeline.run(input, policy);
 
         assertNotNull(report);
-        assertEquals(UniversalArchitectureReport.Status.COMPLETE, report.status(), () -> report.issues().toString());
-        assertEquals(UniversalArchitectureReport.ConfidenceLevel.FULL, report.metrics().confidence());
+        assertEquals(UniversalArchitectureReport.Status.PARTIAL, report.status());
+        assertFalse(report.gaps().isEmpty());
+        assertEquals(UniversalArchitectureReport.ConfidenceLevel.PARTIAL, report.metrics().confidence());
         assertFalse(report.modules().isEmpty());
         assertEquals(UniversalBuildModel.Tool.PLAIN_JAVA.name(), report.modules().getFirst().tool());
 
@@ -273,7 +322,8 @@ class UniversalArchitecturePipelineIntegrationTest {
         assertEquals(1, report.modules().size());
         assertEquals(UniversalBuildModel.Tool.GRADLE_KOTLIN.name(), report.modules().getFirst().tool());
         assertTrue(report.types().stream().anyMatch(t -> t.qualifiedName().contains("App")));
-        assertTrue(report.entryPoints().stream().anyMatch(e -> e.kind() == UniversalArchitectureReport.EntryPointKind.MAIN_METHOD));
+        assertTrue(report.issues().stream().anyMatch(i->i.reason()==IngestionEvidence.Reason.CLASSPATH_RESOLUTION_REQUIRED));
+        assertNotEquals(UniversalArchitectureReport.Status.COMPLETE,report.status());
     }
 
     @Test
@@ -335,7 +385,8 @@ class UniversalArchitecturePipelineIntegrationTest {
         var report = pipeline.run(input, policy);
 
         assertNotNull(report);
-        assertEquals(UniversalArchitectureReport.Status.COMPLETE, report.status());
+        assertEquals(UniversalArchitectureReport.Status.PARTIAL, report.status());
+        assertFalse(report.gaps().isEmpty());
 
         // Java types detected
         assertTrue(report.types().stream().anyMatch(t -> t.qualifiedName().contains("UserDao")));
@@ -675,7 +726,8 @@ class UniversalArchitecturePipelineIntegrationTest {
         var report = pipeline.run(acquisitionResult, policy);
 
         assertNotNull(report);
-        assertEquals(UniversalArchitectureReport.Status.COMPLETE, report.status());
+        assertEquals(UniversalArchitectureReport.Status.PARTIAL, report.status());
+        assertFalse(report.gaps().isEmpty());
         assertTrue(report.types().stream().anyMatch(t -> t.qualifiedName().contains("Simple")));
     }
 }

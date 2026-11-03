@@ -10,7 +10,7 @@ import java.util.*;
 
 /** Executes replaceable semantic providers over an already acquired, exact source/build context. */
 public final class UniversalIngestionPipeline {
-    public static final VersionedIdentifier PROVIDER=new VersionedIdentifier("repository.ingestion-pipeline","m4u.2");
+    public static final VersionedIdentifier PROVIDER=new VersionedIdentifier("repository.ingestion-pipeline","m8.4-source-recovery-v3");
     public enum Status { ANALYZED, NOT_ANALYZED, REJECTED, FAILED }
     public record Unit(UniversalSourceIngestion.SourceSet sourceSet,Status status,Optional<FrontendResult> frontend,
                        Optional<ComponentScanIngestion.Result> components,Optional<ConstructorInjectionIngestion.Result> constructors,
@@ -42,6 +42,13 @@ public final class UniversalIngestionPipeline {
                 acquired=Optional.of(result);
                 gaps.addAll(CapabilityGapNormalizer.normalize(EvidenceContext.forAnalysis(request.manifest()),
                         EvidenceNormalizationInput.builder().frontendResults(List.of(result)).build()).gaps());
+                if(request.sourceRecovery()) {
+                    var issue=new UniversalSpringEvidence.Issue(UniversalSpringEvidence.Reason.CONTEXT_INCOMPLETE,
+                            source.sourceSet()+"#SOURCE_RECOVERY",List.of(UniversalSpringEvidence.derived(identity,"source-recovery")));
+                    gaps.addAll(UniversalSpringEvidence.gaps(request.manifest().snapshot().identity(),identity,List.of(issue)));
+                    units.add(new Unit(source.sourceSet(),Status.ANALYZED,Optional.of(result),Optional.empty(),Optional.empty()));
+                    continue;
+                }
                 var framework=framework(request);
                 var components=new ComponentScanIngestion().scan(request,result,framework,maxTypes);
                 scanned=Optional.of(components);gaps.addAll(components.gaps());
@@ -69,7 +76,7 @@ public final class UniversalIngestionPipeline {
                                                    SourceToSpringPlan.Scope scope,int limit) {
         var input=pipeline.sourceIngestion().outcomes().stream().filter(o -> o.sourceSet().equals(sourceSet)).findFirst().orElseThrow();
         var unit=pipeline.units().stream().filter(u -> u.sourceSet().equals(sourceSet)).findFirst().orElseThrow();
-        if(unit.status()!=Status.ANALYZED||input.request().isEmpty())
+        if(unit.status()!=Status.ANALYZED||input.request().isEmpty()||input.request().orElseThrow().sourceRecovery())
             throw new IllegalArgumentException("Spring plans require an analyzed exact source set");
         var request=input.request().orElseThrow();
         var source=new SpringSourceEvidence(request,unit.frontend().orElseThrow(),framework(request));

@@ -5,6 +5,12 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import static org.junit.jupiter.api.Assertions.*;
 class WorkspaceTest {
+    @Test void storedGraphUsesActualFrameBudgetAndColdSelectionKeepsItsIdentity()throws Exception{
+        var graph=new CliFixture().node("A").graph();var workspace=new Workspace(directory);
+        workspace.select(graph,java.util.Optional.empty());
+        assertEquals(graph.identity(),new Workspace(directory).selectedGraph().identity());
+        assertEquals(graph.identity(),Workspace.graph(workspace.root.resolve(graph.identity().value().substring(7)+".graph.json")).identity());
+    }
     @Test void numberedReferencesBindContextScopeAndPageWithoutGuessing()throws Exception{
         var f=new CliFixture().node("A");var r=f.request();var ws=new Workspace(directory);ws.references(r,java.util.List.of(CliFixture.id("A")));
         assertEquals(CliFixture.id("A"),ws.reference(r,1).orElseThrow());assertTrue(ws.reference(r,2).isEmpty());

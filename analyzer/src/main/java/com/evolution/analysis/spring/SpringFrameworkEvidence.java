@@ -47,7 +47,7 @@ public record SpringFrameworkEvidence(boolean completeClasspath,
         if(!versions.isEmpty()&&!boot.isEmpty())compatible&=switch(versions.getFirst()){
             case "5.3.31"->boot.equals(List.of("2.7.18"));case "6.1.14"->boot.equals(List.of("3.3.5"));case "6.2.0"->boot.equals(List.of("3.4.0"));default->false;
         };
-        return new SpringFrameworkEvidence(compatible,Optional.of(request.plan().classpathManifest()),artifacts);
+        return new SpringFrameworkEvidence(compatible&&!request.sourceRecovery(),Optional.of(request.plan().classpathManifest()),artifacts);
     }
 
     public ContentDigest identity() {

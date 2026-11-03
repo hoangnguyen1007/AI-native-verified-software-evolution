@@ -12,6 +12,10 @@ public record FrontendRequest(AnalysisManifest manifest, ModuleIdentity module,
         PlatformInput platform, List<BinaryInput> dependencies, List<ReactorSourceInput> reactorSources,
         Optional<com.evolution.analysis.javaevidence.JavaSourceCorrespondence.Verified> correspondence) {
     public static final String CATALOG = "m2-java-4";
+    public static final String RESOLUTION_MODE = "java.resolution-mode";
+    public static final String SOURCE_RECOVERY = "SOURCE_RECOVERY";
+    /** Source bytes remain analyzable when the selected build/classpath closure is unavailable. */
+    public boolean sourceRecovery() { return SOURCE_RECOVERY.equals(manifest.configuration().values().get(RESOLUTION_MODE)); }
     public static final List<String> CATEGORIES = List.of("declares", "extends", "implements", "permits", "type-uses", "calls", "constructor-calls", "reads-field", "writes-field", "method-references", "has-parameter", "parameter-type", "returns", "field-type", "throws", "annotated-with", "type-parameter-bound", "type-argument");
     public FrontendRequest(AnalysisManifest manifest, ModuleIdentity module,
             SourceClassification sourceSet, FrontendPlan plan,List<SourceInput> sources,

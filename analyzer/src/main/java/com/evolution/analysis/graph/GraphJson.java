@@ -14,6 +14,25 @@ public final class GraphJson {
         }
         public static Limits defaults() { return new Limits(64_000_000, 128, 2_000_000); }
     }
+    /** Whole-snapshot resource budget; individual tokens remain bounded working units. */
+    public record StreamLimits(long maxCharacters,int maxDepth,long maxValues,int maxStringCharacters) {
+        public StreamLimits(long characters,int depth,long values){this(characters,depth,values,(int)Math.min(characters,64_000_000));}
+        public StreamLimits {
+            if(maxCharacters<1||maxDepth<1||maxDepth>256||maxValues<1||maxStringCharacters<1||maxStringCharacters>maxCharacters)
+                throw new IllegalArgumentException("Invalid graph stream limits");
+        }
+        public static StreamLimits from(Limits limits){return new StreamLimits(limits.maxCharacters(),limits.maxDepth(),limits.maxValues(),limits.maxCharacters());}
+    }
+    @FunctionalInterface public interface ObjectConsumer {void accept(String name,MemberReader member)throws java.io.IOException;}
+    @FunctionalInterface public interface ValueConsumer {void accept(Object value)throws java.io.IOException;}
+    public interface MemberReader {
+        Object read()throws java.io.IOException;
+        void object(ObjectConsumer consumer)throws java.io.IOException;
+        void array(ValueConsumer consumer)throws java.io.IOException;
+    }
+    public static void streamObject(java.io.Reader reader,StreamLimits limits,ObjectConsumer consumer)throws java.io.IOException {
+        new StreamingGraphJson(reader,limits).readObject(consumer);
+    }
     public static Object read(String json, Limits limits) {
         Objects.requireNonNull(json); Objects.requireNonNull(limits);
         if (json.length() > limits.maxCharacters()) throw new LimitExceededException("Graph JSON character limit");

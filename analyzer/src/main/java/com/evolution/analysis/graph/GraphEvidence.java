@@ -4,12 +4,21 @@ import com.evolution.analysis.contract.common.*;
 import com.evolution.analysis.contract.serialization.CanonicalJson;
 import com.evolution.analysis.frontend.SourceInput;
 import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
 import java.net.URI;
 import java.time.Instant;
 import java.util.*;
 
 /** Lossless canonical provider payload; its digest is distinct from provider semantic identity. */
 public record GraphEvidence(ContentDigest identity, String family, String canonicalJson) {
+    private record Accessor(String name,Method method) {}
+    // RecordComponent.getAccessor() creates fresh Method objects. Repeating that per value also
+    // rebuilds JDK method-handle accessors across large observation/gap ledgers.
+    private static final ClassValue<List<Accessor>> RECORD_ACCESSORS=new ClassValue<>() {
+        @Override protected List<Accessor> computeValue(Class<?> type) {
+            return Arrays.stream(type.getRecordComponents()).map(c->new Accessor(c.getName(),c.getAccessor())).toList();
+        }
+    };
     public GraphEvidence {
         Objects.requireNonNull(identity); family=ContractChecks.token(family,"graph evidence family");
         Objects.requireNonNull(canonicalJson);
@@ -82,8 +91,8 @@ public record GraphEvidence(ContentDigest identity, String family, String canoni
         }
         if(value.getClass().isRecord()) {
             var result=new TreeMap<String,Object>();
-            try {for(var component:value.getClass().getRecordComponents())
-                result.put(component.getName(),form(component.getAccessor().invoke(value),depth+1));}
+            try {for(var component:RECORD_ACCESSORS.get(value.getClass()))
+                result.put(component.name(),form(component.method().invoke(value),depth+1));}
             catch(IllegalAccessException|InvocationTargetException failure) {throw new IllegalArgumentException("Cannot encode provider record",failure);}
             return result;
         }
