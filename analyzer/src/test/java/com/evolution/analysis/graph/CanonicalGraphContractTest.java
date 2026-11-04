@@ -14,6 +14,12 @@ import static org.junit.jupiter.api.Assertions.*;
 import static com.evolution.analysis.graph.CanonicalGraphBuilderTest.*;
 
 class CanonicalGraphContractTest {
+    @Test void evidenceHashKeepsTheExistingPreimageAcrossSmallAndStreamingPayloads(){
+        for(int length:List.of(1,8191,8192,30_000)){
+            var evidence=GraphEvidence.capture("fixture.streaming-hash",Map.of("text","Việt 😀\n\"\\".repeat(length)));
+            assertEquals(ContentDigest.sha256Utf8(CanonicalJson.write(List.of("graph.evidence:m5.1-v1",evidence.family(),evidence.canonicalJson()))),evidence.identity());
+        }
+    }
     public record ProviderRow(String name,List<Integer> values,Optional<String> detail) {}
     @Test void streamedIngestionHashesRemainCompatibleWithCanonicalUtf8Bytes(){
         for(Object value:List.of(occurrences().frontend(),Map.of("source","Xin chào\r\n𝄞","nested",List.of("☃",42))))

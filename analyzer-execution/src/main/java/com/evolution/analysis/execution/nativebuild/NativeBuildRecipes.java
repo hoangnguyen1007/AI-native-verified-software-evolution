@@ -24,6 +24,20 @@ public final class NativeBuildRecipes {
         public ContentDigest identity(){return CanonicalJson.sha256(this);}
     }
     public record Lowering(Optional<Recipe> recipe,List<String> pendingReasons) {public Lowering {Objects.requireNonNull(recipe);pendingReasons=ExecutionGraph.strings(pendingReasons);if(recipe.isPresent()==!pendingReasons.isEmpty())throw new IllegalArgumentException("INVALID_LOWERING");}}
+    /** Source-set task discovery happens in the guest's native Gradle configuration phase.
+     * The fixed init task selects real SourceSet.classesTaskName values, never physical-path guesses. */
+    public static Lowering automatic(ReadinessPlan plan,ReadinessPlan.Recipe source,Tool tool,ContentDigest inputs,ContentDigest network,ContentDigest resources,Map<String,List<String>> mappings){
+        if(source.family()==ReadinessPlan.Family.MAVEN){
+            var selected=lower(plan,source,tool,inputs,network,resources,mappings);if(selected.recipe().isEmpty())return selected;var recipe=selected.recipe().orElseThrow();
+            var commands=recipe.commands().stream().map(command->{var args=new ArrayList<String>();args.add("--fail-at-end");args.addAll(command.arguments());return new Command(command.tool(),args,command.rootDirectory(),command.phase());}).toList();
+            return new Lowering(Optional.of(new Recipe(recipe.schema(),recipe.readiness(),recipe.sourceRecipe(),recipe.contexts(),commands,recipe.tool(),recipe.inputClosure(),recipe.networkPolicy(),recipe.resourcePolicy(),recipe.executionScope())),List.of());
+        }
+        if(source.family()!=ReadinessPlan.Family.GRADLE||source.contexts().stream().allMatch(mappings::containsKey))return lower(plan,source,tool,inputs,network,resources,mappings);
+        if(!plan.recipes().contains(source)||!plan.selection().selected().containsAll(source.contexts())||!tool.role().equals("gradle"))throw new IllegalArgumentException("INVALID_GRADLE_SCOPE");
+        var root=plan.roots().stream().filter(r->r.id().equals(source.root())).findFirst().orElseThrow();
+        if(plan.contexts().stream().filter(c->source.contexts().contains(c.id())).anyMatch(c->!c.variant().equals("baseline")))return new Lowering(Optional.empty(),List.of("NATIVE_CONTEXT_MAPPING_REQUIRED"));
+        return new Lowering(Optional.of(new Recipe("native-build-recipe:m8.4-v1",plan.identity(),source.id(),source.contexts(),List.of(new Command(tool.binary().digest(),List.of("--no-daemon","--console=plain","--continue","--init-script","/usr/local/lib/evo/nativebuild/gradle-init.gradle","evoNativeBuild"),root.directory(),"gradle-source-set-dispatch")),tool,inputs,network,resources,"ISOLATED_ROOT")),List.of());
+    }
     /** taskMappings are operator/adapter-selected guest task names, never suggestions executed on the host. */
     public static Lowering lower(ReadinessPlan plan,ReadinessPlan.Recipe source,Tool tool,ContentDigest inputClosure,
             ContentDigest networkPolicy,ContentDigest resourcePolicy,Map<String,List<String>> taskMappings) {

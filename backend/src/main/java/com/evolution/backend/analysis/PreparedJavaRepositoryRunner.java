@@ -169,7 +169,8 @@ public final class PreparedJavaRepositoryRunner implements AnalysisJobs.Runner {
         if(fence.lost)throw new java.io.IOException("JAVA_PUBLICATION_FENCE_MISMATCH");
         if(!fence.loaded){fence.expected=target.store().head(target.key()).map(p->p.document().digest());fence.loaded=true;}
         var artifacts=new TreeMap<String,com.evolution.analysis.acquisition.streaming.ContentHandle>();
-        for(var item:Map.of("graph",new GraphSnapshotCodec().encode(result.graph()),"coverage",CanonicalJson.write(result.contexts()),"readiness",CanonicalJson.write(result.readiness().wire())).entrySet())
+        artifacts.put("graph",PreparedAnalysisPublication.putGraph(target.content(),result.graph(),cancelled));
+        for(var item:Map.of("coverage",CanonicalJson.write(result.contexts()),"readiness",CanonicalJson.write(result.readiness().wire())).entrySet())
             artifacts.put(item.getKey(),target.content().put(new java.io.ByteArrayInputStream(item.getValue().getBytes(java.nio.charset.StandardCharsets.UTF_8)),cancelled));
         current(result.readiness());
         try{fence.expected=Optional.of(target.store().commit(target.key(),fence.expected,artifacts,cancelled).document().digest());}

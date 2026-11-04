@@ -3,7 +3,6 @@ package com.evolution.analysis.frontend;
 import com.evolution.analysis.contract.common.ContractChecks;
 import com.evolution.analysis.contract.identity.*;
 import com.evolution.analysis.contract.semantic.*;
-import com.evolution.analysis.contract.serialization.CanonicalJson;
 import com.evolution.analysis.contract.source.SourceSpan;
 import java.util.*;
 
@@ -23,5 +22,5 @@ public record ObservationRecord(SourceDocumentIdentity document, RelationshipKin
         if (mappedOccurrence.isPresent() && provenance != EvidenceState.VERIFIED) throw new IllegalArgumentException("mapped occurrence needs provenance");
         if (mappedOccurrence.isEmpty() && diagnostics.isEmpty()) throw new IllegalArgumentException("unmapped observation needs a diagnostic");
     }
-    @Override public int compareTo(ObservationRecord other) { return CanonicalJson.write(this).compareTo(CanonicalJson.write(other)); }
+    @Override public int compareTo(ObservationRecord other) { return ObservationOrder.compare(this, other); }
 }

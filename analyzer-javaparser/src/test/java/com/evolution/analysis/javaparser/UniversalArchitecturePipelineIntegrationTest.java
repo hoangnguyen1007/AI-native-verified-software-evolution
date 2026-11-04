@@ -23,6 +23,31 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 class UniversalArchitecturePipelineIntegrationTest {
 
+    @Test void autoEvaluatesRepositoryBaselineWithoutInventingExternalOrContainerClosure() throws Exception {
+        String source="""
+                package demo;
+                @org.springframework.boot.autoconfigure.SpringBootApplication class App {}
+                @org.springframework.stereotype.Service class Store {}
+                @org.springframework.stereotype.Service class Client { Client(Store store) {} }
+                """;
+        var input=inputs(Map.of("src/main/java/demo/App.java",source,"src/main/resources/application.properties","feature.enabled=true\n"));
+        var exact=ComponentIngestionTest.fixture(Map.of("fixture/App.java",source),false).request();
+        var model=new UniversalBuildIngestion().ingest(input,UniversalBuildIngestion.Policy.defaults(),Optional.empty(),Map.of(),
+                new BuildModelPolicy(List.of(),List.of(),Map.of(),10000,100,16));
+        var key=new UniversalSourceIngestion.SourceSet(model.modules().getFirst().descriptor().identity(),SourcePlanModel.Kind.MAIN);
+        var policy=UniversalArchitecturePipeline.Policy.builder(new JavaParserFrontend(),JavaParserFrontend.PROVIDER)
+                .defaultPlatform(exact.platform()).resolutions(Map.of(key,new UniversalSourceIngestion.Resolution(exact.platform(),exact.dependencies(),ContentDigest.sha256Utf8("auto baseline classpath")))).build();
+        var detailed=new UniversalArchitecturePipeline().runWithEvidence(input,policy);
+        var slice=detailed.graphInput().orElseThrow().spring().getFirst();
+        assertTrue(slice.explicitTruth().isPresent(),"AUTO must evaluate a named captured repository baseline");
+        assertTrue(slice.space().orElseThrow().deploymentEnvelope().orElseThrow().documents().stream()
+                .anyMatch(d->d.availability()==ConfigurationEnvelope.Availability.UNOBSERVED_EXTERNAL));
+        assertEquals(com.evolution.analysis.spring.registration.RegistrationEvent.Completeness.UNKNOWN,slice.plan().binding().environment().noPostRegistrationMutation());
+        assertTrue(slice.plan().gaps().size()>0,"Unproved scope remains an explicit capability gap");
+        assertFalse(detailed.report().status()==UniversalArchitectureReport.Status.COMPLETE);
+        assertEquals(detailed.report().identity(),new UniversalArchitecturePipeline().run(input,policy).identity());
+    }
+
     private static final RepositoryIdentity REPO = RepositoryIdentity.fromCanonicalCoordinate("https://example.test/universal-repo.git");
     private static final ModuleDescriptor MODULE = ModuleDescriptor.create(REPO, "test-module", "test-module");
     private static final VersionedIdentifier VERSION = new VersionedIdentifier("fixture.policy", "1");

@@ -1,0 +1,26 @@
+// Platform-owned guest init script. All target configuration stays inside the isolated VM.
+// Missing source sets are a build outcome, never an invented task or semantic fact.
+import groovy.json.JsonSlurper
+import groovy.json.JsonOutput
+
+def request = new JsonSlurper().parse(new File('/usr/local/lib/evo/nativebuild/context.json'))
+gradle.projectsEvaluated {
+    def selected = []
+    def missing = []
+    request.contexts.each { context ->
+        def expected = new File(request.source, context.moduleDirectory == '.' ? '' : context.moduleDirectory).canonicalFile
+        def project = gradle.rootProject.allprojects.find { it.projectDir.canonicalFile == expected }
+        def sourceSets = project?.extensions?.findByName('sourceSets')
+        def sourceSet = sourceSets?.findByName(context.sourceSet)
+        def task = sourceSet == null ? null : project.tasks.findByName(sourceSet.classesTaskName)
+        if (task == null) missing.add([context:context.id, reason:'NATIVE_SOURCE_SET_TASK_UNAVAILABLE'])
+        else selected.add([context:context.id, task:task.path, project:project.path, sourceSet:context.sourceSet])
+    }
+    // This is producer metadata. It is never promoted to an exact compiler/model observation.
+    new File(request.work, 'gradle-dispatch.json').text = JsonOutput.toJson([
+        schema:'native-gradle-source-set-dispatch:m8.4-v1', selected:selected, missing:missing,
+        root:gradle.rootProject.projectDir.canonicalPath, semanticTrust:'PRODUCER_ASSERTION'])
+    if (!missing.isEmpty()) throw new GradleException('NATIVE_SOURCE_SET_TASK_UNAVAILABLE')
+    if (gradle.rootProject.tasks.findByName('evoNativeBuild') != null) throw new GradleException('NATIVE_DISPATCH_TASK_COLLISION')
+    gradle.rootProject.tasks.register('evoNativeBuild') { dependsOn(selected.collect { it.task }.unique()) }
+}

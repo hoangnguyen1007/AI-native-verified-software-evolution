@@ -39,6 +39,14 @@ def main():
         assert resumed["acquisition"]["manifest"] == acquired["acquisition"]["manifest"]
         scan = run("scan", "scan", str(fixture))
         assert scan["metrics"]["declaredTypes"] > 0 and scan["snapshotSelected"]
+        assert scan["semanticDepth"]["relationships"]["resolved"] > 0
+        assert scan["semanticDepth"]["spring"]["status"] == "NOT_EVALUATED"
+        assert scan["execution"] == {"mode": "PASSIVE", "isolatedBuildExecuted": False}
+        partitions = run("partitions", "graph-pages", "partitions", "--limit", "1")
+        assert partitions["scope"] == "RAW_CONTEXT_FACTS" and partitions["semanticAccuracy"] == "NOT_CERTIFIED"
+        partition = partitions["page"]["items"][0]
+        rows = run("partition-nodes", "graph-pages", "nodes", "--partition", partition["context"], "--limit", "1")
+        assert rows["page"]["items"]
         found = run("find", "find", "Controller")
         assert found["items"]
         identity = found["items"][0]["identity"]

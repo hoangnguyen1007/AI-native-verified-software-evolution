@@ -47,22 +47,38 @@ public final class StreamingContentStore implements RepositoryContentStore {
         try { return MessageDigest.getInstance("SHA-256"); } catch (NoSuchAlgorithmException impossible) { throw new IllegalStateException(impossible); }
     }
     @Override public ContentHandle put(InputStream input, BooleanSupplier cancelled) throws IOException {
-        Objects.requireNonNull(input); Objects.requireNonNull(cancelled);
-        Path temp = Files.createTempFile(staging, "blob-", ".part"); var hash = sha256(); long size = 0;
+        Objects.requireNonNull(input);
+        return writeInternal(output -> {
+            byte[] buffer = new byte[64 * 1024]; int count;
+            while ((count = input.read(buffer)) != -1) if (count > 0) output.write(buffer, 0, count);
+        }, cancelled, false);
+    }
+    @Override public ContentHandle write(ContentWriter writer, BooleanSupplier cancelled) throws IOException {
+        return writeInternal(writer, cancelled, true);
+    }
+    private ContentHandle writeInternal(ContentWriter writer, BooleanSupplier cancelled, boolean bufferWrites) throws IOException {
+        Objects.requireNonNull(writer); Objects.requireNonNull(cancelled);
+        if (cancelled.getAsBoolean() || Thread.currentThread().isInterrupted()) throw new CancellationException();
+        Path temp = Files.createTempFile(staging, "blob-", ".part"); var hash = sha256(); long[] size = {0};
         try {
             try (var channel = FileChannel.open(temp, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS)) {
-                byte[] buffer = new byte[64 * 1024]; int count;
-                while ((count = input.read(buffer)) != -1) {
-                    if (cancelled.getAsBoolean() || Thread.currentThread().isInterrupted()) throw new CancellationException();
-                    if (count == 0) continue;
-                    if (Files.getFileStore(staging).getUsableSpace() - count < reserveBytes) throw new IOException("WAITING_FOR_DISK");
-                    size = Math.addExact(size, count); hash.update(buffer, 0, count);
-                    var bytes = ByteBuffer.wrap(buffer, 0, count); while (bytes.hasRemaining()) channel.write(bytes);
-                }
-                if (cancelled.getAsBoolean()) throw new CancellationException();
+                var output = new OutputStream() {
+                    @Override public void write(int value) throws IOException { write(new byte[]{(byte)value}, 0, 1); }
+                    @Override public void write(byte[] bytes, int offset, int count) throws IOException {
+                        Objects.checkFromIndexSize(offset, count, bytes.length);
+                        if (cancelled.getAsBoolean() || Thread.currentThread().isInterrupted()) throw new CancellationException();
+                        if (count == 0) return;
+                        if (Files.getFileStore(staging).getUsableSpace() - count < reserveBytes) throw new IOException("WAITING_FOR_DISK");
+                        size[0] = Math.addExact(size[0], count); hash.update(bytes, offset, count);
+                        var buffer = ByteBuffer.wrap(bytes, offset, count); while (buffer.hasRemaining()) channel.write(buffer);
+                    }
+                };
+                var destination = bufferWrites ? new BufferedOutputStream(output, 64 * 1024) : output;
+                writer.write(destination); destination.flush();
+                if (cancelled.getAsBoolean() || Thread.currentThread().isInterrupted()) throw new CancellationException();
                 channel.force(true);
             }
-            var handle = new ContentHandle(new ContentDigest("sha256:" + HexFormat.of().formatHex(hash.digest())), size);
+            var handle = new ContentHandle(new ContentDigest("sha256:" + HexFormat.of().formatHex(hash.digest())), size[0]);
             Path target = path(handle); directory(target.getParent());
             try { Files.createLink(target, temp); }
             catch (FileAlreadyExistsException exists) { if (!verify(handle)) throw new IOException("CAS_CORRUPT"); }

@@ -2,6 +2,8 @@ package com.evolution.backend.analysis;
 
 import com.evolution.analysis.contract.identity.RepositoryIdentity;
 import com.evolution.analysis.filesystem.FileGraphStore;
+import com.evolution.analysis.filesystem.PartitionedGraphStore;
+import com.evolution.analysis.graph.*;
 import com.evolution.analysis.query.ArchitectureQuery.Scope;
 import com.evolution.backend.query.*;
 import java.nio.file.*;
@@ -30,13 +32,21 @@ public final class WorkbenchApiMain {
             }
             var runner = new LocalAnalysisRunner(new LocalAnalysisRunner.Input(source,RepositoryIdentity.fromCanonicalCoordinate(args[1]),jdk,Integer.parseInt(args[3]),cache,
                     Optional.empty(),true,false,exclusions,policy,LocalAnalysisRunner.SpringInput.absent()),directory.resolve("acquisition"));
-            var store = new FileGraphStore(directory);
+            long bytes=Math.max(1,Files.getFileStore(directory).getUsableSpace());
+            var legacy = new FileGraphStore(directory,bytes,new GraphJson.StreamLimits(bytes,128,bytes));var pages=new PartitionedGraphStore(directory.resolve("graph-pages"));
+            var store = new GraphStore(){
+                public void save(KnowledgeGraph graph,java.util.function.BooleanSupplier cancelled){
+                    legacy.save(graph,cancelled);try{pages.save(graph,cancelled);}catch(java.io.IOException failure){throw new GraphStoreException(GraphStoreException.Reason.IO_FAILURE);}
+                }
+                public Optional<KnowledgeGraph> load(com.evolution.analysis.contract.common.ContentDigest id){return legacy.load(id);}
+            };
             try (var reportDisk=new PersistentReports(directory.resolve("reports"));var disk = new AnalysisJobDiskStore(directory.resolve("jobs"))) {
             var reports=new PublishedReports(reportDisk);
             try(var jobs = new AnalysisJobs(List.of(runner.registration("local")),store,reports,AnalysisJobs.Limits.defaults(),disk)) {
                 var connections=new RepositoryConnections(jobs,jdk,Integer.parseInt(args[3]),cache,directory,policy);
                 connections.describe("local",source.getFileName().toString(),"LOCAL",RepositoryIdentity.fromCanonicalCoordinate(args[1]));
-                try (var server = new ArchitectureHttpServer(new ArchitectureQueryApi(store,reports,ApiLimits.defaults(),jobs,connections),args.length >= 7 ? Integer.parseInt(args[6]) : 8080)) {
+                var api=ArchitectureQueryApi.withPartitionedGraphs(new ArchitectureQueryApi(store,reports,ApiLimits.defaults(),jobs,connections),pages::reader);
+                try (var server = new ArchitectureHttpServer(api,args.length >= 7 ? Integer.parseInt(args[6]) : 8080)) {
                 var stopped = new CountDownLatch(1);
                 var shutdown = new Thread(() -> { server.close(); jobs.close(); stopped.countDown(); },"architecture-workbench-shutdown");
                 Runtime.getRuntime().addShutdownHook(shutdown);

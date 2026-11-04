@@ -15,6 +15,22 @@ import java.util.TimeZone;
 import org.junit.jupiter.api.Test;
 
 class CanonicalSerializationTest {
+    @Test void bulkStringEmissionPreservesGoldenEscapesAroundUnicodeAndControlCharacters()throws Exception{
+        String value="Tiếng Việt 😀 \"\\\b\f\n\r\t\u0000\u001f done";
+        String expected="\"Tiếng Việt 😀 \\\"\\\\\\b\\f\\n\\r\\t\\u0000\\u001f done\"";
+        assertEquals(expected,CanonicalJson.write(value));var writer=new java.io.StringWriter();CanonicalJson.writeTo(value,writer);assertEquals(expected,writer.toString());
+    }
+    @Test void largePlainStringsUseBulkWritesInsteadOfOneWriterCallPerCharacter()throws Exception{
+        class CountingWriter extends java.io.Writer{
+            int calls;long characters;
+            public void write(char[] value,int offset,int length){calls++;characters+=length;}
+            public void write(String value,int offset,int length){calls++;characters+=length;}
+            public void flush(){}public void close(){}
+        }
+        var writer=new CountingWriter();CanonicalJson.writeTo("x".repeat(1_000_000),writer);
+        assertEquals(1_000_002,writer.characters);
+        org.junit.jupiter.api.Assertions.assertTrue(writer.calls<16,"Plain text must be emitted in bulk; calls="+writer.calls);
+    }
     @Test void structuralPreflightMatchesTheDecoderDenominator(){
         record Nested(java.util.Optional<String> empty,Object value){}
         Object value=Map.of("array",Arrays.asList(new Nested(java.util.Optional.empty(),List.of(1,true)),"[{,]}",null),"id",ContractFixtures.sourceA().identity());

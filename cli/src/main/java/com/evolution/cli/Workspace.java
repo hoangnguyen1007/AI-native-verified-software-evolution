@@ -3,6 +3,7 @@ package com.evolution.cli;
 import com.evolution.analysis.contract.common.ContentDigest;
 import com.evolution.analysis.graph.*;
 import com.evolution.analysis.filesystem.FileGraphStore;
+import com.evolution.analysis.filesystem.PartitionedGraphStore;
 import com.evolution.analysis.contract.serialization.CanonicalJson;
 import java.io.*;
 import java.nio.*;
@@ -62,7 +63,9 @@ final class Workspace {
     void publish(KnowledgeGraph graph)throws IOException {
         create();long bytes=Math.max(1,Files.getFileStore(root).getUsableSpace());
         new FileGraphStore(root,bytes,new GraphJson.StreamLimits(bytes,128,bytes)).save(graph);
+        partitioned().save(graph,()->Thread.currentThread().isInterrupted());
     }
+    PartitionedGraphStore partitioned()throws IOException{return new PartitionedGraphStore(root.resolve("graph-pages"));}
     void rememberContext(KnowledgeGraph verified,String context)throws IOException {
         if(verified.contexts().stream().noneMatch(c->c.identity().equals(context)))throw new IllegalArgumentException("Foreign context");
         if(!verified.identity().value().equals(selection().get("graph")))throw new IOException("SELECTION_CHANGED");

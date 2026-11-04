@@ -10,10 +10,61 @@ class ScanJourneyTest {
     @TempDir Path workspace;
     record Run(int code,String out,String err){Map<String,Object> data(){return GraphJson.object(GraphJson.object(GraphJson.read(out.strip(),GraphJson.Limits.defaults())).get("data"));}}
     Run run(String... args){var out=new StringWriter();var err=new StringWriter();int code=new EvoApp(workspace,new StringReader(""),new PrintWriter(out),new PrintWriter(err),false,Map.of()).execute(args);return new Run(code,out.toString(),err.toString());}
+    @Test void graphPageBuildMigratesALegacySelectionWithoutChangingIt()throws Exception{
+        var fixture=new CliFixture().node("a").node("b").edge("a","b");var graph=fixture.graph();var root=Files.createDirectories(workspace.resolve(".evo"));
+        Files.writeString(root.resolve(graph.identity().value().substring(7)+".graph.json"),new GraphSnapshotCodec().encode(graph));
+        String selection=com.evolution.analysis.contract.serialization.CanonicalJson.write(Map.of("graph",graph.identity(),"context",fixture.context));Files.writeString(root.resolve("selection.json"),selection);
+        var indexed=run("graph-pages","build","--json");assertEquals(0,indexed.code,indexed.err);assertEquals("INDEXED",GraphJson.object(indexed.data().get("page")).get("status"));
+        assertEquals(selection,Files.readString(root.resolve("selection.json")));assertEquals(0,run("graph-pages","nodes","--partition",fixture.context,"--json").code);
+    }
+    @Test void graphPagesSurviveFreshCliInstancesAndReturnBothAdjacencyDirections()throws Exception{
+        var fixture=new CliFixture().node("a").node("b").node("c").edge("a","b").edge("c","b");
+        var graph=fixture.graph();new Workspace(workspace).select(graph,Optional.of(fixture.context));
+        var partitions=run("graph-pages","partitions","--limit","1","--json");assertEquals(0,partitions.code,partitions.err);
+        assertEquals("RAW_CONTEXT_FACTS",partitions.data().get("scope"));var ref=GraphJson.object(GraphJson.array(GraphJson.object(partitions.data().get("page")).get("items")).getFirst());
+        String context=GraphJson.string(ref.get("context"));var nodes=run("graph-pages","nodes","--partition",context,"--limit","1","--json");assertEquals(0,nodes.code,nodes.err);
+        var page=GraphJson.object(nodes.data().get("page"));assertEquals(1,GraphJson.array(page.get("items")).size());
+        var next=run("graph-pages","nodes","--partition",context,"--limit","1","--cursor",GraphJson.string(page.get("continuation")),"--json");assertEquals(0,next.code,next.err);
+        assertNotEquals(page.get("items"),GraphJson.object(next.data().get("page")).get("items"));
+        var adjacency=run("graph-pages","adjacency",CliFixture.id("b"),"--partition",context,"--incoming","--json");assertEquals(0,adjacency.code,adjacency.err);
+        assertEquals(2,GraphJson.array(GraphJson.object(adjacency.data().get("page")).get("items")).size());
+        assertEquals(2,run("graph-pages","adjacency",CliFixture.id("b"),"--partition",context,"--limit","1","--cursor",GraphJson.string(page.get("continuation")),"--json").code);
+        assertEquals(2,run("graph-pages","partitions","--incoming","--json").code);
+    }
+    @Test void capturedScanRejectsContextOverridesAndTargetOwnedAuthority()throws Exception{
+        var source=Files.createDirectory(workspace.resolve("capture-input"));Files.createDirectories(source.resolve("src/main/java"));Files.writeString(source.resolve("src/main/java/App.java"),"class App {}");
+        assertEquals(2,run("scan",source.toString(),"--java-capture",source.toString(),"--release","21","--offline","--json").code);
+        var owned=run("scan",source.toString(),"--java-capture",source.toString(),"--offline","--json");assertEquals(2,owned.code,owned.err);assertTrue(owned.err.contains("CAPTURE_REGISTRATION_INSIDE_TARGET")||owned.out.contains("CAPTURE_REGISTRATION_INSIDE_TARGET"));
+    }
+    @Test void missingClasspathReportsSurfaceOnlyAndUnevaluatedSpringRatherThanZeroArchitecture()throws Exception{
+        var source=Files.createDirectory(workspace.resolve("partial"));
+        Files.createDirectories(source.resolve("src/main/java/p"));
+        Files.writeString(source.resolve("src/main/java/p/C.java"),"package p; class C { void run() { missing(); } }");
+        Files.writeString(source.resolve("pom.xml"),"""
+                <project><modelVersion>4.0.0</modelVersion><groupId>fixture</groupId><artifactId>partial</artifactId><version>1</version>
+                <properties><maven.compiler.release>21</maven.compiler.release><project.build.sourceEncoding>UTF-8</project.build.sourceEncoding></properties>
+                <dependencies><dependency><groupId>unavailable.fixture</groupId><artifactId>missing</artifactId><version>1</version></dependency></dependencies></project>
+                """);
+        var scan=run("scan",source.toString(),"--offline","--maven-cache",Files.createDirectory(workspace.resolve("cache")).toString(),"--json");
+        assertEquals(3,scan.code,scan.err+scan.out);
+        assertNotNull(scan.data().get("semanticDepth"),"Scan must distinguish inventory from semantic relationships");
+        var depth=GraphJson.object(scan.data().get("semanticDepth"));
+        assertEquals("SURFACE_ONLY",depth.get("level"));
+        assertEquals(1L,((Number)depth.get("sourceRecoveryContexts")).longValue());
+        var relations=GraphJson.object(depth.get("relationships"));
+        assertTrue(((Number)relations.get("attempted")).longValue()>0);
+        assertEquals(0L,((Number)relations.get("resolved")).longValue());
+        assertEquals("NOT_EVALUATED",GraphJson.object(depth.get("spring")).get("status"));
+        assertEquals("PASSIVE",GraphJson.object(scan.data().get("execution")).get("mode"));
+    }
     @Test void actualSourceToStoredGraphPolicyScoreEvidenceAndSarif()throws Exception{
         Path source=Path.of("src/test/resources/fixtures/tiny").toAbsolutePath();
         var scan=run("scan",source.toString(),"--repo","https://example.test/tiny.git","--json");assertTrue(scan.code==0||scan.code==3,scan.err);assertTrue(scan.data().containsKey("graph"),scan.out);
+        var depth=GraphJson.object(scan.data().get("semanticDepth"));
+        assertTrue(((Number)GraphJson.object(depth.get("relationships")).get("resolved")).longValue()>0,"Independently authored calls must contribute attributed relationships");
+        assertNotEquals("SURFACE_ONLY",depth.get("level"));
         var graph=new Workspace(workspace).selectedGraph();assertTrue(graph.nodes().stream().anyMatch(n->n.kind().equals("TYPE")),scan.out);
+        assertEquals(com.evolution.analysis.contract.serialization.CanonicalJson.write(depth),com.evolution.analysis.contract.serialization.CanonicalJson.write(com.evolution.backend.analysis.SemanticDepth.summarize(graph)),"Stored evidence and live-input semantic denominators must agree");
         var gapSummary=GraphJson.object(scan.data().get("gapSummary"));long gapTotal=((Number)gapSummary.get("total")).longValue();assertEquals(gapTotal,GraphJson.object(gapSummary.get("byReason")).values().stream().mapToLong(v->((Number)v).longValue()).sum());assertFalse(scan.data().containsKey("gaps"));
         assertTrue(graph.evidence().stream().filter(e->e.family().equals("evidence.gap")).count()>=gapTotal,"Every receipt gap must remain a typed canonical graph record");
         var again=run("scan",source.toString(),"--repo","https://example.test/tiny.git","--json");assertEquals(scan.out,again.out);assertEquals(scan.code,again.code);
@@ -38,9 +89,14 @@ class ScanJourneyTest {
         Path source=Files.createDirectory(workspace.resolve("maven-input"));Files.createDirectories(source.resolve("src/main/java/p"));Files.writeString(source.resolve("src/main/java/p/C.java"),"package p; class C {}");
         Files.writeString(source.resolve("pom.xml"),"<project><modelVersion>4.0.0</modelVersion><groupId>fixture</groupId><artifactId>app</artifactId><version>1</version><properties><maven.compiler.release>21</maven.compiler.release><project.build.sourceEncoding>ISO-8859-1</project.build.sourceEncoding></properties></project>");
         var prior=new CliFixture().node("Prior").graph();new Workspace(workspace).select(prior,Optional.of(prior.contexts().getFirst().identity()));
-        var scan=run("scan",source.toString(),"--json");assertEquals(1,scan.code,scan.err);
-        assertEquals(prior.identity(),new Workspace(workspace).selectedGraph().identity(),"A failed scan must not silently replace a usable selection");
+        var scan=run("scan",source.toString(),"--offline","--json");assertEquals(3,scan.code,scan.err);
         String id=GraphJson.string(scan.data().get("graph"));var graph=Workspace.graph(new Workspace(workspace).root.resolve(id.substring(7)+".graph.json"));
-        assertTrue(graph.evidence().stream().anyMatch(e->e.canonicalJson().contains("ISO-8859-1")));assertTrue(graph.nodes().stream().noneMatch(n->n.kind().equals("TYPE")),"Mismatched decoding must withhold source semantics, not replace the build-declared charset");
+        assertEquals(graph.identity(),new Workspace(workspace).selectedGraph().identity(),"Usable recovered declarations remain publishable as partial evidence");
+        assertNotEquals(prior.identity(),graph.identity());
+        assertTrue(graph.evidence().stream().filter(e->e.family().equals("build.module")).anyMatch(e->e.canonicalJson().contains("ISO-8859-1")),"The declared charset must retain its authority");
+        assertTrue(graph.nodes().stream().anyMatch(n->n.kind().equals("TYPE")),"Written declarations remain in the recovery denominator");
+        var depth=GraphJson.object(scan.data().get("semanticDepth"));
+        assertEquals(1L,((Number)depth.get("sourceRecoveryContexts")).longValue());
+        assertEquals(0L,((Number)GraphJson.object(depth.get("relationships")).get("resolved")).longValue(),"Mismatched decoding cannot become exact attribution");
     }
 }

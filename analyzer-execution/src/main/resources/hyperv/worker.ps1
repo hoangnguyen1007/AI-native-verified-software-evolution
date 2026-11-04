@@ -7,6 +7,7 @@ param(
     [string]$BaseRoot,
     [int]$Processors=2,
     [long]$MemoryBytes=2147483648,
+    [switch]$RegisteredResources,
     [string]$LaunchDigest,
     [long]$Fence=0
 )
@@ -97,7 +98,9 @@ if($Action -eq 'Find' -and -not (Test-Path -LiteralPath $marker)){
 }
 
 if($Action -eq 'Create'){
-    if($Processors -lt 1 -or $Processors -gt 4 -or $MemoryBytes -lt 1073741824 -or $MemoryBytes -gt 4294967296){throw 'RESOURCE_POLICY_REQUIRED'}
+    if($RegisteredResources){
+        if($Processors -lt 1 -or $MemoryBytes -lt 268435456){throw 'RESOURCE_POLICY_REQUIRED'}
+    }elseif($Processors -lt 1 -or $Processors -gt 4 -or $MemoryBytes -lt 1073741824 -or $MemoryBytes -gt 4294967296){throw 'RESOURCE_POLICY_REQUIRED'}
     if(Test-Path -LiteralPath $marker){
         $existingOwner=Get-Content -LiteralPath $marker -Raw | ConvertFrom-Json
         $existingVM=Get-VM -Name $name -ErrorAction SilentlyContinue

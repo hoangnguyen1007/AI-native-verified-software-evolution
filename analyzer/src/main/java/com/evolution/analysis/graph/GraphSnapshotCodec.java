@@ -12,6 +12,10 @@ public final class GraphSnapshotCodec {
     public String encode(KnowledgeGraph graph) {
         return CanonicalJson.write(Map.of("format",FORMAT,"identity",graph.identity(),"graph",graph.canonicalForm()));
     }
+    /** Producer-side streaming for already validated graphs; no whole-snapshot string or byte array. */
+    public void encodeTo(KnowledgeGraph graph,java.io.Writer writer)throws java.io.IOException {
+        CanonicalJson.writeTo(Map.of("format",FORMAT,"identity",graph.identity(),"graph",graph.canonicalForm()),writer);
+    }
     /** Trusted immutable graph input has already passed graph/evidence invariants. */
     public void encodeTo(KnowledgeGraph graph,java.io.Writer writer,GraphJson.Limits limits)throws java.io.IOException {
         encodeTo(graph,writer,GraphJson.StreamLimits.from(limits));
@@ -68,6 +72,11 @@ public final class GraphSnapshotCodec {
         }
     }
     private static ContentDigest digest(Object value) {return new ContentDigest(string(value));}
+    /** Shared typed row validation for paged storage adapters. */
+    public static KnowledgeGraph.Context context(Object value){var row=object(value);fields(row,"identity","snapshot","analysis","evidence");return new KnowledgeGraph.Context(string(row.get("identity")),new SnapshotIdentity(string(row.get("snapshot"))),optional(row.get("analysis")).map(AnalysisIdentity::new),digest(row.get("evidence")));}
+    public static KnowledgeGraph.Node node(Object value){var row=object(value);fields(row,"identity","context","kind","evidence");return new KnowledgeGraph.Node(string(row.get("identity")),string(row.get("context")),string(row.get("kind")),digests(row.get("evidence")));}
+    public static KnowledgeGraph.Edge edge(Object value){var row=object(value);fields(row,"identity","context","kind","source","target","evidence","region");var target=object(row.get("target"));fields(target,"state","identities","unresolvedReference");return new KnowledgeGraph.Edge(string(row.get("identity")),string(row.get("context")),string(row.get("kind")),string(row.get("source")),new KnowledgeGraph.Target(KnowledgeGraph.TargetState.valueOf(string(target.get("state"))),array(target.get("identities")).stream().map(GraphJson::string).toList(),optional(target.get("unresolvedReference"))),digests(row.get("evidence")),optional(row.get("region")));}
+    public static GraphEvidence evidence(Object value){var row=object(value);fields(row,"identity","family","canonicalJson");return new GraphEvidence(digest(row.get("identity")),string(row.get("family")),string(row.get("canonicalJson")));}
     private static List<ContentDigest> digests(Object value) {return array(value).stream().map(GraphSnapshotCodec::digest).toList();}
     private static Optional<String> optional(Object value) {return Optional.ofNullable(value).map(GraphJson::string);}
 }

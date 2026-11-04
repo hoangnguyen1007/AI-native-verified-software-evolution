@@ -201,33 +201,30 @@ public final class CanonicalJson {
 
     private static void appendString(String value, Appendable output) throws IOException {
         output.append('"');
+        int start=0;
         for (int index = 0; index < value.length(); index++) {
             char character = value.charAt(index);
-            switch (character) {
-                case '"' -> output.append("\\\"");
-                case '\\' -> output.append("\\\\");
-                case '\b' -> output.append("\\b");
-                case '\f' -> output.append("\\f");
-                case '\n' -> output.append("\\n");
-                case '\r' -> output.append("\\r");
-                case '\t' -> output.append("\\t");
-                default -> {
-                    if (character < 0x20) {
-                        output.append(String.format(java.util.Locale.ROOT, "\\u%04x", (int) character));
-                    } else if (Character.isHighSurrogate(character)) {
-                        if (index + 1 >= value.length()
-                                || !Character.isLowSurrogate(value.charAt(index + 1))) {
-                            throw new IllegalArgumentException("String contains an unpaired surrogate");
-                        }
-                        output.append(character).append(value.charAt(++index));
-                    } else if (Character.isLowSurrogate(character)) {
-                        throw new IllegalArgumentException("String contains an unpaired surrogate");
-                    } else {
-                        output.append(character);
-                    }
+            if(character=='"'||character=='\\'||character<0x20){
+                appendSlice(value,start,index,output);
+                switch(character){
+                    case '"'->output.append("\\\"");case '\\'->output.append("\\\\");
+                    case '\b'->output.append("\\b");case '\f'->output.append("\\f");case '\n'->output.append("\\n");case '\r'->output.append("\\r");case '\t'->output.append("\\t");
+                    default->output.append("\\u00").append("0123456789abcdef".charAt(character>>>4)).append("0123456789abcdef".charAt(character&15));
                 }
+                start=index+1;
+            }else if(Character.isHighSurrogate(character)){
+                if(index+1>=value.length()||!Character.isLowSurrogate(value.charAt(index+1)))throw new IllegalArgumentException("String contains an unpaired surrogate");
+                index++;
+            }else if(Character.isLowSurrogate(character)){
+                throw new IllegalArgumentException("String contains an unpaired surrogate");
             }
         }
+        appendSlice(value,start,value.length(),output);
         output.append('"');
+    }
+    private static void appendSlice(String value,int start,int end,Appendable output)throws IOException{
+        if(start==end)return;
+        if(output instanceof java.io.Writer writer)writer.write(value,start,end-start);
+        else output.append(value,start,end);
     }
 }

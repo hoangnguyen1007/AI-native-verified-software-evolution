@@ -38,7 +38,8 @@ if((Get-Item -LiteralPath $requestFile).Length -gt 65536){throw 'PROVISION_REQUE
 Assert-Pin $requestFile $RequestPin
 $spec=Get-Content -LiteralPath $requestFile -Raw | ConvertFrom-Json -AsHashtable
 Assert-Fields $spec @('schema','attempt','workspace','launch','fence','driverPin','baseRoot','disk','images','seed','network','resources')
-if($spec.schema -ne 'hyperv-provision-request:m8.4-v1' -or $spec.attempt -cne ([Guid]$spec.attempt).ToString() -or $spec.launch -notmatch '^sha256:[a-f0-9]{64}$' -or $spec.fence -isnot [long] -and $spec.fence -isnot [int] -or $spec.fence -lt 1){throw 'INVALID_PROVISION_SCOPE'}
+if($spec.schema -notin @('hyperv-provision-request:m8.4-v1','hyperv-native-provision-request:m8.4-v1') -or $spec.attempt -cne ([Guid]$spec.attempt).ToString() -or $spec.launch -notmatch '^sha256:[a-f0-9]{64}$' -or $spec.fence -isnot [long] -and $spec.fence -isnot [int] -or $spec.fence -lt 1){throw 'INVALID_PROVISION_SCOPE'}
+$registeredResources=$spec.schema -eq 'hyperv-native-provision-request:m8.4-v1'
 $workspace=Assert-LocalPath $spec.workspace
 Assert-LocalPath $requestFile $workspace | Out-Null
 $base=Assert-LocalPath $spec.baseRoot
@@ -105,7 +106,7 @@ if($Action -eq 'Prepare'){
     }
     $existing=Get-VM -Name $name -ErrorAction SilentlyContinue
     if($null -ne $existing -and $existing.State.ToString() -ne 'Off'){throw 'PROVISION_REQUIRES_OFF'}
-    $created=(& $driver -Action Create -Workspace $workspace -Attempt $spec.attempt -ExportedDisk $disk -BaseRoot $base -Processors $spec.resources.processors -MemoryBytes $spec.resources.memoryBytes) | ConvertFrom-Json
+    $created=(& $driver -Action Create -Workspace $workspace -Attempt $spec.attempt -ExportedDisk $disk -BaseRoot $base -Processors $spec.resources.processors -MemoryBytes $spec.resources.memoryBytes -RegisteredResources:$registeredResources) | ConvertFrom-Json
     $bound=(& $driver -Action Bind -Workspace $workspace -Attempt $spec.attempt -LaunchDigest $spec.launch -Fence $spec.fence) | ConvertFrom-Json
     if($created.vmId -ne $bound.vmId -or $bound.state -ne 'Off'){throw 'PROVISION_CREATE_SCOPE_MISMATCH'}
     $vm=Get-VM -Id ([Guid]$bound.vmId)

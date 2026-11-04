@@ -9,6 +9,27 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 class NativeBuildRecipesTest {
+    @Test void automaticGradleDefersTaskIdentityToCapturedGuestSourceSets(){
+        var plan=plan(ReadinessPlan.Family.GRADLE,List.of("main","test"),"baseline");
+        var result=NativeBuildRecipes.automatic(plan,plan.recipes().getFirst(),tool("gradle"),d("c"),d("n"),d("r"),Map.of());
+        var recipe=result.recipe().orElseThrow();assertEquals(List.of("ctx-main","ctx-test"),recipe.contexts());
+        assertEquals("nested",recipe.commands().getFirst().rootDirectory());
+        assertTrue(recipe.commands().getFirst().arguments().contains("/usr/local/lib/evo/nativebuild/gradle-init.gradle"));
+        assertEquals("evoNativeBuild",recipe.commands().getFirst().arguments().getLast());
+        assertEquals("gradle-source-set-dispatch",recipe.commands().getFirst().phase());
+    }
+    @Test void automaticGradleKeepsAnUnmappedVariantPending(){
+        var plan=plan(ReadinessPlan.Family.GRADLE,List.of("main"),"custom-variant");
+        var result=NativeBuildRecipes.automatic(plan,plan.recipes().getFirst(),tool("gradle"),d("c"),d("n"),d("r"),Map.of());
+        assertTrue(result.recipe().isEmpty());assertEquals(List.of("NATIVE_CONTEXT_MAPPING_REQUIRED"),result.pendingReasons());
+    }
+    @Test void unavailableExecutorReportsEverySelectedSupportedRootWithoutInventingExecution(){
+        var plan=plan(ReadinessPlan.Family.MAVEN,List.of("main","test"),"baseline");
+        var result=NativeBuildCoordinator.unavailable(plan,"NATIVE_BUILD_PROFILE_NOT_REGISTERED");
+        assertEquals(1,result.roots());assertEquals(0,result.requested());assertEquals(0,result.executed());
+        assertEquals(List.of("ctx-main","ctx-test"),result.results().getFirst().contexts());
+        assertEquals("NOT_REQUESTED",result.results().getFirst().launchDisposition());assertEquals("NOT_EVALUATED",result.semanticCoverage());
+    }
     static ContentDigest d(String v){return ContentDigest.sha256Utf8(v);}
     static ReadinessPlan plan(ReadinessPlan.Family family,List<String> sets,String variant){
         var inventory=new InventoryManifest(InventoryManifest.SCHEMA,RepositoryIdentity.fromCanonicalCoordinate("urn:test:native-recipe"),d("selection"),d("inventory"),0,0,0,0,Optional.empty(),Optional.empty());

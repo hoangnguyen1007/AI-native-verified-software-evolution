@@ -35,7 +35,7 @@ import javax.xml.stream.*;
  */
 public final class UniversalArchitecturePipeline {
     public static final VersionedIdentifier PROVIDER =
-            new VersionedIdentifier("architecture.pipeline", "m4uv2.3-lombok-v2");
+            new VersionedIdentifier("architecture.pipeline", "m8.4-repository-baseline-v1");
 
     public enum TruthEvaluationMode {
         AUTO,
@@ -846,6 +846,12 @@ public final class UniversalArchitecturePipeline {
                             // Truth evaluation
                             if (policy.truthEvaluationMode() != TruthEvaluationMode.NONE) {
                                 var spaceOpt = policy.configurationSpace();
+                                var baselineOpt = policy.baselineConfiguration();
+                                if(spaceOpt.isEmpty()&&policy.truthEvaluationMode()==TruthEvaluationMode.AUTO) {
+                                    var configuration=assembledSources.outcomes().stream().filter(o->o.sourceSet().equals(unit.sourceSet())).findFirst().orElseThrow().configuration();
+                                    var selected=RepositoryBaselineConfiguration.select(plan.binding().registrationPlan().discoveryPlan().buildContext(),configuration,plan.conditions().occurrences());
+                                    spaceOpt=Optional.of(selected.space());baselineOpt=Optional.of(selected.baseline());
+                                }
                                 if (spaceOpt.isPresent()) {
                                     var rawSpace = spaceOpt.get();
                                     var planBuildContext = plan.binding().registrationPlan().discoveryPlan().buildContext();
@@ -853,8 +859,8 @@ public final class UniversalArchitecturePipeline {
                                             new ConfigurationSpace(planBuildContext, rawSpace.repositoryEnvelope(), rawSpace.deploymentEnvelope(),
                                                     rawSpace.domains(), rawSpace.constraints(), rawSpace.precedencePolicy(), rawSpace.profilePolicy(),
                                                     rawSpace.abstractionVersion(), rawSpace.feasibilityPolicy());
-                                    var baseline = policy.baselineConfiguration().orElse(
-                                            new ConfigurationAssignment(Map.of(), space.domains().getFirst().evidence()));
+                                    var baseline = baselineOpt.orElseGet(()->new ConfigurationAssignment(Map.of(),
+                                            new ConditionEvidence.Derived(List.of(IngestionEvidence.digest(space.identity())),PROVIDER,"unspecified-baseline")));
                                     if (policy.truthEvaluationMode() == TruthEvaluationMode.SYMBOLIC) {
                                         var symbolic = plan.evaluateSymbolic(space, baseline, policy.truthLimits(),
                                                 ContentDigest.sha256Utf8("symbolic-truth-evaluator"), 64, SymbolicConfiguration.Limits.defaults());
@@ -1021,12 +1027,8 @@ public final class UniversalArchitecturePipeline {
         var req = outcomeOpt.get().request().get();
         if (req.sources().isEmpty()) return Optional.empty();
 
-        var firstDoc = req.sources().getFirst().document();
-        var span = new SourceSpan(firstDoc.identity(), 1, 1, 1, 2);
-        var evidence = new ConditionEvidence.Source(firstDoc.identity(), firstDoc.contentDigest(), Optional.of(span), 0);
-        var proof = new ConditionEvidence.Derived(List.of(IngestionEvidence.digest(frontend)),
-                new VersionedIdentifier("architecture.resource-policy", "1"), "pipeline-default");
-        var resourcePolicy = new SourceToSpringPlan.ResourcePolicy(proof);
+        var evidence = new ConditionEvidence.Derived(List.of(IngestionEvidence.digest(req.manifest().identity()),IngestionEvidence.digest(frontend)),
+                PROVIDER,"source-context-with-unproved-runtime-closure");
 
         var framework = extractSpringFramework(req);
         var sourceEvidence = new SpringSourceEvidence(req, frontend, framework);
@@ -1036,13 +1038,13 @@ public final class UniversalArchitecturePipeline {
                 sourceEvidence.identity(),
                 List.of(),
                 RegistrationEvent.Completeness.UNKNOWN,
-                RegistrationEvent.Completeness.COMPLETE,
-                RegistrationEvent.Completeness.COMPLETE,
-                RegistrationEvent.Completeness.COMPLETE,
-                RegistrationEvent.Completeness.COMPLETE,
-                RegistrationPlan.OverridePolicy.FORBID,
+                RegistrationEvent.Completeness.UNKNOWN,
+                RegistrationEvent.Completeness.UNKNOWN,
+                RegistrationEvent.Completeness.UNKNOWN,
+                RegistrationEvent.Completeness.UNKNOWN,
+                RegistrationPlan.OverridePolicy.UNKNOWN,
                 evidence,
-                Optional.of(resourcePolicy)
+                Optional.empty()
         );
         return Optional.of(scope);
     }

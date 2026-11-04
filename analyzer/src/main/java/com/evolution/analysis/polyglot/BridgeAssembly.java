@@ -13,7 +13,7 @@ public final class BridgeAssembly {
     public BridgeAssembly(SemanticTables tables,int candidateBudget){this.tables=Objects.requireNonNull(tables);if(candidateBudget<1)throw new IllegalArgumentException("BRIDGE_ASSEMBLY_WORKER_BUDGET");this.candidateBudget=candidateBudget;}
     public ArchitectureBridges.Input assemble(EvidenceContext root,ContentDigest inventory,ContentDigest policy,Iterator<Fragment> fragments,SemanticRootCensus.Index index,BooleanSupplier cancelled)throws IOException{
         var scope=ArchitectureBridges.scope(root,inventory);
-        for(String space:List.of("assembly.partitions","assembly.endpoints","assembly.http","assembly.requirements","assembly.joined"))try(var rows=index.rows(space,false)){if(rows.next()!=null)throw new IOException("BRIDGE_ASSEMBLY_INDEX_NOT_EMPTY");}
+        for(String space:List.of("assembly.partitions","assembly.endpoints","assembly.http","assembly.protocols","assembly.requirements","assembly.joined"))try(var rows=index.rows(space,false)){if(rows.next()!=null)throw new IOException("BRIDGE_ASSEMBLY_INDEX_NOT_EMPTY");}
         while(fragments.hasNext()){
             check(cancelled);var fragment=fragments.next();var row=fragment.partition();var partition=ArchitectureBridges.partition(row.fields());String owner=row.key();
             if(row.kind()!=SemanticTables.Kind.CONTEXT||!row.scope().equals(scope)||!partition.snapshot().equals(root.snapshotIdentity().value()))throw new IOException("BRIDGE_ASSEMBLY_FOREIGN_CONTEXT");
@@ -24,6 +24,8 @@ public final class BridgeAssembly {
                 String key=key(owner,endpoint.key());index.put("assembly.endpoints",key,new SemanticTables.Row(endpoint.kind(),key,scope,endpoint.fields()));
                 var value=ArchitectureBridges.endpoint(endpoint.fields());String path=value.descriptor().get("path"),method=value.descriptor().get("method");
                 if(value.profile()==ArchitectureBridges.Profile.B02&&value.direction().equals("PROVIDES")&&path!=null&&method!=null){String lookup=ContentDigest.sha256Utf8(path).value()+":"+ContentDigest.sha256Utf8(method).value()+":"+key;index.put("assembly.http",lookup,new SemanticTables.Row(SemanticTables.Kind.OBSERVATION,lookup,scope,Map.of("endpoint",key)));}
+                String protocolPrefix=protocolPrefix(value);
+                if(value.direction().equals("PROVIDES")&&protocolPrefix!=null){String lookup=protocolPrefix+key;index.put("assembly.protocols",lookup,new SemanticTables.Row(SemanticTables.Kind.OBSERVATION,lookup,scope,Map.of("endpoint",key)));}
             }}
             try(var rows=tables.open(fragment.requirements(),cancelled)){SemanticTables.Row requirement;while((requirement=rows.next())!=null){
                 check(cancelled);var original=ArchitectureBridges.requirement(requirement.fields());if(!requirement.scope().equals(scope)||!original.partition().equals(owner))throw new IOException("BRIDGE_ASSEMBLY_REQUIREMENT_SCOPE");
@@ -46,6 +48,17 @@ public final class BridgeAssembly {
                     }}
                 }
             }
+            if((requirement.profile()==ArchitectureBridges.Profile.B03||requirement.profile()==ArchitectureBridges.Profile.B04)&&requirement.endpoint().isPresent()){
+                var source=index.get("assembly.endpoints",requirement.endpoint().orElseThrow());
+                if(source.isPresent()){
+                    var endpoint=ArchitectureBridges.endpoint(source.orElseThrow().fields());String prefix=protocolPrefix(endpoint);
+                    if(endpoint.direction().equals("REQUIRES")&&prefix!=null)try(var providers=index.range("assembly.protocols",prefix,prefix.substring(0,prefix.length()-1)+";")){SemanticTables.Row lookup;while((lookup=providers.next())!=null){
+                        check(cancelled);String targetKey=(String)lookup.fields().get("endpoint");var target=index.get("assembly.endpoints",targetKey).orElseThrow(()->new IOException("BRIDGE_ASSEMBLY_INDEX_BINDING"));
+                        if(protocolCandidate(endpoint,ArchitectureBridges.endpoint(target.fields())))candidates.add(targetKey);
+                        if(candidates.size()>candidateBudget)throw new IOException("BRIDGE_ASSEMBLY_CANDIDATE_WORKER_REQUIRED");
+                    }}
+                }
+            }
             if(candidates.size()>candidateBudget)throw new IOException("BRIDGE_ASSEMBLY_CANDIDATE_WORKER_REQUIRED");
             index.put("assembly.joined",row.key(),ArchitectureBridges.row(SemanticTables.Kind.CENSUS,row.key(),scope,new ArchitectureBridges.Requirement(requirement.partition(),requirement.profile(),requirement.applicability(),requirement.endpoint(),List.copyOf(candidates),requirement.evidence(),requirement.reason())));
         }}
@@ -57,6 +70,21 @@ public final class BridgeAssembly {
         // Hashes select a bucket only. The literal predicate still checks every operand.
         String key=path!=null?ContentDigest.sha256Utf8(path).value():digest;
         return key+":"+(method==null?"":ContentDigest.sha256Utf8(method).value()+":");
+    }
+    private static String protocolPrefix(ArchitectureBridges.Endpoint endpoint){
+        List<String> keys=switch(endpoint.profile()){
+            case B03->List.of("namespace","service","operation");
+            case B04->List.of("protocol","namespace","channel");
+            default->List.of();
+        };
+        if(keys.isEmpty()||keys.stream().anyMatch(key->endpoint.descriptor().getOrDefault(key,"").isBlank()))return null;
+        return endpoint.profile()+":"+com.evolution.analysis.contract.serialization.CanonicalJson.sha256(keys.stream().map(endpoint.descriptor()::get).toList()).value()+":";
+    }
+    private static boolean protocolCandidate(ArchitectureBridges.Endpoint source,ArchitectureBridges.Endpoint target){
+        if(source.profile()!=target.profile()||!target.direction().equals("PROVIDES"))return false;
+        for(String operand:source.profile().operands){String a=source.descriptor().get(operand),b=target.descriptor().get(operand);if(a!=null&&b!=null&&!a.equals(b))return false;}
+        if(source.profile()==ArchitectureBridges.Profile.B04){String a=source.descriptor().get("routing"),b=target.descriptor().get("routing");if(a!=null&&b!=null&&!a.equals(b))return false;}
+        return true;
     }
     private static boolean literalCandidate(ArchitectureBridges.Endpoint source,ArchitectureBridges.Endpoint target){
         if(target.profile()!=ArchitectureBridges.Profile.B02||!target.direction().equals("PROVIDES"))return false;

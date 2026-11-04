@@ -58,6 +58,7 @@ public final class PreparedJavaAnalysisRunner implements AnalysisJobs.Runner {
     }
     @Override public AnalysisJobs.Outcome run(AnalysisJobs.Control control)throws Exception{return run(new CapturedControl(control,control::stage),true);}
     AnalysisJobs.Outcome runCaptured(java.util.function.BooleanSupplier cancelled)throws Exception{return run(new CapturedControl(cancelled,stage->{}),false);}
+    AnalysisJobs.Outcome runCaptured(java.util.function.BooleanSupplier cancelled,boolean accountSiblings)throws Exception{return run(new CapturedControl(cancelled,stage->{}),accountSiblings);}
     private AnalysisJobs.Outcome run(CapturedControl control,boolean accountSiblings)throws Exception{
         control.stage(AnalysisJobs.Stage.ACQUISITION);control.checkpoint();
         if(!prepared.policy().equals(authorityPolicy.get()))return revoked();

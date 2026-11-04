@@ -3,13 +3,31 @@
 Date: **2026-11-03**. Status: **ACTIVE / IN PROGRESS**.  
 Authority: Approved human decision (Direction B). M8.4 Step 5 is **CLOSED / SCOPED MVP**; this document establishes the empirical evaluation protocol, real-world repository cohort, and quantitative experimental design for **M8.4 Step 6 (Comprehensive Real-Repository Scale & Empirical Evaluation)**.
 
+## Human correction — semantic depth and adaptive execution (2026-11-03)
+
+**CONFIRMED human authorization:** repair and expand the implementation to minimize real-repository semantic gaps; hardware is not a reason for fixed product ceilings. The earlier evaluation-only restriction on modifying core code is superseded. Semantic capability and correctness take priority over publication tables. The 90–100% ambition is a target to measure on independently labeled categories and exact captured contexts, not an achieved or universally provable result.
+
+**CONFIRMED source inspection:** `ObservationRecord.compareTo` serialized both full records for every comparison. `evo scan` composes passive Maven acquisition and does not dispatch an isolated build. `SOURCE_RECOVERY` deliberately withholds build-dependent attribution, even if some JARs are available. `HyperVMvpLauncher` launches a fixed offline fixture recipe; merely invoking it from scan would not build arbitrary Maven/Gradle roots. Default scan supplies neither a Spring configuration space nor a baseline assignment, so a prepared Spring plan does not by itself establish selected DI bindings. `QueryApiMain` had a separate 64 MB whole-file byte-array/string loader, while CLI workspace storage already used streaming row decoding. The reported ThingsBoard/Halo memory and duration numbers have not been independently remeasured in this change.
+
+The following are implementation work within active Step 6, not a milestone acceptance or reopening of withdrawn earlier qualifications:
+
+1. **Remove avoidable serialization/memory work.** Compare observation fields without JSON allocation while retaining the exact old canonical order/digests. Stream graph publication to CAS and API snapshot loading; remove the launchers' forced 4-GB heap and honor standard operator JVM allocation settings. Retain atomic publication, corruption detection and cancellation. This is the delivered repair in this change; a fully disk-backed graph/query path remains pending. Streaming JSON alone still retains typed graph rows and indexes in memory.
+2. **Connect readiness to real isolated acquisition.** Normal scan must discover every selected build root/context, choose compatible registered tool/image/resource/network policy, reuse a matching validated capture or schedule the actual Maven/Gradle/native recipe, and resume from durable state. Capture effective modules/source sets, ordered per-context classpaths/platform, generated sources, processor/compiler options and output lineage; feed these to `JavaEvidenceAssembler` and existing prepared runners. A build of a fixed fixture is not evidence for a target repository. Generic-controller qualification and the accepted Core MVP lane keep their actual separate meanings; neither missing registration nor unavailable tool/image may trigger host fallback. Budget exhaustion must produce a checkpoint and resource request, not a repository exclusion. Native build output remains producer evidence until its applicable checks pass.
+3. **Activate architecture semantics in those exact contexts.** Construct named Spring application/container scopes and evidence-backed finite profile/property/configuration spaces; retain unknown external inputs and phase/order uncertainty. Run existing registration/binding/truth engines and publish candidates separately from selected conditional bindings. Preserve distinct Maven/Gradle roots and generated-code origins. Required positive/negative labels cover constructor/field/method injection, Lombok/MapStruct/Protobuf native generation, qualifiers/primary/collections, factories/conditions and cross-module inheritance/calls. Available source/type attribution must be reconciled with stronger native evidence; missing context cannot become a blanket claim that the repository has no relationships.
+4. **Close communication and scale paths end to end.** Feed actual language/schema/configuration evidence to B01–B08, including Kafka producer/topic/listener and gRPC proto/generated stub/client/server correspondence. Distinguish contract correspondence, configured destinations and observed runtime communication; a shared string or service name alone proves none of the latter. Replace monolithic graph loading with content-addressed context/row partitions and rebuildable adjacency/evidence indexes behind stable query services. API/CLI pages remain bounded, with continuation over the entire population. No whole-repository file/count/time ceiling or giant response is introduced.
+
+**Observable exit evidence:** a named snapshot/context has a complete inventory disposition; native requirements are satisfied or explicitly pending; a labeled real DI relationship traverses acquisition → attribution → Spring → graph → API/CLI; labeled Kafka/gRPC cases traverse the bridge path; missing/ambiguous/dynamic cases remain counted and never fabricate edges. Check cold reload and unchanged-input replay, interruption/resume, allocation and query working sets. Register heavier native/scale runs only after their changed prerequisite is available; do not rerun blocked campaigns or reinterpret old passive captures as deep semantic evidence.
+
+For each category report attempted/resolved observations, independently correct/incorrect matches, unresolved/ambiguous/unsupported/error/omitted outcomes and provenance failures. The coverage denominator includes **all applicable labeled obligations**, including candidates and omitted obligations. Report precision and recall separately, plus file/module/context/generator coverage; no single percentage averages away an empty category. Release wildcards in the cohort descriptions below are selection intentions until exact commit/input hashes are captured, not immutable pins.
+
 ---
 
 ## 1. Mission and Research Objective
 
 The objective of Step 6 is to transition from micro-fixtures to **empirical validation on production-grade, real-world open-source repositories at scale**. This provides the concrete, reproducible experimental evidence required for:
-1. **Academic Research (NCKH) Publication:** Producing empirical evaluation tables, precision/recall indicators, scalability charts, and architectural defect discoveries benchmarked against international software engineering standards (ICSE, FSE, ASE, MSR).
-2. **Milestone M8.4 Formal Closure:** Demonstrating that the streaming CAS storage, multi-root readiness planner, polyglot language engines, and architecture bridges operate without fixed repository ceilings, memory overflow, or silent omissions.
+1. **Semantic capability and correctness:** Repair the acquisition-to-architecture path and validate real relationships against independent labels, including negative controls and the complete missing-evidence denominator.
+2. **Milestone M8.4 Formal Closure:** Demonstrating that streaming storage, multi-root readiness, isolated build evidence, language engines and architecture bridges satisfy their scoped contracts without fixed repository ceilings or silent omissions.
+3. **Later research output:** Derive empirical tables and publication artifacts only from verified capability and measurements.
 
 ---
 
@@ -98,7 +116,7 @@ To ensure the empirical results meet the highest academic rigor, the evaluation 
     - $\text{CANDIDATE}$: Ambiguous or conditional candidates.
     - $\text{UNRESOLVED}$: Explicitly unmatched requirement.
     - $\text{GAPS}$: Explicit `CapabilityGapRecord` with typed root causes.
-  - Binding Resolution Rate: $\text{Rate}_{\text{bound}} = N_{\text{BOUND}} / (N_{\text{BOUND}} + N_{\text{UNRESOLVED}})$.
+  - Binding coverage: independently correct resolved bindings divided by **all applicable labeled binding obligations**, including candidate, unresolved, unsupported, error and omitted outcomes. A `BOUND` producer status alone does not establish correctness; report independently judged precision and recall separately.
   - Omission Denominator: Verification that omitted census rows equal **zero**.
 
 ### RQ4: Query Latency & Replay Determinism (Hiệu năng truy vấn và tính tái hiện)
@@ -122,8 +140,8 @@ Every step of the empirical evaluation strictly adheres to the platform's non-ne
    - Candidate bindings without concrete source evidence remain marked as `CANDIDATE` or `UNRESOLVED`; no target is invented.
 3. **Closed Reporting Denominator:**
    - Dynamic reflection, unmapped framework conventions, or missing external libraries are recorded as typed `CapabilityGapRecord` entries with root-cause provenance.
-4. **Preservation of Core Code:**
-   - The evaluation runner uses existing, verified API services (`BridgeQueryService`, `ArchitectureQueryApi`, `EvoApp`) without modifying core platform logic.
+4. **Authorized repairs and integration:**
+   - Reuse existing services (`BridgeQueryService`, `ArchitectureQueryApi`, `EvoApp`); repair supported core defects and missing integration under the human correction above. Preserve existing evidence and verify changed behavior before reporting success.
 
 ---
 
@@ -131,6 +149,6 @@ Every step of the empirical evaluation strictly adheres to the platform's non-ne
 
 1. **Phase 6.1:** Set up automated acquisition and local repository clones for the 4 cohort repositories into the dedicated data cache outside Git (`D:/UIT/evo-benchmark-cohort/`).
 2. **Phase 6.2:** Execute passive streaming ingestion and inventory generation, recording $S_{\text{raw}}$, $S_{\text{CAS}}$, $T_{\text{acq}}$, and deduplication ratios.
-3. **Phase 6.3:** Run multi-context bridge discovery and Knowledge Graph construction, extracting $|V|$, $|E|$, and B01–B08 bridge outcomes.
-4. **Phase 6.4:** Compile the final Empirical Evaluation Report with LaTeX-formatted benchmark tables and research metrics ready for paper inclusion.
+3. **Phase 6.3:** Implement and verify the isolated build/model/generated-output → exact language attribution → Spring configuration/binding → bridge/query path above, then measure it on pinned cohort inputs. Inventory or zero-edge scans do not pass this phase.
+4. **Phase 6.4:** Assess the actual Step-6 exit evidence and remaining gaps; derive the empirical report from those results. No publication artifact closes a missing semantic capability.
 

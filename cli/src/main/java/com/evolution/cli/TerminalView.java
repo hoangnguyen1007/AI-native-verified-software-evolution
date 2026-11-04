@@ -95,6 +95,7 @@ final class TerminalView {
         heading("Commands");
         line("  "+tr("Acquisition","Thu nhận")+" acquire <input> · inventory <revision>");
         line("  Execution   execution <submit|status|cancel|recover> <registration>");
+        line("  Build       build <dir> · build-register <name> <profile.json> · build-profile · build-recover <attempt>");
         line("  Core MVP    core-mvp <registered-root>");
         line("  "+tr("Snapshots","Snapshot")+"   open <file> · use <n> · provenance");
         line("  "+tr("Graph","Đồ thị")+"       reach <n> · paths <a> <b> · cycles");

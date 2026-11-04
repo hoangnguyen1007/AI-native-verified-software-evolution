@@ -4,6 +4,14 @@ import java.util.*;
 import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 class TerminalReportsTest {
+    @Test void surfaceScanMakesSemanticDepthAndUnevaluatedBindingsVisible(){
+        String text=render("scan",Map.of("status","PARTIAL","execution",Map.of("mode","PASSIVE"),"semanticDepth",Map.of(
+                "level","SURFACE_ONLY","sourceRecoveryContexts",2,"relationships",Map.of("resolved",0,"attempted",42),
+                "spring",Map.of("status","NOT_EVALUATED","selectedBindingFactRows",0))));
+        assertTrue(text.contains("SURFACE_ONLY"));assertTrue(text.contains("0 / 42"));
+        assertTrue(text.contains("NOT_EVALUATED"));assertTrue(text.contains("Chưa chạy"));
+        assertTrue(text.contains("chưa chứng minh không có phụ thuộc"));
+    }
     @Test void catalogShowsMeaningUnitsAndCommandInsteadOfAnAbsentMetricValue(){
         String text=render("metrics",Map.of("status","COMPLETE","items",List.of(Map.of("metric",Map.of("id","metric.inventory","version","m5.3-v1"),"meaning","Observed inventory","unit","entities","scopes",List.of("TYPE")))));
         assertTrue(text.contains("Observed inventory"));assertTrue(text.contains("entities"));assertTrue(text.contains("metrics metric.inventory"));assertFalse(text.contains("Giá trị"));

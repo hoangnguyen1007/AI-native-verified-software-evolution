@@ -45,7 +45,7 @@ public final class PreparedAnalysisPublication {
         artifacts.put("input-footprint",put(CanonicalJson.write(footprint),cancelled));
         artifacts.put("semantic-view",put(prepared.view().json(),cancelled));
         artifacts.put("readiness",put(CanonicalJson.write(readiness.wire()),cancelled));
-        artifacts.put("graph",put(new GraphSnapshotCodec().encode(graph),cancelled));
+        artifacts.put("graph",putGraph(content,graph,cancelled));
         if(previous.isPresent()){
             var prior=previous.orElseThrow().artifacts();
             if(!prior.keySet().equals(artifacts.keySet()))throw new IOException("JAVA_PUBLICATION_CACHE_SCHEMA_MISMATCH");
@@ -57,6 +57,13 @@ public final class PreparedAnalysisPublication {
     }
     private ContentHandle put(String json,BooleanSupplier cancelled)throws IOException{
         try{return content.put(new ByteArrayInputStream(json.getBytes(StandardCharsets.UTF_8)),cancelled);}
+        catch(java.util.concurrent.CancellationException stopped){throw new IOException("JAVA_PUBLICATION_CANCELLED",stopped);}
+    }
+    static ContentHandle putGraph(RepositoryContentStore content,KnowledgeGraph graph,BooleanSupplier cancelled)throws IOException{
+        try{return content.write(output->{
+            var writer=new java.io.BufferedWriter(new java.io.OutputStreamWriter(output,StandardCharsets.UTF_8));
+            new GraphSnapshotCodec().encodeTo(graph,writer);writer.flush();
+        },cancelled);}
         catch(java.util.concurrent.CancellationException stopped){throw new IOException("JAVA_PUBLICATION_CANCELLED",stopped);}
     }
 }

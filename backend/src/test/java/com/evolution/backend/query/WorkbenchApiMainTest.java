@@ -40,6 +40,9 @@ class WorkbenchApiMainTest {
             String graph = GraphJson.string(GraphJson.object(job.get("result")).get("graph")); assertTrue(Files.isRegularFile(store.resolve(graph.substring(7)+".graph.json")));
             assertFalse(Files.exists(source.resolve("target-executed.txt"))); assertFalse(Files.exists(directory.resolve("target-executed.txt")));
             var discovery = client.send(HttpRequest.newBuilder(URI.create(base+"/graphs/"+graph)).GET().build(),HttpResponse.BodyHandlers.ofString()); assertEquals(200,discovery.statusCode());
+            var pages=client.send(HttpRequest.newBuilder(URI.create(base+"/graph-pages/"+graph+"/partitions")).header("Content-Type","application/json").POST(HttpRequest.BodyPublishers.ofString("{\"size\":1}")).build(),HttpResponse.BodyHandlers.ofString());
+            assertEquals(200,pages.statusCode());assertEquals("RAW_CONTEXT_FACTS",data(pages.body()).get("scope"));
+            assertFalse(GraphJson.array(GraphJson.object(data(pages.body()).get("page")).get("items")).isEmpty());
         } finally { process.destroyForcibly(); assertTrue(process.waitFor(5,TimeUnit.SECONDS)); }
     }
     private static Map<String,Object> data(String body) { return GraphJson.object(GraphJson.object(GraphJson.read(body,GraphJson.Limits.defaults())).get("data")); }

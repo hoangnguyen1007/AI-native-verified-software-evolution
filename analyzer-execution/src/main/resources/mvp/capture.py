@@ -58,6 +58,8 @@ def main():
     parser.add_argument('--owner', type=Path, required=True)
     parser.add_argument('--work-attempt', required=True)
     parser.add_argument('--request', type=Path, help='Controller-precommitted export request and collector pin')
+    parser.add_argument('--powershell', type=Path, help='Explicit pinned controller PowerShell for native builds')
+    parser.add_argument('--manifest-bytes', type=int, default=536870912)
     args = parser.parse_args()
     attempt = uuid.UUID(hex=args.work_attempt).hex
     if attempt != args.work_attempt:
@@ -159,7 +161,9 @@ def main():
         import base64
         if scope['nonce'] != nonce or base64.b64decode(scope['work']) != request['work'].encode() or scope['budget'] != {key: request[key] for key in ['maxRowBytes','maxObjectBytes','maxCaptureBytes']}:
             raise ValueError('EXPORT_SCOPE_MISMATCH')
-        download(base + '/entries.ndjson', args.root / 'entries.ndjson', census['manifest'], 536870912)
+        if args.manifest_bytes < 1024 or args.manifest_bytes > 9223372036854775807:
+            raise ValueError('INVALID_CAPTURE_BUDGET')
+        download(base + '/entries.ndjson', args.root / 'entries.ndjson', census['manifest'], args.manifest_bytes)
         objects = args.root / 'objects'
         objects.mkdir()
         count = pending = rejected = logical_bytes = captured_bytes = 0
@@ -203,7 +207,7 @@ def main():
         client.close()
         script = resources / 'hyperv/worker.ps1'
         pin = hashlib.sha256(script.read_bytes()).hexdigest()
-        stopped = subprocess.run(['pwsh', '-NoProfile', '-File', str(script), '-Action', 'Stop', '-Workspace', owner['workspace'],
+        stopped = subprocess.run([str(args.powershell) if args.powershell is not None else 'pwsh', '-NoProfile', '-File', str(script), '-Action', 'Stop', '-Workspace', owner['workspace'],
                               '-Attempt', owner['attempt'], '-LaunchDigest', owner['launch'], '-Fence', str(owner['fence'])],
                              stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=45, check=True)
         off = json.loads(stopped.stdout, object_pairs_hook=unique)

@@ -11,6 +11,26 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class StreamingStorageTest {
     @TempDir Path temp;
+    @Test void producerWritesExactBytesAndNeverPublishesFailedOrCancelledOutput()throws Exception{
+        var cas=new StreamingContentStore(temp.resolve("cas"));
+        byte[] bytes="Tiếng Việt 😀".repeat(5000).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        var expected=cas.put(new ByteArrayInputStream(bytes),()->false);
+        assertEquals(expected,cas.write(output->{output.write(bytes,0,17);output.write(bytes,17,bytes.length-17);},()->false));
+        RepositoryContentStore legacy=new RepositoryContentStore(){
+            public ContentHandle put(InputStream input,java.util.function.BooleanSupplier stop)throws IOException{return cas.put(input,stop);}
+            public InputStream open(ContentHandle handle)throws IOException{return cas.open(handle);}
+            public InputStream range(ContentHandle handle,long offset,long length)throws IOException{return cas.range(handle,offset,length);}
+            public boolean verify(ContentHandle handle)throws IOException{return cas.verify(handle);}
+        };
+        assertEquals(expected,legacy.write(output->output.write(bytes),()->false));
+        assertTrue(cas.verify(expected));
+        assertThrows(IOException.class,()->cas.write(output->{output.write('x');output.write(bytes);throw new IOException("producer failed");},()->false));
+        var cancelled=new java.util.concurrent.atomic.AtomicBoolean();
+        assertThrows(java.util.concurrent.CancellationException.class,()->cas.write(output->{output.write('y');output.write(bytes);cancelled.set(true);},cancelled::get));
+        try(var paths=Files.list(temp.resolve("cas/staging"))){assertEquals(0,paths.count());}
+        try(var paths=Files.walk(temp.resolve("cas/sha256"))){assertEquals(1,paths.filter(Files::isRegularFile).count());}
+        assertTrue(cas.verify(expected));
+    }
     @Test void casIsAtomicVerifiedAndRangeAddressable()throws Exception{
         var cas=new StreamingContentStore(temp.resolve("cas"));var handle=cas.put(new ByteArrayInputStream("0123456789".getBytes()),()->false);
         assertTrue(cas.verify(handle));assertEquals(handle,cas.put(new ByteArrayInputStream("0123456789".getBytes()),()->false));

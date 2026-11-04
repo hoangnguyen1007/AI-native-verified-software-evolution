@@ -8,7 +8,7 @@ $evoPreviousEncoding = [Console]::OutputEncoding
 $evoExitCode = 1
 try {
     [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
-    & $evoJavaPath '-Xmx4g' '-Dfile.encoding=UTF-8' '-jar' $evoJarPath @args
+    & $evoJavaPath '-Dfile.encoding=UTF-8' '-jar' $evoJarPath @args
     $evoExitCode = $LASTEXITCODE
 } finally {
     [Console]::OutputEncoding = $evoPreviousEncoding

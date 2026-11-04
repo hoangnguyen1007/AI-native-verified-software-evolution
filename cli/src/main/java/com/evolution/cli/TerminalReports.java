@@ -39,6 +39,7 @@ final class TerminalReports {
         else if(data.containsKey("nodes")&&data.containsKey("edges"))visualGraph(data);
         else if(command.equals("use")){field("Selected context","Ngữ cảnh đã chọn",data.get("selected"));field("Context ID","ID ngữ cảnh",shortId(data.get("context")));line("  "+tr("Next: show / find <text>","Tiếp theo: show / find <từ khóa>"));}
         else if(command.equals("export")){field("File","Tệp",data.get("output"));field("Format","Định dạng",data.get("format"));field("Bytes written","Byte đã ghi",data.get("bytes"));field("Content SHA-256","SHA-256 nội dung",shortId(data.get("content")));}
+        else if(command.equals("build"))nativeBuild(data);
         else if(data.containsKey("items"))items(command,data);
         else if(data.containsKey("metric"))metric(data);
         else compact(data,0);
@@ -65,6 +66,21 @@ final class TerminalReports {
             field("Modules · Java files · types","Module · tệp Java · kiểu",str(m.get("analyzedModules"))+" · "+str(m.get("javaFiles"))+" · "+str(m.get("declaredTypes")));
             field("Dependencies · components · entry points","Phụ thuộc · component · điểm vào",str(m.get("dependenciesCount"))+" · "+str(m.get("evidencedComponents"))+" · "+str(m.get("entryPointsCount")));
         }
+        var depth=map(d.get("semanticDepth"));
+        if(!depth.isEmpty()){
+            section("Semantic depth","Độ sâu ngữ nghĩa");
+            field("Evidence level","Mức bằng chứng",depth.get("level"));
+            field("Source recovery contexts","Context phục hồi từ source",depth.get("sourceRecoveryContexts"));
+            var relations=map(depth.get("relationships"));
+            field("Attributed / attempted relationships","Quan hệ đã resolve / đã xét",str(relations.get("resolved"))+" / "+str(relations.get("attempted")));
+            var spring=map(depth.get("spring"));
+            field("Spring evaluation","Đánh giá Spring",spring.get("status"));
+            field("Selected DI binding fact rows","Bản ghi DI binding đã chọn",spring.get("selectedBindingFactRows"));
+            if("NOT_EVALUATED".equals(spring.get("status"))||"PLAN_ONLY".equals(spring.get("status")))
+                line(tr("  Zero DI bindings do not establish absence of dependencies; Spring configuration evaluation is incomplete.","  DI bằng 0 chưa chứng minh không có phụ thuộc; chưa hoàn tất đánh giá cấu hình Spring."));
+        }
+        var execution=map(d.get("execution"));
+        if("PASSIVE".equals(execution.get("mode")))field("Build execution","Thực thi build",tr("Not executed; passive inputs only","Chưa chạy; chỉ dùng đầu vào thụ động"));
         if(!s.isEmpty())field("Selection","Phạm vi thu thập",Boolean.TRUE.equals(s.get("allFiles"))?tr("All files","Mọi tệp"):tr("Source/build/config; tests ","Mã nguồn/build/cấu hình; kiểm thử ")+(Boolean.TRUE.equals(s.get("includeTests"))?tr("included","có"):tr("excluded","không")));
         if(s.containsKey("excluded"))field("Recorded exclusions","Đường dẫn loại trừ có ghi nhận",list(s.get("excluded")).size());
         if(!map(d.get("dependencies")).isEmpty())field("Dependency acquisition","Thu nhận thư viện",map(d.get("dependencies")).get("mode"));
@@ -81,6 +97,13 @@ final class TerminalReports {
         if(!list(d.get("issues")).isEmpty()){section("Analysis notices","Lưu ý phân tích");group(list(d.get("issues")),"reason");}
         if(!list(d.get("rootCauses")).isEmpty()){section("Root causes","Nguyên nhân");for(Object cause:list(d.get("rootCauses")).stream().limit(8).toList())compact(cause,1);}
         if(number(map(d.get("gapSummary")).get("total"))>0){section("Evidence gaps","Khoảng trống bằng chứng");var summary=map(d.get("gapSummary"));field("Records saved in graph","Bản ghi đã lưu trong đồ thị",summary.get("total"));for(var e:map(summary.get("byReason")).entrySet())line("  "+e.getValue()+"  "+e.getKey());line("  "+tr("Choose Build / acquisition to inspect the full gap inventory.","Chọn Build / thu thập để xem danh mục khoảng trống toàn bộ."));line("  gaps  /  explain <number>  /  --json");}
+    }
+    private void nativeBuild(Map<String,Object> data){
+        field("Selected Maven/Gradle roots","Root Maven/Gradle đã chọn",data.get("roots"));
+        field("Requests issued / guest launchers returned / built","Yêu cầu đã gửi / launcher guest đã trả / build thành công",str(data.get("requested"))+" / "+str(data.get("executed"))+" / "+str(data.get("succeeded")));
+        for(var value:list(data.get("results")).stream().limit(12).toList()){var row=map(value);line("  "+str(row.get("status"))+"  "+str(row.get("root"))+(str(row.get("reason")).equals("")?"":"  "+str(row.get("reason"))));}
+        field("Semantic validation","Kiểm chứng ngữ nghĩa",data.get("semanticCoverage"));
+        if(data.get("publication")!=null)field("Captured result","Kết quả đã lưu",map(data.get("publication")).get("digest"));
     }
     private void contexts(Map<String,Object> data){
         var rows=list(data.get("contexts"));if(rows.isEmpty()){compact(data,0);return;}

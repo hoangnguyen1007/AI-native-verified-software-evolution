@@ -21,6 +21,10 @@ import com.evolution.backend.analysis.MavenScan;
 import com.evolution.analysis.readiness.*;
 import com.evolution.backend.analysis.ScanSelection;
 import com.evolution.backend.analysis.RepositoryIntake;
+import com.evolution.backend.analysis.SemanticDepth;
+import com.evolution.backend.analysis.CapturedJavaScan;
+import com.evolution.backend.analysis.CanonicalRecordReader;
+import com.evolution.analysis.execution.nativebuild.*;
 import com.evolution.analysis.acquisition.streaming.*;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
@@ -132,6 +136,11 @@ public final class EvoApp {
         command.addSubcommand("execution",new Execution(r));
         command.addSubcommand("core-mvp",new CoreMvp(r));
         command.addSubcommand("captured-java",new CapturedJava(r));
+        command.addSubcommand("graph-pages",new GraphPages(r));
+        command.addSubcommand("build",new NativeBuild(r));
+        command.addSubcommand("build-register",new NativeBuildRegister(r));
+        command.addSubcommand("build-profile",new NativeBuildDescribe(r));
+        command.addSubcommand("build-recover",new NativeBuildRecover(r));
         command.addSubcommand("semantic",new SemanticInspect(r));
         command.addSubcommand("bridges",new BridgeInspect(r));
         command.addSubcommand("acquire",new Acquire(r));
@@ -444,7 +453,81 @@ public final class EvoApp {
             try(var intake=new RepositoryIntake(r.storage().root.resolve("acquisition"))){return emit(r,"readiness",envelope(intake.readinessPage(revision,section,r.limit,Optional.ofNullable(r.cursor),policy)),0);}
         }
     }
-    @Command(name="scan",mixinStandardHelpOptions=true,description="Passive repository analysis / Phân tích repository thụ động")
+    @Command(name="graph-pages",mixinStandardHelpOptions=true,description="Read bounded raw graph partitions without materializing a snapshot")
+    private final class GraphPages implements Callable<Integer>{
+        final Root r;GraphPages(Root r){this.r=r;}
+        @Parameters(index="0",paramLabel="partitions|nodes|adjacency|build")String operation;
+        @Parameters(index="1",arity="0..1",paramLabel="NODE")String node;
+        @Option(names="--partition",paramLabel="CONTEXT")String partition;
+        @Option(names="--graph-id",paramLabel="SHA256")String graphId;
+        public Integer call()throws Exception{
+            r.validate();if(!Set.of("partitions","nodes","adjacency","build").contains(operation))throw new InputFailure("INVALID_GRAPH_PAGE_OPERATION");
+            if(r.graph!=null)throw new InputFailure("GRAPH_FILE_NOT_APPLICABLE");
+            if(node!=null&&!operation.equals("adjacency")||partition!=null&&Set.of("partitions","build").contains(operation)||r.incoming&&!operation.equals("adjacency")||operation.equals("build")&&r.cursor!=null)throw new InputFailure("GRAPH_PAGE_FLAGS_NOT_APPLICABLE");
+            if(matched(r,"--context","--request","--args","--other","--policy","--view","--scope","--world","--assignment","--kinds","--depth"))throw new InputFailure("QUERY_FLAGS_NOT_APPLICABLE");
+            var graph=graphId==null?new ContentDigest(GraphJson.string(r.storage().selection().get("graph"))):new ContentDigest(graphId);
+            var pages=r.storage().partitioned();Object data;
+            if(operation.equals("build")){
+                if(graphId!=null&&!graphId.equals(GraphJson.string(r.storage().selection().get("graph"))))throw new InputFailure("GRAPH_PAGE_BUILD_SELECTION_REQUIRED");
+                pages.importSnapshot(r.storage().root.resolve(graph.value().substring(7)+".graph.json"),graph,()->Thread.currentThread().isInterrupted());data=Map.of("graph",graph,"status","INDEXED");
+            }else if(operation.equals("partitions"))data=pages.partitions(graph,r.limit,Optional.ofNullable(r.cursor));
+            else{
+                if(partition==null)throw new InputFailure("PARTITION_REQUIRED");
+                var selected=pages.partition(graph,partition).orElseThrow(()->new InputFailure("PARTITION_UNAVAILABLE"));
+                if(operation.equals("nodes"))data=pages.nodes(selected,r.limit,Optional.ofNullable(r.cursor));
+                else{if(node==null)throw new InputFailure("NODE_REQUIRED");data=pages.adjacency(selected,node,r.incoming,r.limit,Optional.ofNullable(r.cursor));}
+            }
+            return emit(r,"graph-pages",envelope(Map.of("graph",graph,"scope","RAW_CONTEXT_FACTS","page",data,"semanticAccuracy","NOT_CERTIFIED")),0);
+        }
+    }
+    private NativeBuildCoordinator nativeCoordinator(String name,Path source)throws IOException{
+        var registration=NativeBuildRegistrations.selected(name,source).orElseThrow(()->new IOException("NATIVE_BUILD_PROFILE_NOT_REGISTERED"));
+        var profile=CanonicalRecordReader.read(registration.document(),NativeBuildProfile.class);
+        if(!CanonicalJson.write(profile).equals(CanonicalJson.write(registration.document())))throw new IOException("NATIVE_BUILD_PROFILE_INVALID");
+        if(source!=null&&Path.of(profile.stateDirectory()).toAbsolutePath().normalize().startsWith(source.toAbsolutePath().normalize()))throw new IOException("NATIVE_STATE_INSIDE_TARGET");
+        return new NativeBuildCoordinator(profile,registration);
+    }
+    private NativeBuildCoordinator.Result buildNative(String name,Path source,ReadinessPlan plan,String revision,RepositoryIntake intake)throws IOException{
+        if(NativeBuildRegistrations.selected(name,source).isEmpty())return NativeBuildCoordinator.unavailable(plan,"NATIVE_BUILD_PROFILE_NOT_REGISTERED");
+        try{return nativeCoordinator(name,source).run(plan,revision,intake.inventory(),intake.content(),source,()->Thread.currentThread().isInterrupted());}
+        catch(IOException unavailable){String code=unavailable.getMessage();if("NATIVE_TERMINATION_UNCONFIRMED".equals(code))throw unavailable;return NativeBuildCoordinator.unavailable(plan,code!=null&&code.matches("(?:NATIVE|REGISTERED|CURRENT_SANDBOX)_[A-Z0-9_]{1,80}")?code:"NATIVE_BUILD_UNAVAILABLE");}
+    }
+    @Command(name="build",mixinStandardHelpOptions=true,description="Build captured Maven/Gradle roots in registered disposable Hyper-V workers")
+    private final class NativeBuild implements Callable<Integer>{
+        final Root r;NativeBuild(Root r){this.r=r;}
+        @Parameters(arity="0..1",defaultValue=".",paramLabel="DIR")Path source;
+        @Option(names="--repo")String repository;
+        @Option(names="--build-profile",defaultValue="default")String profile;
+        @Option(names="--exclude")List<String> excludes=new ArrayList<>();
+        public Integer call()throws Exception{
+            r.validate();if(matched(r,"--graph","--context","--request","--args","--other","--policy","--view","--scope","--world","--assignment","--incoming","--kinds","--limit","--depth","--cursor"))throw new InputFailure("QUERY_FLAGS_NOT_APPLICABLE");var path=Workspace.safe(resolve(source));var repo=RepositoryIdentity.fromCanonicalCoordinate(repository!=null?repository:"urn:evo:local:"+ContentDigest.sha256Utf8(path.toString()).value().substring(7));
+            var excluded=new TreeSet<>(List.of(".git",".evo"));excluded.addAll(excludes);var state=r.storage().root;if(state.startsWith(path)&&!state.equals(path))excluded.add(path.relativize(state).toString().replace('\\','/'));
+            String revision=UUID.randomUUID().toString();r.stage="acquisition";
+            try(var intake=new RepositoryIntake(state.resolve("acquisition"))){
+                var captured=intake.local(path,revision,new StreamingAcquisitionRequest(repo,Optional.empty(),false,List.copyOf(excluded)),()->Thread.currentThread().isInterrupted());
+                if(captured.manifest().isEmpty())return emit(r,"build",envelope(Map.of("status",captured.state(),"acquisition",captured,"semanticCoverage","NOT_EVALUATED")),3);
+                var plan=intake.readiness(revision,ReadinessPlanner.Policy.comprehensive(),()->Thread.currentThread().isInterrupted());r.stage="isolated-native-build";
+                var result=buildNative(profile,path,plan,revision,intake);return emit(r,"build",envelope(result),Set.of("BUILT","NOT_APPLICABLE").contains(result.status())?0:result.status().equals("FAILED")?1:3);
+            }
+        }
+    }
+    @Command(name="build-register",mixinStandardHelpOptions=true,description="Pin an operator native-build profile; registration grants no qualification")
+    private final class NativeBuildRegister implements Callable<Integer>{
+        final Root r;NativeBuildRegister(Root r){this.r=r;}
+        @Parameters(index="0")String name;@Parameters(index="1",paramLabel="PROFILE.json")Path file;
+        public Integer call()throws Exception{r.validate();var path=Workspace.safe(resolve(file));var document=GraphJson.object(Workspace.json(path,1048576));var profile=CanonicalRecordReader.read(document,NativeBuildProfile.class);if(!CanonicalJson.write(profile).equals(CanonicalJson.write(document)))throw new InputFailure("NATIVE_BUILD_PROFILE_INVALID");NativeBuildRegistrations.register(name,path);return emit(r,"build-register",envelope(Map.of("status","REGISTERED","profile",name,"registered",true,"qualification","NOT_ASSESSED","workerLaunched",false)),0);}
+    }
+    @Command(name="build-profile",mixinStandardHelpOptions=true,description="Describe exact Hyper-V qualification inputs without launching a worker")
+    private final class NativeBuildDescribe implements Callable<Integer>{
+        final Root r;NativeBuildDescribe(Root r){this.r=r;}@Parameters(defaultValue="default",arity="0..1")String name;
+        public Integer call()throws Exception{r.validate();return emit(r,"build-profile",envelope(nativeCoordinator(name,null).describe()),0);}
+    }
+    @Command(name="build-recover",mixinStandardHelpOptions=true,description="Fence a recorded native worker Off; never retry a target lifecycle")
+    private final class NativeBuildRecover implements Callable<Integer>{
+        final Root r;NativeBuildRecover(Root r){this.r=r;}@Parameters String attempt;@Option(names="--build-profile",defaultValue="default")String profile;
+        public Integer call()throws Exception{r.validate();return emit(r,"build-recover",envelope(nativeCoordinator(profile,null).recover(UUID.fromString(attempt))),0);}
+    }
+    @Command(name="scan",mixinStandardHelpOptions=true,description="Source or authenticated captured-context repository analysis")
     private final class Scan implements Callable<Integer>{
         final Root r;Scan(Root r){this.r=r;}
         @Parameters(arity="0..1",defaultValue=".",paramLabel="DIR") Path source;
@@ -458,10 +541,16 @@ public final class EvoApp {
         @Option(names="--all-files",description="Capture all files, including assets and outputs / Thu thập mọi tệp") boolean allFiles;
         @Option(names="--maven-cache",paramLabel="DIR",description="Selected Maven2 artifact cache / Cache artifact Maven2") Path mavenCache=Path.of(System.getProperty("user.home"),".m2","repository");
         @Option(names="--offline",description="Use captured/local artifacts only; disable metadata and dependency downloads") boolean offline;
+        @Option(names="--java-capture",paramLabel="DIR",description="Use an operator-selected authenticated native Java context for this exact snapshot") Path javaCapture;
+        @Option(names="--build",defaultValue="auto",paramLabel="auto|required|off",description="Automatically build Maven/Gradle roots through the registered Hyper-V executor")String buildMode;
+        @Option(names="--build-profile",defaultValue="default",paramLabel="NAME",description="Operator-registered Hyper-V build profile")String buildProfile;
         @Option(names="--artifact-repository",paramLabel="HTTPS_URI",description="Explicit credential-free dependency repository; repeatable") List<java.net.URI> artifactRepositories=new ArrayList<>();
         public Integer call()throws Exception{
             r.validate();if(matched(r,"--graph","--context","--request","--args","--other","--policy","--view","--scope","--world","--assignment","--incoming","--kinds","--limit","--depth","--cursor"))throw new InputFailure("QUERY_FLAGS_NOT_APPLICABLE");
             if(offline&&!artifactRepositories.isEmpty())throw new InputFailure("OFFLINE_REPOSITORY_CONFLICT");
+            if(javaCapture!=null&&matched(r,"--jdk","--release","--artifact-repository","--maven-cache"))throw new InputFailure("CAPTURED_CONTEXT_OVERRIDE_CONFLICT");
+            if(!Set.of("auto","required","off").contains(buildMode))throw new InputFailure("INVALID_BUILD_MODE");
+            if(javaCapture!=null&&buildMode.equals("required"))throw new InputFailure("CAPTURED_BUILD_MODE_CONFLICT");
             var repositories=offline?List.<java.net.URI>of():artifactRepositories.isEmpty()?MavenScan.DEFAULT_REPOSITORIES:List.copyOf(artifactRepositories);
             sessionGraph=null;
             var sourcePath=Workspace.safe(resolve(source));var repo=RepositoryIdentity.fromCanonicalCoordinate(repository!=null?repository:"urn:evo:local:"+ContentDigest.sha256Utf8(sourcePath.toString()).value().substring(7));
@@ -471,16 +560,38 @@ public final class EvoApp {
             r.stage="acquisition";
             progress(r,"[1/4] Reading selected source/build/configuration files…","[1/4] Đọc mã nguồn, build và cấu hình đã chọn…");
             String intakeRevision=UUID.randomUUID().toString();StreamingRepositoryAcquirer.Receipt captured;
-            RepositoryAcquisitionResult acquisition;ReadinessPlan readiness;
+            RepositoryAcquisitionResult acquisition;ReadinessPlan readiness;NativeBuildCoordinator.Result nativeBuild=null;
             try(var intake=new RepositoryIntake(r.storage().root.resolve("acquisition"))){
                 captured=intake.local(sourcePath,intakeRevision,new StreamingAcquisitionRequest(repo,Optional.ofNullable(revision),dirty,List.copyOf(excluded)),()->Thread.currentThread().isInterrupted());
                 if(captured.manifest().isEmpty())return emit(r,"scan",envelope(Map.of("status",captured.state(),"acquisition",captured,"graphCreated",false)),3);
                 readiness=intake.readiness(intakeRevision,ReadinessPlanner.Policy.comprehensive(),()->Thread.currentThread().isInterrupted());
+                if(javaCapture==null&&!buildMode.equals("off")){
+                    r.stage="isolated-native-build";nativeBuild=buildNative(buildProfile,sourcePath,readiness,intakeRevision,intake);
+                    if(buildMode.equals("required")&&!Set.of("BUILT","NOT_APPLICABLE").contains(nativeBuild.status()))return emit(r,"scan",envelope(Map.of("status",nativeBuild.status(),"nativeBuild",nativeBuild,"graphCreated",false)),nativeBuild.status().equals("FAILED")?1:3);
+                }
                 try{acquisition=intake.compatibility(intakeRevision,repo,Optional.ofNullable(revision),dirty,includeTests,allFiles,List.copyOf(excluded));}
-                catch(IOException budget){return emit(r,"scan",envelope(Map.of("status","WAITING_FOR_SEMANTIC_WORKER","acquisition",captured,"graphCreated",false,"reason","COMPATIBILITY_VIEW_UNAVAILABLE")),3);}
+                catch(IOException budget){var unavailable=new TreeMap<String,Object>();unavailable.putAll(Map.of("status","WAITING_FOR_SEMANTIC_WORKER","acquisition",captured,"graphCreated",false,"reason","COMPATIBILITY_VIEW_UNAVAILABLE"));if(nativeBuild!=null)unavailable.put("nativeBuild",nativeBuild);return emit(r,"scan",envelope(unavailable),3);}
             }
             var acquisitionInfo=Map.of("identity",acquisition.identity(),"status",acquisition.completion(),"files",acquisition.files().size(),"bytes",acquisition.files().stream().mapToLong(AcquiredFile::size).sum(),"problems",acquisition.problems(),"policy",acquisition.request().policy(),"fullInventory",captured.manifest().orElseThrow(),"view","BOUNDED_SEMANTIC_COMPATIBILITY");
             if(acquisition.snapshot().isEmpty())return emit(r,"scan",envelope(Map.of("status","TERMINAL_FAILURE","stage","acquisition","acquisition",acquisitionInfo,"selection",selection,"graphCreated",false)),1);
+            if(javaCapture!=null){
+                r.stage="captured-native-context";var root=Workspace.safe(resolve(javaCapture));
+                if(root.startsWith(sourcePath))throw new InputFailure("CAPTURE_REGISTRATION_INSIDE_TARGET");
+                var expected=new CapturedJavaScan.Expected(repo,acquisition.snapshot().orElseThrow().identity(),readiness.identity());
+                CapturedJavaScan.Result nativeResult;
+                try{nativeResult=new CapturedJavaScan().run(root,expected,r.storage().root.resolve("captured-java"),()->Thread.currentThread().isInterrupted());}
+                catch(IOException failure){String code=failure.getMessage();throw new InputFailure(code!=null&&code.matches("(?:SCAN_CAPTURE|CAPTURED_JAVA)_[A-Z_]+")?code:"CAPTURED_JAVA_INPUT_UNAVAILABLE");}
+                var outcome=nativeResult.outcome();var data=new TreeMap<String,Object>();
+                data.put("status",outcome.completion());data.put("acquisition",acquisitionInfo);data.put("selection",selection);
+                data.put("execution",Map.of("mode","CAPTURED_NATIVE_EVIDENCE","isolatedBuildExecuted",false,"capture",nativeResult.capture(),"qualification",nativeResult.qualification()));
+                if(outcome.graph().isEmpty())return emit(r,"scan",envelope(data),1);
+                var graph=outcome.graph().orElseThrow();var selected=autoContext(graph);boolean usable=outcome.completion()!=com.evolution.backend.analysis.AnalysisJobs.Completion.FAILED;
+                if(usable)r.storage().select(graph,selected);else r.storage().publish(graph);
+                data.put("semanticDepth",SemanticDepth.summarize(graph));data.put("graph",graph.identity());data.put("contexts",contextRows(graph));data.put("selectedContext",selected);data.put("snapshotSelected",usable);
+                data.put("gapSummary",Map.of("total",outcome.gaps().size(),"byReason",reasonCounts(outcome.gaps(),g->g.reasonCode()),"records","raw canonical graph"));
+                if(usable&&interactiveDefaults!=null){interactiveDefaults.graph=null;interactiveDefaults.context=null;sessionGraph=graph;}
+                return emit(r,"scan",envelope(data),!usable?1:outcome.completion()==com.evolution.backend.analysis.AnalysisJobs.Completion.COMPLETE?0:3);
+            }
             progress(r,"[2/4] Capturing exact JDK symbols…","[2/4] Thu nhận symbol JDK…");
             r.stage="platform";
             var platform=new FilesystemJdkPlatformProvider().acquire(Workspace.safe(resolve(jdk)),new PlatformSymbolRequest(release,128,128_000_000,512_000_000));var defaults=UniversalBuildIngestion.Policy.defaults();
@@ -498,6 +609,8 @@ public final class EvoApp {
             var detailed=new UniversalArchitecturePipeline().runWithEvidence(acquisition,policy);var data=new TreeMap<String,Object>();data.put("status",detailed.report().status());data.put("reportIdentity",detailed.report().identity());data.put("gaps",detailed.report().gaps());
             data.put("acquisition",acquisitionInfo);data.put("selection",selection);data.put("metrics",detailed.report().metrics());
             data.put("dependencies",mavenInputs.summary());
+            data.put("execution",nativeBuild!=null&&nativeBuild.requested()>0?Map.of("mode","ISOLATED_BUILD_ATTEMPT_WITH_SOURCE_ANALYSIS","isolatedBuildExecuted",nativeBuild.executed()>0,"launchDisposition",nativeBuild.executed()==nativeBuild.requested()?"PROTECTED_GUEST_LAUNCHER_RETURNED":"UNKNOWN"):Map.of("mode","PASSIVE","isolatedBuildExecuted",false));
+            if(nativeBuild!=null)data.put("nativeBuild",nativeBuild);
             data.put("readiness",Map.of("identity",readiness.identity(),"selection",readiness.selection().identity(),"roots",readiness.roots().size(),"contexts",readiness.contexts().size(),"requirements",readiness.requirements().size(),"ownership",readiness.ownership()));
             var scanGaps=new TreeSet<>(detailed.report().gaps());scanGaps.addAll(mavenInputs.gaps());scanGaps.addAll(readiness.gaps(acquisition.snapshot().orElseThrow().identity()));data.put("gaps",List.copyOf(scanGaps));
             if(!scanGaps.isEmpty()&&detailed.report().status()==UniversalArchitectureReport.Status.COMPLETE)data.put("status","PARTIAL");
@@ -508,6 +621,7 @@ public final class EvoApp {
             if(detailed.graphInput().isPresent()){
                 r.stage="graph";progress(r,"[4/4] Saving a verified snapshot…","[4/4] Lưu snapshot đã kiểm tra…");var input=detailed.graphInput().orElseThrow();
                 var graph=new CanonicalGraphBuilder().build(new CanonicalGraphInput(input.repository(),input.build(),input.ingestion(),input.spring(),input.issues(),List.copyOf(scanGaps),input.acquisition(),input.javaEvidence()));
+                data.put("semanticDepth",SemanticDepth.summarize(detailed,graph));
                 if(r.debug){err.println("[DEBUG] graph nodes="+graph.nodes().size()+" edges="+graph.edges().size()+" evidence="+graph.evidence().size()+" payloadChars="+graph.evidence().stream().mapToLong(e->e.canonicalJson().length()).sum());for(var e:graph.evidence().stream().sorted(Comparator.comparingInt((GraphEvidence e)->e.canonicalJson().length()).reversed()).limit(4).toList())err.println("  "+e.family()+" chars="+e.canonicalJson().length());}
                 boolean usable=detailed.report().status()!=UniversalArchitectureReport.Status.TERMINAL_FAILURE;Optional<String> selected=usable?autoContext(graph):Optional.empty();r.stage="storage";
                 if(usable)r.storage().select(graph,selected);else r.storage().publish(graph);

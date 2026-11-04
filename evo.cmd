@@ -9,9 +9,9 @@ rem Match EvoMain's UTF-8 streams, then restore the caller's console code page.
 for /f "tokens=2 delims=:" %%C in ('chcp') do set "EVO_CODEPAGE=%%C"
 chcp 65001 >nul 2>&1
 if defined JAVA_HOME (
-  "%JAVA_HOME%\bin\java.exe" -Xmx4g -Dfile.encoding=UTF-8 -jar "%EVO_JAR%" %*
+  "%JAVA_HOME%\bin\java.exe" -Dfile.encoding=UTF-8 -jar "%EVO_JAR%" %*
 ) else (
-  java -Xmx4g -Dfile.encoding=UTF-8 -jar "%EVO_JAR%" %*
+  java -Dfile.encoding=UTF-8 -jar "%EVO_JAR%" %*
 )
 set "EVO_EXIT=%errorlevel%"
 if defined EVO_CODEPAGE chcp %EVO_CODEPAGE% >nul 2>&1

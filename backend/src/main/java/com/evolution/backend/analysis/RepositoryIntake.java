@@ -25,6 +25,8 @@ public final class RepositoryIntake implements AutoCloseable {
     }
     public RepositoryIntake(Path root,boolean readOnly)throws IOException{this.root=root.toAbsolutePath().normalize();content=new StreamingContentStore(this.root.resolve("content"));inventory=new SqliteInventoryStore(this.root.resolve("metadata"),content,readOnly);}
     public InventoryReader inventory(){return inventory;}
+    /** Immutable captured bytes for isolated build transport; never a mutable host source view. */
+    public RepositoryContentStore content(){return content;}
     public JobJournal journal(){return inventory;}
     public ReadinessPlan readiness(String revision,ReadinessPlanner.Policy policy,BooleanSupplier cancelled)throws IOException{
         if(cancelled.getAsBoolean()||Thread.currentThread().isInterrupted())throw new IOException("READINESS_CANCELLED");

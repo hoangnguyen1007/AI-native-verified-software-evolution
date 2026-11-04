@@ -7,6 +7,30 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 class BridgeAssemblyTest {
+    @Test void grpcAndMessagingDeclarationsJoinAcrossPartitionsWithoutInventingMissingOperands()throws Exception{
+        for(var profile:List.of(ArchitectureBridges.Profile.B03,ArchitectureBridges.Profile.B04)){
+            var f=new ArchitectureBridgesTest.Fixture();f.pair(profile);
+            f.requirements.clear();f.require("native-call","client",profile,Optional.of(profile+".client"),List.of());
+            var input=new BridgeAssembly(f.tables,20).assemble(f.root,f.inventory,f.policy,fragments(f).iterator(),new ArchitectureBridgesTest.Index(),()->false);
+            assertEquals(1,ArchitectureBridges.requirement(f.read(input.requirements()).getFirst().fields()).candidates().size(),profile.toString());
+            var result=new ArchitectureBridges(f.content,f.tables,65536,20).reconcile(input,new ArchitectureBridgesTest.Index(),Set.of(),()->f.policy,()->false);
+            assertEquals(1L,result.counts().get("BOUND"),"Only fully supplied declaration operands may bind");
+            var target=f.endpoints.removeLast();var endpoint=ArchitectureBridges.endpoint(target.fields());var changed=new TreeMap<>(endpoint.descriptor());
+            changed.put(profile==ArchitectureBridges.Profile.B03?"operation":"namespace","other");
+            f.endpoint(target.key(),endpoint.partition(),profile,endpoint.direction(),endpoint.status(),changed,endpoint.condition());
+            var mismatch=new BridgeAssembly(f.tables,20).assemble(f.root,f.inventory,f.policy,fragments(f).iterator(),new ArchitectureBridgesTest.Index(),()->false);
+            assertTrue(ArchitectureBridges.requirement(f.read(mismatch.requirements()).getFirst().fields()).candidates().isEmpty());
+        }
+    }
+
+    @Test void aTopicNameAloneCannotCreateACrossBrokerBinding()throws Exception{
+        var f=new ArchitectureBridgesTest.Fixture();var condition=new ArchitectureBridges.Condition(f.domain,Map.of(),false);
+        f.endpoint("publish","client",ArchitectureBridges.Profile.B04,"REQUIRES","CANDIDATES",Map.of("channel","orders"),condition);
+        f.endpoint("listen","server",ArchitectureBridges.Profile.B04,"PROVIDES","RESOLVED",Map.of("channel","orders"),condition);
+        f.require("need","client",ArchitectureBridges.Profile.B04,Optional.of("publish"),List.of());
+        var input=new BridgeAssembly(f.tables,20).assemble(f.root,f.inventory,f.policy,fragments(f).iterator(),new ArchitectureBridgesTest.Index(),()->false);
+        assertTrue(ArchitectureBridges.requirement(f.read(input.requirements()).getFirst().fields()).candidates().isEmpty());
+    }
     @Test void indexedJoinReadsMatchingBucketsInsteadOfEveryEndpointPerCall()throws Exception{
         var f=new ArchitectureBridgesTest.Fixture();var condition=new ArchitectureBridges.Condition(f.domain,Map.of(),false);
         for(int i=0;i<1000;i++)f.endpoint("operation."+i,"server",ArchitectureBridges.Profile.B02,"PROVIDES","RESOLVED",Map.of("method","GET","path","/item/"+i),condition);

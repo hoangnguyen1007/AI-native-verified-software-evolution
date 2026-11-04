@@ -55,7 +55,9 @@ public record GraphEvidence(ContentDigest identity, String family, String canoni
         if(value.get("snapshot")!=null) {var snapshot=new TreeMap<>(GraphJson.object(value.get("snapshot")));removeSnapshotLabels(snapshot);value.put("snapshot",snapshot);}
     }
     private static ContentDigest digest(String family,String json) {
-        return ContentDigest.sha256Utf8(CanonicalJson.write(List.of("graph.evidence:m5.1-v1",family,json)));
+        var preimage=List.of("graph.evidence:m5.1-v1",family,json);
+        // Small records avoid a per-record encoder buffer; large payloads avoid a second full string.
+        return json.length()<8192?ContentDigest.sha256Utf8(CanonicalJson.write(preimage)):CanonicalJson.sha256(preimage);
     }
     /** Records/canonical forms only; no arbitrary fields or polymorphic deserialization. */
     static Object form(Object value,int depth) {
