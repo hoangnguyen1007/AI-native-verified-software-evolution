@@ -84,7 +84,7 @@ final class ReferenceResolution {
     }
     /** JLS 15.13.2/9.9: references use the non-wildcard ground target.
      * Do not erase a wildcard nested inside a SAM parameter (e.g. List<? super T>). */
-    private ResolvedType groundTarget(ResolvedType target) {
+    ResolvedType groundTarget(ResolvedType target) {
         if(!target.isReferenceType())throw new UnsolvedSymbolException("functional target");
         var view=target.asReferenceType();var declaration=view.getTypeDeclaration().orElseThrow();
         var values=new ArrayList<ResolvedType>();

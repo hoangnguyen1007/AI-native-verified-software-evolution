@@ -16,7 +16,7 @@ import static com.evolution.analysis.ingestion.IngestionEvidence.Reason.*;
 
 /** Passive repository configuration ingestion. The policy explicitly selects one application's locations. */
 public final class ConfigDataIngestion {
-    public static final VersionedIdentifier PROVIDER = new VersionedIdentifier("spring.config-data-ingestion", "m4uv2.2-configtree-v1");
+    public static final VersionedIdentifier PROVIDER = new VersionedIdentifier("spring.config-data-ingestion", "m8.4-lazy-placeholders-v2");
     public record Policy(List<String> locations, List<String> activeProfiles, Map<String,String> overrides,
                          int maxDocuments, int maxCharacters, int maxDepth, int maxProperties) {
         public Policy {
@@ -446,8 +446,16 @@ public final class ConfigDataIngestion {
                 else if (value.charAt(end)=='}') nesting--;
             }
             if (nesting!=0) throw new IllegalArgumentException("Unclosed placeholder");
-            String expression=resolve(value.substring(start+2,end-1),properties,path,budget-1,maxChars);
-            int colon=expression.indexOf(':'); String key=colon<0?expression:expression.substring(0,colon);
+            String expression=value.substring(start+2,end-1);
+            int colon=-1,level=0;
+            for(int p=0;p<expression.length();p++) {
+                if(expression.startsWith("${",p)){level++;p++;}
+                else if(expression.charAt(p)=='}')level--;
+                else if(expression.charAt(p)==':'&&level==0){colon=p;break;}
+            }
+            // Resolve a dynamic selector first, and its default only when the key is absent.
+            // An unavailable/cyclic unused default cannot invalidate a captured value.
+            String key=resolve(colon<0?expression:expression.substring(0,colon),properties,path,budget-1,maxChars);
             if (!path.add(key)) throw new IllegalArgumentException("Placeholder cycle");
             String replacement=properties.get(key);
             if (replacement==null && colon>=0) replacement=expression.substring(colon+1);

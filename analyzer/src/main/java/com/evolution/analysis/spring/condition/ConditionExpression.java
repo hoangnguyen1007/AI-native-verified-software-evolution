@@ -20,7 +20,7 @@ public final class ConditionExpression {
     public sealed interface Operand permits Constant, Profile, Property, Web, Build, Bean, Opaque, None, BasicSpel {}
     /** Additive M4U.2 operand; existing expression identity preimages remain unchanged. */
     public record BasicSpel(String expression,VersionedIdentifier policy) implements Operand {
-        public BasicSpel(String expression){this(expression,new VersionedIdentifier("spring.basic-spel","m4u.2-v1"));}
+        public BasicSpel(String expression){this(expression,com.evolution.analysis.spring.universal.BasicSpelEvaluator.POLICY);}
         public BasicSpel {expression=ConditionIdentitySupport.raw(expression);Objects.requireNonNull(policy);}
     }
     public record Constant(LogicalValue value) implements Operand { public Constant { Objects.requireNonNull(value); } }

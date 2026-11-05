@@ -10,6 +10,25 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class FileAnalysisWorkspaceTest {
     @TempDir Path directory;
+    @Test void nestedReplayListsCannotMoveTheAppendWriterOrCorruptTheirSourceRows()throws Exception {
+        try(var spool=new FileAnalysisWorkspace(directory)) {
+            var original=spool.<String>list();original.add("original");var replay=spool.freeze(original);
+            var separate=spool.<String>list();separate.add("must survive nested replay");
+            var nested=spool.<List<String>>list();nested.add(replay);
+            assertEquals(List.of("original"),nested.getFirst());assertEquals("original",replay.getFirst());
+            assertEquals("must survive nested replay",separate.getFirst());
+        }
+    }
+    @Test void distinctReusesVerifiedRowBytesAndKeepsFirstWinnerAndJavaOrdering()throws Exception {
+        try(var spool=new FileAnalysisWorkspace(directory)) {
+            var rows=spool.<String>list();rows.addAll(List.of("b-first","a-first","b-second"));var replay=spool.freeze(rows);
+            Path bytes;try(var paths=Files.walk(directory)){bytes=paths.filter(p->p.toString().endsWith("values.bin")).findFirst().orElseThrow();}
+            long original=Files.size(bytes);var distinct=spool.distinct(replay,s->s.substring(0,1));
+            assertEquals(List.of("a-first","b-first"),distinct);
+            assertEquals(original,Files.size(bytes),"Sorting/deduplication of stored rows must alias authenticated bytes instead of re-encoding them twice");
+            Files.writeString(bytes,"corrupt");assertThrows(IllegalStateException.class,distinct::getFirst);
+        }
+    }
     @Test void diskRowsReplayExactlySealAndSortWithoutKeepingCallerObjects()throws Exception {
         List<IngestionEvidence.Issue> replay;
         try(var spool=new FileAnalysisWorkspace(directory)){

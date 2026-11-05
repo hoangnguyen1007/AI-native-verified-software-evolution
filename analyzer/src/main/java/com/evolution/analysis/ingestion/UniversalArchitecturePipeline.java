@@ -35,8 +35,10 @@ import javax.xml.stream.*;
  */
 public final class UniversalArchitecturePipeline {
     private final AnalysisWorkspace workspace;
+    private final int aggregationWorkers;
     public UniversalArchitecturePipeline(){this(AnalysisWorkspace.MEMORY);}
-    public UniversalArchitecturePipeline(AnalysisWorkspace workspace){this.workspace=Objects.requireNonNull(workspace);}
+    public UniversalArchitecturePipeline(AnalysisWorkspace workspace){this(workspace,workspace.concurrentTables()?com.evolution.analysis.concurrent.BoundedTasks.automaticWorkers():1);}
+    public UniversalArchitecturePipeline(AnalysisWorkspace workspace,int aggregationWorkers){this.workspace=Objects.requireNonNull(workspace);if(aggregationWorkers<1||aggregationWorkers>8||aggregationWorkers>1&&!workspace.concurrentTables())throw new IllegalArgumentException("Aggregation workers require a compatible workspace and 1..8 admission");this.aggregationWorkers=aggregationWorkers;}
     public static final VersionedIdentifier PROVIDER =
             new VersionedIdentifier("architecture.pipeline", "m8.4-spooled-recovery-v3");
 
@@ -491,7 +493,11 @@ public final class UniversalArchitecturePipeline {
 
         // Process units
         int analyzedUnitsCount = 0;
+        long failedUnitsCount = 0;
+        boolean completedFrontends = true;
         for (var unit : pipelineResult.units()) {
+            if (unit.status() == UniversalIngestionPipeline.Status.FAILED || unit.status() == UniversalIngestionPipeline.Status.REJECTED) failedUnitsCount++;
+            if (unit.frontend().isPresent() && unit.frontend().orElseThrow().state() != FrontendResult.State.COMPLETED) completedFrontends = false;
             if (unit.status() == UniversalIngestionPipeline.Status.ANALYZED && unit.frontend().isPresent()) {
                 analyzedUnitsCount++;
                 var frontend = unit.frontend().get();
@@ -914,41 +920,42 @@ public final class UniversalArchitecturePipeline {
         // Scan legacy XML configurations (beans, properties, web.xml servlets)
         scanXmlConfigurations(inputs, components, injectionSites, entryPoints);
 
-        // Deduplicate records
-        var distinctTypes = workspace.distinct(types, UniversalArchitectureReport.TypeRecord::qualifiedName);
-        var distinctDeps = workspace.distinct(dependencies, d -> d.source() + "->" + d.target() + ":" + d.kind());
-
-        var componentMap = new LinkedHashMap<String, UniversalArchitectureReport.ComponentRecord>();
-        for (var c : components) {
-            String key = c.declaringType().isEmpty() ? c.identity() : c.declaringType();
-            componentMap.merge(key, c, (oldC, newC) -> {
-                if (oldC.stereotype().equals("COMPONENT") && !newC.stereotype().equals("COMPONENT")) {
-                    return newC;
-                }
-                return oldC;
+        // Independent, pure-key groups run concurrently. Each group retains its
+        // original row order/first-winner rules and owns a separate output table.
+        List<UniversalArchitectureReport.TypeRecord> distinctTypes;
+        List<UniversalArchitectureReport.DependencyRecord> distinctDeps;
+        List<UniversalArchitectureReport.ComponentRecord> distinctComponents;
+        List<UniversalArchitectureReport.ProducerRecord> distinctProducers;
+        List<UniversalArchitectureReport.InjectionSiteRecord> distinctInjectionSites;
+        List<UniversalArchitectureReport.EntryPointRecord> distinctEntryPoints;
+        List<UniversalArchitectureReport.TruthRegionSummary> distinctTruthRegions;
+        List<IngestionEvidence.Issue> sortedIssues;
+        try(var work=new com.evolution.analysis.concurrent.BoundedTasks(aggregationWorkers,8,"evo-report",()->Thread.currentThread().isInterrupted())) {
+            var typeTask=work.submit(()->workspace.distinct(types,UniversalArchitectureReport.TypeRecord::qualifiedName));
+            var dependencyTask=work.submit(()->workspace.distinct(dependencies,d->d.source()+"->"+d.target()+":"+d.kind()));
+            var componentTask=work.submit(()->{
+                var merged=new LinkedHashMap<String,UniversalArchitectureReport.ComponentRecord>();
+                for(var c:components){if(Thread.currentThread().isInterrupted())throw new java.util.concurrent.CancellationException();
+                    merged.merge(c.declaringType().isEmpty()?c.identity():c.declaringType(),c,(oldC,newC)->oldC.stereotype().equals("COMPONENT")&&!newC.stereotype().equals("COMPONENT")?newC:oldC);}
+                return merged.values().stream().sorted(Comparator.comparing(UniversalArchitectureReport.ComponentRecord::identity)).toList();
             });
+            var producerTask=work.submit(()->workspace.distinct(producers,p->p.factoryType()+"#"+p.methodName()+":"+p.beanName()));
+            var injectionTask=work.submit(()->workspace.distinct(injectionSites,com.evolution.analysis.contract.serialization.CanonicalJson::write));
+            var entryTask=work.submit(()->workspace.distinct(entryPoints,e->e.declaringType()+":"+e.detail()));
+            var truthTask=work.submit(()->workspace.distinct(truthRegions,UniversalArchitectureReport.TruthRegionSummary::factKey));
+            var issueTask=work.submit(()->workspace.distinct(allIssues,i->i.identity().value()));
+            distinctTypes=typeTask.await();distinctDeps=dependencyTask.await();distinctComponents=componentTask.await();
+            distinctProducers=producerTask.await();distinctInjectionSites=injectionTask.await();distinctEntryPoints=entryTask.await();
+            distinctTruthRegions=truthTask.await();sortedIssues=issueTask.await();
         }
-        var distinctComponents = componentMap.values().stream()
-                .sorted(Comparator.comparing(UniversalArchitectureReport.ComponentRecord::identity))
-                .toList();
-
-        var distinctProducers = workspace.distinct(producers, p -> p.factoryType() + "#" + p.methodName() + ":" + p.beanName());
-        var distinctInjectionSites = workspace.distinct(injectionSites, com.evolution.analysis.contract.serialization.CanonicalJson::write);
-        var distinctEntryPoints = workspace.distinct(entryPoints, e -> e.declaringType() + ":" + e.detail());
-        var distinctTruthRegions = workspace.distinct(truthRegions, UniversalArchitectureReport.TruthRegionSummary::factKey);
 
         // Group root causes
-        var sortedIssues = workspace.distinct(allIssues,i->i.identity().value());
         var gapRows=workspace.<CapabilityGapRecord>list();gapRows.addAll(allGaps);
         var sortedGaps = javaGraph.map(value->value.activeGaps(allGaps)).orElseGet(()->workspace.freeze(gapRows));
         var rootCauses = classifyRootCauses(sortedIssues, sortedGaps);
 
         // Status determination
         UniversalArchitectureReport.Status status;
-        long failedUnitsCount = pipelineResult.units().stream()
-                .filter(u -> u.status() == UniversalIngestionPipeline.Status.FAILED || u.status() == UniversalIngestionPipeline.Status.REJECTED)
-                .count();
-        boolean completedFrontends=pipelineResult.units().stream().flatMap(u->u.frontend().stream()).allMatch(f->f.state()==FrontendResult.State.COMPLETED);
         if (analyzedUnitsCount > 0 && failedUnitsCount == 0 && completedFrontends && sortedIssues.isEmpty() && sortedGaps.isEmpty()
                 &&(prepared.isEmpty()||javaGraph.orElseThrow().closedGapDenominator())) {
             status = UniversalArchitectureReport.Status.COMPLETE;

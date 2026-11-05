@@ -28,6 +28,7 @@ class SpoolSpringTest {
                 @org.springframework.web.bind.annotation.RestController class Api {
                   Api(Store store) {}
                   @org.springframework.web.bind.annotation.GetMapping("/items") String items(){return "ok";}
+                  String remote(org.springframework.web.client.RestTemplate client){return client.getForObject("/items",String.class);}
                 }
                 """);
         Files.createDirectories(source.resolve("src/test/java/test"));
@@ -53,6 +54,7 @@ class SpoolSpringTest {
         assertTrue(expected.graphInput().orElseThrow().spring().stream().flatMap(s->s.plan().gaps().stream()).noneMatch(g->foreign.contains(g.gapIdentity())),"A Spring plan must not multiply unrelated contexts' gaps");
         try(var spool=new FileAnalysisWorkspace(directory.resolve("scratch"))){
             var actual=new UniversalArchitecturePipeline(spool).runWithEvidence(acquisition,policy);
+            assertEquals(1,actual.graphInput().orElseThrow().ingestion().orElseThrow().units().stream().flatMap(u->u.frontend().stream()).mapToInt(f->f.httpClientCalls().size()).sum());
             assertEquals(expected.report().identity(),actual.report().identity());
             var pages=new PartitionedGraphStore(directory.resolve("pages")).build(actual.graphInput().orElseThrow(),directory.resolve("snapshots"),()->false);
             assertEquals(new CanonicalGraphBuilder().build(expected.graphInput().orElseThrow()).identity(),pages.graph());

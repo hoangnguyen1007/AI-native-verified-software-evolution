@@ -12,7 +12,7 @@ import java.util.*;
 
 /** Separate identities for canonical Java meaning and its captured audit binding. */
 public final class JavaSemanticProjection {
-    public static final VersionedIdentifier VERSION=new VersionedIdentifier("java.captured-semantic-projection","m8.4-v1");
+    public static final VersionedIdentifier VERSION=new VersionedIdentifier("java.captured-semantic-projection","m8.4-http-members-v2");
     // Only these documented reference fields are replaced by their typed semantic inputs.
     // Every other option, diagnostic and uncertainty is preserved byte-for-byte.
     private static final Set<String> REFERENCES=Set.of("java.evidence-view","java.generated-overlay","java.base-inventory","java.base-snapshot",
@@ -77,6 +77,7 @@ public final class JavaSemanticProjection {
         var derived=new ArrayList<DerivedRelationshipRecord>();for(var d:actual.derivedRelationships())derived.add(new DerivedRelationshipRecord(d.relationship(),d.status(),normalizer.derivation(d.derivation()),d.supportingSpans(),d.uncertainties(),d.diagnostics()));
         facts.put("declarations",declarations);facts.put("occurrences",occurrences);facts.put("derivedRelationships",derived);
         facts.put("observations",actual.observations());facts.put("sources",actual.sources());facts.put("coverage",actual.coverage());facts.put("diagnostics",actual.diagnostics());
+        facts.put("httpClientCalls",actual.httpClientCalls());facts.put("constructorCandidates",actual.constructorCandidates());
         facts.put("types",actual.types());facts.put("annotations",actual.annotations());facts.put("typeDeclarations",actual.typeDeclarations());facts.put("memberDeclarations",actual.memberDeclarations());
         facts.put("semanticReferences",normalizer.references.entrySet().stream().map(e->Map.of("identity",e.getKey(),"body",e.getValue())).toList());
         String canonical=CanonicalJson.write(facts);var semantic=ContentDigest.sha256Utf8(canonical);
@@ -98,7 +99,7 @@ public final class JavaSemanticProjection {
         var declarations=new ArrayList<DeclarationRecord>();for(var d:actual.declarations())declarations.add(new DeclarationRecord(d.entity(),d.spelling(),d.status(),normalizer.derivation(d.derivation()),d.uncertainties(),d.diagnostics()));
         var occurrences=new ArrayList<RelationshipOccurrence>();for(var o:actual.occurrences())occurrences.add(new RelationshipOccurrence(o.identity(),o.relationship(),o.span(),o.ordinal(),o.status(),normalizer.derivation(o.derivation()),o.uncertainties(),o.diagnostics()));
         var derived=new ArrayList<DerivedRelationshipRecord>();for(var d:actual.derivedRelationships())derived.add(new DerivedRelationshipRecord(d.relationship(),d.status(),normalizer.derivation(d.derivation()),d.supportingSpans(),d.uncertainties(),d.diagnostics()));
-        return new FrontendResult(analysis,actual.frontend(),actual.state(),declarations,occurrences,actual.observations(),actual.sources(),actual.coverage(),actual.diagnostics(),actual.types(),actual.annotations(),derived,actual.typeDeclarations(),actual.memberDeclarations());
+        return new FrontendResult(analysis,actual.frontend(),actual.state(),declarations,occurrences,actual.observations(),actual.sources(),actual.coverage(),actual.diagnostics(),actual.types(),actual.annotations(),derived,actual.typeDeclarations(),actual.memberDeclarations(),actual.constructorCandidates(),actual.httpClientCalls());
     }
     static Object semanticSlot(JavaEvidenceRecord slot)throws IOException{return Normalizer.semanticSlot(slot);}
     private static Map<String,Object> read(GraphEvidence evidence){return GraphJson.object(GraphJson.read(evidence.canonicalJson(),GraphJson.Limits.defaults()));}

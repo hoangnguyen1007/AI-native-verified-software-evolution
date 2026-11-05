@@ -15,6 +15,7 @@ import java.util.function.Function;
  * SHA-256 row checks. Only classes encountered in this process may be reconstructed;
  * input bytes cannot name or load a class. This is scratch state, never an evidence format. */
 public final class FileAnalysisWorkspace implements AnalysisWorkspace, AutoCloseable {
+    @Override public boolean concurrentTables(){return true;}
     private final Path directory;
     private final Connection db;
     private final RandomAccessFile data;
@@ -22,6 +23,8 @@ public final class FileAnalysisWorkspace implements AnalysisWorkspace, AutoClose
     private final Map<String,PreparedStatement> queries=new HashMap<>();
     private final List<Class<?>> classes=new ArrayList<>();
     private final Map<Class<?>,Integer> classIds=new HashMap<>();
+    private record RecordCodec(Method[] accessors,Constructor<?> constructor) {}
+    private final Map<Class<?>,RecordCodec> codecs=new HashMap<>();
     private int sequence;
     private boolean closed;
     public FileAnalysisWorkspace(Path parent)throws IOException {
@@ -31,10 +34,12 @@ public final class FileAnalysisWorkspace implements AnalysisWorkspace, AutoClose
             db=DriverManager.getConnection("jdbc:sqlite:"+directory.resolve("index.sqlite"));
             try(var s=db.createStatement()){
                 s.execute("PRAGMA journal_mode=OFF");s.execute("PRAGMA synchronous=OFF");s.execute("PRAGMA cache_size=-2048");
+                s.execute("PRAGMA temp_store=FILE");
                 s.execute("CREATE TABLE rows(space INTEGER, ordinal INTEGER, key TEXT, start INTEGER, length INTEGER, digest BLOB, PRIMARY KEY(space,ordinal))");
                 s.execute("CREATE UNIQUE INDEX row_keys ON rows(space,key)");
             }
             db.setAutoCommit(false);
+            org.sqlite.ProgressHandler.setHandler(db,1000,new org.sqlite.ProgressHandler(){protected int progress(){return Thread.currentThread().isInterrupted()?1:0;}});
         } catch(SQLException failed){throw new IOException("ANALYSIS_SPOOL_OPEN_FAILED",failed);}
     }
     private void requireOpen(){if(closed)throw new IllegalStateException("ANALYSIS_SPOOL_CLOSED");if(Thread.currentThread().isInterrupted())throw new java.util.concurrent.CancellationException();}
@@ -46,7 +51,7 @@ public final class FileAnalysisWorkspace implements AnalysisWorkspace, AutoClose
             @SuppressWarnings("unchecked") var owned=(Rows<T>)raw;
             if(owned.owner()!=this)throw new IllegalArgumentException("FOREIGN_ANALYSIS_SPOOL");
             owned.sealed=true;int size=owned.size;
-            return new ReplayList<>(){public int size(){requireOpen();return size;}public T get(int index){Objects.checkIndex(index,size);return read(owned.space,index);}};
+            return new ReplayRows<>(owned.space,size);
         }
         return ReplayList.copy(rows);
     }
@@ -58,19 +63,38 @@ public final class FileAnalysisWorkspace implements AnalysisWorkspace, AutoClose
         };set.addAll(initial);return set;
     }
     @Override public <T> List<T> distinct(Collection<T> rows,Function<T,String> key){
-        int space=space();for(var row:rows)insertKey(space,key.apply(row),row);
-        var out=this.<T>list();for(T row:this.<T>ordered(space))out.add(row);return freeze(out);
+        int space=space(),source=-1;
+        if(rows instanceof FileAnalysisWorkspace.Rows<?> owned&&owned.owner()==this)source=owned.space;
+        if(rows instanceof FileAnalysisWorkspace.ReplayRows<?> owned&&owned.owner()==this)source=owned.space;
+        if(source>=0)for(int i=0;i<rows.size();i++){var stored=this.<T>readStored(source,i);insertAlias(space,key.apply(stored.value()),stored.location());}
+        else for(var row:rows)insertKey(space,key.apply(row),row);
+        int output=space();
+        synchronized(this){requireOpen();try {
+            var q=query("INSERT INTO rows SELECT ?,ROW_NUMBER() OVER (ORDER BY key)-1,NULL,start,length,digest FROM rows WHERE space=?");
+            q.setInt(1,output);q.setInt(2,space);q.executeUpdate();sizes.put(output,count(space));
+        }catch(SQLException failed){throw failure(failed);}}
+        return new ReplayRows<>(output,count(output));
+    }
+    private record Location(long start,long length,byte[] digest) {}
+    private record Stored<T>(T value,Location location) {}
+    private synchronized void insertAlias(int space,String key,Location location) {
+        requireOpen();try {
+            var q=query("INSERT OR IGNORE INTO rows VALUES(?,?,?,?,?,?)");
+            q.setInt(1,space);q.setInt(2,count(space));q.setString(3,orderedKey(key));q.setLong(4,location.start());q.setLong(5,location.length());q.setBytes(6,location.digest());
+            if(q.executeUpdate()>0)sizes.put(space,count(space)+1);
+        }catch(SQLException failed){throw failure(failed);}
     }
     private synchronized int count(int space){requireOpen();return sizes.get(space);}
     private synchronized boolean insertKey(int space,String key,Object value){
         // SQLite UTF-8 collation differs from String.compareTo around supplementary
         // characters. UTF-16 code-unit hex preserves the contract's Java ordering.
-        var encoded=new StringBuilder(key.length()*4);for(int i=0;i<key.length();i++){int c=key.charAt(i);for(int shift=12;shift>=0;shift-=4)encoded.append(Character.forDigit((c>>>shift)&15,16));}key=encoded.toString();
+        key=orderedKey(key);
         requireOpen();try{var q=query("SELECT 1 FROM rows WHERE space=? AND key=?");
             q.setInt(1,space);q.setString(2,key);try(var r=q.executeQuery()){if(r.next())return false;}
             write(space,count(space),key,value);return true;
         }catch(SQLException failed){throw failure(failed);}
     }
+    private static String orderedKey(String key){var encoded=new StringBuilder(key.length()*4);for(int i=0;i<key.length();i++){int c=key.charAt(i);for(int shift=12;shift>=0;shift-=4)encoded.append(Character.forDigit((c>>>shift)&15,16));}return encoded.toString();}
     private <T> Iterable<T> ordered(int space){
         return ()->new Iterator<>(){
             String after;boolean done;Integer next;
@@ -92,6 +116,12 @@ public final class FileAnalysisWorkspace implements AnalysisWorkspace, AutoClose
         public boolean add(T value){if(sealed)throw new UnsupportedOperationException();write(space,size,null,value);size++;return true;}
         public T set(int index,T value){if(sealed)throw new UnsupportedOperationException();Objects.checkIndex(index,size);T previous=get(index);write(space,index,null,value);return previous;}
     }
+    private final class ReplayRows<T> extends ReplayList<T> {
+        final int space,size;ReplayRows(int space,int size){this.space=space;this.size=size;}
+        FileAnalysisWorkspace owner(){return FileAnalysisWorkspace.this;}
+        public int size(){requireOpen();return size;}
+        public T get(int index){Objects.checkIndex(index,size);return read(space,index);}
+    }
     private synchronized void write(int space,int index,String key,Object value){
         requireOpen();
         try {
@@ -102,26 +132,35 @@ public final class FileAnalysisWorkspace implements AnalysisWorkspace, AutoClose
             sizes.put(space,Math.max(sizes.get(space),index+1));
         }catch(IOException|SQLException failed){throw failure(failed);}
     }
-    @SuppressWarnings("unchecked") private synchronized <T> T read(int space,int index){
+    private <T> T read(int space,int index){return this.<T>readStored(space,index).value();}
+    @SuppressWarnings("unchecked") private synchronized <T> Stored<T> readStored(int space,int index){
         requireOpen();try{var q=query("SELECT start,length,digest FROM rows WHERE space=? AND ordinal=?");
             q.setInt(1,space);q.setInt(2,index);try(var r=q.executeQuery()){
                 if(!r.next())throw new IllegalStateException("ANALYSIS_SPOOL_ROW_MISSING");long start=r.getLong(1),length=r.getLong(2);byte[] expected=r.getBytes(3);
                 var digest=sha256();try(var in=new DigestInputStream(slice(start,length),digest)){in.transferTo(OutputStream.nullOutputStream());}
                 if(!MessageDigest.isEqual(digest.digest(),expected))throw new IOException("ANALYSIS_SPOOL_HASH_MISMATCH");
-                try(var in=new DataInputStream(new BufferedInputStream(slice(start,length),65536))){Object value=decode(in);if(in.read()!=-1)throw new IOException("ANALYSIS_SPOOL_TRAILING_BYTES");return (T)value;}
+                try(var in=new DataInputStream(new BufferedInputStream(slice(start,length),65536))){Object value=decode(in);if(in.read()!=-1)throw new IOException("ANALYSIS_SPOOL_TRAILING_BYTES");return new Stored<>((T)value,new Location(start,length,expected));}
             }
         }catch(IOException|SQLException failed){throw failure(failed);}
     }
     private InputStream slice(long start,long size)throws IOException {
         if(start<0||size<0||start>data.length()-size)throw new IOException("ANALYSIS_SPOOL_RANGE");
-        data.seek(start);return new InputStream(){long remaining=size;
-            public int read()throws IOException{if(remaining==0)return -1;int b=data.read();if(b<0)throw new EOFException();remaining--;return b;}
-            public int read(byte[] b,int off,int len)throws IOException{if(remaining==0)return -1;int n=data.read(b,off,(int)Math.min(remaining,len));if(n<0)throw new EOFException();remaining-=n;return n;}
+        return new InputStream(){long remaining=size,position=start;final byte[] single=new byte[1];
+            public int read()throws IOException{int n;do{n=read(single,0,1);}while(n==0);return n<0?-1:single[0]&255;}
+            public int read(byte[] b,int off,int len)throws IOException{Objects.checkFromIndexSize(off,len,b.length);if(len==0)return 0;if(remaining==0)return -1;int n=data.getChannel().read(java.nio.ByteBuffer.wrap(b,off,(int)Math.min(remaining,len)),position);if(n<0)throw new EOFException();remaining-=n;position+=n;return n;}
         };
     }
     private int type(Class<?> type)throws IOException {
         if(!type.getName().startsWith("com.evolution.analysis.")||!(type.isRecord()||type.isEnum()))throw new IOException("ANALYSIS_SPOOL_NON_NEUTRAL_TYPE:"+type.getName());
         Integer id=classIds.get(type);if(id!=null)return id;int next=classes.size();classes.add(type);classIds.put(type,next);return next;
+    }
+    private RecordCodec codec(Class<?> type)throws IOException {
+        var cached=codecs.get(type);if(cached!=null)return cached;
+        if(!type.isRecord())throw new IOException("ANALYSIS_SPOOL_RECORD_TYPE");
+        var fields=type.getRecordComponents();var accessors=new Method[fields.length];var parameters=new Class<?>[fields.length];
+        for(int i=0;i<fields.length;i++){accessors[i]=fields[i].getAccessor();parameters[i]=fields[i].getType();}
+        try{var result=new RecordCodec(accessors,type.getConstructor(parameters));codecs.put(type,result);return result;}
+        catch(NoSuchMethodException failed){throw new IOException("ANALYSIS_SPOOL_RECORD_CONSTRUCTOR",failed);}
     }
     private void encode(DataOutputStream out,Object value)throws IOException {
         if(value==null){out.writeByte(0);return;}
@@ -139,7 +178,7 @@ public final class FileAnalysisWorkspace implements AnalysisWorkspace, AutoClose
         if(value instanceof java.time.Instant i){out.writeByte(14);out.writeLong(i.getEpochSecond());out.writeInt(i.getNano());return;}
         if(value instanceof java.net.URI u){out.writeByte(15);string(out,u.toString());return;}
         out.writeByte(11);out.writeInt(type(value.getClass()));
-        try{for(var field:value.getClass().getRecordComponents())encode(out,field.getAccessor().invoke(value));}
+        try{for(var accessor:codec(value.getClass()).accessors())encode(out,accessor.invoke(value));}
         catch(ReflectiveOperationException failed){throw new IOException("ANALYSIS_SPOOL_RECORD_WRITE",failed);}
     }
     private Object decode(DataInputStream in)throws IOException {
@@ -150,8 +189,8 @@ public final class FileAnalysisWorkspace implements AnalysisWorkspace, AutoClose
             case 8->{int n=length(in);var set=new LinkedHashSet<>();for(int i=0;i<n;i++)set.add(decode(in));yield Collections.unmodifiableSet(set);}
             case 9->{int n=length(in);var map=new LinkedHashMap<>();for(int i=0;i<n;i++)map.put(decode(in),decode(in));yield Collections.unmodifiableMap(map);}
             case 10->{Class<?> cls=registered(in);int ordinal=in.readInt();Object[] values=cls.getEnumConstants();if(values==null||ordinal<0||ordinal>=values.length)throw new IOException("ANALYSIS_SPOOL_ENUM");yield values[ordinal];}
-            case 11->{Class<?> cls=registered(in);if(!cls.isRecord())throw new IOException("ANALYSIS_SPOOL_RECORD_TYPE");var fields=cls.getRecordComponents();Object[] args=new Object[fields.length];Class<?>[] types=new Class<?>[fields.length];for(int i=0;i<fields.length;i++){args[i]=decode(in);types[i]=fields[i].getType();}
-                try{yield cls.getConstructor(types).newInstance(args);}catch(ReflectiveOperationException failed){throw new IOException("ANALYSIS_SPOOL_RECORD_READ:"+cls.getSimpleName(),failed);}}
+            case 11->{Class<?> cls=registered(in);var metadata=codec(cls);Object[] args=new Object[metadata.accessors().length];for(int i=0;i<args.length;i++)args[i]=decode(in);
+                try{yield metadata.constructor().newInstance(args);}catch(ReflectiveOperationException failed){throw new IOException("ANALYSIS_SPOOL_RECORD_READ:"+cls.getSimpleName(),failed);}}
             case 12->new BigDecimal(string(in));case 13->new BigInteger(string(in));case 14->java.time.Instant.ofEpochSecond(in.readLong(),in.readInt());case 15->java.net.URI.create(string(in));
             default->throw new IOException("ANALYSIS_SPOOL_TAG");
         };
@@ -163,14 +202,15 @@ public final class FileAnalysisWorkspace implements AnalysisWorkspace, AutoClose
     private static void string(DataOutputStream out,String value)throws IOException {out.writeInt(value.length());for(int i=0;i<value.length();i++)out.writeChar(value.charAt(i));}
     private static String string(DataInputStream in)throws IOException {int n=length(in);char[] text=new char[n];for(int i=0;i<n;i++)text[i]=in.readChar();return new String(text);}
     private static MessageDigest sha256(){try{return MessageDigest.getInstance("SHA-256");}catch(NoSuchAlgorithmException impossible){throw new AssertionError(impossible);}}
-    private static IllegalStateException failure(Exception failed){return new IllegalStateException("ANALYSIS_SPOOL_FAILED",failed);}
+    private static IllegalStateException failure(Exception failed){if(Thread.currentThread().isInterrupted()){var cancelled=new java.util.concurrent.CancellationException("ANALYSIS_SPOOL_CANCELLED");cancelled.initCause(failed);throw cancelled;}return new IllegalStateException("ANALYSIS_SPOOL_FAILED",failed);}
+    private static IOException retain(IOException first,IOException next){if(first==null)return next;if(first!=next)first.addSuppressed(next);return first;}
     @Override public synchronized void close()throws IOException {
         if(closed)return;closed=true;IOException failure=null;
         try{db.close();}catch(SQLException failed){failure=new IOException("ANALYSIS_SPOOL_CLOSE",failed);}
-        try{data.close();}catch(IOException failed){failure=failed;}
+        try{data.close();}catch(IOException failed){failure=retain(failure,failed);}
         // Only this constructor's private flat directory; never follow links or remove caller files.
-        try(var paths=Files.list(directory)){for(var path:paths.toList())Files.delete(path);}catch(IOException failed){failure=failed;}
-        try{Files.delete(directory);}catch(IOException failed){failure=failed;}
+        try(var paths=Files.list(directory)){for(var path:paths.toList())Files.delete(path);}catch(IOException failed){failure=retain(failure,failed);}
+        try{Files.delete(directory);}catch(IOException failed){failure=retain(failure,failed);}
         if(failure!=null)throw failure;
     }
 }

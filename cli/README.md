@@ -139,6 +139,19 @@ For command results, `--json` emits only canonical JSON on stdout with M7.1 enve
 
 Incomplete policy evidence takes precedence over the CI threshold: exit 3 cannot establish conformance. Default `--fail-on none` leaves policy decisions to the caller. Ctrl+C terminates the process; hard interruption may prevent delivery of a JSON envelope. The palette does not change to a raw/full-screen terminal mode. It accepts numbered actions, ordinary commands, quoted paths, `lang en|vi`, `help`, `quit` and EOF. It never evaluates shell expressions.
 
+Storage failures retain a structured diagnostic instead of the generic
+`OPERATION_FAILED`: `STORAGE_BUSY`, `STORAGE_FULL`, `STORAGE_PERMISSION_DENIED`,
+`STORAGE_NOT_FOUND`, `STORAGE_CORRUPT`, `STORAGE_OPEN_FAILED` or
+`STORAGE_IO_FAILED`. Existing snapshot-specific codes remain. Diagnostics include
+the failing stage, exception types, known operation codes, numeric SQLite result
+codes/SQL state and suppressed cleanup failures. Primary and extended
+[SQLite result codes](https://www.sqlite.org/rescode.html) distinguish locking,
+capacity, access, corruption and memory exhaustion. `--debug` adds bounded source
+frames throughout the cause chain. `--json --debug` emits one error document on
+stderr, with diagnostics under `error.diagnostics`; it adds no plain debug lines.
+Raw exception messages, paths, SQL and source text are not printed. Cancellation
+returns 130 and memory exhaustion returns 3; other storage failures return 1.
+
 Exports default to stdout. `-o FILE` creates a new file and refuses existing output. JSON uses `--operation NAME`, optionally `--request FILE`/`--args JSON`, for inventory, metrics, findings, assessment, evidence or provenance. SARIF 2.1.0 preserves rule versions, qualifiers, exact source-document URIs/spans/hashes, bundles and the entire observed rule denominator in properties. `evo-source:` URIs identify immutable documents rather than invented local file paths. GraphML exports one bounded edge page; graph metadata contains the complete canonical envelope, including gaps, exact totals and continuation. It never claims to be the whole repository graph. Raw snapshot export is provided by the selected `.evo/<digest>.graph.json`, which may contain captured source/configuration bytes; query/export projections remain redacted.
 
 PowerShell completion (session-local):
@@ -158,6 +171,16 @@ python cli/src/test/python/windows_console_smoke.py
 ```
 
 The packaged smoke includes passive four-language parsing and authenticated syntax-evidence reads. Its optional `EVO_SMOKE_ONLINE_FIXTURE=1` mode additionally uses a fresh cache to fetch SLF4J 2.0.16 from Maven Central, checks the JAR SHA-256 against the captured classpath and requires a resolved `Logger.info()` call in an authored source fixture. Target builds remain off. Without that explicit test flag the smoke stays offline. This is a small integration check, not an external-repository benchmark.
+
+The 2026-11-05 follow-up adds passive Protobuf schema/RPC nodes, HTTP candidates
+from additional languages and bound Java client APIs, expanded pinned Lombok
+accessor/Builder support, restricted native scalar SpEL and lazy nested config
+defaults. Generated stubs, custom Java predicates and deployment routing still
+require captured evidence. `scan DIR --offline --build off --json` keeps the
+passive cohort scenario explicit; use a separate workspace for new measurements
+and retain the JAR SHA-256. Historical gap/timing tables are not results for the
+new artifact. The current artifact and focused verification are recorded in
+[current state](../docs/current-state.md#linear-validation-bounded-aggregation-and-storage-diagnostics--2026-11-05).
 
 It creates an isolated hidden console with VT initially off, reads actual screen cells/color attributes and checks UTF-8, width, cleanup, actual full-prefix palette commands, numbered dependencies/impact, language switching and redirected JSON. See the [Windows rendering investigation](../docs/research/m7-windows-terminal-rendering.md), [M7.2 contract](../docs/architecture/m7-evo-cli.md) and [verification record](../docs/tasks/m7/02-evo-cli.md). External-corpus acceptance, native executable packaging and the M8 visual workbench remain separate.
 

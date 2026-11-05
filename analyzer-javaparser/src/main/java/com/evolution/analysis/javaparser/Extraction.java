@@ -41,6 +41,7 @@ final class Extraction {
     private final List<ObservationRecord> observations = new ArrayList<>();
     private final List<TypeUseRecord> types = new ArrayList<>();
     private final List<AnnotationUseRecord> annotations = new ArrayList<>();
+    private final List<HttpClientCallRecord> httpClientCalls = new ArrayList<>();
     private final Set<Diagnostic> diagnostics = new TreeSet<>();
     private final List<SourceOutcome> rejected = new ArrayList<>();
     private record ClosureFailure(SemanticStatus status,String code) {}
@@ -97,10 +98,12 @@ final class Extraction {
             if(compactBodies)implicit.declarations(unit.ast,true);
             for (var node : unit.ast.stream().filter(this::isDeclaration).toList()) observe(node, "declares", () -> entity(node), () -> owner(node));
             for (var node : unit.ast.findAll(MethodCallExpr.class)) observe(node, "calls", () -> resolveCall(node), () -> owner(node));
+            httpClientCalls.addAll(httpClientCalls(unit.ast));
             for (var node : unit.ast.findAll(ObjectCreationExpr.class)) observe(node, "constructor-calls", () -> resolveCall(node), () -> owner(node));
             for (var node : unit.ast.findAll(ExplicitConstructorInvocationStmt.class)) observe(node, "constructor-calls", () -> callable(node.resolve()), () -> owner(node));
             var references = new ReferenceResolution(environment.solver);
             for (var node : unit.ast.findAll(MethodReferenceExpr.class)) observe(node,"method-references",() -> {
+                var generated=lombok.resolveReference(node,references);if(generated.isPresent())return generated.orElseThrow();
                 var selected=references.resolve(node);
                 if(request.sourceRecovery()&&selected instanceof ResolvedMethodDeclaration method) {
                     var receiver=recoveryReceiver(node,Optional.of(node.getScope()));
@@ -140,7 +143,28 @@ final class Extraction {
                         ? FrontendResult.State.COMPLETED : FrontendResult.State.PARTIAL,
                 declarations.values().stream().filter(d -> !duplicateDeclarations.contains(d.entity().identity())).toList(),
                 List.copyOf(occurrences.values()), observations, outcomes, coverage, List.copyOf(diagnostics), types, annotations,
-                List.copyOf(derived),shapes,members,constructorCandidates);
+                List.copyOf(derived),shapes,members,constructorCandidates,httpClientCalls);
+    }
+    private List<HttpClientCallRecord> httpClientCalls(CompilationUnit unit) {
+        var result=new ArrayList<HttpClientCallRecord>();
+        var bindings=new HashMap<SourceSpan,RelationshipOccurrence>();
+        for(var occurrence:occurrences.values())if(occurrence.relationship().kind().value().equals("java.calls")&&occurrence.status()==SemanticStatus.RESOLVED)bindings.put(occurrence.span(),occurrence);
+        for(var call:unit.findAll(MethodCallExpr.class)) {
+            String method=call.getNameAsString();
+            if(!Set.of("getForObject","getForEntity","postForObject","postForEntity","postForLocation","put","patchForObject","delete","headForHeaders","optionsForAllow","exchange","uri").contains(method))continue;
+            try {
+                var selected=call.resolve();String type=selected.declaringType().getQualifiedName();
+                boolean rest=Set.of("org.springframework.web.client.RestTemplate","org.springframework.web.client.RestOperations").contains(type);
+                boolean reactive=method.equals("uri")&&type.startsWith("org.springframework.web.reactive.function.client.WebClient.");
+                if(!rest&&!reactive||typeEntity(selected.declaringType()).origin()!=EntityOrigin.DEPENDENCY)continue;
+                var bound=callable(selected,call);var span=source(call).span(call);var caller=owner(call);
+                var binding=bindings.get(span);if(binding==null||!(binding.relationship().target() instanceof RelationshipTarget.Resolved r)||!r.target().equals(bound.identity()))continue;
+                String uri=!call.getArguments().isEmpty()&&call.getArgument(0).isStringLiteralExpr()?call.getArgument(0).asStringLiteralExpr().asString():"";
+                String verb=method.startsWith("getFor")?"GET":method.startsWith("postFor")?"POST":method.equals("put")?"PUT":method.equals("patchForObject")?"PATCH":method.equals("delete")?"DELETE":method.equals("headForHeaders")?"HEAD":method.equals("optionsForAllow")?"OPTIONS":"";
+                result.add(new HttpClientCallRecord(caller.identity(),bound.identity(),span,uri,verb.isEmpty()?List.of():List.of(verb)));
+            }catch(RuntimeException unavailable){/* The original attribution ledger retains unavailable bindings. */}
+        }
+        return result;
     }
 
     private void releaseBody(Unit unit) {
@@ -570,10 +594,10 @@ final class Extraction {
         return callable(resolved);
     }
     private Entity resolveCall(Expression expression) {
-        if(request.sourceRecovery()&&expression instanceof MethodCallExpr call)requireRecoveryReceiver(call);
         var nativeCall=nativeMembers.resolve(expression);if(nativeCall.isPresent())return nativeCall.orElseThrow();
         var generated=lombok.resolve(expression);
-        if(generated.isPresent())return generated.orElseThrow();
+        if(generated.isPresent()){if(expression instanceof MethodCallExpr call)recoveryCallInputs.add(call);return generated.orElseThrow();}
+        if(request.sourceRecovery()&&expression instanceof MethodCallExpr call)requireRecoveryReceiver(call);
         if(expression instanceof MethodCallExpr call) {
             if(!request.sourceRecovery()&&boundedReceiver(call.getScope()))recoveryReceiver(call,call.getScope());
             var result=callable(call.resolve(),call);if(request.sourceRecovery())recoveryCallInputs.add(call);return result;

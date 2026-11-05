@@ -8,6 +8,72 @@ import java.util.*;
 import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 class LombokIngestionTest {
+    @Test void inheritedSettersBoxPrimitiveValuesAndAcceptNullWithoutAcceptingWrongTypes()throws Exception {
+        var r=analyze("@lombok.Setter class Base { Integer id; } class C extends Base { void update(C c){c.setId(1); c.setId(null);} }");
+        assertEquals(2,r.occurrences().stream().filter(o->o.relationship().kind().value().equals("java.calls")&&o.status()==SemanticStatus.RESOLVED).count());
+        var bad=analyze("@lombok.Setter class C { Integer id; void update(){setId(\"wrong\");} }");
+        assertTrue(bad.occurrences().stream().filter(o->o.relationship().kind().value().equals("java.calls")).allMatch(o->o.status()!=SemanticStatus.RESOLVED));
+    }
+    @org.junit.jupiter.api.io.TempDir Path compiled;
+    @Test void pinnedNativeLombokConfirmsAccessorAndBuilderSignaturesOnAuthoredSource()throws Exception {
+        String source="@lombok.Data @lombok.Builder class C { String name; int id; static String run(){return C.builder().name(\"n\").id(1).build().getName();} } "
+                +"@lombok.Getter @lombok.Setter class Other { boolean isReady; @lombok.Getter(lombok.AccessLevel.NONE) String hidden; String uShaped; }";
+        Path input=compiled.resolve("C.java");Files.writeString(input,source);
+        Path lombok=Path.of(lombok.Data.class.getProtectionDomain().getCodeSource().getLocation().toURI());
+        var compiler=javax.tools.ToolProvider.getSystemJavaCompiler();assertNotNull(compiler);
+        var diagnostics=new javax.tools.DiagnosticCollector<javax.tools.JavaFileObject>();
+        try(var files=compiler.getStandardFileManager(diagnostics,null,java.nio.charset.StandardCharsets.UTF_8)) {
+            assertTrue(compiler.getTask(null,files,diagnostics,List.of("-classpath",lombok.toString(),"-processor","lombok.launch.AnnotationProcessorHider$AnnotationProcessor","-d",compiled.toString()),null,files.getJavaFileObjects(input.toFile())).call(),
+                    ()->diagnostics.getDiagnostics().stream().map(d->d.getKind()+":"+d.getCode()).toList().toString());
+        }
+        var expected=Map.of("C",Set.of("getName()Ljava/lang/String;","setName(Ljava/lang/String;)V","builder()LC$CBuilder;"),
+                "C$CBuilder",Set.of("name(Ljava/lang/String;)LC$CBuilder;","id(I)LC$CBuilder;","build()LC;"),
+                "Other",Set.of("isReady()Z","setReady(Z)V","getUShaped()Ljava/lang/String;"));
+        for(var entry:expected.entrySet())try(var bytes=new java.io.DataInputStream(Files.newInputStream(compiled.resolve(entry.getKey()+".class")))) {
+            var type=new javassist.bytecode.ClassFile(bytes);var signatures=type.getMethods().stream().map(m->m.getName()+m.getDescriptor()).collect(java.util.stream.Collectors.toSet());
+            assertTrue(signatures.containsAll(entry.getValue()),entry.getKey());if(entry.getKey().equals("Other"))assertFalse(signatures.contains("getHidden()Ljava/lang/String;"));
+        }
+    }
+    @Test void generatedAccessorReferencesRespectFunctionalArgumentsAndReturnTypes()throws Exception {
+        var r=analyze("@lombok.Data class C { String name; java.util.function.Function<C,String> getter=C::getName; java.util.function.Supplier<String> bound=this::getName; java.util.function.BiConsumer<C,String> setter=C::setName; }");
+        var refs=r.occurrences().stream().filter(o->o.relationship().kind().value().equals("java.method-references")).toList();
+        assertEquals(3,refs.size());assertEquals(3,refs.stream().filter(o->o.status()==SemanticStatus.RESOLVED).count());
+        var bad=analyze("@lombok.Data class C { String name; java.util.function.Function<C,Integer> bad=C::getName; }");
+        assertTrue(bad.occurrences().stream().filter(o->o.relationship().kind().value().equals("java.method-references")).allMatch(o->o.status()!=SemanticStatus.RESOLVED));
+    }
+    @Test void builderFactorySettersBuildAndReturnedOwnerCallsBindAsOneChain()throws Exception {
+        var r=analyze("@lombok.Data @lombok.Builder class C { String name; int id; static String run(){ return C.builder().name(\"n\").id(1).build().getName(); } }");
+        var calls=r.occurrences().stream().filter(o->o.relationship().kind().value().equals("java.calls")).toList();
+        assertEquals(5,calls.size());
+        assertEquals(5,calls.stream().filter(o->o.status()==SemanticStatus.RESOLVED).count());
+        var invalid=analyze("@lombok.Builder class C { String name; static C run(){ return C.builder().name(1).build(); } }");
+        assertTrue(invalid.occurrences().stream().filter(o->o.relationship().kind().value().equals("java.calls")).anyMatch(o->o.status()!=SemanticStatus.RESOLVED));
+    }
+    @Test void standaloneAccessorsAndInheritedDataMembersBindWithoutInventedBodies()throws Exception {
+        var r=analyze("class Base { int base; } @lombok.Getter @lombok.Setter class C extends Base { String name; boolean isReady; java.lang.Boolean boxed; final int fixed=1; String run(C c){ c.setName(\"x\"); c.setReady(true); return c.getName(); } }");
+        var calls=r.occurrences().stream().filter(o->o.relationship().kind().value().equals("java.calls")).toList();
+        assertEquals(3,calls.size());assertTrue(calls.stream().allMatch(o->o.status()==SemanticStatus.RESOLVED),calls.toString());
+        assertTrue(r.declarations().stream().anyMatch(d->d.entity().canonicalName().contains("\"getBoxed\"")));
+        assertFalse(r.declarations().stream().anyMatch(d->d.entity().canonicalName().contains("\"setFixed\"")));
+        assertTrue(r.declarations().stream().filter(d->d.derivation().method().id().startsWith("lombok.")).allMatch(d->d.entity().declaration().isEmpty()));
+        var data=analyze("class Base {} @lombok.Data class C extends Base { String name; String run(){return getName();} }");
+        assertTrue(data.occurrences().stream().filter(o->o.relationship().kind().value().equals("java.calls")).allMatch(o->o.status()==SemanticStatus.RESOLVED));
+        var inherited=analyze("@lombok.Getter class Base { int id; } class C extends Base { int read(C c){return c.getId();} }");
+        assertEquals(1,inherited.occurrences().stream().filter(o->o.relationship().kind().value().equals("java.calls")&&o.status()==SemanticStatus.RESOLVED).count());
+    }
+    @Test void fieldOverridesSuppressAccessorsAndDoNotSuppressTheJavaDefaultConstructor()throws Exception {
+        var r=analyze("@lombok.Getter @lombok.Setter class C { @lombok.Getter(lombok.AccessLevel.NONE) String hidden; @lombok.Setter(lombok.AccessLevel.NONE) String immutable; @lombok.Getter(lombok.AccessLevel.PRIVATE) String secret; @lombok.Getter String uShaped; }");
+        var names=r.declarations().stream().map(d->d.entity().canonicalName()).toList();
+        assertFalse(names.stream().anyMatch(n->n.contains("\"getHidden\"")));
+        assertFalse(names.stream().anyMatch(n->n.contains("\"setImmutable\"")));
+        assertTrue(names.stream().anyMatch(n->n.contains("\"getUShaped\"")));
+        assertEquals(1,r.declarations().stream().filter(d->d.entity().kind()==EntityKind.CONSTRUCTOR&&d.entity().origin()==EntityOrigin.PROJECT).count());
+        var access=analyze("class C { @lombok.Getter(lombok.AccessLevel.PRIVATE) String secret; } class D { String leak(C c){return c.getSecret();} }");
+        assertTrue(access.occurrences().stream().filter(o->o.relationship().kind().value().equals("java.calls")).allMatch(o->o.status()!=SemanticStatus.RESOLVED));
+        var customized=analyze("@lombok.Getter @lombok.experimental.Accessors(fluent=true) class C { String value; }");
+        assertTrue(customized.diagnostics().stream().anyMatch(d->d.code().startsWith("lombok.")));
+        assertEquals(1,customized.declarations().stream().filter(d->d.entity().kind()==EntityKind.CONSTRUCTOR&&d.entity().origin()==EntityOrigin.PROJECT).count());
+    }
     @Test void generatedCallsKeepTheirOwnerAcrossDeclarationSkeletonAndActiveBody()throws Exception {
         Path jar=Path.of(lombok.Data.class.getProtectionDomain().getCodeSource().getLocation().toURI());
         var binary=new BinaryInput(new ClasspathEntry(ClasspathEntryKind.DEPENDENCY,"org.projectlombok:lombok:1.18.46@jar",ContentDigest.sha256(Files.readAllBytes(jar))),jar);
@@ -47,6 +113,8 @@ class LombokIngestionTest {
                 "import other.RequiredArgsConstructor; @RequiredArgsConstructor class C { final Missing field; }")) {
             assertTrue(new JavaParserFrontend().analyze(recovery(TestInputs.request(source))).constructorCandidates().isEmpty());
         }
+        var missingGenerator=new JavaParserFrontend().analyze(recovery(TestInputs.request("@lombok.Data class C { final Missing field; }")));
+        assertFalse(missingGenerator.declarations().stream().anyMatch(d->d.entity().kind()==EntityKind.CONSTRUCTOR),"Missing processor evidence cannot manufacture a Java default constructor");
     }
     @Test void unsupportedGeneratorTargetsAndGeneratorsRemainExplicit()throws Exception {
         for(String source:List.of("class C { @lombok.Builder C(String value) {} }",

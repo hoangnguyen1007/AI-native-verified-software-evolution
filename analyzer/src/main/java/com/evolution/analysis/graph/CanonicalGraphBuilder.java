@@ -250,6 +250,14 @@ public final class CanonicalGraphBuilder {
                 var payload=artifact("java.derived-relationship",derived);relationship(context,derived.relationship(),payload);
                 if(derived.status()==SemanticStatus.RESOLVED)dependency(context,derived.relationship(),byCanonical,byId,payload);
             }
+            for(var call:frontend.httpClientCalls()) {
+                var document=manifest.snapshot().documents().stream().filter(d->d.identity().equals(call.span().document())).findFirst().orElseThrow();
+                var payload=artifact("java.http-client-call",Map.of("call",call,"analysis",manifest.identity(),"sourceContent",document.contentDigest(),
+                        "binding","COMPILE_TIME","runtimeObserved",false));
+                String site=derivedIdentity("http-client-call",payload);
+                node(site,context,"SOURCE_HTTP_CALL_CANDIDATE",payload);
+                link(context,"graph.has-http-client-call",call.caller().value(),site,payload);
+            }
             for(var observation:frontend.observations()) {
                 var payload=artifact("java.observation",observation);
                 node(derivedIdentity("observation",payload),context,"OBSERVATION",payload);

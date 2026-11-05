@@ -110,21 +110,30 @@ public final class EvoApp {
         if(interactiveDefaults!=null){var d=interactiveDefaults;root.workspace=d.workspace;root.graph=d.graph;root.context=d.context;root.scope=d.scope;root.projection=d.projection;root.world=d.world;root.assignment=d.assignment;root.incoming=d.incoming;root.kinds=d.kinds;root.limit=d.limit;root.depth=d.depth;root.width=d.width;root.details=d.details;root.debug=d.debug;}
         var command=new CommandLine(root);configure(command,root);command.setOut(out).setErr(err);
         command.setExecutionStrategy(parse->{try{root.validate();}catch(IllegalArgumentException invalid){return error(root,2,"INVALID_INPUT","Invalid language, color, width or query limit.","Ngôn ngữ, màu, chiều rộng hoặc giới hạn không hợp lệ.");}
+            var active=parse;while(active.subcommand()!=null)active=active.subcommand();if(active!=parse)root.stage=active.commandSpec().name();
             if(parse.subcommand()==null&&parse.isUsageHelpRequested()){help(command,root);return 0;}
             if(parse.subcommand()==null&&parse.isVersionHelpRequested()&&root.json)return emit(root,"version",envelope(Map.of("version",VERSION)),0);
             return new RunLast().execute(parse);});
         command.setParameterExceptionHandler((failure,args)->error(root,2,"INVALID_USAGE","Invalid command or option. Run evo help.","Lệnh hoặc tùy chọn không hợp lệ. Chạy evo help."));
         command.setExecutionExceptionHandler((failure,cmd,parse)->{
-            if(root.debug){err.println("[DEBUG] stage="+root.stage+" exception="+failure.getClass().getName());if(failure.getCause()!=null)err.println("  cause="+failure.getCause().getClass().getName());for(var frame:failure.getStackTrace())if(frame.getClassName().startsWith("com.evolution."))err.println("  "+frame.getClassName()+"."+frame.getMethodName()+":"+frame.getLineNumber());}
+            var diagnostics=FailureDiagnostics.describe(failure,root.stage,root.debug);
+            if(root.debug&&!root.json)FailureDiagnostics.debug(err,diagnostics);
             boolean invalid=failure instanceof IllegalArgumentException||failure instanceof java.nio.charset.CharacterCodingException;
             if(failure instanceof InputFailure f)return inputError(root,f.getMessage());
-            if(failure instanceof GraphStoreException f)return error(root,1,"SNAPSHOT_"+f.reason(),"Snapshot storage failed ("+f.reason()+"). The previous selection is preserved. Check storage permissions and graph limits.","Không lưu được snapshot ("+f.reason()+"). Lựa chọn trước được giữ lại. Kiểm tra quyền ghi và giới hạn đồ thị.");
+            if(failure instanceof GraphStoreException f)return error(root,1,"SNAPSHOT_"+f.reason(),"Snapshot storage failed ("+f.reason()+"). The previous selection is preserved. Check storage permissions and graph limits.","Không lưu được snapshot ("+f.reason()+"). Lựa chọn trước được giữ lại. Kiểm tra quyền ghi và giới hạn đồ thị.",diagnostics);
             if(failure instanceof GraphJson.LimitExceededException)return error(root,3,"GRAPH_LIMIT","Graph/evidence exceeds the declared structural limit. Narrow the scan or query scope.","Đồ thị/bằng chứng vượt giới hạn cấu trúc. Thu hẹp phạm vi quét hoặc truy vấn.");
             if(failure instanceof FileAlreadyExistsException)return error(root,1,"OUTPUT_EXISTS","Output already exists. Choose another --out file.","Tệp đầu ra đã tồn tại. Chọn tệp --out khác.");
             if(failure instanceof BoundedJson.TooLarge)return error(root,3,"OUTPUT_LIMIT","Canonical output exceeds the limit. Narrow the query or reduce --limit.","Đầu ra canonical vượt giới hạn. Thu hẹp truy vấn hoặc giảm --limit.");
+            var category=FailureDiagnostics.classification(failure);
+            if(category!=null) {
+                String en=switch(category){case "STORAGE_BUSY"->"Storage is locked or busy. Close competing writers and retry the saved operation.";case "STORAGE_FULL"->"Storage capacity or disk reserve is exhausted. Free or allocate space before retrying.";case "STORAGE_PERMISSION_DENIED"->"Storage access was denied or the database is read-only. Check the configured storage permissions.";case "STORAGE_NOT_FOUND"->"A required storage input is absent. Check the selected registration or captured path.";case "STORAGE_CORRUPT"->"Storage integrity validation failed. Preserve the evidence and inspect the affected store.";case "STORAGE_OPEN_FAILED"->"The storage database could not be opened. Check its location and access.";case "CANCELLED"->"Operation cancelled; incomplete output was not selected.";case "MEMORY_LIMIT"->"Worker memory exhausted. Retain captured inputs and use an adequately sized worker.";default->"Storage I/O failed. Inspect the stage and cause chain; retry after the underlying storage failure is resolved.";};
+                String vi=switch(category){case "STORAGE_BUSY"->"Kho lưu trữ đang bị khóa hoặc bận. Đóng tác vụ ghi cạnh tranh rồi thử lại thao tác đã lưu.";case "STORAGE_FULL"->"Hết dung lượng hoặc chạm mức dự trữ đĩa. Bổ sung dung lượng trước khi thử lại.";case "STORAGE_PERMISSION_DENIED"->"Bị từ chối quyền truy cập hoặc cơ sở dữ liệu chỉ đọc. Kiểm tra quyền của kho lưu trữ.";case "STORAGE_NOT_FOUND"->"Thiếu đầu vào lưu trữ bắt buộc. Kiểm tra đăng ký hoặc đường dẫn đã chọn.";case "STORAGE_CORRUPT"->"Kiểm tra toàn vẹn lưu trữ thất bại. Giữ nguyên bằng chứng và kiểm tra kho liên quan.";case "STORAGE_OPEN_FAILED"->"Không mở được cơ sở dữ liệu lưu trữ. Kiểm tra vị trí và quyền truy cập.";case "CANCELLED"->"Đã hủy thao tác; đầu ra chưa hoàn tất không được chọn.";case "MEMORY_LIMIT"->"Worker hết bộ nhớ. Giữ đầu vào đã thu nhận và dùng worker đủ tài nguyên.";default->"Lỗi I/O lưu trữ. Xem giai đoạn và chuỗi nguyên nhân; xử lý lỗi gốc trước khi thử lại.";};
+                return error(root,category.equals("CANCELLED")?130:category.equals("MEMORY_LIMIT")?3:1,category,en,vi,diagnostics);
+            }
+            if(root.debug)return error(root,invalid?2:1,invalid?"INVALID_INPUT":"OPERATION_FAILED","Check selected inputs, context, paths and limits. Run evo help.","Kiểm tra đầu vào, ngữ cảnh, đường dẫn và giới hạn. Chạy evo help.",diagnostics);
             return error(root,invalid?2:1,invalid?"INVALID_INPUT":"OPERATION_FAILED","Check selected inputs, context, paths and limits. Run evo help.","Kiểm tra đầu vào, ngữ cảnh, đường dẫn và giới hạn. Chạy evo help.");});
         try{return command.execute(arguments);}
-        catch(OutOfMemoryError limit){if(root.debug)err.println("[DEBUG] stage="+root.stage);return error(root,3,"MEMORY_LIMIT","Semantic worker memory exhausted. Captured inventory and the previous selection remain on disk; rerun with an adequately sized worker.","Worker ngữ nghĩa đã hết bộ nhớ. Inventory đã thu nhận và lựa chọn trước vẫn ở trên đĩa; chạy lại với worker có đủ tài nguyên.");}
+        catch(OutOfMemoryError limit){if(root.debug&&!root.json)err.println("[DEBUG] stage="+root.stage);return error(root,3,"MEMORY_LIMIT","Semantic worker memory exhausted. Captured inventory and the previous selection remain on disk; rerun with an adequately sized worker.","Worker ngữ nghĩa đã hết bộ nhớ. Inventory đã thu nhận và lựa chọn trước vẫn ở trên đĩa; chạy lại với worker có đủ tài nguyên.");}
         finally{out.flush();err.flush();}
     }
     private void configure(CommandLine command,Root r) {
@@ -788,6 +797,11 @@ public final class EvoApp {
         if(map.get("bounds") instanceof Map<?,?> bounds&&(Boolean.TRUE.equals(bounds.get("truncated"))||Boolean.TRUE.equals(bounds.get("workBudgetExceeded"))||Boolean.TRUE.equals(bounds.get("outputBudgetExceeded"))))return 3;
         if(map.get("evaluationStatus")!=null&&!map.get("evaluationStatus").equals("COMPLETE"))return 3;return 0;}
     private int error(Root r,int code,String name,String en,String vi){if(r.json)err.println(CanonicalJson.write(Map.of("cliVersion","architecture.cli:m7.2-v1","error",Map.of("code",name,"message",en))));else err.println("["+name+"] "+(r.lang.equals("vi")?vi:en));return code;}
+    private int error(Root r,int code,String name,String en,String vi,Map<String,Object> diagnostics){
+        if(r.json)err.println(CanonicalJson.write(Map.of("cliVersion","architecture.cli:m7.2-v1","error",Map.of("code",name,"message",en,"diagnostics",diagnostics))));
+        else {err.println("["+name+"] "+(r.lang.equals("vi")?vi:en));err.println("  stage="+diagnostics.get("stage")+" causes="+((List<?>)diagnostics.get("chain")).stream().map(raw->((Map<?,?>)raw).get("type")).toList()+" (--debug)");}
+        return code;
+    }
     private int inputError(Root r,String code){return switch(code){
         case "NO_SNAPSHOT"->error(r,2,code,"No selected snapshot. Run evo scan . or evo open <snapshot.json>.","Chưa chọn snapshot. Chạy evo scan . hoặc evo open <snapshot.json>.");
         case "CONTEXT_REQUIRED","CONTEXT_UNAVAILABLE"->error(r,2,code,"Choose one exact context: evo show, then evo use <index> or --context <id>.","Chọn ngữ cảnh chính xác: evo show, rồi evo use <số> hoặc --context <id>.");

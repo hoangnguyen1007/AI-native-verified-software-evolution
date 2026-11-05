@@ -21,9 +21,11 @@ distinguishes tested behavior from the remaining M4E/G3 acceptance obligations.
 | `HierarchicalContexts.visible` / `select` | Normalized registries and whole-descriptor eligibility/primary evidence to visibility and bounded hierarchical selection |
 
 Parser objects remain in the frontend adapter. Production providers are passive
-and perform no target builds, target class loading, Spring startup, reflection,
-network access or expression execution. The new Maven dependencies are test-only
-Spring Data and injection APIs. The SAT backend uses only Java.
+and perform no target builds, target class loading, Spring startup or network
+access. Scalar condition expressions are evaluated by the restricted, pinned
+platform SpEL engine described below; target methods/reflection remain excluded.
+Spring Data and injection API fixture dependencies are test-only. The SAT backend
+uses only Java; `spring-expression:6.2.0` is a platform runtime dependency.
 
 ## Spring Data and source-to-architecture paths
 
@@ -153,15 +155,28 @@ performance/coverage goals require a registered M4E workload and measurements.
 
 `@ConditionalOnExpression` lowers into an additive `BASIC_SPEL` IR operand and
 flows through both M4B concrete evaluation and symbolic compilation. The passive
-parser supports Boolean/null/string literals, bounded signed integer arithmetic
-and comparison, Boolean operators, parentheses and bounded literal property
-placeholders/defaults. The grammar's policy identity is included in the operand.
-Decimals, division/modulo, overflow, dynamic property keys, bean references, type
-references, calls and code execution remain UNKNOWN with typed gaps. This avoids
-inventing Spring coercion or arbitrary expression semantics. Symbolic property
-tables are bounded locally to the properties used by one expression atom.
+evaluator uses pinned `spring-expression:6.2.0` under
+`spring.basic-spel:m8.4-native-literals-v2`. It admits only scalar literal AST
+operations: Boolean/null/string/numeric literals, native arithmetic/comparison,
+Boolean short circuit, ternary and Elvis. Compiler mode and auto-growth are off;
+character/token/depth budgets apply before parsing and to the AST. The entire AST
+is checked before evaluation. Bean/type/property/method/constructor/variable access,
+assignment, collections, regex and string repetition remain UNKNOWN with typed
+gaps, including in an unselected branch. No target condition class is loaded or
+executed. Numeric coercion/overflow follows this pinned engine, not a homemade
+arithmetic approximation; this is not a certificate for arbitrary Spring versions
+or custom `Condition.matches` implementations.
 
-The shared `spring.universal:m4u.2` provider and
+Literal placeholder footprints include nested defaults. Config-data resolution
+splits the selector/default before expansion and evaluates an unused default only
+when the selected key is absent. Captured properties/explicit policy overrides
+are used; ambient host environment values are not deployment evidence. Missing
+values, cycles, dynamic selector footprints and script-dependent build values
+retain their obligations. Symbolic tables remain bounded to each atom's property
+footprint. Lowering, concrete/symbolic evaluation and universal-result identities
+are versioned for the new policy; finite evaluation binds its evaluator version.
+
+The shared `spring.universal:m8.4-native-spel-v3` provider and
 `evidence.spring-universal-gaps:m4u.2-v1` catalog preserve snapshot, exact artifact,
 source span, derivation, input identity and reason provenance. Upstream gaps are
 retained rather than erased by a successful downstream projection. Inputs and

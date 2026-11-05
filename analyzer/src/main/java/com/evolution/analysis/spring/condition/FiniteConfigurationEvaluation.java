@@ -60,7 +60,7 @@ public final class FiniteConfigurationEvaluation {
     public static Result evaluate(ConditionModel model, ConditionExpression.Semantics semantics, Limits limits) {
         Objects.requireNonNull(model); Objects.requireNonNull(semantics); Objects.requireNonNull(limits);
         var space = model.space();
-        var input = ConditionIdentitySupport.digest(Map.of("provider", PROVIDER, "model", model.identity(), "semantics", semantics, "limits", limits));
+        var input = ConditionIdentitySupport.digest(Map.of("provider", PROVIDER, "evaluator", ExogenousConditionEvaluator.PROVIDER, "model", model.identity(), "semantics", semantics, "limits", limits));
         List<CapabilityGapRecord> gaps = new ArrayList<>(model.capabilityGaps());
         List<ConditionProcessing.Issue> issues = new ArrayList<>();
         List<Dimension> dimensions = new ArrayList<>();

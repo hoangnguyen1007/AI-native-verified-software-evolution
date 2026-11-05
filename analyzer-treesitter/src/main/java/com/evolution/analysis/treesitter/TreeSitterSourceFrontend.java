@@ -12,7 +12,7 @@ import org.treesitter.*;
 
 /** Neutral, data-only syntax acquisition. A written call is not a bound call target. */
 public final class TreeSitterSourceFrontend {
-    public static final String PROVIDER="source.tree-sitter:m8.4-http-candidates-v2";
+    public static final String PROVIDER="source.tree-sitter:m8.4-protobuf-http-v3";
     private record Grammar(String library,String binding,String version) {}
     private static final Map<String,Grammar> GRAMMARS=Map.ofEntries(
             entry("go","go","Go","0.25.0"),entry("python","python","Python","0.25.0"),entry("csharp","c-sharp","CSharp","0.23.1"),
@@ -21,7 +21,7 @@ public final class TreeSitterSourceFrontend {
             entry("c","c","C","0.24.1"),entry("cpp","cpp","Cpp","0.23.4"),entry("php","php","Php","0.24.2"),entry("ruby","ruby","Ruby","0.23.1"),
             entry("dart","dart","Dart","master-a"),entry("swift","swift","Swift","0.5.0"),entry("objectivec","objc","Objc","main-a"));
     private static Map.Entry<String,Grammar> entry(String language,String library,String binding,String version){return Map.entry(language,new Grammar("tree-sitter-"+library,"org.treesitter.TreeSitter"+binding,version));}
-    public static Set<String> languages(){return GRAMMARS.keySet();}
+    public static Set<String> languages(){var languages=new TreeSet<>(GRAMMARS.keySet());languages.add("protobuf");return Collections.unmodifiableSet(languages);}
     private static final Set<String> CALLS=Set.of("call_expression","invocation_expression","function_call_expression","call","method_invocation","object_creation_expression","method_call_expression","macro_invocation","constructor_invocation","new_expression");
     private static final Set<String> ROUTES=Set.of("get","post","put","patch","delete","options","head","route","all","HandleFunc","Handle","GET","POST","PUT","DELETE","MapGet","MapPost","MapPut","MapDelete","MapMethods","HttpGet","HttpPost","HttpPut","HttpDelete","Route");
     private record Frame(TSNode node,String owner) {}
@@ -32,6 +32,7 @@ public final class TreeSitterSourceFrontend {
     public record Summary(long nodes,long facts,long errors,String grammar,String toolIdentity) {}
     @FunctionalInterface public interface Sink {void accept(Fact fact)throws IOException;}
     public Summary parse(String language,byte[] bytes,Sink sink,BooleanSupplier cancelled)throws IOException {
+        if(language.equals("protobuf"))return ProtobufSourceFrontend.parse(bytes,sink,cancelled);
         if(System.getProperty("tree-sitter-lib")!=null)throw new IOException("SYNTAX_EXTERNAL_LIBRARY_OVERRIDE_REJECTED");
         var grammar=GRAMMARS.get(language);if(grammar==null)throw new IOException("SYNTAX_GRAMMAR_UNAVAILABLE");
         check(cancelled);var coordinates=new SourceCoordinates(bytes,charset(bytes));var utf8=coordinates.text().getBytes(StandardCharsets.UTF_8);
@@ -75,19 +76,25 @@ public final class TreeSitterSourceFrontend {
         return new Summary(nodes,facts,errors,grammar.library()+":"+grammar.version(),tool);
     }
     private static boolean httpClient(String language,String written) {
+        if(language.equals("python"))return written.matches("(?:requests|httpx)\\.(?:get|post|put|patch|delete|head|options)");
+        if(language.equals("go"))return Set.of("http.Get","http.Post","http.Head").contains(written);
+        if(language.equals("csharp"))return written.matches("[A-Za-z_][A-Za-z0-9_.]*\\.(?:GetAsync|PostAsync|PutAsync|PatchAsync|DeleteAsync|GetStringAsync|GetByteArrayAsync)");
         if(!Set.of("javascript","typescript","tsx").contains(language))return false;
         return Set.of("fetch","window.fetch","globalThis.fetch").contains(written)
                 ||written.matches("(?:axios|http|this\\.http)\\.(?:get|post|put|patch|delete|head|options)");
     }
     private static String httpMethod(String tail) {
-        String method=tail.replaceFirst("^(?:Map|Http)","").toUpperCase(Locale.ROOT);
+        String method=tail.replaceFirst("^(?:Map|Http)","").replaceFirst("Async$","").toUpperCase(Locale.ROOT);
+        if(Set.of("GETSTRING","GETBYTEARRAY").contains(method))method="GET";
         return Set.of("GET","POST","PUT","PATCH","DELETE","HEAD","OPTIONS","TRACE").contains(method)?method:"UNKNOWN";
     }
     private static String firstLiteral(TSNode call,byte[] bytes) {
         var args=field(call,"arguments");if(args==null||args.getNamedChildCount()==0)return null;
-        var first=args.getNamedChild(0);String raw=text(first,bytes);
+        var first=args.getNamedChild(0);
+        if(first.getType().equals("argument")&&first.getNamedChildCount()==1)first=first.getNamedChild(0);
+        String raw=text(first,bytes);
         // Escapes, interpolation and computed expressions need a language-native decoder.
-        if(!first.getType().equals("string")||interpolated(first)||raw.indexOf('\\')>=0||raw.length()<2)return null;
+        if(!Set.of("string","string_literal","interpreted_string_literal").contains(first.getType())||interpolated(first)||raw.indexOf('\\')>=0||raw.length()<2)return null;
         return (raw.charAt(0)=='\''||raw.charAt(0)=='"')&&raw.charAt(raw.length()-1)==raw.charAt(0)&&raw.indexOf('/')>=0?raw:null;
     }
     private static String clientMethod(TSNode call,String written,byte[] bytes) {

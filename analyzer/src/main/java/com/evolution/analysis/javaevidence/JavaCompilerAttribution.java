@@ -108,7 +108,7 @@ public final class JavaCompilerAttribution {
         case "java.type-uses","java.type-argument","java.parameter-type","java.field-type","java.returns","java.throws","java.type-parameter-bound"->Set.of(EntityKind.TYPE,EntityKind.TYPE_PARAMETER).contains(kind);
         default->kind==EntityKind.TYPE;
     };}
-    private static FrontendResult copy(FrontendResult p,List<RelationshipOccurrence> occurrences,List<ObservationRecord> observations){return new FrontendResult(p.analysis(),PROVIDER,p.state(),p.declarations(),occurrences,observations,p.sources(),p.coverage(),p.diagnostics(),p.types(),p.annotations(),p.derivedRelationships(),p.typeDeclarations(),p.memberDeclarations());}
+    private static FrontendResult copy(FrontendResult p,List<RelationshipOccurrence> occurrences,List<ObservationRecord> observations){return new FrontendResult(p.analysis(),PROVIDER,p.state(),p.declarations(),occurrences,observations,p.sources(),p.coverage(),p.diagnostics(),p.types(),p.annotations(),p.derivedRelationships(),p.typeDeclarations(),p.memberDeclarations(),p.constructorCandidates(),p.httpClientCalls());}
     public static ContentDigest subject(Map<String,Object> scope,ContentDigest view,SourceDocumentIdentity document,String category,SourceSpan span){return CanonicalJson.sha256(Map.of("schema","java-compiler-attribution-key:m8.4-v1","scope",scope,"inputView",view,"document",document,"category",category,"span",span));}
     private static IOException invalid(String code){return new IOException("JAVA_COMPILER_"+code);}
     private static void fields(Map<String,Object> value,String... names)throws IOException{if(!value.keySet().equals(Set.of(names)))throw invalid("FIELDS");}

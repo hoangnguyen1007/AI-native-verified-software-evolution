@@ -26,6 +26,9 @@ class PolyglotScanTest {
         Files.writeString(source.resolve("client.ts"),"fetch('/pets/42'); axios.get('/cart'); fetch('/pets/42', {method:'POST'}); fetch('/api/pets/42');");
         Files.writeString(source.resolve("server.js"),"app.get('/pets/:id', handler);");
         Files.writeString(source.resolve("main.go"),"package main\nfunc register() { http.HandleFunc(\"/cart\", handler) }");
+        Files.writeString(source.resolve("client.py"),"import requests\nrequests.get('/pets/42')\n");
+        Files.writeString(source.resolve("client.go"),"package main\nfunc request() { http.Get(\"/pets/42\") }");
+        Files.writeString(source.resolve("Client.cs"),"class Client { void F(){ client.GetAsync(\"/pets/42\"); } }");
         var repo=RepositoryIdentity.fromCanonicalCoordinate("urn:test:http-scan");
         try(var intake=new RepositoryIntake(directory.resolve("http-intake"))) {
             intake.local(source,"http",new StreamingAcquisitionRequest(repo,Optional.empty(),false,List.of()),()->false);
@@ -36,11 +39,37 @@ class PolyglotScanTest {
             var pages=new PartitionedGraphStore(directory.resolve("http-pages"));var snapshots=directory.resolve("http-snapshots");
             var published=pages.build(input,snapshots,()->false,store->scan.project(result,store,()->false));
             var graph=FileGraphStore.readSnapshot(snapshots.resolve(published.graph().value().substring(7)+".graph.json"),64_000_000,new GraphJson.StreamLimits(64_000_000,128,64_000_000));
-            assertEquals(2,graph.edges().stream().filter(e->e.kind().equals("polyglot.service-call.candidate")).count());
+            assertEquals(5,graph.edges().stream().filter(e->e.kind().equals("polyglot.service-call.candidate")).count());
             assertTrue(graph.edges().stream().noneMatch(e->e.kind().equals("polyglot.service-call")));
-            assertEquals(4,graph.evidence().stream().filter(e->e.family().equals("polyglot.http-uri-match")).count());
+            assertEquals(7,graph.evidence().stream().filter(e->e.family().equals("polyglot.http-uri-match")).count());
             assertEquals(2,graph.evidence().stream().filter(e->e.family().equals("evidence.gap")&&e.canonicalJson().contains("HTTP_URI_NO_CANDIDATE")).count());
             assertEquals(published.graph(),pages.build(input,snapshots,()->false,store->scan.project(result,store,()->false)).graph());
+        }
+    }
+    @Test void protobufDeclarationsAndRpcReachTheCanonicalGraphWithoutSyntheticStubs()throws Exception {
+        Path source=Files.createDirectory(directory.resolve("proto-source"));
+        Files.writeString(source.resolve("shop.proto"),"syntax=\"proto3\";package shop; message Request {string id=1;} message Reply {} service Store {rpc Lookup(Request) returns(Reply);rpc Remote(.external.Request) returns(Reply);}");
+        var repo=RepositoryIdentity.fromCanonicalCoordinate("urn:test:proto-scan");
+        try(var intake=new RepositoryIntake(directory.resolve("proto-intake"))) {
+            intake.localComplete(source,"proto",new StreamingAcquisitionRequest(repo,Optional.empty(),false,List.of()),()->false);
+            var readiness=intake.readiness("proto",ReadinessPlanner.Policy.comprehensive(),()->false);
+            var snapshot=RepositorySnapshot.create(repo,Optional.empty(),false,List.of(),List.of());var scan=new PolyglotScan();
+            var result=scan.run("proto",intake,readiness,EvidenceContext.forSnapshot(snapshot.identity()),Optional.empty(),directory.resolve("proto-work"),()->false);
+            assertEquals(1,result.syntax().parsed());assertEquals(1,result.languages().get("protobuf"));
+            assertTrue(result.gaps().stream().anyMatch(g->g.reasonCode().equals("PROTOBUF_GENERATOR_REQUIRED")));
+            var input=new CanonicalGraphInput(new RepositoryInputs(snapshot,Map.of()),Optional.empty(),Optional.empty(),List.of(),List.of(),result.gaps());
+            var snapshots=directory.resolve("proto-snapshots");var pages=new PartitionedGraphStore(directory.resolve("proto-pages"));
+            var publication=pages.build(input,snapshots,()->false,store->scan.project(result,store,()->false));
+            var graph=FileGraphStore.readSnapshot(snapshots.resolve(publication.graph().value().substring(7)+".graph.json"),64_000_000,new GraphJson.StreamLimits(64_000_000,128,64_000_000));
+            assertEquals(2,graph.nodes().stream().filter(n->n.kind().equals("PROTOBUF_MESSAGE")).count());
+            assertEquals(1,graph.nodes().stream().filter(n->n.kind().equals("PROTOBUF_SERVICE")).count());
+            assertEquals(2,graph.nodes().stream().filter(n->n.kind().equals("PROTOBUF_RPC_METHOD")).count());
+            assertTrue(graph.edges().stream().anyMatch(e->e.kind().equals("syntax.rpc-method")));
+            var references=graph.edges().stream().filter(e->e.kind().startsWith("protobuf.rpc-")&&e.kind().endsWith(".candidate")).toList();
+            assertEquals(4,references.size());assertEquals(1,references.stream().filter(e->e.target().state()==KnowledgeGraph.TargetState.UNRESOLVED).count());
+            assertTrue(graph.evidence().stream().anyMatch(e->e.family().equals("evidence.gap")&&e.canonicalJson().contains("PROTOBUF_SCHEMA_TYPE_UNRESOLVED")));
+            assertTrue(graph.edges().stream().noneMatch(e->e.kind().equals("java.calls")));
+            assertEquals(publication.graph(),pages.build(input,snapshots,()->false,store->scan.project(result,store,()->false)).graph());
         }
     }
     @Test void anUnavailableOptionalGrammarKeepsItsOutcomeWithoutDuplicatingTheNativeObligation()throws Exception {

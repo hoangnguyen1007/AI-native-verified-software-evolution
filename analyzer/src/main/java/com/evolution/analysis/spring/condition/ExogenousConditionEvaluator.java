@@ -7,7 +7,7 @@ import static com.evolution.analysis.spring.condition.ConditionProcessing.Reason
 
 /** Bounded interpreter of normalized, evidence-qualified exogenous IR, before bean registration. */
 public final class ExogenousConditionEvaluator {
-    public static final VersionedIdentifier PROVIDER = new VersionedIdentifier("spring.exogenous-evaluator", "m4u.2");
+    public static final VersionedIdentifier PROVIDER = new VersionedIdentifier("spring.exogenous-evaluator", "m8.4-native-spel-v3");
     public static final VersionedIdentifier SEMANTICS = new VersionedIdentifier("spring.exogenous-semantics", "m4b.2-v1");
     public static final VersionedIdentifier PRECEDENCE = new VersionedIdentifier("spring.normalized-precedence", "last-active-v1");
     public static final VersionedIdentifier PROFILES = new VersionedIdentifier("spring.normalized-profiles", "defaults-includes-groups-v1");
@@ -373,7 +373,7 @@ public final class ExogenousConditionEvaluator {
                         if(selected.isEmpty()||selected.orElseThrow().kind()==FiniteDomain.ValueKind.OTHER)complete=false;
                         else selected.orElseThrow().exact().ifPresent(v->properties.put(key,v));
                     }
-                    if(!complete||!spel.policy().equals(new VersionedIdentifier("spring.basic-spel","m4u.2-v1"))) {
+                    if(!complete||!spel.policy().equals(com.evolution.analysis.spring.universal.BasicSpelEvaluator.POLICY)) {
                         issue(PROPERTY_SEMANTICS_UNSUPPORTED,node.identity().value(),currentEvidence);yield LogicalValue.UNKNOWN;
                     }
                     var result=com.evolution.analysis.spring.universal.BasicSpelEvaluator.evaluate(spel.expression(),properties,currentEvidence,

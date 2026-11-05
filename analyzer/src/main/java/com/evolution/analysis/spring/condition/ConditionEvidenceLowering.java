@@ -12,7 +12,7 @@ import static com.evolution.analysis.spring.condition.ConditionProcessing.Reason
 
 /** Passive evidence-to-IR boundary. Every M4A obligation is classified in the output denominator. */
 public final class ConditionEvidenceLowering {
-    public static final VersionedIdentifier PROVIDER = new VersionedIdentifier("spring.condition-lowering", "m8.4-source-candidates-v2");
+    public static final VersionedIdentifier PROVIDER = new VersionedIdentifier("spring.condition-lowering", "m8.4-native-spel-v3");
     private static final java.util.regex.Pattern WRITTEN_ANNOTATION=java.util.regex.Pattern.compile("^\\s*@\\s*([\\p{javaJavaIdentifierPart}.]+)");
     private static final List<String> CONDITION_TYPES=SpringMechanismCatalog.entries().stream().filter(e->e.id().startsWith("spring.condition."))
             .flatMap(e->e.annotationTypes().stream()).distinct().sorted().toList();

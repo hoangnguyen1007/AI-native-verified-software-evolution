@@ -3,6 +3,7 @@ package com.evolution.analysis.frontend;
 import com.evolution.analysis.contract.common.*;
 import com.evolution.analysis.contract.identity.*;
 import com.evolution.analysis.contract.semantic.*;
+import com.evolution.analysis.contract.source.SourceSpan;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -12,7 +13,8 @@ public record FrontendResult(AnalysisIdentity analysis, VersionedIdentifier fron
         List<ObservationRecord> observations, List<SourceOutcome> sources,
         List<CategoryCoverage> coverage, List<Diagnostic> diagnostics, List<TypeUseRecord> types, List<AnnotationUseRecord> annotations,
         List<DerivedRelationshipRecord> derivedRelationships, List<TypeDeclarationRecord> typeDeclarations,
-        List<MemberDeclarationRecord> memberDeclarations, List<LombokConstructorCandidate> constructorCandidates) {
+        List<MemberDeclarationRecord> memberDeclarations, List<LombokConstructorCandidate> constructorCandidates,
+        List<HttpClientCallRecord> httpClientCalls) {
     public enum State { COMPLETED, PARTIAL, INVALID_INPUT, FAILED, CANCELED }
     public FrontendResult {
         Objects.requireNonNull(analysis); Objects.requireNonNull(frontend); Objects.requireNonNull(state);
@@ -25,11 +27,21 @@ public record FrontendResult(AnalysisIdentity analysis, VersionedIdentifier fron
         typeDeclarations = sorted(typeDeclarations,"type declarations");
         memberDeclarations = sorted(memberDeclarations,"member declarations");
         constructorCandidates = sorted(constructorCandidates,"constructor candidates");
+        httpClientCalls = sorted(httpClientCalls,"HTTP client calls");
         var entities = declarations.stream().map(d -> d.entity().identity()).collect(Collectors.toSet());
         var observed = observations.stream().flatMap(o -> o.mappedOccurrence().stream()).toList();
         if (observed.size() != new HashSet<>(observed).size() || !new HashSet<>(observed).equals(occurrences.stream().map(RelationshipOccurrence::identity).collect(Collectors.toSet()))) throw new IllegalArgumentException("ledger and occurrence mapping differ");
         var byId = occurrences.stream().collect(Collectors.toMap(RelationshipOccurrence::identity, o -> o));
         var documents = sources.stream().map(SourceOutcome::document).collect(Collectors.toSet());
+        var clientOccurrences=new HashMap<SourceSpan,RelationshipOccurrence>();
+        if(!httpClientCalls.isEmpty())for(var occurrence:occurrences)if(occurrence.relationship().kind().value().equals("java.calls"))clientOccurrences.put(occurrence.span(),occurrence);
+        for(var call:httpClientCalls) {
+            var occurrence=clientOccurrences.get(call.span());
+            if(!entities.contains(call.caller())||!entities.contains(call.clientMethod())||!documents.contains(call.span().document())
+                    ||occurrence==null||occurrence.status()!=SemanticStatus.RESOLVED||!occurrence.relationship().source().equals(call.caller())
+                    ||!(occurrence.relationship().target() instanceof RelationshipTarget.Resolved r)||!r.target().equals(call.clientMethod()))
+                throw new IllegalArgumentException("HTTP client call lacks its exact bound source occurrence");
+        }
         if(!constructorCandidates.isEmpty()) {
             var sourceTypes=declarations.stream().filter(d->d.entity().kind()==EntityKind.TYPE&&d.entity().declaration().isPresent()).map(d->d.entity().identity()).collect(Collectors.toSet());
             var sourceFields=declarations.stream().filter(d->d.entity().kind()==EntityKind.FIELD&&d.entity().declaration().isPresent()).map(d->d.entity().identity()).collect(Collectors.toSet());
@@ -98,6 +110,16 @@ public record FrontendResult(AnalysisIdentity analysis, VersionedIdentifier fron
             long emitted = occurrences.stream().filter(o -> o.relationship().kind().equals(c.category())).count();
             if (attempted != c.attempted() || emitted != c.emitted()) throw new IllegalArgumentException("coverage differs from output");
         }
+    }
+    public FrontendResult(AnalysisIdentity analysis, VersionedIdentifier frontend, State state,
+            List<DeclarationRecord> declarations, List<RelationshipOccurrence> occurrences,
+            List<ObservationRecord> observations, List<SourceOutcome> sources,
+            List<CategoryCoverage> coverage, List<Diagnostic> diagnostics, List<TypeUseRecord> types,
+            List<AnnotationUseRecord> annotations, List<DerivedRelationshipRecord> derivedRelationships,
+            List<TypeDeclarationRecord> typeDeclarations, List<MemberDeclarationRecord> memberDeclarations,
+            List<LombokConstructorCandidate> constructorCandidates) {
+        this(analysis,frontend,state,declarations,occurrences,observations,sources,coverage,diagnostics,types,annotations,
+                derivedRelationships,typeDeclarations,memberDeclarations,constructorCandidates,List.of());
     }
     public FrontendResult(AnalysisIdentity analysis, VersionedIdentifier frontend, State state,
             List<DeclarationRecord> declarations, List<RelationshipOccurrence> occurrences,

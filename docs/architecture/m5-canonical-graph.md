@@ -2,11 +2,30 @@
 
 **M8.4 additive source projections (2026-11-04):** `SOURCE_DECLARATION`, `CALL_SITE`, `ROUTE_CANDIDATE` and other `SOURCE_*` nodes preserve passive syntax with provider records and full captured positions. `syntax.call` resolves the reference to a call-site node, not the program's callee. Source wiring has separate `SOURCE_BEAN_CANDIDATE` / `SOURCE_INJECTION_SITE` nodes and `spring.source-type-candidate` edges, retaining unknown activation/selection. These cannot be interpreted as qualified conditional bindings or active endpoints. A Java compatibility-worker fallback builds a real inventory-addressed root with explicit Java gaps; it does not invent a legacy empty-source snapshot. Single-record authenticated evidence lookup (`evo graph-pages evidence SHA256`) follows the evidence Merkle tree and verifies membership in the selected graph without materializing it. Wire fields and protected Java identities remain unchanged.
 
+**2026-11-05 continuation:** neutral HTTP client rows retain their exact bound
+Java occurrence, caller/API entities, URI/method and source range. Projection adds
+`SOURCE_HTTP_CALL_CANDIDATE` plus `java.http-client-call` evidence; it does not parse
+Java source. Root HTTP call/endpoint references preserve cross-context provenance
+while candidate edges stay inside the root partition. Dynamic URI and missing
+routing/activation remain explicit. Passive Protobuf declarations and same-file
+RPC/message candidate references retain source-only trust; no generated stub,
+native callee or runtime connection is invented. Compiler-attribution copies and
+semantic replay preserve the additive HTTP rows and constructor candidates.
+
 Date: 2026-10-14. Implementation: `com.evolution.analysis.graph` in `analyzer`, with `FileGraphStore` in `analyzer-filesystem`. This is the graph/persistence slice; projection queries, structural metric computation and G4 adjudication remain M5.2/M5.3.
 
 ## Entry points and ownership
 
 `UniversalArchitecturePipeline.runWithEvidence(...)` returns a `DetailedResult` containing the existing report plus optional `CanonicalGraphInput`. It captures the original typed repository/build/source/semantic/Spring artifacts during the same execution, before report deduplication/summarization. Existing `run(...)` callers retain their report API. No second frontend, registration or binding run obtains missing graph data.
+
+The 2026-11-05 performance repair validates Spring/source-set provenance with one
+unit-header index and O(U + S) lookups rather than replaying all U units for each
+Spring slice. It retains duplicate/absent/foreign-analysis rejection. Independent
+report groups and CAS leaf preparation may run in bounded request-owned workers;
+winner selection, SQLite ownership, canonical ordering, audits and publication
+remain deterministic. Serial/parallel controls compare identical graph bytes and
+authenticated roots, including cold reads and injected failures. The graph schema
+and identity rules are unchanged. See the [streaming implementation contract](m8-streaming-acquisition.md#linear-validation-and-bounded-aggregation--2026-11-05).
 
 For acquisition inputs, the detailed result also retains the original acquisition record, including terminal failures. No graph input is fabricated when decoding cannot supply an authoritative repository input. Empty/non-Java decoded inputs may produce an honest repository/source-evidence graph with no Java entities.
 

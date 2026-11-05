@@ -83,3 +83,44 @@ Existing v1 graph/query identities, metrics and score formulas are unchanged. V1
 ### CAS disk-space sampling — 2026-11-05
 
 `StreamingContentStore` retains a validated FileStore instead of resolving the volume for every stream write. Both producer and input-stream writes use a 64-KiB buffer. Each private write conservatively debits its sampled usable-space allowance, rechecks after at most 8 MiB or one second, and checks the reserve before publication. A single large producer write is partitioned across those checkpoints. Concurrent filesystem activity can still fail an OS write; failure/cancellation retains the atomic no-handle/no-publication contract. Sampling is operational policy and never contributes to content identity. The authored 3-MiB tiny-write regression changes 48 space probes to at most three while preserving SHA-256; this is not a ThingsBoard timing measurement.
+
+### Analysis-unit replay — 2026-11-05
+
+Report status reuses failed/rejected-unit and frontend-completion counters from
+the structural extraction pass. It no longer traverses disk-retained units twice
+again just to count them. The serial regression allows one full-unit read for
+extraction and one for graph-input provenance validation. These rows are neutral
+frontend/Spring records; parser ASTs stay inside adapters. FileAnalysisWorkspace
+caches record accessor/constructor metadata by its process-registered class, while
+preserving SHA-256-before-decode, bounds and sealing. RAM/disk report and graph
+identities are checked, including additive HTTP rows. No real-repository timing,
+constant-memory or universal throughput result follows from these controls.
+
+### Linear validation and bounded aggregation — 2026-11-05
+
+`CanonicalGraphInput` indexes each ingestion unit's source-set/optional analysis
+identity once, then validates Spring slices by lookup: O(U + S) header operations
+and U full-unit reads. U counts source-set units, not Java files. Duplicate units,
+absent frontends and foreign Spring analyses still fail provenance validation.
+An authored two-unit/128-slice control changes 130 full-unit reads to two.
+
+Independent report groups use request-owned workers only when the workspace
+explicitly supports concurrent tables. Default admission is at most four workers,
+also limited by CPU and available heap; embedding callers can select one to eight.
+Each mutable table has one owner. Input-order winners and sorted outputs remain
+unchanged. FileAnalysisWorkspace serializes its SQLite/file operations; distinct
+owned rows reuse checked byte ranges through SQLite aliases instead of repeatedly
+encoding and appending the same records. Sorted aliases use SQLite's
+[ROW_NUMBER window function](https://www.sqlite.org/windowfunctions.html).
+Hash-before-decode remains required on every replay. Positional reads prevent a
+nested replay from moving the append writer's file position.
+
+PartitionedGraphStore keeps SQLite traversal, tree merges, reference audits and
+root publication ordered. Bounded leaf jobs parse/canonicalize/hash/force separate
+CAS pages concurrently; at most one page per admitted worker is outstanding.
+An oversized page proceeds alone. Cancellation/failure drains workers before
+scratch cleanup. Graph bytes are streamed once into both graph and frame digests;
+canonical bytes, authenticated roots and cold-read validation remain unchanged.
+These bounds govern working sets, not repository admission or total elapsed time.
+Overlap, byte equality, corruption, cancellation and injected-I/O controls are
+authored tests; they do not establish a real-repository speedup.

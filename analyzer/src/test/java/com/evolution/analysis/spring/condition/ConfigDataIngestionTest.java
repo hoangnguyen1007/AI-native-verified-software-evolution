@@ -4,6 +4,18 @@ import java.util.*;
 import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 class ConfigDataIngestionTest {
+    @Test void nestedDefaultsAreLazyAndNestedNamesRetainPrecedence() {
+        var r=load(Map.of("application.properties", "SERVER_PORT=9090\nserver.port=${SERVER_PORT:${PORT}}\n"
+                +"key=host\nhost=localhost\nendpoint=${${key}:missing}\n"
+                +"fallback=${MISSING:${ALSO_MISSING:8080}}\n"));
+        assertEquals("9090",r.properties().get("server.port"));
+        assertEquals("localhost",r.properties().get("endpoint"));
+        assertEquals("8080",r.properties().get("fallback"));
+        assertTrue(r.assignment().isPresent(),r.issues().toString());
+        var cyclicDefault=load(Map.of("application.properties","value=${present:${value}}\npresent=ok\n"));
+        assertEquals("ok",cyclicDefault.properties().get("value"));
+        assertTrue(cyclicDefault.assignment().isPresent(),cyclicDefault.issues().toString());
+    }
     @Test void profileListsReplaceLowerPriorityListsAndActivationListsAreOrExpressions() {
         var r=load(Map.of("application.yml","spring.profiles.active: [old, obsolete]\n---\nspring.config.activate.on-profile: [fresh, other]\nactive: yes\n",
                 "application.properties","spring.profiles.active[0]=fresh\n"));

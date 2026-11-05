@@ -11,7 +11,7 @@ import java.util.function.BooleanSupplier;
 /** Source URI joins expose possible relationships, preserving endpoint contexts and
  * unresolved routing/activation. They cannot establish a deployed service call. */
 public final class HttpServiceCallProjection {
-    public static final VersionedIdentifier PROVIDER=new VersionedIdentifier("polyglot.http-uri-candidates","m8.4-v1");
+    public static final VersionedIdentifier PROVIDER=new VersionedIdentifier("polyglot.http-uri-candidates","m8.4-java-clients-v2");
     private record Endpoint(KnowledgeGraph.Node node,String path,Set<String> methods,ContentDigest proof,boolean recovered) {}
     private HttpServiceCallProjection() {}
 
@@ -30,8 +30,15 @@ public final class HttpServiceCallProjection {
         }
         // Delay added nodes until iteration finishes (in-memory maps also remain valid).
         for(var node:nodes.values()) {
-            check(cancelled);if(!node.context().equals(root)||!node.kind().equals("SOURCE_HTTP_CALL_CANDIDATE"))continue;
+            check(cancelled);if(!node.kind().equals("SOURCE_HTTP_CALL_CANDIDATE"))continue;
             var source=descriptor(node,evidence);if(source.isEmpty())continue;var caller=source.orElseThrow();
+            String from=node.identity();
+            if(!node.context().equals(root)) {
+                from=KnowledgeGraph.derivedIdentity("http-call-reference",List.of(node.context(),node.identity()));
+                var reference=GraphEvidence.capture("polyglot.http-call-reference",Map.of("context",node.context(),"call",node.identity(),"callEvidence",caller.proof()));
+                evidence.putIfAbsent(reference.identity().value(),reference);
+                additions.put(root+"|"+from,new KnowledgeGraph.Node(from,root,"HTTP_CALL_REFERENCE",List.of(reference.identity(),caller.proof())));
+            }
             var candidates=new TreeMap<String,Endpoint>();
             long unsupportedPatterns=0;
             var path=HttpUriPattern.requestPath(caller.path());
@@ -65,7 +72,7 @@ public final class HttpServiceCallProjection {
             if(!targets.isEmpty()) {
                 var target=new KnowledgeGraph.Target(targets.size()==1?KnowledgeGraph.TargetState.RESOLVED:KnowledgeGraph.TargetState.CANDIDATES,targets,Optional.empty());
                 String id=KnowledgeGraph.derivedIdentity("http-service-call-candidate",List.of(PROVIDER,root,node.identity(),target,proof.identity()));
-                edges.put(root+"|"+id,new KnowledgeGraph.Edge(id,root,"polyglot.service-call.candidate",node.identity(),target,List.copyOf(supports),Optional.empty()));
+                edges.put(root+"|"+id,new KnowledgeGraph.Edge(id,root,"polyglot.service-call.candidate",from,target,List.copyOf(supports),Optional.empty()));
             }
             var subject=new EvidenceSubject(EvidenceSubject.Kind.OBSERVATION,proof.identity().value());
             var requirement=new EvidenceRequirement(EvidenceRequirement.Kind.CONFIGURATION,"polyglot.http-routing",List.of(subject),EvidenceRequirement.AuthorizationClass.PASSIVE,
@@ -81,6 +88,11 @@ public final class HttpServiceCallProjection {
     private static Optional<Endpoint> descriptor(KnowledgeGraph.Node node,Map<String,GraphEvidence> evidence) {
         for(var support:node.evidence()) {
             var proof=evidence.get(support.value());if(proof==null)continue;
+            if(proof.family().equals("java.http-client-call")) {
+                var call=GraphJson.object(GraphJson.object(GraphJson.read(proof.canonicalJson(),GraphJson.Limits.defaults())).get("call"));
+                var methods=new TreeSet<String>();GraphJson.array(call.get("methods")).forEach(m->methods.add(GraphJson.string(m)));
+                return Optional.of(new Endpoint(node,GraphJson.string(call.get("uri")),methods,support,false));
+            }
             if(node.kind().equals("ENDPOINT")&&proof.family().equals("spring.endpoint-declaration")) {
                 var route=GraphJson.object(GraphJson.object(GraphJson.read(proof.canonicalJson(),GraphJson.Limits.defaults())).get("route"));
                 var methods=new TreeSet<String>();GraphJson.array(route.get("methods")).forEach(m->methods.add(GraphJson.string(m)));

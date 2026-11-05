@@ -9,6 +9,44 @@ import org.junit.jupiter.api.io.TempDir;
 import static org.junit.jupiter.api.Assertions.*;
 
 class PartitionedGraphStoreTest {
+    @Test void oversizedCanonicalRowProceedsAloneAndRetainsAuthenticatedEvidence()throws Exception {
+        var base=FileGraphStoreTest.graph();var large=GraphEvidence.capture("fixture.large-row",Map.of("text","x".repeat(1_060_000)));
+        var evidence=new ArrayList<>(base.evidence());evidence.add(large);
+        var graph=new KnowledgeGraph(base.snapshot(),base.contexts(),base.nodes(),base.edges(),evidence);
+        var largeWritten=new java.util.concurrent.atomic.AtomicBoolean();
+        var store=new PartitionedGraphStore(directory,64_000_000,2,channel->{if(channel.size()>1_048_576){largeWritten.set(true);assertFalse(Thread.currentThread().getName().startsWith("evo-graph-page"),"An oversized row must be isolated from page workers");}channel.force(true);});
+        store.save(graph,()->false);assertTrue(largeWritten.get());
+        assertEquals(large,new PartitionedGraphStore(directory).evidence(graph.identity(),large.identity()).orElseThrow());
+    }
+    @Test void boundedPageWorkersOverlapAndProduceIdenticalAuthenticatedRoots()throws Exception {
+        var graph=fixture();Path serial=directory.resolve("serial"),parallel=directory.resolve("parallel");
+        new PartitionedGraphStore(serial,64_000_000,1).save(graph,()->false);
+        var gate=new java.util.concurrent.CountDownLatch(2);var active=new java.util.concurrent.atomic.AtomicInteger();var peak=new java.util.concurrent.atomic.AtomicInteger();var pages=new java.util.concurrent.atomic.AtomicInteger();
+        var store=new PartitionedGraphStore(parallel,64_000_000,2,channel->{
+            if(Thread.currentThread().getName().startsWith("evo-graph-page")&&pages.getAndIncrement()>0) {
+                int count=active.incrementAndGet();peak.accumulateAndGet(count,Math::max);gate.countDown();
+                try{assertTrue(gate.await(2,java.util.concurrent.TimeUnit.SECONDS),"Independent page writes must overlap");channel.force(true);}
+                catch(InterruptedException interrupted){Thread.currentThread().interrupt();throw new java.io.InterruptedIOException();}
+                finally{active.decrementAndGet();}
+            }else channel.force(true);
+        });
+        store.save(graph,()->false);assertEquals(2,peak.get());assertEquals(0,active.get());
+        String pointer=graph.identity().value().substring(7)+".partitions.json";
+        assertEquals(Files.readString(serial.resolve(pointer)),Files.readString(parallel.resolve(pointer)));
+        assertEquals(new PartitionedGraphStore(serial).partitions(graph.identity(),10,Optional.empty()),new PartitionedGraphStore(parallel).partitions(graph.identity(),10,Optional.empty()));
+    }
+    @Test void pageWorkerFailureAndCancellationPublishNeitherRootNorSnapshot()throws Exception {
+        var graph=fixture();var cause=new java.io.IOException("GRAPH_PARTITION_STORAGE_UNAVAILABLE",new java.sql.SQLException("private","HY000",13));
+        Path failed=directory.resolve("worker-failure"),snapshots=directory.resolve("worker-snapshots");
+        var store=new PartitionedGraphStore(failed,64_000_000,2,channel->{if(Thread.currentThread().getName().startsWith("evo-graph-page"))throw cause;channel.force(true);});
+        assertSame(cause,assertThrows(java.io.IOException.class,()->store.build(graph,snapshots,()->false,workspace->{})));
+        assertFalse(Files.exists(failed.resolve(graph.identity().value().substring(7)+".partitions.json")));
+        try(var files=Files.list(snapshots)){assertEquals(0,files.count());}
+        var cancelled=new java.util.concurrent.atomic.AtomicBoolean();Path aborted=directory.resolve("worker-cancel");
+        var cancelling=new PartitionedGraphStore(aborted,64_000_000,2,channel->{if(Thread.currentThread().getName().startsWith("evo-graph-page"))cancelled.set(true);channel.force(true);});
+        assertThrows(java.util.concurrent.CancellationException.class,()->cancelling.save(graph,cancelled::get));
+        assertFalse(Files.exists(aborted.resolve(graph.identity().value().substring(7)+".partitions.json")));
+    }
     @TempDir Path directory;
     @Test void legacyGraphAssemblyRetainsEdgesAndNeverPublishesDanglingContributions()throws Exception {
         var graph=fixture();Path snapshots=directory.resolve("snapshots");var store=new PartitionedGraphStore(directory.resolve("pages"));

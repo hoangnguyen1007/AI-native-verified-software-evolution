@@ -73,7 +73,8 @@ public final class ConstructorInjectionIngestion {
                 new VersionedIdentifier("frontend.javaparser","3.28.2-m8.4-lombok-candidates-v3"),
                 new VersionedIdentifier("frontend.javaparser","3.28.2-m8.4-recovery-v4"),
                 new VersionedIdentifier("frontend.javaparser","3.28.2-m8.4-bounded-bodies-v5"),
-                new VersionedIdentifier("frontend.javaparser","3.28.2-m8.4-generic-recovery-v6")).contains(frontend.frontend());
+                new VersionedIdentifier("frontend.javaparser","3.28.2-m8.4-generic-recovery-v6"),
+                        new VersionedIdentifier("frontend.javaparser","3.28.2-m8.4-lombok-http-v7")).contains(frontend.frontend());
         for(var component:discovery.rows()) {
             var evidence=new ConditionEvidence.Derived(List.of(identity,component.evidence().identity()),PROVIDER,"constructor-selection:"+component.type().value());
             if(component.status()!=ComponentScanIngestion.Status.INCLUDED) {

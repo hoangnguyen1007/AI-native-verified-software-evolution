@@ -8,6 +8,18 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 class UniversalConditionSemanticsTest {
+    @Test void expandedExpressionIncludesTrailingTextInTheCharacterBudget() {
+        var result=BasicSpelEvaluator.evaluate("${v} == true",Map.of("v","true||true"),E,ConditionTestInputs.context().snapshotIdentity(),new BasicSpelEvaluator.Limits(16,100,10));
+        assertEquals(LogicalValue.UNKNOWN,result.value());assertEquals(UniversalSpringEvidence.Reason.RESOURCE_LIMIT,result.issues().getFirst().reason());
+    }
+    @Test void nestedPlaceholderFootprintIncludesFallbackKeysAndRejectsDynamicSelectors() {
+        assertEquals(Optional.of(Set.of("SERVER_PORT","PORT")),BasicSpelEvaluator.propertyKeys("${SERVER_PORT:${PORT:8080}} == 8080"));
+        assertEquals(Optional.of(Set.of("enabled","fallback")),BasicSpelEvaluator.propertyKeys("${enabled:${fallback:false}}"));
+        assertTrue(BasicSpelEvaluator.propertyKeys("${${name}:false}").isEmpty());
+        assertTrue(BasicSpelEvaluator.propertyKeys("${open").isEmpty());
+        var r=BasicSpelEvaluator.evaluate("${SERVER_PORT:${PORT}} == 9090",Map.of("SERVER_PORT","9090"),E,ConditionTestInputs.context().snapshotIdentity(),BasicSpelEvaluator.Limits.defaults());
+        assertEquals(LogicalValue.TRUE,r.value());
+    }
     static final ConditionEvidence E=ConditionTestInputs.EVIDENCE;
     static final ConditionExpression.Semantics S=new ConditionExpression.Semantics(ExogenousConditionEvaluator.SEMANTICS,ContentDigest.sha256Utf8("authored-framework"));
     static ConditionModel model(int size, boolean impossible, boolean opaque) {
@@ -47,8 +59,23 @@ class UniversalConditionSemanticsTest {
         }
         assertEquals(LogicalValue.FALSE,BasicSpelEvaluator.evaluate("${missing:false}",Map.of(),E,ConditionTestInputs.context().snapshotIdentity(),BasicSpelEvaluator.Limits.defaults()).value());
     }
+    @Test void nativeSpelArithmeticConditionalAndShortCircuitSemanticsStayDataOnly() {
+        for(String expression:List.of("1 / 2 == 0", "5 % 2 == 1", "0.1 + 0.2 != 0.3", "1.0 / 2 == 0.5",
+                "false && (1 / 0 == 0) == false || true", "true ? 2 > 1 : (1 / 0 == 0)",
+                "(null ?: 'fallback') == 'fallback'", "2147483647 + 1 < 0")) {
+            var result=BasicSpelEvaluator.evaluate(expression,Map.of(),E,ConditionTestInputs.context().snapshotIdentity(),BasicSpelEvaluator.Limits.defaults());
+            assertEquals(LogicalValue.TRUE,result.value(),expression);assertTrue(result.gaps().isEmpty());
+        }
+        for(String expression:List.of("new java.io.File('x').exists()", "'x'.getClass()", "T(java.lang.System).getenv('HOME')",
+                "{'a','b'}.![getClass()]", "'a' * 2147483647 == 'a'", "'aaaa' matches '(a+)+$'", "true || @bean"))
+            assertEquals(LogicalValue.UNKNOWN,BasicSpelEvaluator.evaluate(expression,Map.of(),E,ConditionTestInputs.context().snapshotIdentity(),BasicSpelEvaluator.Limits.defaults()).value(),expression);
+        for(String expression:List.of("(".repeat(1000)+"true"+")".repeat(1000),"!".repeat(1000)+"true")) {
+            var bounded=BasicSpelEvaluator.evaluate(expression,Map.of(),E,ConditionTestInputs.context().snapshotIdentity(),BasicSpelEvaluator.Limits.defaults());
+            assertEquals(LogicalValue.UNKNOWN,bounded.value());assertEquals(UniversalSpringEvidence.Reason.RESOURCE_LIMIT,bounded.issues().getFirst().reason());
+        }
+    }
     @Test void spelNeverExecutesBeanTypeOrMethodAccessAndClosesMalformedAndCyclicInputs() {
-        for(String expression:List.of("T(java.lang.Runtime).getRuntime().exec('no')","@bean.enabled", "true || @bean", "${x}", "true &&", "(true", "'open", "1 / 2 == 0", "0.1 + 0.2 == 0.3", "2147483647 + 1 < 0", "-(-2147483647 - 1) > 0")) {
+        for(String expression:List.of("T(java.lang.Runtime).getRuntime().exec('no')","@bean.enabled", "true || @bean", "${x}", "true &&", "(true", "'open")) {
             var result=BasicSpelEvaluator.evaluate(expression,Map.of("x","${x}"),E,ConditionTestInputs.context().snapshotIdentity(),BasicSpelEvaluator.Limits.defaults());
             assertEquals(LogicalValue.UNKNOWN,result.value(),expression);assertEquals(1,result.gaps().size());
         }

@@ -66,7 +66,7 @@ public final class SymbolicTruthRegions {
     public static StagedResult evaluateStaged(TruthRegionEvaluation.Request request,int maxSignatures,Limits limits) {
         if(maxSignatures<1)throw new IllegalArgumentException("Positive signature limit required");
         var c=new Compilation(request.conditionModel(),request.conditionSemantics(),request.reasoner(),limits);
-        var input=IngestionEvidence.digest(List.of("spring.symbolic-staged:m4u.2-v1",c.input,request.bindingPlan().identity(),request.baseline().identity(),
+        var input=IngestionEvidence.digest(List.of("spring.symbolic-staged:m8.4-native-spel-v2",c.input,request.bindingPlan().identity(),request.baseline().identity(),
                 request.limits(),request.evaluatorArtifactDigest(),maxSignatures));
         c.prepare();
         var dependencies=new HashMap<ContentDigest,InjectionBindingPlan.Dependency>();request.bindingPlan().dependencies().forEach(d->dependencies.put(d.identity(),d));
@@ -152,7 +152,7 @@ public final class SymbolicTruthRegions {
         Compilation(ConditionModel model,ConditionExpression.Semantics semantics,ConfigurationReasoner reasoner,Limits limits) {
             this.model=Objects.requireNonNull(model);space=model.space();this.semantics=Objects.requireNonNull(semantics);
             this.reasoner=Objects.requireNonNull(reasoner);this.limits=Objects.requireNonNull(limits);
-            input=IngestionEvidence.digest(List.of("spring.symbolic-regions:m4u.2-v1",model.identity(),semantics,reasoner.policy(),limits));
+            input=IngestionEvidence.digest(List.of("spring.symbolic-regions:m8.4-native-spel-v2",model.identity(),semantics,reasoner.policy(),limits));
         }
         Result run() {
             prepare();
@@ -329,7 +329,7 @@ public final class SymbolicTruthRegions {
         }
         Truth spel(ConditionExpression.BasicSpel expression) {
             var keys=com.evolution.analysis.spring.universal.BasicSpelEvaluator.propertyKeys(expression.expression());
-            if(keys.isEmpty()||!expression.policy().equals(new VersionedIdentifier("spring.basic-spel","m4u.2-v1")))return unknown("spel-policy");
+            if(keys.isEmpty()||!expression.policy().equals(com.evolution.analysis.spring.universal.BasicSpelEvaluator.POLICY))return unknown("spel-policy");
             var variables=keys.orElseThrow().stream().map(k->new FiniteDomain.Variable(FiniteDomain.Kind.PROPERTY,k)).toList();
             long cells=1;
             for(var variable:variables){var values=environment.get(variable);if(values==null)return unknown("spel-domain");cells*=values.size();if(cells>limits.maxNodes())return unknown("spel-atom-budget");}

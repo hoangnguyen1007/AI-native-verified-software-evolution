@@ -7,11 +7,15 @@ import java.util.function.Function;
 /** Request-owned storage for neutral analysis rows. Its lifetime includes graph publication.
  * Providers retain no parser objects here; scheduling and storage never change semantic identity. */
 public interface AnalysisWorkspace {
+    /** Independent tables may be operated concurrently only with explicit provider
+     * support. Each mutable list still has one owner; close follows worker drain. */
+    default boolean concurrentTables(){return false;}
     <T> List<T> list();
     Set<CapabilityGapRecord> gaps(Collection<CapabilityGapRecord> initial);
     <T> List<T> distinct(Collection<T> rows, Function<T,String> key);
 
     AnalysisWorkspace MEMORY = new AnalysisWorkspace() {
+        public boolean concurrentTables(){return true;}
         public <T> List<T> list(){return new ArrayList<>();}
         public Set<CapabilityGapRecord> gaps(Collection<CapabilityGapRecord> initial){return new TreeSet<>(initial);}
         public <T> List<T> distinct(Collection<T> rows,Function<T,String> key){

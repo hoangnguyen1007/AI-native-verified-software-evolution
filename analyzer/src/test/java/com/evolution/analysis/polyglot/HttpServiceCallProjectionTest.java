@@ -13,6 +13,18 @@ class HttpServiceCallProjectionTest {
     private final Map<String,KnowledgeGraph.Node> nodes=new TreeMap<>();
     private final Map<String,KnowledgeGraph.Edge> edges=new TreeMap<>();
     private final Map<String,GraphEvidence> evidence=new TreeMap<>();
+    @Test void boundJavaClientsKeepTheirAnalysisContextAndDynamicUrisRemainObligations()throws Exception {
+        String context=ContentDigest.sha256Utf8("java-analysis").value();
+        add("literal-java",context,"SOURCE_HTTP_CALL_CANDIDATE",GraphEvidence.capture("java.http-client-call",Map.of("call",Map.of("uri","/pets/42","methods",List.of("GET")))));
+        add("dynamic-java",context,"SOURCE_HTTP_CALL_CANDIDATE",GraphEvidence.capture("java.http-client-call",Map.of("call",Map.of("uri","","methods",List.of("GET")))));
+        syntax("server",root,"ROUTE_CANDIDATE","/pets/{id}","GET",false);
+        HttpServiceCallProjection.project(nodes,edges,evidence,root,()->false);
+        assertEquals(1,edges.size());var join=edges.values().iterator().next();
+        assertEquals("HTTP_CALL_REFERENCE",nodes.get(root+"|"+join.source()).kind());
+        assertEquals(2,nodes.values().stream().filter(n->n.kind().equals("HTTP_CALL_REFERENCE")).count());
+        assertTrue(evidence.values().stream().anyMatch(e->e.family().equals("polyglot.http-uri-match")&&e.canonicalJson().contains(context)));
+        assertTrue(evidence.values().stream().anyMatch(e->e.family().equals("evidence.gap")&&e.canonicalJson().contains("HTTP_URI_UNSUPPORTED")));
+    }
 
     @Test void sourceClientsJoinAllMatchingRoutesAndKeepSpringContextProvenance()throws Exception {
         var client=syntax("client",root,"SOURCE_HTTP_CALL_CANDIDATE","/pets/42?full=true","GET",false);

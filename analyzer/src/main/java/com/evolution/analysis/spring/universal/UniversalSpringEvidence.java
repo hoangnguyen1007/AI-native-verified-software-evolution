@@ -9,7 +9,7 @@ import java.util.*;
 
 /** Additive, closed obligations for the passive universal Spring providers. */
 public final class UniversalSpringEvidence {
-    public static final VersionedIdentifier PROVIDER = new VersionedIdentifier("spring.universal", "m4u.2");
+    public static final VersionedIdentifier PROVIDER = new VersionedIdentifier("spring.universal", "m8.4-native-spel-v3");
     public static final VersionedIdentifier CATALOG = new VersionedIdentifier("evidence.spring-universal-gaps", "m4u.2-v1");
     public enum Reason {
         EVIDENCE_MISSING, EVIDENCE_CONFLICT, FRAMEWORK_VERSION_UNKNOWN, NAMESPACE_INCOMPATIBLE,

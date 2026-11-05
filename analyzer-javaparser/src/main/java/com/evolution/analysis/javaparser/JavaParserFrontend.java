@@ -5,7 +5,7 @@ import com.evolution.analysis.frontend.*;
 public final class JavaParserFrontend implements ConcurrentSemanticFrontend {
     private static final java.util.concurrent.locks.ReentrantReadWriteLock RESOLVERS=new java.util.concurrent.locks.ReentrantReadWriteLock(true);
     public static final com.evolution.analysis.contract.common.VersionedIdentifier PROVIDER =
-            new com.evolution.analysis.contract.common.VersionedIdentifier("frontend.javaparser", "3.28.2-m8.4-generic-recovery-v6");
+            new com.evolution.analysis.contract.common.VersionedIdentifier("frontend.javaparser", "3.28.2-m8.4-lombok-http-v7");
     @Override public long estimatedWorkingBytes(FrontendRequest request) {
         var paths=new java.util.HashSet<java.nio.file.Path>();request.platform().artifacts().forEach(a->paths.add(a.path().toAbsolutePath().normalize()));request.dependencies().forEach(b->paths.add(b.path().toAbsolutePath().normalize()));
         long symbols=0;

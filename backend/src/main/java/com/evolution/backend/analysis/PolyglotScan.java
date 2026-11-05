@@ -18,7 +18,7 @@ import java.util.function.BooleanSupplier;
 /** Full-inventory scan composition. Native outputs use the existing language coordinator's
  * authenticated publication lane, never target execution on the controller. */
 public final class PolyglotScan {
-    public static final VersionedIdentifier PROVIDER=new VersionedIdentifier("scan.polyglot","m8.4-http-candidates-v4");
+    public static final VersionedIdentifier PROVIDER=new VersionedIdentifier("scan.polyglot","m8.4-protobuf-http-v5");
     @FunctionalInterface public interface Current {void check()throws IOException;}
     public record Published(SemanticContextCoordinator.Plan plan,SemanticPublicationStore.Publication publication,
             RepositoryContentStore content,SemanticTables tables,Map<String,Object> report,String trust,Current current) {}
@@ -63,6 +63,7 @@ public final class PolyglotScan {
         var inventory=new PolyglotInventory().scan(revision,intake.inventory(),intake.content(),tables,cancelled);
         var languages=new TreeMap<String,Long>();var uncovered=new TreeMap<String,Long>();long[] counts={0,0,0};
         var profiles=LanguageProfile.baseline().stream().map(LanguageProfile::language).collect(java.util.stream.Collectors.toSet());
+        profiles.add("protobuf");
         try(var index=SqliteSemanticCensusIndex.temporary(scratch,65536)) {
             try(var rows=tables.open(inventory.entries(),cancelled)){SemanticTables.Row row;while((row=rows.next())!=null) {
                 index.put("inventory",row.key(),row);if(!"FILE".equals(row.fields().get("kind")))continue;
@@ -93,7 +94,7 @@ public final class PolyglotScan {
             }}
         }
         var gaps=new ArrayList<CapabilityGapRecord>();
-        for(var language:uncovered.entrySet())gaps.add(gap(context,inventory,language.getKey(),language.getValue(),"NATIVE_CONTEXT_REQUIRED"));
+        for(var language:uncovered.entrySet())gaps.add(gap(context,inventory,language.getKey(),language.getValue(),language.getKey().equals("protobuf")?"PROTOBUF_GENERATOR_REQUIRED":"NATIVE_CONTEXT_REQUIRED"));
         if(published.isPresent()&&!Boolean.TRUE.equals(published.orElseThrow().report().get("complete")))gaps.add(gap(context,inventory,"polyglot",counts[0],"NATIVE_PUBLICATION_PARTIAL"));
         var syntax=new StaticPolyglotScan().run(inventory,tables,intake.content(),scratch,cancelled);
         boolean strongerNativeComplete=published.filter(p->p.trust().equals("VALIDATED_OBSERVATION")&&Boolean.TRUE.equals(p.report().get("complete"))).isPresent();
@@ -107,7 +108,9 @@ public final class PolyglotScan {
     private static List<String> languages(SemanticTables.Row row){return GraphJson.array(row.fields().get("languageCandidates")).stream().map(GraphJson::string).toList();}
     private static CapabilityGapRecord gap(EvidenceContext context,PolyglotInventory.Report inventory,String language,long count,String reason) {
         var subject=new EvidenceSubject(EvidenceSubject.Kind.SOURCE_SET,inventory.inventory().value()+"#"+language);
-        var need=new EvidenceRequirement(EvidenceRequirement.Kind.ALTERNATE_FRONTEND,"polyglot.native-context",List.of(subject),EvidenceRequirement.AuthorizationClass.ISOLATED_EXECUTION,List.of("Acquire exact native context/census/observations with the registered language adapter; keep missing and unqualified results explicit."));
+        var need=language.equals("protobuf")
+                ?new EvidenceRequirement(EvidenceRequirement.Kind.GENERATED_SOURCE,"polyglot.protobuf-generation",List.of(subject),EvidenceRequirement.AuthorizationClass.ISOLATED_EXECUTION,List.of("Acquire exact protoc/plugin identities, import context, native descriptors and generated-source lineage; source schema declarations do not establish stub or client/server bindings."))
+                :new EvidenceRequirement(EvidenceRequirement.Kind.ALTERNATE_FRONTEND,"polyglot.native-context",List.of(subject),EvidenceRequirement.AuthorizationClass.ISOLATED_EXECUTION,List.of("Acquire exact native context/census/observations with the registered language adapter; keep missing and unqualified results explicit."));
         return CapabilityGapRecord.create(context,PROVIDER,"polyglot."+language,reason,subject,List.of(),List.of(ProviderObservationReference.create(PROVIDER,"polyglot.scan",inventory.identity(),CanonicalJson.sha256(List.of(language,count,reason)))),List.of(need),List.of(),List.of(new AffectedOutput(AffectedOutput.Kind.ANALYSIS_COVERAGE,"polyglot."+language)),List.of(),List.of(),List.of("documents="+count,"Full classified document denominator: "+inventory.entries().identity().value()));
     }
     public CapabilityGapRecord javaWorkerGap(Result result) {

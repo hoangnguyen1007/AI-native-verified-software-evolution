@@ -7,6 +7,7 @@ import com.evolution.analysis.spring.condition.*;
 import com.evolution.analysis.spring.truth.*;
 import com.evolution.analysis.spring.universal.SourceToSpringPlan;
 import com.evolution.analysis.contract.common.*;
+import com.evolution.analysis.contract.identity.AnalysisIdentity;
 import com.evolution.analysis.contract.serialization.CanonicalJson;
 import java.util.*;
 
@@ -56,8 +57,8 @@ public record CanonicalGraphInput(RepositoryInputs repository, Optional<Universa
                             Map.entry("limits",p.limits()),Map.entry("evaluatorArtifact",p.evaluatorArtifact()))));
                     if(!expected.equals(truth.inputIdentity()))throw new IllegalArgumentException("Foreign explicit truth result");
                 } else {
-                    var compilation=IngestionEvidence.digest(List.of("spring.symbolic-regions:m4u.2-v1",model.identity(),plan.conditions().semantics(),p.reasonerPolicy(),p.symbolicLimits().orElseThrow()));
-                    var expected=IngestionEvidence.digest(List.of("spring.symbolic-staged:m4u.2-v1",compilation,plan.binding().identity(),baseline.orElseThrow().identity(),p.limits(),p.evaluatorArtifact(),p.maxSignatures()));
+                    var compilation=IngestionEvidence.digest(List.of("spring.symbolic-regions:m8.4-native-spel-v2",model.identity(),plan.conditions().semantics(),p.reasonerPolicy(),p.symbolicLimits().orElseThrow()));
+                    var expected=IngestionEvidence.digest(List.of("spring.symbolic-staged:m8.4-native-spel-v2",compilation,plan.binding().identity(),baseline.orElseThrow().identity(),p.limits(),p.evaluatorArtifact(),p.maxSignatures()));
                     if(!expected.equals(symbolicTruth.orElseThrow().inputIdentity()))throw new IllegalArgumentException("Foreign symbolic truth result");
                 }
             }
@@ -81,16 +82,20 @@ public record CanonicalGraphInput(RepositoryInputs repository, Optional<Universa
         if(!spring.isEmpty()&&ingestion.isEmpty())throw new IllegalArgumentException("Spring has no frontend provenance");
         if(ingestion.isPresent()) {
             var result=ingestion.orElseThrow();
-            var keys=new HashSet<UniversalSourceIngestion.SourceSet>();
-            for(var unit:result.units())if(!keys.add(unit.sourceSet()))throw new IllegalArgumentException("Duplicate ingestion source set");
+            // Retain only provenance headers, never full frontend/Spring payloads.
+            var analyses=new HashMap<UniversalSourceIngestion.SourceSet,Optional<AnalysisIdentity>>();
+            for(var unit:result.units())if(analyses.putIfAbsent(unit.sourceSet(),unit.frontend().map(f->f.analysis()))!=null)
+                throw new IllegalArgumentException("Duplicate ingestion source set");
+            var buildIdentity=build.orElseThrow().identity().value();
             for(var outcome:result.sourceIngestion().outcomes())outcome.request().ifPresent(request->{
                 if(!request.manifest().snapshot().identity().equals(repository.snapshot().identity())
-                        || !build.orElseThrow().identity().value().equals(request.manifest().configuration().values().get("ingestion.build-model")))
+                        || !buildIdentity.equals(request.manifest().configuration().values().get("ingestion.build-model")))
                     throw new IllegalArgumentException("Foreign graph source assembly");
             });
             for(var slice:spring) {
-                var unit=result.units().stream().filter(u->u.sourceSet().equals(slice.sourceSet())).findFirst().orElseThrow(()->new IllegalArgumentException("Spring source set absent"));
-                if(unit.frontend().isEmpty()||!unit.frontend().orElseThrow().analysis().equals(slice.plan().binding().registrationPlan().discoveryPlan().buildContext().analysisIdentity()))
+                var analysis=analyses.get(slice.sourceSet());
+                if(analysis==null)throw new IllegalArgumentException("Spring source set absent");
+                if(analysis.isEmpty()||!analysis.orElseThrow().equals(slice.plan().binding().registrationPlan().discoveryPlan().buildContext().analysisIdentity()))
                     throw new IllegalArgumentException("Foreign graph Spring analysis");
             }
         }

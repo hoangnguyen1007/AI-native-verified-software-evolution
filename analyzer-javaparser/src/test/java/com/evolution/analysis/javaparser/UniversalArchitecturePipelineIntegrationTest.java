@@ -22,6 +22,80 @@ import static org.junit.jupiter.api.Assertions.*;
  * Verifies all 8 acceptance journeys, truth regions, root-cause categorization, and deterministic replay.
  */
 class UniversalArchitecturePipelineIntegrationTest {
+    @Test void independentReportGroupsOverlapAndRetainTheSerialReport() {
+        var gate=new java.util.concurrent.CountDownLatch(2);var started=new java.util.concurrent.atomic.AtomicInteger();
+        AnalysisWorkspace workspace=new AnalysisWorkspace() {
+            public boolean concurrentTables(){return true;}
+            public <T> List<T> list(){return new ArrayList<>();}
+            public Set<com.evolution.analysis.evidence.CapabilityGapRecord> gaps(Collection<com.evolution.analysis.evidence.CapabilityGapRecord> initial){return new TreeSet<>(initial);}
+            public <T> List<T> distinct(Collection<T> rows,java.util.function.Function<T,String> key) {
+                boolean reportGroup=!rows.isEmpty()&&(rows.iterator().next() instanceof UniversalArchitectureReport.TypeRecord||rows.iterator().next() instanceof UniversalArchitectureReport.DependencyRecord);
+                if(reportGroup&&started.getAndIncrement()<2)try{gate.countDown();assertTrue(gate.await(2,java.util.concurrent.TimeUnit.SECONDS),"Independent report groups should overlap");}
+                catch(InterruptedException interrupted){Thread.currentThread().interrupt();throw new java.util.concurrent.CancellationException();}
+                return AnalysisWorkspace.MEMORY.distinct(rows,key);
+            }
+        };
+        var input=inputs(Map.of("src/main/java/demo/App.java","package demo; class App { int n(){return 1;} }"));
+        SemanticFrontend serial=request->new JavaParserFrontend().analyze(request);
+        var policy=UniversalArchitecturePipeline.Policy.builder(serial,JavaParserFrontend.PROVIDER).defaultPlatform(jdkPlatform()).build();
+        var actual=new UniversalArchitecturePipeline(workspace,2).run(input,policy);
+        assertEquals(new UniversalArchitecturePipeline(AnalysisWorkspace.MEMORY,1).run(input,policy).identity(),actual.identity());
+    }
+    @Test void springSliceValidationReadsEachUnitOnceAndKeepsProvenanceRejections()throws Exception {
+        String source="package demo; @org.springframework.boot.autoconfigure.SpringBootApplication class App {} @org.springframework.stereotype.Service class Store {}";
+        var input=inputs(Map.of("src/main/java/demo/App.java",source));
+        var exact=ComponentIngestionTest.fixture(Map.of("fixture/App.java",source),false).request();
+        var model=new UniversalBuildIngestion().ingest(input,UniversalBuildIngestion.Policy.defaults(),Optional.empty(),Map.of(),new BuildModelPolicy(List.of(),List.of(),Map.of(),10000,100,16));
+        var key=new UniversalSourceIngestion.SourceSet(model.modules().getFirst().descriptor().identity(),SourcePlanModel.Kind.MAIN);
+        var policy=UniversalArchitecturePipeline.Policy.builder(new JavaParserFrontend(),JavaParserFrontend.PROVIDER).defaultPlatform(exact.platform())
+                .resolutions(Map.of(key,new UniversalSourceIngestion.Resolution(exact.platform(),exact.dependencies(),ContentDigest.sha256Utf8("slice validation classpath")))).build();
+        var original=new UniversalArchitecturePipeline().runWithEvidence(input,policy).graphInput().orElseThrow();
+        var ingestion=original.ingestion().orElseThrow();var slice=original.spring().getFirst();
+        var reads=new java.util.concurrent.atomic.AtomicInteger();
+        var units=new AnalysisWorkspace.ReplayList<UniversalIngestionPipeline.Unit>() {
+            public int size(){return ingestion.units().size();}
+            public UniversalIngestionPipeline.Unit get(int i){reads.incrementAndGet();return ingestion.units().get(i);}
+        };
+        graphWithUnits(original,units,Collections.nCopies(128,slice));
+        assertEquals(units.size(),reads.get(),"Validation must read each full unit once, independently of the number of Spring slices");
+        var matching=ingestion.units().stream().filter(u->u.sourceSet().equals(slice.sourceSet())).findFirst().orElseThrow();
+        assertThrows(IllegalArgumentException.class,()->graphWithUnits(original,List.of(matching,matching),List.of(slice)));
+        assertThrows(IllegalArgumentException.class,()->graphWithUnits(original,List.of(),List.of(slice)));
+        var absent=new UniversalIngestionPipeline.Unit(matching.sourceSet(),UniversalIngestionPipeline.Status.FAILED,Optional.empty(),Optional.empty(),Optional.empty());
+        assertThrows(IllegalArgumentException.class,()->graphWithUnits(original,List.of(absent),List.of(slice)));
+        var f=matching.frontend().orElseThrow();String id=f.analysis().value();
+        var foreign=new FrontendResult(new com.evolution.analysis.contract.identity.AnalysisIdentity(id.substring(0,id.length()-1)+(id.endsWith("0")?"1":"0")),f.frontend(),f.state(),f.declarations(),f.occurrences(),f.observations(),f.sources(),f.coverage(),f.diagnostics(),f.types(),f.annotations(),f.derivedRelationships(),f.typeDeclarations(),f.memberDeclarations(),f.constructorCandidates(),f.httpClientCalls());
+        var wrong=new UniversalIngestionPipeline.Unit(matching.sourceSet(),matching.status(),Optional.of(foreign),matching.components(),matching.constructors(),matching.spring(),matching.sourceWiring());
+        assertThrows(IllegalArgumentException.class,()->graphWithUnits(original,List.of(wrong),List.of(slice)));
+    }
+    private static com.evolution.analysis.graph.CanonicalGraphInput graphWithUnits(com.evolution.analysis.graph.CanonicalGraphInput original,
+            List<UniversalIngestionPipeline.Unit> units,List<com.evolution.analysis.graph.CanonicalGraphInput.SpringSlice> slices) {
+        var previous=original.ingestion().orElseThrow();
+        var ingestion=new UniversalIngestionPipeline.Result(previous.inputIdentity(),previous.sourceIngestion(),units,previous.issues(),previous.gaps());
+        return new com.evolution.analysis.graph.CanonicalGraphInput(original.repository(),original.build(),Optional.of(ingestion),slices,original.issues(),original.gaps(),original.acquisition(),original.javaEvidence());
+    }
+    @Test void reportStatusDoesNotReplayWholeUnitsForCounters() {
+        var reads=new java.util.concurrent.atomic.AtomicInteger();
+        AnalysisWorkspace workspace=new AnalysisWorkspace() {
+            public <T> List<T> list(){return new ArrayList<>();}
+            public Set<com.evolution.analysis.evidence.CapabilityGapRecord> gaps(Collection<com.evolution.analysis.evidence.CapabilityGapRecord> initial){return new TreeSet<>(initial);}
+            public <T> List<T> distinct(Collection<T> rows,java.util.function.Function<T,String> key){return AnalysisWorkspace.MEMORY.distinct(rows,key);}
+            public <T> List<T> freeze(List<T> rows){
+                var copy=List.copyOf(rows);
+                return new AnalysisWorkspace.ReplayList<>() {
+                    public int size(){return copy.size();}
+                    public T get(int index){var value=copy.get(index);if(value instanceof UniversalIngestionPipeline.Unit)reads.incrementAndGet();return value;}
+                };
+            }
+        };
+        var input=inputs(Map.of("src/main/java/demo/App.java","package demo; class App { int n(){return 1;} }"));
+        SemanticFrontend serial=request->new JavaParserFrontend().analyze(request);
+        var policy=UniversalArchitecturePipeline.Policy.builder(serial,JavaParserFrontend.PROVIDER).defaultPlatform(jdkPlatform()).build();
+        var result=new UniversalArchitecturePipeline(workspace).runWithEvidence(input,policy);
+        assertFalse(result.report().types().isEmpty());
+        int unitCount=result.graphInput().orElseThrow().ingestion().orElseThrow().units().size();
+        assertEquals(2*unitCount,reads.get(),"Structural extraction and graph provenance validation each read units once; counters reuse extraction");
+    }
 
     @Test void declaredSpringEndpointsReachGraphAndQueryWithoutRuntimePromotion()throws Exception {
         String source="""
@@ -29,6 +103,10 @@ class UniversalArchitecturePipelineIntegrationTest {
                 @org.springframework.boot.autoconfigure.SpringBootApplication class App {}
                 @org.springframework.web.bind.annotation.RestController class Api {
                   @org.springframework.web.bind.annotation.GetMapping("/pets") String pets(){ return "pets"; }
+                  String remote(org.springframework.web.client.RestTemplate client,String dynamic){
+                    client.getForObject(dynamic,String.class);
+                    return client.getForObject("/pets",String.class);
+                  }
                 }
                 class Plain { @org.springframework.web.bind.annotation.GetMapping("/not-controller") void hidden(){} }
                 @interface GetMapping { String value(); }
@@ -43,6 +121,7 @@ class UniversalArchitecturePipelineIntegrationTest {
         var detailed=new UniversalArchitecturePipeline().runWithEvidence(input,policy);
         var graph=new com.evolution.analysis.graph.CanonicalGraphBuilder().build(detailed.graphInput().orElseThrow());
         var endpoints=graph.nodes().stream().filter(n->n.kind().equals("ENDPOINT")).toList();assertEquals(1,endpoints.size());
+        assertEquals(2,graph.nodes().stream().filter(n->n.kind().equals("SOURCE_HTTP_CALL_CANDIDATE")).count());
         var endpoint=endpoints.getFirst();
         var request=com.evolution.analysis.query.ArchitectureQuery.Request.dependencies(graph.identity(),endpoint.context());
         var result=new com.evolution.analysis.query.ArchitectureQueryService(graph).spring(request,Set.of("ENDPOINT"),com.evolution.analysis.query.ArchitectureQuery.Page.first());

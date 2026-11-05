@@ -24,7 +24,15 @@ class EvoAppTest {
     @Test void capturedJavaHasAnExplicitCommandAndMissingRegistrationCannotStartABuild()throws Exception{
         var help=run("captured-java","--help");assertEquals(0,help.code());assertTrue(help.out().contains("REGISTERED_DIR"));
         Path absent=directory.resolve("absent-registration");var result=run("captured-java",absent.toString(),"--json");
-        assertEquals(1,result.code());assertTrue(result.err().contains("OPERATION_FAILED"));assertFalse(Files.exists(absent));
+        assertEquals(1,result.code());assertTrue(result.err().contains("STORAGE_"),result.err());assertFalse(Files.exists(absent));
+    }
+    @Test void ioFailureJsonDebugIsOneStructuredDocumentWithAUsefulCauseChain()throws Exception {
+        Path missing=directory.resolve("private-absent-registration");
+        var result=run("captured-java",missing.toString(),"--json","--debug");assertEquals(1,result.code());
+        var error=GraphJson.object(GraphJson.object(GraphJson.read(result.err(),GraphJson.Limits.defaults())).get("error"));
+        assertTrue(GraphJson.string(error.get("code")).startsWith("STORAGE_"));
+        var diagnostic=GraphJson.object(error.get("diagnostics"));assertFalse(GraphJson.array(diagnostic.get("chain")).isEmpty());
+        assertFalse(result.err().contains(missing.toString()));assertFalse(result.err().contains("[DEBUG]"));assertEquals("",result.out());
     }
     @Test void gapHistoryFlagKeepsClosedRowsSeparateFromCurrentResiduals()throws Exception{
         var f=new CliFixture().node("A");

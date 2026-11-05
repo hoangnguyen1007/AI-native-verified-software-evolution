@@ -126,4 +126,33 @@ Scan joins authenticated native observation rows to their exact census obligatio
 
 The passive pack records literal JavaScript/TypeScript fetch, axios and http-client candidates, including AST-derived explicit/default method candidates; dynamic options keep an unknown method. It joins these occurrences to literal source route candidates and evidenced Spring endpoint declarations through `polyglot.service-call.candidate`. Exact paths and single-segment `{name}` / `:name` parameters are supported. Query/fragment text is excluded from the client path; no API-prefix stripping, trailing-slash folding, percent-decoding, context path or gateway rewrite is invented. Regex/glob patterns, unsafe encodings and recovered syntax retain explicit obligations. Multiple matching endpoint contexts remain multiple candidates; cross-context references preserve original context and declaration evidence.
 
+The 2026-11-05 continuation adds requests/httpx, Go http and C# Async client syntax
+candidates. JavaParser emits neutral `HttpClientCallRecord` rows for bound
+RestTemplate/RestOperations and WebClient URI API calls. The exact resolved source
+occurrence and client-method entity are required; literal decoding stays in the
+adapter. A dynamic Java URI is retained as an empty URI with an explicit matching
+obligation. These calls are not silently omitted, guessed from a variable name or
+promoted into runtime requests. Root `HTTP_CALL_REFERENCE` nodes retain foreign
+analysis identities, just as endpoint references retain endpoint contexts.
+
 These edges bind graph references to possible endpoints, never certify a deployed `polyglot.service-call`. Original source bytes/ranges/provider evidence, URI-match evidence and typed missing-routing/no-candidate/unsupported gaps remain inspectable. Host/base URL, route predicates and activation require stronger captured evidence. The production scan stages added reference/gap nodes on disk; only URI endpoint descriptors are indexed in memory. Existing native/bridge trust and qualification remain unchanged.
+
+### Passive Protobuf schema declarations — 2026-11-05
+
+`source.protobuf-schema:m8.4-v1` reads captured UTF-8 `.proto` files without invoking
+protoc, plugins or a target lifecycle. It records package-qualified message/nested
+message/enum/service declarations, fields, imports, options and RPC request/response
+type spellings, streaming flags and gRPC paths with original BOM/CRLF-aware ranges.
+Unknown constructs/malformed input retain recovered facts and a document outcome;
+declaration extraction is not a syntax/typechecker certificate. Per-file/depth
+worker needs do not exclude a repository from inventory.
+
+The scan projects `PROTOBUF_MESSAGE`, `PROTOBUF_ENUM`, `PROTOBUF_SERVICE`,
+`PROTOBUF_RPC_METHOD` and `PROTOBUF_FIELD` nodes. Disk-indexed, same-document name
+lookups add `protobuf.rpc-request.candidate` / `protobuf.rpc-response.candidate`
+links. Unmatched references retain an UNRESOLVED edge and a source-bound
+`PROTOBUF_SCHEMA_TYPE_UNRESOLVED` gap. Recovered schemas do not supply these joins. Imported descriptor closure,
+generated stubs and language-specific client/server bindings remain native evidence
+needs (`PROTOBUF_GENERATOR_REQUIRED` / `GENERATED_SOURCE`), not synthesized Java,
+Go, Python or C# interfaces. This adds schema visibility without passing B03 or
+erasing existing generator obligations.

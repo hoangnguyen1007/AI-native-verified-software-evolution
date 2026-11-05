@@ -4,6 +4,7 @@ import com.evolution.analysis.acquisition.streaming.ContentHandle;
 import com.evolution.analysis.contract.common.ContentDigest;
 import com.evolution.analysis.contract.serialization.CanonicalJson;
 import com.evolution.analysis.graph.*;
+import com.evolution.analysis.concurrent.BoundedTasks;
 import java.io.*;
 import java.nio.ByteBuffer;
 import java.nio.charset.*;
@@ -22,11 +23,13 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
     private final Path directory;
     private final StreamingContentStore content;
     private final int rowBytes;
+    private final int pageWorkers;
     private final Map<ContentDigest,Root> verified=Collections.synchronizedMap(new LinkedHashMap<>(16,.75f,true){
         protected boolean removeEldestEntry(Map.Entry<ContentDigest,Root> entry){return size()>16;}
     });
     private record Tree(ContentHandle content,String first,String last,long rows) {}
     private record Entry(String key,Object row) {}
+    private record EncodedEntry(String key,String payload) {}
     private record Root(ContentHandle document,ContentDigest graph,String snapshot,Map<String,Tree> trees) {
         Root{new com.evolution.analysis.contract.identity.SnapshotIdentity(snapshot);}
     }
@@ -35,12 +38,28 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
         public Publication {contexts=List.copyOf(contexts);edgeKinds=Map.copyOf(edgeKinds);}
     }
     @FunctionalInterface private interface RowConsumer {void accept(Entry entry)throws IOException;}
+    /** Own only these generated flat scratch files. Try-with-resources retains
+     * the original failure and records cleanup failures as suppressed causes. */
+    private static final class TemporaryFiles implements AutoCloseable {
+        private final List<Path> paths=new ArrayList<>();
+        TemporaryFiles(Path... created){Collections.addAll(paths,created);}
+        Path add(Path path){paths.add(path);return path;}
+        public void close()throws IOException {IOException failed=null;for(var path:paths)try{Files.deleteIfExists(path);}catch(IOException problem){if(failed==null)failed=problem;else if(failed!=problem)failed.addSuppressed(problem);}if(failed!=null)throw failed;}
+    }
+    private static IOException unwrap(UncheckedIOException failure){var cause=failure.getCause();for(var suppressed:failure.getSuppressed())if(suppressed!=cause)cause.addSuppressed(suppressed);return cause;}
 
     public PartitionedGraphStore(Path directory)throws IOException{this(directory,64_000_000);}
     public PartitionedGraphStore(Path directory,int rowBytes)throws IOException{
+        this(directory,rowBytes,BoundedTasks.automaticWorkers());
+    }
+    public PartitionedGraphStore(Path directory,int rowBytes,int pageWorkers)throws IOException{
+        this(directory,rowBytes,pageWorkers,channel->channel.force(true));
+    }
+    PartitionedGraphStore(Path directory,int rowBytes,int pageWorkers,StreamingContentStore.Force force)throws IOException{
         if(rowBytes<1024||rowBytes==Integer.MAX_VALUE)throw new IllegalArgumentException("GRAPH_PAGE_WORKER_BUDGET");
+        if(pageWorkers<1||pageWorkers>8)throw new IllegalArgumentException("GRAPH_PAGE_WORKERS_REQUIRED");
         this.directory=StreamingContentStore.directory(directory);this.rowBytes=rowBytes;
-        content=new StreamingContentStore(this.directory.resolve("content"));
+        this.pageWorkers=pageWorkers;content=new StreamingContentStore(this.directory.resolve("content"),0,force);
     }
     /** Request-local cancellation; no mutable cancellation state is shared across callers. */
     public PartitionedGraphReader reader(BooleanSupplier cancelled){
@@ -97,7 +116,8 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
     private Publication assemble(com.evolution.analysis.contract.identity.SnapshotIdentity snapshot,Path snapshots,BooleanSupplier cancelled,Contribution contribution)throws IOException {
         check(cancelled);snapshots=StreamingContentStore.directory(snapshots);
         Path scratch=Files.createTempFile(directory,"graph-projection-",".sqlite");
-        Path pending=Files.createTempFile(snapshots,"graph-snapshot-",".part");
+        try(var cleanup=new TemporaryFiles(scratch)) {
+        Path pending=cleanup.add(Files.createTempFile(snapshots,"graph-snapshot-",".part"));
         try(Connection database=DriverManager.getConnection("jdbc:sqlite:"+scratch)) {
             try(var sql=database.createStatement()) {
                 sql.execute("PRAGMA journal_mode=DELETE");sql.execute("PRAGMA temp_store=FILE");sql.execute("PRAGMA cache_size=-2048");
@@ -116,16 +136,17 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
                 }
             }
             database.commit();
-            var digest=StreamingContentStore.sha256();
-            try(var writer=new BufferedWriter(new OutputStreamWriter(new DigestOutputStream(OutputStream.nullOutputStream(),digest),StandardCharsets.UTF_8))) {
-                writeGraph(database,snapshot.value(),writer,cancelled);
-            }
-            var identity=new ContentDigest("sha256:"+HexFormat.of().formatHex(digest.digest()));
+            var digest=StreamingContentStore.sha256();ContentDigest identity;
             var frame=StreamingContentStore.sha256();
             try(var channel=java.nio.channels.FileChannel.open(pending,StandardOpenOption.WRITE,LinkOption.NOFOLLOW_LINKS)) {
-                var writer=new BufferedWriter(new OutputStreamWriter(new DigestOutputStream(java.nio.channels.Channels.newOutputStream(channel),frame),StandardCharsets.UTF_8));
+                var destination=new DigestOutputStream(java.nio.channels.Channels.newOutputStream(channel),frame);
+                var writer=new BufferedWriter(new OutputStreamWriter(destination,StandardCharsets.UTF_8));
                 writer.write("{\"format\":");CanonicalJson.writeTo(GraphSnapshotCodec.FORMAT,writer);writer.write(",\"graph\":");
-                writeGraph(database,snapshot.value(),writer,cancelled);writer.write(",\"identity\":");CanonicalJson.writeTo(identity,writer);writer.write("}");writer.flush();channel.force(true);
+                writer.flush();
+                var graphWriter=new BufferedWriter(new OutputStreamWriter(new DigestOutputStream(destination,digest),StandardCharsets.UTF_8));
+                writeGraph(database,snapshot.value(),graphWriter,cancelled);graphWriter.flush();
+                identity=new ContentDigest("sha256:"+HexFormat.of().formatHex(digest.digest()));
+                writer.write(",\"identity\":");CanonicalJson.writeTo(identity,writer);writer.write("}");writer.flush();channel.force(true);
             }
             // Audits endpoints, evidence, contexts and both adjacency indexes before publication.
             publish(database,identity,snapshot.value(),cancelled,true,Optional.of(new ContentDigest("sha256:"+HexFormat.of().formatHex(frame.digest()))));
@@ -134,9 +155,9 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
                 if(!Files.isRegularFile(target,LinkOption.NOFOLLOW_LINKS)||Files.size(target)!=Files.size(pending)||!hash(target).equals(hash(pending)))throw new IOException("GRAPH_SNAPSHOT_CONFLICT");
             }
             return new Publication(identity,snapshot,contexts,total(database,"nodes"),total(database,"edges"),total(database,"evidence"),kinds);
-        }catch(UncheckedIOException failure){throw failure.getCause();}
+        }
+        }catch(UncheckedIOException failure){throw unwrap(failure);}
         catch(SQLException failure){throw new IOException("GRAPH_PROJECTION_STORAGE_UNAVAILABLE",failure);}
-        finally{Files.deleteIfExists(pending);Files.deleteIfExists(scratch);}
     }
     private static ContentDigest hash(Path file)throws IOException {
         var digest=StreamingContentStore.sha256();try(var in=new DigestInputStream(Files.newInputStream(file,LinkOption.NOFOLLOW_LINKS),digest)){in.transferTo(OutputStream.nullOutputStream());}
@@ -160,7 +181,7 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
         Objects.requireNonNull(graph);check(cancelled);var pointer=pointer(graph.identity());
         if(Files.exists(pointer,LinkOption.NOFOLLOW_LINKS)){root(graph.identity(),cancelled);return;}
         Path scratch=Files.createTempFile(directory,"graph-index-",".sqlite");
-        try(Connection database=DriverManager.getConnection("jdbc:sqlite:"+scratch)){
+        try(var cleanup=new TemporaryFiles(scratch);Connection database=DriverManager.getConnection("jdbc:sqlite:"+scratch)){
             try(var sql=database.createStatement()){
                 sql.execute("PRAGMA journal_mode=DELETE");sql.execute("PRAGMA temp_store=FILE");sql.execute("PRAGMA cache_size=-2048");
                 sql.execute("CREATE TABLE rows(space TEXT NOT NULL,k TEXT NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(space,k)) WITHOUT ROWID");
@@ -178,8 +199,8 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
             }
             database.commit();
             publish(database,graph.identity(),graph.snapshot().value(),cancelled,false,Optional.empty());
-        }catch(SQLException failure){throw new IOException("GRAPH_PARTITION_STORAGE_UNAVAILABLE",failure);}
-        finally{Files.deleteIfExists(scratch);}
+        }catch(UncheckedIOException failure){throw unwrap(failure);}
+        catch(SQLException failure){throw new IOException("GRAPH_PARTITION_STORAGE_UNAVAILABLE",failure);}
     }
     /** Disk migration of the canonical v1 frame. Neither JSON document nor KnowledgeGraph is
      * retained; the declared identity, exact canonical bytes and structural references must agree. */
@@ -188,7 +209,7 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
         if(!Files.isRegularFile(source,LinkOption.NOFOLLOW_LINKS)||bytes<1)throw new IOException("GRAPH_PARTITION_INPUT_UNAVAILABLE");
         if(Files.exists(pointer(expected),LinkOption.NOFOLLOW_LINKS)){root(expected,cancelled);return;}
         Path scratch=Files.createTempFile(directory,"graph-import-",".sqlite");
-        try(Connection database=DriverManager.getConnection("jdbc:sqlite:"+scratch)){
+        try(var cleanup=new TemporaryFiles(scratch);Connection database=DriverManager.getConnection("jdbc:sqlite:"+scratch)){
             try(var sql=database.createStatement()){
                 sql.execute("PRAGMA journal_mode=DELETE");sql.execute("PRAGMA temp_store=FILE");sql.execute("PRAGMA cache_size=-2048");
                 sql.execute("CREATE TABLE rows(space TEXT NOT NULL,k TEXT NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(space,k)) WITHOUT ROWID");
@@ -218,13 +239,14 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
             if(!header.keySet().equals(Set.of("format","identity"))||!GraphSnapshotCodec.FORMAT.equals(header.get("format"))||!expected.value().equals(header.get("identity"))
                     ||!members.equals(Set.of("schema","snapshot","contexts","nodes","edges","evidence"))||!KnowledgeGraph.SCHEMA.equals(body.get("schema")))throw new IOException("GRAPH_PARTITION_INPUT_SCOPE");
             database.commit();publish(database,expected,text(body.get("snapshot")),cancelled,true,Optional.of(new ContentDigest("sha256:"+HexFormat.of().formatHex(digest.digest()))));
-        }catch(SQLException failure){throw new IOException("GRAPH_PARTITION_STORAGE_UNAVAILABLE",failure);}
+        }catch(UncheckedIOException failure){throw unwrap(failure);}
+        catch(SQLException failure){throw new IOException("GRAPH_PARTITION_STORAGE_UNAVAILABLE",failure);}
         catch(NoSuchAlgorithmException impossible){throw new AssertionError(impossible);}
-        finally{Files.deleteIfExists(scratch);}
     }
     private void publish(Connection database,ContentDigest graph,String snapshot,BooleanSupplier cancelled,boolean audit,Optional<ContentDigest> frame)throws SQLException,IOException{
+        try(var workers=new BoundedTasks(pageWorkers,pageWorkers,"evo-graph-page",cancelled)) {
             var trees=new TreeMap<String,Tree>();
-            for(String space:List.of("contexts","nodes","edges","outgoing","incoming","evidence"))trees.put(space,build(database,space,cancelled));
+            for(String space:List.of("contexts","nodes","edges","outgoing","incoming","evidence"))trees.put(space,build(database,space,cancelled,workers));
             try(var query=database.prepareStatement("SELECT payload FROM rows WHERE space='contexts' ORDER BY k");var contexts=query.executeQuery();var insert=database.prepareStatement("INSERT INTO rows(space,k,payload) VALUES(?,?,?)")){
                 while(contexts.next()){
                     var context=GraphSnapshotCodec.context(parse(contexts.getString(1)));long nodes=count(database,"nodes",context.identity()),edges=count(database,"edges",context.identity());
@@ -233,19 +255,20 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
                     insert(insert,"partitions",context.identity(),new Partition(SCHEMA,graph,context.identity(),segment,nodes,edges),cancelled);
                 }
             }
-            database.commit();trees.put("partitions",build(database,"partitions",cancelled));
+            database.commit();trees.put("partitions",build(database,"partitions",cancelled,workers));
             var document=put(Map.of("format",FORMAT,"graph",graph,"snapshot",snapshot,"trees",trees),cancelled);
             var root=new Root(document,graph,snapshot,Map.copyOf(trees));
             if(!graph.equals(canonicalDigest(root,cancelled,audit,frame)))throw new IOException("GRAPH_PARTITION_DIGEST_MISMATCH");
             check(cancelled);byte[] bytes=CanonicalJson.write(Map.of("format",FORMAT,"graph",graph,"document",document)).getBytes(StandardCharsets.UTF_8);
             Path pending=Files.createTempFile(directory,"graph-root-",".part");
-            try{
+            try(var cleanup=new TemporaryFiles(pending)){
                 try(var channel=java.nio.channels.FileChannel.open(pending,StandardOpenOption.WRITE,LinkOption.NOFOLLOW_LINKS)){var buffer=ByteBuffer.wrap(bytes);while(buffer.hasRemaining())channel.write(buffer);channel.force(true);}
                 Path pointer=pointer(graph);
                 StreamingContentStore.safe(pointer);check(cancelled);
                 try{Files.createLink(pointer,pending);}catch(FileAlreadyExistsException raced){root(graph,cancelled);return;}
                 verified.put(graph,root);
-            }finally{Files.deleteIfExists(pending);}
+            }
+        }
     }
     private long count(Connection database,String space,String context)throws SQLException{
         try(var query=database.prepareStatement("SELECT COUNT(*) FROM rows WHERE space=? AND k>=? AND k<?")){
@@ -257,20 +280,36 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
         if(encoded.getBytes(StandardCharsets.UTF_8).length>rowBytes)throw new IOException("GRAPH_PARTITION_ROW_WORKER_REQUIRED");
         statement.setString(1,space);statement.setString(2,key);statement.setString(3,encoded);statement.executeUpdate();
     }
-    private Tree build(Connection database,String space,BooleanSupplier cancelled)throws SQLException,IOException{
-        var builder=new TreeBuilder(cancelled);var batch=new ArrayList<Entry>();long characters=0;
+    private Tree build(Connection database,String space,BooleanSupplier cancelled,BoundedTasks workers)throws SQLException,IOException{
+        var builder=new TreeBuilder(cancelled);var batch=new ArrayList<EncodedEntry>();long characters=0;
+        var pending=new ArrayDeque<BoundedTasks.Task<Tree>>();
         try(var query=database.prepareStatement("SELECT k,payload FROM rows WHERE space=? ORDER BY k")){
             query.setString(1,space);
             try(var rows=query.executeQuery()){
                 while(rows.next()){
                     check(cancelled);String encoded=rows.getString(2);
-                    if(!batch.isEmpty()&&(batch.size()==PAGE_ROWS||characters+encoded.length()>PAGE_CHARACTERS)){builder.add(leaf(batch,cancelled),0);batch.clear();characters=0;}
-                    batch.add(new Entry(rows.getString(1),parse(encoded)));characters+=encoded.length();
+                    if(!batch.isEmpty()&&(batch.size()==PAGE_ROWS||characters+encoded.length()>PAGE_CHARACTERS)){enqueueLeaf(batch,characters,builder,pending,workers,cancelled);batch.clear();characters=0;}
+                    batch.add(new EncodedEntry(rows.getString(1),encoded));characters+=encoded.length();
                 }
             }
         }
-        if(!batch.isEmpty())builder.add(leaf(batch,cancelled),0);
+        if(!batch.isEmpty())enqueueLeaf(batch,characters,builder,pending,workers,cancelled);
+        while(!pending.isEmpty())builder.add(pending.removeFirst().await(),0);
         return builder.finish();
+    }
+    private void enqueueLeaf(List<EncodedEntry> batch,long characters,TreeBuilder builder,Deque<BoundedTasks.Task<Tree>> pending,BoundedTasks workers,BooleanSupplier cancelled)throws IOException {
+        var captured=List.copyOf(batch);
+        if(characters>PAGE_CHARACTERS) {
+            // One admitted large row proceeds alone, without multiplying worker heap.
+            while(!pending.isEmpty())builder.add(pending.removeFirst().await(),0);
+            builder.add(encodedLeaf(captured,cancelled),0);return;
+        }
+        if(pending.size()>=pageWorkers)builder.add(pending.removeFirst().await(),0);
+        pending.addLast(workers.submit(()->encodedLeaf(captured,cancelled)));
+    }
+    private Tree encodedLeaf(List<EncodedEntry> encoded,BooleanSupplier cancelled)throws IOException {
+        var rows=new ArrayList<Entry>(encoded.size());for(var row:encoded){check(cancelled);rows.add(new Entry(row.key(),parse(row.payload())));}
+        return leaf(rows,cancelled);
     }
     private Tree leaf(List<Entry> entries,BooleanSupplier cancelled)throws IOException{
         var handle=put(Map.of("schema",LEAF,"rows",entries),cancelled);
@@ -354,7 +393,7 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
                 opened=DriverManager.getConnection("jdbc:sqlite:"+file);
                 try(var sql=opened.createStatement()){sql.execute("PRAGMA journal_mode=DELETE");sql.execute("PRAGMA temp_store=FILE");sql.execute("PRAGMA cache_size=-2048");sql.execute("CREATE TABLE audit(space TEXT,k TEXT,payload TEXT,PRIMARY KEY(space,k)) WITHOUT ROWID");}
                 opened.setAutoCommit(false);prepared=opened.prepareStatement("INSERT OR IGNORE INTO audit(space,k,payload) VALUES(?,?,?)");
-            }catch(SQLException failure){if(prepared!=null)try{prepared.close();}catch(SQLException close){failure.addSuppressed(close);}if(opened!=null)try{opened.close();}catch(SQLException close){failure.addSuppressed(close);}Files.deleteIfExists(file);throw new IOException("GRAPH_PARTITION_AUDIT_UNAVAILABLE",failure);}
+            }catch(SQLException failure){if(prepared!=null)try{prepared.close();}catch(SQLException close){failure.addSuppressed(close);}if(opened!=null)try{opened.close();}catch(SQLException close){failure.addSuppressed(close);}try{Files.deleteIfExists(file);}catch(IOException cleanup){failure.addSuppressed(cleanup);}throw new IOException("GRAPH_PARTITION_AUDIT_UNAVAILABLE",failure);}
             database=opened;insert=prepared;
         }
         void add(String space,String key,String value)throws IOException{
@@ -415,8 +454,9 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
         public void close()throws IOException{
             SQLException failed=null;try{insert.close();}catch(SQLException failure){failed=failure;}
             try{database.close();}catch(SQLException failure){if(failed==null)failed=failure;else failed.addSuppressed(failure);}
-            try{Files.deleteIfExists(file);}catch(IOException failure){if(failed!=null)failure.addSuppressed(failed);throw failure;}
-            if(failed!=null)throw new IOException("GRAPH_PARTITION_AUDIT_CLOSE",failed);
+            IOException problem=failed==null?null:new IOException("GRAPH_PARTITION_AUDIT_CLOSE",failed);
+            try{Files.deleteIfExists(file);}catch(IOException cleanup){if(problem==null)problem=cleanup;else problem.addSuppressed(cleanup);}
+            if(problem!=null)throw problem;
         }
     }
     private Page<Partition> partitionPage(ContentDigest graph,int size,Optional<String> cursor,BooleanSupplier cancelled)throws IOException{
