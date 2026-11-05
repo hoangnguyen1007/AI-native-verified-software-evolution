@@ -65,6 +65,25 @@ final class Workspace {
         new FileGraphStore(root,bytes,new GraphJson.StreamLimits(bytes,128,bytes)).save(graph);
         partitioned().save(graph,()->Thread.currentThread().isInterrupted());
     }
+    com.evolution.analysis.filesystem.PartitionedGraphStore.Publication publish(CanonicalGraphInput input)throws IOException {
+        return publish(input,workspace->{});
+    }
+    com.evolution.analysis.filesystem.PartitionedGraphStore.Publication publish(com.evolution.analysis.contract.identity.SnapshotIdentity snapshot,PartitionedGraphStore.Contribution contribution)throws IOException {
+        create();return partitioned().build(snapshot,root,()->Thread.currentThread().isInterrupted(),contribution);
+    }
+    com.evolution.analysis.filesystem.PartitionedGraphStore.Publication publish(CanonicalGraphInput input,PartitionedGraphStore.Contribution contribution)throws IOException {
+        return publish(input,List.of(),contribution);
+    }
+    com.evolution.analysis.filesystem.PartitionedGraphStore.Publication publish(CanonicalGraphInput input,Collection<com.evolution.analysis.evidence.EvidenceAcquisitionLedger> ledgers,PartitionedGraphStore.Contribution contribution)throws IOException {
+        create();return partitioned().build(input,root,()->Thread.currentThread().isInterrupted(),ledgers,contribution);
+    }
+    com.evolution.analysis.filesystem.PartitionedGraphStore.Publication publish(KnowledgeGraph input,PartitionedGraphStore.Contribution contribution)throws IOException {
+        create();return partitioned().build(input,root,()->Thread.currentThread().isInterrupted(),contribution);
+    }
+    void select(com.evolution.analysis.filesystem.PartitionedGraphStore.Publication graph,Optional<String> context)throws IOException {
+        if(context.isPresent()&&graph.contexts().stream().noneMatch(c->c.identity().equals(context.orElseThrow())))throw new IllegalArgumentException("Foreign context");
+        atomicSelection(CanonicalJson.write(Map.of("graph",graph.graph(),"context",context)).getBytes(StandardCharsets.UTF_8));
+    }
     PartitionedGraphStore partitioned()throws IOException{return new PartitionedGraphStore(root.resolve("graph-pages"));}
     void rememberContext(KnowledgeGraph verified,String context)throws IOException {
         if(verified.contexts().stream().noneMatch(c->c.identity().equals(context)))throw new IllegalArgumentException("Foreign context");

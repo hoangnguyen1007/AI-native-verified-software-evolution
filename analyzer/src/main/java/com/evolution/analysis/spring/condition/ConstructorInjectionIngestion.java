@@ -14,7 +14,7 @@ import static com.evolution.analysis.ingestion.IngestionEvidence.Reason.*;
 
 /** Constructor-site acquisition. Candidate matching and conditional activation remain downstream. */
 public final class ConstructorInjectionIngestion {
-    public static final VersionedIdentifier PROVIDER=new VersionedIdentifier("spring.constructor-ingestion","m8.4-native-wiring-compat-v1");
+    public static final VersionedIdentifier PROVIDER=new VersionedIdentifier("spring.constructor-ingestion","m8.4-local-fragment-v3");
     public enum Status { SELECTED, NOT_SELECTED, UNKNOWN }
     public record Parameter(EntityIdentity constructor,EntityIdentity parameter,int index,JavaType type,ConditionEvidence evidence) {
         public Parameter {Objects.requireNonNull(constructor);Objects.requireNonNull(parameter);Objects.requireNonNull(type);Objects.requireNonNull(evidence);if(index<0)throw new IllegalArgumentException("Negative parameter index");}
@@ -40,10 +40,24 @@ public final class ConstructorInjectionIngestion {
             throw new IllegalArgumentException("Constructor and component evidence differ");
         var identity=IngestionEvidence.digest(List.of(PROVIDER,discovery.frontendEvidence(),discovery.identity(),framework.identity(),maxParameters));
         Map<EntityIdentity,DeclarationRecord> declarations=new HashMap<>();frontend.declarations().forEach(d->declarations.put(d.entity().identity(),d));
+        var unrelatedCallDiagnostics=new HashSet<Diagnostic>();
+        for(var occurrence:frontend.occurrences()){
+            var owner=declarations.get(occurrence.relationship().source());
+            if(occurrence.status()==SemanticStatus.UNRESOLVED&&occurrence.relationship().kind().value().equals("java.calls")
+                    &&owner!=null&&owner.entity().origin()==EntityOrigin.PROJECT
+                    &&Set.of(EntityKind.METHOD,EntityKind.CONSTRUCTOR,EntityKind.LAMBDA,EntityKind.INITIALIZER).contains(owner.entity().kind()))
+                unrelatedCallDiagnostics.addAll(occurrence.diagnostics());
+        }
         var relations=java.util.stream.Stream.concat(frontend.occurrences().stream().filter(o->o.status()==SemanticStatus.RESOLVED).map(RelationshipOccurrence::relationship),
                 frontend.derivedRelationships().stream().filter(o->o.status()==SemanticStatus.RESOLVED).map(DerivedRelationshipRecord::relationship)).toList();
         var issues=new ArrayList<IngestionEvidence.Issue>();var rows=new ArrayList<Row>();int parametersSeen=0;
-        boolean frameworkKnown=framework.completeClasspath()&&framework.artifacts().stream().anyMatch(a->a.artifactId().equals("spring-beans")&&framework.verifiedArtifact(a));
+        var targets=new HashMap<EntityIdentity,Map<String,Set<EntityIdentity>>>();
+        for(var relation:relations)if(relation.target() instanceof RelationshipTarget.Resolved target)
+            targets.computeIfAbsent(relation.source(),key->new HashMap<>()).computeIfAbsent(relation.kind().value(),key->new TreeSet<>()).add(target.target());
+        var parameterTypes=new HashMap<EntityIdentity,List<TypeUseRecord>>();
+        for(var type:frontend.types())if(type.owner().isPresent()&&type.role().value().equals("java.parameter-type"))parameterTypes.computeIfAbsent(type.owner().orElseThrow(),key->new ArrayList<>()).add(type);
+        var supportedShapes=new HashSet<EntityIdentity>();frontend.typeDeclarations().stream().filter(t->Set.of(TypeDeclarationRecord.Kind.CLASS,TypeDeclarationRecord.Kind.RECORD).contains(t.kind())).forEach(t->supportedShapes.add(t.type()));
+        boolean frameworkKnown=framework.declarationFragmentKnown()&&framework.artifacts().stream().anyMatch(a->a.artifactId().equals("spring-beans")&&framework.verifiedArtifact(a));
         boolean providerKnown=Set.of(new VersionedIdentifier("frontend.javaparser","3.28.2-m4u.1"),
                 new VersionedIdentifier("frontend.javaparser","3.28.2-m4uv2.2"),
                 new VersionedIdentifier("frontend.javaparser","3.28.2-m4uv2.2-injection-v1"),
@@ -56,18 +70,21 @@ public final class ConstructorInjectionIngestion {
                 new VersionedIdentifier("frontend.javaparser","3.28.2-m8.4-native-constructors-v1"),
                 new VersionedIdentifier("frontend.javaparser","3.28.2-m8.4-native-wiring-v1"),
                 new VersionedIdentifier("frontend.javaparser","3.28.2-m8.4-source-recovery-v2"),
-                new VersionedIdentifier("frontend.javaparser","3.28.2-m8.4-lombok-candidates-v3")).contains(frontend.frontend());
+                new VersionedIdentifier("frontend.javaparser","3.28.2-m8.4-lombok-candidates-v3"),
+                new VersionedIdentifier("frontend.javaparser","3.28.2-m8.4-recovery-v4"),
+                new VersionedIdentifier("frontend.javaparser","3.28.2-m8.4-bounded-bodies-v5"),
+                new VersionedIdentifier("frontend.javaparser","3.28.2-m8.4-generic-recovery-v6")).contains(frontend.frontend());
         for(var component:discovery.rows()) {
             var evidence=new ConditionEvidence.Derived(List.of(identity,component.evidence().identity()),PROVIDER,"constructor-selection:"+component.type().value());
             if(component.status()!=ComponentScanIngestion.Status.INCLUDED) {
                 rows.add(new Row(component.type(),component.status()==ComponentScanIngestion.Status.UNKNOWN?Status.UNKNOWN:Status.NOT_SELECTED,Optional.empty(),List.of(),evidence));continue;
             }
             var owner=declarations.get(component.type());
-            var constructors=targets(relations,component.type(),"java.declares").stream().map(declarations::get).filter(Objects::nonNull)
+            var constructors=targets.getOrDefault(component.type(),Map.of()).getOrDefault("java.declares",Set.of()).stream().map(declarations::get).filter(Objects::nonNull)
                     .filter(d->d.entity().kind()==EntityKind.CONSTRUCTOR).sorted().toList();
-            boolean supportedShape=frontend.typeDeclarations().stream().anyMatch(t->t.type().equals(component.type())&&Set.of(TypeDeclarationRecord.Kind.CLASS,TypeDeclarationRecord.Kind.RECORD).contains(t.kind()));
+            boolean supportedShape=supportedShapes.contains(component.type());
             boolean incomplete=!frameworkKnown || !providerKnown || !supportedShape || owner==null || owner.status()!=SemanticStatus.RESOLVED
-                    || owner.entity().declaration().isEmpty() || frontend.diagnostics().stream().anyMatch(d->d.span().isPresent()
+                    || owner.entity().declaration().isEmpty() || frontend.diagnostics().stream().anyMatch(d->!unrelatedCallDiagnostics.contains(d)&&d.span().isPresent()
                         && overlaps(owner.entity().declaration().orElseThrow(),d.span().orElseThrow()));
             if(constructors.size()!=1 || incomplete) {
                 issue(issues,COMPONENT_ELIGIBILITY_UNKNOWN,component.type().value(),identity);
@@ -75,10 +92,10 @@ public final class ConstructorInjectionIngestion {
             }
             var constructor=constructors.getFirst();var parameters=new ArrayList<Parameter>();
             if(constructor.status()!=SemanticStatus.RESOLVED)incomplete=true;
-            var parameterEntities=targets(relations,constructor.entity().identity(),"java.has-parameter").stream().map(declarations::get).filter(Objects::nonNull).toList();
+            var parameterEntities=targets.getOrDefault(constructor.entity().identity(),Map.of()).getOrDefault("java.has-parameter",Set.of()).stream().map(declarations::get).filter(Objects::nonNull).toList();
             for(var parameter:parameterEntities) {
                 if(++parametersSeen>maxParameters){incomplete=true;issue(issues,INPUT_LIMIT,component.type().value(),identity);continue;}
-                var types=frontend.types().stream().filter(t->t.owner().equals(Optional.of(parameter.entity().identity()))&&t.role().value().equals("java.parameter-type")).toList();
+                var types=parameterTypes.getOrDefault(parameter.entity().identity(),List.of());
                 try {
                     String key=parameter.entity().canonicalName();int index=Integer.parseInt(key.substring(key.lastIndexOf(',')+1,key.length()-1));
                     if(types.size()!=1 || types.getFirst().type().status()!=SemanticStatus.RESOLVED)throw new IllegalArgumentException();
@@ -94,10 +111,6 @@ public final class ConstructorInjectionIngestion {
         var sorted=issues.stream().distinct().sorted(Comparator.comparing(IngestionEvidence.Issue::identity)).toList();
         var gaps=new TreeSet<>(discovery.gaps());gaps.addAll(IngestionEvidence.gaps(discovery.snapshot(),PROVIDER,identity,sorted));
         return new Result(identity,frontend.analysis(),discovery.snapshot(),rows,sorted,List.copyOf(gaps));
-    }
-    private static List<EntityIdentity> targets(List<SemanticRelationship> relations,EntityIdentity owner,String kind) {
-        return relations.stream().filter(r->r.source().equals(owner)&&r.kind().value().equals(kind))
-                .flatMap(r->r.target() instanceof RelationshipTarget.Resolved t?java.util.stream.Stream.of(t.target()):java.util.stream.Stream.empty()).distinct().sorted().toList();
     }
     private static boolean overlaps(SourceSpan a,SourceSpan b) {
         return a.document().equals(b.document()) && before(a.startLine(),a.startColumn(),b.endLine(),b.endColumn())

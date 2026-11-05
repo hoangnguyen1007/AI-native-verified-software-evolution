@@ -4,6 +4,13 @@ import java.util.*;
 import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 class UnicodeSourceTest {
+    @Test void unchangedUtf16BoundariesIncludeEmptyTextCrLfAndSupplementaryCharacters() {
+        for(String input:List.of("","plain","x\r\n\t😀z\ny")) {
+            var translated=UnicodeSource.translate(input);assertSame(input,translated.text);
+            for(int offset=0;offset<=input.length();offset++)assertEquals(offset,translated.rawBoundary(offset));
+            assertThrows(IllegalArgumentException.class,()->translated.rawBoundary(input.length()+1));
+        }
+    }
     @Test void jlsExamplesPreserveEligibilityAndDoNotTranslateRecursively(){
         String slash="\\";
         assertEquals(slash+slash+"u2122=™",UnicodeSource.translate(slash+slash+"u2122="+slash+"u2122").text);

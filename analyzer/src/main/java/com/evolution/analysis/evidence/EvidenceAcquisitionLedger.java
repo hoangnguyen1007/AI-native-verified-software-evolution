@@ -19,6 +19,8 @@ public record EvidenceAcquisitionLedger(
     public static final String SCHEMA = "evidence-acquisition-ledger-v1";
     public static final VersionedIdentifier NORMALIZER =
             new VersionedIdentifier("evidence.gap-normalizer", "m3.8");
+    public static final VersionedIdentifier OBSERVATION_NORMALIZER =
+            new VersionedIdentifier("evidence.gap-normalizer", "m8.4-root-cause-v1");
     public static final VersionedIdentifier M4A1_NORMALIZER =
             new VersionedIdentifier("evidence.gap-normalizer", "m4a.1");
     public static final VersionedIdentifier M4A2_NORMALIZER =
@@ -97,7 +99,7 @@ public record EvidenceAcquisitionLedger(
             List<ProviderConflictRecord> conflicts, List<GapResolutionRecord> resolutions) {
         if (!NORMALIZER.equals(normalizer) && !M4A1_NORMALIZER.equals(normalizer)
                 && !M4A2_NORMALIZER.equals(normalizer) && !V2_COORDINATOR.equals(normalizer)
-                && !V3_COORDINATOR.equals(normalizer)) {
+                && !V3_COORDINATOR.equals(normalizer) && !OBSERVATION_NORMALIZER.equals(normalizer)) {
             throw new IllegalArgumentException("Unsupported evidence normalizer version");
         }
         TreeMap<CapabilityGapIdentity, CapabilityGapRecord> merged = new TreeMap<>();

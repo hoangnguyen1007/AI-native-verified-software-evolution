@@ -1,0 +1,27 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent><groupId>com.evolution</groupId><artifactId>software-evolution-platform</artifactId><version>0.1.0-SNAPSHOT</version></parent>
+    <artifactId>analyzer-treesitter</artifactId>
+    <description>Data-only syntax adapter. Bundled grammars never execute target source, builds or plugins.</description>
+    <dependencies>
+        <dependency><groupId>com.evolution</groupId><artifactId>analyzer</artifactId><version>${project.version}</version></dependency>
+        <dependency><groupId>io.github.bonede</groupId><artifactId>tree-sitter</artifactId><version>0.26.6</version></dependency>
+        <dependency><groupId>io.github.bonede</groupId><artifactId>tree-sitter-go</artifactId><version>0.25.0</version><exclusions><exclusion><groupId>io.github.bonede</groupId><artifactId>tree-sitter</artifactId></exclusion></exclusions></dependency>
+        <dependency><groupId>io.github.bonede</groupId><artifactId>tree-sitter-python</artifactId><version>0.25.0</version><exclusions><exclusion><groupId>io.github.bonede</groupId><artifactId>tree-sitter</artifactId></exclusion></exclusions></dependency>
+        <dependency><groupId>io.github.bonede</groupId><artifactId>tree-sitter-c-sharp</artifactId><version>0.23.1</version><exclusions><exclusion><groupId>io.github.bonede</groupId><artifactId>tree-sitter</artifactId></exclusion></exclusions></dependency>
+        <dependency><groupId>io.github.bonede</groupId><artifactId>tree-sitter-javascript</artifactId><version>0.25.0</version><exclusions><exclusion><groupId>io.github.bonede</groupId><artifactId>tree-sitter</artifactId></exclusion></exclusions></dependency>
+        <dependency><groupId>io.github.bonede</groupId><artifactId>tree-sitter-typescript</artifactId><version>0.23.2</version><exclusions><exclusion><groupId>io.github.bonede</groupId><artifactId>tree-sitter</artifactId></exclusion></exclusions></dependency>
+        <dependency><groupId>io.github.bonede</groupId><artifactId>tree-sitter-tsx</artifactId><version>0.23.2</version><exclusions><exclusion><groupId>io.github.bonede</groupId><artifactId>tree-sitter</artifactId></exclusion></exclusions></dependency>
+        <dependency><groupId>io.github.bonede</groupId><artifactId>tree-sitter-kotlin</artifactId><version>0.3.8.1</version><exclusions><exclusion><groupId>io.github.bonede</groupId><artifactId>tree-sitter</artifactId></exclusion></exclusions></dependency>
+        <dependency><groupId>io.github.bonede</groupId><artifactId>tree-sitter-scala</artifactId><version>0.24.0</version><exclusions><exclusion><groupId>io.github.bonede</groupId><artifactId>tree-sitter</artifactId></exclusion></exclusions></dependency>
+        <dependency><groupId>io.github.bonede</groupId><artifactId>tree-sitter-rust</artifactId><version>0.24.0</version><exclusions><exclusion><groupId>io.github.bonede</groupId><artifactId>tree-sitter</artifactId></exclusion></exclusions></dependency>
+        <dependency><groupId>io.github.bonede</groupId><artifactId>tree-sitter-c</artifactId><version>0.24.1</version><exclusions><exclusion><groupId>io.github.bonede</groupId><artifactId>tree-sitter</artifactId></exclusion></exclusions></dependency>
+        <dependency><groupId>io.github.bonede</groupId><artifactId>tree-sitter-cpp</artifactId><version>0.23.4</version><exclusions><exclusion><groupId>io.github.bonede</groupId><artifactId>tree-sitter</artifactId></exclusion></exclusions></dependency>
+        <dependency><groupId>io.github.bonede</groupId><artifactId>tree-sitter-php</artifactId><version>0.24.2</version><exclusions><exclusion><groupId>io.github.bonede</groupId><artifactId>tree-sitter</artifactId></exclusion></exclusions></dependency>
+        <dependency><groupId>io.github.bonede</groupId><artifactId>tree-sitter-ruby</artifactId><version>0.23.1</version><exclusions><exclusion><groupId>io.github.bonede</groupId><artifactId>tree-sitter</artifactId></exclusion></exclusions></dependency>
+        <dependency><groupId>io.github.bonede</groupId><artifactId>tree-sitter-dart</artifactId><version>master-a</version><exclusions><exclusion><groupId>io.github.bonede</groupId><artifactId>tree-sitter</artifactId></exclusion></exclusions></dependency>
+        <dependency><groupId>io.github.bonede</groupId><artifactId>tree-sitter-swift</artifactId><version>0.5.0</version><exclusions><exclusion><groupId>io.github.bonede</groupId><artifactId>tree-sitter</artifactId></exclusion></exclusions></dependency>
+        <dependency><groupId>io.github.bonede</groupId><artifactId>tree-sitter-objc</artifactId><version>main-a</version><exclusions><exclusion><groupId>io.github.bonede</groupId><artifactId>tree-sitter</artifactId></exclusion></exclusions></dependency>
+        <dependency><groupId>org.junit.jupiter</groupId><artifactId>junit-jupiter</artifactId><scope>test</scope></dependency>
+    </dependencies>
+</project>

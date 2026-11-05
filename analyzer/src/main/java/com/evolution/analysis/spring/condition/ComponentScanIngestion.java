@@ -14,7 +14,7 @@ import static com.evolution.analysis.ingestion.IngestionEvidence.Reason.*;
 
 /** Source-evidenced package membership, separate from activation, definition order and bean creation. */
 public final class ComponentScanIngestion {
-    public static final VersionedIdentifier PROVIDER=new VersionedIdentifier("spring.component-scan-ingestion","m4u.1");
+    public static final VersionedIdentifier PROVIDER=new VersionedIdentifier("spring.component-scan-ingestion","m8.4-local-fragment-v3");
     public enum Status { INCLUDED, OUTSIDE_ROOT, NOT_COMPONENT, INELIGIBLE, UNKNOWN }
     public record Row(EntityIdentity type,Status status,List<String> roots,Optional<String> beanName,ConditionEvidence evidence) {
         public Row { roots=List.copyOf(roots);Objects.requireNonNull(beanName); }
@@ -35,6 +35,7 @@ public final class ComponentScanIngestion {
             "org.springframework.context.annotation.Configuration","org.springframework.boot.autoconfigure.SpringBootApplication");
     private static final String BOOT="org.springframework.boot.autoconfigure.SpringBootApplication",SCAN="org.springframework.context.annotation.ComponentScan";
     private record Annotation(AnnotationUseRecord use,Optional<EntityIdentity> target,Optional<String> trustedName){}
+    private record AnnotationSite(EntityIdentity owner,SourceSpan span) {}
     public Result scan(AnalysisManifest manifest,FrontendResult frontend,SpringFrameworkEvidence framework,int maxTypes) {
         return scan(manifest,frontend,framework,maxTypes,manifest.classpath());
     }
@@ -51,10 +52,13 @@ public final class ComponentScanIngestion {
         Map<EntityIdentity,DeclarationRecord> declarations=new HashMap<>();frontend.declarations().forEach(d->declarations.put(d.entity().identity(),d));
         Map<EntityIdentity,TypeDeclarationRecord> shapes=new HashMap<>();frontend.typeDeclarations().forEach(d->shapes.put(d.type(),d));
         Map<EntityIdentity,List<Annotation>> annotations=new HashMap<>();var issues=new ArrayList<IngestionEvidence.Issue>();
-        if(!framework.completeClasspath())issue(issues,ANNOTATION_EVIDENCE_MISSING,"framework-context",identity);
+        var annotationEdges=new HashMap<AnnotationSite,List<RelationshipOccurrence>>();
+        for(var occurrence:frontend.occurrences())if(occurrence.relationship().kind().value().equals("java.annotated-with")&&occurrence.status()==SemanticStatus.RESOLVED&&occurrence.relationship().target() instanceof RelationshipTarget.Resolved)
+            annotationEdges.computeIfAbsent(new AnnotationSite(occurrence.relationship().source(),occurrence.span()),key->new ArrayList<>()).add(occurrence);
+        if(!framework.declarationFragmentKnown())issue(issues,ANNOTATION_EVIDENCE_MISSING,"framework-context",identity);
+        if(!framework.completeClasspath())issue(issues,CLASSPATH_RESOLUTION_REQUIRED,"framework-context",identity);
         for(var use:frontend.annotations()) {
-            var edges=frontend.occurrences().stream().filter(o->o.relationship().kind().value().equals("java.annotated-with")&&o.span().equals(use.span())
-                    &&o.relationship().source().equals(use.owner())&&o.status()==SemanticStatus.RESOLVED&&o.relationship().target() instanceof RelationshipTarget.Resolved).toList();
+            var edges=annotationEdges.getOrDefault(new AnnotationSite(use.owner(),use.span()),List.of());
             Optional<EntityIdentity> target=edges.size()==1?Optional.of(((RelationshipTarget.Resolved)edges.getFirst().relationship().target()).target()):Optional.empty();
             Optional<String> trusted=target.map(declarations::get).filter(Objects::nonNull).map(DeclarationRecord::entity)
                     .filter(e->e.origin()==EntityOrigin.DEPENDENCY&&framework.artifacts().stream().anyMatch(a->a.entityScope().equals(e.stableScope())
@@ -62,7 +66,7 @@ public final class ComponentScanIngestion {
                     .flatMap(e->JavaTypeName.fromCanonical(e.canonicalName())).map(JavaTypeName::qualifiedName);
             annotations.computeIfAbsent(use.owner(),k->new ArrayList<>()).add(new Annotation(use,target,trusted));
         }
-        Set<String> roots=new TreeSet<>();Set<EntityIdentity> bootstraps=new HashSet<>();boolean unknownScan=!framework.completeClasspath();
+        Set<String> roots=new TreeSet<>();Set<EntityIdentity> bootstraps=new HashSet<>();boolean unknownScan=!framework.declarationFragmentKnown();
         for(var entry:annotations.entrySet()) {
             boolean directScan=entry.getValue().stream().anyMatch(a->a.trustedName().filter(SCAN::equals).isPresent());
             for(var annotation:entry.getValue()) {
@@ -142,7 +146,8 @@ public final class ComponentScanIngestion {
             }
             rows.add(new Row(entity.identity(),status,matched,beanName,evidence));
         }
-        if(frontend.state()!=FrontendResult.State.COMPLETED)issue(issues,SOURCE_INCOMPLETE,"frontend",identity);
+        if(frontend.sources().stream().anyMatch(s->s.state()!=SourceOutcome.State.PROCESSED&&s.state()!=SourceOutcome.State.PARTIAL)
+                ||Set.of(FrontendResult.State.FAILED,FrontendResult.State.INVALID_INPUT,FrontendResult.State.CANCELED).contains(frontend.state()))issue(issues,SOURCE_INCOMPLETE,"frontend",identity);
         var sorted=issues.stream().distinct().sorted(Comparator.comparing(IngestionEvidence.Issue::identity)).toList();
         return new Result(identity,frontend.analysis(),snapshot.identity(),IngestionEvidence.digest(frontend),framework.identity(),rows,sorted,IngestionEvidence.gaps(snapshot.identity(),PROVIDER,identity,sorted));
     }

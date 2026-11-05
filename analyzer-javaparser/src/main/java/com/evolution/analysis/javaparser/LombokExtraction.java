@@ -18,6 +18,12 @@ final class LombokExtraction {
     private record Generated(Entity callable,JavaSymbolName name,List<VariableDeclarator> fields,List<Entity> parameters,String rule,boolean setter){}
     LombokExtraction(Extraction context){this.context=context;}
 
+    void releaseBody(CompilationUnit unit){
+        generated.removeIf(g->g.fields().stream().anyMatch(f->f.findCompilationUnit().filter(c->c==unit).isPresent()));
+        generatedOwners.entrySet().removeIf(e->e.getValue().findCompilationUnit().filter(c->c==unit).isPresent());
+        unsupportedConstructorOwners.removeIf(t->t.findCompilationUnit().filter(c->c==unit).isPresent());
+    }
+
     void unsupportedGenerators(CompilationUnit unit) {
         var otherGenerators=Set.of("Getter","Setter","With","WithBy","ToString","EqualsAndHashCode","SuperBuilder","UtilityClass","FieldDefaults","Accessors");
         for(var annotation:unit.findAll(AnnotationExpr.class)) {
@@ -137,7 +143,7 @@ final class LombokExtraction {
         }
     }
     boolean hasGeneratedConstructor(ClassOrInterfaceDeclaration type) {
-        return generatedOwners.entrySet().stream().anyMatch(e->e.getValue()==type&&e.getKey().kind()==EntityKind.CONSTRUCTOR);
+        return generatedOwners.entrySet().stream().anyMatch(e->sameOwner(e.getKey(),type)&&e.getKey().kind()==EntityKind.CONSTRUCTOR);
     }
     private void constructor(ClassOrInterfaceDeclaration type,List<VariableDeclarator> fields,String rule) {
         var name=JavaSymbolName.constructor(context.name(type),fields.stream().map(f->context.erasedParameter(f.getType())).toList());
@@ -169,6 +175,10 @@ final class LombokExtraction {
             if(g.setter()&&i<g.parameters().size())context.derivedMemberTypes(f,g.parameters().get(i),"parameter-type",g.rule());
             else if(!g.setter())context.derivedMemberTypes(f,g.callable(),"returns",g.rule());
         }
+    }
+    private boolean sameOwner(Entity callable,ClassOrInterfaceDeclaration owner) {
+        var recorded=generatedOwners.get(callable);
+        return recorded!=null&&(recorded==owner||context.name(recorded).equals(context.name(owner)));
     }
     /** Exact-argument generated overloads participate before native resolution can select a
      * wider handwritten overload. No AST mutation, processor execution, or guessed coercion. */
@@ -206,10 +216,10 @@ final class LombokExtraction {
                 }
                 method=call.getNameAsString();arguments=call.getArguments();
             } else return Optional.empty();
-            boolean generatedConstructor=constructor && generated.stream().anyMatch(g -> generatedOwners.get(g.callable())==owner
+            boolean generatedConstructor=constructor && generated.stream().anyMatch(g -> sameOwner(g.callable(),owner)
                     && g.callable().kind()==EntityKind.CONSTRUCTOR);
             affectedGenerated=generatedConstructor || !constructor && generated.stream().anyMatch(g ->
-                    generatedOwners.get(g.callable())==owner && method.equals(generatedMethodNames.get(g.callable())));
+                    sameOwner(g.callable(),owner) && method.equals(generatedMethodNames.get(g.callable())));
             if(!owner.getTypeParameters().isEmpty() || !owner.getExtendedTypes().isEmpty()) {
                 if(affectedGenerated)throw new GeneratedAccessFailure();
                 return Optional.empty();
@@ -217,7 +227,7 @@ final class LombokExtraction {
             var actual=arguments.stream().map(a -> a.calculateResolvedType().describe()).toList();
             var matches=new ArrayList<Entity>();
             for(var candidate:generated) {
-                if(generatedOwners.get(candidate.callable())!=owner)continue;
+                if(!sameOwner(candidate.callable(),owner))continue;
                 if(constructor!=(candidate.callable().kind()==EntityKind.CONSTRUCTOR))continue;
                 if(!constructor && !candidate.name().equals(JavaSymbolName.method(context.name(owner),method,
                         candidate.setter()?candidate.fields().stream().map(f -> context.erasedParameter(f.getType())).toList():List.of())))continue;

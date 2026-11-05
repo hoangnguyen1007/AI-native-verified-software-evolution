@@ -14,13 +14,26 @@ import java.util.function.BooleanSupplier;
 
 /** Disk CAS. A failed write never publishes a handle. Existing evidence is verified, never overwritten. */
 public final class StreamingContentStore implements RepositoryContentStore {
+    @FunctionalInterface interface Force { void flush(FileChannel channel) throws IOException; }
+    @FunctionalInterface interface Space { long usable() throws IOException; }
     private final Path root, staging;
     private final long reserveBytes;
+    private final Force force;
+    private final Space space;
     public StreamingContentStore(Path root) throws IOException { this(root, 0); }
     public StreamingContentStore(Path root, long reserveBytes) throws IOException {
+        this(root,reserveBytes,channel->channel.force(true));
+    }
+    StreamingContentStore(Path root,long reserveBytes,Force force)throws IOException {
+        this(root,reserveBytes,force,null);
+    }
+    StreamingContentStore(Path root,long reserveBytes,Force force,Space space)throws IOException {
         if (reserveBytes < 0) throw new IllegalArgumentException("Negative disk reserve");
+        this.force=Objects.requireNonNull(force);
         this.root = directory(root); this.staging = directory(this.root.resolve("staging")); this.reserveBytes = reserveBytes;
         directory(this.root.resolve("sha256"));
+        var store=space==null?Files.getFileStore(staging):null;
+        this.space=space==null?store::getUsableSpace:space;
     }
     static Path directory(Path path) throws IOException {
         Path absolute = path.toAbsolutePath().normalize();
@@ -51,34 +64,45 @@ public final class StreamingContentStore implements RepositoryContentStore {
         return writeInternal(output -> {
             byte[] buffer = new byte[64 * 1024]; int count;
             while ((count = input.read(buffer)) != -1) if (count > 0) output.write(buffer, 0, count);
-        }, cancelled, false);
+        }, cancelled);
     }
     @Override public ContentHandle write(ContentWriter writer, BooleanSupplier cancelled) throws IOException {
-        return writeInternal(writer, cancelled, true);
+        return writeInternal(writer, cancelled);
     }
-    private ContentHandle writeInternal(ContentWriter writer, BooleanSupplier cancelled, boolean bufferWrites) throws IOException {
+    private ContentHandle writeInternal(ContentWriter writer, BooleanSupplier cancelled) throws IOException {
         Objects.requireNonNull(writer); Objects.requireNonNull(cancelled);
         if (cancelled.getAsBoolean() || Thread.currentThread().isInterrupted()) throw new CancellationException();
         Path temp = Files.createTempFile(staging, "blob-", ".part"); var hash = sha256(); long[] size = {0};
         try {
+            ContentHandle handle;
             try (var channel = FileChannel.open(temp, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS)) {
+                var budget=new DiskBudget();
                 var output = new OutputStream() {
                     @Override public void write(int value) throws IOException { write(new byte[]{(byte)value}, 0, 1); }
                     @Override public void write(byte[] bytes, int offset, int count) throws IOException {
                         Objects.checkFromIndexSize(offset, count, bytes.length);
                         if (cancelled.getAsBoolean() || Thread.currentThread().isInterrupted()) throw new CancellationException();
                         if (count == 0) return;
-                        if (Files.getFileStore(staging).getUsableSpace() - count < reserveBytes) throw new IOException("WAITING_FOR_DISK");
-                        size[0] = Math.addExact(size[0], count); hash.update(bytes, offset, count);
-                        var buffer = ByteBuffer.wrap(bytes, offset, count); while (buffer.hasRemaining()) channel.write(buffer);
+                        while(count>0) {
+                            int chunk=budget.claim(count);
+                            if (cancelled.getAsBoolean() || Thread.currentThread().isInterrupted()) throw new CancellationException();
+                            var buffer=ByteBuffer.wrap(bytes,offset,chunk);while(buffer.hasRemaining())channel.write(buffer);
+                            size[0]=Math.addExact(size[0],chunk);hash.update(bytes,offset,chunk);
+                            offset+=chunk;count-=chunk;
+                        }
                     }
                 };
-                var destination = bufferWrites ? new BufferedOutputStream(output, 64 * 1024) : output;
+                var destination = new BufferedOutputStream(output, 64 * 1024);
                 writer.write(destination); destination.flush();
                 if (cancelled.getAsBoolean() || Thread.currentThread().isInterrupted()) throw new CancellationException();
-                channel.force(true);
+                if(space.usable()<reserveBytes)throw new IOException("WAITING_FOR_DISK");
+                handle=new ContentHandle(new ContentDigest("sha256:"+HexFormat.of().formatHex(hash.digest())),size[0]);
+                if(Files.exists(path(handle),LinkOption.NOFOLLOW_LINKS)) {
+                    if(!verify(handle))throw new IOException("CAS_CORRUPT");
+                    return handle;
+                }
+                force(channel);
             }
-            var handle = new ContentHandle(new ContentDigest("sha256:" + HexFormat.of().formatHex(hash.digest())), size[0]);
             Path target = path(handle); directory(target.getParent());
             try { Files.createLink(target, temp); }
             catch (FileAlreadyExistsException exists) { if (!verify(handle)) throw new IOException("CAS_CORRUPT"); }
@@ -87,14 +111,52 @@ public final class StreamingContentStore implements RepositoryContentStore {
         } catch (ArithmeticException overflow) { throw new IOException("CONTENT_SIZE_OVERFLOW"); }
         finally { Files.deleteIfExists(temp); }
     }
-    private Path path(ContentHandle handle) throws IOException {
+    /** Conservative allowance between fresh samples. Bounds probe frequency by bytes/time,
+     * including a producer's single huge write; OS write failures still abort publication. */
+    private final class DiskBudget {
+        private static final int SAMPLE_BYTES=8*1024*1024;
+        private long allowance,sampledAt;
+        private int remaining;
+        int claim(int requested)throws IOException {
+            long now=System.nanoTime();
+            if(remaining==0||now-sampledAt>=1_000_000_000L||allowance<Math.min(requested,remaining)) {
+                long usable=space.usable();
+                if(usable<reserveBytes)throw new IOException("WAITING_FOR_DISK");
+                allowance=usable-reserveBytes;remaining=SAMPLE_BYTES;sampledAt=now;
+            }
+            int chunk=Math.min(requested,remaining);
+            if(chunk>allowance)throw new IOException("WAITING_FOR_DISK");
+            allowance-=chunk;remaining-=chunk;return chunk;
+        }
+    }
+    Path path(ContentHandle handle) throws IOException {
         String hex = handle.digest().value().substring(7);
         Path path = root.resolve("sha256").resolve(hex.substring(0, 2)).resolve(hex.substring(2)); safe(path); return path;
     }
     @Override public InputStream open(ContentHandle handle) throws IOException {
         Path file = path(handle);
+        if (!Files.exists(file, LinkOption.NOFOLLOW_LINKS)) new SmallBlobPacks(root, reserveBytes).recover(handle, this);
         if (!Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS) || Files.size(file) != handle.size()) throw new IOException("CAS_UNAVAILABLE");
         return Files.newInputStream(file, LinkOption.NOFOLLOW_LINKS);
+    }
+    /** One forced immutable pack precedes all derived loose files and any inventory commit.
+     * Bounds apply to one batch, never to repository admission. */
+    void putSmallBatch(Collection<byte[]> values) throws IOException {
+        new SmallBlobPacks(root, reserveBytes).put(values, this);
+    }
+    void force(FileChannel channel)throws IOException { force.flush(channel); }
+    void cacheSmall(ContentHandle handle, byte[] bytes) throws IOException {
+        Path target=path(handle); directory(target.getParent());
+        if(Files.exists(target,LinkOption.NOFOLLOW_LINKS)) {
+            if(!verify(handle))throw new IOException("CAS_CORRUPT");
+            return;
+        }
+        Path pending=Files.createTempFile(staging,"packed-",".part");
+        try {
+            Files.write(pending,bytes,StandardOpenOption.WRITE,LinkOption.NOFOLLOW_LINKS);
+            try { Files.createLink(target,pending); }
+            catch(FileAlreadyExistsException race) { if(!verify(handle))throw new IOException("CAS_CORRUPT"); }
+        } finally { Files.deleteIfExists(pending); }
     }
     @Override public InputStream range(ContentHandle handle, long offset, long length) throws IOException {
         if (offset < 0 || length < 0 || offset > handle.size() || length > handle.size() - offset) throw new IllegalArgumentException("Invalid content range");

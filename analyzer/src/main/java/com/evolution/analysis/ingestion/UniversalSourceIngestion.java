@@ -16,7 +16,7 @@ import static com.evolution.analysis.ingestion.IngestionEvidence.Reason.*;
 /** Connects declarative plans to neutral frontend/configuration ports, retaining source recovery
  * when build closure is unavailable. A Gradle dependency declaration is never treated as a JAR. */
 public final class UniversalSourceIngestion {
-    public static final VersionedIdentifier PROVIDER=new VersionedIdentifier("source.universal-ingestion","m8.4-source-recovery-v2");
+    public static final VersionedIdentifier PROVIDER=new VersionedIdentifier("source.universal-ingestion","m8.4-reactor-recovery-v2");
     public record SourceSet(ModuleIdentity module,SourcePlanModel.Kind kind,String name) {
         public SourceSet { Objects.requireNonNull(module); Objects.requireNonNull(kind);
             name=ContractChecks.token(name,"source-set name"); }
@@ -25,11 +25,22 @@ public final class UniversalSourceIngestion {
                     kind==SourcePlanModel.Kind.TEST?"test":"");
         }
     }
-    /** complete describes the context closure, separately from the exact identities of available bytes. */
-    public record Resolution(PlatformInput platform,List<BinaryInput> binaries,ContentDigest exactClasspathEvidence,Optional<com.evolution.analysis.javaevidence.JavaSourceCorrespondence.Verified> correspondence,boolean complete) {
+    /** A source substitution retains the original exact reactor classpath position. */
+    public record ReactorSlot(SourceSet sourceSet,int order) {
+        public ReactorSlot {Objects.requireNonNull(sourceSet);if(order<0)throw new IllegalArgumentException("Negative reactor slot");}
+    }
+    /** complete describes non-reactor closure; every declared reactor slot also needs complete owned source evidence. */
+    public record Resolution(PlatformInput platform,List<BinaryInput> binaries,ContentDigest exactClasspathEvidence,Optional<com.evolution.analysis.javaevidence.JavaSourceCorrespondence.Verified> correspondence,boolean complete,List<ReactorSlot> reactorSlots) {
         public Resolution(PlatformInput platform,List<BinaryInput> binaries,ContentDigest exactClasspathEvidence){this(platform,binaries,exactClasspathEvidence,Optional.empty());}
         public Resolution(PlatformInput platform,List<BinaryInput> binaries,ContentDigest exactClasspathEvidence,Optional<com.evolution.analysis.javaevidence.JavaSourceCorrespondence.Verified> correspondence){this(platform,binaries,exactClasspathEvidence,correspondence,true);}
-        public Resolution { Objects.requireNonNull(platform);binaries=List.copyOf(binaries);Objects.requireNonNull(exactClasspathEvidence);Objects.requireNonNull(correspondence); }
+        public Resolution(PlatformInput platform,List<BinaryInput> binaries,ContentDigest exactClasspathEvidence,Optional<com.evolution.analysis.javaevidence.JavaSourceCorrespondence.Verified> correspondence,boolean complete){this(platform,binaries,exactClasspathEvidence,correspondence,complete,List.of());}
+        public Resolution {
+            Objects.requireNonNull(platform);binaries=List.copyOf(binaries);Objects.requireNonNull(exactClasspathEvidence);Objects.requireNonNull(correspondence);
+            reactorSlots=reactorSlots.stream().sorted(Comparator.comparingInt(ReactorSlot::order)).toList();
+            int slots=binaries.size()+reactorSlots.size();
+            if(reactorSlots.stream().map(ReactorSlot::order).distinct().count()!=reactorSlots.size()||reactorSlots.stream().anyMatch(s->s.order()>=slots))throw new IllegalArgumentException("Invalid reactor slots");
+            if(!reactorSlots.isEmpty()&&correspondence.isPresent())throw new IllegalArgumentException("Native correspondence cannot use source substitutions");
+        }
     }
     public enum Status { OWNED, UNOWNED, OVERLAPPING, INPUT_UNAVAILABLE, CLASSIFICATION_CONFLICT }
     public record SourceRow(String path,Status status,List<SourceSet> claims) {public SourceRow{claims=List.copyOf(claims);}}
@@ -67,6 +78,7 @@ public final class UniversalSourceIngestion {
         var resolutionKeys=available.entrySet().stream().map(e->{
             var key=new TreeMap<String,Object>();key.put("set",e.getKey());key.put("platform",e.getValue().platform().entry());key.put("classpath",e.getValue().binaries().stream().map(BinaryInput::entry).toList());key.put("evidence",e.getValue().exactClasspathEvidence());key.put("complete",e.getValue().complete());
             var nativeOrigins=FrontendRequest.binaryOriginOptions(e.getValue().binaries());if(!nativeOrigins.isEmpty())key.put("nativeOrigins",nativeOrigins);
+            if(!e.getValue().reactorSlots().isEmpty())key.put("reactorSlots",e.getValue().reactorSlots());
             var correspondence=FrontendRequest.correspondenceOptions(e.getValue().correspondence());if(!correspondence.isEmpty())key.put("correspondence",correspondence);
             return key;
         }).sorted(Comparator.comparing(IngestionEvidence::digest)).toList();
@@ -114,7 +126,23 @@ public final class UniversalSourceIngestion {
             if(!owned.getOrDefault(key,List.of()).isEmpty()) {
                 if(resolution==null)issues.add(new IngestionEvidence.Issue(CLASSPATH_RESOLUTION_REQUIRED,key.toString(),List.of(identity)));
                 else try {
+                    var reactorSources=new ArrayList<ReactorSourceInput>();
+                    boolean reactorComplete=true;
+                    for(var slot:resolution.reactorSlots()) {
+                        var sibling=plans.stream().filter(p->p.module().equals(slot.sourceSet().module())&&p.kind()==slot.sourceSet().kind()&&p.name().equals(slot.sourceSet().name())).findFirst();
+                        var siblingSources=owned.getOrDefault(slot.sourceSet(),List.of());
+                        if(sibling.isEmpty()||siblingSources.isEmpty()||siblingSources.stream().anyMatch(s->s.document().classification()!=sibling.orElseThrow().semanticRole())||incomplete.contains(slot.sourceSet())||buildClosureUnknown(build,inputs,slot.sourceSet())
+                                ||!sibling.orElseThrow().gaps().isEmpty()
+                                ||!sibling.orElseThrow().syntaxLevel().value().equals(plan.syntaxLevel().value())
+                                ||!sibling.orElseThrow().platformRelease().value().filter(Integer.toString(resolution.platform().release())::equals).isPresent()
+                                ||sibling.orElseThrow().encoding().value().isEmpty()
+                                ||siblingSources.stream().anyMatch(s->!s.decoding().charset().equalsIgnoreCase(sibling.orElseThrow().encoding().value().orElseThrow()))) {
+                            reactorComplete=false;continue;
+                        }
+                        reactorSources.add(ReactorSourceInput.create(slot.sourceSet().module(),sibling.orElseThrow().semanticRole(),slot.order(),siblingSources));
+                    }
                     boolean recovery=!resolution.complete()||buildClosureUnknown(build,inputs,key)||incomplete.contains(key)
+                            ||!reactorComplete
                             ||plan.syntaxLevel().value().isEmpty()||plan.platformRelease().value().isEmpty()||plan.encoding().value().isEmpty()
                             ||plan.gaps().stream().anyMatch(g->g!=SourcePlanModel.Gap.GENERATED_SOURCES_NOT_ACQUIRED&&g!=SourcePlanModel.Gap.PLUGIN_EFFECTS_NOT_EVALUATED);
                     int level=Integer.parseInt(plan.syntaxLevel().value().orElse(Integer.toString(resolution.platform().release())));
@@ -123,20 +151,22 @@ public final class UniversalSourceIngestion {
                     var sourceInputs=owned.get(key).stream().sorted(Comparator.comparing(s->s.document().path())).toList();
                     if(plan.encoding().value().isPresent()&&sourceInputs.stream().anyMatch(s->!s.decoding().charset().equalsIgnoreCase(plan.encoding().value().orElseThrow())))recovery=true;
                     if(recovery)issues.add(new IngestionEvidence.Issue(SOURCE_INCOMPLETE,key.toString(),List.of(identity)));
-                    if(!resolution.complete())issues.add(new IngestionEvidence.Issue(CLASSPATH_RESOLUTION_REQUIRED,key.toString(),List.of(identity)));
+                    if(!resolution.complete()||!reactorComplete)issues.add(new IngestionEvidence.Issue(CLASSPATH_RESOLUTION_REQUIRED,key.toString(),List.of(identity)));
+                    if(!reactorComplete)reactorSources.clear();
                     var frontendPlan=new FrontendPlan(Optional.of(level),plan.bytecodeTarget().value().map(Integer::valueOf),false,resolution.exactClasspathEvidence(),inputs.identity());
                     var set=plan.semanticRole();
-                    var options=new TreeMap<>(FrontendRequest.options(frontendPlan,plan.module(),set,sourceInputs.stream().map(SourceInput::document).toList(),resolution.platform()));
+                    var options=new TreeMap<>(FrontendRequest.options(frontendPlan,plan.module(),set,sourceInputs.stream().map(SourceInput::document).toList(),resolution.platform(),reactorSources));
                     options.put("ingestion.build-model",build.identity().value());options.put("ingestion.source-input",identity.value());
                     options.put("ingestion.source-set-name",plan.name());
                     if(recovery)options.put(FrontendRequest.RESOLUTION_MODE,FrontendRequest.SOURCE_RECOVERY);
+                    if(recovery)options.put(FrontendRequest.RECOVERY_PLATFORM_COMPATIBLE,Boolean.toString(resolution.platform().release()==release));
                     options.putAll(FrontendRequest.binaryOriginOptions(resolution.binaries()));
                     options.putAll(FrontendRequest.correspondenceOptions(resolution.correspondence()));
                     options.putAll(readinessOptions);
                     var classpath=new ArrayList<ClasspathEntry>();classpath.add(resolution.platform().entry());resolution.binaries().forEach(b->classpath.add(b.entry()));
                     var manifest=AnalysisManifest.create(new VersionedIdentifier("analysis.manifest","1"),snapshot,descriptors,classpath,
                             AnalysisConfiguration.create(new VersionedIdentifier("analysis.configuration","1"),options),analyzer,rules,schema);
-                    request=Optional.of(new FrontendRequest(manifest,plan.module(),set,frontendPlan,sourceInputs,resolution.platform(),resolution.binaries(),List.of(),resolution.correspondence()));
+                    request=Optional.of(new FrontendRequest(manifest,plan.module(),set,frontendPlan,sourceInputs,resolution.platform(),resolution.binaries(),reactorSources,resolution.correspondence()));
                 }catch(IllegalArgumentException failure){issues.add(new IngestionEvidence.Issue(SOURCE_INCOMPLETE,key.toString(),List.of(identity)));}
             }
             var metadata=new ArrayList<AutoConfigurationMetadata.Resource>();

@@ -75,7 +75,7 @@ public record CanonicalGraphInput(RepositoryInputs repository, Optional<Universa
         Objects.requireNonNull(acquisition);
         Objects.requireNonNull(javaEvidence);javaEvidence.ifPresent(value->{if(!value.derived().equals(repository.snapshot().identity()))throw new IllegalArgumentException("Foreign Java evidence view");value.validateFor(ingestion);});
         acquisition.ifPresent(a->{if(a.snapshot().isEmpty()||!a.snapshot().orElseThrow().identity().equals(repository.snapshot().identity()))throw new IllegalArgumentException("Foreign acquisition snapshot");});
-        spring=List.copyOf(spring);issues=List.copyOf(issues);gaps=List.copyOf(gaps);
+        spring=AnalysisWorkspace.ReplayList.copy(spring);issues=AnalysisWorkspace.ReplayList.copy(issues);gaps=AnalysisWorkspace.ReplayList.copy(gaps);
         build.ifPresent(b->{if(!b.repositoryInputIdentity().equals(repository.identity()))throw new IllegalArgumentException("Foreign graph build inputs");});
         if(ingestion.isPresent()&&build.isEmpty())throw new IllegalArgumentException("Ingestion has no build provenance");
         if(!spring.isEmpty()&&ingestion.isEmpty())throw new IllegalArgumentException("Spring has no frontend provenance");

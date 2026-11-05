@@ -34,17 +34,17 @@ final class ResolutionEnvironment {
     ResolutionEnvironment(FrontendRequest request) {
         request.originClasspath();
         platformEntry = request.platform().entry();
-        // Recovery consumes captured source bytes only and never attributes a binary/platform target.
-        if(request.sourceRecovery())return;
+        // An incomplete build closure does not invalidate the independently verified inputs.
+        // Missing targets remain unresolved at the individual observation, never filled by host lookup.
         try {
             var platformPaths = new HashSet<Path>();
             for (var artifact : request.platform().artifacts()) {
+                if(request.sourceRecovery()&&"false".equals(request.manifest().configuration().values().get(FrontendRequest.RECOVERY_PLATFORM_COMPATIBLE)))continue;
                 Path real = artifact.path().toRealPath();
                 if (!platformPaths.add(real)) {
                     throw new FrontendInputException("frontend.duplicate-platform-artifact", "Aliased platform artifacts are not allowed");
                 }
-                byte[] bytes = Files.readAllBytes(real);
-                verify(artifact.contentDigest(), bytes);
+                verify(artifact.contentDigest(), real);
                 switch (artifact.format()) {
                     case RUNTIME_MODULES -> {
                         Path runtimeModules = Path.of(System.getProperty("java.home")).resolve("lib/modules");
@@ -55,6 +55,7 @@ final class ResolutionEnvironment {
                         platform.add(new ClassLoaderTypeSolver(ClassLoader.getPlatformClassLoader()));
                     }
                     case JAR -> {
+                        byte[] bytes=Files.readAllBytes(real);verify(artifact.contentDigest(),bytes);
                         platform.add(jarSolver(bytes, request.platform().release(), artifact.logicalName()));
                     }
                     case JMOD -> platform.add(jmodSolver(real));
@@ -105,6 +106,12 @@ final class ResolutionEnvironment {
     }
     private static void verify(ClasspathEntry entry, byte[] bytes) {
         verify(entry.contentDigest(), bytes);
+    }
+    private static void verify(ContentDigest expected,Path path)throws IOException {
+        java.security.MessageDigest digest;
+        try{digest=java.security.MessageDigest.getInstance("SHA-256");}catch(java.security.NoSuchAlgorithmException impossible){throw new AssertionError(impossible);}
+        try(var input=new java.security.DigestInputStream(Files.newInputStream(path),digest)){input.transferTo(OutputStream.nullOutputStream());}
+        if(!expected.value().equals("sha256:"+HexFormat.of().formatHex(digest.digest())))throw new FrontendInputException("frontend.artifact-digest","Artifact bytes differ from the manifest");
     }
     private static void verify(ContentDigest expected, byte[] bytes) {
         if (!ContentDigest.sha256(bytes).equals(expected)) throw new FrontendInputException("frontend.artifact-digest", "Artifact bytes differ from the manifest");
@@ -215,6 +222,13 @@ final class ResolutionEnvironment {
             for (var entry = jar.getNextJarEntry(); entry != null; entry = jar.getNextJarEntry()) {
                 if (entry.isDirectory()) continue;
                 if (!seen.add(entry.getName())) continue;
+                if(!entry.getName().endsWith(".class")&&!entry.getName().equalsIgnoreCase("META-INF/MANIFEST.MF")) {
+                    // Resources do not participate in JVM type resolution. Account for
+                    // expansion with a fixed buffer rather than retaining their bytes.
+                    byte[] buffer=new byte[65536];long size=0;int read;
+                    while((read=jar.read(buffer))!=-1){size+=read;expandedBytes+=read;if(size>100_000_000||expandedBytes>1_000_000_000L)throw new FrontendInputException("frontend.jar-size","JAR expansion exceeds the bounded class-view limit");}
+                    continue;
+                }
                 byte[] content = jar.readNBytes(100_000_001);
                 if (content.length > 100_000_000)
                     throw new FrontendInputException("frontend.jar-size", "A JAR entry exceeds the bounded class-view limit");

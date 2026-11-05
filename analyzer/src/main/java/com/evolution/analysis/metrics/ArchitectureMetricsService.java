@@ -89,6 +89,7 @@ public final class ArchitectureMetricsService implements Metrics {
             for(Object row:InventoryMetrics.array(inventory.get("obligations"))){if(!input.spend(1))break;InventoryMetrics.increment(mechanisms,MetricEvidence.text(MetricEvidence.object(row),"primaryMechanism"));}input.references.add(ref);}
         detail.put("evidencedMechanismObligations",mechanisms);
         if(!counts.containsKey("ENDPOINT")){input.gap("ENDPOINT_COVERAGE_UNAVAILABLE");detail.put("endpointCountStatus","WITHHELD");}
+        else {detail.put("endpointCountStatus","OBSERVED_DECLARATIONS");detail.put("endpointPopulationMeaning","Captured declaration rows; activation and runtime traffic require separate evidence.");}
         return input.count(subject,counts.getOrDefault("BEAN_DEFINITION_CANDIDATE",0L),detail,layers);
     }
     private void validate(Request request){if(!graph.identity().equals(request.graph())||graph.contexts().stream().noneMatch(c->c.identity().equals(request.context())))throw new IllegalArgumentException("Foreign metric graph/context");}

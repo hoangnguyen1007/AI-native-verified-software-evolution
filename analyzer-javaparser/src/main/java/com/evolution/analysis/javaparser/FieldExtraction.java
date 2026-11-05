@@ -19,7 +19,7 @@ final class FieldExtraction {
                 if (compactParameter(reference,part.getNameWithScope())) continue;
                 var value = ReferenceResolution.value(reference,part.getNameWithScope());
                 if (value.isPresent() && (value.get().isField() || value.get().isEnumConstant())) {
-                    context.observe(part,"reads-field",() -> context.field(value.orElseThrow()),() -> context.fieldOwner(reference));
+                    context.observe(part,"reads-field",() -> context.field(value.orElseThrow(),reference),() -> context.fieldOwner(reference));
                 }
             }
         }
@@ -53,7 +53,7 @@ final class FieldExtraction {
     }
     private void emit(Expression expression, Supplier<ResolvedValueDeclaration> target) {
         for (var mode : modes(expression))
-            context.observe(expression,mode,() -> context.field(target.get()),() -> context.fieldOwner(expression));
+            context.observe(expression,mode,() -> context.field(target.get(),expression),() -> context.fieldOwner(expression));
     }
     private boolean arrayLength(FieldAccessExpr access) {
         if (!access.getNameAsString().equals("length")) return false;

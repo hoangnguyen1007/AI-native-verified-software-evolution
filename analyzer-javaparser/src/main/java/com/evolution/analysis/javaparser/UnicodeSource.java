@@ -13,6 +13,9 @@ final class UnicodeSource {
             else if(c=='\n')lines.add(i+1);}
     }
     static UnicodeSource translate(String input){
+        // Most source has no Unicode escapes: its boundary mapping is the identity.
+        // Preserve the original string and avoid a second string plus one int per character.
+        if(input.indexOf("\\u")<0)return new UnicodeSource(input,null);
         var text=new StringBuilder(input.length());int[] raw=new int[input.length()+1];
         int backslashes=0;boolean previousEscape=false;
         for(int i=0;i<input.length();){
@@ -33,5 +36,5 @@ final class UnicodeSource {
         int value=lines.get(line-1)+column-1,limit=line==lines.size()?text.length():lines.get(line)-1;
         if(value>limit)throw new IllegalArgumentException("Translated column outside line");return value;
     }
-    int rawBoundary(int offset){if(offset<0||offset>=raw.length)throw new IllegalArgumentException("Translated boundary outside input");return raw[offset];}
+    int rawBoundary(int offset){if(offset<0||offset>text.length())throw new IllegalArgumentException("Translated boundary outside input");return raw==null?offset:raw[offset];}
 }

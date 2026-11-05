@@ -18,9 +18,28 @@ import static org.junit.jupiter.api.Assertions.*;
 import static com.evolution.analysis.spring.condition.ExogenousConditionEvaluatorTest.*;
 
 class ConditionLoweringTest {
+    @Test void pinnedConditionFragmentsRemainUsableWithUnrelatedClasspathGaps()throws Exception {
+        var fixture=fixture(List.of(new Spec(PROPERTY,"@ConditionalOnProperty(name=\"enabled\")")),pins("6.2.0","3.4.0"),false);
+        var result=lower(fixture);
+        assertEquals(1,result.coverage().loweredRows());assertTrue(result.sourceCandidates().isEmpty());
+        assertInstanceOf(ConditionExpression.Property.class,result.occurrences().getFirst().expression().operand());
+        assertFalse(fixture.inventory().frameworkEvidence().completeClasspath());
+    }
+    @Test void passiveSourceNamesStayInspectableWithoutForgingArtifactBindings()throws Exception {
+        var fixture=fixture(List.of(new Spec(PROPERTY,"@ConditionalOnProperty(name=\"enabled\")",false,true)));
+        var result=lower(fixture);
+        assertEquals(0,result.coverage().loweredRows());assertEquals(1,result.coverage().opaqueRows());
+        assertEquals(List.of(PROPERTY),result.sourceCandidates().getFirst().candidateTypes());
+        assertFalse(result.sourceCandidates().getFirst().evaluationAllowed());assertEquals("NOT_ESTABLISHED",result.sourceCandidates().getFirst().typeBinding());
+        assertEquals("ANNOTATION_TYPE_EVIDENCE_MISSING",result.capabilityGaps().getFirst().reasonCode());
+        assertNull(ConditionEvidenceLowering.exactAnnotationType(fixture.inventory().rawObservations().getFirst(),fixture.inventory().frameworkEvidence()));
+    }
     static final String PROFILE = "org.springframework.context.annotation.Profile";
     static final String PROPERTY = "org.springframework.boot.autoconfigure.condition.ConditionalOnProperty";
-    record Spec(String type, String spelling, boolean impostor) { Spec(String type, String spelling) { this(type, spelling, false); } }
+    record Spec(String type, String spelling, boolean impostor,boolean unresolved) {
+        Spec(String type,String spelling,boolean impostor){this(type,spelling,impostor,false);}
+        Spec(String type, String spelling) { this(type, spelling, false,false); }
+    }
     record Fixture(SpringBuildContext build, SpringMechanismInventory inventory, ConditionEvidence evidence) {}
     static List<SpringFrameworkEvidence.Artifact> pins(String framework, String boot) throws Exception {
         Path root = Path.of("").toAbsolutePath();
@@ -38,6 +57,9 @@ class ConditionLoweringTest {
     }
     static Fixture fixture(List<Spec> specs) throws Exception { return fixture(specs, pins("6.2.0", "3.4.0")); }
     static Fixture fixture(List<Spec> specs, List<SpringFrameworkEvidence.Artifact> artifacts) {
+        return fixture(specs,artifacts,true);
+    }
+    static Fixture fixture(List<Spec> specs,List<SpringFrameworkEvidence.Artifact> artifacts,boolean completeClasspath) {
         var repository = RepositoryIdentity.fromCanonicalCoordinate("https://example.test/m4b2-fixture.git");
         var module = ModuleDescriptor.create(repository, ".", "fixture");
         String source = "package fixture;\n" + specs.stream().map(s -> s.spelling() + "\nclass Site" + specs.indexOf(s) + " {}\n").collect(java.util.stream.Collectors.joining());
@@ -46,7 +68,7 @@ class ConditionLoweringTest {
         var platform = PlatformInput.create(21, "21-fixture", "authored", List.of(new PlatformInput.Artifact("java.base.jmod", ContentDigest.sha256Utf8("platform"), Path.of("unused.jmod"), PlatformInput.Format.JMOD)));
         var binaries = artifacts.stream().map(a -> new BinaryInput(new ClasspathEntry(ClasspathEntryKind.DEPENDENCY, a.classpathLogicalName(), a.contentDigest()), Path.of(a.artifactId() + "-unused.jar"))).toList();
         var plan = new FrontendPlan(Optional.of(21), Optional.of(21), false, ContentDigest.sha256Utf8("exact-fixture-classpath"), ContentDigest.sha256Utf8("decoding"));
-        var framework = new SpringFrameworkEvidence(true, Optional.of(plan.classpathManifest()), artifacts);
+        var framework = new SpringFrameworkEvidence(completeClasspath, Optional.of(plan.classpathManifest()), artifacts);
         var component = new ManifestComponent(new VersionedIdentifier("fixture.component", "1"), ContentDigest.sha256Utf8("fixture"));
         List<ClasspathEntry> classpath = new ArrayList<>(List.of(platform.entry())); binaries.forEach(b -> classpath.add(b.entry()));
         var manifest = AnalysisManifest.create(new VersionedIdentifier("analysis.manifest", "1"), snapshot, List.of(module), classpath,
@@ -69,13 +91,13 @@ class ConditionLoweringTest {
             declarations.put(owner.identity(), new DeclarationRecord(owner, spec.spelling(), SemanticStatus.RESOLVED, derivation, List.of(), List.of()));
             declarations.put(target.identity(), new DeclarationRecord(target, spec.type(), SemanticStatus.RESOLVED, derivation, List.of(), List.of()));
             var relationship = RelationshipOccurrence.create(SemanticRelationship.create(owner.identity(), new RelationshipKind("java.annotated-with"), new RelationshipTarget.Resolved(target.identity())), span, 0, SemanticStatus.RESOLVED, derivation, List.of(), List.of());
-            relationships.add(relationship);
-            observations.add(new ObservationRecord(document.identity(), new RelationshipKind("java.annotated-with"), Optional.of(span), SemanticStatus.RESOLVED,
-                    ObservationRecord.EvidenceState.VERIFIED, ObservationRecord.EvidenceState.VERIFIED, Optional.of(relationship.identity()), spec.spelling(), List.of()));
+            if(!spec.unresolved())relationships.add(relationship);
+            observations.add(new ObservationRecord(document.identity(), new RelationshipKind("java.annotated-with"), Optional.of(span), spec.unresolved()?SemanticStatus.UNRESOLVED:SemanticStatus.RESOLVED,
+                    spec.unresolved()?ObservationRecord.EvidenceState.MISSING:ObservationRecord.EvidenceState.VERIFIED, ObservationRecord.EvidenceState.VERIFIED, spec.unresolved()?Optional.empty():Optional.of(relationship.identity()), spec.spelling(), spec.unresolved()?List.of(new Diagnostic(DiagnosticSeverity.WARNING,"java.unresolved","Authored missing annotation type",Optional.of(span),Map.of())):List.of()));
             annotations.add(new AnnotationUseRecord(JavaSymbolName.annotationUse(ownerName, document.identity(), index).canonicalName(), owner.identity(), span, "declaration-syntax", spec.spelling()));
         }
         var coverage = FrontendRequest.CATEGORIES.stream().map(c -> new CategoryCoverage(new RelationshipKind("java." + c), CategoryCoverage.Support.IMPLEMENTED,
-                c.equals("annotated-with") ? specs.size() : 0, c.equals("annotated-with") ? specs.size() : 0, 0)).toList();
+                c.equals("annotated-with") ? specs.size() : 0, c.equals("annotated-with") ? relationships.size() : 0, c.equals("annotated-with")?specs.size()-relationships.size():0)).toList();
         var frontend = new FrontendResult(manifest.identity(), new VersionedIdentifier("frontend.fixture", "m4b2"), FrontendResult.State.COMPLETED,
                 List.copyOf(declarations.values()), relationships, observations, List.of(new SourceOutcome(document.identity(), SourceOutcome.State.PROCESSED, List.of())), coverage, List.of(), List.of(), annotations);
         var inventory = SpringMechanismScanner.scan(new SpringMechanismScanRequest(frontend, framework, List.of(), List.of()));

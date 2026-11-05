@@ -22,6 +22,7 @@
         <module>analyzer-filesystem</module>
         <module>analyzer-execution</module>
         <module>analyzer-javaparser</module>
+        <module>analyzer-treesitter</module>
         <module>backend</module>
         <module>cli</module>
     </modules>

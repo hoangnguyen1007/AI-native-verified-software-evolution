@@ -367,14 +367,32 @@ class CapabilityGapContractTest {
                 context, EvidenceNormalizationInput.builder().frontendResults(List.of(result)).build());
 
         Set<String> reasons = ledger.gaps().stream().map(CapabilityGapRecord::reasonCode).collect(java.util.stream.Collectors.toSet());
-        assertTrue(reasons.containsAll(Set.of("FRONTEND_PARTIAL", "SOURCE_PARTIAL", "SEMANTIC_UNRESOLVED", "MISSING_ORIGIN")));
+        assertTrue(reasons.containsAll(Set.of("FRONTEND_PARTIAL", "SOURCE_PARTIAL", "SEMANTIC_UNRESOLVED")));
+        assertFalse(reasons.contains("MISSING_ORIGIN"),"An absent unresolved target has no independent missing-origin defect");
+        assertFalse(reasons.contains("UNMAPPED_OBSERVATION"),"Mapping failure belongs to the same attribution obligation");
         CapabilityGapRecord semantic = ledger.gaps().stream()
                 .filter(gap -> gap.reasonCode().equals("SEMANTIC_UNRESOLVED")).findFirst().orElseThrow();
         assertEquals(List.of(span), semantic.sourceSpans());
         assertEquals("java.calls", semantic.mechanismCategory());
+        assertTrue(semantic.limitations().contains("origin=MISSING"));
+        assertTrue(semantic.limitations().contains("mapping=MISSING"));
         assertThrows(IllegalArgumentException.class, () -> CapabilityGapNormalizer.normalize(
                 EvidenceContext.forSnapshot(SNAPSHOT.identity()),
                 EvidenceNormalizationInput.builder().frontendResults(List.of(result)).build()));
+    }
+
+    @Test void resolvedAttributionStillRequiresIndependentOriginCoordinatesAndMappingEvidence() {
+        var manifest=manifest();var diagnostic=diagnostic("frontend.missing-evidence","Resolved target lacks usable origin/coordinates.");
+        var observation=new ObservationRecord(DOCUMENT.identity(),new RelationshipKind("java.calls"),Optional.empty(),SemanticStatus.RESOLVED,
+                ObservationRecord.EvidenceState.MISSING,ObservationRecord.EvidenceState.MISSING,Optional.empty(),"call()",List.of(diagnostic));
+        var coverage=FrontendRequest.CATEGORIES.stream().map(c->new CategoryCoverage(new RelationshipKind("java."+c),CategoryCoverage.Support.IMPLEMENTED,c.equals("calls")?1:0,0,c.equals("calls")?1:0)).toList();
+        var result=new FrontendResult(manifest.identity(),PROVIDER,FrontendResult.State.PARTIAL,List.of(),List.of(),List.of(observation),
+                List.of(new SourceOutcome(DOCUMENT.identity(),SourceOutcome.State.PARTIAL,List.of(diagnostic))),coverage,List.of(diagnostic));
+        var ledger=CapabilityGapNormalizer.normalize(EvidenceContext.forAnalysis(manifest),EvidenceNormalizationInput.builder().frontendResults(List.of(result)).build());
+        assertEquals(EvidenceAcquisitionLedger.OBSERVATION_NORMALIZER,ledger.normalizer());
+        var reasons=ledger.gaps().stream().map(CapabilityGapRecord::reasonCode).collect(java.util.stream.Collectors.toSet());
+        assertTrue(reasons.containsAll(Set.of("MISSING_ORIGIN","MISSING_PROVENANCE","UNMAPPED_OBSERVATION")));
+        assertFalse(reasons.contains("SEMANTIC_UNRESOLVED"));
     }
 
     @Test

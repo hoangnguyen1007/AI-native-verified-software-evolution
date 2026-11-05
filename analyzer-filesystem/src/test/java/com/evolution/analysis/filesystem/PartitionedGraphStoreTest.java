@@ -10,6 +10,35 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class PartitionedGraphStoreTest {
     @TempDir Path directory;
+    @Test void legacyGraphAssemblyRetainsEdgesAndNeverPublishesDanglingContributions()throws Exception {
+        var graph=fixture();Path snapshots=directory.resolve("snapshots");var store=new PartitionedGraphStore(directory.resolve("pages"));
+        var result=store.build(graph,snapshots,()->false,workspace->{});assertEquals(graph.identity(),result.graph());
+        assertEquals(new GraphSnapshotCodec().encode(graph),Files.readString(snapshots.resolve(result.graph().value().substring(7)+".graph.json")));
+        Path invalid=directory.resolve("invalid-snapshots");var failed=new PartitionedGraphStore(directory.resolve("invalid-pages"));
+        assertThrows(java.io.IOException.class,()->failed.build(graph,invalid,()->false,workspace->{
+            var edge=graph.edges().getFirst();String id=KnowledgeGraph.derivedIdentity("invalid-contribution",1);
+            workspace.records("edges",GraphSnapshotCodec::edge).put(edge.context()+"|"+id,new KnowledgeGraph.Edge(id,edge.context(),"fixture.dangling",edge.source(),
+                    new KnowledgeGraph.Target(KnowledgeGraph.TargetState.RESOLVED,List.of(KnowledgeGraph.derivedIdentity("absent-node",1)),Optional.empty()),edge.evidence(),Optional.empty()));
+        }));
+        try(var files=Files.list(invalid)){assertEquals(0,files.count());}
+    }
+    @Test void diskProjectionMatchesCanonicalSnapshotAndColdPages()throws Exception {
+        var repo=com.evolution.analysis.contract.identity.RepositoryIdentity.fromCanonicalCoordinate("urn:test:disk-projection");
+        var snapshot=com.evolution.analysis.contract.source.RepositorySnapshot.create(repo,Optional.empty(),false,List.of(),List.of());
+        var input=new CanonicalGraphInput(new com.evolution.analysis.ingestion.RepositoryInputs(snapshot,Map.of()),Optional.empty(),Optional.empty(),List.of(),List.of(),List.of());
+        var expected=new CanonicalGraphBuilder().build(input);
+        Path snapshots=Files.createDirectory(directory.resolve("snapshots"));var store=new PartitionedGraphStore(directory.resolve("pages"));
+        var published=store.build(input,snapshots,()->false);
+        assertEquals(expected.identity(),published.graph());assertEquals(expected.nodes().size(),published.nodes());
+        assertEquals(new GraphSnapshotCodec().encode(expected),Files.readString(snapshots.resolve(expected.identity().value().substring(7)+".graph.json")));
+        var cold=new PartitionedGraphStore(directory.resolve("pages"));var partition=cold.partitions(published.graph(),1,Optional.empty()).items().getFirst();
+        assertEquals(expected.nodes(),cold.nodes(partition,10,Optional.empty()).items());
+        assertEquals(expected.evidence().getFirst(),cold.evidence(published.graph(),expected.evidence().getFirst().identity()).orElseThrow());
+        assertTrue(cold.evidence(published.graph(),ContentDigest.sha256Utf8("not-in-this-graph")).isEmpty());
+        assertEquals(published,store.build(input,snapshots,()->false));
+        var changed=new CanonicalGraphInput(input.repository(),Optional.empty(),Optional.empty(),List.of(),List.of(new com.evolution.analysis.ingestion.IngestionEvidence.Issue(com.evolution.analysis.ingestion.IngestionEvidence.Reason.INPUT_UNAVAILABLE,"absent",List.of(ContentDigest.sha256Utf8("absent")))),List.of());
+        assertThrows(java.util.concurrent.CancellationException.class,()->store.build(changed,snapshots,()->true));
+    }
     @Test void canonicalSnapshotImportsByRowsAndRejectsNoncanonicalOrDanglingInputBeforePublication()throws Exception{
         var graph=fixture();Path source=directory.resolve("input.json");Files.writeString(source,new GraphSnapshotCodec().encode(graph));
         var imported=new PartitionedGraphStore(directory.resolve("imported"));imported.importSnapshot(source,graph.identity(),()->false);

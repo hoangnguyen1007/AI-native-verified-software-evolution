@@ -30,6 +30,10 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
     private record Root(ContentHandle document,ContentDigest graph,String snapshot,Map<String,Tree> trees) {
         Root{new com.evolution.analysis.contract.identity.SnapshotIdentity(snapshot);}
     }
+    public record Publication(ContentDigest graph,com.evolution.analysis.contract.identity.SnapshotIdentity snapshot,
+            List<KnowledgeGraph.Context> contexts,long nodes,long edges,long evidence,Map<String,Long> edgeKinds) {
+        public Publication {contexts=List.copyOf(contexts);edgeKinds=Map.copyOf(edgeKinds);}
+    }
     @FunctionalInterface private interface RowConsumer {void accept(Entry entry)throws IOException;}
 
     public PartitionedGraphStore(Path directory)throws IOException{this(directory,64_000_000);}
@@ -54,6 +58,102 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
         var root=root(graph,()->false);var found=new ArrayList<Entry>();
         visit(root.trees().get("partitions"),context,context+"\0",null,found::add,()->false,0);
         return found.isEmpty()?Optional.empty():Optional.of(partition(found.getFirst().row()));
+    }
+    /** Read one authenticated provider record without loading the legacy snapshot. */
+    public Optional<GraphEvidence> evidence(ContentDigest graph,ContentDigest identity)throws IOException {
+        BooleanSupplier cancelled=()->Thread.currentThread().isInterrupted();var root=root(graph,cancelled);var found=new ArrayList<Entry>();
+        visit(root.trees().get("evidence"),identity.value(),identity.value()+"\0",null,found::add,cancelled,0);
+        if(found.size()>1)throw new IOException("GRAPH_PARTITION_DUPLICATE_EVIDENCE");
+        return found.isEmpty()?Optional.empty():Optional.of(GraphSnapshotCodec.evidence(found.getFirst().row()));
+    }
+
+    /** Build directly into a bounded disk workspace. No repository-wide graph objects or
+     * adjacency maps are constructed. Both the original snapshot and authenticated pages
+     * retain the exact v1 digest and undergo the same reference audit as imported snapshots. */
+    public Publication build(CanonicalGraphInput input,Path snapshots,BooleanSupplier cancelled)throws IOException {
+        return build(input,snapshots,cancelled,workspace->{});
+    }
+    @FunctionalInterface public interface Contribution {void project(GraphProjectionStore workspace)throws IOException;}
+    /** Neutral inventory/native roots need not fabricate a legacy Java RepositorySnapshot. */
+    public Publication build(com.evolution.analysis.contract.identity.SnapshotIdentity snapshot,Path snapshots,BooleanSupplier cancelled,Contribution contribution)throws IOException {
+        return assemble(snapshot,snapshots,cancelled,contribution);
+    }
+    public Publication build(CanonicalGraphInput input,Path snapshots,BooleanSupplier cancelled,Contribution contribution)throws IOException {
+        return build(input,snapshots,cancelled,List.of(),contribution);
+    }
+    public Publication build(CanonicalGraphInput input,Path snapshots,BooleanSupplier cancelled,Collection<com.evolution.analysis.evidence.EvidenceAcquisitionLedger> ledgers,Contribution contribution)throws IOException {
+        return assemble(input.repository().snapshot().identity(),snapshots,cancelled,workspace->{new CanonicalGraphBuilder().project(input,workspace,ledgers);contribution.project(workspace);});
+    }
+    /** Compatibility entry for an already validated graph; additive providers still spill to disk. */
+    public Publication build(KnowledgeGraph graph,Path snapshots,BooleanSupplier cancelled,Contribution contribution)throws IOException {
+        return assemble(graph.snapshot(),snapshots,cancelled,workspace->{
+            var contexts=workspace.records("contexts",GraphSnapshotCodec::context);for(var row:graph.contexts())contexts.put(row.identity(),row);
+            var nodes=workspace.records("nodes",GraphSnapshotCodec::node);for(var row:graph.nodes())nodes.put(key(row.context(),row.identity()),row);
+            var edges=workspace.records("edges",GraphSnapshotCodec::edge);for(var row:graph.edges())edges.put(key(row.context(),row.identity()),row);
+            var evidence=workspace.records("evidence",GraphSnapshotCodec::evidence);for(var row:graph.evidence())evidence.put(row.identity().value(),row);
+            contribution.project(workspace);
+        });
+    }
+    private Publication assemble(com.evolution.analysis.contract.identity.SnapshotIdentity snapshot,Path snapshots,BooleanSupplier cancelled,Contribution contribution)throws IOException {
+        check(cancelled);snapshots=StreamingContentStore.directory(snapshots);
+        Path scratch=Files.createTempFile(directory,"graph-projection-",".sqlite");
+        Path pending=Files.createTempFile(snapshots,"graph-snapshot-",".part");
+        try(Connection database=DriverManager.getConnection("jdbc:sqlite:"+scratch)) {
+            try(var sql=database.createStatement()) {
+                sql.execute("PRAGMA journal_mode=DELETE");sql.execute("PRAGMA temp_store=FILE");sql.execute("PRAGMA cache_size=-2048");
+                sql.execute("CREATE TABLE rows(space TEXT NOT NULL,k TEXT NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(space,k)) WITHOUT ROWID");
+            }
+            database.setAutoCommit(false);
+            var workspace=new SqliteGraphProjection(database,rowBytes,cancelled);
+            contribution.project(workspace);
+            var contexts=new ArrayList<KnowledgeGraph.Context>(workspace.records("contexts",GraphSnapshotCodec::context).values());
+            var kinds=new TreeMap<String,Long>();
+            try(var insert=database.prepareStatement("INSERT INTO rows(space,k,payload) VALUES(?,?,?)")) {
+                for(var edge:workspace.records("edges",GraphSnapshotCodec::edge).values()) {
+                    kinds.merge(edge.kind(),1L,Long::sum);String id=key(edge.context(),edge.identity());
+                    insert(insert,"outgoing",key(edge.context(),edge.source(),edge.identity()),id,cancelled);
+                    for(String target:edge.target().identities())insert(insert,"incoming",key(edge.context(),target,edge.identity()),id,cancelled);
+                }
+            }
+            database.commit();
+            var digest=StreamingContentStore.sha256();
+            try(var writer=new BufferedWriter(new OutputStreamWriter(new DigestOutputStream(OutputStream.nullOutputStream(),digest),StandardCharsets.UTF_8))) {
+                writeGraph(database,snapshot.value(),writer,cancelled);
+            }
+            var identity=new ContentDigest("sha256:"+HexFormat.of().formatHex(digest.digest()));
+            var frame=StreamingContentStore.sha256();
+            try(var channel=java.nio.channels.FileChannel.open(pending,StandardOpenOption.WRITE,LinkOption.NOFOLLOW_LINKS)) {
+                var writer=new BufferedWriter(new OutputStreamWriter(new DigestOutputStream(java.nio.channels.Channels.newOutputStream(channel),frame),StandardCharsets.UTF_8));
+                writer.write("{\"format\":");CanonicalJson.writeTo(GraphSnapshotCodec.FORMAT,writer);writer.write(",\"graph\":");
+                writeGraph(database,snapshot.value(),writer,cancelled);writer.write(",\"identity\":");CanonicalJson.writeTo(identity,writer);writer.write("}");writer.flush();channel.force(true);
+            }
+            // Audits endpoints, evidence, contexts and both adjacency indexes before publication.
+            publish(database,identity,snapshot.value(),cancelled,true,Optional.of(new ContentDigest("sha256:"+HexFormat.of().formatHex(frame.digest()))));
+            Path target=snapshots.resolve(identity.value().substring(7)+".graph.json");StreamingContentStore.safe(target);check(cancelled);
+            try{Files.createLink(target,pending);}catch(FileAlreadyExistsException existing){
+                if(!Files.isRegularFile(target,LinkOption.NOFOLLOW_LINKS)||Files.size(target)!=Files.size(pending)||!hash(target).equals(hash(pending)))throw new IOException("GRAPH_SNAPSHOT_CONFLICT");
+            }
+            return new Publication(identity,snapshot,contexts,total(database,"nodes"),total(database,"edges"),total(database,"evidence"),kinds);
+        }catch(UncheckedIOException failure){throw failure.getCause();}
+        catch(SQLException failure){throw new IOException("GRAPH_PROJECTION_STORAGE_UNAVAILABLE",failure);}
+        finally{Files.deleteIfExists(pending);Files.deleteIfExists(scratch);}
+    }
+    private static ContentDigest hash(Path file)throws IOException {
+        var digest=StreamingContentStore.sha256();try(var in=new DigestInputStream(Files.newInputStream(file,LinkOption.NOFOLLOW_LINKS),digest)){in.transferTo(OutputStream.nullOutputStream());}
+        return new ContentDigest("sha256:"+HexFormat.of().formatHex(digest.digest()));
+    }
+    private static long total(Connection database,String space)throws SQLException {
+        try(var query=database.prepareStatement("SELECT COUNT(*) FROM rows WHERE space=?")){query.setString(1,space);try(var rows=query.executeQuery()){return rows.next()?rows.getLong(1):0;}}
+    }
+    private void writeGraph(Connection database,String snapshot,Writer writer,BooleanSupplier cancelled)throws SQLException,IOException {
+        writer.write("{");boolean first=true;
+        for(String space:List.of("contexts","edges","evidence","nodes")) {
+            if(!first)writer.write(",");first=false;CanonicalJson.writeTo(space,writer);writer.write(":[");boolean member=false;
+            try(var query=database.prepareStatement("SELECT payload FROM rows WHERE space=? ORDER BY k")) {
+                query.setString(1,space);try(var rows=query.executeQuery()){while(rows.next()){check(cancelled);if(member)writer.write(",");member=true;writer.write(rows.getString(1));}}
+            }writer.write("]");
+        }
+        writer.write(",\"schema\":");CanonicalJson.writeTo(KnowledgeGraph.SCHEMA,writer);writer.write(",\"snapshot\":");CanonicalJson.writeTo(snapshot,writer);writer.write("}");
     }
 
     public void save(KnowledgeGraph graph,BooleanSupplier cancelled)throws IOException{

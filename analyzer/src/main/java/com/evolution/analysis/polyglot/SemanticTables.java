@@ -64,7 +64,7 @@ public final class SemanticTables {
         private final Table table;private final InputStream input;private final BooleanSupplier cancelled;private long count;private String previous;private boolean end;
         private Reader(Table table,BooleanSupplier cancelled)throws IOException{
             this.table=Objects.requireNonNull(table);this.cancelled=Objects.requireNonNull(cancelled);check(cancelled);
-            if(!content.verify(table.content()))throw new IOException("SEMANTIC_TABLE_CONTENT_UNAVAILABLE");input=content.open(table.content());
+            if(!content.verify(table.content()))throw new IOException("SEMANTIC_TABLE_CONTENT_UNAVAILABLE");input=new BufferedInputStream(content.open(table.content()),65536);
         }
         public Row next()throws IOException{
             check(cancelled);if(end)return null;

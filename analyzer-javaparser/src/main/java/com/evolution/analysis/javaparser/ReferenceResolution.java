@@ -20,7 +20,7 @@ final class ReferenceResolution {
     ResolvedMethodLikeDeclaration resolve(MethodReferenceExpr reference) {
         if (reference.getScope() instanceof TypeExpr type && type.getType().isArrayType())
             throw new UnsupportedOperationException("Array constructor/reference has no declared callable");
-        var functional = targetType(reference);
+        var functional = groundTarget(targetType(reference));
         var sam = FunctionalInterfaceLogic.getFunctionalMethod(functional).orElseThrow(() -> new UnsolvedSymbolException("functional target"));
         var substitutions = functional.asReferenceType().typeParametersMap();
         var args = sam.getParamTypes().stream().map(substitutions::replaceAll).toList();
@@ -51,6 +51,9 @@ final class ReferenceResolution {
             else if (receiverValue.isPresent()) receiver=receiverValue.orElseThrow().getType();
             else try { receiver=reference.getScope().calculateResolvedType(); } catch (RuntimeException ignored) { }
         }
+        if(receiver!=null&&receiver.isWildcard()&&!receiver.asWildcard().isUpperBounded()
+                &&!selected.declaringType().getQualifiedName().equals("java.lang.Object"))
+            throw new UnsolvedSymbolException("lower wildcard receiver member");
         var receiverMap=com.github.javaparser.resolution.types.parametrization.ResolvedTypeParametersMap.empty();
         if (receiver!=null && receiver.isReferenceType()) {
             var view=receiver.asReferenceType();
@@ -78,6 +81,26 @@ final class ReferenceResolution {
         if (!returnType.isVoid() && !returnType.isAssignableBy(selectedReturn)) throw new UnsolvedSymbolException("incompatible functional return");
         checkThrows(selected,sam);
         return selected;
+    }
+    /** JLS 15.13.2/9.9: references use the non-wildcard ground target.
+     * Do not erase a wildcard nested inside a SAM parameter (e.g. List<? super T>). */
+    private ResolvedType groundTarget(ResolvedType target) {
+        if(!target.isReferenceType())throw new UnsolvedSymbolException("functional target");
+        var view=target.asReferenceType();var declaration=view.getTypeDeclaration().orElseThrow();
+        var values=new ArrayList<ResolvedType>();
+        for(var entry:view.getTypeParametersMap()) {
+            var value=entry.b;
+            if(value.isWildcard()) {
+                var wildcard=value.asWildcard();var bounds=entry.a.getBounds();
+                if(wildcard.isBounded())value=wildcard.getBoundedType();
+                else if(bounds.isEmpty())value=new com.github.javaparser.resolution.model.typesystem.ReferenceTypeImpl(solver.solveType("java.lang.Object"));
+                else if(bounds.size()==1)value=view.typeParametersMap().replaceAll(bounds.getFirst().getType());
+                else throw new UnsupportedOperationException("Intersection ground target bound");
+                for(var bound:bounds)if(!bound.getType().isAssignableBy(value))throw new UnsolvedSymbolException("ground target bound");
+            }
+            values.add(value);
+        }
+        return new com.github.javaparser.resolution.model.typesystem.ReferenceTypeImpl(declaration,values);
     }
     private ResolvedMethodDeclaration select(MethodReferenceExpr reference,List<ResolvedType> args) {
         try { return reference.resolve(); }
@@ -122,7 +145,8 @@ final class ReferenceResolution {
         }
         throw new UnsupportedOperationException("Functional target context");
     }
-    private static ResolvedType functionalReturn(ResolvedType target) {
+    private ResolvedType functionalReturn(ResolvedType target) {
+        target=groundTarget(target);
         return target.asReferenceType().typeParametersMap().replaceAll(FunctionalInterfaceLogic.getFunctionalMethod(target).orElseThrow().returnType());
     }
     static Optional<ResolvedValueDeclaration> value(MethodReferenceExpr reference, String name) {

@@ -33,12 +33,12 @@ public record SpringFrameworkEvidence(boolean completeClasspath,
     }
     /** Framework identity follows the native artifact, not a per-slot solver filename. */
     public static SpringFrameworkEvidence fromRequest(com.evolution.analysis.frontend.FrontendRequest request){
-        var artifacts=new ArrayList<Artifact>();var seen=new LinkedHashMap<String,Artifact>();boolean compatible=true;
+        var artifacts=new ArrayList<Artifact>();var seen=new LinkedHashMap<String,Artifact>();var conflicting=new HashSet<String>();boolean compatible=true;
         boolean nativeView=request.dependencies().stream().anyMatch(b->b.nativeOrigin().isPresent());
         for(var entry:request.originClasspath()){
             String name=entry.logicalName();if(!name.matches("[^:@]+:[^:@]+:[^:@]+@jar"))continue;
             var artifact=new Artifact(name.substring(0,name.length()-4),name,entry.contentDigest());
-            if(nativeView){var previous=seen.putIfAbsent(name,artifact);if(previous!=null){if(!previous.equals(artifact))compatible=false;continue;}}
+            if(nativeView){if(conflicting.contains(name))continue;var previous=seen.putIfAbsent(name,artifact);if(previous!=null){if(!previous.equals(artifact)){compatible=false;conflicting.add(name);artifacts.removeIf(a->a.classpathLogicalName().equals(name));}continue;}}
             artifacts.add(artifact);
         }
         var versions=artifacts.stream().filter(a->a.groupId().equals("org.springframework")).map(Artifact::version).distinct().toList();
@@ -72,7 +72,29 @@ public record SpringFrameworkEvidence(boolean completeClasspath,
 
     /** Exact accepted R0 artifact tuples, never a version-range or name-only support claim. */
     public boolean acceptedConditionFragment(boolean bootRequired) {
-        if (!completeClasspath || classpathManifestIdentity.isEmpty()) return false;
+        // Exact framework semantics depend on their pinned artifact tuple. Overall
+        // dependency closure is a separate registry/context obligation.
+        if (classpathManifestIdentity.isEmpty()) return false;
+        return declarationFragmentKnown()&&declarationFragmentKnown(bootRequired);
+    }
+
+    /** Exact artifact bytes establish annotation/constructor declaration rules even when
+     * unrelated dependencies are missing. This never establishes registry or condition closure. */
+    public boolean declarationFragmentKnown() {
+        if(!completeClasspath&&classpathManifestIdentity.isEmpty())return false;
+        var framework=artifacts.stream().filter(a->a.groupId().equals("org.springframework")).toList();
+        var versions=framework.stream().map(Artifact::version).distinct().toList();
+        var boot=artifacts.stream().filter(a->a.groupId().equals("org.springframework.boot")).toList();
+        if(versions.size()!=1||framework.stream().anyMatch(a->!verifiedArtifact(a))||boot.stream().anyMatch(a->!verifiedArtifact(a)))return false;
+        for(String name:List.of("spring-core","spring-beans","spring-context"))if(framework.stream().noneMatch(a->a.artifactId().equals(name)))return false;
+        if(!boot.isEmpty()) {
+            String expected=switch(versions.getFirst()){case "5.3.31"->"2.7.18";case "6.1.14"->"3.3.5";case "6.2.0"->"3.4.0";default->"";};
+            if(boot.stream().anyMatch(a->!a.version().equals(expected)))return false;
+            for(String name:List.of("spring-boot","spring-boot-autoconfigure"))if(boot.stream().noneMatch(a->a.artifactId().equals(name)))return false;
+        }
+        return true;
+    }
+    private boolean declarationFragmentKnown(boolean bootRequired) {
         Set<String> framework = new TreeSet<>(), boot = new TreeSet<>();
         for (var artifact : artifacts) {
             if (artifact.groupId().equals("org.springframework")) framework.add(artifact.version());

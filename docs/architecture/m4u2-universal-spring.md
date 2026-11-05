@@ -1,5 +1,7 @@
 # M4-UNIVERSAL Slice 2 — Spring evidence and symbolic reasoning
 
+**M8.4 additive source-wiring lane (2026-11-04):** `SourceWiringCandidates` reuses the acquired `SpringSourceEvidence` index to preserve possible source type matches even when framework/container closure is open. Component and bean-method declarations, constructor/field sites, Lombok candidate fields and positively identified Spring Data interfaces retain actual entity IDs and spans. `NoRepositoryBean` does not become a proxy candidate. `spring.source-type-candidate` links source-site/candidate nodes with `UNKNOWN` activation, `NOT_SELECTED`, and unevaluated qualifier/generic compatibility; it does not select a bean or prove runtime registration. `sourceTypeCandidateRows` / `sourceEvaluatedContexts` are distinct from configuration-qualified binding counts. Unresolved types and actual Spring gaps remain upstream evidence. These facts do not widen the accepted condition-fragment catalog or certify a runtime container. See [ADR-008](../decisions/ADR-008-passive-polyglot-syntax-and-source-wiring.md).
+
 **CONFIRMED by implementation:** Slice 2 supplies the four provider lanes in the
 [approved M4-UNIVERSAL contract](m4-universal-engine.md). This document records
 their executable boundaries, not a replacement or weakening of that contract.
@@ -171,3 +173,10 @@ followed by V2.2/V2.3 and M4E adjudication. The v2 plan addresses remaining
 acquisition/integration obligations; M4E still requires closed denominators,
 registered baselines and representative/version evidence. Global 98–99% coverage,
 all-generation container equivalence and G3 acceptance remain unmeasured/unpassed.
+
+
+### M8.4 local evidence during source recovery — 2026-11-04
+
+A global PARTIAL frontend/classpath does not itself invalidate successfully parsed declaration metadata or an exact hash-pinned framework fragment. Failed/canceled inputs, unknown annotation/type/member shapes, mixed/conflicting artifact identities and absent required tuple members still withhold the corresponding proof. Recovery gaps remain explicit. Observed source wiring triggers plan/truth evaluation even without proved scan membership. Automatic per-context plans inherit global and matching-analysis gaps; the full repository report/graph retains other contexts’ gaps once. Selected bindings continue to require evidenced scope and configuration; unknown runtime/container state is not filled by source candidates.
+
+An unresolved written condition name now retains a separate `sourceCandidates` row and `ANNOTATION_TYPE_EVIDENCE_MISSING` acquisition reason when it matches a catalog name. Its type binding is `NOT_ESTABLISHED` and evaluation is forbidden. Short names can denote project impostors; a POM dependency is not annotation-origin proof. `exactAnnotationType` still requires the artifact-bound target. A real hash-pinned Spring/Boot fixture in source recovery lowers `@Profile` and `@ConditionalOnProperty` despite an unrelated missing type, while the missing-type/global-classpath obligations remain. This distinguishes useful local condition evidence from unauthenticated source candidates without treating either as container closure.

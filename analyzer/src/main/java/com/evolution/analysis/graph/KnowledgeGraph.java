@@ -8,6 +8,7 @@ import java.util.function.Function;
 
 /** Immutable graph with context-qualified indexes and explicit unresolved targets. */
 public final class KnowledgeGraph {
+    private static final java.util.regex.Pattern IDENTITY=java.util.regex.Pattern.compile("(?:[a-z][a-z0-9.-]*:)?sha256:[0-9a-f]{64}");
     public static final String SCHEMA="knowledge-graph:m5.1-v1";
     public static com.evolution.analysis.contract.analysis.ManifestComponent schemaComponent() {
         String definition=CanonicalJson.write(Map.of("schema",SCHEMA,"format",GraphSnapshotCodec.FORMAT,
@@ -97,7 +98,7 @@ public final class KnowledgeGraph {
     }
     static String key(String context,String identity) {return context+"|"+identity;}
     static void requireIdentity(String identity) {
-        if(identity==null || !identity.matches("(?:[a-z][a-z0-9.-]*:)?sha256:[0-9a-f]{64}"))throw new IllegalArgumentException("Invalid graph canonical identity");
+        if(identity==null || !IDENTITY.matcher(identity).matches())throw new IllegalArgumentException("Invalid graph canonical identity");
     }
     private static void checkEvidence(Set<ContentDigest> available,List<ContentDigest> references) {
         if(!available.containsAll(references))throw new IllegalArgumentException("Missing graph evidence payload");

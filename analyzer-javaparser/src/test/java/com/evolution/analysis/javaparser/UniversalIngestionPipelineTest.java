@@ -10,6 +10,27 @@ import java.util.*;
 import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 class UniversalIngestionPipelineTest {
+    @Test void independentModulesOverlapWithinMemoryAdmissionAndMergeDeterministically()throws Exception {
+        var input=inputs(Map.of("one/build.gradle","plugins { java }", "one/src/main/java/One.java","class One { void f(){ g(); } void g(){} }",
+                "two/build.gradle","plugins { java }", "two/src/main/java/Two.java","class Two { void f(){ g(); } void g(){} }"));
+        var build=new UniversalBuildIngestion().ingest(input,UniversalBuildIngestion.Policy.defaults(),Optional.empty(),Map.of(),new BuildModelPolicy(List.of(),List.of(),Map.of(),10000,100,16));
+        var component=new ManifestComponent(new VersionedIdentifier("test.parallel","1"),ContentDigest.sha256Utf8("parallel"));
+        var assembly=new UniversalSourceIngestion().assemble(input,build,Map.of(),component,component,component,Map.of(),Optional.of(TestInputs.request("class Platform {}").platform()));
+        assertEquals(2,assembly.outcomes().stream().filter(o->o.request().isPresent()).count());
+        var pipeline=new UniversalIngestionPipeline();var serial=pipeline.run(assembly,new JavaParserFrontend(),JavaParserFrontend.PROVIDER,100,100,1,128L<<20);
+        var ready=new java.util.concurrent.CountDownLatch(2);var active=new java.util.concurrent.atomic.AtomicInteger();var peak=new java.util.concurrent.atomic.AtomicInteger();
+        ConcurrentSemanticFrontend frontend=request->{int count=active.incrementAndGet();peak.accumulateAndGet(count,Math::max);ready.countDown();
+            try{if(!ready.await(5,java.util.concurrent.TimeUnit.SECONDS))throw new IllegalStateException("Workers did not overlap");return new JavaParserFrontend().analyze(request);}
+            catch(InterruptedException cancelled){Thread.currentThread().interrupt();throw new java.util.concurrent.CancellationException();}finally{active.decrementAndGet();}};
+        var parallel=pipeline.run(assembly,frontend,JavaParserFrontend.PROVIDER,100,100,2,128L<<20);
+        assertEquals(2,peak.get());assertEquals(serial,parallel);assertEquals(serial.identity(),parallel.identity());
+        peak.set(0);var releases=new java.util.concurrent.atomic.AtomicInteger();ConcurrentSemanticFrontend bounded=new ConcurrentSemanticFrontend(){
+            public FrontendResult analyze(FrontendRequest request){int count=active.incrementAndGet();peak.accumulateAndGet(count,Math::max);try{return new JavaParserFrontend().analyze(request);}finally{active.decrementAndGet();}}
+            public void releaseCompletedContexts(){assertEquals(0,active.get(),"A cache cannot be released under an active worker");releases.incrementAndGet();}
+        };
+        assertEquals(serial,pipeline.run(assembly,bounded,JavaParserFrontend.PROVIDER,100,100,8,1));assertEquals(1,peak.get());
+        assertTrue(releases.get()>=2);releases.set(0);assertEquals(serial,pipeline.run(assembly,bounded,JavaParserFrontend.PROVIDER,100,100,1,1));assertTrue(releases.get()>=2);
+    }
     @Test void onePipelineConnectsConfigurationComponentsAndGeneratedConstructorSites()throws Exception {
         String source="""
                 package app;

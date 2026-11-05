@@ -12,7 +12,10 @@ import static com.evolution.analysis.spring.condition.ConditionProcessing.Reason
 
 /** Passive evidence-to-IR boundary. Every M4A obligation is classified in the output denominator. */
 public final class ConditionEvidenceLowering {
-    public static final VersionedIdentifier PROVIDER = new VersionedIdentifier("spring.condition-lowering", "m8.4-native-origin-v1");
+    public static final VersionedIdentifier PROVIDER = new VersionedIdentifier("spring.condition-lowering", "m8.4-source-candidates-v2");
+    private static final java.util.regex.Pattern WRITTEN_ANNOTATION=java.util.regex.Pattern.compile("^\\s*@\\s*([\\p{javaJavaIdentifierPart}.]+)");
+    private static final List<String> CONDITION_TYPES=SpringMechanismCatalog.entries().stream().filter(e->e.id().startsWith("spring.condition."))
+            .flatMap(e->e.annotationTypes().stream()).distinct().sorted().toList();
     public record Limits(int maxLoweredRows, int maxMetadataCharacters, int maxProfileDepth) {
         public Limits { if (maxLoweredRows < 1 || maxMetadataCharacters < 1 || maxProfileDepth < 1) throw new IllegalArgumentException("Positive lowering limits required"); }
         public static Limits conservative() { return new Limits(10000, 16384, 256); }
@@ -28,6 +31,12 @@ public final class ConditionEvidenceLowering {
         public ContentDigest identity() { return ConditionIdentitySupport.digest(this); }
     }
     public enum Outcome { LOWERED, OPAQUE, NOT_A_CONDITION }
+    /** Written catalog-name candidates are navigation/acquisition evidence only.
+     * They never enter the condition model or establish annotation authenticity. */
+    public record SourceCandidate(ContentDigest rawObservation,List<String> candidateTypes,
+                                  String typeBinding,boolean evaluationAllowed,ConditionEvidence evidence) {
+        public SourceCandidate {candidateTypes=List.copyOf(candidateTypes);if(evaluationAllowed)throw new IllegalArgumentException("Unbound source candidate cannot be evaluated");}
+    }
     public record Row(ContentDigest obligation, ContentDigest rawObservation, Outcome outcome,
                       Optional<ConditionOccurrence.View> occurrence) {
         public Row {
@@ -48,12 +57,20 @@ public final class ConditionEvidenceLowering {
         private final List<ConditionOccurrence> occurrences;
         private final List<ConditionProcessing.Issue> issues;
         private final List<CapabilityGapRecord> gaps;
+        private final List<SourceCandidate> sourceCandidates;
         Result(ContentDigest input, SpringMechanismInventory inventory, SpringBuildContext build,
                List<Row> rows, List<ConditionOccurrence> occurrences, Collection<ConditionProcessing.Issue> issues) {
             this.input = input; this.inventory = inventory.identity(); semantics = ConditionEvidenceLowering.semantics(inventory.frameworkEvidence());
             this.rows = List.copyOf(rows); this.occurrences = List.copyOf(occurrences);
             this.issues = issues.stream().distinct().sorted(Comparator.comparing(ConditionProcessing.Issue::identity)).toList();
             gaps = ConditionProcessing.gaps(PROVIDER, input, build, this.issues);
+            var candidates=new ArrayList<SourceCandidate>();
+            for(var raw:inventory.rawObservations())if(raw.kind()==RawKind.ANNOTATION_USE&&raw.resolvedTarget().isEmpty()) {
+                var types=sourceCandidateTypes(raw);
+                if(!types.isEmpty())build.sourceDigest(raw.document()).ifPresent(digest->candidates.add(new SourceCandidate(raw.identity(),types,"NOT_ESTABLISHED",false,
+                        new ConditionEvidence.Source(raw.document(),digest,raw.span(),raw.ordinal()))));
+            }
+            sourceCandidates=List.copyOf(candidates);
         }
         public ContentDigest inputIdentity() { return input; }
         public ContentDigest inventoryIdentity() { return inventory; }
@@ -62,6 +79,7 @@ public final class ConditionEvidenceLowering {
         public List<ConditionOccurrence> occurrences() { return occurrences; }
         public List<ConditionProcessing.Issue> issues() { return issues; }
         public List<CapabilityGapRecord> capabilityGaps() { return gaps; }
+        public List<SourceCandidate> sourceCandidates() {return sourceCandidates;}
         public ContentDigest identity() { return ConditionIdentitySupport.digest(canonicalForm()); }
         public Coverage coverage() {
             return new Coverage(rows.size(), count(Outcome.LOWERED), count(Outcome.OPAQUE), count(Outcome.NOT_A_CONDITION));
@@ -78,9 +96,9 @@ public final class ConditionEvidenceLowering {
                     if (expressions.putIfAbsent(node.identity(), node.view()) == null && !node.children().isEmpty()) pending.push(node.children().iterator());
                 }
             }
-            return Map.of("schema", "spring-condition-lowering-v1", "provider", PROVIDER, "inputIdentity", input,
-                    "inventoryIdentity", inventory, "semantics", semantics, "rows", rows, "expressions", List.copyOf(expressions.values()),
-                    "issues", issues, "capabilityGaps", gaps, "coverage", coverage());
+            return Map.ofEntries(Map.entry("schema", "spring-condition-lowering-v1"), Map.entry("provider", PROVIDER), Map.entry("inputIdentity", input),
+                    Map.entry("inventoryIdentity", inventory), Map.entry("semantics", semantics), Map.entry("rows", rows), Map.entry("expressions", List.copyOf(expressions.values())),
+                    Map.entry("issues", issues), Map.entry("capabilityGaps", gaps), Map.entry("coverage", coverage()), Map.entry("sourceCandidates",sourceCandidates));
         }
     }
     private ConditionEvidenceLowering() {}
@@ -117,7 +135,8 @@ public final class ConditionEvidenceLowering {
             if (!matchingBuild) reason = BUILD_CONTEXT_MISMATCH;
             else if (build.sourceDigest(observation.document()).isEmpty()) reason = SOURCE_EVIDENCE_MISMATCH;
             else if (observation.span().isEmpty()) reason = MISSING_SOURCE_SPAN;
-            else if (unclassified) reason = POTENTIAL_CONDITION_UNCLASSIFIED;
+            else if (unclassified) reason = !sourceCandidateTypes(observation).isEmpty()&&observation.resolvedTarget().isEmpty()
+                    ? ANNOTATION_TYPE_EVIDENCE_MISSING : POTENTIAL_CONDITION_UNCLASSIFIED;
             else if (++attempted > limits.maxLoweredRows() || observation.spelling().length() > limits.maxMetadataCharacters()) reason = LOWERING_LIMIT;
             else if (obligation.secondaryTags().contains("spring.annotation.composed")) reason = ANNOTATION_COMPOSITION_UNSUPPORTED;
             else if (type == null || observation.kind() != RawKind.ANNOTATION_USE || observation.evidenceState() != EvidenceState.VERIFIED) reason = ANNOTATION_METADATA_UNSUPPORTED;
@@ -183,6 +202,11 @@ public final class ConditionEvidenceLowering {
             issues.add(new ConditionProcessing.Issue(BUILD_EVIDENCE_CONFLICT, observation.identity().value(), Optional.empty(), List.of(observation.evidence())));
         }
         return new Result(input, inventory, build, rows, occurrences, issues);
+    }
+    private static List<String> sourceCandidateTypes(RawObservation observation) {
+        var name=WRITTEN_ANNOTATION.matcher(observation.spelling());
+        if(!name.find())return List.of();String written=name.group(1);
+        return CONDITION_TYPES.stream().filter(type->written.equals(type)||written.indexOf('.')<0&&type.endsWith("."+written)).toList();
     }
     private static Optional<ConditionExpression.BuildPredicate> buildPredicate(String type) {
         return switch (type) {

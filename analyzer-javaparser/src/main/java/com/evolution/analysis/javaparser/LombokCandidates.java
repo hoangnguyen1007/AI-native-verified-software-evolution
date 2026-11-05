@@ -10,7 +10,10 @@ import java.util.*;
 final class LombokCandidates {
     private static final Set<String> GENERATORS=Set.of("RequiredArgsConstructor","AllArgsConstructor","Data","Value","Builder");
     static List<LombokConstructorCandidate> extract(Extraction context,List<CompilationUnit> units,List<TypeUseRecord> uses) {
-        var sourceTypes=new HashSet<String>();
+        return extract(context,units,uses,Set.of());
+    }
+    static List<LombokConstructorCandidate> extract(Extraction context,List<CompilationUnit> units,List<TypeUseRecord> uses,Set<String> allSourceTypes) {
+        var sourceTypes=new HashSet<String>(allSourceTypes);
         for(var unit:units)for(TypeDeclaration<?> type:unit.findAll(TypeDeclaration.class))type.getFullyQualifiedName().ifPresent(sourceTypes::add);
         var fieldTypes=new HashMap<com.evolution.analysis.contract.identity.EntityIdentity,JavaType>();
         for(var use:uses)if(use.role().value().equals("java.field-type"))use.owner().ifPresent(id->fieldTypes.put(id,use.type()));

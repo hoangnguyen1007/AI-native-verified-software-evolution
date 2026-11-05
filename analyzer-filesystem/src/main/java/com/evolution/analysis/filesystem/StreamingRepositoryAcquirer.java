@@ -35,6 +35,7 @@ public final class StreamingRepositoryAcquirer {
             Path root=selectedRoot.toAbsolutePath().normalize();StreamingContentStore.safe(root);
             if(!Files.isDirectory(root,LinkOption.NOFOLLOW_LINKS)||!root.equals(root.toRealPath()))throw new IOException("ROOT_UNAVAILABLE");
             var batch=new ArrayList<SqliteInventoryStore.Observation>(256);
+            var small=new LinkedHashMap<ContentHandle,byte[]>();
             class Frame implements AutoCloseable{
                 final Path path;final String logical;final BasicFileAttributes before;final DirectoryStream<Path> stream;final Iterator<Path> iterator;
                 Frame(Path path,String logical)throws IOException{this.path=path;this.logical=logical;before=attributes(path);stream=Files.newDirectoryStream(path);iterator=stream.iterator();}
@@ -49,17 +50,17 @@ public final class StreamingRepositoryAcquirer {
                             if(frame.logical.isEmpty())throw new IOException("SOURCE_DIRECTORY_CHANGED");
                             batch.add(new SqliteInventoryStore.Observation(gap(logicalPath(root,frame.path),Kind.DIRECTORY,"DIRECTORY_CHANGED"),""));
                         }
-                        frame.close();stack.pop();flush(revision,batch);continue;
+                        frame.close();stack.pop();flushIfFull(revision,batch,small);continue;
                     }
                     Path file=frame.iterator.next();LogicalPath path=logicalPath(root,file);String logical=path.utf8().orElse("raw-name-"+path.key());BasicFileAttributes attrs;
-                    try{attrs=attributes(file);}catch(IOException unavailable){batch.add(new SqliteInventoryStore.Observation(gap(path,Kind.SPECIAL,"ENTRY_UNAVAILABLE"),""));flushIfFull(revision,batch);continue;}
+                    try{attrs=attributes(file);}catch(IOException unavailable){batch.add(new SqliteInventoryStore.Observation(gap(path,Kind.SPECIAL,"ENTRY_UNAVAILABLE"),""));flushIfFull(revision,batch,small);continue;}
                     Kind kind=attrs.isSymbolicLink()?Kind.SYMBOLIC_LINK:attrs.isDirectory()?Kind.DIRECTORY:attrs.isRegularFile()?Kind.FILE:Kind.SPECIAL;
                     InventoryEntry entry;
                     if(request.excludes(logical))entry=new InventoryEntry(path,kind,"",classify(logical),Disposition.EXCLUDED,Optional.empty(),Optional.empty(),Optional.empty(),List.of(),Optional.empty());
                     else if(kind==Kind.DIRECTORY){
                         entry=new InventoryEntry(path,kind,"040000",classify(logical),Disposition.ACQUIRED,Optional.empty(),Optional.empty(),Optional.empty(),List.of(),Optional.empty());
-                        batch.add(new SqliteInventoryStore.Observation(entry,stamp(attrs)));flush(revision,batch);
-                        try{stack.push(new Frame(file,logical));}catch(IOException unavailable){inventory.entries(revision,List.of(new SqliteInventoryStore.Observation(gap(path,kind,"DIRECTORY_UNAVAILABLE"),"")));}continue;
+                        batch.add(new SqliteInventoryStore.Observation(entry,stamp(attrs)));flushIfFull(revision,batch,small);
+                        try{stack.push(new Frame(file,logical));}catch(IOException unavailable){batch.add(new SqliteInventoryStore.Observation(gap(path,kind,"DIRECTORY_UNAVAILABLE"),""));flushIfFull(revision,batch,small);}continue;
                     }else if(kind==Kind.FILE){
                         var previous=inventory.observation(revision,path);var handle=Optional.<ContentHandle>empty();
                         if(previous.isPresent()&&previous.orElseThrow().stamp().equals(stamp(attrs))&&previous.orElseThrow().entry().content().isPresent()){
@@ -68,24 +69,24 @@ public final class StreamingRepositoryAcquirer {
                             else if(previous.orElseThrow().entry().disposition()==Disposition.ACQUIRED)throw new IOException("SOURCE_CHANGED_SINCE_CHECKPOINT");
                         }
                         try{
-                            if(handle.isEmpty())try(var input=Files.newInputStream(file,LinkOption.NOFOLLOW_LINKS)){handle=Optional.of(content.put(input,cancelled));}
+                            if(handle.isEmpty())try(var input=Files.newInputStream(file,LinkOption.NOFOLLOW_LINKS)){handle=Optional.of(capture(input,small,cancelled));}
                             if(!stamp(attrs).equals(stamp(attributes(file)))||handle.orElseThrow().size()!=attrs.size())throw new IOException("SOURCE_CHANGED_DURING_READ");
                             entry=new InventoryEntry(path,kind,"100644",classify(logical),Disposition.ACQUIRED,handle,Optional.empty(),Optional.empty(),List.of(),Optional.empty());
-                            if(isLfsPointer(handle.orElseThrow()))entry=new InventoryEntry(path,kind,"100644",classify(logical),Disposition.GAP,handle,Optional.empty(),Optional.empty(),List.of(),Optional.of("LFS_OBJECT_REQUIRED"));
+                            if(isLfsPointer(handle.orElseThrow(),small))entry=new InventoryEntry(path,kind,"100644",classify(logical),Disposition.GAP,handle,Optional.empty(),Optional.empty(),List.of(),Optional.of("LFS_OBJECT_REQUIRED"));
                         }catch(IOException failure){
                             if(isStorageFailure(failure))throw failure;
                             entry=gap(path,kind,"FILE_UNAVAILABLE_OR_CHANGED");
                         }
                     }else if(kind==Kind.SYMBOLIC_LINK){
                         String target=Files.readSymbolicLink(file).toString();
-                        var handle=content.put(new ByteArrayInputStream(target.getBytes(java.nio.charset.StandardCharsets.UTF_8)),cancelled);
+                        var handle=capture(new ByteArrayInputStream(target.getBytes(java.nio.charset.StandardCharsets.UTF_8)),small,cancelled);
                         Path destination=file.getParent().resolve(target).normalize();
                         boolean contained=!Path.of(target).isAbsolute()&&destination.startsWith(root);
                         entry=new InventoryEntry(path,kind,"120000",classify(logical),contained?Disposition.ACQUIRED:Disposition.GAP,Optional.of(handle),Optional.of(target),Optional.empty(),List.of(),contained?Optional.empty():Optional.of("LINK_OUTSIDE_SELECTION"));
                     }else entry=gap(path,kind,"NON_REGULAR_ENTRY");
-                    batch.add(new SqliteInventoryStore.Observation(entry,stamp(attrs)));flushIfFull(revision,batch);
+                    batch.add(new SqliteInventoryStore.Observation(entry,stamp(attrs)));flushIfFull(revision,batch,small);
                 }
-            }finally{for(var frame:stack)frame.close();flush(revision,batch);}
+            }finally{for(var frame:stack)frame.close();flush(revision,batch,small);}
             // A second stat/hash pass detects changes to previously visited regions, including deleted entries.
             Optional<String> cursor=Optional.empty();do{
                 var page=inventory.page(revision,256,cursor);
@@ -97,9 +98,9 @@ public final class StreamingRepositoryAcquirer {
                         if(entry.kind()==Kind.FILE&&valid)valid=matches(file,entry.content().orElseThrow(),cancelled);
                         if(entry.kind()==Kind.SYMBOLIC_LINK&&valid)valid=validLink(root,file,entry.target().orElseThrow(),revision);
                     }catch(IOException failure){valid=false;}
-                    if(!valid)batch.add(new SqliteInventoryStore.Observation(gap(entry.path(),entry.kind(),"SOURCE_CHANGED_OR_LINK_UNCLOSED"),""));flushIfFull(revision,batch);
+                    if(!valid)batch.add(new SqliteInventoryStore.Observation(gap(entry.path(),entry.kind(),"SOURCE_CHANGED_OR_LINK_UNCLOSED"),""));flushIfFull(revision,batch,small);
                 }cursor=page.continuation();
-            }while(cursor.isPresent());flush(revision,batch);check(cancelled);
+            }while(cursor.isPresent());flush(revision,batch,small);check(cancelled);
             job=inventory.transition(revision,job.revision(),JobJournal.State.RUNNING,"FRONTIER_CLOSED",Optional.empty());
             var manifest=inventory.seal(revision,request.repository(),request.identity());
             var payload=content.put(new ByteArrayInputStream(CanonicalJson.write(manifest).getBytes(java.nio.charset.StandardCharsets.UTF_8)),cancelled);
@@ -123,12 +124,25 @@ public final class StreamingRepositoryAcquirer {
             String logical=root.relativize(destination).toString().replace('\\','/');var found=inventory.observation(revision,LogicalPath.utf8(logical));if(found.isEmpty())return false;var e=found.orElseThrow().entry();
             if(e.disposition()!=Disposition.ACQUIRED)return false;if(e.kind()!=Kind.SYMBOLIC_LINK)return true;current=destination;target=e.target().orElseThrow();}
     }
-    private boolean isLfsPointer(ContentHandle handle)throws IOException{
-        if(handle.size()>1024)return false;try(var input=content.open(handle)){return new String(input.readAllBytes(),java.nio.charset.StandardCharsets.US_ASCII).startsWith("version https://git-lfs.github.com/spec/v1\n");}
+    private ContentHandle capture(InputStream input,Map<ContentHandle,byte[]> small,BooleanSupplier cancelled)throws IOException{
+        check(cancelled);byte[] prefix=input.readNBytes(SmallBlobPacks.MAX_BLOB+1);check(cancelled);
+        if(prefix.length>SmallBlobPacks.MAX_BLOB)return content.put(new SequenceInputStream(new ByteArrayInputStream(prefix),input),cancelled);
+        var handle=new ContentHandle(ContentDigest.sha256(prefix),prefix.length);small.putIfAbsent(handle,prefix);return handle;
+    }
+    private boolean isLfsPointer(ContentHandle handle,Map<ContentHandle,byte[]> small)throws IOException{
+        if(handle.size()>1024)return false;
+        byte[] bytes=small.get(handle);
+        if(bytes!=null)return new String(bytes,java.nio.charset.StandardCharsets.US_ASCII).startsWith("version https://git-lfs.github.com/spec/v1\n");
+        try(var input=content.open(handle)){return new String(input.readAllBytes(),java.nio.charset.StandardCharsets.US_ASCII).startsWith("version https://git-lfs.github.com/spec/v1\n");}
     }
     private static InventoryEntry gap(LogicalPath path,Kind kind,String reason){return new InventoryEntry(path,kind,"",classify(path.utf8().orElse("")),Disposition.GAP,Optional.empty(),Optional.empty(),Optional.empty(),List.of(),Optional.of(reason));}
-    private void flushIfFull(String revision,List<SqliteInventoryStore.Observation> batch)throws IOException{if(batch.size()>=256)flush(revision,batch);}
-    private void flush(String revision,List<SqliteInventoryStore.Observation> batch)throws IOException{if(!batch.isEmpty()){inventory.entries(revision,batch);batch.clear();}}
+    private void flushIfFull(String revision,List<SqliteInventoryStore.Observation> batch,Map<ContentHandle,byte[]> small)throws IOException{if(batch.size()>=256)flush(revision,batch,small);}
+    private void flush(String revision,List<SqliteInventoryStore.Observation> batch,Map<ContentHandle,byte[]> small)throws IOException{
+        if(batch.isEmpty())return;
+        boolean interrupted=Thread.interrupted();
+        try{content.putSmallBatch(small.values());inventory.entries(revision,batch);batch.clear();small.clear();}
+        finally{if(interrupted)Thread.currentThread().interrupt();}
+    }
     static BasicFileAttributes attributes(Path path)throws IOException{StreamingContentStore.safe(path.getParent());return Files.readAttributes(path,BasicFileAttributes.class,LinkOption.NOFOLLOW_LINKS);}
     private static LogicalPath logicalPath(Path root,Path file)throws IOException{
         if(Files.isSymbolicLink(file)){
@@ -144,7 +158,7 @@ public final class StreamingRepositoryAcquirer {
         String base=root.toUri().toASCIIString();if(!base.endsWith("/"))base+="/";var encoded=new StringBuilder();for(byte b:path.bytes()){int value=b&255;if(value=='/')encoded.append('/');else encoded.append('%').append(HexFormat.of().toHexDigits(b));}
         try{Path physical=Path.of(java.net.URI.create(base+encoded));if(!physical.normalize().startsWith(root))throw new IOException("PATH_OUTSIDE_ROOT");return physical;}catch(IllegalArgumentException invalid){throw new IOException("PATH_MAPPING_UNAVAILABLE");}
     }
-    static String stamp(BasicFileAttributes a){return a.size()+":"+a.lastModifiedTime()+":"+a.fileKey()+":"+a.isDirectory()+":"+a.isSymbolicLink();}
+    static String stamp(BasicFileAttributes a){return (a.isDirectory()?0:a.size())+":"+a.lastModifiedTime()+":"+a.fileKey()+":"+a.isDirectory()+":"+a.isSymbolicLink();}
     private static void check(BooleanSupplier cancelled){if(cancelled.getAsBoolean()||Thread.currentThread().isInterrupted())throw new CancellationException();}
     private static boolean matches(Path file,ContentHandle handle,BooleanSupplier cancelled)throws IOException{
         var digest=StreamingContentStore.sha256();long size=0;try(var input=Files.newInputStream(file,LinkOption.NOFOLLOW_LINKS)){byte[] buffer=new byte[65536];int n;while((n=input.read(buffer))!=-1){check(cancelled);digest.update(buffer,0,n);size=Math.addExact(size,n);}}

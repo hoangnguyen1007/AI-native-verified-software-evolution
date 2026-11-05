@@ -13,6 +13,16 @@ import java.util.regex.Pattern;
 
 /** Indexed exact M2 evidence. Package spelling alone never establishes framework origin. */
 public final class SpringSourceEvidence {
+    /** Successful document traversal is local evidence. An unrelated missing dependency
+     * changes overall completion, not an already acquired declaration's metadata. */
+    public boolean declarationParsed(EntityIdentity id) {
+        if(Set.of(FrontendResult.State.INVALID_INPUT,FrontendResult.State.FAILED,FrontendResult.State.CANCELED).contains(frontend.state()))return false;
+        var row=declarations.get(id);
+        if(row==null||row.entity().origin()!=EntityOrigin.PROJECT||row.status()!=SemanticStatus.RESOLVED||row.entity().declaration().isEmpty())return false;
+        var document=row.entity().declaration().orElseThrow().document();
+        return frontend.sources().stream().anyMatch(s->s.document().equals(document)
+                &&(s.state()==SourceOutcome.State.PROCESSED||s.state()==SourceOutcome.State.PARTIAL));
+    }
     public record Annotation(AnnotationUseRecord use,Optional<String> name,ConditionEvidence evidence) {}
     /** Child-to-parent source declarations, including the verified prefix on failure.
      * Only exactly empty source marker interfaces can be discharged without an inherited-member provider. */

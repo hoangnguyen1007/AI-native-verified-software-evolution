@@ -20,6 +20,18 @@ class SourcePlanProjectionTest {
     }
     private static String value(Setting setting) { return setting.value().orElseThrow(() -> new AssertionError(setting)); }
 
+    @Test void explicitNoProcessingDoesNotInventAnAnnotationGeneratedSourceObligation() {
+        var plan=plans("<properties><maven.compiler.proc>none</maven.compiler.proc><maven.compiler.release>21</maven.compiler.release><project.build.sourceEncoding>UTF-8</project.build.sourceEncoding></properties><build><plugins>"+plugin("")+"</plugins></build>");
+        for(var set:plan.sourceSets()) {
+            assertFalse(set.gaps().contains(Gap.UNSUPPORTED_COMPILER_CONFIGURATION));
+            assertFalse(set.gaps().contains(Gap.GENERATED_SOURCES_NOT_ACQUIRED));
+            assertTrue(set.generatedSourceHints().isEmpty());
+            assertEquals("none",value(set.compilerSettings().get("proc")));
+        }
+        var processing=plans("<build><plugins>"+plugin("<proc>full</proc>")+"</plugins></build>").sourceSets().getFirst();
+        assertTrue(processing.gaps().contains(Gap.GENERATED_SOURCES_NOT_ACQUIRED));
+    }
+
     @Test void projectVersionMetadataDoesNotBecomeAnImplicitCompilerParameter(){
         var plan=plans("<properties><maven.compiler.plugin.version>3.15.0</maven.compiler.plugin.version><maven.compiler.company.tag>internal</maven.compiler.company.tag><maven.compiler.release>21</maven.compiler.release><project.build.sourceEncoding>UTF-8</project.build.sourceEncoding></properties><build><plugins>"+plugin("<release>21</release><encoding>UTF-8</encoding>")+"</plugins></build>");
         assertFalse(plan.sourceSets().getFirst().gaps().contains(Gap.UNSUPPORTED_COMPILER_CONFIGURATION));

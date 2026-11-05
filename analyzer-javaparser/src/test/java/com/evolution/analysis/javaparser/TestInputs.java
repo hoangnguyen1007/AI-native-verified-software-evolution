@@ -12,21 +12,27 @@ import java.util.*;
 final class TestInputs {
     static final RepositoryIdentity REPO = RepositoryIdentity.fromCanonicalCoordinate("https://example.test/m2-fixture.git");
     static final ModuleDescriptor MODULE = ModuleDescriptor.create(REPO, "fixture", "fixture");
+    private static final class FixedSdk {
+        static final PlatformInput INPUT=acquire();
+        private static PlatformInput acquire(){
+            Path modules=Path.of(System.getProperty("java.home")).resolve("lib/modules");
+            try {
+                var digest=java.security.MessageDigest.getInstance("SHA-256");
+                try(var in=new java.security.DigestInputStream(Files.newInputStream(modules),digest)){in.transferTo(java.io.OutputStream.nullOutputStream());}
+                return PlatformInput.create(Runtime.version().feature(),Runtime.version().toString(),System.getProperty("java.vendor"),List.of(new PlatformInput.Artifact(
+                        "lib/modules",new ContentDigest("sha256:"+HexFormat.of().formatHex(digest.digest())),modules,PlatformInput.Format.RUNTIME_MODULES)));
+            }catch(java.io.IOException failure){throw new java.io.UncheckedIOException(failure);}
+            catch(java.security.NoSuchAlgorithmException impossible){throw new AssertionError(impossible);}
+        }
+    }
     static FrontendRequest request(String source) { return request(Map.of("fixture/C.java", source), List.of()); }
     static FrontendRequest request(Map<String, String> texts, List<BinaryInput> dependencies) {
-        try {
-            Path home = Path.of(System.getProperty("java.home"));
-            Path modules = home.resolve("lib/modules");
-            var platform = PlatformInput.create(Runtime.version().feature(), Runtime.version().toString(),
-                    System.getProperty("java.vendor"), List.of(new PlatformInput.Artifact(
-                            "lib/modules", ContentDigest.sha256(Files.readAllBytes(modules)), modules,
-                            PlatformInput.Format.RUNTIME_MODULES)));
+            var platform = FixedSdk.INPUT;
             var sources = texts.entrySet().stream().map(e -> {
                 byte[] bytes = e.getValue().getBytes(StandardCharsets.UTF_8);
                 return new SourceInput(SourceDocument.create(REPO, MODULE, e.getKey(), ContentDigest.sha256(bytes), SourceClassification.MAIN), bytes);
             }).toList();
             return request(sources, platform, dependencies);
-        } catch (java.io.IOException e) { throw new java.io.UncheckedIOException(e); }
     }
     static FrontendRequest request(List<SourceInput> sources, PlatformInput platform, List<BinaryInput> dependencies) {
         return request(sources, platform, dependencies, FrontendPlan.legacy());

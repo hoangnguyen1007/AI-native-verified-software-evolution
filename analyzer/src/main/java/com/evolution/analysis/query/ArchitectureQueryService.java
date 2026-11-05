@@ -650,6 +650,13 @@ public final class ArchitectureQueryService {
                     var declared=GraphJson.object(names);if("EXACT".equals(declared.get("status"))&&declared.get("primary") instanceof String primary){name=Optional.of(primary);spelling=name;}
                 }
             }
+            if(evidence.family().equals("spring.endpoint-declaration")){
+                var payload=read(evidence,budget);var route=GraphJson.object(payload.get("route"));
+                String label=String.join(",",GraphJson.array(route.get("methods")).stream().map(GraphJson::string).toList())+" "+GraphJson.string(route.get("path"));
+                if(label.length()<=16512&&label.chars().noneMatch(Character::isISOControl)){name=Optional.of(label);spelling=name;}
+                else budget.qualify("ENDPOINT_LABEL_UNAVAILABLE");
+                module=Optional.of(GraphJson.string(payload.get("module")));sourceSet=Optional.of(GraphJson.string(payload.get("sourceSet")));origin=Optional.of("PROJECT");
+            }
         }
         if(sourceSet.isEmpty())sourceSet=Optional.ofNullable((String)partition.get("sourceSet"));
         if(module.isEmpty())module=Optional.ofNullable((String)partition.get("module"));
@@ -820,6 +827,11 @@ public final class ArchitectureQueryService {
                 if(module.get("path") instanceof String path)try{metadata.put("modulePath",ContractChecks.modulePath(path));}catch(IllegalArgumentException invalid){budget.qualify("INVALID_MODULE_PATH");}}
             var roots=sourceRoots(payload,budget);if(roots.size()>budget.limits.maxResults())budget.qualify("EVIDENCE_DESCRIPTOR_LIMIT");
             metadata.put("sourceRoots",roots.stream().limit(budget.limits.maxResults()).map(root->Map.of("identity",root.identity(),"path",root.path(),"sourceSet",root.sourceSet())).toList());
+            return new EvidenceView(evidence.identity(),evidence.family(),true,metadata);
+        }
+        if(evidence.family().equals("spring.endpoint-declaration")){
+            var payload=read(evidence,budget);var metadata=new TreeMap<>(select(payload,Set.of("schema","scope","activation","runtimeObserved","module","sourceSet")));
+            metadata.put("route",select(GraphJson.object(payload.get("route")),Set.of("controller","handler","path","methods","implicitHead","evidence")));
             return new EvidenceView(evidence.identity(),evidence.family(),true,metadata);
         }
         if(!SAFE_FAMILIES.contains(evidence.family()))return new EvidenceView(evidence.identity(),evidence.family(),true,Map.of());

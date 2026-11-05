@@ -6,6 +6,21 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 class ConstructorInjectionIngestionTest {
+    @Test void unresolvedOrdinaryMethodCallDoesNotInvalidateKnownConstructorMetadata()throws Exception {
+        var fixture=ComponentIngestionTest.fixture(Map.of("fixture/App.java","""
+                package app;
+                @org.springframework.boot.autoconfigure.SpringBootApplication class App {}
+                @org.springframework.stereotype.Component class Store {}
+                @org.springframework.stereotype.Component class Client {
+                  Client(Store store) {}
+                  void use(){ missingExternalCall(); }
+                }
+                """),false);
+        assertTrue(fixture.frontend().observations().stream().anyMatch(o->o.category().value().equals("java.calls")&&o.attribution()!=com.evolution.analysis.contract.semantic.SemanticStatus.RESOLVED));
+        var discovery=new ComponentScanIngestion().scan(fixture.request().manifest(),fixture.frontend(),fixture.framework(),100);
+        var result=new ConstructorInjectionIngestion().ingest(fixture.frontend(),discovery,fixture.framework(),100);
+        assertEquals(3,result.rows().stream().filter(r->r.status()==ConstructorInjectionIngestion.Status.SELECTED).count());
+    }
     @Test void recordsLombokAndExplicitConstructorsYieldExactOrderedParameterEvidence()throws Exception {
         var fixture=ComponentIngestionTest.fixture(Map.of("fixture/App.java","""
                 package app;
@@ -16,7 +31,7 @@ class ConstructorInjectionIngestionTest {
                 """),true);
         var discovery=new ComponentScanIngestion().scan(fixture.request().manifest(),fixture.frontend(),fixture.framework(),100);
         var provider=new ConstructorInjectionIngestion();var r=provider.ingest(fixture.frontend(),discovery,fixture.framework(),100);
-        assertEquals(4,r.rows().stream().filter(row->row.status()==ConstructorInjectionIngestion.Status.SELECTED).count());
+        assertEquals(4,r.rows().stream().filter(row->row.status()==ConstructorInjectionIngestion.Status.SELECTED).count(),()->fixture.frontend().diagnostics().stream().map(d->d.code()+":"+d.span()).toList()+" "+r.rows().stream().map(row->row.type()+":"+row.status()).toList());
         var parameterRows=r.rows().stream().filter(row->!row.parameters().isEmpty()).toList();assertEquals(3,parameterRows.size());
         for(var row:parameterRows) {
             assertEquals(List.of(0,1),row.parameters().stream().map(ConstructorInjectionIngestion.Parameter::index).toList());
@@ -24,7 +39,7 @@ class ConstructorInjectionIngestionTest {
         }
         assertTrue(r.issues().isEmpty(),r.issues().toString());
         assertEquals(r.identity(),provider.ingest(fixture.frontend(),discovery,fixture.framework(),100).identity());
-        assertEquals("m8.4-native-wiring-compat-v1",ConstructorInjectionIngestion.PROVIDER.version());
+        assertEquals("m8.4-local-fragment-v3",ConstructorInjectionIngestion.PROVIDER.version());
     }
     @Test void overloadedOrIncompleteConstructorSetsRemainUnknown()throws Exception {
         var fixture=ComponentIngestionTest.fixture(Map.of("fixture/App.java","""

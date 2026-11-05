@@ -22,7 +22,7 @@ import static com.evolution.analysis.spring.registration.RegistrationEvent.Compl
  * evidenced container/order closure, never final definitions, dependency descriptors or matches.
  * An unproved scope stays open. This is not an application bootstrap detector. */
 public final class SourceToSpringPlan {
-    public static final VersionedIdentifier PROVIDER=new VersionedIdentifier("spring.source-to-plan","m8.4-source-marker-closure-v1");
+    public static final VersionedIdentifier PROVIDER=new VersionedIdentifier("spring.source-to-plan","m8.4-local-metadata-closure-v2");
 
     /** Evidence that the standard Framework 6.2.0 CommonAnnotationBeanPostProcessor is
      * enabled for this container with default type fallback, local resource factory,
@@ -54,7 +54,7 @@ public final class SourceToSpringPlan {
     public record Result(ContentDigest inputIdentity, SpringMechanismInventory inventory,
                          ConditionEvidenceLowering.Result conditions, InjectionBindingPlan binding,
                          List<CapabilityGapRecord> gaps,List<SourceMethodSelection.Decision> methodSelections) {
-        public Result {gaps=List.copyOf(gaps);methodSelections=List.copyOf(methodSelections);}
+        public Result {gaps=com.evolution.analysis.ingestion.AnalysisWorkspace.ReplayList.copy(gaps);methodSelections=List.copyOf(methodSelections);}
         public Result(ContentDigest inputIdentity,SpringMechanismInventory inventory,ConditionEvidenceLowering.Result conditions,
                       InjectionBindingPlan binding,List<CapabilityGapRecord> gaps) {
             this(inputIdentity,inventory,conditions,binding,gaps,List.of());
@@ -177,7 +177,7 @@ public final class SourceToSpringPlan {
         // A direct, unconditional scan obligation is realized by the component membership
         // evidence already acquired above. Conditional/custom scan drivers stay unplanned.
         var scans=inventory.obligations().stream().filter(o -> o.primaryMechanism().equals("spring.discovery.component-scan"))
-                .filter(o -> components.issues().isEmpty() && raw.get(o.rawObservationIdentity()).owner().filter(owner ->
+                .filter(o -> components.issues().stream().allMatch(i->i.reason()==com.evolution.analysis.ingestion.IngestionEvidence.Reason.CLASSPATH_RESOLUTION_REQUIRED&&i.subject().equals("framework-context")) && raw.get(o.rawObservationIdentity()).owner().filter(owner ->
                         source.ancestry(owner,2).size()==1
                                 &&source.annotations(owner).stream().allMatch(a -> a.name().filter("org.springframework.context.annotation.ComponentScan"::equals).isPresent())
                                 &&!source.annotations(owner).isEmpty()).isPresent())
@@ -394,7 +394,7 @@ public final class SourceToSpringPlan {
         return new Result(input,inventory,lowering,binding,List.copyOf(gaps),List.copyOf(methodSelections.values()));
     }
     private static boolean metadataComplete(SpringSourceEvidence source,EntityIdentity type,SpringSourceEvidence.SourceHierarchy hierarchy) {
-        return source.frontend().state()==com.evolution.analysis.frontend.FrontendResult.State.COMPLETED
+        return source.declarationParsed(type)
                 &&BeanMethodIngestion.configurationMetadata(source,type)
                 &&source.annotations(type).stream().allMatch(a -> a.name().filter(n -> COMPONENT_METADATA.contains(n)||BeanMethodIngestion.CONDITIONS.contains(n)).isPresent())
                 &&hierarchy.complete()

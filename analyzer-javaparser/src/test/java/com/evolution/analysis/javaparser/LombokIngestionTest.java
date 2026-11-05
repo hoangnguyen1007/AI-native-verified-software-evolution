@@ -8,6 +8,16 @@ import java.util.*;
 import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 class LombokIngestionTest {
+    @Test void generatedCallsKeepTheirOwnerAcrossDeclarationSkeletonAndActiveBody()throws Exception {
+        Path jar=Path.of(lombok.Data.class.getProtectionDomain().getCodeSource().getLocation().toURI());
+        var binary=new BinaryInput(new ClasspathEntry(ClasspathEntryKind.DEPENDENCY,"org.projectlombok:lombok:1.18.46@jar",ContentDigest.sha256(Files.readAllBytes(jar))),jar);
+        var result=new JavaParserFrontend().analyze(TestInputs.request(Map.of(
+                "fixture/C.java","package fixture; @lombok.Data class C { String name; String own(){return getName();} }",
+                "fixture/D.java","package fixture; class D { String other(C c){return c.getName();} }"),List.of(binary)));
+        var calls=result.occurrences().stream().filter(o->o.relationship().kind().value().equals("java.calls")).toList();
+        assertEquals(2,calls.size());assertTrue(calls.stream().allMatch(o->o.status()==SemanticStatus.RESOLVED));
+        var target=calls.getFirst().relationship().target();assertEquals(target,calls.getLast().relationship().target());
+    }
     @Test void recoveryRetainsOrderedConstructorCandidatesWithoutInventingConstructors() {
         var base=TestInputs.request("import lombok.RequiredArgsConstructor; @RequiredArgsConstructor class C { final Missing first; @lombok.NonNull Other second; static Missing ignored; final int initialized=1; }");
         var request=recovery(base);
@@ -28,7 +38,7 @@ class LombokIngestionTest {
         options.put(FrontendRequest.RESOLUTION_MODE,FrontendRequest.SOURCE_RECOVERY);
         var config=AnalysisConfiguration.create(old.configuration().schema(),options);
         var manifest=AnalysisManifest.create(old.manifestVersion(),old.snapshot(),old.modules(),old.classpath(),config,old.analyzer(),old.ruleSet(),old.graphSchema());
-        return new FrontendRequest(manifest,base.module(),base.sourceSet(),base.plan(),base.sources(),base.platform(),base.dependencies());
+        return new FrontendRequest(manifest,base.module(),base.sourceSet(),base.plan(),base.sources(),base.platform(),base.dependencies(),base.reactorSources(),base.correspondence());
     }
     @Test void recoveryRejectsImpostorsAndSuppressedDataConstructors() {
         for(String source:List.of("package lombok; @interface RequiredArgsConstructor {} @RequiredArgsConstructor class C { final Missing field; }",

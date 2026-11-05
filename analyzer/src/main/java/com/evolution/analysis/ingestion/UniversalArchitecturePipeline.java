@@ -34,8 +34,11 @@ import javax.xml.stream.*;
  * Spring enrichment, truth evaluation, and compiles the canonical UniversalArchitectureReport.
  */
 public final class UniversalArchitecturePipeline {
+    private final AnalysisWorkspace workspace;
+    public UniversalArchitecturePipeline(){this(AnalysisWorkspace.MEMORY);}
+    public UniversalArchitecturePipeline(AnalysisWorkspace workspace){this.workspace=Objects.requireNonNull(workspace);}
     public static final VersionedIdentifier PROVIDER =
-            new VersionedIdentifier("architecture.pipeline", "m8.4-repository-baseline-v1");
+            new VersionedIdentifier("architecture.pipeline", "m8.4-spooled-recovery-v3");
 
     public enum TruthEvaluationMode {
         AUTO,
@@ -312,8 +315,10 @@ public final class UniversalArchitecturePipeline {
             return buildEmptyOrNonJavaReport(inputs, policy, inventoryOpt, initialIssues, emptyGaps);
         }
 
-        var allIssues = new ArrayList<IngestionEvidence.Issue>(initialIssues);
-        var allGaps = new TreeSet<CapabilityGapRecord>(initialGaps);
+        var allIssues = workspace.<IngestionEvidence.Issue>list();allIssues.addAll(initialIssues);
+        var allGaps = workspace.gaps(initialGaps);
+        // Plans own validated non-record solver state; frontend rows/gaps and report
+        // populations spill independently rather than serializing executable domain objects.
         var springArtifacts = new ArrayList<com.evolution.analysis.graph.CanonicalGraphInput.SpringSlice>();
 
         // Map for resolving source paths from document identities
@@ -398,7 +403,7 @@ public final class UniversalArchitecturePipeline {
         allGaps.addAll(assembledSources.gaps());
 
         // 3. Semantic Frontend Pipeline
-        var pipeline = new UniversalIngestionPipeline();
+        var pipeline = new UniversalIngestionPipeline(workspace);
         var compilerResults=new ArrayList<com.evolution.analysis.javaevidence.JavaCompilerAttribution.Result>();
         com.evolution.analysis.frontend.SemanticFrontend executionFrontend=policy.frontend();var executionProvider=policy.frontendProvider();
         if(compiler.isPresent()){
@@ -423,6 +428,11 @@ public final class UniversalArchitecturePipeline {
         var pipelineResult = pipeline.run(assembledSources, executionFrontend, executionProvider, policy.maxTypes(), policy.maxParameters());
         allIssues.addAll(pipelineResult.issues());
         allGaps.addAll(pipelineResult.gaps());
+        // Keep the repository denominator once. A Spring context inherits global and
+        // its own analysis gaps, not the semantic failures of every unrelated module.
+        var contextGaps=new HashMap<Optional<AnalysisIdentity>,List<CapabilityGapRecord>>();
+        for(var gap:pipelineResult.gaps())contextGaps.computeIfAbsent(gap.context().analysisIdentity(),key->workspace.list()).add(gap);
+        contextGaps.replaceAll((key,rows)->workspace.freeze(rows));
 
         var javaGraph=prepared.map(com.evolution.analysis.javaevidence.JavaEvidenceAssembler.Prepared::graph);
         for(var applied:compilerResults)try{javaGraph=Optional.of(javaGraph.orElseThrow().withCompilerAttribution(applied));}catch(java.io.IOException revoked){throw new com.evolution.analysis.frontend.FrontendInputException("frontend.compiler-evidence-revoked","Compiler evidence is no longer current");}
@@ -446,14 +456,14 @@ public final class UniversalArchitecturePipeline {
         }
 
         // 4. Extract Structural and Semantic Architecture
-        var modules = new ArrayList<UniversalArchitectureReport.ModuleBoundary>();
-        var types = new ArrayList<UniversalArchitectureReport.TypeRecord>();
-        var dependencies = new ArrayList<UniversalArchitectureReport.DependencyRecord>();
-        var components = new ArrayList<UniversalArchitectureReport.ComponentRecord>();
-        var producers = new ArrayList<UniversalArchitectureReport.ProducerRecord>();
-        var injectionSites = new ArrayList<UniversalArchitectureReport.InjectionSiteRecord>();
-        var entryPoints = new ArrayList<UniversalArchitectureReport.EntryPointRecord>();
-        var truthRegions = new ArrayList<UniversalArchitectureReport.TruthRegionSummary>();
+        var modules = workspace.<UniversalArchitectureReport.ModuleBoundary>list();
+        var types = workspace.<UniversalArchitectureReport.TypeRecord>list();
+        var dependencies = workspace.<UniversalArchitectureReport.DependencyRecord>list();
+        var components = workspace.<UniversalArchitectureReport.ComponentRecord>list();
+        var producers = workspace.<UniversalArchitectureReport.ProducerRecord>list();
+        var injectionSites = workspace.<UniversalArchitectureReport.InjectionSiteRecord>list();
+        var entryPoints = workspace.<UniversalArchitectureReport.EntryPointRecord>list();
+        var truthRegions = workspace.<UniversalArchitectureReport.TruthRegionSummary>list();
 
         // Modules
         for (var module : buildModel.modules()) {
@@ -485,14 +495,14 @@ public final class UniversalArchitecturePipeline {
             if (unit.status() == UniversalIngestionPipeline.Status.ANALYZED && unit.frontend().isPresent()) {
                 analyzedUnitsCount++;
                 var frontend = unit.frontend().get();
+                var declarationsByIdentity=new HashMap<EntityIdentity,DeclarationRecord>();
+                frontend.declarations().forEach(declaration->declarationsByIdentity.putIfAbsent(declaration.entity().identity(),declaration));
 
                 var typeIdentityToFqn = new HashMap<EntityIdentity, String>();
 
                 // Types
                 for (var typeDecl : frontend.typeDeclarations()) {
-                    var declOpt = frontend.declarations().stream()
-                            .filter(d -> d.entity().identity().equals(typeDecl.type()))
-                            .findFirst();
+                    var declOpt = Optional.ofNullable(declarationsByIdentity.get(typeDecl.type()));
                     String fqn = declOpt.map(d -> d.entity().canonicalName()).orElse(typeDecl.type().value());
                     typeIdentityToFqn.put(typeDecl.type(), fqn);
                     Optional<SourceSpan> span = declOpt.flatMap(d -> d.entity().declaration());
@@ -534,9 +544,7 @@ public final class UniversalArchitecturePipeline {
                 // Main methods
                 for (var memberDecl : frontend.memberDeclarations()) {
                     if (memberDecl.name().equals("main") && memberDecl.staticMember()) {
-                        var declOpt = frontend.declarations().stream()
-                                .filter(d -> d.entity().identity().equals(memberDecl.member()))
-                                .findFirst();
+                        var declOpt = Optional.ofNullable(declarationsByIdentity.get(memberDecl.member()));
                         Optional<SourceSpan> span = declOpt.flatMap(d -> d.entity().declaration());
                         String path = span.map(s -> pathMap.getOrDefault(s.document(), "")).orElse("");
                         String declaringType = path.replace('/', '.').replaceAll("\\.java$", "");
@@ -551,9 +559,7 @@ public final class UniversalArchitecturePipeline {
                 // Annotations / Boot Apps / Component Scans
                 for (var ann : frontend.annotations()) {
                     if (ann.spelling().contains("SpringBootApplication") || ann.spelling().contains("EnableAutoConfiguration")) {
-                        var declOpt = frontend.declarations().stream()
-                                .filter(d -> d.entity().identity().equals(ann.owner()))
-                                .findFirst();
+                        var declOpt = Optional.ofNullable(declarationsByIdentity.get(ann.owner()));
                         String fqn = declOpt.map(d -> d.entity().canonicalName()).orElseGet(() -> typeIdentityToFqn.getOrDefault(ann.owner(), ann.owner().value()));
                         String path = pathMap.getOrDefault(ann.span().document(), "");
                         entryPoints.add(new UniversalArchitectureReport.EntryPointRecord(
@@ -561,9 +567,7 @@ public final class UniversalArchitecturePipeline {
                                 ann.spelling(), path
                         ));
                     } else if (ann.spelling().contains("ComponentScan")) {
-                        var declOpt = frontend.declarations().stream()
-                                .filter(d -> d.entity().identity().equals(ann.owner()))
-                                .findFirst();
+                        var declOpt = Optional.ofNullable(declarationsByIdentity.get(ann.owner()));
                         String fqn = declOpt.map(d -> d.entity().canonicalName()).orElseGet(() -> typeIdentityToFqn.getOrDefault(ann.owner(), ann.owner().value()));
                         String path = pathMap.getOrDefault(ann.span().document(), "");
                         entryPoints.add(new UniversalArchitectureReport.EntryPointRecord(
@@ -608,9 +612,7 @@ public final class UniversalArchitecturePipeline {
                     if (spelling.contains("Component") || spelling.contains("Service") ||
                             spelling.contains("Repository") || spelling.contains("Controller") ||
                             spelling.contains("Configuration") || spelling.contains("RestController")) {
-                        var declOpt = frontend.declarations().stream()
-                                .filter(d -> d.entity().identity().equals(ann.owner()))
-                                .findFirst();
+                        var declOpt = Optional.ofNullable(declarationsByIdentity.get(ann.owner()));
                         String fqn = declOpt.map(d -> d.entity().canonicalName())
                                 .orElseGet(() -> typeIdentityToFqn.getOrDefault(ann.owner(), ann.owner().value()));
                         String simpleName = fqn.contains(".") ? fqn.substring(fqn.lastIndexOf('.') + 1) : fqn;
@@ -624,9 +626,7 @@ public final class UniversalArchitecturePipeline {
                                 kind, "source-annotation", List.of(), false
                         ));
                     } else if (spelling.contains("Bean")) {
-                        var declOpt = frontend.declarations().stream()
-                                .filter(d -> d.entity().identity().equals(ann.owner()))
-                                .findFirst();
+                        var declOpt = Optional.ofNullable(declarationsByIdentity.get(ann.owner()));
                         if (declOpt.isPresent()) {
                             var decl = declOpt.get();
                             String methodName = frontend.memberDeclarations().stream()
@@ -677,9 +677,7 @@ public final class UniversalArchitecturePipeline {
                             ));
                         }
                     } else if (spelling.contains("Autowired") || spelling.contains("Inject")) {
-                        var declOpt = frontend.declarations().stream()
-                                .filter(d -> d.entity().identity().equals(ann.owner()))
-                                .findFirst();
+                        var declOpt = Optional.ofNullable(declarationsByIdentity.get(ann.owner()));
                         if (declOpt.isPresent()) {
                             var decl = declOpt.get();
                             Optional<EntityIdentity> ownerTypeOpt = frontend.occurrences().stream()
@@ -772,9 +770,7 @@ public final class UniversalArchitecturePipeline {
                     for (var site : spring.injections().sites()) {
                         String ownerFqn = typeIdentityToFqn.getOrDefault(site.owner(), site.owner().value());
                         String memberName = site.element().value();
-                        var declOpt = frontend.declarations().stream()
-                                .filter(d -> d.entity().identity().equals(site.element()))
-                                .findFirst();
+                        var declOpt = Optional.ofNullable(declarationsByIdentity.get(site.element()));
                         if (declOpt.isPresent()) {
                             String cName = declOpt.get().entity().canonicalName();
                             memberName = cName.contains("#") ? cName.substring(cName.indexOf('#') + 1) : cName;
@@ -802,11 +798,16 @@ public final class UniversalArchitecturePipeline {
                         unit.components().get().rows().stream().anyMatch(r -> r.status() == ComponentScanIngestion.Status.INCLUDED);
                 boolean hasExplicitSpringScope = policy.springScopes().containsKey(unit.sourceSet());
                 boolean hasConfigurationSpace = policy.configurationSpace().isPresent();
-                if (hasIncludedSpringComponents || hasExplicitSpringScope || hasConfigurationSpace) {
+                boolean hasObservedSpring=unit.sourceWiring().map(SourceWiringCandidates.Result::observed).orElse(false);
+                if (hasIncludedSpringComponents || hasExplicitSpringScope || hasConfigurationSpace || hasObservedSpring) {
                     try {
                         var scope = resolveScope(policy, unit, assembledSources, frontend);
                         if (scope.isPresent()) {
-                            var plan = pipeline.prepareSpring(pipelineResult, unit.sourceSet(), scope.get(), policy.maxTypes());
+                            var related=workspace.gaps(contextGaps.getOrDefault(Optional.empty(),List.of()));
+                            related.addAll(contextGaps.getOrDefault(Optional.of(frontend.analysis()),List.of()));
+                            var relatedRows=workspace.<CapabilityGapRecord>list();relatedRows.addAll(related);
+                            var scopedPipeline=new UniversalIngestionPipeline.Result(pipelineResult.inputIdentity(),pipelineResult.sourceIngestion(),List.of(unit),List.of(),workspace.freeze(relatedRows));
+                            var plan = pipeline.prepareSpring(scopedPipeline, unit.sourceSet(), scope.get(), policy.maxTypes());
                             allGaps.addAll(plan.gaps());
                             int artifactIndex = springArtifacts.size();
                             springArtifacts.add(new com.evolution.analysis.graph.CanonicalGraphInput.SpringSlice(unit.sourceSet(), plan,
@@ -864,7 +865,7 @@ public final class UniversalArchitecturePipeline {
                                     if (policy.truthEvaluationMode() == TruthEvaluationMode.SYMBOLIC) {
                                         var symbolic = plan.evaluateSymbolic(space, baseline, policy.truthLimits(),
                                                 ContentDigest.sha256Utf8("symbolic-truth-evaluator"), 64, SymbolicConfiguration.Limits.defaults());
-                                        allGaps.addAll(symbolic.capabilityGaps());
+                                        allGaps.addAll(symbolic.truth().gaps()); // plan gaps already retained above
                                         springArtifacts.set(artifactIndex, new com.evolution.analysis.graph.CanonicalGraphInput.SpringSlice(unit.sourceSet(), plan,
                                                 Optional.of(space), Optional.of(baseline), Optional.empty(), Optional.of(symbolic.truth()),
                                                 Optional.of(new com.evolution.analysis.graph.CanonicalGraphInput.EvaluationParameters(policy.truthLimits(),SatConfigurationReasoner.INSTANCE.policy(),
@@ -881,7 +882,7 @@ public final class UniversalArchitecturePipeline {
                                     } else {
                                         var evaluated = plan.evaluate(space, baseline, policy.truthLimits(),
                                                 ContentDigest.sha256Utf8("exhaustive-truth-evaluator"));
-                                        allGaps.addAll(evaluated.capabilityGaps());
+                                        allGaps.addAll(evaluated.truth().capabilityGaps()); // plan gaps already retained above
                                         springArtifacts.set(artifactIndex, new com.evolution.analysis.graph.CanonicalGraphInput.SpringSlice(unit.sourceSet(), plan,
                                                 Optional.of(space), Optional.of(baseline), Optional.of(evaluated.truth()), Optional.empty(),
                                                 Optional.of(new com.evolution.analysis.graph.CanonicalGraphInput.EvaluationParameters(policy.truthLimits(),ExhaustiveConfigurationReasoner.INSTANCE.policy(),
@@ -914,8 +915,8 @@ public final class UniversalArchitecturePipeline {
         scanXmlConfigurations(inputs, components, injectionSites, entryPoints);
 
         // Deduplicate records
-        var distinctTypes = deduplicate(types, Comparator.comparing(UniversalArchitectureReport.TypeRecord::qualifiedName));
-        var distinctDeps = deduplicate(dependencies, Comparator.comparing(d -> d.source() + "->" + d.target() + ":" + d.kind()));
+        var distinctTypes = workspace.distinct(types, UniversalArchitectureReport.TypeRecord::qualifiedName);
+        var distinctDeps = workspace.distinct(dependencies, d -> d.source() + "->" + d.target() + ":" + d.kind());
 
         var componentMap = new LinkedHashMap<String, UniversalArchitectureReport.ComponentRecord>();
         for (var c : components) {
@@ -931,14 +932,15 @@ public final class UniversalArchitecturePipeline {
                 .sorted(Comparator.comparing(UniversalArchitectureReport.ComponentRecord::identity))
                 .toList();
 
-        var distinctProducers = deduplicate(producers, Comparator.comparing(p -> p.factoryType() + "#" + p.methodName() + ":" + p.beanName()));
-        var distinctInjectionSites = deduplicate(injectionSites, Comparator.comparing(com.evolution.analysis.contract.serialization.CanonicalJson::write));
-        var distinctEntryPoints = deduplicate(entryPoints, Comparator.comparing(e -> e.declaringType() + ":" + e.detail()));
-        var distinctTruthRegions = deduplicate(truthRegions, Comparator.comparing(UniversalArchitectureReport.TruthRegionSummary::factKey));
+        var distinctProducers = workspace.distinct(producers, p -> p.factoryType() + "#" + p.methodName() + ":" + p.beanName());
+        var distinctInjectionSites = workspace.distinct(injectionSites, com.evolution.analysis.contract.serialization.CanonicalJson::write);
+        var distinctEntryPoints = workspace.distinct(entryPoints, e -> e.declaringType() + ":" + e.detail());
+        var distinctTruthRegions = workspace.distinct(truthRegions, UniversalArchitectureReport.TruthRegionSummary::factKey);
 
         // Group root causes
-        var sortedIssues = allIssues.stream().distinct().sorted(Comparator.comparing(IngestionEvidence.Issue::identity)).toList();
-        var sortedGaps = javaGraph.map(value->value.activeGaps(allGaps)).orElseGet(()->List.copyOf(allGaps));
+        var sortedIssues = workspace.distinct(allIssues,i->i.identity().value());
+        var gapRows=workspace.<CapabilityGapRecord>list();gapRows.addAll(allGaps);
+        var sortedGaps = javaGraph.map(value->value.activeGaps(allGaps)).orElseGet(()->workspace.freeze(gapRows));
         var rootCauses = classifyRootCauses(sortedIssues, sortedGaps);
 
         // Status determination
@@ -992,12 +994,12 @@ public final class UniversalArchitecturePipeline {
         );
 
         capture.accept(new com.evolution.analysis.graph.CanonicalGraphInput(inputs, Optional.of(buildModel), Optional.of(pipelineResult),
-                springArtifacts, sortedIssues, sortedGaps,Optional.empty(),javaGraph));
+                workspace.freeze(springArtifacts), sortedIssues, sortedGaps,Optional.empty(),javaGraph));
         return new UniversalArchitectureReport(
                 prepared.map(value->value.view().identity()).orElse(inputs.identity()),
                 status,
                 inventoryOpt,
-                modules,
+                workspace.freeze(modules),
                 distinctTypes,
                 distinctDeps,
                 distinctComponents,
@@ -1060,17 +1062,17 @@ public final class UniversalArchitecturePipeline {
         var map = new LinkedHashMap<UniversalArchitectureReport.RootCauseCategory, List<String>>();
         for (var issue : issues) {
             var category = categorizeIssue(issue.reason());
-            map.computeIfAbsent(category, k -> new ArrayList<>()).add(issue.subject());
+            map.computeIfAbsent(category, k -> workspace.list()).add(issue.subject());
         }
         for (var gap : gaps) {
             var category = categorizeGap(gap);
-            map.computeIfAbsent(category, k -> new ArrayList<>()).add(gap.subject().identity());
+            map.computeIfAbsent(category, k -> workspace.list()).add(gap.subject().identity());
         }
 
         var result = new ArrayList<UniversalArchitectureReport.RootCauseExplanation>();
         for (var entry : map.entrySet()) {
             var category = entry.getKey();
-            var subjects = entry.getValue().stream().distinct().sorted().toList();
+            var subjects = workspace.distinct(entry.getValue(),s->s);
             result.add(createExplanation(category, subjects));
         }
         return result.stream().sorted(Comparator.comparing(UniversalArchitectureReport.RootCauseExplanation::description)).toList();

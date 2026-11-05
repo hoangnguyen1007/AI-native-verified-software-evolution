@@ -163,6 +163,10 @@ A Spring Data repository interface is not automatically a bean fact. Registratio
 - A successful later provider adds traceable evidence while preserving the original gap/attempt history.
 - Missing or denied acquisition visibly qualifies affected downstream outputs and never improves architecture health.
 
+## Observation root-cause normalization — 2026-11-04
+
+New frontend ledgers use `evidence.gap-normalizer:m8.4-root-cause-v1`. An unresolved/unsupported/ambiguous/error attribution produces one primary typed observation gap. Consequent missing target origin and missing mapping remain explicit dimensions and evidence requirements on that gap. Independent missing source provenance remains separate; a resolved attribution still emits independent missing-origin/provenance/mapping gaps. Raw observations, source outcomes and category denominators are unchanged. Historical ledgers/gap identities are not rewritten, and distinct failed observations are not merged.
+
 ## Related Documents
 
 - [ADR-003: Progressive Evidence Acquisition](../decisions/ADR-003-progressive-evidence-acquisition.md)

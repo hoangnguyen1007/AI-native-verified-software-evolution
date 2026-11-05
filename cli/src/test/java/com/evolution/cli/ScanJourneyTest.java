@@ -8,6 +8,46 @@ import org.junit.jupiter.api.io.TempDir;
 import static org.junit.jupiter.api.Assertions.*;
 class ScanJourneyTest {
     @TempDir Path workspace;
+    @Test void aJavaWorkerBudgetStillPublishesEveryInventoryEntryAndOtherLanguageCalls()throws Exception {
+        Path source=Files.createDirectory(workspace.resolve("large-source"));byte[] block=new byte[8192];Arrays.fill(block,(byte)'a');
+        try(var output=Files.newOutputStream(source.resolve("Huge.java"))){output.write("//".getBytes(java.nio.charset.StandardCharsets.UTF_8));for(int i=0;i<1222;i++)output.write(block);}
+        Files.writeString(source.resolve("small.py"),"print('fallback')\n");
+        var result=run("scan",source.toString(),"--offline","--build","off","--json");assertEquals(3,result.code,result.err+result.out);
+        assertEquals("COMPATIBILITY_WORKER_REQUIRED",result.data().get("javaAnalysis"));assertEquals(Boolean.TRUE,result.data().get("graphCreated"));
+        var graph=new Workspace(workspace).selectedGraph();assertEquals(2,graph.nodes().stream().filter(n->n.kind().equals("INVENTORY_ENTRY")).count());
+        assertEquals(1,graph.nodes().stream().filter(n->n.kind().equals("CALL_SITE")).count());
+        assertTrue(graph.evidence().stream().anyMatch(e->e.family().equals("evidence.gap")&&e.canonicalJson().contains("JAVA_COMPATIBILITY_WORKER_REQUIRED")));
+        assertTrue(graph.contexts().stream().allMatch(c->c.analysis().isEmpty()));
+    }
+    @Test void declaredMavenReleaseUsesMatchingSymbolsInsteadOfTheCliFallback()throws Exception {
+        Path source=Files.createDirectory(workspace.resolve("release17"));Files.createDirectories(source.resolve("src/main/java/p"));
+        Files.writeString(source.resolve("src/main/java/p/App.java"),"package p; class App { String text() { return \" x \".strip(); } }");
+        Files.writeString(source.resolve("pom.xml"),"<project><modelVersion>4.0.0</modelVersion><groupId>fixture</groupId><artifactId>release17</artifactId><version>1</version><properties><maven.compiler.release>17</maven.compiler.release><project.build.sourceEncoding>UTF-8</project.build.sourceEncoding></properties></project>");
+        var scan=run("scan",source.toString(),"--offline","--build","off","--maven-cache",Files.createDirectory(workspace.resolve("cache17")).toString(),"--json");
+        assertTrue(scan.code==0||scan.code==3,scan.err+scan.out);
+        var graph=new Workspace(workspace).selectedGraph();var manifests=graph.evidence().stream().filter(e->e.family().equals("analysis.manifest")).map(e->GraphJson.object(GraphJson.read(e.canonicalJson(),GraphJson.Limits.defaults()))).toList();
+        assertFalse(manifests.isEmpty());assertTrue(manifests.stream().allMatch(m->"17".equals(GraphJson.object(GraphJson.object(m.get("configuration")).get("values")).get("java.release"))));
+        assertTrue(((Number)GraphJson.object(GraphJson.object(scan.data().get("semanticDepth")).get("relationships")).get("resolved")).longValue()>0);
+        assertFalse(graph.evidence().stream().filter(e->e.family().equals("evidence.gap")).anyMatch(e->e.canonicalJson().contains("REFERENCED_EVIDENCE_UNAVAILABLE")),"Platform acquisition attempts must accompany their ledger");
+        assertTrue(graph.evidence().stream().anyMatch(e->e.family().equals("evidence.attempt")&&e.canonicalJson().contains(com.evolution.analysis.maven.MavenBuildModelProvider.VERSION.id())),"Available Maven attempt provenance must reach the graph too");
+    }
+    @Test void scanAccountsForEveryLanguageAndKeepsLocalCallsWhenAnUnrelatedDependencyIsMissing()throws Exception {
+        Path source=Files.createDirectory(workspace.resolve("polyglot"));Files.createDirectories(source.resolve("src/main/java/p"));
+        Files.writeString(source.resolve("src/main/java/p/App.java"),"package p; class App { void local() {} void run() { local(); } }");
+        Files.writeString(source.resolve("pom.xml"),"<project><modelVersion>4.0.0</modelVersion><groupId>fixture</groupId><artifactId>polyglot</artifactId><version>1</version><properties><maven.compiler.release>21</maven.compiler.release></properties><dependencies><dependency><groupId>unavailable.fixture</groupId><artifactId>missing</artifactId><version>1</version></dependency></dependencies></project>");
+        for(var file:Map.of("go/main.go","package main\nfunc main() { run() }\nfunc run() {}", "python/app.py","def run(): print('hello')", "dotnet/App.cs","class App { void Run() { Work(); } void Work() {} }", "node/app.js","function run() { work(); } function work() {} app.get('/health',run);").entrySet()) {Path path=source.resolve(file.getKey());Files.createDirectories(path.getParent());Files.writeString(path,file.getValue());}
+        var result=run("scan",source.toString(),"--offline","--build","off","--maven-cache",Files.createDirectory(workspace.resolve("cache")).toString(),"--json");
+        assertEquals(3,result.code,result.err+result.out);
+        var nativeSummary=GraphJson.object(result.data().get("polyglot"));assertEquals(Set.of("java","go","python","csharp","javascript"),GraphJson.object(nativeSummary.get("filesByLanguage")).keySet());
+        assertTrue(((Number)GraphJson.object(GraphJson.object(result.data().get("semanticDepth")).get("relationships")).get("resolved")).longValue()>0);
+        var graph=new Workspace(workspace).selectedGraph();assertTrue(graph.evidence().stream().anyMatch(e->e.family().equals("polyglot.inventory-entry")&&e.canonicalJson().contains("python")));
+        assertEquals(4,graph.evidence().stream().filter(e->e.family().equals("evidence.gap")&&e.canonicalJson().contains("NATIVE_CONTEXT_REQUIRED")).count());
+        assertTrue(graph.nodes().stream().filter(n->n.kind().equals("CALL_SITE")).count()>=5);
+        assertTrue(graph.nodes().stream().anyMatch(n->n.kind().equals("ROUTE_CANDIDATE")));
+        assertTrue(graph.evidence().stream().filter(e->e.family().equals("polyglot.source-syntax")).anyMatch(e->e.canonicalJson().contains("NOT_ESTABLISHED")));
+        assertFalse(graph.evidence().stream().filter(e->e.family().equals("evidence.gap")).anyMatch(e->e.canonicalJson().contains("REFERENCED_EVIDENCE_UNAVAILABLE")),"Failed Maven acquisition attempts must remain available too");
+        var pages=run("graph-pages","partitions","--json");assertEquals(0,pages.code,pages.err);
+    }
     record Run(int code,String out,String err){Map<String,Object> data(){return GraphJson.object(GraphJson.object(GraphJson.read(out.strip(),GraphJson.Limits.defaults())).get("data"));}}
     Run run(String... args){var out=new StringWriter();var err=new StringWriter();int code=new EvoApp(workspace,new StringReader(""),new PrintWriter(out),new PrintWriter(err),false,Map.of()).execute(args);return new Run(code,out.toString(),err.toString());}
     @Test void graphPageBuildMigratesALegacySelectionWithoutChangingIt()throws Exception{

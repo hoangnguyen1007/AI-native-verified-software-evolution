@@ -41,7 +41,7 @@ public final class CapabilityGapNormalizer {
         input.frontendResults().forEach(value -> normalize(context, value, attempts, gaps));
         input.springInventories().forEach(value -> normalize(context, value, gaps));
 
-        VersionedIdentifier normalizer = input.springInventories().isEmpty()
+        VersionedIdentifier normalizer = !input.frontendResults().isEmpty() ? EvidenceAcquisitionLedger.OBSERVATION_NORMALIZER : input.springInventories().isEmpty()
                 ? EvidenceAcquisitionLedger.NORMALIZER : EvidenceAcquisitionLedger.M4A2_NORMALIZER;
         return EvidenceAcquisitionLedger.create(
                 normalizer, context, gaps, attempts, input.conflicts(), input.resolutions());
@@ -344,12 +344,24 @@ public final class CapabilityGapNormalizer {
                     AffectedOutput.Kind.RELATIONSHIP_CATEGORY, observation.category().value()));
             if (observation.attribution() != com.evolution.analysis.contract.semantic.SemanticStatus.RESOLVED) {
                 CapabilityGapCatalog.Entry base = CapabilityGapCatalog.entryFor(observation.attribution());
-                addGap(context, result.frontend(), reference, new CapabilityGapCatalog.Entry(
+                var entry=new CapabilityGapCatalog.Entry(
                         observation.category().value(), base.reasonCode(), base.requirementKind(), base.question(),
-                        base.authorizationClass(), outputs.getFirst()), subject, spans,
-                        observation.diagnostics(), attempts, gaps);
+                        base.authorizationClass(), outputs.getFirst());
+                // Missing target origin and an unmapped occurrence are consequences of the same
+                // failed attribution. Preserve all dimensions and requirements in one root gap.
+                var requirements=new ArrayList<EvidenceRequirement>();requirements.add(entry.requirement(List.of(subject)));
+                var affected=new ArrayList<AffectedOutput>(outputs);var dimensions=new ArrayList<String>();
+                if(observation.origin()==ObservationRecord.EvidenceState.MISSING) {
+                    var origin=CapabilityGapCatalog.missingOrigin();requirements.add(origin.requirement(List.of(subject)));affected.add(origin.affectedOutput());dimensions.add("origin=MISSING");
+                }
+                if(observation.mappedOccurrence().isEmpty()) {
+                    var mapping=CapabilityGapCatalog.unmappedObservation();requirements.add(mapping.requirement(List.of(subject)));affected.add(mapping.affectedOutput());dimensions.add("mapping=MISSING");
+                }
+                var related=attempts.stream().filter(a->a.context().equals(context)&&a.subject().equals(subject)
+                        &&requirements.stream().anyMatch(r->r.kind()==a.requestedRequirement().kind())).map(AcquisitionAttemptRecord::attemptIdentity).toList();
+                gaps.add(CapabilityGapRecord.create(context,result.frontend(),entry.mechanismCategory(),entry.reasonCode(),subject,spans,List.of(reference),requirements.stream().distinct().toList(),List.of(),affected.stream().distinct().toList(),related,observation.diagnostics(),dimensions));
             }
-            if (observation.origin() == ObservationRecord.EvidenceState.MISSING) {
+            if (observation.attribution()==com.evolution.analysis.contract.semantic.SemanticStatus.RESOLVED && observation.origin() == ObservationRecord.EvidenceState.MISSING) {
                 addGap(context, result.frontend(), reference, CapabilityGapCatalog.missingOrigin(), subject,
                         spans, observation.diagnostics(), attempts, gaps);
             }
@@ -357,7 +369,7 @@ public final class CapabilityGapNormalizer {
                 addGap(context, result.frontend(), reference, CapabilityGapCatalog.missingProvenance(), subject,
                         spans, observation.diagnostics(), attempts, gaps);
             }
-            if (observation.mappedOccurrence().isEmpty()) {
+            if (observation.attribution()==com.evolution.analysis.contract.semantic.SemanticStatus.RESOLVED && observation.mappedOccurrence().isEmpty()) {
                 addGap(context, result.frontend(), reference, CapabilityGapCatalog.unmappedObservation(), subject,
                         spans, observation.diagnostics(), attempts, gaps);
             }

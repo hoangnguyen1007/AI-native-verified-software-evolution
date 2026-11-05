@@ -905,7 +905,10 @@ public final class SpringMechanismScanner {
         if(owner==null||owner.status()!=SemanticStatus.RESOLVED||owner.entity().origin()!=EntityOrigin.PROJECT||owner.entity().declaration().isEmpty()
                 ||!Set.of(new VersionedIdentifier("frontend.javaparser","3.28.2-m8.4-native-wiring-v1"),
                         new VersionedIdentifier("frontend.javaparser","3.28.2-m8.4-source-recovery-v2"),
-                        new VersionedIdentifier("frontend.javaparser","3.28.2-m8.4-lombok-candidates-v3")).contains(frontend.frontend())
+                        new VersionedIdentifier("frontend.javaparser","3.28.2-m8.4-lombok-candidates-v3"),
+                        new VersionedIdentifier("frontend.javaparser","3.28.2-m8.4-recovery-v4"),
+                        new VersionedIdentifier("frontend.javaparser","3.28.2-m8.4-bounded-bodies-v5"),
+                        new VersionedIdentifier("frontend.javaparser","3.28.2-m8.4-generic-recovery-v6")).contains(frontend.frontend())
                 ||constructor.entity().origin()!=EntityOrigin.PROJECT||!constructor.entity().stableScope().equals(owner.entity().stableScope())
                 ||!constructor.uncertainties().isEmpty()||!constructor.diagnostics().isEmpty()
                 ||constructor.derivation().kind()!=DerivationKind.DERIVED||!constructor.derivation().method().equals(new VersionedIdentifier("java.default-constructor","1"))
@@ -1325,9 +1328,9 @@ public final class SpringMechanismScanner {
         boolean hasClassifiedSpringInput = output.obligations.stream()
                 .anyMatch(value -> !value.primaryMechanism().equals(UNCLASSIFIED));
         if (!hasClassifiedSpringInput) return;
-        if (!evidence.completeClasspath() || evidence.classpathManifestIdentity().isEmpty()) {
+        if (evidence.classpathManifestIdentity().isEmpty()) {
             output.problems.add(frameworkProblem(ProblemReason.VERSION_FRAGMENT_NOT_VALIDATED, evidence,
-                    "The complete content-addressed M3 classpath manifest is required to certify a Spring version fragment."));
+                    "A content-addressed M3 classpath manifest is required to identify a Spring version fragment."));
             return;
         }
         boolean hasBootSpecificInput = output.obligations.stream().anyMatch(value ->

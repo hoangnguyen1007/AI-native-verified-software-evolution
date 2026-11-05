@@ -56,7 +56,7 @@ class ResourceFieldIngestionTest {
         assertEquals(InjectionBindings.Outcome.SELECTED,row.outcome());
         assertEquals(InjectionBindings.Stage.RESOURCE_NAME,row.selectionStage().orElseThrow());
         assertEquals("6.2.0",org.springframework.context.annotation.CommonAnnotationBeanPostProcessor.class.getPackage().getImplementationVersion());
-        assertEquals("m8.4-source-marker-closure-v1",SourceToSpringPlan.PROVIDER.version());
+        assertEquals("m8.4-local-metadata-closure-v2",SourceToSpringPlan.PROVIDER.version());
         var evidence=assertInstanceOf(ConditionEvidence.Source.class,dependency.evidence());
         assertTrue(evidence.span().isPresent());assertTrue(f.build().containsSource(evidence));
         assertTrue(plan.binding().obligations().stream().anyMatch(o -> o.dependencies().contains(dependency.identity())));

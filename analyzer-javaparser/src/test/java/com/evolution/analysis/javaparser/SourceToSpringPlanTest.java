@@ -21,6 +21,21 @@ import static com.evolution.analysis.spring.registration.RegistrationEvent.Compl
 
 @org.junit.jupiter.api.Tag("integration")
 class SourceToSpringPlanTest {
+    @Test void unrelatedClasspathRecoveryDoesNotEraseProvedMetadataOrClosedScopeBinding()throws Exception {
+        var f=sourceFixture(Map.of("app/App.java","""
+                package app;
+                @org.springframework.context.annotation.ComponentScan("app") class App {}
+                @org.springframework.stereotype.Component class Store {}
+                @org.springframework.stereotype.Component class Client { Client(Store store) {} }
+                """),true,true);
+        assertEquals(FrontendResult.State.PARTIAL,f.source().frontend().state());
+        var plan=prepare(f,true);
+        var evaluated=bindingAt(f,plan,true);
+        assertEquals(1,evaluated.rows().stream().filter(r->r.outcome()==InjectionBindings.Outcome.SELECTED).count(),
+                ()->"rows="+evaluated.rows().stream().map(r->r.outcome().name()).toList()+" reasons="+evaluated.capabilityGaps().stream().map(g->g.reasonCode()).distinct().toList()+" components="+plan.binding().registrationPlan().discoveryPlan().initialDefinitions().size());
+        var open=prepare(f,false);
+        assertTrue(bindingAt(f,open,true).rows().stream().noneMatch(r->r.outcome()==InjectionBindings.Outcome.SELECTED));
+    }
     @org.springframework.stereotype.Component("store") @org.springframework.context.annotation.Profile("dev")
     @org.springframework.beans.factory.annotation.Qualifier("chosen")
     static class OracleStore {}
@@ -70,6 +85,9 @@ class SourceToSpringPlanTest {
         return sourceFixture(sources,true);
     }
     Fixture sourceFixture(Map<String,String> sources,boolean resourceArtifact) throws Exception {
+        return sourceFixture(sources,resourceArtifact,false);
+    }
+    Fixture sourceFixture(Map<String,String> sources,boolean resourceArtifact,boolean recovery) throws Exception {
         var artifactFixture=ComponentIngestionTest.fixture(sources,false);
         var binaries=new ArrayList<>(artifactFixture.request().dependencies());
         var artifacts=new ArrayList<>(artifactFixture.framework().artifacts());
@@ -107,13 +125,13 @@ class SourceToSpringPlanTest {
         var key=new UniversalSourceIngestion.SourceSet(build.modules().getFirst().descriptor().identity(),SourcePlanModel.Kind.MAIN);
         var component=new ManifestComponent(new VersionedIdentifier("test.components","1"),ContentDigest.sha256Utf8("source-plan-test"));
         var assembled=new UniversalSourceIngestion().assemble(inputs,build,Map.of(key,new UniversalSourceIngestion.Resolution(
-                artifactFixture.request().platform(),binaries,ContentDigest.sha256Utf8("captured-spring-classpath"))),component,component,component);
+                artifactFixture.request().platform(),binaries,ContentDigest.sha256Utf8("captured-spring-classpath"),Optional.empty(),!recovery)),component,component,component);
         var pipeline=new UniversalIngestionPipeline();
         var result=pipeline.run(assembled,new JavaParserFrontend(),JavaParserFrontend.PROVIDER,100,100);
         var unit=result.units().stream().filter(u -> u.sourceSet().equals(key)).findFirst().orElseThrow();
         assertEquals(UniversalIngestionPipeline.Status.ANALYZED,unit.status(),result.issues().toString());
         var request=assembled.outcomes().stream().filter(o -> o.sourceSet().equals(key)).findFirst().orElseThrow().request().orElseThrow();
-        var framework=new SpringFrameworkEvidence(true,Optional.of(request.plan().classpathManifest()),artifacts);
+        var framework=new SpringFrameworkEvidence(!recovery,Optional.of(request.plan().classpathManifest()),artifacts);
         return new Fixture(pipeline,result,key,new SpringSourceEvidence(request.manifest(),unit.frontend().orElseThrow(),framework),
                 SpringBuildContext.fromExactRequest(request,assembled.identity()));
     }
@@ -1700,7 +1718,7 @@ class SourceToSpringPlanTest {
                 @org.springframework.beans.factory.annotation.Autowired void wire(Dependency z,Dependency a) {}
                 ""","@org.springframework.context.annotation.Profile(\"dev\")");
         var plan=beanPlan(f,true,"Dependency","Config","first","second");
-        assertEquals("m8.4-source-marker-closure-v1",SourceToSpringPlan.PROVIDER.version());
+        assertEquals("m8.4-local-metadata-closure-v2",SourceToSpringPlan.PROVIDER.version());
         assertEquals(6,plan.binding().dependencies().size());
         assertEquals(3,plan.binding().dependencies().stream().map(d -> d.point().identity()).distinct().count());
         assertEquals(6,plan.binding().dependencies().stream().map(InjectionBindingPlan.Dependency::identity).distinct().count());

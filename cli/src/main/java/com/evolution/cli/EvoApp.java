@@ -22,6 +22,7 @@ import com.evolution.analysis.readiness.*;
 import com.evolution.backend.analysis.ScanSelection;
 import com.evolution.backend.analysis.RepositoryIntake;
 import com.evolution.backend.analysis.SemanticDepth;
+import com.evolution.backend.analysis.PolyglotScan;
 import com.evolution.backend.analysis.CapturedJavaScan;
 import com.evolution.backend.analysis.CanonicalRecordReader;
 import com.evolution.analysis.execution.nativebuild.*;
@@ -123,7 +124,7 @@ public final class EvoApp {
             if(failure instanceof BoundedJson.TooLarge)return error(root,3,"OUTPUT_LIMIT","Canonical output exceeds the limit. Narrow the query or reduce --limit.","Đầu ra canonical vượt giới hạn. Thu hẹp truy vấn hoặc giảm --limit.");
             return error(root,invalid?2:1,invalid?"INVALID_INPUT":"OPERATION_FAILED","Check selected inputs, context, paths and limits. Run evo help.","Kiểm tra đầu vào, ngữ cảnh, đường dẫn và giới hạn. Chạy evo help.");});
         try{return command.execute(arguments);}
-        catch(OutOfMemoryError limit){if(root.debug)err.println("[DEBUG] stage="+root.stage);return error(root,3,"MEMORY_LIMIT","Memory limit reached. Narrow the scan scope or launch the standalone JAR with a larger heap.","Đã chạm giới hạn bộ nhớ. Thu hẹp phạm vi quét hoặc chạy JAR với heap lớn hơn.");}
+        catch(OutOfMemoryError limit){if(root.debug)err.println("[DEBUG] stage="+root.stage);return error(root,3,"MEMORY_LIMIT","Semantic worker memory exhausted. Captured inventory and the previous selection remain on disk; rerun with an adequately sized worker.","Worker ngữ nghĩa đã hết bộ nhớ. Inventory đã thu nhận và lựa chọn trước vẫn ở trên đĩa; chạy lại với worker có đủ tài nguyên.");}
         finally{out.flush();err.flush();}
     }
     private void configure(CommandLine command,Root r) {
@@ -456,14 +457,14 @@ public final class EvoApp {
     @Command(name="graph-pages",mixinStandardHelpOptions=true,description="Read bounded raw graph partitions without materializing a snapshot")
     private final class GraphPages implements Callable<Integer>{
         final Root r;GraphPages(Root r){this.r=r;}
-        @Parameters(index="0",paramLabel="partitions|nodes|adjacency|build")String operation;
-        @Parameters(index="1",arity="0..1",paramLabel="NODE")String node;
+        @Parameters(index="0",paramLabel="partitions|nodes|adjacency|evidence|build")String operation;
+        @Parameters(index="1",arity="0..1",paramLabel="NODE|EVIDENCE")String node;
         @Option(names="--partition",paramLabel="CONTEXT")String partition;
         @Option(names="--graph-id",paramLabel="SHA256")String graphId;
         public Integer call()throws Exception{
-            r.validate();if(!Set.of("partitions","nodes","adjacency","build").contains(operation))throw new InputFailure("INVALID_GRAPH_PAGE_OPERATION");
+            r.validate();if(!Set.of("partitions","nodes","adjacency","evidence","build").contains(operation))throw new InputFailure("INVALID_GRAPH_PAGE_OPERATION");
             if(r.graph!=null)throw new InputFailure("GRAPH_FILE_NOT_APPLICABLE");
-            if(node!=null&&!operation.equals("adjacency")||partition!=null&&Set.of("partitions","build").contains(operation)||r.incoming&&!operation.equals("adjacency")||operation.equals("build")&&r.cursor!=null)throw new InputFailure("GRAPH_PAGE_FLAGS_NOT_APPLICABLE");
+            if(node!=null&&!Set.of("adjacency","evidence").contains(operation)||partition!=null&&Set.of("partitions","build","evidence").contains(operation)||r.incoming&&!operation.equals("adjacency")||operation.equals("build")&&r.cursor!=null||operation.equals("evidence")&&matched(r,"--cursor","--limit"))throw new InputFailure("GRAPH_PAGE_FLAGS_NOT_APPLICABLE");
             if(matched(r,"--context","--request","--args","--other","--policy","--view","--scope","--world","--assignment","--kinds","--depth"))throw new InputFailure("QUERY_FLAGS_NOT_APPLICABLE");
             var graph=graphId==null?new ContentDigest(GraphJson.string(r.storage().selection().get("graph"))):new ContentDigest(graphId);
             var pages=r.storage().partitioned();Object data;
@@ -471,6 +472,7 @@ public final class EvoApp {
                 if(graphId!=null&&!graphId.equals(GraphJson.string(r.storage().selection().get("graph"))))throw new InputFailure("GRAPH_PAGE_BUILD_SELECTION_REQUIRED");
                 pages.importSnapshot(r.storage().root.resolve(graph.value().substring(7)+".graph.json"),graph,()->Thread.currentThread().isInterrupted());data=Map.of("graph",graph,"status","INDEXED");
             }else if(operation.equals("partitions"))data=pages.partitions(graph,r.limit,Optional.ofNullable(r.cursor));
+            else if(operation.equals("evidence")){if(node==null)throw new InputFailure("EVIDENCE_REQUIRED");data=Map.of("evidence",pages.evidence(graph,new ContentDigest(node)).orElseThrow(()->new InputFailure("EVIDENCE_UNAVAILABLE")));}
             else{
                 if(partition==null)throw new InputFailure("PARTITION_REQUIRED");
                 var selected=pages.partition(graph,partition).orElseThrow(()->new InputFailure("PARTITION_UNAVAILABLE"));
@@ -542,6 +544,10 @@ public final class EvoApp {
         @Option(names="--maven-cache",paramLabel="DIR",description="Selected Maven2 artifact cache / Cache artifact Maven2") Path mavenCache=Path.of(System.getProperty("user.home"),".m2","repository");
         @Option(names="--offline",description="Use captured/local artifacts only; disable metadata and dependency downloads") boolean offline;
         @Option(names="--java-capture",paramLabel="DIR",description="Use an operator-selected authenticated native Java context for this exact snapshot") Path javaCapture;
+        @Option(names="--semantic-store",paramLabel="DIR",description="Attach an existing native polyglot publication for this exact captured inventory") Path semanticStore;
+        @Option(names="--semantic-plan",paramLabel="SHA256",description="Exact native selected-context plan in --semantic-store") String semanticPlan;
+        @Option(names="--semantic-policy",paramLabel="SHA256",description="Current operator policy for the native publication") String semanticPolicy;
+        @Option(names="--semantic-authority",paramLabel="DIR",description="Operator keys/methods/claims for a qualified native publication") Path semanticAuthority;
         @Option(names="--build",defaultValue="auto",paramLabel="auto|required|off",description="Automatically build Maven/Gradle roots through the registered Hyper-V executor")String buildMode;
         @Option(names="--build-profile",defaultValue="default",paramLabel="NAME",description="Operator-registered Hyper-V build profile")String buildProfile;
         @Option(names="--artifact-repository",paramLabel="HTTPS_URI",description="Explicit credential-free dependency repository; repeatable") List<java.net.URI> artifactRepositories=new ArrayList<>();
@@ -551,18 +557,26 @@ public final class EvoApp {
             if(javaCapture!=null&&matched(r,"--jdk","--release","--artifact-repository","--maven-cache"))throw new InputFailure("CAPTURED_CONTEXT_OVERRIDE_CONFLICT");
             if(!Set.of("auto","required","off").contains(buildMode))throw new InputFailure("INVALID_BUILD_MODE");
             if(javaCapture!=null&&buildMode.equals("required"))throw new InputFailure("CAPTURED_BUILD_MODE_CONFLICT");
+            if((semanticStore==null)!=(semanticPlan==null)||semanticStore==null&&(semanticPolicy!=null||semanticAuthority!=null)||semanticStore!=null&&semanticPolicy==null&&semanticAuthority==null)throw new InputFailure("SEMANTIC_CAPTURE_OPTIONS_REQUIRED");
             var repositories=offline?List.<java.net.URI>of():artifactRepositories.isEmpty()?MavenScan.DEFAULT_REPOSITORIES:List.copyOf(artifactRepositories);
             sessionGraph=null;
             var sourcePath=Workspace.safe(resolve(source));var repo=RepositoryIdentity.fromCanonicalCoordinate(repository!=null?repository:"urn:evo:local:"+ContentDigest.sha256Utf8(sourcePath.toString()).value().substring(7));
+            Optional<PolyglotScan.Published> languageEvidence=Optional.empty();
+            if(semanticStore!=null) {
+                var store=Workspace.safe(resolve(semanticStore));var authority=Optional.ofNullable(semanticAuthority).map(EvoApp.this::resolve);
+                if(store.startsWith(sourcePath)||authority.filter(p->p.toAbsolutePath().normalize().startsWith(sourcePath)).isPresent())throw new InputFailure("CAPTURE_REGISTRATION_INSIDE_TARGET");
+                var trust=semanticPolicy==null?SemanticAuthorityStore.policy(authority.orElseThrow()):new ContentDigest(semanticPolicy);
+                languageEvidence=Optional.of(PolyglotScan.load(store,new ContentDigest(semanticPlan),trust,authority,()->Thread.currentThread().isInterrupted()));
+            }
             var excluded=new TreeSet<>(List.of(".git",".evo"));excluded.addAll(excludes);Path session=r.storage().root;
             if(session.startsWith(sourcePath)&&!session.equals(sourcePath))excluded.add(sourcePath.relativize(session).toString().replace('\\','/'));
             var selection=ScanSelection.plan(sourcePath,includeTests,allFiles,List.copyOf(excluded));excluded.addAll(selection.excluded());
             r.stage="acquisition";
             progress(r,"[1/4] Reading selected source/build/configuration files…","[1/4] Đọc mã nguồn, build và cấu hình đã chọn…");
             String intakeRevision=UUID.randomUUID().toString();StreamingRepositoryAcquirer.Receipt captured;
-            RepositoryAcquisitionResult acquisition;ReadinessPlan readiness;NativeBuildCoordinator.Result nativeBuild=null;
+            RepositoryAcquisitionResult acquisition;ReadinessPlan readiness;NativeBuildCoordinator.Result nativeBuild=null;PolyglotScan.Result polyglot;
             try(var intake=new RepositoryIntake(r.storage().root.resolve("acquisition"))){
-                captured=intake.local(sourcePath,intakeRevision,new StreamingAcquisitionRequest(repo,Optional.ofNullable(revision),dirty,List.copyOf(excluded)),()->Thread.currentThread().isInterrupted());
+                captured=intake.localComplete(sourcePath,intakeRevision,new StreamingAcquisitionRequest(repo,Optional.ofNullable(revision),dirty,List.copyOf(excluded)),()->Thread.currentThread().isInterrupted());
                 if(captured.manifest().isEmpty())return emit(r,"scan",envelope(Map.of("status",captured.state(),"acquisition",captured,"graphCreated",false)),3);
                 readiness=intake.readiness(intakeRevision,ReadinessPlanner.Policy.comprehensive(),()->Thread.currentThread().isInterrupted());
                 if(javaCapture==null&&!buildMode.equals("off")){
@@ -570,7 +584,24 @@ public final class EvoApp {
                     if(buildMode.equals("required")&&!Set.of("BUILT","NOT_APPLICABLE").contains(nativeBuild.status()))return emit(r,"scan",envelope(Map.of("status",nativeBuild.status(),"nativeBuild",nativeBuild,"graphCreated",false)),nativeBuild.status().equals("FAILED")?1:3);
                 }
                 try{acquisition=intake.compatibility(intakeRevision,repo,Optional.ofNullable(revision),dirty,includeTests,allFiles,List.copyOf(excluded));}
-                catch(IOException budget){var unavailable=new TreeMap<String,Object>();unavailable.putAll(Map.of("status","WAITING_FOR_SEMANTIC_WORKER","acquisition",captured,"graphCreated",false,"reason","COMPATIBILITY_VIEW_UNAVAILABLE"));if(nativeBuild!=null)unavailable.put("nativeBuild",nativeBuild);return emit(r,"scan",envelope(unavailable),3);}
+                catch(IOException budget){
+                    if(!Set.of("COMPATIBILITY_WORKER_REQUIRED","V1_PATH_UNREPRESENTABLE","V1_KIND_UNREPRESENTABLE","V1_SELECTION_UNREPRESENTABLE").contains(String.valueOf(budget.getMessage())))throw budget;
+                    var snapshot=com.evolution.analysis.contract.identity.SnapshotIdentity.from(repo,captured.manifest().orElseThrow().inventory());
+                    r.stage="polyglot-static-fallback";
+                    var scanner=new PolyglotScan();var remaining=scanner.run(intakeRevision,intake,readiness,EvidenceContext.forSnapshot(snapshot),languageEvidence,r.storage().root.resolve("semantic-work"),()->Thread.currentThread().isInterrupted());
+                    r.stage="graph";progress(r,"[4/4] Saving available inventory and syntax evidence…","[4/4] Lưu inventory và bằng chứng cú pháp hiện có…");
+                    var graph=r.storage().publish(snapshot,store->scanner.projectInventoryRoot(remaining,store,()->Thread.currentThread().isInterrupted()));
+                    var context=autoContext(graph.contexts());r.storage().select(graph,context);sessionGraph=null;
+                    if(interactiveDefaults!=null){interactiveDefaults.graph=null;interactiveDefaults.context=null;}
+                    var gaps=new TreeSet<>(remaining.gaps());gaps.add(scanner.javaWorkerGap(remaining));
+                    var data=new TreeMap<String,Object>();data.putAll(Map.of("status","PARTIAL","acquisition",captured,"graphCreated",true,"snapshotSelected",true,"graph",graph.graph(),"contexts",contextRows(graph.contexts()),"selectedContext",context,"polyglot",remaining.summary(),"javaAnalysis","COMPATIBILITY_WORKER_REQUIRED"));
+                    data.put("gapSummary",Map.of("total",gaps.size(),"byReason",reasonCounts(gaps,g->g.reasonCode()),"records","raw canonical graph","context",graph.snapshot()));
+                    data.put("semanticDepth",Map.of("scope","JAVA_COMPATIBILITY_NOT_ANALYZED","level","NO_ANALYSIS","sourceRecoveryContexts",0,"relationships",Map.of("attempted",0,"resolved",0),"spring",Map.of("status","NOT_EVALUATED","selectedBindingFactRows",0)));
+                    if(nativeBuild!=null)data.put("nativeBuild",nativeBuild);return emit(r,"scan",envelope(data),3);
+                }
+                r.stage="polyglot-inventory";
+                var context=com.evolution.analysis.evidence.EvidenceContext.forSnapshot(acquisition.snapshot().map(s->s.identity()).orElseGet(()->com.evolution.analysis.contract.identity.SnapshotIdentity.from(repo,captured.manifest().orElseThrow().inventory())));
+                polyglot=new PolyglotScan().run(intakeRevision,intake,readiness,context,languageEvidence,r.storage().root.resolve("semantic-work"),()->Thread.currentThread().isInterrupted());
             }
             var acquisitionInfo=Map.of("identity",acquisition.identity(),"status",acquisition.completion(),"files",acquisition.files().size(),"bytes",acquisition.files().stream().mapToLong(AcquiredFile::size).sum(),"problems",acquisition.problems(),"policy",acquisition.request().policy(),"fullInventory",captured.manifest().orElseThrow(),"view","BOUNDED_SEMANTIC_COMPATIBILITY");
             if(acquisition.snapshot().isEmpty())return emit(r,"scan",envelope(Map.of("status","TERMINAL_FAILURE","stage","acquisition","acquisition",acquisitionInfo,"selection",selection,"graphCreated",false)),1);
@@ -583,20 +614,34 @@ public final class EvoApp {
                 catch(IOException failure){String code=failure.getMessage();throw new InputFailure(code!=null&&code.matches("(?:SCAN_CAPTURE|CAPTURED_JAVA)_[A-Z_]+")?code:"CAPTURED_JAVA_INPUT_UNAVAILABLE");}
                 var outcome=nativeResult.outcome();var data=new TreeMap<String,Object>();
                 data.put("status",outcome.completion());data.put("acquisition",acquisitionInfo);data.put("selection",selection);
+                data.put("polyglot",polyglot.summary());
                 data.put("execution",Map.of("mode","CAPTURED_NATIVE_EVIDENCE","isolatedBuildExecuted",false,"capture",nativeResult.capture(),"qualification",nativeResult.qualification()));
                 if(outcome.graph().isEmpty())return emit(r,"scan",envelope(data),1);
-                var graph=outcome.graph().orElseThrow();var selected=autoContext(graph);boolean usable=outcome.completion()!=com.evolution.backend.analysis.AnalysisJobs.Completion.FAILED;
-                if(usable)r.storage().select(graph,selected);else r.storage().publish(graph);
-                data.put("semanticDepth",SemanticDepth.summarize(graph));data.put("graph",graph.identity());data.put("contexts",contextRows(graph));data.put("selectedContext",selected);data.put("snapshotSelected",usable);
-                data.put("gapSummary",Map.of("total",outcome.gaps().size(),"byReason",reasonCounts(outcome.gaps(),g->g.reasonCode()),"records","raw canonical graph"));
-                if(usable&&interactiveDefaults!=null){interactiveDefaults.graph=null;interactiveDefaults.context=null;sessionGraph=graph;}
-                return emit(r,"scan",envelope(data),!usable?1:outcome.completion()==com.evolution.backend.analysis.AnalysisJobs.Completion.COMPLETE?0:3);
+                var original=outcome.graph().orElseThrow();var graph=r.storage().publish(original,store->new PolyglotScan().project(polyglot,store,original.snapshot(),()->Thread.currentThread().isInterrupted()));
+                var selected=autoContext(graph.contexts());boolean usable=outcome.completion()!=com.evolution.backend.analysis.AnalysisJobs.Completion.FAILED;
+                if(usable)r.storage().select(graph,selected);
+                data.put("semanticDepth",SemanticDepth.summarize(original));data.put("graph",graph.graph());data.put("contexts",contextRows(graph.contexts()));data.put("selectedContext",selected);data.put("snapshotSelected",usable);
+                var gaps=new TreeSet<>(outcome.gaps());gaps.addAll(polyglot.gaps());
+                if(!gaps.isEmpty()&&outcome.completion()==com.evolution.backend.analysis.AnalysisJobs.Completion.COMPLETE)data.put("status","PARTIAL");
+                data.put("gapSummary",Map.of("total",gaps.size(),"byReason",reasonCounts(gaps,g->g.reasonCode()),"records","raw canonical graph"));
+                if(usable&&interactiveDefaults!=null){interactiveDefaults.graph=null;interactiveDefaults.context=null;sessionGraph=null;}
+                return emit(r,"scan",envelope(data),!usable?1:outcome.completion()==com.evolution.backend.analysis.AnalysisJobs.Completion.COMPLETE&&gaps.isEmpty()?0:3);
             }
             progress(r,"[2/4] Capturing exact JDK symbols…","[2/4] Thu nhận symbol JDK…");
             r.stage="platform";
             var platform=new FilesystemJdkPlatformProvider().acquire(Workspace.safe(resolve(jdk)),new PlatformSymbolRequest(release,128,128_000_000,512_000_000));var defaults=UniversalBuildIngestion.Policy.defaults();
             var cachePath=Workspace.safe(resolve(mavenCache));
-            var mavenInputs=MavenScan.inputs(acquisition,MavenScan.models(acquisition,cachePath,repositories),cachePath,platform.platform(),new com.evolution.analysis.dependency.DependencyAcquisitionPolicy(1024,64_000_000,256_000_000,64,repositories,5000,15000,1));
+            var models=MavenScan.models(acquisition,cachePath,repositories);
+            var platformViews=new TreeMap<Integer,PlatformSymbolResult>();platformViews.put(release,platform);
+            var additionalPlatforms=new ArrayList<PlatformSymbolResult>();
+            for(int target:MavenScan.platformReleases(models))if(!platformViews.containsKey(target)) {
+                var view=new FilesystemJdkPlatformProvider().acquire(Workspace.safe(resolve(jdk)),new PlatformSymbolRequest(target,128,128_000_000,512_000_000));
+                platformViews.put(target,view);additionalPlatforms.add(view);
+            }
+            var availablePlatforms=new TreeMap<Integer,com.evolution.analysis.frontend.PlatformInput>();platformViews.forEach((target,view)->view.platform().ifPresent(value->availablePlatforms.put(target,value)));
+            var platformLedgers=additionalPlatforms.isEmpty()?List.<com.evolution.analysis.evidence.EvidenceAcquisitionLedger>of():List.of(com.evolution.analysis.evidence.CapabilityGapNormalizer.normalize(
+                    EvidenceContext.forSnapshot(acquisition.snapshot().orElseThrow().identity()),com.evolution.analysis.evidence.EvidenceNormalizationInput.builder().platformResults(additionalPlatforms).build()));
+            var mavenInputs=MavenScan.inputs(acquisition,models,cachePath,platform.platform(),new com.evolution.analysis.dependency.DependencyAcquisitionPolicy(1024,64_000_000,256_000_000,64,repositories,5000,15000,1),availablePlatforms);
             r.stage="analysis";
             // Supply fallback evidence without Builder.defaultPlatform's Maven user-property overrides.
             // Declared Maven release/encoding must keep their authority over CLI defaults.
@@ -605,35 +650,41 @@ public final class EvoApp {
                     new RepositoryInputDecoder.Policy("UTF-8",10_000,10_000_000),frontend(r),JavaParserFrontend.PROVIDER,
                     mavenInputs.resolutions(),platform.platform(),Optional.of(new MavenBuildModelProvider()),mavenInputs.externalPoms(),MavenScan.POLICY,
                     1000,100,UniversalArchitecturePipeline.TruthEvaluationMode.AUTO,Map.of(),Optional.empty(),Optional.empty(),com.evolution.analysis.spring.truth.TruthRegionEvaluation.Limits.conservative()).withReadiness(readiness.identity());
-            progress(r,"[3/4] Analyzing Java / Spring and building the graph…","[3/4] Phân tích Java / Spring và dựng đồ thị…");
-            var detailed=new UniversalArchitecturePipeline().runWithEvidence(acquisition,policy);var data=new TreeMap<String,Object>();data.put("status",detailed.report().status());data.put("reportIdentity",detailed.report().identity());data.put("gaps",detailed.report().gaps());
+            progress(r,"[3/4] Analyzing source contexts / Spring and captured native language evidence…","[3/4] Phân tích context nguồn / Spring và bằng chứng native đa ngôn ngữ…");
+            try(var analysisWorkspace=new com.evolution.analysis.filesystem.FileAnalysisWorkspace(r.storage().root.resolve("analysis-work"))){
+            var detailed=new UniversalArchitecturePipeline(analysisWorkspace).runWithEvidence(acquisition,policy);var data=new TreeMap<String,Object>();data.put("status",detailed.report().status());data.put("reportIdentity",detailed.report().identity());data.put("gaps",detailed.report().gaps());
             data.put("acquisition",acquisitionInfo);data.put("selection",selection);data.put("metrics",detailed.report().metrics());
             data.put("dependencies",mavenInputs.summary());
+            data.put("polyglot",polyglot.summary());
             data.put("execution",nativeBuild!=null&&nativeBuild.requested()>0?Map.of("mode","ISOLATED_BUILD_ATTEMPT_WITH_SOURCE_ANALYSIS","isolatedBuildExecuted",nativeBuild.executed()>0,"launchDisposition",nativeBuild.executed()==nativeBuild.requested()?"PROTECTED_GUEST_LAUNCHER_RETURNED":"UNKNOWN"):Map.of("mode","PASSIVE","isolatedBuildExecuted",false));
             if(nativeBuild!=null)data.put("nativeBuild",nativeBuild);
             data.put("readiness",Map.of("identity",readiness.identity(),"selection",readiness.selection().identity(),"roots",readiness.roots().size(),"contexts",readiness.contexts().size(),"requirements",readiness.requirements().size(),"ownership",readiness.ownership()));
-            var scanGaps=new TreeSet<>(detailed.report().gaps());scanGaps.addAll(mavenInputs.gaps());scanGaps.addAll(readiness.gaps(acquisition.snapshot().orElseThrow().identity()));data.put("gaps",List.copyOf(scanGaps));
-            if(!scanGaps.isEmpty()&&detailed.report().status()==UniversalArchitectureReport.Status.COMPLETE)data.put("status","PARTIAL");
+            var scanGaps=analysisWorkspace.gaps(detailed.report().gaps());scanGaps.addAll(mavenInputs.gaps());scanGaps.addAll(readiness.gaps(acquisition.snapshot().orElseThrow().identity()));scanGaps.addAll(polyglot.gaps());
+            var scanGapRows=analysisWorkspace.<com.evolution.analysis.evidence.CapabilityGapRecord>list();
+            platformLedgers.forEach(ledger->scanGaps.addAll(ledger.gaps()));scanGapRows.addAll(scanGaps);var frozenScanGaps=analysisWorkspace.freeze(scanGapRows);data.put("gaps",frozenScanGaps);
+            if(!scanGaps.isEmpty()&&Set.of(UniversalArchitectureReport.Status.COMPLETE,UniversalArchitectureReport.Status.EMPTY_OR_NON_JAVA).contains(detailed.report().status()))data.put("status","PARTIAL");
             data.put("issues",detailed.report().issues());data.put("rootCauses",detailed.report().rootCauses());
-            data.put("platform",Map.of("status",platform.status(),"identity",platform.identity(),"problems",platform.problems()));
+            data.put("platform",Map.of("status",platform.status(),"identity",platform.identity(),"problems",platform.problems(),"views",platformViews.entrySet().stream().map(e->Map.of("release",e.getKey(),"status",e.getValue().status(),"identity",e.getValue().identity(),"problems",e.getValue().problems())).toList()));
             data.put("inputPolicy",Map.of("release",release,"charsetFallback","UTF-8","dependencyAcquisition",mavenInputs.summary().get("mode"),"excludedPaths",excluded,"repository",repo,
                     "versionControl","NOT_INSPECTED","callerRevision",Optional.ofNullable(revision),"callerDirty",dirty));
             if(detailed.graphInput().isPresent()){
                 r.stage="graph";progress(r,"[4/4] Saving a verified snapshot…","[4/4] Lưu snapshot đã kiểm tra…");var input=detailed.graphInput().orElseThrow();
-                var graph=new CanonicalGraphBuilder().build(new CanonicalGraphInput(input.repository(),input.build(),input.ingestion(),input.spring(),input.issues(),List.copyOf(scanGaps),input.acquisition(),input.javaEvidence()));
-                data.put("semanticDepth",SemanticDepth.summarize(detailed,graph));
-                if(r.debug){err.println("[DEBUG] graph nodes="+graph.nodes().size()+" edges="+graph.edges().size()+" evidence="+graph.evidence().size()+" payloadChars="+graph.evidence().stream().mapToLong(e->e.canonicalJson().length()).sum());for(var e:graph.evidence().stream().sorted(Comparator.comparingInt((GraphEvidence e)->e.canonicalJson().length()).reversed()).limit(4).toList())err.println("  "+e.family()+" chars="+e.canonicalJson().length());}
-                boolean usable=detailed.report().status()!=UniversalArchitectureReport.Status.TERMINAL_FAILURE;Optional<String> selected=usable?autoContext(graph):Optional.empty();r.stage="storage";
-                if(usable)r.storage().select(graph,selected);else r.storage().publish(graph);
-                if(usable&&interactiveDefaults!=null){interactiveDefaults.graph=null;interactiveDefaults.context=null;sessionGraph=graph;}
-                data.put("graph",graph.identity());data.put("snapshotSelected",usable);data.put("contexts",contextRows(graph));data.put("selectedContext",selected);
+                var graphLedgers=new ArrayList<>(mavenInputs.ledgers());graphLedgers.addAll(platformLedgers);
+                var graph=r.storage().publish(new CanonicalGraphInput(input.repository(),input.build(),input.ingestion(),input.spring(),input.issues(),frozenScanGaps,input.acquisition(),input.javaEvidence()),graphLedgers,store->new PolyglotScan().project(polyglot,store,()->Thread.currentThread().isInterrupted()));
+                data.put("semanticDepth",SemanticDepth.summarize(detailed,graph.edgeKinds()));
+                if(r.debug)err.println("[DEBUG] graph storage=PARTITIONED_DISK nodes="+graph.nodes()+" edges="+graph.edges()+" evidence="+graph.evidence());
+                boolean usable=detailed.report().status()!=UniversalArchitectureReport.Status.TERMINAL_FAILURE;Optional<String> selected=usable?autoContext(graph.contexts()):Optional.empty();r.stage="storage";
+                if(usable)r.storage().select(graph,selected);
+                if(usable&&interactiveDefaults!=null){interactiveDefaults.graph=null;interactiveDefaults.context=null;sessionGraph=null;}
+                data.put("graph",graph.graph());data.put("snapshotSelected",usable);data.put("contexts",contextRows(graph.contexts()));data.put("selectedContext",selected);
                 // The receipt is bounded independently of repository size. Every typed gap remains in the verified graph.
                 data.remove("gaps");data.put("gapSummary",Map.of("total",scanGaps.size(),"byReason",reasonCounts(scanGaps,g->g.reasonCode()),"records","raw canonical graph","context",graph.snapshot(),"inspect","evo gaps --context "+graph.snapshot().value()+" --json"));
                 data.remove("issues");data.put("issueSummary",Map.of("total",detailed.report().issues().size(),"byReason",reasonCounts(detailed.report().issues(),i->i.reason().name())));
                 data.remove("rootCauses");data.put("rootCauseSummary",Map.of("total",detailed.report().rootCauses().size(),"byCategory",reasonCounts(detailed.report().rootCauses(),c->c.category().name())));
             }
             r.stage="receipt";
-            return emit(r,"scan",envelope(data),detailed.graphInput().isEmpty()||detailed.report().status()==UniversalArchitectureReport.Status.TERMINAL_FAILURE?1:detailed.report().status()==UniversalArchitectureReport.Status.COMPLETE&&platform.platform().isPresent()&&scanGaps.isEmpty()?0:3);
+            return emit(r,"scan",envelope(data),detailed.graphInput().isEmpty()||detailed.report().status()==UniversalArchitectureReport.Status.TERMINAL_FAILURE?1:detailed.report().status()==UniversalArchitectureReport.Status.COMPLETE&&!availablePlatforms.isEmpty()&&scanGaps.isEmpty()?0:3);
+            }
         }
     }
     @Command(name="open",mixinStandardHelpOptions=true,description="Select verified graph snapshot / Chọn snapshot đã kiểm tra")
@@ -662,7 +713,11 @@ public final class EvoApp {
     private void progress(Root r,String en,String vi){if(terminal&&!r.json){err.println("[evo] "+(r.lang.equals("vi")?vi:en));err.flush();}}
     private com.evolution.analysis.frontend.SemanticFrontend frontend(Root r){
         var frontend=new JavaParserFrontend();if(!r.debug)return frontend;
-        return request->{try{return frontend.analyze(request);}catch(RuntimeException failure){err.println("[DEBUG] frontend="+failure.getClass().getName());for(var frame:failure.getStackTrace())if(frame.getClassName().startsWith("com.evolution."))err.println("  "+frame.getClassName()+"."+frame.getMethodName()+":"+frame.getLineNumber());throw failure;}};
+        return new com.evolution.analysis.frontend.ConcurrentSemanticFrontend(){
+            public long estimatedWorkingBytes(com.evolution.analysis.frontend.FrontendRequest request){return frontend.estimatedWorkingBytes(request);}
+            public void releaseCompletedContexts(){frontend.releaseCompletedContexts();}
+            public com.evolution.analysis.frontend.FrontendResult analyze(com.evolution.analysis.frontend.FrontendRequest request){try{return frontend.analyze(request);}catch(RuntimeException failure){err.println("[DEBUG] frontend="+failure.getClass().getName());for(var frame:failure.getStackTrace())if(frame.getClassName().startsWith("com.evolution."))err.println("  "+frame.getClassName()+"."+frame.getMethodName()+":"+frame.getLineNumber());throw failure;}}
+        };
     }
     private static <T> Map<String,Long> reasonCounts(Collection<T> rows,java.util.function.Function<T,String> reason){var counts=new TreeMap<String,Long>();for(T row:rows)counts.merge(reason.apply(row),1L,Long::sum);return counts;}
     private Path resolve(Path path){return path.isAbsolute()?path:directory.resolve(path);}
@@ -673,7 +728,13 @@ public final class EvoApp {
         if(interactiveDefaults!=null&&sessionGraph!=null&&sessionGraph.identity().equals(selected))return sessionGraph;
         var graph=r.storage().selectedGraph();if(interactiveDefaults!=null)sessionGraph=graph;return graph;
     }
-    private Optional<String> autoContext(KnowledgeGraph graph){var candidates=graph.contexts().stream().filter(c->c.analysis().isPresent()).toList();if(candidates.size()==1)return Optional.of(candidates.getFirst().identity());return graph.contexts().size()==1?Optional.of(graph.contexts().getFirst().identity()):Optional.empty();}
+    private Optional<String> autoContext(KnowledgeGraph graph){return autoContext(graph.contexts());}
+    private Optional<String> autoContext(List<KnowledgeGraph.Context> contexts){var candidates=contexts.stream().filter(c->c.analysis().isPresent()).toList();if(candidates.size()==1)return Optional.of(candidates.getFirst().identity());return contexts.size()==1?Optional.of(contexts.getFirst().identity()):Optional.empty();}
+    private List<Object> contextRows(List<KnowledgeGraph.Context> contexts){
+        var rows=new ArrayList<Object>();int index=0;
+        for(var context:contexts.stream().sorted(Comparator.comparing(KnowledgeGraph.Context::identity)).toList())rows.add(Map.of("index",++index,"identity",context.identity(),"analysis",context.analysis(),"snapshot",context.snapshot(),"label",context.analysis().isPresent()?"Analysis "+index:"Build / acquisition"));
+        return rows;
+    }
     private String context(Root r,KnowledgeGraph graph,boolean required)throws IOException{
         if(r.request!=null){var body=GraphJson.object(Workspace.json(resolve(r.request),65_536));
             if(body.get("request") instanceof Map<?,?> request){String selected=findContext(graph,GraphJson.string(request.get("context")));

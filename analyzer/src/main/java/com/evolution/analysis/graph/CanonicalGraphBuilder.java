@@ -35,8 +35,18 @@ public final class CanonicalGraphBuilder {
         return build(input,List.of());
     }
     public KnowledgeGraph build(CanonicalGraphInput input,Collection<EvidenceAcquisitionLedger> ledgers) {
+        return project(input,ledgers,GraphProjectionStore.memory()).finish();
+    }
+    /** Assemble identical canonical rows without constructing or indexing a KnowledgeGraph. */
+    public void project(CanonicalGraphInput input,GraphProjectionStore store) {
+        project(input,store,List.of());
+    }
+    public void project(CanonicalGraphInput input,GraphProjectionStore store,Collection<EvidenceAcquisitionLedger> ledgers) {
+        project(input,ledgers,store).complete();
+    }
+    private Projection project(CanonicalGraphInput input,Collection<EvidenceAcquisitionLedger> ledgers,GraphProjectionStore store) {
         Objects.requireNonNull(input);
-        var p=new Projection(input.repository().snapshot().identity());
+        var p=new Projection(input.repository().snapshot().identity(),store);
         input.javaEvidence().ifPresent(binding->{try{binding.requireCurrent();}catch(java.io.IOException unavailable){throw new IllegalArgumentException("Unavailable post-analysis Java evidence");}p.javaBase=Optional.of(binding.base());p.historicalGaps=binding.historicalGapIds();binding.evidence().forEach(p::nativeEvidence);});
         String repository=p.repository(input);
         input.javaEvidence().ifPresent(binding->{
@@ -74,46 +84,97 @@ public final class CanonicalGraphBuilder {
                 p.artifact("ingestion.unit",Map.of("sourceSet",unit.sourceSet(),"status",unit.status()));
                 var outcome=ingestion.sourceIngestion().outcomes().stream().filter(o->o.sourceSet().equals(unit.sourceSet())).findFirst().orElseThrow();
                 unit.frontend().ifPresent(frontend->p.frontend(outcome.request().orElseThrow().manifest(),frontend));
+                unit.sourceWiring().ifPresent(wiring->p.sourceWiring(outcome.request().orElseThrow(),wiring));
                 unit.components().ifPresent(c->p.artifact("spring.components",c));
                 unit.constructors().ifPresent(c->p.artifact("spring.constructors",c));
-                unit.spring().ifPresent(s->p.artifact("spring.universal",s));
+                unit.spring().ifPresent(s->{
+                    p.artifact("spring.universal",s);
+                    var request=outcome.request().orElseThrow();
+                    for(var route:s.web().routes()) {
+                        var handler=unit.frontend().orElseThrow().declarations().stream().map(DeclarationRecord::entity)
+                                .filter(e->e.identity().equals(route.handler())&&e.origin()==EntityOrigin.PROJECT).findFirst().orElseThrow(()->new IllegalArgumentException("Foreign endpoint declaration"));
+                        String context=request.manifest().identity().value();
+                        var payload=p.artifact("spring.endpoint-declaration",Map.of("schema","spring.endpoint-declaration:m8.4-v1",
+                                "route",route,"module",handler.stableScope().value(),"sourceSet",request.sourceSet(),
+                                "scope","DECLARATION_ONLY","activation","UNKNOWN","runtimeObserved",false));
+                        String endpoint=derivedIdentity("endpoint-declaration",List.of("m8.4-v1",context,route.identity()));
+                        p.node(endpoint,context,"ENDPOINT",payload);
+                        p.link(context,"graph.contains",route.handler().value(),endpoint,payload);
+                    }
+                });
             }
             // Index the lossless records instead of nesting the full repeated ledger in one giant payload.
             // Individual issues/gaps retain their own canonical evidence and original provider identity.
             ingestion.issues().forEach(i->p.artifact("ingestion.issue",i));
             ingestion.gaps().forEach(g->p.gapRecord(repository,g));
-            p.artifact("ingestion.outcome-index",Map.of("schema","ingestion.outcome-index:m7.2-v1","identity",ingestion.identity(),"inputIdentity",ingestion.inputIdentity(),
-                    "issues",ingestion.issues().stream().map(i->i.identity().value()).sorted().distinct().toList(),
-                    "gaps",ingestion.gaps().stream().map(g->g.gapIdentity().value()).sorted().distinct().toList()));
+            p.artifact("ingestion.outcome-index",Map.of("schema","ingestion.outcome-index:m8.4-paged-v2","identity",ingestion.identity(),"inputIdentity",ingestion.inputIdentity(),
+                    "issues",p.indexPages("ingestion.issue-index-page",ingestion.issues(),i->i.identity().value()),
+                    "gaps",p.indexPages("ingestion.gap-index-page",ingestion.gaps(),g->g.gapIdentity().value())));
         });
         for(var spring:input.spring())p.spring(spring);
         input.issues().forEach(i->p.node(i.identity().value(),repository,"ACQUISITION_ISSUE",p.artifact("ingestion.issue",i)));
         input.gaps().forEach(g->p.gapRecord(repository,g));
         ledgers.forEach(p::ledger);
-        return p.finish();
+        return p;
     }
 
     private static final class Projection {
         final SnapshotIdentity snapshot;
-        final Map<String,Context> contexts=new TreeMap<>();
-        final Map<String,Node> nodes=new TreeMap<>();
-        final Map<String,Edge> edges=new TreeMap<>();
-        final Map<ContentDigest,GraphEvidence> evidence=new TreeMap<>();
-        final Map<String,ContentDigest> statements=new HashMap<>();
+        final Map<String,Context> contexts;
+        final Map<String,Node> nodes;
+        final Map<String,Edge> edges;
+        final Map<String,GraphEvidence> evidence;
+        final Map<String,ContentDigest> statements;
         final Map<String,String> injectionUses=new HashMap<>();
-        final Map<String,ContentDigest> requiredAttempts=new TreeMap<>();
+        final Map<String,ContentDigest> requiredAttempts;
         Optional<SnapshotIdentity> javaBase=Optional.empty();
         Set<String> historicalGaps=Set.of();
         final Map<String,ContentDigest> gapDispositions=new HashMap<>();
         final Map<String,Set<ContentDigest>> nativeSupports=new HashMap<>();
-        Projection(SnapshotIdentity snapshot) {this.snapshot=snapshot;}
+        Projection(SnapshotIdentity snapshot) {this(snapshot,GraphProjectionStore.memory());}
+        Projection(SnapshotIdentity snapshot,GraphProjectionStore store) {
+            this.snapshot=snapshot;
+            contexts=store.records("contexts",GraphSnapshotCodec::context);
+            nodes=store.records("nodes",GraphSnapshotCodec::node);
+            edges=store.records("edges",GraphSnapshotCodec::edge);
+            evidence=store.records("evidence",GraphSnapshotCodec::evidence);
+            statements=store.records("statements",v->new ContentDigest(GraphJson.string(v)));
+            requiredAttempts=store.records("required-attempts",v->new ContentDigest(GraphJson.string(v)));
+        }
         void nativeEvidence(GraphEvidence value){
-            evidence.put(value.identity(),value);
+            evidence.put(value.identity().value(),value);
             nativeSupports.computeIfAbsent(ContentDigest.sha256Utf8(value.canonicalJson()).value(),key->new TreeSet<>()).add(value.identity());
         }
+        void sourceWiring(com.evolution.analysis.frontend.FrontendRequest request,com.evolution.analysis.spring.universal.SourceWiringCandidates.Result result) {
+            if(!request.manifest().identity().equals(result.analysis()))throw new IllegalArgumentException("Foreign source wiring context");
+            if(!result.observed())return;
+            String context=request.manifest().identity().value();
+            var summary=artifact("spring.source-wiring",Map.of("provider",com.evolution.analysis.spring.universal.SourceWiringCandidates.PROVIDER,"input",result.input(),
+                    "beans",result.beans().size(),"sites",result.sites().size(),"typeCandidates",result.matches().size(),"activation","UNKNOWN","selection","NOT_SELECTED","qualifierCompatibility","NOT_EVALUATED"));
+            String evaluation=derivedIdentity("spring-source-wiring",List.of(context,result.input()));node(evaluation,context,"SPRING_SOURCE_WIRING",summary);
+            link(context,"spring.source-wiring-evaluated",request.module().value(),evaluation,summary);
+            for(var bean:result.beans()) {
+                var support=artifact("spring.source-bean-candidate",bean);String id=derivedIdentity("spring-source-bean",List.of(context,bean));
+                node(id,context,"SOURCE_BEAN_CANDIDATE",support);link(context,"spring.source-bean-declaration",id,bean.declaration().value(),support);
+            }
+            for(var site:result.sites()) {
+                var support=artifact("spring.source-injection-site",site);String id=derivedIdentity("spring-source-injection",List.of(context,site));
+                node(id,context,"SOURCE_INJECTION_SITE",support);link(context,"spring.source-injection-owner",id,site.owner().value(),support);
+            }
+            for(var match:result.matches()) {
+                var support=artifact("spring.source-type-candidate",match);
+                link(context,"spring.source-type-candidate",derivedIdentity("spring-source-injection",List.of(context,match.site())),derivedIdentity("spring-source-bean",List.of(context,match.bean())),support);
+            }
+        }
         ContentDigest artifact(String family,Object value) {
-            var artifact=GraphEvidence.capture(family,value);var old=evidence.putIfAbsent(artifact.identity(),artifact);
+            var artifact=GraphEvidence.capture(family,value);var old=evidence.putIfAbsent(artifact.identity().value(),artifact);
             if(old!=null&&!old.equals(artifact))throw new IllegalArgumentException("Conflicting provider artifact");return artifact.identity();
+        }
+        <T> List<ContentDigest> indexPages(String family,Iterable<T> rows,java.util.function.Function<T,String> identity) {
+            var pages=new ArrayList<ContentDigest>();var page=new ArrayList<String>(1024);
+            for(var row:rows){page.add(identity.apply(row));if(page.size()==1024){pages.add(artifact(family,Map.of("page",pages.size(),"records",List.copyOf(page))));page.clear();}}
+            if(!page.isEmpty())pages.add(artifact(family,Map.of("page",pages.size(),"records",page)));
+            return List.copyOf(pages);
         }
         String repository(CanonicalGraphInput input) {
             String context=snapshot.value();
@@ -351,6 +412,7 @@ public final class CanonicalGraphBuilder {
         void node(String identity,String context,String kind,ContentDigest payload) {
             String key=key(context,identity);var old=nodes.get(key);
             if(old!=null&&!old.kind().equals(kind))throw new IllegalArgumentException("Conflicting graph node kind");
+            if(old!=null&&old.evidence().contains(payload))return;
             var support=new TreeSet<ContentDigest>();if(old!=null)support.addAll(old.evidence());support.add(payload);
             nodes.put(key,new Node(identity,context,kind,List.copyOf(support)));
         }
@@ -378,6 +440,7 @@ public final class CanonicalGraphBuilder {
             String key=key(edge.context(),edge.identity());var old=edges.get(key);
             if(old==null){edges.put(key,edge);return;}
             if(!old.kind().equals(edge.kind())||!old.source().equals(edge.source())||!old.target().equals(edge.target())||!old.region().equals(edge.region()))throw new IllegalArgumentException("Conflicting graph relationship");
+            if(old.evidence().containsAll(edge.evidence()))return;
             var supports=new TreeSet<>(old.evidence());supports.addAll(edge.evidence());
             edges.put(key,new Edge(old.identity(),old.context(),old.kind(),old.source(),old.target(),List.copyOf(supports),old.region()));
         }
@@ -401,12 +464,15 @@ public final class CanonicalGraphBuilder {
             node(gap.gapIdentity().value(),context,"CAPABILITY_GAP",artifact("evidence.gap",gap));
             artifact("graph.unavailable-reference",Map.of("subject",subjectIdentity,"availability","UNAVAILABLE","support",support,"gap",gap.gapIdentity()));
         }
-        KnowledgeGraph finish() {
+        void complete() {
             for(var reference:requiredAttempts.entrySet())if(!nodes.containsKey(reference.getKey())) {
                 String context=reference.getKey().substring(0,reference.getKey().indexOf('|'));
                 if(!contexts.containsKey(context))context=contexts.containsKey(snapshot.value())?snapshot.value():contexts.keySet().iterator().next();
                 projectionGap(context,reference.getKey(),reference.getValue(),"REFERENCED_EVIDENCE_UNAVAILABLE");
             }
+        }
+        KnowledgeGraph finish() {
+            complete();
             return new KnowledgeGraph(snapshot,List.copyOf(contexts.values()),List.copyOf(nodes.values()),List.copyOf(edges.values()),List.copyOf(evidence.values()));
         }
     }

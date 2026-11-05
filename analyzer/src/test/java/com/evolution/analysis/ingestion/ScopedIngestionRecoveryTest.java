@@ -24,7 +24,7 @@ class ScopedIngestionRecoveryTest {
         var result = new UniversalSourceIngestion().assemble(inputs, build, Map.of(key, resolution()),
                 component(), component(), component());
         assertTrue(result.outcomes().stream().filter(o -> o.sourceSet().equals(key))
-                .allMatch(o -> o.request().isEmpty()));
+                .anyMatch(o -> o.request().isPresent()&&o.request().orElseThrow().sourceRecovery()));
     }
 
     @Test void sharedSettingsKeepFailedProjectFootprintBroad() {
@@ -42,7 +42,7 @@ class ScopedIngestionRecoveryTest {
         var result = new UniversalSourceIngestion().assemble(inputs, build, Map.of(key, resolution()),
                 component(), component(), component());
         assertTrue(result.outcomes().stream().filter(o -> o.sourceSet().equals(key))
-                .allMatch(o -> o.request().isEmpty()));
+                .anyMatch(o -> o.request().isPresent()&&o.request().orElseThrow().sourceRecovery()));
     }
 
     @Test void malformedIndependentBuildKeepsExactRequestForHealthyIsland() {
@@ -67,11 +67,11 @@ class ScopedIngestionRecoveryTest {
         assertTrue(result.outcomes().stream().filter(o -> o.sourceSet().module().equals(
                 build.modules().stream().filter(m -> m.descriptor().path().equals("good"))
                         .findFirst().orElseThrow().descriptor().identity()))
-                .anyMatch(o -> o.request().isPresent()), result.issues().toString());
+                .anyMatch(o -> o.request().isPresent()&&!o.request().orElseThrow().sourceRecovery()), result.issues().toString());
         assertTrue(result.outcomes().stream().filter(o -> o.sourceSet().module().equals(
                 build.modules().stream().filter(m -> m.descriptor().path().equals("bad"))
                         .findFirst().orElseThrow().descriptor().identity()))
-                .allMatch(o -> o.request().isEmpty()));
+                .anyMatch(o -> o.request().isPresent()&&o.request().orElseThrow().sourceRecovery()));
     }
 
     @Test void unknownCustomRoleKeepsMainExactAndCustomStructureQualified() {
@@ -91,7 +91,7 @@ class ScopedIngestionRecoveryTest {
         assertTrue(result.outcomes().stream().filter(o -> o.sourceSet().equals(main))
                 .anyMatch(o -> o.request().isPresent()), result.issues().toString());
         assertTrue(result.outcomes().stream().filter(o -> o.sourceSet().equals(custom))
-                .allMatch(o -> o.request().isEmpty()));
+                .anyMatch(o -> o.request().isPresent()&&o.request().orElseThrow().sourceRecovery()));
         assertTrue(result.sources().stream().anyMatch(row -> row.path().endsWith("Probe.java")
                 && row.claims().equals(List.of(custom))));
     }

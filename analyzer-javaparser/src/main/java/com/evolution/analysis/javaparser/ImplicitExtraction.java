@@ -11,8 +11,12 @@ final class ImplicitExtraction {
     private final Extraction context;
     ImplicitExtraction(Extraction context) { this.context=context; }
     void declarations(CompilationUnit unit) {
+        declarations(unit,false);
+    }
+    void declarations(CompilationUnit unit,boolean localsOnly) {
         context.lombok.unsupportedGenerators(unit);
         for (TypeDeclaration<?> type : unit.findAll(TypeDeclaration.class)) {
+            if(localsOnly&&!context.hasLocalOwner(type))continue;
             try {
                 var symbol=context.name(type);
                 if (type instanceof RecordDeclaration record) record(record);

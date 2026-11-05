@@ -51,6 +51,14 @@ public final class SpringDataRepositories {
     public static Result synthesize(SpringSourceEvidence source,int maxTypes) {
         return synthesize(source,Map.of(),maxTypes);
     }
+    /** Positive source/byte evidence for the repository interface mechanism only.
+     * Scan membership, store selection and actual proxy registration remain separate. */
+    public static boolean sourceRepositoryDeclaration(SpringSourceEvidence source,EntityIdentity type,int limit) {
+        if(source.annotations(type).stream().anyMatch(a->a.name().filter("org.springframework.data.repository.NoRepositoryBean"::equals).isPresent()))return false;
+        if(source.annotations(type).stream().anyMatch(a->a.name().filter("org.springframework.data.repository.RepositoryDefinition"::equals).isPresent()))return true;
+        return source.ancestry(type,limit).stream().anyMatch(parent->source.artifact(parent).filter(a->a.groupId().equals("org.springframework.data")).isPresent()
+                &&(COMMON.contains(source.typeName(parent))||STORES.containsValue(source.typeName(parent))));
+    }
     public static Result synthesize(SpringSourceEvidence source,Map<String,String> properties,int maxTypes) {
         if(maxTypes<1)throw new IllegalArgumentException("Positive repository limit required");
         var input=IngestionEvidence.digest(List.of("spring.data-repositories:m4u.2-v1",source.identity(),new TreeMap<>(properties),maxTypes));

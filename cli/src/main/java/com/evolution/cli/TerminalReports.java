@@ -76,7 +76,8 @@ final class TerminalReports {
             var spring=map(depth.get("spring"));
             field("Spring evaluation","Đánh giá Spring",spring.get("status"));
             field("Selected DI binding fact rows","Bản ghi DI binding đã chọn",spring.get("selectedBindingFactRows"));
-            if("NOT_EVALUATED".equals(spring.get("status"))||"PLAN_ONLY".equals(spring.get("status")))
+            if(spring.containsKey("sourceTypeCandidateRows"))field("Source type candidates · contexts","Ứng viên theo kiểu nguồn · context",str(spring.get("sourceTypeCandidateRows"))+" · "+str(spring.get("sourceEvaluatedContexts")));
+            if(Set.of("NOT_EVALUATED","PLAN_ONLY","SOURCE_CANDIDATES_ONLY","PLAN_AND_SOURCE_CANDIDATES").contains(str(spring.get("status"))))
                 line(tr("  Zero DI bindings do not establish absence of dependencies; Spring configuration evaluation is incomplete.","  DI bằng 0 chưa chứng minh không có phụ thuộc; chưa hoàn tất đánh giá cấu hình Spring."));
         }
         var execution=map(d.get("execution"));
@@ -84,6 +85,11 @@ final class TerminalReports {
         if(!s.isEmpty())field("Selection","Phạm vi thu thập",Boolean.TRUE.equals(s.get("allFiles"))?tr("All files","Mọi tệp"):tr("Source/build/config; tests ","Mã nguồn/build/cấu hình; kiểm thử ")+(Boolean.TRUE.equals(s.get("includeTests"))?tr("included","có"):tr("excluded","không")));
         if(s.containsKey("excluded"))field("Recorded exclusions","Đường dẫn loại trừ có ghi nhận",list(s.get("excluded")).size());
         if(!map(d.get("dependencies")).isEmpty())field("Dependency acquisition","Thu nhận thư viện",map(d.get("dependencies")).get("mode"));
+        var polyglot=map(d.get("polyglot"));var syntax=map(polyglot.get("sourceSyntax"));
+        if(!syntax.isEmpty()) {
+            field("Polyglot syntax attempts parsed / total","Lượt phân tích cú pháp đa ngôn ngữ đã phân tích / tổng",str(syntax.get("parsedDocuments"))+" / "+str(syntax.get("documents")));
+            field("Polyglot evidence","Bằng chứng đa ngôn ngữ",polyglot.get("status"));
+        }
         for(Object problem:list(a.get("problems"))){var p=map(problem);line("  ! "+str(p.getOrDefault("reason",p.get("code")))+"  "+str(p.getOrDefault("path",p.get("subject"))));}
         if("TERMINAL_FAILURE".equals(d.get("status"))){
             field("Stopped at","Dừng ở bước",d.getOrDefault("stage","analysis"));

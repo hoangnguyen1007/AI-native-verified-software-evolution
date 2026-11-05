@@ -25,6 +25,22 @@ public final class RepositoryIntake implements AutoCloseable {
     }
     public RepositoryIntake(Path root,boolean readOnly)throws IOException{this.root=root.toAbsolutePath().normalize();content=new StreamingContentStore(this.root.resolve("content"));inventory=new SqliteInventoryStore(this.root.resolve("metadata"),content,readOnly);}
     public InventoryReader inventory(){return inventory;}
+    /** Product capture drains traversal in one invocation and retries only an unsettled
+     * filesystem checkpoint. Missing LFS/content/resources and cancellation never spin. */
+    public StreamingRepositoryAcquirer.Receipt localComplete(Path source,String revision,StreamingAcquisitionRequest request,BooleanSupplier cancelled)throws IOException {
+        StreamingRepositoryAcquirer.Receipt result=null;
+        for(int pass=0;pass<3;pass++) {
+            result=local(source,revision,request,cancelled);
+            if(result.manifest().isPresent()||cancelled.getAsBoolean()||Thread.currentThread().isInterrupted())return result;
+            if(!result.reason().equals("INVENTORY_FRONTIER_OPEN")&&!result.reason().equals("SOURCE_DIRECTORY_CHANGED"))return result;
+            boolean transientOnly=true,found=result.reason().equals("SOURCE_DIRECTORY_CHANGED");Optional<String> cursor=Optional.empty();
+            do{var page=inventory.page(revision,256,cursor);for(var entry:page.entries())if(entry.disposition()==InventoryEntry.Disposition.GAP||entry.disposition()==InventoryEntry.Disposition.PENDING) {
+                found=true;transientOnly&=entry.problem().filter(Set.of("DIRECTORY_CHANGED","SOURCE_CHANGED_OR_LINK_UNCLOSED","FILE_UNAVAILABLE_OR_CHANGED")::contains).isPresent();
+            }cursor=page.continuation();}while(transientOnly&&cursor.isPresent());
+            if(!found||!transientOnly)return result;
+        }
+        return result;
+    }
     /** Immutable captured bytes for isolated build transport; never a mutable host source view. */
     public RepositoryContentStore content(){return content;}
     public JobJournal journal(){return inventory;}

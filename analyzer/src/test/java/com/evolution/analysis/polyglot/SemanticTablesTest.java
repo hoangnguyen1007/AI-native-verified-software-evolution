@@ -9,6 +9,23 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 class SemanticTablesTest {
+    @Test void tableReplayUsesBulkUnderlyingReadsRatherThanOneReadPerByte()throws Exception {
+        var memory=new Memory();var reads=new java.util.concurrent.atomic.AtomicInteger();
+        RepositoryContentStore content=new RepositoryContentStore(){
+            public ContentHandle put(InputStream input,BooleanSupplier cancelled)throws IOException{return memory.put(input,cancelled);}
+            public InputStream open(ContentHandle handle)throws IOException{return new FilterInputStream(memory.open(handle)){
+                public int read()throws IOException{reads.incrementAndGet();return in.read();}
+                public int read(byte[] bytes,int offset,int length)throws IOException{reads.incrementAndGet();return in.read(bytes,offset,length);}
+            };}
+            public InputStream range(ContentHandle handle,long offset,long length)throws IOException{return memory.range(handle,offset,length);}
+            public boolean verify(ContentHandle handle){return memory.verify(handle);}
+        };
+        var tables=new SemanticTables(content,4096);var scope=ContentDigest.sha256Utf8("buffered-replay");
+        var expected=java.util.stream.IntStream.range(0,1000).mapToObj(i->new SemanticTables.Row(SemanticTables.Kind.CENSUS,String.format(Locale.ROOT,"%05d",i),scope,Map.of("name","é😀"))).toList();
+        var table=tables.write(SemanticTables.Kind.CENSUS,expected.iterator(),()->false);var actual=new ArrayList<SemanticTables.Row>();
+        try(var reader=tables.open(table,()->false)){SemanticTables.Row row;while((row=reader.next())!=null)actual.add(row);}
+        assertEquals(expected,actual);assertTrue(reads.get()<32,"Underlying reads: "+reads.get());
+    }
     @Test void pagedRowsRetainTheirExactPrefixAndRejectForgedCursors()throws Exception{
         var content=new Memory();var tables=new SemanticTables(content,4096);var scope=ContentDigest.sha256Utf8("context");
         var rows=java.util.stream.IntStream.range(0,513).mapToObj(i->new SemanticTables.Row(SemanticTables.Kind.CENSUS,String.format(Locale.ROOT,"%04d",i),scope,Map.of("label","é😀"))).toList();

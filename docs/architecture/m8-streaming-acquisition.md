@@ -1,5 +1,7 @@
 # M8.4.1 — Streaming acquisition and durable storage
 
+**Product scan stabilization (2026-11-04):** low-level local acquisition already drains traversal and verification pages. `RepositoryIntake.localComplete` adds at most three passes over the same durable checkpoint for known unsettled file/directory observations, and `evo scan` uses that entry point. It neither treats pagination as missing input nor loops indefinitely on permanent gaps. Cancellation, resources and LFS requirements remain waiting outcomes; low-level mutation rejection is preserved. Every successful pass must still close traversal and recheck captured source before sealing. A first-invocation 520-file control and a deliberately unsettled-then-stable source control distinguish page completion from checkpoint recovery.
+
 Date: 2026-10-18. **Implementation contract for step 1**, under [ADR-007](../decisions/ADR-007-isolated-build-and-polyglot-readiness.md) and the [M8.4 plan](../tasks/m8/04-comprehensive-repository-readiness.md). This document does not certify steps 2–6 or a milestone gate. Verification and remaining qualifications are recorded in the step-1 execution section of the plan.
 
 ## Boundaries and identities
@@ -23,6 +25,10 @@ Raw names unsupported by the host are read directly from Git objects or archives
 ## Publication, recovery and resources
 
 CAS writes stream to private staging, hash incrementally, force the file, then publish with create-if-absent hard-link semantics on the same filesystem. Existing content is checked and never overwritten. An unsupported atomic-publication filesystem produces an explicit requirement. Failed writes do not return published handles. Range and legacy materialization bounds are independent of repository admission.
+
+**2026-11-04 implementation extension:** local acquisition batches up to 256 blobs of at most 64 KiB each into a SHA-256-named immutable `packs/*.pack` segment. The segment is forced and atomically published before its derived loose CAS files or any referencing inventory commit. This replaces per-blob forcing for that batch; large blobs keep the streaming forced-file path. Duplicate verified loose objects require no additional content force. These are working-set bounds, not repository limits. Directory traversal no longer forces an undersized inventory batch at each directory boundary; cancellation still durably checkpoints the collected prefix.
+
+The bounded binary segment records its version/magic, row count, SHA-256, length and original bytes for every unique blob. Cold reads recover missing loose cache files from a fully hash-verified segment, validating individual row hashes and sizes before caching. Existing corrupt loose evidence is rejected, never overwritten. No packed cache index defines evidence authority; legacy loose-only stores remain readable. The tradeoff is an additional retained copy of newly packed small bytes, plus segment metadata; no cleanup/compaction is implied. Process-crash/cache-loss controls do not certify arbitrary hardware power-loss durability.
 
 The authoritative journal consists of immutable sequence-numbered commit records and SHA-256-addressed operation bodies. Each commit binds the preceding digest. Publication precedes the derived SQLite transaction, allowing an interrupted transaction to replay exactly once. Index corruption is quarantined, including SQLite sidecars, and rebuilt from the original operations. Missing links in the commit sequence or corrupt authoritative content withhold recovery; they are not normalized away. Foreign/newer metadata databases are rejected without overwriting their schema.
 
@@ -73,3 +79,7 @@ Additive HTTP routes (same loopback transport safeguards):
 - `POST /api/v2/analysis/jobs/{id}/resume`: explicit failed/interrupted-job continuation.
 
 Existing v1 graph/query identities, metrics and score formulas are unchanged. V1 job states describe the bounded semantic consumer; the v2 inventory receipt describes full selected-input acquisition. A complete inventory is not complete semantics, a build result or Track A acceptance.
+
+### CAS disk-space sampling — 2026-11-05
+
+`StreamingContentStore` retains a validated FileStore instead of resolving the volume for every stream write. Both producer and input-stream writes use a 64-KiB buffer. Each private write conservatively debits its sampled usable-space allowance, rechecks after at most 8 MiB or one second, and checks the reserve before publication. A single large producer write is partitioned across those checkpoints. Concurrent filesystem activity can still fail an OS write; failure/cancellation retains the atomic no-handle/no-publication contract. Sampling is operational policy and never contributes to content identity. The authored 3-MiB tiny-write regression changes 48 space probes to at most three while preserving SHA-256; this is not a ThingsBoard timing measurement.

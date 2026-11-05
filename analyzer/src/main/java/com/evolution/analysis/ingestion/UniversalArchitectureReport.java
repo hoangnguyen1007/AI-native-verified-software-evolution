@@ -57,7 +57,7 @@ public final class UniversalArchitectureReport {
             Objects.requireNonNull(coordinate);
             languages = List.copyOf(languages);
             sourceRoots = List.copyOf(sourceRoots);
-            dependencies = List.copyOf(dependencies);
+            dependencies = AnalysisWorkspace.ReplayList.copy(dependencies);
         }
     }
 
@@ -191,7 +191,7 @@ public final class UniversalArchitectureReport {
             affectedArchitecture = ContractChecks.text(affectedArchitecture, "affectedArchitecture");
             attempted = ContractChecks.text(attempted, "attempted");
             nextEvidenceRequirement = ContractChecks.text(nextEvidenceRequirement, "nextEvidenceRequirement");
-            affectedObligations = List.copyOf(affectedObligations);
+            affectedObligations = AnalysisWorkspace.ReplayList.copy(affectedObligations);
             Objects.requireNonNull(mode);
         }
     }
@@ -253,34 +253,34 @@ public final class UniversalArchitectureReport {
         this.inputIdentity = Objects.requireNonNull(inputIdentity);
         this.status = Objects.requireNonNull(status);
         this.inventory = Objects.requireNonNull(inventory);
-        this.modules = List.copyOf(modules);
-        this.types = List.copyOf(types);
-        this.dependencies = List.copyOf(dependencies);
-        this.components = List.copyOf(components);
-        this.producers = List.copyOf(producers);
-        this.injectionSites = List.copyOf(injectionSites);
-        this.entryPoints = List.copyOf(entryPoints);
-        this.truthRegions = List.copyOf(truthRegions);
-        this.rootCauses = List.copyOf(rootCauses);
-        this.issues = List.copyOf(issues);
-        this.gaps = List.copyOf(gaps);
+        this.modules = AnalysisWorkspace.ReplayList.copy(modules);
+        this.types = AnalysisWorkspace.ReplayList.copy(types);
+        this.dependencies = AnalysisWorkspace.ReplayList.copy(dependencies);
+        this.components = AnalysisWorkspace.ReplayList.copy(components);
+        this.producers = AnalysisWorkspace.ReplayList.copy(producers);
+        this.injectionSites = AnalysisWorkspace.ReplayList.copy(injectionSites);
+        this.entryPoints = AnalysisWorkspace.ReplayList.copy(entryPoints);
+        this.truthRegions = AnalysisWorkspace.ReplayList.copy(truthRegions);
+        this.rootCauses = AnalysisWorkspace.ReplayList.copy(rootCauses);
+        this.issues = AnalysisWorkspace.ReplayList.copy(issues);
+        this.gaps = AnalysisWorkspace.ReplayList.copy(gaps);
         this.metrics = Objects.requireNonNull(metrics);
 
         this.identity = IngestionEvidence.digest(List.of(
                 PROVIDER,
                 inputIdentity,
                 status.name(),
-                this.modules.stream().map(m -> List.of(m.identity().value(), m.name(), m.path(), m.tool())).toList(),
-                this.types.stream().map(t -> List.of(t.module().value(), t.qualifiedName(), t.kind())).toList(),
-                this.dependencies.stream().map(d -> List.of(d.source(), d.target(), d.kind(), d.layer().name())).toList(),
-                this.components.stream().map(c -> List.of(c.identity(), c.beanName(), c.declaringType(), c.stereotype())).toList(),
-                this.producers.stream().map(p -> List.of(p.factoryType(), p.methodName(), p.productType(), p.beanName())).toList(),
-                this.injectionSites.stream().map(s -> List.of(s.owner(), s.memberName(), s.targetType(), s.siteKind())).toList(),
-                this.entryPoints.stream().map(e -> List.of(e.declaringType(), e.kind().name(), e.detail())).toList(),
-                this.truthRegions.stream().map(r -> List.of(r.factKey(), r.kind(), r.classification().name(), r.feasibleWorlds())).toList(),
-                this.rootCauses.stream().map(rc -> List.of(rc.category().name(), rc.affectedArchitecture(), rc.mode().name(), rc.affectedObligations())).toList(),
-                this.issues.stream().map(IngestionEvidence.Issue::identity).toList(),
-                this.gaps.stream().map(g -> g.gapIdentity().value()).toList(),
+                AnalysisWorkspace.ReplayList.map(this.modules,m -> List.of(m.identity().value(), m.name(), m.path(), m.tool())),
+                AnalysisWorkspace.ReplayList.map(this.types,t -> List.of(t.module().value(), t.qualifiedName(), t.kind())),
+                AnalysisWorkspace.ReplayList.map(this.dependencies,d -> List.of(d.source(), d.target(), d.kind(), d.layer().name())),
+                AnalysisWorkspace.ReplayList.map(this.components,c -> List.of(c.identity(), c.beanName(), c.declaringType(), c.stereotype())),
+                AnalysisWorkspace.ReplayList.map(this.producers,p -> List.of(p.factoryType(), p.methodName(), p.productType(), p.beanName())),
+                AnalysisWorkspace.ReplayList.map(this.injectionSites,s -> List.of(s.owner(), s.memberName(), s.targetType(), s.siteKind())),
+                AnalysisWorkspace.ReplayList.map(this.entryPoints,e -> List.of(e.declaringType(), e.kind().name(), e.detail())),
+                AnalysisWorkspace.ReplayList.map(this.truthRegions,r -> List.of(r.factKey(), r.kind(), r.classification().name(), r.feasibleWorlds())),
+                AnalysisWorkspace.ReplayList.map(this.rootCauses,rc -> List.of(rc.category().name(), rc.affectedArchitecture(), rc.mode().name(), rc.affectedObligations())),
+                AnalysisWorkspace.ReplayList.map(this.issues,IngestionEvidence.Issue::identity),
+                AnalysisWorkspace.ReplayList.map(this.gaps,g -> g.gapIdentity().value()),
                 List.of(metrics.totalFiles(), metrics.javaFiles(), metrics.analyzedModules(), metrics.declaredTypes(),
                         metrics.evidencedComponents(), metrics.truthRegionsCount(), metrics.unknownFactsCount(), metrics.confidence().name())
         ));

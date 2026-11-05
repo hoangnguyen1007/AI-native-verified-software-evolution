@@ -60,6 +60,11 @@ class ReactorSourceResolutionTest {
                 .findFirst().orElseThrow();
         assertEquals(3, declares.attempted(), "resolution-only sibling declarations are not analyzed twice");
         assertEquals(FrontendResult.State.COMPLETED, result.state(), () -> result.diagnostics().toString());
+        var recovered=new JavaParserFrontend().analyze(LombokIngestionTest.recovery(request));
+        var recoveredCall=recovered.occurrences().stream().filter(o->o.relationship().kind().value().equals("java.calls")).findFirst().orElseThrow();
+        assertEquals(SemanticStatus.RESOLVED,recoveredCall.status());
+        assertEquals(target,((RelationshipTarget.Resolved)recoveredCall.relationship().target()).target());
+        assertEquals(FrontendResult.State.PARTIAL,recovered.state());
     }
 
     @Test

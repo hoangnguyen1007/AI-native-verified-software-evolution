@@ -12,7 +12,7 @@ import org.codehaus.plexus.util.xml.Xpp3Dom;
 final class SourcePlanProjection {
     private static final String COMPILER = "org.apache.maven.plugins:maven-compiler-plugin";
     private static final Set<String> SETTINGS = Set.of("source", "target", "release", "testSource", "testTarget",
-            "testRelease", "encoding", "enablePreview", "generatedSourcesDirectory", "generatedTestSourcesDirectory");
+            "testRelease", "encoding", "enablePreview", "proc", "generatedSourcesDirectory", "generatedTestSourcesDirectory");
     // User-property bindings from the compiler 3.15.0 compile/testCompile descriptors.
     // Arbitrary project properties (e.g. maven.compiler.plugin.version) are not Mojo parameters.
     private static final Set<String> COMPILER_PROPERTIES=Set.of("compilerId","compilerReuseStrategy","compilerVersion",
@@ -87,6 +87,10 @@ final class SourcePlanProjection {
         Setting preview = parameter(config, "enablePreview", "maven.compiler.enablePreview", null);
         if (preview.value().isPresent() && !Set.of("true", "false").contains(preview.value().get())) preview = invalid(preview, Status.INVALID);
         settings.put("enablePreview", preview);
+        Setting processing=parameter(config,"proc","maven.compiler.proc",null);
+        if(processing.value().isPresent()&&!Set.of("none","full","only").contains(processing.value().orElseThrow()))processing=invalid(processing,Status.INVALID);
+        if(processing.value().filter("only"::equals).isPresent())processing=invalid(processing,Status.UNSUPPORTED);
+        settings.put("proc",processing);
         var properties = new TreeMap<String, String>();
         model.getProperties().forEach((k, v) -> properties.put(k.toString(), v.toString()));
         properties.putAll(request.policy().userProperties());
@@ -141,7 +145,7 @@ final class SourcePlanProjection {
         Setting generated = parameter(config, generatedName, null, null);
         if (generated.status() == Status.UNSPECIFIED) generated = convention("compiler." + generatedName,
                 "${project.build.directory}/" + (test ? "generated-test-sources/test-annotations" : "generated-sources/annotations"));
-        var hints = roots.isEmpty() ? List.<Setting>of() : List.of(path(generated, gaps));
+        var hints = roots.isEmpty() || processing.value().filter("none"::equals).isPresent() ? List.<Setting>of() : List.of(path(generated, gaps));
         if (!hints.isEmpty()) gaps.add(Gap.GENERATED_SOURCES_NOT_ACQUIRED);
         if (syntax.value().isEmpty() && !roots.isEmpty()) gaps.add(Gap.MISSING_SOURCE_LEVEL);
         if (release.value().isEmpty() && !roots.isEmpty()) gaps.add(Gap.MISSING_PLATFORM_RELEASE);

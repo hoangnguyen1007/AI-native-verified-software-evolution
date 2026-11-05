@@ -23,6 +23,70 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 class UniversalArchitecturePipelineIntegrationTest {
 
+    @Test void declaredSpringEndpointsReachGraphAndQueryWithoutRuntimePromotion()throws Exception {
+        String source="""
+                package demo;
+                @org.springframework.boot.autoconfigure.SpringBootApplication class App {}
+                @org.springframework.web.bind.annotation.RestController class Api {
+                  @org.springframework.web.bind.annotation.GetMapping("/pets") String pets(){ return "pets"; }
+                }
+                class Plain { @org.springframework.web.bind.annotation.GetMapping("/not-controller") void hidden(){} }
+                @interface GetMapping { String value(); }
+                @org.springframework.web.bind.annotation.RestController class Impostor { @demo.GetMapping("/impostor") void hidden(){} }
+                """;
+        var input=inputs(Map.of("src/main/java/demo/App.java",source));
+        var exact=ComponentIngestionTest.fixture(Map.of("fixture/App.java",source),false).request();
+        var model=new UniversalBuildIngestion().ingest(input,UniversalBuildIngestion.Policy.defaults(),Optional.empty(),Map.of(),new BuildModelPolicy(List.of(),List.of(),Map.of(),10000,100,16));
+        var key=new UniversalSourceIngestion.SourceSet(model.modules().getFirst().descriptor().identity(),SourcePlanModel.Kind.MAIN);
+        var policy=UniversalArchitecturePipeline.Policy.builder(new JavaParserFrontend(),JavaParserFrontend.PROVIDER).defaultPlatform(exact.platform())
+                .resolutions(Map.of(key,new UniversalSourceIngestion.Resolution(exact.platform(),exact.dependencies(),ContentDigest.sha256Utf8("endpoint classpath")))).build();
+        var detailed=new UniversalArchitecturePipeline().runWithEvidence(input,policy);
+        var graph=new com.evolution.analysis.graph.CanonicalGraphBuilder().build(detailed.graphInput().orElseThrow());
+        var endpoints=graph.nodes().stream().filter(n->n.kind().equals("ENDPOINT")).toList();assertEquals(1,endpoints.size());
+        var endpoint=endpoints.getFirst();
+        var request=com.evolution.analysis.query.ArchitectureQuery.Request.dependencies(graph.identity(),endpoint.context());
+        var result=new com.evolution.analysis.query.ArchitectureQueryService(graph).spring(request,Set.of("ENDPOINT"),com.evolution.analysis.query.ArchitectureQuery.Page.first());
+        assertEquals(1,result.items().size());assertEquals("GET /pets",result.items().getFirst().spelling().orElseThrow());
+        assertFalse(result.gaps().stream().anyMatch(g->g.reasonCode().equals("ENDPOINT_COVERAGE_UNAVAILABLE")));
+        var evidence=endpoint.evidence().stream().map(r->graph.evidence(r).orElseThrow()).filter(e->e.family().equals("spring.endpoint-declaration")).findFirst().orElseThrow();
+        var payload=com.evolution.analysis.graph.GraphJson.object(com.evolution.analysis.graph.GraphJson.read(evidence.canonicalJson(),com.evolution.analysis.graph.GraphJson.Limits.defaults()));
+        assertEquals("DECLARATION_ONLY",payload.get("scope"));assertEquals("UNKNOWN",payload.get("activation"));assertEquals(false,payload.get("runtimeObserved"));
+        var publicEvidence=new com.evolution.analysis.query.ArchitectureQueryService(graph).evidence(request,evidence.identity()).items().getFirst().metadata();
+        assertEquals(false,publicEvidence.get("runtimeObserved"));assertEquals("DECLARATION_ONLY",publicEvidence.get("scope"));
+        var restored=new com.evolution.analysis.graph.GraphSnapshotCodec().decode(new com.evolution.analysis.graph.GraphSnapshotCodec().encode(graph),com.evolution.analysis.graph.GraphJson.Limits.defaults());
+        assertEquals(result.identity(),new com.evolution.analysis.query.ArchitectureQueryService(restored).spring(request,Set.of("ENDPOINT"),com.evolution.analysis.query.ArchitectureQuery.Page.first()).identity());
+        var metricRequest=new com.evolution.analysis.query.ArchitectureQuery.Request(request.graph(),request.context(),com.evolution.analysis.query.ArchitectureQuery.Scope.SPRING_COMPONENT,request.projection(),request.direction(),request.relationshipKinds(),request.population(),request.includeMust(),request.realization(),request.limits());
+        var metric=new com.evolution.analysis.metrics.ArchitectureMetricsService(graph).compute(metricRequest,"metric.spring",endpoint.context());
+        assertEquals("OBSERVED_DECLARATIONS",metric.details().get("endpointCountStatus"));
+        assertNotEquals(UniversalArchitectureReport.Status.COMPLETE,detailed.report().status());
+    }
+
+    @Test void incompleteUnrelatedClasspathStillRunsSpringEnrichmentAndKeepsContextUnknown()throws Exception {
+        String source="""
+                package demo;
+                @org.springframework.boot.autoconfigure.SpringBootApplication class App {}
+                @org.springframework.stereotype.Service class Store {}
+                @org.springframework.stereotype.Service class Client { Client(Store store) {} }
+                """;
+        var input=inputs(Map.of("src/main/java/demo/App.java",source));
+        var exact=ComponentIngestionTest.fixture(Map.of("fixture/App.java",source),false).request();
+        var model=new UniversalBuildIngestion().ingest(input,UniversalBuildIngestion.Policy.defaults(),Optional.empty(),Map.of(),new BuildModelPolicy(List.of(),List.of(),Map.of(),10000,100,16));
+        var key=new UniversalSourceIngestion.SourceSet(model.modules().getFirst().descriptor().identity(),SourcePlanModel.Kind.MAIN);
+        var resolution=new UniversalSourceIngestion.Resolution(exact.platform(),exact.dependencies(),ContentDigest.sha256Utf8("incomplete classpath"),Optional.empty(),false,List.of());
+        var policy=UniversalArchitecturePipeline.Policy.builder(new JavaParserFrontend(),JavaParserFrontend.PROVIDER).defaultPlatform(exact.platform()).resolutions(Map.of(key,resolution)).build();
+        var detailed=new UniversalArchitecturePipeline().runWithEvidence(input,policy);
+        var unit=detailed.graphInput().orElseThrow().ingestion().orElseThrow().units().getFirst();
+        assertEquals(UniversalIngestionPipeline.Status.ANALYZED,unit.status());assertTrue(unit.spring().isPresent());
+        assertTrue(unit.constructors().orElseThrow().rows().stream().anyMatch(r->r.parameters().size()==1&&r.status()==ConstructorInjectionIngestion.Status.SELECTED));
+        assertFalse(detailed.graphInput().orElseThrow().spring().isEmpty());
+        assertTrue(detailed.graphInput().orElseThrow().spring().stream().anyMatch(s->!s.plan().binding().dependencies().isEmpty()));
+        var graph=new com.evolution.analysis.graph.CanonicalGraphBuilder().build(detailed.graphInput().orElseThrow());
+        assertEquals(1,graph.edges().stream().filter(e->e.kind().equals("spring.source-type-candidate")).count());
+        assertTrue(graph.evidence().stream().filter(e->e.family().equals("spring.source-type-candidate")).allMatch(e->e.canonicalJson().contains("NOT_SELECTED")&&e.canonicalJson().contains("NOT_EVALUATED")));
+        assertEquals(UniversalArchitectureReport.Status.PARTIAL,detailed.report().status());
+        assertFalse(detailed.report().gaps().isEmpty());
+    }
+
     @Test void autoEvaluatesRepositoryBaselineWithoutInventingExternalOrContainerClosure() throws Exception {
         String source="""
                 package demo;
@@ -80,7 +144,7 @@ class UniversalArchitecturePipelineIntegrationTest {
         assertNotEquals(UniversalArchitectureReport.Status.COMPLETE,result.report().status());
         var graph=new com.evolution.analysis.graph.CanonicalGraphBuilder().build(result.graphInput().orElseThrow());
         assertTrue(graph.nodes().stream().anyMatch(n->n.kind().equals("CONSTRUCTOR_INJECTION_CANDIDATE")));
-        assertTrue(result.graphInput().orElseThrow().ingestion().orElseThrow().units().stream().allMatch(u->u.spring().isEmpty()));
+        assertTrue(result.graphInput().orElseThrow().ingestion().orElseThrow().units().stream().filter(u->u.frontend().isPresent()).allMatch(u->u.spring().isPresent()));
     }
 
     @Test void dynamicGradleKeepsSourceDeclarationsAndUnresolvedApiEvidence() {
@@ -95,13 +159,14 @@ class UniversalArchitecturePipelineIntegrationTest {
         assertEquals(Set.of(JavaSymbolName.topLevelType("p","Api").canonicalName(),JavaSymbolName.topLevelType("p","Client").canonicalName()),first.report().types().stream().map(UniversalArchitectureReport.TypeRecord::qualifiedName).collect(java.util.stream.Collectors.toSet()));
         var units=first.graphInput().orElseThrow().ingestion().orElseThrow().units();
         var frontend=units.stream().flatMap(u->u.frontend().stream()).findFirst().orElseThrow();
-        assertTrue(units.stream().allMatch(u->u.spring().isEmpty()));
+        assertTrue(units.stream().filter(u->u.frontend().isPresent()).allMatch(u->u.spring().isPresent()));
         assertTrue(first.report().gaps().stream().anyMatch(g->g.reasonCode().equals("CONTEXT_INCOMPLETE")&&g.mechanismCategory().equals("spring.universal")));
         assertEquals(2,frontend.sources().size());
         assertEquals(1,frontend.annotations().size());
         assertTrue(frontend.observations().stream().anyMatch(o->o.category().value().equals("java.calls")&&o.attribution()==com.evolution.analysis.contract.semantic.SemanticStatus.UNRESOLVED&&o.span().isPresent()));
         assertEquals(2,frontend.observations().stream().filter(o->o.category().value().equals("java.calls")).count());
-        assertTrue(frontend.observations().stream().filter(o->o.category().value().equals("java.calls")).allMatch(o->o.attribution()==com.evolution.analysis.contract.semantic.SemanticStatus.UNRESOLVED));
+        assertTrue(frontend.observations().stream().anyMatch(o->o.reference().equals("helper()")&&o.attribution()==com.evolution.analysis.contract.semantic.SemanticStatus.RESOLVED));
+        assertTrue(frontend.observations().stream().anyMatch(o->o.reference().equals("External.call()")&&o.attribution()==com.evolution.analysis.contract.semantic.SemanticStatus.UNRESOLVED));
         assertFalse(com.evolution.analysis.spring.SpringFrameworkEvidence.fromRequest(first.graphInput().orElseThrow().ingestion().orElseThrow().sourceIngestion().outcomes().stream().flatMap(o->o.request().stream()).findFirst().orElseThrow()).completeClasspath());
         assertNotEquals(UniversalArchitectureReport.Status.TERMINAL_FAILURE,first.report().status());
         assertFalse(first.report().gaps().isEmpty());
@@ -130,7 +195,7 @@ class UniversalArchitecturePipelineIntegrationTest {
         assertEquals(1,result.report().types().size());assertNotEquals(UniversalArchitectureReport.Status.COMPLETE,result.report().status());
         assertTrue(result.graphInput().orElseThrow().ingestion().orElseThrow().sourceIngestion().outcomes().stream().flatMap(o->o.request().stream()).allMatch(FrontendRequest::sourceRecovery));
         assertTrue(result.graphInput().orElseThrow().build().orElseThrow().modules().stream().flatMap(m->m.sourcePlan().sourceSets().stream()).anyMatch(s->s.gaps().contains(SourcePlanModel.Gap.UNSUPPORTED_COMPILER_CONFIGURATION)));
-        assertEquals("m8.4-source-recovery-v2",UniversalSourceIngestion.PROVIDER.version());assertEquals("3.9.16-m7.2-compiler-bindings-v1",MavenBuildModelProvider.VERSION.version());
+        assertEquals("m8.4-reactor-recovery-v2",UniversalSourceIngestion.PROVIDER.version());assertEquals("3.9.16-m8.4-processing-policy-v1",MavenBuildModelProvider.VERSION.version());
     }
 
     private static SpringBuildContext testBuildContext(PlatformInput platform, List<BinaryInput> dependencies) {

@@ -46,7 +46,7 @@ final class BeanMethodIngestion {
             var returns=source.frontend().types().stream().filter(t -> t.owner().equals(Optional.of(id))&&t.role().value().equals("java.returns"))
                     .map(TypeUseRecord::type).toList();
             boolean complete=beans.size()==1&&declaration.status()==SemanticStatus.RESOLVED
-                    &&source.frontend().state()==FrontendResult.State.COMPLETED
+                    &&source.declarationParsed(id)
                     &&source.annotations(id).stream().allMatch(a -> a.name().filter(n -> METADATA.contains(n)||CONDITIONS.contains(n)).isPresent());
             String header=declaration.spelling();
             for(var annotation:source.annotations(id))header=header.replace(annotation.use().spelling()," ");

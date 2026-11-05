@@ -24,6 +24,7 @@ final class Extraction {
     private static final VersionedIdentifier VERSION = JavaParserFrontend.PROVIDER;
     private static final Derivation DIRECT = new Derivation(DerivationKind.DIRECT, new VersionedIdentifier("java.source", "1"), List.of());
     private final FrontendRequest request;
+    private final boolean compactBodies;
     private final ResolutionEnvironment environment;
     private final Map<CompilationUnit, Unit> units = new IdentityHashMap<>();
     private final List<Unit> orderedUnits = new ArrayList<>();
@@ -42,6 +43,9 @@ final class Extraction {
     private final List<AnnotationUseRecord> annotations = new ArrayList<>();
     private final Set<Diagnostic> diagnostics = new TreeSet<>();
     private final List<SourceOutcome> rejected = new ArrayList<>();
+    private record ClosureFailure(SemanticStatus status,String code) {}
+    private final Map<String,Optional<ClosureFailure>> recoveryHierarchies=new HashMap<>();
+    private final Set<MethodCallExpr> recoveryCallInputs=Collections.newSetFromMap(new IdentityHashMap<>());
     private boolean reactorResolutionDegraded;
     final LombokExtraction lombok = new LombokExtraction(this);
     private NativeMemberExtraction nativeMembers;
@@ -59,7 +63,11 @@ final class Extraction {
         MappingFailure(SemanticStatus status, String code) { this.status = status; this.code = code; }
     }
     Extraction(FrontendRequest request) {
+        this(request,true);
+    }
+    Extraction(FrontendRequest request,boolean compactBodies) {
         this.request = Objects.requireNonNull(request);
+        this.compactBodies=compactBodies;
         environment = new ResolutionEnvironment(request);
         diagnostics.addAll(environment.diagnostics);
     }
@@ -67,34 +75,51 @@ final class Extraction {
     FrontendResult run() {
         parse();
         if(request.sourceRecovery())diagnostics.add(new Diagnostic(DiagnosticSeverity.WARNING,"java.source-recovery",
-                "Source declarations and written syntax retained; build-dependent attribution requires a complete context",
+                "Available source, platform and artifact bindings are attributed individually; build closure remains incomplete",
                 Optional.empty(),Map.of("mode",FrontendRequest.SOURCE_RECOVERY)));
-        if(!request.sourceRecovery())indexTypes();
+        indexTypes();
         // Materialize declaration identities before emitting edges, so collisions can be withheld.
         for (var unit : orderedUnits) for (var node : unit.ast.stream().filter(this::isDeclaration).toList()) {
             try { entity(node); } catch (RuntimeException exception) { /* Recorded in the declaration observation pass below. */ }
         }
         nativeMembers=new NativeMemberExtraction(this,request,environment);
-        if(!request.sourceRecovery())nativeMembers.declarations();
+        nativeMembers.declarations();
         var implicit = new ImplicitExtraction(this);
-        if(!request.sourceRecovery())for (var unit : orderedUnits) implicit.declarations(unit.ast);
-        for (var unit : orderedUnits) {
+        for (var unit : orderedUnits) implicit.declarations(unit.ast);
+        var shapes=new ArrayList<TypeDeclarationRecord>();var members=new ArrayList<MemberDeclarationRecord>();
+        var constructorCandidates=new ArrayList<LombokConstructorCandidate>();
+        var sourceTypeNames=new HashSet<String>();for(var header:orderedUnits)for(TypeDeclaration<?> type:header.ast.findAll(TypeDeclaration.class))type.getFullyQualifiedName().ifPresent(sourceTypeNames::add);
+        for (var header : orderedUnits) {
+            // Only declaration skeletons live across files. Method/initializer bodies and
+            // expression resolver caches belong to one active source document at a time.
+            var unit=compactBodies?parse(parser(),header.input,Optional.empty()).orElseThrow():header;
+            unit.ast.stream().filter(this::membershipNode).forEach(sourceNodes::add);
+            if(compactBodies)implicit.declarations(unit.ast,true);
             for (var node : unit.ast.stream().filter(this::isDeclaration).toList()) observe(node, "declares", () -> entity(node), () -> owner(node));
             for (var node : unit.ast.findAll(MethodCallExpr.class)) observe(node, "calls", () -> resolveCall(node), () -> owner(node));
             for (var node : unit.ast.findAll(ObjectCreationExpr.class)) observe(node, "constructor-calls", () -> resolveCall(node), () -> owner(node));
             for (var node : unit.ast.findAll(ExplicitConstructorInvocationStmt.class)) observe(node, "constructor-calls", () -> callable(node.resolve()), () -> owner(node));
             var references = new ReferenceResolution(environment.solver);
-            for (var node : unit.ast.findAll(MethodReferenceExpr.class)) observe(node,"method-references",() -> callable(references.resolve(node),node),() -> owner(node));
+            for (var node : unit.ast.findAll(MethodReferenceExpr.class)) observe(node,"method-references",() -> {
+                var selected=references.resolve(node);
+                if(request.sourceRecovery()&&selected instanceof ResolvedMethodDeclaration method) {
+                    var receiver=recoveryReceiver(node,Optional.of(node.getScope()));
+                    if(!ownZeroArgumentMethod(method,receiver))requireRecoveryHierarchy(receiver);
+                }
+                return callable(selected,node);
+            },() -> owner(node));
             types.addAll(new TypeExtraction(this).extract(unit.ast));
             new ExpressionTypeExtraction(this).extract(unit.ast);
             new FieldExtraction(this).extract(unit.ast);
             new AnnotationExtraction(this).extract(unit.ast);
-            if(!request.sourceRecovery()) {
-                implicit.relationships(unit.ast);
-                lombok.relationships(unit.ast);
-            }
+            implicit.relationships(unit.ast);
+            if(compactBodies)lombok.relationships(header.ast);
+            lombok.relationships(unit.ast);
+            shapes.addAll(typeDeclarations(unit));members.addAll(memberDeclarations(unit));
+            constructorCandidates.addAll(LombokCandidates.extract(this,List.of(unit.ast),types,sourceTypeNames));
+            header.diagnostics.addAll(unit.diagnostics);
+            if(compactBodies)releaseBody(unit);
         }
-        var constructorCandidates=LombokCandidates.extract(this,orderedUnits.stream().map(u->u.ast).toList(),types);
         var outcomes = new ArrayList<>(rejected);
         for (var unit : orderedUnits) outcomes.add(new SourceOutcome(unit.input.document().identity(),
                 unit.diagnostics.isEmpty() ? SourceOutcome.State.PROCESSED : SourceOutcome.State.PARTIAL, List.copyOf(unit.diagnostics)));
@@ -115,12 +140,19 @@ final class Extraction {
                         ? FrontendResult.State.COMPLETED : FrontendResult.State.PARTIAL,
                 declarations.values().stream().filter(d -> !duplicateDeclarations.contains(d.entity().identity())).toList(),
                 List.copyOf(occurrences.values()), observations, outcomes, coverage, List.copyOf(diagnostics), types, annotations,
-                List.copyOf(derived),typeDeclarations(),memberDeclarations(),constructorCandidates);
+                List.copyOf(derived),shapes,members,constructorCandidates);
     }
 
-    private List<MemberDeclarationRecord> memberDeclarations() {
+    private void releaseBody(Unit unit) {
+        unit.ast.walk(node->{sourceNodes.remove(node);nodes.remove(node);names.remove(node);});
+        units.remove(unit.ast);recoveryCallInputs.clear();lombok.releaseBody(unit.ast);
+    }
+    long retainedBodyStatements(){return units.keySet().stream().flatMap(ast->ast.findAll(com.github.javaparser.ast.stmt.Statement.class).stream()).count();}
+    long retainedCalls(){return units.keySet().stream().mapToLong(ast->ast.findAll(MethodCallExpr.class).size()).sum();}
+
+    private List<MemberDeclarationRecord> memberDeclarations(Unit unit) {
         var result=new ArrayList<MemberDeclarationRecord>();
-        for(var unit:orderedUnits)for(var node:unit.ast.stream().toList()) {
+        for(var node:unit.ast.stream().toList()) {
             var entity=nodes.get(node);
             if(entity==null||duplicateDeclarations.contains(entity.identity()))continue;
             if(node instanceof VariableDeclarator variable && variable.getParentNode().orElse(null) instanceof FieldDeclaration field) {
@@ -135,9 +167,9 @@ final class Extraction {
         }
         return result;
     }
-    private List<TypeDeclarationRecord> typeDeclarations() {
+    private List<TypeDeclarationRecord> typeDeclarations(Unit unit) {
         var result=new ArrayList<TypeDeclarationRecord>();
-        for(var unit:orderedUnits)for(var type:unit.ast.findAll(TypeDeclaration.class)) {
+        for(var type:unit.ast.findAll(TypeDeclaration.class)) {
             var entity=nodes.get(type);
             if(entity==null || duplicateDeclarations.contains(entity.identity()))continue;
             TypeDeclarationRecord.Kind kind=type instanceof AnnotationDeclaration?TypeDeclarationRecord.Kind.ANNOTATION
@@ -157,22 +189,39 @@ final class Extraction {
     }
 
     private void parse() {
-        var configuration = new ParserConfiguration().setLanguageLevel(languageLevel())
-                .setTabSize(1).setPreprocessUnicodeEscapes(true).setSymbolResolver(new JavaSymbolSolver(environment.solver));
-        var parser = new JavaParser(configuration);
+        var parser = parser();
         for (var input : request.sources()) {
+            if(Thread.currentThread().isInterrupted())throw new java.util.concurrent.CancellationException();
             parse(parser, input, Optional.empty()).ifPresent(unit -> {
+                if(compactBodies)skeleton(unit.ast);
                 orderedUnits.add(unit);
-                sourceNodes.addAll(unit.ast.stream().toList());
+                unit.ast.stream().filter(this::membershipNode).forEach(sourceNodes::add);
             });
         }
         for (ReactorSourceInput reactor : request.reactorSources()) {
             for (SourceInput input : reactor.sources()) {
                 parse(parser, input, Optional.of(reactor)).ifPresent(unit -> {
+                    if(compactBodies)skeleton(unit.ast);
                     reactorUnits.add(new ReactorUnit(reactor, unit));
-                    reactorNodes.addAll(unit.ast.stream().toList());
+                    unit.ast.stream().filter(this::membershipNode).forEach(reactorNodes::add);
                 });
             }
+        }
+    }
+    private JavaParser parser() {
+        return new JavaParser(new ParserConfiguration().setLanguageLevel(languageLevel()).setTabSize(1)
+                .setStoreTokens(true).setAttributeComments(false).setPreprocessUnicodeEscapes(false)
+                .setSymbolResolver(new JavaSymbolSolver(environment.solver)));
+    }
+    /** Preserve signatures, annotations, constants, ranges and member shape for cross-file
+     * resolution. No method/constructor/initializer executable body enters the global index. */
+    private static void skeleton(CompilationUnit ast) {
+        for(var method:ast.findAll(MethodDeclaration.class))method.getBody().ifPresent(body->body.getStatements().clear());
+        for(var constructor:ast.findAll(ConstructorDeclaration.class))constructor.getBody().getStatements().clear();
+        for(var constructor:ast.findAll(CompactConstructorDeclaration.class))constructor.getBody().getStatements().clear();
+        for(var initializer:ast.findAll(InitializerDeclaration.class))initializer.getBody().getStatements().clear();
+        for(var lambda:ast.findAll(LambdaExpr.class)){
+            var body=new com.github.javaparser.ast.stmt.BlockStmt();lambda.getBody().getRange().ifPresent(body::setRange);lambda.setBody(body);
         }
     }
 
@@ -201,6 +250,10 @@ final class Extraction {
             return Optional.empty();
         }
         var ast = parsed.getResult().orElseThrow();
+        // JavaParser derives source ranges while storing tokens. Detach its linked
+        // token stream only after preserving those ranges, so headers cannot retain
+        // every token from discarded bodies and raw source spans remain exact.
+        ast.walk(node->{var range=node.getRange().orElse(null);node.setTokenRange(null);node.setRange(range);});
         // Java identifier-ignorable characters do not participate in symbol equality.
         ast.findAll(SimpleName.class).forEach(n -> n.setIdentifier(semanticIdentifier(n.getIdentifier())));
         ast.findAll(Name.class).forEach(n -> n.setIdentifier(semanticIdentifier(n.getIdentifier())));
@@ -270,7 +323,7 @@ final class Extraction {
             }
         }
     }
-    private boolean hasLocalOwner(Node node) {
+    boolean hasLocalOwner(Node node) {
         for (Node current = node; current != null; current = current.getParentNode().orElse(null)) {
             if (current instanceof TypeDeclaration<?> t && !(t.getParentNode().orElse(null) instanceof CompilationUnit) && !(t.getParentNode().orElse(null) instanceof TypeDeclaration<?>)) return true;
             if (current instanceof ObjectCreationExpr) return true;
@@ -284,6 +337,9 @@ final class Extraction {
                 || node instanceof InitializerDeclaration || node instanceof LambdaExpr
                 || node instanceof ObjectCreationExpr o && o.getAnonymousClassBody().isPresent();
     }
+    // Only declaration-shaped nodes can cross the resolver's toAst boundary. Retaining
+    // every expression/token in a second identity hash table scales with the entire AST.
+    private boolean membershipNode(Node node) {return node instanceof CompilationUnit||node instanceof FieldDeclaration||isDeclaration(node);}
 
     JavaSymbolName name(Node node) {
         var existing = names.get(node); if (existing != null) return existing;
@@ -514,11 +570,154 @@ final class Extraction {
         return callable(resolved);
     }
     private Entity resolveCall(Expression expression) {
+        if(request.sourceRecovery()&&expression instanceof MethodCallExpr call)requireRecoveryReceiver(call);
         var nativeCall=nativeMembers.resolve(expression);if(nativeCall.isPresent())return nativeCall.orElseThrow();
         var generated=lombok.resolve(expression);
         if(generated.isPresent())return generated.orElseThrow();
-        return expression instanceof MethodCallExpr call ? callable(call.resolve(),call)
-                : callable(((ObjectCreationExpr)expression).resolve());
+        if(expression instanceof MethodCallExpr call) {
+            if(!request.sourceRecovery()&&boundedReceiver(call.getScope()))recoveryReceiver(call,call.getScope());
+            var result=callable(call.resolve(),call);if(request.sourceRecovery())recoveryCallInputs.add(call);return result;
+        }
+        return callable(((ObjectCreationExpr)expression).resolve());
+    }
+    private boolean boundedReceiver(Optional<Expression> scope) {
+        if(scope.isEmpty())return false;
+        try {
+            var type=scope.orElseThrow().calculateResolvedType();
+            return type.isWildcard()||type.isTypeVariable()||type instanceof com.github.javaparser.resolution.types.ResolvedIntersectionType;
+        }catch(UnsolvedSymbolException typeQualifier){return false;} // Static type qualifiers need not have a value type.
+    }
+    /** A missing parent may introduce a more specific overload even when resolve() picks
+     * a local method. Close only this receiver hierarchy, never the entire module. */
+    private void requireRecoveryReceiver(MethodCallExpr call) {
+        if(recoveryCallInputs.contains(call))return;
+        // Resolve inputs before using their inferred return types for an outer overload.
+        // An uncertain nested call cannot manufacture an exact outer receiver/argument type.
+        requireRecoveryInputs(call,call);
+    }
+    private void requireRecoveryInputs(Node input,MethodCallExpr deferred) {
+        if(input instanceof MethodCallExpr call&&recoveryCallInputs.contains(call))return;
+        input.walk(Node.TreeTraversal.POSTORDER,node->{
+            if(node instanceof MethodCallExpr nested&&!recoveryCallInputs.contains(nested)) {
+                requireRecoveryReceiverType(nested);
+                if(nested!=deferred){nested.resolve();recoveryCallInputs.add(nested);}
+            }
+        });
+    }
+    private void requireRecoveryReceiverType(MethodCallExpr call) {
+        requireRecoverySelected(call,recoveryReceiver(call,call.getScope()));
+    }
+    private ResolvedReferenceTypeDeclaration recoveryReceiver(Node site,Optional<Expression> receiverScope) {
+        ResolvedReferenceTypeDeclaration receiver;
+        if(receiverScope.isEmpty()) {
+            Node owner=enclosingType(site);
+            if(owner instanceof TypeDeclaration<?> type)receiver=type.resolve();
+            else if(owner instanceof ObjectCreationExpr creation)receiver=creation.getType().resolve().asReferenceType().getTypeDeclaration().orElseThrow();
+            else if(owner instanceof EnumConstantDeclaration constant)receiver=constant.resolve().getType().asReferenceType().getTypeDeclaration().orElseThrow();
+            else throw new MappingFailure(SemanticStatus.UNSUPPORTED,"java.receiver-shape-unsupported");
+        } else {
+            var scope=receiverScope.orElseThrow();requireRecoveryInputs(scope,null);ResolvedType type;
+            try{
+                var value=site instanceof MethodReferenceExpr reference?ReferenceResolution.value(reference,scope.toString()):Optional.<ResolvedValueDeclaration>empty();
+                type=value.isPresent()?value.orElseThrow().getType():scope instanceof TypeExpr expression?expression.getType().resolve():scope.calculateResolvedType();
+            }
+            catch(UnsolvedSymbolException missing) {
+                var context=com.github.javaparser.symbolsolver.javaparsermodel.JavaParserFactory.getContext(scope,environment.solver);
+                if(scope instanceof NameExpr name&&context.solveSymbol(name.getNameAsString()).isSolved())throw missing;
+                if(!(scope instanceof NameExpr||scope instanceof FieldAccessExpr||scope instanceof TypeExpr))throw missing;
+                var named=context.solveType(scope.toString());if(!named.isSolved())throw missing;
+                return named.getCorrespondingDeclaration().asReferenceType();
+            }
+            if(type.isArray())receiver=environment.solver.solveType("java.lang.Object");
+            else if(type.isReferenceType())receiver=type.asReferenceType().getTypeDeclaration().orElseThrow();
+            else {
+                var bounds=new ArrayList<ResolvedReferenceTypeDeclaration>();
+                recoveryUpperBounds(type,new HashSet<>(),bounds);
+                // The solver still selects the actual member. This is a closure
+                // check over every bound, never an erasure-based target guess.
+                for(var bound:bounds)requireRecoveryHierarchy(bound);
+                if(bounds.isEmpty())throw new MappingFailure(SemanticStatus.UNRESOLVED,"java.receiver-type-required");
+                ResolvedMethodLikeDeclaration selected=site instanceof MethodCallExpr call?call.resolve()
+                        :site instanceof MethodReferenceExpr reference?new ReferenceResolution(environment.solver).resolve(reference):null;
+                ResolvedReferenceTypeDeclaration declaringType=selected==null?null:selected.declaringType();
+                if(site instanceof FieldAccessExpr access) {
+                    var value=access.resolve();if(value.isField())declaringType=value.asField().declaringType().asReferenceType();
+                }
+                if(declaringType!=null) {
+                    String declaring=hierarchyKey(declaringType);
+                    boolean member=declaring.equals(hierarchyKey(environment.solver.solveType("java.lang.Object")));
+                    for(var bound:bounds)if(hierarchyKey(bound).equals(declaring)
+                            ||bound.getAllAncestors().stream().anyMatch(parent->parent.getTypeDeclaration().map(this::hierarchyKey).filter(declaring::equals).isPresent()))member=true;
+                    if(!member)throw new MappingFailure(SemanticStatus.UNRESOLVED,"java.receiver-bound-member-required");
+                }
+                receiver=bounds.getFirst();
+            }
+        }
+        return receiver;
+    }
+    private void recoveryUpperBounds(ResolvedType type,Set<String> visiting,List<ResolvedReferenceTypeDeclaration> result) {
+        if(type.isReferenceType()){result.add(type.asReferenceType().getTypeDeclaration().orElseThrow());return;}
+        if(type.isArray()){result.add(environment.solver.solveType("java.lang.Object"));return;}
+        if(type.isWildcard()) {
+            var wildcard=type.asWildcard();
+            if(wildcard.isUpperBounded())recoveryUpperBounds(wildcard.getBoundedType(),visiting,result);
+            else result.add(environment.solver.solveType("java.lang.Object"));
+            return;
+        }
+        if(type.isTypeVariable()) {
+            var parameter=type.asTypeVariable().asTypeParameter();String key=parameter.getQualifiedName();
+            if(!visiting.add(key))throw new MappingFailure(SemanticStatus.UNRESOLVED,"java.receiver-bound-cycle");
+            try {
+                if(parameter.getBounds().isEmpty())result.add(environment.solver.solveType("java.lang.Object"));
+                else for(var bound:parameter.getBounds()) {
+                    if(!bound.isExtends())throw new MappingFailure(SemanticStatus.UNRESOLVED,"java.receiver-type-required");
+                    recoveryUpperBounds(bound.getType(),visiting,result);
+                }
+            } finally {visiting.remove(key);}
+            return;
+        }
+        if(type instanceof com.github.javaparser.resolution.types.ResolvedIntersectionType intersection) {
+            for(var bound:intersection.getElements())recoveryUpperBounds(bound,visiting,result);
+            return;
+        }
+        throw new MappingFailure(SemanticStatus.UNRESOLVED,"java.receiver-type-required");
+    }
+    private void requireRecoverySelected(MethodCallExpr call,ResolvedReferenceTypeDeclaration receiver) {
+        // A fixed own zero-argument declaration shadows any inherited alternative;
+        // varargs and inherited selections still require the receiver hierarchy.
+        if(call.getArguments().isEmpty()) {
+            var selected=call.resolve();
+            if(ownZeroArgumentMethod(selected,receiver))return;
+        }
+        requireRecoveryHierarchy(receiver);
+    }
+    private boolean ownZeroArgumentMethod(ResolvedMethodLikeDeclaration selected,ResolvedReferenceTypeDeclaration receiver) {
+        return selected.getNumberOfParams()==0&&selected.toAst().filter(MethodDeclaration.class::isInstance).isPresent()
+                &&hierarchyKey(selected.declaringType()).equals(hierarchyKey(receiver));
+    }
+    private String hierarchyKey(ResolvedReferenceTypeDeclaration type) {
+        return type.toAst().filter(n->sourceNodes.contains(n)||reactorNodes.contains(n))
+                .map(n->unit(n).input.document().identity().value()+":"+unit(n).source.start(n)).orElse("external:"+type.getQualifiedName());
+    }
+    private void requireRecoveryHierarchy(ResolvedReferenceTypeDeclaration receiver) {
+        String root=hierarchyKey(receiver);var cached=recoveryHierarchies.get(root);
+        if(cached!=null){if(cached.isPresent())throw new MappingFailure(cached.orElseThrow().status(),cached.orElseThrow().code());return;}
+        try {
+            var pending=new ArrayDeque<ResolvedReferenceTypeDeclaration>();pending.add(receiver);var visited=new HashSet<String>();
+            while(!pending.isEmpty()) {
+                var type=pending.removeFirst();if(!visited.add(hierarchyKey(type)))continue;
+                // Some solver paths omit unknown ancestors. Inspect written source parents too.
+                if(type.toAst().orElse(null) instanceof ClassOrInterfaceDeclaration declaration) {
+                    for(var parent:declaration.getExtendedTypes())pending.add(parent.resolve().asReferenceType().getTypeDeclaration().orElseThrow());
+                    for(var parent:declaration.getImplementedTypes())pending.add(parent.resolve().asReferenceType().getTypeDeclaration().orElseThrow());
+                }
+                for(var parent:type.getAncestors(false))pending.add(parent.getTypeDeclaration().orElseThrow());
+            }
+            recoveryHierarchies.put(root,Optional.empty());
+        }catch(UnsolvedSymbolException missing) {
+            recoveryHierarchies.put(root,Optional.of(new ClosureFailure(SemanticStatus.UNRESOLVED,"java.receiver-hierarchy-required")));
+            throw new MappingFailure(SemanticStatus.UNRESOLVED,"java.receiver-hierarchy-required");
+        }
     }
     Entity callable(ResolvedMethodLikeDeclaration resolved) {
         if(nativeMembers!=null){var nativeDeclaration=nativeMembers.callable(resolved);if(nativeDeclaration.isPresent())return nativeDeclaration.orElseThrow();}
@@ -563,6 +762,14 @@ final class Extraction {
         return entity;
     }
 
+    Entity field(ResolvedValueDeclaration resolved,Node site) {
+        var scope=site instanceof FieldAccessExpr access?Optional.of(access.getScope()):Optional.<Expression>empty();
+        if(resolved.isField()&&(request.sourceRecovery()||boundedReceiver(scope))) {
+            var receiver=recoveryReceiver(site,scope);
+            if(!hierarchyKey(resolved.asField().declaringType().asReferenceType()).equals(hierarchyKey(receiver)))requireRecoveryHierarchy(receiver);
+        }
+        return field(resolved);
+    }
     Entity field(ResolvedValueDeclaration resolved) {
         if (resolved.isField() && resolved.asField().declaringType().toAst().orElse(null) instanceof RecordDeclaration record
                 && record.getParameters().stream().anyMatch(p -> p.getNameAsString().equals(resolved.getName()))) {
@@ -623,14 +830,12 @@ final class Extraction {
         observe(node,category,() -> { throw new MappingFailure(status,code); },() -> { throw new MappingFailure(status,code); });
     }
     ResolvedTypeDeclaration resolveNamed(com.github.javaparser.ast.type.ClassOrInterfaceType type) {
-        if(request.sourceRecovery())throw new UnsolvedSymbolException(type.getNameWithScope());
         var resolved = com.github.javaparser.symbolsolver.javaparsermodel.JavaParserFactory.getContext(type, environment.solver)
                 .solveType(type.getNameWithScope());
         if (!resolved.isSolved()) throw new UnsolvedSymbolException(type.getNameWithScope());
         return resolved.getCorrespondingDeclaration();
     }
     Entity typeEntity(ResolvedTypeDeclaration type) {
-        if(request.sourceRecovery())throw new UnsolvedSymbolException(type.getName());
         if (type.toAst().isPresent()) {
             Node declaration = type.toAst().orElseThrow();
             if (reactorNodes.contains(declaration) && type.isReferenceType()) {
@@ -786,6 +991,7 @@ final class Extraction {
         observe(node, category, () -> { throw new MappingFailure(SemanticStatus.UNSUPPORTED, "java.category-unsupported"); }, () -> owner(node));
     }
     void observe(Node node, String category, Supplier<Entity> targetSupplier, Supplier<Entity> ownerSupplier) {
+        if(Thread.currentThread().isInterrupted())throw new java.util.concurrent.CancellationException();
         var unit = unit(node); Optional<SourceSpan> span; RuntimeException spanFailure = null;
         try { span = Optional.of(unit.source.span(node)); }
         catch (RuntimeException exception) { span = Optional.empty(); spanFailure = exception; }
@@ -793,8 +999,6 @@ final class Extraction {
         var local = new ArrayList<Diagnostic>();
         try {
             source = ownerSupplier.get();
-            if(request.sourceRecovery()&&!Set.of("declares","has-parameter").contains(category))
-                throw new MappingFailure(SemanticStatus.UNRESOLVED,"java.build-context-required");
             target = targetSupplier.get();
         }
         catch (UnsolvedSymbolException exception) { status = SemanticStatus.UNRESOLVED; local.add(diagnostic("java.unresolved", status, span)); }
