@@ -4,6 +4,32 @@ import java.util.*;
 import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 class UniversalBuildIngestionTest {
+    @Test void literalMapCoordinatesKeepBuildScriptEvidenceWhenSettingsArePresent() {
+        var model=load(Map.of("settings.gradle","include ':api'\n","api/build.gradle","dependencies { implementation group: 'g', name: 'lib', version: '1'\n implementation(group: 'g', name: 'other', version: '2') }\n"));
+        var module=model.modules().stream().filter(m->m.descriptor().path().equals("api")).findFirst().orElseThrow();
+        assertEquals(List.of("g:lib:1","g:other:2"),module.dependencies().stream().map(d->d.coordinate().orElseThrow().notation()).toList());
+        assertTrue(module.dependencies().stream().allMatch(d->d.evidence().stream().anyMatch(e->e.logicalId().equals("api/build.gradle"))));
+    }
+    @Test void bootBomExpressionNeedsTheActualImportAndUniqueFixedPluginDeclaration() {
+        String script="import org.springframework.boot.gradle.plugin.SpringBootPlugin\nplugins { alias(libs.plugins.spring.boot) apply false }\ndependencies { api platform(SpringBootPlugin.BOM_COORDINATES) }\n";
+        var files=Map.of("build.gradle",script,"gradle/libs.versions.toml","[versions]\nboot='3.4.1'\n[plugins]\nspring-boot={ id='org.springframework.boot', version.ref='boot' }\n");
+        var dependencies=load(files).modules().getFirst().dependencies();
+        assertEquals("org.springframework.boot:org.springframework.boot.gradle.plugin:3.4.1",dependencies.getFirst().coordinate().orElseThrow().notation());
+        assertEquals("org.springframework.boot:spring-boot-dependencies:3.4.1",dependencies.getLast().coordinate().orElseThrow().notation());
+        assertEquals("SpringBootPlugin.BOM_COORDINATES",dependencies.getLast().notation());
+        assertTrue(load(Map.of("build.gradle",script.replace("import org.springframework.boot.gradle.plugin.SpringBootPlugin\n",""),"gradle/libs.versions.toml",files.get("gradle/libs.versions.toml"))).modules().getFirst().dependencies().getLast().coordinate().isEmpty());
+        var malformed=assertDoesNotThrow(()->load(Map.of("build.gradle","import org.springframework.boot.gradle.plugin.SpringBootPlugin\nplugins { id 'org.springframework.boot' version 'bad version' }\ndependencies { api platform(SpringBootPlugin.BOM_COORDINATES) }\n")));
+        assertTrue(malformed.modules().getFirst().dependencies().getLast().coordinate().isEmpty());
+    }
+    @Test void platformImportsAndConstraintsRemainDistinctFromRuntimeLibraries() {
+        var model=load(Map.of("build.gradle.kts","dependencies { api(platform(\"g:bom:1\"))\n implementation(platform(project(\":platform\")))\n constraints { api(\"g:library:2\") }\n implementation(\"g:library\") }\n"));
+        var deps=model.modules().getFirst().dependencies();
+        assertEquals(List.of("api.platform","implementation.platform","api.constraint","implementation"),deps.stream().map(UniversalBuildModel.Dependency::configuration).toList());
+        assertEquals("g:bom:1",deps.getFirst().coordinate().orElseThrow().notation());
+        assertEquals(Optional.of(":platform"),deps.get(1).projectPath());
+        assertEquals("g:library:2",deps.get(2).coordinate().orElseThrow().notation());
+        assertEquals("g:library",deps.get(3).notation());assertTrue(deps.get(3).coordinate().isEmpty());
+    }
     @Test void nestedGradleIncludesRetainImplicitParentProjectAndDynamicPathsRemainGaps(){
         var nested=load(Map.of("settings.gradle","include ':platform:api'\nproject(':platform:api').projectDir = new File(settingsDir, 'services/api')\n"));
         assertEquals(Set.of(".","platform","services/api"),nested.modules().stream().map(m->m.descriptor().path()).collect(java.util.stream.Collectors.toSet()));

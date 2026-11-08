@@ -23,6 +23,8 @@ final class ModelInputs {
     private final BuildModelRequest request;
     private final List<Problem> problems;
     private final List<Attempt> attempts;
+    private Map<MavenCoordinate, String> workspaceBomIndex;
+    private Map<String, String> rootCiProperties;
     private int modelReads;
 
     ModelInputs(BuildModelRequest request, String root, List<Problem> problems, List<Attempt> attempts) {
@@ -54,7 +56,7 @@ final class ModelInputs {
             if (++modelReads > request.policy().maxModelReads()) throw new SecurePomReader.Rejected(Reason.MODEL_READ_LIMIT);
             if (source.input.size() > request.policy().maxPomBytes()) throw new SecurePomReader.Rejected(Reason.INPUT_LIMIT);
             Model model = SecurePomReader.read(source.input.bytes());
-            if (source.coordinate.isPresent()) validateCoordinate(model, source.coordinate.orElseThrow());
+            if (source.coordinate.isPresent()) validateCoordinate(model, source.coordinate.orElseThrow(), source.path.isPresent());
             checkProfiles(model, source.id, evidence);
             if (model.getBuild() != null && (!model.getBuild().getExtensions().isEmpty()
                     || model.getBuild().getPlugins().stream().anyMatch(p -> p.isExtensions()))) {
@@ -88,14 +90,85 @@ final class ModelInputs {
         }
     }
 
-    private static void validateCoordinate(Model model, MavenCoordinate expected) throws SecurePomReader.Rejected {
+    private void validateCoordinate(Model model, MavenCoordinate expected, boolean workspaceSource) throws SecurePomReader.Rejected {
+        var props = effectiveProperties(model, workspaceSource);
         var parent = model.getParent();
-        String group = model.getGroupId() == null && parent != null ? parent.getGroupId() : model.getGroupId();
-        String version = model.getVersion() == null && parent != null ? parent.getVersion() : model.getVersion();
-        if (!expected.groupId().equals(group) || !expected.artifactId().equals(model.getArtifactId())
+        String group = interpolate(model.getGroupId() == null && parent != null ? parent.getGroupId() : model.getGroupId(), props);
+        String artifact = interpolate(model.getArtifactId(), props);
+        String version = interpolate(model.getVersion() == null && parent != null ? parent.getVersion() : model.getVersion(), props);
+        if (!expected.groupId().equals(group) || !expected.artifactId().equals(artifact)
                 || !expected.version().equals(version)) {
             throw new SecurePomReader.Rejected(Reason.COORDINATE_MISMATCH);
         }
+    }
+
+    Map<String, String> rootCiFriendlyProperties() {
+        if (rootCiProperties != null) return rootCiProperties;
+        var result = new LinkedHashMap<String, String>();
+        PomInput rootInput = request.workspacePoms().get(request.rootPom());
+        if (rootInput != null && rootInput.size() <= request.policy().maxPomBytes()) {
+            try {
+                Model rootModel = SecurePomReader.read(rootInput.bytes());
+                for (String key : List.of("revision", "sha1", "changelist")) {
+                    String value = rootModel.getProperties().getProperty(key);
+                    if (value != null && !value.contains("${")) result.put(key, value);
+                }
+            } catch (SecurePomReader.Rejected ignored) {
+                // Root model validation errors are handled when inspecting the root POM.
+            }
+        }
+        rootCiProperties = Map.copyOf(result);
+        return rootCiProperties;
+    }
+
+    private Map<String, String> effectiveProperties(Model model, boolean workspaceSource) {
+        var props = new LinkedHashMap<String, String>();
+        if (workspaceSource) props.putAll(rootCiFriendlyProperties());
+        if (model.getProperties() != null) {
+            model.getProperties().forEach((k, v) -> props.put(k.toString(), v.toString()));
+        }
+        props.putAll(request.policy().userProperties());
+        return props;
+    }
+
+    private static String interpolate(String value, Map<String, String> properties) {
+        if (value == null || !value.contains("${")) return value;
+        String current = value;
+        for (int depth = 0; depth < 8 && current.contains("${"); depth++) {
+            int start = current.indexOf("${");
+            int end = current.indexOf('}', start + 2);
+            if (end < 0) break;
+            String key = current.substring(start + 2, end);
+            String replacement = properties.get(key);
+            if (replacement == null) break;
+            current = current.substring(0, start) + replacement + current.substring(end + 1);
+        }
+        return current;
+    }
+
+    private String workspaceBomPath(MavenCoordinate coordinate) {
+        if (workspaceBomIndex == null) {
+            var index = new LinkedHashMap<MavenCoordinate, String>();
+            for (var entry : request.workspacePoms().entrySet()) {
+                if (entry.getValue().size() > request.policy().maxPomBytes()) continue;
+                try {
+                    Model model = SecurePomReader.read(entry.getValue().bytes());
+                    var props = effectiveProperties(model, true);
+                    var parent = model.getParent();
+                    String group = interpolate(model.getGroupId() == null && parent != null ? parent.getGroupId() : model.getGroupId(), props);
+                    String artifact = interpolate(model.getArtifactId(), props);
+                    String version = interpolate(model.getVersion() == null && parent != null ? parent.getVersion() : model.getVersion(), props);
+                    if (group != null && artifact != null && version != null
+                            && !group.contains("${") && !artifact.contains("${") && !version.contains("${")) {
+                        index.putIfAbsent(new MavenCoordinate(group, artifact, version), entry.getKey());
+                    }
+                } catch (SecurePomReader.Rejected | IllegalArgumentException ignored) {
+                    // Invalid workspace POMs remain governed by direct inspection.
+                }
+            }
+            workspaceBomIndex = Map.copyOf(index);
+        }
+        return workspaceBomIndex.get(coordinate);
     }
 
     ModelResolver resolver() {
@@ -109,6 +182,15 @@ final class ModelInputs {
                     throw new UnresolvableModelException("Non-exact model coordinate", group, artifact, version);
                 }
                 PomInput input = request.artifactPoms().get(coordinate);
+                if (input == null && kind == AttemptKind.IMPORT_BOM) {
+                    String wsPath = workspaceBomPath(coordinate);
+                    if (wsPath != null && !wsPath.equals(root)) {
+                        PomInput wsInput = request.workspacePoms().get(wsPath);
+                        if (wsInput != null) {
+                            return new Source("workspace:" + wsPath, Optional.of(wsPath), wsInput, root, kind, Optional.of(coordinate));
+                        }
+                    }
+                }
                 if (input == null) {
                     attempts.add(new Attempt(root, kind, "artifact:" + coordinate.notation(), Outcome.UNAVAILABLE, Optional.empty()));
                     reject(kind == AttemptKind.PARENT ? Reason.MISSING_PARENT_POM : Reason.MISSING_IMPORT_BOM, root);

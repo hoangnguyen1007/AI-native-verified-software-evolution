@@ -98,6 +98,7 @@ final class NativeMemberExtraction {
         reject("source-signature-unavailable");
     }
     private static boolean generic(ResolvedType type){if(type.isArray())return generic(type.asArrayType().getComponentType());return type.isTypeVariable()||type.isWildcard()||type.isReferenceType()&&!type.asReferenceType().typeParametersValues().isEmpty();}
+    boolean hasOwners(){return !owners.isEmpty();}
     boolean owns(JavaSymbolName name){return owners.containsKey(name.canonicalName());}
     Optional<Entity> callable(ResolvedMethodLikeDeclaration declaration){
         if(declaration.toAst().isPresent())return Optional.empty();

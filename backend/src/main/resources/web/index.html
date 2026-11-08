@@ -9,7 +9,7 @@
 <a class="skip-link" href="#main">Skip to content</a>
 <div class="app-shell">
 <aside class="sidebar" id="sidebar" aria-label="Workspace">
-<a class="brand" href="/" aria-label="Evo home"><img src="/logo.svg" alt="" width="32" height="32"><span>evo<span class="brand-dot">.</span></span></a>
+<a class="brand" href="/" aria-label="Evo home"><img src="/logo.svg" alt="" width="32" height="32"><span>evo<span class="brand-dot">.</span></span><span class="brand-tag">workbench</span></a>
 <button class="button primary wide" data-action="connect">＋ Connect repository</button>
 <div class="sidebar-section"><p class="eyebrow">REPOSITORIES</p><div id="repositories" class="sidebar-list"><p class="muted small">Connecting to server…</p></div></div>
 <div class="sidebar-section history-section"><div class="section-heading"><p class="eyebrow">RECENT ANALYSES</p><button class="icon-button" data-action="refresh" aria-label="Refresh analysis history" title="Refresh history">↻</button></div><div id="history" class="sidebar-list"></div><button id="history-more" class="button subtle wide" hidden>Load more analyses</button></div>
@@ -19,30 +19,42 @@
 <header class="topbar">
 <button id="sidebar-toggle" class="icon-button" aria-label="Toggle sidebar" aria-expanded="true" aria-controls="sidebar">☰</button>
 <div class="topbar-nav" role="navigation" aria-label="View switcher">
-<a href="/" class="topbar-nav-link active" aria-current="page"><span class="nav-icon">⊞</span> <span class="nav-text">Architecture Workbench</span></a>
-<a href="/bridges.html" class="topbar-nav-link"><span class="nav-icon">⇄</span> <span class="nav-text">Polyglot Bridges</span></a>
+<a href="/" class="topbar-nav-link active" aria-current="page"><span class="nav-icon" aria-hidden="true">⊞</span> <span class="nav-text">Architecture Workbench</span></a>
+<a href="/bridges.html" class="topbar-nav-link"><span class="nav-icon" aria-hidden="true">⇄</span> <span class="nav-text">Polyglot Bridges</span></a>
 </div>
 <span class="topbar-title sr-only">Architecture workspace</span>
 <div class="topbar-actions">
+<span class="shortcut-pill muted small" title="Press / anywhere to search symbols">Press <kbd>/</kbd> to search</span>
 <button id="theme-toggle" class="icon-button" aria-label="Switch to light theme" data-tooltip><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/></svg></button>
 </div>
 </header>
 <main id="main" tabindex="-1">
-<div class="page-heading"><div><h1 id="repository-title">Explore your architecture</h1><p id="repository-description" class="muted">Connect a repository, run an analysis, then follow the evidence.</p></div><button id="analyze" class="button primary" disabled>Run analysis ↗</button></div>
+<div class="page-heading"><div><h1 id="repository-title">Explore your architecture</h1><p id="repository-description" class="muted">Connect a repository, run an analysis, then follow the evidence.</p></div><div class="heading-actions"><button id="analyze" class="button primary" disabled>Run analysis ↗</button></div></div>
 <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
 <section id="job-panel" class="card job-panel" aria-label="Analysis progress" hidden><div class="section-heading"><div><span class="badge" id="job-state"></span><h2 id="job-title">Analysis</h2><p id="job-description" class="muted small"></p></div><button id="cancel-job" class="button danger" hidden>Cancel analysis</button></div><ol id="job-events" class="job-events"></ol><div class="job-links"><button id="job-diagnostics" class="text-button">Input diagnostics</button><button id="job-gaps" class="text-button">Analysis limitations</button><button id="job-receipt" class="text-button">View receipt</button></div></section>
-<div id="welcome" class="welcome card"><img src="/logo.svg" alt="" width="56" height="56"><h2>Start with your repository</h2><p class="muted">Inspect how your software connects across modules, rules, and configurations.<br>Find dependencies, verify architecture rules, and trace each result to its verified source.</p><button class="button primary" data-action="connect">Connect repository →</button><p class="small muted">Local folders or public Git repositories. Source code is never executed directly on the host.</p></div>
+<div id="welcome" class="welcome card">
+<img src="/logo.svg" alt="" width="56" height="56">
+<h2>Start with your repository</h2>
+<p class="muted">Inspect how your software connects across modules, rules, and configurations.<br>Find dependencies, verify architecture rules, and trace each result to its verified source.</p>
+<div class="workflow-steps" aria-label="How it works">
+<div class="workflow-step"><span class="step-num">1</span><div><strong>Connect source</strong><small>Point to a local project directory or public HTTPS Git repository.</small></div></div>
+<div class="workflow-step"><span class="step-num">2</span><div><strong>Capture &amp; analyze</strong><small>Passively extracts AST, types, Spring wiring and build boundaries without executing untrusted builds.</small></div></div>
+<div class="workflow-step"><span class="step-num">3</span><div><strong>Explore &amp; verify</strong><small>Inspect interactive graphs, shortest paths, blast radius and explained capability boundaries.</small></div></div>
+</div>
+<button class="button primary" data-action="connect">Connect repository →</button>
+<p class="small muted">Local folders or public Git repositories. Source code is never executed directly on the host.</p>
+</div>
 <section id="analysis-workspace" hidden aria-label="Analysis results">
-<div class="context-bar"><label for="context">Analysis context</label><select id="context"></select><span class="muted small" id="context-hint">Choose one module and source set to inspect.</span><button id="provenance" class="text-button">View provenance</button></div>
-<form id="search-form" class="search-bar"><span aria-hidden="true">⌕</span><label class="sr-only" for="search">Search classes and symbols</label><input id="search" type="search" placeholder="Find a class, component, or symbol (e.g. UserController)…" autocomplete="off"><button class="button" type="submit">Search →</button></form>
+<div class="context-bar"><div class="context-bar-main"><label for="context">Analysis context</label><select id="context"></select><span class="muted small" id="context-hint">Choose one module and source set to inspect.</span></div><button id="provenance" class="text-button">View provenance &amp; hashes</button></div>
+<form id="search-form" class="search-bar"><span aria-hidden="true">⌕</span><label class="sr-only" for="search">Search classes and symbols</label><input id="search" type="search" placeholder="Find a class, component, or symbol (e.g. UserController)… Press / to focus" autocomplete="off"><kbd class="kbd-hint" aria-hidden="true">/</kbd><button class="button" type="submit">Search →</button></form>
 <nav id="tabs" class="tabs" aria-label="Analysis views" role="tablist">
 <button role="tab" id="tab-overview" aria-controls="panel-overview" aria-selected="true" data-tab="overview">Overview</button>
 <button role="tab" id="tab-structure" aria-controls="panel-structure" aria-selected="false" tabindex="-1" data-tab="structure">Structure</button>
 <button role="tab" id="tab-graph" aria-controls="panel-graph" aria-selected="false" tabindex="-1" data-tab="graph">Dependency graph</button>
-<button role="tab" id="tab-policy" aria-controls="panel-policy" aria-selected="false" tabindex="-1" data-tab="policy">Rules & findings</button>
+<button role="tab" id="tab-policy" aria-controls="panel-policy" aria-selected="false" tabindex="-1" data-tab="policy">Rules &amp; findings</button>
 <button role="tab" id="tab-spring" aria-controls="panel-spring" aria-selected="false" tabindex="-1" data-tab="spring">Spring</button>
 <button role="tab" id="tab-configurations" aria-controls="panel-configurations" aria-selected="false" tabindex="-1" data-tab="configurations">Configurations</button>
-<button role="tab" id="tab-metrics" aria-controls="panel-metrics" aria-selected="false" tabindex="-1" data-tab="metrics">Metrics & score</button>
+<button role="tab" id="tab-metrics" aria-controls="panel-metrics" aria-selected="false" tabindex="-1" data-tab="metrics">Metrics &amp; score</button>
 <button role="tab" id="tab-impact" aria-controls="panel-impact" aria-selected="false" tabindex="-1" data-tab="impact">Change impact</button>
 <button role="tab" id="tab-gaps" aria-controls="panel-gaps" aria-selected="false" tabindex="-1" data-tab="gaps">Limitations</button>
 </nav>
@@ -57,14 +69,14 @@
 <section role="tabpanel" id="panel-impact" aria-labelledby="tab-impact" tabindex="0" hidden></section>
 <section role="tabpanel" id="panel-gaps" aria-labelledby="tab-gaps" tabindex="0" hidden></section>
 </section>
-<footer class="footer">Evo · Repository architecture analysis</footer>
+<footer class="footer">Evo · Evidence-First Software Architecture Intelligence Workbench</footer>
 </main></div></div>
 <dialog id="connect-dialog" aria-labelledby="connect-title">
 <form id="connect-form"><div class="dialog-heading"><div><h2 id="connect-title">Connect your code</h2></div><button type="button" class="icon-button" data-close="connect-dialog" aria-label="Close repository dialog">×</button></div>
 <p class="muted">Paste an absolute local folder path or a public HTTPS Git URL.</p>
 <label for="repository-source">Repository location</label><input id="repository-source" required maxlength="4096" placeholder="C:/projects/my-app or https://github.com/team/repo" aria-describedby="source-help" autocomplete="off">
 <p id="source-help" class="muted small">Public HTTPS Git hosts are supported. Private access and SSH require operator configuration. Analysis reads captured source and available dependencies without running your build.</p>
-<details id="policy-settings"><summary>Architecture rules & scoring (optional)</summary><label for="repository-policy">Policy YAML</label><textarea id="repository-policy" rows="6" maxlength="8192" placeholder="Paste your architecture policy YAML"></textarea><p class="muted small">A score requires explicit rules and enough evidence. With no policy, structural metrics remain available and the score is unavailable.</p><button id="policy-example" class="text-button" type="button">Insert cycle-check example</button><p class="muted small">The example checks cycles between project classes. Review it for your repository; it is not a complete architecture policy.</p></details>
+<details id="policy-settings"><summary>Architecture rules &amp; scoring (optional)</summary><label for="repository-policy">Policy YAML</label><div id="policy-presets" class="preset-chips" aria-label="Policy templates"></div><textarea id="repository-policy" rows="6" maxlength="8192" placeholder="Paste your architecture policy YAML or choose a preset above"></textarea><p class="muted small">A score requires explicit rules and enough evidence. With no policy, structural metrics remain available and the score is unavailable.</p><button id="policy-example" class="text-button" type="button">Insert cycle-check example</button><p class="muted small">Templates check structural cycles. Review and customize rules for your repository.</p></details>
 <p id="connect-error" class="form-error" role="alert" hidden></p><div class="dialog-actions"><button type="button" class="button" data-close="connect-dialog">Cancel</button><button id="connect-submit" class="button primary" type="submit">Connect repository</button></div>
 </form></dialog>
 <dialog id="inspector" class="inspector" aria-labelledby="inspector-title"><div class="dialog-heading"><div><p class="eyebrow" id="inspector-kind">DETAILS</p><h2 id="inspector-title"></h2></div><button class="icon-button" data-close="inspector" aria-label="Close details">×</button></div><div id="inspector-body"></div><div class="dialog-actions"><button id="download-details" class="button">Download JSON</button><button class="button primary" data-close="inspector">Done</button></div></dialog>

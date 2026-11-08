@@ -16,7 +16,7 @@ import static com.evolution.analysis.ingestion.IngestionEvidence.Reason.*;
 /** Connects declarative plans to neutral frontend/configuration ports, retaining source recovery
  * when build closure is unavailable. A Gradle dependency declaration is never treated as a JAR. */
 public final class UniversalSourceIngestion {
-    public static final VersionedIdentifier PROVIDER=new VersionedIdentifier("source.universal-ingestion","m8.4-reactor-recovery-v2");
+    public static final VersionedIdentifier PROVIDER=new VersionedIdentifier("source.universal-ingestion","m8.4-project-recovery-v3");
     public record SourceSet(ModuleIdentity module,SourcePlanModel.Kind kind,String name) {
         public SourceSet { Objects.requireNonNull(module); Objects.requireNonNull(kind);
             name=ContractChecks.token(name,"source-set name"); }
@@ -128,18 +128,20 @@ public final class UniversalSourceIngestion {
                 else try {
                     var reactorSources=new ArrayList<ReactorSourceInput>();
                     boolean reactorComplete=true;
+                    int skippedReactorSlots=0;
                     for(var slot:resolution.reactorSlots()) {
                         var sibling=plans.stream().filter(p->p.module().equals(slot.sourceSet().module())&&p.kind()==slot.sourceSet().kind()&&p.name().equals(slot.sourceSet().name())).findFirst();
                         var siblingSources=owned.getOrDefault(slot.sourceSet(),List.of());
-                        if(sibling.isEmpty()||siblingSources.isEmpty()||siblingSources.stream().anyMatch(s->s.document().classification()!=sibling.orElseThrow().semanticRole())||incomplete.contains(slot.sourceSet())||buildClosureUnknown(build,inputs,slot.sourceSet())
-                                ||!sibling.orElseThrow().gaps().isEmpty()
+                        if(sibling.isEmpty()||siblingSources.isEmpty()||siblingSources.stream().anyMatch(s->s.document().classification()!=sibling.orElseThrow().semanticRole())||incomplete.contains(slot.sourceSet())
                                 ||!sibling.orElseThrow().syntaxLevel().value().equals(plan.syntaxLevel().value())
                                 ||!sibling.orElseThrow().platformRelease().value().filter(Integer.toString(resolution.platform().release())::equals).isPresent()
                                 ||sibling.orElseThrow().encoding().value().isEmpty()
                                 ||siblingSources.stream().anyMatch(s->!s.decoding().charset().equalsIgnoreCase(sibling.orElseThrow().encoding().value().orElseThrow()))) {
-                            reactorComplete=false;continue;
+                            reactorComplete=false;skippedReactorSlots++;continue;
                         }
-                        reactorSources.add(ReactorSourceInput.create(slot.sourceSet().module(),sibling.orElseThrow().semanticRole(),slot.order(),siblingSources));
+                        boolean closed=!buildClosureUnknown(build,inputs,slot.sourceSet())&&sibling.orElseThrow().gaps().isEmpty();
+                        if(!closed){reactorComplete=false;if(resolution.complete()){skippedReactorSlots++;continue;}}
+                        reactorSources.add(ReactorSourceInput.create(slot.sourceSet().module(),sibling.orElseThrow().semanticRole(),slot.order()-skippedReactorSlots,siblingSources));
                     }
                     boolean recovery=!resolution.complete()||buildClosureUnknown(build,inputs,key)||incomplete.contains(key)
                             ||!reactorComplete
@@ -152,7 +154,7 @@ public final class UniversalSourceIngestion {
                     if(plan.encoding().value().isPresent()&&sourceInputs.stream().anyMatch(s->!s.decoding().charset().equalsIgnoreCase(plan.encoding().value().orElseThrow())))recovery=true;
                     if(recovery)issues.add(new IngestionEvidence.Issue(SOURCE_INCOMPLETE,key.toString(),List.of(identity)));
                     if(!resolution.complete()||!reactorComplete)issues.add(new IngestionEvidence.Issue(CLASSPATH_RESOLUTION_REQUIRED,key.toString(),List.of(identity)));
-                    if(!reactorComplete)reactorSources.clear();
+                    if(!reactorComplete&&resolution.complete())reactorSources.clear();
                     var frontendPlan=new FrontendPlan(Optional.of(level),plan.bytecodeTarget().value().map(Integer::valueOf),false,resolution.exactClasspathEvidence(),inputs.identity());
                     var set=plan.semanticRole();
                     var options=new TreeMap<>(FrontendRequest.options(frontendPlan,plan.module(),set,sourceInputs.stream().map(SourceInput::document).toList(),resolution.platform(),reactorSources));

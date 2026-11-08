@@ -10,17 +10,18 @@ final class GradleVersionCatalog {
     private static final Pattern KEY = Pattern.compile("[A-Za-z0-9][A-Za-z0-9_-]*");
     private static final Pattern QUOTED = Pattern.compile("\"([^\"\\\\]*)\"|'([^'\\\\]*)'");
     record Catalog(Map<String, Optional<MavenCoordinate>> libraries,
-                   Map<String, List<String>> bundles, BuildModelResult.PomEvidence evidence,
+                   Map<String, List<String>> bundles,Map<String,Optional<Plugin>> plugins, BuildModelResult.PomEvidence evidence,
                    List<IngestionEvidence.Issue> issues) {
         Catalog {
-            libraries = Map.copyOf(libraries); bundles = Map.copyOf(bundles);
+            libraries = Map.copyOf(libraries); bundles = Map.copyOf(bundles);plugins=Map.copyOf(plugins);
             issues = List.copyOf(issues);
         }
     }
+    record Plugin(String id,String version) {}
     static Catalog parse(String path, String text, ContentDigest digest, int maxLines) {
-        Map<String,String> versions = new HashMap<>(), rawLibraries = new LinkedHashMap<>(), rawBundles = new LinkedHashMap<>();
+        Map<String,String> versions = new HashMap<>(), rawLibraries = new LinkedHashMap<>(), rawBundles = new LinkedHashMap<>(),rawPlugins=new LinkedHashMap<>();
         Set<String> seenVersions = new HashSet<>();
-        Set<String> invalidLibraries = new HashSet<>(), invalidBundles = new HashSet<>();
+        Set<String> invalidLibraries = new HashSet<>(), invalidBundles = new HashSet<>(),invalidPlugins=new HashSet<>();
         var issues = new ArrayList<IngestionEvidence.Issue>();
         String section = ""; String[] lines = text.split("\\R", -1);
         for (int index = 0; index < lines.length; index++) {
@@ -52,7 +53,7 @@ final class GradleVersionCatalog {
                         invalidBundles.add(key); issue(issues, path, index + 1, digest);
                     }
                 }
-                case "plugins" -> { /* Plugin aliases are inventoried by their raw catalog digest, never applied. */ }
+                case "plugins" -> {if(rawPlugins.putIfAbsent(key,value)!=null){invalidPlugins.add(key);issue(issues,path,index+1,digest);}}
                 default -> issue(issues, path, index + 1, digest);
             }
         }
@@ -79,7 +80,23 @@ final class GradleVersionCatalog {
                     .map(GradleVersionCatalog::accessor).toList());
             else issue(issues, path, 0, digest);
         });
-        return new Catalog(libraries, bundles, new BuildModelResult.PomEvidence(path, digest),
+        Map<String,Optional<Plugin>> plugins=new TreeMap<>();
+        rawPlugins.forEach((alias,raw)->{
+            Optional<Plugin> plugin=Optional.empty();
+            if(!invalidPlugins.contains(alias)) {
+                var literal=quoted(raw);
+                if(literal.isPresent()) {String[] parts=literal.orElseThrow().split(":",-1);if(parts.length==2&&gav("plugin:marker:"+parts[1]).isPresent())plugin=Optional.of(new Plugin(parts[0],parts[1]));}
+                else if(raw.startsWith("{")&&raw.endsWith("}")) {
+                    var fields=new HashMap<String,String>();boolean valid=true;
+                    for(String part:raw.substring(1,raw.length()-1).split(",",-1)){String[] pair=part.split("=",2);if(pair.length!=2||!Set.of("id","version","version.ref").contains(pair[0].trim())||quoted(pair[1].trim()).isEmpty()||fields.putIfAbsent(pair[0].trim(),quoted(pair[1].trim()).orElse(""))!=null){valid=false;break;}}
+                    String version=fields.containsKey("version.ref")?versions.get(fields.get("version.ref")):fields.get("version");
+                    if(valid&&!(fields.containsKey("version")&&fields.containsKey("version.ref"))&&fields.get("id")!=null&&version!=null&&gav("plugin:marker:"+version).isPresent())plugin=Optional.of(new Plugin(fields.get("id"),version));
+                }
+            }
+            String accessor=accessor(alias);if(plugins.containsKey(accessor))plugin=Optional.empty();plugins.put(accessor,plugin);
+            if(plugin.isEmpty())issue(issues,path,0,digest);
+        });
+        return new Catalog(libraries, bundles,plugins, new BuildModelResult.PomEvidence(path, digest),
                 issues.stream().distinct().sorted(Comparator.comparing(IngestionEvidence.Issue::identity)).toList());
     }
     private static Optional<MavenCoordinate> coordinate(String raw, Map<String,String> versions) {

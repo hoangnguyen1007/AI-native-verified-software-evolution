@@ -9,7 +9,9 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 
-/** Immutable sibling-module sources occupying one exact reactor classpath position. */
+/** Immutable owned sibling-module sources. Closed contexts preserve the exact
+ * reactor position; source-recovery requests retain their provider's evidenced
+ * ordering without certifying a native build classpath. */
 public record ReactorSourceInput(
         ContentDigest identity,
         ModuleIdentity module,

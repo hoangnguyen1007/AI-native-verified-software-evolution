@@ -108,7 +108,7 @@ public final class MavenScan {
     }
     /** Create only the caller-selected cache, without traversing existing aliases/links.
      * Unavailable storage remains a typed acquisition result rather than aborting source analysis. */
-    private static void prepareCache(Path cache,List<java.net.URI> repositories){
+    static void prepareCache(Path cache,List<java.net.URI> repositories){
         if(repositories.isEmpty())return;
         var absolute=cache.toAbsolutePath().normalize();
         try {

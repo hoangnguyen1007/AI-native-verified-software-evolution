@@ -196,3 +196,65 @@ It creates an isolated hidden console with VT initially off, reads actual screen
 `evo captured-java <registered-directory> --json` passively reconstructs an operator-registered captured Java context, verifies its public trust registry/attestations and exact bytes, then runs Java/Spring analysis, persists child/root graphs and returns separate semantic/audit summaries. PARTIAL returns exit 3 and retains genuine gaps; successful replay does not mean runtime-container or semantic accuracy certification. `registration.json` must be selected outside analyzed source snapshots; no target build, signer, private key or test classpath is used. Existing `gaps --gap-view CURRENT|HISTORY|ALL --graph <saved-graph> --context <id>` queries retain their per-context scope. See the backend registration contract in [backend README](../backend/README.md#registered-captured-java-replay).
 
 Registered Java replay forwards authenticated readiness proofs to both context and root; six closed readiness requirements do not force semantic COMPLETE. Full graph/publication references retain captured audit bindings and may change between semantically equivalent captures. The additive Spring semantic projection is explicitly DEFAULT_SCOPE_TRUTH_NONE; unsupported projection scopes remain visible. See the [review closeout](../docs/tasks/m8/04-step4-phase2-execution.md#review-follow-up--2026-10-26) for the changed-capture determinism control and final packaged verification.
+## Gradle and source service recovery (2026-11-05)
+
+`scan` now supplies verified cached/acquired Gradle dependency bytes to Java
+source recovery. The passive subset includes literal GAV/maps/catalogs, platform
+POMs/constraints, exported project APIs and a captured-marker-checked Boot BOM
+derivation. `--offline` uses only the selected `--maven-cache`; normal explicit
+repository policy still governs downloads. Scripts/plugins remain inert. The
+summary's `dependencies.gradle` reports `PASSIVE_RECOVERY` and
+`effectiveGradleContext=false`; missing/conflicting inputs and the effective
+context obligation stay visible.
+
+Populate the selected artifact cache before disconnecting:
+
+```powershell
+evo scan D:/repositories/halo --prepare-dependencies --maven-cache D:/caches/evo-artifacts --json
+evo scan D:/repositories/halo --offline --build off --maven-cache D:/caches/evo-artifacts --json
+```
+
+Preparation reads captured build declarations and acquires/verifies actual POM/JAR
+bytes under the normal repository policy. It skips JDK capture, semantic analysis,
+graph publication and worker dispatch. Its receipt preserves acquisition ledgers,
+remaining gaps and model issues. `PREPARED` describes cache preparation only;
+`semanticCoverage=NOT_EVALUATED` and effective-context obligations remain.
+`--prepare-dependencies --offline` verifies an existing cache without downloads.
+Missing artifacts still yield `PARTIAL`; changing offline mode never invents bytes.
+
+HTTP single-segment client templates and gRPC source clients, Protobuf contracts
+and handler candidates now join automatically during ordinary scan. Java, Go,
+Python, C# and JavaScript source patterns retain original evidence and namespace
+ambiguity. Edges named `*.candidate` do not establish generated/compiler binding,
+address selection, activation or runtime traffic. Stronger native publications
+retain their existing trust rules. The packaged offline smoke includes both
+Gradle composition and a gRPC client/schema/handler cold-publication journey.
+
+The architecture projection also emits typed `CALLS_SERVICE` / `INVOKES_RPC`
+edges, resolving evidenced caller/handler declarations where available. Endpoints
+from different analysis contexts use references preserving both original context
+and identity. Ambiguous targets and `CANDIDATE`/routing/runtime labels survive;
+these edges can be navigated without promoting a source match to deployed truth.
+
+Recovery also retains captured source from literal Gradle `project(...)`
+dependencies and exported API projects, with original module identities. Test
+contexts receive their own main source. Incomplete plugin/generated closure
+remains explicit; private transitive implementation projects are not exported.
+The Java frontend supports source record-pattern `var` inference and target-typed
+lambda bounds, and recovers HTTP URIs from verified final String aliases. Mutable
+values and unsupported captures retain gaps. Known WebClient verbs narrow route
+candidates using actual method bindings.
+
+Projection scratch payloads use deduplicated compressed segments instead of large
+JSON rows in the SQLite key B-tree. Existing workspaces/evidence are preserved;
+new scans use the new private scratch layout automatically. The final canonical
+JSON/page formats and graph digest remain compatible. Disk headroom exhaustion
+reports `STORAGE_FULL`; payload corruption reports `STORAGE_CORRUPT`. Durable
+snapshot/page size and repository timings still need actual measurements. See
+[ADR-009](../docs/decisions/ADR-009-segmented-projection-and-passive-service-recovery.md).
+
+`gapSummary.total` now includes projection-created gaps and deduplicates their
+identities across contexts. `contextReferences` counts the graph-node copies;
+`inputTotal` retains the pre-projection report count. This is the explicitly named
+ALL population, including retained history. Inspect each partition with the
+existing CURRENT/HISTORY/ALL gap queries for lifecycle-qualified coverage.

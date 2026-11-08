@@ -9,6 +9,10 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 class FailureDiagnosticsTest {
+    @Test void projectionDiskPressureAndPayloadCorruptionRetainDistinctClassifications() {
+        assertEquals("STORAGE_FULL",FailureDiagnostics.classification(new UncheckedIOException(new IOException("GRAPH_PROJECTION_DISK_PRESSURE"))));
+        assertEquals("STORAGE_CORRUPT",FailureDiagnostics.classification(new UncheckedIOException(new IOException("GRAPH_PROJECTION_PAYLOAD_HASH_MISMATCH"))));
+    }
     @Test void sqlitePrimaryAndExtendedCodesRemainDistinctThroughIoWrappers() {
         for(var expected:Map.of(5,"STORAGE_BUSY",6,"STORAGE_BUSY",517,"STORAGE_BUSY",13,"STORAGE_FULL",8,"STORAGE_PERMISSION_DENIED",3,"STORAGE_PERMISSION_DENIED",23,"STORAGE_PERMISSION_DENIED",11,"STORAGE_CORRUPT",14,"STORAGE_OPEN_FAILED",10,"STORAGE_IO_FAILED").entrySet()) {
             var failure=new IOException("GRAPH_PARTITION_STORAGE_UNAVAILABLE",new SQLException("private text","HY000",expected.getKey()));

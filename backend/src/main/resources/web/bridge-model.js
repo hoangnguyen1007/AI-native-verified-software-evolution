@@ -83,5 +83,20 @@
     for(const [key,label] of Object.entries(roles))if((f.descriptor||f.attributes&&f.attributes.descriptor||{})[key]===digest)return label;
     return 'Supporting reference '+index;
   }
-  return {request,describe,formatCount,moduleName,moduleContext,sourceName,reason,stats,error,native,categories,readable,opaque,structure,evidenceLabel,impactReference};
+  function categoryGroup(code) {
+    const key = String(code || '').toUpperCase();
+    if (key.startsWith('F')) return {prefix: 'F', layer: 'Frontend & UI', description: 'Components, routes, state, client API calls and source maps', label: categories[key] || key};
+    if (key.startsWith('B')) return {prefix: 'B', layer: 'Contracts & Bridges', description: 'OpenAPI, gRPC/Protobuf, GraphQL, messaging, SQL and worker bridges', label: categories[key] || key};
+    if (key.startsWith('A')) return {prefix: 'A', layer: 'Backend & Native', description: 'Declarations, types, call graphs, hierarchy and data access', label: categories[key] || key};
+    return {prefix: '', layer: 'All layers', description: 'All captured architecture categories', label: categories[key] || 'All categories'};
+  }
+  function outcomeBreakdown(summary) {
+    if (!summary) return {matched: 0, pending: 0, extra: 0, extraLabel: 'Untracked'};
+    const outcomes = summary.accounting ? summary.accounting.bindingOutcomes : summary.outcomes || {};
+    const matched = Number(outcomes.BOUND || 0);
+    const pending = Object.entries(outcomes).filter(([k]) => !['BOUND', 'NOT_APPLICABLE', 'INFEASIBLE'].includes(k)).reduce((sum, [, v]) => sum + Number(v || 0), 0);
+    const extra = Number(summary.accounting ? summary.accounting.evidenceObligations || 0 : summary.missingCensus || 0);
+    return {matched, pending, extra, extraLabel: summary.accounting ? 'Coverage checks' : 'Untracked'};
+  }
+  return {request,describe,formatCount,moduleName,moduleContext,sourceName,reason,stats,error,native,categories,readable,opaque,structure,evidenceLabel,impactReference,categoryGroup,outcomeBreakdown};
 });

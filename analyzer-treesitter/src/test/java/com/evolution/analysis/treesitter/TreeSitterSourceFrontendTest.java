@@ -6,6 +6,59 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 class TreeSitterSourceFrontendTest {
+    @Test void indirectServersCannotFollowReassignedDuplicateOrForwardBases()throws Exception {
+        for(String declarations:List.of(
+                "class Base(demo_pb2_grpc.CartServiceServicer):\n    pass\nclass Base:\n    pass\nclass Real(Base):\n    def GetCart(self,req,ctx): pass\n",
+                "class Base(demo_pb2_grpc.CartServiceServicer):\n    pass\nBase=object\nclass Real(Base):\n    def GetCart(self,req,ctx): pass\n",
+                "class Real(Base):\n    def GetCart(self,req,ctx): pass\nclass Base(demo_pb2_grpc.CartServiceServicer):\n    pass\n")) {
+            var facts=new ArrayList<TreeSitterSourceFrontend.Fact>();new TreeSitterSourceFrontend().parse("python",("import demo_pb2_grpc\n"+declarations).getBytes(StandardCharsets.UTF_8),facts::add,()->false);
+            assertTrue(facts.stream().noneMatch(f->f.category().equals("RPC_HANDLER_CANDIDATE")),declarations);
+        }
+    }
+    @Test void goAllocationsCannotFollowShadowedNewOrReassignedAliases()throws Exception {
+        for(String body:List.of("func new(x interface{}) *cart{return nil}\nfunc run(){svc:=new(cart);pb.RegisterCartServiceServer(server,svc)}",
+                "func run(new func(interface{}) *cart){svc:=new(cart);pb.RegisterCartServiceServer(server,svc)}",
+                "func run(){svc:=new(cart);svc=unknown;pb.RegisterCartServiceServer(server,svc)}")) {
+            String source="package main\ntype cart struct{}\nfunc (s *cart) GetCart(ctx context.Context,r *Req)(*Reply,error){return nil,nil}\n"+body;
+            var facts=new ArrayList<TreeSitterSourceFrontend.Fact>();new TreeSitterSourceFrontend().parse("go",source.getBytes(StandardCharsets.UTF_8),facts::add,()->false);
+            assertTrue(facts.stream().noneMatch(f->f.category().equals("RPC_HANDLER_CANDIDATE")),body);
+        }
+    }
+    @Test void localPythonServicerInheritanceAndGoNewRegistrationsKeepRealHandlerSpans()throws Exception {
+        assertEquals("source.tree-sitter:m8.4-rpc-local-inheritance-v5",TreeSitterSourceFrontend.PROVIDER);
+        var sources=Map.of("python","import demo_pb2_grpc\nclass Base(demo_pb2_grpc.EmailServiceServicer):\n    pass\nclass Middle(Base):\n    pass\nclass Real(Middle):\n    def SendOrderConfirmation(self, req, ctx):\n        pass\nclass Dummy(Base):\n    def SendOrderConfirmation(self, req, ctx):\n        pass\n",
+                "go","package main\ntype checkout struct{}\nfunc (s *checkout) PlaceOrder(ctx context.Context, r *Req) (*Reply,error){return nil,nil}\nfunc run(){svc := new(checkout); pb.RegisterCheckoutServiceServer(server,svc)}\n");
+        for(var entry:sources.entrySet()) {
+            var facts=new ArrayList<TreeSitterSourceFrontend.Fact>();var result=new TreeSitterSourceFrontend().parse(entry.getKey(),entry.getValue().getBytes(StandardCharsets.UTF_8),facts::add,()->false);
+            assertEquals(0,result.errors());var handlers=facts.stream().filter(f->f.category().equals("RPC_HANDLER_CANDIDATE")).toList();
+            assertEquals(entry.getKey().equals("python")?2:1,handlers.size());
+            assertTrue(handlers.stream().allMatch(f->entry.getValue().substring(f.span().start(),f.span().end()).contains(entry.getKey().equals("python")?"def SendOrderConfirmation":"func (s *checkout) PlaceOrder")));
+        }
+    }
+    @Test void registeredGoReceiversAndJavascriptHandlerMapsKeepServiceSyntax()throws Exception {
+        var sources=Map.of("go","package main\ntype cart struct {}\nfunc (s *cart) GetCart(ctx context.Context, r *Req) (*Reply,error) { return nil,nil }\nfunc run(){ svc := &cart{}; pb.RegisterCartServiceServer(server, svc) }\n",
+                "javascript","function getCart(call, callback) {}\nfunction run(){ server.addService(shop.CartService.service, {getCart}); }\n");
+        for(var entry:sources.entrySet()) {
+            var facts=new ArrayList<TreeSitterSourceFrontend.Fact>();new TreeSitterSourceFrontend().parse(entry.getKey(),entry.getValue().getBytes(StandardCharsets.UTF_8),facts::add,()->false);
+            var handlers=facts.stream().filter(f->f.category().equals("RPC_HANDLER_CANDIDATE")).toList();assertEquals(1,handlers.size(),entry.getKey());assertEquals("CartService",handlers.getFirst().attributes().get("service"));
+        }
+    }
+    @Test void shadowedParametersStringsAndOrdinaryMethodNamesCannotCreateRpcCalls()throws Exception {
+        String source="import demo_pb2_grpc\nstub = demo_pb2_grpc.CartServiceStub(channel)\ndef f(stub):\n    stub.GetCart(req)\nordinary.GetCart(req)\ntext='stub.GetCart(req)'\n# stub.GetCart(req)\n";
+        var facts=new ArrayList<TreeSitterSourceFrontend.Fact>();new TreeSitterSourceFrontend().parse("python",source.getBytes(StandardCharsets.UTF_8),facts::add,()->false);
+        assertTrue(facts.stream().noneMatch(f->f.category().equals("RPC_CALL_CANDIDATE")));
+    }
+    @Test void grpcConstructorsAndServicerMethodsProduceSourceCandidatesWithActualRanges()throws Exception {
+        var sources=Map.of("go","package main\nfunc f(){ pb.NewCartServiceClient(conn).GetCart(ctx, req) }",
+                "python","import demo_pb2_grpc\nstub = demo_pb2_grpc.CartServiceStub(channel)\nclass Server(demo_pb2_grpc.CartServiceServicer):\n    def GetCart(self, req, ctx):\n        return stub.GetCart(req)\n",
+                "csharp","class Server : Shop.CartService.CartServiceBase { public override Task<Reply> GetCart(Req r, CallContext c) { return client.GetCartAsync(r); } CartServiceClient client = new CartServiceClient(channel); }");
+        for(var entry:sources.entrySet()) {
+            var facts=new ArrayList<TreeSitterSourceFrontend.Fact>();new TreeSitterSourceFrontend().parse(entry.getKey(),entry.getValue().getBytes(StandardCharsets.UTF_8),facts::add,()->false);
+            var calls=facts.stream().filter(f->f.category().equals("RPC_CALL_CANDIDATE")).toList();assertEquals(1,calls.size(),entry.getKey()+facts);
+            assertEquals("CartService",calls.getFirst().attributes().get("service"));assertTrue(entry.getValue().substring(calls.getFirst().span().start(),calls.getFirst().span().end()).contains("GetCart"));
+            if(!entry.getKey().equals("go"))assertEquals(1,facts.stream().filter(f->f.category().equals("RPC_HANDLER_CANDIDATE")).count(),entry.getKey());
+        }
+    }
     @Test void pythonGoAndCsharpHttpClientsAreCandidatesWithLiteralMethodAndUri()throws Exception {
         var sources=Map.of("python","import requests\nrequests.get('/pets/42')\nrequests.post('/pets')\nrequests.get(f'/pets/{ident}')\n",
                 "go","package main\nfunc f(){ http.Get(\"/pets/42\"); http.Post(\"/pets\",\"text/plain\",nil) }",

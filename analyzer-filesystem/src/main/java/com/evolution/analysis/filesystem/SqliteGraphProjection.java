@@ -3,30 +3,34 @@ package com.evolution.analysis.filesystem;
 import com.evolution.analysis.graph.*;
 import com.evolution.analysis.contract.serialization.CanonicalJson;
 import java.io.*;
-import java.nio.charset.StandardCharsets;
 import java.sql.*;
 import java.util.*;
 import java.util.function.*;
 
 /** External-memory canonical projection, private to one build. SQLite is scratch, never authority. */
-final class SqliteGraphProjection implements GraphProjectionStore {
+final class SqliteGraphProjection implements GraphProjectionStore,AutoCloseable {
     private final Connection database;
     private final int rowBytes;
     private final BooleanSupplier cancelled;
-    // This request-private connection is single-owner; it closes these four hot
+    private final GraphProjectionPayloads payloads;
+    // This request-private connection is single-owner; it closes these hot
     // statements along with the scratch database. Page cursors remain independent.
-    private final PreparedStatement lookup,exists,upsert,count;
-    SqliteGraphProjection(Connection database,int rowBytes,BooleanSupplier cancelled)throws SQLException {
+    private final PreparedStatement lookup,exists,upsert,count,gapUpsert,gapDelete;
+    SqliteGraphProjection(Connection database,int rowBytes,BooleanSupplier cancelled)throws SQLException,IOException {
         this.database=database;this.rowBytes=rowBytes;this.cancelled=cancelled;
+        payloads=new GraphProjectionPayloads(database,rowBytes,cancelled);
+        try(var sql=database.createStatement()){sql.execute("CREATE TABLE gap_nodes(identity TEXT NOT NULL,k TEXT NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(identity,k)) WITHOUT ROWID");}
         lookup=database.prepareStatement("SELECT payload FROM rows WHERE space=? AND k=?");
         exists=database.prepareStatement("SELECT 1 FROM rows WHERE space=? AND k=?");
         upsert=database.prepareStatement("INSERT INTO rows(space,k,payload) VALUES(?,?,?) ON CONFLICT(space,k) DO UPDATE SET payload=excluded.payload");
         count=database.prepareStatement("SELECT COUNT(*) FROM rows WHERE space=?");
+        gapUpsert=database.prepareStatement("INSERT INTO gap_nodes VALUES(?,?,?) ON CONFLICT(identity,k) DO UPDATE SET payload=excluded.payload");
+        gapDelete=database.prepareStatement("DELETE FROM gap_nodes WHERE identity=? AND k=?");
     }
     public <T> Map<String,T> records(String space,Function<Object,T> decode) {
         return new AbstractMap<>() {
             private void check() {if(cancelled.getAsBoolean()||Thread.currentThread().isInterrupted())throw new java.util.concurrent.CancellationException();}
-            private T read(String encoded) {return decode.apply(GraphJson.read(encoded,new GraphJson.Limits(rowBytes,128,Integer.MAX_VALUE)));}
+            private T read(String reference) {return decode.apply(GraphJson.read(decoded(reference),new GraphJson.Limits(rowBytes,128,Integer.MAX_VALUE)));}
             public T get(Object key) {
                 check();try {var query=lookup;
                     query.setString(1,space);query.setString(2,(String)key);
@@ -40,16 +44,19 @@ final class SqliteGraphProjection implements GraphProjectionStore {
                 }catch(SQLException failure){throw storage(failure);}
             }
             public T put(String key,T value) {
-                T old=get(key);write(key,value);return old;
+                T old=get(key);if(!Objects.equals(old,value))write(key,value,old);return old;
             }
             public T putIfAbsent(String key,T value) {
-                T old=get(key);if(old==null)write(key,value);return old;
+                T old=get(key);if(old==null)write(key,value,null);return old;
             }
-            private void write(String key,T value) {
+            private void write(String key,T value,T previous) {
                 check();String encoded=CanonicalJson.write(value);
-                if(encoded.getBytes(StandardCharsets.UTF_8).length>rowBytes)throw new UncheckedIOException(new IOException("GRAPH_PARTITION_ROW_WORKER_REQUIRED"));
                 try {var insert=upsert;
-                    insert.setString(1,space);insert.setString(2,key);insert.setString(3,encoded);insert.executeUpdate();
+                    String reference=encoded(encoded);insert.setString(1,space);insert.setString(2,key);insert.setString(3,reference);insert.executeUpdate();
+                    if(space.equals("nodes")) {
+                        if(previous instanceof KnowledgeGraph.Node old&&old.kind().equals("CAPABILITY_GAP")) {gapDelete.setString(1,old.identity());gapDelete.setString(2,key);gapDelete.executeUpdate();}
+                        if(value instanceof KnowledgeGraph.Node node&&node.kind().equals("CAPABILITY_GAP")) {gapUpsert.setString(1,node.identity());gapUpsert.setString(2,key);gapUpsert.setString(3,reference);gapUpsert.executeUpdate();}
+                    }
                 }catch(SQLException failure){throw storage(failure);}
             }
             public Set<Map.Entry<String,T>> entrySet() {
@@ -61,15 +68,15 @@ final class SqliteGraphProjection implements GraphProjectionStore {
                     }
                     public Iterator<Map.Entry<String,T>> iterator() {
                         return new Iterator<>() {
-                            String after="";Iterator<Map.Entry<String,T>> page=Collections.emptyIterator();boolean end;
+                            String after;Iterator<Map.Entry<String,T>> page=Collections.emptyIterator();boolean end;
                             public boolean hasNext() {
                                 check();if(page.hasNext())return true;if(end)return false;
                                 var batch=new ArrayList<Map.Entry<String,T>>();long characters=0;
-                                try(var query=database.prepareStatement("SELECT k,payload FROM rows WHERE space=? AND k>? ORDER BY k LIMIT 128")) {
-                                    query.setString(1,space);query.setString(2,after);
+                                try(var query=database.prepareStatement("SELECT k,payload FROM rows WHERE space=?"+(after==null?"":" AND k>?")+" ORDER BY k LIMIT 128")) {
+                                    query.setString(1,space);if(after!=null)query.setString(2,after);
                                     try(var rows=query.executeQuery()) {
                                         while(rows.next()) {
-                                            String encoded=rows.getString(2);batch.add(Map.entry(rows.getString(1),read(encoded)));characters+=encoded.length();
+                                            String encoded=decoded(rows.getString(2));batch.add(Map.entry(rows.getString(1),decode.apply(GraphJson.read(encoded,new GraphJson.Limits(rowBytes,128,Integer.MAX_VALUE)))));characters+=encoded.length();
                                             if(characters>=1_048_576)break;
                                         }
                                     }
@@ -82,6 +89,32 @@ final class SqliteGraphProjection implements GraphProjectionStore {
                 };
             }
         };
+    }
+    record GapCounts(Map<String,Long> reasons,long nodes) {}
+    /** Count unique gap identities after every contribution. Only the narrow gap
+     * index is replayed; repeated context references are not new obligations. */
+    GapCounts gapCounts()throws SQLException {
+        var reasons=new TreeMap<String,Long>();long nodes=0;String previous=null;
+        var evidence=records("evidence",GraphSnapshotCodec::evidence);
+        try(var query=database.prepareStatement("SELECT identity,payload FROM gap_nodes ORDER BY identity,k");var rows=query.executeQuery()) {
+            while(rows.next()) {
+                if(cancelled.getAsBoolean()||Thread.currentThread().isInterrupted())throw new java.util.concurrent.CancellationException();nodes++;
+                String identity=rows.getString(1);if(identity.equals(previous))continue;previous=identity;
+                var node=GraphSnapshotCodec.node(GraphJson.read(decoded(rows.getString(2)),new GraphJson.Limits(rowBytes,128,Integer.MAX_VALUE)));
+                String reason="UNCLASSIFIED_CAPABILITY_GAP";
+                for(var id:node.evidence()){var proof=evidence.get(id.value());if(proof!=null&&proof.family().equals("evidence.gap")){var raw=GraphJson.object(GraphJson.read(proof.canonicalJson(),new GraphJson.Limits(rowBytes,128,Integer.MAX_VALUE)));if(raw.get("reasonCode") instanceof String code)reason=code;break;}}
+                reasons.merge(reason,1L,Long::sum);
+            }
+        }
+        return new GapCounts(Map.copyOf(reasons),nodes);
+    }
+    String encoded(String value) {try{return payloads.put(value);}catch(SQLException failure){throw storage(failure);}catch(IOException failure){throw new UncheckedIOException(failure);}}
+    String decoded(String reference) {try{return payloads.get(reference);}catch(SQLException failure){throw storage(failure);}catch(IOException failure){throw new UncheckedIOException(failure);}}
+    public void close()throws IOException {
+        IOException failed=null;
+        for(var statement:List.of(lookup,exists,upsert,count,gapUpsert,gapDelete))try{statement.close();}catch(SQLException failure){if(failed==null)failed=new IOException("GRAPH_PROJECTION_STATEMENT_CLOSE",failure);else failed.addSuppressed(failure);}
+        try{payloads.close();}catch(IOException failure){if(failed==null)failed=failure;else failed.addSuppressed(failure);}
+        if(failed!=null)throw failed;
     }
     private static UncheckedIOException storage(SQLException failure) {return new UncheckedIOException(new IOException("GRAPH_PROJECTION_STORAGE_UNAVAILABLE",failure));}
 }

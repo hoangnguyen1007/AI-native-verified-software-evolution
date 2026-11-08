@@ -251,7 +251,7 @@ Exit gate: the entire Track A analysis/evidence workflow runs locally without ba
 
 ### M8 - Backend API and Complete Architecture Workbench
 
-**Implementation sequence:** M8.1 jobs/API, M8.2 live workbench/connections and M8.3 structure/configuration/evidence views are implemented within their recorded bounds. M8.4 execution follows its six-step plan; [current state](current-state.md) records completed slices. The full acceptance criteria below still govern M8 completion.
+**Status: CLOSED / SCOPED EMPIRICAL BASELINE (Human-Accepted 2026-11-08).** M8.1 jobs/API, M8.2 live workbench/connections, M8.3 structure/configuration/evidence views, and M8.4 Steps 1–6 are closed at their recorded scoped MVP and 10-repository empirical benchmark baseline ([M8.4-Step6-Real-Repository-Scale-Evaluation-Report.md](research/M8.4-Step6-Real-Repository-Scale-Evaluation-Report.md)). Active work has transitioned to the **Master Upgrade Plan (`masterupdateplan` — 6 Phases / 15 Slices)** ([04-step6-real-repository-evaluation-plan.md](tasks/m8/04-step6-real-repository-evaluation-plan.md#6-master-upgrade-plan-2026-11-08--6-phase-execution-roadmap-for-90-attribution--universal-repository-compatibility)) to remediate the 10 empirical root-cause gaps across diverse real-world repositories; [current state](current-state.md) records operational slice progress. The full acceptance criteria below still govern M10 Track A release gate completion.
 
 Deliver asynchronous cancellable analysis jobs and versioned query APIs plus the required workbench:
 
@@ -274,7 +274,7 @@ Exit gate: a user can complete the registered end-to-end product journey on a pi
 
 **CONFIRMED human delivery adjustment (2026-10-29):** Step 5 / Bước 1 is **CLOSED / CORE MVP** for the demonstrated 18-adapter/native-capture, explicit-gap, replay, embedded/cross-provider and authentication paths. Full A01–A12 qualification and production-method registration are withdrawn from that task's exit, without being certified or turned into replacement tasks. ADR-007 owns the acceptance amendment. Step 5 continues with its existing Bước 2–3; M8.4 and later gates are unchanged.
 
-**Status: IN PROGRESS (mandatory before M9); operational slice status is in [current state](current-state.md).**
+**Status: CLOSED / SCOPED EMPIRICAL BASELINE (Human-Accepted 2026-11-08); post-M8 Master Upgrade Plan (`masterupdateplan` — 6 Phases / 15 Slices) is ACTIVE / IN PROGRESS in [current state](current-state.md).**
 
 This task is established pursuant to the binding **Human Mandate on Comprehensive Coverage** ([docs/architecture/comprehensive-repository-coverage-problems.md](architecture/comprehensive-repository-coverage-problems.md)).
 

@@ -60,8 +60,10 @@ public final class MavenBuildModelProvider implements BuildModelProvider {
                     var source = context.workspace(next.path, next.aggregator.orElse(next.path), AttemptKind.MODULE);
                     raw = context.inspect(source);
                     var policy = request.policy();
+                    var effectiveUserProperties = new LinkedHashMap<String, String>(context.rootCiFriendlyProperties());
+                    effectiveUserProperties.putAll(policy.userProperties());
                     var properties = new Properties();
-                    properties.putAll(policy.userProperties());
+                    properties.putAll(effectiveUserProperties);
                     var modelRequest = new DefaultModelBuildingRequest()
                             .setModelSource(source)
                             .setValidationLevel(ModelBuildingRequest.VALIDATION_LEVEL_MAVEN_3_1)
@@ -81,7 +83,7 @@ public final class MavenBuildModelProvider implements BuildModelProvider {
                                         .setActiveProfileIds(policy.activeProfiles())
                                         .setInactiveProfileIds(policy.inactiveProfiles())
                                         .setSystemProperties(Map.<String, String>of())
-                                        .setUserProperties(policy.userProperties());
+                                        .setUserProperties(effectiveUserProperties);
                                 var projectProperties = new Properties();
                                 projectProperties.putAll(activationContext.getProjectProperties());
                                 isolated.setProjectProperties(projectProperties);

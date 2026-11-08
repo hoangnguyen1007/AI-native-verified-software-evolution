@@ -46,7 +46,7 @@ results, not diagnostic messages.
 | Provider | Implemented projection | Explicit evidence boundary |
 |---|---|---|
 | Maven | Delegation to the existing passive Maven provider, including acquired parents, BOMs, dependency management and main/test source plans | Existing Maven acquisition, profile, dependency and generated-output gaps remain authoritative |
-| Gradle Groovy/Kotlin | Literal settings includes and project names, project/exact GAV dependency declarations, basic Java plugins, conventional/custom source and resource directories, Java toolchain/source/target/release/encoding settings in recognized blocks | Arbitrary scripts/plugins, interpolation, custom source sets, catalogs, inherited build logic, dynamic selectors and unmodeled expressions produce gaps; no script is executed |
+| Gradle Groovy/Kotlin | Literal settings includes/project names, project/GAV/map declarations, default version catalogs/bundles, platform imports/constraints, basic Java plugins, source/resource directories and compiler settings; verified POM/JAR recovery through product composition | Arbitrary scripts/plugin effects, rich variants, inherited logic and dynamic selectors remain gaps; passive recovery does not establish the effective Gradle context |
 | Plain Java | Conventional `src/main/java`, `src/test/java`, resource directories, with `src` or repository-root fallback | Compiler/encoding/platform policy must be supplied; unusual or overlapping ownership remains explicit |
 
 Lexing separates strings/comments from syntax and bounds characters, tokens,
@@ -86,8 +86,14 @@ span; their derivations cite original owner/field/component entities. Derived
 parameters/accessors retain source type evidence. Record canonical parameters
 now expose `TypeUseRecord` evidence for DI as well.
 
-Synthesis requires exact Lombok **1.18.46** artifact bytes
+Synthesis requires exact pinned Lombok artifact bytes: **1.18.36**
+(`sha256:73b6b05b6a2d365b700bab08d30f94de9d336490bc0acce5b6181fef48cbf18e`)
+or **1.18.46**
 (`sha256:01f7b1a015e33e2b62d5f5f37053306357ab1415fd181fcba7794f5d198c1126`).
+The compatibility oracle compiles an authored Data/Getter/Setter/inheritance/
+Builder fixture with the actual pinned 1.18.36 processor and checks generated
+bytecode descriptors. A mislabeled version/hash and invalid arguments remain
+unresolved. The production frontend remains passive; it never loads a target processor.
 Unverified artifacts, ancestor `lombok.config`, unresolved nullness/type evidence,
 member customization, inner-class constructor complications, generic/existing
 builders and unsupported options produce diagnostics/normalized gaps. Uses on
@@ -153,6 +159,87 @@ unverified provider/framework evidence and missing parameter types stay unknown.
 These are acquisition facts. Activation, parameter qualifiers/names, constructor
 overload choice, candidate matching, registration order and runtime creation
 continue through the existing M4B/M4C contracts; this slice does not invent them.
+
+## Source recovery continuation (2026-11-05)
+
+`source.universal-ingestion:m8.4-project-recovery-v3` retains usable owned sibling
+sources for explicitly incomplete recovery contexts. Literal Gradle project
+dependencies supply their own main source set and exported API project sources;
+test contexts additionally receive their own main sources. Private transitive
+implementation projects are not exported. Missing source ownership/bytes and
+incompatible syntax/platform/encoding still prevent substitution. Closed exact
+contexts keep their existing all-or-nothing closure rules. Recovery order is
+provider evidence, not a certified native Gradle variant/classpath; generated
+output and plugin obligations remain open.
+
+`frontend.javaparser:3.28.2-m8.4-inference-http-v10` understands the parser's lambda
+constraint wrapper while preserving hierarchy checks. Lower-bounded receiver
+captures remain unknown until their actual capture context is established; they
+cannot supply fictitious member bindings. Source-proven record component types
+support `var` in record patterns, including nested and explicitly parameterized
+source records. Materialization stays inside the adapter, preserves original
+source bytes/ranges/spelling, and supplies no missing record or generated stub.
+Raw generic selector inference, missing/binary-only components and invalid arity
+retain their actual unavailable outcomes. Authored fixtures use javac 21 without
+processors as an independent oracle.
+
+HTTP recovery folds only known String literals, parentheses, concatenations and
+resolved final String aliases. It keeps mutable/shadowed/runtime values unknown,
+with memoization, cycle detection and per-expression work/depth/size bounds.
+Resolved WebClient get/post/etc. declarations provide method evidence; spelling
+alone does not. Unknown URI evidence retains the call and its typed gap. The
+[JLS lambda rules](https://docs.oracle.com/javase/specs/jls/se21/html/jls-15.html#jls-15.27.3)
+and pinned [parser constraint representation](https://github.com/javaparser/javaparser/blob/javaparser-parent-3.28.2/javaparser-core/src/main/java/com/github/javaparser/resolution/types/ResolvedLambdaConstraintType.java)
+are implementation references, not a substitute for the compiler controls.
+
+A compiler-confirmed Reactor/circuit-breaker fixture also exposes the pinned
+parser's inference-context collision: its
+[inference map keys parameters by bare name](https://github.com/javaparser/javaparser/blob/javaparser-parent-3.28.2/javaparser-core/src/main/java/com/github/javaparser/resolution/logic/InferenceContext.java),
+conflating unrelated `T` parameters. The exact `InferenceVariableType.equivalentType`
+failure signature now retains `java.parser-inference-collision` / UNSUPPORTED
+observations. No equivalent type is guessed, no observation is omitted, and
+unrelated adapter exceptions remain ERROR. This is explicit provider-gap
+classification, not resolved attribution or a claimed fix of the upstream solver.
+Replace this control when a scoped-inference provider passes the same positive
+and negative compiler controls.
+
+### Ground lambda inputs (provider v11)
+
+`frontend.javaparser:3.28.2-m8.4-lambda-input-v11` additionally handles two
+compiler-confirmed pinned-provider defects: block-return LUB over constraint
+wrappers can return null, and chained comparator inference can mutate a map
+during iteration. `LambdaParameterInference` materializes adapter-local inputs
+only from a concrete, non-raw/non-wildcard receiver, a unique fixed-arity member
+and its substituted functional signature. A unique fixed-arity static factory
+can supply its return parameters from explicitly written lambda inputs only
+when their method variables have no bound other than Object. Unestablished
+variables, conflicting inputs, overload ties and capture contexts stay unknown.
+Primitive inputs do not instantiate generic method variables; unresolved explicit
+factory type arguments require their own substitution rather than body inference.
+
+### Gradle POM compile variants (2026-11-06)
+
+`dependency.gradle-recovery:m8.4-compile-variants-v2` traverses only Maven
+`compile` dependencies for the recovered MAIN/TEST compile classpaths. A
+dependency's runtime implementation dependencies cannot introduce a compile
+version conflict or remove an independently declared compile artifact. This
+follows the [Gradle POM-to-variant mapping](https://docs.gradle.org/current/userguide/java_library_plugin.html#sec:java_library_separation).
+Direct test dependencies, exported project APIs, optional/exclusion handling and
+actual POM/JAR hashes remain explicit. Genuine conflicts remain withheld; the
+provider never chooses a version merely to improve attribution. Gradle module
+metadata, plugins, effective variants and generated outputs still need their
+actual context. Every recovery context retains `GRADLE_EFFECTIVE_CONTEXT_REQUIRED`.
+
+The pinned facade's public node-data caches are invalidated on changed lambdas
+and ancestors; same-bound constraint values are normalized only after verifying
+the exact parameter declaration binding. No private fields or global cache state
+are modified. Nested/independent inputs are restored deterministically. These
+provider-specific details must be revalidated when replacing/upgrading the SDK.
+Exact and recovery paths retain receiver hierarchy checks, including normalized
+inputs; missing parents cannot justify an overload binding. Implicit inputs add
+no written type uses, written `var` retains its original spelling, and all source
+spans/bytes remain authoritative. Compiler oracles, overload/raw/lower-wildcard/
+missing-parent negatives, replay and packaged CLI journeys cover this boundary.
 
 ## Verification and remaining acceptance
 

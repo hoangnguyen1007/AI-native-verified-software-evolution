@@ -8,6 +8,43 @@ import org.junit.jupiter.api.io.TempDir;
 import static org.junit.jupiter.api.Assertions.*;
 class ScanJourneyTest {
     @TempDir Path workspace;
+    @Test void dependencyPreparationVerifiesRealCachedBinariesWithoutCreatingAGraphOrLoadingAJdk()throws Exception {
+        Path source=Files.createDirectory(workspace.resolve("prepare-input")),cache=Files.createDirectory(workspace.resolve("prepare-cache"));
+        Files.writeString(source.resolve("build.gradle"),"plugins { id 'java' }\ndependencies { implementation 'fixture:library:1' }\n");
+        Path artifact=Files.createDirectories(cache.resolve("fixture/library/1"));
+        Files.writeString(artifact.resolve("library-1.pom"),"<project><modelVersion>4.0.0</modelVersion><groupId>fixture</groupId><artifactId>library</artifactId><version>1</version></project>");
+        try(var jar=new java.util.jar.JarOutputStream(Files.newOutputStream(artifact.resolve("library-1.jar")))){jar.putNextEntry(new java.util.jar.JarEntry("META-INF/fixture"));jar.write(new byte[]{1});jar.closeEntry();}
+        var ready=run("scan",source.toString(),"--prepare-dependencies","--offline","--maven-cache",cache.toString(),"--jdk",workspace.resolve("absent-jdk").toString(),"--json");
+        assertEquals(0,ready.code,ready.err);assertEquals("PREPARED",ready.data().get("status"));assertEquals(false,ready.data().get("graphCreated"));assertEquals("NOT_EVALUATED",ready.data().get("semanticCoverage"));
+        assertTrue(((Number)GraphJson.object(GraphJson.object(ready.data().get("dependencies")).get("gradle")).get("binaryInputs")).intValue()>0);
+        assertEquals(1,((Number)GraphJson.object(GraphJson.object(ready.data().get("dependencies")).get("gradle")).get("uniqueBinaryArtifacts")).intValue());
+        assertEquals(false,GraphJson.object(ready.data().get("execution")).get("isolatedBuildExecuted"));assertFalse(Files.exists(workspace.resolve(".evo/selection.json")));
+        var missing=run("scan",source.toString(),"--prepare-dependencies","--offline","--maven-cache",Files.createDirectory(workspace.resolve("empty-prepare-cache")).toString(),"--json");
+        assertEquals(3,missing.code,missing.err+missing.out);assertEquals("PARTIAL",missing.data().get("status"));
+        assertTrue(GraphJson.object(missing.data().get("problemsByReason")).containsKey("ARTIFACT_NOT_FOUND"));
+        assertEquals(2,run("scan",source.toString(),"--prepare-dependencies","--build","required","--json").code);
+    }
+    @Test void receiptCountsUniquePublishedGapsIncludingRpcProjection()throws Exception {
+        Path source=Files.createDirectory(workspace.resolve("rpc-input"));
+        Files.writeString(source.resolve("cart.proto"),"syntax=\"proto3\"; package shop; message Req {} message Reply {} service Cart { rpc Get(Req) returns (Reply); }");
+        Files.writeString(source.resolve("client.go"),"package main\nfunc f(){ pb.NewCartClient(conn).Get(ctx, req) }");
+        Files.writeString(source.resolve("server.py"),"import demo_pb2_grpc\nclass C(demo_pb2_grpc.CartServicer):\n    def Get(self,r,c):\n        return Reply()\n");
+        var result=run("scan",source.toString(),"--offline","--build","off","--json");assertEquals(3,result.code,result.err+result.out);
+        var graph=new Workspace(workspace).selectedGraph();var summary=GraphJson.object(result.data().get("gapSummary"));
+        assertEquals(graph.nodes().stream().filter(n->n.kind().equals("CAPABILITY_GAP")).map(KnowledgeGraph.Node::identity).distinct().count(),((Number)summary.get("total")).longValue());
+        assertTrue(((Number)summary.get("inputTotal")).longValue()<((Number)summary.get("total")).longValue());
+        assertEquals(2,((Number)GraphJson.object(summary.get("byReason")).get("GRPC_ROUTING_EVIDENCE_MISSING")).longValue());
+    }
+    @Test void gradleScanUsesThePassiveRecoveryCompositionWithoutLaunchingAWorker()throws Exception {
+        Path source=Files.createDirectory(workspace.resolve("gradle-input"));Files.createDirectories(source.resolve("src/main/java"));
+        Files.writeString(source.resolve("build.gradle"),"plugins { id 'java' }\njava { toolchain { languageVersion = JavaLanguageVersion.of(21) } }\n");
+        Files.writeString(source.resolve("src/main/java/GradleClient.java"),"class GradleClient { int size(String s) { return s.length(); } }");
+        var result=run("scan",source.toString(),"--offline","--build","off","--json");assertEquals(3,result.code,result.err+result.out);
+        var dependencies=GraphJson.object(result.data().get("dependencies"));var gradle=GraphJson.object(dependencies.get("gradle"));
+        assertEquals("PASSIVE_RECOVERY",gradle.get("trust"));assertEquals(false,gradle.get("effectiveGradleContext"));
+        assertEquals(false,GraphJson.object(result.data().get("execution")).get("isolatedBuildExecuted"));
+        assertTrue(new Workspace(workspace).selectedGraph().nodes().stream().anyMatch(n->n.kind().equals("TYPE")));
+    }
     @Test void aJavaWorkerBudgetStillPublishesEveryInventoryEntryAndOtherLanguageCalls()throws Exception {
         Path source=Files.createDirectory(workspace.resolve("large-source"));byte[] block=new byte[8192];Arrays.fill(block,(byte)'a');
         try(var output=Files.newOutputStream(source.resolve("Huge.java"))){output.write("//".getBytes(java.nio.charset.StandardCharsets.UTF_8));for(int i=0;i<1222;i++)output.write(block);}

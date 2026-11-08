@@ -11,8 +11,8 @@ import java.util.function.BooleanSupplier;
 /** Source URI joins expose possible relationships, preserving endpoint contexts and
  * unresolved routing/activation. They cannot establish a deployed service call. */
 public final class HttpServiceCallProjection {
-    public static final VersionedIdentifier PROVIDER=new VersionedIdentifier("polyglot.http-uri-candidates","m8.4-java-clients-v2");
-    private record Endpoint(KnowledgeGraph.Node node,String path,Set<String> methods,ContentDigest proof,boolean recovered) {}
+    public static final VersionedIdentifier PROVIDER=new VersionedIdentifier("polyglot.http-uri-candidates","m8.4-spring-segments-v4");
+    private record Endpoint(KnowledgeGraph.Node node,String path,Set<String> methods,ContentDigest proof,boolean recovered,boolean spring) {}
     private HttpServiceCallProjection() {}
 
     public static void project(Map<String,KnowledgeGraph.Node> nodes,Map<String,KnowledgeGraph.Edge> edges,
@@ -41,14 +41,15 @@ public final class HttpServiceCallProjection {
             }
             var candidates=new TreeMap<String,Endpoint>();
             long unsupportedPatterns=0;
-            var path=HttpUriPattern.requestPath(caller.path());
+            var path=HttpUriPattern.candidatePath(caller.path());
             if(path.isPresent()&&!caller.recovered()) {
                 var group=new ArrayList<Endpoint>(providers.getOrDefault(bucket(path.orElseThrow()),List.of()));
                 if(!bucket(path.orElseThrow()).equals("*"))group.addAll(providers.getOrDefault("*",List.of()));
+                else for(var entry:providers.entrySet())if(!entry.getKey().equals("*"))group.addAll(entry.getValue());
                 for(var target:group) {
                     check(cancelled);if(target.recovered()||target.node().identity().equals(node.identity()))continue;
                     if(!caller.methods().isEmpty()&&!target.methods().isEmpty()&&Collections.disjoint(caller.methods(),target.methods()))continue;
-                    var match=HttpUriPattern.match(caller.path(),target.path());
+                    var match=target.spring()?HttpUriPattern.springCandidateMatch(caller.path(),target.path()):HttpUriPattern.candidateMatch(caller.path(),target.path());
                     if(match==HttpUriPattern.Match.MATCH)candidates.put(target.node().context()+"|"+target.node().identity(),target);
                     else if(match==HttpUriPattern.Match.UNSUPPORTED)unsupportedPatterns++;
                 }
@@ -91,20 +92,20 @@ public final class HttpServiceCallProjection {
             if(proof.family().equals("java.http-client-call")) {
                 var call=GraphJson.object(GraphJson.object(GraphJson.read(proof.canonicalJson(),GraphJson.Limits.defaults())).get("call"));
                 var methods=new TreeSet<String>();GraphJson.array(call.get("methods")).forEach(m->methods.add(GraphJson.string(m)));
-                return Optional.of(new Endpoint(node,GraphJson.string(call.get("uri")),methods,support,false));
+                return Optional.of(new Endpoint(node,GraphJson.string(call.get("uri")),methods,support,false,false));
             }
             if(node.kind().equals("ENDPOINT")&&proof.family().equals("spring.endpoint-declaration")) {
                 var route=GraphJson.object(GraphJson.object(GraphJson.read(proof.canonicalJson(),GraphJson.Limits.defaults())).get("route"));
                 var methods=new TreeSet<String>();GraphJson.array(route.get("methods")).forEach(m->methods.add(GraphJson.string(m)));
                 if(Boolean.TRUE.equals(route.get("implicitHead")))methods.add("HEAD");
-                return Optional.of(new Endpoint(node,GraphJson.string(route.get("path")),methods,support,false));
+                return Optional.of(new Endpoint(node,GraphJson.string(route.get("path")),methods,support,false,true));
             }
             if(proof.family().equals("polyglot.source-syntax")) {
                 var fields=GraphJson.object(GraphJson.object(GraphJson.read(proof.canonicalJson(),GraphJson.Limits.defaults())).get("fields"));
                 var fact=GraphJson.object(fields.get("fact"));String raw=GraphJson.string(fact.get("name"));
                 if(raw.length()<2||raw.indexOf('\\')>=0||raw.charAt(raw.length()-1)!=raw.charAt(0)||raw.charAt(0)!='\''&&raw.charAt(0)!='"')continue;
                 String method="UNKNOWN";if(fact.get("attributes") instanceof Map<?,?> attrs&&attrs.get("method") instanceof String text)method=text;
-                return Optional.of(new Endpoint(node,raw.substring(1,raw.length()-1),method.equals("UNKNOWN")?Set.of():Set.of(method),support,Boolean.TRUE.equals(fact.get("recovered"))));
+                return Optional.of(new Endpoint(node,raw.substring(1,raw.length()-1),method.equals("UNKNOWN")?Set.of():Set.of(method),support,Boolean.TRUE.equals(fact.get("recovered")),false));
             }
         }
         return Optional.empty();

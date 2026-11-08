@@ -24,6 +24,7 @@ final class TypeExtraction {
 
     List<TypeUseRecord> extract(CompilationUnit unit) {
         for (var parameter : unit.findAll(Parameter.class)) {
+            if(parameter.getType().containsData(LambdaParameterInference.IMPLICIT))handled.addAll(parameter.getType().findAll(Type.class));
             if (parameter.getParentNode().orElse(null) instanceof CallableDeclaration<?> callable) {
                 context.observe(parameter,"has-parameter",() -> context.entity(parameter),() -> context.entity(callable));
                 add(parameter,parameter.getType(),"parameter-type",parameter.isVarArgs());
@@ -80,7 +81,7 @@ final class TypeExtraction {
     }
     private JavaType map(Type type, Supplier<Entity> owner, String role, boolean argument) {
         String spelling = context.source(type).slice(context.source(type).span(type));
-        if (type instanceof VarType) {
+        if (type instanceof VarType || type.containsData(RecordPatternInference.INFERRED)) {
             try {
                 var inferred = inferred(type.resolve(), spelling, 0);
                 if(inferred.target().isPresent()) {

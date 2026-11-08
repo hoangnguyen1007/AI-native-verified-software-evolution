@@ -14,7 +14,7 @@ final class ImplicitExtraction {
         declarations(unit,false);
     }
     void declarations(CompilationUnit unit,boolean localsOnly) {
-        context.lombok.unsupportedGenerators(unit);
+        context.lombok.unsupportedGenerators(unit,localsOnly);
         for (TypeDeclaration<?> type : unit.findAll(TypeDeclaration.class)) {
             if(localsOnly&&!context.hasLocalOwner(type))continue;
             try {

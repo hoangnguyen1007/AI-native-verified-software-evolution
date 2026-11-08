@@ -7,7 +7,7 @@
   const append = (parent, ...children) => { children.filter(Boolean).forEach(child => parent.append(child)); return parent; };
   const safe = async action => { try { await action(); } catch (error) { if (error.name !== 'AbortError') notice(error.message, true); } };
   const btn = (text, action, cls = 'button') => { const n = el('button', cls, text); n.type = 'button'; n.addEventListener('click', () => safe(action)); return n; };
-  const badge = text => el('span', 'badge' + (/FAILED|CANCELLED|TIMED_OUT/i.test(text) ? ' bad' : /PARTIAL|UNKNOWN|MAY|WITHHELD/i.test(text) ? ' warn' : /COMPLETE|SUCCEEDED|MUST/i.test(text) ? ' good' : ''), text);
+  const badge = text => el('span', 'badge' + (/FAILED|CANCELLED|TIMED_OUT|ERROR/i.test(text) ? ' bad' : /PARTIAL|UNKNOWN|MAY|WITHHELD|UNRESOLVED|CANDIDATE/i.test(text) ? ' warn' : /COMPLETE|SUCCEEDED|MUST|RESOLVED|SAT/i.test(text) ? ' good' : ''), text);
   const empty = (title, text) => append(el('div', 'empty'), el('h3', '', title), el('p', '', text));
   const card = (title, hint) => append(el('div', 'card'), append(el('div', 'card-heading'), append(el('div'), el('h2', '', title), el('p', 'muted', hint))));
   function selectControl(label, options, value) {
@@ -17,6 +17,15 @@
   }
   const field = (label, control) => append(el('label', 'control-field'), el('span', 'small muted', label), control);
   const relationshipKinds = scope => scope==='SPRING_COMPONENT'?['spring.selected-binding']:scope==='ENTITY'?['java.calls','java.constructor-calls','java.reads-field','java.writes-field','java.type-uses','java.returns','java.field-type','java.parameter-type','java.throws','java.extends','java.implements','java.method-references','java.type-parameter-bound','java.type-argument']:['graph.depends-on'];
+  function digestChip(value) {
+    const str = String(value ?? '');
+    if (!/^sha256:[0-9a-f]{16,}$/i.test(str)) return el('span', '', str);
+    const chip = btn(M.shortDigest(str), async () => {
+      try { await navigator.clipboard.writeText(str); chip.textContent = 'Copied!'; setTimeout(() => { chip.textContent = M.shortDigest(str); }, 1200); } catch (_) {}
+    }, 'digest-chip');
+    chip.title = str + ' (Click to copy full SHA-256 digest)';
+    return chip;
+  }
   async function resolveLabels(identities,env){
     const pending=[...new Set(identities)].filter(id=>!state.labels.has(id));
     for(let offset=0;offset<pending.length&&!env.signal.aborted;offset+=3){
@@ -187,8 +196,12 @@
   }
   function row(item, action, subtitle) {
     if (item.identity) state.labels.set(item.identity, M.label(item));
-    const moduleName = item.module && !item.module.includes('sha256:') ? item.module : null;
-    return append(btn('', action, 'entity-row'), append(el('div'), el('strong', '', M.label(item)), el('p', '', subtitle || [moduleName, item.origin === 'PROJECT' ? 'Project source' : item.origin, item.sourceSet === 'MAIN' ? 'Main' : item.sourceSet].filter(Boolean).join(' · '))), badge((item.kind || 'Details').toLowerCase().replaceAll('_', ' ')));
+    const moduleName = item.module && !item.module.includes('sha256:') ? item.module : state.moduleLabels?.get(item.module) || null;
+    const rawLabel = M.label(item);
+    const displayLabel = /^sha256:[0-9a-f]{16,}$/i.test(rawLabel) ? M.shortDigest(rawLabel) : rawLabel;
+    const node = append(btn('', action, 'entity-row'), append(el('div'), el('strong', '', displayLabel), el('p', '', subtitle || [moduleName, item.origin === 'PROJECT' ? 'Project source' : item.origin, item.sourceSet === 'MAIN' ? 'Main' : item.sourceSet].filter(Boolean).join(' · '))), badge((item.kind || 'Details').toLowerCase().replaceAll('_', ' ')));
+    if (displayLabel !== rawLabel) node.title = rawLabel;
+    return node;
   }
   function pagedList(container, env, fetchPage, onRow, title, hint) {
     const list = el('div', 'list'), footer = el('div', 'page-footer');footer.setAttribute('role','status');footer.setAttribute('aria-live','polite');let next, items = [], busy = false; container.append(list, footer);
@@ -206,31 +219,48 @@
   async function inspect(title, kind, loader, actions = [], previousItems = [], cursor) {
     state.inspector?.abort(); state.inspector = new AbortController(); const controller = state.inspector;
     state.details = null;
-    $('inspector-title').textContent = title; $('inspector-kind').textContent = kind; $('inspector-body').replaceChildren(el('p', 'muted', 'Loading evidence…')); $('download-details').disabled = true;
+    $('inspector-title').textContent = /^sha256:[0-9a-f]{16,}$/i.test(String(title)) ? M.shortDigest(String(title)) : title;
+    $('inspector-kind').textContent = kind; $('inspector-body').replaceChildren(el('p', 'muted', 'Loading evidence…')); $('download-details').disabled = true;
     if (!$('inspector').open) $('inspector').showModal();
     const contextEnv = state.graph && state.context ? envFor(controller.signal) : null;
     try { const page = typeof loader === 'function' ? await loader(controller.signal, cursor) : loader; if (controller.signal.aborted) return;
       const value = page?.items && previousItems.length ? {...page, items: [...previousItems, ...page.items]} : page;
-      state.details = value; const body = $('inspector-body'); body.replaceChildren(); const fields = el('dl', 'data-fields');
-      for (const [key, val] of Object.entries(value || {})) if (val != null && typeof val !== 'object' && !['query','identity','id','setup','graph','snapshot','acquisition','sourceReport','continuation'].includes(key)) append(fields, append(el('div', 'data-field'), el('dt', '', key.replace(/([A-Z])/g, ' $1')), el('dd', '', val)));
+      state.details = value; const body = $('inspector-body'); body.replaceChildren();
+      const firstGap = value?.reasonCode ? value : Array.isArray(value?.items) && value.items.length === 1 && value.items[0]?.reasonCode ? value.items[0] : null;
+      if (firstGap?.reasonCode) {
+        const info = M.humanReason(firstGap.reasonCode);
+        const guide = el('div', 'human-explain-banner');
+        append(guide, append(el('div', 'human-explain-header'), el('strong', '', info.title), badge(info.code)), el('p', '', info.explanation), el('p', 'human-action-hint', 'Recommended next step: ' + info.action));
+        body.append(guide);
+      }
+      const fields = el('dl', 'data-fields');
+      for (const [key, val] of Object.entries(value || {})) if (val != null && typeof val !== 'object' && !['query','identity','id','setup','graph','snapshot','acquisition','sourceReport','continuation'].includes(key)) {
+        const dd = el('dd');
+        if (typeof val === 'string' && /^sha256:[0-9a-f]{16,}$/i.test(val)) dd.append(digestChip(val));
+        else dd.textContent = String(val);
+        append(fields, append(el('div', 'data-field'), el('dt', '', key.replace(/([A-Z])/g, ' $1')), dd));
+      }
       body.append(fields);
       if (Array.isArray(value?.items)) {
         body.append(el('p', 'muted small', M.pageInfo(value)));
         for (const [index, item] of value.items.entries()) {
           const section = el(item.reasonCode ? 'details' : 'div', 'evidence-item');
-          const title = item.reasonCode ? item.reasonCode.toLowerCase().replaceAll('_', ' ') + ' · ' + item.mechanismCategory : item.vertices ? 'Dependency path ' + (index + 1) : item.family || item.kind || 'Evidence ' + (index + 1);
-          section.append(el(item.reasonCode ? 'summary' : 'h3', '', title));
+          const gapInfo = item.reasonCode ? M.humanReason(item.reasonCode) : null;
+          const itemTitle = gapInfo ? gapInfo.title + ' (' + item.reasonCode + ') · ' + (item.mechanismCategory || 'GAP') : item.vertices ? 'Dependency path ' + (index + 1) : item.family || item.kind || 'Evidence ' + (index + 1);
+          section.append(el(item.reasonCode ? 'summary' : 'h3', '', itemTitle));
+          if (gapInfo) section.append(el('p', 'small muted', gapInfo.explanation + ' — ' + gapInfo.action));
           if (item.vertices && contextEnv) {
-            section.append(el('p', 'muted small', item.edges.length + ' dependency steps · ' + (item.feasibility === 'SAT' ? 'Feasible in the modeled configuration space' : 'Configuration feasibility: ' + item.feasibility)));
+            const feasText = item.feasibility === 'SAT' ? 'Feasible in modeled configurations (SAT)' : item.feasibility === 'UNSAT' ? 'Infeasible / contradictory conditions (UNSAT)' : 'Configuration feasibility: ' + item.feasibility;
+            section.append(el('p', 'muted small', item.edges.length + ' dependency steps · ' + feasText));
             const path = el('ol', 'dependency-path');
-            item.vertices.forEach((identity, step) => path.append(append(el('li'), btn(state.labels.get(identity) || 'Inspect symbol ' + (step + 1), async () => {
+            item.vertices.forEach((identity, step) => path.append(append(el('li'), btn(state.labels.get(identity) || 'Inspect symbol ' + (step + 1) + ' (' + M.shortDigest(identity) + ')', async () => {
               const entity = await contextEnv.query('entity', {identity});
               if (controller.signal.aborted) return;
               if (entity.items[0]) return inspectEntity(entity.items[0], contextEnv);
               return inspect('Symbol evidence', 'ENTITY', entity);
             }, 'text-button')))); section.append(path);
           } else if(item.span&&item.sourceDigest){
-            const span=item.span;section.append(el('p','', (state.labels.get(span.document)||'Captured source')+' · '+span.startLine+':'+span.startColumn+' → '+span.endLine+':'+span.endColumn));
+            const span=item.span;section.append(el('p','source-coord-pill', (state.labels.get(span.document)||M.shortDigest(span.document)||'Captured source')+' · Line '+span.startLine+':'+span.startColumn+' → '+span.endLine+':'+span.endColumn));
             const detail=append(el('details'),el('summary','','Source identities & coordinates'));renderFields(detail,item,0);section.append(detail);
           } else renderFields(section, item.metadata || item, 0);
           body.append(section);
@@ -238,8 +268,8 @@
         if (!value.items.length) body.append(empty('No records returned', 'Read the status and limitations before interpreting an empty result.'));
         if (value.continuation && typeof loader === 'function') body.append(btn('Load more evidence', () => inspect(title, kind, loader, actions, value.items, value.continuation)));
       } else renderFields(body, value, 0, true);
-      if (actions.length) body.append(append(el('div', 'detail-actions'), ...actions.map(action => btn(action.label, action.run, 'text-button'))));
-      body.append(append(el('details'), el('summary', '', 'Recorded data and source coordinates'), el('pre', '', JSON.stringify(value, null, 2)))); $('download-details').disabled = false;
+      if (actions.length) body.append(append(el('div', 'detail-actions'), ...actions.map(action => btn(action.label, action.run, 'button subtle'))));
+      body.append(append(el('details'), el('summary', '', 'Recorded data and source coordinates (Raw JSON)'), el('pre', '', JSON.stringify(value, null, 2)))); $('download-details').disabled = false;
     } catch (error) { if (!controller.signal.aborted) $('inspector-body').replaceChildren(empty('Details unavailable', error.message)); }
   }
   function renderFields(parent, value, depth, objectsOnly = false) {
@@ -247,8 +277,13 @@
     const fields = el('dl', 'data-fields');
     for (const [key, val] of Object.entries(value)) {
       if (val == null || objectsOnly && typeof val !== 'object') continue;
-      if (typeof val !== 'object') append(fields, append(el('div', 'data-field'), el('dt', '', key.replace(/([A-Z])/g, ' $1')), el('dd', '', ['source','target'].includes(key) ? state.labels.get(val) || val : val)));
-      else if (depth < 3 && Object.keys(val).length) {
+      if (typeof val !== 'object') {
+        const resolved = ['source','target'].includes(key) ? state.labels.get(val) || val : val;
+        const dd = el('dd');
+        if (typeof resolved === 'string' && /^sha256:[0-9a-f]{16,}$/i.test(resolved)) dd.append(digestChip(resolved));
+        else dd.textContent = String(resolved);
+        append(fields, append(el('div', 'data-field'), el('dt', '', key.replace(/([A-Z])/g, ' $1')), dd));
+      } else if (depth < 3 && Object.keys(val).length) {
         const detail = append(el('details'), el('summary', '', key.replace(/([A-Z])/g, ' $1')));
         if (['entity', 'span', 'sourceSpan', 'declaration', 'path', 'confidence', 'dimensions'].includes(key)) detail.open = true;
         renderFields(detail, val, depth + 1); fields.append(detail);
@@ -261,10 +296,10 @@
     const query = (op, args, signal, override = {}, cursor) => api('/graphs/' + env.graph + '/queries/' + op, {request: {...env.request, ...override}, arguments: args, ...(['explain', 'dependencies'].includes(op) ? {page: {size: 20, ...(cursor ? {cursor} : {})}} : {})}, signal);
     const scope = ['TYPE', 'MODULE', 'PACKAGE'].includes(item.kind) ? item.kind : item.kind==='BEAN_DEFINITION_CANDIDATE'?'SPRING_COMPONENT':['METHOD','CONSTRUCTOR','FIELD','PARAMETER','RECORD_COMPONENT'].includes(item.kind) ? 'ENTITY' : null;
     const actions = scope ? [
-      {label: 'Dependencies', run: () => inspect(M.label(item), 'DEPENDENCIES', (signal, cursor) => query('dependencies', {identity: item.identity}, signal, {scope,relationshipKinds:relationshipKinds(scope)}, cursor))},
-      {label: 'Dependents', run: () => inspect(M.label(item), 'INCOMING DEPENDENCIES', (signal, cursor) => query('dependencies', {identity: item.identity}, signal, {scope,relationshipKinds:relationshipKinds(scope), direction: 'INCOMING'}, cursor))},
-      {label: 'Change impact', run: () => inspect(M.label(item), 'POTENTIAL STRUCTURAL IMPACT', signal => query('impact', {identity: item.identity}, signal, {scope,relationshipKinds:relationshipKinds(scope), direction: 'INCOMING'}))},
-      {label: 'Focused graph', run: async () => { state.graphFocus = {seed: item.identity, scope}; closeInspector(); await loadTab('graph'); }},
+      {label: 'Dependencies (Outgoing)', run: () => inspect(M.label(item), 'DEPENDENCIES', (signal, cursor) => query('dependencies', {identity: item.identity}, signal, {scope,relationshipKinds:relationshipKinds(scope)}, cursor))},
+      {label: 'Dependents (Incoming)', run: () => inspect(M.label(item), 'INCOMING DEPENDENCIES', (signal, cursor) => query('dependencies', {identity: item.identity}, signal, {scope,relationshipKinds:relationshipKinds(scope), direction: 'INCOMING'}, cursor))},
+      {label: 'Blast radius / Impact', run: () => inspect(M.label(item), 'POTENTIAL STRUCTURAL IMPACT', signal => query('impact', {identity: item.identity}, signal, {scope,relationshipKinds:relationshipKinds(scope), direction: 'INCOMING'}))},
+      {label: 'Open in graph', run: async () => { state.graphFocus = {seed: item.identity, scope}; closeInspector(); await loadTab('graph'); }},
       {label: 'Metric details', run: async () => { state.metricSubject = item; closeInspector(); await loadTab('metrics'); }}
     ] : [];
     return inspect(M.label(item), item.kind || 'ENTITY', (signal, cursor) => query('explain', {identity: item.identity}, signal, {}, cursor), actions);
@@ -294,16 +329,22 @@
     }
     return inspect(rule?.name||rule?.id||'Rule evidence','POLICY EVIDENCE',finding,actions);
   }
+  function layoutConfig(name) {
+    if (name === 'concentric') return {name: 'concentric', padding: 36, animate: false, minNodeSpacing: 28, concentric: node => node.degree(), levelWidth: () => 2};
+    if (name === 'circle') return {name: 'circle', padding: 36, animate: false, spacingFactor: 1.2};
+    if (name === 'grid') return {name: 'grid', padding: 36, animate: false, condense: true, spacingFactor: 1.25};
+    return {name: 'breadthfirst', directed: true, padding: 35, spacingFactor: 1.4, animate: false};
+  }
   const views = {
     async overview(env) {
       const summary = await env.query('summary'), node = el('div'), counts = summary.items?.[0], stats = el('div', 'stats');
       for (const [label, kind] of [['Types & references', 'TYPE'], ['Modules', 'MODULE'], ['Source documents', 'SOURCE_DOCUMENT'], ['Recorded gaps', 'CAPABILITY_GAP']]) {
         const stat = btn('', () => loadTab(label === 'Recorded gaps' ? 'gaps' : 'structure'), 'stat');
-        append(stat, el('span', '', label), el('strong', '', counts?.nodeCounts?.[kind] ?? (counts ? 0 : '—')), el('small', '', summary.status === 'COMPLETE' ? 'In the selected context' : 'Observed · incomplete evidence')); stats.append(stat);
+        append(stat, el('span', '', label), el('strong', '', counts?.nodeCounts?.[kind] ?? (counts ? 0 : '—')), el('small', '', summary.status === 'COMPLETE' ? 'In the selected context' : 'Observed · click to inspect')); stats.append(stat);
       }
       node.append(stats); const grid = el('div', 'content-grid'); node.append(grid);
       const health = card('Architecture assessment', 'Based on the selected policy and the evidence available for this analysis.'); grid.append(health);
-      if (env.reportIds.length !== 1) health.append(empty(env.reportIds.length ? 'Select a policy report' : 'Score unavailable — no rules configured', env.reportIds.length ? 'Open Metrics & score to choose an exact report.' : 'A score needs explicit architecture rules and enough evidence. Structural metrics are available without a policy.'),btn(env.reportIds.length?'Open Metrics & score':'Configure rules & scoring',()=>env.reportIds.length?loadTab('metrics'):configureRules()));
+      if (env.reportIds.length !== 1) health.append(empty(env.reportIds.length ? 'Select a policy report' : 'Score unavailable — no rules configured', env.reportIds.length ? 'Open Metrics & score to choose an exact report.' : 'A score needs explicit architecture rules and enough evidence. Structural metrics are available without a policy.'),btn(env.reportIds.length?'Open Metrics & score':'Configure rules & scoring',()=>env.reportIds.length?loadTab('metrics'):configureRules(),'button primary'));
       else {
         try { const assessment = await env.report(env.reportIds[0].identity, 'assessment'); health.append(el('div', 'score', M.assessment(assessment)), badge(assessment.status));
           if (assessment.confidence) health.append(el('p', 'muted small', assessment.confidence.sufficient ? 'Required assessment evidence is sufficient.' : 'Required assessment evidence is incomplete.'));
@@ -311,23 +352,47 @@
           health.append(btn('View score breakdown', () => loadTab('metrics'), 'text-button'));
         } catch (error) { health.append(empty('Assessment unavailable', error.message)); }
       }
-      const guide = card('Follow the evidence', 'Start with a class, inspect its dependencies, then review limitations.'); grid.append(guide);
-      for (const [label, tab] of [['Browse captured structure →', 'structure'], ['Explore dependency graph →', 'graph'], ['Compare modeled configurations →','configurations'],['Inspect metrics & score →','metrics'], ['Review rules and findings →', 'policy'], ['Inspect missing evidence →', 'gaps']]) guide.append(btn(label, () => loadTab(tab), 'entity-row'));
-      const inventory = append(el('details', 'card'), el('summary', '', 'Captured inventory — view all counts'));
-      for (const [kind, count] of Object.entries(counts?.nodeCounts || {})) inventory.append(append(el('div', 'dimension'), el('span', '', kind.toLowerCase().replaceAll('_', ' ')), el('strong', '', count)));
+      const guide = card('Follow the evidence', 'Jump directly to the workflow that matches your architectural question.'); grid.append(guide);
+      for (const [label, sub, tab] of [
+        ['Browse captured structure →', 'Navigate modules, packages, classes, methods and source files', 'structure'],
+        ['Explore dependency graph →', 'Interactive canvas with layout switcher, ego-spotlight and shortest path', 'graph'],
+        ['Compare modeled configurations →', 'Diff required (MUST) vs conditional (MAY) dependencies across profiles', 'configurations'],
+        ['Inspect coupling & hotspots →', 'Measure incoming/outgoing coupling (Ca/Ce), fan-in/fan-out and LOC', 'metrics'],
+        ['Review rules and findings →', 'Check cyclic dependencies and policy violations with source witnesses', 'policy'],
+        ['Inspect limitations & gaps →', 'Plain-English root-cause breakdown of unresolved or dynamic boundaries', 'gaps']
+      ]) guide.append(row({label, kind: tab}, () => loadTab(tab), sub));
+      const inventory = append(el('details', 'card'), el('summary', '', 'Captured inventory — visual distribution & counts'));
+      const nodeEntries = Object.entries(counts?.nodeCounts || {}).sort((a, b) => b[1] - a[1]);
+      const maxCount = Math.max(1, ...nodeEntries.map(([, c]) => Number(c) || 0));
+      const invGrid = el('div', 'dist-list');
+      for (const [kind, count] of nodeEntries) {
+        const pct = Math.max(2, Math.round((Number(count) || 0) * 100 / maxCount));
+        const bar = append(el('div', 'dist-bar'), el('span', 'dist-fill'));
+        bar.firstChild.style.width = pct + '%';
+        invGrid.append(append(el('div', 'dist-row'), append(el('div', 'dist-meta'), el('span', '', kind.toLowerCase().replaceAll('_', ' ')), el('strong', 'mono', count)), bar));
+      }
+      inventory.append(invGrid);
       inventory.style.marginTop = '20px'; node.append(inventory); return {node, status: summary.status === 'COMPLETE' ? 'Selected context · Evidence complete' : 'Selected context · Incomplete evidence — review limitations'};
     },
     async structure(env) {
       const node = card('Repository structure', 'Open a module, package or class to browse its recorded contents. Use Details for source locations, dependencies and impact.');
-      const level = selectControl('Browse level', [['MODULE','Modules'],['PACKAGE','Packages'],['TYPE','Classes'],['MEMBER','Members'],['SOURCE_DOCUMENT','Source files'],['SOURCE_ROOT','Source roots']], $('search').value.trim() ? 'TYPE' : 'MODULE');
+      const levelOptions = [['MODULE','Modules'],['PACKAGE','Packages'],['TYPE','Classes'],['MEMBER','Members'],['SOURCE_DOCUMENT','Source files'],['SOURCE_ROOT','Source roots']];
+      const level = selectControl('Browse level', levelOptions, $('search').value.trim() ? 'TYPE' : 'MODULE');
       const population = selectControl('Symbol population', [['all','All captured origins'],['PROJECT','Project code'],['JDK','JDK types'],['DEPENDENCY','External dependencies'],['SYNTHETIC','Synthetic evidence']]);
       const sourceSet = selectControl('Source set', [['','All source sets'],['MAIN','Main'],['TEST','Test'],['GENERATED_MAIN','Generated main'],['GENERATED_TEST','Generated test']]);
+      const quickPills = el('div', 'chip-bar');
+      const syncPills = () => { [...quickPills.children].forEach(c => c.classList.toggle('active', c.dataset.level === level.value)); };
+      for (const [val, text] of levelOptions) {
+        const pill = btn(text, () => { level.value = val; trail = []; syncPills(); return load(); }, 'chip');
+        pill.dataset.level = val; quickPills.append(pill);
+      }
       const breadcrumbs = el('nav', 'breadcrumbs'); breadcrumbs.setAttribute('aria-label','Structure location');
       const selection = el('div', 'selection-bar'), results = el('div');
-      node.append(append(el('div','toolbar'),field('Browse',level),field('Origin',population),field('Source set',sourceSet)),breadcrumbs,selection,results);
+      node.append(quickPills, append(el('div','toolbar'),field('Browse',level),field('Origin',population),field('Source set',sourceSet)),breadcrumbs,selection,results);
       let version = 0, trail = state.explorer?.context === env.context ? state.explorer.trail : [];
       const memberKinds = ['METHOD','CONSTRUCTOR','FIELD','PARAMETER','TYPE_PARAMETER','RECORD_COMPONENT','INITIALIZER','LAMBDA'];
       async function load() {
+        syncPills();
         const current = ++version, search = $('search').value.trim(), target = el('div'), parent = search ? null : trail.at(-1);
         state.explorer = {context:env.context,trail}; breadcrumbs.replaceChildren(btn('Repository',()=>{trail=[];$('search').value='';return load();},'text-button'));
         trail.forEach((item,index)=>breadcrumbs.append(el('span','','/'),btn(M.label(item),()=>{trail=trail.slice(0,index+1);$('search').value='';return load();},'text-button')));
@@ -347,18 +412,44 @@
       level.addEventListener('change',()=>{trail=[];safe(load);});population.addEventListener('change',()=>safe(load));sourceSet.addEventListener('change',()=>safe(load)); await load(); return node;
     },
     async gaps(env) {
-      const node = card('Analysis limitations', 'Missing or unsupported evidence is recorded explicitly. These entries explain what the analysis cannot establish.');
-      const labels = new Map();
+      const node = card('Analysis limitations & capability boundaries', 'Missing or unsupported evidence is recorded explicitly with plain-English explanations so partial coverage is never mistaken for clean architecture.');
+      const labels = new Map(), rawSupplemental = [];
       if (env.jobId) {
         try { const supplemental = await api('/analysis/jobs/' + env.jobId + '/gaps', {size: 50}, env.signal);
-          supplemental.items.forEach(gap => labels.set(gap.gapIdentity, gap.reasonCode.toLowerCase().replaceAll('_', ' ') + ' · ' + gap.mechanismCategory));
+          supplemental.items.forEach(gap => {
+            rawSupplemental.push(gap);
+            const info = M.humanReason(gap.reasonCode);
+            labels.set(gap.gapIdentity, info.title + ' (' + gap.reasonCode + ') · ' + gap.mechanismCategory);
+          });
         } catch (error) { if (env.signal.aborted) throw error; /* Exact graph evidence remains accessible even without supplemental labels. */ }
       }
-      await pagedList(node, env, cursor => env.query('gaps', {}, {size: 20, ...(cursor ? {cursor} : {})}), item => row({...item, label: labels.get(item.identity)}, () => inspectEntity(item, env)), 'No gap entries returned', 'Read the result status and input diagnostics as well. An empty page alone does not prove complete analysis.'); return node;
+      if (rawSupplemental.length) {
+        const grouped = M.summarizeGaps(rawSupplemental);
+        const maxGap = Math.max(1, ...grouped.map(g => g.count));
+        const breakdown = append(el('div', 'gap-summary-box'), el('h3', '', 'Top observed limitation categories (sample of ' + rawSupplemental.length + ')'));
+        const list = el('div', 'dist-list');
+        for (const group of grouped.slice(0, 6)) {
+          const pct = Math.max(4, Math.round(group.count * 100 / maxGap));
+          const bar = append(el('div', 'dist-bar'), el('span', 'dist-fill warn'));
+          bar.firstChild.style.width = pct + '%';
+          list.append(append(el('div', 'gap-group-card'),
+            append(el('div', 'dist-meta'), el('strong', '', group.info.title), badge(group.code + ' · ' + group.count)),
+            bar,
+            el('p', 'small muted', group.info.explanation),
+            el('p', 'small human-action-hint', 'Fix / Action: ' + group.info.action)
+          ));
+        }
+        breakdown.append(list);
+        node.append(breakdown);
+      }
+      await pagedList(node, env, cursor => env.query('gaps', {}, {size: 20, ...(cursor ? {cursor} : {})}), item => {
+        const text = labels.get(item.identity) || M.label(item);
+        return row({...item, label: text}, () => inspectEntity(item, env), 'Click to inspect exact source coordinates & diagnostic trail');
+      }, 'No gap entries returned', 'Read the result status and input diagnostics as well. An empty page alone does not prove complete analysis.'); return node;
     },
     async policy(env) {
       const node = card('Rules & findings', 'Inspect the evaluated rules and their evidence. An absent report is not a clean architecture verdict.');
-      if (!env.reportIds.length) { node.append(empty('No policy report for this context', 'Add architecture policy YAML when connecting the repository, then run a new analysis.')); return node; }
+      if (!env.reportIds.length) { node.append(empty('No policy report for this context', 'Add architecture policy YAML when connecting the repository, then run a new analysis.'), btn('Configure rules & scoring', configureRules, 'button primary')); return node; }
       const toolbar = el('div', 'toolbar'), reports = el('select'), kinds = el('select'); reports.setAttribute('aria-label', 'Policy report'); kinds.setAttribute('aria-label', 'Rules or findings');
       env.reportIds.forEach((report, index) => { const option = el('option', '', 'Policy report ' + (index + 1)); option.value = report.identity; reports.append(option); });
       for (const op of ['findings', 'rules']) { const option = el('option', '', op === 'rules' ? 'Evaluated rules' : 'Observed findings'); option.value = op; kinds.append(option); }
@@ -393,7 +484,7 @@
     async configurations(env) {
       const node=card('Compare configurations','Compare dependencies within this captured analysis. Recorded configurations and modeled examples are distinct from a running application.');
       node.append(el('p','notice small','“All observed” can include alternatives that never coexist. “Required” keeps dependencies present in every modeled configuration. Missing evidence remains unknown.'));
-      const options=[['MUST','Required in every configuration'],['MAY','Conditional dependencies'],['UNKNOWN_OVERLAY','Uncertain dependencies'],['BOUNDED_UNION','All observed dependencies']];
+      const options=[['MUST','Required in every configuration (MUST)'],['MAY','Conditional dependencies (MAY)'],['UNKNOWN_OVERLAY','Uncertain dependencies (UNKNOWN)'],['BOUNDED_UNION','All observed dependencies (UNION)']];
       const saved=state.comparison?.graph===env.graph&&state.comparison?.context===env.context?state.comparison:null;
       const a=selectControl('View A',options,'MUST'),b=selectControl('View B',options,'MAY'),scope=selectControl('Comparison scope',[['TYPE','Classes'],['PACKAGE','Packages'],['MODULE','Modules'],['SPRING_COMPONENT','Spring components']],saved?.scope||(env.springContext?'SPRING_COMPONENT':'TYPE'));
       const toolbar=append(el('div','toolbar'),field('View A',a),field('View B',b),field('Scope',scope));node.append(toolbar);
@@ -426,7 +517,7 @@
             for(const [index,value] of shown.entries())summary.append(append(el('div','surface'),el('h3','',index?'View B':'View A'),el('p','small muted',labels[index]),el('p','small',M.pageInfo(value)),btn('Inspect view',()=>inspect(index?'View B':'View A','CONFIGURATION PROJECTION',value),'text-button')));
             const table=el('table','comparison-table'),head=append(el('tr'),el('th','','Dependency'),el('th','','View A'),el('th','','View B')),body=el('tbody');table.append(el('caption','','Dependencies in the two selected views'),append(el('thead'),head),body);head.querySelectorAll('th').forEach(cell=>cell.scope='col');results.append(append(el('div','table-scroll'),table));
             const rows=M.compareEdges(shown[0],shown[1]);
-            for(const value of rows){const edge=value.edge;body.append(append(el('tr'),append(el('td'),btn((state.labels.get(edge.source)||'Source symbol')+' → '+(state.labels.get(edge.target)||'Target symbol'),()=>inspect('Dependency evidence','DEPENDENCY',edge,[{label:'Source details',run:async()=>{const value=await env.query('entity',{identity:edge.source});if(!env.signal.aborted&&value.items[0])return inspectEntity(value.items[0],env);}},{label:'Target details',run:async()=>{const value=await env.query('entity',{identity:edge.target});if(!env.signal.aborted&&value.items[0])return inspectEntity(value.items[0],env);}}]),'text-button')),el('td','',value.a),el('td','',value.b)));}
+            for(const value of rows){const edge=value.edge;body.append(append(el('tr'),append(el('td'),btn((state.labels.get(edge.source)||M.shortDigest(edge.source))+' → '+(state.labels.get(edge.target)||M.shortDigest(edge.target)),()=>inspect('Dependency evidence','DEPENDENCY',edge,[{label:'Source details',run:async()=>{const value=await env.query('entity',{identity:edge.source});if(!env.signal.aborted&&value.items[0])return inspectEntity(value.items[0],env);}},{label:'Target details',run:async()=>{const value=await env.query('entity',{identity:edge.target});if(!env.signal.aborted&&value.items[0])return inspectEntity(value.items[0],env);}}]),'text-button')),el('td','',badge(value.a)),el('td','',badge(value.b))));}
             if(!rows.length)results.append(empty('No dependency rows returned','Inspect each view’s status. Empty partial results do not establish an absence of dependencies.'));
             const controls=el('div','toolbar');results.append(controls);
             for(const index of [0,1])if(shown[index].continuation)controls.append(btn('Load more from '+(index?'B':'A'),async()=>{
@@ -459,7 +550,7 @@
         reportSelect.addEventListener('change',()=>safe(score));await score();
       }
       const catalog=await env.query('metric-catalog',{}, {size:50}),metricCard=card('Architecture metrics','Choose a metric and scope. Values, definitions, units, limitations and supporting evidence come from the canonical backend.');metricCard.style.marginTop='20px';node.append(metricCard);
-      const metricNames={'metric.ca':'Incoming coupling (Ca)','metric.ce':'Outgoing coupling (Ce)','metric.scc':'Connected components','metric.physical-loc':'Physical lines of code','metric.quality':'Evidence quality','metric.inventory':'Captured inventory','metric.fan-in':'Incoming dependencies','metric.fan-out':'Outgoing dependencies','metric.hotspots':'Dependency hotspots','metric.crossings':'Layer boundary crossings','metric.operational':'Measured runtime','metric.spring':'Spring inventory'};
+      const metricNames={'metric.ca':'Incoming coupling (Ca)','metric.ce':'Outgoing coupling (Ce)','metric.scc':'Connected components (SCC)','metric.physical-loc':'Physical lines of code (LOC)','metric.quality':'Evidence quality','metric.inventory':'Captured inventory','metric.fan-in':'Incoming dependencies (Fan-in)','metric.fan-out':'Outgoing dependencies (Fan-out)','metric.hotspots':'Dependency hotspots','metric.crossings':'Layer boundary crossings','metric.operational':'Measured runtime','metric.spring':'Spring inventory'};
       const metric=selectControl('Metric',catalog.items.map(id=>[id,metricNames[id]||id.replace(/^metric\./,'').replaceAll('-',' ').replace(/^./,letter=>letter.toUpperCase())]),env.springContext?'metric.spring':'metric.inventory');
       const subject=state.metricSubject;state.metricSubject=null;
       const scope=selectControl('Metric scope',[['TYPE','Classes'],['PACKAGE','Packages'],['MODULE','Modules'],['SPRING_COMPONENT','Spring components'],['ENTITY','All entities']],subject?(['TYPE','PACKAGE','MODULE'].includes(subject.kind)?subject.kind:'ENTITY'):(env.springContext?'SPRING_COMPONENT':'TYPE'));
@@ -478,17 +569,26 @@
           result.append(append(el('div','toolbar'),btn('Inputs, distribution & evidence',()=>inspect('Metric details','CANONICAL METRIC',value),'text-button'),btn('Download metric JSON',()=>download(value,'architecture-metric.json'),'text-button')));
           const rankings=data.details?.ranking||data.details?.hotspots;if(Array.isArray(rankings)){
             await resolveLabels(rankings.map(value=>value.identity),env);if(env.signal.aborted||current!==version)return;
-            result.append(el('h3','','Ranked dependencies'),el('p','muted small',rankings.length+' rows shown'+(data.details.rankingPopulation==null?'':' from '+data.details.rankingPopulation+' ranked entities')+(data.details.rankingTruncated?' · Ranking is bounded':'')));
-            for(const value of rankings)result.append(row({identity:value.identity,label:state.labels.get(value.identity)||'Ranked entity',kind:'Dependency counts'},async()=>{const entity=await env.query('entity',{identity:value.identity});if(!env.signal.aborted&&entity.items[0])return inspectEntity(entity.items[0],env);return inspect('Ranked metric entry','METRIC EVIDENCE',value);},value.fanIn+' incoming · '+value.fanOut+' outgoing'));
+            result.append(el('h3','','Ranked dependencies & coupling hotspots'),el('p','muted small',rankings.length+' rows shown'+(data.details.rankingPopulation==null?'':' from '+data.details.rankingPopulation+' ranked entities')+(data.details.rankingTruncated?' · Ranking is bounded':'')));
+            const maxDeg = Math.max(1, ...rankings.map(r => (Number(r.fanIn) || 0) + (Number(r.fanOut) || 0)));
+            for(const value of rankings){
+              const rNode = row({identity:value.identity,label:state.labels.get(value.identity)||M.shortDigest(value.identity),kind:'Hotspot'},async()=>{const entity=await env.query('entity',{identity:value.identity});if(!env.signal.aborted&&entity.items[0])return inspectEntity(entity.items[0],env);return inspect('Ranked metric entry','METRIC EVIDENCE',value);},value.fanIn+' incoming (fan-in) · '+value.fanOut+' outgoing (fan-out)');
+              const barWrap = el('div', 'coupling-bars'), inBar = el('span', 'coupling-in'), outBar = el('span', 'coupling-out');
+              inBar.style.width = Math.max(2, Math.round((Number(value.fanIn) || 0) * 100 / maxDeg)) + '%';
+              outBar.style.width = Math.max(2, Math.round((Number(value.fanOut) || 0) * 100 / maxDeg)) + '%';
+              barWrap.append(inBar, outBar);
+              rNode.firstChild.append(barWrap);
+              result.append(rNode);
+            }
           }
         }catch(error){if(!env.signal.aborted&&current===version)result.replaceChildren(empty('Metric unavailable',error.message),btn('Retry',evaluate));}}
       toolbar.append(btn('Read metric',evaluate,'button primary'),btn('Use whole context',()=>{selectedSubject=env.context;subjectLabel.textContent='Subject: the complete selected analysis context.';return evaluate();}));
       metric.addEventListener('change',()=>safe(evaluate));scope.addEventListener('change',()=>safe(evaluate));await evaluate();return node;
     },
     async impact(env) {
-      const node = card('Change impact', 'Find a class, then inspect the incoming dependency paths that may be affected. This is potential structural impact, not a runtime simulation.');
-      const form = el('form', 'toolbar'), input = el('input'), submit = el('button', 'button primary', 'Find symbol'); input.type = 'search'; input.placeholder = 'Class name or exact symbol identity'; input.setAttribute('aria-label', 'Symbol for impact analysis'); input.required = true; submit.type = 'submit'; form.append(input, submit); node.append(form);
-      const results = empty('Choose a symbol', 'Search by class name, then select the exact symbol to calculate its potential impact.'); node.append(results); let version = 0;
+      const node = card('Change impact (Blast Radius)', 'Find a class or component, then inspect the incoming dependency paths that may be affected if you modify it. This is potential structural impact, not a runtime simulation.');
+      const form = el('form', 'toolbar'), input = el('input'), submit = el('button', 'button primary', 'Find symbol'); input.type = 'search'; input.placeholder = 'Class name or exact symbol identity (e.g. OrderService)'; input.setAttribute('aria-label', 'Symbol for impact analysis'); input.required = true; submit.type = 'submit'; form.append(input, submit); node.append(form);
+      const results = empty('Choose a symbol', 'Search by class name, then select the exact symbol to calculate its upstream dependents and blast radius.'); node.append(results); let version = 0;
       form.addEventListener('submit', event => { event.preventDefault(); safe(async () => {
         const current = ++version; submit.disabled = true; results.replaceChildren(empty('Searching…', 'Reading matching symbols.'));
         try { const target = el('div'); await pagedList(target, env, cursor => env.query('entities', {search: input.value.trim()}, {size: 20, ...(cursor ? {cursor} : {})}), item => row(item, async () => {
@@ -499,16 +599,17 @@
       }); }); return node;
     },
     async graph(env) {
-      const node = card('Dependency graph', 'Select a node for its evidence. All observed dependencies may include alternatives that do not coexist in one runtime configuration.');
+      const node = card('Interactive dependency graph', 'Click any node to spotlight its 1-hop neighborhood and reduce visual clutter. Switch layouts or filter by certainty layer.');
       let focus = state.graphFocus || {};
-      const toolbar = el('div', 'toolbar'), scope = el('select'), projection = el('select'); scope.setAttribute('aria-label', 'Graph scope'); projection.setAttribute('aria-label', 'Dependency view');
+      const toolbar = el('div', 'toolbar'), scope = el('select'), projection = el('select'), layoutSelect = selectControl('Graph layout', [['breadthfirst', 'Hierarchy (Directed)'], ['concentric', 'Concentric (Centrality)'], ['circle', 'Circular (Ring)'], ['grid', 'Grid (Matrix)']], 'breadthfirst');
+      scope.setAttribute('aria-label', 'Graph scope'); projection.setAttribute('aria-label', 'Dependency view');
       for (const [value, label] of [['MODULE', 'Modules'], ['PACKAGE', 'Packages'], ['TYPE', 'Classes'],['SPRING_COMPONENT','Spring components'],['ENTITY','Members & entities']]) { const option = el('option', '', label); option.value = value; scope.append(option); }
-      for (const [value, label] of [['BOUNDED_UNION', 'All observed dependencies'], ['MUST', 'Required in every modeled configuration'], ['MAY', 'Conditional dependencies'], ['UNKNOWN_OVERLAY', 'Uncertain dependencies']]) { const option = el('option', '', label); option.value = value; projection.append(option); }
+      for (const [value, label] of [['BOUNDED_UNION', 'All observed (UNION)'], ['MUST', 'Required in all configs (MUST)'], ['MAY', 'Conditional (MAY)'], ['UNKNOWN_OVERLAY', 'Uncertain (UNKNOWN)']]) { const option = el('option', '', label); option.value = value; projection.append(option); }
       if(focus.realization){const option=el('option','','Selected recorded configuration');option.value='REALIZED';projection.append(option);}
       scope.value=focus.scope||(env.springContext?'SPRING_COMPONENT':'MODULE');projection.value=focus.projection||'BOUNDED_UNION';
-      const depth=selectControl('Neighborhood depth',[['1','1 dependency step'],['2','2 dependency steps'],['3','3 dependency steps']]);depth.hidden=!focus.seed;
-      const clear=btn('Show complete bounded view',()=>{focus={...focus,seed:null};depth.hidden=true;return load();});clear.hidden=!focus.seed;
-      toolbar.append(field('Scope',scope),field('Dependency view',projection),depth,clear); node.append(toolbar); const content = el('div'); node.append(content); let version = 0;
+      const depth=selectControl('Neighborhood depth',[['1','1 hop (direct)'],['2','2 hops'],['3','3 hops']]);depth.hidden=!focus.seed;
+      const clear=btn('Reset to full view',()=>{focus={...focus,seed:null};depth.hidden=true;clear.hidden=true;return load();});clear.hidden=!focus.seed;
+      toolbar.append(field('Scope',scope),field('Dependency view',projection),field('Layout',layoutSelect),depth,clear); node.append(toolbar); const content = el('div'); node.append(content); let version = 0;
       async function load() {
         const current = ++version; content.replaceChildren(empty('Loading graph…', 'Reading bounded canonical dependencies.'));
         try {
@@ -518,21 +619,54 @@
           content.append(el('p', 'muted small', graph.nodes.length + ' displayed nodes · ' + graph.edges.length + ' displayed edges · '+(graph.metadata.status||'Observed projection') + (graph.metadata.isTruncated ? ' · Result limited — narrow the scope' : '')));
           if (!graph.nodes.length) { content.append(empty('No dependency nodes available', 'Choose another scope or context. An empty graph does not establish an absence of dependencies.')); return; }
           if (!window.cytoscape) { content.append(empty('Graph renderer unavailable', 'The local graph library could not be loaded. You can still download the canonical projection.'), btn('Download graph JSON', () => download(graph, 'dependency-graph.json'))); return; }
-          const controls = el('div', 'toolbar'), canvas = el('div', 'graph-canvas'); canvas.setAttribute('aria-label', 'Interactive dependency graph'); canvas.tabIndex = 0;
-          controls.append(btn('Zoom in', () => state.cy.zoom(state.cy.zoom() * 1.25)), btn('Zoom out', () => state.cy.zoom(state.cy.zoom() / 1.25)), btn('Fit graph', () => state.cy.fit(undefined, 36)),btn('Projection limits & evidence',()=>inspect('Graph projection','PROJECTION EVIDENCE',graph)), btn('Download graph JSON', () => download(graph, 'dependency-graph.json')),btn('Save graph image',async()=>{
+          const filterBar = el('div', 'graph-filter-bar'), canvasFilter = el('input');
+          canvasFilter.type = 'search'; canvasFilter.placeholder = 'Filter & spotlight nodes on canvas (e.g. Service, Controller)…'; canvasFilter.setAttribute('aria-label', 'Filter canvas nodes');
+          const lensGroup = el('div', 'chip-bar');
+          const edgeCounts = {ALL: graph.edges.length, MUST: 0, MAY: 0, UNKNOWN: 0};
+          graph.edges.forEach(e => { const c = e.classification || 'MUST'; if (edgeCounts[c] != null) edgeCounts[c]++; });
+          let activeLens = 'ALL';
+          function applyCanvasFilters() {
+            if (!state.cy) return;
+            const q = canvasFilter.value.trim().toLowerCase();
+            state.cy.elements().removeClass('dimmed ego-highlight');
+            state.cy.edges().forEach(edge => {
+              const cls = edge.data('classification') || 'MUST';
+              const matchLens = activeLens === 'ALL' || cls === activeLens;
+              if (!matchLens) edge.addClass('dimmed');
+            });
+            if (q) {
+              const matched = state.cy.nodes().filter(n => !n.id().startsWith('compound:') && String(n.data('label') || '').toLowerCase().includes(q));
+              const neighborhood = matched.union(matched.connectedEdges()).union(matched.neighborhood('node'));
+              state.cy.elements().not(neighborhood).not(':parent').addClass('dimmed');
+              matched.addClass('ego-highlight');
+            }
+          }
+          for (const [lensId, lensLabel] of [['ALL', 'All edges (' + edgeCounts.ALL + ')'], ['MUST', 'Required (' + edgeCounts.MUST + ')'], ['MAY', 'Conditional (' + edgeCounts.MAY + ')'], ['UNKNOWN', 'Uncertain (' + edgeCounts.UNKNOWN + ')']]) {
+            const pill = btn(lensLabel, () => { activeLens = lensId; [...lensGroup.children].forEach(c => c.classList.toggle('active', c.dataset.lens === lensId)); applyCanvasFilters(); }, 'chip' + (lensId === 'ALL' ? ' active' : ''));
+            pill.dataset.lens = lensId; lensGroup.append(pill);
+          }
+          canvasFilter.addEventListener('input', applyCanvasFilters);
+          filterBar.append(canvasFilter, lensGroup);
+          const controls = el('div', 'toolbar'), canvas = el('div', 'graph-canvas'), spotlightBar = el('div', 'node-spotlight-bar');
+          spotlightBar.hidden = true;
+          canvas.setAttribute('aria-label', 'Interactive dependency graph'); canvas.tabIndex = 0;
+          controls.append(btn('Zoom in', () => state.cy.zoom(state.cy.zoom() * 1.25)), btn('Zoom out', () => state.cy.zoom(state.cy.zoom() / 1.25)), btn('Fit graph', () => state.cy.fit(undefined, 36)), btn('Reset highlight', () => { canvasFilter.value = ''; activeLens = 'ALL'; [...lensGroup.children].forEach(c => c.classList.toggle('active', c.dataset.lens === 'ALL')); state.cy.elements().removeClass('dimmed ego-highlight path-highlight'); spotlightBar.hidden = true; }), btn('Projection limits & evidence',()=>inspect('Graph projection','PROJECTION EVIDENCE',graph)), btn('Download graph JSON', () => download(graph, 'dependency-graph.json')),btn('Save graph image',async()=>{
             const blob=await state.cy.png({output:'blob-promise',full:true,scale:1,maxWidth:3000,maxHeight:3000,bg: getComputedStyle(document.documentElement).getPropertyValue('--surface').trim()});downloadBlob(blob,'dependency-graph.png');
-          })); content.append(controls, canvas);
+          })); content.append(filterBar, controls, spotlightBar, canvas);
           const displayNode=item=>{const module=item.id.startsWith('compound:module:')?state.moduleLabels?.get(item.id.slice('compound:module:'.length)):null;return {...item,label:module==='.'?'Root module':module||(!item.label&&item.kind==='PACKAGE'?'(default package)':item.label),activationStatus:item.properties?.activationStatus,parent:item.parent||undefined};};
           const elements = [...graph.nodes.map(item => ({data: displayNode(item)})), ...graph.edges.map(item => ({data: item}))], colors = getComputedStyle(document.documentElement);
           graph.nodes.forEach(item => state.labels.set(item.id, displayNode(item).label));
-          state.cy = cytoscape({container: canvas, elements, layout: {name: 'breadthfirst', directed: true, padding: 35, spacingFactor: 1.4, animate: false}, minZoom: .05, maxZoom: 3, wheelSensitivity: .2, style: [
+          state.cy = cytoscape({container: canvas, elements, layout: layoutConfig(layoutSelect.value), minZoom: .05, maxZoom: 3, wheelSensitivity: .2, style: [
             {selector: 'node', style: {'background-color': colors.getPropertyValue('--accent').trim(), color: colors.getPropertyValue('--text').trim(), label: 'data(label)', 'font-size': 10, 'text-valign': 'bottom', 'text-margin-y': 8, 'text-wrap': 'ellipsis', 'text-max-width': 140, width: 22, height: 22}},
             {selector: ':parent', style: {'background-opacity': .08, 'border-width': 1, 'border-color': colors.getPropertyValue('--muted').trim(), padding: 20, 'text-valign': 'top'}},
-            {selector: 'edge', style: {'line-color': colors.getPropertyValue('--muted').trim(), 'target-arrow-color': colors.getPropertyValue('--muted').trim(), 'target-arrow-shape': 'triangle', 'curve-style': 'bezier', width: 1, opacity: .6}},
-            {selector: 'edge[classification="MAY"]',style:{'line-style':'dashed'}},
-            {selector: 'edge[classification="UNKNOWN"]',style:{'line-style':'dotted','line-color':colors.getPropertyValue('--warning').trim()}},
+            {selector: 'edge', style: {'line-color': colors.getPropertyValue('--muted').trim(), 'target-arrow-color': colors.getPropertyValue('--muted').trim(), 'target-arrow-shape': 'triangle', 'curve-style': 'bezier', width: 1.3, opacity: .65}},
+            {selector: 'edge[classification="MAY"]',style:{'line-style':'dashed','line-color':colors.getPropertyValue('--cyan').trim(),'target-arrow-color':colors.getPropertyValue('--cyan').trim()}},
+            {selector: 'edge[classification="UNKNOWN"]',style:{'line-style':'dotted','line-color':colors.getPropertyValue('--warning').trim(),'target-arrow-color':colors.getPropertyValue('--warning').trim()}},
             {selector: 'node[activationStatus="UNKNOWN"]',style:{shape:'diamond','border-width':2,'border-style':'dashed','border-color':colors.getPropertyValue('--warning').trim()}},
             {selector: ':selected', style: {'border-width': 3, 'border-color': colors.getPropertyValue('--warning').trim()}},
+            {selector: '.ego-highlight', style: {'border-width': 3, 'border-color': colors.getPropertyValue('--cyan').trim(), opacity: 1}},
+            {selector: 'edge.ego-highlight', style: {width: 2.5, opacity: 1, 'line-color': colors.getPropertyValue('--accent').trim(), 'target-arrow-color': colors.getPropertyValue('--accent').trim()}},
+            {selector: '.dimmed', style: {opacity: 0.14}},
             {selector: '.path-highlight',style:{'line-color':colors.getPropertyValue('--warning').trim(),'target-arrow-color':colors.getPropertyValue('--warning').trim(),'border-color':colors.getPropertyValue('--warning').trim(),'border-width':3,width:3,opacity:1}}
           ]});
           const actualNodes=graph.nodes.filter(item=>!item.id.startsWith('compound:'));
@@ -541,24 +675,59 @@
           const destination=selectControl('Path target',actualNodes.map(item=>[item.id,displayNode(item).label]));
           const pathStatus=el('p','small muted');content.append(append(el('div','toolbar'),field('Path target',destination),btn('Find shortest path',async()=>{
             const result=await env.query('shortest-path',{source:selected.value,target:destination.value},undefined,{scope:scope.value,relationshipKinds:focus.relationshipKinds||relationshipKinds(scope.value),projection:projection.value,...(projection.value==='REALIZED'?{realization:focus.realization}:{})});
-            if(env.signal.aborted||current!==version)return;state.cy.elements().removeClass('path-highlight');
-            const path=result.items[0];if(path){state.cy.nodes().filter(node=>path.vertices.includes(node.id())).addClass('path-highlight');state.cy.edges().filter(edge=>path.edges.some(item=>item.source===edge.source().id()&&item.target===edge.target().id())).addClass('path-highlight');}
+            if(env.signal.aborted||current!==version)return;state.cy.elements().removeClass('path-highlight dimmed ego-highlight');
+            const path=result.items[0];if(path){state.cy.elements().not(':parent').addClass('dimmed');state.cy.nodes().filter(node=>path.vertices.includes(node.id())).removeClass('dimmed').addClass('path-highlight');state.cy.edges().filter(edge=>path.edges.some(item=>item.source===edge.source().id()&&item.target===edge.target().id())).removeClass('dimmed').addClass('path-highlight');}
             pathStatus.textContent=path?'Path highlighted where present in this bounded graph. '+M.pageInfo(result):'No path returned. '+M.pageInfo(result);
             await inspect('Shortest dependency path','PATH EVIDENCE',result);
           })),pathStatus);
-          state.cy.on('tap', 'node', event => { const item = event.target.data(); if(!item.id.startsWith('compound:'))selected.value=item.id; safe(() => item.id.startsWith('compound:') ? inspect(item.label, item.kind, item) : inspectEntity({...item, identity: item.id}, env)); });
+          function spotlightNode(cyNode) {
+            const item = cyNode.data();
+            if (item.id.startsWith('compound:')) return inspect(item.label, item.kind, item);
+            selected.value = item.id;
+            state.cy.elements().removeClass('dimmed ego-highlight');
+            const ego = cyNode.closedNeighborhood();
+            state.cy.elements().not(ego).not(':parent').addClass('dimmed');
+            ego.addClass('ego-highlight');
+            const inDeg = cyNode.indegree(false), outDeg = cyNode.outdegree(false);
+            spotlightBar.hidden = false;
+            spotlightBar.replaceChildren(
+              append(el('div', 'spotlight-info'), el('strong', '', item.label), badge((item.kind || 'NODE').toLowerCase()), el('span', 'small muted', inDeg + ' incoming · ' + outDeg + ' outgoing on canvas')),
+              append(el('div', 'spotlight-actions'),
+                btn('Inspect details', () => inspectEntity({...item, identity: item.id}, env), 'button primary'),
+                btn('Isolate 1-hop subgraph', () => { focus = {...focus, seed: item.id}; depth.value = '1'; depth.hidden = false; clear.hidden = false; return load(); }, 'button subtle'),
+                btn('Set as path target', () => { destination.value = item.id; }, 'button subtle'),
+                btn('Clear spotlight', () => { state.cy.elements().removeClass('dimmed ego-highlight'); spotlightBar.hidden = true; }, 'text-button')
+              )
+            );
+          }
+          state.cy.on('tap', 'node', event => safe(() => spotlightNode(event.target)));
           state.cy.on('tap','edge',event=>safe(()=>{
             const item=event.target.data(),actions=[];
             for(const reference of item.properties?.evidence||[])actions.push({label:'Open source evidence',run:()=>inspect('Dependency source','SOURCE EVIDENCE',signal=>api('/graphs/'+env.graph+'/queries/evidence',{request:env.request,arguments:{reference}},signal))});
             return inspect('Dependency evidence','DEPENDENCY',item,actions);
           }));
           canvas.addEventListener('keydown', event => { if (event.key === '+' || event.key === '=') state.cy.zoom(state.cy.zoom() * 1.2); else if (event.key === '-') state.cy.zoom(state.cy.zoom() / 1.2); else if (event.key === '0') state.cy.fit(undefined, 36); });
-          content.append(el('p', 'muted small', 'Arrows show dependency direction. Solid: required · Dashed: conditional · Dotted: uncertain. Diamond: uncertain Spring definition. Drag to pan · Scroll to zoom · Keyboard: + / − / 0. Node controls provide a keyboard alternative.'));
+          const legend = append(el('div', 'graph-legend'),
+            el('span', 'legend-must', 'Solid: Required (MUST)'),
+            el('span', 'legend-may', 'Dashed: Conditional (MAY)'),
+            el('span', 'legend-unknown', 'Dotted: Uncertain (UNKNOWN)'),
+            el('span', 'legend-tip', 'Tip: Click any node to spotlight its 1-hop neighborhood · Scroll to zoom · Drag to pan')
+          );
+          content.append(legend);
         } catch (error) { if (!env.signal.aborted && current === version) content.replaceChildren(empty('Graph unavailable', error.message), btn('Retry graph', load)); }
       }
+      layoutSelect.addEventListener('change', () => { if (state.cy) state.cy.layout(layoutConfig(layoutSelect.value)).run(); });
       scope.addEventListener('change', () => {focus={...focus,seed:null,relationshipKinds:null};depth.hidden=true;clear.hidden=true;safe(load);}); projection.addEventListener('change', () => safe(load));depth.addEventListener('change',()=>safe(load)); return {node, after: () => safe(load)};
     }
   };
+  const presetBox = $('policy-presets');
+  if (presetBox && Array.isArray(M.policyTemplates)) {
+    for (const preset of M.policyTemplates) {
+      const chip = btn(preset.label, () => { $('repository-policy').value = preset.yaml; $('connect-error').hidden = true; }, 'chip');
+      chip.title = preset.description;
+      presetBox.append(chip);
+    }
+  }
   document.querySelectorAll('[data-action=connect]').forEach(n => n.addEventListener('click', () => { $('connect-title').textContent='Connect your code'; $('connect-error').hidden = true; $('connect-dialog').showModal(); }));
   $('policy-example').addEventListener('click',()=>{if($('repository-policy').value.trim()){$('connect-error').textContent='The policy field already contains rules. Clear it before inserting an example.';$('connect-error').hidden=false;return;}$('repository-policy').value='schema: architecture-policy:v1\nid: project.cycles\nversion: "1"\nrules:\n  - id: project.no-cycles\n    version: "1"\n    kind: ACYCLIC\n    severity: ERROR\n    scope: TYPE\n    relationships: [graph.depends-on]\n    within: {origins: [PROJECT]}\n';});
   document.querySelectorAll('[data-action=refresh]').forEach(n => n.addEventListener('click', () => safe(async () => { await connectServer(); if (state.job) { const id = state.job.id, latest = await api('/analysis/jobs/' + id); if (state.job?.id === id) await selectJob(latest); } })));
@@ -572,6 +741,17 @@
   $('tabs').addEventListener('click', event => { const tab = event.target.closest('[data-tab]'); if (tab) safe(() => loadTab(tab.dataset.tab)); });
   $('tabs').addEventListener('keydown', event => { if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return; event.preventDefault(); const tabs = [...document.querySelectorAll('[role=tab]')], index = tabs.indexOf(document.activeElement), next = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : (index + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;tabs.forEach((tab,i)=>tab.tabIndex=i===next?0:-1); tabs[next].focus(); });
   $('search-form').addEventListener('submit', event => { event.preventDefault(); safe(() => loadTab('structure')); });
+  window.addEventListener('keydown', event => {
+    const tag = document.activeElement?.tagName;
+    const inInput = ['INPUT', 'TEXTAREA', 'SELECT'].includes(tag) || document.activeElement?.isContentEditable;
+    if ((event.key === '/' && !inInput && !event.ctrlKey && !event.metaKey) || ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k')) {
+      if (!$('analysis-workspace').hidden && !$('connect-dialog').open && !$('inspector').open) {
+        event.preventDefault();
+        $('search').focus();
+        $('search').select();
+      }
+    }
+  });
   $('provenance').addEventListener('click', () => safe(() => { if (!state.context) return notice('Choose an analysis context first.'); const env = envFor(); return inspect('Analysis provenance', 'PROVENANCE', signal => api('/graphs/' + env.graph + '/queries/provenance', {request: env.request, arguments: {}}, signal)); }));
   $('job-receipt').addEventListener('click', () => safe(() => inspect('Analysis receipt', 'ANALYSIS', state.job)));
   for (const [id, op, label] of [['job-diagnostics', 'input-diagnostics', 'Input diagnostics'], ['job-gaps', 'gaps', 'Supplemental analysis limitations']]) $(id).addEventListener('click', () => safe(async () => {

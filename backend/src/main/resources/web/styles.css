@@ -293,6 +293,68 @@ pre { font-size: 11.5px; line-height: 1.6; font-family: var(--font-mono); white-
 #theme-toggle { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; }
 #theme-toggle svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 
+/* Architecture Intelligence Workbench · Enhanced UX Components */
+.brand-tag { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; padding: 3px 7px; border-radius: 9999px; background: var(--accent-subtle); color: var(--accent); border: 1px solid rgba(16, 185, 129, 0.25); }
+.shortcut-pill { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 6px; background: var(--surface-2); border: 1px solid var(--line); font-size: 11px; color: var(--muted); user-select: none; }
+kbd { display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 20px; padding: 0 5px; font-family: var(--font-mono); font-size: 10.5px; font-weight: 600; color: var(--text); background: var(--bg); border: 1px solid var(--line-focus); border-radius: 4px; box-shadow: 0 1px 0 var(--line-focus); }
+.kbd-hint { display: inline-flex; align-items: center; gap: 6px; margin: 0; font-size: 11.5px; color: var(--muted); }
+.heading-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.context-bar-main { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+
+/* 3-Step Guided Onboarding Grid */
+.workflow-steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin: 20px 0 24px; }
+.workflow-step { display: flex; align-items: flex-start; gap: 12px; padding: 16px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); position: relative; transition: border-color 0.15s ease, transform 0.15s ease; }
+.workflow-step:hover { border-color: var(--line-focus); transform: translateY(-1px); }
+.step-num { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 50%; background: var(--accent-subtle); color: var(--accent); border: 1px solid rgba(16, 185, 129, 0.3); font-family: var(--font-mono); font-size: 12px; font-weight: 700; flex-shrink: 0; }
+.workflow-step strong { display: block; font-size: 13px; font-weight: 650; color: var(--text); margin-bottom: 4px; }
+.workflow-step p { margin: 0; font-size: 12px; line-height: 1.55; }
+
+/* Interactive Filter & Policy Preset Chips */
+.preset-chips, .chip-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 10px 0 14px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px; border-radius: 9999px; font-size: 11.5px; font-weight: 550; color: var(--muted); background: var(--surface-2); border: 1px solid var(--line); cursor: pointer; transition: all 0.15s ease; min-height: 30px; }
+.chip:hover { color: var(--text); border-color: var(--line-focus); background: var(--surface-3); }
+.chip.active { color: var(--accent); background: var(--accent-subtle); border-color: rgba(16, 185, 129, 0.45); font-weight: 600; box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.18); }
+
+/* Condensed Copyable SHA-256 Digest Chip */
+.digest-chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border-radius: 6px; background: var(--surface-2); border: 1px solid var(--line); font-family: var(--font-mono); font-size: 11.5px; color: var(--cyan); cursor: pointer; max-width: 100%; overflow-wrap: anywhere; text-align: left; }
+.digest-chip:hover { border-color: var(--cyan); background: var(--surface-3); }
+
+/* Proportional Visual Distribution Bars */
+.dist-list { display: grid; gap: 10px; margin-top: 8px; }
+.dist-row { display: grid; gap: 5px; }
+.dist-meta { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 12px; }
+.dist-meta strong { font-family: var(--font-mono); font-size: 12px; font-variant-numeric: tabular-nums; color: var(--text); }
+.dist-bar { width: 100%; height: 7px; border-radius: 9999px; background: var(--surface-3); overflow: hidden; border: 1px solid var(--line); }
+.dist-fill { height: 100%; border-radius: 9999px; background: linear-gradient(90deg, var(--accent), var(--cyan)); transition: width 0.25s ease; }
+.dist-fill.warn { background: linear-gradient(90deg, var(--warning), #f59e0b); }
+
+/* Visual Coupling Hotspot Bars (Fan-in / Fan-out) */
+.coupling-bars { display: flex; width: 100%; height: 5px; border-radius: 9999px; background: var(--surface-3); overflow: hidden; gap: 2px; margin-top: 4px; }
+.coupling-in { height: 100%; background: var(--cyan); border-radius: 9999px; }
+.coupling-out { height: 100%; background: var(--accent); border-radius: 9999px; }
+
+/* Human-Friendly Diagnostic Banner & Gap Root-Cause Cards */
+.human-explain-banner { padding: 14px 16px; border-radius: 10px; border: 1px solid rgba(251, 191, 36, 0.32); background: var(--warning-subtle); margin: 12px 0 16px; }
+.human-explain-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 6px; }
+.human-explain-header strong { font-size: 13px; color: var(--text); }
+.human-explain-banner p { margin: 4px 0; font-size: 12.5px; line-height: 1.6; color: var(--text-secondary); }
+.human-action-hint { margin-top: 8px !important; padding-top: 8px; border-top: 1px dashed rgba(251, 191, 36, 0.3); color: var(--warning) !important; font-weight: 550; }
+.source-coord-pill { display: inline-flex; align-items: center; padding: 4px 10px; border-radius: 6px; background: var(--surface-2); border: 1px solid var(--line-focus); font-family: var(--font-mono); font-size: 11.5px; color: var(--cyan); margin: 4px 0 12px; }
+.gap-summary-box { padding: 16px 18px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface-2); margin-bottom: 18px; }
+.gap-group-card { padding: 12px 14px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); }
+
+/* Interactive Dependency Graph: Spotlight, Lens Filter & Line Legend */
+.graph-filter-bar { display: flex; align-items: flex-end; justify-content: space-between; gap: 14px; flex-wrap: wrap; padding: 12px 14px; margin-bottom: 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); }
+.node-spotlight-bar { display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; padding: 12px 16px; margin-bottom: 12px; border: 1px solid rgba(16, 185, 129, 0.4); border-radius: 10px; background: var(--accent-subtle); box-shadow: var(--shadow-sm); }
+.spotlight-info { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; min-width: 0; }
+.spotlight-info strong { font-size: 13px; color: var(--text); overflow-wrap: anywhere; }
+.spotlight-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.legend-must, .legend-may, .legend-unknown { display: inline-flex; align-items: center; gap: 6px; }
+.legend-must::before { content: ''; width: 18px; height: 2.5px; background: var(--accent); border-radius: 2px; display: inline-block; }
+.legend-may::before { content: ''; width: 18px; height: 0; border-top: 2.5px dashed var(--cyan); display: inline-block; }
+.legend-unknown::before { content: ''; width: 18px; height: 0; border-top: 2.5px dotted var(--warning); display: inline-block; }
+.legend-tip { margin-left: auto; font-style: italic; }
+
 [data-tooltip] { position: relative; }
 [data-tooltip]:is(:hover, :focus-visible)::after { content: attr(aria-label); position: absolute; top: calc(100% + 7px); right: 0; z-index: 100; background: var(--text); color: var(--bg); border-radius: 5px; padding: 5px 9px; font-size: 10.5px; font-weight: 550; white-space: nowrap; pointer-events: none; box-shadow: var(--shadow); }
 
@@ -301,6 +363,7 @@ pre { font-size: 11.5px; line-height: 1.6; font-family: var(--font-mono); white-
   main { padding: 28px 24px 20px; }
   .topbar { padding: 0 24px; }
   .content-grid { grid-template-columns: 1fr; }
+  .workflow-steps { grid-template-columns: 1fr; }
 }
 @media (max-width: 760px) {
   .app-shell { grid-template-columns: minmax(0, 1fr); }
@@ -311,6 +374,7 @@ pre { font-size: 11.5px; line-height: 1.6; font-family: var(--font-mono); white-
   .topbar-nav { padding: 2px; }
   .topbar-nav-link { padding: 6px 8px; }
   .topbar-nav .nav-text { display: none; }
+  .shortcut-pill { display: none; }
   .page-heading { align-items: flex-start; flex-direction: column; gap: 16px; }
   .page-heading > .button { width: 100%; }
   .context-bar select { width: 100%; max-width: 100%; }
@@ -319,5 +383,5 @@ pre { font-size: 11.5px; line-height: 1.6; font-family: var(--font-mono); white-
   .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (prefers-reduced-motion: no-preference) {
-  button, a, .stat, .sidebar-item, .entity-row { transition: all 0.15s ease; }
+  button, a, .stat, .sidebar-item, .entity-row, .chip, .workflow-step { transition: all 0.15s ease; }
 }

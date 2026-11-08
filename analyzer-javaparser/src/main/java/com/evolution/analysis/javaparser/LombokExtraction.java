@@ -31,14 +31,19 @@ final class LombokExtraction {
     }
 
     void unsupportedGenerators(CompilationUnit unit) {
+        unsupportedGenerators(unit,false);
+    }
+    void unsupportedGenerators(CompilationUnit unit,boolean localsOnly) {
         var otherGenerators=Set.of("Getter","Setter","With","WithBy","ToString","EqualsAndHashCode","SuperBuilder","UtilityClass","FieldDefaults","Accessors");
         for(var annotation:unit.findAll(AnnotationExpr.class)) {
             String simple=annotation.getName().getIdentifier();var parent=annotation.getParentNode().orElse(null);
-            var nativeOwner=annotation.findAncestor(TypeDeclaration.class);if(nativeOwner.isPresent()&&context.nativeOwner(nativeOwner.orElseThrow()))continue;
             if(GENERATORS.contains(simple)&&parent instanceof ClassOrInterfaceDeclaration type&&!type.isInterface())continue;
             if(ACCESSORS.contains(simple)&&parent instanceof FieldDeclaration)continue;
             if(!GENERATORS.contains(simple)&&!otherGenerators.contains(simple))continue;
+            var nativeOwner=annotation.findAncestor(TypeDeclaration.class);
+            if(localsOnly!=(nativeOwner.isPresent()&&context.hasLocalOwner(nativeOwner.orElseThrow())))continue;
             try {
+                if(nativeOwner.isPresent()&&context.nativeOwner(nativeOwner.orElseThrow()))continue;
                 var entity=context.typeEntity(annotation.resolve());
                 if(entity.origin()==EntityOrigin.PROJECT)continue;
                 String name=JavaTypeName.fromCanonical(entity.canonicalName()).map(JavaTypeName::qualifiedName).orElse("");
@@ -231,7 +236,9 @@ final class LombokExtraction {
     }
     private boolean sameOwner(Entity callable,ClassOrInterfaceDeclaration owner) {
         var recorded=generatedOwners.get(callable);
-        return recorded!=null&&(recorded==owner||context.name(recorded).equals(context.name(owner)));
+        if(recorded==null)return false;
+        if(recorded==owner)return true;
+        try{return context.name(recorded).equals(context.name(owner));}catch(RuntimeException unavailable){return false;}
     }
     /** Exact-argument generated overloads participate before native resolution can select a
      * wider handwritten overload. No AST mutation, processor execution, or guessed coercion. */

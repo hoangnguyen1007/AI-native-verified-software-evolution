@@ -96,6 +96,36 @@ class ScopedIngestionRecoveryTest {
                 && row.claims().equals(List.of(custom))));
     }
 
+    @Test void emptyLeadingReactorSlotCompactsSurvivingPeerSourceOrderInRecovery() {
+        var inputs = IngestionFixtures.inputs(Map.of(
+                "settings.gradle", "include ':empty', ':lib', ':app'\n",
+                "lib/build.gradle", "plugins { java }\n",
+                "lib/src/main/java/lib/Shared.java", "package lib; public class Shared {}",
+                "app/build.gradle", "plugins { java }\n",
+                "app/src/main/java/app/Client.java", "package app; class Client { lib.Shared s; }"));
+        var build = new UniversalBuildIngestion().ingest(inputs, policy(), Optional.empty(), Map.of(),
+                new BuildModelPolicy(List.of(), List.of(), Map.of(), 10000, 100, 16));
+        var emptyMod = build.modules().stream().filter(m -> m.descriptor().path().equals("empty")).findFirst().orElseThrow().descriptor().identity();
+        var libMod = build.modules().stream().filter(m -> m.descriptor().path().equals("lib")).findFirst().orElseThrow().descriptor().identity();
+        var appMod = build.modules().stream().filter(m -> m.descriptor().path().equals("app")).findFirst().orElseThrow().descriptor().identity();
+        var emptySet = new UniversalSourceIngestion.SourceSet(emptyMod, SourcePlanModel.Kind.MAIN);
+        var libSet = new UniversalSourceIngestion.SourceSet(libMod, SourcePlanModel.Kind.MAIN);
+        var appSet = new UniversalSourceIngestion.SourceSet(appMod, SourcePlanModel.Kind.MAIN);
+        var base = resolution();
+        var appRes = new UniversalSourceIngestion.Resolution(base.platform(), List.of(),
+                ContentDigest.sha256Utf8("recovery-with-empty-leading-slot"), Optional.empty(), false,
+                List.of(new UniversalSourceIngestion.ReactorSlot(emptySet, 0),
+                        new UniversalSourceIngestion.ReactorSlot(libSet, 1)));
+        var result = new UniversalSourceIngestion().assemble(inputs, build,
+                Map.of(libSet, base, appSet, appRes), component(), component(), component());
+        var appRequest = result.outcomes().stream().filter(o -> o.sourceSet().equals(appSet))
+                .findFirst().orElseThrow().request().orElseThrow(() -> new AssertionError(result.issues().toString()));
+        assertTrue(appRequest.sourceRecovery());
+        assertEquals(1, appRequest.reactorSources().size());
+        assertEquals(0, appRequest.reactorSources().getFirst().order());
+        assertEquals(libMod, appRequest.reactorSources().getFirst().module());
+    }
+
     private static UniversalBuildIngestion.Policy policy() {
         return new UniversalBuildIngestion.Policy(Optional.of(21), Optional.of(21),
                 Optional.of("UTF-8"), 100, 10000, 1000, 16);

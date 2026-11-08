@@ -66,3 +66,15 @@ test('impact actions require a scoped bridge reference rather than a native targ
  assert.equal(model.impactReference({fields:{targets:[scope]}}),null);
  const ref={identity:scope,source:{path:'api/users.proto'}};assert.equal(model.impactReference({fields:{targets:[ref]}}),ref);
 });
+test('categoryGroup maps F, B and A codes to intuitive architectural layers',()=>{
+ assert.equal(model.categoryGroup('F03').layer,'Frontend & UI');
+ assert.equal(model.categoryGroup('B02').layer,'Contracts & Bridges');
+ assert.equal(model.categoryGroup('A06').layer,'Backend & Native');
+});
+test('outcomeBreakdown extracts visual segments from bridge summary without inventing percentages',()=>{
+ const breakdown=model.outcomeBreakdown({partitions:'4',requirements:'20',endpoints:'10',missingCensus:'3',outcomes:{BOUND:'12',UNRESOLVED:'8'}});
+ assert.equal(breakdown.matched,12);
+ assert.equal(breakdown.pending,8);
+ assert.equal(breakdown.extra,3);
+ assert.equal(breakdown.extraLabel,'Untracked');
+});

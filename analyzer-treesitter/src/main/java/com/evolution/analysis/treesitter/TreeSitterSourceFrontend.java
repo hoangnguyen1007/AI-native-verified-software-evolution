@@ -12,7 +12,9 @@ import org.treesitter.*;
 
 /** Neutral, data-only syntax acquisition. A written call is not a bound call target. */
 public final class TreeSitterSourceFrontend {
-    public static final String PROVIDER="source.tree-sitter:m8.4-protobuf-http-v3";
+    public static final String PROVIDER="source.tree-sitter:m8.4-rpc-local-inheritance-v5";
+    /** Read the loaded adapter version at runtime, avoiding consumer constant inlining. */
+    public static String provider(){return PROVIDER;}
     private record Grammar(String library,String binding,String version) {}
     private static final Map<String,Grammar> GRAMMARS=Map.ofEntries(
             entry("go","go","Go","0.25.0"),entry("python","python","Python","0.25.0"),entry("csharp","c-sharp","CSharp","0.23.1"),
@@ -70,6 +72,7 @@ public final class TreeSitterSourceFrontend {
                     }
                     for(int i=node.getNamedChildCount()-1;i>=0;i--)pending.push(new Frame(node.getNamedChild(i),owner));
                 }
+                facts+=GrpcSourceSyntax.acquire(language,root,utf8,positions,sink,cancelled);
                 if(recovered&&errors==0)errors=1;
             }
         } catch(ReflectiveOperationException|LinkageError failure){throw new IOException("SYNTAX_BUNDLED_GRAMMAR_UNAVAILABLE",failure);}
@@ -156,7 +159,7 @@ public final class TreeSitterSourceFrontend {
         String extension=os.contains("windows")?"dll":os.contains("mac")?"dylib":"so";platform+="-"+(os.contains("windows")?"windows":os.contains("mac")?"macos":"linux-gnu");
         String identity=CanonicalJson.sha256(List.of(PROVIDER,"tree-sitter:0.26.6",grammar.library(),grammar.version(),
                 resource("lib/"+platform+"-tree-sitter."+extension),resource("lib/"+platform+"-"+grammar.library()+"."+extension),
-                resource(grammar.binding().replace('.','/')+".class"),resource("com/evolution/analysis/treesitter/TreeSitterSourceFrontend.class"))).value();
+                resource(grammar.binding().replace('.','/')+".class"),resource("com/evolution/analysis/treesitter/TreeSitterSourceFrontend.class"),resource("com/evolution/analysis/treesitter/GrpcSourceSyntax.class"))).value();
         TOOLS.put(grammar.library(),identity);return identity;
     }
     private static ContentDigest resource(String name)throws IOException {

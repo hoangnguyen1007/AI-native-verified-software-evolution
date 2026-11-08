@@ -76,3 +76,61 @@ The Python `m8.4-v3` profile can bind Pyright's native SDK definition locations 
 Cold publication load still replays the complete domain result. A bounded one-view process cache stores its transitive byte read set on disk; every warm read rehashes every read/emitted CAS object and rechecks policy, head and withdrawals. It does not restore saved proof authority or trust timestamps/file sizes. Same-size corruption is rejected. Navigation checks only the immutable head and read policy, since SAVED_UNVERIFIED labels contain no live semantic outcomes; withdrawal does not make an otherwise readable analysis disappear. Semantic reads continue to enforce current withdrawals.
 
 `topology` adds bounded incoming paths, cross-context boundary records and cycle observations. It checks joint captured feature selections across each chosen path: compatible bound paths may be labelled DECLARED_STRUCTURAL_CYCLE, uncertainty remains POTENTIAL_CYCLE and contradictory selections are INFEASIBLE. Results retain evidence and scan/depth/node frontiers and explicitly set `exhaustive=false`. They establish neither runtime cycles nor policy violations. Full global traversal/SCC and scale acceptance remain Step 6. Native facts without a scoped bridge reference do not expose a broken bridge-impact action.
+## Source service candidate continuation — 2026-11-05
+
+**2026-11-06 extension:** `polyglot.http-uri-candidates:m8.4-spring-segments-v4`
+recognizes a whole-segment `*` only on an evidenced Spring endpoint mapping.
+Single-segment boundaries, method filters, client templates and unsafe-encoding
+checks survive. Other frameworks keep their existing matcher; regex, `**`,
+embedded globs and empty-segment cases remain explicit unsupported outcomes.
+The implementation is checked against the actual Spring PathPattern parser on
+authored cases and the [Spring URI pattern contract](https://docs.spring.io/spring-framework/reference/web/webflux/controller/ann-requestmapping.html#webflux-ann-requestmapping-uri-templates).
+A successful candidate still carries a routing obligation. An unrelated
+multi-segment route no longer produces a spurious unsupported-pattern gap for
+a shorter literal request.
+
+`source.tree-sitter:m8.4-rpc-local-inheritance-v5` additionally follows ordered,
+unambiguous, same-file top-level Python base declarations to an evidenced
+generated Servicer base. Duplicate, reassigned and forward bases are not followed.
+Go server registration can use a literal `new(LocalType)` allocation; shadowed
+`new` and reassigned aliases are withheld. These remain source syntax candidates,
+not compiler-resolved registrations. All compatible implementations remain
+targets; helpers and unknown schema names keep their original observations/gaps.
+Cross-file Go registration/receiver association remains an open capability.
+
+Consumers read `TreeSitterSourceFrontend.provider()` at runtime for capture rows
+and summaries. Inlined Java String constants previously allowed a new adapter
+to be recorded with an old producer label during incremental builds. The final
+backend and packaged smoke assert the actual version; affected intermediate
+captures remain immutable and are not presented as qualified provider evidence.
+
+Ordinary scan adds gRPC client-to-contract, handler-to-contract and
+client-to-handler candidate edges from captured Protobuf and generated-API source
+syntax. Go inline clients/registrations, Python Stub/Servicer forms, C# generated
+clients/bases and JavaScript service maps retain original source coordinates.
+The separate `source.javaparser-grpc:m8.4-v1` adapter adds selective Java
+generated-base overrides and typed stub/factory calls. It returns neutral source
+facts only, with per-file AST lifetime and explicit unsupported Unicode mapping.
+Matching keeps every compatible namespace and method spelling; ordinary method
+names alone supply no client binding. HTTP matching additionally intersects
+literal single-segment client/server URI templates. Unsafe encodings, unsupported
+patterns, recovered syntax, missing schema/handler and unresolved routing retain
+typed obligations.
+
+These source edges are separate from qualified B01–B08 publication. They preserve
+`CANDIDATE`, `generatedBindingEstablished=false`, `routingEstablished=false` and
+`runtimeObserved=false`; a unique graph target is not deployed semantic certainty.
+Cross-context references retain original identities/evidence. Native trust,
+configuration activation, broader language forms and deployment evidence remain
+separate. [ADR-009](../decisions/ADR-009-segmented-projection-and-passive-service-recovery.md)
+owns the additive decision and limitations.
+
+`architecture.service-edges:m8.4-v1` now projects these matches into typed
+`CALLS_SERVICE` and `INVOKES_RPC` architecture edges. Available Java HTTP caller
+and Spring handler declarations, or syntax owner/handler links, supply actual
+declaration endpoints. Otherwise the evidence identifies a call/endpoint site.
+Cross-context endpoints use `SERVICE_ENDPOINT_REFERENCE` nodes keyed by original
+context and identity, preserving the canonical same-context edge invariant.
+Projection is idempotent, keeps multiple targets and retains `certainty=CANDIDATE`,
+`routingEstablished=false`, `runtimeObserved=false`. A structurally unique target
+does not close routing or native binding gaps.

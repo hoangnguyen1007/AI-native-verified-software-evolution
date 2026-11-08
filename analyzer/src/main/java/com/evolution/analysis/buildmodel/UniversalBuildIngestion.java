@@ -10,7 +10,7 @@ import static com.evolution.analysis.buildmodel.SourcePlanModel.*;
 
 /** Passive router with an injected Maven provider; no target script, plugin, process or network execution. */
 public final class UniversalBuildIngestion {
-    public static final VersionedIdentifier PROVIDER=new VersionedIdentifier("build.universal-ingestion","m8.4-gradle-recovery-v2");
+    public static final VersionedIdentifier PROVIDER=new VersionedIdentifier("build.universal-ingestion","m8.4-gradle-platforms-v3");
     public record Policy(Optional<Integer> syntaxLevel, Optional<Integer> platformRelease, Optional<String> encoding,
                          int maxFiles,int maxCharacters,int maxTokens,int maxDepth) {
         public Policy { Objects.requireNonNull(syntaxLevel);Objects.requireNonNull(platformRelease);Objects.requireNonNull(encoding);
@@ -177,6 +177,7 @@ public final class UniversalBuildIngestion {
         final Map<String,List<String>> customRoots=new TreeMap<>(),customResources=new TreeMap<>();
         final Set<String> declared=new HashSet<>(),declaredRoots=new HashSet<>();
         boolean explicitSource,explicitTarget,releaseOption;
+        Optional<MavenCoordinate> bootPlugin=Optional.empty();boolean bootConflict,bootImport;
         Projection(String dir,Policy policy,List<BuildModelResult.PomEvidence> evidence,List<IngestionEvidence.Issue> issues,ContentDigest identity,
                    Optional<GradleVersionCatalog.Catalog> catalog){
             this.dir=dir;this.policy=policy;this.evidence=evidence;this.issues=issues;this.identity=identity;this.catalog=catalog;
@@ -185,9 +186,16 @@ public final class UniversalBuildIngestion {
             mainResources=List.of(join(dir,"src/main/resources"));testResources=List.of(join(dir,"src/test/resources"));
         }
         void read(List<DeclarativeScript.Statement> statements,String context) {
+            if(context.isEmpty())for(var statement:statements) {
+                if(statement.syntax().equals("importorg.springframework.boot.gradle.plugin.SpringBootPlugin"))bootImport=true;
+                if(statement.syntax().equals("plugins"))for(var plugin:statement.body())registerBootPlugin(plugin);
+            }
             for(var s:statements) {
                 String shape=s.syntax();boolean handled=false;
-                if(context.equals("dependencies")) {dependency(s);continue;}
+                if(context.equals("dependencies")) {
+                    if(s.syntax().equals("constraints"))for(var child:s.body())dependency(child,".constraint");
+                    else dependency(s,"");continue;
+                }
                 if(!s.body().isEmpty()) {
                     boolean knownBlock=shape.equals(s.key()) && (context.isEmpty()&&Set.of("dependencies","java","sourceSets").contains(s.key())
                             ||context.equals("java")&&s.key().equals("toolchain")
@@ -215,7 +223,8 @@ public final class UniversalBuildIngestion {
                             &&!Set.of("main","test").contains(s.key())) {
                         registerCustom(s);handled=true;
                     }
-                    if((shape.equals("group=#")||shape.equals("group#"))&&context.isEmpty()){try{group=literal(s);}catch(IllegalArgumentException failure){group=null;gap(s);}handled=true;}
+                    if(shape.equals("importorg.springframework.boot.gradle.plugin.SpringBootPlugin")&&context.isEmpty())handled=true;
+                    else if((shape.equals("group=#")||shape.equals("group#"))&&context.isEmpty()){try{group=literal(s);}catch(IllegalArgumentException failure){group=null;gap(s);}handled=true;}
                     else if((shape.equals("version=#")||shape.equals("version#"))&&context.isEmpty()){try{version=literal(s);}catch(IllegalArgumentException failure){version=null;gap(s);}handled=true;}
                     else if(Set.of("","java","java.toolchain","javaCompile").contains(context)&&shape.matches("(?:sourceCompatibility|targetCompatibility|languageVersion|options\\.release)(?:=|\\.set\\().+")) {
                         var numbers=s.head().stream().filter(t->!t.literal()&&t.value().matches("[0-9]+|VERSION_[0-9]+"))
@@ -257,29 +266,56 @@ public final class UniversalBuildIngestion {
                 if(!handled)gap(s);
             }
         }
+        void registerBootPlugin(DeclarativeScript.Statement statement) {
+            String shape=statement.syntax();Optional<GradleVersionCatalog.Plugin> plugin=Optional.empty();
+            if(shape.matches("alias\\(libs\\.plugins\\.[A-Za-z0-9_.-]+\\)(?:applyfalse)?")) {
+                String alias=shape.substring("alias(libs.plugins.".length(),shape.indexOf(')'));
+                plugin=catalog.flatMap(c->c.plugins().getOrDefault(alias,Optional.empty()));
+            } else if(shape.matches("id(?:#|\\(#\\))version#(?:applyfalse)?")&&statement.strings().size()==2)plugin=Optional.of(new GradleVersionCatalog.Plugin(statement.strings().getFirst(),statement.strings().get(1)));
+            if(plugin.isEmpty()||!plugin.orElseThrow().id().equals("org.springframework.boot")||!fixedVersion(plugin.orElseThrow().version()))return;
+            MavenCoordinate marker;
+            try{marker=new MavenCoordinate("org.springframework.boot","org.springframework.boot.gradle.plugin",plugin.orElseThrow().version());}
+            catch(IllegalArgumentException invalid){gap(statement);return;}
+            if(bootPlugin.isPresent()&&!bootPlugin.orElseThrow().equals(marker)){bootConflict=true;bootPlugin=Optional.empty();gap(statement);return;}
+            if(bootConflict)return;bootPlugin=Optional.of(marker);
+            dependencies.add(new UniversalBuildModel.Dependency("gradlePlugin",Optional.of(marker),Optional.empty(),"org.springframework.boot",evidence));
+        }
         void registerCustom(DeclarativeScript.Statement s) {
             if(customRoots.putIfAbsent(s.key(),List.of(join(dir,"src/"+s.key()+"/java")))==null) {
                 customResources.put(s.key(),List.of(join(dir,"src/"+s.key()+"/resources")));
                 issue(issues,CUSTOM_SOURCE_SET_ROLE_UNRESOLVED,dir+"#"+s.offset(),identity);
             }
         }
-        void dependency(DeclarativeScript.Statement s) {
-            var configurations=Set.of("implementation","api","compileOnly","runtimeOnly","testImplementation","testCompileOnly","testRuntimeOnly","annotationProcessor","testAnnotationProcessor","compile","testCompile","runtime");
+        void dependency(DeclarativeScript.Statement s,String qualifier) {
+            var configurations=Set.of("implementation","api","compileOnly","compileOnlyApi","runtimeOnly","testImplementation","testCompileOnly","testRuntimeOnly","annotationProcessor","testAnnotationProcessor","compile","testCompile","runtime");
             if(!configurations.contains(s.key())||!s.body().isEmpty()){gap(s);return;}
             Optional<MavenCoordinate> coordinate=Optional.empty();Optional<String> project=Optional.empty();String notation="";
             String shape=s.syntax();
             try {
                 String accessor=shape.substring(s.key().length());
                 if(accessor.startsWith("(")&&accessor.endsWith(")"))accessor=accessor.substring(1,accessor.length()-1);
+                if((accessor.startsWith("platform(")||accessor.startsWith("enforcedPlatform("))&&accessor.endsWith(")")) {
+                    boolean enforced=accessor.startsWith("enforcedPlatform(");
+                    qualifier+=enforced?".enforced-platform":".platform";
+                    accessor=accessor.substring(accessor.indexOf('(')+1,accessor.length()-1);
+                    shape=s.key()+"("+accessor+")";
+                }
+                String configuration=s.key()+qualifier;
+                if((qualifier.endsWith(".platform")||qualifier.endsWith(".enforced-platform"))&&accessor.equals("SpringBootPlugin.BOM_COORDINATES")) {
+                    notation=accessor;
+                    if(bootImport&&bootPlugin.isPresent())coordinate=Optional.of(new MavenCoordinate("org.springframework.boot","spring-boot-dependencies",bootPlugin.orElseThrow().version()));
+                    else issue(issues,DEPENDENCY_VERSION_UNRESOLVED,dir+"#"+s.offset(),identity);
+                    dependencies.add(new UniversalBuildModel.Dependency(configuration,coordinate,Optional.empty(),notation,evidence));return;
+                }
                 if(accessor.matches("libs\\.[A-Za-z0-9_.-]+")) {
                     if(accessor.startsWith("libs.bundles.")) {
                         String bundle=accessor.substring("libs.bundles.".length());
                         var members=catalog.flatMap(c->Optional.ofNullable(c.bundles().get(bundle))).orElse(List.of());
                         if(members.isEmpty()) {
                             issue(issues,DEPENDENCY_VERSION_UNRESOLVED,dir+"#"+s.offset(),identity);
-                            dependencies.add(new UniversalBuildModel.Dependency(s.key(),Optional.empty(),Optional.empty(),accessor,evidence.getFirst()));
-                        } else for(String member:members)catalogDependency(s,accessor+"/"+member,member);
-                    } else catalogDependency(s,accessor,accessor.substring("libs.".length()));
+                            dependencies.add(new UniversalBuildModel.Dependency(configuration,Optional.empty(),Optional.empty(),accessor,evidence));
+                        } else for(String member:members)catalogDependency(s,configuration,accessor+"/"+member,member);
+                    } else catalogDependency(s,configuration,accessor,accessor.substring("libs.".length()));
                     return;
                 }
                 if(shape.matches("[A-Za-z]+(?:\\(project\\(#\\)\\)|project\\(#\\))")) {
@@ -288,20 +324,29 @@ public final class UniversalBuildIngestion {
                     notation=literal(s);String[] gav=notation.split(":",-1);
                     if(gav.length==3&&fixedVersion(gav[2]))coordinate=Optional.of(new MavenCoordinate(gav[0],gav[1],gav[2]));
                     else issue(issues,DEPENDENCY_VERSION_UNRESOLVED,dir+"#"+s.offset(),identity);
+                } else if(shape.matches("[A-Za-z]+\\(?(?:group|name|version):#(?:,(?:group|name|version):#){2}\\)?")) {
+                    var fields=new HashMap<String,String>();
+                    for(int i=2;i<s.head().size();i++)if(s.head().get(i).literal()&&s.head().get(i-1).value().equals(":")) {
+                        String key=s.head().get(i-2).value();if(fields.putIfAbsent(key,s.head().get(i).value())!=null)throw new IllegalArgumentException();
+                    }
+                    if(!fields.keySet().equals(Set.of("group","name","version")))throw new IllegalArgumentException();
+                    notation=fields.get("group")+":"+fields.get("name")+":"+fields.get("version");
+                    if(fixedVersion(fields.get("version")))coordinate=Optional.of(new MavenCoordinate(fields.get("group"),fields.get("name"),fields.get("version")));
+                    else issue(issues,DEPENDENCY_VERSION_UNRESOLVED,dir+"#"+s.offset(),identity);
                 } else {gap(s);return;}
                 if(notation.contains("$")){coordinate=Optional.empty();issue(issues,DEPENDENCY_VERSION_UNRESOLVED,dir+"#"+s.offset(),identity);}
-                dependencies.add(new UniversalBuildModel.Dependency(s.key(),coordinate,project,notation,evidence.getFirst()));
+                dependencies.add(new UniversalBuildModel.Dependency(configuration,coordinate,project,notation,evidence));
             }catch(IllegalArgumentException failure){
                 issue(issues,DEPENDENCY_VERSION_UNRESOLVED,dir+"#"+s.offset(),identity);
-                dependencies.add(new UniversalBuildModel.Dependency(s.key(),Optional.empty(),Optional.empty(),
-                        notation.isEmpty()?s.syntax():notation,evidence.getFirst()));
+                dependencies.add(new UniversalBuildModel.Dependency(s.key()+qualifier,Optional.empty(),Optional.empty(),
+                        notation.isEmpty()?s.syntax():notation,evidence));
             }
         }
-        void catalogDependency(DeclarativeScript.Statement s,String notation,String alias) {
+        void catalogDependency(DeclarativeScript.Statement s,String configuration,String notation,String alias) {
             Optional<MavenCoordinate> coordinate=catalog.flatMap(c->Optional.ofNullable(c.libraries().get(alias)))
                     .orElse(Optional.empty());
             if(coordinate.isEmpty())issue(issues,DEPENDENCY_VERSION_UNRESOLVED,dir+"#"+s.offset(),identity);
-            dependencies.add(new UniversalBuildModel.Dependency(s.key(),coordinate,Optional.empty(),notation,evidence));
+            dependencies.add(new UniversalBuildModel.Dependency(configuration,coordinate,Optional.empty(),notation,evidence));
         }
         String literal(DeclarativeScript.Statement s){if(s.strings().size()!=1||s.strings().getFirst().contains("$"))throw new IllegalArgumentException();return s.strings().getFirst();}
         void gap(DeclarativeScript.Statement s){issue(issues,DYNAMIC_BUILD_LOGIC,dir+"#"+s.offset(),identity);}
@@ -346,6 +391,7 @@ public final class UniversalBuildIngestion {
     }
     private static String directory(String path){int i=path.lastIndexOf('/');return i<0?".":path.substring(0,i);}
     private static boolean fixedVersion(String version) {
+        if(version==null||version.isBlank())return false;
         String upper=version.toUpperCase(Locale.ROOT);
         return !version.contains("+")&&!version.contains("$")&&!version.contains("[")&&!version.contains("(")
                 &&!version.contains("]")&&!version.contains(")")&&!upper.endsWith("-SNAPSHOT")

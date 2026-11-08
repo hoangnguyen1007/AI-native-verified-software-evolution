@@ -64,6 +64,7 @@ def main():
             (source / name).write_text(text, encoding="utf-8")
         mixed = run("polyglot-scan", "scan", str(source), "--offline", "--build", "off")
         syntax = mixed["polyglot"]["sourceSyntax"]
+        assert syntax["provider"] == "source.tree-sitter:m8.4-rpc-local-inheritance-v5"
         assert syntax["parsedDocuments"] == 4 and not syntax["failures"] and syntax["boundCallTargets"] is False
         assert sum(count for category, count in syntax["categories"].items() if category.endswith(":CALL")) == 5
         page = run("syntax-nodes", "graph-pages", "nodes", "--partition", mixed["gapSummary"]["context"], "--limit", "50")
@@ -80,8 +81,48 @@ def main():
         snapshot = json.loads((Path(workspace) / ".evo" / (mixed["graph"].split(":")[-1] + ".graph.json")).read_text(encoding="utf-8"))["graph"]
         joins = [edge for edge in snapshot["edges"] if edge["kind"] == "polyglot.service-call.candidate"]
         assert len(joins) == 1 and len(joins[0]["target"]["identities"]) == 1
+        assert sum(edge["kind"] == "CALLS_SERVICE" for edge in snapshot["edges"]) == 1
         assert not any(edge["kind"] == "polyglot.service-call" for edge in snapshot["edges"])
         assert any(row["family"] == "polyglot.http-uri-match" and json.loads(row["canonicalJson"])["routingEstablished"] is False for row in snapshot["evidence"])
+        (source / "cart.proto").write_text('syntax="proto3"; package shop; message Req {} message Reply {} service CartService { rpc GetCart(Req) returns (Reply); }', encoding="utf-8")
+        (source / "rpc.go").write_text('package main\nfunc f(){ pb.NewCartServiceClient(conn).GetCart(ctx, req) }\ntype cart struct{}\nfunc(s *cart) GetCart(ctx context.Context, req *Req)(*Reply,error){return nil,nil}\nfunc serve(){svc:=new(cart); pb.RegisterCartServiceServer(server,svc)}', encoding="utf-8")
+        (source / "rpc.py").write_text('import demo_pb2_grpc\nclass Base(demo_pb2_grpc.CartServiceServicer):\n    pass\nclass Cart(Base):\n    def GetCart(self, req, ctx):\n        return Reply()\n', encoding="utf-8")
+        rpc = run("grpc-scan", "scan", str(source), "--offline", "--build", "off")
+        rpc_graph = json.loads((Path(workspace) / ".evo" / (rpc["graph"].split(":")[-1] + ".graph.json")).read_text(encoding="utf-8"))["graph"]
+        assert sum(edge["kind"] == "polyglot.grpc-service-call.candidate" for edge in rpc_graph["edges"]) == 1
+        assert sum(edge["kind"] == "INVOKES_RPC" for edge in rpc_graph["edges"]) == 1
+        rpc_edge = next(edge for edge in rpc_graph["edges"] if edge["kind"] == "INVOKES_RPC")
+        assert rpc_edge["target"]["state"] == "CANDIDATES" and len(rpc_edge["target"]["identities"]) == 2
+        assert any(row["family"] == "polyglot.grpc-source-match" and json.loads(row["canonicalJson"])["generatedBindingEstablished"] is False for row in rpc_graph["evidence"])
+        gap_nodes = [node for node in rpc_graph["nodes"] if node["kind"] == "CAPABILITY_GAP"]
+        assert rpc["gapSummary"]["total"] == len({node["identity"] for node in gap_nodes})
+        assert rpc["gapSummary"]["contextReferences"] == len(gap_nodes)
+        assert rpc["gapSummary"]["inputTotal"] < rpc["gapSummary"]["total"]
+        gradle_source = Path(workspace) / "gradle-input"
+        (gradle_source / "src/main/java").mkdir(parents=True)
+        (gradle_source / "build.gradle").write_text("plugins { id 'java' }\njava { toolchain { languageVersion = JavaLanguageVersion.of(21) } }\n", encoding="utf-8")
+        (gradle_source / "src/main/java/GradleClient.java").write_text('''
+import java.util.*;
+record Pet(String name) {}
+class GradleClient {
+  int size(String s) {return s.length();}
+  List<Pet> normalize(List<Pet> pets) {
+    return pets.stream().map(p -> {if(p.name().isBlank())return new Pet("fixed");return p;}).toList();
+  }
+  Comparator<Pet> ordered() {
+    return Comparator.comparing((Pet p) -> p.name(),Comparator.nullsLast(Comparator.naturalOrder()))
+      .thenComparing(p -> p.name(),Comparator.nullsLast(Comparator.naturalOrder()));
+  }
+}
+''', encoding="utf-8")
+        gradle = run("gradle-scan", "scan", str(gradle_source), "--offline", "--build", "off")
+        assert gradle["dependencies"]["gradle"]["trust"] == "PASSIVE_RECOVERY"
+        assert gradle["dependencies"]["gradle"]["effectiveGradleContext"] is False
+        calls = gradle["semanticDepth"]["relationships"]["byCategory"]["java.calls"]
+        assert calls["attempted"] >= 14 and calls["resolved"] == calls["attempted"], f"lambda recovery: {calls}"
+        prepared = run("prepare-dependencies", "scan", str(gradle_source), "--prepare-dependencies", "--offline")
+        assert prepared["status"] == "PREPARED" and prepared["graphCreated"] is False
+        assert prepared["semanticCoverage"] == "NOT_EVALUATED"
         if os.environ.get("EVO_SMOKE_ONLINE_FIXTURE") == "1":
             online = Path(workspace) / "online-input"
             (online / "src/main/java/app").mkdir(parents=True)

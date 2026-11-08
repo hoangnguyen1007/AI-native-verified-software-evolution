@@ -21,6 +21,36 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class PolyglotScanTest {
     @TempDir Path directory;
+    @Test void grpcClientsJoinProtobufContractsAndServerHandlersThroughDiskPublication()throws Exception {
+        Path source=Files.createDirectory(directory.resolve("rpc-source"));
+        Files.writeString(source.resolve("cart.proto"),"syntax=\"proto3\"; package shop; message Req {} message Reply {} service CartService { rpc GetCart(Req) returns (Reply); } service AdService { rpc GetAds(Req) returns (Reply); }");
+        Files.writeString(source.resolve("client.go"),"package main\nfunc f(){ pb.NewCartServiceClient(conn).GetCart(ctx, req); pb.NewAdServiceClient(conn).GetAds(ctx, req); ordinary.GetCart(req) }");
+        Files.writeString(source.resolve("JavaServer.java"),"class Ads extends shop.AdServiceGrpc.AdServiceImplBase { @Override public void getAds(Req r, StreamObserver<Reply> out) {} }");
+        Files.writeString(source.resolve("server.py"),"import demo_pb2_grpc\nclass Cart(demo_pb2_grpc.CartServiceServicer):\n    def GetCart(self, request, context):\n        return Reply()\n");
+        var repo=RepositoryIdentity.fromCanonicalCoordinate("urn:test:grpc-scan");
+        try(var intake=new RepositoryIntake(directory.resolve("rpc-intake"))) {
+            intake.localComplete(source,"rpc",new StreamingAcquisitionRequest(repo,Optional.empty(),false,List.of()),()->false);
+            var readiness=intake.readiness("rpc",ReadinessPlanner.Policy.comprehensive(),()->false);
+            var snapshot=RepositorySnapshot.create(repo,Optional.empty(),false,List.of(),List.of());var scan=new PolyglotScan();
+            var result=scan.run("rpc",intake,readiness,EvidenceContext.forSnapshot(snapshot.identity()),Optional.empty(),directory.resolve("rpc-work"),()->false);
+            var input=new CanonicalGraphInput(new RepositoryInputs(snapshot,Map.of()),Optional.empty(),Optional.empty(),List.of(),List.of(),result.gaps());
+            var pages=new PartitionedGraphStore(directory.resolve("rpc-pages"));var snapshots=directory.resolve("rpc-snapshots");
+            var published=pages.build(input,snapshots,()->false,store->scan.project(result,store,()->false));
+            var graph=FileGraphStore.readSnapshot(snapshots.resolve(published.graph().value().substring(7)+".graph.json"),64_000_000,new GraphJson.StreamLimits(64_000_000,128,64_000_000));
+            assertEquals(2,graph.edges().stream().filter(e->e.kind().equals("polyglot.grpc-service-call.candidate")).count());
+            assertEquals(2,graph.edges().stream().filter(e->e.kind().equals("INVOKES_RPC")).count());
+            assertEquals(2,graph.edges().stream().filter(e->e.kind().equals("polyglot.grpc-contract.candidate")).count());
+            assertEquals(2,graph.edges().stream().filter(e->e.kind().equals("polyglot.grpc-implements.candidate")).count());
+            assertEquals(4,published.gapReasons().get("GRPC_ROUTING_EVIDENCE_MISSING"));
+            assertEquals(graph.nodes().stream().filter(n->n.kind().equals("CAPABILITY_GAP")).map(KnowledgeGraph.Node::identity).distinct().count(),published.gaps());
+            assertEquals(graph.nodes().stream().filter(n->n.kind().equals("CAPABILITY_GAP")).count(),published.gapNodes());
+            assertTrue(graph.evidence().stream().anyMatch(e->e.family().equals("evidence.gap")&&e.canonicalJson().contains("GRPC_ROUTING_EVIDENCE_MISSING")));
+            assertTrue(graph.evidence().stream().filter(e->e.family().equals("polyglot.grpc-source-match")).allMatch(e->e.canonicalJson().contains("\"runtimeObserved\":false")));
+            assertTrue(graph.evidence().stream().filter(e->e.family().equals("polyglot.source-syntax")&&e.canonicalJson().contains("\"rowType\":\"FACT\"")).allMatch(e->e.canonicalJson().contains("source.tree-sitter:m8.4-rpc-local-inheritance-v5")||e.canonicalJson().contains("source.javaparser-grpc:m8.4-v1")),"Capture uses the actual frontend version, including incremental SDK changes");
+            assertTrue(new PartitionedGraphStore(directory.resolve("rpc-pages")).partition(published.graph(),snapshot.identity().value()).isPresent());
+            assertEquals(published.graph(),pages.build(input,snapshots,()->false,store->scan.project(result,store,()->false)).graph());
+        }
+    }
     @Test void ordinaryScanPublishesUriCandidateLinksToGoAndFrontendRoutesWithTypedUnknowns()throws Exception {
         Path source=Files.createDirectory(directory.resolve("http-source"));
         Files.writeString(source.resolve("client.ts"),"fetch('/pets/42'); axios.get('/cart'); fetch('/pets/42', {method:'POST'}); fetch('/api/pets/42');");
@@ -40,6 +70,7 @@ class PolyglotScanTest {
             var published=pages.build(input,snapshots,()->false,store->scan.project(result,store,()->false));
             var graph=FileGraphStore.readSnapshot(snapshots.resolve(published.graph().value().substring(7)+".graph.json"),64_000_000,new GraphJson.StreamLimits(64_000_000,128,64_000_000));
             assertEquals(5,graph.edges().stream().filter(e->e.kind().equals("polyglot.service-call.candidate")).count());
+            assertEquals(5,graph.edges().stream().filter(e->e.kind().equals("CALLS_SERVICE")).count());
             assertTrue(graph.edges().stream().noneMatch(e->e.kind().equals("polyglot.service-call")));
             assertEquals(7,graph.evidence().stream().filter(e->e.family().equals("polyglot.http-uri-match")).count());
             assertEquals(2,graph.evidence().stream().filter(e->e.family().equals("evidence.gap")&&e.canonicalJson().contains("HTTP_URI_NO_CANDIDATE")).count());

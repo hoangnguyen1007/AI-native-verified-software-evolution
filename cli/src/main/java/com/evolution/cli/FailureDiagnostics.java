@@ -9,7 +9,7 @@ import java.util.concurrent.CancellationException;
 /** Structural diagnostics only. Exception messages, paths, SQL and source text
  * may contain secrets and are never copied into CLI output. */
 final class FailureDiagnostics {
-    private static final Set<String> OPERATIONS=Set.of("GRAPH_PARTITION_STORAGE_UNAVAILABLE","GRAPH_PROJECTION_STORAGE_UNAVAILABLE","GRAPH_PARTITION_AUDIT_UNAVAILABLE","GRAPH_PARTITION_AUDIT_WRITE","GRAPH_PARTITION_AUDIT_READ","GRAPH_PARTITION_AUDIT_CLOSE","ANALYSIS_SPOOL_FAILED","ANALYSIS_SPOOL_CLOSE","ANALYSIS_SPOOL_HASH_MISMATCH","CAS_CORRUPT","GRAPH_PARTITION_CONTENT_CORRUPT","GRAPH_PARTITION_DIGEST_MISMATCH","GRAPH_SNAPSHOT_CONFLICT","WAITING_FOR_DISK");
+    private static final Set<String> OPERATIONS=Set.of("GRAPH_PARTITION_STORAGE_UNAVAILABLE","GRAPH_PROJECTION_STORAGE_UNAVAILABLE","GRAPH_PARTITION_AUDIT_UNAVAILABLE","GRAPH_PARTITION_AUDIT_WRITE","GRAPH_PARTITION_AUDIT_READ","GRAPH_PARTITION_AUDIT_CLOSE","ANALYSIS_SPOOL_FAILED","ANALYSIS_SPOOL_CLOSE","ANALYSIS_SPOOL_HASH_MISMATCH","CAS_CORRUPT","GRAPH_PARTITION_CONTENT_CORRUPT","GRAPH_PARTITION_DIGEST_MISMATCH","GRAPH_SNAPSHOT_CONFLICT","WAITING_FOR_DISK","GRAPH_PROJECTION_DISK_PRESSURE","GRAPH_PROJECTION_PAYLOAD_HASH_MISMATCH","GRAPH_PROJECTION_PAYLOAD_TRUNCATED","GRAPH_PROJECTION_PAYLOAD_LOCATOR_INVALID","GRAPH_PROJECTION_PAYLOAD_MISSING");
     private record Item(Throwable failure,String relation) {}
     static String classification(Throwable failure) {
         var seen=Collections.newSetFromMap(new IdentityHashMap<Throwable,Boolean>());var pending=new ArrayDeque<Throwable>();pending.add(failure);
@@ -25,7 +25,8 @@ final class FailureDiagnostics {
                 result=sqlite?switch(sql.getErrorCode()&255){case 3,8,23->"STORAGE_PERMISSION_DENIED";case 5,6->"STORAGE_BUSY";case 7->"MEMORY_LIMIT";case 13->"STORAGE_FULL";case 11,26->"STORAGE_CORRUPT";case 14->"STORAGE_OPEN_FAILED";default->result==null?"STORAGE_IO_FAILED":result;}:result==null?"STORAGE_IO_FAILED":result;
                 if(sql.getNextException()!=null)pending.addLast(sql.getNextException());
             } else if(value instanceof FileSystemException fs&&full(fs.getReason()))result="STORAGE_FULL";
-            else if(value instanceof IOException&&"WAITING_FOR_DISK".equals(value.getMessage()))result="STORAGE_FULL";
+            else if(value instanceof IOException&&Set.of("WAITING_FOR_DISK","GRAPH_PROJECTION_DISK_PRESSURE").contains(Objects.toString(value.getMessage(),"")))result="STORAGE_FULL";
+            else if(value instanceof IOException&&Set.of("GRAPH_PROJECTION_PAYLOAD_HASH_MISMATCH","GRAPH_PROJECTION_PAYLOAD_TRUNCATED","GRAPH_PROJECTION_PAYLOAD_LOCATOR_INVALID","GRAPH_PROJECTION_PAYLOAD_MISSING").contains(Objects.toString(value.getMessage(),"")))result="STORAGE_CORRUPT";
             else if(value instanceof IOException&&result==null)result="STORAGE_IO_FAILED";
             if(value.getCause()!=null)pending.addLast(value.getCause());
         }

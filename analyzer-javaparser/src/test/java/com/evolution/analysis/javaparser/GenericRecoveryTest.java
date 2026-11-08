@@ -7,6 +7,48 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 class GenericRecoveryTest {
+    @org.junit.jupiter.api.io.TempDir java.nio.file.Path compiled;
+    @Test void lambdaConstraintBoundsNeverPromoteLowerWildcardsOrUnknownParents()throws Exception {
+        for(String source:List.of(
+                "import java.util.*; record Pet(int id) {} class C { void run(List<? super Pet> pets) { pets.forEach(p -> p.id()); } }",
+                "import java.util.*; class Pet extends Missing { void pick(Object o){} } class C { void run(List<Pet> pets) { pets.forEach(p -> p.pick(\"x\")); } }")) {
+            var diagnostics=new javax.tools.DiagnosticCollector<javax.tools.JavaFileObject>();var compiler=javax.tools.ToolProvider.getSystemJavaCompiler();
+            var file=compiled.resolve("Invalid.java");java.nio.file.Files.writeString(file,source);
+            try(var manager=compiler.getStandardFileManager(diagnostics,null,null)) {
+                assertFalse(compiler.getTask(null,manager,diagnostics,List.of("-proc:none","-d",compiled.toString()),null,manager.getJavaFileObjects(file)).call());
+            }
+            for(boolean recovery:List.of(false,true)) {
+                var request=TestInputs.request(source);var result=new JavaParserFrontend().analyze(recovery?LombokIngestionTest.recovery(request):request);
+                var invalid=result.observations().stream().filter(o->o.category().value().equals("java.calls")&&(o.reference().equals("p.id()")||o.reference().equals("p.pick(\"x\")"))).toList();
+                assertEquals(1,invalid.size());assertTrue(invalid.stream().allMatch(o->o.attribution()!=SemanticStatus.RESOLVED),()->summary(result,"calls"));
+            }
+        }
+    }
+    @Test void selfBoundedFluentWildcardsRetainTheirDeclaredUpperBound() {
+        String source="""
+            interface Response { void done(); }
+            interface Headers<S extends Headers<S>> { S uri(String path,Object... args); Response retrieve(); }
+            interface Client { Headers<?> get(); }
+            class C { void run(Client client) { client.get().uri("/pets/{id}",1).retrieve().done(); } }
+            """;
+        var result=analyze(source);
+        var calls=result.observations().stream().filter(o->o.category().value().equals("java.calls")).toList();
+        assertEquals(4,calls.size());assertTrue(calls.stream().allMatch(o->o.attribution()==SemanticStatus.RESOLVED),()->summary(result,"calls"));
+    }
+    @Test void nestedRecordAccessorsInsideTargetTypedLambdasAreAttributed()throws Exception {
+        String source="""
+            import java.util.*;
+            record Pet(int id,List<String> visits) {}
+            record Owner(List<Pet> pets) {}
+            class C { void run(List<Owner> owners) { owners.forEach(owner -> owner.pets().forEach(pet -> pet.visits().add("visit"))); } }
+            """;
+        java.nio.file.Path file=compiled.resolve("C.java");java.nio.file.Files.writeString(file,source);
+        var compiler=javax.tools.ToolProvider.getSystemJavaCompiler();assertNotNull(compiler);
+        assertEquals(0,compiler.run(null,null,null,"-proc:none","-d",compiled.toString(),file.toString()));
+        var result=analyze(source);
+        var calls=result.observations().stream().filter(o->o.category().value().equals("java.calls")).toList();
+        assertEquals(5,calls.size());assertTrue(calls.stream().allMatch(o->o.attribution()==SemanticStatus.RESOLVED),()->summary(result,"calls"));
+    }
     @Test void lowerWildcardCannotSupplyItsBoundMembersInAnExactClasspathEither() {
         for(boolean recovery:List.of(false,true)) {
             var request=TestInputs.request("import java.util.List; class Pet { void act(){} } class C { void run(List<? super Pet> pets) { pets.get(0).act(); Runnable r=pets.get(0)::act; } }");

@@ -18,7 +18,7 @@ import java.util.function.BooleanSupplier;
 /** Full-inventory scan composition. Native outputs use the existing language coordinator's
  * authenticated publication lane, never target execution on the controller. */
 public final class PolyglotScan {
-    public static final VersionedIdentifier PROVIDER=new VersionedIdentifier("scan.polyglot","m8.4-protobuf-http-v5");
+    public static final VersionedIdentifier PROVIDER=new VersionedIdentifier("scan.polyglot","m8.4-service-edges-v7");
     @FunctionalInterface public interface Current {void check()throws IOException;}
     public record Published(SemanticContextCoordinator.Plan plan,SemanticPublicationStore.Publication publication,
             RepositoryContentStore content,SemanticTables tables,Map<String,Object> report,String trust,Current current) {}
@@ -172,6 +172,8 @@ public final class PolyglotScan {
             nativeInput.current().check();
         }
         HttpServiceCallProjection.project(writer.nodes,writer.edges,writer.evidence,store.records("http-projection-additions",GraphSnapshotCodec::node),context,cancelled);
+        GrpcServiceCallProjection.project(store,context,cancelled);
+        ServiceArchitectureProjection.project(store,context,cancelled);
     }
     /** Join the native census to native targets. Syntax names never supply a callee.
      * Producer assertions use a separate edge vocabulary from validated observations. */

@@ -18,7 +18,8 @@ import java.util.*;
 /** Bounded immutable reads from one explicitly selected standard Maven2-layout artifact cache. */
 final class LocalArtifactCache {
     private final Path root;
-    private final BuildModelRequest buildRequest;
+    private final Map<MavenCoordinate,PomInput> suppliedPoms;
+    private final java.util.function.Consumer<ArtifactCoordinate> missingArtifact;
     private final ClasspathResolutionPolicy policy;
     private final Map<ArtifactCoordinate, Material> materials = new HashMap<>();
     private final Map<ArtifactCoordinate, Failure> failures = new HashMap<>();
@@ -29,14 +30,20 @@ final class LocalArtifactCache {
 
     LocalArtifactCache(Path selectedRoot, BuildModelRequest buildRequest, ClasspathResolutionPolicy policy)
             throws RootFailure {
-        this.buildRequest = Objects.requireNonNull(buildRequest);
+        this(selectedRoot,Objects.requireNonNull(buildRequest).artifactPoms(),policy,ignored->{});
+    }
+
+    /** Neutral descriptor acquisition for non-Maven consumers. No target POM is synthesized. */
+    LocalArtifactCache(Path selectedRoot,Map<MavenCoordinate,PomInput> suppliedPoms,ClasspathResolutionPolicy policy,
+                       java.util.function.Consumer<ArtifactCoordinate> missingArtifact)throws RootFailure {
+        this.suppliedPoms=Map.copyOf(suppliedPoms);this.missingArtifact=Objects.requireNonNull(missingArtifact);
         this.policy = Objects.requireNonNull(policy);
         this.root = validateRoot(Objects.requireNonNull(selectedRoot));
     }
 
     Material pom(MavenCoordinate gav) throws Failure {
         ArtifactCoordinate coordinate = new ArtifactCoordinate(gav, "pom", "");
-        PomInput supplied = buildRequest.artifactPoms().get(gav);
+        PomInput supplied = suppliedPoms.get(gav);
         return supplied == null
                 ? local(coordinate, ArtifactKind.POM, policy.maxPomBytes())
                 : supplied(coordinate, supplied);
@@ -104,6 +111,7 @@ final class LocalArtifactCache {
             if (!path.startsWith(root)) {
                 throw failure(coordinate, kind, relative, Reason.PATH_OUTSIDE_CACHE, AttemptOutcome.DENIED);
             }
+            if (!Files.exists(path, LinkOption.NOFOLLOW_LINKS)) missingArtifact.accept(coordinate);
             if (!Files.exists(path, LinkOption.NOFOLLOW_LINKS)) {
                 Reason reason = kind == ArtifactKind.POM ? Reason.MISSING_POM : Reason.MISSING_ARTIFACT;
                 throw failure(coordinate, kind, relative, reason, AttemptOutcome.UNAVAILABLE);

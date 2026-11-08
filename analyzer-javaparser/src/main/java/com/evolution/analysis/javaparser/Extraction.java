@@ -94,6 +94,8 @@ final class Extraction {
             // Only declaration skeletons live across files. Method/initializer bodies and
             // expression resolver caches belong to one active source document at a time.
             var unit=compactBodies?parse(parser(),header.input,Optional.empty()).orElseThrow():header;
+            RecordPatternInference.prepare(unit.ast);
+            LambdaParameterInference.prepare(unit.ast);
             unit.ast.stream().filter(this::membershipNode).forEach(sourceNodes::add);
             if(compactBodies)implicit.declarations(unit.ast,true);
             for (var node : unit.ast.stream().filter(this::isDeclaration).toList()) observe(node, "declares", () -> entity(node), () -> owner(node));
@@ -159,12 +161,27 @@ final class Extraction {
                 if(!rest&&!reactive||typeEntity(selected.declaringType()).origin()!=EntityOrigin.DEPENDENCY)continue;
                 var bound=callable(selected,call);var span=source(call).span(call);var caller=owner(call);
                 var binding=bindings.get(span);if(binding==null||!(binding.relationship().target() instanceof RelationshipTarget.Resolved r)||!r.target().equals(bound.identity()))continue;
-                String uri=!call.getArguments().isEmpty()&&call.getArgument(0).isStringLiteralExpr()?call.getArgument(0).asStringLiteralExpr().asString():"";
+                String uri=call.getArguments().isEmpty()?"":HttpClientConstants.uri(call.getArgument(0));
                 String verb=method.startsWith("getFor")?"GET":method.startsWith("postFor")?"POST":method.equals("put")?"PUT":method.equals("patchForObject")?"PATCH":method.equals("delete")?"DELETE":method.equals("headForHeaders")?"HEAD":method.equals("optionsForAllow")?"OPTIONS":"";
+                if(reactive)verb=reactiveVerb(call,bindings);
                 result.add(new HttpClientCallRecord(caller.identity(),bound.identity(),span,uri,verb.isEmpty()?List.of():List.of(verb)));
             }catch(RuntimeException unavailable){/* The original attribution ledger retains unavailable bindings. */}
         }
         return result;
+    }
+    private String reactiveVerb(MethodCallExpr uri,Map<SourceSpan,RelationshipOccurrence> bindings) {
+        Expression scope=uri.getScope().orElse(null);
+        while(scope instanceof MethodCallExpr call) {
+            if(Set.of("get","post","put","patch","delete","head","options").contains(call.getNameAsString())) {
+                var selected=call.resolve();var binding=bindings.get(source(call).span(call));
+                if(selected.declaringType().getQualifiedName().equals("org.springframework.web.reactive.function.client.WebClient")
+                        &&typeEntity(selected.declaringType()).origin()==EntityOrigin.DEPENDENCY&&binding!=null
+                        &&binding.relationship().target() instanceof RelationshipTarget.Resolved target&&target.target().equals(callable(selected,call).identity()))
+                    return call.getNameAsString().toUpperCase(Locale.ROOT);
+            }
+            scope=call.getScope().orElse(null);
+        }
+        return "";
     }
 
     private void releaseBody(Unit unit) {
@@ -599,7 +616,7 @@ final class Extraction {
         if(generated.isPresent()){if(expression instanceof MethodCallExpr call)recoveryCallInputs.add(call);return generated.orElseThrow();}
         if(request.sourceRecovery()&&expression instanceof MethodCallExpr call)requireRecoveryReceiver(call);
         if(expression instanceof MethodCallExpr call) {
-            if(!request.sourceRecovery()&&boundedReceiver(call.getScope()))recoveryReceiver(call,call.getScope());
+            if(!request.sourceRecovery()&&boundedReceiver(call.getScope()))requireRecoverySelected(call,recoveryReceiver(call,call.getScope()));
             var result=callable(call.resolve(),call);if(request.sourceRecovery())recoveryCallInputs.add(call);return result;
         }
         return callable(((ObjectCreationExpr)expression).resolve());
@@ -607,8 +624,10 @@ final class Extraction {
     private boolean boundedReceiver(Optional<Expression> scope) {
         if(scope.isEmpty())return false;
         try {
+            Expression receiver=scope.orElseThrow();while(receiver instanceof EnclosedExpr enclosed)receiver=enclosed.getInner();
+            if(receiver.containsData(LambdaParameterInference.INPUT))return true;
             var type=scope.orElseThrow().calculateResolvedType();
-            return type.isWildcard()||type.isTypeVariable()||type instanceof com.github.javaparser.resolution.types.ResolvedIntersectionType;
+            return type.isConstraint()||type.isWildcard()||type.isTypeVariable()||type instanceof com.github.javaparser.resolution.types.ResolvedIntersectionType;
         }catch(UnsolvedSymbolException typeQualifier){return false;} // Static type qualifiers need not have a value type.
     }
     /** A missing parent may introduce a more specific overload even when resolve() picks
@@ -652,6 +671,7 @@ final class Extraction {
                 var named=context.solveType(scope.toString());if(!named.isSolved())throw missing;
                 return named.getCorrespondingDeclaration().asReferenceType();
             }
+            if(type.isConstraint())requireLambdaCaptureContext(site);
             if(type.isArray())receiver=environment.solver.solveType("java.lang.Object");
             else if(type.isReferenceType())receiver=type.asReferenceType().getTypeDeclaration().orElseThrow();
             else {
@@ -680,6 +700,7 @@ final class Extraction {
         return receiver;
     }
     private void recoveryUpperBounds(ResolvedType type,Set<String> visiting,List<ResolvedReferenceTypeDeclaration> result) {
+        if(type.isConstraint()){recoveryUpperBounds(type.asConstraintType().getBound(),visiting,result);return;}
         if(type.isReferenceType()){result.add(type.asReferenceType().getTypeDeclaration().orElseThrow());return;}
         if(type.isArray()){result.add(environment.solver.solveType("java.lang.Object"));return;}
         if(type.isWildcard()) {
@@ -705,6 +726,22 @@ final class Extraction {
             return;
         }
         throw new MappingFailure(SemanticStatus.UNRESOLVED,"java.receiver-type-required");
+    }
+    private void requireLambdaCaptureContext(Node site) {
+        // The parser constraint wrapper drops wildcard direction. A receiver capture
+        // such as Iterable<? super Pet> cannot establish a Pet-typed lambda value.
+        // Keep this case unknown until its actual capture/ground target is available.
+        for(Node node=site;node!=null;node=node.getParentNode().orElse(null))if(node instanceof LambdaExpr lambda) {
+            Node parent=lambda.getParentNode().orElse(null);while(parent instanceof EnclosedExpr)parent=parent.getParentNode().orElse(null);
+            if(parent instanceof MethodCallExpr call&&call.getScope().isPresent()&&hasLowerWildcard(call.getScope().orElseThrow().calculateResolvedType()))
+                throw new MappingFailure(SemanticStatus.UNRESOLVED,"java.lambda-capture-context-required");
+        }
+    }
+    private boolean hasLowerWildcard(ResolvedType type) {
+        if(type.isConstraint())return hasLowerWildcard(type.asConstraintType().getBound());
+        if(type.isWildcard())return type.asWildcard().isLowerBounded()||type.asWildcard().isUpperBounded()&&hasLowerWildcard(type.asWildcard().getBoundedType());
+        if(type.isArray())return hasLowerWildcard(type.asArrayType().getComponentType());
+        return type.isReferenceType()&&type.asReferenceType().typeParametersValues().stream().anyMatch(this::hasLowerWildcard);
     }
     private void requireRecoverySelected(MethodCallExpr call,ResolvedReferenceTypeDeclaration receiver) {
         // A fixed own zero-argument declaration shadows any inherited alternative;
@@ -885,7 +922,10 @@ final class Extraction {
     Node sourceDeclarationNode(Entity entity){sourceDeclaration(entity);var matches=nodes.entrySet().stream().filter(e->e.getValue().equals(entity)).map(Map.Entry::getKey).toList();if(matches.size()!=1)throw new FrontendInputException("frontend.native-source-declaration","Correspondence source node is missing or ambiguous");return matches.getFirst();}
     List<Entity> sourceMembers(JavaSymbolName type){return nodes.entrySet().stream().filter(e->{try{return typeNameOfOwner(e.getKey()).equals(type);}catch(RuntimeException absent){return false;}}).map(Map.Entry::getValue).filter(e->Set.of(EntityKind.FIELD,EntityKind.METHOD,EntityKind.CONSTRUCTOR).contains(e.kind())).distinct().toList();}
     private JavaSymbolName typeNameOfOwner(Node node){return name(enclosingType(node));}
-    boolean nativeOwner(TypeDeclaration<?> type){return nativeMembers!=null&&nativeMembers.owns(name(type));}
+    boolean nativeOwner(TypeDeclaration<?> type){
+        if(nativeMembers==null||!nativeMembers.hasOwners())return false;
+        try{return nativeMembers.owns(name(type));}catch(RuntimeException unavailable){return false;}
+    }
     JavaSymbolName callableName(ResolvedMethodLikeDeclaration resolved){var parameters=new ArrayList<ErasedType>();for(int i=0;i<resolved.getNumberOfParams();i++)parameters.add(erased(resolved.getParam(i).getType(),new HashSet<>()));return resolved instanceof ResolvedConstructorDeclaration?JavaSymbolName.constructor(typeName(resolved.declaringType()),parameters):JavaSymbolName.method(typeName(resolved.declaringType()),resolved.getName(),parameters);}
     Entity nativeDeclaration(JavaSymbolName symbol,EntityKind kind,JavaEvidenceMapping mapping){
         var entity=Entity.create(EntityOrigin.PROJECT,EntityScope.project(request.module()),kind,symbol.canonicalName(),Optional.empty());
@@ -948,8 +988,9 @@ final class Extraction {
     boolean isLombok(Entity entity,String name) {
         int dot=name.lastIndexOf('.');
         if(entity.origin()!=EntityOrigin.DEPENDENCY||!entity.canonicalName().equals(JavaSymbolName.topLevelType(name.substring(0,dot),name.substring(dot+1)).canonicalName()))return false;
-        return request.dependencies().stream().anyMatch(b->b.originEntry().logicalName().equals("org.projectlombok:lombok:1.18.46@jar")
-                &&b.originEntry().contentDigest().value().equals("sha256:01f7b1a015e33e2b62d5f5f37053306357ab1415fd181fcba7794f5d198c1126")
+        var supported=Map.of("org.projectlombok:lombok:1.18.36@jar","sha256:73b6b05b6a2d365b700bab08d30f94de9d336490bc0acce5b6181fef48cbf18e",
+                "org.projectlombok:lombok:1.18.46@jar","sha256:01f7b1a015e33e2b62d5f5f37053306357ab1415fd181fcba7794f5d198c1126");
+        return request.dependencies().stream().anyMatch(b->b.originEntry().contentDigest().value().equals(supported.get(b.originEntry().logicalName()))
                 &&entity.stableScope().equals(EntityScope.external(EntityOrigin.DEPENDENCY,b.originEntry().logicalName(),b.originEntry().contentDigest())));
     }
     void synthesisGap(Node node,String code) {
@@ -1002,7 +1043,15 @@ final class Extraction {
         if (failure instanceof MappingFailure mapping) return mapping.status;
         if (failure instanceof UnsolvedSymbolException) return SemanticStatus.UNRESOLVED;
         if (failure instanceof UnsupportedOperationException) return SemanticStatus.UNSUPPORTED;
+        if (providerInferenceCollision(failure)) return SemanticStatus.UNSUPPORTED;
         return failure.getClass().getSimpleName().equals("MethodAmbiguityException") ? SemanticStatus.AMBIGUOUS : SemanticStatus.ERROR;
+    }
+    private static boolean providerInferenceCollision(RuntimeException failure) {
+        // Pinned parser's name-keyed inference can conflate unrelated T parameters.
+        // Recognize only its specific failure site; retain the observation as an
+        // explicit provider capability gap, without choosing an equivalent type.
+        if(!(failure instanceof IllegalStateException)||failure.getMessage()==null||!failure.getMessage().startsWith("Equivalent types are: "))return false;
+        var frames=failure.getStackTrace();return frames.length>0&&frames[0].getClassName().equals("com.github.javaparser.resolution.logic.InferenceVariableType")&&frames[0].getMethodName().equals("equivalentType");
     }
 
     private Unit unit(Node node) {
@@ -1029,9 +1078,10 @@ final class Extraction {
         catch (MappingFailure failure) { status = failure.status; local.add(diagnostic(failure.code, status, span)); }
         catch (UnsupportedOperationException exception) { status = SemanticStatus.UNSUPPORTED; local.add(diagnostic("java.adapter-unsupported", status, span)); }
         catch (RuntimeException exception) {
-            status = exception.getClass().getSimpleName().equals("MethodAmbiguityException") ? SemanticStatus.AMBIGUOUS : SemanticStatus.ERROR;
+            boolean inferenceCollision=providerInferenceCollision(exception);
+            status = inferenceCollision?SemanticStatus.UNSUPPORTED:exception.getClass().getSimpleName().equals("MethodAmbiguityException") ? SemanticStatus.AMBIGUOUS : SemanticStatus.ERROR;
             local.add(new Diagnostic(status == SemanticStatus.ERROR ? DiagnosticSeverity.ERROR : DiagnosticSeverity.WARNING,
-                    status == SemanticStatus.ERROR ? "java.adapter-error" : "java.ambiguous", "Attribution did not produce a safely mapped fact", span, Map.of("exception", exception.getClass().getName())));
+                    inferenceCollision?"java.parser-inference-collision":status == SemanticStatus.ERROR ? "java.adapter-error" : "java.ambiguous", "Attribution did not produce a safely mapped fact", span, Map.of("exception", exception.getClass().getName())));
         }
         if (span.isEmpty()) local.add(missingSpanDiagnostic(node, spanFailure));
         Optional<OccurrenceIdentity> mapped = Optional.empty();

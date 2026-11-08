@@ -124,3 +124,32 @@ canonical bytes, authenticated roots and cold-read validation remain unchanged.
 These bounds govern working sets, not repository admission or total elapsed time.
 Overlap, byte equality, corruption, cancellation and injected-I/O controls are
 authored tests; they do not establish a real-repository speedup.
+
+### Segmented projection payloads — 2026-11-05
+
+The projection/import/save scratch index now stores SHA-256 references, with
+deduplicated canonical UTF-8 payloads in private compressed/raw 64-MiB segments.
+The `rows.payload` SQL column contains a reference, never literal graph JSON;
+every read/write path uses the workspace codec. SQLite retains key ordering,
+uniqueness and compact byte locators. Raw output digests and published formats
+are unchanged. Decoded caching is limited to 524,288 UTF-16 code units/64 entries;
+at most four older segments have open read channels. Oversized admitted rows
+proceed alone, and decompression is bounded by the existing row-worker budget.
+Positional reads and raw SHA-256 checks protect uncached reconstruction.
+
+The writer samples/debits free disk allowance with 64 MiB of headroom. Physical
+pressure withholds publication and is reported as `STORAGE_FULL`; payload hash,
+locator/truncation failures are storage corruption. Owned scratch statements,
+channels and segments close before scratch-index cleanup. Existing immutable
+evidence/workspaces are not migrated or deleted. The regression with 256 repeated
+27,000-character values keeps the SQLite file below 400,000 bytes; this is an
+authored storage bound, not a new ThingsBoard size/timing result. Durable JSON and
+CAS pages still require disk. See [ADR-009](../decisions/ADR-009-segmented-projection-and-passive-service-recovery.md).
+
+Publication also indexes capability-gap references in a narrow scratch table.
+The final reason summary replays only that index and its referenced evidence;
+identical gap identities copied into several contexts count once. CLI
+`gapSummary.total`/`byReason` cover all stored gap identities, `contextReferences`
+counts their graph-node occurrences and `inputTotal` retains the earlier input
+report count. The declared population is `ALL_GRAPH_CAPABILITY_GAP_IDENTITIES`;
+the domain's CURRENT/HISTORY fold and selected-context completion are preserved.

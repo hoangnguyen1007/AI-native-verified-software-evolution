@@ -274,7 +274,7 @@ class UniversalArchitecturePipelineIntegrationTest {
         assertEquals(1,result.report().types().size());assertNotEquals(UniversalArchitectureReport.Status.COMPLETE,result.report().status());
         assertTrue(result.graphInput().orElseThrow().ingestion().orElseThrow().sourceIngestion().outcomes().stream().flatMap(o->o.request().stream()).allMatch(FrontendRequest::sourceRecovery));
         assertTrue(result.graphInput().orElseThrow().build().orElseThrow().modules().stream().flatMap(m->m.sourcePlan().sourceSets().stream()).anyMatch(s->s.gaps().contains(SourcePlanModel.Gap.UNSUPPORTED_COMPILER_CONFIGURATION)));
-        assertEquals("m8.4-reactor-recovery-v2",UniversalSourceIngestion.PROVIDER.version());assertEquals("3.9.16-m8.4-processing-policy-v1",MavenBuildModelProvider.VERSION.version());
+        assertEquals("m8.4-project-recovery-v3",UniversalSourceIngestion.PROVIDER.version());assertEquals("3.9.16-m8.4-processing-policy-v1",MavenBuildModelProvider.VERSION.version());
     }
 
     private static SpringBuildContext testBuildContext(PlatformInput platform, List<BinaryInput> dependencies) {

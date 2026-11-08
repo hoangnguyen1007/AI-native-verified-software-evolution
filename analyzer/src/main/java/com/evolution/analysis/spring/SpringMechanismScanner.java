@@ -909,7 +909,11 @@ public final class SpringMechanismScanner {
                         new VersionedIdentifier("frontend.javaparser","3.28.2-m8.4-recovery-v4"),
                         new VersionedIdentifier("frontend.javaparser","3.28.2-m8.4-bounded-bodies-v5"),
                         new VersionedIdentifier("frontend.javaparser","3.28.2-m8.4-generic-recovery-v6"),
-                        new VersionedIdentifier("frontend.javaparser","3.28.2-m8.4-lombok-http-v7")).contains(frontend.frontend())
+                        new VersionedIdentifier("frontend.javaparser","3.28.2-m8.4-lombok-http-v7"),
+                        new VersionedIdentifier("frontend.javaparser","3.28.2-m8.4-lombok-compat-v8"),
+                        new VersionedIdentifier("frontend.javaparser","3.28.2-m8.4-inference-http-v9"),
+                        new VersionedIdentifier("frontend.javaparser","3.28.2-m8.4-inference-http-v10"),
+                        new VersionedIdentifier("frontend.javaparser","3.28.2-m8.4-lambda-input-v11")).contains(frontend.frontend())
                 ||constructor.entity().origin()!=EntityOrigin.PROJECT||!constructor.entity().stableScope().equals(owner.entity().stableScope())
                 ||!constructor.uncertainties().isEmpty()||!constructor.diagnostics().isEmpty()
                 ||constructor.derivation().kind()!=DerivationKind.DERIVED||!constructor.derivation().method().equals(new VersionedIdentifier("java.default-constructor","1"))

@@ -34,8 +34,11 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
         Root{new com.evolution.analysis.contract.identity.SnapshotIdentity(snapshot);}
     }
     public record Publication(ContentDigest graph,com.evolution.analysis.contract.identity.SnapshotIdentity snapshot,
-            List<KnowledgeGraph.Context> contexts,long nodes,long edges,long evidence,Map<String,Long> edgeKinds) {
-        public Publication {contexts=List.copyOf(contexts);edgeKinds=Map.copyOf(edgeKinds);}
+            List<KnowledgeGraph.Context> contexts,long nodes,long edges,long evidence,Map<String,Long> edgeKinds,Map<String,Long> gapReasons,long gapNodes) {
+        public Publication {contexts=List.copyOf(contexts);edgeKinds=Map.copyOf(edgeKinds);gapReasons=Map.copyOf(gapReasons);}
+        public Publication(ContentDigest graph,com.evolution.analysis.contract.identity.SnapshotIdentity snapshot,List<KnowledgeGraph.Context> contexts,long nodes,long edges,long evidence,Map<String,Long> edgeKinds){this(graph,snapshot,contexts,nodes,edges,evidence,edgeKinds,Map.of(),0);}
+        /** All stored gap identities; CURRENT/HISTORY qualification stays in domain queries. */
+        public long gaps(){return gapReasons.values().stream().mapToLong(Long::longValue).sum();}
     }
     @FunctionalInterface private interface RowConsumer {void accept(Entry entry)throws IOException;}
     /** Own only these generated flat scratch files. Try-with-resources retains
@@ -124,15 +127,16 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
                 sql.execute("CREATE TABLE rows(space TEXT NOT NULL,k TEXT NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(space,k)) WITHOUT ROWID");
             }
             database.setAutoCommit(false);
-            var workspace=new SqliteGraphProjection(database,rowBytes,cancelled);
+            try(var workspace=new SqliteGraphProjection(database,rowBytes,cancelled)) {
             contribution.project(workspace);
+            var gaps=workspace.gapCounts();
             var contexts=new ArrayList<KnowledgeGraph.Context>(workspace.records("contexts",GraphSnapshotCodec::context).values());
             var kinds=new TreeMap<String,Long>();
             try(var insert=database.prepareStatement("INSERT INTO rows(space,k,payload) VALUES(?,?,?)")) {
                 for(var edge:workspace.records("edges",GraphSnapshotCodec::edge).values()) {
                     kinds.merge(edge.kind(),1L,Long::sum);String id=key(edge.context(),edge.identity());
-                    insert(insert,"outgoing",key(edge.context(),edge.source(),edge.identity()),id,cancelled);
-                    for(String target:edge.target().identities())insert(insert,"incoming",key(edge.context(),target,edge.identity()),id,cancelled);
+                    insert(workspace,insert,"outgoing",key(edge.context(),edge.source(),edge.identity()),id,cancelled);
+                    for(String target:edge.target().identities())insert(workspace,insert,"incoming",key(edge.context(),target,edge.identity()),id,cancelled);
                 }
             }
             database.commit();
@@ -144,17 +148,18 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
                 writer.write("{\"format\":");CanonicalJson.writeTo(GraphSnapshotCodec.FORMAT,writer);writer.write(",\"graph\":");
                 writer.flush();
                 var graphWriter=new BufferedWriter(new OutputStreamWriter(new DigestOutputStream(destination,digest),StandardCharsets.UTF_8));
-                writeGraph(database,snapshot.value(),graphWriter,cancelled);graphWriter.flush();
+                writeGraph(database,workspace,snapshot.value(),graphWriter,cancelled);graphWriter.flush();
                 identity=new ContentDigest("sha256:"+HexFormat.of().formatHex(digest.digest()));
                 writer.write(",\"identity\":");CanonicalJson.writeTo(identity,writer);writer.write("}");writer.flush();channel.force(true);
             }
             // Audits endpoints, evidence, contexts and both adjacency indexes before publication.
-            publish(database,identity,snapshot.value(),cancelled,true,Optional.of(new ContentDigest("sha256:"+HexFormat.of().formatHex(frame.digest()))));
+            publish(database,workspace,identity,snapshot.value(),cancelled,true,Optional.of(new ContentDigest("sha256:"+HexFormat.of().formatHex(frame.digest()))));
             Path target=snapshots.resolve(identity.value().substring(7)+".graph.json");StreamingContentStore.safe(target);check(cancelled);
             try{Files.createLink(target,pending);}catch(FileAlreadyExistsException existing){
                 if(!Files.isRegularFile(target,LinkOption.NOFOLLOW_LINKS)||Files.size(target)!=Files.size(pending)||!hash(target).equals(hash(pending)))throw new IOException("GRAPH_SNAPSHOT_CONFLICT");
             }
-            return new Publication(identity,snapshot,contexts,total(database,"nodes"),total(database,"edges"),total(database,"evidence"),kinds);
+            return new Publication(identity,snapshot,contexts,total(database,"nodes"),total(database,"edges"),total(database,"evidence"),kinds,gaps.reasons(),gaps.nodes());
+            }
         }
         }catch(UncheckedIOException failure){throw unwrap(failure);}
         catch(SQLException failure){throw new IOException("GRAPH_PROJECTION_STORAGE_UNAVAILABLE",failure);}
@@ -166,12 +171,12 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
     private static long total(Connection database,String space)throws SQLException {
         try(var query=database.prepareStatement("SELECT COUNT(*) FROM rows WHERE space=?")){query.setString(1,space);try(var rows=query.executeQuery()){return rows.next()?rows.getLong(1):0;}}
     }
-    private void writeGraph(Connection database,String snapshot,Writer writer,BooleanSupplier cancelled)throws SQLException,IOException {
+    private void writeGraph(Connection database,SqliteGraphProjection workspace,String snapshot,Writer writer,BooleanSupplier cancelled)throws SQLException,IOException {
         writer.write("{");boolean first=true;
         for(String space:List.of("contexts","edges","evidence","nodes")) {
             if(!first)writer.write(",");first=false;CanonicalJson.writeTo(space,writer);writer.write(":[");boolean member=false;
             try(var query=database.prepareStatement("SELECT payload FROM rows WHERE space=? ORDER BY k")) {
-                query.setString(1,space);try(var rows=query.executeQuery()){while(rows.next()){check(cancelled);if(member)writer.write(",");member=true;writer.write(rows.getString(1));}}
+                query.setString(1,space);try(var rows=query.executeQuery()){while(rows.next()){check(cancelled);if(member)writer.write(",");member=true;writer.write(workspace.decoded(rows.getString(1)));}}
             }writer.write("]");
         }
         writer.write(",\"schema\":");CanonicalJson.writeTo(KnowledgeGraph.SCHEMA,writer);writer.write(",\"snapshot\":");CanonicalJson.writeTo(snapshot,writer);writer.write("}");
@@ -187,18 +192,18 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
                 sql.execute("CREATE TABLE rows(space TEXT NOT NULL,k TEXT NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(space,k)) WITHOUT ROWID");
             }
             database.setAutoCommit(false);
-            try(var insert=database.prepareStatement("INSERT INTO rows(space,k,payload) VALUES(?,?,?)")){
-                for(var value:graph.contexts())insert(insert,"contexts",value.identity(),value,cancelled);
-                for(var value:graph.nodes())insert(insert,"nodes",key(value.context(),value.identity()),value,cancelled);
+            try(var workspace=new SqliteGraphProjection(database,rowBytes,cancelled);var insert=database.prepareStatement("INSERT INTO rows(space,k,payload) VALUES(?,?,?)")){
+                for(var value:graph.contexts())insert(workspace,insert,"contexts",value.identity(),value,cancelled);
+                for(var value:graph.nodes())insert(workspace,insert,"nodes",key(value.context(),value.identity()),value,cancelled);
                 for(var value:graph.edges()){
-                    String id=key(value.context(),value.identity());insert(insert,"edges",id,value,cancelled);
-                    insert(insert,"outgoing",key(value.context(),value.source(),value.identity()),id,cancelled);
-                    for(String target:value.target().identities())insert(insert,"incoming",key(value.context(),target,value.identity()),id,cancelled);
+                    String id=key(value.context(),value.identity());insert(workspace,insert,"edges",id,value,cancelled);
+                    insert(workspace,insert,"outgoing",key(value.context(),value.source(),value.identity()),id,cancelled);
+                    for(String target:value.target().identities())insert(workspace,insert,"incoming",key(value.context(),target,value.identity()),id,cancelled);
                 }
-                for(var value:graph.evidence())insert(insert,"evidence",value.identity().value(),value,cancelled);
-            }
+                for(var value:graph.evidence())insert(workspace,insert,"evidence",value.identity().value(),value,cancelled);
             database.commit();
-            publish(database,graph.identity(),graph.snapshot().value(),cancelled,false,Optional.empty());
+            publish(database,workspace,graph.identity(),graph.snapshot().value(),cancelled,false,Optional.empty());
+            }
         }catch(UncheckedIOException failure){throw unwrap(failure);}
         catch(SQLException failure){throw new IOException("GRAPH_PARTITION_STORAGE_UNAVAILABLE",failure);}
     }
@@ -214,7 +219,7 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
                 sql.execute("PRAGMA journal_mode=DELETE");sql.execute("PRAGMA temp_store=FILE");sql.execute("PRAGMA cache_size=-2048");
                 sql.execute("CREATE TABLE rows(space TEXT NOT NULL,k TEXT NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(space,k)) WITHOUT ROWID");
             }
-            database.setAutoCommit(false);var header=new TreeMap<String,Object>();var body=new TreeMap<String,Object>();var members=new HashSet<String>();
+            database.setAutoCommit(false);try(var workspace=new SqliteGraphProjection(database,rowBytes,cancelled)) {var header=new TreeMap<String,Object>();var body=new TreeMap<String,Object>();var members=new HashSet<String>();
             var digest=MessageDigest.getInstance("SHA-256");
             try(var insert=database.prepareStatement("INSERT INTO rows(space,k,payload) VALUES(?,?,?)");
                 var input=new DigestInputStream(Files.newInputStream(source,LinkOption.NOFOLLOW_LINKS),digest);
@@ -229,8 +234,8 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
                             check(cancelled);Object value=switch(space){case "contexts"->GraphSnapshotCodec.context(raw);case "nodes"->GraphSnapshotCodec.node(raw);case "edges"->GraphSnapshotCodec.edge(raw);default->GraphSnapshotCodec.evidence(raw);};
                             String key=switch(value){case KnowledgeGraph.Context c->c.identity();case KnowledgeGraph.Node n->key(n.context(),n.identity());case KnowledgeGraph.Edge e->key(e.context(),e.identity());case GraphEvidence e->e.identity().value();default->throw new AssertionError();};
                             try{
-                                insert(insert,space,key,value,cancelled);
-                                if(value instanceof KnowledgeGraph.Edge edge){insert(insert,"outgoing",key(edge.context(),edge.source(),edge.identity()),key,cancelled);for(String target:edge.target().identities())insert(insert,"incoming",key(edge.context(),target,edge.identity()),key,cancelled);}
+                                insert(workspace,insert,space,key,value,cancelled);
+                                if(value instanceof KnowledgeGraph.Edge edge){insert(workspace,insert,"outgoing",key(edge.context(),edge.source(),edge.identity()),key,cancelled);for(String target:edge.target().identities())insert(workspace,insert,"incoming",key(edge.context(),target,edge.identity()),key,cancelled);}
                             }catch(SQLException failure){throw new IOException("GRAPH_PARTITION_DUPLICATE_OR_INVALID_ROW",failure);}
                         });
                     });else throw new IOException("GRAPH_PARTITION_INPUT_FIELDS");
@@ -238,24 +243,25 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
             }
             if(!header.keySet().equals(Set.of("format","identity"))||!GraphSnapshotCodec.FORMAT.equals(header.get("format"))||!expected.value().equals(header.get("identity"))
                     ||!members.equals(Set.of("schema","snapshot","contexts","nodes","edges","evidence"))||!KnowledgeGraph.SCHEMA.equals(body.get("schema")))throw new IOException("GRAPH_PARTITION_INPUT_SCOPE");
-            database.commit();publish(database,expected,text(body.get("snapshot")),cancelled,true,Optional.of(new ContentDigest("sha256:"+HexFormat.of().formatHex(digest.digest()))));
+            database.commit();publish(database,workspace,expected,text(body.get("snapshot")),cancelled,true,Optional.of(new ContentDigest("sha256:"+HexFormat.of().formatHex(digest.digest()))));
+            }
         }catch(UncheckedIOException failure){throw unwrap(failure);}
         catch(SQLException failure){throw new IOException("GRAPH_PARTITION_STORAGE_UNAVAILABLE",failure);}
         catch(NoSuchAlgorithmException impossible){throw new AssertionError(impossible);}
     }
-    private void publish(Connection database,ContentDigest graph,String snapshot,BooleanSupplier cancelled,boolean audit,Optional<ContentDigest> frame)throws SQLException,IOException{
+    private void publish(Connection database,SqliteGraphProjection workspace,ContentDigest graph,String snapshot,BooleanSupplier cancelled,boolean audit,Optional<ContentDigest> frame)throws SQLException,IOException{
         try(var workers=new BoundedTasks(pageWorkers,pageWorkers,"evo-graph-page",cancelled)) {
             var trees=new TreeMap<String,Tree>();
-            for(String space:List.of("contexts","nodes","edges","outgoing","incoming","evidence"))trees.put(space,build(database,space,cancelled,workers));
+            for(String space:List.of("contexts","nodes","edges","outgoing","incoming","evidence"))trees.put(space,build(database,workspace,space,cancelled,workers));
             try(var query=database.prepareStatement("SELECT payload FROM rows WHERE space='contexts' ORDER BY k");var contexts=query.executeQuery();var insert=database.prepareStatement("INSERT INTO rows(space,k,payload) VALUES(?,?,?)")){
                 while(contexts.next()){
-                    var context=GraphSnapshotCodec.context(parse(contexts.getString(1)));long nodes=count(database,"nodes",context.identity()),edges=count(database,"edges",context.identity());
+                    var context=GraphSnapshotCodec.context(parse(workspace.decoded(contexts.getString(1))));long nodes=count(database,"nodes",context.identity()),edges=count(database,"edges",context.identity());
                     var segment=put(Map.of("schema","graph.partition-segment:m8.4-v1","graph",graph,"context",context.identity(),
                             "nodes",nodes,"edges",edges,"indexes",Map.of("nodes",trees.get("nodes"),"edges",trees.get("edges"),"incoming",trees.get("incoming"),"outgoing",trees.get("outgoing"))),cancelled);
-                    insert(insert,"partitions",context.identity(),new Partition(SCHEMA,graph,context.identity(),segment,nodes,edges),cancelled);
+                    insert(workspace,insert,"partitions",context.identity(),new Partition(SCHEMA,graph,context.identity(),segment,nodes,edges),cancelled);
                 }
             }
-            database.commit();trees.put("partitions",build(database,"partitions",cancelled,workers));
+            database.commit();trees.put("partitions",build(database,workspace,"partitions",cancelled,workers));
             var document=put(Map.of("format",FORMAT,"graph",graph,"snapshot",snapshot,"trees",trees),cancelled);
             var root=new Root(document,graph,snapshot,Map.copyOf(trees));
             if(!graph.equals(canonicalDigest(root,cancelled,audit,frame)))throw new IOException("GRAPH_PARTITION_DIGEST_MISMATCH");
@@ -275,19 +281,19 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
             String prefix=context+"|";query.setString(1,space);query.setString(2,prefix);query.setString(3,upper(prefix));try(var result=query.executeQuery()){return result.next()?result.getLong(1):0;}
         }
     }
-    private void insert(PreparedStatement statement,String space,String key,Object value,BooleanSupplier cancelled)throws SQLException,IOException{
+    private void insert(SqliteGraphProjection workspace,PreparedStatement statement,String space,String key,Object value,BooleanSupplier cancelled)throws SQLException,IOException{
         check(cancelled);String encoded=CanonicalJson.write(value);
         if(encoded.getBytes(StandardCharsets.UTF_8).length>rowBytes)throw new IOException("GRAPH_PARTITION_ROW_WORKER_REQUIRED");
-        statement.setString(1,space);statement.setString(2,key);statement.setString(3,encoded);statement.executeUpdate();
+        statement.setString(1,space);statement.setString(2,key);statement.setString(3,workspace.encoded(encoded));statement.executeUpdate();
     }
-    private Tree build(Connection database,String space,BooleanSupplier cancelled,BoundedTasks workers)throws SQLException,IOException{
+    private Tree build(Connection database,SqliteGraphProjection workspace,String space,BooleanSupplier cancelled,BoundedTasks workers)throws SQLException,IOException{
         var builder=new TreeBuilder(cancelled);var batch=new ArrayList<EncodedEntry>();long characters=0;
         var pending=new ArrayDeque<BoundedTasks.Task<Tree>>();
         try(var query=database.prepareStatement("SELECT k,payload FROM rows WHERE space=? ORDER BY k")){
             query.setString(1,space);
             try(var rows=query.executeQuery()){
                 while(rows.next()){
-                    check(cancelled);String encoded=rows.getString(2);
+                    check(cancelled);String encoded=workspace.decoded(rows.getString(2));
                     if(!batch.isEmpty()&&(batch.size()==PAGE_ROWS||characters+encoded.length()>PAGE_CHARACTERS)){enqueueLeaf(batch,characters,builder,pending,workers,cancelled);batch.clear();characters=0;}
                     batch.add(new EncodedEntry(rows.getString(1),encoded));characters+=encoded.length();
                 }
