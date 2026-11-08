@@ -194,4 +194,117 @@ class UniversalBuildIngestionTest {
                 "gradle/libs.versions.toml", "[libraries]\nmutable = \"g:mutable:1.0-SNAPSHOT\"\n"));
         assertTrue(catalog.modules().getFirst().dependencies().getFirst().coordinate().isEmpty());
     }
+
+    @Test void tripleQuotedMultilineStringsAndEscapesParseWithoutMalformedInputAndPreserveKmpSourceSets() {
+        var r = load(Map.of(
+                "settings.gradle.kts", "pluginManagement { repositories { google(); mavenCentral() } }\n"
+                        + "dependencyResolutionManagement { repositories { google(); mavenCentral() } }\n"
+                        + "enableFeaturePreview(\"TYPESAFE_PROJECT_ACCESSORS\")\n"
+                        + "include(\":shared\", \":app\")\n",
+                "shared/build.gradle.kts", "plugins { alias(libs.plugins.kotlin.multiplatform) }\n"
+                        + "val generated = \"\"\"\n"
+                        + "    package org.schabi.newpipe.shared\n"
+                        + "    const val USER_AGENT = \"Mozilla/5.0 (Windows NT 10.0; rv:128.0)\"\n"
+                        + "    fun block() { println(\"hello \\$world\") }\n"
+                        + "\"\"\".trimIndent()\n"
+                        + "kotlin {\n"
+                        + "    jvmToolchain(21)\n"
+                        + "    sourceSets {\n"
+                        + "        commonMain {\n"
+                        + "            dependencies {\n"
+                        + "                implementation(libs.kotlin.stdlib)\n"
+                        + "            }\n"
+                        + "        }\n"
+                        + "        commonTest.dependencies {\n"
+                        + "            implementation(libs.kotlin.test)\n"
+                        + "        }\n"
+                        + "    }\n"
+                        + "}\n",
+                "shared/src/commonMain/kotlin/Shared.kt", "package org.schabi.newpipe.shared\nclass Shared\n",
+                "app/build.gradle.kts", "plugins { id(\"com.android.application\") }\n"
+                        + "val escaped = \"price: \\$100\\u0020ok\\b\\f\"\n"
+                        + "android {\n"
+                        + "    namespace = \"org.schabi.newpipe\"\n"
+                        + "    compileSdk = 35\n"
+                        + "    compileOptions {\n"
+                        + "        sourceCompatibility = JavaVersion.VERSION_17\n"
+                        + "        targetCompatibility = JavaVersion.VERSION_17\n"
+                        + "        encoding = \"UTF-8\"\n"
+                        + "    }\n"
+                        + "}\n"
+                        + "dependencies {\n"
+                        + "    implementation(projects.shared)\n"
+                        + "    ksp(libs.room.compiler)\n"
+                        + "    coreLibraryDesugaring(\"com.android.tools:desugar_jdk_libs:2.1.2\")\n"
+                        + "    debugImplementation(\"com.squareup.leakcanary:leakcanary-android:2.14\") {\n"
+                        + "        exclude(group = \"org.jetbrains\", module = \"annotations\")\n"
+                        + "    }\n"
+                        + "}\n",
+                "gradle/libs.versions.toml", "[versions]\nkotlin = \"2.1.0\"\nroom = \"2.6.1\"\n"
+                        + "[libraries]\nkotlin-stdlib = { module = \"org.jetbrains.kotlin:kotlin-stdlib\", version.ref = \"kotlin\" }\n"
+                        + "kotlin-test = { module = \"org.jetbrains.kotlin:kotlin-test\", version.ref = \"kotlin\" }\n"
+                        + "room-compiler = { module = \"androidx.room:room-compiler\", version.ref = \"room\" }\n"
+                        + "[plugins]\nkotlin-multiplatform = { id = \"org.jetbrains.kotlin.multiplatform\", version.ref = \"kotlin\" }\n"));
+        assertTrue(r.issues().stream().noneMatch(i -> i.reason() == IngestionEvidence.Reason.MALFORMED_INPUT));
+        var shared = r.modules().stream().filter(m -> m.descriptor().path().equals("shared")).findFirst().orElseThrow();
+        assertEquals("21", shared.sourcePlan().sourceSets().getFirst().syntaxLevel().value().orElseThrow());
+        assertTrue(shared.sourcePlan().sourceSets().getFirst().sourceRoots().stream()
+                .flatMap(s -> s.value().stream()).toList().contains("shared/src/commonMain/kotlin"));
+        assertEquals(List.of("org.jetbrains.kotlin:kotlin-stdlib:2.1.0", "org.jetbrains.kotlin:kotlin-test:2.1.0"),
+                shared.dependencies().stream().map(d -> d.coordinate().orElseThrow().notation()).toList());
+        var app = r.modules().stream().filter(m -> m.descriptor().path().equals("app")).findFirst().orElseThrow();
+        assertEquals("17", app.sourcePlan().sourceSets().getFirst().syntaxLevel().value().orElseThrow());
+        assertEquals("UTF-8", app.sourcePlan().sourceSets().getFirst().encoding().value().orElseThrow());
+        assertEquals(Optional.of(":shared"), app.dependencies().getFirst().projectPath());
+        var debugDep = app.dependencies().stream().filter(d -> d.configuration().equals("debugImplementation")).findFirst().orElseThrow();
+        assertEquals(List.of("org.jetbrains:annotations"), debugDep.exclusions());
+    }
+
+    @Test void settingsEachDirSubprojectsVariablesAndSpringBootDependencyManagementResolveDeterministically() {
+        var r = load(Map.of(
+                "settings.gradle", "include ':app', ':utils'\n"
+                        + "project(':utils').projectDir = file('depends/utils')\n"
+                        + "file('modules').eachDir {\n"
+                        + "    def name = ':' + it.name\n"
+                        + "    include name\n"
+                        + "    project(name).projectDir = it\n"
+                        + "}\n",
+                "build.gradle", "subprojects {\n"
+                        + "    group = 'me.aap.fermata'\n"
+                        + "    version = '1.9.9'\n"
+                        + "    android {\n"
+                        + "        compileOptions {\n"
+                        + "            sourceCompatibility = JavaVersion.VERSION_17\n"
+                        + "            targetCompatibility = JavaVersion.VERSION_17\n"
+                        + "        }\n"
+                        + "    }\n"
+                        + "}\n",
+                "app/build.gradle", "plugins {\n"
+                        + "    id 'org.springframework.boot' version '3.4.0'\n"
+                        + "    id 'io.spring.dependency-management' version '1.1.6'\n"
+                        + "}\n"
+                        + "def boostVersion = '1.40.0'\n"
+                        + "dependencies {\n"
+                        + "    implementation 'androidx.appcompat:appcompat:1.7.0', 'com.google.android.material:material:1.12.0'\n"
+                        + "    implementation(\"org.webjars.npm:boost:$boostVersion\") { exclude group: 'org.webjars' }\n"
+                        + "    autoImplementation project(':exoplayer')\n"
+                        + "}\n",
+                "app/src/auto/java/AutoMain.java", "class AutoMain {}",
+                "depends/utils/build.gradle", "plugins { id 'com.android.library' }\n",
+                "modules/exoplayer/build.gradle", "plugins { id 'com.android.library' }\n",
+                "modules/felex/build.gradle", "plugins { id 'com.android.library' }\n"));
+        assertEquals(Set.of(".", "app", "depends/utils", "modules/exoplayer", "modules/felex"),
+                r.modules().stream().map(m -> m.descriptor().path()).collect(java.util.stream.Collectors.toSet()));
+        var app = r.modules().stream().filter(m -> m.descriptor().path().equals("app")).findFirst().orElseThrow();
+        assertEquals(new MavenCoordinate("me.aap.fermata", "app", "1.9.9"), app.coordinate().orElseThrow());
+        assertEquals("17", app.sourcePlan().sourceSets().getFirst().syntaxLevel().value().orElseThrow());
+        assertTrue(app.sourcePlan().sourceSets().getFirst().sourceRoots().stream()
+                .flatMap(s -> s.value().stream()).toList().contains("app/src/auto/java"));
+        assertTrue(app.dependencies().stream().anyMatch(d -> d.configuration().equals("implementation.platform")
+                && d.coordinate().equals(Optional.of(new MavenCoordinate("org.springframework.boot", "spring-boot-dependencies", "3.4.0")))));
+        assertTrue(app.dependencies().stream().anyMatch(d -> d.coordinate().equals(Optional.of(new MavenCoordinate("org.webjars.npm", "boost", "1.40.0")))
+                && d.exclusions().equals(List.of("org.webjars:*"))));
+        assertTrue(app.dependencies().stream().anyMatch(d -> d.configuration().equals("autoImplementation")
+                && d.projectPath().equals(Optional.of(":exoplayer"))));
+    }
 }

@@ -12,17 +12,29 @@ public record UniversalBuildModel(ContentDigest inputIdentity, ContentDigest rep
                                   List<CapabilityGapRecord> gaps) {
     public enum Tool { MAVEN, GRADLE_GROOVY, GRADLE_KOTLIN, PLAIN_JAVA, IMPORTED_SOURCE_PLAN }
     public record Dependency(String configuration, Optional<MavenCoordinate> coordinate,
-                             Optional<String> projectPath, String notation, List<BuildModelResult.PomEvidence> evidence) {
+                             Optional<String> projectPath, String notation, List<BuildModelResult.PomEvidence> evidence,
+                             List<String> exclusions) {
         public Dependency {
             Objects.requireNonNull(configuration); Objects.requireNonNull(coordinate);
             Objects.requireNonNull(projectPath); Objects.requireNonNull(notation);
             evidence = ContractChecks.sortedDistinct(evidence,
                     Comparator.comparing(BuildModelResult.PomEvidence::logicalId), "dependency evidence");
             if (evidence.isEmpty()) throw new IllegalArgumentException("Dependency needs declaration evidence");
+            exclusions = exclusions == null ? List.of()
+                    : ContractChecks.sortedDistinct(exclusions, Comparator.naturalOrder(), "dependency exclusions");
+        }
+        public Dependency(String configuration, Optional<MavenCoordinate> coordinate,
+                          Optional<String> projectPath, String notation, List<BuildModelResult.PomEvidence> evidence) {
+            this(configuration, coordinate, projectPath, notation, evidence, List.of());
         }
         public Dependency(String configuration, Optional<MavenCoordinate> coordinate,
                           Optional<String> projectPath, String notation, BuildModelResult.PomEvidence evidence) {
-            this(configuration, coordinate, projectPath, notation, List.of(evidence));
+            this(configuration, coordinate, projectPath, notation, List.of(evidence), List.of());
+        }
+        public Dependency(String configuration, Optional<MavenCoordinate> coordinate,
+                          Optional<String> projectPath, String notation, BuildModelResult.PomEvidence evidence,
+                          List<String> exclusions) {
+            this(configuration, coordinate, projectPath, notation, List.of(evidence), exclusions);
         }
     }
     public record Module(ModuleDescriptor descriptor, Tool tool, Optional<String> buildFile,

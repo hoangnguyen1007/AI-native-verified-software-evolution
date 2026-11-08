@@ -66,4 +66,39 @@ class GradleScanTest {
         assertTrue(inputs.gaps().stream().anyMatch(g->g.reasonCode().equals("GRADLE_EFFECTIVE_CONTEXT_REQUIRED")));
         assertEquals(inputs.resolutions(),GradleScan.augment(empty,acquisition,model,cache,platform,new DependencyAcquisitionPolicy(100,1_000_000,10_000_000,16,List.of(),1000,1000,0),Map.of(21,platform.orElseThrow())).resolutions());
     }
+    @Test void androidAarClassesJarAndRemappedVariantProjectsResolveInSemanticFrontend()throws Exception {
+        assertTrue(MavenScan.DEFAULT_REPOSITORIES.contains(java.net.URI.create("https://dl.google.com/dl/android/maven2/")));
+        Path source=Files.createDirectory(directory.resolve("android-source")),cache=Files.createDirectory(directory.resolve("android-cache"));
+        var files=Map.of(
+                "settings.gradle","include ':app', ':utils'\nproject(':utils').projectDir = file('depends/utils')\n",
+                "build.gradle","subprojects {\n android {\n compileOptions {\n sourceCompatibility = JavaVersion.VERSION_21\n targetCompatibility = JavaVersion.VERSION_21\n encoding = 'UTF-8'\n }\n }\n}\n",
+                "depends/utils/build.gradle","plugins { id 'com.android.library' }\n",
+                "depends/utils/src/main/java/util/Helper.java","package util; public class Helper { public static int help() { return 7; } }",
+                "app/build.gradle.kts","plugins { id(\"com.android.application\") }\ndependencies {\n implementation(projects.utils)\n autoImplementation(\"external:aarlib:1\")\n}\n",
+                "app/src/auto/java/Client.java","class Client { int a() { return util.Helper.help(); } int b() { return external.AarWidget.render(); } }");
+        for(var file:files.entrySet()){Path path=source.resolve(file.getKey());Files.createDirectories(path.getParent());Files.writeString(path,file.getValue());}
+        Path authored=Files.createDirectory(directory.resolve("aar-authored")),classes=Files.createDirectory(directory.resolve("aar-classes"));
+        Path fixture=authored.resolve("AarWidget.java");Files.writeString(fixture,"package external; public class AarWidget { public static int render() { return 99; } }");
+        assertEquals(0,javax.tools.ToolProvider.getSystemJavaCompiler().run(null,null,null,"-proc:none","-d",classes.toString(),fixture.toString()));
+        var innerJar=new java.io.ByteArrayOutputStream();
+        try(var jar=new JarOutputStream(innerJar)){jar.putNextEntry(new JarEntry("external/AarWidget.class"));jar.write(Files.readAllBytes(classes.resolve("external/AarWidget.class")));jar.closeEntry();}
+        Path aarDir=Files.createDirectories(cache.resolve("external/aarlib/1"));
+        try(var aar=new JarOutputStream(Files.newOutputStream(aarDir.resolve("aarlib-1.aar")))){
+            aar.putNextEntry(new JarEntry("AndroidManifest.xml"));aar.write("<manifest/>".getBytes(java.nio.charset.StandardCharsets.UTF_8));aar.closeEntry();
+            aar.putNextEntry(new JarEntry("classes.jar"));aar.write(innerJar.toByteArray());aar.closeEntry();
+        }
+        Files.writeString(aarDir.resolve("aarlib-1.pom"),"<project><modelVersion>4.0.0</modelVersion><groupId>external</groupId><artifactId>aarlib</artifactId><version>1</version><packaging>aar</packaging></project>");
+        var acquisition=new FilesystemRepositoryAcquirer().acquire(source,new RepositoryAcquisitionRequest(RepositoryIdentity.fromCanonicalCoordinate("urn:test:gradle-android-product"),Optional.empty(),false,"pom.xml",new RepositoryAcquisitionPolicy(100,100,1_000_000,10_000_000,32,List.of())));
+        var buildPolicy=new UniversalBuildIngestion.Policy(Optional.of(21),Optional.of(21),Optional.of("UTF-8"),2048,1_000_000,200_000,64);
+        var decoding=new RepositoryInputDecoder.Policy("UTF-8",100,1_000_000);
+        var model=GradleScan.model(acquisition,buildPolicy,decoding,Map.of());
+        var platform=new FilesystemJdkPlatformProvider().acquire(Path.of(System.getProperty("java.home")),new PlatformSymbolRequest(21,128,128_000_000,512_000_000)).platform();assertTrue(platform.isPresent());
+        var empty=new MavenScan.Inputs(Map.of(),Map.of(),List.of(),Map.of("mode","NOT_APPLICABLE"));
+        var inputs=GradleScan.augment(empty,acquisition,model,cache,platform,new DependencyAcquisitionPolicy(100,1_000_000,10_000_000,16,List.of(),1000,1000,0),Map.of(21,platform.orElseThrow()));
+        var policy=new UniversalArchitecturePipeline.Policy(buildPolicy,decoding,new JavaParserFrontend(),JavaParserFrontend.PROVIDER,inputs.resolutions(),platform,Optional.of(new com.evolution.analysis.maven.MavenBuildModelProvider()),Map.of(),MavenScan.POLICY,1000,100,UniversalArchitecturePipeline.TruthEvaluationMode.NONE,Map.of(),Optional.empty(),Optional.empty(),com.evolution.analysis.spring.truth.TruthRegionEvaluation.Limits.conservative());
+        var result=new UniversalArchitecturePipeline().runWithEvidence(acquisition,policy);
+        var calls=result.graphInput().orElseThrow().ingestion().orElseThrow().units().stream().flatMap(u->u.frontend().stream()).flatMap(f->f.observations().stream()).filter(o->o.category().value().equals("java.calls")).toList();
+        assertEquals(1,calls.stream().filter(o->o.reference().equals("util.Helper.help()")&&o.attribution()==SemanticStatus.RESOLVED).count());
+        assertEquals(1,calls.stream().filter(o->o.reference().equals("external.AarWidget.render()")&&o.attribution()==SemanticStatus.RESOLVED).count());
+    }
 }

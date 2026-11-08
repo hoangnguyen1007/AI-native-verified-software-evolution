@@ -32,6 +32,7 @@ public final class PassiveReadinessDiscovery implements ReadinessDiscovery {
             var owner=bazelWorkspaces.stream().filter(directory->within(root.directory(),directory)).max(Comparator.comparingInt(String::length));
             if(owner.isPresent()){roots.remove(root.id());bazelMembers.computeIfAbsent("BAZEL:"+owner.orElseThrow(),key->new TreeSet<>()).add(root.directory());}
         }
+        var projectRemapping=new TreeMap<String,String>();
         for(var entry:scripts.entrySet())if(filename(entry.getKey()).startsWith("settings.")){
             String dir=directory(entry.getKey()),root="GRADLE:"+dir;
             for(var statement:entry.getValue()){
@@ -40,11 +41,42 @@ public final class PassiveReadinessDiscovery implements ReadinessDiscovery {
                     for(String literal:statement.strings())try{
                         String relative=statement.key().equals("include")?literal.replaceFirst("^:","").replace(':','/'):literal;
                         String moduleDir=resolve(dir,relative);
-                        if(statement.key().equals("include"))membership.put(moduleDir,root);
-                        else related.computeIfAbsent(root,key->new TreeSet<>()).add("GRADLE:"+moduleDir);
+                        if(statement.key().equals("include")){
+                            membership.put(moduleDir,root);
+                            projectRemapping.put(root+":"+relative,moduleDir);
+                        }else related.computeIfAbsent(root,key->new TreeSet<>()).add("GRADLE:"+moduleDir);
                     }catch(IllegalArgumentException unsafe){requirements.add(requirement(Kind.DISCOVERY,entry.getKey(),"BUILD_PATH_UNRESOLVED",List.of(),roots.get(root).evidence()));}
+                }else if(projectDirectoryAssignment(statement.syntax())) {
+                    // Applied in second pass after includes.
+                }else if(eachDirInclude(statement)){
+                    try{
+                        String baseDir=resolve(dir,statement.strings().getFirst()),prefix=baseDir.equals(".")?"":baseDir+"/";
+                        for(String p:descriptors.keySet()){
+                            if(!p.startsWith(prefix))continue;
+                            String rest=p.substring(prefix.length());int slash=rest.indexOf('/');if(slash<=0)continue;
+                            String childName=rest.substring(0,slash),childFile=rest.substring(slash+1);
+                            if(!Set.of("build.gradle","build.gradle.kts").contains(childFile))continue;
+                            String moduleDir=resolve(baseDir,childName);
+                            membership.put(moduleDir,root);
+                            projectRemapping.put(root+":"+childName,moduleDir);
+                        }
+                    }catch(IllegalArgumentException unsafe){requirements.add(requirement(Kind.DISCOVERY,entry.getKey(),"BUILD_PATH_UNRESOLVED",List.of(),roots.get(root).evidence()));}
+                }else if(declarativeSettingsStatement(statement)){
+                    // Declarative settings configuration.
                 }else unknown.add(root+":settings:"+statement.offset());
             }
+            for(var statement:entry.getValue())if(projectDirectoryAssignment(statement.syntax()))try{
+                String project=statement.strings().getFirst();
+                if(!project.startsWith(":"))throw new IllegalArgumentException();
+                String relative=project.substring(1).replace(':','/');
+                String oldDir=resolve(dir,relative),newDir=resolve(dir,statement.strings().get(1));
+                if(membership.containsKey(oldDir)){
+                    if(!descriptors.containsKey(resolve(oldDir,"build.gradle"))&&!descriptors.containsKey(resolve(oldDir,"build.gradle.kts")))
+                        membership.remove(oldDir);
+                    membership.put(newDir,root);
+                    projectRemapping.put(root+":"+relative,newDir);
+                }
+            }catch(IllegalArgumentException unsafe){requirements.add(requirement(Kind.DISCOVERY,entry.getKey(),"BUILD_PATH_UNRESOLVED",List.of(),roots.get(root).evidence()));}
         }
         for(var root:List.copyOf(roots.values())){
             if(root.family()==Family.GRADLE){
@@ -74,7 +106,7 @@ public final class PassiveReadinessDiscovery implements ReadinessDiscovery {
                 if(root.family()==Family.GRADLE){
                     unknown.add(root.id()+":variants-and-substitution");
                     for(var script:scripts.entrySet())if(directory(script.getKey()).equals(moduleDir)&&filename(script.getKey()).startsWith("build.")){
-                        scanGradle(script.getValue(),moduleDir,root,sets,dependencies,requirements,unknown,evidence);
+                        scanGradle(script.getValue(),moduleDir,root,sets,dependencies,requirements,unknown,evidence,projectRemapping);
                     }
                 }
                 modules.put(id,new Module(id,root.id(),moduleDir,moduleDir,List.of(),List.copyOf(dependencies),evidence));
@@ -88,7 +120,7 @@ public final class PassiveReadinessDiscovery implements ReadinessDiscovery {
         return new Projection(List.copyOf(roots.values()),List.copyOf(modules.values()),List.copyOf(contexts.values()),requirements,List.copyOf(unknown));
     }
     private static void scanGradle(List<DeclarativeScript.Statement> statements,String dir,Root root,Map<String,List<String>> sets,Set<String> dependencies,
-            List<Requirement> requirements,Set<String> unknown,List<Evidence> evidence){
+            List<Requirement> requirements,Set<String> unknown,List<Evidence> evidence,Map<String,String> projectRemapping){
         for(var statement:statements){
             if(statement.key().equals("sourceSets"))for(var set:statement.body()){
                 if(!set.key().matches("[A-Za-z][A-Za-z0-9_]*")){unknown.add(root.id()+":dynamic-source-sets");continue;}
@@ -101,9 +133,21 @@ public final class PassiveReadinessDiscovery implements ReadinessDiscovery {
                 if(!replaces)paths.addFirst(resolve(dir,"src/"+set.key()));
                 sets.put(set.key(),List.copyOf(paths));
             }
-            if(statement.key().equals("dependencies"))for(var dependency:statement.body())if(dependency.syntax().contains("project(#)"))for(String project:dependency.strings())try{
-                dependencies.add("GRADLE:"+resolve(root.directory(),project.replaceFirst("^:","").replace(':','/')));
-            }catch(IllegalArgumentException unsafe){unknown.add(root.id()+":dynamic-project-dependency");}
+            if(statement.key().equals("dependencies"))for(var dependency:statement.body()){
+                if(dependency.syntax().contains("project(#)"))for(String project:dependency.strings())try{
+                    String rel=project.replaceFirst("^:","").replace(':','/');
+                    String mapped=projectRemapping.getOrDefault(root.id()+":"+rel,resolve(root.directory(),rel));
+                    dependencies.add("GRADLE:"+mapped);
+                }catch(IllegalArgumentException unsafe){unknown.add(root.id()+":dynamic-project-dependency");}
+                else if(dependency.syntax().matches("[A-Za-z0-9_]+(?:\\(projects(?:\\.[A-Za-z0-9_]+)+\\)|projects(?:\\.[A-Za-z0-9_]+)+)"))try{
+                    String acc=dependency.syntax().substring(dependency.key().length());
+                    if(acc.startsWith("(")&&acc.endsWith(")"))acc=acc.substring(1,acc.length()-1);
+                    if(acc.endsWith(".dependencyProject"))acc=acc.substring(0,acc.length()-".dependencyProject".length());
+                    String rel=acc.substring("projects.".length()).replace('.','/');
+                    String mapped=projectRemapping.getOrDefault(root.id()+":"+rel,resolve(root.directory(),rel));
+                    dependencies.add("GRADLE:"+mapped);
+                }catch(IllegalArgumentException unsafe){unknown.add(root.id()+":dynamic-project-dependency");}
+            }
             if(statement.key().equals("plugins"))for(var plugin:statement.body())for(String name:plugin.strings()){
                 String reason=name.startsWith("com.android.")?"ANDROID_SDK_REQUIRED":name.contains("javafx")?"JAVAFX_PLATFORM_REQUIRED":name.contains("protobuf")?"PROTOBUF_GENERATOR_REQUIRED":name.contains("aspectj")?"WOVEN_BYTECODE_REQUIRED":null;
                 if(reason!=null)requirements.add(requirement(reason.endsWith("GENERATOR_REQUIRED")?Kind.GENERATION:Kind.PLATFORM,root.id(),reason,List.of(),evidence));
@@ -113,6 +157,26 @@ public final class PassiveReadinessDiscovery implements ReadinessDiscovery {
                 requirements.add(requirement(Kind.DISCOVERY,root.id(),"ANDROID_VARIANT_MODEL_REQUIRED",List.of(),evidence));
             }
         }
+    }
+    private static boolean projectDirectoryAssignment(String syntax){
+        return syntax.equals("project(#).projectDir=file(#)")||syntax.equals("project(#).projectDir=newFile(settingsDir,#)")
+                ||syntax.equals("project(#).projectDir=File(settingsDir,#)")||syntax.equals("project(#).projectDir=newFile(rootDir,#)")
+                ||syntax.equals("project(#).projectDir=File(rootDir,#)");
+    }
+    private static boolean eachDirInclude(DeclarativeScript.Statement statement){
+        String syntax=statement.syntax();
+        return (syntax.equals("file(#).eachDir")||syntax.equals("newFile(settingsDir,#).eachDir")
+                ||syntax.equals("File(settingsDir,#).eachDir")||syntax.equals("newFile(rootDir,#).eachDir")
+                ||syntax.equals("File(rootDir,#).eachDir"))
+                &&!statement.body().isEmpty()&&statement.strings().size()==1
+                &&statement.body().stream().anyMatch(child->child.key().equals("include"));
+    }
+    private static boolean declarativeSettingsStatement(DeclarativeScript.Statement statement){
+        String syntax=statement.syntax(),key=statement.key();
+        if(!statement.body().isEmpty())return Set.of("pluginManagement","dependencyResolutionManagement","plugins","buildCache","gradle").contains(key)&&syntax.equals(key);
+        return syntax.equals("rootProject.name=#")||syntax.matches("enableFeaturePreview(?:\\(#\\)|#)")||key.equals("import")
+                ||syntax.matches("(?:val|var|def)[A-Za-z_][A-Za-z0-9_]*=(?:#|true|false|[0-9]+)")
+                ||syntax.matches("gradle\\.ext\\.[A-Za-z_][A-Za-z0-9_]*=(?:#|true|false|[0-9]+)");
     }
     private static String decode(Descriptor descriptor){try{return StandardCharsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(descriptor.bytes())).toString();}catch(CharacterCodingException malformed){throw new IllegalArgumentException("Descriptor decoding required");}}
     public static String resolve(String directory,String relative){

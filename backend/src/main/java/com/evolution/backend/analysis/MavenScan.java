@@ -14,7 +14,9 @@ import java.util.*;
 
 /** Passive metadata/artifact acquisition; target lifecycles and target-declared repositories stay inert. */
 public final class MavenScan {
-    public static final List<java.net.URI> DEFAULT_REPOSITORIES=List.of(java.net.URI.create("https://repo.maven.apache.org/maven2/"));
+    public static final List<java.net.URI> DEFAULT_REPOSITORIES=List.of(
+            java.net.URI.create("https://repo.maven.apache.org/maven2/"),
+            java.net.URI.create("https://dl.google.com/dl/android/maven2/"));
     public static final BuildModelPolicy POLICY=new BuildModelPolicy(List.of(),List.of(),Map.of(),10_000_000,1000,128);
     public static MavenPomResolutionPolicy pomPolicy(List<java.net.URI> repositories){
         return new MavenPomResolutionPolicy(1000,4_000_000,64_000_000,64,repositories,5000,15000);

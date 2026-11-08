@@ -37,6 +37,17 @@ class PassiveReadinessDiscoveryTest {
         assertTrue(projection.contexts().stream().filter(context->context.sourceSet().equals("main")).allMatch(context->context.sourceRoots().isEmpty()));
         assertTrue(projection.requirements().stream().anyMatch(requirement->requirement.reason().equals("BUILD_PATH_UNRESOLVED")));
     }
+    @Test void settingsProjectDirRemappingEachDirAndTypesafeProjectDependenciesAreDiscoveredDeterministically(){
+        var projection=discover(Map.of(
+                "settings.gradle","pluginManagement { repositories { google() } }\ninclude ':app', ':utils'\nproject(':utils').projectDir = file('depends/utils')\nfile('modules').eachDir { def name = ':' + it.name; include name; project(name).projectDir = it }\n",
+                "app/build.gradle.kts","plugins { id(\"com.android.application\") }\ndependencies { implementation(projects.utils)\n autoImplementation(project(\":exoplayer\")) }\n",
+                "depends/utils/build.gradle","plugins { id 'com.android.library' }\n",
+                "modules/exoplayer/build.gradle","plugins { id 'com.android.library' }\n"));
+        assertEquals(1,projection.roots().size());
+        assertEquals(Set.of(".","app","depends/utils","modules/exoplayer"),projection.modules().stream().map(com.evolution.analysis.readiness.ReadinessPlan.Module::directory).collect(java.util.stream.Collectors.toSet()));
+        var app=projection.modules().stream().filter(module->module.directory().equals("app")).findFirst().orElseThrow();
+        assertTrue(app.dependencies().containsAll(List.of("GRADLE:depends/utils","GRADLE:modules/exoplayer")));
+    }
     private static ReadinessDiscovery.Projection discover(Map<String,String> files){
         var descriptors=new TreeMap<String,ReadinessDiscovery.Descriptor>();files.forEach((path,text)->{byte[] bytes=text.getBytes(StandardCharsets.UTF_8);descriptors.put(path,new ReadinessDiscovery.Descriptor(path,new ContentHandle(ContentDigest.sha256(bytes),bytes.length),bytes));});
         var manifest=new InventoryManifest(InventoryManifest.SCHEMA,RepositoryIdentity.fromCanonicalCoordinate("urn:test:generic-readiness"),ContentDigest.sha256Utf8("selection"),ContentDigest.sha256Utf8("inventory"),files.size(),files.size(),0,0,Optional.empty(),Optional.empty());

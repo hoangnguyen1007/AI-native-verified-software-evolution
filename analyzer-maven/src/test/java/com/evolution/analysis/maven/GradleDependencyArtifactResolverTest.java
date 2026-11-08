@@ -88,6 +88,35 @@ class GradleDependencyArtifactResolverTest {
             assertTrue(context.problems().stream().anyMatch(p->p.reason().equals("GRADLE_EFFECTIVE_CONTEXT_REQUIRED")));
         }
     }
+    @Test void androidAarDependenciesExtractEmbeddedClassesJarEnforceExclusionsAndResolveRemappedProjects()throws Exception {
+        var model=model(Map.of(
+                "settings.gradle","include ':app', ':utils'\nproject(':utils').projectDir = file('depends/utils')\nfile('modules').eachDir { def name = ':' + it.name; include name; project(name).projectDir = it }\n",
+                "app/build.gradle","dependencies {\n implementation(projects.utils)\n autoImplementation project(':exoplayer')\n implementation('g:android-lib:1') { exclude group: 'g', module: 'banned' }\n}\n",
+                "depends/utils/build.gradle","plugins { id 'java-library' }\n",
+                "modules/exoplayer/build.gradle","plugins { id 'java-library' }\n"));
+        putAar("android-lib","1","<packaging>aar</packaging><dependencies><dependency><groupId>g</groupId><artifactId>allowed</artifactId><version>1</version></dependency><dependency><groupId>g</groupId><artifactId>banned</artifactId><version>1</version></dependency></dependencies>");
+        put("allowed","1",false,"");
+        put("banned","1",false,"");
+        var resolver=new GradleDependencyArtifactResolver(temp);
+        var result=resolver.resolve(model,offline);
+        var app=model.modules().stream().filter(m->m.descriptor().path().equals("app")).findFirst().orElseThrow();
+        var main=result.contexts().stream().filter(c->c.sourceSet().module().equals(app.descriptor().identity())&&c.sourceSet().kind()==SourcePlanModel.Kind.MAIN).findFirst().orElseThrow();
+        assertEquals(2,main.projects().size());
+        assertEquals(List.of("g:android-lib:1@aar","g:allowed:1@jar"),main.binaries().stream().map(b->b.entry().logicalName()).toList());
+        var aarBinary=main.binaries().getFirst();
+        byte[] extractedBytes=Files.readAllBytes(aarBinary.path());
+        assertEquals(aarBinary.entry().contentDigest(),ContentDigest.sha256(extractedBytes));
+    }
+    private void putAar(String artifact,String version,String body)throws Exception {
+        Path root=Files.createDirectories(temp.resolve("g/"+artifact+"/"+version));
+        Files.writeString(root.resolve(artifact+"-"+version+".pom"),"<project><modelVersion>4.0.0</modelVersion><groupId>g</groupId><artifactId>"+artifact+"</artifactId><version>"+version+"</version>"+body+"</project>");
+        var innerJar=new ByteArrayOutputStream();
+        try(var jar=new JarOutputStream(innerJar)){jar.putNextEntry(new JarEntry("fixture.txt"));jar.write(artifact.getBytes(StandardCharsets.UTF_8));jar.closeEntry();}
+        try(var aar=new JarOutputStream(Files.newOutputStream(root.resolve(artifact+"-"+version+".aar")))){
+            aar.putNextEntry(new JarEntry("AndroidManifest.xml"));aar.write("<manifest/>".getBytes(StandardCharsets.UTF_8));aar.closeEntry();
+            aar.putNextEntry(new JarEntry("classes.jar"));aar.write(innerJar.toByteArray());aar.closeEntry();
+        }
+    }
     private static UniversalBuildModel model(Map<String,String> text) {
         var repo=RepositoryIdentity.fromCanonicalCoordinate("urn:test:gradle-recovery");var module=ModuleDescriptor.create(repo,".","fixture");var files=new TreeMap<String,SourceInput>();
         text.forEach((path,value)->{byte[] bytes=value.getBytes(StandardCharsets.UTF_8);files.put(path,new SourceInput(SourceDocument.create(repo,module,path,ContentDigest.sha256(bytes),SourceClassification.OTHER),bytes));});

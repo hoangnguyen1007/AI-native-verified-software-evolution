@@ -101,8 +101,9 @@ final class MavenArtifactModelReader {
                     : model.getDependencyManagement().getDependencies().stream()
                             .map(MavenArtifactModelReader::dependency)
                             .toList();
+            String packaging = Objects.toString(model.getPackaging(), "jar");
             return new DescriptorOutcome(
-                    Optional.of(new Descriptor(dependencies, managed, List.copyOf(used.values()))), issues);
+                    Optional.of(new Descriptor(packaging, dependencies, managed, List.copyOf(used.values()))), issues);
         } catch (ModelRejected rejected) {
             issues.add(rejected.issue);
         } catch (ModelBuildingException exception) {
@@ -394,10 +395,15 @@ final class MavenArtifactModelReader {
     }
 
     record Descriptor(
+            String packaging,
             List<Dependency> dependencies,
             List<Dependency> managedDependencies,
             List<Evidence> evidence) {
+        Descriptor(List<Dependency> dependencies, List<Dependency> managedDependencies, List<Evidence> evidence) {
+            this("jar", dependencies, managedDependencies, evidence);
+        }
         Descriptor {
+            packaging = packaging == null || packaging.isBlank() ? "jar" : packaging;
             dependencies = List.copyOf(dependencies);
             managedDependencies = List.copyOf(managedDependencies);
             evidence = List.copyOf(evidence);

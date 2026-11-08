@@ -78,17 +78,35 @@ public final class UniversalBuildIngestion {
                             directories.add(parent);projectNames.putIfAbsent(parent,filename(parent));gradleProjects.putIfAbsent(parent,settingsTool);settingsEvidence.putIfAbsent(parent,settingsInput);
                         }
                     }catch(IllegalArgumentException failure){issue(issues,UNSAFE_PATH,entry.getKey()+"#"+statement.offset(),inputs.files().get(entry.getKey()).document().contentDigest());}
-                } else if(statement.syntax().matches("includeBuild(?:\\(#\\)|#)")&&statement.body().isEmpty()) {
+                } else if(statement.syntax().matches("includeBuild(?:\\(#\\)|#)")) {
                     try {
                         if(statement.strings().getFirst().contains("$")){issue(issues,DYNAMIC_BUILD_LOGIC,entry.getKey()+"#"+statement.offset(),settingsInput.digest());continue;}
                         String dir=join(root,statement.strings().getFirst());
                         if(directories.size()>=policy.maxFiles()&&!directories.contains(dir)){issue(issues,INPUT_LIMIT,entry.getKey()+"#"+statement.offset(),identity);continue;}
                         directories.add(dir);gradleProjects.putIfAbsent(dir,settingsTool);settingsEvidence.putIfAbsent(dir,settingsInput);
+                        if(!statement.body().isEmpty())issue(issues,DYNAMIC_BUILD_LOGIC,entry.getKey()+"#"+statement.offset(),settingsInput.digest());
+                    }catch(IllegalArgumentException failure){issue(issues,UNSAFE_PATH,entry.getKey()+"#"+statement.offset(),settingsInput.digest());}
+                } else if(eachDirInclude(statement)) {
+                    try {
+                        String folder=statement.strings().getFirst();
+                        if(folder.contains("$")){issue(issues,DYNAMIC_BUILD_LOGIC,entry.getKey()+"#"+statement.offset(),settingsInput.digest());continue;}
+                        String baseDir=join(root,folder),prefix=baseDir.equals(".")?"":baseDir+"/";
+                        for(var f:inputs.snapshot().files()) {
+                            String p=f.path();if(!p.startsWith(prefix))continue;
+                            String rest=p.substring(prefix.length());int slash=rest.indexOf('/');if(slash<=0)continue;
+                            String childName=rest.substring(0,slash),childFile=rest.substring(slash+1);
+                            if(!Set.of("build.gradle","build.gradle.kts").contains(childFile))continue;
+                            String dir=join(baseDir,childName);
+                            if(!directories.contains(dir)&&directories.size()>=policy.maxFiles()){issue(issues,INPUT_LIMIT,entry.getKey()+"#"+statement.offset(),identity);break;}
+                            directories.add(dir);projectNames.put(dir,childName);gradleProjects.put(dir,settingsTool);settingsEvidence.put(dir,settingsInput);
+                        }
                     }catch(IllegalArgumentException failure){issue(issues,UNSAFE_PATH,entry.getKey()+"#"+statement.offset(),settingsInput.digest());}
                 } else if(projectDirectoryAssignment(statement.syntax())) {
                     // Applied after all include rows, independently of statement order.
                 } else if(statement.syntax().equals("rootProject.name=#")&&!statement.strings().getFirst().contains("$")&&!statement.strings().getFirst().isBlank())projectNames.put(root,statement.strings().getFirst());
-                else issue(issues,DYNAMIC_BUILD_LOGIC,entry.getKey()+"#"+statement.offset(),inputs.files().get(entry.getKey()).document().contentDigest());
+                else if(declarativeSettingsStatement(statement)) {
+                    // Declarative settings configuration (pluginManagement, dependencyResolutionManagement, enableFeaturePreview, etc.).
+                } else issue(issues,DYNAMIC_BUILD_LOGIC,entry.getKey()+"#"+statement.offset(),inputs.files().get(entry.getKey()).document().contentDigest());
             }
             for(var statement:entry.getValue())if(projectDirectoryAssignment(statement.syntax()))try {
                 var strings=statement.strings();String project=strings.getFirst();
@@ -148,7 +166,22 @@ public final class UniversalBuildIngestion {
             catalog.ifPresent(c->evidence.add(c.evidence()));
             var descriptor=ModuleDescriptor.create(inputs.snapshot().repository(),dir,projectNames.getOrDefault(dir,dir.equals(".")?"repository":filename(dir)));
             var model=new Projection(dir,policy,evidence,issues,identity,catalog);
+            if(!dir.equals(".")&&Set.of(UniversalBuildModel.Tool.GRADLE_GROOVY,UniversalBuildModel.Tool.GRADLE_KOTLIN).contains(tool)) {
+                String rootScript=scripts.containsKey("build.gradle.kts")?"build.gradle.kts":scripts.containsKey("build.gradle")?"build.gradle":null;
+                if(rootScript!=null) {
+                    var inherited=scripts.get(rootScript).stream().filter(s->Set.of("allprojects","subprojects").contains(s.key())&&s.syntax().equals(s.key())&&!s.body().isEmpty()).toList();
+                    if(!inherited.isEmpty()) {
+                        var rootFile=inputs.files().get(rootScript);
+                        if(rootFile!=null&&evidence.stream().noneMatch(e->e.logicalId().equals(rootScript)))
+                            evidence.add(new BuildModelResult.PomEvidence(rootFile.document().path(),rootFile.document().contentDigest()));
+                        for(var block:inherited)model.read(block.body(),"");
+                    }
+                }
+            }
             build.ifPresent(p->model.read(scripts.getOrDefault(p,List.of()),""));
+            if(Set.of(UniversalBuildModel.Tool.GRADLE_GROOVY,UniversalBuildModel.Tool.GRADLE_KOTLIN).contains(tool)) {
+                model.finish(inputs.snapshot().files());
+            }
             if(tool==UniversalBuildModel.Tool.PLAIN_JAVA) {
                 boolean conventional=inputs.snapshot().files().stream().anyMatch(f->f.path().startsWith(join(dir,"src/main/java")+"/")&&f.path().endsWith(".java"));
                 if(!conventional)model.mainRoots=List.of(inputs.snapshot().files().stream().anyMatch(f->f.path().startsWith(join(dir,"src")+"/")&&f.path().endsWith(".java"))?join(dir,"src"):dir);
@@ -168,15 +201,34 @@ public final class UniversalBuildIngestion {
                 ||syntax.equals("project(#).projectDir=File(settingsDir,#)")||syntax.equals("project(#).projectDir=newFile(rootDir,#)")
                 ||syntax.equals("project(#).projectDir=File(rootDir,#)");
     }
+    private static boolean eachDirInclude(DeclarativeScript.Statement statement){
+        String syntax=statement.syntax();
+        return (syntax.equals("file(#).eachDir")||syntax.equals("newFile(settingsDir,#).eachDir")
+                ||syntax.equals("File(settingsDir,#).eachDir")||syntax.equals("newFile(rootDir,#).eachDir")
+                ||syntax.equals("File(rootDir,#).eachDir"))
+                &&!statement.body().isEmpty()&&statement.strings().size()==1
+                &&statement.body().stream().anyMatch(child->child.key().equals("include"));
+    }
+    private static boolean declarativeSettingsStatement(DeclarativeScript.Statement statement){
+        String syntax=statement.syntax(),key=statement.key();
+        if(!statement.body().isEmpty()) {
+            return Set.of("pluginManagement","dependencyResolutionManagement","plugins","buildCache","gradle").contains(key)&&syntax.equals(key);
+        }
+        return syntax.matches("enableFeaturePreview(?:\\(#\\)|#)")
+                ||key.equals("import")
+                ||syntax.matches("(?:val|var|def)[A-Za-z_][A-Za-z0-9_]*=(?:#|true|false|[0-9]+)")
+                ||syntax.matches("gradle\\.ext\\.[A-Za-z_][A-Za-z0-9_]*=(?:#|true|false|[0-9]+)");
+    }
 
     private static final class Projection {
         final String dir;final Policy policy;final List<BuildModelResult.PomEvidence> evidence;final List<IngestionEvidence.Issue> issues;final ContentDigest identity;
         final Optional<GradleVersionCatalog.Catalog> catalog;
         final List<UniversalBuildModel.Dependency> dependencies=new ArrayList<>();
+        final Map<String,String> variables=new HashMap<>();
         String group,version;Optional<Integer> syntax,platform,target;Optional<String> encoding;List<String> mainRoots,testRoots,mainResources,testResources;
         final Map<String,List<String>> customRoots=new TreeMap<>(),customResources=new TreeMap<>();
         final Set<String> declared=new HashSet<>(),declaredRoots=new HashSet<>();
-        boolean explicitSource,explicitTarget,releaseOption;
+        boolean explicitSource,explicitTarget,releaseOption,androidModule,bootPluginApplied,springDependencyManagementApplied;
         Optional<MavenCoordinate> bootPlugin=Optional.empty();boolean bootConflict,bootImport;
         Projection(String dir,Policy policy,List<BuildModelResult.PomEvidence> evidence,List<IngestionEvidence.Issue> issues,ContentDigest identity,
                    Optional<GradleVersionCatalog.Catalog> catalog){
@@ -192,9 +244,11 @@ public final class UniversalBuildIngestion {
             }
             for(var s:statements) {
                 String shape=s.syntax();boolean handled=false;
-                if(context.equals("dependencies")) {
-                    if(s.syntax().equals("constraints"))for(var child:s.body())dependency(child,".constraint");
-                    else dependency(s,"");continue;
+                if(context.equals("dependencies")||context.equals("dependencies.test")) {
+                    String prefix=context.equals("dependencies.test")?".test":"";
+                    if(s.syntax().equals("constraints"))for(var child:s.body())dependency(child,prefix+".constraint");
+                    else dependency(s,prefix);
+                    continue;
                 }
                 if(!s.body().isEmpty()) {
                     boolean knownBlock=shape.equals(s.key()) && (context.isEmpty()&&Set.of("dependencies","java","sourceSets").contains(s.key())
@@ -207,14 +261,53 @@ public final class UniversalBuildIngestion {
                             registerCustom(s);
                         }
                         read(s.body(),context.isEmpty()?s.key():context+"."+s.key());handled=true;
+                    } else if(context.isEmpty()&&shape.equals("allprojects")) {
+                        read(s.body(),"");handled=true;
+                    } else if(context.isEmpty()&&shape.equals("subprojects")) {
+                        handled=true;
+                    } else if(context.isEmpty()&&(shape.equals("ext")||shape.equals("extra"))) {
+                        read(s.body(),"ext");handled=true;
+                    } else if(context.isEmpty()&&(shape.equals("android")||shape.matches("configure<(?:Application|Library|BaseAppModule)Extension>"))) {
+                        androidModule=true;read(s.body(),"android");handled=true;
+                    } else if(context.equals("android")&&shape.equals("compileOptions")) {
+                        read(s.body(),"android.compileOptions");handled=true;
+                    } else if(context.equals("android")&&shape.equals("sourceSets")) {
+                        read(s.body(),"sourceSets");handled=true;
+                    } else if(context.equals("android")&&shape.equals("dependencies")) {
+                        read(s.body(),"dependencies");handled=true;
+                    } else if(context.startsWith("android")) {
+                        handled=true;
+                    } else if(context.isEmpty()&&shape.equals("kotlin")) {
+                        read(s.body(),"kotlin");handled=true;
+                    } else if(context.equals("kotlin")&&shape.equals("sourceSets")) {
+                        read(s.body(),"kotlin.sourceSets");handled=true;
+                    } else if(context.equals("kotlin.sourceSets")&&shape.matches("[A-Za-z][A-Za-z0-9_]*\\.dependencies")) {
+                        boolean isTest=s.key().toLowerCase(Locale.ROOT).endsWith("test");
+                        read(s.body(),isTest?"dependencies.test":"dependencies");handled=true;
+                    } else if(context.equals("kotlin.sourceSets")&&shape.matches("[A-Za-z][A-Za-z0-9_]*|val[A-Za-z][A-Za-z0-9_]*by(?:getting|creating)|(?:named|getByName)\\(#\\)")) {
+                        String setName=s.key().equals("val")&&s.head().size()>=2?s.head().get(1).value():!s.strings().isEmpty()?s.strings().getFirst():s.key();
+                        read(s.body(),"kotlin.sourceSets."+setName);handled=true;
+                    } else if(context.startsWith("kotlin.sourceSets.")) {
+                        String setName=context.substring("kotlin.sourceSets.".length());
+                        boolean isTest=setName.toLowerCase(Locale.ROOT).endsWith("test");
+                        if(shape.equals("dependencies"))read(s.body(),isTest?"dependencies.test":"dependencies");
+                        else if(Set.of("kotlin","java","resources").contains(s.key())&&shape.equals(s.key()))
+                            read(s.body(),"sourceSets."+(isTest?"test":"main")+"."+(s.key().equals("resources")?"resources":"java"));
+                        handled=true;
+                    } else if(context.startsWith("kotlin")) {
+                        handled=true;
                     } else if(context.isEmpty() && shape.matches("tasks\\.withType(?:<JavaCompile>\\(\\)|\\(JavaCompile\\))(?:\\.configureEach)?")) {
                         read(s.body(),"javaCompile");handled=true;
+                    } else if(context.isEmpty() && (shape.matches("tasks\\.(?:withType|named|register|configureEach).*")
+                            ||Set.of("configurations","publishing","signing","spotless","checkstyle","jacoco","test","springBoot","hibernate","graalvmNative","idea","eclipse","buildscript").contains(s.key()))) {
+                        handled=true;
                     } else if(shape.equals("plugins")&&context.isEmpty()) {
-                        for(var plugin:s.body())if(!(Set.of("java","java-library").contains(plugin.syntax())
-                                ||plugin.syntax().matches("id(?:#|\\(#\\))")&&plugin.strings().size()==1&&Set.of("java","java-library").contains(plugin.strings().getFirst())))gap(plugin);
+                        for(var plugin:s.body())if(!supportedPluginDeclaration(plugin))gap(plugin);
                         handled=true;
                     } else if(shape.equals("repositories")&&context.isEmpty()) {
-                        for(var repository:s.body())if(!Set.of("mavenCentral()","mavenLocal()","google()").contains(repository.syntax()))gap(repository);
+                        for(var repository:s.body())if(!(Set.of("mavenCentral()","mavenLocal()","google()","gradlePluginPortal()","jcenter()").contains(repository.syntax())
+                                ||repository.key().equals("maven")&&!repository.body().isEmpty()
+                                ||repository.syntax().matches("maven\\(url=#\\)|maven\\(#\\)")))gap(repository);
                         handled=true;
                     }
                 } else {
@@ -223,10 +316,31 @@ public final class UniversalBuildIngestion {
                             &&!Set.of("main","test").contains(s.key())) {
                         registerCustom(s);handled=true;
                     }
-                    if(shape.equals("importorg.springframework.boot.gradle.plugin.SpringBootPlugin")&&context.isEmpty())handled=true;
-                    else if((shape.equals("group=#")||shape.equals("group#"))&&context.isEmpty()){try{group=literal(s);}catch(IllegalArgumentException failure){group=null;gap(s);}handled=true;}
+                    if((shape.equals("importorg.springframework.boot.gradle.plugin.SpringBootPlugin")||s.key().equals("import"))&&context.isEmpty())handled=true;
+                    else if((context.isEmpty()||context.equals("ext"))&&shape.matches("(?:val|var|def)[A-Za-z_][A-Za-z0-9_]*=.+")&&s.head().size()>=3) {
+                        if(shape.matches("(?:val|var|def)[A-Za-z_][A-Za-z0-9_]*=#")&&s.strings().size()==1) {
+                            String v=interpolate(s.strings().getFirst());if(!v.contains("$"))variables.put(s.head().get(1).value(),v);
+                        }
+                        handled=true;
+                    } else if(context.equals("ext")&&shape.matches("[A-Za-z_][A-Za-z0-9_]*=.+")) {
+                        if(shape.matches("[A-Za-z_][A-Za-z0-9_]*=#")&&s.strings().size()==1) {
+                            String v=interpolate(s.strings().getFirst());if(!v.contains("$"))variables.put(s.head().getFirst().value(),v);
+                        }
+                        handled=true;
+                    } else if(context.isEmpty()&&shape.matches("apply(?:plugin:#|\\(plugin=#\\))")&&s.strings().size()==1) {
+                        String pluginId=interpolate(s.strings().getFirst());
+                        if(pluginId.startsWith("com.android."))androidModule=true;
+                        if(pluginId.equals("io.spring.dependency-management"))springDependencyManagementApplied=true;
+                        handled=!pluginId.contains("$");
+                    } else if((shape.equals("group=#")||shape.equals("group#"))&&context.isEmpty()){try{group=literal(s);}catch(IllegalArgumentException failure){group=null;gap(s);}handled=true;}
                     else if((shape.equals("version=#")||shape.equals("version#"))&&context.isEmpty()){try{version=literal(s);}catch(IllegalArgumentException failure){version=null;gap(s);}handled=true;}
-                    else if(Set.of("","java","java.toolchain","javaCompile").contains(context)&&shape.matches("(?:sourceCompatibility|targetCompatibility|languageVersion|options\\.release)(?:=|\\.set\\().+")) {
+                    else if(Set.of("kotlin","java").contains(context)&&shape.matches("jvmToolchain\\([0-9]+\\)")) {
+                        int level=Integer.parseInt(s.head().stream().filter(t->!t.literal()&&t.value().matches("[0-9]+")).findFirst().orElseThrow().value());
+                        platform=Optional.of(level);declared.add("release");
+                        if(!explicitSource){syntax=platform;declared.add("source");}
+                        if(!explicitTarget){target=syntax;declared.add("target");}
+                        handled=true;
+                    } else if(Set.of("","java","java.toolchain","javaCompile","android.compileOptions").contains(context)&&shape.matches("(?:sourceCompatibility|targetCompatibility|languageVersion|options\\.release)(?:=|\\.set\\().+")) {
                         var numbers=s.head().stream().filter(t->!t.literal()&&t.value().matches("[0-9]+|VERSION_[0-9]+"))
                                 .map(t->t.value().replace("VERSION_","")).toList();
                         try {
@@ -243,7 +357,7 @@ public final class UniversalBuildIngestion {
                                 if(!explicitTarget) {target=syntax;declared.add("target");}
                             } else {if(explicitSource||explicitTarget)gap(s);releaseOption=true;syntax=Optional.of(level);platform=syntax;target=syntax;declared.addAll(List.of("source","target","release"));}handled=true;
                         }catch(IllegalArgumentException failure){if(s.key().equals("sourceCompatibility"))syntax=Optional.empty();else if(s.key().equals("targetCompatibility"))target=Optional.empty();else {syntax=Optional.empty();platform=Optional.empty();target=Optional.empty();}gap(s);handled=true;}
-                    } else if(shape.equals("options.encoding=#")&&context.equals("javaCompile")){try{encoding=Optional.of(literal(s));declared.add("encoding");}catch(IllegalArgumentException failure){encoding=Optional.empty();gap(s);}handled=true;}
+                    } else if((shape.equals("options.encoding=#")&&context.equals("javaCompile"))||(shape.equals("encoding=#")&&(context.equals("java")||context.equals("android.compileOptions")))){try{encoding=Optional.of(literal(s));declared.add("encoding");}catch(IllegalArgumentException failure){encoding=Optional.empty();gap(s);}handled=true;}
                     else if((s.key().equals("srcDirs")||s.key().equals("srcDir")||s.key().equals("setSrcDirs"))
                             &&context.matches("sourceSets\\.[A-Za-z][A-Za-z0-9_]*\\.(?:java|resources)")) {
                         try {
@@ -261,24 +375,93 @@ public final class UniversalBuildIngestion {
                             else if(resource)customResources.put(setName,roots);else customRoots.put(setName,roots);
                             handled=true;
                         }catch(IllegalArgumentException failure){issue(issues,UNSAFE_PATH,dir+"#"+s.offset(),identity);handled=true;}
+                    } else if(context.startsWith("android")||context.startsWith("kotlin")||context.equals("javaCompile")) {
+                        handled=true;
                     }
                 }
                 if(!handled)gap(s);
             }
         }
+        static boolean supportedPluginDeclaration(DeclarativeScript.Statement plugin) {
+            if(!plugin.body().isEmpty())return false;
+            String shape=plugin.syntax();
+            if(Set.of("java","java-library","java-platform","application","war","groovy","scala","jacoco","maven-publish","signing","checkstyle","pmd","idea","eclipse").contains(shape))return true;
+            if(shape.matches("alias\\(libs\\.plugins\\.[A-Za-z0-9_.-]+\\)(?:applyfalse)?"))return true;
+            if(shape.matches("kotlin\\(#\\)(?:version#)?(?:applyfalse)?")&&!plugin.strings().isEmpty())
+                return plugin.strings().size()==1||fixedVersion(plugin.strings().get(1))&&!plugin.strings().get(1).contains(" ");
+            if(shape.matches("id(?:#|\\(#\\))(?:version#)?(?:applyfalse)?")&&!plugin.strings().isEmpty()&&plugin.strings().getFirst().matches("[A-Za-z0-9_.-]+"))
+                return plugin.strings().size()==1||fixedVersion(plugin.strings().get(1))&&!plugin.strings().get(1).contains(" ");
+            return false;
+        }
         void registerBootPlugin(DeclarativeScript.Statement statement) {
             String shape=statement.syntax();Optional<GradleVersionCatalog.Plugin> plugin=Optional.empty();
+            boolean applyFalse=shape.endsWith("applyfalse");
             if(shape.matches("alias\\(libs\\.plugins\\.[A-Za-z0-9_.-]+\\)(?:applyfalse)?")) {
                 String alias=shape.substring("alias(libs.plugins.".length(),shape.indexOf(')'));
                 plugin=catalog.flatMap(c->c.plugins().getOrDefault(alias,Optional.empty()));
-            } else if(shape.matches("id(?:#|\\(#\\))version#(?:applyfalse)?")&&statement.strings().size()==2)plugin=Optional.of(new GradleVersionCatalog.Plugin(statement.strings().getFirst(),statement.strings().get(1)));
-            if(plugin.isEmpty()||!plugin.orElseThrow().id().equals("org.springframework.boot")||!fixedVersion(plugin.orElseThrow().version()))return;
+            } else if(shape.matches("id(?:#|\\(#\\))(?:version#)?(?:applyfalse)?")&&!statement.strings().isEmpty()) {
+                String id=statement.strings().getFirst();
+                String ver=statement.strings().size()>1?statement.strings().get(1):"";
+                plugin=Optional.of(new GradleVersionCatalog.Plugin(id,ver));
+            }
+            if(plugin.isEmpty())return;
+            String id=plugin.orElseThrow().id(),ver=plugin.orElseThrow().version();
+            if(id.startsWith("com.android."))androidModule=true;
+            if(id.equals("io.spring.dependency-management")&&!applyFalse)springDependencyManagementApplied=true;
+            if(!id.equals("org.springframework.boot")||ver.isEmpty()||!fixedVersion(ver))return;
             MavenCoordinate marker;
-            try{marker=new MavenCoordinate("org.springframework.boot","org.springframework.boot.gradle.plugin",plugin.orElseThrow().version());}
+            try{marker=new MavenCoordinate("org.springframework.boot","org.springframework.boot.gradle.plugin",ver);}
             catch(IllegalArgumentException invalid){gap(statement);return;}
             if(bootPlugin.isPresent()&&!bootPlugin.orElseThrow().equals(marker)){bootConflict=true;bootPlugin=Optional.empty();gap(statement);return;}
             if(bootConflict)return;bootPlugin=Optional.of(marker);
+            if(!applyFalse)bootPluginApplied=true;
             dependencies.add(new UniversalBuildModel.Dependency("gradlePlugin",Optional.of(marker),Optional.empty(),"org.springframework.boot",evidence));
+        }
+        void finish(List<SnapshotFile> snapshotFiles) {
+            if(bootPluginApplied&&springDependencyManagementApplied&&bootPlugin.isPresent()&&!bootConflict) {
+                var bom=new MavenCoordinate("org.springframework.boot","spring-boot-dependencies",bootPlugin.orElseThrow().version());
+                if(dependencies.stream().noneMatch(d->d.configuration().endsWith(".platform")&&d.coordinate().equals(Optional.of(bom)))) {
+                    dependencies.add(new UniversalBuildModel.Dependency("implementation.platform",Optional.of(bom),Optional.empty(),"io.spring.dependency-management:org.springframework.boot",evidence));
+                }
+            }
+            Set<String> claimedCustom=new HashSet<>(declaredRoots);
+            customRoots.values().forEach(claimedCustom::addAll);
+            customResources.values().forEach(claimedCustom::addAll);
+            var extraMain=new ArrayList<>(mainRoots);
+            for(String candidate:List.of("src/main/kotlin","src/commonMain/kotlin","src/commonMain/java","src/androidMain/kotlin","src/androidMain/java","src/jvmMain/kotlin","src/jvmMain/java","src/iosMain/kotlin","src/debug/java","src/debug/kotlin","src/release/java","src/release/kotlin")) {
+                String path=join(dir,candidate);
+                if(!extraMain.contains(path)&&!claimedCustom.contains(path)&&hasFilesUnder(snapshotFiles,path))extraMain.add(path);
+            }
+            if(androidModule) {
+                String prefix=dir.equals(".")?"src/":dir+"/src/";
+                Set<String> excludedSets=new HashSet<>(Set.of("main","test","androidTest","commonMain","commonTest","androidMain","androidUnitTest","androidDeviceTest","androidInstrumentedTest","jvmMain","jvmTest","iosMain","iosTest","debug","release"));
+                excludedSets.addAll(customRoots.keySet());
+                for(var f:snapshotFiles)if(f.path().startsWith(prefix)&&(f.path().endsWith(".java")||f.path().endsWith(".kt"))) {
+                    String rest=f.path().substring(prefix.length());
+                    String[] parts=rest.split("/",3);
+                    if(parts.length==3&&!excludedSets.contains(parts[0])&&Set.of("java","kotlin").contains(parts[1])) {
+                        String variantRoot=join(dir,"src/"+parts[0]+"/"+parts[1]);
+                        if(!extraMain.contains(variantRoot)&&!claimedCustom.contains(variantRoot))extraMain.add(variantRoot);
+                    }
+                }
+            }
+            mainRoots=List.copyOf(extraMain);
+            var extraTest=new ArrayList<>(testRoots);
+            for(String candidate:List.of("src/test/kotlin","src/androidTest/java","src/androidTest/kotlin","src/commonTest/kotlin","src/commonTest/java","src/jvmTest/kotlin","src/jvmTest/java","src/androidUnitTest/kotlin","src/androidUnitTest/java","src/androidDeviceTest/kotlin","src/androidDeviceTest/java","src/iosTest/kotlin")) {
+                String path=join(dir,candidate);
+                if(!extraTest.contains(path)&&!claimedCustom.contains(path)&&hasFilesUnder(snapshotFiles,path))extraTest.add(path);
+            }
+            testRoots=List.copyOf(extraTest);
+            var extraRes=new ArrayList<>(mainResources);
+            for(String candidate:List.of("src/main/res","src/commonMain/resources","src/androidMain/res","src/debug/res","src/release/res","src/auto/res")) {
+                String path=join(dir,candidate);
+                if(!extraRes.contains(path)&&!claimedCustom.contains(path)&&hasFilesUnder(snapshotFiles,path))extraRes.add(path);
+            }
+            mainResources=List.copyOf(extraRes);
+        }
+        static boolean hasFilesUnder(List<SnapshotFile> files,String root) {
+            String prefix=root+"/";
+            return files.stream().anyMatch(f->f.path().startsWith(prefix));
         }
         void registerCustom(DeclarativeScript.Statement s) {
             if(customRoots.putIfAbsent(s.key(),List.of(join(dir,"src/"+s.key()+"/java")))==null) {
@@ -286,9 +469,47 @@ public final class UniversalBuildIngestion {
                 issue(issues,CUSTOM_SOURCE_SET_ROLE_UNRESOLVED,dir+"#"+s.offset(),identity);
             }
         }
+        static boolean isDependencyConfiguration(String key) {
+            return Set.of("implementation","api","compileOnly","compileOnlyApi","runtimeOnly",
+                    "testImplementation","testCompileOnly","testRuntimeOnly","annotationProcessor",
+                    "testAnnotationProcessor","compile","testCompile","runtime","testRuntime",
+                    "developmentOnly","ksp","kspTest","kapt","kaptTest","coreLibraryDesugaring",
+                    "androidTestImplementation","androidTestCompileOnly","androidTestRuntimeOnly","androidTestUtil",
+                    "debugImplementation","releaseImplementation","debugCompileOnly","releaseCompileOnly",
+                    "debugRuntimeOnly","releaseRuntimeOnly","testFixturesImplementation","testFixturesApi",
+                    "testFixturesCompileOnly","testFixturesRuntimeOnly").contains(key)
+                    ||key.matches("[a-z][A-Za-z0-9_]*(?:Implementation|Api|CompileOnly|CompileOnlyApi|RuntimeOnly|AnnotationProcessor|Ksp|Kapt)");
+        }
         void dependency(DeclarativeScript.Statement s,String qualifier) {
-            var configurations=Set.of("implementation","api","compileOnly","compileOnlyApi","runtimeOnly","testImplementation","testCompileOnly","testRuntimeOnly","annotationProcessor","testAnnotationProcessor","compile","testCompile","runtime");
-            if(!configurations.contains(s.key())||!s.body().isEmpty()){gap(s);return;}
+            if(!isDependencyConfiguration(s.key())){gap(s);return;}
+            var exclusions=new ArrayList<String>();
+            if(!s.body().isEmpty()) {
+                for(var child:s.body()) {
+                    if(child.key().equals("exclude")&&child.body().isEmpty()) {
+                        String exGroup=null,exModule=null;boolean bad=false;
+                        for(int i=1;i+1<child.head().size();i++) {
+                            String tok=child.head().get(i).value();
+                            if((tok.equals(":")||tok.equals("="))&&child.head().get(i+1).literal()) {
+                                String k=child.head().get(i-1).value(),v=interpolate(child.head().get(i+1).value());
+                                if(v.contains("$")){bad=true;break;}
+                                if(k.equals("group"))exGroup=v;else if(k.equals("module"))exModule=v;
+                            }
+                        }
+                        if(!bad&&(exGroup!=null||exModule!=null))exclusions.add((exGroup!=null?exGroup:"*")+":"+(exModule!=null?exModule:"*"));
+                        else gap(child);
+                    } else if(child.syntax().matches("(?:transitive|isTransitive)=(?:true|false)")&&child.body().isEmpty()) {
+                        if(child.syntax().endsWith("false"))exclusions.add("*:*");
+                    } else gap(child);
+                }
+            }
+            String baseKey=s.key();
+            if(qualifier.startsWith(".test")) {
+                qualifier=qualifier.substring(".test".length());
+                if(baseKey.equals("implementation"))baseKey="testImplementation";
+                else if(baseKey.equals("api"))baseKey="testCompile";
+                else if(baseKey.equals("compileOnly"))baseKey="testCompileOnly";
+                else if(baseKey.equals("runtimeOnly"))baseKey="testRuntimeOnly";
+            }
             Optional<MavenCoordinate> coordinate=Optional.empty();Optional<String> project=Optional.empty();String notation="";
             String shape=s.syntax();
             try {
@@ -300,12 +521,12 @@ public final class UniversalBuildIngestion {
                     accessor=accessor.substring(accessor.indexOf('(')+1,accessor.length()-1);
                     shape=s.key()+"("+accessor+")";
                 }
-                String configuration=s.key()+qualifier;
+                String configuration=baseKey+qualifier;
                 if((qualifier.endsWith(".platform")||qualifier.endsWith(".enforced-platform"))&&accessor.equals("SpringBootPlugin.BOM_COORDINATES")) {
                     notation=accessor;
                     if(bootImport&&bootPlugin.isPresent())coordinate=Optional.of(new MavenCoordinate("org.springframework.boot","spring-boot-dependencies",bootPlugin.orElseThrow().version()));
                     else issue(issues,DEPENDENCY_VERSION_UNRESOLVED,dir+"#"+s.offset(),identity);
-                    dependencies.add(new UniversalBuildModel.Dependency(configuration,coordinate,Optional.empty(),notation,evidence));return;
+                    dependencies.add(new UniversalBuildModel.Dependency(configuration,coordinate,Optional.empty(),notation,evidence,exclusions));return;
                 }
                 if(accessor.matches("libs\\.[A-Za-z0-9_.-]+")) {
                     if(accessor.startsWith("libs.bundles.")) {
@@ -313,21 +534,40 @@ public final class UniversalBuildIngestion {
                         var members=catalog.flatMap(c->Optional.ofNullable(c.bundles().get(bundle))).orElse(List.of());
                         if(members.isEmpty()) {
                             issue(issues,DEPENDENCY_VERSION_UNRESOLVED,dir+"#"+s.offset(),identity);
-                            dependencies.add(new UniversalBuildModel.Dependency(configuration,Optional.empty(),Optional.empty(),accessor,evidence));
-                        } else for(String member:members)catalogDependency(s,configuration,accessor+"/"+member,member);
-                    } else catalogDependency(s,configuration,accessor,accessor.substring("libs.".length()));
+                            dependencies.add(new UniversalBuildModel.Dependency(configuration,Optional.empty(),Optional.empty(),accessor,evidence,exclusions));
+                        } else for(String member:members)catalogDependency(s,configuration,accessor+"/"+member,member,exclusions);
+                    } else catalogDependency(s,configuration,accessor,accessor.substring("libs.".length()),exclusions);
                     return;
                 }
-                if(shape.matches("[A-Za-z]+(?:\\(project\\(#\\)\\)|project\\(#\\))")) {
-                    notation=literal(s);if(!notation.matches(":?[A-Za-z0-9_.-]+(?::[A-Za-z0-9_.-]+)*"))throw new IllegalArgumentException();project=Optional.of(notation);
-                } else if(shape.matches("[A-Za-z]+(?:\\(#\\)|#)")) {
-                    notation=literal(s);String[] gav=notation.split(":",-1);
-                    if(gav.length==3&&fixedVersion(gav[2]))coordinate=Optional.of(new MavenCoordinate(gav[0],gav[1],gav[2]));
+                if(accessor.matches("projects(?:\\.[A-Za-z0-9_]+)+")) {
+                    String clean=accessor.endsWith(".dependencyProject")?accessor.substring(0,accessor.length()-".dependencyProject".length()):accessor;
+                    String projPath=":"+clean.substring("projects.".length()).replace('.',':');
+                    dependencies.add(new UniversalBuildModel.Dependency(configuration,Optional.empty(),Optional.of(projPath),projPath,evidence,exclusions));
+                    return;
+                }
+                if(accessor.matches("#(?:,#)+")&&s.strings().size()>1) {
+                    for(String rawItem:s.strings()) {
+                        String item=interpolate(rawItem),cleanItem=item.replaceFirst("@[A-Za-z0-9]+$","");
+                        Optional<MavenCoordinate> itemCoord=Optional.empty();
+                        String[] gav=cleanItem.split(":",-1);
+                        if(gav.length>=3&&fixedVersion(gav[2])&&!item.contains("$")) {
+                            try{itemCoord=Optional.of(new MavenCoordinate(gav[0],gav[1],gav[2]));}
+                            catch(IllegalArgumentException invalid){issue(issues,DEPENDENCY_VERSION_UNRESOLVED,dir+"#"+s.offset(),identity);}
+                        } else issue(issues,DEPENDENCY_VERSION_UNRESOLVED,dir+"#"+s.offset(),identity);
+                        dependencies.add(new UniversalBuildModel.Dependency(configuration,itemCoord,Optional.empty(),cleanItem,evidence,exclusions));
+                    }
+                    return;
+                }
+                if(shape.matches("[A-Za-z0-9_]+(?:\\(project\\((?:#|path[:=]#(?:,configuration[:=]#)?)\\)\\)|project\\((?:#|path[:=]#(?:,configuration[:=]#)?)\\))")) {
+                    notation=interpolate(s.strings().getFirst());if(!notation.matches(":?[A-Za-z0-9_.-]+(?::[A-Za-z0-9_.-]+)*"))throw new IllegalArgumentException();project=Optional.of(notation);
+                } else if(shape.matches("[A-Za-z0-9_]+(?:\\(#\\)|#)")) {
+                    notation=literal(s).replaceFirst("@[A-Za-z0-9]+$","");String[] gav=notation.split(":",-1);
+                    if(gav.length>=3&&fixedVersion(gav[2]))coordinate=Optional.of(new MavenCoordinate(gav[0],gav[1],gav[2]));
                     else issue(issues,DEPENDENCY_VERSION_UNRESOLVED,dir+"#"+s.offset(),identity);
-                } else if(shape.matches("[A-Za-z]+\\(?(?:group|name|version):#(?:,(?:group|name|version):#){2}\\)?")) {
+                } else if(shape.matches("[A-Za-z0-9_]+\\(?(?:group|name|version)[:=]#(?:,(?:group|name|version)[:=]#){2}\\)?")) {
                     var fields=new HashMap<String,String>();
-                    for(int i=2;i<s.head().size();i++)if(s.head().get(i).literal()&&s.head().get(i-1).value().equals(":")) {
-                        String key=s.head().get(i-2).value();if(fields.putIfAbsent(key,s.head().get(i).value())!=null)throw new IllegalArgumentException();
+                    for(int i=2;i<s.head().size();i++)if(s.head().get(i).literal()&&(s.head().get(i-1).value().equals(":")||s.head().get(i-1).value().equals("="))) {
+                        String key=s.head().get(i-2).value();if(fields.putIfAbsent(key,interpolate(s.head().get(i).value()))!=null)throw new IllegalArgumentException();
                     }
                     if(!fields.keySet().equals(Set.of("group","name","version")))throw new IllegalArgumentException();
                     notation=fields.get("group")+":"+fields.get("name")+":"+fields.get("version");
@@ -335,20 +575,33 @@ public final class UniversalBuildIngestion {
                     else issue(issues,DEPENDENCY_VERSION_UNRESOLVED,dir+"#"+s.offset(),identity);
                 } else {gap(s);return;}
                 if(notation.contains("$")){coordinate=Optional.empty();issue(issues,DEPENDENCY_VERSION_UNRESOLVED,dir+"#"+s.offset(),identity);}
-                dependencies.add(new UniversalBuildModel.Dependency(configuration,coordinate,project,notation,evidence));
+                dependencies.add(new UniversalBuildModel.Dependency(configuration,coordinate,project,notation,evidence,exclusions));
             }catch(IllegalArgumentException failure){
                 issue(issues,DEPENDENCY_VERSION_UNRESOLVED,dir+"#"+s.offset(),identity);
-                dependencies.add(new UniversalBuildModel.Dependency(s.key()+qualifier,Optional.empty(),Optional.empty(),
-                        notation.isEmpty()?s.syntax():notation,evidence));
+                dependencies.add(new UniversalBuildModel.Dependency(baseKey+qualifier,Optional.empty(),Optional.empty(),
+                        notation.isEmpty()?s.syntax():notation,evidence,exclusions));
             }
         }
-        void catalogDependency(DeclarativeScript.Statement s,String configuration,String notation,String alias) {
+        void catalogDependency(DeclarativeScript.Statement s,String configuration,String notation,String alias,List<String> exclusions) {
             Optional<MavenCoordinate> coordinate=catalog.flatMap(c->Optional.ofNullable(c.libraries().get(alias)))
                     .orElse(Optional.empty());
             if(coordinate.isEmpty())issue(issues,DEPENDENCY_VERSION_UNRESOLVED,dir+"#"+s.offset(),identity);
-            dependencies.add(new UniversalBuildModel.Dependency(configuration,coordinate,Optional.empty(),notation,evidence));
+            dependencies.add(new UniversalBuildModel.Dependency(configuration,coordinate,Optional.empty(),notation,evidence,exclusions));
         }
-        String literal(DeclarativeScript.Statement s){if(s.strings().size()!=1||s.strings().getFirst().contains("$"))throw new IllegalArgumentException();return s.strings().getFirst();}
+        String interpolate(String value) {
+            if(!value.contains("$")||variables.isEmpty())return value;
+            String result=value;
+            for(var entry:variables.entrySet()) {
+                result=result.replace("${"+entry.getKey()+"}",entry.getValue()).replace("$"+entry.getKey(),entry.getValue());
+            }
+            return result;
+        }
+        String literal(DeclarativeScript.Statement s){
+            if(s.strings().size()!=1)throw new IllegalArgumentException();
+            String v=interpolate(s.strings().getFirst());
+            if(v.contains("$"))throw new IllegalArgumentException();
+            return v;
+        }
         void gap(DeclarativeScript.Statement s){issue(issues,DYNAMIC_BUILD_LOGIC,dir+"#"+s.offset(),identity);}
         SourcePlanModel plan(ModuleDescriptor descriptor,UniversalBuildModel.Tool tool) {
             if(syntax.isEmpty()||platform.isEmpty()||encoding.isEmpty())issue(issues,COMPILER_CONFIGURATION_MISSING,dir,identity);

@@ -21,11 +21,27 @@ final class DeclarativeScript {
             if(c=='/' && i<source.length() && source.charAt(i)=='*') {int end=source.indexOf("*/",i+1);if(end<0)throw new IllegalArgumentException();i=end+2;continue;}
             if(c=='\''||c=='"') {
                 char quote=c; StringBuilder value=new StringBuilder(); boolean closed=false;
-                while(i<source.length()) {
+                if(i+1<source.length()&&source.charAt(i)==quote&&source.charAt(i+1)==quote) {
+                    i+=2;
+                    while(i+2<source.length()) {
+                        if(source.charAt(i)==quote&&source.charAt(i+1)==quote&&source.charAt(i+2)==quote) {
+                            while(i+3<source.length()&&source.charAt(i+3)==quote)value.append(source.charAt(i++));
+                            i+=3;closed=true;break;
+                        }
+                        char ch=source.charAt(i++);if(ch!='\r')value.append(ch);
+                    }
+                } else while(i<source.length()) {
                     c=source.charAt(i++); if(c==quote){closed=true;break;}
                     if(c=='\n'||c=='\r')throw new IllegalArgumentException();
-                    if(c=='\\') {if(i==source.length())throw new IllegalArgumentException();c=source.charAt(i++);
-                        c=switch(c){case 'n'->'\n';case 'r'->'\r';case 't'->'\t';case '\\','\'','"'->c;default->throw new IllegalArgumentException();};}
+                    if(c=='\\') {
+                        if(i==source.length())throw new IllegalArgumentException();
+                        c=source.charAt(i++);
+                        if(c=='u') {
+                            if(i+4>source.length())throw new IllegalArgumentException();
+                            try{c=(char)Integer.parseInt(source.substring(i,i+4),16);i+=4;}
+                            catch(NumberFormatException invalid){throw new IllegalArgumentException();}
+                        } else c=switch(c){case 'n'->'\n';case 'r'->'\r';case 't'->'\t';case 'b'->'\b';case 'f'->'\f';case '$','\\','\'','"'->c;default->throw new IllegalArgumentException();};
+                    }
                     value.append(c);
                 }
                 if(!closed)throw new IllegalArgumentException();tokens.add(new Token(value.toString(),true,start));

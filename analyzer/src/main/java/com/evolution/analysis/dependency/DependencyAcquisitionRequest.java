@@ -50,8 +50,8 @@ public record DependencyAcquisitionRequest(
         public Requirement {
             ContractChecks.notNull(coordinate, "dependency artifact coordinate");
             expectedDigest = ContractChecks.notNull(expectedDigest, "expected artifact digest");
-            if (!coordinate.extension().equals("pom") && !coordinate.extension().equals("jar")) {
-                throw new IllegalArgumentException("Dependency acquisition supports exact POM and JAR files only");
+            if (!coordinate.extension().equals("pom") && !coordinate.extension().equals("jar") && !coordinate.extension().equals("aar")) {
+                throw new IllegalArgumentException("Dependency acquisition supports exact POM, JAR and AAR files only");
             }
         }
     }
