@@ -19,6 +19,7 @@ final class ImplicitExtraction {
             if(localsOnly&&!context.hasLocalOwner(type))continue;
             try {
                 var symbol=context.name(type);
+                context.lombok.loggerDeclarations(type);
                 if (type instanceof RecordDeclaration record) record(record);
                 else if (context.nativeOwner(type)) { /* The validated native member census owns implicit/processor additions. */ }
                 else if (type instanceof ClassOrInterfaceDeclaration c && context.lombok.declarations(c)) { /* Processor-owned constructor set. */ }

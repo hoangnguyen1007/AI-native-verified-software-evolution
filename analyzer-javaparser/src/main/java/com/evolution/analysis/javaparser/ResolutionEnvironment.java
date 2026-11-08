@@ -22,8 +22,12 @@ import java.util.zip.ZipFile;
 final class ResolutionEnvironment {
     final MemoryTypeSolver project = new MemoryTypeSolver();
     final CombinedTypeSolver platform = new CombinedTypeSolver();
+    final MemoryTypeSolver androidProject = new MemoryTypeSolver();
+    final MemoryTypeSolver androidPlatform = new MemoryTypeSolver();
+    final ExplicitImportTypeSolver explicitImports = new ExplicitImportTypeSolver();
     final CombinedTypeSolver solver = new CombinedTypeSolver(project, platform);
     final Set<Diagnostic> diagnostics = new TreeSet<>();
+    private final FrontendRequest request;
     private final ClasspathEntry platformEntry;
     private final List<Artifact> artifacts = new ArrayList<>();
     private final Map<ContentDigest,JarTypeSolver> memberEvidence=new TreeMap<>();
@@ -32,6 +36,7 @@ final class ResolutionEnvironment {
     record Origin(EntityOrigin kind, EntityScope scope) {}
 
     ResolutionEnvironment(FrontendRequest request) {
+        this.request = Objects.requireNonNull(request);
         request.originClasspath();
         platformEntry = request.platform().entry();
         // An incomplete build closure does not invalidate the independently verified inputs.
@@ -91,10 +96,47 @@ final class ResolutionEnvironment {
                     solver.add(artifacts.get(binary++).solver());
                 }
             }
+            solver.add(androidProject);
+            solver.add(androidPlatform);
+            if (request.sourceRecovery()) {
+                solver.add(explicitImports);
+            }
         } catch (IOException exception) {
             throw new FrontendInputException("frontend.input-io", "Cannot read a supplied platform or dependency artifact");
         }
     }
+    private static final Map<String, String> PINNED_LOMBOK_DIGESTS = Map.of(
+            "org.projectlombok:lombok:1.18.36@jar", "sha256:73b6b05b6a2d365b700bab08d30f94de9d336490bc0acce5b6181fef48cbf18e",
+            "org.projectlombok:lombok:1.18.46@jar", "sha256:01f7b1a015e33e2b62d5f5f37053306357ab1415fd181fcba7794f5d198c1126");
+
+    boolean isVerifiedLombokArtifact(BinaryInput input) {
+        String logical = input.originEntry().logicalName();
+        String digest = input.originEntry().contentDigest().value();
+        if (!logical.startsWith("org.projectlombok:lombok:") || !logical.endsWith("@jar")) return false;
+        if (PINNED_LOMBOK_DIGESTS.containsKey(logical) || PINNED_LOMBOK_DIGESTS.containsValue(digest)) {
+            return digest.equals(PINNED_LOMBOK_DIGESTS.get(logical));
+        }
+        for (Artifact artifact : artifacts) {
+            if (artifact.input().originEntry().equals(input.originEntry())) {
+                return artifact.solver().tryToSolveType("lombok.Data").isSolved()
+                        && artifact.solver().tryToSolveType("lombok.Getter").isSolved()
+                        && artifact.solver().tryToSolveType("lombok.Builder").isSolved();
+            }
+        }
+        return false;
+    }
+
+    boolean hasAnyLombokClassInDependencies() {
+        for (Artifact artifact : artifacts) {
+            if (artifact.solver().tryToSolveType("lombok.RequiredArgsConstructor").isSolved()
+                    || artifact.solver().tryToSolveType("lombok.Data").isSolved()
+                    || artifact.solver().tryToSolveType("lombok.Getter").isSolved()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     void addReactorDeclaration(
             int order,
             String qualifiedName,
@@ -278,6 +320,24 @@ final class ResolutionEnvironment {
         }
         return new NormalizedJar(normalized.toByteArray(), Optional.ofNullable(manifestClasspath));
     }
+    boolean isKnownInPrimarySolvers(String qualifiedName) {
+        if (project.tryToSolveType(qualifiedName).isSolved() || platform.tryToSolveType(qualifiedName).isSolved()) {
+            return true;
+        }
+        for (var artifact : artifacts) {
+            if (artifact.solver().getKnownClasses().contains(qualifiedName)
+                    || artifact.solver().tryToSolveType(qualifiedName).isSolved()) {
+                return true;
+            }
+        }
+        for (var source : reactorSources.values()) {
+            if (source.tryToSolveType(qualifiedName).isSolved()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     Origin origin(String qualifiedName) {
         if (platform.tryToSolveType(qualifiedName).isSolved()) return origin(EntityOrigin.JDK, platformEntry);
         for (var artifact : artifacts) {
@@ -288,6 +348,17 @@ final class ResolutionEnvironment {
                 }
                 return origin(EntityOrigin.DEPENDENCY, artifact.input().originEntry());
             }
+        }
+        if (androidProject.tryToSolveType(qualifiedName).isSolved()) {
+            return new Origin(EntityOrigin.PROJECT, EntityScope.project(request.module()));
+        }
+        if (androidPlatform.tryToSolveType(qualifiedName).isSolved() || explicitImports.isRecoveredType(qualifiedName)) {
+            return new Origin(
+                    EntityOrigin.DEPENDENCY,
+                    EntityScope.external(
+                            EntityOrigin.DEPENDENCY,
+                            "source-recovery:explicit-import",
+                            ContentDigest.sha256Utf8(request.manifest().snapshot().identity().value())));
         }
         throw new IllegalArgumentException("selected declaration has no verified origin");
     }
@@ -308,6 +379,18 @@ final class ResolutionEnvironment {
                     com.evolution.analysis.contract.semantic.DerivationKind.DERIVED,new com.evolution.analysis.contract.common.VersionedIdentifier("java.native-binary-import","m8.4-v1"),
                     List.of(origin.orElseThrow().slot().value(),com.evolution.analysis.contract.serialization.CanonicalJson.sha256(origin.orElseThrow().canonicalForm()).value(),input.originEntry().contentDigest().value()));
             break;
+        }
+        if (androidProject.tryToSolveType(qualifiedName).isSolved()) {
+            return new com.evolution.analysis.contract.semantic.Derivation(
+                    com.evolution.analysis.contract.semantic.DerivationKind.DERIVED,
+                    new com.evolution.analysis.contract.common.VersionedIdentifier("java.android-synthetic-recovery", "m8.4-v1"),
+                    List.of(request.manifest().snapshot().identity().value()));
+        }
+        if (androidPlatform.tryToSolveType(qualifiedName).isSolved() || explicitImports.isRecoveredType(qualifiedName)) {
+            return new com.evolution.analysis.contract.semantic.Derivation(
+                    com.evolution.analysis.contract.semantic.DerivationKind.DERIVED,
+                    new com.evolution.analysis.contract.common.VersionedIdentifier("java.explicit-import-recovery", "m8.4-v1"),
+                    List.of(request.manifest().snapshot().identity().value()));
         }
         return new com.evolution.analysis.contract.semantic.Derivation(com.evolution.analysis.contract.semantic.DerivationKind.DIRECT,new com.evolution.analysis.contract.common.VersionedIdentifier("java.source","1"),List.of());
     }

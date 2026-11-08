@@ -60,4 +60,38 @@ class LombokCompatibilityTest {
         assertEquals(FrontendResult.State.PARTIAL,result.state());
         assertTrue(result.occurrences().stream().anyMatch(o->o.relationship().kind().value().equals("java.calls")&&o.status()==SemanticStatus.RESOLVED));
     }
+    @Test void slf4jLoggerFieldWithUtilityClassAndChainedAccessorsResolveInRecoveryAndVerifiedModes()throws Exception {
+        String source="""
+            package app;
+            import lombok.Data;
+            import lombok.Builder;
+            import lombok.With;
+            import lombok.experimental.Accessors;
+            import lombok.experimental.UtilityClass;
+            import lombok.extern.slf4j.Slf4j;
+            @Data @Builder @With class Item { String code; }
+            @Data @Accessors(chain = true) class Order { Item item; String status; }
+            @UtilityClass class OrderUtils { String normalize(String raw) { return raw.trim(); } }
+            @Slf4j class OrderService {
+                String process(Order order) {
+                    log.info("Processing {}", order.getItem().getCode());
+                    Order updated = order.setStatus("OK");
+                    Item next = updated.getItem().withCode("NEW");
+                    return OrderUtils.normalize(next.getCode());
+                }
+            }
+            """;
+        var recoveryResult=new JavaParserFrontend().analyze(LombokIngestionTest.recovery(TestInputs.request(Map.of("app/OrderService.java",source),List.of())));
+        var recoveryCalls=recoveryResult.occurrences().stream().filter(o->o.relationship().kind().value().equals("java.calls")).toList();
+        assertEquals(9,recoveryCalls.size());
+        assertTrue(recoveryCalls.stream().allMatch(o->o.status()==SemanticStatus.RESOLVED),recoveryCalls.toString());
+        var logReads=recoveryResult.occurrences().stream().filter(o->o.relationship().kind().value().equals("java.reads-field")&&o.status()==SemanticStatus.RESOLVED).toList();
+        assertFalse(logReads.isEmpty());
+        assertTrue(recoveryResult.diagnostics().stream().noneMatch(d->d.code().equals("java.unclassified-name")));
+
+        var verifiedResult=new JavaParserFrontend().analyze(TestInputs.request(Map.of("app/OrderService.java",source),List.of(input("1.18.36"))));
+        var verifiedCalls=verifiedResult.occurrences().stream().filter(o->o.relationship().kind().value().equals("java.calls")).toList();
+        assertEquals(9,verifiedCalls.size());
+        assertTrue(verifiedCalls.stream().allMatch(o->o.status()==SemanticStatus.RESOLVED),verifiedCalls.toString());
+    }
 }

@@ -299,7 +299,8 @@ public final class UniversalBuildIngestion {
                     } else if(context.isEmpty() && shape.matches("tasks\\.withType(?:<JavaCompile>\\(\\)|\\(JavaCompile\\))(?:\\.configureEach)?")) {
                         read(s.body(),"javaCompile");handled=true;
                     } else if(context.isEmpty() && (shape.matches("tasks\\.(?:withType|named|register|configureEach).*")
-                            ||Set.of("configurations","publishing","signing","spotless","checkstyle","jacoco","test","springBoot","hibernate","graalvmNative","idea","eclipse","buildscript").contains(s.key()))) {
+                            ||Set.of("publishing","signing","spotless","checkstyle","jacoco","test","springBoot","hibernate","graalvmNative","idea","eclipse","buildscript").contains(s.key()))) {
+                        // Source-semantics-inert blocks. `configurations` can change the classpath and stays a gap.
                         handled=true;
                     } else if(shape.equals("plugins")&&context.isEmpty()) {
                         for(var plugin:s.body())if(!supportedPluginDeclaration(plugin))gap(plugin);
@@ -382,16 +383,34 @@ public final class UniversalBuildIngestion {
                 if(!handled)gap(s);
             }
         }
-        static boolean supportedPluginDeclaration(DeclarativeScript.Statement plugin) {
+        /** Plugins whose effects on Java source roots/classpath are nil or already modeled here.
+         *  Anything else (code generators, Android R/BuildConfig, kapt/ksp outputs, unknown ids)
+         *  stays an explicit DYNAMIC_BUILD_LOGIC gap, i.e. PLUGIN_EFFECTS_NOT_EVALUATED. */
+        private static final Set<String> INERT_PLUGINS=Set.of("java","java-library","java-platform","application","war","jacoco",
+                "maven-publish","signing","checkstyle","pmd","idea","eclipse","base","distribution",
+                "org.springframework.boot","io.spring.dependency-management",
+                "org.jetbrains.kotlin.jvm","org.jetbrains.kotlin.multiplatform","org.jetbrains.kotlin.plugin.spring",
+                "org.jetbrains.kotlin.plugin.allopen","org.jetbrains.kotlin.plugin.noarg","org.jetbrains.kotlin.plugin.jpa",
+                "jvm","multiplatform","plugin.spring","plugin.allopen","plugin.noarg","plugin.jpa",
+                "com.diffplug.spotless","com.github.ben-manes.versions","org.sonarqube","org.graalvm.buildtools.native",
+                "org.cyclonedx.bom","com.gorylenko.gradle-git-properties","org.asciidoctor.jvm.convert");
+        boolean supportedPluginDeclaration(DeclarativeScript.Statement plugin) {
             if(!plugin.body().isEmpty())return false;
             String shape=plugin.syntax();
-            if(Set.of("java","java-library","java-platform","application","war","groovy","scala","jacoco","maven-publish","signing","checkstyle","pmd","idea","eclipse").contains(shape))return true;
-            if(shape.matches("alias\\(libs\\.plugins\\.[A-Za-z0-9_.-]+\\)(?:applyfalse)?"))return true;
-            if(shape.matches("kotlin\\(#\\)(?:version#)?(?:applyfalse)?")&&!plugin.strings().isEmpty())
-                return plugin.strings().size()==1||fixedVersion(plugin.strings().get(1))&&!plugin.strings().get(1).contains(" ");
-            if(shape.matches("id(?:#|\\(#\\))(?:version#)?(?:applyfalse)?")&&!plugin.strings().isEmpty()&&plugin.strings().getFirst().matches("[A-Za-z0-9_.-]+"))
-                return plugin.strings().size()==1||fixedVersion(plugin.strings().get(1))&&!plugin.strings().get(1).contains(" ");
-            return false;
+            if(INERT_PLUGINS.contains(shape))return true;
+            String id;
+            if(shape.matches("alias\\(libs\\.plugins\\.[A-Za-z0-9_.-]+\\)(?:applyfalse)?")) {
+                if(shape.endsWith("applyfalse"))return true;
+                String alias=shape.substring("alias(libs.plugins.".length(),shape.indexOf(')'));
+                var resolved=catalog.flatMap(c->c.plugins().getOrDefault(alias,Optional.empty()));
+                if(resolved.isEmpty())return false;
+                id=resolved.orElseThrow().id();
+            } else if(shape.matches("(?:kotlin|id)(?:#|\\(#\\))(?:version#)?(?:applyfalse)?")&&!plugin.strings().isEmpty()) {
+                if(plugin.strings().size()>1&&(!fixedVersion(plugin.strings().get(1))||plugin.strings().get(1).contains(" ")))return false;
+                if(shape.endsWith("applyfalse"))return true;
+                id=plugin.strings().getFirst();
+            } else return false;
+            return INERT_PLUGINS.contains(id);
         }
         void registerBootPlugin(DeclarativeScript.Statement statement) {
             String shape=statement.syntax();Optional<GradleVersionCatalog.Plugin> plugin=Optional.empty();

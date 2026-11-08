@@ -170,4 +170,81 @@ class SourceRecoveryAttributionTest {
         var reads=fields.observations().stream().filter(o->o.category().value().equals("java.reads-field")).toList();
         assertEquals(1,reads.size());assertTrue(reads.stream().noneMatch(o->o.attribution()==SemanticStatus.RESOLVED));
     }
+    @Test void explicitImportsRecoverExternalTypesCallsConstructorsAndStaticMembersWhilePreservingHierarchyGuards() {
+        String source = """
+                package app;
+                import org.slf4j.Logger;
+                import org.slf4j.LoggerFactory;
+                import com.external.sdk.ExternalClient;
+                import static org.junit.jupiter.api.Assertions.assertEquals;
+                class Service {
+                    private final Logger log = LoggerFactory.getLogger(Service.class);
+                    void execute(String host) {
+                        ExternalClient client = new ExternalClient(host);
+                        log.info("connecting");
+                        client.send(host);
+                        assertEquals("ok", host);
+                    }
+                }
+                class Child extends ExternalClient {
+                    void helper(Object value) {}
+                    void run() {
+                        helper("still-guarded");
+                    }
+                }
+                """;
+        var result = new JavaParserFrontend().analyze(LombokIngestionTest.recovery(TestInputs.request(source)));
+        var calls = result.observations().stream().filter(o -> o.category().value().equals("java.calls")).toList();
+        assertEquals(5, calls.size());
+        assertEquals(4, calls.stream().filter(o -> o.attribution() == SemanticStatus.RESOLVED).count());
+        assertEquals(1, calls.stream().filter(o -> o.attribution() == SemanticStatus.UNRESOLVED && o.reference().contains("helper")).count());
+        var ctors = result.observations().stream().filter(o -> o.category().value().equals("java.constructor-calls")).toList();
+        assertTrue(ctors.stream().anyMatch(o -> o.attribution() == SemanticStatus.RESOLVED && o.reference().contains("new ExternalClient")));
+        assertTrue(result.declarations().stream().anyMatch(d ->
+                d.entity().origin() == EntityOrigin.DEPENDENCY
+                && d.derivation().method().id().equals("java.explicit-import-recovery")));
+    }
+    @Test void androidSyntheticDeclarationsResolveResourcesBuildConfigViewBindingAidlAndLifecycleHierarchy() {
+        String source = """
+                package com.example.app;
+                import android.content.Intent;
+                import android.os.Bundle;
+                import android.os.IBinder;
+                import android.widget.Toast;
+                import androidx.appcompat.app.AppCompatActivity;
+                import com.example.app.databinding.ActivityMainBinding;
+                import com.example.ipc.IRemoteService;
+                public class MainActivity extends AppCompatActivity {
+                    private ActivityMainBinding binding;
+                    @Override
+                    protected void onCreate(Bundle savedInstanceState) {
+                        super.onCreate(savedInstanceState);
+                        binding = ActivityMainBinding.inflate(getLayoutInflater());
+                        setContentView(binding.getRoot());
+                        if (BuildConfig.DEBUG) {
+                            int layoutId = R.layout.activity_main;
+                            int btnId = R.id.submit_button;
+                            binding.submitButton.setText(getString(R.string.app_name));
+                            Toast.makeText(this, String.valueOf(layoutId + btnId), Toast.LENGTH_SHORT).show();
+                        }
+                    }
+                    public String callRemote(IBinder binder) {
+                        IRemoteService service = IRemoteService.Stub.asInterface(binder);
+                        return service.fetchStatus();
+                    }
+                }
+                """;
+        var result = new JavaParserFrontend().analyze(LombokIngestionTest.recovery(TestInputs.request(source)));
+        var unresolvedCalls = result.observations().stream()
+                .filter(o -> o.category().value().equals("java.calls") && o.attribution() != SemanticStatus.RESOLVED)
+                .toList();
+        assertEquals(List.of(), unresolvedCalls);
+        var unresolvedFields = result.observations().stream()
+                .filter(o -> o.category().value().equals("java.reads-field") && o.attribution() != SemanticStatus.RESOLVED)
+                .toList();
+        assertEquals(List.of(), unresolvedFields);
+        assertTrue(result.declarations().stream().anyMatch(d ->
+                d.entity().origin() == EntityOrigin.PROJECT
+                && d.derivation().method().id().equals("java.android-synthetic-recovery")));
+    }
 }

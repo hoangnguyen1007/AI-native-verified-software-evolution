@@ -260,6 +260,19 @@ class UniversalBuildIngestionTest {
         assertEquals(List.of("org.jetbrains:annotations"), debugDep.exclusions());
     }
 
+    @Test void generatorPluginsAndConfigurationBlocksKeepPluginEffectGapsWhileInertPluginsDoNot() {
+        var inert = load(Map.of("build.gradle", "plugins { id 'java'\n id 'org.springframework.boot' version '3.4.0'\n id 'io.spring.dependency-management' version '1.1.6' }\n"));
+        assertTrue(inert.issues().stream().noneMatch(i -> i.reason() == IngestionEvidence.Reason.DYNAMIC_BUILD_LOGIC));
+        for (String generator : List.of("plugins { id 'com.google.protobuf' version '0.9.4' }\n",
+                "plugins { id 'com.android.application' }\n",
+                "plugins { id 'java' }\nconfigurations { compileOnly { extendsFrom annotationProcessor } }\n")) {
+            var r = load(Map.of("build.gradle", generator));
+            assertTrue(r.issues().stream().anyMatch(i -> i.reason() == IngestionEvidence.Reason.DYNAMIC_BUILD_LOGIC), generator);
+            assertTrue(r.modules().getFirst().sourcePlan().sourceSets().getFirst().gaps()
+                    .contains(SourcePlanModel.Gap.PLUGIN_EFFECTS_NOT_EVALUATED), generator);
+        }
+    }
+
     @Test void settingsEachDirSubprojectsVariablesAndSpringBootDependencyManagementResolveDeterministically() {
         var r = load(Map.of(
                 "settings.gradle", "include ':app', ':utils'\n"

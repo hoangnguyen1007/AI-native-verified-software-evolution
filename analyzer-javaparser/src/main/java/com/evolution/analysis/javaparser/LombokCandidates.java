@@ -53,7 +53,7 @@ final class LombokCandidates {
         }
         return result;
     }
-    private static boolean isLombok(AnnotationExpr annotation,String name,Set<String> sourceTypes) {
+    static boolean isLombok(AnnotationExpr annotation,String name,Set<String> sourceTypes) {
         if(sourceTypes.contains(name))return false;
         String spelling=annotation.getNameAsString();if(spelling.equals(name))return true;
         if(spelling.contains(".")||!name.endsWith("."+spelling))return false;

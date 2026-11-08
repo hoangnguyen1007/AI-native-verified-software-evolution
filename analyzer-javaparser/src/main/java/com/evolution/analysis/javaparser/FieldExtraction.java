@@ -25,7 +25,7 @@ final class FieldExtraction {
         }
         for (var node : unit.stream().filter(n -> n instanceof FieldAccessExpr || n instanceof NameExpr).toList()) {
             var expression = (Expression)node;
-            if (expression instanceof NameExpr name && compactParameter(name,name.getNameAsString())) continue;
+            if (expression instanceof NameExpr name && (compactParameter(name,name.getNameAsString()) || name.containsData(SwitchAndPatternInference.PATTERN_VAR))) continue;
             if (expression instanceof FieldAccessExpr access && arrayLength(access)) {
                 emit(expression,() -> { throw new UnsupportedOperationException("Array length has no declared field entity"); });
                 continue;
@@ -33,6 +33,18 @@ final class FieldExtraction {
             ResolvedValueDeclaration value;
             try { value = expression instanceof FieldAccessExpr access ? access.resolve() : ((NameExpr)expression).resolve(); }
             catch (RuntimeException failure) {
+                var lombokField = context.lombok.resolveField(expression);
+                if (lombokField.isPresent()) {
+                    for (var mode : modes(expression))
+                        context.observe(expression, mode, lombokField::orElseThrow, () -> context.fieldOwner(expression));
+                    continue;
+                }
+                var recoveredField = context.resolveRecoveredExternalField(expression);
+                if (recoveredField.isPresent()) {
+                    for (var mode : modes(expression))
+                        context.observe(expression, mode, recoveredField::orElseThrow, () -> context.fieldOwner(expression));
+                    continue;
+                }
                 // Dotted names can contain package/type qualifiers, which are not evaluated field reads.
                 if (!hasValueRoot(expression) && (typeName(expression) || qualifierFragment(expression))) continue;
                 if (expression instanceof FieldAccessExpr) emit(expression,() -> { throw failure; });
@@ -78,6 +90,7 @@ final class FieldExtraction {
         Expression root = expression;
         while (root instanceof FieldAccessExpr field) root = field.getScope();
         if (!(root instanceof NameExpr name)) return true;
+        if (name.containsData(SwitchAndPatternInference.PATTERN_VAR)) return true;
         try { return !name.resolve().isType(); }
         catch (RuntimeException failure) { return false; }
     }

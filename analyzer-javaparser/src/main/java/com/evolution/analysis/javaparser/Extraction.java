@@ -47,8 +47,10 @@ final class Extraction {
     private record ClosureFailure(SemanticStatus status,String code) {}
     private final Map<String,Optional<ClosureFailure>> recoveryHierarchies=new HashMap<>();
     private final Set<MethodCallExpr> recoveryCallInputs=Collections.newSetFromMap(new IdentityHashMap<>());
+    final Set<String> sourceTypeNames = new HashSet<>();
     private boolean reactorResolutionDegraded;
     final LombokExtraction lombok = new LombokExtraction(this);
+    private final AndroidSyntheticDeclarations android = new AndroidSyntheticDeclarations();
     private NativeMemberExtraction nativeMembers;
 
     private static final class Unit {
@@ -89,13 +91,16 @@ final class Extraction {
         for (var unit : orderedUnits) implicit.declarations(unit.ast);
         var shapes=new ArrayList<TypeDeclarationRecord>();var members=new ArrayList<MemberDeclarationRecord>();
         var constructorCandidates=new ArrayList<LombokConstructorCandidate>();
-        var sourceTypeNames=new HashSet<String>();for(var header:orderedUnits)for(TypeDeclaration<?> type:header.ast.findAll(TypeDeclaration.class))type.getFullyQualifiedName().ifPresent(sourceTypeNames::add);
         for (var header : orderedUnits) {
             // Only declaration skeletons live across files. Method/initializer bodies and
             // expression resolver caches belong to one active source document at a time.
             var unit=compactBodies?parse(parser(),header.input,Optional.empty()).orElseThrow():header;
             RecordPatternInference.prepare(unit.ast);
+            SwitchAndPatternInference.prepare(unit.ast);
+            lombok.prepareExpressions(unit.ast);
             LambdaParameterInference.prepare(unit.ast);
+            SwitchAndPatternInference.prepare(unit.ast);
+            lombok.prepareExpressions(unit.ast);
             unit.ast.stream().filter(this::membershipNode).forEach(sourceNodes::add);
             if(compactBodies)implicit.declarations(unit.ast,true);
             for (var node : unit.ast.stream().filter(this::isDeclaration).toList()) observe(node, "declares", () -> entity(node), () -> owner(node));
@@ -197,13 +202,15 @@ final class Extraction {
             var entity=nodes.get(node);
             if(entity==null||duplicateDeclarations.contains(entity.identity()))continue;
             if(node instanceof VariableDeclarator variable && variable.getParentNode().orElse(null) instanceof FieldDeclaration field) {
-                boolean implicitStatic=field.getParentNode().orElse(null) instanceof AnnotationDeclaration
-                        ||field.getParentNode().orElse(null) instanceof ClassOrInterfaceDeclaration c&&c.isInterface();
+                Node parentType=field.getParentNode().orElse(null);
+                boolean implicitStatic=parentType instanceof AnnotationDeclaration
+                        ||parentType instanceof ClassOrInterfaceDeclaration c&&(c.isInterface()||lombok.isUtilityClass(c));
                 result.add(new MemberDeclarationRecord(entity.identity(),semanticIdentifier(variable.getNameAsString()),
                         field.isStatic()||implicitStatic,false,false));
             } else if(node instanceof MethodDeclaration method) {
+                boolean utilityStatic=method.getParentNode().orElse(null) instanceof ClassOrInterfaceDeclaration c&&lombok.isUtilityClass(c);
                 result.add(new MemberDeclarationRecord(entity.identity(),semanticIdentifier(method.getNameAsString()),
-                        method.isStatic(),method.isAbstract()||method.getBody().isEmpty(),!method.getTypeParameters().isEmpty()));
+                        method.isStatic()||utilityStatic,method.isAbstract()||method.getBody().isEmpty(),!method.getTypeParameters().isEmpty()));
             }
         }
         return result;
@@ -234,6 +241,8 @@ final class Extraction {
         for (var input : request.sources()) {
             if(Thread.currentThread().isInterrupted())throw new java.util.concurrent.CancellationException();
             parse(parser, input, Optional.empty()).ifPresent(unit -> {
+                android.observeUnit(unit.ast);
+                if(request.sourceRecovery())environment.explicitImports.observeUnit(unit.ast);
                 if(compactBodies)skeleton(unit.ast);
                 orderedUnits.add(unit);
                 unit.ast.stream().filter(this::membershipNode).forEach(sourceNodes::add);
@@ -346,6 +355,7 @@ final class Extraction {
     private void indexTypes() {
         var indexed = new HashSet<String>();
         for (var unit : orderedUnits) for (TypeDeclaration<?> type : unit.ast.findAll(TypeDeclaration.class)) {
+            type.getFullyQualifiedName().ifPresent(sourceTypeNames::add);
             if (type.getFullyQualifiedName().isEmpty() || hasLocalOwner(type)) continue;
             String name = type.getFullyQualifiedName().orElseThrow();
             if (!indexed.add(name)) throw new FrontendInputException("frontend.duplicate-type", "Duplicate source type definitions in the supplied environment");
@@ -363,6 +373,16 @@ final class Extraction {
                 environment.addReactorDeclaration(reactor.input().order(), name, type.resolve());
             }
         }
+        android.populate(request, environment, parser());
+        if (request.sourceRecovery()) {
+            environment.explicitImports.materialize(
+                    sourceTypeNames,
+                    environment,
+                    !environment.hasAnyLombokClassInDependencies());
+        }
+    }
+    private boolean isSourceOrReactorNode(Node node) {
+        return sourceNodes.contains(node) || reactorNodes.contains(node);
     }
     boolean hasLocalOwner(Node node) {
         for (Node current = node; current != null; current = current.getParentNode().orElse(null)) {
@@ -449,7 +469,7 @@ final class Extraction {
         throw new MappingFailure(SemanticStatus.UNSUPPORTED, "java.erasure");
     }
     JavaSymbolName typeName(ResolvedReferenceTypeDeclaration type) {
-        if (type.toAst().isPresent()) {
+        if (type.toAst().filter(this::isSourceOrReactorNode).isPresent()) {
             Node ast = type.toAst().orElseThrow(); unit(ast); return typeOwnerName(ast);
         }
         // ReflectionAnnotationDeclaration does not implement containerType(). Its verified
@@ -594,7 +614,7 @@ final class Extraction {
                     var value=ReferenceResolution.value(reference,scope.toString());
                     receiver=value.isPresent() ? value.orElseThrow().getType() : type.getType().resolve();
                 } else receiver=scope.calculateResolvedType();
-                if (receiver.isReferenceType() && receiver.asReferenceType().getTypeDeclaration().orElseThrow().toAst().orElse(null) instanceof RecordDeclaration r) record=r;
+                if (receiver.isReferenceType() && receiver.asReferenceType().getTypeDeclaration().orElseThrow().toAst().filter(this::isSourceOrReactorNode).orElse(null) instanceof RecordDeclaration r) record=r;
             }
             if (record!=null) {
                 var parameters=new ArrayList<ErasedType>();
@@ -614,12 +634,163 @@ final class Extraction {
         var nativeCall=nativeMembers.resolve(expression);if(nativeCall.isPresent())return nativeCall.orElseThrow();
         var generated=lombok.resolve(expression);
         if(generated.isPresent()){if(expression instanceof MethodCallExpr call)recoveryCallInputs.add(call);return generated.orElseThrow();}
+        if(request.sourceRecovery()) {
+            var recoveredExternal=resolveRecoveredExternalCall(expression);
+            if(recoveredExternal.isPresent()){if(expression instanceof MethodCallExpr call)recoveryCallInputs.add(call);return recoveredExternal.orElseThrow();}
+        }
         if(request.sourceRecovery()&&expression instanceof MethodCallExpr call)requireRecoveryReceiver(call);
         if(expression instanceof MethodCallExpr call) {
             if(!request.sourceRecovery()&&boundedReceiver(call.getScope()))requireRecoverySelected(call,recoveryReceiver(call,call.getScope()));
             var result=callable(call.resolve(),call);if(request.sourceRecovery())recoveryCallInputs.add(call);return result;
         }
         return callable(((ObjectCreationExpr)expression).resolve());
+    }
+    private Optional<Entity> resolveRecoveredExternalCall(Expression expression) {
+        if (!request.sourceRecovery()) return Optional.empty();
+        if (expression instanceof MethodCallExpr call) {
+            ExplicitImportTypeSolver.ExplicitImportTypeDeclaration owner = null;
+            if (call.getScope().isPresent()) {
+                Expression scope = call.getScope().orElseThrow();
+                try {
+                    requireRecoveryInputs(scope, null);
+                    var scopeType = scope.calculateResolvedType();
+                    if (scopeType.isReferenceType()
+                            && scopeType.asReferenceType().getTypeDeclaration().orElse(null)
+                                    instanceof ExplicitImportTypeSolver.ExplicitImportTypeDeclaration decl) {
+                        owner = decl;
+                    }
+                } catch (RuntimeException notValue) {
+                    if (scope instanceof NameExpr || scope instanceof FieldAccessExpr) {
+                        try {
+                            var context = com.github.javaparser.symbolsolver.javaparsermodel.JavaParserFactory.getContext(scope, environment.solver);
+                            if (!(scope instanceof NameExpr name && context.solveSymbol(name.getNameAsString()).isSolved())) {
+                                var named = context.solveType(scope.toString());
+                                if (named.isSolved()
+                                        && named.getCorrespondingDeclaration().asReferenceType()
+                                                instanceof ExplicitImportTypeSolver.ExplicitImportTypeDeclaration decl) {
+                                    owner = decl;
+                                }
+                            }
+                        } catch (RuntimeException ignored) {}
+                    }
+                }
+            } else {
+                var staticOwner = environment.explicitImports
+                        .resolveStaticImportOwner(call.findCompilationUnit().orElse(null), call.getNameAsString())
+                        .orElse(null);
+                if (staticOwner != null) {
+                    boolean resolvedLocally = false;
+                    try {
+                        call.resolve();
+                        resolvedLocally = true;
+                    } catch (RuntimeException ignored) {}
+                    if (!resolvedLocally) {
+                        owner = staticOwner;
+                    }
+                }
+            }
+            if (owner == null) return Optional.empty();
+            var erasedArgs = new ArrayList<ErasedType>();
+            for (var arg : call.getArguments()) {
+                requireRecoveryInputs(arg, null);
+                erasedArgs.add(erased(arg.calculateResolvedType(), new HashSet<>()));
+            }
+            var symbol = JavaSymbolName.method(typeName(owner), call.getNameAsString(), erasedArgs);
+            var origin = environment.origin(owner.getQualifiedName());
+            var entity = Entity.create(origin.kind(), origin.scope(), EntityKind.METHOD, symbol.canonicalName(), Optional.empty());
+            declarations.putIfAbsent(
+                    entity.identity(),
+                    new DeclarationRecord(
+                            entity,
+                            call.getNameAsString(),
+                            SemanticStatus.RESOLVED,
+                            environment.nativeDerivation(owner.getQualifiedName()),
+                            List.of(),
+                            List.of()));
+            return Optional.of(entity);
+        }
+        if (expression instanceof ObjectCreationExpr creation && creation.getAnonymousClassBody().isEmpty()) {
+            ExplicitImportTypeSolver.ExplicitImportTypeDeclaration owner = null;
+            try {
+                var resolvedType = creation.getType().resolve();
+                if (resolvedType.isReferenceType()
+                        && resolvedType.asReferenceType().getTypeDeclaration().orElse(null)
+                                instanceof ExplicitImportTypeSolver.ExplicitImportTypeDeclaration decl) {
+                    owner = decl;
+                }
+            } catch (RuntimeException ignored) {}
+            if (owner == null) return Optional.empty();
+            var erasedArgs = new ArrayList<ErasedType>();
+            for (var arg : creation.getArguments()) {
+                requireRecoveryInputs(arg, null);
+                erasedArgs.add(erased(arg.calculateResolvedType(), new HashSet<>()));
+            }
+            var symbol = JavaSymbolName.constructor(typeName(owner), erasedArgs);
+            var origin = environment.origin(owner.getQualifiedName());
+            var entity = Entity.create(origin.kind(), origin.scope(), EntityKind.CONSTRUCTOR, symbol.canonicalName(), Optional.empty());
+            declarations.putIfAbsent(
+                    entity.identity(),
+                    new DeclarationRecord(
+                            entity,
+                            owner.getName(),
+                            SemanticStatus.RESOLVED,
+                            environment.nativeDerivation(owner.getQualifiedName()),
+                            List.of(),
+                            List.of()));
+            return Optional.of(entity);
+        }
+        return Optional.empty();
+    }
+    Optional<Entity> resolveRecoveredExternalField(Expression expression) {
+        if (!request.sourceRecovery()) return Optional.empty();
+        ExplicitImportTypeSolver.ExplicitImportTypeDeclaration owner = null;
+        String fieldName = null;
+        if (expression instanceof FieldAccessExpr access) {
+            fieldName = access.getNameAsString();
+            Expression scope = access.getScope();
+            try {
+                requireRecoveryInputs(scope, null);
+                var scopeType = scope.calculateResolvedType();
+                if (scopeType.isReferenceType()
+                        && scopeType.asReferenceType().getTypeDeclaration().orElse(null)
+                                instanceof ExplicitImportTypeSolver.ExplicitImportTypeDeclaration decl) {
+                    owner = decl;
+                }
+            } catch (RuntimeException notValue) {
+                if (scope instanceof NameExpr || scope instanceof FieldAccessExpr) {
+                    try {
+                        var context = com.github.javaparser.symbolsolver.javaparsermodel.JavaParserFactory.getContext(scope, environment.solver);
+                        if (!(scope instanceof NameExpr name && context.solveSymbol(name.getNameAsString()).isSolved())) {
+                            var named = context.solveType(scope.toString());
+                            if (named.isSolved()
+                                    && named.getCorrespondingDeclaration().asReferenceType()
+                                            instanceof ExplicitImportTypeSolver.ExplicitImportTypeDeclaration decl) {
+                                owner = decl;
+                            }
+                        }
+                    } catch (RuntimeException ignored) {}
+                }
+            }
+        } else if (expression instanceof NameExpr name) {
+            fieldName = name.getNameAsString();
+            owner = environment.explicitImports
+                    .resolveStaticImportOwner(name.findCompilationUnit().orElse(null), fieldName)
+                    .orElse(null);
+        }
+        if (owner == null || fieldName == null) return Optional.empty();
+        var symbol = JavaSymbolName.field(typeName(owner), fieldName);
+        var origin = environment.origin(owner.getQualifiedName());
+        var entity = Entity.create(origin.kind(), origin.scope(), EntityKind.FIELD, symbol.canonicalName(), Optional.empty());
+        declarations.putIfAbsent(
+                entity.identity(),
+                new DeclarationRecord(
+                        entity,
+                        fieldName,
+                        SemanticStatus.RESOLVED,
+                        environment.nativeDerivation(owner.getQualifiedName()),
+                        List.of(),
+                        List.of()));
+        return Optional.of(entity);
     }
     private boolean boundedReceiver(Optional<Expression> scope) {
         if(scope.isEmpty())return false;
@@ -642,6 +813,7 @@ final class Extraction {
         if(input instanceof MethodCallExpr call&&recoveryCallInputs.contains(call))return;
         input.walk(Node.TreeTraversal.POSTORDER,node->{
             if(node instanceof MethodCallExpr nested&&!recoveryCallInputs.contains(nested)) {
+                if(lombok.resolve(nested).isPresent()||resolveRecoveredExternalCall(nested).isPresent()){recoveryCallInputs.add(nested);return;}
                 requireRecoveryReceiverType(nested);
                 if(nested!=deferred){nested.resolve();recoveryCallInputs.add(nested);}
             }
@@ -753,11 +925,11 @@ final class Extraction {
         requireRecoveryHierarchy(receiver);
     }
     private boolean ownZeroArgumentMethod(ResolvedMethodLikeDeclaration selected,ResolvedReferenceTypeDeclaration receiver) {
-        return selected.getNumberOfParams()==0&&selected.toAst().filter(MethodDeclaration.class::isInstance).isPresent()
+        return selected.getNumberOfParams()==0&&selected.toAst().filter(this::isSourceOrReactorNode).filter(MethodDeclaration.class::isInstance).isPresent()
                 &&hierarchyKey(selected.declaringType()).equals(hierarchyKey(receiver));
     }
     private String hierarchyKey(ResolvedReferenceTypeDeclaration type) {
-        return type.toAst().filter(n->sourceNodes.contains(n)||reactorNodes.contains(n))
+        return type.toAst().filter(this::isSourceOrReactorNode)
                 .map(n->unit(n).input.document().identity().value()+":"+unit(n).source.start(n)).orElse("external:"+type.getQualifiedName());
     }
     private void requireRecoveryHierarchy(ResolvedReferenceTypeDeclaration receiver) {
@@ -767,10 +939,25 @@ final class Extraction {
             var pending=new ArrayDeque<ResolvedReferenceTypeDeclaration>();pending.add(receiver);var visited=new HashSet<String>();
             while(!pending.isEmpty()) {
                 var type=pending.removeFirst();if(!visited.add(hierarchyKey(type)))continue;
+                if(type instanceof ExplicitImportTypeSolver.ExplicitImportTypeDeclaration) {
+                    throw new UnsolvedSymbolException(type.getQualifiedName());
+                }
                 // Some solver paths omit unknown ancestors. Inspect written source parents too.
-                if(type.toAst().orElse(null) instanceof ClassOrInterfaceDeclaration declaration) {
-                    for(var parent:declaration.getExtendedTypes())pending.add(parent.resolve().asReferenceType().getTypeDeclaration().orElseThrow());
-                    for(var parent:declaration.getImplementedTypes())pending.add(parent.resolve().asReferenceType().getTypeDeclaration().orElseThrow());
+                if(type.toAst().filter(this::isSourceOrReactorNode).orElse(null) instanceof ClassOrInterfaceDeclaration declaration) {
+                    for(var parent:declaration.getExtendedTypes()) {
+                        var parentDecl=parent.resolve().asReferenceType().getTypeDeclaration().orElseThrow();
+                        if(parentDecl instanceof ExplicitImportTypeSolver.ExplicitImportTypeDeclaration) {
+                            throw new UnsolvedSymbolException(parentDecl.getQualifiedName());
+                        }
+                        pending.add(parentDecl);
+                    }
+                    for(var parent:declaration.getImplementedTypes()) {
+                        var parentDecl=parent.resolve().asReferenceType().getTypeDeclaration().orElseThrow();
+                        if(parentDecl instanceof ExplicitImportTypeSolver.ExplicitImportTypeDeclaration) {
+                            throw new UnsolvedSymbolException(parentDecl.getQualifiedName());
+                        }
+                        pending.add(parentDecl);
+                    }
                 }
                 for(var parent:type.getAncestors(false))pending.add(parent.getTypeDeclaration().orElseThrow());
             }
@@ -782,8 +969,7 @@ final class Extraction {
     }
     Entity callable(ResolvedMethodLikeDeclaration resolved) {
         if(nativeMembers!=null){var nativeDeclaration=nativeMembers.callable(resolved);if(nativeDeclaration.isPresent())return nativeDeclaration.orElseThrow();}
-        if (resolved.toAst().isPresent() && (sourceNodes.contains(resolved.toAst().orElseThrow())
-                || reactorNodes.contains(resolved.toAst().orElseThrow()))) {
+        if (resolved.toAst().filter(this::isSourceOrReactorNode).isPresent()) {
             Node node = resolved.toAst().orElseThrow();
             if (node instanceof CallableDeclaration<?> || node instanceof CompactConstructorDeclaration || node instanceof AnnotationMemberDeclaration) {
                 if (reactorNodes.contains(node)) warnDuplicateExternal(resolved.declaringType().getQualifiedName());
@@ -794,7 +980,7 @@ final class Extraction {
         var parameters = new ArrayList<ErasedType>();
         for (int i = 0; i < resolved.getNumberOfParams(); i++) parameters.add(erased(resolved.getParam(i).getType(), new HashSet<>()));
         var symbol = resolved instanceof ResolvedConstructorDeclaration ? JavaSymbolName.constructor(typeName(type), parameters) : JavaSymbolName.method(typeName(type), resolved.getName(), parameters);
-        if (type.toAst().isPresent()) {
+        if (type.toAst().filter(this::isSourceOrReactorNode).isPresent()) {
             Node declaration = type.toAst().orElseThrow();
             if (reactorNodes.contains(declaration)) {
                 warnDuplicateExternal(type.getQualifiedName());
@@ -832,7 +1018,7 @@ final class Extraction {
         return field(resolved);
     }
     Entity field(ResolvedValueDeclaration resolved) {
-        if (resolved.isField() && resolved.asField().declaringType().toAst().orElse(null) instanceof RecordDeclaration record
+        if (resolved.isField() && resolved.asField().declaringType().toAst().filter(this::isSourceOrReactorNode).orElse(null) instanceof RecordDeclaration record
                 && record.getParameters().stream().anyMatch(p -> p.getNameAsString().equals(resolved.getName()))) {
             var symbol = JavaSymbolName.field(name(record), resolved.getName());
             if (reactorNodes.contains(record)) {
@@ -845,7 +1031,7 @@ final class Extraction {
             }
             return existing(symbol);
         }
-        if (resolved.toAst().isPresent()) {
+        if (resolved.toAst().filter(this::isSourceOrReactorNode).isPresent()) {
             Node node = resolved.toAst().orElseThrow();
             if (node instanceof FieldDeclaration declaration) {
                 var matching = declaration.getVariables().stream().filter(v -> v.getNameAsString().equals(resolved.getName())).toList();
@@ -863,7 +1049,7 @@ final class Extraction {
         }
         ResolvedReferenceTypeDeclaration type = resolved.isField() ? resolved.asField().declaringType().asReferenceType()
                 : resolved.asEnumConstant().getType().asReferenceType().getTypeDeclaration().orElseThrow();
-        if (type.toAst().isPresent()) throw new MappingFailure(SemanticStatus.UNSUPPORTED,"java.implicit-field");
+        if (type.toAst().filter(this::isSourceOrReactorNode).isPresent()) throw new MappingFailure(SemanticStatus.UNSUPPORTED,"java.implicit-field");
         var origin = environment.origin(type.getQualifiedName());
         if (environment.duplicateExternal(type.getQualifiedName())) diagnostics.add(new Diagnostic(DiagnosticSeverity.WARNING,"java.duplicate-binary-type","Ordered classpath selected the first definition",Optional.empty(),Map.of("type",typeName(type).canonicalName())));
         var entity = Entity.create(origin.kind(),origin.scope(),EntityKind.FIELD,JavaSymbolName.field(typeName(type),resolved.getName()).canonicalName(),Optional.empty());
@@ -897,7 +1083,7 @@ final class Extraction {
         return resolved.getCorrespondingDeclaration();
     }
     Entity typeEntity(ResolvedTypeDeclaration type) {
-        if (type.toAst().isPresent()) {
+        if (type.toAst().filter(this::isSourceOrReactorNode).isPresent()) {
             Node declaration = type.toAst().orElseThrow();
             if (reactorNodes.contains(declaration) && type.isReferenceType()) {
                 warnDuplicateExternal(type.asReferenceType().getQualifiedName());
@@ -988,10 +1174,11 @@ final class Extraction {
     boolean isLombok(Entity entity,String name) {
         int dot=name.lastIndexOf('.');
         if(entity.origin()!=EntityOrigin.DEPENDENCY||!entity.canonicalName().equals(JavaSymbolName.topLevelType(name.substring(0,dot),name.substring(dot+1)).canonicalName()))return false;
-        var supported=Map.of("org.projectlombok:lombok:1.18.36@jar","sha256:73b6b05b6a2d365b700bab08d30f94de9d336490bc0acce5b6181fef48cbf18e",
-                "org.projectlombok:lombok:1.18.46@jar","sha256:01f7b1a015e33e2b62d5f5f37053306357ab1415fd181fcba7794f5d198c1126");
-        return request.dependencies().stream().anyMatch(b->b.originEntry().contentDigest().value().equals(supported.get(b.originEntry().logicalName()))
+        return request.dependencies().stream().anyMatch(b->environment.isVerifiedLombokArtifact(b)
                 &&entity.stableScope().equals(EntityScope.external(EntityOrigin.DEPENDENCY,b.originEntry().logicalName(),b.originEntry().contentDigest())));
+    }
+    boolean isSourceRecoveryLombok(AnnotationExpr annotation,String name) {
+        return request.sourceRecovery()&&!environment.hasAnyLombokClassInDependencies()&&LombokCandidates.isLombok(annotation,name,sourceTypeNames);
     }
     void synthesisGap(Node node,String code) {
         var problem=new Diagnostic(DiagnosticSeverity.WARNING,code,"Generated-member evidence is incomplete",Optional.of(source(node).span(node)),Map.of());

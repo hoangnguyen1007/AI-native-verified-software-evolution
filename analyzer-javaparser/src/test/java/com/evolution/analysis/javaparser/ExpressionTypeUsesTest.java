@@ -36,4 +36,29 @@ class ExpressionTypeUsesTest {
         assertEquals(List.of("C"),sites.stream().map(site->original.slice(site.span())).toList());
         assertEquals(1,TypeRelationshipsTest.edges(result,"reads-field").size());
     }
+    @Test void switchExpressionsAndFlowScopedGuardedPatternsResolveDownstreamCalls(){
+        String source="""
+                class Box {
+                    String value() { return "ok"; }
+                    static String eval(int mode, Object candidate) {
+                        String a = (switch (mode) {
+                            case 1 -> new Box();
+                            default -> { yield new Box(); }
+                        }).value().trim();
+                        if (candidate instanceof Box b && !b.value().isEmpty()) {
+                            return b.value().toLowerCase() + a;
+                        }
+                        if (!(candidate instanceof Box after)) {
+                            return a;
+                        }
+                        return after.value().trim();
+                    }
+                }
+                """;
+        var result=new JavaParserFrontend().analyze(TestInputs.request(source));
+        var calls=result.observations().stream().filter(o->o.category().value().equals("java.calls")).toList();
+        assertEquals(8,calls.size());
+        assertTrue(calls.stream().allMatch(o->o.attribution()==SemanticStatus.RESOLVED));
+        assertEquals(FrontendResult.State.COMPLETED,result.state());
+    }
 }
