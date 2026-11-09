@@ -46,6 +46,45 @@ class RepositoryIntakeDecoderTest {
         assertTrue(result.inventory().unobservedFileCount().isEmpty());
     }
 
+    @Test void iso88591PropertiesAndUnicodeBomFilesDecodeWhileInvalidSourceRemainsMalformed() {
+        byte[] germanProps = "welcome=Willkommen in M\u00fcnchen, Stra\u00dfe!\n".getBytes(StandardCharsets.ISO_8859_1);
+        byte[] utf16Body = "class BomType {}\n".getBytes(StandardCharsets.UTF_16LE);
+        byte[] utf16WithBom = new byte[2 + utf16Body.length];
+        utf16WithBom[0] = (byte) 0xFF;
+        utf16WithBom[1] = (byte) 0xFE;
+        System.arraycopy(utf16Body, 0, utf16WithBom, 2, utf16Body.length);
+        byte[] corruptUtf16Props = new byte[] {(byte) 0xFE, (byte) 0xFF, 0x41};
+        byte[] badJava = new byte[] {(byte) 0xC3, (byte) 0x28};
+
+        var acquisition = complete(List.of(
+                new AcquiredFile("src/main/resources/messages/messages_de.properties", germanProps),
+                new AcquiredFile("src/main/java/BomType.java", utf16WithBom),
+                new AcquiredFile("src/main/resources/corrupt.properties", corruptUtf16Props),
+                new AcquiredFile("src/main/java/Broken.java", badJava)));
+        var result = new RepositoryInputDecoder().decode(acquisition,
+                new RepositoryInputDecoder.Policy("UTF-8", 20, 10_000));
+        var inputs = result.inputs().orElseThrow();
+
+        var propsInput = inputs.files().get("src/main/resources/messages/messages_de.properties");
+        assertNotNull(propsInput, "ISO-8859-1 .properties should fallback per Java .properties spec");
+        assertEquals("ISO-8859-1", propsInput.decoding().charset());
+        assertEquals("welcome=Willkommen in M\u00fcnchen, Stra\u00dfe!\n", propsInput.text());
+
+        var bomInput = inputs.files().get("src/main/java/BomType.java");
+        assertNotNull(bomInput, "UTF-16LE BOM file should decode via BOM-aware charset");
+        assertEquals("UTF-16LE", bomInput.decoding().charset());
+        assertEquals(com.evolution.analysis.frontend.SourceInput.Bom.UTF16_LE, bomInput.decoding().bom());
+        assertEquals("class BomType {}\n", bomInput.text());
+
+        assertFalse(inputs.files().containsKey("src/main/resources/corrupt.properties"));
+        assertFalse(inputs.files().containsKey("src/main/java/Broken.java"));
+        assertEquals(Set.of("src/main/resources/corrupt.properties", "src/main/java/Broken.java"),
+                result.issues().stream()
+                        .filter(i -> i.reason() == IngestionEvidence.Reason.MALFORMED_INPUT)
+                        .map(IngestionEvidence.Issue::subject)
+                        .collect(java.util.stream.Collectors.toSet()));
+    }
+
     private static RepositoryAcquisitionResult complete(List<AcquiredFile> files) {
         var snapshot = RepositorySnapshot.create(REPOSITORY, Optional.empty(), false,
                 files.stream().map(f -> new SnapshotFile(f.path(), f.contentDigest())).toList(), List.of());

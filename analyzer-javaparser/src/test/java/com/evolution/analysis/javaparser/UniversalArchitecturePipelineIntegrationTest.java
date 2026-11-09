@@ -899,4 +899,138 @@ class UniversalArchitecturePipelineIntegrationTest {
         assertFalse(report.gaps().isEmpty());
         assertTrue(report.types().stream().anyMatch(t -> t.qualifiedName().contains("Simple")));
     }
+
+    @Test
+    void pureKotlinSpringBootRepositoryAnalyzesControllersRepositoriesRoutesAndCalls() throws Exception {
+        var input = inputs(Map.of(
+                "src/main/kotlin/org/springframework/samples/petclinic/PetClinicApplication.kt", """
+                        package org.springframework.samples.petclinic
+                        import org.springframework.boot.autoconfigure.SpringBootApplication
+                        import org.springframework.boot.runApplication
+
+                        @SpringBootApplication
+                        class PetClinicApplication
+
+                        fun main(args: Array<String>) {
+                            runApplication<PetClinicApplication>(*args)
+                        }
+                        """,
+                "src/main/kotlin/org/springframework/samples/petclinic/owner/Owner.kt", """
+                        package org.springframework.samples.petclinic.owner
+                        data class Owner(val id: Int, var lastName: String, val isActive: Boolean = true)
+                        """,
+                "src/main/kotlin/org/springframework/samples/petclinic/owner/OwnerRepository.kt", """
+                        package org.springframework.samples.petclinic.owner
+                        import org.springframework.stereotype.Repository
+
+                        @Repository
+                        class OwnerRepository {
+                            fun findById(id: Int): Owner? = Owner(id, "Franklin")
+                            fun save(owner: Owner): Owner = owner
+                        }
+                        """,
+                "src/main/kotlin/org/springframework/samples/petclinic/owner/OwnerController.kt", """
+                        package org.springframework.samples.petclinic.owner
+                        import org.springframework.web.bind.annotation.RestController
+                        import org.springframework.web.bind.annotation.GetMapping
+                        import org.springframework.web.bind.annotation.PostMapping
+
+                        @RestController
+                        class OwnerController(private val owners: OwnerRepository) {
+                            @GetMapping("/owners/{ownerId}")
+                            fun showOwner(ownerId: Int): Owner? {
+                                return owners.findById(ownerId)
+                            }
+
+                            @PostMapping("/owners/new")
+                            fun createOwner(owner: Owner): Owner {
+                                return owners.save(owner)
+                            }
+                        }
+                        """
+        ));
+
+        var exact = ComponentIngestionTest.fixture(Map.of("fixture/App.java", "class App {}"), false).request();
+        var build = new UniversalBuildIngestion().ingest(
+                input,
+                UniversalBuildIngestion.Policy.defaults(),
+                Optional.empty(),
+                Map.of(),
+                new BuildModelPolicy(List.of(), List.of(), Map.of(), 10000, 100, 16)
+        );
+        var key = new UniversalSourceIngestion.SourceSet(build.modules().getFirst().descriptor().identity(), SourcePlanModel.Kind.MAIN);
+        var resolution = new UniversalSourceIngestion.Resolution(exact.platform(), exact.dependencies(), ContentDigest.sha256Utf8("kotlin-spring-res"));
+
+        var policy = UniversalArchitecturePipeline.Policy.builder(new JavaParserFrontend(), JavaParserFrontend.PROVIDER)
+                .resolutions(Map.of(key, resolution))
+                .defaultPlatform(exact.platform())
+                .build();
+
+        var report = new UniversalArchitecturePipeline().run(input, policy);
+
+        assertNotNull(report);
+        assertNotEquals(UniversalArchitectureReport.Status.EMPTY_OR_NON_JAVA, report.status());
+        assertTrue(report.types().stream().anyMatch(t -> t.qualifiedName().contains("\"PetClinicApplication\"")),
+                () -> "Types=" + report.types() + " gaps=" + report.gaps());
+        assertTrue(report.types().stream().anyMatch(t -> t.qualifiedName().contains("\"PetClinicApplicationKt\"")));
+        assertTrue(report.types().stream().anyMatch(t -> t.qualifiedName().contains("\"Owner\"")));
+        assertTrue(report.types().stream().anyMatch(t -> t.qualifiedName().contains("\"OwnerRepository\"")));
+        assertTrue(report.types().stream().anyMatch(t -> t.qualifiedName().contains("\"OwnerController\"")));
+        assertTrue(report.entryPoints().stream().anyMatch(e -> e.kind() == UniversalArchitectureReport.EntryPointKind.BOOT_APPLICATION));
+        assertTrue(report.entryPoints().stream().anyMatch(e -> e.kind() == UniversalArchitectureReport.EntryPointKind.CONTROLLER_ENDPOINT));
+        assertTrue(report.injectionSites().stream().anyMatch(s -> s.targetType().contains("OwnerRepository")));
+    }
+
+    @Test
+    void mixedJavaAndKotlinRepositoryResolvesBidirectionalSymbolsDataClassesAndCompanionObjects() {
+        var input = inputs(Map.of(
+                "src/main/kotlin/org/schabi/newpipe/StreamItem.kt", """
+                        package org.schabi.newpipe
+
+                        data class StreamItem(val url: String, var title: String, val isLive: Boolean = false) {
+                            companion object {
+                                @JvmStatic
+                                fun fromUrl(url: String): StreamItem = StreamItem(url, "Untitled")
+                            }
+                        }
+
+                        fun normalizeUrl(raw: String): String = raw.trim()
+                        """,
+                "src/main/java/org/schabi/newpipe/JavaFeedService.java", """
+                        package org.schabi.newpipe;
+
+                        public class JavaFeedService {
+                            public String loadTitle(String rawUrl) {
+                                String clean = StreamItemKt.normalizeUrl(rawUrl);
+                                StreamItem item = StreamItem.fromUrl(clean);
+                                StreamItem viaCompanion = StreamItem.Companion.fromUrl(clean);
+                                if (item.isLive()) {
+                                    item.setTitle("LIVE");
+                                }
+                                return viaCompanion.getTitle();
+                            }
+                        }
+                        """
+        ));
+
+        var policy = UniversalArchitecturePipeline.Policy.builder(new JavaParserFrontend(), JavaParserFrontend.PROVIDER)
+                .defaultPlatform(jdkPlatform())
+                .build();
+
+        var detailed = new UniversalArchitecturePipeline().runWithEvidence(input, policy);
+        var report = detailed.report();
+        assertNotNull(report);
+        assertTrue(report.types().stream().anyMatch(t -> t.qualifiedName().contains("\"StreamItem\"")),
+                () -> "Types=" + report.types() + " gaps=" + report.gaps());
+        assertTrue(report.types().stream().anyMatch(t -> t.qualifiedName().contains("\"StreamItemKt\"")));
+        assertTrue(report.types().stream().anyMatch(t -> t.qualifiedName().contains("\"JavaFeedService\"")));
+
+        var frontend = detailed.graphInput().orElseThrow().ingestion().orElseThrow().units().getFirst().frontend().orElseThrow();
+        var callsFromJava = frontend.occurrences().stream()
+                .filter(o -> o.relationship().kind().value().equals("java.calls"))
+                .toList();
+        assertFalse(callsFromJava.isEmpty());
+        assertTrue(callsFromJava.stream().allMatch(o -> o.status() == com.evolution.analysis.contract.semantic.SemanticStatus.RESOLVED),
+                () -> "All Java->Kotlin calls must resolve: " + callsFromJava);
+    }
 }

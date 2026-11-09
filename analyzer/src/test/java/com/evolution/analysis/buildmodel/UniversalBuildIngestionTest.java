@@ -320,4 +320,131 @@ class UniversalBuildIngestionTest {
         assertTrue(app.dependencies().stream().anyMatch(d -> d.configuration().equals("autoImplementation")
                 && d.projectPath().equals(Optional.of(":exoplayer"))));
     }
+
+    @Test void discoversKotlinSourceRootsAcrossMavenGradleAndMixedJavaDirectories() {
+        var r = load(Map.of(
+                "build.gradle.kts", "plugins { kotlin(\"jvm\") version \"1.9.24\" }\n",
+                "src/main/kotlin/org/springframework/samples/petclinic/PetClinicApplication.kt", "package org.springframework.samples.petclinic\nclass PetClinicApplication\n",
+                "src/test/kotlin/org/springframework/samples/petclinic/PetClinicTests.kt", "package org.springframework.samples.petclinic\nclass PetClinicTests\n"));
+        var module = r.modules().getFirst();
+        var mainRoots = module.sourcePlan().sourceSets().stream()
+                .filter(s -> s.name().equals("main"))
+                .flatMap(s -> s.sourceRoots().stream())
+                .flatMap(s -> s.value().stream())
+                .toList();
+        var testRoots = module.sourcePlan().sourceSets().stream()
+                .filter(s -> s.name().equals("test"))
+                .flatMap(s -> s.sourceRoots().stream())
+                .flatMap(s -> s.value().stream())
+                .toList();
+        assertTrue(mainRoots.contains("src/main/kotlin"), () -> "mainRoots=" + mainRoots);
+        assertTrue(testRoots.contains("src/test/kotlin"), () -> "testRoots=" + testRoots);
+    }
+
+    @Test void normalizesInRepoParentRelativeRootsAndDisambiguatesDualMavenGradleDirectories() {
+        var repoInputs = IngestionFixtures.inputs(Map.of(
+                "pom.xml", "<project><modules><module>mapstruct-lombok</module></modules></project>",
+                "settings.gradle", "rootProject.name = 'examples'\nincludeBuild 'mapstruct-lombok'\nincludeBuild 'mapstruct-on-gradle-protobuf3'\n",
+                "build.gradle", "task buildAll {}\n",
+                "mapstruct-lombok/pom.xml", "<project><artifactId>mapstruct-lombok</artifactId></project>",
+                "mapstruct-lombok/build.gradle", "plugins { id 'java' }\n",
+                "mapstruct-lombok/src/main/java/LombokMapper.java", "class LombokMapper {}",
+                "mapstruct-on-gradle-protobuf3/settings.gradle", "rootProject.name = 'proto3'\ninclude 'usage'\n",
+                "mapstruct-on-gradle-protobuf3/usage/build.gradle", "plugins { id 'java' }\n"
+                        + "sourceSets { main { java { srcDir '../protobuf3-Async/src/main/java'\n srcDir file(\"${buildDir}/generated/source/proto\") } "
+                        + "resources { srcDirs += file('../shared-res') } } }\n",
+                "mapstruct-on-gradle-protobuf3/protobuf3-Async/src/main/java/AsyncProto.java", "class AsyncProto {}"));
+
+        BuildModelProvider stubMaven = req -> {
+            if (req.rootPom().equals("pom.xml")) {
+                var rootDesc = com.evolution.analysis.contract.source.ModuleDescriptor.create(
+                        req.snapshot().repository(), ".", "examples");
+                var childDesc = com.evolution.analysis.contract.source.ModuleDescriptor.create(
+                        req.snapshot().repository(), "mapstruct-lombok", "mapstruct-lombok");
+                var ev = List.of(new BuildModelResult.PomEvidence("pom.xml",
+                        req.workspacePoms().get("pom.xml").digest()));
+                var childEv = List.of(new BuildModelResult.PomEvidence("mapstruct-lombok/pom.xml",
+                        req.workspacePoms().get("mapstruct-lombok/pom.xml").digest()));
+                var emptyMain = new SourcePlanModel.SourceSetPlan(rootDesc.identity(), SourcePlanModel.Kind.MAIN,
+                        List.of(), List.of(),
+                        new SourcePlanModel.Setting("output", Optional.of("target/classes"), Optional.of("target/classes"), SourcePlanModel.Status.DEFAULT, SourcePlanModel.Origin.MAVEN_CONVENTION, ev),
+                        Map.of(),
+                        new SourcePlanModel.Setting("source", Optional.of("17"), Optional.of("17"), SourcePlanModel.Status.DECLARED, SourcePlanModel.Origin.EFFECTIVE_MODEL, ev),
+                        new SourcePlanModel.Setting("target", Optional.of("17"), Optional.of("17"), SourcePlanModel.Status.DECLARED, SourcePlanModel.Origin.EFFECTIVE_MODEL, ev),
+                        new SourcePlanModel.Setting("release", Optional.of("17"), Optional.of("17"), SourcePlanModel.Status.DECLARED, SourcePlanModel.Origin.EFFECTIVE_MODEL, ev),
+                        new SourcePlanModel.Setting("encoding", Optional.of("UTF-8"), Optional.of("UTF-8"), SourcePlanModel.Status.DECLARED, SourcePlanModel.Origin.EFFECTIVE_MODEL, ev),
+                        List.of(), List.of());
+                var emptyTest = new SourcePlanModel.SourceSetPlan(rootDesc.identity(), SourcePlanModel.Kind.TEST,
+                        List.of(), List.of(),
+                        new SourcePlanModel.Setting("output", Optional.of("target/test-classes"), Optional.of("target/test-classes"), SourcePlanModel.Status.DEFAULT, SourcePlanModel.Origin.MAVEN_CONVENTION, ev),
+                        Map.of(), emptyMain.syntaxLevel(), emptyMain.bytecodeTarget(), emptyMain.platformRelease(), emptyMain.encoding(), List.of(), List.of());
+                var childMain = new SourcePlanModel.SourceSetPlan(childDesc.identity(), SourcePlanModel.Kind.MAIN,
+                        List.of(new SourcePlanModel.Setting("sourceRoot", Optional.of("mapstruct-lombok/src/main/java"), Optional.of("mapstruct-lombok/src/main/java"), SourcePlanModel.Status.DEFAULT, SourcePlanModel.Origin.MAVEN_CONVENTION, childEv)),
+                        List.of(),
+                        new SourcePlanModel.Setting("output", Optional.of("mapstruct-lombok/target/classes"), Optional.of("mapstruct-lombok/target/classes"), SourcePlanModel.Status.DEFAULT, SourcePlanModel.Origin.MAVEN_CONVENTION, childEv),
+                        Map.of(),
+                        new SourcePlanModel.Setting("source", Optional.of("17"), Optional.of("17"), SourcePlanModel.Status.DECLARED, SourcePlanModel.Origin.EFFECTIVE_MODEL, childEv),
+                        new SourcePlanModel.Setting("target", Optional.of("17"), Optional.of("17"), SourcePlanModel.Status.DECLARED, SourcePlanModel.Origin.EFFECTIVE_MODEL, childEv),
+                        new SourcePlanModel.Setting("release", Optional.of("17"), Optional.of("17"), SourcePlanModel.Status.DECLARED, SourcePlanModel.Origin.EFFECTIVE_MODEL, childEv),
+                        new SourcePlanModel.Setting("encoding", Optional.of("UTF-8"), Optional.of("UTF-8"), SourcePlanModel.Status.DECLARED, SourcePlanModel.Origin.EFFECTIVE_MODEL, childEv),
+                        List.of(), List.of());
+                var childTest = new SourcePlanModel.SourceSetPlan(childDesc.identity(), SourcePlanModel.Kind.TEST,
+                        List.of(), List.of(),
+                        new SourcePlanModel.Setting("output", Optional.of("mapstruct-lombok/target/test-classes"), Optional.of("mapstruct-lombok/target/test-classes"), SourcePlanModel.Status.DEFAULT, SourcePlanModel.Origin.MAVEN_CONVENTION, childEv),
+                        Map.of(), childMain.syntaxLevel(), childMain.bytecodeTarget(), childMain.platformRelease(), childMain.encoding(), List.of(), List.of());
+                return new BuildModelResult(BuildModelResult.SCHEMA, req.identity(),
+                        new com.evolution.analysis.contract.common.VersionedIdentifier("test.maven", "1"),
+                        List.of(
+                                new BuildModelResult.ModuleModel(rootDesc, "pom.xml", Optional.empty(),
+                                        Optional.of(new BuildModelResult.EffectivePom(new MavenCoordinate("org.example", "examples", "1.0"), "pom",
+                                                List.of("mapstruct-lombok"), List.of(), List.of(), Map.of(), List.of(), ev,
+                                                new SourcePlanModel(List.of(emptyMain, emptyTest), List.of())))),
+                                new BuildModelResult.ModuleModel(childDesc, "mapstruct-lombok/pom.xml", Optional.of("pom.xml"),
+                                        Optional.of(new BuildModelResult.EffectivePom(new MavenCoordinate("org.example", "mapstruct-lombok", "1.0"), "jar",
+                                                List.of(), List.of(), List.of(), Map.of(), List.of(), childEv,
+                                                new SourcePlanModel(List.of(childMain, childTest), List.of()))))),
+                        List.of(), List.of(), BuildModelResult.DECLARATIVE_LIMITATIONS);
+            }
+            throw new AssertionError("Unexpected Maven build call for " + req.rootPom());
+        };
+
+        var model = new UniversalBuildIngestion().ingest(repoInputs,
+                new UniversalBuildIngestion.Policy(Optional.of(17), Optional.of(17), Optional.of("UTF-8"), 2048, 1_000_000, 200_000, 64),
+                Optional.of(stubMaven), Map.of(), new BuildModelPolicy(List.of(), List.of(), Map.of(), 1_000_000, 100, 64));
+
+        assertTrue(model.issues().stream().noneMatch(i -> i.reason() == IngestionEvidence.Reason.AMBIGUOUS_INPUT),
+                () -> "Unexpected AMBIGUOUS_INPUT: " + model.issues());
+        assertTrue(model.issues().stream().noneMatch(i -> i.reason() == IngestionEvidence.Reason.UNSAFE_PATH),
+                () -> "Unexpected UNSAFE_PATH: " + model.issues());
+        assertEquals(1, model.modules().stream().filter(m -> m.descriptor().path().equals("mapstruct-lombok")).count());
+        assertEquals(UniversalBuildModel.Tool.MAVEN,
+                model.modules().stream().filter(m -> m.descriptor().path().equals("mapstruct-lombok")).findFirst().orElseThrow().tool());
+
+        var usage = model.modules().stream().filter(m -> m.descriptor().path().equals("mapstruct-on-gradle-protobuf3/usage")).findFirst().orElseThrow();
+        var usageRoots = usage.sourcePlan().sourceSets().getFirst().sourceRoots().stream().flatMap(s -> s.value().stream()).toList();
+        assertTrue(usageRoots.contains("mapstruct-on-gradle-protobuf3/protobuf3-Async/src/main/java"), () -> "usageRoots=" + usageRoots);
+        assertTrue(usageRoots.contains("mapstruct-on-gradle-protobuf3/usage/build/generated/source/proto"), () -> "usageRoots=" + usageRoots);
+        var usageRes = usage.sourcePlan().sourceSets().getFirst().resourceRoots().stream().flatMap(s -> s.value().stream()).toList();
+        assertTrue(usageRes.contains("mapstruct-on-gradle-protobuf3/shared-res"), () -> "usageRes=" + usageRes);
+
+        // Enclosing Gradle aggregator prefers Gradle for included child even when child also has a standalone pom.xml.
+        var gradleParentInputs = IngestionFixtures.inputs(Map.of(
+                "settings.gradle.kts", "include(\":sub\")\n",
+                "build.gradle.kts", "plugins { java }\n",
+                "sub/build.gradle.kts", "plugins { java }\n",
+                "sub/pom.xml", "<project><artifactId>sub</artifactId></project>",
+                "sub/src/main/java/Sub.java", "class Sub {}"));
+        var gradleParentModel = new UniversalBuildIngestion().ingest(gradleParentInputs,
+                UniversalBuildIngestion.Policy.defaults(), Optional.of(stubMaven), Map.of(),
+                new BuildModelPolicy(List.of(), List.of(), Map.of(), 1_000_000, 100, 64));
+        assertTrue(gradleParentModel.issues().stream().noneMatch(i -> i.reason() == IngestionEvidence.Reason.AMBIGUOUS_INPUT));
+        assertEquals(UniversalBuildModel.Tool.GRADLE_KOTLIN,
+                gradleParentModel.modules().stream().filter(m -> m.descriptor().path().equals("sub")).findFirst().orElseThrow().tool());
+
+        // Escaping outside repository root still emits UNSAFE_PATH, and dual Groovy+Kotlin Gradle still emits AMBIGUOUS_INPUT.
+        var escaped = load(Map.of("sub/build.gradle", "sourceSets { main { java { srcDir '../../outside' } } }\n"));
+        assertTrue(escaped.issues().stream().anyMatch(i -> i.reason() == IngestionEvidence.Reason.UNSAFE_PATH));
+        var dualGradle = load(Map.of("build.gradle", "plugins { id 'java' }\n", "build.gradle.kts", "plugins { java }\n"));
+        assertTrue(dualGradle.issues().stream().anyMatch(i -> i.reason() == IngestionEvidence.Reason.AMBIGUOUS_INPUT));
+    }
 }

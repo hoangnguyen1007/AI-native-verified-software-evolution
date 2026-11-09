@@ -309,7 +309,8 @@ public final class UniversalArchitecturePipeline {
             Optional<com.evolution.analysis.javaevidence.JavaEvidenceAssembler.Prepared> prepared,
             Optional<com.evolution.analysis.javaevidence.JavaSemanticEvidence.Bundle> semantic,
             Optional<com.evolution.analysis.javaevidence.JavaCompilerAttribution.Bundle> compiler){
-        long javaFilesCount = inputs.snapshot().files().stream().filter(f -> f.path().endsWith(".java")).count();
+        long javaFilesCount = inputs.snapshot().files().stream()
+                .filter(f -> f.path().endsWith(".java") || f.path().endsWith(".kt")).count();
         if (inputs.snapshot().files().isEmpty() || javaFilesCount == 0) {
             var emptyGaps=new ArrayList<CapabilityGapRecord>(initialGaps);
             prepared.ifPresent(value->emptyGaps.add(com.evolution.analysis.javaevidence.JavaEvidenceGaps.create(value.view().object("scope"),com.evolution.analysis.javaevidence.JavaEvidenceGaps.Reason.SEMANTIC_MAPPING_UNPROVEN,value.view().identity(),value.view().identity())));
@@ -553,7 +554,7 @@ public final class UniversalArchitecturePipeline {
                         var declOpt = Optional.ofNullable(declarationsByIdentity.get(memberDecl.member()));
                         Optional<SourceSpan> span = declOpt.flatMap(d -> d.entity().declaration());
                         String path = span.map(s -> pathMap.getOrDefault(s.document(), "")).orElse("");
-                        String declaringType = path.replace('/', '.').replaceAll("\\.java$", "");
+                        String declaringType = path.replace('/', '.').replaceAll("\\.(?:java|kt)$", "");
                         if (declaringType.isEmpty()) declaringType = memberDecl.member().value();
                         entryPoints.add(new UniversalArchitectureReport.EntryPointRecord(
                                 declaringType, UniversalArchitectureReport.EntryPointKind.MAIN_METHOD,

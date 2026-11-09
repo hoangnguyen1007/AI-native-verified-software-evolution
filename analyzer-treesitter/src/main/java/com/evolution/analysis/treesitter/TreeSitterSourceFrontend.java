@@ -50,11 +50,13 @@ public final class TreeSitterSourceFrontend {
                 while(!pending.isEmpty()) {
                     check(cancelled);var frame=pending.pop();var node=frame.node();nodes++;String kind=node.getType(),category=category(kind);String owner=frame.owner();
                     if(language.equals("dart")&&kind.equals("selector")&&node.getNamedChildCount()>0&&node.getNamedChild(0).getType().equals("argument_part"))category="CALL";
+                    if(language.equals("python")&&kind.equals("argument_list")&&!node.getParent().isNull()&&node.getParent().getType().equals("class_definition"))category="HERITAGE";
                     if(node.isError()||node.isMissing()){errors++;category="ERROR";}
                     if(!category.isEmpty()&&node.getEndByte()>node.getStartByte()) {
                         var span=positions.range(node.getStartByte(),node.getEndByte(),SourceCoordinates.Encoding.UTF8);
                         var nameNode=name(node);String name=text(nameNode,utf8);String written=text(head(node),utf8);
                         if(category.equals("DECLARATION")&&nameNode!=null)written=name;
+                        else if(category.equals("HERITAGE")||category.equals("IMPORT"))written=text(node,utf8);
                         if(language.equals("dart")&&category.equals("CALL")&&kind.equals("selector")) {
                             var parent=node.getParent();written=new String(utf8,parent.getStartByte(),node.getStartByte()-parent.getStartByte(),StandardCharsets.UTF_8);
                         }

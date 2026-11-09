@@ -48,6 +48,15 @@ class PassiveReadinessDiscoveryTest {
         var app=projection.modules().stream().filter(module->module.directory().equals("app")).findFirst().orElseThrow();
         assertTrue(app.dependencies().containsAll(List.of("GRADLE:depends/utils","GRADLE:modules/exoplayer")));
     }
+    @Test void inRepoParentRelativeAndStandardBuildDirRootsResolveWithoutBuildPathUnresolved(){
+        var projection=discover(Map.of(
+                "mapstruct-on-gradle-protobuf3/settings.gradle","include 'protobuf3-Async', 'usage'\n",
+                "mapstruct-on-gradle-protobuf3/usage/build.gradle","sourceSets { main { java { srcDir '../protobuf3-Async/src/main/java'\n srcDir file(\"${buildDir}/generated/source/proto\") } } }\n"));
+        assertTrue(projection.requirements().stream().noneMatch(r->r.reason().equals("BUILD_PATH_UNRESOLVED")));
+        var main=projection.contexts().stream().filter(c->c.sourceSet().equals("main")&&c.sourceRoots().contains("mapstruct-on-gradle-protobuf3/usage/src/main")).findFirst().orElseThrow();
+        assertTrue(main.sourceRoots().contains("mapstruct-on-gradle-protobuf3/protobuf3-Async/src/main/java"));
+        assertTrue(main.sourceRoots().contains("mapstruct-on-gradle-protobuf3/usage/build/generated/source/proto"));
+    }
     private static ReadinessDiscovery.Projection discover(Map<String,String> files){
         var descriptors=new TreeMap<String,ReadinessDiscovery.Descriptor>();files.forEach((path,text)->{byte[] bytes=text.getBytes(StandardCharsets.UTF_8);descriptors.put(path,new ReadinessDiscovery.Descriptor(path,new ContentHandle(ContentDigest.sha256(bytes),bytes.length),bytes));});
         var manifest=new InventoryManifest(InventoryManifest.SCHEMA,RepositoryIdentity.fromCanonicalCoordinate("urn:test:generic-readiness"),ContentDigest.sha256Utf8("selection"),ContentDigest.sha256Utf8("inventory"),files.size(),files.size(),0,0,Optional.empty(),Optional.empty());

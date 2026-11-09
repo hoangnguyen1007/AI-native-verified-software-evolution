@@ -277,6 +277,22 @@ final class Extraction {
 
     private Optional<Unit> parse(
             JavaParser parser, SourceInput input, Optional<ReactorSourceInput> reactor) {
+        if (input.document().path().endsWith(".kt")) {
+            UnicodeSource ktSource;
+            try {
+                ktSource = UnicodeSource.translate(input.text());
+            } catch (IllegalArgumentException ignored) {
+                ktSource = UnicodeSource.translate(input.text().replace("\\u", "\\\\u"));
+            }
+            var ast = KotlinAstLowering.lower(
+                    input.document().path(), ktSource, new JavaSymbolSolver(environment.solver));
+            ast.findAll(SimpleName.class).forEach(n -> n.setIdentifier(semanticIdentifier(n.getIdentifier())));
+            ast.findAll(Name.class).forEach(n -> n.setIdentifier(semanticIdentifier(n.getIdentifier())));
+            ast.findAll(MethodReferenceExpr.class).forEach(n -> n.setIdentifier(semanticIdentifier(n.getIdentifier())));
+            var unit = new Unit(input, ast, ktSource);
+            units.put(ast, unit);
+            return Optional.of(unit);
+        }
         UnicodeSource translated;
         try{translated=UnicodeSource.translate(input.text());}
         catch(IllegalArgumentException invalid){

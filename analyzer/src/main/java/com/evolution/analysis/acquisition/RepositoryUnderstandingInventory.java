@@ -71,7 +71,7 @@ public record RepositoryUnderstandingInventory(ContentDigest identity,
                 ignored -> new ArrayList<>()).add(file.path());
         var collisions = folded.values().stream().filter(paths -> paths.size() > 1)
                 .map(paths -> paths.stream().sorted().toList()).toList();
-        JavaApplicability java = files.stream().anyMatch(f -> f.language() == Language.JAVA)
+        JavaApplicability java = files.stream().anyMatch(f -> f.language() == Language.JAVA || f.language() == Language.KOTLIN)
                 ? JavaApplicability.APPLICABLE
                 : acquisition.completion() == RepositoryAcquisitionResult.Completion.COMPLETE
                 ? JavaApplicability.NOT_APPLICABLE : JavaApplicability.UNKNOWN;

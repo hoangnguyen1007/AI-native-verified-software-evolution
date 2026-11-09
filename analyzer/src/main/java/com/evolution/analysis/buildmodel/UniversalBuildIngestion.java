@@ -57,6 +57,7 @@ public final class UniversalBuildIngestion {
         Map<String,String> projectNames=new HashMap<>();
         Map<String,UniversalBuildModel.Tool> gradleProjects=new HashMap<>();
         Map<String,BuildModelResult.PomEvidence> settingsEvidence=new HashMap<>();
+        Set<String> gradleIncludedChildren=new HashSet<>();
         for(var entry:scripts.entrySet())if(filename(entry.getKey()).startsWith("settings.")) {
             String root=directory(entry.getKey());
             var settingsTool=entry.getKey().endsWith(".kts")?UniversalBuildModel.Tool.GRADLE_KOTLIN:UniversalBuildModel.Tool.GRADLE_GROOVY;
@@ -71,11 +72,13 @@ public final class UniversalBuildIngestion {
                         if(!directories.contains(dir)&&directories.size()>=policy.maxFiles()){issue(issues,INPUT_LIMIT,entry.getKey()+"#"+statement.offset(),identity);continue;}
                         directories.add(dir);projectNames.put(dir,relative.substring(relative.lastIndexOf('/')+1));
                         gradleProjects.put(dir,settingsTool);settingsEvidence.put(dir,settingsInput);
+                        if(!dir.equals(root))gradleIncludedChildren.add(dir);
                         // Gradle also creates intermediate project descriptors for nested project paths.
                         for(int slash=relative.indexOf('/');slash>=0;slash=relative.indexOf('/',slash+1)){
                             String parent=join(root,relative.substring(0,slash));
                             if(!directories.contains(parent)&&directories.size()>=policy.maxFiles()){issue(issues,INPUT_LIMIT,entry.getKey()+"#"+statement.offset(),identity);break;}
                             directories.add(parent);projectNames.putIfAbsent(parent,filename(parent));gradleProjects.putIfAbsent(parent,settingsTool);settingsEvidence.putIfAbsent(parent,settingsInput);
+                            if(!parent.equals(root))gradleIncludedChildren.add(parent);
                         }
                     }catch(IllegalArgumentException failure){issue(issues,UNSAFE_PATH,entry.getKey()+"#"+statement.offset(),inputs.files().get(entry.getKey()).document().contentDigest());}
                 } else if(statement.syntax().matches("includeBuild(?:\\(#\\)|#)")) {
@@ -99,6 +102,7 @@ public final class UniversalBuildIngestion {
                             String dir=join(baseDir,childName);
                             if(!directories.contains(dir)&&directories.size()>=policy.maxFiles()){issue(issues,INPUT_LIMIT,entry.getKey()+"#"+statement.offset(),identity);break;}
                             directories.add(dir);projectNames.put(dir,childName);gradleProjects.put(dir,settingsTool);settingsEvidence.put(dir,settingsInput);
+                            if(!dir.equals(root))gradleIncludedChildren.add(dir);
                         }
                     }catch(IllegalArgumentException failure){issue(issues,UNSAFE_PATH,entry.getKey()+"#"+statement.offset(),settingsInput.digest());}
                 } else if(projectDirectoryAssignment(statement.syntax())) {
@@ -116,19 +120,23 @@ public final class UniversalBuildIngestion {
                 if(!gradleProjects.containsKey(oldDir)){issue(issues,DYNAMIC_BUILD_LOGIC,entry.getKey()+"#"+statement.offset(),settingsInput.digest());continue;}
                 if(!oldDir.equals(newDir)&&gradleProjects.containsKey(newDir)){issue(issues,AMBIGUOUS_INPUT,entry.getKey()+"#"+statement.offset(),settingsInput.digest());continue;}
                 String name=projectNames.getOrDefault(oldDir,filename(oldDir));projectNames.remove(oldDir);gradleProjects.remove(oldDir);settingsEvidence.remove(oldDir);
+                boolean wasChild=gradleIncludedChildren.remove(oldDir);
                 if(!scripts.containsKey(join(oldDir,"build.gradle"))&&!scripts.containsKey(join(oldDir,"build.gradle.kts"))&&!poms.containsKey(join(oldDir,"pom.xml")))directories.remove(oldDir);
                 directories.add(newDir);projectNames.put(newDir,name);gradleProjects.put(newDir,settingsTool);settingsEvidence.put(newDir,settingsInput);
+                if(wasChild&&!newDir.equals(root))gradleIncludedChildren.add(newDir);
             }catch(IllegalArgumentException failure){issue(issues,UNSAFE_PATH,entry.getKey()+"#"+statement.offset(),settingsInput.digest());}
         }
         if(directories.isEmpty())directories.add(".");
+        var orderedDirectories=directories.stream().sorted(UniversalBuildIngestion::compareDirectories).toList();
         Set<String> modeledMaven=new HashSet<>();
-        for(String dir:directories) {
+        for(String dir:orderedDirectories) {
             String pom=join(dir,"pom.xml"),groovy=join(dir,"build.gradle"),kotlin=join(dir,"build.gradle.kts");
             boolean hasPom=inputs.snapshot().files().stream().anyMatch(f->f.path().equals(pom));
             boolean hasGroovy=inputs.snapshot().files().stream().anyMatch(f->f.path().equals(groovy));
             boolean hasKotlin=inputs.snapshot().files().stream().anyMatch(f->f.path().equals(kotlin));
-            if(hasPom&&(hasGroovy||hasKotlin)||hasGroovy&&hasKotlin)issue(issues,AMBIGUOUS_INPUT,dir,identity);
-            if(hasPom) {
+            boolean useMaven=hasPom&&(modeledMaven.contains(pom)||!gradleIncludedChildren.contains(dir)||(!hasGroovy&&!hasKotlin));
+            if(!useMaven&&hasGroovy&&hasKotlin)issue(issues,AMBIGUOUS_INPUT,dir,identity);
+            if(useMaven) {
                 if(modeledMaven.contains(pom))continue;
                 if(maven.isEmpty()){issue(issues,INPUT_UNAVAILABLE,pom,identity);continue;}
                 var result=maven.orElseThrow().build(new BuildModelRequest(inputs.snapshot(),pom,poms,externalPoms,mavenPolicy));mavenResults.add(result);
@@ -145,8 +153,9 @@ public final class UniversalBuildIngestion {
                         continue;
                     }
                     var effective=module.effectivePom().orElseThrow();
+                    var sourcePlan=withMavenKotlinRoots(effective.sourcePlan(),module.module().path(),inputs.snapshot().files(),effective.inputs());
                     var projected=new UniversalBuildModel.Module(module.module(),UniversalBuildModel.Tool.MAVEN,Optional.of(module.pomPath()),
-                            Optional.of(effective.coordinate()),effective.sourcePlan(),List.of(),effective.inputs());
+                            Optional.of(effective.coordinate()),sourcePlan,List.of(),effective.inputs());
                     var prior=modules.stream().filter(candidate->candidate.descriptor().identity().equals(projected.descriptor().identity())).findFirst();
                     if(prior.isEmpty())modules.add(projected);
                     else if(!prior.orElseThrow().equals(projected))issue(issues,AMBIGUOUS_INPUT,module.pomPath(),result.identity());
@@ -183,8 +192,17 @@ public final class UniversalBuildIngestion {
                 model.finish(inputs.snapshot().files());
             }
             if(tool==UniversalBuildModel.Tool.PLAIN_JAVA) {
-                boolean conventional=inputs.snapshot().files().stream().anyMatch(f->f.path().startsWith(join(dir,"src/main/java")+"/")&&f.path().endsWith(".java"));
-                if(!conventional)model.mainRoots=List.of(inputs.snapshot().files().stream().anyMatch(f->f.path().startsWith(join(dir,"src")+"/")&&f.path().endsWith(".java"))?join(dir,"src"):dir);
+                boolean conventional=inputs.snapshot().files().stream().anyMatch(f->f.path().startsWith(join(dir,"src/main/java")+"/")&&f.path().endsWith(".java")
+                        ||f.path().startsWith(join(dir,"src/main/kotlin")+"/")&&f.path().endsWith(".kt"));
+                if(!conventional)model.mainRoots=List.of(inputs.snapshot().files().stream().anyMatch(f->f.path().startsWith(join(dir,"src")+"/")&&(f.path().endsWith(".java")||f.path().endsWith(".kt")))?join(dir,"src"):dir);
+                else if(Projection.hasFilesUnder(inputs.snapshot().files(),join(dir,"src/main/kotlin"))) {
+                    var extra=new ArrayList<>(model.mainRoots);String ktRoot=join(dir,"src/main/kotlin");
+                    if(!extra.contains(ktRoot))extra.add(ktRoot);model.mainRoots=List.copyOf(extra);
+                }
+                if(Projection.hasFilesUnder(inputs.snapshot().files(),join(dir,"src/test/kotlin"))) {
+                    var extra=new ArrayList<>(model.testRoots);String ktTest=join(dir,"src/test/kotlin");
+                    if(!extra.contains(ktTest))extra.add(ktTest);model.testRoots=List.copyOf(extra);
+                }
             }
             Optional<MavenCoordinate> coordinate=Optional.empty();
             if(model.group!=null&&model.version!=null&&projectNames.containsKey(dir))try{coordinate=Optional.of(new MavenCoordinate(model.group,descriptor.displayName(),model.version));}
@@ -359,23 +377,27 @@ public final class UniversalBuildIngestion {
                             } else {if(explicitSource||explicitTarget)gap(s);releaseOption=true;syntax=Optional.of(level);platform=syntax;target=syntax;declared.addAll(List.of("source","target","release"));}handled=true;
                         }catch(IllegalArgumentException failure){if(s.key().equals("sourceCompatibility"))syntax=Optional.empty();else if(s.key().equals("targetCompatibility"))target=Optional.empty();else {syntax=Optional.empty();platform=Optional.empty();target=Optional.empty();}gap(s);handled=true;}
                     } else if((shape.equals("options.encoding=#")&&context.equals("javaCompile"))||(shape.equals("encoding=#")&&(context.equals("java")||context.equals("android.compileOptions")))){try{encoding=Optional.of(literal(s));declared.add("encoding");}catch(IllegalArgumentException failure){encoding=Optional.empty();gap(s);}handled=true;}
-                    else if((s.key().equals("srcDirs")||s.key().equals("srcDir")||s.key().equals("setSrcDirs"))
+                    else if((s.key().equals("srcDirs")||s.key().equals("srcDir")||s.key().equals("setSrcDirs")||s.key().equals("resourceDirs"))
                             &&context.matches("sourceSets\\.[A-Za-z][A-Za-z0-9_]*\\.(?:java|resources)")) {
-                        try {
-                            if(s.strings().isEmpty()||!shape.matches("(?:srcDir|srcDirs|setSrcDirs)(?:\\(#(?:,#)*\\)|#|=\\[#(?:,#)*\\])"))throw new IllegalArgumentException();
-                            var roots=s.strings().stream().map(p->join(dir,p)).toList();
-                            String setName=context.split("\\.")[1];
-                            boolean test=setName.equals("test"),main=setName.equals("main"),resource=context.endsWith(".resources");
-                            declaredRoots.addAll(roots);
-                            boolean replace=s.key().equals("setSrcDirs")||shape.startsWith("srcDirs=");
-                            var prior=test?(resource?testResources:testRoots):main?(resource?mainResources:mainRoots)
-                                    :(resource?customResources.get(setName):customRoots.get(setName));
-                            if(!replace)roots=java.util.stream.Stream.concat(prior.stream(),roots.stream()).distinct().toList();
-                            if(test&&resource)testResources=roots;else if(test)testRoots=roots;
-                            else if(main&&resource)mainResources=roots;else if(main)mainRoots=roots;
-                            else if(resource)customResources.put(setName,roots);else customRoots.put(setName,roots);
-                            handled=true;
-                        }catch(IllegalArgumentException failure){issue(issues,UNSAFE_PATH,dir+"#"+s.offset(),identity);handled=true;}
+                        if(s.strings().isEmpty()||!shape.matches(SRC_DIR_SHAPE)){gap(s);handled=true;}
+                        else {
+                            var expanded=s.strings().stream().map(p->expandStandardBuildDirs(interpolate(p))).toList();
+                            if(expanded.stream().anyMatch(p->p.contains("$"))){gap(s);handled=true;}
+                            else try {
+                                var roots=expanded.stream().map(p->join(dir,p)).toList();
+                                String setName=context.split("\\.")[1];
+                                boolean test=setName.equals("test"),main=setName.equals("main"),resource=context.endsWith(".resources")||s.key().equals("resourceDirs");
+                                declaredRoots.addAll(roots);
+                                boolean replace=s.key().equals("setSrcDirs")||shape.startsWith("srcDirs=")||shape.startsWith("resourceDirs=");
+                                var prior=test?(resource?testResources:testRoots):main?(resource?mainResources:mainRoots)
+                                        :(resource?customResources.get(setName):customRoots.get(setName));
+                                if(!replace)roots=java.util.stream.Stream.concat(prior.stream(),roots.stream()).distinct().toList();
+                                if(test&&resource)testResources=roots;else if(test)testRoots=roots;
+                                else if(main&&resource)mainResources=roots;else if(main)mainRoots=roots;
+                                else if(resource)customResources.put(setName,roots);else customRoots.put(setName,roots);
+                                handled=true;
+                            }catch(IllegalArgumentException failure){issue(issues,UNSAFE_PATH,dir+"#"+s.offset(),identity);handled=true;}
+                        }
                     } else if(context.startsWith("android")||context.startsWith("kotlin")||context.equals("javaCompile")) {
                         handled=true;
                     }
@@ -661,7 +683,50 @@ public final class UniversalBuildIngestion {
         Setting setting(String key,Optional<String> value,Origin origin){return new Setting(key,value,value,value.isEmpty()?Status.UNSPECIFIED:
                 Set.of(Origin.GRADLE_CONVENTION,Origin.PLAIN_JAVA_CONVENTION).contains(origin)?Status.DEFAULT:Status.DECLARED,value.isEmpty()?Origin.ABSENT:origin,evidence);}
     }
+    private static SourcePlanModel withMavenKotlinRoots(SourcePlanModel plan,String dir,List<SnapshotFile> files,List<BuildModelResult.PomEvidence> inputs) {
+        String ktMain=join(dir,"src/main/kotlin"),ktTest=join(dir,"src/test/kotlin");
+        boolean hasKtMain=Projection.hasFilesUnder(files,ktMain),hasKtTest=Projection.hasFilesUnder(files,ktTest);
+        if(!hasKtMain&&!hasKtTest)return plan;
+        var updatedSets=new ArrayList<SourceSetPlan>();
+        for(var set:plan.sourceSets()) {
+            String candidate=set.kind()==Kind.MAIN&&hasKtMain?ktMain:set.kind()==Kind.TEST&&hasKtTest?ktTest:null;
+            if(candidate!=null&&set.sourceRoots().stream().flatMap(r->r.value().stream()).noneMatch(candidate::equals)) {
+                var roots=new ArrayList<>(set.sourceRoots());
+                roots.add(new Setting("sourceRoot",Optional.of(candidate),Optional.of(candidate),Status.DEFAULT,Origin.MAVEN_CONVENTION,inputs));
+                updatedSets.add(new SourceSetPlan(set.module(),set.kind(),set.name(),set.semanticRole(),roots,set.resourceRoots(),
+                        set.outputDirectory(),set.compilerSettings(),set.syntaxLevel(),set.bytecodeTarget(),
+                        set.platformRelease(),set.encoding(),set.generatedSourceHints(),set.gaps()));
+            } else updatedSets.add(set);
+        }
+        return new SourcePlanModel(updatedSets,plan.plugins());
+    }
+    private static final String PATH_EXPR="(?:#|(?:file|files)\\(#(?:,#)*\\))";
+    private static final String PATH_LIST=PATH_EXPR+"(?:,"+PATH_EXPR+")*";
+    private static final String SRC_DIR_SHAPE="(?:srcDir|srcDirs|resourceDirs)(?:\\("+PATH_LIST+"\\)|"+PATH_EXPR
+            +"|\\+=(?:"+PATH_EXPR+"|\\["+PATH_LIST+"\\]|(?:listOf|setOf)\\("+PATH_LIST+"\\))"
+            +"|=(?:\\["+PATH_LIST+"\\]|files\\(#(?:,#)*\\)|(?:listOf|setOf)\\("+PATH_LIST+"\\)))"
+            +"|setSrcDirs\\((?:"+PATH_LIST+"|\\["+PATH_LIST+"\\]|(?:listOf|setOf)\\("+PATH_LIST+"\\))\\)";
     private static String directory(String path){int i=path.lastIndexOf('/');return i<0?".":path.substring(0,i);}
+    private static int compareDirectories(String left,String right) {
+        if(left.equals(right))return 0;
+        if(left.equals("."))return -1;
+        if(right.equals("."))return 1;
+        String[] a=left.split("/"),b=right.split("/");
+        for(int i=0;i<Math.min(a.length,b.length);i++){int cmp=a[i].compareTo(b[i]);if(cmp!=0)return cmp;}
+        return Integer.compare(a.length,b.length);
+    }
+    public static String expandStandardBuildDirs(String path) {
+        if(path==null||!path.contains("$"))return path;
+        return path.replace("${project.buildDir}","build").replace("${buildDir}","build")
+                .replaceAll("\\$project\\.buildDir(?![A-Za-z0-9_])","build")
+                .replaceAll("\\$buildDir(?![A-Za-z0-9_])","build")
+                .replace("${project.projectDir}",".").replace("${projectDir}",".")
+                .replaceAll("\\$project\\.projectDir(?![A-Za-z0-9_])",".")
+                .replaceAll("\\$projectDir(?![A-Za-z0-9_])",".");
+    }
+    public static Optional<String> normalizeRepositoryPath(String path) {
+        try{return Optional.of(join(".",path));}catch(IllegalArgumentException unsafe){return Optional.empty();}
+    }
     private static boolean fixedVersion(String version) {
         if(version==null||version.isBlank())return false;
         String upper=version.toUpperCase(Locale.ROOT);
@@ -670,6 +735,23 @@ public final class UniversalBuildIngestion {
                 &&!upper.equals("LATEST")&&!upper.equals("RELEASE")&&!version.startsWith("latest.");
     }
     private static String filename(String path){return path.substring(path.lastIndexOf('/')+1);}
-    private static String join(String dir,String path){ContractChecks.repositoryRelativePath(path,"build path");String result=dir.equals(".")?path:dir+"/"+path;return ContractChecks.repositoryRelativePath(result,"build path");}
+    static String join(String dir,String path) {
+        ContractChecks.text(path,"build path");
+        if(path.startsWith("/")||path.contains("\\")||path.contains(":")||path.indexOf('\0')>=0)
+            throw new IllegalArgumentException("Unsafe build path: "+path);
+        var parts=new ArrayDeque<String>();
+        if(!dir.equals("."))for(String seg:dir.split("/"))if(!seg.isEmpty()&&!seg.equals("."))parts.addLast(seg);
+        for(String seg:path.split("/",-1)) {
+            if(seg.isEmpty()||seg.equals("."))continue;
+            if(seg.equals("..")) {
+                if(parts.isEmpty())throw new IllegalArgumentException("Build path escapes repository root: "+path);
+                parts.removeLast();
+            } else {
+                ContractChecks.repositoryRelativePath(seg,"build path");
+                parts.addLast(seg);
+            }
+        }
+        return parts.isEmpty()?".":String.join("/",parts);
+    }
     private static void issue(List<IngestionEvidence.Issue> issues,IngestionEvidence.Reason reason,String subject,ContentDigest input){issues.add(new IngestionEvidence.Issue(reason,subject,List.of(input)));}
 }

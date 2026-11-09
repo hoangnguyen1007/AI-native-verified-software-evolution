@@ -18,5 +18,7 @@ class JavaGrpcSourceFrontendTest {
         var facts=new ArrayList<JavaGrpcSourceFrontend.Fact>();new JavaGrpcSourceFrontend().parse(text.getBytes(StandardCharsets.UTF_8),facts::add,()->false);assertTrue(facts.isEmpty());
         assertThrows(java.io.IOException.class,()->new JavaGrpcSourceFrontend().parse("class Grpc { String x=\"\\u0020\"; }".getBytes(StandardCharsets.UTF_8),facts::add,()->false));
         assertThrows(java.io.IOException.class,()->new JavaGrpcSourceFrontend().parse(new byte[0],facts::add,()->true));
+        assertFalse(JavaGrpcSourceFrontend.candidate("class Localization { String bullet = \"\\u2022\"; }".getBytes(StandardCharsets.UTF_8)));
+        assertTrue(JavaGrpcSourceFrontend.candidate("class Ads extends shop.AdServiceGrpc.AdServiceImplBase {}".getBytes(StandardCharsets.UTF_8)));
     }
 }

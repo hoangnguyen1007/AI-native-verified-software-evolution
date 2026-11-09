@@ -43,8 +43,13 @@ public final class GradleScan {
                 var slots=new ArrayList<UniversalSourceIngestion.ReactorSlot>();
                 for(var peer:peers)slots.add(new UniversalSourceIngestion.ReactorSlot(peer,slots.size()));
                 var resolution=new UniversalSourceIngestion.Resolution(platform.orElseThrow(),row.binaries(),row.identity(),Optional.empty(),false,slots);
-                var existing=resolutions.putIfAbsent(row.sourceSet(),resolution);
-                if(existing!=null&&!existing.equals(resolution)){resolutions.remove(row.sourceSet());gaps.add(gap(context,build,row.identity(),new GradleDependencyArtifactResolver.Problem("GRADLE_SOURCE_SET_CONFLICT",row.sourceSet().toString())));}
+                boolean gradleSelected=build.modules().stream().anyMatch(m->m.descriptor().identity().equals(row.sourceSet().module())
+                        &&(m.tool()==UniversalBuildModel.Tool.GRADLE_GROOVY||m.tool()==UniversalBuildModel.Tool.GRADLE_KOTLIN));
+                if(gradleSelected)resolutions.put(row.sourceSet(),resolution);
+                else {
+                    var existing=resolutions.putIfAbsent(row.sourceSet(),resolution);
+                    if(existing!=null&&!existing.equals(resolution)){resolutions.remove(row.sourceSet());gaps.add(gap(context,build,row.identity(),new GradleDependencyArtifactResolver.Problem("GRADLE_SOURCE_SET_CONFLICT",row.sourceSet().toString())));}
+                }
             }
             for(var problem:row.problems()){reasons.merge(problem.reason(),1L,Long::sum);gaps.add(gap(context,build,row.identity(),problem));}
         }

@@ -120,4 +120,34 @@ class StreamingRepositoryAcquirerTest {
             assertEquals(JobJournal.State.WAITING_FOR_INPUT,store.get("pinned").orElseThrow().state());
         }
     }
+    @Test void symbolicLinkEntriesAreSkippedInCompatibilityWithExplicitExclusionProvenance()throws Exception{
+        var cas=new StreamingContentStore(temp.resolve("cas"));
+        try(var store=new SqliteInventoryStore(temp.resolve("metadata"),cas)){
+            byte[] pomBytes="<project/>".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            byte[] javaBytes="class Main {}".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            byte[] targetBytes="Main.java".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            var pomHandle=cas.put(new ByteArrayInputStream(pomBytes),()->false);
+            var javaHandle=cas.put(new ByteArrayInputStream(javaBytes),()->false);
+            var linkHandle=cas.put(new ByteArrayInputStream(targetBytes),()->false);
+            var req=request();
+            var job=store.create("symlink-rev",req.identity(),Optional.empty());
+            job=store.transition("symlink-rev",job.revision(),JobJournal.State.RUNNING,"",Optional.empty());
+            store.entries("symlink-rev",List.of(
+                    new SqliteInventoryStore.Observation(new InventoryEntry(LogicalPath.utf8("pom.xml"),InventoryEntry.Kind.FILE,"100644",InventoryEntry.Population.BUILD,InventoryEntry.Disposition.ACQUIRED,Optional.of(pomHandle),Optional.empty(),Optional.empty(),List.of(),Optional.empty()),"1"),
+                    new SqliteInventoryStore.Observation(new InventoryEntry(LogicalPath.utf8("src/Main.java"),InventoryEntry.Kind.FILE,"100644",InventoryEntry.Population.SOURCE,InventoryEntry.Disposition.ACQUIRED,Optional.of(javaHandle),Optional.empty(),Optional.empty(),List.of(),Optional.empty()),"2"),
+                    new SqliteInventoryStore.Observation(new InventoryEntry(LogicalPath.utf8("src/Linked.java"),InventoryEntry.Kind.SYMBOLIC_LINK,"120000",InventoryEntry.Population.SOURCE,InventoryEntry.Disposition.ACQUIRED,Optional.of(linkHandle),Optional.of("Main.java"),Optional.empty(),List.of(),Optional.empty()),"3")));
+            job=store.transition("symlink-rev",job.revision(),JobJournal.State.RUNNING,"FRONTIER_CLOSED",Optional.empty());
+            var manifest=store.seal("symlink-rev",repo,req.identity());
+            store.transition("symlink-rev",job.revision(),JobJournal.State.COMPLETE,"",Optional.empty());
+
+            var compatReq=new RepositoryAcquisitionRequest(repo,Optional.empty(),true,"pom.xml",
+                    new RepositoryAcquisitionPolicy(100,100,10_000,100_000,64,List.of()));
+            var view=new StreamingRepositoryAcquirer(cas,store).compatibility("symlink-rev",compatReq,e->true);
+            assertEquals(List.of("pom.xml","src/Main.java"),view.files().stream().map(AcquiredFile::path).toList());
+            assertTrue(view.attempts().stream().anyMatch(a->a.kind()==RepositoryAcquisitionResult.AttemptKind.EXCLUSION
+                    &&a.subject().equals("src/Linked.java")&&a.outcome()==RepositoryAcquisitionResult.Outcome.EXCLUDED));
+            assertTrue(RepositoryUnderstandingInventory.from(view).excludedPaths().contains("src/Linked.java"));
+            assertEquals(manifest,store.manifest("symlink-rev").orElseThrow());
+        }
+    }
 }

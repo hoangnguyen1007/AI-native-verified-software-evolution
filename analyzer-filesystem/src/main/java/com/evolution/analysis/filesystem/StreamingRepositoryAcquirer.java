@@ -173,13 +173,20 @@ public final class StreamingRepositoryAcquirer {
     }
     public RepositoryAcquisitionResult compatibility(String revision,RepositoryAcquisitionRequest request,Predicate<InventoryEntry> selected,String selectionPolicy)throws IOException{
         if(inventory.manifest(revision).isEmpty())throw new IOException("INVENTORY_NOT_SEALED");
-        var files=new ArrayList<AcquiredFile>();var directories=new TreeSet<String>();directories.add(".");long bytes=0;Optional<String> cursor=Optional.empty();
+        var files=new ArrayList<AcquiredFile>();var directories=new TreeSet<String>();directories.add(".");
+        var skippedLinks=new ArrayList<String>();var attempts=new ArrayList<RepositoryAcquisitionResult.Attempt>();
+        long bytes=0;Optional<String> cursor=Optional.empty();
         do{var page=inventory.page(revision,256,cursor);for(var e:page.entries()){
             if(e.disposition()!=Disposition.ACQUIRED||!selected.test(e))continue;
             String path=e.path().utf8().orElseThrow(()->new IOException("V1_PATH_UNREPRESENTABLE"));
             if(path.chars().filter(c->c=='/').count()>request.policy().maxDepth())throw new IOException("COMPATIBILITY_WORKER_REQUIRED");
             try{ContractChecks.repositoryRelativePath(path,"v1 path");}catch(IllegalArgumentException invalid){throw new IOException("V1_PATH_UNREPRESENTABLE");}
             if(e.kind()==Kind.DIRECTORY){if(directories.size()>=request.policy().maxDirectories())throw new IOException("COMPATIBILITY_WORKER_REQUIRED");directories.add(path);continue;}
+            if(e.kind()==Kind.SYMBOLIC_LINK){
+                skippedLinks.add(path);
+                attempts.add(new RepositoryAcquisitionResult.Attempt(RepositoryAcquisitionResult.AttemptKind.EXCLUSION,path,RepositoryAcquisitionResult.Outcome.EXCLUDED,Optional.empty()));
+                continue;
+            }
             if(e.kind()!=Kind.FILE)throw new IOException("V1_KIND_UNREPRESENTABLE");var handle=e.content().orElseThrow();bytes=Math.addExact(bytes,handle.size());
             for(int slash=path.lastIndexOf('/');slash>0;slash=path.lastIndexOf('/',slash-1)){directories.add(path.substring(0,slash));if(directories.size()>request.policy().maxDirectories())throw new IOException("COMPATIBILITY_WORKER_REQUIRED");}
             if(files.size()>=request.policy().maxFiles()||handle.size()>request.policy().maxFileBytes()||bytes>request.policy().maxTotalBytes())throw new IOException("COMPATIBILITY_WORKER_REQUIRED");
@@ -187,9 +194,12 @@ public final class StreamingRepositoryAcquirer {
         }cursor=page.continuation();}while(cursor.isPresent());
         var snapshot=RepositorySnapshot.create(request.repository(),request.revision(),request.dirty(),files.stream().map(f->new SnapshotFile(f.path(),f.contentDigest())).toList(),List.of());
         var problems=files.stream().noneMatch(f->f.path().equals(request.rootPom()))?List.of(new RepositoryAcquisitionResult.Problem(RepositoryAcquisitionResult.Reason.MISSING_ROOT_POM,request.rootPom(),RepositoryAcquisitionResult.Requirement.BUILD_MODEL_INPUT)):List.<RepositoryAcquisitionResult.Problem>of();
-        var selection=Map.of("schema","compatibility.selection:m8.4-v2","inventory",inventory.manifest(revision).orElseThrow().inventory(),"request",request.identity(),"snapshot",snapshot.identity(),"selectedFiles",files.size(),"selectedBytes",bytes,"selectionPolicy",Objects.requireNonNull(selectionPolicy));
+        var baseSelection=Map.<String,Object>of("schema","compatibility.selection:m8.4-v2","inventory",inventory.manifest(revision).orElseThrow().inventory(),"request",request.identity(),"snapshot",snapshot.identity(),"selectedFiles",files.size(),"selectedBytes",bytes,"selectionPolicy",Objects.requireNonNull(selectionPolicy));
+        Map<String,Object> selection;
+        if(skippedLinks.isEmpty())selection=baseSelection;
+        else{var extended=new TreeMap<>(baseSelection);extended.put("skippedSymbolicLinks",List.copyOf(skippedLinks));selection=Map.copyOf(extended);}
         var handle=content.put(new ByteArrayInputStream(CanonicalJson.write(selection).getBytes(java.nio.charset.StandardCharsets.UTF_8)),()->false);
         var selectionIdentity=CanonicalJson.sha256(selection);inventory.create(revision+".compat."+selectionIdentity.value().substring(7),selectionIdentity,Optional.of(handle));
-        return new RepositoryAcquisitionResult(RepositoryAcquisitionResult.SCHEMA,request,new VersionedIdentifier("repository.cas-compatibility","m8.4-v2"),RepositoryAcquisitionResult.Completion.COMPLETE,Optional.of(snapshot),files,List.copyOf(directories),problems,List.of(),RepositoryAcquisitionResult.LIMITATIONS);
+        return new RepositoryAcquisitionResult(RepositoryAcquisitionResult.SCHEMA,request,new VersionedIdentifier("repository.cas-compatibility","m8.4-v2"),RepositoryAcquisitionResult.Completion.COMPLETE,Optional.of(snapshot),files,List.copyOf(directories),problems,attempts,RepositoryAcquisitionResult.LIMITATIONS);
     }
 }

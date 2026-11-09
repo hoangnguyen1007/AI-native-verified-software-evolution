@@ -125,9 +125,9 @@ public final class PassiveReadinessDiscovery implements ReadinessDiscovery {
             if(statement.key().equals("sourceSets"))for(var set:statement.body()){
                 if(!set.key().matches("[A-Za-z][A-Za-z0-9_]*")){unknown.add(root.id()+":dynamic-source-sets");continue;}
                 var paths=new ArrayList<String>();boolean replaces=false;
-                for(var language:set.body())for(var source:language.body())if(Set.of("srcDir","srcDirs","setSrcDirs").contains(source.key())){
-                    replaces|=source.key().equals("setSrcDirs")||source.syntax().startsWith("srcDirs=");
-                    for(String path:source.strings())try{paths.add(resolve(dir,path));}
+                for(var language:set.body())for(var source:language.body())if(Set.of("srcDir","srcDirs","setSrcDirs","resourceDirs").contains(source.key())){
+                    replaces|=source.key().equals("setSrcDirs")||source.syntax().startsWith("srcDirs=")||source.syntax().startsWith("resourceDirs=");
+                    for(String path:source.strings())try{paths.add(resolve(dir,UniversalBuildIngestion.expandStandardBuildDirs(path)));}
                     catch(IllegalArgumentException unsafe){requirements.add(requirement(Kind.DISCOVERY,dir,"BUILD_PATH_UNRESOLVED",List.of(),evidence));}
                 }
                 if(!replaces)paths.addFirst(resolve(dir,"src/"+set.key()));

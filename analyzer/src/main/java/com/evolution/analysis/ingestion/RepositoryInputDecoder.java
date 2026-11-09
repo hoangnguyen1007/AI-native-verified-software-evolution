@@ -59,12 +59,26 @@ public final class RepositoryInputDecoder {
                 }
                 var document = SourceDocument.create(snapshot.repository(), provisionalModule,
                         file.path(), file.contentDigest(), classification(file.path()));
+                var detectedBom = SourceInput.Bom.detect(file.bytes());
+                String charset = selectCharset(policy.charset(), detectedBom);
                 try {
-                    var decoding = new SourceInput.Decoding("source-decoding-v1", policy.charset(),
+                    var decoding = new SourceInput.Decoding("source-decoding-v1", charset,
                             SourceInput.EncodingOrigin.ANALYSIS_POLICY, List.of(),
-                            SourceInput.Bom.detect(file.bytes()), SourceInput.LineEndings.from(""));
+                            detectedBom, SourceInput.LineEndings.from(""));
                     decoded.put(file.path(), new SourceInput(document, file.bytes(), decoding));
                 } catch (FrontendInputException failure) {
+                    if (isProperties(file.path()) && detectedBom == SourceInput.Bom.NONE
+                            && !"ISO-8859-1".equalsIgnoreCase(charset)) {
+                        try {
+                            var fallback = new SourceInput.Decoding("source-decoding-v1", "ISO-8859-1",
+                                    SourceInput.EncodingOrigin.ANALYSIS_POLICY, List.of(),
+                                    SourceInput.Bom.NONE, SourceInput.LineEndings.from(""));
+                            decoded.put(file.path(), new SourceInput(document, file.bytes(), fallback));
+                            continue;
+                        } catch (FrontendInputException ignored) {
+                            // Retain MALFORMED_INPUT below if ISO-8859-1 fallback ever fails.
+                        }
+                    }
                     issues.add(new IngestionEvidence.Issue(IngestionEvidence.Reason.MALFORMED_INPUT,
                             file.path(), List.of(file.contentDigest())));
                 }
@@ -79,19 +93,32 @@ public final class RepositoryInputDecoder {
         return new Result(identity, inventory, output, sorted, gaps.stream().sorted().toList());
     }
 
+    private static String selectCharset(String policyCharset, SourceInput.Bom detectedBom) {
+        return switch (detectedBom) {
+            case UTF8 -> "UTF-8";
+            case UTF16_BE -> "UTF-16".equalsIgnoreCase(policyCharset) ? "UTF-16" : "UTF-16BE";
+            case UTF16_LE -> "UTF-16".equalsIgnoreCase(policyCharset) ? "UTF-16" : "UTF-16LE";
+            case NONE -> policyCharset;
+        };
+    }
+
+    private static boolean isProperties(String path) {
+        return path.substring(path.lastIndexOf('/') + 1).toLowerCase(Locale.ROOT).endsWith(".properties");
+    }
+
     private static boolean isText(String path) {
         String name = path.substring(path.lastIndexOf('/') + 1).toLowerCase(Locale.ROOT);
         return name.equals("pom.xml") || name.equals("build.gradle") || name.equals("build.gradle.kts")
                 || name.equals("settings.gradle") || name.equals("settings.gradle.kts")
                 || name.equals("spring.factories") || name.endsWith(".imports")
-                || name.endsWith(".java") || name.endsWith(".xml")
+                || name.endsWith(".java") || name.endsWith(".kt") || name.endsWith(".xml")
                 || name.endsWith(".properties") || name.endsWith(".yml") || name.endsWith(".yaml")
                 || name.endsWith(".json") || name.endsWith(".toml") || name.endsWith(".lockfile");
     }
     private static SourceClassification classification(String path) {
         String lower = "/" + path.toLowerCase(Locale.ROOT) + "/";
         if (lower.contains("/src/test/") || lower.contains("/test/")) return SourceClassification.TEST;
-        if (lower.endsWith(".java/")) return SourceClassification.MAIN;
+        if (lower.endsWith(".java/") || lower.endsWith(".kt/")) return SourceClassification.MAIN;
         return SourceClassification.OTHER;
     }
 }

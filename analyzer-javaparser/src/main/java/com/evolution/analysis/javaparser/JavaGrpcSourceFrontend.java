@@ -25,8 +25,6 @@ public final class JavaGrpcSourceFrontend {
         for(int i=0;i<bytes.length;i++) {
             if(bytes[i]=='G'&&i+3<bytes.length&&bytes[i+1]=='r'&&bytes[i+2]=='p'&&bytes[i+3]=='c')return true;
             if(bytes[i]=='G'&&i+6<bytes.length&&bytes[i+1]==0&&bytes[i+2]=='r'&&bytes[i+3]==0&&bytes[i+4]=='p'&&bytes[i+5]==0&&bytes[i+6]=='c')return true;
-            if(bytes[i]=='\\'&&i+1<bytes.length&&bytes[i+1]=='u')return true;
-            if(bytes[i]=='\\'&&i+2<bytes.length&&bytes[i+1]==0&&bytes[i+2]=='u')return true;
         }
         return false;
     }

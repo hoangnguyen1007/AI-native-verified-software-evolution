@@ -86,9 +86,12 @@ public final class UniversalSourceIngestion {
         var plans=build.modules().stream().flatMap(m->m.sourcePlan().sourceSets().stream()).toList();
         var issues=new ArrayList<IngestionEvidence.Issue>();var rows=new ArrayList<SourceRow>();
         Map<SourceSet,List<SourceInput>> owned=new HashMap<>();Set<SourceSet> incomplete=new HashSet<>();
-        for(var file:inputs.snapshot().files())if(file.path().endsWith(".java")) {
-            var claims=plans.stream().filter(p->p.sourceRoots().stream().flatMap(r->r.value().stream()).anyMatch(root->root.equals(".")||file.path().startsWith(root+"/")))
+        for(var file:inputs.snapshot().files())if(file.path().endsWith(".java")||file.path().endsWith(".kt")) {
+            var claims=plans.stream().filter(p->p.sourceRoots().stream().flatMap(r->r.value().stream())
+                    .flatMap(root->UniversalBuildIngestion.normalizeRepositoryPath(root).stream())
+                    .anyMatch(root->root.equals(".")||file.path().startsWith(root+"/")))
                     .map(p->new SourceSet(p.module(),p.kind(),p.name())).distinct().toList();
+            if(file.path().endsWith(".kt")&&claims.isEmpty())continue;
             var original=inputs.files().get(file.path());
             var claimedPlan=claims.size()==1?plans.stream().filter(p->p.module().equals(claims.getFirst().module())
                     &&p.kind()==claims.getFirst().kind()&&p.name().equals(claims.getFirst().name()))
@@ -121,7 +124,9 @@ public final class UniversalSourceIngestion {
             var resources=new ArrayList<SourcePlanModel.Setting>();
             if(plan.semanticRole()==SourceClassification.TEST)plans.stream().filter(p->p.module().equals(plan.module())&&p.kind()==SourcePlanModel.Kind.MAIN).forEach(p->resources.addAll(p.resourceRoots()));
             resources.addAll(plan.resourceRoots());
-            var locations=resources.stream().flatMap(r->r.value().stream()).flatMap(p->java.util.stream.Stream.of(p,p.equals(".")?"config":p+"/config")).distinct().toList();
+            var locations=resources.stream().flatMap(r->r.value().stream())
+                    .flatMap(root->UniversalBuildIngestion.normalizeRepositoryPath(root).stream())
+                    .flatMap(p->java.util.stream.Stream.of(p,p.equals(".")?"config":p+"/config")).distinct().toList();
             var defaults=ConfigDataIngestion.Policy.defaults();var config=new ConfigDataIngestion().ingest(inputs,new ConfigDataIngestion.Policy(locations,List.of(),Map.of(),defaults.maxDocuments(),defaults.maxCharacters(),defaults.maxDepth(),defaults.maxProperties()));
             if(!owned.getOrDefault(key,List.of()).isEmpty()) {
                 if(resolution==null)issues.add(new IngestionEvidence.Issue(CLASSPATH_RESOLUTION_REQUIRED,key.toString(),List.of(identity)));

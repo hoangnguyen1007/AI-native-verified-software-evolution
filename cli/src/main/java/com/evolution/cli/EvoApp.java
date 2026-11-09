@@ -645,7 +645,7 @@ public final class EvoApp {
             var platform=new FilesystemJdkPlatformProvider().acquire(Workspace.safe(resolve(jdk)),new PlatformSymbolRequest(release,128,128_000_000,512_000_000));var defaults=UniversalBuildIngestion.Policy.defaults();
             var cachePath=Workspace.safe(resolve(mavenCache));
             var models=MavenScan.models(acquisition,cachePath,repositories);
-            var gradleModel=com.evolution.backend.analysis.GradleScan.model(acquisition,new UniversalBuildIngestion.Policy(Optional.of(release),Optional.of(release),Optional.of("UTF-8"),defaults.maxFiles(),defaults.maxCharacters(),defaults.maxTokens(),defaults.maxDepth()),new RepositoryInputDecoder.Policy("UTF-8",10_000,10_000_000),Map.of());
+            var gradleModel=com.evolution.backend.analysis.GradleScan.model(acquisition,new UniversalBuildIngestion.Policy(Optional.of(release),Optional.of(release),Optional.of("UTF-8"),32_768,defaults.maxCharacters(),defaults.maxTokens(),128),new RepositoryInputDecoder.Policy("UTF-8",500_000,10_000_000),Map.of());
             var requiredReleases=new TreeSet<>(MavenScan.platformReleases(models));requiredReleases.addAll(com.evolution.backend.analysis.GradleScan.platformReleases(gradleModel));
             var platformViews=new TreeMap<Integer,PlatformSymbolResult>();platformViews.put(release,platform);
             var additionalPlatforms=new ArrayList<PlatformSymbolResult>();
@@ -662,10 +662,10 @@ public final class EvoApp {
             // Supply fallback evidence without Builder.defaultPlatform's Maven user-property overrides.
             // Declared Maven release/encoding must keep their authority over CLI defaults.
             var policy=new UniversalArchitecturePipeline.Policy(
-                    new UniversalBuildIngestion.Policy(Optional.of(release),Optional.of(release),Optional.of("UTF-8"),defaults.maxFiles(),defaults.maxCharacters(),defaults.maxTokens(),defaults.maxDepth()),
-                    new RepositoryInputDecoder.Policy("UTF-8",10_000,10_000_000),frontend(r),JavaParserFrontend.PROVIDER,
+                    new UniversalBuildIngestion.Policy(Optional.of(release),Optional.of(release),Optional.of("UTF-8"),32_768,defaults.maxCharacters(),defaults.maxTokens(),128),
+                    new RepositoryInputDecoder.Policy("UTF-8",500_000,10_000_000),frontend(r),JavaParserFrontend.PROVIDER,
                     mavenInputs.resolutions(),platform.platform(),Optional.of(new MavenBuildModelProvider()),mavenInputs.externalPoms(),MavenScan.POLICY,
-                    1000,100,UniversalArchitecturePipeline.TruthEvaluationMode.AUTO,Map.of(),Optional.empty(),Optional.empty(),com.evolution.analysis.spring.truth.TruthRegionEvaluation.Limits.conservative()).withReadiness(readiness.identity());
+                    100_000,1_000,UniversalArchitecturePipeline.TruthEvaluationMode.AUTO,Map.of(),Optional.empty(),Optional.empty(),com.evolution.analysis.spring.truth.TruthRegionEvaluation.Limits.conservative()).withReadiness(readiness.identity());
             progress(r,"[3/4] Analyzing source contexts / Spring and captured native language evidence…","[3/4] Phân tích context nguồn / Spring và bằng chứng native đa ngôn ngữ…");
             try(var analysisWorkspace=new com.evolution.analysis.filesystem.FileAnalysisWorkspace(r.storage().root.resolve("analysis-work"))){
             var detailed=new UniversalArchitecturePipeline(analysisWorkspace).runWithEvidence(acquisition,policy);var data=new TreeMap<String,Object>();data.put("status",detailed.report().status());data.put("reportIdentity",detailed.report().identity());data.put("gaps",detailed.report().gaps());
@@ -707,8 +707,8 @@ public final class EvoApp {
             progress(r,"[2/2] Acquiring and verifying permitted dependency artifacts…","[2/2] Thu nhận và xác minh artifact dependency được phép…");
             if(acquisition.snapshot().isEmpty())return emit(r,"scan",envelope(Map.of("status","TERMINAL_FAILURE","graphCreated",false,"semanticCoverage","NOT_EVALUATED")),1);
             var cache=Workspace.safe(resolve(mavenCache));var defaults=UniversalBuildIngestion.Policy.defaults();
-            var buildPolicy=new UniversalBuildIngestion.Policy(Optional.of(release),Optional.of(release),Optional.of("UTF-8"),defaults.maxFiles(),defaults.maxCharacters(),defaults.maxTokens(),defaults.maxDepth());
-            var model=com.evolution.backend.analysis.GradleScan.model(acquisition,buildPolicy,new RepositoryInputDecoder.Policy("UTF-8",10_000,10_000_000),Map.of());
+            var buildPolicy=new UniversalBuildIngestion.Policy(Optional.of(release),Optional.of(release),Optional.of("UTF-8"),32_768,defaults.maxCharacters(),defaults.maxTokens(),128);
+            var model=com.evolution.backend.analysis.GradleScan.model(acquisition,buildPolicy,new RepositoryInputDecoder.Policy("UTF-8",500_000,10_000_000),Map.of());
             var policy=new com.evolution.analysis.dependency.DependencyAcquisitionPolicy(1024,64_000_000,256_000_000,64,repositories,5000,15000,1);
             var base=MavenScan.inputs(acquisition,MavenScan.models(acquisition,cache,repositories),cache,Optional.empty(),policy);
             var inputs=com.evolution.backend.analysis.GradleScan.augment(base,acquisition,model,cache,Optional.empty(),policy,Map.of());

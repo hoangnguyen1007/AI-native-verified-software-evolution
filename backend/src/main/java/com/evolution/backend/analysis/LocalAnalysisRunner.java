@@ -83,15 +83,15 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
         var platform = new FilesystemJdkPlatformProvider().acquire(safe(input.jdk()),new PlatformSymbolRequest(input.release(),128,128_000_000,512_000_000));
         control.checkpoint();
         var maven = MavenScan.inputs(acquisition,Optional.empty(),cache,platform.platform()); control.checkpoint();
-        var gradle=GradleScan.model(acquisition,new UniversalBuildIngestion.Policy(Optional.of(input.release()),Optional.of(input.release()),Optional.of("UTF-8"),2048,1_000_000,200_000,64),new RepositoryInputDecoder.Policy("UTF-8",10_000,10_000_000),maven.externalPoms());
+        var gradle=GradleScan.model(acquisition,new UniversalBuildIngestion.Policy(Optional.of(input.release()),Optional.of(input.release()),Optional.of("UTF-8"),32_768,1_000_000,200_000,128),new RepositoryInputDecoder.Policy("UTF-8",500_000,10_000_000),maven.externalPoms());
         var dependencies=GradleScan.augment(maven,acquisition,gradle,cache,platform.platform(),new com.evolution.analysis.dependency.DependencyAcquisitionPolicy(1024,64_000_000,256_000_000,64,List.of(),5000,15000,0),Map.of());
         var defaults = UniversalBuildIngestion.Policy.defaults(); var frontend = new JavaParserFrontend();
         SemanticFrontend guarded = request -> { control.checkpoint(); var result = frontend.analyze(request); control.checkpoint(); return result; };
         var policy = new UniversalArchitecturePipeline.Policy(
-                new UniversalBuildIngestion.Policy(Optional.of(input.release()),Optional.of(input.release()),Optional.of("UTF-8"),defaults.maxFiles(),defaults.maxCharacters(),defaults.maxTokens(),defaults.maxDepth()),
-                new RepositoryInputDecoder.Policy("UTF-8",10_000,10_000_000),guarded,JavaParserFrontend.PROVIDER,
+                new UniversalBuildIngestion.Policy(Optional.of(input.release()),Optional.of(input.release()),Optional.of("UTF-8"),32_768,defaults.maxCharacters(),defaults.maxTokens(),128),
+                new RepositoryInputDecoder.Policy("UTF-8",500_000,10_000_000),guarded,JavaParserFrontend.PROVIDER,
                 dependencies.resolutions(),platform.platform(),Optional.of(new MavenBuildModelProvider()),dependencies.externalPoms(),MavenScan.POLICY,
-                1000,100,UniversalArchitecturePipeline.TruthEvaluationMode.AUTO,input.spring().scopes(),input.spring().space(),input.spring().baseline(),
+                100_000,1_000,UniversalArchitecturePipeline.TruthEvaluationMode.AUTO,input.spring().scopes(),input.spring().space(),input.spring().baseline(),
                 com.evolution.analysis.spring.truth.TruthRegionEvaluation.Limits.conservative()).withReadiness(readiness.identity());
         control.stage(AnalysisJobs.Stage.ANALYSIS);
         var detailed = new UniversalArchitecturePipeline().runWithEvidence(acquisition,policy); control.checkpoint();

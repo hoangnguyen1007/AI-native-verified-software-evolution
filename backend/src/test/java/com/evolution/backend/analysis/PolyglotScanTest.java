@@ -202,4 +202,31 @@ class PolyglotScanTest {
             assertThrows(IOException.class,()->new PolyglotScan().run("changed",intake,changed,context,Optional.of(loaded),directory.resolve("work"),()->false));
         }
     }
+    @Test void passiveIntraRepositoryLinkerConnectsPythonTypeScriptAndGoDeclarations()throws Exception {
+        Path source=Files.createDirectory(directory.resolve("polyglot-links"));
+        Files.createDirectories(source.resolve("python/app"));
+        Files.writeString(source.resolve("python/app/models.py"),"class BaseOrder:\n    pass\n\ndef calculate_tax(amount):\n    return amount\n");
+        Files.writeString(source.resolve("python/app/service.py"),"from app.models import BaseOrder, calculate_tax\nclass OrderService(BaseOrder):\n    def process(self, total):\n        return calculate_tax(total)\n");
+        Files.createDirectories(source.resolve("web/src"));
+        Files.writeString(source.resolve("web/src/pricing.ts"),"export class BaseWidget {}\nexport function formatCurrency(val: number) { return String(val); }\n");
+        Files.writeString(source.resolve("web/src/CartView.tsx"),"import { BaseWidget, formatCurrency } from './pricing';\nexport class CartView extends BaseWidget {\n    render() { return formatCurrency(100); }\n}\n");
+        Files.createDirectories(source.resolve("go/cart"));
+        Files.writeString(source.resolve("go/cart/pricing.go"),"package cart\nfunc ComputeDiscount(v int) int { return v }\n");
+        Files.writeString(source.resolve("go/cart/handler.go"),"package cart\nfunc HandleCheckout() int { return ComputeDiscount(42) }\n");
+        var repo=RepositoryIdentity.fromCanonicalCoordinate("urn:test:polyglot-static-links");
+        try(var intake=new RepositoryIntake(directory.resolve("links-intake"))) {
+            intake.localComplete(source,"links",new StreamingAcquisitionRequest(repo,Optional.empty(),false,List.of()),()->false);
+            var readiness=intake.readiness("links",ReadinessPlanner.Policy.comprehensive(),()->false);
+            var snapshot=RepositorySnapshot.create(repo,Optional.empty(),false,List.of(),List.of());var scan=new PolyglotScan();
+            var result=scan.run("links",intake,readiness,EvidenceContext.forSnapshot(snapshot.identity()),Optional.empty(),directory.resolve("links-work"),()->false);
+            var input=new CanonicalGraphInput(new RepositoryInputs(snapshot,Map.of()),Optional.empty(),Optional.empty(),List.of(),List.of(),result.gaps());
+            var pages=new PartitionedGraphStore(directory.resolve("links-pages"));var snapshots=directory.resolve("links-snapshots");
+            var published=pages.build(input,snapshots,()->false,store->scan.project(result,store,()->false));
+            var graph=FileGraphStore.readSnapshot(snapshots.resolve(published.graph().value().substring(7)+".graph.json"),64_000_000,new GraphJson.StreamLimits(64_000_000,128,64_000_000));
+            assertTrue(graph.edges().stream().filter(e->e.kind().equals("syntax.imports-declaration")).count()>=2);
+            assertTrue(graph.edges().stream().filter(e->e.kind().equals("syntax.calls-declaration")).count()>=3);
+            assertTrue(graph.edges().stream().filter(e->e.kind().equals("syntax.inherits-declaration")).count()>=2);
+            assertTrue(graph.evidence().stream().filter(e->e.family().equals("polyglot.static-symbol-link")).allMatch(e->e.canonicalJson().contains("\"trust\":\"STATIC_SYNTAX_DERIVED\"")&&e.canonicalJson().contains("\"runtimeObserved\":false")));
+        }
+    }
 }
