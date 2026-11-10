@@ -71,7 +71,7 @@ final class TypeExtraction {
         handled.addAll(type.findAll(Type.class));
         Optional<EntityIdentity> identity;
         try { identity = Optional.of(owner.get().identity()); }
-        catch (RuntimeException failure) { identity = Optional.empty(); }
+        catch (RuntimeException | LinkageError | StackOverflowError failure) { identity = Optional.empty(); }
         var span=context.source(type).span(type);
         // A shared local declaration header has multiple cloned AST types but one written use.
         // Field/parameter obligations retain their different verified owners.
@@ -90,8 +90,8 @@ final class TypeExtraction {
                             () -> context.typeEntity(resolved.asReferenceType().getTypeDeclaration().orElseThrow()),owner);
                 }
                 return inferred;
-            } catch(RuntimeException failure) {
-                context.observe(type,role,() -> {throw failure;},owner);
+            } catch(RuntimeException | LinkageError | StackOverflowError failure) {
+                context.observe(type,role,() -> { if(failure instanceof RuntimeException re) throw re; throw new RuntimeException(failure); },owner);
                 return new JavaType(JavaType.Kind.UNKNOWN,spelling,Optional.empty(),List.of(),Optional.empty(),Extraction.failureStatus(failure));
             }
         }
@@ -106,14 +106,14 @@ final class TypeExtraction {
         if (type instanceof IntersectionType intersection) return simple(JavaType.Kind.INTERSECTION,spelling,intersection.getElements().stream().map(t -> map(t,owner,role,argument)).toList());
         if (type instanceof UnionType union) return simple(JavaType.Kind.UNION,spelling,union.getElements().stream().map(t -> map(t,owner,role,argument)).toList());
         if (type instanceof ClassOrInterfaceType named) {
-            Entity target = null; RuntimeException failure = null;
+            Entity target = null; Throwable failure = null;
             try { target = context.typeEntity(context.resolveNamed(named)); }
-            catch (RuntimeException exception) { failure = exception; }
+            catch (RuntimeException | LinkageError | StackOverflowError exception) { failure = exception; }
             if (target!=null && target.kind()==EntityKind.TYPE_PARAMETER && (named.getTypeArguments().isPresent() || named.getScope().isPresent())) {
                 target=null; failure=new IllegalArgumentException("A type variable cannot have type arguments or a qualifier");
             }
-            Entity selected = target; RuntimeException error = failure;
-            Supplier<Entity> resolver = () -> { if (error != null) throw error; return selected; };
+            Entity selected = target; Throwable error = failure;
+            Supplier<Entity> resolver = () -> { if (error != null) { if (error instanceof RuntimeException re) throw re; throw new RuntimeException(error); } return selected; };
             var categories = new LinkedHashSet<String>(); categories.add(role); categories.add("type-uses");
             if (argument) categories.add("type-argument");
             for (var category : categories) context.observe(ROOT_TYPE_ROLES.contains(category) ? named : named.getName(),category,resolver,owner);

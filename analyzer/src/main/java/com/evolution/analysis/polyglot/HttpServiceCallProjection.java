@@ -15,21 +15,33 @@ public final class HttpServiceCallProjection {
     private record Endpoint(KnowledgeGraph.Node node,String path,Set<String> methods,ContentDigest proof,boolean recovered,boolean spring) {}
     private HttpServiceCallProjection() {}
 
+    public static void project(GraphProjectionStore store,String root,BooleanSupplier cancelled)throws IOException {
+        project(store.valuesByKind("nodes",Set.of("ENDPOINT","ROUTE_CANDIDATE"),GraphSnapshotCodec::node,KnowledgeGraph.Node::kind),
+                store.valuesByKind("nodes",Set.of("SOURCE_HTTP_CALL_CANDIDATE"),GraphSnapshotCodec::node,KnowledgeGraph.Node::kind),
+                store.records("nodes",GraphSnapshotCodec::node),store.records("edges",GraphSnapshotCodec::edge),
+                store.records("evidence",GraphSnapshotCodec::evidence),store.records("http-projection-additions",GraphSnapshotCodec::node),root,cancelled);
+    }
     public static void project(Map<String,KnowledgeGraph.Node> nodes,Map<String,KnowledgeGraph.Edge> edges,
                                Map<String,GraphEvidence> evidence,String root,BooleanSupplier cancelled)throws IOException {
         project(nodes,edges,evidence,new TreeMap<>(),root,cancelled);
     }
     public static void project(Map<String,KnowledgeGraph.Node> nodes,Map<String,KnowledgeGraph.Edge> edges,
                                Map<String,GraphEvidence> evidence,Map<String,KnowledgeGraph.Node> additions,String root,BooleanSupplier cancelled)throws IOException {
+        project(nodes.values(),nodes.values(),nodes,edges,evidence,additions,root,cancelled);
+    }
+    private static void project(Iterable<KnowledgeGraph.Node> endpointCandidates,Iterable<KnowledgeGraph.Node> callCandidates,
+                                Map<String,KnowledgeGraph.Node> nodes,Map<String,KnowledgeGraph.Edge> edges,
+                                Map<String,GraphEvidence> evidence,Map<String,KnowledgeGraph.Node> additions,String root,BooleanSupplier cancelled)throws IOException {
+        check(cancelled);
         var providers=new TreeMap<String,List<Endpoint>>();
         // Only URI endpoint descriptors are retained, never the complete syntax population.
-        for(var node:nodes.values()) {
+        for(var node:endpointCandidates) {
             check(cancelled);if(!Set.of("ENDPOINT","ROUTE_CANDIDATE").contains(node.kind()))continue;
             var endpoint=descriptor(node,evidence);if(endpoint.isEmpty())continue;
             var value=endpoint.orElseThrow();providers.computeIfAbsent(bucket(value.path()),key->new ArrayList<>()).add(value);
         }
         // Delay added nodes until iteration finishes (in-memory maps also remain valid).
-        for(var node:nodes.values()) {
+        for(var node:callCandidates) {
             check(cancelled);if(!node.kind().equals("SOURCE_HTTP_CALL_CANDIDATE"))continue;
             var source=descriptor(node,evidence);if(source.isEmpty())continue;var caller=source.orElseThrow();
             String from=node.identity();

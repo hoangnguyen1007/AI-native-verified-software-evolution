@@ -87,12 +87,20 @@ public final class UniversalSourceIngestion {
         var issues=new ArrayList<IngestionEvidence.Issue>();var rows=new ArrayList<SourceRow>();
         Map<SourceSet,List<SourceInput>> owned=new HashMap<>();Set<SourceSet> incomplete=new HashSet<>();
         for(var file:inputs.snapshot().files())if(file.path().endsWith(".java")||file.path().endsWith(".kt")) {
-            var claims=plans.stream().filter(p->p.sourceRoots().stream().flatMap(r->r.value().stream())
+            var declared=plans.stream().filter(p->p.sourceRoots().stream().flatMap(r->r.value().stream())
                     .flatMap(root->UniversalBuildIngestion.normalizeRepositoryPath(root).stream())
                     .anyMatch(root->root.equals(".")||file.path().startsWith(root+"/")))
                     .map(p->new SourceSet(p.module(),p.kind(),p.name())).distinct().toList();
-            if(file.path().endsWith(".kt")&&claims.isEmpty())continue;
+            if(file.path().endsWith(".kt")&&declared.isEmpty())continue;
             var original=inputs.files().get(file.path());
+            // A handwritten Java file outside every build-declared root is still analyzable source. It is attached to the
+            // nearest enclosing module's conventional main/test set, never to a guessed classpath, and the inference stays a typed gap.
+            var enclosing=declared.isEmpty()&&original!=null?enclosingOwner(file.path(),original.document().classification(),descriptors,plans):Optional.<SourceSet>empty();
+            var claims=enclosing.isPresent()?List.of(enclosing.orElseThrow()):declared;
+            if(enclosing.isPresent()){
+                incomplete.add(enclosing.orElseThrow());
+                issues.add(new IngestionEvidence.Issue(CUSTOM_SOURCE_LAYOUT,file.path()+"#ENCLOSING_MODULE_OWNER",List.of(file.contentDigest())));
+            }
             var claimedPlan=claims.size()==1?plans.stream().filter(p->p.module().equals(claims.getFirst().module())
                     &&p.kind()==claims.getFirst().kind()&&p.name().equals(claims.getFirst().name()))
                     .findFirst():Optional.<SourcePlanModel.SourceSetPlan>empty();
@@ -187,6 +195,17 @@ public final class UniversalSourceIngestion {
         var sorted=issues.stream().distinct().sorted(Comparator.comparing(IngestionEvidence.Issue::identity)).toList();
         var gaps=new TreeSet<>(build.gaps());outcomes.forEach(o->gaps.addAll(o.configuration().gaps()));gaps.addAll(IngestionEvidence.gaps(snapshot.identity(),PROVIDER,identity,sorted));
         return new Result(identity,rows,outcomes,sorted,List.copyOf(gaps));
+    }
+
+    /** Longest-prefix module that has the matching conventional (non-custom) source set; absent when none exists. */
+    private static Optional<SourceSet> enclosingOwner(String path,SourceClassification classification,List<ModuleDescriptor> modules,List<SourcePlanModel.SourceSetPlan> plans) {
+        if(!path.endsWith(".java"))return Optional.empty();
+        boolean test=classification==SourceClassification.TEST||classification==SourceClassification.GENERATED_TEST;
+        var kind=test?SourcePlanModel.Kind.TEST:SourcePlanModel.Kind.MAIN;
+        return modules.stream().filter(m->m.path().equals(".")||path.startsWith(m.path()+"/"))
+                .sorted(Comparator.comparingInt((ModuleDescriptor m)->m.path().equals(".")?0:m.path().length()).reversed())
+                .flatMap(m->plans.stream().filter(p->p.module().equals(m.identity())&&p.kind()==kind).findFirst().stream())
+                .findFirst().map(p->new SourceSet(p.module(),p.kind(),p.name()));
     }
 
     private static boolean buildClosureUnknown(UniversalBuildModel build,RepositoryInputs inputs,SourceSet sourceSet) {

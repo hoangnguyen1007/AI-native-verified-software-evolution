@@ -16,25 +16,26 @@ public final class GrpcServiceCallProjection {
     private record Method(Row row,String service,String name) {}
     private GrpcServiceCallProjection() {}
     public static void project(GraphProjectionStore store,String root,BooleanSupplier cancelled)throws IOException {
+        check(cancelled);
         var nodes=store.records("nodes",GraphSnapshotCodec::node);var edges=store.records("edges",GraphSnapshotCodec::edge);var evidence=store.records("evidence",GraphSnapshotCodec::evidence);
         var additions=store.records("grpc-projection-additions",GraphSnapshotCodec::node);
         var methods=new TreeMap<String,List<Method>>();var handlers=new TreeMap<String,List<Row>>();
         // Retain only API descriptors; executable/source populations stream below.
-        for(var node:nodes.values()) {
-            check(cancelled);if(!Set.of("PROTOBUF_RPC_METHOD","SOURCE_RPC_METHOD").contains(node.kind()))continue;
+        for(var node:store.valuesByKind("nodes",Set.of("PROTOBUF_RPC_METHOD","SOURCE_RPC_METHOD"),GraphSnapshotCodec::node,KnowledgeGraph.Node::kind)) {
+            check(cancelled);
             var row=source(node,evidence);if(row.isEmpty()||recovered(row.orElseThrow()))continue;var value=row.orElseThrow();
             String qualified=GraphJson.string(value.attributes().get("qualifiedName"));int dot=qualified.lastIndexOf('.');
             if(dot<0)continue;String service=qualified.substring(0,dot),name=qualified.substring(dot+1);
             var method=new Method(value,service,name);
             for(String style:List.of("EXACT","LOWER_CAMEL","CSHARP_ASYNC"))for(String spelling:spellings(name,style))methods.computeIfAbsent(simple(service)+"|"+style+"|"+spelling,ignored->new ArrayList<>()).add(method);
         }
-        for(var node:nodes.values()) {
-            check(cancelled);if(!node.kind().equals("SOURCE_RPC_HANDLER_CANDIDATE"))continue;
+        for(var node:store.valuesByKind("nodes",Set.of("SOURCE_RPC_HANDLER_CANDIDATE"),GraphSnapshotCodec::node,KnowledgeGraph.Node::kind)) {
+            check(cancelled);
             var descriptor=source(node,evidence);if(descriptor.isEmpty()||recovered(descriptor.orElseThrow()))continue;var handler=descriptor.orElseThrow();
             for(var method:matching(handler,methods))handlers.computeIfAbsent(key(method.row()),ignored->new ArrayList<>()).add(handler);
         }
-        for(var node:nodes.values()) {
-            check(cancelled);if(!Set.of("SOURCE_RPC_CALL_CANDIDATE","SOURCE_RPC_HANDLER_CANDIDATE").contains(node.kind()))continue;
+        for(var node:store.valuesByKind("nodes",Set.of("SOURCE_RPC_CALL_CANDIDATE","SOURCE_RPC_HANDLER_CANDIDATE"),GraphSnapshotCodec::node,KnowledgeGraph.Node::kind)) {
+            check(cancelled);
             var descriptor=source(node,evidence);if(descriptor.isEmpty())continue;var caller=descriptor.orElseThrow();boolean implementation=node.kind().equals("SOURCE_RPC_HANDLER_CANDIDATE");
             var contracts=recovered(caller)?List.<Method>of():matching(caller,methods);var targets=new TreeMap<String,Row>();var schemas=new TreeMap<String,Row>();
             for(var method:contracts) {

@@ -55,6 +55,20 @@ class UniversalIngestionPipelineTest {
         assertEquals(List.of("app.OptionalConfiguration"),main.spring().orElseThrow().metadata().candidates());
         assertTrue(assembly.outcomes().getFirst().configuration().assignment().isPresent());
     }
+    @Test void javaSourcesOutsideDeclaredRootsAreOwnedByTheEnclosingModuleWithAnExplicitInferenceRecord() {
+        var input=inputs(Map.of("build.gradle.kts","plugins { java }\n","src/main/java/app/A.java","package app; class A {}",
+                "tools/p/Weird.java","package p; class Weird { void run(){ new app.A(); } }","services/cart/Cart.java","package cart; class Cart {}"));
+        var build=new UniversalBuildIngestion().ingest(input,UniversalBuildIngestion.Policy.defaults(),Optional.empty(),Map.of(),new BuildModelPolicy(List.of(),List.of(),Map.of(),10000,100,16));
+        var component=new ManifestComponent(new VersionedIdentifier("test.inferred","1"),ContentDigest.sha256Utf8("inferred"));
+        var result=new UniversalSourceIngestion().assemble(input,build,Map.of(),component,component,component,Map.of(),Optional.of(TestInputs.request("class Platform {}").platform()));
+        assertEquals(3,result.sources().size());
+        assertTrue(result.sources().stream().allMatch(row->row.status()==UniversalSourceIngestion.Status.OWNED),result.sources().toString());
+        var request=result.outcomes().stream().filter(o->o.request().isPresent()).findFirst().orElseThrow().request().orElseThrow();
+        assertEquals(3,request.sources().size());assertTrue(request.sourceRecovery(),"A build-undeclared root cannot become exact classpath evidence");
+        var inferred=result.issues().stream().filter(i->i.reason()==IngestionEvidence.Reason.CUSTOM_SOURCE_LAYOUT).map(IngestionEvidence.Issue::subject).sorted().toList();
+        assertEquals(List.of("services/cart/Cart.java#ENCLOSING_MODULE_OWNER","tools/p/Weird.java#ENCLOSING_MODULE_OWNER"),inferred);
+        assertEquals(result.identity(),new UniversalSourceIngestion().assemble(input,build,Map.of(),component,component,component,Map.of(),Optional.of(TestInputs.request("class Platform {}").platform())).identity());
+    }
     private RepositoryInputs inputs(Map<String,String> text) {
         var files=new TreeMap<String,SourceInput>();
         text.forEach((path,value)->{byte[] bytes=value.getBytes(StandardCharsets.UTF_8);files.put(path,new SourceInput(SourceDocument.create(TestInputs.REPO,TestInputs.MODULE,path,ContentDigest.sha256(bytes),SourceClassification.MAIN),bytes));});

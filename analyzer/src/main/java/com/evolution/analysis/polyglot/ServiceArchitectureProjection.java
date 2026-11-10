@@ -15,16 +15,17 @@ public final class ServiceArchitectureProjection {
     }
     private ServiceArchitectureProjection() {}
     public static void project(GraphProjectionStore store,String root,BooleanSupplier cancelled)throws IOException {
+        check(cancelled);
         var nodes=store.records("nodes",GraphSnapshotCodec::node);var edges=store.records("edges",GraphSnapshotCodec::edge);var evidence=store.records("evidence",GraphSnapshotCodec::evidence);
         var owners=store.records("service-declaration-index",GraphJson::object);
         var newNodes=store.records("service-endpoint-additions",GraphSnapshotCodec::node);var newEdges=store.records("service-edge-additions",GraphSnapshotCodec::edge);
-        for(var edge:edges.values()) {
+        for(var edge:store.valuesByKind("edges",Set.of("graph.has-http-client-call","syntax.http-call-candidate","syntax.rpc-call-candidate","syntax.rpc-handler-declaration"),GraphSnapshotCodec::edge,KnowledgeGraph.Edge::kind)) {
             check(cancelled);
             if(Set.of("graph.has-http-client-call","syntax.http-call-candidate","syntax.rpc-call-candidate").contains(edge.kind()))for(String target:edge.target().identities())
                 owners.put(edge.context()+"|caller|"+target,Map.of("context",edge.context(),"identity",edge.source()));
             if(edge.kind().equals("syntax.rpc-handler-declaration"))for(String target:edge.target().identities())owners.put(edge.context()+"|handler|"+edge.source(),Map.of("context",edge.context(),"identity",target));
         }
-        for(var candidate:edges.values()) {
+        for(var candidate:store.valuesByKind("edges",Set.of("polyglot.service-call.candidate","polyglot.grpc-service-call.candidate"),GraphSnapshotCodec::edge,KnowledgeGraph.Edge::kind)) {
             check(cancelled);String kind=switch(candidate.kind()){case "polyglot.service-call.candidate"->"CALLS_SERVICE";case "polyglot.grpc-service-call.candidate"->"INVOKES_RPC";default->"";};if(kind.isEmpty())continue;
             var source=endpoint(nodes.get(candidate.context()+"|"+candidate.source()),true,nodes,evidence,owners);var destinations=new TreeMap<String,Endpoint>();
             for(String target:candidate.target().identities()) {

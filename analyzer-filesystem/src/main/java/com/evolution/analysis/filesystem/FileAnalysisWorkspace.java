@@ -28,7 +28,9 @@ public final class FileAnalysisWorkspace implements AnalysisWorkspace, AutoClose
     private int sequence;
     private boolean closed;
     public FileAnalysisWorkspace(Path parent)throws IOException {
-        Files.createDirectories(parent);directory=Files.createTempDirectory(parent,"analysis-");
+        Files.createDirectories(parent);
+        cleanStale(parent);
+        directory=Files.createTempDirectory(parent,"analysis-");
         data=new RandomAccessFile(directory.resolve("values.bin").toFile(),"rw");
         try {
             db=DriverManager.getConnection("jdbc:sqlite:"+directory.resolve("index.sqlite"));
@@ -212,5 +214,17 @@ public final class FileAnalysisWorkspace implements AnalysisWorkspace, AutoClose
         try(var paths=Files.list(directory)){for(var path:paths.toList())Files.delete(path);}catch(IOException failed){failure=retain(failure,failed);}
         try{Files.delete(directory);}catch(IOException failed){failure=retain(failure,failed);}
         if(failure!=null)throw failure;
+    }
+    private static void cleanStale(Path parent) {
+        try (var stream = Files.list(parent)) {
+            for (var path : stream.toList()) {
+                if (Files.isDirectory(path) && path.getFileName().toString().startsWith("analysis-")) {
+                    try (var files = Files.list(path)) {
+                        for (var f : files.toList()) Files.deleteIfExists(f);
+                    } catch (IOException ignored) {}
+                    try { Files.deleteIfExists(path); } catch (IOException ignored) {}
+                }
+            }
+        } catch (IOException ignored) {}
     }
 }

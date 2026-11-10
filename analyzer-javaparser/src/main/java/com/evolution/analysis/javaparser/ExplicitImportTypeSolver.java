@@ -34,12 +34,109 @@ final class ExplicitImportTypeSolver implements TypeSolver {
             "lombok.extern.java.Log", "lombok.extern.apachecommons.CommonsLog",
             "lombok.extern.jbosslog.JBossLog", "lombok.extern.flogger.Flogger");
 
+    private static final Set<String> JPA_TYPES = Set.of(
+            "Entity", "Table", "Id", "GeneratedValue", "GenerationType", "Column", "JoinColumn", "JoinColumns",
+            "JoinTable", "OneToMany", "ManyToOne", "OneToOne", "ManyToMany", "MappedSuperclass", "Embeddable",
+            "Embedded", "EmbeddedId", "Transient", "Version", "Enumerated", "EnumType", "Temporal", "TemporalType",
+            "Lob", "Basic", "Access", "AccessType", "OrderBy", "OrderColumn", "ElementCollection", "CollectionTable",
+            "MapKey", "MapKeyColumn", "MapKeyEnumerated", "NamedQuery", "NamedQueries", "NamedNativeQuery",
+            "NamedEntityGraph", "EntityListeners", "PrePersist", "PostPersist", "PreUpdate", "PostUpdate",
+            "PreRemove", "PostRemove", "PostLoad", "Converter", "Convert", "Inheritance", "InheritanceType",
+            "DiscriminatorColumn", "DiscriminatorValue", "SequenceGenerator", "TableGenerator", "UniqueConstraint",
+            "Index", "ForeignKey", "ConstraintMode", "CascadeType", "FetchType", "PersistenceContext",
+            "PersistenceUnit", "EntityManager", "EntityManagerFactory", "Query", "TypedQuery", "PersistenceException",
+            "NoResultException", "NonUniqueResultException", "OptimisticLockException", "PessimisticLockException",
+            "LockModeType", "FlushModeType", "AttributeConverter");
+
+    private static final Set<String> VALIDATION_TYPES = Set.of(
+            "Valid", "Constraint", "Payload", "ReportAsSingleViolation", "OverridesAttribute", "GroupSequence",
+            "Validator", "ValidatorFactory", "Validation", "ConstraintViolation", "ConstraintViolationException",
+            "ConstraintValidator", "ConstraintValidatorContext");
+
+    private static final Set<String> VALIDATION_CONSTRAINT_TYPES = Set.of(
+            "NotNull", "Null", "NotEmpty", "NotBlank", "Size", "Min", "Max", "DecimalMin", "DecimalMax",
+            "Digits", "Pattern", "Email", "Positive", "PositiveOrZero", "Negative", "NegativeOrZero",
+            "Past", "PastOrPresent", "Future", "FutureOrPresent", "AssertTrue", "AssertFalse");
+
+    private static final Map<String, Set<String>> WELL_KNOWN_WILDCARD_TYPES = Map.ofEntries(
+            Map.entry("jakarta.persistence", JPA_TYPES),
+            Map.entry("javax.persistence", JPA_TYPES),
+            Map.entry("org.springframework.web.bind.annotation", Set.of(
+                    "RestController", "ControllerAdvice", "RestControllerAdvice", "RequestMapping",
+                    "GetMapping", "PostMapping", "PutMapping", "DeleteMapping", "PatchMapping",
+                    "RequestParam", "PathVariable", "RequestBody", "ResponseBody", "RequestHeader",
+                    "CookieValue", "ModelAttribute", "SessionAttribute", "SessionAttributes",
+                    "RequestAttribute", "RequestPart", "MatrixVariable", "ExceptionHandler",
+                    "InitBinder", "ResponseStatus", "CrossOrigin", "RequestMethod", "ValueConstants", "BindParam")),
+            Map.entry("org.springframework.stereotype", Set.of(
+                    "Component", "Service", "Repository", "Controller", "Indexed")),
+            Map.entry("org.springframework.beans.factory.annotation", Set.of(
+                    "Autowired", "Qualifier", "Value", "Lookup", "Configurable")),
+            Map.entry("org.springframework.context.annotation", Set.of(
+                    "Configuration", "Bean", "Import", "Profile", "Scope", "Lazy", "Primary", "DependsOn",
+                    "ComponentScan", "PropertySource", "PropertySources", "Conditional", "Role",
+                    "Description", "ImportResource", "ScopedProxyMode", "FilterType")),
+            Map.entry("org.springframework.boot.autoconfigure", Set.of(
+                    "SpringBootApplication", "EnableAutoConfiguration", "AutoConfiguration",
+                    "AutoConfigureAfter", "AutoConfigureBefore", "AutoConfigureOrder", "SpringBootConfiguration")),
+            Map.entry("org.springframework.boot.context.properties", Set.of(
+                    "ConfigurationProperties", "EnableConfigurationProperties", "ConfigurationPropertiesScan",
+                    "ConstructorBinding", "NestedConfigurationProperty")),
+            Map.entry("org.springframework.transaction.annotation", Set.of(
+                    "Transactional", "EnableTransactionManagement", "Propagation", "Isolation",
+                    "TransactionalEventListener")),
+            Map.entry("org.springframework.data.annotation", Set.of(
+                    "Id", "Transient", "Version", "CreatedBy", "CreatedDate", "LastModifiedBy",
+                    "LastModifiedDate", "PersistenceCreator", "Immutable", "ReadOnlyProperty", "Reference", "TypeAlias")),
+            Map.entry("org.springframework.data.jpa.repository", Set.of(
+                    "JpaRepository", "JpaSpecificationExecutor", "Query", "Modifying", "EntityGraph",
+                    "Lock", "QueryHints", "Temporal", "Meta")),
+            Map.entry("org.springframework.data.repository", Set.of(
+                    "Repository", "CrudRepository", "PagingAndSortingRepository", "ListCrudRepository",
+                    "ListPagingAndSortingRepository", "NoRepositoryBean", "Param", "QueryDefinition")),
+            Map.entry("org.springframework.cache.annotation", Set.of(
+                    "Cacheable", "CacheEvict", "CachePut", "Caching", "CacheConfig", "EnableCaching")),
+            Map.entry("org.springframework.scheduling.annotation", Set.of(
+                    "Async", "Scheduled", "Schedules", "EnableAsync", "EnableScheduling")),
+            Map.entry("org.springframework.security.access.prepost", Set.of(
+                    "PreAuthorize", "PostAuthorize", "PreFilter", "PostFilter")),
+            Map.entry("jakarta.validation", VALIDATION_TYPES),
+            Map.entry("javax.validation", VALIDATION_TYPES),
+            Map.entry("jakarta.validation.constraints", VALIDATION_CONSTRAINT_TYPES),
+            Map.entry("javax.validation.constraints", VALIDATION_CONSTRAINT_TYPES),
+            Map.entry("io.grpc", Set.of(
+                    "Server", "ServerBuilder", "ServerServiceDefinition", "ServerInterceptor",
+                    "ServerInterceptors", "ServerCall", "ServerCallHandler", "ManagedChannel",
+                    "ManagedChannelBuilder", "Channel", "ClientInterceptor", "ClientInterceptors",
+                    "ClientCall", "CallOptions", "Metadata", "Status", "StatusRuntimeException",
+                    "StatusException", "Context", "BindableService", "MethodDescriptor", "ServiceDescriptor",
+                    "Grpc", "InsecureServerCredentials", "InsecureChannelCredentials", "ServerCredentials",
+                    "ChannelCredentials")),
+            Map.entry("io.grpc.stub", Set.of(
+                    "StreamObserver", "AbstractStub", "AbstractAsyncStub", "AbstractBlockingStub",
+                    "AbstractFutureStub", "ClientCalls", "ServerCalls", "ClientResponseObserver",
+                    "ServerCallStreamObserver", "CallStreamObserver")),
+            Map.entry("io.grpc.services", Set.of(
+                    "HealthStatusManager", "BinlogHelper", "BinaryLogProvider", "ChannelzService",
+                    "ProtoReflectionService")),
+            Map.entry("io.grpc.health.v1", Set.of(
+                    "HealthCheckRequest", "HealthCheckResponse", "HealthGrpc")),
+            Map.entry("kotlin.jvm", Set.of(
+                    "JvmStatic", "JvmField", "JvmOverloads", "JvmName", "JvmSynthetic",
+                    "JvmWildcard", "JvmSuppressWildcards", "Throws", "Synchronized", "Volatile",
+                    "Transient", "Strictfp", "JvmMultifileClass", "JvmInline", "JvmRecord",
+                    "JvmDefault", "JvmDefaultWithoutCompatibility", "JvmDefaultWithCompatibility")));
+
+    private static final Set<String> SYNTHETIC_MISSING_PACKAGES = Set.of("other", "missing", "unavailable");
+
     private TypeSolver parent;
     private final Map<String, ExplicitImportTypeDeclaration> declarations = new TreeMap<>();
     private final Map<String, Integer> observedMaxTypeArgs = new HashMap<>();
     private final Set<String> observedInterfaceHints = new HashSet<>();
     private final Set<String> observedAnnotationHints = new HashSet<>();
     private final Map<String, String> observedSimpleToFqn = new LinkedHashMap<>();
+    private final Set<String> observedQualifiedTypes = new LinkedHashSet<>();
+    private final Set<String> explicitlyImportedFqns = new HashSet<>();
 
     @Override
     public TypeSolver getParent() {
@@ -86,13 +183,22 @@ final class ExplicitImportTypeSolver implements TypeSolver {
 
     void observeUnit(CompilationUnit unit) {
         Map<String, String> localSimpleToFqn = new HashMap<>();
+        Set<String> wildcardPackages = new LinkedHashSet<>();
         for (ImportDeclaration imp : unit.getImports()) {
-            if (imp.isAsterisk()) continue;
+            if (imp.isAsterisk()) {
+                if (!imp.isStatic()) {
+                    String pkg = imp.getNameAsString();
+                    if (!SYNTHETIC_MISSING_PACKAGES.contains(pkg)) {
+                        wildcardPackages.add(pkg);
+                    }
+                }
+                continue;
+            }
             String fqn = imp.getNameAsString();
             int dot = fqn.lastIndexOf('.');
             if (dot <= 0) continue;
             String pkg = fqn.substring(0, dot);
-            if (pkg.equals("other")) continue;
+            if (SYNTHETIC_MISSING_PACKAGES.contains(pkg) || SYNTHETIC_MISSING_PACKAGES.contains(pkg.split("\\.")[0])) continue;
             if (imp.isStatic()) {
                 String ownerType = pkg;
                 int ownerDot = ownerType.lastIndexOf('.');
@@ -108,7 +214,20 @@ final class ExplicitImportTypeSolver implements TypeSolver {
         }
         for (ClassOrInterfaceType type : unit.findAll(ClassOrInterfaceType.class)) {
             String simple = type.getNameAsString();
-            String fqn = localSimpleToFqn.getOrDefault(simple, type.getNameWithScope());
+            String scoped = type.getNameWithScope();
+            if (type.getScope().isEmpty()) {
+                if (!localSimpleToFqn.containsKey(simple)) {
+                    resolveWildcardSimple(simple, wildcardPackages).ifPresent(wFqn -> {
+                        localSimpleToFqn.put(simple, wFqn);
+                        observedSimpleToFqn.put(simple, wFqn);
+                    });
+                }
+            } else {
+                extractInlineTopLevelFqn(scoped, localSimpleToFqn).ifPresent(observedQualifiedTypes::add);
+            }
+            String fqn = type.getScope().isPresent()
+                    ? resolveScopedFqn(scoped, localSimpleToFqn)
+                    : localSimpleToFqn.getOrDefault(simple, scoped);
             if (type.getTypeArguments().isPresent()) {
                 int count = type.getTypeArguments().orElseThrow().size();
                 observedMaxTypeArgs.merge(fqn, count, Math::max);
@@ -117,15 +236,79 @@ final class ExplicitImportTypeSolver implements TypeSolver {
         }
         for (ClassOrInterfaceDeclaration decl : unit.findAll(ClassOrInterfaceDeclaration.class)) {
             for (ClassOrInterfaceType impl : decl.getImplementedTypes()) {
-                String fqn = localSimpleToFqn.getOrDefault(impl.getNameAsString(), impl.getNameWithScope());
+                String scoped = impl.getNameWithScope();
+                String fqn = impl.getScope().isPresent()
+                        ? resolveScopedFqn(scoped, localSimpleToFqn)
+                        : localSimpleToFqn.getOrDefault(impl.getNameAsString(), scoped);
                 observedInterfaceHints.add(fqn);
             }
         }
         for (AnnotationExpr ann : unit.findAll(AnnotationExpr.class)) {
-            String simple = ann.getName().getIdentifier();
-            String fqn = localSimpleToFqn.getOrDefault(simple, ann.getNameAsString());
-            observedAnnotationHints.add(fqn);
+            String rawName = ann.getNameAsString();
+            if (rawName.contains(".")) {
+                extractInlineTopLevelFqn(rawName, localSimpleToFqn).ifPresent(observedQualifiedTypes::add);
+                String fqn = resolveScopedFqn(rawName, localSimpleToFqn);
+                observedAnnotationHints.add(fqn);
+            } else {
+                if (!localSimpleToFqn.containsKey(rawName)) {
+                    resolveWildcardSimple(rawName, wildcardPackages).ifPresent(wFqn -> {
+                        localSimpleToFqn.put(rawName, wFqn);
+                        observedSimpleToFqn.put(rawName, wFqn);
+                    });
+                }
+                String fqn = localSimpleToFqn.getOrDefault(rawName, rawName);
+                observedAnnotationHints.add(fqn);
+            }
         }
+    }
+
+    private static Optional<String> resolveWildcardSimple(String simple, Set<String> wildcardPackages) {
+        if (wildcardPackages.isEmpty() || simple.isEmpty() || !Character.isUpperCase(simple.codePointAt(0))) {
+            return Optional.empty();
+        }
+        for (String pkg : wildcardPackages) {
+            Set<String> known = WELL_KNOWN_WILDCARD_TYPES.get(pkg);
+            if (known != null && known.contains(simple)) {
+                return Optional.of(pkg + "." + simple);
+            }
+        }
+        return Optional.empty();
+    }
+
+    private static String resolveScopedFqn(String scopedName, Map<String, String> localSimpleToFqn) {
+        int firstDot = scopedName.indexOf('.');
+        if (firstDot <= 0) {
+            return localSimpleToFqn.getOrDefault(scopedName, scopedName);
+        }
+        String firstSeg = scopedName.substring(0, firstDot);
+        String importedFirst = localSimpleToFqn.get(firstSeg);
+        if (importedFirst != null) {
+            return importedFirst + scopedName.substring(firstDot);
+        }
+        return scopedName;
+    }
+
+    private static Optional<String> extractInlineTopLevelFqn(String scopedName, Map<String, String> localSimpleToFqn) {
+        String[] parts = scopedName.split("\\.");
+        if (parts.length < 2) {
+            return Optional.empty();
+        }
+        String first = parts[0];
+        if (first.isEmpty()
+                || localSimpleToFqn.containsKey(first)
+                || SYNTHETIC_MISSING_PACKAGES.contains(first)
+                || first.equals("java")
+                || !Character.isLowerCase(first.codePointAt(0))) {
+            return Optional.empty();
+        }
+        for (int i = 1; i < parts.length; i++) {
+            String seg = parts[i];
+            if (!seg.isEmpty() && Character.isUpperCase(seg.codePointAt(0))) {
+                String pkg = String.join(".", Arrays.copyOfRange(parts, 0, i));
+                return Optional.of(pkg + "." + seg);
+            }
+        }
+        return Optional.empty();
     }
 
     void materialize(
@@ -138,6 +321,22 @@ final class ExplicitImportTypeSolver implements TypeSolver {
             if (sourceTypeNames.contains(fqn) || environment.isKnownInPrimarySolvers(fqn)) {
                 continue;
             }
+            explicitlyImportedFqns.add(fqn);
+            int typeParamCount = Math.max(
+                    observedMaxTypeArgs.getOrDefault(fqn, 0),
+                    observedMaxTypeArgs.getOrDefault(simple, 0));
+            registerDeclaration(
+                    fqn,
+                    typeParamCount,
+                    observedInterfaceHints.contains(fqn),
+                    observedAnnotationHints.contains(fqn));
+        }
+        for (String fqn : observedQualifiedTypes) {
+            if (sourceTypeNames.contains(fqn) || environment.isKnownInPrimarySolvers(fqn)) {
+                continue;
+            }
+            int dot = fqn.lastIndexOf('.');
+            String simple = dot > 0 ? fqn.substring(dot + 1) : fqn;
             int typeParamCount = Math.max(
                     observedMaxTypeArgs.getOrDefault(fqn, 0),
                     observedMaxTypeArgs.getOrDefault(simple, 0));
@@ -151,11 +350,23 @@ final class ExplicitImportTypeSolver implements TypeSolver {
         if (includeLombokAnnotations) {
             for (String lombokFqn : LOMBOK_TYPES) {
                 if (!sourceTypeNames.contains(lombokFqn) && !environment.isKnownInPrimarySolvers(lombokFqn)) {
+                    explicitlyImportedFqns.add(lombokFqn);
                     boolean isAnn = !lombokFqn.endsWith(".AccessLevel");
                     registerDeclaration(lombokFqn, 0, false, isAnn);
                 }
             }
         }
+    }
+
+    boolean isExplicitlyImported(String qualifiedName) {
+        if (explicitlyImportedFqns.contains(qualifiedName)) return true;
+        int dot = qualifiedName.lastIndexOf('.');
+        while (dot > 0) {
+            String prefix = qualifiedName.substring(0, dot);
+            if (explicitlyImportedFqns.contains(prefix)) return true;
+            dot = prefix.lastIndexOf('.');
+        }
+        return false;
     }
 
     private ExplicitImportTypeDeclaration registerDeclaration(
@@ -198,14 +409,17 @@ final class ExplicitImportTypeSolver implements TypeSolver {
         for (String part : parts) {
             String nextFqn = current.getQualifiedName() + "." + part;
             ExplicitImportTypeDeclaration parentDecl = current;
+            int typeParamCount = Math.max(
+                    observedMaxTypeArgs.getOrDefault(nextFqn, 0),
+                    observedMaxTypeArgs.getOrDefault(part, 0));
             current = declarations.computeIfAbsent(nextFqn, key -> new ExplicitImportTypeDeclaration(
                     parentDecl.getPackageName(),
                     parentDecl.getClassName() + "." + part,
                     key,
                     Optional.of(parentDecl),
-                    0,
-                    false,
-                    false,
+                    typeParamCount,
+                    observedInterfaceHints.contains(key),
+                    observedAnnotationHints.contains(key),
                     this));
         }
         return current;
@@ -250,6 +464,10 @@ final class ExplicitImportTypeSolver implements TypeSolver {
             }
             this.typeParameters = List.copyOf(params);
             this.constructors = List.of(new ZeroArgConstructor(this));
+        }
+
+        boolean isExplicitlyImported() {
+            return solver instanceof ExplicitImportTypeSolver s && s.isExplicitlyImported(qualifiedName);
         }
 
         @Override

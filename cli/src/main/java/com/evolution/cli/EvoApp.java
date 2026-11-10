@@ -687,7 +687,13 @@ public final class EvoApp {
                 r.stage="graph";progress(r,"[4/4] Saving a verified snapshot…","[4/4] Lưu snapshot đã kiểm tra…");var input=detailed.graphInput().orElseThrow();
                 var graphLedgers=new ArrayList<>(mavenInputs.ledgers());graphLedgers.addAll(platformLedgers);
                 var graph=r.storage().publish(new CanonicalGraphInput(input.repository(),input.build(),input.ingestion(),input.spring(),input.issues(),frozenScanGaps,input.acquisition(),input.javaEvidence()),graphLedgers,store->new PolyglotScan().project(polyglot,store,()->Thread.currentThread().isInterrupted()));
-                data.put("semanticDepth",SemanticDepth.summarize(detailed,graph.edgeKinds()));
+                var semanticDepth=SemanticDepth.summarize(detailed,graph.edgeKinds());
+                data.put("semanticDepth",semanticDepth);
+                boolean exactComplete=detailed.report().status()==UniversalArchitectureReport.Status.COMPLETE&&!availablePlatforms.isEmpty()&&scanGaps.isEmpty();
+                boolean passiveArchitectureComplete=!exactComplete&&!availablePlatforms.isEmpty()
+                        &&SemanticDepth.meetsPassiveArchitectureThreshold(semanticDepth,polyglot.summary(),detailed,polyglot.gaps());
+                data.put("evidenceTier",SemanticDepth.evidenceTier(detailed.report().status(),exactComplete,passiveArchitectureComplete));
+                if(exactComplete||passiveArchitectureComplete)data.put("status","COMPLETE");
                 if(r.debug)err.println("[DEBUG] graph storage=PARTITIONED_DISK nodes="+graph.nodes()+" edges="+graph.edges()+" evidence="+graph.evidence());
                 boolean usable=detailed.report().status()!=UniversalArchitectureReport.Status.TERMINAL_FAILURE;Optional<String> selected=usable?autoContext(graph.contexts()):Optional.empty();r.stage="storage";
                 if(usable)r.storage().select(graph,selected);
@@ -699,7 +705,9 @@ public final class EvoApp {
                 data.remove("rootCauses");data.put("rootCauseSummary",Map.of("total",detailed.report().rootCauses().size(),"byCategory",reasonCounts(detailed.report().rootCauses(),c->c.category().name())));
             }
             r.stage="receipt";
-            return emit(r,"scan",envelope(data),detailed.graphInput().isEmpty()||detailed.report().status()==UniversalArchitectureReport.Status.TERMINAL_FAILURE?1:detailed.report().status()==UniversalArchitectureReport.Status.COMPLETE&&!availablePlatforms.isEmpty()&&scanGaps.isEmpty()?0:3);
+            int exitCode=detailed.graphInput().isEmpty()||detailed.report().status()==UniversalArchitectureReport.Status.TERMINAL_FAILURE
+                    ?1:("COMPLETE".equals(String.valueOf(data.get("status")))&&!availablePlatforms.isEmpty()?0:3);
+            return emit(r,"scan",envelope(data),exitCode);
             }
         }
         private int prepareDependencies(RepositoryAcquisitionResult acquisition,List<java.net.URI> repositories)throws IOException {
@@ -754,7 +762,7 @@ public final class EvoApp {
             public com.evolution.analysis.frontend.FrontendResult analyze(com.evolution.analysis.frontend.FrontendRequest request){try{return frontend.analyze(request);}catch(RuntimeException failure){err.println("[DEBUG] frontend="+failure.getClass().getName());for(var frame:failure.getStackTrace())if(frame.getClassName().startsWith("com.evolution."))err.println("  "+frame.getClassName()+"."+frame.getMethodName()+":"+frame.getLineNumber());throw failure;}}
         };
     }
-    private static Map<String,Object> graphGapSummary(PartitionedGraphStore.Publication graph,long inputTotal){return Map.of("total",graph.gaps(),"byReason",graph.gapReasons(),"contextReferences",graph.gapNodes(),"inputTotal",inputTotal,"population","ALL_GRAPH_CAPABILITY_GAP_IDENTITIES","records","raw canonical graph","context",graph.snapshot(),"inspect","evo gaps --context <partition-context> --json");}
+    private static Map<String,Object> graphGapSummary(PartitionedGraphStore.Publication graph,long inputTotal){return Map.of("total",graph.gaps(),"byReason",graph.gapReasons(),"byObligation",com.evolution.backend.analysis.GapObligations.classify(graph.gapReasons()),"contextReferences",graph.gapNodes(),"inputTotal",inputTotal,"population","ALL_GRAPH_CAPABILITY_GAP_IDENTITIES","records","raw canonical graph","context",graph.snapshot(),"inspect","evo gaps --context <partition-context> --json");}
     private static <T> Map<String,Long> reasonCounts(Collection<T> rows,java.util.function.Function<T,String> reason){var counts=new TreeMap<String,Long>();for(T row:rows)counts.merge(reason.apply(row),1L,Long::sum);return counts;}
     private Path resolve(Path path){return path.isAbsolute()?path:directory.resolve(path);}
     private KnowledgeGraph load(Root r)throws IOException{

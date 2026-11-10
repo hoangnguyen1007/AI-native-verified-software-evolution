@@ -94,7 +94,18 @@ final class InventoryMetrics {
             try {
                 var expected=input.documents.get(identity);
                 if(expected.digest().isEmpty()||!expected.digest().orElseThrow().value().equals(document.get("contentDigest"))){input.gap("SOURCE_CONTENT_DIGEST_CONFLICT");continue;}
-                String encoded=text(row,"bytesBase64");long estimate=((long)encoded.length()+3)/4*3;
+                String encoded;
+                Optional<ContentDigest> contentProof=Optional.empty();
+                if(row.get("bytesBase64") instanceof String inline)encoded=inline;
+                else if(row.get("contentEvidence") instanceof String ref) {
+                    var target=new ContentDigest(ref);
+                    var contentEv=input.graph.evidence(target);
+                    if(contentEv.isEmpty()||!contentEv.orElseThrow().family().equals("source.content")){input.gap("SOURCE_BYTES_UNAVAILABLE");continue;}
+                    var contentRow=input.read(contentEv.orElseThrow());
+                    if(!Objects.equals(document.get("contentDigest"),contentRow.get("contentDigest"))||!(contentRow.get("bytesBase64") instanceof String stored)){input.gap("SOURCE_CONTENT_DIGEST_CONFLICT");continue;}
+                    encoded=stored;contentProof=Optional.of(target);
+                } else {input.gap("SOURCE_DECODING_OR_INTEGRITY_FAILED");continue;}
+                long estimate=((long)encoded.length()+3)/4*3;
                 if(estimate>input.limits.maxSourceBytes()-input.sourceBytes+2){input.gap("SOURCE_BYTE_LIMIT");input.exhausted=true;break;}
                 var bytes=Base64.getDecoder().decode(encoded);if(bytes.length>input.limits.maxSourceBytes()-input.sourceBytes){input.gap("SOURCE_BYTE_LIMIT");input.exhausted=true;break;}input.sourceBytes+=bytes.length;
                 var sourceDoc=new SourceDocument(new SourceDocumentIdentity(identity),new RepositoryIdentity(text(document,"repository")),new ModuleIdentity(text(document,"module")),
@@ -103,7 +114,8 @@ final class InventoryMetrics {
                 var proofs=array(decoding.get("evidence")).stream().map(e->{var p=object(e);return new SourceInput.Evidence(text(p,"logicalId"),new ContentDigest(text(p,"digest")));}).toList();
                 var policy=new SourceInput.Decoding(text(decoding,"schemaVersion"),text(decoding,"charset"),SourceInput.EncodingOrigin.valueOf(text(decoding,"origin")),proofs,
                         SourceInput.Bom.valueOf(text(decoding,"bom")),new SourceInput.LineEndings(SourceInput.LineEndingKind.valueOf(text(endings,"kind")),Math.toIntExact(number(endings.get("lf"))),Math.toIntExact(number(endings.get("crlf"))),Math.toIntExact(number(endings.get("cr")))));
-                var source=new SourceInput(sourceDoc,bytes,policy);long count=physicalLines(source.text());lines+=count;decoded++;remaining.remove(identity);input.references.add(evidence.identity());
+                var source=new SourceInput(sourceDoc,bytes,policy);long count=physicalLines(source.text());lines+=count;decoded++;remaining.remove(identity);
+                input.references.add(evidence.identity());contentProof.ifPresent(input.references::add);
                 if(perFile.size()<input.limits.maxDetailRows())perFile.put(identity,count);
             }catch(IllegalArgumentException|ArithmeticException invalid){input.gap("SOURCE_DECODING_OR_INTEGRITY_FAILED");}
         }

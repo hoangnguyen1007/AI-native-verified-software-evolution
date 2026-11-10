@@ -171,7 +171,7 @@ public final class PolyglotScan {
             }}
             nativeInput.current().check();
         }
-        HttpServiceCallProjection.project(writer.nodes,writer.edges,writer.evidence,store.records("http-projection-additions",GraphSnapshotCodec::node),context,cancelled);
+        HttpServiceCallProjection.project(store,context,cancelled);
         GrpcServiceCallProjection.project(store,context,cancelled);
         ServiceArchitectureProjection.project(store,context,cancelled);
     }

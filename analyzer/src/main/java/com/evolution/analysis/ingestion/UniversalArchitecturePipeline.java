@@ -544,8 +544,9 @@ public final class UniversalArchitecturePipeline {
                         :frontend.memberDeclarations().stream().collect(java.util.stream.Collectors.toMap(MemberDeclarationRecord::member,MemberDeclarationRecord::name));
                 for(var candidate:frontend.constructorCandidates()) {
                     injectionSites.add(new UniversalArchitectureReport.InjectionSiteRecord(
-                            typeIdentityToFqn.getOrDefault(candidate.owner(),candidate.owner().value()),
-                            candidateFieldNames.getOrDefault(candidate.field(),candidate.field().value()),candidate.type().spelling(),
+                            typeIdentityToFqn.getOrDefault(candidate.owner(),candidate.owner().value()).strip(),
+                            candidateFieldNames.getOrDefault(candidate.field(),candidate.field().value()).strip(),
+                            candidate.type().spelling().strip(),
                             "LOMBOK_CONSTRUCTOR_CANDIDATE",List.of(),true));
                 }
                 // Main methods
@@ -650,6 +651,9 @@ public final class UniversalArchitecturePipeline {
                                         }
                                         return decl.spelling();
                                     });
+                            if (methodName.isBlank()) {
+                                methodName = "bean";
+                            }
 
                             Optional<EntityIdentity> ownerTypeOpt = frontend.occurrences().stream()
                                     .filter(o -> o.relationship().kind().value().contains("declares") &&
@@ -671,14 +675,19 @@ public final class UniversalArchitecturePipeline {
                             if (factoryType.isBlank()) {
                                 factoryType = "Factory";
                             }
+                            factoryType = factoryType.strip();
+                            methodName = methodName.strip();
 
                             var returnTypeOpt = frontend.types().stream()
                                     .filter(t -> t.owner().equals(Optional.of(ann.owner())) &&
                                             (t.role().value().contains("returns") || t.role().value().equals("java.return-type")))
-                                    .map(t -> t.type().spelling())
+                                    .map(t -> t.type().spelling().strip())
                                     .filter(s -> !s.isBlank())
                                     .findFirst();
-                            String productType = returnTypeOpt.orElse("Object");
+                            String productType = returnTypeOpt.orElse("Object").strip();
+                            if (productType.isBlank()) {
+                                productType = "Object";
+                            }
                             producers.add(new UniversalArchitectureReport.ProducerRecord(
                                     factoryType, methodName, productType, methodName, List.of()
                             ));
@@ -707,24 +716,26 @@ public final class UniversalArchitecturePipeline {
                             if (ownerClass.isBlank()) {
                                 ownerClass = "Owner";
                             }
+                            ownerClass = ownerClass.strip();
 
-                            String memberName = frontend.memberDeclarations().stream()
+                            String rawMemberName = frontend.memberDeclarations().stream()
                                     .filter(m -> m.member().equals(ann.owner()))
                                     .map(MemberDeclarationRecord::name)
                                     .findFirst()
                                     .orElse(decl.spelling());
+                            final String memberName = (rawMemberName.isBlank() ? "injected" : rawMemberName).strip();
 
-                            String siteKind = decl.entity().kind().name();
+                            String siteKind = decl.entity().kind().name().strip();
 
                             var paramTypes = frontend.types().stream()
                                     .filter(t -> t.owner().equals(Optional.of(ann.owner())))
-                                    .map(t -> t.type().spelling())
+                                    .map(t -> t.type().spelling().strip())
                                     .filter(s -> !s.isBlank())
                                     .toList();
                             if (!paramTypes.isEmpty()) {
                                 for (String pType : paramTypes) {
                                     injectionSites.add(new UniversalArchitectureReport.InjectionSiteRecord(
-                                            ownerClass, memberName, pType, siteKind, List.of(), true
+                                            ownerClass, memberName, pType.strip(), siteKind, List.of(), true
                                     ));
                                 }
                             } else {
@@ -734,7 +745,7 @@ public final class UniversalArchitecturePipeline {
                                         .findFirst()
                                         .orElse("Object");
                                 injectionSites.add(new UniversalArchitectureReport.InjectionSiteRecord(
-                                        ownerClass, memberName, targetType, siteKind, List.of(), true
+                                        ownerClass, memberName, targetType.strip(), siteKind, List.of(), true
                                 ));
                             }
                         }

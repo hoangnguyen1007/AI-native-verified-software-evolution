@@ -58,7 +58,7 @@ final class GraphProjectionPayloads implements AutoCloseable {
         }finally{deflater.end();}
         boolean compressed=packed.length<raw.length;byte[] bytes=compressed?packed:raw;
         if(writer==null||position>0&&position+bytes.length>segmentBytes) {
-            if(writer!=null){writer.close();writer=null;}
+            if(writer!=null){writer.force(false);writer.close();writer=null;}
             Path file=Files.createTempFile(directory,"graph-payload-",".pack");segments.add(file);
             writer=FileChannel.open(file,StandardOpenOption.READ,StandardOpenOption.WRITE,LinkOption.NOFOLLOW_LINKS);position=0;
         }

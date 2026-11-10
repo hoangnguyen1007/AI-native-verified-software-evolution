@@ -11,15 +11,25 @@ import com.github.javaparser.symbolsolver.resolution.typesolvers.*;
 import java.io.*;
 import java.nio.file.*;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.jar.Attributes;
 import java.util.jar.JarInputStream;
-import java.util.jar.JarEntry;
-import java.util.jar.JarOutputStream;
 import java.util.jar.Manifest;
 import java.util.zip.ZipFile;
 
 /** Sources, platform loader and verified JAR snapshots only; no application classloader or directory scanning. */
 final class ResolutionEnvironment {
+    private static final WeightedLruCache<PlatformCacheKey, CachedArchive> PLATFORM_CACHE = new WeightedLruCache<>(384L << 20);
+    private static final WeightedLruCache<JarCacheKey, CachedArchive> JAR_CACHE = new WeightedLruCache<>(512L << 20);
+    private static final AtomicLong ARCHIVE_BUILDS = new AtomicLong();
+
+    static long cachedArchiveBuilds() {
+        return ARCHIVE_BUILDS.get();
+    }
+
+    private record PlatformCacheKey(PlatformInput.Format format, int release, ContentDigest digest) {}
+    private record JarCacheKey(int targetRelease, ContentDigest digest) {}
+
     final MemoryTypeSolver project = new MemoryTypeSolver();
     final CombinedTypeSolver platform = new CombinedTypeSolver();
     final MemoryTypeSolver androidProject = new MemoryTypeSolver();
@@ -30,15 +40,16 @@ final class ResolutionEnvironment {
     private final FrontendRequest request;
     private final ClasspathEntry platformEntry;
     private final List<Artifact> artifacts = new ArrayList<>();
-    private final Map<ContentDigest,JarTypeSolver> memberEvidence=new TreeMap<>();
+    private final Map<ContentDigest, ArchiveTypeSolver> memberEvidence = new TreeMap<>();
     private final Map<Integer, MemoryTypeSolver> reactorSources = new TreeMap<>();
-    private record Artifact(BinaryInput input, JarTypeSolver solver) {}
+    private record Artifact(BinaryInput input, ArchiveTypeSolver solver) {}
     record Origin(EntityOrigin kind, EntityScope scope) {}
 
     ResolutionEnvironment(FrontendRequest request) {
         this.request = Objects.requireNonNull(request);
         request.originClasspath();
         platformEntry = request.platform().entry();
+        int release = request.platform().release();
         // An incomplete build closure does not invalidate the independently verified inputs.
         // Missing targets remain unresolved at the individual observation, never filled by host lookup.
         try {
@@ -49,30 +60,66 @@ final class ResolutionEnvironment {
                 if (!platformPaths.add(real)) {
                     throw new FrontendInputException("frontend.duplicate-platform-artifact", "Aliased platform artifacts are not allowed");
                 }
-                verify(artifact.contentDigest(), real);
                 switch (artifact.format()) {
                     case RUNTIME_MODULES -> {
+                        verify(artifact.contentDigest(), real);
                         Path runtimeModules = Path.of(System.getProperty("java.home")).resolve("lib/modules");
-                        if (request.platform().release() != Runtime.version().feature()
+                        if (release != Runtime.version().feature()
                                 || !Files.isSameFile(real, runtimeModules)) {
                             throw new FrontendInputException("frontend.platform-view", "Running-module symbols must identify the running JDK exactly");
                         }
                         platform.add(new ClassLoaderTypeSolver(ClassLoader.getPlatformClassLoader()));
                     }
                     case JAR -> {
-                        byte[] bytes=Files.readAllBytes(real);verify(artifact.contentDigest(),bytes);
-                        platform.add(jarSolver(bytes, request.platform().release(), artifact.logicalName()));
+                        var key = new PlatformCacheKey(PlatformInput.Format.JAR, release, artifact.contentDigest());
+                        var cached = PLATFORM_CACHE.get(key);
+                        if (cached != null) {
+                            verify(artifact.contentDigest(), real);
+                        } else {
+                            byte[] bytes = Files.readAllBytes(real);
+                            verify(artifact.contentDigest(), bytes);
+                            cached = buildJarArchive(bytes, release);
+                            PLATFORM_CACHE.put(key, cached);
+                        }
+                        platform.add(solverFromCachedJar(cached, artifact.logicalName()));
                     }
-                    case JMOD -> platform.add(jmodSolver(real));
-                    case CT_SYM -> platform.add(ctSymSolver(real, request.platform().release()));
+                    case JMOD -> {
+                        verify(artifact.contentDigest(), real);
+                        var key = new PlatformCacheKey(PlatformInput.Format.JMOD, 0, artifact.contentDigest());
+                        var cached = PLATFORM_CACHE.get(key);
+                        if (cached == null) {
+                            cached = buildJmodArchive(real);
+                            PLATFORM_CACHE.put(key, cached);
+                        }
+                        platform.add(new ArchiveTypeSolver(cached));
+                    }
+                    case CT_SYM -> {
+                        verify(artifact.contentDigest(), real);
+                        var key = new PlatformCacheKey(PlatformInput.Format.CT_SYM, release, artifact.contentDigest());
+                        var cached = PLATFORM_CACHE.get(key);
+                        if (cached == null) {
+                            cached = buildCtSymArchive(real, release);
+                            PLATFORM_CACHE.put(key, cached);
+                        }
+                        platform.add(new ArchiveTypeSolver(cached));
+                    }
                 }
             }
             var paths = new HashSet<Path>();
             for (var input : request.dependencies()) {
-                if (!paths.add(input.path().toRealPath())) throw new FrontendInputException("frontend.duplicate-binary", "Aliased binary inputs are not allowed");
-                byte[] bytes = Files.readAllBytes(input.path());
-                verify(input.entry(), bytes);
-                var jar = jarSolver(bytes, request.platform().release(), input.entry().logicalName());
+                Path real = input.path().toRealPath();
+                if (!paths.add(real)) throw new FrontendInputException("frontend.duplicate-binary", "Aliased binary inputs are not allowed");
+                var key = new JarCacheKey(release, input.entry().contentDigest());
+                var cached = JAR_CACHE.get(key);
+                if (cached != null) {
+                    verify(input.entry().contentDigest(), real);
+                } else {
+                    byte[] bytes = Files.readAllBytes(real);
+                    verify(input.entry(), bytes);
+                    cached = buildJarArchive(bytes, release);
+                    JAR_CACHE.put(key, cached);
+                }
+                var jar = solverFromCachedJar(cached, input.entry().logicalName());
                 artifacts.add(new Artifact(input, jar));
             }
             if(request.correspondence().isPresent()){
@@ -80,7 +127,16 @@ final class ResolutionEnvironment {
                 for(var view:binding.binaryViews().entrySet()){
                     if(view.getValue().size()>32_000_000)throw new FrontendInputException("frontend.native-member-worker","A larger member-evidence worker is required");
                     byte[] bytes;try(var in=binding.openBinaryView(view.getKey())){bytes=in.readNBytes(Math.toIntExact(view.getValue().size()+1));}
-                    verify(view.getValue().digest(),bytes);var memberSolver=jarSolver(bytes,request.platform().release(),"native-member:"+view.getKey().value());memberSolver.setParent(solver);memberEvidence.put(view.getKey(),memberSolver);
+                    verify(view.getValue().digest(),bytes);
+                    var key = new JarCacheKey(release, view.getValue().digest());
+                    var cached = JAR_CACHE.get(key);
+                    if (cached == null) {
+                        cached = buildJarArchive(bytes, release);
+                        JAR_CACHE.put(key, cached);
+                    }
+                    var memberSolver = solverFromCachedJar(cached, "native-member:" + view.getKey().value());
+                    memberSolver.setParent(solver);
+                    memberEvidence.put(view.getKey(), memberSolver);
                 }
             }
             Map<Integer, ReactorSourceInput> sourcePositions = new TreeMap<>();
@@ -149,23 +205,27 @@ final class ResolutionEnvironment {
     private static void verify(ClasspathEntry entry, byte[] bytes) {
         verify(entry.contentDigest(), bytes);
     }
-    private static void verify(ContentDigest expected,Path path)throws IOException {
+    private static void verify(ContentDigest expected, Path path) throws IOException {
         java.security.MessageDigest digest;
-        try{digest=java.security.MessageDigest.getInstance("SHA-256");}catch(java.security.NoSuchAlgorithmException impossible){throw new AssertionError(impossible);}
-        try(var input=new java.security.DigestInputStream(Files.newInputStream(path),digest)){input.transferTo(OutputStream.nullOutputStream());}
-        if(!expected.value().equals("sha256:"+HexFormat.of().formatHex(digest.digest())))throw new FrontendInputException("frontend.artifact-digest","Artifact bytes differ from the manifest");
+        try { digest = java.security.MessageDigest.getInstance("SHA-256"); }
+        catch (java.security.NoSuchAlgorithmException impossible) { throw new AssertionError(impossible); }
+        byte[] buffer = new byte[65536];
+        try (var input = Files.newInputStream(path)) {
+            int read;
+            while ((read = input.read(buffer)) != -1) {
+                digest.update(buffer, 0, read);
+            }
+        }
+        if (!expected.value().equals("sha256:" + HexFormat.of().formatHex(digest.digest()))) {
+            throw new FrontendInputException("frontend.artifact-digest", "Artifact bytes differ from the manifest");
+        }
     }
     private static void verify(ContentDigest expected, byte[] bytes) {
         if (!ContentDigest.sha256(bytes).equals(expected)) throw new FrontendInputException("frontend.artifact-digest", "Artifact bytes differ from the manifest");
     }
-    private static com.github.javaparser.resolution.TypeSolver jmodSolver(Path path) throws IOException {
-        ByteArrayOutputStream normalized = new ByteArrayOutputStream();
-        Set<String> seen = new HashSet<>();
-        try (ZipFile jmod = new ZipFile(path.toFile());
-                JarOutputStream jar = new JarOutputStream(normalized)) {
-            // Temporary solver archive: avoid recompression CPU while retaining exact
-            // class bytes and ZIP CRCs. The provider may materialize it as a temp file.
-            jar.setLevel(java.util.zip.Deflater.NO_COMPRESSION);
+    private static CachedArchive buildJmodArchive(Path path) throws IOException {
+        var classEntries = new LinkedHashMap<String, byte[]>();
+        try (ZipFile jmod = new ZipFile(path.toFile())) {
             List<? extends java.util.zip.ZipEntry> entries = jmod.stream()
                     .filter(entry -> !entry.isDirectory()
                             && entry.getName().startsWith("classes/")
@@ -174,14 +234,13 @@ final class ResolutionEnvironment {
                     .sorted(Comparator.comparing(java.util.zip.ZipEntry::getName)).toList();
             for (var source : entries) {
                 String name = source.getName().substring("classes/".length());
-                if (!seen.add(name)) throw new FrontendInputException("frontend.jmod-duplicate", "JMOD contains duplicate platform classes");
-                JarEntry target = new JarEntry(name);
-                target.setTime(0);
-                jar.putNextEntry(target);
-                try (InputStream input = jmod.getInputStream(source)) { input.transferTo(jar); }
-                jar.closeEntry();
+                try (InputStream input = jmod.getInputStream(source)) {
+                    if (classEntries.put(name, input.readAllBytes()) != null) {
+                        throw new FrontendInputException("frontend.jmod-duplicate", "JMOD contains duplicate platform classes");
+                    }
+                }
             }
-            if (seen.isEmpty()) {
+            if (classEntries.isEmpty()) {
                 // Aggregator/native-only JDK modules legitimately declare no Java types.
                 // Retain the original artifact/hash in the platform manifest; validate its descriptor.
                 var descriptor = jmod.getEntry("classes/module-info.class");
@@ -191,18 +250,16 @@ final class ResolutionEnvironment {
                 } catch (java.lang.module.InvalidModuleDescriptorException invalid) {
                     throw new FrontendInputException("frontend.jmod-descriptor", "JMOD module descriptor is invalid");
                 }
-                return new MemoryTypeSolver();
+                return CachedArchive.fromClassEntries(Map.of(), Optional.empty());
             }
         }
-        return new JarTypeSolver(new ByteArrayInputStream(normalized.toByteArray()));
+        return CachedArchive.fromClassEntries(classEntries, Optional.empty());
     }
-    private static JarTypeSolver ctSymSolver(Path path, int release) throws IOException {
+    private static CachedArchive buildCtSymArchive(Path path, int release) throws IOException {
         String code = releaseCode(release);
         if (code == null) throw new FrontendInputException("frontend.ct-sym-release", "ct.sym release is unsupported");
-        ByteArrayOutputStream normalized = new ByteArrayOutputStream();
-        Set<String> seen = new HashSet<>();
-        try (ZipFile ctSym = new ZipFile(path.toFile());
-                JarOutputStream jar = new JarOutputStream(normalized)) {
+        var classEntries = new LinkedHashMap<String, byte[]>();
+        try (ZipFile ctSym = new ZipFile(path.toFile())) {
             List<? extends java.util.zip.ZipEntry> entries = ctSym.stream()
                     .filter(entry -> {
                         String[] parts = entry.getName().split("/", 3);
@@ -213,18 +270,17 @@ final class ResolutionEnvironment {
             for (var source : entries) {
                 String[] parts = source.getName().split("/", 3);
                 String name = parts[2].substring(0, parts[2].length() - ".sig".length()) + ".class";
-                if (!seen.add(name)) throw new FrontendInputException(
-                        "frontend.ct-sym-duplicate", "ct.sym contains duplicate platform classes for the requested release");
-                JarEntry target = new JarEntry(name);
-                target.setTime(0);
-                jar.putNextEntry(target);
-                try (InputStream input = ctSym.getInputStream(source)) { input.transferTo(jar); }
-                jar.closeEntry();
+                try (InputStream input = ctSym.getInputStream(source)) {
+                    if (classEntries.put(name, input.readAllBytes()) != null) {
+                        throw new FrontendInputException(
+                                "frontend.ct-sym-duplicate", "ct.sym contains duplicate platform classes for the requested release");
+                    }
+                }
             }
         }
-        if (seen.isEmpty()) throw new FrontendInputException(
+        if (classEntries.isEmpty()) throw new FrontendInputException(
                 "frontend.ct-sym-empty", "ct.sym contains no classes for the requested release");
-        return new JarTypeSolver(new ByteArrayInputStream(normalized.toByteArray()));
+        return CachedArchive.fromClassEntries(classEntries, Optional.empty());
     }
     private static String releaseCode(int release) {
         if (release >= 0 && release <= 9) return Integer.toString(release);
@@ -233,24 +289,22 @@ final class ResolutionEnvironment {
     }
     private record PhysicalJarEntry(String name, byte[] bytes) {}
     private record SelectedJarEntry(int version, byte[] bytes) {}
-    private record NormalizedJar(byte[] bytes, Optional<String> manifestClasspath) {}
 
-    private JarTypeSolver jarSolver(byte[] bytes, int targetRelease, String logicalName) throws IOException {
-        var normalized = normalizeJar(bytes, targetRelease);
-        normalized.manifestClasspath().ifPresent(classpath -> diagnostics.add(new Diagnostic(
+    private ArchiveTypeSolver solverFromCachedJar(CachedArchive cached, String logicalName) {
+        cached.manifestClasspath().ifPresent(classpath -> diagnostics.add(new Diagnostic(
                 DiagnosticSeverity.WARNING, "frontend.jar-classpath-unmodeled",
                 "JAR manifest Class-Path is recorded but not expanded; the exact supplied classpath remains authoritative",
                 Optional.empty(), Map.of("artifact", logicalName, "classPathSha256",
                         ContentDigest.sha256Utf8(classpath).value()))));
-        return new JarTypeSolver(new ByteArrayInputStream(normalized.bytes()));
+        return new ArchiveTypeSolver(cached);
     }
 
     /** Materializes the exact target-release class view so SymbolSolver never guesses MR-JAR selection. */
-    private static NormalizedJar normalizeJar(byte[] bytes, int targetRelease) throws IOException {
+    private static CachedArchive buildJarArchive(byte[] bytes, int targetRelease) throws IOException {
         if(bytes.length>=22&&bytes[0]=='P'&&bytes[1]=='K'&&bytes[2]==5&&bytes[3]==6){
             var end=java.nio.ByteBuffer.wrap(bytes).order(java.nio.ByteOrder.LITTLE_ENDIAN);
             if(end.getShort(4)==0&&end.getShort(6)==0&&end.getShort(8)==0&&end.getShort(10)==0&&end.getInt(12)==0&&end.getInt(16)==0&&Short.toUnsignedInt(end.getShort(20))==bytes.length-22)
-                return new NormalizedJar(bytes,Optional.empty());
+                return CachedArchive.fromClassEntries(Map.of(), Optional.empty());
         }
         if (bytes.length < 4 || bytes[0] != 'P' || bytes[1] != 'K' || bytes[2] != 3 || bytes[3] != 4)
             throw new FrontendInputException("frontend.jar-format", "Dependency is not a JAR archive");
@@ -311,14 +365,196 @@ final class ResolutionEnvironment {
             if (current == null || version > current.version())
                 selected.put(name, new SelectedJarEntry(version, entry.bytes()));
         }
-        var normalized = new ByteArrayOutputStream();
-        try (var output = new JarOutputStream(normalized)) {
-            for (var entry : selected.entrySet()) {
-                var target = new JarEntry(entry.getKey()); target.setTime(0);
-                output.putNextEntry(target); output.write(entry.getValue().bytes()); output.closeEntry();
+        var classEntries = new LinkedHashMap<String, byte[]>(Math.max(16, selected.size() * 2));
+        for (var entry : selected.entrySet()) {
+            classEntries.put(entry.getKey(), entry.getValue().bytes());
+        }
+        return CachedArchive.fromClassEntries(classEntries, Optional.ofNullable(manifestClasspath));
+    }
+
+    private static javassist.ClassPath mapClassPath(Map<String, byte[]> pool) {
+        return new javassist.ClassPath() {
+            @Override
+            public InputStream openClassfile(String classname) {
+                byte[] raw = pool.get(classname);
+                return raw == null ? null : new ByteArrayInputStream(raw);
+            }
+
+            @Override
+            public java.net.URL find(String classname) {
+                if (!pool.containsKey(classname)) return null;
+                try {
+                    return new java.net.URL(null, "file:/CachedArchive/" + classname.replace('.', '/') + ".class",
+                            new java.net.URLStreamHandler() {
+                                @Override
+                                protected java.net.URLConnection openConnection(java.net.URL url) {
+                                    return new java.net.URLConnection(url) {
+                                        @Override public void connect() {}
+                                        @Override public int getContentLength() {
+                                            byte[] raw = pool.get(classname);
+                                            return raw == null ? -1 : raw.length;
+                                        }
+                                        @Override public InputStream getInputStream() throws IOException {
+                                            byte[] raw = pool.get(classname);
+                                            if (raw == null) throw new FileNotFoundException(classname);
+                                            return new ByteArrayInputStream(raw);
+                                        }
+                                    };
+                                }
+                            });
+                } catch (java.net.MalformedURLException impossible) {
+                    return null;
+                }
+            }
+        };
+    }
+
+    private static final class CachedArchive {
+        private static final CachedArchive EMPTY = new CachedArchive(Map.of(), Map.of(), Optional.empty(), Optional.empty(), 64L);
+        final Map<String, String> knownClasses;
+        final Map<String, byte[]> classBytesByPoolName;
+        final Optional<com.github.javaparser.utils.Pair<String, List<String>>> moduleToExportedPackages;
+        final Optional<String> manifestClasspath;
+        final javassist.ClassPath classPath;
+        final long weightBytes;
+
+        private CachedArchive(
+                Map<String, String> knownClasses,
+                Map<String, byte[]> classBytesByPoolName,
+                Optional<com.github.javaparser.utils.Pair<String, List<String>>> moduleToExportedPackages,
+                Optional<String> manifestClasspath,
+                long weightBytes) {
+            this.knownClasses = knownClasses;
+            this.classBytesByPoolName = classBytesByPoolName;
+            this.moduleToExportedPackages = moduleToExportedPackages;
+            this.manifestClasspath = manifestClasspath;
+            this.weightBytes = weightBytes;
+            this.classPath = mapClassPath(classBytesByPoolName);
+        }
+
+        Optional<String> manifestClasspath() {
+            return manifestClasspath;
+        }
+
+        static CachedArchive fromClassEntries(Map<String, byte[]> entries, Optional<String> manifestClasspath) {
+            ARCHIVE_BUILDS.incrementAndGet();
+            if (entries.isEmpty() && manifestClasspath.isEmpty()) {
+                return EMPTY;
+            }
+            var known = new LinkedHashMap<String, String>(Math.max(16, entries.size() * 2));
+            var byPool = new HashMap<String, byte[]>(Math.max(16, entries.size() * 2));
+            long weight = 128L + manifestClasspath.map(s -> (long) s.length() * 2).orElse(0L);
+            for (var entry : entries.entrySet()) {
+                String entryName = entry.getKey();
+                if (!entryName.endsWith(".class")) continue;
+                String stripped = entryName.substring(0, entryName.length() - ".class".length());
+                String poolName = stripped.replace('/', '.');
+                String className = poolName.replace('$', '.');
+                known.put(className, className.equals(poolName) ? className : poolName);
+                byte[] raw = entry.getValue();
+                byPool.put(poolName, raw);
+                weight += raw.length + (long) poolName.length() * 4 + 96L;
+            }
+            var immutableKnown = Collections.unmodifiableMap(known);
+            var immutablePool = Collections.unmodifiableMap(byPool);
+            Optional<com.github.javaparser.utils.Pair<String, List<String>>> modInfo = Optional.empty();
+            if (immutablePool.containsKey("module-info")) {
+                var initPool = new javassist.ClassPool(false);
+                initPool.appendClassPath(mapClassPath(immutablePool));
+                try {
+                    modInfo = com.github.javaparser.symbolsolver.utils.JavassistModuleHelper
+                            .getModuleWithExportedPackages(initPool.get("module-info"));
+                } catch (javassist.NotFoundException impossible) {
+                    throw new IllegalStateException("Unable to read module-info from class pool", impossible);
+                }
+            }
+            return new CachedArchive(immutableKnown, immutablePool, modInfo, manifestClasspath, weight);
+        }
+    }
+
+    private static final class ArchiveTypeSolver implements com.github.javaparser.resolution.TypeSolver {
+        private final CachedArchive archive;
+        private final javassist.ClassPool classPool;
+        private com.github.javaparser.resolution.TypeSolver parent;
+
+        ArchiveTypeSolver(CachedArchive archive) {
+            this.archive = Objects.requireNonNull(archive);
+            this.classPool = new javassist.ClassPool(false);
+            this.classPool.appendClassPath(archive.classPath);
+        }
+
+        Set<String> getKnownClasses() {
+            return archive.knownClasses.keySet();
+        }
+
+        @Override
+        public com.github.javaparser.resolution.TypeSolver getParent() {
+            return parent;
+        }
+
+        @Override
+        public void setParent(com.github.javaparser.resolution.TypeSolver parent) {
+            Objects.requireNonNull(parent);
+            if (this.parent != null) throw new IllegalStateException("This TypeSolver already has a parent.");
+            if (parent == this) throw new IllegalStateException("The parent of this TypeSolver cannot be itself.");
+            this.parent = parent;
+        }
+
+        @Override
+        public com.github.javaparser.resolution.model.SymbolReference<com.github.javaparser.resolution.declarations.ResolvedReferenceTypeDeclaration> tryToSolveType(String name) {
+            String poolName = archive.knownClasses.get(name);
+            if (poolName == null) {
+                return com.github.javaparser.resolution.model.SymbolReference.unsolved();
+            }
+            try {
+                return com.github.javaparser.resolution.model.SymbolReference.solved(
+                        com.github.javaparser.symbolsolver.javassistmodel.JavassistFactory.toTypeDeclaration(
+                                classPool.get(poolName), getRoot()));
+            } catch (javassist.NotFoundException e) {
+                throw new IllegalStateException("Unable to get class with name " + poolName + " from class pool.", e);
             }
         }
-        return new NormalizedJar(normalized.toByteArray(), Optional.ofNullable(manifestClasspath));
+
+        @Override
+        public com.github.javaparser.resolution.model.SymbolReference<com.github.javaparser.resolution.declarations.ResolvedReferenceTypeDeclaration> tryToSolveTypeInModule(String qualifiedModuleName, String simpleTypeName) {
+            if (archive.moduleToExportedPackages.isPresent()) {
+                var pair = archive.moduleToExportedPackages.get();
+                if (pair.a.equals(qualifiedModuleName)) {
+                    for (String pkg : pair.b) {
+                        var candidate = tryToSolveType(pkg + "." + simpleTypeName);
+                        if (candidate.isSolved()) return candidate;
+                    }
+                }
+            }
+            return com.github.javaparser.resolution.model.SymbolReference.unsolved();
+        }
+    }
+
+    private static final class WeightedLruCache<K, V extends CachedArchive> {
+        private final long maxBytes;
+        private final LinkedHashMap<K, V> map = new LinkedHashMap<>(64, 0.75f, true);
+        private long usedBytes;
+
+        WeightedLruCache(long maxBytes) {
+            this.maxBytes = maxBytes;
+        }
+
+        synchronized V get(K key) {
+            return map.get(key);
+        }
+
+        synchronized void put(K key, V value) {
+            if (value.weightBytes > maxBytes) return;
+            V previous = map.put(key, value);
+            if (previous != null) usedBytes -= previous.weightBytes;
+            usedBytes += value.weightBytes;
+            var it = map.entrySet().iterator();
+            while (usedBytes > maxBytes && it.hasNext()) {
+                var evicted = it.next().getValue();
+                usedBytes -= evicted.weightBytes;
+                it.remove();
+            }
+        }
     }
     boolean isKnownInPrimarySolvers(String qualifiedName) {
         if (project.tryToSolveType(qualifiedName).isSolved() || platform.tryToSolveType(qualifiedName).isSolved()) {

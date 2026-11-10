@@ -11,7 +11,7 @@ import com.evolution.analysis.filesystem.*;
 import com.evolution.analysis.frontend.*;
 import com.evolution.analysis.graph.*;
 import com.evolution.analysis.ingestion.*;
-import com.evolution.analysis.input.PlatformSymbolRequest;
+import com.evolution.analysis.input.*;
 import com.evolution.analysis.javaparser.JavaParserFrontend;
 import com.evolution.analysis.maven.MavenBuildModelProvider;
 import com.evolution.analysis.metrics.*;
@@ -82,10 +82,23 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
         control.stage(AnalysisJobs.Stage.PLATFORM);
         var platform = new FilesystemJdkPlatformProvider().acquire(safe(input.jdk()),new PlatformSymbolRequest(input.release(),128,128_000_000,512_000_000));
         control.checkpoint();
-        var maven = MavenScan.inputs(acquisition,Optional.empty(),cache,platform.platform()); control.checkpoint();
-        var gradle=GradleScan.model(acquisition,new UniversalBuildIngestion.Policy(Optional.of(input.release()),Optional.of(input.release()),Optional.of("UTF-8"),32_768,1_000_000,200_000,128),new RepositoryInputDecoder.Policy("UTF-8",500_000,10_000_000),maven.externalPoms());
-        var dependencies=GradleScan.augment(maven,acquisition,gradle,cache,platform.platform(),new com.evolution.analysis.dependency.DependencyAcquisitionPolicy(1024,64_000_000,256_000_000,64,List.of(),5000,15000,0),Map.of());
-        var defaults = UniversalBuildIngestion.Policy.defaults(); var frontend = new JavaParserFrontend();
+        var models = MavenScan.models(acquisition,cache,List.of());
+        var defaults = UniversalBuildIngestion.Policy.defaults();
+        var gradleModel=GradleScan.model(acquisition,new UniversalBuildIngestion.Policy(Optional.of(input.release()),Optional.of(input.release()),Optional.of("UTF-8"),32_768,defaults.maxCharacters(),defaults.maxTokens(),128),new RepositoryInputDecoder.Policy("UTF-8",500_000,10_000_000),Map.of());
+        var requiredReleases=new TreeSet<>(MavenScan.platformReleases(models));requiredReleases.addAll(GradleScan.platformReleases(gradleModel));
+        var platformViews=new TreeMap<Integer,PlatformSymbolResult>();platformViews.put(input.release(),platform);
+        var additionalPlatforms=new ArrayList<PlatformSymbolResult>();
+        for(int target:requiredReleases)if(!platformViews.containsKey(target)) {
+            var view=new FilesystemJdkPlatformProvider().acquire(safe(input.jdk()),new PlatformSymbolRequest(target,128,128_000_000,512_000_000));
+            platformViews.put(target,view);additionalPlatforms.add(view);
+        }
+        var availablePlatforms=new TreeMap<Integer,com.evolution.analysis.frontend.PlatformInput>();platformViews.forEach((target,view)->view.platform().ifPresent(value->availablePlatforms.put(target,value)));
+        var platformLedgers=additionalPlatforms.isEmpty()?List.<EvidenceAcquisitionLedger>of():List.of(CapabilityGapNormalizer.normalize(
+                EvidenceContext.forSnapshot(acquisition.snapshot().orElseThrow().identity()),EvidenceNormalizationInput.builder().platformResults(additionalPlatforms).build()));
+        var depPolicy=new com.evolution.analysis.dependency.DependencyAcquisitionPolicy(1024,64_000_000,256_000_000,64,List.of(),5000,15000,0);
+        var mavenBase=MavenScan.inputs(acquisition,models,cache,platform.platform(),depPolicy,availablePlatforms);
+        var dependencies=GradleScan.augment(mavenBase,acquisition,gradleModel,cache,platform.platform(),depPolicy,availablePlatforms);
+        var frontend = new JavaParserFrontend();
         SemanticFrontend guarded = request -> { control.checkpoint(); var result = frontend.analyze(request); control.checkpoint(); return result; };
         var policy = new UniversalArchitecturePipeline.Policy(
                 new UniversalBuildIngestion.Policy(Optional.of(input.release()),Optional.of(input.release()),Optional.of("UTF-8"),32_768,defaults.maxCharacters(),defaults.maxTokens(),128),
@@ -95,14 +108,23 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
                 com.evolution.analysis.spring.truth.TruthRegionEvaluation.Limits.conservative()).withReadiness(readiness.identity());
         control.stage(AnalysisJobs.Stage.ANALYSIS);
         var detailed = new UniversalArchitecturePipeline().runWithEvidence(acquisition,policy); control.checkpoint();
+        PolyglotScan.Result polyglot;
+        try(var intake=new RepositoryIntake(intakeDirectory)){
+            polyglot=new PolyglotScan().run(control.id(),intake,readiness,EvidenceContext.forSnapshot(acquisition.snapshot().orElseThrow().identity()),Optional.empty(),intakeDirectory.resolve("semantic-work"),control);
+        }
         var gaps = new TreeSet<>(detailed.report().gaps()); gaps.addAll(dependencies.gaps());
         gaps.addAll(readiness.gaps(acquisition.snapshot().orElseThrow().identity()));
+        gaps.addAll(polyglot.gaps());
+        platformLedgers.forEach(ledger->gaps.addAll(ledger.gaps()));
+        var allPlatforms=new ArrayList<PlatformSymbolResult>();allPlatforms.add(platform);allPlatforms.addAll(additionalPlatforms);
         gaps.addAll(CapabilityGapNormalizer.normalize(EvidenceContext.forSnapshot(acquisition.snapshot().orElseThrow().identity()),
-                EvidenceNormalizationInput.builder().repositoryAcquisitions(List.of(acquisition)).platformResults(List.of(platform)).build()).gaps());
+                EvidenceNormalizationInput.builder().repositoryAcquisitions(List.of(acquisition)).platformResults(allPlatforms).build()).gaps());
         if (detailed.graphInput().isEmpty()) return new AnalysisJobs.Outcome(AnalysisJobs.Completion.FAILED,Optional.empty(),List.of(),List.copyOf(gaps),Optional.of(acquisition.identity()),Optional.of(detailed.report().identity()),inputProblems(acquisition));
         control.stage(AnalysisJobs.Stage.GRAPH);
         var captured = detailed.graphInput().orElseThrow(); gaps.addAll(captured.gaps());
-        var graph = new CanonicalGraphBuilder().build(new CanonicalGraphInput(captured.repository(),captured.build(),captured.ingestion(),captured.spring(),captured.issues(),List.copyOf(gaps),captured.acquisition(),captured.javaEvidence()));
+        var graphLedgers=new ArrayList<>(dependencies.ledgers());graphLedgers.addAll(platformLedgers);
+        var graph = new CanonicalGraphBuilder().build(new CanonicalGraphInput(captured.repository(),captured.build(),captured.ingestion(),captured.spring(),captured.issues(),List.copyOf(gaps),captured.acquisition(),captured.javaEvidence()),
+                graphLedgers,store->new PolyglotScan().project(polyglot,store,control));
         control.checkpoint();
         var reports = new ArrayList<PublishedReports.Report>();
         if (input.policy().isPresent()) {
@@ -139,7 +161,7 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
         if(intakeDirectory.startsWith(source))full.add(source.relativize(intakeDirectory).toString().replace('\\','/'));
         try(var intake=new RepositoryIntake(intakeDirectory)){
             var request=new StreamingAcquisitionRequest(input.repository(),input.revision(),input.dirty(),List.copyOf(full));
-            var receipt=intake.local(source,control.id(),request,control);control.checkpoint();
+            var receipt=intake.localComplete(source,control.id(),request,control);control.checkpoint();
             if(receipt.manifest().isEmpty())throw new IOException(receipt.reason());
             return intake.compatibility(control.id(),input.repository(),input.revision(),input.dirty(),input.includeTests(),false,List.copyOf(excluded));
         }

@@ -68,6 +68,133 @@ public final class SemanticDepth {
         for(var edge:graph.edges())if(Set.of("spring.selected-binding","spring.injection-candidate","spring.source-type-candidate","spring.source-wiring-evaluated").contains(edge.kind()))bindings.merge(edge.kind(),1L,Long::sum);
         return bindings;
     }
+    /** Declaration-level relations that define architecture structure (type hierarchy, signatures, annotations). */
+    static final Set<String> STRUCTURE=Set.of("java.extends","java.implements","java.permits","java.field-type","java.parameter-type","java.returns",
+            "java.throws","java.annotated-with","java.type-argument","java.type-parameter-bound");
+    /** Type-hierarchy and component/stereotype annotation relations required for architectural component & boundary recovery. */
+    static final Set<String> HIERARCHY_AND_ANNOTATIONS=Set.of("java.extends","java.implements","java.permits","java.annotated-with");
+    /** Minimum per-mille resolution threshold (98.0%) for passive architectural structure completion. */
+    public static final long ARCHITECTURE_THRESHOLD_PER_MILLE=980L;
+    /** Expression-level relations inside bodies; third-party calls here must not hide an exact structural skeleton. */
+    static final Set<String> USAGE=Set.of("java.calls","java.constructor-calls","java.reads-field","java.writes-field","java.method-references","java.type-uses");
+
+    public static boolean meetsPassiveArchitectureThreshold(
+            Map<String,Object> semanticDepth,
+            Map<String,Object> polyglotSummary,
+            UniversalArchitecturePipeline.DetailedResult detailed,
+            List<com.evolution.analysis.evidence.CapabilityGapRecord> polyglotGaps) {
+        if (detailed == null
+                || detailed.report().status() == com.evolution.analysis.ingestion.UniversalArchitectureReport.Status.TERMINAL_FAILURE
+                || detailed.report().status() == com.evolution.analysis.ingestion.UniversalArchitectureReport.Status.CANCELLED) {
+            return false;
+        }
+        boolean hasRejectedOrFailedUnits = detailed.report().issues().stream().anyMatch(i ->
+                i.reason() == com.evolution.analysis.ingestion.IngestionEvidence.Reason.SEMANTIC_INPUT_REJECTED
+                        || i.reason() == com.evolution.analysis.ingestion.IngestionEvidence.Reason.SEMANTIC_PROVIDER_FAILED);
+        boolean hasWorkerRequired = detailed.report().gaps().stream()
+                .anyMatch(g -> "JAVA_COMPATIBILITY_WORKER_REQUIRED".equals(g.reasonCode()))
+                || (polyglotGaps != null && polyglotGaps.stream()
+                        .anyMatch(g -> "JAVA_COMPATIBILITY_WORKER_REQUIRED".equals(g.reasonCode())));
+        boolean hasUnresolvedRpcGap = polyglotGaps != null && polyglotGaps.stream()
+                .anyMatch(g -> "GRPC_ROUTING_EVIDENCE_MISSING".equals(g.reasonCode()));
+        long totalJavaFiles = detailed.report().metrics().javaFiles();
+        return meetsPassiveArchitectureThreshold(
+                semanticDepth,
+                polyglotSummary,
+                hasRejectedOrFailedUnits,
+                hasWorkerRequired,
+                totalJavaFiles,
+                hasUnresolvedRpcGap);
+    }
+
+    public static boolean meetsPassiveArchitectureThreshold(
+            Map<String,Object> semanticDepth,
+            Map<String,Object> polyglotSummary,
+            boolean hasRejectedOrFailedUnits,
+            boolean hasCompatibilityWorkerRequired,
+            long totalJavaFiles,
+            boolean hasUnresolvedRpcRoutingGap) {
+        if (semanticDepth == null || hasRejectedOrFailedUnits || hasCompatibilityWorkerRequired || hasUnresolvedRpcRoutingGap) {
+            return false;
+        }
+        long analyzedContexts = number(semanticDepth.get("analyzedContexts"));
+        if (analyzedContexts > 0) {
+            var archRes = GraphJson.object(semanticDepth.get("architectureResolution"));
+            var structure = GraphJson.object(archRes.get("structure"));
+            long structAttempted = number(structure.get("attempted"));
+            long structPerMille = number(structure.get("resolvedPerMille"));
+            if (structAttempted <= 0 || structPerMille < ARCHITECTURE_THRESHOLD_PER_MILLE) {
+                return false;
+            }
+            var relationships = GraphJson.object(semanticDepth.get("relationships"));
+            var byCategory = GraphJson.object(relationships.get("byCategory"));
+            long hierAttempted = 0L;
+            long hierResolved = 0L;
+            for (String cat : HIERARCHY_AND_ANNOTATIONS) {
+                if (byCategory.containsKey(cat)) {
+                    var row = GraphJson.object(byCategory.get(cat));
+                    hierAttempted += number(row.get("attempted"));
+                    hierResolved += number(row.get("resolved"));
+                }
+            }
+            if (hierAttempted <= 0 || (hierResolved * 1000L / hierAttempted) < ARCHITECTURE_THRESHOLD_PER_MILLE) {
+                return false;
+            }
+            if (polyglotSummary != null && polyglotSummary.containsKey("sourceSyntax")) {
+                var syntax = GraphJson.object(polyglotSummary.get("sourceSyntax"));
+                long docs = number(syntax.get("documents"));
+                long parsed = number(syntax.get("parsedDocuments"));
+                if (docs > 0 && (parsed * 1000L / docs) < ARCHITECTURE_THRESHOLD_PER_MILLE) {
+                    return false;
+                }
+            }
+            return true;
+        }
+        if (totalJavaFiles > 0 || polyglotSummary == null || !polyglotSummary.containsKey("sourceSyntax")) {
+            return false;
+        }
+        var syntax = GraphJson.object(polyglotSummary.get("sourceSyntax"));
+        long docs = number(syntax.get("documents"));
+        long parsed = number(syntax.get("parsedDocuments"));
+        long edges = number(polyglotSummary.get("edges"));
+        return docs > 0 && edges > 0 && (parsed * 1000L / docs) >= ARCHITECTURE_THRESHOLD_PER_MILLE;
+    }
+
+    public static String evidenceTier(
+            com.evolution.analysis.ingestion.UniversalArchitectureReport.Status reportStatus,
+            boolean exactComplete,
+            boolean passiveArchitectureComplete) {
+        if (exactComplete) {
+            return "VERIFIED_EXACT";
+        }
+        if (passiveArchitectureComplete) {
+            return "PASSIVE_ARCHITECTURE_RECOVERY";
+        }
+        if (reportStatus == com.evolution.analysis.ingestion.UniversalArchitectureReport.Status.TERMINAL_FAILURE
+                || reportStatus == com.evolution.analysis.ingestion.UniversalArchitectureReport.Status.CANCELLED) {
+            return "FAILED";
+        }
+        return "PARTIAL_RECOVERY";
+    }
+
+    private static long number(Object value) {
+        return value instanceof Number n ? n.longValue() : 0L;
+    }
+    /** Splits the same observed denominator by relation role. Nothing is re-counted, re-labelled or removed; per-mille keeps canonical JSON integral. */
+    static Map<String,Object> architectureResolution(Map<String,long[]> categories){
+        long[] structure=new long[2],usage=new long[2];
+        categories.forEach((category,counts)->{
+            long[] target=STRUCTURE.contains(category)?structure:USAGE.contains(category)?usage:null;
+            if(target!=null){target[0]+=counts[0];target[1]+=counts[1];}
+        });
+        var result=new TreeMap<String,Object>();
+        result.put("structure",role(structure));result.put("usage",role(usage));
+        result.put("interpretation","Structure covers declaration-level relations; usage covers expression-level relations. Both are attributed-fact ratios over observed Java relationships, not recall against an external ground truth.");
+        return Collections.unmodifiableMap(result);
+    }
+    private static Map<String,Object> role(long[] counts){
+        return Map.of("attempted",counts[0],"resolved",counts[1],"notResolved",counts[0]-counts[1],"resolvedPerMille",counts[0]==0?0L:counts[1]*1000/counts[0]);
+    }
     private static Map<String,Object> summary(Map<String,Long> bindings,long analyzed,long recovery,long attempted,long resolved,
             Map<String,long[]> categories,Map<String,Long> states,long plans,long evaluated){
         var byCategory=new TreeMap<String,Object>();
@@ -77,6 +204,7 @@ public final class SemanticDepth {
         summary.put("level",analyzed==0?"NO_ANALYSIS":resolved==0?"SURFACE_ONLY":recovery>0||resolved<attempted?"PARTIAL_RELATIONSHIPS":"ATTRIBUTED_RELATIONSHIPS");
         summary.put("analyzedContexts",analyzed);summary.put("sourceRecoveryContexts",recovery);
         summary.put("relationships",Map.of("attempted",attempted,"resolved",resolved,"notResolved",attempted-resolved,"byCategory",byCategory,"byAttributionStatus",states));
+        summary.put("architectureResolution",architectureResolution(categories));
         long sourceContexts=bindings.getOrDefault("spring.source-wiring-evaluated",0L);
         summary.put("spring",Map.of("status",plans==0?(sourceContexts>0?"SOURCE_CANDIDATES_ONLY":"NOT_EVALUATED"):evaluated==0?(sourceContexts>0?"PLAN_AND_SOURCE_CANDIDATES":"PLAN_ONLY"):evaluated<plans?"PARTIALLY_EVALUATED":"EVALUATED_IN_SELECTED_CONFIGURATION_SPACE",
                 "planContexts",plans,"evaluatedContexts",evaluated,

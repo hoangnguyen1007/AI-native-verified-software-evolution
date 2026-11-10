@@ -83,7 +83,7 @@ final class Extraction {
         indexTypes();
         // Materialize declaration identities before emitting edges, so collisions can be withheld.
         for (var unit : orderedUnits) for (var node : unit.ast.stream().filter(this::isDeclaration).toList()) {
-            try { entity(node); } catch (RuntimeException exception) { /* Recorded in the declaration observation pass below. */ }
+            try { entity(node); } catch (RuntimeException | LinkageError | StackOverflowError exception) { /* Recorded in the declaration observation pass below. */ }
         }
         nativeMembers=new NativeMemberExtraction(this,request,environment);
         nativeMembers.declarations();
@@ -145,12 +145,23 @@ final class Extraction {
             long emitted = occurrences.values().stream().filter(o -> o.relationship().kind().equals(kind)).count();
             return new CategoryCoverage(kind, c.equals("calls") ? CategoryCoverage.Support.IMPLEMENTED : CategoryCoverage.Support.PARTIAL, attempted, emitted, attempted - emitted);
         }).toList();
+        var seenObs = new HashSet<ObservationRecord>();
+        var distinctObservations = new ArrayList<ObservationRecord>();
+        for (var obs : observations) {
+            if (seenObs.add(obs)) distinctObservations.add(obs);
+        }
+        var distinctTypes = new ArrayList<TypeUseRecord>(new TreeSet<>(types));
+        var distinctAnnotations = new ArrayList<AnnotationUseRecord>(new TreeSet<>(annotations));
+        var distinctShapes = new ArrayList<TypeDeclarationRecord>(new TreeSet<>(shapes));
+        var distinctMembers = new ArrayList<MemberDeclarationRecord>(new TreeSet<>(members));
+        var distinctCandidates = new ArrayList<LombokConstructorCandidate>(new TreeSet<>(constructorCandidates));
+        var distinctHttp = new ArrayList<HttpClientCallRecord>(new TreeSet<>(httpClientCalls));
         return new FrontendResult(request.manifest().identity(), VERSION,
                 !request.sourceRecovery() && !reactorResolutionDegraded && outcomes.stream().allMatch(s -> s.state() == SourceOutcome.State.PROCESSED)
                         ? FrontendResult.State.COMPLETED : FrontendResult.State.PARTIAL,
                 declarations.values().stream().filter(d -> !duplicateDeclarations.contains(d.entity().identity())).toList(),
-                List.copyOf(occurrences.values()), observations, outcomes, coverage, List.copyOf(diagnostics), types, annotations,
-                List.copyOf(derived),shapes,members,constructorCandidates,httpClientCalls);
+                List.copyOf(occurrences.values()), distinctObservations, outcomes, coverage, List.copyOf(diagnostics), distinctTypes, distinctAnnotations,
+                List.copyOf(derived),distinctShapes,distinctMembers,distinctCandidates,distinctHttp);
     }
     private List<HttpClientCallRecord> httpClientCalls(CompilationUnit unit) {
         var result=new ArrayList<HttpClientCallRecord>();
@@ -368,25 +379,103 @@ final class Extraction {
     private static String semanticIdentifier(String raw) {
         var result = new StringBuilder(); raw.codePoints().filter(c -> !Character.isIdentifierIgnorable(c)).forEach(result::appendCodePoint); return result.toString();
     }
+    private static boolean isMainSourcePath(Unit unit) {
+        String p = unit.input.document().path().replace('\\', '/');
+        return p.startsWith("src/main/") || p.contains("/src/main/");
+    }
+
+    private static int compareRecoveryPriority(Unit a, Unit b) {
+        boolean mainA = isMainSourcePath(a);
+        boolean mainB = isMainSourcePath(b);
+        if (mainA != mainB) return mainA ? -1 : 1;
+        int sizeCmp = Integer.compare(b.input.bytes().length, a.input.bytes().length);
+        if (sizeCmp != 0) return sizeCmp;
+        return a.input.document().path().compareTo(b.input.document().path());
+    }
+
     private void indexTypes() {
+        Map<String, Unit> recoveryWinners = new HashMap<>();
+        if (request.sourceRecovery()) {
+            for (var unit : orderedUnits) {
+                for (TypeDeclaration<?> type : unit.ast.findAll(TypeDeclaration.class)) {
+                    if (type.getFullyQualifiedName().isEmpty() || hasLocalOwner(type)) continue;
+                    String name = type.getFullyQualifiedName().orElseThrow();
+                    recoveryWinners.merge(name, unit, (existing, candidate) ->
+                            compareRecoveryPriority(existing, candidate) <= 0 ? existing : candidate);
+                }
+            }
+        }
         var indexed = new HashSet<String>();
-        for (var unit : orderedUnits) for (TypeDeclaration<?> type : unit.ast.findAll(TypeDeclaration.class)) {
-            type.getFullyQualifiedName().ifPresent(sourceTypeNames::add);
-            if (type.getFullyQualifiedName().isEmpty() || hasLocalOwner(type)) continue;
-            String name = type.getFullyQualifiedName().orElseThrow();
-            if (!indexed.add(name)) throw new FrontendInputException("frontend.duplicate-type", "Duplicate source type definitions in the supplied environment");
-            environment.project.addDeclaration(name, type.resolve());
+        var unitIterator = orderedUnits.iterator();
+        while (unitIterator.hasNext()) {
+            var unit = unitIterator.next();
+            var unitTopTypes = new ArrayList<Map.Entry<String, TypeDeclaration<?>>>();
+            var unitSeen = new HashSet<String>();
+            String duplicateName = null;
+            for (TypeDeclaration<?> type : unit.ast.findAll(TypeDeclaration.class)) {
+                type.getFullyQualifiedName().ifPresent(sourceTypeNames::add);
+                if (type.getFullyQualifiedName().isEmpty() || hasLocalOwner(type)) continue;
+                String name = type.getFullyQualifiedName().orElseThrow();
+                boolean lostRecoveryPriority = request.sourceRecovery() && recoveryWinners.get(name) != unit;
+                if (!unitSeen.add(name) || indexed.contains(name) || lostRecoveryPriority) {
+                    duplicateName = name;
+                    break;
+                }
+                unitTopTypes.add(Map.entry(name, type));
+            }
+            if (duplicateName != null) {
+                if (!request.sourceRecovery()) {
+                    throw new FrontendInputException("frontend.duplicate-type", "Duplicate source type definitions in the supplied environment");
+                }
+                var warning = new Diagnostic(DiagnosticSeverity.WARNING, "java.duplicate-source-type",
+                        "Duplicate source type definition in recovery mode; colliding source document is withheld",
+                        Optional.empty(), Map.of("type", duplicateName, "document", unit.input.document().identity().value()));
+                diagnostics.add(warning);
+                rejected.add(new SourceOutcome(unit.input.document().identity(), SourceOutcome.State.PARTIAL, List.of(warning)));
+                releaseBody(unit);
+                unitIterator.remove();
+                continue;
+            }
+            for (var entry : unitTopTypes) {
+                indexed.add(entry.getKey());
+                environment.project.addDeclaration(entry.getKey(), entry.getValue().resolve());
+            }
         }
         var reactorIndexed = new HashMap<Integer, Set<String>>();
-        for (ReactorUnit reactor : reactorUnits) {
+        var reactorIterator = reactorUnits.iterator();
+        while (reactorIterator.hasNext()) {
+            ReactorUnit reactor = reactorIterator.next();
             Set<String> names = reactorIndexed.computeIfAbsent(reactor.input().order(), ignored -> new HashSet<>());
+            var unitTopTypes = new ArrayList<Map.Entry<String, TypeDeclaration<?>>>();
+            var unitSeen = new HashSet<String>();
+            String duplicateName = null;
             for (TypeDeclaration<?> type : reactor.unit().ast.findAll(TypeDeclaration.class)) {
                 if (type.getFullyQualifiedName().isEmpty() || hasLocalOwner(type)) continue;
                 String name = type.getFullyQualifiedName().orElseThrow();
-                if (!names.add(name)) throw new FrontendInputException(
-                        "frontend.duplicate-reactor-source-type",
-                        "Duplicate type definitions occur in one sibling-module source input");
-                environment.addReactorDeclaration(reactor.input().order(), name, type.resolve());
+                if (!unitSeen.add(name) || names.contains(name)) {
+                    duplicateName = name;
+                    break;
+                }
+                unitTopTypes.add(Map.entry(name, type));
+            }
+            if (duplicateName != null) {
+                if (!request.sourceRecovery()) {
+                    throw new FrontendInputException(
+                            "frontend.duplicate-reactor-source-type",
+                            "Duplicate type definitions occur in one sibling-module source input");
+                }
+                var warning = new Diagnostic(DiagnosticSeverity.WARNING, "java.duplicate-reactor-source-type",
+                        "Duplicate sibling-module source type in recovery mode; colliding source document is withheld",
+                        Optional.empty(), Map.of("type", duplicateName, "document", reactor.unit().input.document().identity().value()));
+                diagnostics.add(warning);
+                rejected.add(new SourceOutcome(reactor.unit().input.document().identity(), SourceOutcome.State.PARTIAL, List.of(warning)));
+                releaseBody(reactor.unit());
+                reactorIterator.remove();
+                continue;
+            }
+            for (var entry : unitTopTypes) {
+                names.add(entry.getKey());
+                environment.addReactorDeclaration(reactor.input().order(), entry.getKey(), entry.getValue().resolve());
             }
         }
         android.populate(request, environment, parser());
@@ -592,7 +681,7 @@ final class Extraction {
                 for (var extended : type.getExtendedTypes()) extended.resolve();
                 for (var implemented : type.getImplementedTypes()) implemented.resolve();
             }
-        } catch (RuntimeException exception) {
+        } catch (RuntimeException | LinkageError | StackOverflowError exception) {
             boolean unresolved = exception instanceof UnsolvedSymbolException;
             var diagnostic = diagnostic(unresolved ? "java.declaration-type-unresolved" : "java.declaration-type-error", unresolved ? SemanticStatus.UNRESOLVED : SemanticStatus.ERROR, entity.declaration());
             var prior = declarations.get(entity.identity());
@@ -672,7 +761,8 @@ final class Extraction {
                     var scopeType = scope.calculateResolvedType();
                     if (scopeType.isReferenceType()
                             && scopeType.asReferenceType().getTypeDeclaration().orElse(null)
-                                    instanceof ExplicitImportTypeSolver.ExplicitImportTypeDeclaration decl) {
+                                    instanceof ExplicitImportTypeSolver.ExplicitImportTypeDeclaration decl
+                            && decl.isExplicitlyImported()) {
                         owner = decl;
                     }
                 } catch (RuntimeException notValue) {
@@ -683,7 +773,8 @@ final class Extraction {
                                 var named = context.solveType(scope.toString());
                                 if (named.isSolved()
                                         && named.getCorrespondingDeclaration().asReferenceType()
-                                                instanceof ExplicitImportTypeSolver.ExplicitImportTypeDeclaration decl) {
+                                                instanceof ExplicitImportTypeSolver.ExplicitImportTypeDeclaration decl
+                                        && decl.isExplicitlyImported()) {
                                     owner = decl;
                                 }
                             }
@@ -731,7 +822,8 @@ final class Extraction {
                 var resolvedType = creation.getType().resolve();
                 if (resolvedType.isReferenceType()
                         && resolvedType.asReferenceType().getTypeDeclaration().orElse(null)
-                                instanceof ExplicitImportTypeSolver.ExplicitImportTypeDeclaration decl) {
+                                instanceof ExplicitImportTypeSolver.ExplicitImportTypeDeclaration decl
+                        && decl.isExplicitlyImported()) {
                     owner = decl;
                 }
             } catch (RuntimeException ignored) {}
@@ -1242,14 +1334,14 @@ final class Extraction {
             annotations.add(new AnnotationUseRecord(key.canonicalName(),entity.identity(),unit(node).source.span(node),site,unit(node).source.slice(unit(node).source.span(node))));
         } catch (RuntimeException failure) { /* Missing owner remains in the observation ledger. */ }
     }
-    static SemanticStatus failureStatus(RuntimeException failure) {
+    static SemanticStatus failureStatus(Throwable failure) {
         if (failure instanceof MappingFailure mapping) return mapping.status;
         if (failure instanceof UnsolvedSymbolException) return SemanticStatus.UNRESOLVED;
         if (failure instanceof UnsupportedOperationException) return SemanticStatus.UNSUPPORTED;
         if (providerInferenceCollision(failure)) return SemanticStatus.UNSUPPORTED;
         return failure.getClass().getSimpleName().equals("MethodAmbiguityException") ? SemanticStatus.AMBIGUOUS : SemanticStatus.ERROR;
     }
-    private static boolean providerInferenceCollision(RuntimeException failure) {
+    private static boolean providerInferenceCollision(Throwable failure) {
         // Pinned parser's name-keyed inference can conflate unrelated T parameters.
         // Recognize only its specific failure site; retain the observation as an
         // explicit provider capability gap, without choosing an equivalent type.
@@ -1268,7 +1360,7 @@ final class Extraction {
     }
     void observe(Node node, String category, Supplier<Entity> targetSupplier, Supplier<Entity> ownerSupplier) {
         if(Thread.currentThread().isInterrupted())throw new java.util.concurrent.CancellationException();
-        var unit = unit(node); Optional<SourceSpan> span; RuntimeException spanFailure = null;
+        var unit = unit(node); Optional<SourceSpan> span; Throwable spanFailure = null;
         try { span = Optional.of(unit.source.span(node)); }
         catch (RuntimeException exception) { span = Optional.empty(); spanFailure = exception; }
         Entity source = null, target = null; SemanticStatus status = SemanticStatus.RESOLVED;
@@ -1280,7 +1372,7 @@ final class Extraction {
         catch (UnsolvedSymbolException exception) { status = SemanticStatus.UNRESOLVED; local.add(diagnostic("java.unresolved", status, span)); }
         catch (MappingFailure failure) { status = failure.status; local.add(diagnostic(failure.code, status, span)); }
         catch (UnsupportedOperationException exception) { status = SemanticStatus.UNSUPPORTED; local.add(diagnostic("java.adapter-unsupported", status, span)); }
-        catch (RuntimeException exception) {
+        catch (RuntimeException | LinkageError | StackOverflowError exception) {
             boolean inferenceCollision=providerInferenceCollision(exception);
             status = inferenceCollision?SemanticStatus.UNSUPPORTED:exception.getClass().getSimpleName().equals("MethodAmbiguityException") ? SemanticStatus.AMBIGUOUS : SemanticStatus.ERROR;
             local.add(new Diagnostic(status == SemanticStatus.ERROR ? DiagnosticSeverity.ERROR : DiagnosticSeverity.WARNING,
@@ -1308,7 +1400,7 @@ final class Extraction {
         return new Diagnostic(status == SemanticStatus.ERROR ? DiagnosticSeverity.ERROR : DiagnosticSeverity.WARNING, code,
                 "Semantic observation requires additional evidence or support", span, Map.of());
     }
-    static Diagnostic missingSpanDiagnostic(Node node, RuntimeException failure) {
+    static Diagnostic missingSpanDiagnostic(Node node, Throwable failure) {
         return new Diagnostic(DiagnosticSeverity.ERROR, "java.missing-span",
                 "Semantic observation has no verified source coordinates; the deterministic AST path preserves its denominator entry",
                 Optional.empty(), Map.of("astPath", astPath(node), "nodeType", node.getClass().getName(),

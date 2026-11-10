@@ -847,6 +847,11 @@ final class KotlinAstLowering {
         }
 
         TypeDeclaration<?> targetOwner = enclosingType != null ? enclosingType : topLevelFacade;
+        String methodName = method.getNameAsString();
+        int paramCount = method.getParameters().size();
+        targetOwner.getMembers().removeIf(m -> m instanceof MethodDeclaration md
+                && md.getNameAsString().equals(methodName)
+                && md.getParameters().size() == paramCount);
         targetOwner.addMember(method);
 
         if (isObjectOwner && !method.isStatic()) {

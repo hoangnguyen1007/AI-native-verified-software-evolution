@@ -44,9 +44,11 @@ class CanonicalGraphPipelineIntegrationTest {
         var indexed=graph.evidence().stream().filter(e->e.family().equals("frontend.result-index")).findFirst().orElseThrow();
         var restoredFrontend=new TreeMap<>(GraphJson.object(GraphJson.read(indexed.canonicalJson(),GraphJson.Limits.defaults())));
         restoredFrontend.remove("indexSchema");restoredFrontend.remove("providerResultIdentity");
-        for(String field:List.of("declarations","occurrences","observations","types","annotations","derivedRelationships","typeDeclarations","memberDeclarations")){
+        for(String field:List.of("diagnostics","declarations","occurrences","observations","types","annotations","derivedRelationships","typeDeclarations","memberDeclarations","constructorCandidates")){
             var records=GraphJson.array(restoredFrontend.get(field)).stream().map(id->GraphJson.read(graph.evidence(new ContentDigest(GraphJson.string(id))).orElseThrow().canonicalJson(),GraphJson.Limits.defaults())).toList();restoredFrontend.put(field,records);
         }
+        restoredFrontend.put("sources",GraphJson.array(restoredFrontend.get("sources")).stream().map(entry->{var ref=GraphJson.string(GraphJson.object(entry).get("evidence"));return GraphJson.read(graph.evidence(new ContentDigest(ref)).orElseThrow().canonicalJson(),GraphJson.Limits.defaults());}).toList());
+        restoredFrontend.put("httpClientCalls",GraphJson.array(restoredFrontend.get("httpClientCalls")).stream().map(id->{var wrapper=GraphJson.object(GraphJson.read(graph.evidence(new ContentDigest(GraphJson.string(id))).orElseThrow().canonicalJson(),GraphJson.Limits.defaults()));return wrapper.get("call");}).toList());
         assertEquals(com.evolution.analysis.contract.serialization.CanonicalJson.write(frontend),com.evolution.analysis.contract.serialization.CanonicalJson.write(restoredFrontend),"Index must reconstruct every canonical frontend field without loss");
         var codec=new GraphSnapshotCodec();var restored=codec.decode(codec.encode(graph),GraphJson.Limits.defaults());
         assertEquals(graph.identity(),restored.identity());assertEquals(graph.evidence(),restored.evidence());
@@ -69,7 +71,8 @@ class CanonicalGraphPipelineIntegrationTest {
         var index=graph.evidence().stream().filter(e->e.family().equals("ingestion.outcome-index")).findFirst().orElseThrow();
         var payload=GraphJson.object(GraphJson.read(index.canonicalJson(),GraphJson.Limits.defaults()));
         var ingestion=detailed.graphInput().orElseThrow().ingestion().orElseThrow();
-        assertEquals(ingestion.gaps().stream().map(g->g.gapIdentity().value()).sorted().distinct().toList(),GraphJson.array(payload.get("gaps")));
+        var indexedGaps=GraphJson.array(payload.get("gaps")).stream().flatMap(pageId->GraphJson.array(GraphJson.object(GraphJson.read(graph.evidence(new ContentDigest(GraphJson.string(pageId))).orElseThrow().canonicalJson(),GraphJson.Limits.defaults())).get("records")).stream().map(GraphJson::string)).toList();
+        assertEquals(ingestion.gaps().stream().map(g->g.gapIdentity().value()).sorted().distinct().toList(),indexedGaps);
         assertTrue(graph.evidence().stream().noneMatch(e->e.family().equals("ingestion.outcomes")),"Do not embed the entire repeated gap ledger inside one bounded evidence payload");
         for(var gap:ingestion.gaps())assertTrue(graph.evidence().stream().anyMatch(e->e.family().equals("evidence.gap")&&e.canonicalJson().contains(gap.gapIdentity().value())),"Every indexed gap must remain lossless");
     }

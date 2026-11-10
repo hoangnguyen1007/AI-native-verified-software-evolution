@@ -138,6 +138,18 @@ class PartitionedGraphStoreTest {
         Files.writeString(directory.resolve("content/sha256/"+hex.substring(0,2)+"/"+hex.substring(2)),"corrupt");
         assertThrows(java.io.IOException.class,()->new PartitionedGraphStore(directory).nodes(partition,10,Optional.empty()));
     }
+    @Test void publicStoreCoalescesIntermediateLeafForcesAndPreservesColdIntegrity()throws Exception{
+        var graph=fixture();Path target=directory.resolve("coalesced");
+        var store=new PartitionedGraphStore(target,64_000_000,2);
+        store.save(graph,()->false);
+        // fixture() writes ~20 intermediate leaf blobs across 7 trees, 5 multi-leaf branches, 2 partition segments, and 1 root document.
+        assertTrue(store.forcedBlobWrites()<=8,"Intermediate leaf blobs must coalesce force(true) to branch/segment/root boundaries, got: "+store.forcedBlobWrites());
+        assertTrue(store.forcedBlobWrites()>=3,"Branch, partition-segment and root-document durability boundaries must still force(true)");
+        var cold=new PartitionedGraphStore(target);
+        var partitions=cold.partitions(graph.identity(),10,Optional.empty()).items();
+        assertEquals(2,partitions.size());
+        assertEquals(graph.nodes().size(),partitions.stream().mapToLong(PartitionedGraphReader.Partition::nodes).sum());
+    }
     static KnowledgeGraph fixture(){
         var base=FileGraphStoreTest.graph();var evidence=base.evidence().getFirst();var contexts=new ArrayList<>(base.contexts());
         String other=KnowledgeGraph.derivedIdentity("partition-context",List.of("other"));contexts.add(new KnowledgeGraph.Context(other,base.snapshot(),Optional.empty(),evidence.identity()));

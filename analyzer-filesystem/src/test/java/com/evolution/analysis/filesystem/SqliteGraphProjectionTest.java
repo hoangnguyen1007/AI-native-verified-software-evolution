@@ -53,4 +53,48 @@ class SqliteGraphProjectionTest {
             }
         }
     }
+    @Test void valuesByKindUsesPartialKindIndexReusesStatementsAndPreservesCanonicalOrder()throws Exception {
+        try(var database=DriverManager.getConnection("jdbc:sqlite:"+directory.resolve("kinds.sqlite"))) {
+            try(var sql=database.createStatement()){sql.execute("CREATE TABLE rows(space TEXT NOT NULL,k TEXT NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(space,k)) WITHOUT ROWID");}
+            database.setAutoCommit(false);
+            var prepares=new AtomicInteger();
+            var counted=(Connection)java.lang.reflect.Proxy.newProxyInstance(getClass().getClassLoader(),new Class<?>[]{Connection.class},(proxy,method,args)->{
+                if(method.getName().equals("prepareStatement"))prepares.incrementAndGet();
+                try{return method.invoke(database,args);}catch(java.lang.reflect.InvocationTargetException failure){throw failure.getCause();}
+            });
+            try(var projection=new SqliteGraphProjection(counted,64_000,()->false)) {
+                String ctx=com.evolution.analysis.contract.common.ContentDigest.sha256Utf8("ctx").value();
+                var proof=com.evolution.analysis.graph.GraphEvidence.capture("fixture.kind",java.util.Map.of("ok",true));
+                projection.records("evidence",com.evolution.analysis.graph.GraphSnapshotCodec::evidence).put(proof.identity().value(),proof);
+                var nodes=projection.records("nodes",com.evolution.analysis.graph.GraphSnapshotCodec::node);
+                var expectedKeys=new java.util.ArrayList<String>();
+                for(int i=0;i<320;i++) {
+                    String id=com.evolution.analysis.contract.common.ContentDigest.sha256Utf8("node-"+i).value();
+                    String key=ctx+"|"+id;
+                    String kind=i==10?"ENDPOINT":i==90?"ROUTE_CANDIDATE":i==170?"ENDPOINT":i==250?"ROUTE_CANDIDATE":i==300?"ENDPOINT":"TYPE";
+                    nodes.put(key,new com.evolution.analysis.graph.KnowledgeGraph.Node(id,ctx,kind,java.util.List.of(proof.identity())));
+                    if(i==300)nodes.put(key,new com.evolution.analysis.graph.KnowledgeGraph.Node(id,ctx,"TYPE",java.util.List.of(proof.identity())));
+                    else if(!kind.equals("TYPE"))expectedKeys.add(key);
+                }
+                java.util.Collections.sort(expectedKeys);
+                database.commit();
+                assertEquals(320,nodes.entrySet().stream().count());
+                var decoded=new AtomicInteger();
+                var matched=new java.util.ArrayList<String>();
+                for(var node:projection.valuesByKind("nodes",java.util.Set.of("ENDPOINT","ROUTE_CANDIDATE"),raw->{
+                    decoded.incrementAndGet();return com.evolution.analysis.graph.GraphSnapshotCodec.node(raw);
+                },com.evolution.analysis.graph.KnowledgeGraph.Node::kind))matched.add(node.context()+"|"+node.identity());
+                assertEquals(expectedKeys,matched);
+                assertEquals(4,decoded.get(),"valuesByKind must decode only matching indexed kinds, never unrelated TYPE rows");
+                assertTrue(prepares.get()<16,"Multi-page scans and valuesByKind must reuse prepared statements: "+prepares.get());
+                try(var planStmt=database.prepareStatement("EXPLAIN QUERY PLAN SELECT k,payload FROM rows INDEXED BY rows_space_kind_k WHERE space=? AND kind=? AND kind IS NOT NULL ORDER BY k LIMIT 128")) {
+                    planStmt.setString(1,"nodes");planStmt.setString(2,"ENDPOINT");
+                    try(var plan=planStmt.executeQuery()) {
+                        var details=new StringBuilder();while(plan.next())details.append(plan.getString("detail")).append(' ');
+                        assertTrue(details.toString().contains("COVERING INDEX rows_space_kind_k"),"SQLite query plan must use covering index rows_space_kind_k: "+details);
+                    }
+                }
+            }
+        }
+    }
 }

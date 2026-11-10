@@ -115,8 +115,8 @@ public final class UniversalIngestionPipeline {
                 gaps.addAll(spring.gaps());
                 var sourceWiring=new SourceWiringCandidates().analyze(springSource);
                 units.add(new Unit(source.sourceSet(),Status.ANALYZED,Optional.of(result),Optional.of(components),Optional.of(constructors),Optional.of(spring),Optional.of(sourceWiring)));
-            }catch(RuntimeException failure) {
-                if(failure instanceof java.util.concurrent.CancellationException)throw failure;
+            }catch(Exception | LinkageError | StackOverflowError failure) {
+                if(failure instanceof java.util.concurrent.CancellationException)throw (RuntimeException)failure;
                 // Retain the failed source-set obligation and continue unrelated modules. Never expose exception text.
                 var reason=failure instanceof FrontendInputException?IngestionEvidence.Reason.SEMANTIC_INPUT_REJECTED:IngestionEvidence.Reason.SEMANTIC_PROVIDER_FAILED;
                 String code=failure instanceof FrontendInputException input?input.diagnostic().code():failure.getClass().getSimpleName();

@@ -5,6 +5,7 @@ import com.evolution.analysis.contract.common.*;
 import com.evolution.analysis.contract.identity.*;
 import com.evolution.analysis.contract.semantic.*;
 import com.evolution.analysis.contract.serialization.CanonicalJson;
+import com.evolution.analysis.contract.source.*;
 import com.evolution.analysis.frontend.*;
 import com.evolution.analysis.ingestion.*;
 import com.evolution.analysis.spring.binding.*;
@@ -37,6 +38,12 @@ public final class CanonicalGraphBuilder {
     public KnowledgeGraph build(CanonicalGraphInput input,Collection<EvidenceAcquisitionLedger> ledgers) {
         return project(input,ledgers,GraphProjectionStore.memory()).finish();
     }
+    public KnowledgeGraph build(CanonicalGraphInput input,Collection<EvidenceAcquisitionLedger> ledgers,GraphProjectionStore.Contribution contribution) throws java.io.IOException {
+        var store=GraphProjectionStore.memory();
+        var p=project(input,ledgers,store);
+        contribution.project(store);
+        return p.finish();
+    }
     /** Assemble identical canonical rows without constructing or indexing a KnowledgeGraph. */
     public void project(CanonicalGraphInput input,GraphProjectionStore store) {
         project(input,store,List.of());
@@ -59,7 +66,7 @@ public final class CanonicalGraphBuilder {
                 String document=GraphJson.string(row.get("projectedDocument"));
                 var source=input.repository().snapshot().documents().stream().filter(d->d.identity().value().equals(document)).findFirst()
                         .orElseThrow(()->new IllegalArgumentException("Foreign generated source map"));
-                p.node(document,repository,"SOURCE_DOCUMENT",p.artifact("source.document",source));
+                p.node(document,repository,"SOURCE_DOCUMENT",p.documentArtifact(source));
                 p.node(document,repository,"SOURCE_DOCUMENT",evidence.identity());
             }
             binding.gapHistory().forEach(g->p.gapRecord(repository,g));
@@ -73,8 +80,8 @@ public final class CanonicalGraphBuilder {
                 outcome.metadata().forEach(m->p.artifact("source.metadata",m));
                 outcome.request().ifPresent(request->{
                     if(!request.manifest().snapshot().identity().equals(p.snapshot))throw new IllegalArgumentException("Foreign frontend snapshot");
-                    p.artifact("source.request",Map.of("manifest",request.manifest(),"module",request.module(),"sourceSet",request.sourceSet(),"plan",request.plan()));
-                    request.sources().forEach(s->p.artifact("source.bytes",s));
+                    p.artifact("source.request",Map.of("manifest",compactRequestManifest(request.manifest()),"module",request.module(),"sourceSet",request.sourceSet(),"plan",request.plan()));
+                    request.sources().forEach(p::sourceBytes);
                     request.originClasspath(); // Revalidate native capabilities before persisting their provenance.
                     request.dependencies().forEach(binary->binary.nativeOrigin().ifPresent(origin->{p.nativeEvidence(GraphEvidence.capture("java.evidence.binary-origin",origin.canonicalForm()));origin.proof().ifPresent(proof->proof.evidence().forEach(p::nativeEvidence));}));
                     request.correspondence().ifPresent(binding->{try{if(!binding.current())throw new IllegalArgumentException("Revoked source/native correspondence");}catch(java.io.IOException unavailable){throw new IllegalArgumentException("Unavailable source/native correspondence");}binding.evidence().forEach(p::nativeEvidence);});
@@ -131,6 +138,9 @@ public final class CanonicalGraphBuilder {
         Set<String> historicalGaps=Set.of();
         final Map<String,ContentDigest> gapDispositions=new HashMap<>();
         final Map<String,Set<ContentDigest>> nativeSupports=new HashMap<>();
+        final Map<ContentDigest,ContentDigest> contentArtifacts=new HashMap<>();
+        final Map<ModuleIdentity,ContentDigest> moduleArtifacts=new HashMap<>();
+        final Map<SourceDocumentIdentity,ContentDigest> documentArtifacts=new HashMap<>();
         Projection(SnapshotIdentity snapshot) {this(snapshot,GraphProjectionStore.memory());}
         Projection(SnapshotIdentity snapshot,GraphProjectionStore store) {
             this.snapshot=snapshot;
@@ -170,6 +180,20 @@ public final class CanonicalGraphBuilder {
             var artifact=GraphEvidence.capture(family,value);var old=evidence.putIfAbsent(artifact.identity().value(),artifact);
             if(old!=null&&!old.equals(artifact))throw new IllegalArgumentException("Conflicting provider artifact");return artifact.identity();
         }
+        ContentDigest sourceBytes(SourceInput s) {
+            var digest=s.document().contentDigest();
+            var contentRef=contentArtifacts.computeIfAbsent(digest,d->{
+                byte[] raw=s.bytes();
+                return artifact("source.content",Map.of("contentDigest",d,"size",raw.length,"bytesBase64",Base64.getEncoder().encodeToString(raw)));
+            });
+            return artifact("source.bytes",Map.of("document",s.document(),"decoding",s.decoding(),"contentDigest",digest,"contentEvidence",contentRef));
+        }
+        ContentDigest moduleArtifact(ModuleDescriptor m) {
+            return moduleArtifacts.computeIfAbsent(m.identity(),k->artifact("module.descriptor",m));
+        }
+        ContentDigest documentArtifact(SourceDocument d) {
+            return documentArtifacts.computeIfAbsent(d.identity(),k->artifact("source.document",d));
+        }
         <T> List<ContentDigest> indexPages(String family,Iterable<T> rows,java.util.function.Function<T,String> identity) {
             var pages=new ArrayList<ContentDigest>();var page=new ArrayList<String>(1024);
             for(var row:rows){page.add(identity.apply(row));if(page.size()==1024){pages.add(artifact(family,Map.of("page",pages.size(),"records",List.copyOf(page))));page.clear();}}
@@ -182,7 +206,7 @@ public final class CanonicalGraphBuilder {
             contexts.put(context,new Context(context,snapshot,Optional.empty(),snapshotPayload));
             node(input.repository().snapshot().repository().value(),context,"REPOSITORY",snapshotPayload);
             input.acquisition().ifPresent(a->artifact("repository.acquisition",a));
-            input.repository().files().values().forEach(s->{var payload=artifact("source.bytes",s);node(s.document().identity().value(),context,"SOURCE_DOCUMENT",payload);});
+            input.repository().files().values().forEach(s->{var payload=sourceBytes(s);node(s.document().identity().value(),context,"SOURCE_DOCUMENT",payload);});
             input.build().ifPresent(build->{
                 artifact("build.model",build);
                 for(var module:build.modules()) {
@@ -203,22 +227,50 @@ public final class CanonicalGraphBuilder {
         }
         void frontend(AnalysisManifest manifest,FrontendResult frontend) {
             if(!manifest.identity().equals(frontend.analysis())||!manifest.snapshot().identity().equals(snapshot))throw new IllegalArgumentException("Foreign frontend context");
-            String context=manifest.identity().value();var manifestPayload=artifact("analysis.manifest",manifest);
-            var documents=manifest.snapshot().documents().stream().map(d->d.identity().value()).collect(java.util.stream.Collectors.toSet());
-            frontend.sources().forEach(s->document(documents,s.document().value()));
-            frontend.observations().forEach(o->document(documents,o.document().value()));
-            frontend.types().forEach(t->document(documents,t.span().document().value()));
-            frontend.annotations().forEach(a->document(documents,a.span().document().value()));
-            frontend.derivedRelationships().forEach(r->r.supportingSpans().forEach(s->document(documents,s.document().value())));
+            String context=manifest.identity().value();var manifestPayload=artifact("analysis.manifest",compactManifest(manifest));
+            var snapshotDocs=new LinkedHashMap<String,SourceDocument>(Math.max(16,manifest.snapshot().documents().size()*2));
+            for(var d:manifest.snapshot().documents())snapshotDocs.put(d.identity().value(),d);
+            var documents=snapshotDocs.keySet();
+            var referencedDocs=new HashSet<String>();
+            frontend.sources().forEach(s->{String id=s.document().value();document(documents,id);referencedDocs.add(id);});
+            frontend.observations().forEach(o->{String id=o.document().value();document(documents,id);referencedDocs.add(id);});
+            frontend.types().forEach(t->{String id=t.span().document().value();document(documents,id);referencedDocs.add(id);});
+            frontend.annotations().forEach(a->{String id=a.span().document().value();document(documents,id);referencedDocs.add(id);});
+            frontend.derivedRelationships().forEach(r->r.supportingSpans().forEach(s->{String id=s.document().value();document(documents,id);referencedDocs.add(id);}));
+            frontend.declarations().forEach(d->d.entity().declaration().ifPresent(s->referencedDocs.add(s.document().value())));
+            frontend.occurrences().forEach(o->referencedDocs.add(o.span().document().value()));
+            frontend.httpClientCalls().forEach(c->{String id=c.span().document().value();document(documents,id);referencedDocs.add(id);});
             var prior=contexts.putIfAbsent(context,new Context(context,snapshot,Optional.of(manifest.identity()),manifestPayload));
             if(prior!=null&&!prior.evidence().equals(manifestPayload))throw new IllegalArgumentException("Conflicting manifest");
             ledger(CapabilityGapNormalizer.normalize(EvidenceContext.forAnalysis(manifest),EvidenceNormalizationInput.builder().frontendResults(List.of(frontend)).build()));
-            for(var module:manifest.modules())node(module.identity().value(),context,"MODULE",artifact("module.descriptor",module));
-            for(var document:manifest.snapshot().documents())node(document.identity().value(),context,"SOURCE_DOCUMENT",artifact("source.document",document));
+            String unitModule=manifest.configuration().values().get("java.module");
+            String unitSourceSet=manifest.configuration().values().get("java.source-set");
+            var knownModules=new HashSet<String>(Math.max(16,manifest.modules().size()*2));
+            for(var m:manifest.modules())knownModules.add(m.identity().value());
+            List<SourceDocument> contextDocs;
+            List<ModuleDescriptor> contextModules;
+            if(unitModule==null) {
+                contextDocs=manifest.snapshot().documents();
+                contextModules=manifest.modules();
+            } else {
+                contextDocs=manifest.snapshot().documents().stream()
+                        .filter(d->referencedDocs.contains(d.identity().value())
+                                ||(d.module().value().equals(unitModule)&&matchesSourceSet(d.classification(),unitSourceSet)))
+                        .toList();
+                var activeModules=new HashSet<String>();activeModules.add(unitModule);
+                contextDocs.forEach(d->activeModules.add(d.module().value()));
+                for(var declaration:frontend.declarations())if(declaration.entity().origin()==EntityOrigin.PROJECT)
+                    activeModules.add(declaration.entity().stableScope().value());
+                contextModules=manifest.modules().stream().filter(m->activeModules.contains(m.identity().value())).toList();
+            }
+            for(var module:contextModules)node(module.identity().value(),context,"MODULE",moduleArtifact(module));
+            for(var document:contextDocs)node(document.identity().value(),context,"SOURCE_DOCUMENT",documentArtifact(document));
             var byCanonical=new HashMap<String,Entity>();var byId=new HashMap<String,Entity>();
+            var declarationPayloads=new ArrayList<ContentDigest>(frontend.declarations().size());
             for(var declaration:frontend.declarations()) {
                 var entity=declaration.entity();var payload=artifact("java.declaration",declaration);
-                if(entity.origin()==EntityOrigin.PROJECT&&manifest.modules().stream().noneMatch(m->m.identity().value().equals(entity.stableScope().value())))
+                declarationPayloads.add(payload);
+                if(entity.origin()==EntityOrigin.PROJECT&&!knownModules.contains(entity.stableScope().value()))
                     throw new IllegalArgumentException("Foreign project entity scope");
                 statement(context,"java.declaration",entity.identity().value(),payload);
                 node(entity.identity().value(),context,entity.kind().name(),payload);
@@ -227,8 +279,9 @@ public final class CanonicalGraphBuilder {
                 byCanonical.put(entity.stableScope().value()+"|"+entity.canonicalName(),entity);byId.put(entity.identity().value(),entity);
                 entity.declaration().ifPresent(span->{if(!nodes.containsKey(key(context,span.document().value())))throw new IllegalArgumentException("Declaration source absent from manifest");});
             }
-            for(var declaration:frontend.declarations()) {
-                var entity=declaration.entity();var payload=artifact("java.declaration",declaration);
+            for(int i=0;i<frontend.declarations().size();i++) {
+                var declaration=frontend.declarations().get(i);
+                var entity=declaration.entity();var payload=declarationPayloads.get(i);
                 ownerTuple(entity.canonicalName()).ifPresent(owner->{
                     var parent=byCanonical.get(entity.stableScope().value()+"|java:v1:"+CanonicalJson.write(owner));
                     if(parent!=null)link(context,"graph.declares",parent.identity().value(),entity.identity().value(),payload);
@@ -239,55 +292,79 @@ public final class CanonicalGraphBuilder {
                     if(entity.origin()==EntityOrigin.PROJECT)link(context,"graph.contains",entity.stableScope().value(),pkg.value(),payload);
                 });
             }
+            var occurrencePayloads=new ArrayList<ContentDigest>(frontend.occurrences().size());
             for(var occurrence:frontend.occurrences()) {
                 if(!nodes.containsKey(key(context,occurrence.span().document().value())))throw new IllegalArgumentException("Occurrence source absent from manifest");
-                var payload=artifact("java.occurrence",occurrence);node(occurrence.identity().value(),context,"OCCURRENCE",payload);
+                var payload=artifact("java.occurrence",occurrence);occurrencePayloads.add(payload);
+                node(occurrence.identity().value(),context,"OCCURRENCE",payload);
                 statement(context,"java.occurrence",occurrence.identity().value(),payload);
                 relationship(context,occurrence.relationship(),payload);
                 if(occurrence.status()==SemanticStatus.RESOLVED)dependency(context,occurrence.relationship(),byCanonical,byId,payload);
             }
+            var derivedPayloads=new ArrayList<ContentDigest>(frontend.derivedRelationships().size());
             for(var derived:frontend.derivedRelationships()) {
-                var payload=artifact("java.derived-relationship",derived);relationship(context,derived.relationship(),payload);
+                var payload=artifact("java.derived-relationship",derived);derivedPayloads.add(payload);
+                relationship(context,derived.relationship(),payload);
                 if(derived.status()==SemanticStatus.RESOLVED)dependency(context,derived.relationship(),byCanonical,byId,payload);
             }
+            var httpClientCallPayloads=new ArrayList<ContentDigest>(frontend.httpClientCalls().size());
             for(var call:frontend.httpClientCalls()) {
-                var document=manifest.snapshot().documents().stream().filter(d->d.identity().equals(call.span().document())).findFirst().orElseThrow();
+                var document=Objects.requireNonNull(snapshotDocs.get(call.span().document().value()));
                 var payload=artifact("java.http-client-call",Map.of("call",call,"analysis",manifest.identity(),"sourceContent",document.contentDigest(),
                         "binding","COMPILE_TIME","runtimeObserved",false));
+                httpClientCallPayloads.add(payload);
                 String site=derivedIdentity("http-client-call",payload);
                 node(site,context,"SOURCE_HTTP_CALL_CANDIDATE",payload);
                 link(context,"graph.has-http-client-call",call.caller().value(),site,payload);
             }
+            var observationPayloads=new ArrayList<ContentDigest>(frontend.observations().size());
             for(var observation:frontend.observations()) {
-                var payload=artifact("java.observation",observation);
+                var payload=artifact("java.observation",observation);observationPayloads.add(payload);
                 node(derivedIdentity("observation",payload),context,"OBSERVATION",payload);
             }
-            frontend.sources().forEach(s->artifact("java.source-outcome",s));
-            frontend.types().forEach(t->{var payload=artifact("java.type-use",t);String id=derivedIdentity("type-use",payload);
-                node(id,context,"TYPE_USE",payload);t.owner().ifPresent(owner->link(context,"graph.has-type-use",owner.value(),id,payload));});
-            frontend.annotations().forEach(a->{var payload=artifact("java.annotation-use",a);var owner=byId.get(a.owner().value());
+            var sourceSummaries=new ArrayList<Map<String,Object>>(frontend.sources().size());
+            for(var s:frontend.sources()) {
+                var payload=artifact("java.source-outcome",s);
+                sourceSummaries.add(Map.of("document",s.document(),"state",s.state(),"evidence",payload));
+            }
+            var typeUsePayloads=new ArrayList<ContentDigest>(frontend.types().size());
+            for(var t:frontend.types()) {
+                var payload=artifact("java.type-use",t);typeUsePayloads.add(payload);
+                String id=derivedIdentity("type-use",payload);
+                node(id,context,"TYPE_USE",payload);t.owner().ifPresent(owner->link(context,"graph.has-type-use",owner.value(),id,payload));
+            }
+            var annotationPayloads=new ArrayList<ContentDigest>(frontend.annotations().size());
+            for(var a:frontend.annotations()) {
+                var payload=artifact("java.annotation-use",a);annotationPayloads.add(payload);
+                var owner=byId.get(a.owner().value());
                 if(owner==null)throw new IllegalArgumentException("Annotation owner is absent");
                 String id=EntityIdentity.from(owner.origin(),owner.stableScope(),EntityKind.ANNOTATION_USE,a.canonicalName()).value();
-                node(id,context,"ANNOTATION_USE",payload);link(context,"graph.has-annotation-use",owner.identity().value(),id,payload);});
-            frontend.typeDeclarations().forEach(t->artifact("java.type-shape",t));frontend.memberDeclarations().forEach(m->artifact("java.member-shape",m));
-            frontend.constructorCandidates().forEach(c->{var payload=artifact("java.lombok-constructor-candidate",c);
+                node(id,context,"ANNOTATION_USE",payload);link(context,"graph.has-annotation-use",owner.identity().value(),id,payload);
+            }
+            var typeShapePayloads=frontend.typeDeclarations().stream().map(t->artifact("java.type-shape",t)).toList();
+            var memberShapePayloads=frontend.memberDeclarations().stream().map(m->artifact("java.member-shape",m)).toList();
+            var ctorCandidatePayloads=new ArrayList<ContentDigest>(frontend.constructorCandidates().size());
+            for(var c:frontend.constructorCandidates()) {
+                var payload=artifact("java.lombok-constructor-candidate",c);ctorCandidatePayloads.add(payload);
                 String id=derivedIdentity("constructor-candidate",payload);node(id,context,"CONSTRUCTOR_INJECTION_CANDIDATE",payload);
                 link(context,"graph.has-constructor-candidate",c.owner().value(),id,payload);
-                link(context,"graph.candidate-field",id,c.field().value(),payload);});
+                link(context,"graph.candidate-field",id,c.field().value(),payload);
+            }
             var index=new TreeMap<String,Object>();index.put("indexSchema","frontend.result-index:m8.4-v2");index.put("providerResultIdentity",CanonicalJson.sha256(frontend));
             index.put("analysis",frontend.analysis());index.put("frontend",frontend.frontend());index.put("state",frontend.state());
             index.put("coverage",frontend.coverage());
-            index.put("sources",frontend.sources().stream().map(s->Map.of("document",s.document(),"state",s.state(),"evidence",artifact("java.source-outcome",s))).toList());
+            index.put("sources",List.copyOf(sourceSummaries));
             index.put("diagnostics",frontend.diagnostics().stream().map(d->artifact("java.diagnostic",d)).toList());
-            index.put("declarations",frontend.declarations().stream().map(v->artifact("java.declaration",v)).toList());
-            index.put("occurrences",frontend.occurrences().stream().map(v->artifact("java.occurrence",v)).toList());
-            index.put("observations",frontend.observations().stream().map(v->artifact("java.observation",v)).toList());
-            index.put("types",frontend.types().stream().map(v->artifact("java.type-use",v)).toList());
-            index.put("annotations",frontend.annotations().stream().map(v->artifact("java.annotation-use",v)).toList());
-            index.put("derivedRelationships",frontend.derivedRelationships().stream().map(v->artifact("java.derived-relationship",v)).toList());
-            index.put("typeDeclarations",frontend.typeDeclarations().stream().map(v->artifact("java.type-shape",v)).toList());
-            index.put("memberDeclarations",frontend.memberDeclarations().stream().map(v->artifact("java.member-shape",v)).toList());
-            index.put("constructorCandidates",frontend.constructorCandidates().stream().map(v->artifact("java.lombok-constructor-candidate",v)).toList());
+            index.put("declarations",List.copyOf(declarationPayloads));
+            index.put("occurrences",List.copyOf(occurrencePayloads));
+            index.put("observations",List.copyOf(observationPayloads));
+            index.put("types",List.copyOf(typeUsePayloads));
+            index.put("annotations",List.copyOf(annotationPayloads));
+            index.put("derivedRelationships",List.copyOf(derivedPayloads));
+            index.put("typeDeclarations",typeShapePayloads);
+            index.put("memberDeclarations",memberShapePayloads);
+            index.put("constructorCandidates",List.copyOf(ctorCandidatePayloads));
+            index.put("httpClientCalls",List.copyOf(httpClientCallPayloads));
             artifact("frontend.result-index",index);
         }
         void relationship(String context,SemanticRelationship relation,ContentDigest payload) {
@@ -483,6 +560,30 @@ public final class CanonicalGraphBuilder {
             complete();
             return new KnowledgeGraph(snapshot,List.copyOf(contexts.values()),List.copyOf(nodes.values()),List.copyOf(edges.values()),List.copyOf(evidence.values()));
         }
+    }
+    private static Map<String,Object> compactSnapshot(RepositorySnapshot s) {
+        var map=new TreeMap<String,Object>();
+        map.put("identity",s.identity());map.put("repository",s.repository());map.put("revision",s.revision());
+        map.put("dirty",s.dirty());map.put("contentDigest",s.contentDigest());
+        return Collections.unmodifiableMap(map);
+    }
+    private static Map<String,Object> compactManifest(AnalysisManifest m) {
+        var map=new TreeMap<String,Object>();
+        map.put("identity",m.identity());map.put("manifestVersion",m.manifestVersion());map.put("snapshot",compactSnapshot(m.snapshot()));
+        map.put("modules",m.modules());map.put("classpath",m.classpath());map.put("configuration",m.configuration());
+        map.put("analyzer",m.analyzer());map.put("ruleSet",m.ruleSet());map.put("graphSchema",m.graphSchema());
+        return Collections.unmodifiableMap(map);
+    }
+    private static Map<String,Object> compactRequestManifest(AnalysisManifest m) {
+        var map=new TreeMap<String,Object>();
+        map.put("identity",m.identity());map.put("manifestVersion",m.manifestVersion());map.put("snapshot",compactSnapshot(m.snapshot()));
+        map.put("configuration",m.configuration());map.put("analyzer",m.analyzer());map.put("ruleSet",m.ruleSet());map.put("graphSchema",m.graphSchema());
+        return Collections.unmodifiableMap(map);
+    }
+    private static boolean matchesSourceSet(SourceClassification docRole,String unitSourceSet) {
+        if("MAIN".equals(unitSourceSet))return docRole==SourceClassification.MAIN||docRole==SourceClassification.GENERATED_MAIN;
+        if("TEST".equals(unitSourceSet))return docRole==SourceClassification.TEST||docRole==SourceClassification.GENERATED_TEST;
+        return unitSourceSet==null||docRole.name().equals(unitSourceSet);
     }
     private static Optional<List<Object>> ownerTuple(String name) {
         var tuple=tuple(name);if(tuple.isEmpty())return Optional.empty();var parts=tuple.orElseThrow();

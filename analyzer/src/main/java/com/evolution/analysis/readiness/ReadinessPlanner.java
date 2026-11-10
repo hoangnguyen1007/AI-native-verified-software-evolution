@@ -136,8 +136,16 @@ public final class ReadinessPlanner {
         }
         if(summary.counts().getOrDefault("UNOWNED",0L)>0||summary.counts().getOrDefault("AMBIGUOUS",0L)>0||summary.counts().getOrDefault("UNAVAILABLE",0L)>0)
             issues.add(requirement(Kind.OWNERSHIP,manifest.inventory().value(),"SOURCE_OWNERSHIP_UNRESOLVED",List.of(),List.of(new Evidence("ownership-ledger",summary.ledger().digest()))));
+        var distinctIssues = new ArrayList<Requirement>();
+        var seenReqIds = new HashSet<String>();
+        for (var issue : issues) {
+            if (seenReqIds.add(issue.id())) {
+                distinctIssues.add(issue);
+            }
+        }
+        distinctIssues.sort(Comparator.comparing(Requirement::id));
         return new ReadinessPlan(ReadinessPlan.SCHEMA,manifest,selection,List.copyOf(roots.values()),List.copyOf(modules.values()),List.copyOf(contexts.values()),
-                issues.stream().distinct().sorted(Comparator.comparing(Requirement::id)).toList(),recipes,summary);
+                distinctIssues,recipes,summary);
     }
     public static Context context(String module,String root,String set,String variant,List<String> sourceRoots,Map<String,String> environment,List<Evidence> evidence,InventoryManifest inventory,boolean buildable){
         String id="context:"+IngestionEvidence.digest(List.of(module,set,variant,environment)).value();

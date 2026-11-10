@@ -273,4 +273,154 @@ class ResolutionInputsTest {
 
         assertEquals(SemanticStatus.RESOLVED, calls(result).getFirst().status());
     }
+
+    @Test void cachedArchivesAvoidRepeatedDecompressionTempFilesAndCrossContextLeakage() throws Exception {
+        var bJar = jar("dep-b", "package dep2; public class Library { public static String base(){ return \"ok\"; } }");
+        Path aRoot = temp.resolve("dep-a"); Files.createDirectories(aRoot);
+        Path aSource = aRoot.resolve("A.java");
+        Files.writeString(aSource, "package dep1; public class A extends dep2.Library { public static String call(){ return base(); } }");
+        assertEquals(0, ToolProvider.getSystemJavaCompiler().run(null, null, null, "--release", "21", "-proc:none",
+                "-encoding", "UTF-8", "-classpath", bJar.path().toString(), "-d", aRoot.toString(), aSource.toString()));
+        Path aArchive = temp.resolve("dep-a.jar");
+        var manifest = new Manifest();
+        manifest.getMainAttributes().put(Attributes.Name.MANIFEST_VERSION, "1.0");
+        manifest.getMainAttributes().put(Attributes.Name.CLASS_PATH, "neighbor.jar");
+        try (var output = new JarOutputStream(Files.newOutputStream(aArchive), manifest)) {
+            var entry = new JarEntry("dep1/A.class"); entry.setTime(0);
+            output.putNextEntry(entry); Files.copy(aRoot.resolve("dep1/A.class"), output); output.closeEntry();
+        }
+        var aDigest = ContentDigest.sha256(Files.readAllBytes(aArchive));
+        var aJar1 = new BinaryInput(new ClasspathEntry(ClasspathEntryKind.DEPENDENCY, "fixture:dep-a:1", aDigest), aArchive);
+        var aJar2 = new BinaryInput(new ClasspathEntry(ClasspathEntryKind.DEPENDENCY, "fixture:dep-a-alias:1", aDigest), aArchive);
+
+        Path jmod = temp.resolve("java.cached.jmod");
+        var pSource = jar("jmod-cached-src", "package platform.cached; public class Library { public static int v(){ return 7; } }");
+        try (var input = new JarFile(pSource.path().toFile());
+                var output = new JarOutputStream(Files.newOutputStream(jmod))) {
+            for (var item : input.stream().filter(v -> v.getName().endsWith(".class")).toList()) {
+                var entry = new JarEntry("classes/" + item.getName()); entry.setTime(0);
+                output.putNextEntry(entry); input.getInputStream(item).transferTo(output); output.closeEntry();
+            }
+        }
+        var basePlatform = TestInputs.request("class S {}").platform();
+        var jmodList = new ArrayList<>(basePlatform.artifacts());
+        jmodList.add(new PlatformInput.Artifact("jmods/java.cached.jmod",
+                ContentDigest.sha256(Files.readAllBytes(jmod)), jmod, PlatformInput.Format.JMOD));
+        var platform = PlatformInput.create(21, basePlatform.version(), basePlatform.vendor(), jmodList);
+
+        Path tmpDir = Path.of(System.getProperty("java.io.tmpdir"));
+        long tempJarsBefore;
+        try (var s = Files.list(tmpDir)) {
+            tempJarsBefore = s.filter(p -> p.getFileName().toString().startsWith("jar_file_from_input_stream")).count();
+        }
+
+        // Warm platform + aJar + bJar
+        var srcWithBoth = TestInputs.request("class C1 { String f(){ return dep1.A.base() + platform.cached.Library.v(); } }").sources();
+        var req1 = TestInputs.request(srcWithBoth, platform, List.of(aJar1, bJar));
+        var res1 = new JavaParserFrontend().analyze(req1);
+        assertEquals(2, calls(res1).stream().filter(c -> c.status() == SemanticStatus.RESOLVED).count());
+        assertTrue(res1.diagnostics().stream().anyMatch(d -> d.code().equals("frontend.jar-classpath-unmodeled")
+                && "fixture:dep-a:1".equals(d.details().get("artifact"))));
+
+        long buildsAfterWarm = ResolutionEnvironment.cachedArchiveBuilds();
+
+        // Second & concurrent runs with same digest (different logical name aJar2) must hit cache (0 new archive builds)
+        // AND isolate parent solver when bJar is omitted!
+        var srcWithoutB = TestInputs.request("class C2 { String f(){ return dep1.A.base(); } }").sources();
+        var reqWithoutB = TestInputs.request(srcWithoutB, platform, List.of(aJar2));
+        var pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+        try {
+            var f1 = pool.submit(() -> new JavaParserFrontend().analyze(req1));
+            var f2 = pool.submit(() -> new JavaParserFrontend().analyze(reqWithoutB));
+            assertEquals(res1, f1.get());
+            var res2 = f2.get();
+            // Without bJar in Context 2, dep1.A.base() inherited from dep2.B cannot borrow Context 1's bJar solver!
+            assertEquals(SemanticStatus.UNRESOLVED, calls(res2).getFirst().status());
+            assertTrue(res2.diagnostics().stream().anyMatch(d -> d.code().equals("frontend.jar-classpath-unmodeled")
+                    && "fixture:dep-a-alias:1".equals(d.details().get("artifact"))));
+        } finally {
+            pool.shutdownNow();
+        }
+        assertEquals(buildsAfterWarm, ResolutionEnvironment.cachedArchiveBuilds(),
+                "Repeated and concurrent analyses of identical platform/JAR digests must reuse cached archives");
+
+        long tempJarsAfter;
+        try (var s = Files.list(tmpDir)) {
+            tempJarsAfter = s.filter(p -> p.getFileName().toString().startsWith("jar_file_from_input_stream")).count();
+        }
+        assertEquals(tempJarsBefore, tempJarsAfter, "CachedArchive must never materialize JarTypeSolver temp JARs on disk");
+
+        // Mutating a cached JAR on disk must STILL fail per-request SHA-256 verification!
+        Files.writeString(aArchive, "tampered");
+        assertEquals("frontend.artifact-digest", assertThrows(FrontendInputException.class,
+                () -> new JavaParserFrontend().analyze(reqWithoutB)).diagnostic().code());
+    }
+
+    @Test void sourceRecoveryResolvesWildcardImportsInlineQualifiedTypesAndWithholdsDuplicateTypes() {
+        var sources = Map.of(
+                "src/main/java/demo/Owner.java", """
+                        package demo;
+                        import jakarta.persistence.*;
+                        import org.springframework.web.bind.annotation.*;
+                        import io.grpc.services.*;
+                        import javax.cache.configuration.Configuration;
+                        @Entity
+                        @Table(name = "owners")
+                        @RequestMapping("/owners")
+                        @org.springframework.context.annotation.Configuration
+                        public class Owner extends hipstershop.AdServiceGrpc.AdServiceImplBase {
+                            private HealthStatusManager healthMgr;
+                            private hipstershop.AdServiceGrpc.AdServiceBlockingStub blockingStub;
+                            @GetMapping("/list")
+                            public String list() { return "ok"; }
+                        }
+                        """,
+                "src/debug/java/demo/Owner.java", """
+                        package demo;
+                        public class Owner {}
+                        """);
+        var base = TestInputs.request(sources, List.of());
+        // Strict mode rejects duplicate source type definitions
+        assertEquals("frontend.duplicate-type", assertThrows(FrontendInputException.class,
+                () -> new JavaParserFrontend().analyze(base)).diagnostic().code());
+
+        // Source-recovery mode withholds the duplicate source document with a warning diagnostic
+        // and resolves wildcard annotations/types + inline package-qualified types/annotations
+        var options = new TreeMap<>(base.manifest().configuration().values());
+        options.put(FrontendRequest.RESOLUTION_MODE, FrontendRequest.SOURCE_RECOVERY);
+        var component = new ManifestComponent(
+                new com.evolution.analysis.contract.common.VersionedIdentifier("test.fixture", "1"),
+                ContentDigest.sha256Utf8("test-fixture-components-v1"));
+        var recoveryManifest = AnalysisManifest.create(
+                new com.evolution.analysis.contract.common.VersionedIdentifier("analysis.manifest", "1"),
+                base.manifest().snapshot(),
+                base.manifest().modules(),
+                base.manifest().classpath(),
+                AnalysisConfiguration.create(
+                        new com.evolution.analysis.contract.common.VersionedIdentifier("analysis.configuration", "1"),
+                        options),
+                component,
+                component,
+                component);
+        var recoveryReq = new FrontendRequest(
+                recoveryManifest,
+                base.module(),
+                base.sourceSet(),
+                base.plan(),
+                base.sources(),
+                base.platform(),
+                base.dependencies());
+        var result = new JavaParserFrontend().analyze(recoveryReq);
+        assertEquals(FrontendResult.State.PARTIAL, result.state());
+        assertEquals(2, result.sources().size());
+        assertTrue(result.diagnostics().stream().anyMatch(d -> d.code().equals("java.duplicate-source-type")));
+
+        var structuralObs = result.observations().stream()
+                .filter(o -> Set.of("java.extends", "java.implements", "java.annotated-with", "java.field-type")
+                        .contains(o.category().value()))
+                .toList();
+        assertFalse(structuralObs.isEmpty());
+        assertTrue(structuralObs.stream().allMatch(o -> o.attribution() == SemanticStatus.RESOLVED),
+                () -> "Unresolved structural observations: " + structuralObs);
+    }
 }

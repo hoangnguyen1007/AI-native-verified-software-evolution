@@ -176,4 +176,28 @@ class ScanJourneyTest {
         assertEquals(1L,((Number)depth.get("sourceRecoveryContexts")).longValue());
         assertEquals(0L,((Number)GraphJson.object(depth.get("relationships")).get("resolved")).longValue(),"Mismatched decoding cannot become exact attribution");
     }
+    @Test void passiveScanCompletesWithPassiveArchitectureRecoveryTierWhenStructureExceedsNinetyEightPercent()throws Exception{
+        Path source=Files.createDirectory(workspace.resolve("arch-complete"));
+        Files.createDirectories(source.resolve("src/main/java/demo"));
+        Files.writeString(source.resolve("src/main/java/demo/OwnerController.java"),"""
+                package demo;
+                import jakarta.persistence.*;
+                import org.springframework.web.bind.annotation.*;
+                @Entity
+                @RestController
+                @RequestMapping("/owners")
+                public class OwnerController extends hipstershop.AdServiceGrpc.AdServiceImplBase {
+                    @GetMapping("/list")
+                    public String list() { return "ok"; }
+                }
+                """);
+        Files.writeString(source.resolve("build.gradle"),"plugins { id 'java' }\n");
+        var scan=run("scan",source.toString(),"--offline","--build","off","--json");
+        assertEquals(0,scan.code,scan.err+scan.out);
+        assertEquals("COMPLETE",scan.data().get("status"));
+        assertEquals("PASSIVE_ARCHITECTURE_RECOVERY",scan.data().get("evidenceTier"));
+        var gapSummary=GraphJson.object(scan.data().get("gapSummary"));
+        assertTrue(((Number)gapSummary.get("total")).longValue()>0,"Passive capability gaps must remain preserved");
+        assertTrue(GraphJson.object(gapSummary.get("byObligation")).containsKey("ISOLATED_EXECUTION_REQUIRED"));
+    }
 }

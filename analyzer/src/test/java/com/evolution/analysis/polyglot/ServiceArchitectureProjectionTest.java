@@ -37,4 +37,48 @@ class ServiceArchitectureProjectionTest {
         var actual=store.records("edges",GraphSnapshotCodec::edge).values().stream().filter(e->e.kind().equals("INVOKES_RPC")).toList();assertEquals(1,actual.size());assertEquals(id("caller"),actual.getFirst().source());assertEquals(KnowledgeGraph.TargetState.CANDIDATES,actual.getFirst().target().state());assertEquals(2,actual.getFirst().target().identities().size());
         assertThrows(java.io.IOException.class,()->ServiceArchitectureProjection.project(store,root,()->true));
     }
+    @Test void projectionsQueryTargetedKindsWithoutFullTableScan()throws Exception {
+        var guarded=new GraphProjectionStore() {
+            @SuppressWarnings("unchecked")
+            public <T> Map<String,T> records(String space,java.util.function.Function<Object,T> decode) {
+                var backing=(Map<String,T>)tables.computeIfAbsent(space,ignored->new TreeMap<>());
+                if(!Set.of("nodes","edges").contains(space))return backing;
+                return new AbstractMap<>() {
+                    @Override public T get(Object key){return backing.get(key);}
+                    @Override public boolean containsKey(Object key){return backing.containsKey(key);}
+                    @Override public T put(String key,T value){return backing.put(key,value);}
+                    @Override public T putIfAbsent(String key,T value){return backing.putIfAbsent(key,value);}
+                    @Override public void putAll(Map<? extends String,? extends T> m){backing.putAll(m);}
+                    @Override public Set<Entry<String,T>> entrySet(){throw new AssertionError("Full "+space+" scan is forbidden; use valuesByKind");}
+                };
+            }
+            @SuppressWarnings("unchecked")
+            public <T> Iterable<T> valuesByKind(String space,Set<String> kinds,java.util.function.Function<Object,T> decode,java.util.function.Function<T,String> kindExtractor) {
+                var backing=(Map<String,T>)tables.computeIfAbsent(space,ignored->new TreeMap<>());
+                return ()->backing.values().stream().filter(v->kinds.contains(kindExtractor.apply(v))).iterator();
+            }
+        };
+        String snapRoot="snapshot:"+root;
+        var support=GraphEvidence.capture("fixture",List.of("opaque"));
+        node(client,id("http-caller"),"METHOD",support);node(server,id("http-handler"),"METHOD",support);
+        node(client,id("http-call"),"SOURCE_HTTP_CALL_CANDIDATE",GraphEvidence.capture("java.http-client-call",Map.of("analysis",client,"call",Map.of("caller",id("http-caller"),"uri","/api/items","methods",List.of("GET")))));
+        node(server,id("http-ep"),"ENDPOINT",GraphEvidence.capture("spring.endpoint-declaration",Map.of("route",Map.of("handler",id("http-handler"),"path","/api/items","methods",List.of("GET"),"implicitHead",false))));
+        edge(client,"graph.has-http-client-call",id("http-caller"),List.of(id("http-call")),support);
+        node(snapRoot,id("rpc-method"),"PROTOBUF_RPC_METHOD",GraphEvidence.capture("polyglot.source-syntax",Map.of("fields",Map.of("fact",Map.of("recovered",false,"attributes",Map.of("qualifiedName","demo.OrderService.Place"))))));
+        node(server,id("rpc-handler-site"),"SOURCE_RPC_HANDLER_CANDIDATE",GraphEvidence.capture("polyglot.source-syntax",Map.of("fields",Map.of("fact",Map.of("recovered",false,"attributes",Map.of("service","demo.OrderService","method","Place","methodStyle","EXACT","serviceQualification","QUALIFIED"))))));
+        node(server,id("rpc-handler-decl"),"DECLARATION",support);
+        edge(server,"syntax.rpc-handler-declaration",id("rpc-handler-site"),List.of(id("rpc-handler-decl")),support);
+        node(client,id("rpc-call-site"),"SOURCE_RPC_CALL_CANDIDATE",GraphEvidence.capture("polyglot.source-syntax",Map.of("fields",Map.of("fact",Map.of("recovered",false,"attributes",Map.of("service","demo.OrderService","method","Place","methodStyle","EXACT","serviceQualification","QUALIFIED"))))));
+        node(client,id("rpc-caller-decl"),"DECLARATION",support);
+        edge(client,"syntax.rpc-call-candidate",id("rpc-caller-decl"),List.of(id("rpc-call-site")),support);
+
+        HttpServiceCallProjection.project(guarded,snapRoot,()->false);
+        GrpcServiceCallProjection.project(guarded,snapRoot,()->false);
+        ServiceArchitectureProjection.project(guarded,snapRoot,()->false);
+
+        @SuppressWarnings("unchecked")
+        var allEdges=((Map<String,KnowledgeGraph.Edge>)tables.get("edges")).values();
+        assertEquals(1,allEdges.stream().filter(e->e.kind().equals("CALLS_SERVICE")).count());
+        assertEquals(1,allEdges.stream().filter(e->e.kind().equals("INVOKES_RPC")).count());
+    }
 }
