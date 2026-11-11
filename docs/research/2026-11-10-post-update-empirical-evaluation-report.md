@@ -9,6 +9,8 @@
 
 ---
 
+**Quy định hiện hành — CONFIRMED human, 2026-11-11:** dùng ngưỡng hoàn thành phục hồi kiến trúc thụ động **95.0% (`950‰`)**, khớp code hiện tại. [Readiness contract](../architecture/m8-repository-readiness.md#ngưỡng-hoàn-thành-phục-hồi-kiến-trúc-thụ-động-hiện-hành-95) giữ các điều kiện lỗi/evidence và phân biệt recovery/exact; [ADR-007](../decisions/ADR-007-isolated-build-and-polyglot-readiness.md#human-approved-passive-recovery-completion-threshold--2026-11-11) ghi quyết định. Mô hình 98% ở mục 2 và số liệu/giải trình ở mục 3–5 mô tả lần chạy lịch sử ngày 10/11; giữ nguyên để truy vết. Mục 6 mô tả cập nhật sau lần chạy. Không đổi status của các dòng thực nghiệm cũ hoặc suy ra success rate mới khi chưa đo lại.
+
 ## 1. Mục Tiêu & Phương Pháp Thực Nghiệm Khách Quan
 
 Thực hiện theo chỉ đạo của con người:
@@ -27,7 +29,7 @@ Thực hiện theo chỉ đạo của con người:
 
 ---
 
-## 2. Mô Hình Đo Đạc & Chuẩn Hóa Chỉ Số 3 Trục (3-Axis Model)
+## 2. Mô Hình Đo Đạc Lịch Sử Ngày 2026-11-10 & Chuẩn Hóa Chỉ Số 3 Trục (3-Axis Model)
 
 Theo chuẩn quốc tế OASIS SARIF 2.1.0 và mô hình GitHub CodeQL `build-mode: none`, kết quả phân tích không được quy về một con số phần trăm mù mờ mà được phân rã thành 3 trục độc lập:
 

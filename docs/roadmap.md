@@ -251,7 +251,7 @@ Exit gate: the entire Track A analysis/evidence workflow runs locally without ba
 
 ### M8 - Backend API and Complete Architecture Workbench
 
-**Status: CLOSED / SCOPED EMPIRICAL BASELINE (Human-Accepted 2026-11-08).** M8.1 jobs/API, M8.2 live workbench/connections, M8.3 structure/configuration/evidence views, and M8.4 Steps 1–6 are closed at their recorded scoped MVP and 10-repository empirical benchmark baseline ([M8.4-Step6-Real-Repository-Scale-Evaluation-Report.md](research/M8.4-Step6-Real-Repository-Scale-Evaluation-Report.md)). Active work has transitioned to the **Master Upgrade Plan (`masterupdateplan` — 6 Phases / 15 Slices)** ([04-step6-real-repository-evaluation-plan.md](tasks/m8/04-step6-real-repository-evaluation-plan.md#6-master-upgrade-plan-2026-11-08--6-phase-execution-roadmap-for-90-attribution--universal-repository-compatibility)) to remediate the 10 empirical root-cause gaps across diverse real-world repositories; [current state](current-state.md) records operational slice progress. The full acceptance criteria below still govern M10 Track A release gate completion.
+**Status: CLOSED / FINAL ARCHITECTURAL RECOVERY BASELINE (Human-Accepted 2026-11-10).** M8.1–M8.4 and the Master Upgrade Plan are complete within their recorded bounds; the [closure report](research/M8.4-Step6-Real-Repository-Scale-Evaluation-Report.md) preserves historical evidence. Active work is M9 under its [five-task plan](tasks/m9/README.md). The current passive completion policy is the human-approved 95% with guards and truthful evidence tiers; it does not recalculate historical runs. The full product acceptance criteria below remain relevant to M9 evaluation and M10 human release review.
 
 Deliver asynchronous cancellable analysis jobs and versioned query APIs plus the required workbench:
 
@@ -274,7 +274,7 @@ Exit gate: a user can complete the registered end-to-end product journey on a pi
 
 **CONFIRMED human delivery adjustment (2026-10-29):** Step 5 / Bước 1 is **CLOSED / CORE MVP** for the demonstrated 18-adapter/native-capture, explicit-gap, replay, embedded/cross-provider and authentication paths. Full A01–A12 qualification and production-method registration are withdrawn from that task's exit, without being certified or turned into replacement tasks. ADR-007 owns the acceptance amendment. Step 5 continues with its existing Bước 2–3; M8.4 and later gates are unchanged.
 
-**Status: CLOSED / SCOPED EMPIRICAL BASELINE (Human-Accepted 2026-11-08); post-M8 Master Upgrade Plan (`masterupdateplan` — 6 Phases / 15 Slices) is ACTIVE / IN PROGRESS in [current state](current-state.md).**
+**Status: CLOSED / FINAL ARCHITECTURAL RECOVERY BASELINE (Human-Accepted 2026-11-10).** The post-M8 Master Upgrade Plan is complete; [current state](current-state.md) owns its bounded evidence and remaining capability limits. M9 does not reopen withdrawn Step-3/Step-5 qualification campaigns.
 
 This task is established pursuant to the binding **Human Mandate on Comprehensive Coverage** ([docs/architecture/comprehensive-repository-coverage-problems.md](architecture/comprehensive-repository-coverage-problems.md)).
 
@@ -290,7 +290,7 @@ This task is established pursuant to the binding **Human Mandate on Comprehensiv
 
 Deliver curated condition/registration/binding microfixtures, interaction fixtures, PetClinic, medium, multi-module and larger repositories; controlled partial-classpath/configuration experiments; architecture mutations with expected affected regions; metric golden cases; score sensitivity and missing-evidence experiments; graph/query/UI scale scenarios; accessibility/usability review of primary workflows; robustness matrix; repeated determinism/performance runs; and immutable raw results. Corpus inclusion, labels, baselines and primary metrics are registered before result interpretation.
 
-Exit gate G6: independent review supports the exact bounded Track A claims, metric and score correctness boundaries, registered product performance/usability criteria, and a clean reproducible product workflow.
+M9 Track A evaluation acceptance: independent review supports the exact bounded Track A claims, metric and score correctness boundaries, registered product performance/usability criteria, and a clean reproducible product workflow. The historical G6 M7 release-preparation adjudication stays PASSED within its original scope; this M9 acceptance record supplements it without renumbering gates or granting M10 approval. See the [M9 protocol](tasks/m9/PROTOCOL.md).
 
 ### M10 - Track A Release Gate
 
@@ -422,7 +422,7 @@ Paper readiness, venue selection, extensive artifact badging, and elaborate defe
 
 ## Immediate Sequence
 
-1. Preserve delivered M0–M8.3 contracts and immutable G2–G6 evidence within their original scopes.
-2. Execute the [six-step M8.4 plan](tasks/m8/04-comprehensive-repository-readiness.md), beginning with full inventory, streaming CAS and durable recovery. Validate the executor before target execution; qualify each semantic pack and evidence boundary.
-3. Complete registered M8.4 correctness/isolation/recovery/scale acceptance, then M9 broader multi-repository and product hardening. Required repeated trials and representative checkpoints are authorized within the plan and configured resource policy.
+1. Preserve delivered M0–M8 contracts and immutable G2–G6 evidence within their original scopes, including scoped MVP acceptance and unqualified native-method markers.
+2. Use the [M9 Task-1 protocol](tasks/m9/PROTOCOL.md) and frozen identities before evaluating semantic/evidence correctness in M9.2.
+3. Complete M9.2–M9.5 under the [five-task plan](tasks/m9/README.md), including registered multi-repository/product hardening and independent review. Required repeated trials and representative checkpoints follow the frozen protocol and resource policy.
 4. Obtain M10 human Track A product approval before M11 conditional architecture evolution and M12 integration. No M8.4 plan or implementation result automatically authorizes Track B.

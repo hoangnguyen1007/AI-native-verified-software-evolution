@@ -1,0 +1,2584 @@
+{
+  "schema": "m9-evaluation-protocol-v2",
+  "frozen": true,
+  "policy": {
+    "passiveThresholdPerMille": 950,
+    "id": "passive-completion-950-guards-v1",
+    "authority": "docs/decisions/ADR-007-isolated-build-and-polyglot-readiness.md",
+    "historicalStatusRecalculation": false
+  },
+  "selection": {
+    "passive": [
+      "--offline",
+      "--build=off",
+      "--all-files",
+      "--include-tests",
+      "--release=21"
+    ],
+    "sourceSets": [
+      "MAIN",
+      "TEST",
+      "GENERATED",
+      "VENDOR",
+      "UNCLASSIFIED"
+    ],
+    "physicalExclusion": [
+      "root .git administrative data"
+    ],
+    "semanticDisposition": "Each physical entry and each realized context must reconcile to selected/analyzed/unsupported/unavailable/error; vendor and unclassified stay in census. No automatic main-only correctness claim.",
+    "P": "No dependency acquisition; fresh empty artifact cache. Ordered native dependency classpath is empty; platform view pinned separately. Analyzer realized context/classpath manifests must be retained at execution.",
+    "C": "NOT_RUN until an explicitly pinned compatible authenticated capture is registered",
+    "N": "NOT_RUN unless changed claim needs new isolated execution; no worker provisioned"
+  },
+  "corpus": [
+    {
+      "id": "realworld-java",
+      "directory": "spring-boot-realworld-example-app",
+      "strata": [
+        "development",
+        "spring",
+        "maven"
+      ],
+      "historicalRow": "post-update:1",
+      "commit": "ee17e31aafe733d98c4853c8b9a74d7f2f6c924a",
+      "root": "corpus:spring-boot-realworld-example-app",
+      "physicalEntries": 142,
+      "sourceManifestSha256": "2ff18b1cb67e72fce5914a8aa0722a62f84e94a4371833c83ef10486a087def6",
+      "dirty": false,
+      "languages": {
+        "OTHER": 13,
+        "java": 116,
+        "sql": 1,
+        "xml": 11,
+        "yaml": 1
+      },
+      "sourceSets": {
+        "MAIN": 108,
+        "TEST": 23,
+        "UNCLASSIFIED": 11
+      },
+      "descriptorOwners": 1,
+      "inventory": {
+        "path": "evidence:realworld-java.jsonl",
+        "sha256": "387946b42c287eccc873327a6b26a3cc38439db2a0f9aab2c696f4322769e54e"
+      },
+      "contexts": {
+        "path": "evidence:realworld-java-contexts.json",
+        "sha256": "fd0e0ed53032e741bb5599afc95638fee0455e29a57fc89375d66b57237c472c"
+      },
+      "repository": "https://github.com/gothinkster/spring-boot-realworld-example-app",
+      "passiveCommandTemplate": [
+        "java",
+        "-Xmx2048m",
+        "-jar",
+        "evidence:evo-baseline-r2.jar",
+        "scan",
+        "corpus:spring-boot-realworld-example-app",
+        "--offline",
+        "--build=off",
+        "--all-files",
+        "--include-tests",
+        "--release=21",
+        "--repo=https://github.com/gothinkster/spring-boot-realworld-example-app.git",
+        "--revision=ee17e31aafe733d98c4853c8b9a74d7f2f6c924a",
+        "--jdk=jdk:.",
+        "--maven-cache=<new-explicit-empty-cache>",
+        "--workspace=<new-external-run-directory>",
+        "--json"
+      ]
+    },
+    {
+      "id": "piggymetrics",
+      "directory": "piggymetrics",
+      "strata": [
+        "development",
+        "multi-module",
+        "spring"
+      ],
+      "historicalRow": "post-update:2",
+      "commit": "6bb2cf9ddbca980b664d3edbb6ff775d75369278",
+      "root": "corpus:piggymetrics",
+      "physicalEntries": 204,
+      "sourceManifestSha256": "27d0f27bffd454b09512b96b691c82a8c469c6baa53af199dd5c85bc200187ae",
+      "dirty": false,
+      "languages": {
+        "OTHER": 52,
+        "css": 3,
+        "html": 2,
+        "java": 97,
+        "javascript": 8,
+        "xml": 10,
+        "yaml": 32
+      },
+      "sourceSets": {
+        "MAIN": 138,
+        "TEST": 36,
+        "UNCLASSIFIED": 30
+      },
+      "descriptorOwners": 10,
+      "inventory": {
+        "path": "evidence:piggymetrics.jsonl",
+        "sha256": "34f6949532c04c31a75cfcef1d3054e9b16fe953a9e4bb8a0ed21134db27de9d"
+      },
+      "contexts": {
+        "path": "evidence:piggymetrics-contexts.json",
+        "sha256": "13fb5bd3ff1388fd06cde2b883aeb3c6f8d60d5b75b7bce4ee594e9f68ba0e45"
+      },
+      "repository": "https://github.com/sqshq/piggymetrics",
+      "passiveCommandTemplate": [
+        "java",
+        "-Xmx2048m",
+        "-jar",
+        "evidence:evo-baseline-r2.jar",
+        "scan",
+        "corpus:piggymetrics",
+        "--offline",
+        "--build=off",
+        "--all-files",
+        "--include-tests",
+        "--release=21",
+        "--repo=https://github.com/sqshq/piggymetrics.git",
+        "--revision=6bb2cf9ddbca980b664d3edbb6ff775d75369278",
+        "--jdk=jdk:.",
+        "--maven-cache=<new-explicit-empty-cache>",
+        "--workspace=<new-external-run-directory>",
+        "--json"
+      ]
+    },
+    {
+      "id": "sunflower",
+      "directory": "sunflower",
+      "strata": [
+        "development",
+        "android",
+        "kotlin"
+      ],
+      "historicalRow": "post-update:3",
+      "commit": "2a357a31551bb53f3fe80382a9ce6d30bcc8b960",
+      "root": "corpus:sunflower",
+      "physicalEntries": 162,
+      "sourceManifestSha256": "12d6eb48ece7d0376f45d185079032e523e4ffd8f5fd1397c565db13ba70dc5e",
+      "dirty": false,
+      "languages": {
+        "OTHER": 54,
+        "json": 2,
+        "kotlin": 71,
+        "xml": 29,
+        "yaml": 6
+      },
+      "sourceSets": {
+        "GENERATED": 1,
+        "MAIN": 97,
+        "TEST": 19,
+        "UNCLASSIFIED": 45
+      },
+      "descriptorOwners": 3,
+      "inventory": {
+        "path": "evidence:sunflower.jsonl",
+        "sha256": "8566bf9ab3844da8b0e51f2cde111ea002289ebefcf2caad4c7e6ba913e3f369"
+      },
+      "contexts": {
+        "path": "evidence:sunflower-contexts.json",
+        "sha256": "cec6ec593a9f10dafa8acd5403af712e6ac9ff621e78a08f22e616a7c69bdf16"
+      },
+      "repository": "https://github.com/android/sunflower",
+      "passiveCommandTemplate": [
+        "java",
+        "-Xmx2048m",
+        "-jar",
+        "evidence:evo-baseline-r2.jar",
+        "scan",
+        "corpus:sunflower",
+        "--offline",
+        "--build=off",
+        "--all-files",
+        "--include-tests",
+        "--release=21",
+        "--repo=https://github.com/android/sunflower.git",
+        "--revision=2a357a31551bb53f3fe80382a9ce6d30bcc8b960",
+        "--jdk=jdk:.",
+        "--maven-cache=<new-explicit-empty-cache>",
+        "--workspace=<new-external-run-directory>",
+        "--json"
+      ]
+    },
+    {
+      "id": "realworld-go",
+      "directory": "golang-gin-realworld-example-app",
+      "strata": [
+        "development",
+        "go"
+      ],
+      "historicalRow": "post-update:4",
+      "commit": "a41289b2a4951e7cc09066f86742a27f85121c9b",
+      "root": "corpus:golang-gin-realworld-example-app",
+      "physicalEntries": 41,
+      "sourceManifestSha256": "962027c9ca798532384765c8b88f43c366daba9fd7c990b22b483a75741057a6",
+      "dirty": false,
+      "languages": {
+        "OTHER": 16,
+        "go": 21,
+        "yaml": 4
+      },
+      "sourceSets": {
+        "UNCLASSIFIED": 41
+      },
+      "descriptorOwners": 1,
+      "inventory": {
+        "path": "evidence:realworld-go.jsonl",
+        "sha256": "ccb4cae96441ae4eb089e0d774b9e9caf9626e59cd4685a1ea8ebd1cd963235b"
+      },
+      "contexts": {
+        "path": "evidence:realworld-go-contexts.json",
+        "sha256": "6bc81a454e3a222c6187788c70f611560128ab2197e80ba8e63d484e4ad0cef7"
+      },
+      "repository": "https://github.com/realworld-apps/golang-gin-realworld-example-app",
+      "passiveCommandTemplate": [
+        "java",
+        "-Xmx2048m",
+        "-jar",
+        "evidence:evo-baseline-r2.jar",
+        "scan",
+        "corpus:golang-gin-realworld-example-app",
+        "--offline",
+        "--build=off",
+        "--all-files",
+        "--include-tests",
+        "--release=21",
+        "--repo=https://github.com/realworld-apps/golang-gin-realworld-example-app.git",
+        "--revision=a41289b2a4951e7cc09066f86742a27f85121c9b",
+        "--jdk=jdk:.",
+        "--maven-cache=<new-explicit-empty-cache>",
+        "--workspace=<new-external-run-directory>",
+        "--json"
+      ]
+    },
+    {
+      "id": "mapstruct",
+      "directory": "mapstruct-examples",
+      "strata": [
+        "development",
+        "generated"
+      ],
+      "historicalRow": "post-update:5",
+      "commit": "3f9fd5ffe9e2272b6219a4216e842f8c009d1005",
+      "root": "corpus:mapstruct-examples",
+      "physicalEntries": 283,
+      "sourceManifestSha256": "3c891c315273d1458efb2cbc859dd63ed2cf25cb4469c29e42be0b25706e318c",
+      "dirty": false,
+      "languages": {
+        "OTHER": 70,
+        "java": 172,
+        "kotlin": 11,
+        "protobuf": 2,
+        "xml": 27,
+        "yaml": 1
+      },
+      "sourceSets": {
+        "GENERATED": 9,
+        "MAIN": 151,
+        "TEST": 33,
+        "UNCLASSIFIED": 90
+      },
+      "descriptorOwners": 32,
+      "inventory": {
+        "path": "evidence:mapstruct.jsonl",
+        "sha256": "3873f11fb3bad76f7b46ddb677f460033c728ad69b623648585f02387cf6617b"
+      },
+      "contexts": {
+        "path": "evidence:mapstruct-contexts.json",
+        "sha256": "fcab06a897720c4b9f87317f2ff58180d56b2a9fa0a3cde96adbabc6b56c3432"
+      },
+      "repository": "https://github.com/mapstruct/mapstruct-examples",
+      "passiveCommandTemplate": [
+        "java",
+        "-Xmx2048m",
+        "-jar",
+        "evidence:evo-baseline-r2.jar",
+        "scan",
+        "corpus:mapstruct-examples",
+        "--offline",
+        "--build=off",
+        "--all-files",
+        "--include-tests",
+        "--release=21",
+        "--repo=https://github.com/mapstruct/mapstruct-examples.git",
+        "--revision=3f9fd5ffe9e2272b6219a4216e842f8c009d1005",
+        "--jdk=jdk:.",
+        "--maven-cache=<new-explicit-empty-cache>",
+        "--workspace=<new-external-run-directory>",
+        "--json"
+      ]
+    },
+    {
+      "id": "boutique",
+      "directory": "microservices-demo",
+      "strata": [
+        "development",
+        "scale",
+        "polyglot",
+        "grpc"
+      ],
+      "historicalRow": "post-update:6",
+      "commit": "c7cb6d5bfd6ea3aed768634ebbcb98cb7a523712",
+      "root": "corpus:microservices-demo",
+      "physicalEntries": 364,
+      "sourceManifestSha256": "b543f549018cd2ff03d03286ab077ba6e44ac8bebe089444bde63b79de3b950d",
+      "dirty": false,
+      "languages": {
+        "OTHER": 171,
+        "csharp": 9,
+        "css": 4,
+        "go": 29,
+        "html": 11,
+        "java": 2,
+        "javascript": 6,
+        "json": 7,
+        "protobuf": 8,
+        "python": 13,
+        "xml": 1,
+        "yaml": 103
+      },
+      "sourceSets": {
+        "GENERATED": 12,
+        "MAIN": 4,
+        "TEST": 7,
+        "UNCLASSIFIED": 341
+      },
+      "descriptorOwners": 8,
+      "inventory": {
+        "path": "evidence:boutique.jsonl",
+        "sha256": "95fef3643398a4c268dd929862bf51a63ef4b3d873ede56ba5de98e2f1064fc9"
+      },
+      "contexts": {
+        "path": "evidence:boutique-contexts.json",
+        "sha256": "0003ceee0c53aac3ac37b80ef73993d8b8b62efffd614c3ffb910b32e4a63e89"
+      },
+      "repository": "https://github.com/GoogleCloudPlatform/microservices-demo",
+      "passiveCommandTemplate": [
+        "java",
+        "-Xmx8192m",
+        "-jar",
+        "evidence:evo-baseline-r2.jar",
+        "scan",
+        "corpus:microservices-demo",
+        "--offline",
+        "--build=off",
+        "--all-files",
+        "--include-tests",
+        "--release=21",
+        "--repo=https://github.com/GoogleCloudPlatform/microservices-demo.git",
+        "--revision=c7cb6d5bfd6ea3aed768634ebbcb98cb7a523712",
+        "--jdk=jdk:.",
+        "--maven-cache=<new-explicit-empty-cache>",
+        "--workspace=<new-external-run-directory>",
+        "--json"
+      ]
+    },
+    {
+      "id": "petclinic-microservices",
+      "directory": "spring-petclinic-microservices",
+      "strata": [
+        "development",
+        "multi-module",
+        "spring"
+      ],
+      "historicalRow": "post-update:7",
+      "commit": "f9fd559361f11b79e622ee0c0c660f42980a36ac",
+      "root": "corpus:spring-petclinic-microservices",
+      "physicalEntries": 205,
+      "sourceManifestSha256": "6ef8047d4eb58f1dbf94cfd29dcc87e5fd92265fc6c93a7f3119f2a9eed99266",
+      "dirty": false,
+      "languages": {
+        "OTHER": 47,
+        "css": 4,
+        "html": 11,
+        "java": 62,
+        "javascript": 22,
+        "json": 14,
+        "sql": 12,
+        "xml": 15,
+        "yaml": 18
+      },
+      "sourceSets": {
+        "MAIN": 138,
+        "TEST": 15,
+        "UNCLASSIFIED": 52
+      },
+      "descriptorOwners": 9,
+      "inventory": {
+        "path": "evidence:petclinic-microservices.jsonl",
+        "sha256": "94d0018b20bd4b74d86d12fa3b11a26dfcc73c28b6c4b945a030211f33cb54d6"
+      },
+      "contexts": {
+        "path": "evidence:petclinic-microservices-contexts.json",
+        "sha256": "16ed7de35b21f9ab314e92689eda5cffad7a1b9be628ed4a8c3a9bccb6e2133e"
+      },
+      "repository": "https://github.com/spring-petclinic/spring-petclinic-microservices",
+      "passiveCommandTemplate": [
+        "java",
+        "-Xmx2048m",
+        "-jar",
+        "evidence:evo-baseline-r2.jar",
+        "scan",
+        "corpus:spring-petclinic-microservices",
+        "--offline",
+        "--build=off",
+        "--all-files",
+        "--include-tests",
+        "--release=21",
+        "--repo=https://github.com/spring-petclinic/spring-petclinic-microservices.git",
+        "--revision=f9fd559361f11b79e622ee0c0c660f42980a36ac",
+        "--jdk=jdk:.",
+        "--maven-cache=<new-explicit-empty-cache>",
+        "--workspace=<new-external-run-directory>",
+        "--json"
+      ]
+    },
+    {
+      "id": "petclinic-kotlin",
+      "directory": "spring-petclinic-kotlin",
+      "strata": [
+        "development",
+        "kotlin",
+        "spring"
+      ],
+      "historicalRow": "post-update:8",
+      "commit": "817dba3b02261e4291f138d5d8bb8c85c7d49758",
+      "root": "corpus:spring-petclinic-kotlin",
+      "physicalEntries": 105,
+      "sourceManifestSha256": "9b4485a546f6b7ebb833c0bfa37aa0bf34153099d97c48e784df4f9d95e3382a",
+      "dirty": false,
+      "languages": {
+        "OTHER": 42,
+        "css": 1,
+        "html": 13,
+        "kotlin": 40,
+        "sql": 5,
+        "xml": 1,
+        "yaml": 3
+      },
+      "sourceSets": {
+        "MAIN": 72,
+        "TEST": 16,
+        "UNCLASSIFIED": 17
+      },
+      "descriptorOwners": 1,
+      "inventory": {
+        "path": "evidence:petclinic-kotlin.jsonl",
+        "sha256": "36df62c7cce1441c54431d0d4e5e1e1840e3bf2b025df35703261024ac906356"
+      },
+      "contexts": {
+        "path": "evidence:petclinic-kotlin-contexts.json",
+        "sha256": "7e6f1a622d4c65e8bddaa6274cec2de02426575b4a508a87a72c383d445d3c42"
+      },
+      "repository": "https://github.com/spring-petclinic/spring-petclinic-kotlin",
+      "passiveCommandTemplate": [
+        "java",
+        "-Xmx2048m",
+        "-jar",
+        "evidence:evo-baseline-r2.jar",
+        "scan",
+        "corpus:spring-petclinic-kotlin",
+        "--offline",
+        "--build=off",
+        "--all-files",
+        "--include-tests",
+        "--release=21",
+        "--repo=https://github.com/spring-petclinic/spring-petclinic-kotlin.git",
+        "--revision=817dba3b02261e4291f138d5d8bb8c85c7d49758",
+        "--jdk=jdk:.",
+        "--maven-cache=<new-explicit-empty-cache>",
+        "--workspace=<new-external-run-directory>",
+        "--json"
+      ]
+    },
+    {
+      "id": "fastapi",
+      "directory": "full-stack-fastapi-template",
+      "strata": [
+        "development",
+        "python",
+        "frontend"
+      ],
+      "historicalRow": "post-update:9",
+      "commit": "aabb90126964a164e02aff39e7c385bb0598236d",
+      "root": "corpus:full-stack-fastapi-template",
+      "physicalEntries": 252,
+      "sourceManifestSha256": "e4dd19303016b116dc1d90ed0c143ea6397e7c522510defde090666c85f8f1c4",
+      "dirty": false,
+      "languages": {
+        "OTHER": 58,
+        "css": 1,
+        "html": 4,
+        "json": 14,
+        "python": 43,
+        "typescript": 109,
+        "yaml": 23
+      },
+      "sourceSets": {
+        "GENERATED": 1,
+        "TEST": 27,
+        "UNCLASSIFIED": 224
+      },
+      "descriptorOwners": 4,
+      "inventory": {
+        "path": "evidence:fastapi.jsonl",
+        "sha256": "9099d7f96a81e487995b6061c5490309eb504c8cff2606c1b9deb898a25158b4"
+      },
+      "contexts": {
+        "path": "evidence:fastapi-contexts.json",
+        "sha256": "0661b6bbcc98deed37a0ff4e6873fd2952ccdae3ccc93eb9d98a78826469e1bd"
+      },
+      "repository": "https://github.com/fastapi/full-stack-fastapi-template",
+      "passiveCommandTemplate": [
+        "java",
+        "-Xmx2048m",
+        "-jar",
+        "evidence:evo-baseline-r2.jar",
+        "scan",
+        "corpus:full-stack-fastapi-template",
+        "--offline",
+        "--build=off",
+        "--all-files",
+        "--include-tests",
+        "--release=21",
+        "--repo=https://github.com/fastapi/full-stack-fastapi-template.git",
+        "--revision=aabb90126964a164e02aff39e7c385bb0598236d",
+        "--jdk=jdk:.",
+        "--maven-cache=<new-explicit-empty-cache>",
+        "--workspace=<new-external-run-directory>",
+        "--json"
+      ]
+    },
+    {
+      "id": "newpipe",
+      "directory": "NewPipe",
+      "strata": [
+        "development",
+        "scale",
+        "android"
+      ],
+      "historicalRow": "post-update:10",
+      "commit": "8917ff1b29a3146c34057c62a7b3cd49c1ac6d97",
+      "root": "corpus:NewPipe",
+      "physicalEntries": 4496,
+      "sourceManifestSha256": "7664a1291fd4428a5402e9488f0fa97b1e5b65fdbe53659bc760b18f3760ac5a",
+      "dirty": false,
+      "languages": {
+        "OTHER": 3304,
+        "html": 1,
+        "java": 293,
+        "javascript": 3,
+        "json": 19,
+        "kotlin": 300,
+        "xml": 562,
+        "yaml": 14
+      },
+      "sourceSets": {
+        "GENERATED": 1,
+        "MAIN": 895,
+        "TEST": 46,
+        "UNCLASSIFIED": 3554
+      },
+      "descriptorOwners": 5,
+      "inventory": {
+        "path": "evidence:newpipe.jsonl",
+        "sha256": "6381203253b0e1ddc5ece8164ac6bdf7be9d8a6aea2cb14d3cf515758dc9861e"
+      },
+      "contexts": {
+        "path": "evidence:newpipe-contexts.json",
+        "sha256": "fea787bd13c6dd739f76783ee1d4014ede64d98a995e2c9d891005ffd0ce627b"
+      },
+      "repository": "https://github.com/TeamNewPipe/NewPipe",
+      "passiveCommandTemplate": [
+        "java",
+        "-Xmx8192m",
+        "-jar",
+        "evidence:evo-baseline-r2.jar",
+        "scan",
+        "corpus:NewPipe",
+        "--offline",
+        "--build=off",
+        "--all-files",
+        "--include-tests",
+        "--release=21",
+        "--repo=https://github.com/TeamNewPipe/NewPipe.git",
+        "--revision=8917ff1b29a3146c34057c62a7b3cd49c1ac6d97",
+        "--jdk=jdk:.",
+        "--maven-cache=<new-explicit-empty-cache>",
+        "--workspace=<new-external-run-directory>",
+        "--json"
+      ]
+    },
+    {
+      "id": "halo",
+      "directory": "halo",
+      "strata": [
+        "development",
+        "scale",
+        "gradle",
+        "spring"
+      ],
+      "historicalRow": "post-update:11",
+      "commit": "80b9d42c212bda035c81c1116769a9d67199a35a",
+      "root": "corpus:halo",
+      "physicalEntries": 3328,
+      "sourceManifestSha256": "91d583ea7a41d1d2154605adca99604fd6ea6291b953350d00d5028e47475d89",
+      "dirty": false,
+      "languages": {
+        "OTHER": 450,
+        "css": 11,
+        "html": 42,
+        "java": 1386,
+        "javascript": 9,
+        "json": 44,
+        "sql": 4,
+        "typescript": 892,
+        "vue": 392,
+        "yaml": 98
+      },
+      "sourceSets": {
+        "GENERATED": 10,
+        "MAIN": 1174,
+        "TEST": 526,
+        "UNCLASSIFIED": 1618
+      },
+      "descriptorOwners": 12,
+      "inventory": {
+        "path": "evidence:halo.jsonl",
+        "sha256": "d27522b416b8644ea75cb8ee262e54caf468a64d7d1d7497871e5e82013a3af8"
+      },
+      "contexts": {
+        "path": "evidence:halo-contexts.json",
+        "sha256": "3cc3b692ed2ab03d4861c13b9b7b79096e44f3c92b3c9b45fa71eeab7d7b391d"
+      },
+      "repository": "https://github.com/halo-dev/halo",
+      "passiveCommandTemplate": [
+        "java",
+        "-Xmx8192m",
+        "-jar",
+        "evidence:evo-baseline-r2.jar",
+        "scan",
+        "corpus:halo",
+        "--offline",
+        "--build=off",
+        "--all-files",
+        "--include-tests",
+        "--release=21",
+        "--repo=https://github.com/halo-dev/halo.git",
+        "--revision=80b9d42c212bda035c81c1116769a9d67199a35a",
+        "--jdk=jdk:.",
+        "--maven-cache=<new-explicit-empty-cache>",
+        "--workspace=<new-external-run-directory>",
+        "--json"
+      ]
+    },
+    {
+      "id": "fermata",
+      "directory": "Fermata",
+      "strata": [
+        "development",
+        "scale",
+        "android"
+      ],
+      "historicalRow": "post-update:12",
+      "commit": "8f97cc46425fc051fc4b24523b0a110c83c968ec",
+      "root": "corpus:Fermata",
+      "physicalEntries": 792,
+      "sourceManifestSha256": "52fd105bc1f7293040704e5f115e290804bda3f3538ab4acd16a467606b594bb",
+      "dirty": false,
+      "languages": {
+        "OTHER": 46,
+        "cpp": 1,
+        "java": 450,
+        "javascript": 1,
+        "xml": 293,
+        "yaml": 1
+      },
+      "sourceSets": {
+        "MAIN": 670,
+        "TEST": 11,
+        "UNCLASSIFIED": 111
+      },
+      "descriptorOwners": 18,
+      "inventory": {
+        "path": "evidence:fermata.jsonl",
+        "sha256": "d520690565efaa47f7538b676a9c3f73275b5a381f4a6e02df425dbe80a92b70"
+      },
+      "contexts": {
+        "path": "evidence:fermata-contexts.json",
+        "sha256": "d1d3dd5e0ec65f16ed58d704bd902234d8415126511ae0a77cb59753ebdbc143"
+      },
+      "repository": "https://github.com/AndreyPavlenko/Fermata",
+      "passiveCommandTemplate": [
+        "java",
+        "-Xmx8192m",
+        "-jar",
+        "evidence:evo-baseline-r2.jar",
+        "scan",
+        "corpus:Fermata",
+        "--offline",
+        "--build=off",
+        "--all-files",
+        "--include-tests",
+        "--release=21",
+        "--repo=https://github.com/AndreyPavlenko/Fermata.git",
+        "--revision=8f97cc46425fc051fc4b24523b0a110c83c968ec",
+        "--jdk=jdk:.",
+        "--maven-cache=<new-explicit-empty-cache>",
+        "--workspace=<new-external-run-directory>",
+        "--json"
+      ]
+    },
+    {
+      "id": "agentscope",
+      "directory": "agentscope-java",
+      "strata": [
+        "development",
+        "scale",
+        "multi-module",
+        "maven"
+      ],
+      "historicalRow": "post-update:13",
+      "commit": "5baff2613401bf87b3a967b185f2f14945ec594e",
+      "root": "corpus:agentscope-java",
+      "physicalEntries": 5469,
+      "sourceManifestSha256": "d3dbba7ff9d8b294abba2c5176aae6d741d48cf9b3eef64321d42e58e1f85bda",
+      "dirty": false,
+      "languages": {
+        "OTHER": 728,
+        "css": 4,
+        "go": 551,
+        "html": 8,
+        "java": 3267,
+        "javascript": 7,
+        "json": 39,
+        "protobuf": 2,
+        "python": 63,
+        "ruby": 1,
+        "sql": 226,
+        "typescript": 406,
+        "xml": 105,
+        "yaml": 62
+      },
+      "sourceSets": {
+        "GENERATED": 18,
+        "MAIN": 2236,
+        "TEST": 1183,
+        "UNCLASSIFIED": 2027,
+        "VENDOR": 5
+      },
+      "descriptorOwners": 107,
+      "inventory": {
+        "path": "evidence:agentscope.jsonl",
+        "sha256": "5281190a4fd27e6284bff4476e42c297907670db493b38c7dc99bbadd92547d0"
+      },
+      "contexts": {
+        "path": "evidence:agentscope-contexts.json",
+        "sha256": "5e229c3c7b3f937b0428b970f11e2dce5723b2da9babcdda3ab7bfb3be21add9"
+      },
+      "repository": "https://github.com/agentscope-ai/agentscope-java",
+      "passiveCommandTemplate": [
+        "java",
+        "-Xmx8192m",
+        "-jar",
+        "evidence:evo-baseline-r2.jar",
+        "scan",
+        "corpus:agentscope-java",
+        "--offline",
+        "--build=off",
+        "--all-files",
+        "--include-tests",
+        "--release=21",
+        "--repo=https://github.com/agentscope-ai/agentscope-java.git",
+        "--revision=5baff2613401bf87b3a967b185f2f14945ec594e",
+        "--jdk=jdk:.",
+        "--maven-cache=<new-explicit-empty-cache>",
+        "--workspace=<new-external-run-directory>",
+        "--json"
+      ]
+    },
+    {
+      "id": "quarkus",
+      "directory": "m9-holdout/quarkus-quickstarts",
+      "repository": "https://github.com/quarkusio/quarkus-quickstarts",
+      "strata": [
+        "holdout",
+        "multi-root",
+        "alternative-java-framework"
+      ],
+      "selectionReason": "Maven/Gradle quickstarts outside Spring; source inspection only before freeze; no analyzer pilot",
+      "commit": "b3e90af5f60b94a1acb14736be97e34127f079ec",
+      "root": "corpus:m9-holdout/quarkus-quickstarts",
+      "physicalEntries": 2147,
+      "sourceManifestSha256": "53485bd49321ac7ce1a84f70b2d57f6d03c43a3767bd41f9fc23eed4020f4d15",
+      "dirty": false,
+      "languages": {
+        "OTHER": 1238,
+        "html": 51,
+        "java": 649,
+        "javascript": 5,
+        "json": 9,
+        "kotlin": 4,
+        "protobuf": 2,
+        "sql": 23,
+        "xml": 128,
+        "yaml": 38
+      },
+      "sourceSets": {
+        "GENERATED": 7,
+        "MAIN": 994,
+        "TEST": 291,
+        "UNCLASSIFIED": 855
+      },
+      "descriptorOwners": 124,
+      "inventory": {
+        "path": "evidence:quarkus.jsonl",
+        "sha256": "2c25f059de8f90c270979f4ecad3cb1198a05af930d708ce0d57b01c082221b5"
+      },
+      "contexts": {
+        "path": "evidence:quarkus-contexts.json",
+        "sha256": "dda21fd4ed6a8c08a0d31eb1c4b797c8d3be99eca61ca79f133f4cd7da64583d"
+      },
+      "passiveCommandTemplate": [
+        "java",
+        "-Xmx2048m",
+        "-jar",
+        "evidence:evo-baseline-r2.jar",
+        "scan",
+        "corpus:m9-holdout/quarkus-quickstarts",
+        "--offline",
+        "--build=off",
+        "--all-files",
+        "--include-tests",
+        "--release=21",
+        "--repo=https://github.com/quarkusio/quarkus-quickstarts.git",
+        "--revision=b3e90af5f60b94a1acb14736be97e34127f079ec",
+        "--jdk=jdk:.",
+        "--maven-cache=<new-explicit-empty-cache>",
+        "--workspace=<new-external-run-directory>",
+        "--json"
+      ]
+    },
+    {
+      "id": "gorm",
+      "directory": "m9-holdout/gorm",
+      "repository": "https://github.com/go-gorm/gorm",
+      "strata": [
+        "holdout",
+        "go",
+        "library"
+      ],
+      "selectionReason": "Go generic ORM/library distinct from existing Gin service; source inspection only",
+      "commit": "ead4e04ba7c6a49654649131e587133b1d9f3eca",
+      "root": "corpus:m9-holdout/gorm",
+      "physicalEntries": 185,
+      "sourceManifestSha256": "3221b134ce7c46e871af243f2cc840b685ee20f8445155869c9cc8c4ad00169d",
+      "dirty": false,
+      "languages": {
+        "OTHER": 10,
+        "go": 162,
+        "json": 1,
+        "yaml": 12
+      },
+      "sourceSets": {
+        "TEST": 64,
+        "UNCLASSIFIED": 121
+      },
+      "descriptorOwners": 2,
+      "inventory": {
+        "path": "evidence:gorm.jsonl",
+        "sha256": "e1c5351cc8c7fd0206f93169a3e8cdd5d537419835035e2119688550b05ada5b"
+      },
+      "contexts": {
+        "path": "evidence:gorm-contexts.json",
+        "sha256": "e2b46f41e0b99dc819a82aa5dee48a52997313e4d0cf1822532410580fbc82f1"
+      },
+      "passiveCommandTemplate": [
+        "java",
+        "-Xmx2048m",
+        "-jar",
+        "evidence:evo-baseline-r2.jar",
+        "scan",
+        "corpus:m9-holdout/gorm",
+        "--offline",
+        "--build=off",
+        "--all-files",
+        "--include-tests",
+        "--release=21",
+        "--repo=https://github.com/go-gorm/gorm.git",
+        "--revision=ead4e04ba7c6a49654649131e587133b1d9f3eca",
+        "--jdk=jdk:.",
+        "--maven-cache=<new-explicit-empty-cache>",
+        "--workspace=<new-external-run-directory>",
+        "--json"
+      ]
+    },
+    {
+      "id": "create-vue",
+      "directory": "m9-holdout/create-vue",
+      "repository": "https://github.com/vuejs/create-vue",
+      "strata": [
+        "holdout",
+        "frontend",
+        "templates"
+      ],
+      "selectionReason": "Template/tooling ownership beyond conventional application source; source inspection only",
+      "commit": "09c6528454f06b5e0a618f2b7d15a74fa5707160",
+      "root": "corpus:m9-holdout/create-vue",
+      "physicalEntries": 192,
+      "sourceManifestSha256": "d574072312bbfb7613673dcd66e40c804ec42aa039fa99f864e0ceffb47d605f",
+      "dirty": false,
+      "languages": {
+        "OTHER": 43,
+        "css": 2,
+        "html": 2,
+        "javascript": 18,
+        "json": 54,
+        "typescript": 26,
+        "vue": 42,
+        "yaml": 5
+      },
+      "sourceSets": {
+        "GENERATED": 1,
+        "TEST": 4,
+        "UNCLASSIFIED": 187
+      },
+      "descriptorOwners": 22,
+      "inventory": {
+        "path": "evidence:create-vue.jsonl",
+        "sha256": "45813bc1786fb01b18657728526553319fdae4e9e30c6d5ac8a19b8ef8dc8177"
+      },
+      "contexts": {
+        "path": "evidence:create-vue-contexts.json",
+        "sha256": "a83158aac581936c932c3e007db6ecee02ca982cac6503721fb6397a40e82025"
+      },
+      "passiveCommandTemplate": [
+        "java",
+        "-Xmx2048m",
+        "-jar",
+        "evidence:evo-baseline-r2.jar",
+        "scan",
+        "corpus:m9-holdout/create-vue",
+        "--offline",
+        "--build=off",
+        "--all-files",
+        "--include-tests",
+        "--release=21",
+        "--repo=https://github.com/vuejs/create-vue.git",
+        "--revision=09c6528454f06b5e0a618f2b7d15a74fa5707160",
+        "--jdk=jdk:.",
+        "--maven-cache=<new-explicit-empty-cache>",
+        "--workspace=<new-external-run-directory>",
+        "--json"
+      ]
+    }
+  ],
+  "claims": [
+    {
+      "id": "I01",
+      "owner": "M9.2",
+      "oracle": "independent physical SHA-256 census, descriptor ownership and reviewed nonstandard-root labels",
+      "denominator": "all physical entries plus all registered/effective contexts including omitted/error/unavailable",
+      "cases": [
+        "all corpus inventories",
+        "analyzer/src/test/java/com/evolution/analysis/ingestion/ScopedIngestionRecoveryTest.java"
+      ],
+      "criterion": "100% dispositions reconcile; zero silent omissions; descriptor census never asserts effective-context completeness",
+      "acceptanceState": "REGISTERED_NOT_ACCEPTANCE_RUN"
+    },
+    {
+      "id": "J01",
+      "owner": "M9.2",
+      "oracle": "javac OraclePilot with -proc:none and independent expected.json source/span/target/origin labels; invalid compilations cannot oracle bindings",
+      "denominator": "all independently eligible relationship occurrences per category/context/tier including omitted; labels coverage separate",
+      "cases": [
+        "benchmarks/m2-ground-truth/expected.json",
+        "analyzer-javaparser/src/test/java/com/evolution/analysis/javaparser/SourceRecoveryAttributionTest.java",
+        "analyzer-javaparser/src/test/java/com/evolution/analysis/javaparser/ResolutionInputsTest.java"
+      ],
+      "criterion": "zero wrong certain targets/origins/spans; exact supported goldens all match; unresolved/ambiguous/error/omitted retained; external unlabeled recall N/A",
+      "acceptanceState": "REGISTERED_NOT_ACCEPTANCE_RUN"
+    },
+    {
+      "id": "J02",
+      "owner": "M9.2",
+      "oracle": "source-authored negative controls: absent wildcard type, shadowed names, missing receivers and duplicate contexts",
+      "denominator": "all negative labels and certain recovery outputs; structure and usage separate",
+      "cases": [
+        "benchmarks/m2-ground-truth/expected.json",
+        "analyzer-javaparser/src/test/java/com/evolution/analysis/javaparser/SourceRecoveryAttributionTest.java",
+        "analyzer-javaparser/src/test/java/com/evolution/analysis/javaparser/ResolutionInputsTest.java"
+      ],
+      "criterion": "zero unsupported certain bindings; no recovery claim promoted to verified exact",
+      "acceptanceState": "REGISTERED_NOT_ACCEPTANCE_RUN"
+    },
+    {
+      "id": "B01",
+      "owner": "M9.2",
+      "oracle": "reviewed build descriptors plus isolated authenticated model/generated capture and exact ordered classpath hashes",
+      "denominator": "all roots/modules/source sets/variants/generators in census plus independently identified dynamic contexts",
+      "cases": [
+        "mapstruct",
+        "agentscope",
+        "newpipe",
+        "boutique",
+        "docs/tasks/m8/04-step4-phase2-execution.md"
+      ],
+      "criterion": "zero wrong ownership/stale native closure; missing capture stays NOT_RUN; every generator has disposition, not handwritten evidence",
+      "acceptanceState": "REGISTERED_NOT_ACCEPTANCE_RUN"
+    },
+    {
+      "id": "S01",
+      "owner": "M9.2",
+      "oracle": "preregistered M4 formal/runtime labels, exhaustive small-space oracle and scoped framework captures",
+      "denominator": "cases times registered framework versions and legal assignments/orders; T/F/U and invalid models separate",
+      "cases": [
+        "benchmarks/m4-r0/cases.json",
+        "benchmarks/m4-r0/runtime-labels.json",
+        "benchmarks/m4-r0/mechanisms.json"
+      ],
+      "criterion": "zero mismatches/false certainty/invalid witnesses/false unconditional warnings; missing order remains UNKNOWN; new interactions source-reviewed before execution",
+      "acceptanceState": "REGISTERED_NOT_ACCEPTANCE_RUN"
+    },
+    {
+      "id": "L01",
+      "owner": "M9.2",
+      "oracle": "native/source capture labels independent of evaluated adapter with original UTF-8/UTF-16/byte spans",
+      "denominator": "each advertised language/category/provider and bridge obligation, including unqualified/unavailable; syntax counts separate",
+      "cases": [
+        "docs/tasks/m8/04-step5-step1-execution.md",
+        "docs/tasks/m8/04-step5-step2-execution.md",
+        "docs/tasks/m8/04-step5-step3-execution.md"
+      ],
+      "criterion": "zero false exact bindings/route ownership/cross-service runtime claims; unqualified pack/method markers preserved; absent native evidence NOT_RUN",
+      "acceptanceState": "REGISTERED_NOT_ACCEPTANCE_RUN"
+    },
+    {
+      "id": "D01",
+      "owner": "M9.2",
+      "oracle": "one compatible exact capture minus one hash-identified artifact/generated/config input at a time, then restore",
+      "denominator": "every registered removal/restoration and all original eligible obligations",
+      "cases": [
+        "docs/testing.md",
+        "docs/tasks/m8/04-step4-phase2-execution.md"
+      ],
+      "criterion": "evidence loss never increases certainty or cleans score; restore reproduces original semantic identity; unavailable capture blocks only associated claim",
+      "acceptanceState": "REGISTERED_NOT_ACCEPTANCE_RUN"
+    },
+    {
+      "id": "T01",
+      "owner": "M9.3",
+      "oracle": "human-approved 950 per-mille policy with independent 949/950 truth table and existing error guards",
+      "denominator": "JVM structure, hierarchy, optional syntax, pure non-JVM and error/worker/RPC/zero-population cells separately",
+      "cases": [
+        "backend/src/test/java/com/evolution/backend/analysis/SemanticDepthArchitectureTest.java",
+        "cli/src/test/java/com/evolution/cli/ScanJourneyTest.java"
+      ],
+      "criterion": "all truth-table cells match; COMPLETE recovery retains tier and gaps; no historical relabeling",
+      "acceptanceState": "REGISTERED_NOT_ACCEPTANCE_RUN"
+    },
+    {
+      "id": "G01",
+      "owner": "M9.3",
+      "oracle": "hand-built golden graphs and existing deterministic graph generator with exact context/partition counts",
+      "denominator": "all nodes/edges/evidence/contexts/partitions, including dangling/duplicate/recovery controls",
+      "cases": [
+        "analyzer-filesystem/src/test/java/com/evolution/analysis/filesystem/PartitionedGraphStoreTest.java",
+        "backend/src/test/java/com/evolution/backend/query/PartitionedGraphApiTest.java"
+      ],
+      "criterion": "zero identity/ownership/count errors; cold reopen/page traversal byte-equivalent; failed publication cannot produce complete root",
+      "acceptanceState": "REGISTERED_NOT_ACCEPTANCE_RUN"
+    },
+    {
+      "id": "P01",
+      "owner": "M9.3",
+      "oracle": "independently enumerated feasible worlds and hand-labeled paths/cycles/mutation affected regions",
+      "denominator": "all policy positives, negatives, mutually infeasible paths and degraded cells; TP/FP/FN on labeled regions",
+      "cases": [
+        "analyzer/src/test/java/com/evolution/analysis/query/ConditionalPathCycleTest.java",
+        "analyzer/src/test/java/com/evolution/analysis/query/PolicyConditionalEvaluationTest.java"
+      ],
+      "criterion": "exact goldens 100% precision/recall and zero false certain paths; unknown frontier never clean architecture",
+      "acceptanceState": "REGISTERED_NOT_ACCEPTANCE_RUN"
+    },
+    {
+      "id": "M01",
+      "owner": "M9.3",
+      "oracle": "manual graph operands and G4-approved MetricCatalog formulas",
+      "denominator": "all 19 metric definitions times applicable registered scopes/configurations; inapplicable N/A, missing WITHHELD",
+      "cases": [
+        "analyzer/src/test/java/com/evolution/analysis/metrics/StructuralMetricsTest.java",
+        "analyzer/src/test/java/com/evolution/analysis/metrics/AssessmentMetricsIntegrationTest.java"
+      ],
+      "criterion": "exact operands/counts/rationals/statuses match; no renamed approximate metric or Java-only polyglot aggregate",
+      "acceptanceState": "REGISTERED_NOT_ACCEPTANCE_RUN"
+    },
+    {
+      "id": "A01",
+      "owner": "M9.3",
+      "oracle": "G5 human-approved formula/weights/penalties and manually calculated sensitivity goldens",
+      "denominator": "every dimension/penalty and unknown/missing-evidence case including withdrawn assessment",
+      "cases": [
+        "analyzer/src/test/java/com/evolution/analysis/query/ConditionalAssessmentTest.java",
+        "docs/reproducibility/g5-adjudication-record-2026-10-15.md"
+      ],
+      "criterion": "exact score/status and monotonic sensitivity; no missing-evidence denominator renormalization; confidence remains separate",
+      "acceptanceState": "REGISTERED_NOT_ACCEPTANCE_RUN"
+    },
+    {
+      "id": "X01",
+      "owner": "M9.3",
+      "oracle": "same immutable canonical query fixture projected across CLI/API/export/UI, manual expected values",
+      "denominator": "every surface times inventory/tier/gaps/metric/penalty/violation/region/witness/source fields",
+      "cases": [
+        "cli/src/test/java/com/evolution/cli/ScanJourneyTest.java",
+        "backend/src/test/js/workbench-model.test.cjs",
+        "backend/src/test/js/bridge-model.test.cjs"
+      ],
+      "criterion": "zero canonical-value/status/version mismatch; unavailable UI field explicitly reported",
+      "acceptanceState": "REGISTERED_NOT_ACCEPTANCE_RUN"
+    },
+    {
+      "id": "R01",
+      "owner": "M9.4",
+      "oracle": "controlled corrupt/missing/stale/same-size bytes, cancellation/restart and concurrent schedule perturbations",
+      "denominator": "every registered robustness perturbation including failed and censored runs",
+      "cases": [
+        "analyzer-filesystem/src/test/java/com/evolution/analysis/filesystem/PartitionedGraphStoreTest.java",
+        "backend/src/test/java/com/evolution/backend/query/PartitionedGraphApiTest.java"
+      ],
+      "criterion": "zero lost/duplicated obligations, false publication, integrity acceptance or credential disclosure; replay canonical digest/metrics/findings/gaps/witness order identical",
+      "acceptanceState": "REGISTERED_NOT_ACCEPTANCE_RUN"
+    },
+    {
+      "id": "F01",
+      "owner": "M9.4",
+      "oracle": "external wall clock/process memory/disk/bytes measurements independent of analyzer counters; frozen pilot-relative budgets",
+      "denominator": "all registered attempts including timeout/failure/unavailable, per phase/repo/stratum",
+      "cases": [
+        "agentscope",
+        "halo",
+        "fermata",
+        "newpipe",
+        "boutique",
+        "analyzer-filesystem/src/test/java/com/evolution/analysis/filesystem/PartitionedGraphStoreTest.java"
+      ],
+      "criterion": "PROTOCOL.md resource/repetition/censoring rules met; no tail-percentile claim from three samples",
+      "acceptanceState": "REGISTERED_NOT_ACCEPTANCE_RUN"
+    },
+    {
+      "id": "U01",
+      "owner": "M9.4",
+      "oracle": "six source-authored task scripts, keyboard/manual screen-reader review and independently recorded user outcomes",
+      "denominator": "all six journeys times desktop/mobile/reflow/degraded controls; missing independent users remain pending",
+      "cases": [
+        "backend/src/main/resources/web",
+        "docs/tasks/m8/03-structure-configuration-and-workbench-acceptance.md"
+      ],
+      "criterion": "all required journeys complete without assistance-blocking defects or stale responses; scoped WCAG criteria and protocol timing met, no universal certification",
+      "acceptanceState": "REGISTERED_NOT_ACCEPTANCE_RUN"
+    },
+    {
+      "id": "E01",
+      "owner": "M9.5",
+      "oracle": "clean trusted product build and other reviewer raw-to-summary reproduction on exact final candidate",
+      "denominator": "every mandatory claim and run, including NOT_RUN/FAIL/NA with reason",
+      "cases": [
+        "cli/src/test/python/packaged_jar_smoke.py",
+        "docs/tasks/m9/README.md"
+      ],
+      "criterion": "all mandatory cells resolved with evidence and independent review; M10 human approval still separate",
+      "acceptanceState": "REGISTERED_NOT_ACCEPTANCE_RUN"
+    }
+  ],
+  "pilot": {
+    "role": "DEVELOPMENT_ALLOCATION_ONLY_NOT_ACCEPTANCE",
+    "repository": "realworld-go",
+    "wallSeconds": 9.922,
+    "exit": 0,
+    "initialJarSha256": "31f3fb96366a8766e6c028a55cb7cbf396e576cf4657c1b00d5d96b4549572dd",
+    "initialRuntime": "HEAD before Task-1 CLI projection guard repair",
+    "receipt": {
+      "path": "corpus:m9-protocol-pilot-v1/stdout.json",
+      "sha256": "95c5e330f695fcc1d7e0eb754bc535ffb217eee563933f69a1acc54c9ffdfa64"
+    },
+    "metadata": {
+      "path": "corpus:m9-protocol-pilot-v1/pilot.json",
+      "sha256": "9bf9eb324fbc0c872078bea3fbdef06e3a5302008a1bd3e86c3708b70cb9a62e"
+    }
+  },
+  "environment": {
+    "os": "Windows-11-10.0.26100-SP0",
+    "cpu": "Intel Core i5-14400F",
+    "logicalProcessors": 16,
+    "physicalMemoryBytes": 34138931200,
+    "java": "Oracle 21.0.12.1+1-LTS-4",
+    "maven": "Wrapper 3.9.16",
+    "python": "3.12.0",
+    "node": "v26.13.0",
+    "browser": "Edge 157.0.4341.42",
+    "browserJourneys": "NOT_RUN",
+    "jdkRoot": "jdk:.",
+    "resourceProfile": "PROTOCOL.md v1 single-job 2GiB development / 8GiB scale heap",
+    "platformInput": "Every JMOD plus release/modules/ct.sym and launcher/compiler bytes pinned; actual release-selected view must also be retained per run"
+  },
+  "versions": {
+    "graph": "knowledge-graph:m5.1-v1",
+    "partition": "graph.partition-reference:m8.4-v2",
+    "query": "architecture.query:m8.3-v1",
+    "policyCompiler": "policy.compiler:m6.1-v1",
+    "metric": "metric.*:m5.3-v1 (19 G4-approved definitions)",
+    "policyMetric": "policy.metrics:m6.3-v1",
+    "scoreFormula": "architecture.score-formula:m6.3-exposure-v1",
+    "scoreModel": "architecture.score-candidate:m6.3-v1 (G5 human-approved baseline)",
+    "emittedCalibration": "PROVISIONAL (preserved artifact marker)",
+    "statusPolicy": "passive-completion-950-guards-v1",
+    "providerVersions": "Exact provider source and POM bytes pinned below; runtime digest pins all executable providers",
+    "javaFrontend": "frontend.javaparser:3.28.2-m8.4-lambda-input-v11",
+    "mavenBuild": "build.maven-model:3.9.16-m8.4-processing-policy-v1",
+    "policy": "architecture.policy:m6.1-v1"
+  },
+  "historicalCases": [
+    {
+      "id": "petclinic-java",
+      "repository": "https://github.com/spring-projects/spring-petclinic",
+      "commit": "818c4136ea971c21674525f9053de0d9c7ad8cfe",
+      "mapping": "G2 corpus-manifest; distinct from kotlin/microservices cases",
+      "currentCompatibility": "NOT_REGISTERED_NOT_CURRENT_ACCEPTANCE"
+    },
+    {
+      "id": "thingsboard",
+      "mapping": "M8 original ten-repository cohort; absent from post-update thirteen",
+      "commit": null,
+      "currentCompatibility": "HISTORICAL_ONLY_NO_IMMUTABLE_CURRENT_SOURCE_LINK"
+    }
+  ],
+  "historicalEvidence": [
+    {
+      "path": "corpus:results-postupgrade-latest/comprehensive_benchmark_results.json",
+      "sha256": "8ee9d2f588198ecd9be442509c52bcd78e29444aa620af87adc1274c4055e4c9",
+      "compatibility": "HISTORICAL_ONLY_NOT_CANDIDATE"
+    },
+    {
+      "path": "corpus:results-postupgrade-latest/final_aggregated_report.json",
+      "sha256": "fc57d88ca998f63872dc0642cd7e6dabf32ae143e673dc27a269867fd9b91995",
+      "compatibility": "HISTORICAL_ONLY_NOT_CANDIDATE"
+    },
+    {
+      "path": "corpus:results-postupgrade-latest/full-stack-fastapi-template.json",
+      "sha256": "2c7bcc82b3dc055e8e19aa498a8278c6b091475a75cd85f6bf1f18192d54727f",
+      "compatibility": "HISTORICAL_ONLY_NOT_CANDIDATE"
+    },
+    {
+      "path": "corpus:results-postupgrade-latest/golang-gin-realworld-example-app.json",
+      "sha256": "268fecce040208f6126e583a103556811c6d276f6e88e4bc044e41f6f02e77b5",
+      "compatibility": "HISTORICAL_ONLY_NOT_CANDIDATE"
+    },
+    {
+      "path": "corpus:results-postupgrade-latest/mapstruct-examples.json",
+      "sha256": "15773704ef9562f572d8736848ca3fea3403c48f93208317dbf2bd5e35b502ae",
+      "compatibility": "HISTORICAL_ONLY_NOT_CANDIDATE"
+    },
+    {
+      "path": "corpus:results-postupgrade-latest/microservices-demo.json",
+      "sha256": "d9edfb94703ffd1c905e6c60454ac1f76dafcf88a0edf441600429ee03e0c265",
+      "compatibility": "HISTORICAL_ONLY_NOT_CANDIDATE"
+    },
+    {
+      "path": "corpus:results-postupgrade-latest/NewPipe.json",
+      "sha256": "f46140a4d733164569b85bd3b945a2097968c84128d6d1ad887fdc6a80778df1",
+      "compatibility": "HISTORICAL_ONLY_NOT_CANDIDATE"
+    },
+    {
+      "path": "corpus:results-postupgrade-latest/piggymetrics.json",
+      "sha256": "ddce2f4c3164895e4227119ad7945b6d4e814a1dee705bb69bb1d8e7a3de061f",
+      "compatibility": "HISTORICAL_ONLY_NOT_CANDIDATE"
+    },
+    {
+      "path": "corpus:results-postupgrade-latest/spring-boot-realworld-example-app.json",
+      "sha256": "80285ed3a9b4ffd354f9b6bdeac36c01c6085a972818f22da590ca154f149e4e",
+      "compatibility": "HISTORICAL_ONLY_NOT_CANDIDATE"
+    },
+    {
+      "path": "corpus:results-postupgrade-latest/spring-petclinic-kotlin.json",
+      "sha256": "fd60d0191dc2a6c25ab03d9bc423e7c783e21002691e4e99bbb16c1faa715a32",
+      "compatibility": "HISTORICAL_ONLY_NOT_CANDIDATE"
+    },
+    {
+      "path": "corpus:results-postupgrade-latest/spring-petclinic-microservices.json",
+      "sha256": "d94b506051ca9c69213ca6d190db9ab0c4f6cd15302804847019ba47e082ca66",
+      "compatibility": "HISTORICAL_ONLY_NOT_CANDIDATE"
+    },
+    {
+      "path": "corpus:results-postupgrade-latest/sunflower.json",
+      "sha256": "b8579824a25deabdf0000feac3a72bc89c211b0f2cd9984c29a649cb99c9bdef",
+      "compatibility": "HISTORICAL_ONLY_NOT_CANDIDATE"
+    },
+    {
+      "path": "corpus:results-m9-baseline/final_aggregated_report.json",
+      "sha256": "eaaf1cbf82a3d23c3179b872eee37a495ce791bc5ef57c0fe7a0001c5a80ac17",
+      "compatibility": "UNBOUND_PRIOR_OUTPUT_NOT_ACCEPTANCE"
+    },
+    {
+      "path": "corpus:results-m9-baseline/full-stack-fastapi-template.json",
+      "sha256": "d65010221c5ab526a5d053535bb1ef78badce6262f80b33b11dea3559dc895ff",
+      "compatibility": "UNBOUND_PRIOR_OUTPUT_NOT_ACCEPTANCE"
+    },
+    {
+      "path": "corpus:results-m9-baseline/golang-gin-realworld-example-app.json",
+      "sha256": "f6ad2de5999fd1dcae19a9f7b4cb121fa466e5dce2958864d6431c85d28d3b0f",
+      "compatibility": "UNBOUND_PRIOR_OUTPUT_NOT_ACCEPTANCE"
+    },
+    {
+      "path": "corpus:results-m9-baseline/mapstruct-examples.json",
+      "sha256": "cffe6a141f4c3d8a998102396c278a2b96e91f426ac86b1b7d71a1d6a79923bf",
+      "compatibility": "UNBOUND_PRIOR_OUTPUT_NOT_ACCEPTANCE"
+    },
+    {
+      "path": "corpus:results-m9-baseline/microservices-demo.json",
+      "sha256": "5b7a3fa39bd7fd614f5a0e10a667cd3b487f820c7463e1d9187821898fd267b0",
+      "compatibility": "UNBOUND_PRIOR_OUTPUT_NOT_ACCEPTANCE"
+    },
+    {
+      "path": "corpus:results-m9-baseline/NewPipe.json",
+      "sha256": "ed23910e1942bf4bd2b97fb7c94ab6221bac30a1acbd23688b750657c8b1c569",
+      "compatibility": "UNBOUND_PRIOR_OUTPUT_NOT_ACCEPTANCE"
+    },
+    {
+      "path": "corpus:results-m9-baseline/piggymetrics.json",
+      "sha256": "90150f85f6a047278817cd8c99c803d7e49722031499f3f2eb6efecfb39c8f91",
+      "compatibility": "UNBOUND_PRIOR_OUTPUT_NOT_ACCEPTANCE"
+    },
+    {
+      "path": "corpus:results-m9-baseline/spring-boot-realworld-example-app.json",
+      "sha256": "2d88a47bce016959cffba9e8431b8fd854d8a4209df77d4e19b19610f41c04b1",
+      "compatibility": "UNBOUND_PRIOR_OUTPUT_NOT_ACCEPTANCE"
+    },
+    {
+      "path": "corpus:results-m9-baseline/spring-petclinic-kotlin.json",
+      "sha256": "e0a29ccc038e8278284a38febbca81c821dadb6af363e9738135f65e05f754fc",
+      "compatibility": "UNBOUND_PRIOR_OUTPUT_NOT_ACCEPTANCE"
+    },
+    {
+      "path": "corpus:results-m9-baseline/spring-petclinic-microservices.json",
+      "sha256": "3237a62092ccc37384c9cc04589c2643f1573b49742f40b832822dbd04f50447",
+      "compatibility": "UNBOUND_PRIOR_OUTPUT_NOT_ACCEPTANCE"
+    },
+    {
+      "path": "corpus:results-m9-baseline/sunflower.json",
+      "sha256": "8ce8ec7e44badf85cc47624111e628466b51fd039d68660976be0da9d62b2d90",
+      "compatibility": "UNBOUND_PRIOR_OUTPUT_NOT_ACCEPTANCE"
+    }
+  ],
+  "labelSets": [
+    {
+      "path": "repo:benchmarks/m2-ground-truth/expected.json",
+      "sha256": "b0f65414a3ae88b6f8f9ca461cf9ed5fe1ed049f818d71c003924287e4334356",
+      "caseIds": [
+        "identifiers:id-composed",
+        "identifiers:id-decomposed",
+        "identifiers:id-ignorable",
+        "identifiers:id-plain-ignored",
+        "identifiers:id-escape",
+        "identifiers:id-plain-escaped",
+        "bindings:overload-int",
+        "bindings:overload-boxed",
+        "bindings:overload-widen",
+        "bindings:generic-list-get",
+        "bindings:generic-list-trim",
+        "bindings:generic-identity",
+        "bindings:generic-identity-trim",
+        "bindings:varargs-expanded",
+        "bindings:varargs-object-overload",
+        "bindings:varargs-array",
+        "offsets-lf:duplicate-first",
+        "offsets-lf:duplicate-second",
+        "offsets-lf:multiline",
+        "offsets-lf:after-astral",
+        "offsets-lf:argument-astral",
+        "offsets-lf:escaped-identifier",
+        "offsets-lf:escaped-line",
+        "offsets-crlf:duplicate-first-crlf",
+        "offsets-crlf:duplicate-second-crlf",
+        "offsets-crlf:multiline-crlf",
+        "offsets-crlf:after-astral-crlf",
+        "offsets-crlf:argument-astral-crlf",
+        "offsets-crlf:escaped-identifier-crlf",
+        "offsets-crlf:escaped-line-crlf",
+        "ambiguous:ambiguous-0",
+        "missing:missing-0",
+        "missing:missing-1",
+        "malformed:malformed-0"
+      ],
+      "authority": "SOURCE_AUTHORED_EXPECTATIONS_NOT_ANALYZER_OUTPUT; independent adjudication pending where required"
+    },
+    {
+      "path": "repo:benchmarks/m4-r0/cases.json",
+      "sha256": "44cc972e3749907fb777f90603c1b619e014f0e7833cf9008dbf1e816109186b",
+      "caseIds": [
+        ":and-T-T",
+        ":or-T-T",
+        ":and-T-F",
+        ":or-T-F",
+        ":and-T-U",
+        ":or-T-U",
+        ":and-F-T",
+        ":or-F-T",
+        ":and-F-F",
+        ":or-F-F",
+        ":and-F-U",
+        ":or-F-U",
+        ":and-U-T",
+        ":or-U-T",
+        ":and-U-F",
+        ":or-U-F",
+        ":and-U-U",
+        ":or-U-U",
+        ":not-T",
+        ":not-F",
+        ":not-U",
+        ":property-default-0",
+        ":property-true-0",
+        ":property-default-1",
+        ":property-true-1",
+        ":property-default-2",
+        ":property-true-2",
+        ":property-default-3",
+        ":property-true-3",
+        ":property-default-4",
+        ":property-true-4",
+        ":property-default-5",
+        ":property-true-5",
+        ":property-default-6",
+        ":property-true-6",
+        ":property-default-7",
+        ":property-true-7",
+        ":region-T",
+        ":region-F",
+        ":region-TF",
+        ":region-TFU",
+        ":region-TU",
+        ":region-FU",
+        ":region-U",
+        ":region-empty",
+        ":order-a-b",
+        ":order-b-a",
+        ":order-user-a",
+        ":order-a-user",
+        ":opaque-propagates",
+        ":unrecognized-condition",
+        ":property-unobserved",
+        ":limit-registration",
+        ":profile-both",
+        ":profile-dev",
+        ":precedence-highest",
+        ":precedence-empty",
+        ":binding-no-candidates",
+        ":binding-ambiguous",
+        ":binding-one-primary",
+        ":binding-two-primary",
+        ":binding-name-before-priority",
+        ":binding-priority-before-name",
+        ":binding-unique-nonfallback",
+        ":space-profile-fallback",
+        ":empty-feasible-space",
+        ":binding-name-fallback",
+        ":variable-limit",
+        ":world-limit",
+        ":witness-irrelevant-dimensions"
+      ],
+      "authority": "SOURCE_AUTHORED_EXPECTATIONS_NOT_ANALYZER_OUTPUT; independent adjudication pending where required"
+    },
+    {
+      "path": "repo:benchmarks/m4-r0/runtime-labels.json",
+      "sha256": "fb4914b962a3095c5aa99d824ffc29b88a4d0006b870c0067965e0d6909e14e7",
+      "caseIds": [
+        "5.3.31:property-0",
+        "5.3.31:property-1",
+        "5.3.31:property-2",
+        "5.3.31:property-3",
+        "5.3.31:property-4",
+        "5.3.31:property-5",
+        "5.3.31:property-6",
+        "5.3.31:property-7",
+        "5.3.31:profile-0",
+        "5.3.31:profile-1",
+        "5.3.31:profile-2",
+        "5.3.31:profile-3",
+        "5.3.31:profile-4",
+        "5.3.31:order-ab",
+        "5.3.31:order-ba",
+        "5.3.31:order-user-a",
+        "5.3.31:order-a-user",
+        "5.3.31:onbean-true",
+        "5.3.31:onbean-false",
+        "5.3.31:single-0",
+        "5.3.31:single-1",
+        "5.3.31:single-2",
+        "5.3.31:single-primary",
+        "5.3.31:di-qualifier-primary",
+        "5.3.31:xml-alias-ref",
+        "5.3.31:di-name-priority",
+        "6.1.14:property-0",
+        "6.1.14:property-1",
+        "6.1.14:property-2",
+        "6.1.14:property-3",
+        "6.1.14:property-4",
+        "6.1.14:property-5",
+        "6.1.14:property-6",
+        "6.1.14:property-7",
+        "6.1.14:profile-0",
+        "6.1.14:profile-1",
+        "6.1.14:profile-2",
+        "6.1.14:profile-3",
+        "6.1.14:profile-4",
+        "6.1.14:order-ab",
+        "6.1.14:order-ba",
+        "6.1.14:order-user-a",
+        "6.1.14:order-a-user",
+        "6.1.14:onbean-true",
+        "6.1.14:onbean-false",
+        "6.1.14:single-0",
+        "6.1.14:single-1",
+        "6.1.14:single-2",
+        "6.1.14:single-primary",
+        "6.1.14:di-qualifier-primary",
+        "6.1.14:xml-alias-ref",
+        "6.1.14:di-name-priority",
+        "6.2.0:property-0",
+        "6.2.0:property-1",
+        "6.2.0:property-2",
+        "6.2.0:property-3",
+        "6.2.0:property-4",
+        "6.2.0:property-5",
+        "6.2.0:property-6",
+        "6.2.0:property-7",
+        "6.2.0:profile-0",
+        "6.2.0:profile-1",
+        "6.2.0:profile-2",
+        "6.2.0:profile-3",
+        "6.2.0:profile-4",
+        "6.2.0:order-ab",
+        "6.2.0:order-ba",
+        "6.2.0:order-user-a",
+        "6.2.0:order-a-user",
+        "6.2.0:onbean-true",
+        "6.2.0:onbean-false",
+        "6.2.0:single-0",
+        "6.2.0:single-1",
+        "6.2.0:single-2",
+        "6.2.0:single-primary",
+        "6.2.0:di-qualifier-primary",
+        "6.2.0:xml-alias-ref",
+        "6.2.0:di-name-priority",
+        "6.2.0:default-candidate"
+      ],
+      "authority": "SOURCE_AUTHORED_EXPECTATIONS_NOT_ANALYZER_OUTPUT; independent adjudication pending where required"
+    },
+    {
+      "path": "repo:benchmarks/m4-r0/mechanisms.json",
+      "sha256": "2d6a8ccaa73c5d6b83c9b6e87277017fdf0ff9308409c209e9255fbf652b08a2",
+      "caseIds": [
+        "whole closed mechanism catalog"
+      ],
+      "authority": "SOURCE_AUTHORED_EXPECTATIONS_NOT_ANALYZER_OUTPUT; independent adjudication pending where required"
+    },
+    {
+      "path": "repo:analyzer-javaparser/src/test/java/com/evolution/analysis/javaparser/SourceRecoveryAttributionTest.java",
+      "sha256": "29f1de8566f165785ac4e5bb596fa9a6f64063489df98c2c15a052fe5d78caf4",
+      "caseIds": [
+        "realPinnedSpringArtifactsLowerPassivePropertyAndProfileDespiteAnUnrelatedMissingType",
+        "evidencedComposedStereotypesAndInjectionAnnotationsRetainCandidatesButCyclesDoNot",
+        "exactExternalJarBytesCloseBoundaryCallsWhileOfflineAbsenceStaysUnknown",
+        "repositoryInterfacesRetainCandidateEvidenceWithoutInventingProxyClasses",
+        "openContainerRetainsOnlyEvidencedSourceTypeCandidates",
+        "ownFixedZeroArgumentMethodsDoNotNeedUnknownAncestorOverloads",
+        "incompatiblePlatformViewCannotAttributeJdkTargetsInRecovery",
+        "knownSpringDeclarationsAndConstructorSitesSurviveIncompleteBuildClosure",
+        "missingUnrelatedLibraryDoesNotDisableSourceAndPlatformBindings",
+        "missingReceiverAndUnknownOverloadsNeverBecomeResolvedCalls",
+        "uncertainInnerReceiverCannotProvideAnExactOuterCallBinding",
+        "unknownAncestorsCannotSupplyExactInheritedReferences",
+        "explicitImportsRecoverExternalTypesCallsConstructorsAndStaticMembersWhilePreservingHierarchyGuards",
+        "androidSyntheticDeclarationsResolveResourcesBuildConfigViewBindingAidlAndLifecycleHierarchy",
+        "unambiguousExternalWildcardAndOverloadedJdkCallsWithRecoveredArgumentResolveCleanly"
+      ],
+      "authority": "SOURCE_AUTHORED_EXPECTATIONS_NOT_ANALYZER_OUTPUT; independent adjudication pending where required"
+    },
+    {
+      "path": "repo:analyzer-javaparser/src/test/java/com/evolution/analysis/javaparser/ResolutionInputsTest.java",
+      "sha256": "336661a862bcb132a2b6d1f7c3a299c52baebc381345ef6a6c3a2a19a09c034d",
+      "caseIds": [
+        "capturedEmptyJarIsAnExactEmptySearchSlot",
+        "unprovedNativeOriginCannotBorrowFrameworkIdentity",
+        "exactJarOriginsAndRemovedDependencyAreEvidenceBacked",
+        "classpathOrderControlsSelectionAndReportsDuplicateDefinitions",
+        "inheritedFieldsKeepTheirActualJarOriginAndMissingDependencyEvidence",
+        "mutableArtifactHandlesAreRecheckedBeforeUse",
+        "multiReleaseJarSelectsTheHighestVersionNotNewerThanTheTargetPlatform",
+        "manifestClasspathIsExplicitlyDiagnosedWhileTheExactSuppliedClasspathRemainsAuthoritative",
+        "missingSourceSpansRetainDistinctDeterministicAstProvenance",
+        "hostApplicationDependenciesNeverLeakIntoAnalysis",
+        "sourceInputPermutationIsDeterministicAndCrossFileTargetsRemainProject",
+        "wrongPlatformHashIsRejectedBeforeParsing",
+        "explicitPlatformJarDecouplesSymbolsFromTheRunningJdk",
+        "explicitJmodViewUsesClassesPrefixAndRejectsMutation",
+        "ctSymViewSelectsOnlyTheRequestedReleaseSignatures",
+        "cachedArchivesAvoidRepeatedDecompressionTempFilesAndCrossContextLeakage",
+        "sourceRecoveryResolvesWildcardImportsInlineQualifiedTypesAndWithholdsDuplicateTypes"
+      ],
+      "authority": "SOURCE_AUTHORED_EXPECTATIONS_NOT_ANALYZER_OUTPUT; independent adjudication pending where required"
+    },
+    {
+      "path": "repo:analyzer-javaparser/src/test/java/com/evolution/analysis/javaparser/SourceToSpringPlanTest.java",
+      "sha256": "aaea2f3f9084837c077f516c469cf431f25f1a5daa92c2dfc24d16236f72f065",
+      "caseIds": [
+        "unrelatedClasspathRecoveryDoesNotEraseProvedMetadataOrClosedScopeBinding",
+        "aSourceProvenEmptyMarkerInterfaceAndLanguageDefaultConstructorDoNotEraseProfileRegions",
+        "inheritedHiddenFieldsKeepDeclaringPointsAndConditionalComponentOwners",
+        "sharedAncestorFieldsFanOutAcrossComponentsAndKeepOriginalDocuments",
+        "unannotatedHiddenChildFieldDoesNotSuppressAncestorInjection",
+        "inheritedQualifierMismatchRetainsOptionalAbsenceAndRequiredFailure",
+        "unsupportedSourceHierarchiesNeverCertifyMemberClosure",
+        "inheritedClassMetadataAndComposedMemberMetadataRetainFootprintGaps",
+        "unannotatedOverrideSuppressesOnlyItsOwnInheritedMethodGroup",
+        "fullySuppressedMethodRetainsEvidenceAndExplicitSuppressedObligation",
+        "packagePrivateAncestorMethodAcrossPackagesIsNotSuppressed",
+        "qualifiedAndSimpleParameterSpellingsUseResolvedSignatureEquality",
+        "methodComparisonExhaustionNeverCertifiesAbsenceOfAnOverride",
+        "sourceOverrideAnnotationImpostorCannotCertifyAnnotatedChildInjection",
+        "inheritedScalarMethodsKeepConditionalOwnersParameterOrderAndReplay",
+        "annotatedNearestOverrideUsesItsOwnQualifiersAndRequiredness",
+        "privateSameNamedMethodsRemainDistinctInjectionGroups",
+        "overloadsDoNotSuppressInheritedMethodAndFinalMethodsRemainIncluded",
+        "inheritedOptionalAndRequiredGroupsClearTentativeEdgesIndependently",
+        "genericOverridesAndIncompleteHierarchyCannotProveSuppression",
+        "missingOverrideShapeOrParameterEvidenceRetainsUnknownSelection",
+        "methodFanOutBudgetKeepsAllOwnerGroupsAndObligations",
+        "inheritedFieldFanOutRetainsEveryRequestWhenDescriptorBudgetIsExhausted",
+        "boundedHierarchyCannotTreatTruncationAsATerminalClass",
+        "missingOrConflictingSuperclassMetadataCannotProveHierarchyClosure",
+        "inheritedStaticAndUnresolvedFieldsRetainUnknownRequestsAndUpstreamEvidence",
+        "sourceThroughUniversalPipelineProducesRealPlansBindingsRegionsAndReplayedWitnesses",
+        "missingOrderCannotCreateASelectionOrUniversalPresence",
+        "wrongQualifierRemainsADefiniteNonSelection",
+        "emptyQualifierIsAnExplicitGapRatherThanAnExceptionOrSelection",
+        "openRegistryAndAcquisitionBudgetCannotCertifyBinding",
+        "beanMethodsProduceConditionalBindingsFromActualSource",
+        "beanOrderMustIncludeMethodsAndOwnerBeforeItsProducts",
+        "beanQualifierMismatchAndMissingProducerMetadataDoNotSelect",
+        "distinctBeanProducersWithSameReturnTypeUsePrimaryAndKeepSourceEvidence",
+        "instanceFactoryAndStaticFactoryOwnershipStayDistinct",
+        "missingBeanConditionUsesActualRegistrationPrefixAndReversingItChangesPresence",
+        "beanNameAndEligibilityFlagsMatchPinnedContainerDefinitions",
+        "missingReturnTypeStaysQualifiedWhileIndependentAliasMetadataCloses",
+        "producerNameCollisionCannotInventReaderOverrideBehavior",
+        "unprovedRuntimeParameterNameRemainsUnknownForMultipleFactoryCandidates",
+        "duplicatePrimaryProducersKeepAmbiguityAndCannotPublishASelection",
+        "projectAnnotationCannotBecomeABeanProducerAndProxyMetadataStaysOpen",
+        "defaultBeanNameUsesJavaIdentifierEqualityRatherThanRawSpelling",
+        "voidMethodQualifierIsAcquiredForEachUnqualifiedParameter",
+        "parameterQualifierOverridesMatchingConflictingAndEmptyMethodMetadata",
+        "mismatchingParameterDoesNotFallBackToMatchingMethodQualifier",
+        "nonVoidMethodQualifierDoesNotFilterItsUnqualifiedParameters",
+        "methodQualifierMismatchClearsRequiredAndOptionalGroupSelections",
+        "emptyAndMalformedMethodQualifiersRemainExplicitGaps",
+        "emptyParameterQualifierCannotBeReplacedByMatchingMethodMetadata",
+        "sourceMethodQualifierImpostorCannotEstablishFrameworkSemantics",
+        "methodNamedAndMixedQualifierKindsNeedAnnotationSpecificMatchingProofs",
+        "composedMethodAndParameterQualifiersAreNotSilentlyIgnored",
+        "scalarFieldsAndMethodsProduceConditionalBindingsWithExactSourceEvidence",
+        "absentOptionalMethodParameterSuppressesAllTentativeBindings",
+        "completeOptionalMethodKeepsParameterOrderAndSelectsBothDependencies",
+        "qualifierMismatchPreservesOptionalFieldAbsenceAndRequiredMethodFailure",
+        "incompleteOptionalParameterCannotLeaveATentativeSelectionOrDisappear",
+        "unresolvedParameterTypesRetainSourceGapsAndCannotCertifyBinding",
+        "staticFieldsAndMethodsRetainGapsAndNeverBecomeInstanceBindings",
+        "directMethodQualifierIsCompleteWhileGenericMethodRemainsIncomplete",
+        "fieldNamesAreEvidencedWhileMethodParameterNamesRemainUnknown",
+        "canonicallyEquivalentUnicodeFieldNamesRemainDistinctJavaIdentifiers",
+        "beanProducedScalarFieldsAttachToTheirFactoryProduct",
+        "productMethodQualifiersPreservePerOwnerGroupsSourcePointsAndWitnesses",
+        "productMethodQualifierMismatchClearsEachOptionalAndRequiredOwnerGroup",
+        "missingMethodReturnEvidenceCannotDecideQualifierFallback",
+        "sharedProductSitesKeepDistinctOwnersGroupsAndConditionalFacts",
+        "productOptionalMethodGroupsSkipIndependentlyAndRetainInactiveParameters",
+        "productRequiredMethodFailureClearsSelectionsForEveryOwner",
+        "widerAndGenericProductTypesRetainDescriptorsWithoutCertifyingRuntimeMembers",
+        "declaredProductMethodDoesNotProveAnOverridingRuntimeSubtypeInjection",
+        "widerProductWithNoDeclaredSitesStillRetainsItsRuntimeFootprintGap",
+        "factoryParametersAndProductMembersHaveSeparateSitesOnTheSameOwner",
+        "productOwnerExpansionPreservesEveryRequestWhenTheBudgetIsExceeded",
+        "productUnsupportedMembersAndUnknownTypesStayInTheReportingDenominator",
+        "unsupportedBeanReaderMetadataCannotCertifyProductMemberSelection",
+        "requiredMethodFailureClearsTheEarlierTentativeSelection",
+        "optionalMethodPrimaryConflictRemainsAnErrorInsteadOfAbsence",
+        "sourceDefinedInjectionAnnotationCannotManufactureAFrameworkDescriptor"
+      ],
+      "authority": "SOURCE_AUTHORED_EXPECTATIONS_NOT_ANALYZER_OUTPUT; independent adjudication pending where required"
+    },
+    {
+      "path": "repo:analyzer-javaparser/src/test/java/com/evolution/analysis/javaparser/SpringBridgeImportTest.java",
+      "sha256": "aa653bdae59f9de28f022683103a489000d717b6cb8a77dca56c8eff45e23620",
+      "caseIds": [
+        "realFrameworkRouteOwnershipReachesNeutralEndpointsWithoutInventingActivationOrContract",
+        "lookalikeMappingAnnotationsNeverBecomeSpringEndpoints"
+      ],
+      "authority": "SOURCE_AUTHORED_EXPECTATIONS_NOT_ANALYZER_OUTPUT; independent adjudication pending where required"
+    },
+    {
+      "path": "repo:analyzer/src/test/java/com/evolution/analysis/ingestion/ScopedIngestionRecoveryTest.java",
+      "sha256": "a1f866b480b695ffdac9e0256ac53618a0ef9349e4d8e6bd4c652533f77f6bc0",
+      "caseIds": [
+        "rootBuildFailureCannotBeScopedAwayFromNestedProject",
+        "sharedSettingsKeepFailedProjectFootprintBroad",
+        "malformedIndependentBuildKeepsExactRequestForHealthyIsland",
+        "unknownCustomRoleKeepsMainExactAndCustomStructureQualified",
+        "emptyLeadingReactorSlotCompactsSurvivingPeerSourceOrderInRecovery"
+      ],
+      "authority": "SOURCE_AUTHORED_EXPECTATIONS_NOT_ANALYZER_OUTPUT; independent adjudication pending where required"
+    },
+    {
+      "path": "repo:analyzer/src/test/java/com/evolution/analysis/buildmodel/UniversalBuildIngestionTest.java",
+      "sha256": "f1b19133f872486ba99f852e02268f623fa607908df5a7f48d02e25b5b1c7506",
+      "caseIds": [
+        "literalMapCoordinatesKeepBuildScriptEvidenceWhenSettingsArePresent",
+        "bootBomExpressionNeedsTheActualImportAndUniqueFixedPluginDeclaration",
+        "platformImportsAndConstraintsRemainDistinctFromRuntimeLibraries",
+        "nestedGradleIncludesRetainImplicitParentProjectAndDynamicPathsRemainGaps",
+        "gradleProjectDirectoryRemappingAndIncludedBuildsKeepTheirOwnModules",
+        "plainJavaGetsSourcePlansWithoutInventedCoordinates",
+        "commentsStringsAndConditionalBlocksCannotInventDependencies",
+        "dynamicVersionsPathEscapesAndMalformedScriptsStayExplicit",
+        "configuredSourceSetsAndToolchainHaveExactEvidence",
+        "customSetsAndLookalikeBlocksDoNotChangeMainCompilerFacts",
+        "literalCustomSourceSetIsInventoriedWithUnknownSemanticRole",
+        "unqualifiedCustomSrcDirDoesNotBecomeJavaRoot",
+        "emptyDeclaredCustomSetStillHasASeparateInventoryRow",
+        "scriptAndIncludedProjectLimitsRemainExplicit",
+        "unresolvedAssignmentsAreGapsRatherThanCrashesOrFakeCoordinates",
+        "discoversKotlinMultiProjectAndLiteralDependenciesWithoutExecution",
+        "literalCatalogAliasesAndBundlesRemainDeclaredSelectors",
+        "unknownCatalogAliasRemainsAnUnresolvedDependency",
+        "collidingCatalogAccessorsCannotSelectAnArbitraryCoordinate",
+        "duplicateCatalogKeysCannotPickFirstVersionOrLibrary",
+        "rangeAndSnapshotSelectorsRemainUnresolvedWithoutCapturedSelection",
+        "tripleQuotedMultilineStringsAndEscapesParseWithoutMalformedInputAndPreserveKmpSourceSets",
+        "generatorPluginsAndConfigurationBlocksKeepPluginEffectGapsWhileInertPluginsDoNot",
+        "settingsEachDirSubprojectsVariablesAndSpringBootDependencyManagementResolveDeterministically",
+        "discoversKotlinSourceRootsAcrossMavenGradleAndMixedJavaDirectories",
+        "normalizesInRepoParentRelativeRootsAndDisambiguatesDualMavenGradleDirectories"
+      ],
+      "authority": "SOURCE_AUTHORED_EXPECTATIONS_NOT_ANALYZER_OUTPUT; independent adjudication pending where required"
+    },
+    {
+      "path": "repo:analyzer/src/test/java/com/evolution/analysis/spring/condition/TruthRegionEvaluationTest.java",
+      "sha256": "8e31242702a6ab81b355e3d09dbdf006200e9c239abda8bc716dd257878bc960",
+      "caseIds": [
+        "satSignaturesReplayStagedRegistrationAndBindingAcrossFiftySixDimensions",
+        "satStagedClassificationsAgreeWithTheExhaustiveSmallSpaceOracle",
+        "conditionalRegistrationAndBindingAreMayWithMinimalRevalidatedWitnesses",
+        "unknownBindingEvidenceNeverBecomesFalseOrNever",
+        "unconditionalWinnerIsMustAndDefiniteNonWinnerIsNever",
+        "enumerationLimitAndUnknownFeasibilityCannotPromoteUniversalFacts",
+        "emptyModeledSpaceIsInvalidNotVacuouslyMustOrNever",
+        "incompatibleBuildContextsRemainExplicitAndUnknown",
+        "reasonerSupportsBoundedSetQueriesWithoutTreatingIncompleteAsUnsat",
+        "invalidBaselineIsExplicitAndCannotProduceWitnesses",
+        "regionLimitRetainsUnknownCellsWithoutPublishingFalseReplayFailures",
+        "operationalErrorWorldsRemainVisibleButAreNotSemanticWitnesses",
+        "inconsistentReasonerOutputIsRejectedByIndependentWitnessReplay",
+        "resultAffectingLimitsAndEvaluatorArtifactAreIdentityInputs",
+        "factLimitIsClosedAndExplicitRatherThanSilentlyTruncated",
+        "contextualBindingOwnerParticipatesInFactIdentity",
+        "witnessBudgetNeverInventsMissingReplayEvidence"
+      ],
+      "authority": "SOURCE_AUTHORED_EXPECTATIONS_NOT_ANALYZER_OUTPUT; independent adjudication pending where required"
+    },
+    {
+      "path": "repo:analyzer/src/test/java/com/evolution/analysis/query/ConditionalPathCycleTest.java",
+      "sha256": "0f64eb499414aa54a74294012aee83413bb8707627117e9a7985cd5e7813a163",
+      "caseIds": [
+        "impossiblePrefixIsPrunedBeforeFurtherExpansion",
+        "pairwiseIntersectionDoesNotProveJointPath",
+        "independentPrefixesToSameVertexRemainExplorable",
+        "profileNamesAreNotAnExclusionConstraint",
+        "unknownFeasibilityIsQualifiedWithoutInventingWitness",
+        "directedCyclesAreDistinctButParallelSupportsDoNotMultiplyThem",
+        "cycleOutputQuotaStopsAt50AcrossSccs",
+        "cycleDepthCountsVerticesAndNeverOverflowsBudget",
+        "traversalCountersDoNotResetAndCanStopBeforeFirstWitness",
+        "tarjanHandlesDeepAcyclicInputsWithoutUsingCycleDepthBudget",
+        "smallBooleanOracleAgreesAndLargeSpaceIsNotEnumerated",
+        "operationalGuardsAndInputCapsReturnTypedPartialResults",
+        "stepLimit100000IsGlobalEvenWhenEveryCycleIsInfeasible",
+        "solverBudgetAndIncompatibleWorldUniversesAreNeverFalseProofs",
+        "pendingPrefixesAreBoundedBeforeQueueGrowth",
+        "cycleSearchDoesNotBlockASecondPrefixWithADifferentRegion"
+      ],
+      "authority": "SOURCE_AUTHORED_EXPECTATIONS_NOT_ANALYZER_OUTPUT; independent adjudication pending where required"
+    },
+    {
+      "path": "repo:analyzer/src/test/java/com/evolution/analysis/query/PolicyConditionalEvaluationTest.java",
+      "sha256": "6328659ac763e85e68ac81d87e67bf62c72d8a04bcf14530bcca0e5dbe629890",
+      "caseIds": [
+        "complementaryMayFindingsMakeMustRuleAndRetainIndependentCounterWitnesses",
+        "mutuallyExclusiveCycleAndPairwiseOnlyTripleAreClean",
+        "conditionalAndUnknownCyclesHaveQualifiedBundles",
+        "exhaustiveTwoVariableOracleAgreesForCyclesAndRuleUnion",
+        "explicitAndSymbolicEquivalentSpacesHaveSameVerdictsAndReplayedWitnesses",
+        "incompleteOrEmptyUniverseAndDepthOrSolverExhaustionCannotProveClean"
+      ],
+      "authority": "SOURCE_AUTHORED_EXPECTATIONS_NOT_ANALYZER_OUTPUT; independent adjudication pending where required"
+    },
+    {
+      "path": "repo:analyzer/src/test/java/com/evolution/analysis/query/ConditionalAssessmentTest.java",
+      "sha256": "f319280e377f2cdaa3b98f3154bbfcdfa47d02a195c7550646b07032a254bf95",
+      "caseIds": [
+        "severeMayExposureRetainsFullSeverityAndBothRegionWitnesses",
+        "complementaryMayFindingsDoNotAcquireAHalfSeverityDiscount",
+        "mutuallyInfeasibleEdgesNeverCreateACyclePenalty",
+        "explicitAndSymbolicEncodingsAgreeOnHealthWithoutConflatingTheirIdentities",
+        "unknownIncompleteAndEmptySpacesWithholdInsteadOfCertifyingCleanHealth",
+        "repeatedConditionalEvaluationPreservesDigestsAndCapabilityRecords",
+        "cleanConditionalRuleStillRetainsTheModeledSpaceIdentity",
+        "spaceEvidenceReadLimitRetainsTheCleanRuleButWithholdsHealth"
+      ],
+      "authority": "SOURCE_AUTHORED_EXPECTATIONS_NOT_ANALYZER_OUTPUT; independent adjudication pending where required"
+    },
+    {
+      "path": "repo:analyzer/src/test/java/com/evolution/analysis/metrics/StructuralMetricsTest.java",
+      "sha256": "b6d5c431ff7deb7e75bd36027221a098dafea1bce45d5c36f520d10f746915ec",
+      "caseIds": [
+        "completeSpringComponentMetricsIgnoreJavaMartinOwnership",
+        "springUnknownActivationStillWithholdsRatiosWithGenuineGaps",
+        "nonMartinJavaMetricsStillValidateTheirProductionPopulation",
+        "fanCountsDistinctNeighborsPerComponentAndSumsAcrossContext",
+        "reachabilityCountsIncomingDependentsAndShortestWitnessDistances",
+        "boundedReachabilityRetainsObservedCountDistancesAndFrontier",
+        "moduleMetricsUseProductionTypesWithoutRequiringASourceRoleOnTheAggregateNode",
+        "singletonSelfLoopIsCyclicButNotADensityPair",
+        "martinGoldenCountsDistinctNeighborsInsteadOfCallMultiplicity",
+        "densityUsesNonselfDistinctPairsAndExactOperands",
+        "productionAbstractnessIncludesEnumsRecordsAndAnnotationTypesButNotUsesOrOtherRoles",
+        "zeroDenominatorsAndMissingPopulationAreNotInventedZeros",
+        "sccHotspotConcentrationAndLayerCrossingsHaveExplicitMeaning"
+      ],
+      "authority": "SOURCE_AUTHORED_EXPECTATIONS_NOT_ANALYZER_OUTPUT; independent adjudication pending where required"
+    },
+    {
+      "path": "repo:analyzer/src/test/java/com/evolution/analysis/metrics/AssessmentMetricsIntegrationTest.java",
+      "sha256": "27426bcb879e6b96551e6724f2913f6706da87d6dfa1c3081ef1213a4e5da925",
+      "caseIds": [
+        "goldenGraphComputesSixtySevenPointFiveFromCanonicalInputs",
+        "aSourcePopulationGapCannotBecomeAnImprovedScore",
+        "metricBudgetAndSharedCancellationPropagateIntoWithheldAssessment",
+        "codecRoundTripAndTelemetryDoNotChangeCanonicalAssessmentIdentity",
+        "twoDimensionsCanReuseOneMetricWithoutRecomputingDuplicateOperands"
+      ],
+      "authority": "SOURCE_AUTHORED_EXPECTATIONS_NOT_ANALYZER_OUTPUT; independent adjudication pending where required"
+    },
+    {
+      "path": "repo:analyzer-filesystem/src/test/java/com/evolution/analysis/filesystem/PartitionedGraphStoreTest.java",
+      "sha256": "e1eba6661d1ece2fdd162998e9bddbe9c44cd7eeee3738ed3075e8133a3ef4bb",
+      "caseIds": [
+        "oversizedCanonicalRowProceedsAloneAndRetainsAuthenticatedEvidence",
+        "boundedPageWorkersOverlapAndProduceIdenticalAuthenticatedRoots",
+        "pageWorkerFailureAndCancellationPublishNeitherRootNorSnapshot",
+        "legacyGraphAssemblyRetainsEdgesAndNeverPublishesDanglingContributions",
+        "diskProjectionMatchesCanonicalSnapshotAndColdPages",
+        "canonicalSnapshotImportsByRowsAndRejectsNoncanonicalOrDanglingInputBeforePublication",
+        "aRehashedDerivedIndexCannotSilentlyOmitOrRedirectCanonicalEdges",
+        "indexSpansMultipleDirectoryLevelsWithoutARepositoryRowCeiling",
+        "coldPagesAndBothAdjacencyDirectionsMatchCanonicalGraphWithoutLoadingIt",
+        "cancelledPublicationHasNoRootAndCorruptContentCannotBecomeQueryRows",
+        "publicStoreCoalescesIntermediateLeafForcesAndPreservesColdIntegrity"
+      ],
+      "authority": "SOURCE_AUTHORED_EXPECTATIONS_NOT_ANALYZER_OUTPUT; independent adjudication pending where required"
+    },
+    {
+      "path": "repo:backend/src/test/java/com/evolution/backend/query/PartitionedGraphApiTest.java",
+      "sha256": "e0c4db84423b6572752088ca53f96040f5fce83e1abf1c75e23e9e18fba779ee",
+      "caseIds": [
+        "pagesUseDiskRowsWithoutInvokingTheLegacyWholeGraphLoader"
+      ],
+      "authority": "SOURCE_AUTHORED_EXPECTATIONS_NOT_ANALYZER_OUTPUT; independent adjudication pending where required"
+    },
+    {
+      "path": "repo:backend/src/test/java/com/evolution/backend/analysis/SemanticDepthArchitectureTest.java",
+      "sha256": "7aa50c9c31addfaff85e0728c254f6a5a653c573f7606c4b7cbcfbb5edcb097a",
+      "caseIds": [
+        "declarationStructureIsMeasuredSeparatelyFromExpressionUsageOverTheSameDenominator",
+        "passiveArchitectureThresholdRequiresNinetyFivePercentStructureAndNoFailedUnits",
+        "passiveCompletionChecksEachPopulationAt949And950AndRetainsEvidenceGuards"
+      ],
+      "authority": "SOURCE_AUTHORED_EXPECTATIONS_NOT_ANALYZER_OUTPUT; independent adjudication pending where required"
+    },
+    {
+      "path": "repo:cli/src/test/java/com/evolution/cli/ScanJourneyTest.java",
+      "sha256": "547ca171bbedf425233d18a8764960c6b8b9ae1c29c8616b014ee5e0c164dfaa",
+      "caseIds": [
+        "dependencyPreparationVerifiesRealCachedBinariesWithoutCreatingAGraphOrLoadingAJdk",
+        "receiptCountsUniquePublishedGapsIncludingRpcProjection",
+        "gradleScanUsesThePassiveRecoveryCompositionWithoutLaunchingAWorker",
+        "aJavaWorkerBudgetStillPublishesEveryInventoryEntryAndOtherLanguageCalls",
+        "declaredMavenReleaseUsesMatchingSymbolsInsteadOfTheCliFallback",
+        "scanAccountsForEveryLanguageAndKeepsLocalCallsWhenAnUnrelatedDependencyIsMissing",
+        "graphPageBuildMigratesALegacySelectionWithoutChangingIt",
+        "graphPagesSurviveFreshCliInstancesAndReturnBothAdjacencyDirections",
+        "capturedScanRejectsContextOverridesAndTargetOwnedAuthority",
+        "missingClasspathReportsSurfaceOnlyAndUnevaluatedSpringRatherThanZeroArchitecture",
+        "actualSourceToStoredGraphPolicyScoreEvidenceAndSarif",
+        "cliFallbackCannotOverrideDeclaredMavenEncoding",
+        "passiveScanCompletesWithPassiveArchitectureRecoveryTierUnderApprovedNinetyFivePercentPolicy"
+      ],
+      "authority": "SOURCE_AUTHORED_EXPECTATIONS_NOT_ANALYZER_OUTPUT; independent adjudication pending where required"
+    },
+    {
+      "path": "repo:backend/src/test/js/workbench-model.test.cjs",
+      "sha256": "92c91c0c49e19b8693ebd11a412b0a3bbaebec0c4cea711f0cd54954eb00f0b2",
+      "caseIds": [
+        "default packages have a useful label rather than an internal name tuple",
+        "configuration comparisons never promote an unloaded or partial page to absent",
+        "a realized request carries the selected backend realization and cannot silently become union",
+        "missing assessments never become healthy scores",
+        "incomplete populations never claim a full count or clean result",
+        "published finding pages retain their withheld evaluation and observed denominator",
+        "query requests keep one exact selected context and incoming impact is explicit",
+        "shortDigest condenses sha256 digests for scannable display while keeping readable names intact",
+        "humanReason translates cryptic gap codes into actionable explanations without hiding the raw code",
+        "summarizeGaps groups observed gap rows by reason code in deterministic count order",
+        "policyTemplates provide valid architecture-policy:v1 presets"
+      ],
+      "authority": "SOURCE_AUTHORED_EXPECTATIONS_NOT_ANALYZER_OUTPUT; independent adjudication pending where required"
+    },
+    {
+      "path": "repo:backend/src/test/js/bridge-model.test.cjs",
+      "sha256": "abaf492a02b1c8ff0bced1370308147892e1f9900f90697b4fe42e3fc487440c",
+      "caseIds": [
+        "page selection preserves the exact capability and continuation without synthesizing counts",
+        "uncertain outcomes are displayed without promoting a single target or hiding a failed child",
+        "native source pages require an exact partition and preserve native category/path filters",
+        "people see source names, evidence precision and readable states instead of internal identifiers",
+        "source-only contexts open their captured documents without pretending native facts exist",
+        "evidence labels use captured source and role metadata while unidentified references stay explicit",
+        "configuration records are distinguished by captured JSON pointer keys without disclosing values",
+        "summary explains unmet census separately and never turns partial data into a health score",
+        "binding outcomes and coverage obligations keep their exact separate denominators",
+        "native language observations keep category, target names and source context",
+        "native bridge records show operation, table or channel names without descriptor hashes",
+        "impact actions require a scoped bridge reference rather than a native target string",
+        "categoryGroup maps F, B and A codes to intuitive architectural layers",
+        "outcomeBreakdown extracts visual segments from bridge summary without inventing percentages"
+      ],
+      "authority": "SOURCE_AUTHORED_EXPECTATIONS_NOT_ANALYZER_OUTPUT; independent adjudication pending where required"
+    }
+  ],
+  "candidate": {
+    "commit": "d8c26035f9254db040fc0a61336fada3fb2a98b6",
+    "runtimeSourceSha256": "60bc5ac2b0b73ac6eed115fc4eeb7d0fdde996d030611e54ae59a9c02e29a502",
+    "runtimeDirtyPatchSha256": "515e7732018e8d7357ab4d0dbe42db34e3d4f6e9024b229b946de0f97f119976",
+    "files": 635,
+    "revision": "m9.1-r2-final",
+    "jar": {
+      "path": "evidence:evo-baseline-r2.jar",
+      "sha256": "968242158bd4402935767544ee0bdfee516575090b6b315600f02c706ca0f0c2"
+    },
+    "jarBytes": 46218773,
+    "packaging": "mvnw.cmd -q -pl cli test package -Denforcer.skipRules=reactorModuleConvergence -Dtest=ScanJourneyTest,TerminalReportsTest"
+  },
+  "pinSemantics": "Runtime digest is executable inputs; protocol/test/oracle/tool pins below are separate. Source commits plus actual-byte manifests describe dirty repositories without inventing historical compatibility.",
+  "pinnedFiles": [
+    {
+      "path": "browser:msedge.exe",
+      "sha256": "d258e512aa24947cfbef0c0033d8c3cd56ecb40f7b2ad59802fa75c4e4f3324d"
+    },
+    {
+      "path": "jdk:bin/java.exe",
+      "sha256": "5cabacd1cf1c303f0e0d06a7c2475b16f6c908eee958af5b8b4e5909c6500ef1"
+    },
+    {
+      "path": "jdk:bin/javac.exe",
+      "sha256": "e4ce093a11fd6de2a9ea159a3fbc210855218304d51fe4e0c071d87e36854f36"
+    },
+    {
+      "path": "jdk:lib/ct.sym",
+      "sha256": "cd00efe81f47d0e7f7a80a5d99ab1403cc4b4fd1eb97404ee4c897335dc80d8f"
+    },
+    {
+      "path": "jdk:lib/modules",
+      "sha256": "6033b3c99c2be48143ed6345bb2cdda3e6b1fc32dc38f44e58ee135e3dd495d7"
+    },
+    {
+      "path": "jdk:release",
+      "sha256": "ba0b0ca802d29185ff7f3ac925839fa361fb076d1b2771101cc63b977e7fb617"
+    },
+    {
+      "path": "node:node.exe",
+      "sha256": "14319838b3f355e0398c13569a90270bce4fc68f25189f58c59b03dadae0e6d5"
+    },
+    {
+      "path": "repo:analyzer-filesystem/src/test/java/com/evolution/analysis/filesystem/PartitionedGraphStoreTest.java",
+      "sha256": "e1eba6661d1ece2fdd162998e9bddbe9c44cd7eeee3738ed3075e8133a3ef4bb"
+    },
+    {
+      "path": "repo:analyzer-javaparser/src/main/java/com/evolution/analysis/javaparser/JavaParserFrontend.java",
+      "sha256": "ab9940c6ae7ba7f0e751cb09933dfccb35a2262b7eca042b0b292bb1b323b609"
+    },
+    {
+      "path": "repo:analyzer-javaparser/src/test/java/com/evolution/analysis/javaparser/ResolutionInputsTest.java",
+      "sha256": "336661a862bcb132a2b6d1f7c3a299c52baebc381345ef6a6c3a2a19a09c034d"
+    },
+    {
+      "path": "repo:analyzer-javaparser/src/test/java/com/evolution/analysis/javaparser/SourceRecoveryAttributionTest.java",
+      "sha256": "29f1de8566f165785ac4e5bb596fa9a6f64063489df98c2c15a052fe5d78caf4"
+    },
+    {
+      "path": "repo:analyzer-javaparser/src/test/java/com/evolution/analysis/javaparser/SourceToSpringPlanTest.java",
+      "sha256": "aaea2f3f9084837c077f516c469cf431f25f1a5daa92c2dfc24d16236f72f065"
+    },
+    {
+      "path": "repo:analyzer-javaparser/src/test/java/com/evolution/analysis/javaparser/SpringBridgeImportTest.java",
+      "sha256": "aa653bdae59f9de28f022683103a489000d717b6cb8a77dca56c8eff45e23620"
+    },
+    {
+      "path": "repo:analyzer-maven/src/main/java/com/evolution/analysis/maven/MavenBuildModelProvider.java",
+      "sha256": "83e5e7de4a7cf714e147fad0672b07bdfcc7b5fb414559d93ae240124fd36e81"
+    },
+    {
+      "path": "repo:analyzer/src/main/java/com/evolution/analysis/assessment/ArchitectureScoreModel.java",
+      "sha256": "2c4584e8b1badafd425a5cc99e43d995dc78e4e17e46e34ffff5e85a17f65a44"
+    },
+    {
+      "path": "repo:analyzer/src/main/java/com/evolution/analysis/graph/KnowledgeGraph.java",
+      "sha256": "73fa2c5d219b382a2f45b2a7666ae2656b9f0f01c93b25d9b0c582b587c77775"
+    },
+    {
+      "path": "repo:analyzer/src/main/java/com/evolution/analysis/metrics/MetricCatalog.java",
+      "sha256": "0942d256d54c01a3a3e9c6aaa7d7ad8f50f2e0cb145b12a350e9db4d99f58403"
+    },
+    {
+      "path": "repo:analyzer/src/main/java/com/evolution/analysis/policy/ArchitecturePolicy.java",
+      "sha256": "a7b9095548b848130ba4f323b64a7df6f58ef8f05860e4c331b265fb61848a1a"
+    },
+    {
+      "path": "repo:analyzer/src/test/java/com/evolution/analysis/buildmodel/UniversalBuildIngestionTest.java",
+      "sha256": "f1b19133f872486ba99f852e02268f623fa607908df5a7f48d02e25b5b1c7506"
+    },
+    {
+      "path": "repo:analyzer/src/test/java/com/evolution/analysis/ingestion/ScopedIngestionRecoveryTest.java",
+      "sha256": "a1f866b480b695ffdac9e0256ac53618a0ef9349e4d8e6bd4c652533f77f6bc0"
+    },
+    {
+      "path": "repo:analyzer/src/test/java/com/evolution/analysis/metrics/AssessmentMetricsIntegrationTest.java",
+      "sha256": "27426bcb879e6b96551e6724f2913f6706da87d6dfa1c3081ef1213a4e5da925"
+    },
+    {
+      "path": "repo:analyzer/src/test/java/com/evolution/analysis/metrics/StructuralMetricsTest.java",
+      "sha256": "b6d5c431ff7deb7e75bd36027221a098dafea1bce45d5c36f520d10f746915ec"
+    },
+    {
+      "path": "repo:analyzer/src/test/java/com/evolution/analysis/query/ConditionalAssessmentTest.java",
+      "sha256": "f319280e377f2cdaa3b98f3154bbfcdfa47d02a195c7550646b07032a254bf95"
+    },
+    {
+      "path": "repo:analyzer/src/test/java/com/evolution/analysis/query/ConditionalPathCycleTest.java",
+      "sha256": "0f64eb499414aa54a74294012aee83413bb8707627117e9a7985cd5e7813a163"
+    },
+    {
+      "path": "repo:analyzer/src/test/java/com/evolution/analysis/query/PolicyConditionalEvaluationTest.java",
+      "sha256": "6328659ac763e85e68ac81d87e67bf62c72d8a04bcf14530bcca0e5dbe629890"
+    },
+    {
+      "path": "repo:analyzer/src/test/java/com/evolution/analysis/spring/condition/TruthRegionEvaluationTest.java",
+      "sha256": "8e31242702a6ab81b355e3d09dbdf006200e9c239abda8bc716dd257878bc960"
+    },
+    {
+      "path": "repo:backend/src/main/java/com/evolution/backend/analysis/SemanticDepth.java",
+      "sha256": "7e53de53435b3f15fa25224024710b1ae28eb08cc871f3c3c29a5788f23d8e1f"
+    },
+    {
+      "path": "repo:backend/src/test/java/com/evolution/backend/analysis/SemanticDepthArchitectureTest.java",
+      "sha256": "7aa50c9c31addfaff85e0728c254f6a5a653c573f7606c4b7cbcfbb5edcb097a"
+    },
+    {
+      "path": "repo:backend/src/test/java/com/evolution/backend/query/PartitionedGraphApiTest.java",
+      "sha256": "e0c4db84423b6572752088ca53f96040f5fce83e1abf1c75e23e9e18fba779ee"
+    },
+    {
+      "path": "repo:backend/src/test/js/bridge-model.test.cjs",
+      "sha256": "abaf492a02b1c8ff0bced1370308147892e1f9900f90697b4fe42e3fc487440c"
+    },
+    {
+      "path": "repo:backend/src/test/js/workbench-model.test.cjs",
+      "sha256": "92c91c0c49e19b8693ebd11a412b0a3bbaebec0c4cea711f0cd54954eb00f0b2"
+    },
+    {
+      "path": "repo:benchmarks/g2-pipeline/corpus-manifest.json",
+      "sha256": "3038d169db8c1550c9c8a365d24c0abf10cfdeca4f19f54bd7f08787a908973a"
+    },
+    {
+      "path": "repo:benchmarks/g2-pipeline/m9_protocol.py",
+      "sha256": "b85551853fc34be9b29b78c8f61dd71a31cd5a6fd5b87da8e44ab2aeb4ea7c2a"
+    },
+    {
+      "path": "repo:benchmarks/g2-pipeline/test_m9_protocol.py",
+      "sha256": "f21b41859ec75a01cd50b1612b6c276b89663bd57b789ed9c011ba79171c483a"
+    },
+    {
+      "path": "repo:benchmarks/m2-ground-truth/OraclePilot.java",
+      "sha256": "aba73bbba1c3e74baaab50eceaa8b84653a157d20ffd679878428317a5ae772a"
+    },
+    {
+      "path": "repo:benchmarks/m2-ground-truth/expected.json",
+      "sha256": "b0f65414a3ae88b6f8f9ca461cf9ed5fe1ed049f818d71c003924287e4334356"
+    },
+    {
+      "path": "repo:benchmarks/m2-ground-truth/fixtures/ambiguous/fixture/Ambiguous.java",
+      "sha256": "f686f1d0c18cc6528e6b407cc40cf28995473bfa7b8af5a9c51d8b4ed66482ab"
+    },
+    {
+      "path": "repo:benchmarks/m2-ground-truth/fixtures/bindings/javax/lookalike/Bindings.java",
+      "sha256": "12eda2bfacbee8b25a9f1d5d5f1e9b8a0f561353225fac1d51317de25bff98a3"
+    },
+    {
+      "path": "repo:benchmarks/m2-ground-truth/fixtures/identifiers/fixture/Identifiers.java",
+      "sha256": "cf8f3d4a670e848aa240eed5be0ec3abe55a612088aaf801e2ba5f6f3b589982"
+    },
+    {
+      "path": "repo:benchmarks/m2-ground-truth/fixtures/malformed/fixture/Malformed.java",
+      "sha256": "731d4a46a88007023c36a1945ce9dac6879d745030b40f846d93205f3eb628d7"
+    },
+    {
+      "path": "repo:benchmarks/m2-ground-truth/fixtures/missing/fixture/MissingType.java",
+      "sha256": "ea20e17dd59cec9d564e2f6663fe9aa41b24df5119a56015216d6b5539d4f8c8"
+    },
+    {
+      "path": "repo:benchmarks/m2-ground-truth/fixtures/offsets/fixture/Offsets.java",
+      "sha256": "a0aa4a20d99c2a2f8f95e0e28aa5c31591ff6d72af6cd85f02545bc043f3059c"
+    },
+    {
+      "path": "repo:benchmarks/m2-ground-truth/run_oracle.py",
+      "sha256": "0dcc0336fe9dd2f3a4f597ae4fbc7d1b41491dfb58109a1c570b844c555f073a"
+    },
+    {
+      "path": "repo:benchmarks/m4-r0/artifacts.lock.json",
+      "sha256": "e8294297b3c4de137f2914085a14a2629cb0375315ff7d468e7d3c8ec5e95e69"
+    },
+    {
+      "path": "repo:benchmarks/m4-r0/cases.json",
+      "sha256": "44cc972e3749907fb777f90603c1b619e014f0e7833cf9008dbf1e816109186b"
+    },
+    {
+      "path": "repo:benchmarks/m4-r0/mechanisms.json",
+      "sha256": "2d6a8ccaa73c5d6b83c9b6e87277017fdf0ff9308409c209e9255fbf652b08a2"
+    },
+    {
+      "path": "repo:benchmarks/m4-r0/oracle.py",
+      "sha256": "a983636522a628368bdbcb2bc8035a647f26416cbcffa60c6b53f934db07168d"
+    },
+    {
+      "path": "repo:benchmarks/m4-r0/run_runtime.py",
+      "sha256": "4dbb2ac81eddc1468e1a9155e86bb8b9494e6ef29292d0742b52d08503857570"
+    },
+    {
+      "path": "repo:benchmarks/m4-r0/runtime-labels.json",
+      "sha256": "fb4914b962a3095c5aa99d824ffc29b88a4d0006b870c0067965e0d6909e14e7"
+    },
+    {
+      "path": "repo:benchmarks/m4-r0/src/test/resources/fixtures/DiFixture.java",
+      "sha256": "5605faaeafff15d0a845c11073caf6ac5f9791cb5aeb31efd17c5f69562d7209"
+    },
+    {
+      "path": "repo:benchmarks/m4-r0/src/test/resources/fixtures/LegacyConsumer.java",
+      "sha256": "09508bd2340c8adb411ac8b388504405fc37c9579317da85499d222729a69d9d"
+    },
+    {
+      "path": "repo:benchmarks/m4-r0/src/test/resources/fixtures/MissingAFixture.java",
+      "sha256": "8025a7e4dae81ad2f4652eafaa38f77561d75778ffc7d56560c0454a4559f156"
+    },
+    {
+      "path": "repo:benchmarks/m4-r0/src/test/resources/fixtures/MissingBFixture.java",
+      "sha256": "7473cd3e9dbae04b2b20f829cc6750a7be60ce982802b20ebe50dc3947822c95"
+    },
+    {
+      "path": "repo:benchmarks/m4-r0/src/test/resources/fixtures/OnBeanFixture.java",
+      "sha256": "10806325c7b1dfa18c54be16c34b227b9d23481e7ad25921fce859e9689f0eb6"
+    },
+    {
+      "path": "repo:benchmarks/m4-r0/src/test/resources/fixtures/ProfileFixture.java",
+      "sha256": "0de6dfe8aca7f529b1d5dfcc9d3ad5b280d33417dd7559334ca4de12679a6059"
+    },
+    {
+      "path": "repo:benchmarks/m4-r0/src/test/resources/fixtures/PropertyFixture.java",
+      "sha256": "965f058458512852ded6d400c1bb2779aaf6a046be08b4135bb85d25c50e6954"
+    },
+    {
+      "path": "repo:benchmarks/m4-r0/src/test/resources/fixtures/QualifierFixture.java",
+      "sha256": "ecaa42448c9b39a8f80036d1254ca3102286a5f77a717c8f77ddeb10eeec9368"
+    },
+    {
+      "path": "repo:benchmarks/m4-r0/src/test/resources/fixtures/SingleFixture.java",
+      "sha256": "a2071df4b722d38cbe3b0fae66877c5381b6369b30059eaada59bd9228920d14"
+    },
+    {
+      "path": "repo:benchmarks/m4-r0/src/test/resources/fixtures/Token.java",
+      "sha256": "a21e8b5c87ef440d013c6b6698459e148de64071bb7c5f2c032b3495f683f4e6"
+    },
+    {
+      "path": "repo:benchmarks/m4-r0/src/test/resources/fixtures/UserFixture.java",
+      "sha256": "a98bc13fc519e6c9daac16de2b03817d8af4bfe7c3f483b44efbe79000746c09"
+    },
+    {
+      "path": "repo:benchmarks/m4-r0/src/test/resources/fixtures/legacy.xml",
+      "sha256": "28616432cf95aa13c989e9bccc4b23f8f6f7a492c94808772edacc34a53bc35e"
+    },
+    {
+      "path": "repo:benchmarks/run-g2-benchmark.ps1",
+      "sha256": "2a2b719b96f254829061f2b8ca304449a05231d40e5ebfb3f8813d76059d8b86"
+    },
+    {
+      "path": "repo:cli/src/test/java/com/evolution/cli/ScanJourneyTest.java",
+      "sha256": "547ca171bbedf425233d18a8764960c6b8b9ae1c29c8616b014ee5e0c164dfaa"
+    },
+    {
+      "path": "repo:docs/tasks/m9/PROTOCOL.md",
+      "sha256": "2628893d09ea235f4467d92966289d596a5c243deac3737c100a0143cb0a3a2e"
+    },
+    {
+      "path": "jdk:jmods/java.base.jmod",
+      "sha256": "b2a46fff49f2ebb5780ee896c8dcbe03eecfa8cb32fd9cefce61ae5d39338988"
+    },
+    {
+      "path": "jdk:jmods/java.compiler.jmod",
+      "sha256": "a381ff066d44ecad7773a0206df71b44df28b5097aa8be80911da760a32839f8"
+    },
+    {
+      "path": "jdk:jmods/java.datatransfer.jmod",
+      "sha256": "07cccd9de6cab477988ab8fe34b88ae87647883a66771cb375fe4ea29b2ce1a1"
+    },
+    {
+      "path": "jdk:jmods/java.desktop.jmod",
+      "sha256": "81ff35066f55e16bb286def403407886d32e773616f443ea4d4e68c3ac2f2aa7"
+    },
+    {
+      "path": "jdk:jmods/java.instrument.jmod",
+      "sha256": "322f7da31479695173bec86a06ea793c189273dc2d9ef84c07a0798eac391828"
+    },
+    {
+      "path": "jdk:jmods/java.logging.jmod",
+      "sha256": "b7ad4253c3196b65c6c673ef68fcb8a620b47969b21115c1644b1e104ec5da18"
+    },
+    {
+      "path": "jdk:jmods/java.management.jmod",
+      "sha256": "63cde60603709f3a5e625c0489e9173c494d6f597f138e4ee99a0d508115bb8e"
+    },
+    {
+      "path": "jdk:jmods/java.management.rmi.jmod",
+      "sha256": "3e303ca7e3642a3957956428a783dbd88c5a9fb0d79e84e8d54cc7cc40e056b6"
+    },
+    {
+      "path": "jdk:jmods/java.naming.jmod",
+      "sha256": "29b1f775532c895b77964a589f0ad4dbf33919b8eee23fc3be495f5b1125ad29"
+    },
+    {
+      "path": "jdk:jmods/java.net.http.jmod",
+      "sha256": "a80f94e18040b10876913d79427767cf060760b7dfea5cdd25ff4c236ad9a57b"
+    },
+    {
+      "path": "jdk:jmods/java.prefs.jmod",
+      "sha256": "570b07063f7cb315fed018afca7add99e2ccbeb4b750702a35285cedc8a140ca"
+    },
+    {
+      "path": "jdk:jmods/java.rmi.jmod",
+      "sha256": "fe4be81a4eebb72e66f31b59fb02c81b1bfc166a35fc492b09d427903898bf3d"
+    },
+    {
+      "path": "jdk:jmods/java.scripting.jmod",
+      "sha256": "4360584b34f41f83932959236502387ac2482b66b315566a748a3dc524792736"
+    },
+    {
+      "path": "jdk:jmods/java.se.jmod",
+      "sha256": "96eaaec544dfe845b83c890821a03721c14bcc391966f54306dea3ba58b853fe"
+    },
+    {
+      "path": "jdk:jmods/java.security.jgss.jmod",
+      "sha256": "4b7ffbdd6588976a793b995a1af923a3ee932100fdff42cf2465628bda41cdb6"
+    },
+    {
+      "path": "jdk:jmods/java.security.sasl.jmod",
+      "sha256": "65d7fcd624138fe33d47c23459bc0638bf0822fd6565a17a049b930a21c5f7dd"
+    },
+    {
+      "path": "jdk:jmods/java.smartcardio.jmod",
+      "sha256": "607f788c24d26dccb701f92586f2f2cb750b9a0ad04e9a420e4f17e78d3e203c"
+    },
+    {
+      "path": "jdk:jmods/java.sql.jmod",
+      "sha256": "62dbf00087cc9b87a79ea67e6f9da49ec57bdd0cc709283c99e537de3f48a3c4"
+    },
+    {
+      "path": "jdk:jmods/java.sql.rowset.jmod",
+      "sha256": "d87f823bb75bca1639a7cf12f46413b04024bb567e89ea4743b1f562fe88720b"
+    },
+    {
+      "path": "jdk:jmods/java.transaction.xa.jmod",
+      "sha256": "b22cd5c42573d730314ba4cdfc8c37dcf70df23e6d858a705eef3b842623dc1c"
+    },
+    {
+      "path": "jdk:jmods/java.xml.crypto.jmod",
+      "sha256": "01dbdb17aa04bdc05257916f8e5b56276cef001443a44c593deea7626fc5a27c"
+    },
+    {
+      "path": "jdk:jmods/java.xml.jmod",
+      "sha256": "60420f10abd7641cc0916a07672d751e2df5e3e5a8ba3b06d86163314ee52977"
+    },
+    {
+      "path": "jdk:jmods/jdk.accessibility.jmod",
+      "sha256": "f04d5c70671b062b4dc1e1ef26ce133305adde8c83ea072a58ff6fce4cea16a7"
+    },
+    {
+      "path": "jdk:jmods/jdk.attach.jmod",
+      "sha256": "ee86eefb05d1b87cb47baed61018039f3feb1dee48e37e211ced1d451ae10049"
+    },
+    {
+      "path": "jdk:jmods/jdk.charsets.jmod",
+      "sha256": "c7fdc417c851022622347744d8430f5ed81b7851931c32486be6dbe9de9d43fb"
+    },
+    {
+      "path": "jdk:jmods/jdk.compiler.jmod",
+      "sha256": "360e5d81c8b9ae73bffa2d730984766b22ee565fa75e51c7f053d0d3485cf4e2"
+    },
+    {
+      "path": "jdk:jmods/jdk.crypto.cryptoki.jmod",
+      "sha256": "0e134af870cbef6485fa25529bf4c3f1259ae56167293b84267373f1be9ab086"
+    },
+    {
+      "path": "jdk:jmods/jdk.crypto.ec.jmod",
+      "sha256": "0c2fb18159fbe40c5d082f99059c8d924f87ca5337fd59df0e158cf03044f03c"
+    },
+    {
+      "path": "jdk:jmods/jdk.crypto.mscapi.jmod",
+      "sha256": "40de3f3c7bae678e301154ba621d203ea850cd0e9fba71ebab975f3cd454a7aa"
+    },
+    {
+      "path": "jdk:jmods/jdk.dynalink.jmod",
+      "sha256": "5766d25db636fdfcfb0ea1e1b4610b283d3f5010820ce0e5a9fb78feb7713901"
+    },
+    {
+      "path": "jdk:jmods/jdk.editpad.jmod",
+      "sha256": "3744297cfb913de1aadf90c25fbfb8c6e8eb78a92c4480df76282d733f3f85c5"
+    },
+    {
+      "path": "jdk:jmods/jdk.hotspot.agent.jmod",
+      "sha256": "79302fae5882d6d2832c9406e236bbafcf6d1b0388b22e6f0cbe1c12746fa125"
+    },
+    {
+      "path": "jdk:jmods/jdk.httpserver.jmod",
+      "sha256": "383b34dfee107de45b42734df6cfe6fa450b290690411eb0b93341b75427ef78"
+    },
+    {
+      "path": "jdk:jmods/jdk.incubator.vector.jmod",
+      "sha256": "14c5cf9c64833b8fd7f43b657d2301a6929424782792ddec745365a135858ff2"
+    },
+    {
+      "path": "jdk:jmods/jdk.internal.ed.jmod",
+      "sha256": "c63eb8a016dc01dc7bb6cae5796300d6100d3fa9a746fbc7b90f7ceac6419ea6"
+    },
+    {
+      "path": "jdk:jmods/jdk.internal.jvmstat.jmod",
+      "sha256": "22e66ffc98769145d80c18a736e8122caa4216cacac9e44577c19efa34bac30c"
+    },
+    {
+      "path": "jdk:jmods/jdk.internal.le.jmod",
+      "sha256": "16dca4801b9702e4237a854e095fe42832926fc76915754a43388239f541e696"
+    },
+    {
+      "path": "jdk:jmods/jdk.internal.opt.jmod",
+      "sha256": "a493568d4a61f599afc52070993f6295a502d97797dadb09c97753d9b03b899d"
+    },
+    {
+      "path": "jdk:jmods/jdk.internal.vm.ci.jmod",
+      "sha256": "1572530d0598e1f5f83ed46552301267b60de48e74a508ebdb8c961f909a1fcc"
+    },
+    {
+      "path": "jdk:jmods/jdk.internal.vm.compiler.jmod",
+      "sha256": "df8149cf6f75b7f38509bd1d2d388afb1c7cb60768b6f08d87a4237b52ac670e"
+    },
+    {
+      "path": "jdk:jmods/jdk.internal.vm.compiler.management.jmod",
+      "sha256": "a27d0b3d467806009ac0f987f7f15a29e157544407b323ef979708cc4dbde786"
+    },
+    {
+      "path": "jdk:jmods/jdk.jartool.jmod",
+      "sha256": "53cb5fc260c87423427f9e1af819e3d102254b2e93a5a0737639d918017fa7cd"
+    },
+    {
+      "path": "jdk:jmods/jdk.javadoc.jmod",
+      "sha256": "2e972a15e3e475a5647b35c5c3d5f57718a3ecdd3ba4bd9db14c6f114c520e9f"
+    },
+    {
+      "path": "jdk:jmods/jdk.jcmd.jmod",
+      "sha256": "bd1dbb796f10cfff35a36589629168e03103b87b1331431a8267e38b0c71efe1"
+    },
+    {
+      "path": "jdk:jmods/jdk.jconsole.jmod",
+      "sha256": "e980628b0d6acb1b348e78b5bb08c57393f684d5d97bf7ef2f760ebd67fede8e"
+    },
+    {
+      "path": "jdk:jmods/jdk.jdeps.jmod",
+      "sha256": "a3651c977148f8fe048581f213ede8e01225a8e1ca600065ef351ca0e2638b87"
+    },
+    {
+      "path": "jdk:jmods/jdk.jdi.jmod",
+      "sha256": "6ee81afcb9bdb1ac60ca0536af741935d779a2b3384d345a3810ef336703f279"
+    },
+    {
+      "path": "jdk:jmods/jdk.jdwp.agent.jmod",
+      "sha256": "63f0c591bc734b1412f87617caa64604464434d6c3764626167573379e18f708"
+    },
+    {
+      "path": "jdk:jmods/jdk.jfr.jmod",
+      "sha256": "13d2dae6c8d76188e31e041a89fad040a8dd8274a9bf7e5317b745350828db30"
+    },
+    {
+      "path": "jdk:jmods/jdk.jlink.jmod",
+      "sha256": "e903d6b249d722f0e6742237f96cccbe55c175e1d1d16ca4cbc306a5653733c2"
+    },
+    {
+      "path": "jdk:jmods/jdk.jpackage.jmod",
+      "sha256": "c5b3a7eab71b38ce8a03efe038e850f2adc05a5b60286095cd8d353b44ec5ba7"
+    },
+    {
+      "path": "jdk:jmods/jdk.jshell.jmod",
+      "sha256": "2ebd5f8e841a4b58f89dcf3bf5f9412ca8f02585cb27bd0308e6a03fbf5f7d39"
+    },
+    {
+      "path": "jdk:jmods/jdk.jsobject.jmod",
+      "sha256": "b47db20e5d49a06dd5229d2461ac8846dc7a7152ef4d615aa4c8628ef242c0aa"
+    },
+    {
+      "path": "jdk:jmods/jdk.jstatd.jmod",
+      "sha256": "dbf673f2be9ca118b1f10ecc01d77d0ef16e3c507f42239a67036842453fedd9"
+    },
+    {
+      "path": "jdk:jmods/jdk.localedata.jmod",
+      "sha256": "b7813e6c5593087ed5471c61ae6f64abd3cec0964631d1244b06b3c9a7a7d2ae"
+    },
+    {
+      "path": "jdk:jmods/jdk.management.agent.jmod",
+      "sha256": "6ad503ecbda01865f45c3e9e317d908888022e10a166441c3d471047e2384702"
+    },
+    {
+      "path": "jdk:jmods/jdk.management.jfr.jmod",
+      "sha256": "15d5eaab4d907cb3b94b80370039c8c8dc04f2310a29da3332cc6191a50ab096"
+    },
+    {
+      "path": "jdk:jmods/jdk.management.jmod",
+      "sha256": "27624a78218167a56f0f7fde109c28b8ac25cb755971136df17276cb9f1b9560"
+    },
+    {
+      "path": "jdk:jmods/jdk.naming.dns.jmod",
+      "sha256": "3abbae602690bd27b9028529015166a8194f243d89544412ff5c987d9cd54ea6"
+    },
+    {
+      "path": "jdk:jmods/jdk.naming.rmi.jmod",
+      "sha256": "08979688a70613fb262535e9f2a41c64c9856dc3794aa2cd4414489902f83c23"
+    },
+    {
+      "path": "jdk:jmods/jdk.net.jmod",
+      "sha256": "ac16b37881e06b54607b084b309e0d709093016b7b5f105ab8975af5ca91ea2f"
+    },
+    {
+      "path": "jdk:jmods/jdk.nio.mapmode.jmod",
+      "sha256": "db5b261ce0971e221c2096ecc8d27a9c68c03b93d133823126e320d4ea5c68f8"
+    },
+    {
+      "path": "jdk:jmods/jdk.random.jmod",
+      "sha256": "cac44e8f491bf98a49b717217340121bf458af71145c0f639d0694332f371d50"
+    },
+    {
+      "path": "jdk:jmods/jdk.sctp.jmod",
+      "sha256": "27a18a427a92220b772f63fe2ecb87122e50f11edc0bc6d5c6fee3d085f53c9b"
+    },
+    {
+      "path": "jdk:jmods/jdk.security.auth.jmod",
+      "sha256": "bc59b76bc1a0bd0740018350e96807572774f624daac64854067bf5b6f31f820"
+    },
+    {
+      "path": "jdk:jmods/jdk.security.jgss.jmod",
+      "sha256": "65be4b7f77c4c8c61b5e365d92e233a203d960456d46e3375f9bfe0ad733edf9"
+    },
+    {
+      "path": "jdk:jmods/jdk.unsupported.desktop.jmod",
+      "sha256": "6787acac3c67335f59c942bc5543768d7db33fef615496effb7204068d4370bb"
+    },
+    {
+      "path": "jdk:jmods/jdk.unsupported.jmod",
+      "sha256": "cbbbc2e750ac87e389c5b5e2b6877fde5664a09b5851a00944f8d0dfcfba4414"
+    },
+    {
+      "path": "jdk:jmods/jdk.xml.dom.jmod",
+      "sha256": "8e1e2344791e76fe3db8cbcbf519181c347df431cec3f76bb35e21d25200eb16"
+    },
+    {
+      "path": "jdk:jmods/jdk.zipfs.jmod",
+      "sha256": "84f1149e70df5c985eaad42ad1a5244f2f2da2ca69e332304f7394e468f92714"
+    },
+    {
+      "path": "repo:benchmarks/g2-pipeline/test_m9_launcher.py",
+      "sha256": "2d139c6eab4f401ab771eba616cfe738e3b6008d7909e22ee2a789949d3b5bb6"
+    }
+  ],
+  "nativeAvailability": [
+    {
+      "root": "authored:m845-mixed-20261102-v3",
+      "captureManifestSha256": "a30801224c22f8659e94853dab6941fdf3a6d8f27cfa5355926458acbe049740",
+      "requestSha256": "c95b459794f118e0f2f2c582a11619618b7c1f8e552c32af95be4f7220c1742b",
+      "compatibility": "AVAILABLE_BYTES_UNASSESSED_NOT_ACCEPTANCE",
+      "qualification": "NO_NEW_QUALIFICATION_CLAIM",
+      "claim": "L01/D01: require source/context/tool/method/lineage reconciliation before C-lane reuse"
+    }
+  ],
+  "supersededRegistrationCandidate": {
+    "commit": "d8c26035f9254db040fc0a61336fada3fb2a98b6",
+    "runtimeSourceSha256": "f99e600c796ce265b173739be6af3c9d0089c6fe998edfcedac0a8107d8d4410",
+    "runtimeDirtyPatchSha256": "dc9147f639398c573c302ddc0da4c45be6a64d9826a67ee61e1d88191a15e66f",
+    "files": 635,
+    "jar": {
+      "path": "evidence:evo-baseline.jar",
+      "sha256": "9abf4fe83152a646888181f11e0a9d65de7fdcc40462c707f2077e4a7896cddb"
+    },
+    "packaging": "mvnw.cmd -q -pl cli package -DskipTests -Denforcer.skipRules=reactorModuleConvergence (after trusted dependency-closure install)",
+    "jarBytes": 46218769,
+    "reason": "Final self-review retained the pre-existing input-gap exact-completion guard in addition to final published-gap guard; previous artifact preserved, no acceptance data reused"
+  },
+  "pathRoots": {
+    "corpus": {
+      "recordedPath": "D:\\UIT\\evo-benchmark-cohort"
+    },
+    "evidence": {
+      "recordedPath": "D:\\UIT\\evo-benchmark-cohort\\m9-inputs-v1-final"
+    },
+    "jdk": {
+      "recordedPath": "C:\\Program Files\\Java\\jdk-21.0.12.1"
+    },
+    "node": {
+      "recordedPath": "D:\\node"
+    },
+    "browser": {
+      "recordedPath": "C:\\Program Files (x86)\\Microsoft\\Edge\\Application"
+    },
+    "authored": {
+      "recordedPath": "D:\\UIT\\evo-authored-fixtures"
+    }
+  },
+  "priorRegistration": {
+    "schema": "m9-evaluation-protocol-v1",
+    "sha256": "eb17a7e88905a7efe92a7cbc7edd668601235aa01e3c425273c51903a8e66831",
+    "path": "evidence:registry-workspace-v1.json"
+  },
+  "locationRevision": "portable-locations-r1; candidate and experimental design unchanged"
+}

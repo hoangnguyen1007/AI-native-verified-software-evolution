@@ -689,9 +689,16 @@ public final class EvoApp {
                 var graph=r.storage().publish(new CanonicalGraphInput(input.repository(),input.build(),input.ingestion(),input.spring(),input.issues(),frozenScanGaps,input.acquisition(),input.javaEvidence()),graphLedgers,store->new PolyglotScan().project(polyglot,store,()->Thread.currentThread().isInterrupted()));
                 var semanticDepth=SemanticDepth.summarize(detailed,graph.edgeKinds());
                 data.put("semanticDepth",semanticDepth);
-                boolean exactComplete=detailed.report().status()==UniversalArchitectureReport.Status.COMPLETE&&!availablePlatforms.isEmpty()&&scanGaps.isEmpty();
+                var publishedGapSummary=graphGapSummary(graph,scanGaps.size());
+                var publishedGapReasons=GraphJson.object(publishedGapSummary.get("byReason"));
+                // Projection can add obligations after intake (notably cross-language RPC routing).
+                // Completion must account for the same final gap population shown in the receipt.
+                boolean publishedCompletionBlocked=publishedGapReasons.containsKey("GRPC_ROUTING_EVIDENCE_MISSING")
+                        ||publishedGapReasons.containsKey("JAVA_COMPATIBILITY_WORKER_REQUIRED");
+                boolean exactComplete=detailed.report().status()==UniversalArchitectureReport.Status.COMPLETE&&!availablePlatforms.isEmpty()&&scanGaps.isEmpty()&&((Number)publishedGapSummary.get("total")).longValue()==0;
                 boolean passiveArchitectureComplete=!exactComplete&&!availablePlatforms.isEmpty()
-                        &&SemanticDepth.meetsPassiveArchitectureThreshold(semanticDepth,polyglot.summary(),detailed,polyglot.gaps());
+                        &&!publishedCompletionBlocked
+                        &&SemanticDepth.meetsPassiveArchitectureThreshold(semanticDepth,polyglot.summary(),detailed,frozenScanGaps);
                 data.put("evidenceTier",SemanticDepth.evidenceTier(detailed.report().status(),exactComplete,passiveArchitectureComplete));
                 if(exactComplete||passiveArchitectureComplete)data.put("status","COMPLETE");
                 if(r.debug)err.println("[DEBUG] graph storage=PARTITIONED_DISK nodes="+graph.nodes()+" edges="+graph.edges()+" evidence="+graph.evidence());
@@ -700,7 +707,7 @@ public final class EvoApp {
                 if(usable&&interactiveDefaults!=null){interactiveDefaults.graph=null;interactiveDefaults.context=null;sessionGraph=null;}
                 data.put("graph",graph.graph());data.put("snapshotSelected",usable);data.put("contexts",contextRows(graph.contexts()));data.put("selectedContext",selected);
                 // The receipt is bounded independently of repository size. Every typed gap remains in the verified graph.
-                data.remove("gaps");data.put("gapSummary",graphGapSummary(graph,scanGaps.size()));
+                data.remove("gaps");data.put("gapSummary",publishedGapSummary);
                 data.remove("issues");data.put("issueSummary",Map.of("total",detailed.report().issues().size(),"byReason",reasonCounts(detailed.report().issues(),i->i.reason().name())));
                 data.remove("rootCauses");data.put("rootCauseSummary",Map.of("total",detailed.report().rootCauses().size(),"byCategory",reasonCounts(detailed.report().rootCauses(),c->c.category().name())));
             }

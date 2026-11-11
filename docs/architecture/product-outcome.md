@@ -5,7 +5,7 @@
 - **Product outcome:** CONFIRMED by the human owner on 2026-09-01.
 - **Capability boundaries and safety invariants:** CONFIRMED direction.
 - **Bounded conditional-architecture product direction:** ACCEPTED by [ADR-004](../decisions/ADR-004-staged-conditional-architecture-semantics.md); implementation and UX validation pending.
-- **Exact metric formulas, score weights, thresholds, visual framework, and performance budgets:** PROVISIONAL until their milestone gates.
+- **Metric formulas and score baseline:** CONFIRMED by human approval at [G4](../reproducibility/g4-adjudication-record-2026-10-15.md) and [G5](../reproducibility/g5-adjudication-record-2026-10-15.md), including weights, thresholds and penalties. Preserve emitted calibration/status markers; approval is distinct from empirical validity. G4 also freezes traversal quotas. Additional M9 performance/usability measurements follow the [registered protocol](../tasks/m9/PROTOCOL.md); they do not reopen the approved formula or imply M10 release acceptance.
 
 This document defines the minimum end-product contract for SE121. It prevents the project from completing as a technically strong analyzer without becoming a usable architecture-intelligence platform.
 
