@@ -127,7 +127,20 @@ Metrics/policy dùng language applicability. Không áp nguyên xi Java Martin m
 
 ## Completion và control gates
 
-Job state tách operational waiting/running/canceled/failed khỏi semantic partial/complete. `PARTIAL` được giảm bằng evidence closure, không bằng đổi nhãn trạng thái. Fully acquired nhưng unsupported language vẫn semantic partial. Pre-snapshot lỗi giữ typed acquisition receipt; không tạo fake semantic gap context. Complete theo ngôn ngữ/module không đủ suy ra root complete khi frontier, inaccessible input hoặc obligation còn mở.
+Job state tách operational waiting/running/canceled/failed khỏi semantic partial/complete. Semantic gaps được giảm bằng evidence closure; fully acquired nhưng unsupported language vẫn có semantic gap. Pre-snapshot lỗi giữ typed acquisition receipt; không tạo fake semantic gap context. Complete theo ngôn ngữ/module không đủ suy ra toàn bộ root có exact semantics khi frontier, inaccessible input hoặc obligation còn mở.
+
+### Ngưỡng hoàn thành phục hồi kiến trúc thụ động hiện hành: 95%
+
+**CONFIRMED — human, 2026-11-11:** dùng **95.0% (`950‰`)**, thay cho ngưỡng hoàn thành thụ động 98% trước đây, đúng với `SemanticDepth.ARCHITECTURE_THRESHOLD_PER_MILLE = 950L`. Mục tiêu là cho phép nhiều lượt phân tích đủ hữu ích đạt `COMPLETE` / exit code `0`, giảm `PARTIAL` do ngưỡng phục hồi cấu trúc quá cao. Quyết định đã được duyệt trong [amendment ADR-007](../decisions/ADR-007-isolated-build-and-polyglot-readiness.md#human-approved-passive-recovery-completion-threshold--2026-11-11); không yêu cầu hỏi lại tại M9.
+
+Predicate hiện hành trong [SemanticDepth](../../backend/src/main/java/com/evolution/backend/analysis/SemanticDepth.java) giữ các điều kiện đi kèm:
+
+- Với JVM contexts đã phân tích: cả `architectureResolution.structure` và nhóm `HIERARCHY_AND_ANNOTATIONS` có mẫu số dương và tỷ lệ resolved đạt **ít nhất `950‰`**. Nếu có population `sourceSyntax` đa ngôn ngữ khác 0 thì tỷ lệ parsed cũng phải đạt **ít nhất `950‰`**.
+- Với lane thuần non-JVM: không có Java files chưa được phân tích; `sourceSyntax.documents > 0`, tỷ lệ parsed đạt **ít nhất `950‰`**, và có quan sát được đếm trong `edges` hoặc `sourceSyntax.categories`. Đây là completion của lane phục hồi thụ động, không là chứng nhận native binding hoặc semantic correctness.
+- Không có `SEMANTIC_INPUT_REJECTED` / `SEMANTIC_PROVIDER_FAILED`, `JAVA_COMPATIBILITY_WORKER_REQUIRED` hoặc `GRPC_ROUTING_EVIDENCE_MISSING` trong các nguồn được predicate kiểm tra; terminal failure/cancelled không đạt predicate. CLI vẫn cần platform inputs và graph publication hợp lệ như hiện tại.
+- Khi đủ điều kiện thụ động, `status=COMPLETE` đi cùng `evidenceTier=PASSIVE_ARCHITECTURE_RECOVERY`; giữ mọi `CapabilityGapRecord`, uncertainty và `gapSummary`. `VERIFIED_EXACT` vẫn theo predicate exact riêng; tỷ lệ 95% không cấp nhãn này, không tăng health score và không xác nhận đã native build.
+
+Ngưỡng dưới 95% hoặc các điều kiện còn thiếu tiếp tục giữ kết quả qualified/partial theo contract; lỗi vận hành giữ failure/cancellation tương ứng. Quyết định này thay completion policy, không thay số liệu đã đo, không đổi denominator và không khẳng định độ đúng ngữ nghĩa 95%. Các báo cáo ngưỡng 98% trước 2026-11-11 được giữ như lịch sử, không là quy định completion hiện hành.
 
 M8.4 acceptance gồm correctness/isolation/recovery/scale/interop controls tại bước 6; không thay G2–G6 lịch sử hay M10 approval. Mỗi claim phải chỉ rõ finite tested cohort, engine/tool versions và resource profile. Một test lớn hoặc một lượt build xanh không chứng minh “mọi repo toàn thế giới”.
 

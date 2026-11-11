@@ -18,6 +18,14 @@ Full A01–A12 pack/method qualification and production validation-method regist
 
 Alternatives: retain the full original Task-1 exit (not selected); claim qualification without evidence (rejected); or accept the demonstrated bounded implementation with explicit limits (selected by the human). No new code, VM campaign, certificate or unrestricted executor is required for this acceptance. Step 5 remains in progress; Bước 2–3 and later milestone gates retain their scopes. The comprehensive coverage mandate and execution safety remain in force. [Execution record](../tasks/m8/04-step5-step1-execution.md) owns the evidence; [current state](../current-state.md) owns the next task.
 
+## Human-approved passive recovery completion threshold — 2026-11-11
+
+**CONFIRMED direct human decision:** set the documented passive architecture recovery completion threshold to **95.0% (`950‰`)**, matching the existing code, so more useful scans can succeed without excessive `PARTIAL` outcomes caused solely by the former 98% threshold. This replaces the previous passive completion threshold and resolves the M9 plan's 95%/98% decision question; no further approval is required to apply 95%.
+
+Alternatives: retain 98% (superseded by this decision); use 95% with the existing failed-unit/required-evidence guards and explicit recovery tier (selected); or discard gaps/promote recovery to exact semantics to increase success counts (not authorized). The [readiness contract](../architecture/m8-repository-readiness.md#ngưỡng-hoàn-thành-phục-hồi-kiến-trúc-thụ-động-hiện-hành-95) owns the current predicate and its applicable JVM/polyglot populations.
+
+`COMPLETE` / exit code `0` can therefore describe a `PASSIVE_ARCHITECTURE_RECOVERY` result satisfying that predicate. Every capability gap, uncertainty, denominator and evidence-tier distinction remains visible. `VERIFIED_EXACT`, native execution safety, semantic correctness and health-score requirements are unchanged. The intended reduction in partial outcomes is a policy consequence; its magnitude has not been measured by this documentation update. Existing empirical rows, raw captures and historical 98% results are not relabeled or recalculated. M8 remains closed; M9 evaluation and M10 approval remain separate.
+
 ## Authority and problem
 
 The owner explicitly requested M8.4 planning, replacement of the blanket target-build prohibition with a prohibition on direct host execution, removal of artificial repository acquisition ceilings, comprehensive module/generated-code handling, and maximum evidence coverage. In the follow-up choice the owner explicitly selected **semantic engines for non-Java languages in M8.4**, rather than inventory-only polyglot support.

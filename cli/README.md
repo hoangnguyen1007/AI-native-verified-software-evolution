@@ -137,6 +137,8 @@ For command results, `--json` emits only canonical JSON on stdout with M7.1 enve
 | 4 | Complete policy evaluation exceeds explicit `--fail-on info\|warning\|error` threshold |
 | 130 | Canonical query cancellation |
 
+**Passive scan completion (human-approved 2026-11-11):** the threshold is **95.0% (`950‰`)**. A scan meeting the applicable structure/syntax criteria and existing failed-unit/required-evidence guards can return `COMPLETE` / exit `0` with `evidenceTier=PASSIVE_ARCHITECTURE_RECOVERY`, even while capability gaps remain visible. Read `evidenceTier` and `gapSummary` alongside `status`; this result does not establish `VERIFIED_EXACT` or complete policy conformance. The [readiness contract](../docs/architecture/m8-repository-readiness.md#ngưỡng-hoàn-thành-phục-hồi-kiến-trúc-thụ-động-hiện-hành-95) defines the applicable populations and guards. Historical 98% reports retain their original results.
+
 Incomplete policy evidence takes precedence over the CI threshold: exit 3 cannot establish conformance. Default `--fail-on none` leaves policy decisions to the caller. Ctrl+C terminates the process; hard interruption may prevent delivery of a JSON envelope. The palette does not change to a raw/full-screen terminal mode. It accepts numbered actions, ordinary commands, quoted paths, `lang en|vi`, `help`, `quit` and EOF. It never evaluates shell expressions.
 
 Storage failures retain a structured diagnostic instead of the generic

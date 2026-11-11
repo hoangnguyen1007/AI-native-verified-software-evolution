@@ -1,18 +1,42 @@
 [CmdletBinding()]
 param(
-    [string]$TargetRepository = "$PSScriptRoot\temp_repo\spring-petclinic",
+    [string]$TargetRepository = "",
     [string]$RepositoryCoordinate = "https://github.com/spring-projects/spring-petclinic.git",
     [string]$RepositoryLabel = "spring-petclinic",
     [int]$FallbackPlatformRelease = 17,
     [string]$MavenRepository = "",
     [string]$JdkHome = "",
     [string[]]$RemotePomRepositories = @("https://repo.maven.apache.org/maven2/"),
-    [string]$DocumentationDirectory = "$PSScriptRoot\..\docs\reproducibility\g2-petclinic-check-2026-09-09",
-    [switch]$Publish
+    [string]$DocumentationDirectory = "",
+    [switch]$Publish,
+    [switch]$M9Preflight,
+    [string]$M9Registry = "",
+    [string]$Python = "python",
+    [string]$M9RootsFile = ""
 )
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+
+# Windows PowerShell -File binds parameters before PSScriptRoot is available.
+if ([string]::IsNullOrWhiteSpace($TargetRepository)) {
+    $TargetRepository = Join-Path $PSScriptRoot 'temp_repo\spring-petclinic'
+}
+if ([string]::IsNullOrWhiteSpace($DocumentationDirectory)) {
+    $DocumentationDirectory = Join-Path $PSScriptRoot '..\docs\reproducibility\g2-petclinic-check-2026-09-09'
+}
+if ([string]::IsNullOrWhiteSpace($M9Registry)) {
+    $M9Registry = Join-Path $PSScriptRoot '..\docs\tasks\m9\registry.json'
+}
+
+if ($M9Preflight) {
+    if ($Publish) { throw 'M9 preflight is read-only; Publish is incompatible' }
+    $preflightArgs = @('preflight', '--registry', $M9Registry, '--verify-sources')
+    if (![string]::IsNullOrWhiteSpace($M9RootsFile)) { $preflightArgs += @('--roots-file', $M9RootsFile) }
+    & $Python "$PSScriptRoot\g2-pipeline\m9_protocol.py" @preflightArgs
+    if ($LASTEXITCODE -ne 0) { throw 'M9 registration preflight failed' }
+    return
+}
 
 if ([string]::IsNullOrWhiteSpace($MavenRepository)) {
     if (![string]::IsNullOrWhiteSpace($env:G2_MAVEN_REPOSITORY)) {

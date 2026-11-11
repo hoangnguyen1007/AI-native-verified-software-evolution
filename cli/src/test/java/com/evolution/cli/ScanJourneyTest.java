@@ -30,6 +30,8 @@ class ScanJourneyTest {
         Files.writeString(source.resolve("client.go"),"package main\nfunc f(){ pb.NewCartClient(conn).Get(ctx, req) }");
         Files.writeString(source.resolve("server.py"),"import demo_pb2_grpc\nclass C(demo_pb2_grpc.CartServicer):\n    def Get(self,r,c):\n        return Reply()\n");
         var result=run("scan",source.toString(),"--offline","--build","off","--json");assertEquals(3,result.code,result.err+result.out);
+        assertEquals("PARTIAL",result.data().get("status"));
+        assertEquals("PARTIAL_RECOVERY",result.data().get("evidenceTier"));
         var graph=new Workspace(workspace).selectedGraph();var summary=GraphJson.object(result.data().get("gapSummary"));
         assertEquals(graph.nodes().stream().filter(n->n.kind().equals("CAPABILITY_GAP")).map(KnowledgeGraph.Node::identity).distinct().count(),((Number)summary.get("total")).longValue());
         assertTrue(((Number)summary.get("inputTotal")).longValue()<((Number)summary.get("total")).longValue());
@@ -176,7 +178,7 @@ class ScanJourneyTest {
         assertEquals(1L,((Number)depth.get("sourceRecoveryContexts")).longValue());
         assertEquals(0L,((Number)GraphJson.object(depth.get("relationships")).get("resolved")).longValue(),"Mismatched decoding cannot become exact attribution");
     }
-    @Test void passiveScanCompletesWithPassiveArchitectureRecoveryTierWhenStructureExceedsNinetyEightPercent()throws Exception{
+    @Test void passiveScanCompletesWithPassiveArchitectureRecoveryTierUnderApprovedNinetyFivePercentPolicy()throws Exception{
         Path source=Files.createDirectory(workspace.resolve("arch-complete"));
         Files.createDirectories(source.resolve("src/main/java/demo"));
         Files.writeString(source.resolve("src/main/java/demo/OwnerController.java"),"""

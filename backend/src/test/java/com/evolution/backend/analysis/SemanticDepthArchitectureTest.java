@@ -18,7 +18,7 @@ class SemanticDepthArchitectureTest {
         assertEquals(com.evolution.analysis.contract.serialization.CanonicalJson.write(split),com.evolution.analysis.contract.serialization.CanonicalJson.write(SemanticDepth.architectureResolution(categories)));
     }
 
-    @Test void passiveArchitectureThresholdRequiresNinetyEightPercentStructureAndNoFailedUnits() {
+    @Test void passiveArchitectureThresholdRequiresNinetyFivePercentStructureAndNoFailedUnits() {
         var jvmCompleteDepth = Map.<String, Object>of(
                 "analyzedContexts", 4L,
                 "architectureResolution", Map.of(
@@ -68,6 +68,61 @@ class SemanticDepthArchitectureTest {
                 nonJvmDepth, fastApiPolyglot, false, false, 0L, false));
         assertFalse(SemanticDepth.meetsPassiveArchitectureThreshold(
                 nonJvmDepth, fastApiPolyglot, false, false, 0L, true));
+    }
+
+    @Test void passiveCompletionChecksEachPopulationAt949And950AndRetainsEvidenceGuards() {
+        assertEquals(950L, SemanticDepth.ARCHITECTURE_THRESHOLD_PER_MILLE);
+        var syntax950 = syntax(1000, 950, 1);
+        var syntax949 = syntax(1000, 949, 1);
+        var accepted = depth(1000, 950, 1000, 950);
+        assertTrue(passive(accepted, syntax950, false, false, 10, false));
+        assertFalse(passive(depth(1000, 949, 1000, 950), syntax950, false, false, 10, false));
+        assertFalse(passive(depth(1000, 950, 1000, 949), syntax950, false, false, 10, false));
+        assertFalse(passive(accepted, syntax949, false, false, 10, false));
+        assertFalse(passive(depth(0, 0, 1000, 950), syntax950, false, false, 10, false));
+        assertFalse(passive(depth(1000, 950, 0, 0), syntax950, false, false, 10, false));
+        assertFalse(passive(accepted, syntax950, true, false, 10, false));
+        assertFalse(passive(accepted, syntax950, false, true, 10, false));
+        assertFalse(passive(accepted, syntax950, false, false, 10, true));
+        assertFalse(passive(null, syntax950, false, false, 10, false));
+        // A JVM-only population does not acquire a synthetic polyglot denominator.
+        assertTrue(passive(accepted, null, false, false, 10, false));
+        assertTrue(passive(accepted, syntax(0, 0, 0), false, false, 10, false));
+
+        var nonJvm = Map.<String, Object>of("analyzedContexts", 0L);
+        assertTrue(passive(nonJvm, syntax950, false, false, 0, false));
+        assertFalse(passive(nonJvm, syntax949, false, false, 0, false));
+        assertFalse(passive(nonJvm, syntax950, false, false, 1, false));
+        assertFalse(passive(nonJvm, syntax(0, 0, 1), false, false, 0, false));
+        assertFalse(passive(nonJvm, syntax(1000, 950, 0), false, false, 0, false));
+        assertFalse(passive(nonJvm, null, false, false, 0, false));
+        assertTrue(passive(nonJvm, Map.of("sourceSyntax", Map.of("documents", 1000L,
+                "parsedDocuments", 950L, "categories", Map.of("IMPORT", 1L))), false, false, 0, false));
+        for (var status : List.of(
+                com.evolution.analysis.ingestion.UniversalArchitectureReport.Status.TERMINAL_FAILURE,
+                com.evolution.analysis.ingestion.UniversalArchitectureReport.Status.CANCELLED)) {
+            assertEquals("FAILED", SemanticDepth.evidenceTier(status, false, false));
+        }
+        assertEquals("PARTIAL_RECOVERY", SemanticDepth.evidenceTier(
+                com.evolution.analysis.ingestion.UniversalArchitectureReport.Status.PARTIAL, false, false));
+        assertFalse(SemanticDepth.meetsPassiveArchitectureThreshold(accepted, syntax950, null, List.of()));
+    }
+
+    private static Map<String, Object> depth(long structureTotal, long structureResolved,
+                                             long hierarchyTotal, long hierarchyResolved) {
+        return Map.of("analyzedContexts", 1L, "architectureResolution", Map.of("structure", Map.of(
+                "attempted", structureTotal, "resolvedPerMille", structureTotal == 0 ? 0 : structureResolved * 1000 / structureTotal)),
+                "relationships", Map.of("byCategory", Map.of("java.extends", Map.of(
+                        "attempted", hierarchyTotal, "resolved", hierarchyResolved))));
+    }
+
+    private static Map<String, Object> syntax(long documents, long parsed, long edges) {
+        return Map.of("sourceSyntax", Map.of("documents", documents, "parsedDocuments", parsed), "edges", edges);
+    }
+
+    private static boolean passive(Map<String, Object> depth, Map<String, Object> syntax,
+                                   boolean failed, boolean worker, long javaFiles, boolean rpc) {
+        return SemanticDepth.meetsPassiveArchitectureThreshold(depth, syntax, failed, worker, javaFiles, rpc);
     }
 }
 
