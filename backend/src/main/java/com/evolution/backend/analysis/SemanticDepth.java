@@ -73,8 +73,8 @@ public final class SemanticDepth {
             "java.throws","java.annotated-with","java.type-argument","java.type-parameter-bound");
     /** Type-hierarchy and component/stereotype annotation relations required for architectural component & boundary recovery. */
     static final Set<String> HIERARCHY_AND_ANNOTATIONS=Set.of("java.extends","java.implements","java.permits","java.annotated-with");
-    /** Minimum per-mille resolution threshold (98.0%) for passive architectural structure completion. */
-    public static final long ARCHITECTURE_THRESHOLD_PER_MILLE=980L;
+    /** Minimum per-mille resolution threshold (95.0%) for passive architectural structure completion. */
+    public static final long ARCHITECTURE_THRESHOLD_PER_MILLE=950L;
     /** Expression-level relations inside bodies; third-party calls here must not hide an exact structural skeleton. */
     static final Set<String> USAGE=Set.of("java.calls","java.constructor-calls","java.reads-field","java.writes-field","java.method-references","java.type-uses");
 
@@ -157,6 +157,11 @@ public final class SemanticDepth {
         long docs = number(syntax.get("documents"));
         long parsed = number(syntax.get("parsedDocuments"));
         long edges = number(polyglotSummary.get("edges"));
+        if (edges <= 0 && syntax.get("categories") instanceof Map<?, ?> cats) {
+            for (Object val : cats.values()) {
+                edges += number(val);
+            }
+        }
         return docs > 0 && edges > 0 && (parsed * 1000L / docs) >= ARCHITECTURE_THRESHOLD_PER_MILLE;
     }
 

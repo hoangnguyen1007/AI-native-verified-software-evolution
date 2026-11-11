@@ -130,15 +130,24 @@ final class Extraction {
             header.diagnostics.addAll(unit.diagnostics);
             if(compactBodies)releaseBody(unit);
         }
-        var outcomes = new ArrayList<>(rejected);
-        for (var unit : orderedUnits) outcomes.add(new SourceOutcome(unit.input.document().identity(),
-                unit.diagnostics.isEmpty() ? SourceOutcome.State.PROCESSED : SourceOutcome.State.PARTIAL, List.copyOf(unit.diagnostics)));
+        var outcomesByDoc = new LinkedHashMap<SourceDocumentIdentity, SourceOutcome>();
+        for (var outcome : rejected) {
+            outcomesByDoc.merge(outcome.document(), outcome, Extraction::mergeOutcome);
+        }
+        for (var unit : orderedUnits) {
+            var outcome = new SourceOutcome(unit.input.document().identity(),
+                    unit.diagnostics.isEmpty() ? SourceOutcome.State.PROCESSED : SourceOutcome.State.PARTIAL,
+                    List.copyOf(unit.diagnostics));
+            outcomesByDoc.merge(outcome.document(), outcome, Extraction::mergeOutcome);
+        }
         for (var reactor : reactorUnits) {
             Unit unit = reactor.unit();
-            outcomes.add(new SourceOutcome(unit.input.document().identity(),
+            var outcome = new SourceOutcome(unit.input.document().identity(),
                     unit.diagnostics.isEmpty() ? SourceOutcome.State.PROCESSED : SourceOutcome.State.PARTIAL,
-                    List.copyOf(unit.diagnostics)));
+                    List.copyOf(unit.diagnostics));
+            outcomesByDoc.merge(outcome.document(), outcome, Extraction::mergeOutcome);
         }
+        var outcomes = new ArrayList<>(outcomesByDoc.values());
         var coverage = FrontendRequest.CATEGORIES.stream().map(c -> {
             var kind = new RelationshipKind("java." + c);
             long attempted = observations.stream().filter(o -> o.category().equals(kind)).count();
@@ -181,9 +190,25 @@ final class Extraction {
                 String verb=method.startsWith("getFor")?"GET":method.startsWith("postFor")?"POST":method.equals("put")?"PUT":method.equals("patchForObject")?"PATCH":method.equals("delete")?"DELETE":method.equals("headForHeaders")?"HEAD":method.equals("optionsForAllow")?"OPTIONS":"";
                 if(reactive)verb=reactiveVerb(call,bindings);
                 result.add(new HttpClientCallRecord(caller.identity(),bound.identity(),span,uri,verb.isEmpty()?List.of():List.of(verb)));
-            }catch(RuntimeException unavailable){/* The original attribution ledger retains unavailable bindings. */}
+            }catch(RuntimeException | LinkageError | StackOverflowError unavailable){/* The original attribution ledger retains unavailable bindings. */}
         }
         return result;
+    }
+
+    private static SourceOutcome mergeOutcome(SourceOutcome a, SourceOutcome b) {
+        var mergedDiagnostics = new TreeSet<>(a.diagnostics());
+        mergedDiagnostics.addAll(b.diagnostics());
+        SourceOutcome.State mergedState;
+        if (a.state() == SourceOutcome.State.ERROR || b.state() == SourceOutcome.State.ERROR) {
+            mergedState = SourceOutcome.State.ERROR;
+        } else if (a.state() == SourceOutcome.State.PARTIAL
+                || b.state() == SourceOutcome.State.PARTIAL
+                || !mergedDiagnostics.isEmpty()) {
+            mergedState = SourceOutcome.State.PARTIAL;
+        } else {
+            mergedState = SourceOutcome.State.PROCESSED;
+        }
+        return new SourceOutcome(a.document(), mergedState, List.copyOf(mergedDiagnostics));
     }
     private String reactiveVerb(MethodCallExpr uri,Map<SourceSpan,RelationshipOccurrence> bindings) {
         Expression scope=uri.getScope().orElse(null);

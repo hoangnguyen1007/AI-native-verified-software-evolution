@@ -42,6 +42,12 @@ public final class RepositoryInputDecoder {
         if (acquisition.snapshot().isPresent()) {
             var snapshot = acquisition.snapshot().orElseThrow();
             var provisionalModule = ModuleDescriptor.create(snapshot.repository(), ".", "intake-observed");
+            Set<String> lfsPaths = new HashSet<>();
+            for (var row : inventory.observedFiles()) {
+                if (row.availability() == RepositoryUnderstandingInventory.Availability.LFS_POINTER) {
+                    lfsPaths.add(row.path());
+                }
+            }
             Map<String, SourceInput> decoded = new TreeMap<>();
             int attempted = 0;
             for (var file : acquisition.files()) {
@@ -51,8 +57,7 @@ public final class RepositoryInputDecoder {
                             file.path(), List.of(file.contentDigest())));
                     continue;
                 }
-                if (inventory.observedFiles().stream().anyMatch(row -> row.path().equals(file.path())
-                        && row.availability() == RepositoryUnderstandingInventory.Availability.LFS_POINTER)) {
+                if (lfsPaths.contains(file.path())) {
                     issues.add(new IngestionEvidence.Issue(IngestionEvidence.Reason.INPUT_UNAVAILABLE,
                             file.path(), List.of(file.contentDigest())));
                     continue;

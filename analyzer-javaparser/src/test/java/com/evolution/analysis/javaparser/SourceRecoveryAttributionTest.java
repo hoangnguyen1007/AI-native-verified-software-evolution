@@ -247,4 +247,31 @@ class SourceRecoveryAttributionTest {
                 d.entity().origin() == EntityOrigin.PROJECT
                 && d.derivation().method().id().equals("java.android-synthetic-recovery")));
     }
+
+    @Test void unambiguousExternalWildcardAndOverloadedJdkCallsWithRecoveredArgumentResolveCleanly() {
+        String source = """
+                package com.example.arch;
+                import java.util.*;
+                import com.custom.thirdparty.framework.*;
+                import org.novel.annotations.stereotype.*;
+                @NovelComponent
+                public class OrderProcessor implements ExternalProcessor<String> {
+                    public String format(ExternalPayload payload) {
+                        return String.valueOf(payload);
+                    }
+                }
+                """;
+        var result = new JavaParserFrontend().analyze(LombokIngestionTest.recovery(TestInputs.request(source)));
+        var structureCategories = Set.of(
+                "java.extends", "java.implements", "java.field-type",
+                "java.parameter-type", "java.returns", "java.annotated-with", "java.type-argument");
+        var unresolvedStructure = result.observations().stream()
+                .filter(o -> structureCategories.contains(o.category().value()) && o.attribution() != SemanticStatus.RESOLVED)
+                .toList();
+        assertEquals(List.of(), unresolvedStructure);
+        var unresolvedCalls = result.observations().stream()
+                .filter(o -> o.category().value().equals("java.calls") && o.attribution() != SemanticStatus.RESOLVED)
+                .toList();
+        assertEquals(List.of(), unresolvedCalls);
+    }
 }

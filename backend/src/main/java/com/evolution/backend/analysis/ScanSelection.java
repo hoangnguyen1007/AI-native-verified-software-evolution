@@ -45,8 +45,7 @@ public final class ScanSelection {
         return List.of(".java",".xml",".properties",".yml",".yaml",".toml",".imports",".gradle",".kts",".kt",".scala",".groovy",".js",".ts",".cs",".c",".cpp",".h").stream().anyMatch(name::endsWith);
     }
     public static boolean semanticInput(InventoryEntry entry,boolean includeTests,boolean allFiles){
-        if(allFiles)return true;
-        return entry.path().utf8().map(path->{String rooted="/"+path;if(!includeTests&&(rooted.contains("/src/test/")||rooted.contains("/src/integrationTest/")))return false;return input(path);}).orElse(false);
+        return entry.path().utf8().map(path->{String rooted="/"+path;if(!includeTests&&(rooted.contains("/src/test/")||rooted.contains("/src/integrationTest/")||rooted.contains("/src/androidTest/")))return false;return allFiles||input(path);}).orElse(false);
     }
     private ScanSelection(){}
 }

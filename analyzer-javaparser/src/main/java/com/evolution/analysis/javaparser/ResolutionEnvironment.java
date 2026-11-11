@@ -29,6 +29,14 @@ final class ResolutionEnvironment {
 
     private record PlatformCacheKey(PlatformInput.Format format, int release, ContentDigest digest) {}
     private record JarCacheKey(int targetRelease, ContentDigest digest) {}
+    private record FileStamp(Path path, long size, long lastModifiedMillis) {}
+    private static final Map<FileStamp, ContentDigest> VERIFIED_FILE_DIGESTS =
+            Collections.synchronizedMap(new LinkedHashMap<>(512, 0.75f, true) {
+                @Override
+                protected boolean removeEldestEntry(Map.Entry<FileStamp, ContentDigest> eldest) {
+                    return size() > 2048;
+                }
+            });
 
     final MemoryTypeSolver project = new MemoryTypeSolver();
     final CombinedTypeSolver platform = new CombinedTypeSolver();
@@ -40,6 +48,9 @@ final class ResolutionEnvironment {
     private final FrontendRequest request;
     private final ClasspathEntry platformEntry;
     private final List<Artifact> artifacts = new ArrayList<>();
+    private final Set<String> platformKnownClasses = new HashSet<>();
+    private final Set<String> artifactKnownClasses = new HashSet<>();
+    private boolean hasRuntimeModulesPlatform;
     private final Map<ContentDigest, ArchiveTypeSolver> memberEvidence = new TreeMap<>();
     private final Map<Integer, MemoryTypeSolver> reactorSources = new TreeMap<>();
     private record Artifact(BinaryInput input, ArchiveTypeSolver solver) {}
@@ -54,6 +65,7 @@ final class ResolutionEnvironment {
         // Missing targets remain unresolved at the individual observation, never filled by host lookup.
         try {
             var platformPaths = new HashSet<Path>();
+            var platformArchiveSolvers = new ArrayList<ArchiveTypeSolver>();
             for (var artifact : request.platform().artifacts()) {
                 if(request.sourceRecovery()&&"false".equals(request.manifest().configuration().values().get(FrontendRequest.RECOVERY_PLATFORM_COMPATIBLE)))continue;
                 Path real = artifact.path().toRealPath();
@@ -68,6 +80,11 @@ final class ResolutionEnvironment {
                                 || !Files.isSameFile(real, runtimeModules)) {
                             throw new FrontendInputException("frontend.platform-view", "Running-module symbols must identify the running JDK exactly");
                         }
+                        if (!platformArchiveSolvers.isEmpty()) {
+                            platform.add(new IndexedArchiveGroupSolver(platformArchiveSolvers));
+                            platformArchiveSolvers.clear();
+                        }
+                        hasRuntimeModulesPlatform = true;
                         platform.add(new ClassLoaderTypeSolver(ClassLoader.getPlatformClassLoader()));
                     }
                     case JAR -> {
@@ -81,7 +98,9 @@ final class ResolutionEnvironment {
                             cached = buildJarArchive(bytes, release);
                             PLATFORM_CACHE.put(key, cached);
                         }
-                        platform.add(solverFromCachedJar(cached, artifact.logicalName()));
+                        var s = solverFromCachedJar(cached, artifact.logicalName());
+                        platformKnownClasses.addAll(s.getKnownClasses());
+                        platformArchiveSolvers.add(s);
                     }
                     case JMOD -> {
                         verify(artifact.contentDigest(), real);
@@ -91,7 +110,9 @@ final class ResolutionEnvironment {
                             cached = buildJmodArchive(real);
                             PLATFORM_CACHE.put(key, cached);
                         }
-                        platform.add(new ArchiveTypeSolver(cached));
+                        var s = new ArchiveTypeSolver(cached);
+                        platformKnownClasses.addAll(s.getKnownClasses());
+                        platformArchiveSolvers.add(s);
                     }
                     case CT_SYM -> {
                         verify(artifact.contentDigest(), real);
@@ -101,9 +122,14 @@ final class ResolutionEnvironment {
                             cached = buildCtSymArchive(real, release);
                             PLATFORM_CACHE.put(key, cached);
                         }
-                        platform.add(new ArchiveTypeSolver(cached));
+                        var s = new ArchiveTypeSolver(cached);
+                        platformKnownClasses.addAll(s.getKnownClasses());
+                        platformArchiveSolvers.add(s);
                     }
                 }
+            }
+            if (!platformArchiveSolvers.isEmpty()) {
+                platform.add(new IndexedArchiveGroupSolver(platformArchiveSolvers));
             }
             var paths = new HashSet<Path>();
             for (var input : request.dependencies()) {
@@ -120,6 +146,7 @@ final class ResolutionEnvironment {
                     JAR_CACHE.put(key, cached);
                 }
                 var jar = solverFromCachedJar(cached, input.entry().logicalName());
+                artifactKnownClasses.addAll(jar.getKnownClasses());
                 artifacts.add(new Artifact(input, jar));
             }
             if(request.correspondence().isPresent()){
@@ -143,14 +170,22 @@ final class ResolutionEnvironment {
             request.reactorSources().forEach(input -> sourcePositions.put(input.order(), input));
             int binary = 0;
             int size = request.dependencies().size() + request.reactorSources().size();
+            var contiguousBinarySolvers = new ArrayList<ArchiveTypeSolver>();
             for (int order = 0; order < size; order++) {
                 if (sourcePositions.containsKey(order)) {
+                    if (!contiguousBinarySolvers.isEmpty()) {
+                        solver.add(new IndexedArchiveGroupSolver(contiguousBinarySolvers));
+                        contiguousBinarySolvers.clear();
+                    }
                     var sourceSolver = new MemoryTypeSolver();
                     reactorSources.put(order, sourceSolver);
                     solver.add(sourceSolver);
                 } else {
-                    solver.add(artifacts.get(binary++).solver());
+                    contiguousBinarySolvers.add(artifacts.get(binary++).solver());
                 }
+            }
+            if (!contiguousBinarySolvers.isEmpty()) {
+                solver.add(new IndexedArchiveGroupSolver(contiguousBinarySolvers));
             }
             solver.add(androidProject);
             solver.add(androidPlatform);
@@ -206,6 +241,20 @@ final class ResolutionEnvironment {
         verify(entry.contentDigest(), bytes);
     }
     private static void verify(ContentDigest expected, Path path) throws IOException {
+        FileStamp cacheableStamp = null;
+        try {
+            var attrs = Files.readAttributes(path, java.nio.file.attribute.BasicFileAttributes.class);
+            long mtime = attrs.lastModifiedTime().toMillis();
+            if (attrs.isRegularFile() && attrs.size() >= 65_536 && System.currentTimeMillis() - mtime > 2_000) {
+                cacheableStamp = new FileStamp(path, attrs.size(), mtime);
+                ContentDigest prev = VERIFIED_FILE_DIGESTS.get(cacheableStamp);
+                if (expected.equals(prev)) {
+                    return;
+                }
+            }
+        } catch (IOException ignored) {
+            // Fall through to full stream verification.
+        }
         java.security.MessageDigest digest;
         try { digest = java.security.MessageDigest.getInstance("SHA-256"); }
         catch (java.security.NoSuchAlgorithmException impossible) { throw new AssertionError(impossible); }
@@ -216,8 +265,12 @@ final class ResolutionEnvironment {
                 digest.update(buffer, 0, read);
             }
         }
-        if (!expected.value().equals("sha256:" + HexFormat.of().formatHex(digest.digest()))) {
+        String computed = "sha256:" + HexFormat.of().formatHex(digest.digest());
+        if (!expected.value().equals(computed)) {
             throw new FrontendInputException("frontend.artifact-digest", "Artifact bytes differ from the manifest");
+        }
+        if (cacheableStamp != null) {
+            VERIFIED_FILE_DIGESTS.put(cacheableStamp, expected);
         }
     }
     private static void verify(ContentDigest expected, byte[] bytes) {
@@ -472,9 +525,62 @@ final class ResolutionEnvironment {
         }
     }
 
+    private static final class IndexedArchiveGroupSolver implements com.github.javaparser.resolution.TypeSolver {
+        private final List<ArchiveTypeSolver> delegates;
+        private final Map<String, ArchiveTypeSolver> byClass;
+        private com.github.javaparser.resolution.TypeSolver parent;
+
+        IndexedArchiveGroupSolver(List<ArchiveTypeSolver> solvers) {
+            this.delegates = List.copyOf(solvers);
+            int expectedClasses = 16;
+            for (var s : this.delegates) {
+                expectedClasses += s.getKnownClasses().size();
+            }
+            var index = new HashMap<String, ArchiveTypeSolver>(Math.max(16, expectedClasses * 2));
+            for (var s : this.delegates) {
+                s.setParent(this);
+                for (String cls : s.getKnownClasses()) {
+                    index.putIfAbsent(cls, s);
+                }
+            }
+            this.byClass = index;
+        }
+
+        @Override
+        public com.github.javaparser.resolution.TypeSolver getParent() {
+            return parent;
+        }
+
+        @Override
+        public void setParent(com.github.javaparser.resolution.TypeSolver parent) {
+            Objects.requireNonNull(parent);
+            if (this.parent != null) throw new IllegalStateException("This TypeSolver already has a parent.");
+            if (parent == this) throw new IllegalStateException("The parent of this TypeSolver cannot be itself.");
+            this.parent = parent;
+        }
+
+        @Override
+        public com.github.javaparser.resolution.model.SymbolReference<com.github.javaparser.resolution.declarations.ResolvedReferenceTypeDeclaration> tryToSolveType(String name) {
+            ArchiveTypeSolver owner = byClass.get(name);
+            return owner == null
+                    ? com.github.javaparser.resolution.model.SymbolReference.unsolved()
+                    : owner.tryToSolveType(name);
+        }
+
+        @Override
+        public com.github.javaparser.resolution.model.SymbolReference<com.github.javaparser.resolution.declarations.ResolvedReferenceTypeDeclaration> tryToSolveTypeInModule(String qualifiedModuleName, String simpleTypeName) {
+            for (var s : delegates) {
+                var candidate = s.tryToSolveTypeInModule(qualifiedModuleName, simpleTypeName);
+                if (candidate.isSolved()) return candidate;
+            }
+            return com.github.javaparser.resolution.model.SymbolReference.unsolved();
+        }
+    }
+
     private static final class ArchiveTypeSolver implements com.github.javaparser.resolution.TypeSolver {
         private final CachedArchive archive;
         private final javassist.ClassPool classPool;
+        private final Map<String, com.github.javaparser.resolution.model.SymbolReference<com.github.javaparser.resolution.declarations.ResolvedReferenceTypeDeclaration>> solvedCache = new HashMap<>();
         private com.github.javaparser.resolution.TypeSolver parent;
 
         ArchiveTypeSolver(CachedArchive archive) {
@@ -506,10 +612,16 @@ final class ResolutionEnvironment {
             if (poolName == null) {
                 return com.github.javaparser.resolution.model.SymbolReference.unsolved();
             }
+            var cached = solvedCache.get(name);
+            if (cached != null) {
+                return cached;
+            }
             try {
-                return com.github.javaparser.resolution.model.SymbolReference.solved(
+                var solved = com.github.javaparser.resolution.model.SymbolReference.solved(
                         com.github.javaparser.symbolsolver.javassistmodel.JavassistFactory.toTypeDeclaration(
                                 classPool.get(poolName), getRoot()));
+                solvedCache.put(name, solved);
+                return solved;
             } catch (javassist.NotFoundException e) {
                 throw new IllegalStateException("Unable to get class with name " + poolName + " from class pool.", e);
             }
@@ -556,15 +668,16 @@ final class ResolutionEnvironment {
             }
         }
     }
+    private boolean isKnownInPlatform(String qualifiedName) {
+        return platformKnownClasses.contains(qualifiedName)
+                || (hasRuntimeModulesPlatform && platform.tryToSolveType(qualifiedName).isSolved());
+    }
+
     boolean isKnownInPrimarySolvers(String qualifiedName) {
-        if (project.tryToSolveType(qualifiedName).isSolved() || platform.tryToSolveType(qualifiedName).isSolved()) {
+        if (isKnownInPlatform(qualifiedName)
+                || artifactKnownClasses.contains(qualifiedName)
+                || project.tryToSolveType(qualifiedName).isSolved()) {
             return true;
-        }
-        for (var artifact : artifacts) {
-            if (artifact.solver().getKnownClasses().contains(qualifiedName)
-                    || artifact.solver().tryToSolveType(qualifiedName).isSolved()) {
-                return true;
-            }
         }
         for (var source : reactorSources.values()) {
             if (source.tryToSolveType(qualifiedName).isSolved()) {
@@ -575,7 +688,7 @@ final class ResolutionEnvironment {
     }
 
     Origin origin(String qualifiedName) {
-        if (platform.tryToSolveType(qualifiedName).isSolved()) return origin(EntityOrigin.JDK, platformEntry);
+        if (isKnownInPlatform(qualifiedName)) return origin(EntityOrigin.JDK, platformEntry);
         for (var artifact : artifacts) {
             if (artifact.solver().getKnownClasses().contains(qualifiedName)) {
                 if (artifact.input().entry().kind() == com.evolution.analysis.contract.analysis.ClasspathEntryKind.MODULE_OUTPUT) {
@@ -607,9 +720,9 @@ final class ResolutionEnvironment {
     }
     Set<String> nativeClasses(ContentDigest slot){if(memberEvidence.containsKey(slot))return Set.copyOf(memberEvidence.get(slot).getKnownClasses());for(var artifact:artifacts)if(artifact.input().nativeOrigin().filter(o->o.slot().equals(slot)).isPresent())return Set.copyOf(artifact.solver().getKnownClasses());throw new FrontendInputException("frontend.native-member-slot","Correspondence slot is absent");}
     boolean privateMemberSlot(ContentDigest slot,String qualifiedName){return memberEvidence.containsKey(slot)&&memberEvidence.get(slot).getKnownClasses().contains(qualifiedName);}
-    Optional<ContentDigest> selectedNativeSlot(String qualifiedName){if(platform.tryToSolveType(qualifiedName).isSolved())return Optional.empty();for(var artifact:artifacts)if(artifact.solver().getKnownClasses().contains(qualifiedName))return artifact.input().nativeOrigin().map(BinaryInput.NativeOrigin::slot);return Optional.empty();}
+    Optional<ContentDigest> selectedNativeSlot(String qualifiedName){if(isKnownInPlatform(qualifiedName))return Optional.empty();for(var artifact:artifacts)if(artifact.solver().getKnownClasses().contains(qualifiedName))return artifact.input().nativeOrigin().map(BinaryInput.NativeOrigin::slot);return Optional.empty();}
     com.evolution.analysis.contract.semantic.Derivation nativeDerivation(String qualifiedName){
-        if(!platform.tryToSolveType(qualifiedName).isSolved())for(var artifact:artifacts)if(artifact.solver().getKnownClasses().contains(qualifiedName)){
+        if(!isKnownInPlatform(qualifiedName))for(var artifact:artifacts)if(artifact.solver().getKnownClasses().contains(qualifiedName)){
             var input=artifact.input();var origin=input.nativeOrigin();
             if(input.reactorModule().isPresent()&&origin.flatMap(BinaryInput.NativeOrigin::proof).isPresent())return new com.evolution.analysis.contract.semantic.Derivation(
                     com.evolution.analysis.contract.semantic.DerivationKind.DERIVED,new com.evolution.analysis.contract.common.VersionedIdentifier("java.native-binary-import","m8.4-v1"),
@@ -631,7 +744,7 @@ final class ResolutionEnvironment {
         return new com.evolution.analysis.contract.semantic.Derivation(com.evolution.analysis.contract.semantic.DerivationKind.DIRECT,new com.evolution.analysis.contract.common.VersionedIdentifier("java.source","1"),List.of());
     }
     boolean duplicateExternal(String name) {
-        int count = platform.tryToSolveType(name).isSolved() ? 1 : 0;
+        int count = isKnownInPlatform(name) ? 1 : 0;
         for (var artifact : artifacts) if (artifact.solver().getKnownClasses().contains(name)) count++;
         for (var source : reactorSources.values()) if (source.tryToSolveType(name).isSolved()) count++;
         return count > 1;

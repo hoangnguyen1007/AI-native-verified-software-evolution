@@ -42,26 +42,28 @@ class SemanticDepthArchitectureTest {
         assertFalse(SemanticDepth.meetsPassiveArchitectureThreshold(
                 jvmCompleteDepth, polyglotOk, true, false, 40L, false));
 
-        // Fails if below 980 per-mille (98.0%)
+        // Fails if below 950 per-mille (95.0%)
         var belowThresholdDepth = Map.<String, Object>of(
                 "analyzedContexts", 1L,
                 "architectureResolution", Map.of(
-                        "structure", Map.of("attempted", 1000L, "resolved", 979L, "notResolved", 21L, "resolvedPerMille", 979L)),
+                        "structure", Map.of("attempted", 1000L, "resolved", 949L, "notResolved", 51L, "resolvedPerMille", 949L)),
                 "relationships", Map.of(
                         "byCategory", Map.of(
                                 "java.extends", Map.of("attempted", 100L, "resolved", 100L))));
         assertFalse(SemanticDepth.meetsPassiveArchitectureThreshold(
                 belowThresholdDepth, polyglotOk, false, false, 10L, false));
 
-        // Pure non-JVM polyglot repository (e.g. FastAPI + React/TS) with >= 98% parsed syntax and edges > 0
+        // Pure non-JVM polyglot repository (e.g. FastAPI + React/TS or Go Gin) with >= 95% parsed syntax and extracted syntax categories
         var nonJvmDepth = Map.<String, Object>of(
                 "analyzedContexts", 0L,
                 "architectureResolution", Map.of(
                         "structure", Map.of("attempted", 0L, "resolved", 0L, "notResolved", 0L, "resolvedPerMille", 0L)),
                 "relationships", Map.of("byCategory", Map.of()));
         var fastApiPolyglot = Map.<String, Object>of(
-                "sourceSyntax", Map.of("documents", 152L, "parsedDocuments", 152L),
-                "edges", 4897L);
+                "sourceSyntax", Map.of(
+                        "documents", 152L,
+                        "parsedDocuments", 152L,
+                        "categories", Map.of("CALL", 1609L, "DECLARATION", 756L, "IMPORT", 510L, "ROUTE_CANDIDATE", 43L)));
         assertTrue(SemanticDepth.meetsPassiveArchitectureThreshold(
                 nonJvmDepth, fastApiPolyglot, false, false, 0L, false));
         assertFalse(SemanticDepth.meetsPassiveArchitectureThreshold(

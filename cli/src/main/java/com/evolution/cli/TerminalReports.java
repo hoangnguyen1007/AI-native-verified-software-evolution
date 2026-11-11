@@ -52,7 +52,7 @@ final class TerminalReports {
         line("");v.tone("  "+tr("Result ","Kết quả ")+shortId(envelope.get("resultIdentity"))+"  ·  --details / --json",false);
     }
     private String statusLabel(String status){return switch(status){
-        case "COMPLETE"->tr("Complete within the declared scope","Đầy đủ trong phạm vi đã khai báo");
+        case "COMPLETE"->tr("Scan succeeded; complete within the declared scope","Quét đã thành công; đầy đủ trong phạm vi đã khai báo");
         case "PARTIAL"->tr("Usable observations; evidence remains incomplete","Có kết quả quan sát; bằng chứng còn thiếu");
         case "WITHHELD"->tr("Insufficient evidence for an assessment","Chưa đủ bằng chứng để đánh giá");
         case "TERMINAL_FAILURE"->tr("Analysis could not produce a usable result","Chưa tạo được kết quả phân tích sử dụng được");
@@ -61,6 +61,7 @@ final class TerminalReports {
     private void scan(Map<String,Object> d){
         var a=map(d.get("acquisition"));var m=map(d.get("metrics"));var s=map(d.get("selection"));
         section("Observed analysis","Kết quả quan sát");
+        if(d.containsKey("evidenceTier"))field("Architecture tier","Mức xác thực kiến trúc",d.get("evidenceTier"));
         field("Selected files / bytes","Tệp đã chọn / byte",str(a.get("files"))+" / "+str(a.get("bytes")));
         if(!m.isEmpty()){
             field("Modules · Java files · types","Module · tệp Java · kiểu",str(m.get("analyzedModules"))+" · "+str(m.get("javaFiles"))+" · "+str(m.get("declaredTypes")));

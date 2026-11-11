@@ -11,7 +11,8 @@ public final class JavaParserFrontend implements ConcurrentSemanticFrontend {
         long symbols=0;
         try {
             for(var path:paths){long bytes;try{bytes=java.nio.file.Files.size(path);}catch(java.io.IOException|SecurityException unavailable){bytes=64L<<20;}symbols=Math.addExact(symbols,bytes);}
-            return Math.addExact(ConcurrentSemanticFrontend.super.estimatedWorkingBytes(request),Math.multiplyExact(symbols,2));
+            long sharedSymbolOverhead=Math.min(Math.multiplyExact(symbols,2),32L<<20);
+            return Math.addExact(ConcurrentSemanticFrontend.super.estimatedWorkingBytes(request),sharedSymbolOverhead);
         }catch(ArithmeticException enormous){return Long.MAX_VALUE;}
     }
     @Override public FrontendResult analyze(FrontendRequest request) {

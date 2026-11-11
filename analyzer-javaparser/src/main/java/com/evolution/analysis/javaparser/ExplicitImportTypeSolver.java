@@ -11,10 +11,13 @@ import com.github.javaparser.resolution.Context;
 import com.github.javaparser.resolution.MethodUsage;
 import com.github.javaparser.resolution.TypeSolver;
 import com.github.javaparser.resolution.declarations.*;
+import com.github.javaparser.resolution.logic.MethodResolutionCapability;
 import com.github.javaparser.resolution.model.SymbolReference;
 import com.github.javaparser.resolution.model.typesystem.ReferenceTypeImpl;
 import com.github.javaparser.resolution.types.ResolvedReferenceType;
 import com.github.javaparser.resolution.types.ResolvedType;
+import com.github.javaparser.symbolsolver.core.resolution.MethodUsageResolutionCapability;
+import com.github.javaparser.symbolsolver.core.resolution.SymbolResolutionCapability;
 import java.util.*;
 
 /**
@@ -121,13 +124,30 @@ final class ExplicitImportTypeSolver implements TypeSolver {
                     "ProtoReflectionService")),
             Map.entry("io.grpc.health.v1", Set.of(
                     "HealthCheckRequest", "HealthCheckResponse", "HealthGrpc")),
+            Map.entry("org.junit.jupiter.api", Set.of(
+                    "Test", "BeforeEach", "AfterEach", "BeforeAll", "AfterAll", "DisplayName",
+                    "Disabled", "Nested", "Tag", "Tags", "RepeatedTest", "TestFactory",
+                    "TestInstance", "TestMethodOrder", "Order", "Timeout", "TempDir", "Assertions", "Assumptions")),
+            Map.entry("org.junit", Set.of(
+                    "Test", "Before", "After", "BeforeClass", "AfterClass", "Ignore", "Rule", "ClassRule", "Assert", "Assume")),
+            Map.entry("org.mockito", Set.of(
+                    "Mock", "Spy", "InjectMocks", "Captor", "Mockito", "BDDMockito", "ArgumentCaptor", "ArgumentMatchers")),
             Map.entry("kotlin.jvm", Set.of(
                     "JvmStatic", "JvmField", "JvmOverloads", "JvmName", "JvmSynthetic",
                     "JvmWildcard", "JvmSuppressWildcards", "Throws", "Synchronized", "Volatile",
                     "Transient", "Strictfp", "JvmMultifileClass", "JvmInline", "JvmRecord",
                     "JvmDefault", "JvmDefaultWithoutCompatibility", "JvmDefaultWithCompatibility")));
 
+    private static final Set<String> KOTLIN_IMPLICIT_JVM_ANNOTATIONS =
+            WELL_KNOWN_WILDCARD_TYPES.getOrDefault("kotlin.jvm", Set.of());
+
     private static final Set<String> SYNTHETIC_MISSING_PACKAGES = Set.of("other", "missing", "unavailable");
+
+    private record PendingWildcardCandidate(
+            String unitPackage,
+            String simpleName,
+            Set<String> wildcardPackages,
+            boolean isAnnotation) {}
 
     private TypeSolver parent;
     private final Map<String, ExplicitImportTypeDeclaration> declarations = new TreeMap<>();
@@ -136,6 +156,7 @@ final class ExplicitImportTypeSolver implements TypeSolver {
     private final Set<String> observedAnnotationHints = new HashSet<>();
     private final Map<String, String> observedSimpleToFqn = new LinkedHashMap<>();
     private final Set<String> observedQualifiedTypes = new LinkedHashSet<>();
+    private final List<PendingWildcardCandidate> pendingWildcardCandidates = new ArrayList<>();
     private final Set<String> explicitlyImportedFqns = new HashSet<>();
 
     @Override
@@ -182,6 +203,14 @@ final class ExplicitImportTypeSolver implements TypeSolver {
     }
 
     void observeUnit(CompilationUnit unit) {
+        String unitPkg = unit.getPackageDeclaration().map(p -> p.getNameAsString()).orElse("");
+        Set<String> unitLocalNames = new HashSet<>();
+        for (com.github.javaparser.ast.body.TypeDeclaration<?> td : unit.findAll(com.github.javaparser.ast.body.TypeDeclaration.class)) {
+            unitLocalNames.add(td.getNameAsString());
+        }
+        for (com.github.javaparser.ast.type.TypeParameter tp : unit.findAll(com.github.javaparser.ast.type.TypeParameter.class)) {
+            unitLocalNames.add(tp.getNameAsString());
+        }
         Map<String, String> localSimpleToFqn = new HashMap<>();
         Set<String> wildcardPackages = new LinkedHashSet<>();
         for (ImportDeclaration imp : unit.getImports()) {
@@ -217,10 +246,18 @@ final class ExplicitImportTypeSolver implements TypeSolver {
             String scoped = type.getNameWithScope();
             if (type.getScope().isEmpty()) {
                 if (!localSimpleToFqn.containsKey(simple)) {
-                    resolveWildcardSimple(simple, wildcardPackages).ifPresent(wFqn -> {
+                    Optional<String> knownWildcard = resolveWildcardSimple(simple, wildcardPackages);
+                    if (knownWildcard.isPresent()) {
+                        String wFqn = knownWildcard.orElseThrow();
                         localSimpleToFqn.put(simple, wFqn);
                         observedSimpleToFqn.put(simple, wFqn);
-                    });
+                    } else if (!wildcardPackages.isEmpty()
+                            && simple.length() > 1
+                            && Character.isUpperCase(simple.codePointAt(0))
+                            && !unitLocalNames.contains(simple)) {
+                        pendingWildcardCandidates.add(new PendingWildcardCandidate(
+                                unitPkg, simple, Set.copyOf(wildcardPackages), false));
+                    }
                 }
             } else {
                 extractInlineTopLevelFqn(scoped, localSimpleToFqn).ifPresent(observedQualifiedTypes::add);
@@ -241,6 +278,7 @@ final class ExplicitImportTypeSolver implements TypeSolver {
                         ? resolveScopedFqn(scoped, localSimpleToFqn)
                         : localSimpleToFqn.getOrDefault(impl.getNameAsString(), scoped);
                 observedInterfaceHints.add(fqn);
+                observedInterfaceHints.add(impl.getNameAsString());
             }
         }
         for (AnnotationExpr ann : unit.findAll(AnnotationExpr.class)) {
@@ -251,13 +289,26 @@ final class ExplicitImportTypeSolver implements TypeSolver {
                 observedAnnotationHints.add(fqn);
             } else {
                 if (!localSimpleToFqn.containsKey(rawName)) {
-                    resolveWildcardSimple(rawName, wildcardPackages).ifPresent(wFqn -> {
+                    Optional<String> knownWildcard = resolveWildcardSimple(rawName, wildcardPackages);
+                    if (knownWildcard.isPresent()) {
+                        String wFqn = knownWildcard.orElseThrow();
                         localSimpleToFqn.put(rawName, wFqn);
                         observedSimpleToFqn.put(rawName, wFqn);
-                    });
+                    } else if (KOTLIN_IMPLICIT_JVM_ANNOTATIONS.contains(rawName)) {
+                        String ktFqn = "kotlin.jvm." + rawName;
+                        localSimpleToFqn.put(rawName, ktFqn);
+                        observedSimpleToFqn.put(rawName, ktFqn);
+                    } else if (!wildcardPackages.isEmpty()
+                            && rawName.length() > 1
+                            && Character.isUpperCase(rawName.codePointAt(0))
+                            && !unitLocalNames.contains(rawName)) {
+                        pendingWildcardCandidates.add(new PendingWildcardCandidate(
+                                unitPkg, rawName, Set.copyOf(wildcardPackages), true));
+                    }
                 }
                 String fqn = localSimpleToFqn.getOrDefault(rawName, rawName);
                 observedAnnotationHints.add(fqn);
+                observedAnnotationHints.add(rawName);
             }
         }
     }
@@ -315,6 +366,72 @@ final class ExplicitImportTypeSolver implements TypeSolver {
             Set<String> sourceTypeNames,
             ResolutionEnvironment environment,
             boolean includeLombokAnnotations) {
+        Set<String> sourcePackages = new HashSet<>();
+        for (String srcType : sourceTypeNames) {
+            int dot = srcType.lastIndexOf('.');
+            if (dot > 0) {
+                sourcePackages.add(srcType.substring(0, dot));
+            }
+        }
+        for (PendingWildcardCandidate cand : pendingWildcardCandidates) {
+            String simple = cand.simpleName();
+            if (observedSimpleToFqn.containsKey(simple)) continue;
+            if (environment.isKnownInPrimarySolvers("java.lang." + simple)) continue;
+            if (!cand.unitPackage().isEmpty()) {
+                String samePkgFqn = cand.unitPackage() + "." + simple;
+                if (sourceTypeNames.contains(samePkgFqn) || environment.isKnownInPrimarySolvers(samePkgFqn)) {
+                    continue;
+                }
+            }
+            boolean alreadyKnownInWildcard = false;
+            List<String> externalWildcards = new ArrayList<>();
+            List<String> annotationDomainWildcards = new ArrayList<>();
+            List<String> nonAnnotationWildcards = new ArrayList<>();
+            for (String wPkg : cand.wildcardPackages()) {
+                String candidateFqn = wPkg + "." + simple;
+                if (sourceTypeNames.contains(candidateFqn) || environment.isKnownInPrimarySolvers(candidateFqn)) {
+                    alreadyKnownInWildcard = true;
+                    break;
+                }
+                if (wPkg.indexOf('.') <= 0
+                        || wPkg.startsWith("java.")
+                        || SYNTHETIC_MISSING_PACKAGES.contains(wPkg)
+                        || SYNTHETIC_MISSING_PACKAGES.contains(wPkg.substring(0, wPkg.indexOf('.')))
+                        || sourcePackages.contains(wPkg)) {
+                    continue;
+                }
+                externalWildcards.add(wPkg);
+                boolean isAnnotationPkg = wPkg.contains("annotation")
+                        || wPkg.contains("constraints")
+                        || wPkg.contains("stereotype")
+                        || wPkg.startsWith("lombok");
+                if (isAnnotationPkg || wPkg.contains("persistence") || wPkg.contains("validation") || wPkg.contains("bind")) {
+                    annotationDomainWildcards.add(wPkg);
+                }
+                if (!isAnnotationPkg && !WELL_KNOWN_WILDCARD_TYPES.containsKey(wPkg)) {
+                    nonAnnotationWildcards.add(wPkg);
+                }
+            }
+            if (alreadyKnownInWildcard) continue;
+            String selectedPkg = null;
+            if (externalWildcards.size() == 1) {
+                selectedPkg = externalWildcards.getFirst();
+            } else if (cand.isAnnotation() && annotationDomainWildcards.size() == 1) {
+                selectedPkg = annotationDomainWildcards.getFirst();
+            } else if (!cand.isAnnotation() && nonAnnotationWildcards.size() == 1) {
+                selectedPkg = nonAnnotationWildcards.getFirst();
+            }
+            if (selectedPkg != null) {
+                String fqn = selectedPkg + "." + simple;
+                observedSimpleToFqn.put(simple, fqn);
+                if (cand.isAnnotation() || observedAnnotationHints.contains(simple)) {
+                    observedAnnotationHints.add(fqn);
+                }
+                if (observedInterfaceHints.contains(simple)) {
+                    observedInterfaceHints.add(fqn);
+                }
+            }
+        }
         for (Map.Entry<String, String> entry : observedSimpleToFqn.entrySet()) {
             String simple = entry.getKey();
             String fqn = entry.getValue();
@@ -428,7 +545,10 @@ final class ExplicitImportTypeSolver implements TypeSolver {
     static final class ExplicitImportTypeDeclaration
             implements ResolvedClassDeclaration,
                     ResolvedInterfaceDeclaration,
-                    ResolvedAnnotationDeclaration {
+                    ResolvedAnnotationDeclaration,
+                    MethodResolutionCapability,
+                    MethodUsageResolutionCapability,
+                    SymbolResolutionCapability {
         private final String packageName;
         private final String className;
         private final String simpleName;
@@ -525,20 +645,67 @@ final class ExplicitImportTypeSolver implements TypeSolver {
             return Set.of();
         }
 
+        @Override
+        public Set<ResolvedReferenceTypeDeclaration> internalTypes() {
+            return Set.of();
+        }
+
+        @Override
         public SymbolReference<ResolvedMethodDeclaration> solveMethod(
                 String name, List<ResolvedType> argumentsTypes, boolean staticOnly) {
             return SymbolReference.unsolved();
         }
 
         @Override
+        public Optional<MethodUsage> solveMethodAsUsage(
+                String name,
+                List<ResolvedType> argumentsTypes,
+                Context invokationContext,
+                List<ResolvedType> typeParameters) {
+            return Optional.empty();
+        }
+
+        @Override
+        public SymbolReference<? extends ResolvedValueDeclaration> solveSymbol(
+                String name, TypeSolver typeSolver) {
+            return SymbolReference.unsolved();
+        }
+
+        @Override
         public boolean isAssignableBy(ResolvedType type) {
             if (type.isNull()) return true;
-            return type.isReferenceType() && qualifiedName.equals(type.asReferenceType().getQualifiedName());
+            if (!type.isReferenceType()) return false;
+            ResolvedReferenceType ref = type.asReferenceType();
+            if (qualifiedName.equals(ref.getQualifiedName())) return true;
+            try {
+                for (ResolvedReferenceType ancestor : ref.getAllAncestors()) {
+                    if (qualifiedName.equals(ancestor.getQualifiedName())) return true;
+                }
+            } catch (RuntimeException | LinkageError | StackOverflowError ignored) {
+                // Keep assignability conservative if ancestor traversal fails.
+            }
+            return false;
         }
 
         @Override
         public boolean isAssignableBy(ResolvedReferenceTypeDeclaration other) {
-            return other != null && qualifiedName.equals(other.getQualifiedName());
+            if (other == null) return false;
+            if (qualifiedName.equals(other.getQualifiedName())) return true;
+            try {
+                for (ResolvedReferenceType ancestor : other.getAllAncestors()) {
+                    if (qualifiedName.equals(ancestor.getQualifiedName())) return true;
+                }
+            } catch (RuntimeException | LinkageError | StackOverflowError ignored) {
+                // Keep assignability conservative if ancestor traversal fails.
+            }
+            return false;
+        }
+
+        @Override
+        public boolean canBeAssignedTo(ResolvedReferenceTypeDeclaration other) {
+            if (other == null) return false;
+            String otherName = other.getQualifiedName();
+            return qualifiedName.equals(otherName) || "java.lang.Object".equals(otherName);
         }
 
         @Override

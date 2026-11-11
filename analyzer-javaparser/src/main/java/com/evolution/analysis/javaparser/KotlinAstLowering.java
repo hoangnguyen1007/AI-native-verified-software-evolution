@@ -64,9 +64,12 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Deterministic Kotlin-to-JavaParser AST lowering engine for mixed Java/Kotlin and pure-Kotlin
- * repositories. Preserves 1-based source coordinates into the underlying {@link UnicodeSource}
- * so declarations, Spring annotations, constructors, synthesized JVM getters/setters, and call
+ * Deterministic Kotlin-to-JavaParser AST lowering engine for mixed Java/Kotlin
+ * and pure-Kotlin
+ * repositories. Preserves 1-based source coordinates into the underlying
+ * {@link UnicodeSource}
+ * so declarations, Spring annotations, constructors, synthesized JVM
+ * getters/setters, and call
  * sites participate natively in symbol resolution and architecture projection.
  */
 final class KotlinAstLowering {
@@ -93,7 +96,8 @@ final class KotlinAstLowering {
     private static final Pattern LOCAL_VAL_SCAN = Pattern.compile(
             "\\b(?:val|var)\\s+([A-Za-z_][A-Za-z0-9_]*)\\s*(?::\\s*([A-Za-z_][A-Za-z0-9_.<>?,\\s]*?))?\\s*=\\s*([^;\\n\\r]+)");
 
-    private KotlinAstLowering() {}
+    private KotlinAstLowering() {
+    }
 
     static CompilationUnit lower(String path, UnicodeSource translated, JavaSymbolSolver solver) {
         CompilationUnit cu = new CompilationUnit();
@@ -121,7 +125,8 @@ final class KotlinAstLowering {
             boolean nameTaken = cu.getTypes().stream()
                     .anyMatch(t -> t.getNameAsString().equals(fileFacadeName));
             if (!nameTaken) {
-                Range firstMemberRange = topLevelFacade.getMembers().getFirst().flatMap(Node::getRange).orElse(fileRange);
+                Range firstMemberRange = topLevelFacade.getMembers().getFirst().flatMap(Node::getRange)
+                        .orElse(fileRange);
                 topLevelFacade.setRange(firstMemberRange);
                 topLevelFacade.getName().setRange(firstMemberRange);
                 cu.getTypes().add(topLevelFacade);
@@ -185,7 +190,8 @@ final class KotlinAstLowering {
         int pos = start;
         while (pos < end) {
             pos = skipWhitespaceAndDelimiters(clean, pos, end);
-            if (pos >= end) break;
+            if (pos >= end)
+                break;
 
             if (clean.startsWith("package ", pos) || clean.startsWith("import ", pos)
                     || clean.startsWith("typealias ", pos) || clean.startsWith("@file:", pos)) {
@@ -199,7 +205,8 @@ final class KotlinAstLowering {
 
             while (pos < end) {
                 pos = skipWhitespace(clean, pos, end);
-                if (pos >= end) break;
+                if (pos >= end)
+                    break;
                 if (clean.charAt(pos) == '@') {
                     int annoEnd = consumeAnnotation(raw, clean, pos, end, index, annotations);
                     if (annoEnd <= pos) {
@@ -219,7 +226,8 @@ final class KotlinAstLowering {
             }
 
             pos = skipWhitespace(clean, pos, end);
-            if (pos >= end) break;
+            if (pos >= end)
+                break;
 
             String keyword = readIdentifier(clean, pos, end);
             if (keyword.equals("class") || keyword.equals("interface") || keyword.equals("object")) {
@@ -298,12 +306,14 @@ final class KotlinAstLowering {
             }
         }
 
-        // Optional visibility + annotations + 'constructor' keyword before primary constructor parens
+        // Optional visibility + annotations + 'constructor' keyword before primary
+        // constructor parens
         List<AnnotationExpr> ctorAnnotations = new ArrayList<>();
         while (pos < headerLimit) {
             if (clean.charAt(pos) == '@') {
                 int next = consumeAnnotation(raw, clean, pos, end, index, ctorAnnotations);
-                if (next <= pos) break;
+                if (next <= pos)
+                    break;
                 headerLimit = findHeaderEnd(clean, next, end);
                 pos = skipWhitespace(clean, next, headerLimit);
                 continue;
@@ -355,7 +365,8 @@ final class KotlinAstLowering {
             }
         }
 
-        int declEnd = Math.max(declStart, (bodyEnd >= 0 ? bodyEnd : Math.max(superEnd - 1, Math.max(primaryParensEnd, nameEnd))));
+        int declEnd = Math.max(declStart,
+                (bodyEnd >= 0 ? bodyEnd : Math.max(superEnd - 1, Math.max(primaryParensEnd, nameEnd))));
         Range declRange = index.range(declStart, Math.min(declEnd, raw.length() - 1));
         Range nameRange = index.range(nameStart, Math.min(nameEnd, raw.length() - 1));
 
@@ -365,7 +376,8 @@ final class KotlinAstLowering {
             enumDecl.getName().setRange(nameRange);
             annotations.forEach(enumDecl::addAnnotation);
             if (bodyStart >= 0 && bodyEnd > bodyStart) {
-                populateEnumBody(raw, clean, bodyStart + 1, bodyEnd, index, importAliases, cu, enumDecl, topLevelFacade);
+                populateEnumBody(raw, clean, bodyStart + 1, bodyEnd, index, importAliases, cu, enumDecl,
+                        topLevelFacade);
             }
             attachType(cu, enclosingType, enumDecl);
             return pos;
@@ -374,7 +386,8 @@ final class KotlinAstLowering {
         boolean isInterface = keyword.equals("interface") || modifiers.contains("annotation");
         NodeList<Modifier> typeMods = new NodeList<>(Modifier.publicModifier());
         if (modifiers.contains("abstract") || modifiers.contains("sealed")) {
-            if (!isInterface) typeMods.add(Modifier.abstractModifier());
+            if (!isInterface)
+                typeMods.add(Modifier.abstractModifier());
         }
         if (enclosingType != null && !isInterface && (!modifiers.contains("inner") || keyword.equals("object"))) {
             typeMods.add(Modifier.staticModifier());
@@ -490,7 +503,8 @@ final class KotlinAstLowering {
         List<IntSpan> entries = splitTopLevel(clean, superStart, superEnd, ',');
         for (IntSpan entry : entries) {
             int s = skipWhitespace(clean, entry.start, entry.end);
-            if (s >= entry.end) continue;
+            if (s >= entry.end)
+                continue;
             String sliceClean = clean.substring(s, entry.end);
             int byIdx = indexOfWord(sliceClean, "by");
             int effectiveEnd = byIdx >= 0 ? s + byIdx : entry.end;
@@ -498,7 +512,8 @@ final class KotlinAstLowering {
             boolean hasConstructorCall = parenPos > s;
             int typeEnd = hasConstructorCall ? parenPos : effectiveEnd;
             String typeSpelling = raw.substring(s, typeEnd).trim();
-            if (typeSpelling.isEmpty()) continue;
+            if (typeSpelling.isEmpty())
+                continue;
             Range r = index.range(s, Math.max(s, typeEnd - 1));
             ClassOrInterfaceType superType = parseClassType(typeSpelling, r, importAliases);
             if (typeDecl.isInterface() || hasConstructorCall) {
@@ -609,7 +624,8 @@ final class KotlinAstLowering {
             return advancePastUnknownItem(clean, pos, end);
         }
         int closeParen = findMatchingBracket(clean, pos, end, '(', ')');
-        if (closeParen <= pos) return advancePastUnknownItem(clean, pos, end);
+        if (closeParen <= pos)
+            return advancePastUnknownItem(clean, pos, end);
 
         List<ParsedParam> params = parseParameterList(raw, clean, pos + 1, closeParen, index, importAliases);
         pos = skipWhitespace(clean, closeParen + 1, end);
@@ -621,7 +637,8 @@ final class KotlinAstLowering {
                 pos = skipWhitespace(clean, pos + delegate.length(), end);
                 if (pos < end && clean.charAt(pos) == '(') {
                     int delEnd = findMatchingBracket(clean, pos, end, '(', ')');
-                    if (delEnd > pos) pos = skipWhitespace(clean, delEnd + 1, end);
+                    if (delEnd > pos)
+                        pos = skipWhitespace(clean, delEnd + 1, end);
                 }
             }
         }
@@ -631,7 +648,8 @@ final class KotlinAstLowering {
         if (pos < end && clean.charAt(pos) == '{') {
             bodyStart = pos;
             bodyEnd = findMatchingBracket(clean, pos, end, '{', '}');
-            if (bodyEnd > pos) pos = bodyEnd + 1;
+            if (bodyEnd > pos)
+                pos = bodyEnd + 1;
         }
 
         int declEnd = bodyEnd > 0 ? bodyEnd : closeParen;
@@ -671,18 +689,19 @@ final class KotlinAstLowering {
         if (pos < end && clean.charAt(pos) == '{') {
             int bodyEnd = findMatchingBracket(clean, pos, end, '{', '}');
             if (bodyEnd > pos) {
-                ConstructorDeclaration targetCtor = enclosingClass.getConstructors().stream().findFirst().orElseGet(() -> {
-                    Range r = index.range(keywordPos, bodyEnd);
-                    ConstructorDeclaration c = new ConstructorDeclaration(
-                            new NodeList<>(Modifier.publicModifier()), enclosingClass.getNameAsString());
-                    c.setRange(r);
-                    c.getName().setRange(r);
-                    BlockStmt b = new BlockStmt();
-                    b.setRange(r);
-                    c.setBody(b);
-                    enclosingClass.addMember(c);
-                    return c;
-                });
+                ConstructorDeclaration targetCtor = enclosingClass.getConstructors().stream().findFirst()
+                        .orElseGet(() -> {
+                            Range r = index.range(keywordPos, bodyEnd);
+                            ConstructorDeclaration c = new ConstructorDeclaration(
+                                    new NodeList<>(Modifier.publicModifier()), enclosingClass.getNameAsString());
+                            c.setRange(r);
+                            c.getName().setRange(r);
+                            BlockStmt b = new BlockStmt();
+                            b.setRange(r);
+                            c.setBody(b);
+                            enclosingClass.addMember(c);
+                            return c;
+                        });
                 extractBodyStatements(raw, clean, pos + 1, bodyEnd, index, importAliases, targetCtor.getBody());
                 return bodyEnd + 1;
             }
@@ -712,7 +731,8 @@ final class KotlinAstLowering {
             }
         }
 
-        // Handle optional receiver type for extension functions (e.g. fun String.toSlug() or fun List<String>.join())
+        // Handle optional receiver type for extension functions (e.g. fun
+        // String.toSlug() or fun List<String>.join())
         int parenPos = findTopLevelCharInHeader(clean, pos, end, '(');
         if (parenPos <= pos) {
             return advancePastUnknownItem(clean, pos, end);
@@ -806,7 +826,8 @@ final class KotlinAstLowering {
         method.setRange(methodRange);
         method.getName().setRange(nameRange);
         annotations.forEach(method::addAnnotation);
-        if (modifiers.contains("override") && annotations.stream().noneMatch(a -> a.getNameAsString().equals("Override"))) {
+        if (modifiers.contains("override")
+                && annotations.stream().noneMatch(a -> a.getNameAsString().equals("Override"))) {
             MarkerAnnotationExpr ov = new MarkerAnnotationExpr(parseNameWithRange("Override", nameRange));
             ov.setRange(nameRange);
             method.addAnnotation(ov);
@@ -833,7 +854,8 @@ final class KotlinAstLowering {
             Range bRange = index.range(bodyStart, Math.min(bodyEnd, raw.length() - 1));
             body.setRange(bRange);
             if (expressionBody) {
-                extractExpressionBodyStatements(raw, clean, bodyStart, bodyEnd, !(returnType instanceof VoidType), index, importAliases, body);
+                extractExpressionBodyStatements(raw, clean, bodyStart, bodyEnd, !(returnType instanceof VoidType),
+                        index, importAliases, body);
             } else {
                 extractBodyStatements(raw, clean, bodyStart + 1, bodyEnd, index, importAliases, body);
             }
@@ -907,11 +929,13 @@ final class KotlinAstLowering {
         int pos = skipWhitespace(clean, keywordPos + 3, end);
         if (pos < end && clean.charAt(pos) == '<') {
             int closeAngle = findMatchingBracket(clean, pos, end, '<', '>');
-            if (closeAngle > pos) pos = skipWhitespace(clean, closeAngle + 1, end);
+            if (closeAngle > pos)
+                pos = skipWhitespace(clean, closeAngle + 1, end);
         }
 
         int stmtEnd = findExpressionStatementEnd(clean, pos, end);
-        if (stmtEnd <= pos) return advancePastUnknownItem(clean, pos, end);
+        if (stmtEnd <= pos)
+            return advancePastUnknownItem(clean, pos, end);
 
         int eqPos = findTopLevelChar(clean, pos, stmtEnd, '=');
         int colonPos = findTopLevelChar(clean, pos, eqPos >= 0 ? eqPos : stmtEnd, ':');
@@ -977,14 +1001,20 @@ final class KotlinAstLowering {
                         .anyMatch(a -> a.getNameAsString().endsWith("JvmField"));
                 NodeList<Modifier> fieldMods = new NodeList<>(
                         publicField ? Modifier.publicModifier() : Modifier.privateModifier());
-                if (isStatic) fieldMods.add(Modifier.staticModifier());
-                if (!isVar) fieldMods.add(Modifier.finalModifier());
+                if (isStatic)
+                    fieldMods.add(Modifier.staticModifier());
+                if (!isVar)
+                    fieldMods.add(Modifier.finalModifier());
                 VariableDeclarator declarator = new VariableDeclarator(propType.clone(), new SimpleName(propName));
                 declarator.setRange(range);
                 declarator.getName().setRange(range);
                 FieldDeclaration field = new FieldDeclaration(fieldMods, declarator);
                 field.setRange(range);
-                annotations.forEach(field::addAnnotation);
+                annotations.forEach(a -> {
+                    AnnotationExpr copy = a.clone();
+                    a.getRange().ifPresent(copy::setRange);
+                    field.addAnnotation(copy);
+                });
                 owner.addMember(field);
             }
         }
@@ -993,7 +1023,8 @@ final class KotlinAstLowering {
         boolean hasGetter = owner.getMethodsByName(getterName).stream().anyMatch(m -> m.getParameters().isEmpty());
         if (!hasGetter) {
             NodeList<Modifier> getterMods = new NodeList<>(Modifier.publicModifier());
-            if (isStatic && !owner.isInterface()) getterMods.add(Modifier.staticModifier());
+            if (isStatic && !owner.isInterface())
+                getterMods.add(Modifier.staticModifier());
             MethodDeclaration getter = new MethodDeclaration(getterMods, propType.clone(), getterName);
             getter.setRange(range);
             getter.getName().setRange(range);
@@ -1009,10 +1040,12 @@ final class KotlinAstLowering {
 
         if (isVar) {
             String setterName = setterName(propName);
-            boolean hasSetter = owner.getMethodsByName(setterName).stream().anyMatch(m -> m.getParameters().size() == 1);
+            boolean hasSetter = owner.getMethodsByName(setterName).stream()
+                    .anyMatch(m -> m.getParameters().size() == 1);
             if (!hasSetter) {
                 NodeList<Modifier> setterMods = new NodeList<>(Modifier.publicModifier());
-                if (isStatic && !owner.isInterface()) setterMods.add(Modifier.staticModifier());
+                if (isStatic && !owner.isInterface())
+                    setterMods.add(Modifier.staticModifier());
                 VoidType vt = new VoidType();
                 vt.setRange(range);
                 MethodDeclaration setter = new MethodDeclaration(setterMods, vt, setterName);
@@ -1074,7 +1107,8 @@ final class KotlinAstLowering {
         Matcher valMatcher = LOCAL_VAL_SCAN.matcher(bodyClean);
         while (valMatcher.find()) {
             String varName = valMatcher.group(1);
-            if (!isValidSimpleIdentifier(varName)) continue;
+            if (!isValidSimpleIdentifier(varName))
+                continue;
             int absStart = bodyStart + valMatcher.start();
             int absEnd = Math.min(raw.length() - 1, bodyStart + valMatcher.end() - 1);
             Range r = index.range(absStart, Math.max(absStart, absEnd));
@@ -1098,7 +1132,8 @@ final class KotlinAstLowering {
             int matchStart = callMatcher.start();
             if (matchStart > 0) {
                 char prev = bodyClean.charAt(matchStart - 1);
-                if (Character.isJavaIdentifierPart(prev) || prev == '@') continue;
+                if (Character.isJavaIdentifierPart(prev) || prev == '@')
+                    continue;
             }
             int openParenOffset = bodyStart + callMatcher.end() - 1;
             int closeParenOffset = findMatchingBracket(clean, openParenOffset, bodyEnd, '(', ')');
@@ -1109,7 +1144,8 @@ final class KotlinAstLowering {
             String qualified = callMatcher.group(1);
             String simple = callMatcher.group(2);
             List<Expression> argExprs = parseCallArguments(
-                    raw, clean, openParenOffset + 1, closeParenOffset > openParenOffset ? closeParenOffset : openParenOffset + 1,
+                    raw, clean, openParenOffset + 1,
+                    closeParenOffset > openParenOffset ? closeParenOffset : openParenOffset + 1,
                     index, importAliases);
 
             if (qualified != null) {
@@ -1117,16 +1153,19 @@ final class KotlinAstLowering {
                 int lastDot = normalized.lastIndexOf('.');
                 String scopeText = normalized.substring(0, lastDot);
                 String methodName = normalized.substring(lastDot + 1);
-                if (CONTROL_KEYWORDS.contains(methodName) || !isValidSimpleIdentifier(methodName)) continue;
+                if (CONTROL_KEYWORDS.contains(methodName) || !isValidSimpleIdentifier(methodName))
+                    continue;
                 Expression scopeExpr = buildScopeExpression(scopeText, callRange, importAliases);
-                MethodCallExpr call = new MethodCallExpr(scopeExpr, new SimpleName(methodName), new NodeList<>(argExprs));
+                MethodCallExpr call = new MethodCallExpr(scopeExpr, new SimpleName(methodName),
+                        new NodeList<>(argExprs));
                 call.setRange(callRange);
                 call.getName().setRange(callRange);
                 ExpressionStmt stmt = new ExpressionStmt(call);
                 stmt.setRange(callRange);
                 targetBlock.addStatement(stmt);
             } else if (simple != null) {
-                if (CONTROL_KEYWORDS.contains(simple) || !isValidSimpleIdentifier(simple)) continue;
+                if (CONTROL_KEYWORDS.contains(simple) || !isValidSimpleIdentifier(simple))
+                    continue;
                 if (Character.isUpperCase(simple.charAt(0))) {
                     ClassOrInterfaceType createdType = parseClassType(simple, callRange, importAliases);
                     ObjectCreationExpr creation = new ObjectCreationExpr(null, createdType, new NodeList<>(argExprs));
@@ -1153,16 +1192,19 @@ final class KotlinAstLowering {
             int argsEnd,
             LineIndex index,
             Map<String, String> importAliases) {
-        if (argsEnd <= argsStart) return List.of();
+        if (argsEnd <= argsStart)
+            return List.of();
         List<IntSpan> spans = splitTopLevel(clean, argsStart, argsEnd, ',');
         List<Expression> exprs = new ArrayList<>();
         for (IntSpan span : spans) {
             String argText = raw.substring(span.start, span.end).trim();
-            if (argText.isEmpty()) continue;
+            if (argText.isEmpty())
+                continue;
             // Strip named argument prefix `paramName = value`
             int eq = argText.indexOf('=');
             if (eq > 0 && (eq + 1 >= argText.length() || argText.charAt(eq + 1) != '=')
-                    && argText.charAt(eq - 1) != '!' && argText.charAt(eq - 1) != '<' && argText.charAt(eq - 1) != '>') {
+                    && argText.charAt(eq - 1) != '!' && argText.charAt(eq - 1) != '<'
+                    && argText.charAt(eq - 1) != '>') {
                 String lhs = argText.substring(0, eq).trim();
                 if (isValidSimpleIdentifier(lhs)) {
                     argText = argText.substring(eq + 1).trim();
@@ -1194,7 +1236,8 @@ final class KotlinAstLowering {
             return t;
         }
         if (text.startsWith("\"") && text.endsWith("\"") && text.length() >= 2) {
-            StringLiteralExpr s = new StringLiteralExpr(sanitizeStringLiteralContent(text.substring(1, text.length() - 1)));
+            StringLiteralExpr s = new StringLiteralExpr(
+                    sanitizeStringLiteralContent(text.substring(1, text.length() - 1)));
             s.setRange(range);
             return s;
         }
@@ -1250,7 +1293,8 @@ final class KotlinAstLowering {
             }
         }
         for (int i = 1; i < parts.length; i++) {
-            if (!isValidSimpleIdentifier(parts[i])) break;
+            if (!isValidSimpleIdentifier(parts[i]))
+                break;
             FieldAccessExpr fa = new FieldAccessExpr(current, parts[i]);
             fa.setRange(range);
             current = fa;
@@ -1266,7 +1310,8 @@ final class KotlinAstLowering {
             boolean vararg,
             boolean hasDefault,
             List<AnnotationExpr> annotations,
-            Range range) {}
+            Range range) {
+    }
 
     private static List<ParsedParam> parseParameterList(
             String raw,
@@ -1280,7 +1325,8 @@ final class KotlinAstLowering {
         int paramIdx = 1;
         for (IntSpan item : items) {
             int p = skipWhitespace(clean, item.start, item.end);
-            if (p >= item.end) continue;
+            if (p >= item.end)
+                continue;
 
             List<AnnotationExpr> paramAnnos = new ArrayList<>();
             boolean isVal = false;
@@ -1289,7 +1335,8 @@ final class KotlinAstLowering {
 
             while (p < item.end) {
                 p = skipWhitespace(clean, p, item.end);
-                if (p >= item.end) break;
+                if (p >= item.end)
+                    break;
                 if (clean.charAt(p) == '@') {
                     int next = consumeAnnotation(raw, clean, p, item.end, index, paramAnnos);
                     if (next <= p) {
@@ -1323,7 +1370,8 @@ final class KotlinAstLowering {
             }
 
             p = skipWhitespace(clean, p, item.end);
-            if (p >= item.end) continue;
+            if (p >= item.end)
+                continue;
 
             int eqPos = findTopLevelChar(clean, p, item.end, '=');
             boolean hasDefault = eqPos >= 0;
@@ -1359,11 +1407,14 @@ final class KotlinAstLowering {
             List<AnnotationExpr> out) {
         int pos = atPos + 1;
         pos = skipWhitespace(clean, pos, limit);
-        if (pos >= limit) return atPos + 1;
+        if (pos >= limit)
+            return atPos + 1;
 
-        // Check for optional use-site target e.g. @field:Autowired, @get:Bean, @param:Qualifier("x")
+        // Check for optional use-site target e.g. @field:Autowired, @get:Bean,
+        // @param:Qualifier("x")
         String firstWord = readIdentifier(raw, pos, limit);
-        if (firstWord.isEmpty()) return atPos + 1;
+        if (firstWord.isEmpty())
+            return atPos + 1;
         int afterFirst = skipWhitespace(clean, pos + firstWord.length(), limit);
         if (afterFirst < limit && clean.charAt(afterFirst) == ':') {
             pos = skipWhitespace(clean, afterFirst + 1, limit);
@@ -1383,14 +1434,17 @@ final class KotlinAstLowering {
                 break;
             }
         }
-        if (nameEnd <= nameStart) return atPos + 1;
+        if (nameEnd <= nameStart)
+            return atPos + 1;
         String annoTypeName = raw.substring(nameStart, nameEnd);
-        if (!isValidQualifiedName(annoTypeName)) return nameEnd;
+        if (!isValidQualifiedName(annoTypeName))
+            return nameEnd;
 
         pos = skipWhitespace(clean, nameEnd, limit);
         if (pos < limit && clean.charAt(pos) == '<') {
             int closeAngle = findMatchingBracket(clean, pos, limit, '<', '>');
-            if (closeAngle > pos) pos = skipWhitespace(clean, closeAngle + 1, limit);
+            if (closeAngle > pos)
+                pos = skipWhitespace(clean, closeAngle + 1, limit);
         }
 
         int annoEnd = nameEnd - 1;
@@ -1431,7 +1485,8 @@ final class KotlinAstLowering {
                 NodeList<MemberValuePair> pairs = new NodeList<>();
                 for (IntSpan s : argSpans) {
                     String segRaw = raw.substring(openParen + 1 + s.start, openParen + 1 + s.end).trim();
-                    if (segRaw.isEmpty()) continue;
+                    if (segRaw.isEmpty())
+                        continue;
                     int eq = segRaw.indexOf('=');
                     if (eq > 0) {
                         String k = segRaw.substring(0, eq).trim();
@@ -1521,12 +1576,14 @@ final class KotlinAstLowering {
             Range range,
             Map<String, String> importAliases,
             boolean allowVoid) {
-        if (rawType == null) return parseClassType("Object", range, importAliases);
+        if (rawType == null)
+            return parseClassType("Object", range, importAliases);
         String s = rawType.trim();
         // Strip inline annotations or suspend modifier
         while (s.startsWith("@")) {
             int sp = s.indexOf(' ');
-            if (sp < 0) break;
+            if (sp < 0)
+                break;
             s = s.substring(sp + 1).trim();
         }
         if (s.startsWith("suspend ")) {
@@ -1546,8 +1603,10 @@ final class KotlinAstLowering {
         if (s.isEmpty() || s.equals("*")) {
             return parseClassType("Object", range, importAliases);
         }
-        if (s.startsWith("in ")) s = s.substring(3).trim();
-        else if (s.startsWith("out ")) s = s.substring(4).trim();
+        if (s.startsWith("in "))
+            s = s.substring(3).trim();
+        else if (s.startsWith("out "))
+            s = s.substring(4).trim();
 
         if (allowVoid && (s.equals("Unit") || s.equals("kotlin.Unit") || s.equals("Nothing"))) {
             VoidType vt = new VoidType();
@@ -1574,14 +1633,22 @@ final class KotlinAstLowering {
             }
         }
 
-        if (s.equals("IntArray")) return primitiveArray(PrimitiveType.Primitive.INT, range);
-        if (s.equals("LongArray")) return primitiveArray(PrimitiveType.Primitive.LONG, range);
-        if (s.equals("BooleanArray")) return primitiveArray(PrimitiveType.Primitive.BOOLEAN, range);
-        if (s.equals("ByteArray")) return primitiveArray(PrimitiveType.Primitive.BYTE, range);
-        if (s.equals("DoubleArray")) return primitiveArray(PrimitiveType.Primitive.DOUBLE, range);
-        if (s.equals("FloatArray")) return primitiveArray(PrimitiveType.Primitive.FLOAT, range);
-        if (s.equals("ShortArray")) return primitiveArray(PrimitiveType.Primitive.SHORT, range);
-        if (s.equals("CharArray")) return primitiveArray(PrimitiveType.Primitive.CHAR, range);
+        if (s.equals("IntArray"))
+            return primitiveArray(PrimitiveType.Primitive.INT, range);
+        if (s.equals("LongArray"))
+            return primitiveArray(PrimitiveType.Primitive.LONG, range);
+        if (s.equals("BooleanArray"))
+            return primitiveArray(PrimitiveType.Primitive.BOOLEAN, range);
+        if (s.equals("ByteArray"))
+            return primitiveArray(PrimitiveType.Primitive.BYTE, range);
+        if (s.equals("DoubleArray"))
+            return primitiveArray(PrimitiveType.Primitive.DOUBLE, range);
+        if (s.equals("FloatArray"))
+            return primitiveArray(PrimitiveType.Primitive.FLOAT, range);
+        if (s.equals("ShortArray"))
+            return primitiveArray(PrimitiveType.Primitive.SHORT, range);
+        if (s.equals("CharArray"))
+            return primitiveArray(PrimitiveType.Primitive.CHAR, range);
 
         int lt = s.indexOf('<');
         int gt = s.lastIndexOf('>');
@@ -1610,7 +1677,9 @@ final class KotlinAstLowering {
             case "Throwable", "kotlin.Throwable" -> "Throwable";
             case "MutableList", "List", "kotlin.collections.List", "kotlin.collections.MutableList" -> "java.util.List";
             case "MutableSet", "Set", "kotlin.collections.Set", "kotlin.collections.MutableSet" -> "java.util.Set";
-            case "MutableCollection", "Collection", "kotlin.collections.Collection", "kotlin.collections.MutableCollection" -> "java.util.Collection";
+            case "MutableCollection", "Collection", "kotlin.collections.Collection",
+                    "kotlin.collections.MutableCollection" ->
+                "java.util.Collection";
             case "MutableIterable", "Iterable", "kotlin.collections.Iterable" -> "Iterable";
             case "MutableMap", "Map", "kotlin.collections.Map", "kotlin.collections.MutableMap" -> "java.util.Map";
             default -> importAliases.getOrDefault(base, base);
@@ -1649,7 +1718,8 @@ final class KotlinAstLowering {
             Map<String, String> importAliases) {
         String cleaned = typeName == null ? "Object" : typeName.trim();
         int lt = cleaned.indexOf('<');
-        if (lt > 0) cleaned = cleaned.substring(0, lt).trim();
+        if (lt > 0)
+            cleaned = cleaned.substring(0, lt).trim();
         cleaned = importAliases.getOrDefault(cleaned, cleaned);
         if (!isValidQualifiedName(cleaned)) {
             cleaned = "Object";
@@ -1667,7 +1737,8 @@ final class KotlinAstLowering {
 
     private static Type inferExpressionType(String exprRaw, Range range, Map<String, String> importAliases) {
         String e = exprRaw == null ? "" : exprRaw.trim();
-        if (e.startsWith("return ")) e = e.substring("return ".length()).trim();
+        if (e.startsWith("return "))
+            e = e.substring("return ".length()).trim();
         if (e.equals("true") || e.equals("false")) {
             PrimitiveType pt = new PrimitiveType(PrimitiveType.Primitive.BOOLEAN);
             pt.setRange(range);
@@ -1699,7 +1770,8 @@ final class KotlinAstLowering {
         if (openParen > 0) {
             String head = e.substring(0, openParen).trim();
             int lt = head.indexOf('<');
-            if (lt > 0) head = head.substring(0, lt).trim();
+            if (lt > 0)
+                head = head.substring(0, lt).trim();
             if (isValidQualifiedName(head)) {
                 String lastSeg = head.substring(head.lastIndexOf('.') + 1);
                 if (!lastSeg.isEmpty() && Character.isUpperCase(lastSeg.charAt(0))) {
@@ -1714,9 +1786,12 @@ final class KotlinAstLowering {
         List<IntSpan> spans = splitTopLevel(inner, 0, inner.length(), ',');
         for (IntSpan span : spans) {
             String item = inner.substring(span.start, span.end).trim();
-            if (item.startsWith("reified ")) item = item.substring("reified ".length()).trim();
-            if (item.startsWith("in ")) item = item.substring(3).trim();
-            else if (item.startsWith("out ")) item = item.substring(4).trim();
+            if (item.startsWith("reified "))
+                item = item.substring("reified ".length()).trim();
+            if (item.startsWith("in "))
+                item = item.substring(3).trim();
+            else if (item.startsWith("out "))
+                item = item.substring(4).trim();
             int colon = item.indexOf(':');
             String name = (colon > 0 ? item.substring(0, colon) : item).trim();
             if (isValidSimpleIdentifier(name)) {
@@ -1730,10 +1805,14 @@ final class KotlinAstLowering {
 
     private static NodeList<Modifier> visibilityModifiers(Set<String> modifiers, boolean isStatic) {
         NodeList<Modifier> list = new NodeList<>();
-        if (modifiers.contains("private")) list.add(Modifier.privateModifier());
-        else if (modifiers.contains("protected")) list.add(Modifier.protectedModifier());
-        else list.add(Modifier.publicModifier());
-        if (isStatic) list.add(Modifier.staticModifier());
+        if (modifiers.contains("private"))
+            list.add(Modifier.privateModifier());
+        else if (modifiers.contains("protected"))
+            list.add(Modifier.protectedModifier());
+        else
+            list.add(Modifier.publicModifier());
+        if (isStatic)
+            list.add(Modifier.staticModifier());
         return list;
     }
 
@@ -1808,7 +1887,8 @@ final class KotlinAstLowering {
                         out[i++] = ' ';
                         depth--;
                     } else {
-                        if (out[i] != '\n' && out[i] != '\r') out[i] = ' ';
+                        if (out[i] != '\n' && out[i] != '\r')
+                            out[i] = ' ';
                         i++;
                     }
                 }
@@ -1825,7 +1905,8 @@ final class KotlinAstLowering {
                         i += 3;
                         break;
                     }
-                    if (out[i] != '\n' && out[i] != '\r') out[i] = ' ';
+                    if (out[i] != '\n' && out[i] != '\r')
+                        out[i] = ' ';
                     i++;
                 }
             } else if (c == '"') {
@@ -1838,14 +1919,18 @@ final class KotlinAstLowering {
                         out[i++] = ' ';
                     }
                 }
-                if (i < n && out[i] == '"') i++;
+                if (i < n && out[i] == '"')
+                    i++;
             } else if (c == '\'') {
                 out[i++] = ' ';
                 while (i < n && out[i] != '\'' && out[i] != '\n' && out[i] != '\r') {
-                    if (out[i] == '\\' && i + 1 < n) out[i++] = ' ';
-                    if (i < n && out[i] != '\n' && out[i] != '\r') out[i++] = ' ';
+                    if (out[i] == '\\' && i + 1 < n)
+                        out[i++] = ' ';
+                    if (i < n && out[i] != '\n' && out[i] != '\r')
+                        out[i++] = ' ';
                 }
-                if (i < n && out[i] == '\'') out[i++] = ' ';
+                if (i < n && out[i] == '\'')
+                    out[i++] = ' ';
             } else {
                 i++;
             }
@@ -1854,12 +1939,14 @@ final class KotlinAstLowering {
     }
 
     private static int skipWhitespace(String clean, int pos, int end) {
-        while (pos < end && Character.isWhitespace(clean.charAt(pos))) pos++;
+        while (pos < end && Character.isWhitespace(clean.charAt(pos)))
+            pos++;
         return pos;
     }
 
     private static int skipWhitespaceAndDelimiters(String clean, int pos, int end) {
-        while (pos < end && (Character.isWhitespace(clean.charAt(pos)) || clean.charAt(pos) == ';')) pos++;
+        while (pos < end && (Character.isWhitespace(clean.charAt(pos)) || clean.charAt(pos) == ';'))
+            pos++;
         return pos;
     }
 
@@ -1869,7 +1956,8 @@ final class KotlinAstLowering {
             pos = skipWhitespace(clean, pos, end);
             if (pos < end && clean.charAt(pos) == '@') {
                 int next = consumeAnnotation(raw, clean, pos, end, index, out);
-                if (next <= pos) break;
+                if (next <= pos)
+                    break;
                 pos = next;
             } else {
                 break;
@@ -1879,16 +1967,19 @@ final class KotlinAstLowering {
     }
 
     private static String readIdentifier(String text, int pos, int end) {
-        if (pos >= end) return "";
+        if (pos >= end)
+            return "";
         if (text.charAt(pos) == '`') {
             int close = text.indexOf('`', pos + 1);
             if (close > pos && close < end) {
                 return text.substring(pos, close + 1);
             }
         }
-        if (!Character.isJavaIdentifierStart(text.charAt(pos))) return "";
+        if (!Character.isJavaIdentifierStart(text.charAt(pos)))
+            return "";
         int i = pos + 1;
-        while (i < end && Character.isJavaIdentifierPart(text.charAt(i))) i++;
+        while (i < end && Character.isJavaIdentifierPart(text.charAt(i)))
+            i++;
         return text.substring(pos, i);
     }
 
@@ -1896,10 +1987,12 @@ final class KotlinAstLowering {
         int depth = 0;
         for (int i = openPos; i < limit; i++) {
             char c = clean.charAt(i);
-            if (c == openChar) depth++;
+            if (c == openChar)
+                depth++;
             else if (c == closeChar) {
                 depth--;
-                if (depth == 0) return i;
+                if (depth == 0)
+                    return i;
             }
         }
         return -1;
@@ -1911,19 +2004,27 @@ final class KotlinAstLowering {
         int bracket = 0;
         for (int i = start; i < limit; i++) {
             char c = clean.charAt(i);
-            if (c == '(') paren++;
-            else if (c == ')') paren = Math.max(0, paren - 1);
-            else if (c == '<') angle++;
-            else if (c == '>') angle = Math.max(0, angle - 1);
-            else if (c == '[') bracket++;
-            else if (c == ']') bracket = Math.max(0, bracket - 1);
+            if (c == '(')
+                paren++;
+            else if (c == ')')
+                paren = Math.max(0, paren - 1);
+            else if (c == '<')
+                angle++;
+            else if (c == '>')
+                angle = Math.max(0, angle - 1);
+            else if (c == '[')
+                bracket++;
+            else if (c == ']')
+                bracket = Math.max(0, bracket - 1);
             else if (paren == 0 && angle == 0 && bracket == 0) {
-                if (c == '{' || c == ';') return i;
+                if (c == '{' || c == ';')
+                    return i;
                 if (c == '\n' || c == '\r') {
                     int nextNonWs = skipWhitespace(clean, i + 1, limit);
                     if (nextNonWs < limit) {
                         char nc = clean.charAt(nextNonWs);
-                        if (nc == ',' || nc == ':') continue;
+                        if (nc == ',' || nc == ':')
+                            continue;
                     }
                     int prevNonWs = i - 1;
                     while (prevNonWs >= start && (clean.charAt(prevNonWs) == ' ' || clean.charAt(prevNonWs) == '\t')) {
@@ -1946,11 +2047,15 @@ final class KotlinAstLowering {
         int angle = 0;
         for (int i = start; i < limit; i++) {
             char c = clean.charAt(i);
-            if (c == '<') angle++;
-            else if (c == '>') angle = Math.max(0, angle - 1);
+            if (c == '<')
+                angle++;
+            else if (c == '>')
+                angle = Math.max(0, angle - 1);
             else if (angle == 0) {
-                if (c == target) return i;
-                if (c == '{' || c == ';' || c == '=') return -1;
+                if (c == target)
+                    return i;
+                if (c == '{' || c == ';' || c == '=')
+                    return -1;
             }
         }
         return -1;
@@ -1961,12 +2066,17 @@ final class KotlinAstLowering {
         int paren = 0;
         for (int i = start; i < limit; i++) {
             char c = clean.charAt(i);
-            if (c == '<') angle++;
-            else if (c == '>') angle = Math.max(0, angle - 1);
-            else if (c == '(') paren++;
-            else if (c == ')') paren = Math.max(0, paren - 1);
+            if (c == '<')
+                angle++;
+            else if (c == '>')
+                angle = Math.max(0, angle - 1);
+            else if (c == '(')
+                paren++;
+            else if (c == ')')
+                paren = Math.max(0, paren - 1);
             else if (angle == 0 && paren == 0) {
-                if (c == '{' || c == '=' || c == ';' || c == '\n' || c == '\r') return i;
+                if (c == '{' || c == '=' || c == ';' || c == '\n' || c == '\r')
+                    return i;
                 if (readIdentifier(clean, i, limit).equals("where")
                         && (i == start || !Character.isJavaIdentifierPart(clean.charAt(i - 1)))) {
                     return i;
@@ -1982,20 +2092,29 @@ final class KotlinAstLowering {
         int bracket = 0;
         for (int i = start; i < limit; i++) {
             char c = clean.charAt(i);
-            if (c == '(') paren++;
-            else if (c == ')') paren = Math.max(0, paren - 1);
-            else if (c == '{') brace++;
+            if (c == '(')
+                paren++;
+            else if (c == ')')
+                paren = Math.max(0, paren - 1);
+            else if (c == '{')
+                brace++;
             else if (c == '}') {
-                if (brace == 0) return i;
+                if (brace == 0)
+                    return i;
                 brace--;
-            } else if (c == '[') bracket++;
-            else if (c == ']') bracket = Math.max(0, bracket - 1);
+            } else if (c == '[')
+                bracket++;
+            else if (c == ']')
+                bracket = Math.max(0, bracket - 1);
             else if (paren == 0 && brace == 0 && bracket == 0) {
-                if (c == ';') return i + 1;
+                if (c == ';')
+                    return i + 1;
                 if (c == '\n' || c == '\r') {
                     int prev = i - 1;
-                    while (prev >= start && (clean.charAt(prev) == ' ' || clean.charAt(prev) == '\t')) prev--;
-                    if (prev >= start && Set.of('.', '+', '-', '*', '/', '=', ',', '?', ':').contains(clean.charAt(prev))) {
+                    while (prev >= start && (clean.charAt(prev) == ' ' || clean.charAt(prev) == '\t'))
+                        prev--;
+                    if (prev >= start
+                            && Set.of('.', '+', '-', '*', '/', '=', ',', '?', ':').contains(clean.charAt(prev))) {
                         continue;
                     }
                     int next = skipWhitespace(clean, i + 1, limit);
@@ -2016,17 +2135,26 @@ final class KotlinAstLowering {
         int bracket = 0;
         for (int i = start; i < end; i++) {
             char c = clean.charAt(i);
-            if (c == '(') paren++;
-            else if (c == ')') paren = Math.max(0, paren - 1);
-            else if (c == '<') angle++;
-            else if (c == '>') angle = Math.max(0, angle - 1);
-            else if (c == '{') brace++;
-            else if (c == '}') brace = Math.max(0, brace - 1);
-            else if (c == '[') bracket++;
-            else if (c == ']') bracket = Math.max(0, bracket - 1);
+            if (c == '(')
+                paren++;
+            else if (c == ')')
+                paren = Math.max(0, paren - 1);
+            else if (c == '<')
+                angle++;
+            else if (c == '>')
+                angle = Math.max(0, angle - 1);
+            else if (c == '{')
+                brace++;
+            else if (c == '}')
+                brace = Math.max(0, brace - 1);
+            else if (c == '[')
+                bracket++;
+            else if (c == ']')
+                bracket = Math.max(0, bracket - 1);
             else if (paren == 0 && angle == 0 && brace == 0 && bracket == 0 && c == target) {
                 if (target == '=' && ((i + 1 < end && clean.charAt(i + 1) == '=')
-                        || (i > start && (clean.charAt(i - 1) == '!' || clean.charAt(i - 1) == '<' || clean.charAt(i - 1) == '>')))) {
+                        || (i > start && (clean.charAt(i - 1) == '!' || clean.charAt(i - 1) == '<'
+                                || clean.charAt(i - 1) == '>')))) {
                     continue;
                 }
                 return i;
@@ -2035,7 +2163,8 @@ final class KotlinAstLowering {
         return -1;
     }
 
-    private static record IntSpan(int start, int end) {}
+    private static record IntSpan(int start, int end) {
+    }
 
     private static List<IntSpan> splitTopLevel(String clean, int start, int end, char delimiter) {
         List<IntSpan> list = new ArrayList<>();
@@ -2046,20 +2175,30 @@ final class KotlinAstLowering {
         int segStart = start;
         for (int i = start; i < end; i++) {
             char c = clean.charAt(i);
-            if (c == '(') paren++;
-            else if (c == ')') paren = Math.max(0, paren - 1);
-            else if (c == '<') angle++;
-            else if (c == '>') angle = Math.max(0, angle - 1);
-            else if (c == '{') brace++;
-            else if (c == '}') brace = Math.max(0, brace - 1);
-            else if (c == '[') bracket++;
-            else if (c == ']') bracket = Math.max(0, bracket - 1);
+            if (c == '(')
+                paren++;
+            else if (c == ')')
+                paren = Math.max(0, paren - 1);
+            else if (c == '<')
+                angle++;
+            else if (c == '>')
+                angle = Math.max(0, angle - 1);
+            else if (c == '{')
+                brace++;
+            else if (c == '}')
+                brace = Math.max(0, brace - 1);
+            else if (c == '[')
+                bracket++;
+            else if (c == ']')
+                bracket = Math.max(0, bracket - 1);
             else if (paren == 0 && angle == 0 && brace == 0 && bracket == 0 && c == delimiter) {
-                if (i > segStart) list.add(new IntSpan(segStart, i));
+                if (i > segStart)
+                    list.add(new IntSpan(segStart, i));
                 segStart = i + 1;
             }
         }
-        if (end > segStart) list.add(new IntSpan(segStart, end));
+        if (end > segStart)
+            list.add(new IntSpan(segStart, end));
         return list;
     }
 
@@ -2067,9 +2206,12 @@ final class KotlinAstLowering {
         int angle = 0;
         for (int i = s.length() - 1; i >= 0; i--) {
             char c = s.charAt(i);
-            if (c == '>') angle++;
-            else if (c == '<') angle = Math.max(0, angle - 1);
-            else if (angle == 0 && c == '.') return i;
+            if (c == '>')
+                angle++;
+            else if (c == '<')
+                angle = Math.max(0, angle - 1);
+            else if (angle == 0 && c == '.')
+                return i;
         }
         return -1;
     }
@@ -2080,7 +2222,8 @@ final class KotlinAstLowering {
             boolean leftOk = idx == 0 || !Character.isJavaIdentifierPart(s.charAt(idx - 1));
             int right = idx + word.length();
             boolean rightOk = right >= s.length() || !Character.isJavaIdentifierPart(s.charAt(right));
-            if (leftOk && rightOk) return idx;
+            if (leftOk && rightOk)
+                return idx;
             idx = right;
         }
         return -1;
@@ -2094,7 +2237,8 @@ final class KotlinAstLowering {
     }
 
     private static int advancePastUnknownItem(String clean, int pos, int end) {
-        if (pos >= end) return end;
+        if (pos >= end)
+            return end;
         char c = clean.charAt(pos);
         if (c == '{') {
             int close = findMatchingBracket(clean, pos, end, '{', '}');
@@ -2104,7 +2248,8 @@ final class KotlinAstLowering {
             int close = findMatchingBracket(clean, pos, end, '(', ')');
             return close > pos ? close + 1 : pos + 1;
         }
-        while (pos < end && clean.charAt(pos) != '\n' && clean.charAt(pos) != '\r' && clean.charAt(pos) != ';' && clean.charAt(pos) != '{') {
+        while (pos < end && clean.charAt(pos) != '\n' && clean.charAt(pos) != '\r' && clean.charAt(pos) != ';'
+                && clean.charAt(pos) != '{') {
             pos++;
         }
         if (pos < end && clean.charAt(pos) == '{') {
@@ -2123,19 +2268,24 @@ final class KotlinAstLowering {
     }
 
     private static boolean isValidSimpleIdentifier(String s) {
-        if (s == null || s.isEmpty() || CONTROL_KEYWORDS.contains(s)) return false;
-        if (!Character.isJavaIdentifierStart(s.charAt(0))) return false;
+        if (s == null || s.isEmpty() || CONTROL_KEYWORDS.contains(s))
+            return false;
+        if (!Character.isJavaIdentifierStart(s.charAt(0)))
+            return false;
         for (int i = 1; i < s.length(); i++) {
-            if (!Character.isJavaIdentifierPart(s.charAt(i))) return false;
+            if (!Character.isJavaIdentifierPart(s.charAt(i)))
+                return false;
         }
         return true;
     }
 
     private static boolean isValidQualifiedName(String s) {
-        if (s == null || s.isEmpty()) return false;
+        if (s == null || s.isEmpty())
+            return false;
         String[] parts = s.split("\\.", -1);
         for (String p : parts) {
-            if (!isValidSimpleIdentifier(p)) return false;
+            if (!isValidSimpleIdentifier(p))
+                return false;
         }
         return true;
     }
@@ -2152,10 +2302,14 @@ final class KotlinAstLowering {
                     continue;
                 }
             }
-            if (c == '\n') sb.append("\\n");
-            else if (c == '\r') sb.append("\\r");
-            else if (c == '"') sb.append("\\\"");
-            else sb.append(c);
+            if (c == '\n')
+                sb.append("\\n");
+            else if (c == '\r')
+                sb.append("\\r");
+            else if (c == '"')
+                sb.append("\\\"");
+            else
+                sb.append(c);
         }
         return sb.toString();
     }
@@ -2170,7 +2324,8 @@ final class KotlinAstLowering {
             for (int i = 0; i < text.length(); i++) {
                 char c = text.charAt(i);
                 if (c == '\r') {
-                    if (i + 1 < text.length() && text.charAt(i + 1) == '\n') i++;
+                    if (i + 1 < text.length() && text.charAt(i + 1) == '\n')
+                        i++;
                     lines.add(i + 1);
                 } else if (c == '\n') {
                     lines.add(i + 1);
