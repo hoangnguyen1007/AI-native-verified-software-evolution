@@ -80,5 +80,46 @@ class KotlinAstLoweringTest {
         assertTrue(typeNames.contains("PetClinicApplication"), () -> "Expected PetClinicApplication in " + typeNames);
         assertTrue(typeNames.contains("PetClinicApplicationKt"), () -> "Expected PetClinicApplicationKt in " + typeNames);
     }
+
+    @Test
+    void lowersRealworldSpringbootKotlinSourcesCleanly() throws Exception {
+        var files = new java.util.LinkedHashMap<String, String>();
+        var root = java.nio.file.Path.of("D:/UIT/evo-random-benchmark/realworld-springboot-kotlin/src/main/kotlin");
+        if (java.nio.file.Files.isDirectory(root)) {
+            try (var stream = java.nio.file.Files.walk(root)) {
+                for (var p : stream.filter(p -> p.toString().endsWith(".kt")).sorted().toList()) {
+                    String rel = "src/main/kotlin/" + root.relativize(p).toString().replace('\\', '/');
+                    files.put(rel, java.nio.file.Files.readString(p));
+                }
+            }
+        } else {
+            files.put("src/main/kotlin/io/realworld/web/RestControllerAdvice.kt", """
+                    package io.realworld.web
+                    import org.springframework.web.bind.annotation.ExceptionHandler
+                    import org.springframework.web.bind.annotation.RestControllerAdvice
+                    @RestControllerAdvice
+                    class RestControllerAdvice {
+                        @ExceptionHandler(Exception::class)
+                        fun handle(e: Exception): String = e.message ?: ""
+                    }
+                    """);
+        }
+        var request = LombokIngestionTest.recovery(ComponentIngestionTest.fixture(files, true).request());
+        var result = new JavaParserFrontend().analyze(request).validateFor(request);
+        assertFalse(result.typeDeclarations().isEmpty());
+        var structKinds = java.util.Set.of(
+                "java.extends", "java.implements", "java.permits", "java.field-type",
+                "java.parameter-type", "java.returns", "java.throws", "java.annotated-with",
+                "java.type-argument", "java.type-parameter-bound");
+        var structObs = result.observations().stream()
+                .filter(o -> structKinds.contains(o.category().value()))
+                .toList();
+        var unresolvedStruct = structObs.stream()
+                .filter(o -> o.attribution() != com.evolution.analysis.contract.semantic.SemanticStatus.RESOLVED)
+                .toList();
+        long permille = structObs.isEmpty() ? 1000L
+                : ((structObs.size() - unresolvedStruct.size()) * 1000L) / structObs.size();
+        assertTrue(permille >= 980L, () -> "permille=" + permille + " unresolved=" + unresolvedStruct);
+    }
 }
 

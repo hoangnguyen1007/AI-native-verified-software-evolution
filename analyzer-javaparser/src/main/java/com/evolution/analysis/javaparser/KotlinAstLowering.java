@@ -88,9 +88,9 @@ final class KotlinAstLowering {
     private static final Pattern FILE_JVM_NAME = Pattern.compile(
             "@file\\s*:\\s*JvmName\\s*\\(\\s*\"([A-Za-z_][A-Za-z0-9_]*)\"\\s*\\)");
     private static final Pattern PACKAGE_DECL = Pattern.compile(
-            "(?m)^\\s*package\\s+([A-Za-z_][A-Za-z0-9_.]*)");
+            "(?m)^\\s*package\\s+([A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*)");
     private static final Pattern IMPORT_DECL = Pattern.compile(
-            "(?m)^\\s*import\\s+([A-Za-z_][A-Za-z0-9_.]*(?:\\.\\*)?)(?:\\s+as\\s+([A-Za-z_][A-Za-z0-9_]*))?");
+            "(?m)^\\s*import\\s+([A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\.\\*)?)(?:\\s+as\\s+([A-Za-z_][A-Za-z0-9_]*))?");
     private static final Pattern CALL_SCAN = Pattern.compile(
             "(?:([A-Za-z_][A-Za-z0-9_]*(?:\\s*\\.\\s*[A-Za-z_][A-Za-z0-9_]*)+)|([A-Za-z_][A-Za-z0-9_]*))(?:\\s*<[^>{};()]*>)?\\s*\\(");
     private static final Pattern LOCAL_VAL_SCAN = Pattern.compile(

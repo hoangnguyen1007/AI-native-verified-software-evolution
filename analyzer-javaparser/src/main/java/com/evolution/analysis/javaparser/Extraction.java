@@ -148,21 +148,25 @@ final class Extraction {
             outcomesByDoc.merge(outcome.document(), outcome, Extraction::mergeOutcome);
         }
         var outcomes = new ArrayList<>(outcomesByDoc.values());
-        var coverage = FrontendRequest.CATEGORIES.stream().map(c -> {
-            var kind = new RelationshipKind("java." + c);
-            long attempted = observations.stream().filter(o -> o.category().equals(kind)).count();
-            long emitted = occurrences.values().stream().filter(o -> o.relationship().kind().equals(kind)).count();
-            return new CategoryCoverage(kind, c.equals("calls") ? CategoryCoverage.Support.IMPLEMENTED : CategoryCoverage.Support.PARTIAL, attempted, emitted, attempted - emitted);
-        }).toList();
         var seenObs = new HashSet<ObservationRecord>();
         var distinctObservations = new ArrayList<ObservationRecord>();
         for (var obs : observations) {
             if (seenObs.add(obs)) distinctObservations.add(obs);
         }
+        var coverage = FrontendRequest.CATEGORIES.stream().map(c -> {
+            var kind = new RelationshipKind("java." + c);
+            long attempted = distinctObservations.stream().filter(o -> o.category().equals(kind)).count();
+            long emitted = occurrences.values().stream().filter(o -> o.relationship().kind().equals(kind)).count();
+            return new CategoryCoverage(kind, c.equals("calls") ? CategoryCoverage.Support.IMPLEMENTED : CategoryCoverage.Support.PARTIAL, attempted, emitted, attempted - emitted);
+        }).toList();
         var distinctTypes = new ArrayList<TypeUseRecord>(new TreeSet<>(types));
         var distinctAnnotations = new ArrayList<AnnotationUseRecord>(new TreeSet<>(annotations));
-        var distinctShapes = new ArrayList<TypeDeclarationRecord>(new TreeSet<>(shapes));
-        var distinctMembers = new ArrayList<MemberDeclarationRecord>(new TreeSet<>(members));
+        var shapesByType = new LinkedHashMap<EntityIdentity, TypeDeclarationRecord>();
+        for (var s : shapes) shapesByType.putIfAbsent(s.type(), s);
+        var distinctShapes = new ArrayList<TypeDeclarationRecord>(new TreeSet<>(shapesByType.values()));
+        var membersById = new LinkedHashMap<EntityIdentity, MemberDeclarationRecord>();
+        for (var m : members) membersById.putIfAbsent(m.member(), m);
+        var distinctMembers = new ArrayList<MemberDeclarationRecord>(new TreeSet<>(membersById.values()));
         var distinctCandidates = new ArrayList<LombokConstructorCandidate>(new TreeSet<>(constructorCandidates));
         var distinctHttp = new ArrayList<HttpClientCallRecord>(new TreeSet<>(httpClientCalls));
         return new FrontendResult(request.manifest().identity(), VERSION,
@@ -1350,14 +1354,37 @@ final class Extraction {
     }
     void annotation(AnnotationExpr node, Node declaration, String site, boolean direct) {
         Supplier<Entity> source = declaration == null ? () -> typeUseOwner(node) : () -> entity(declaration);
-        if (direct) observe(node,"annotated-with",() -> typeEntity(node.resolve()),source);
-        observe(node.getName(),"type-uses",() -> typeEntity(node.resolve()),source);
+        if (direct) observe(node,"annotated-with",() -> typeEntity(resolveAnnotation(node)),source);
+        observe(node.getName(),"type-uses",() -> typeEntity(resolveAnnotation(node)),source);
         try {
             var entity = source.get();
             var symbol = declaration == null ? ownerName(node) : name(declaration);
             var key = JavaSymbolName.annotationUse(symbol,unit(node).input.document().identity(),unit(node).source.start(node));
             annotations.add(new AnnotationUseRecord(key.canonicalName(),entity.identity(),unit(node).source.span(node),site,unit(node).source.slice(unit(node).source.span(node))));
         } catch (RuntimeException failure) { /* Missing owner remains in the observation ledger. */ }
+    }
+    private ResolvedReferenceTypeDeclaration resolveAnnotation(AnnotationExpr node) {
+        try {
+            return node.resolve();
+        } catch (ClassCastException sameNameAsEnclosingType) {
+            String simple = node.getNameAsString();
+            var cu = node.findCompilationUnit().orElse(null);
+            if (cu != null) {
+                for (var imp : cu.getImports()) {
+                    if (!imp.isStatic() && !imp.isAsterisk() && imp.getName().getIdentifier().equals(simple)) {
+                        var solved = environment.solver.tryToSolveType(imp.getNameAsString());
+                        if (solved.isSolved()) return solved.getCorrespondingDeclaration();
+                    }
+                }
+                for (var imp : cu.getImports()) {
+                    if (!imp.isStatic() && imp.isAsterisk()) {
+                        var solved = environment.solver.tryToSolveType(imp.getNameAsString() + "." + simple);
+                        if (solved.isSolved()) return solved.getCorrespondingDeclaration();
+                    }
+                }
+            }
+            throw new UnsolvedSymbolException(simple);
+        }
     }
     static SemanticStatus failureStatus(Throwable failure) {
         if (failure instanceof MappingFailure mapping) return mapping.status;

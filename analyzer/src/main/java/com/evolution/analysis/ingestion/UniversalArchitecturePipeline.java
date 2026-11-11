@@ -709,10 +709,15 @@ public final class UniversalArchitecturePipeline {
                     if (memberDecl.name().equals("main") && memberDecl.staticMember()) {
                         var declOpt = Optional.ofNullable(declarationsByIdentity.get(memberDecl.member()));
                         Optional<SourceSpan> span = declOpt.flatMap(d -> d.entity().declaration());
-                        String path = span.map(s -> pathMap.getOrDefault(s.document(), "")).orElse("");
-                        String declaringType = path.replace('/', '.').replaceAll("\\.(?:java|kt)$", "");
+                        String path = span.map(s -> pathMap.getOrDefault(s.document(), ""))
+                                .filter(p -> !p.isBlank())
+                                .orElse("declared")
+                                .strip();
+                        String declaringType = path.replace('/', '.').replaceAll("\\.(?:java|kt)$", "").strip();
+                        if (declaringType.isEmpty() || declaringType.equals("declared"))
+                            declaringType = memberDecl.member().value().strip();
                         if (declaringType.isEmpty())
-                            declaringType = memberDecl.member().value();
+                            declaringType = "Main";
                         entryPoints.add(new UniversalArchitectureReport.EntryPointRecord(
                                 declaringType, UniversalArchitectureReport.EntryPointKind.MAIN_METHOD,
                                 "public static void main(String[] args)", path));
@@ -725,19 +730,29 @@ public final class UniversalArchitecturePipeline {
                             || ann.spelling().contains("EnableAutoConfiguration")) {
                         var declOpt = Optional.ofNullable(declarationsByIdentity.get(ann.owner()));
                         String fqn = declOpt.map(d -> d.entity().canonicalName())
-                                .orElseGet(() -> typeIdentityToFqn.getOrDefault(ann.owner(), ann.owner().value()));
-                        String path = pathMap.getOrDefault(ann.span().document(), "");
+                                .orElseGet(() -> typeIdentityToFqn.getOrDefault(ann.owner(), ann.owner().value()))
+                                .strip();
+                        if (fqn.isEmpty()) fqn = "Application";
+                        String path = pathMap.getOrDefault(ann.span().document(), "declared").strip();
+                        if (path.isEmpty()) path = "declared";
+                        String detail = ann.spelling().strip();
+                        if (detail.isEmpty()) detail = "@SpringBootApplication";
                         entryPoints.add(new UniversalArchitectureReport.EntryPointRecord(
                                 fqn, UniversalArchitectureReport.EntryPointKind.BOOT_APPLICATION,
-                                ann.spelling(), path));
+                                detail, path));
                     } else if (ann.spelling().contains("ComponentScan")) {
                         var declOpt = Optional.ofNullable(declarationsByIdentity.get(ann.owner()));
                         String fqn = declOpt.map(d -> d.entity().canonicalName())
-                                .orElseGet(() -> typeIdentityToFqn.getOrDefault(ann.owner(), ann.owner().value()));
-                        String path = pathMap.getOrDefault(ann.span().document(), "");
+                                .orElseGet(() -> typeIdentityToFqn.getOrDefault(ann.owner(), ann.owner().value()))
+                                .strip();
+                        if (fqn.isEmpty()) fqn = "Application";
+                        String path = pathMap.getOrDefault(ann.span().document(), "declared").strip();
+                        if (path.isEmpty()) path = "declared";
+                        String detail = ann.spelling().strip();
+                        if (detail.isEmpty()) detail = "@ComponentScan";
                         entryPoints.add(new UniversalArchitectureReport.EntryPointRecord(
                                 fqn, UniversalArchitectureReport.EntryPointKind.COMPONENT_SCAN_ROOT,
-                                ann.spelling(), path));
+                                detail, path));
                     }
                 }
 
@@ -745,12 +760,14 @@ public final class UniversalArchitecturePipeline {
                 if (unit.components().isPresent()) {
                     for (var row : unit.components().get().rows()) {
                         if (row.status() == ComponentScanIngestion.Status.INCLUDED) {
-                            String fqn = typeIdentityToFqn.getOrDefault(row.type(), row.type().value());
+                            String fqn = typeIdentityToFqn.getOrDefault(row.type(), row.type().value()).strip();
+                            if (fqn.isEmpty()) fqn = "Component";
                             String simpleName = fqn.contains(".") ? fqn.substring(fqn.lastIndexOf('.') + 1) : fqn;
                             String defaultBeanName = simpleName.isEmpty() ? fqn
                                     : (Character.toLowerCase(simpleName.charAt(0))
                                             + (simpleName.length() > 1 ? simpleName.substring(1) : ""));
-                            String beanName = row.beanName().orElse(defaultBeanName);
+                            String beanName = row.beanName().filter(b -> !b.isBlank()).orElse(defaultBeanName).strip();
+                            if (beanName.isEmpty()) beanName = fqn;
                             components.add(new UniversalArchitectureReport.ComponentRecord(
                                     "component:" + fqn, beanName, fqn,
                                     "COMPONENT", "default", List.of(), false));
@@ -761,10 +778,13 @@ public final class UniversalArchitecturePipeline {
                 // Spring Constructors & Injections
                 if (unit.constructors().isPresent()) {
                     for (var row : unit.constructors().get().rows()) {
-                        String ownerFqn = typeIdentityToFqn.getOrDefault(row.type(), row.type().value());
+                        String ownerFqn = typeIdentityToFqn.getOrDefault(row.type(), row.type().value()).strip();
+                        if (ownerFqn.isEmpty()) ownerFqn = "Owner";
                         for (var param : row.parameters()) {
+                            String paramSpelling = param.type().spelling().strip();
+                            if (paramSpelling.isEmpty()) paramSpelling = "Object";
                             injectionSites.add(new UniversalArchitectureReport.InjectionSiteRecord(
-                                    ownerFqn, "constructor", param.type().spelling(),
+                                    ownerFqn, "constructor", paramSpelling,
                                     "CONSTRUCTOR", List.of(), true));
                         }
                     }
@@ -778,11 +798,14 @@ public final class UniversalArchitecturePipeline {
                             spelling.contains("Configuration") || spelling.contains("RestController")) {
                         var declOpt = Optional.ofNullable(declarationsByIdentity.get(ann.owner()));
                         String fqn = declOpt.map(d -> d.entity().canonicalName())
-                                .orElseGet(() -> typeIdentityToFqn.getOrDefault(ann.owner(), ann.owner().value()));
-                        String simpleName = fqn.contains(".") ? fqn.substring(fqn.lastIndexOf('.') + 1) : fqn;
-                        String beanName = simpleName.isEmpty() ? fqn
+                                .orElseGet(() -> typeIdentityToFqn.getOrDefault(ann.owner(), ann.owner().value()))
+                                .strip();
+                        if (fqn.isEmpty()) fqn = "Component";
+                        String simpleName = (fqn.contains(".") ? fqn.substring(fqn.lastIndexOf('.') + 1) : fqn).strip();
+                        String beanName = (simpleName.isEmpty() ? fqn
                                 : (Character.toLowerCase(simpleName.charAt(0))
-                                        + (simpleName.length() > 1 ? simpleName.substring(1) : ""));
+                                        + (simpleName.length() > 1 ? simpleName.substring(1) : ""))).strip();
+                        if (beanName.isEmpty()) beanName = fqn;
                         String kind = spelling.contains("Service") ? "SERVICE"
                                 : spelling.contains("Repository") ? "REPOSITORY"
                                         : spelling.contains("Controller") ? "CONTROLLER"
@@ -917,18 +940,25 @@ public final class UniversalArchitecturePipeline {
                     var spring = unit.spring().get();
                     allGaps.addAll(spring.gaps());
                     for (var route : spring.web().routes()) {
-                        String methods = String.join(",", route.methods());
+                        String methods = String.join(",", route.methods()).strip();
+                        String routePath = route.path() == null ? "" : route.path().strip();
+                        String detail = (methods.isEmpty()
+                                ? (routePath.isEmpty() ? "ANY /" : "ANY " + routePath)
+                                : (routePath.isEmpty() ? methods : methods + " " + routePath)).strip();
                         String ctrlPath = types.stream()
                                 .filter(t -> t.qualifiedName().equals(route.controller().value())
                                         || t.qualifiedName().endsWith("." + route.controller().value()))
                                 .map(UniversalArchitectureReport.TypeRecord::sourcePath)
                                 .filter(p -> !p.isBlank())
                                 .findFirst()
-                                .orElse("declared");
+                                .orElse("declared")
+                                .strip();
+                        String ctrlDeclaring = route.controller().value().strip();
+                        if (ctrlDeclaring.isEmpty()) ctrlDeclaring = "Controller";
                         entryPoints.add(new UniversalArchitectureReport.EntryPointRecord(
-                                route.controller().value(),
+                                ctrlDeclaring,
                                 UniversalArchitectureReport.EntryPointKind.CONTROLLER_ENDPOINT,
-                                methods + " " + route.path(),
+                                detail,
                                 ctrlPath));
                     }
                     for (var repo : spring.repositories().rows()) {
@@ -938,9 +968,12 @@ public final class UniversalArchitecturePipeline {
                                 .map(UniversalArchitectureReport.TypeRecord::sourcePath)
                                 .filter(p -> !p.isBlank())
                                 .findFirst()
-                                .orElse("declared");
+                                .orElse("declared")
+                                .strip();
+                        String repoDeclaring = repo.repository().value().strip();
+                        if (repoDeclaring.isEmpty()) repoDeclaring = "Repository";
                         entryPoints.add(new UniversalArchitectureReport.EntryPointRecord(
-                                repo.repository().value(),
+                                repoDeclaring,
                                 UniversalArchitectureReport.EntryPointKind.REPOSITORY_INTERFACE,
                                 "Spring Data repository (" + String.join(", ",
                                         repo.exposedTypes().stream().map(EntityIdentity::value).toList()) + ")",
@@ -1013,18 +1046,23 @@ public final class UniversalArchitecturePipeline {
                                     Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty()));
 
                             for (var cand : plan.binding().registrationPlan().discoveryPlan().initialDefinitions()) {
-                                String beanName = cand.declaredNameKey().primary().orElse(cand.definitionSlot());
-                                String type = cand.exposedTypes().isEmpty() ? ""
+                                String beanName = cand.declaredNameKey().primary().orElse(cand.definitionSlot()).strip();
+                                String type = (cand.exposedTypes().isEmpty() ? ""
                                         : typeIdentityToFqn.getOrDefault(cand.exposedTypes().getFirst(),
-                                                cand.exposedTypes().getFirst().value());
-                                String fqn = type.isEmpty() ? cand.identity().value() : type;
+                                                cand.exposedTypes().getFirst().value())).strip();
+                                String fqn = (type.isEmpty() ? cand.identity().value() : type).strip();
+                                if (fqn.isEmpty()) fqn = "Component";
+                                if (beanName.isEmpty()) beanName = fqn;
+                                String containerKey = cand.producer().containerKey().strip();
+                                if (containerKey.isEmpty()) containerKey = "default";
                                 components.add(new UniversalArchitectureReport.ComponentRecord(
                                         "component:" + fqn, beanName, fqn,
-                                        cand.producer().producerKind().name(), cand.producer().containerKey(),
+                                        cand.producer().producerKind().name(), containerKey,
                                         List.of(), false));
                                 if (cand.producer().producerKind() == BeanProducer.Kind.BEAN_METHOD) {
-                                    String factoryType = cand.producer().containerKey();
-                                    String methodName = cand.producer().declarationSlot();
+                                    String factoryType = containerKey;
+                                    String methodName = cand.producer().declarationSlot().strip();
+                                    if (methodName.isEmpty()) methodName = "bean";
                                     String productType = type.isEmpty() ? "Object" : type;
                                     producers.add(new UniversalArchitectureReport.ProducerRecord(
                                             factoryType, methodName, productType, beanName, List.of()));
@@ -1032,12 +1070,18 @@ public final class UniversalArchitecturePipeline {
                             }
 
                             for (var dep : plan.binding().dependencies()) {
+                                String owner = dep.owner().map(BeanDefinitionCandidate.Identity::value).orElse("external").strip();
+                                if (owner.isEmpty()) owner = "external";
+                                String memberName = (dep.point().ownerDeclarationKey() + "#" + dep.point().siteSlot()).strip();
+                                if (memberName.isEmpty()) memberName = "<init>";
+                                String reqType = dep.requestedType().spelling().strip();
+                                if (reqType.isEmpty()) reqType = "Object";
                                 injectionSites.add(new UniversalArchitectureReport.InjectionSiteRecord(
-                                        dep.owner().map(BeanDefinitionCandidate.Identity::value).orElse("external"),
-                                        dep.point().ownerDeclarationKey() + "#" + dep.point().siteSlot(),
-                                        dep.requestedType().spelling(),
+                                        owner,
+                                        memberName,
+                                        reqType,
                                         dep.point().siteKind().name(),
-                                        dep.dependencyName().value().map(List::of).orElse(List.of()),
+                                        dep.dependencyName().value().map(String::strip).filter(s -> !s.isEmpty()).map(List::of).orElse(List.of()),
                                         dep.required() == InjectionBindingPlan.Required.REQUIRED));
                             }
 

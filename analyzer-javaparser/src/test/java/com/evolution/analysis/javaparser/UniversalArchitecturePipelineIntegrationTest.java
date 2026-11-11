@@ -1033,4 +1033,46 @@ class UniversalArchitecturePipelineIntegrationTest {
         assertTrue(callsFromJava.stream().allMatch(o -> o.status() == com.evolution.analysis.contract.semantic.SemanticStatus.RESOLVED),
                 () -> "All Java->Kotlin calls must resolve: " + callsFromJava);
     }
+
+    @Test
+    void requestMappingWithoutExplicitHttpMethodFormatsCleanEntryPointDetail() throws Exception {
+        var springSource = """
+                package org.springframework.samples.petclinic.rest.controller;
+                import org.springframework.web.bind.annotation.RestController;
+                import org.springframework.web.bind.annotation.RequestMapping;
+
+                @RestController
+                @RequestMapping("/api/pettypes")
+                public class PetTypeRestController {
+                    @RequestMapping("")
+                    public String listPetTypes() {
+                        return "ok";
+                    }
+                }
+                """;
+        var input = inputs(Map.of(
+                "src/main/java/org/springframework/samples/petclinic/rest/controller/PetTypeRestController.java", springSource
+        ));
+        var exact = ComponentIngestionTest.fixture(Map.of("fixture/App.java", springSource), false).request();
+        var build = new UniversalBuildIngestion().ingest(
+                input,
+                UniversalBuildIngestion.Policy.defaults(),
+                Optional.empty(),
+                Map.of(),
+                new BuildModelPolicy(List.of(), List.of(), Map.of(), 10000, 100, 16)
+        );
+        var key = new UniversalSourceIngestion.SourceSet(build.modules().getFirst().descriptor().identity(), SourcePlanModel.Kind.MAIN);
+        var resolution = new UniversalSourceIngestion.Resolution(exact.platform(), exact.dependencies(), ContentDigest.sha256Utf8("petclinic-rest-res"));
+        var policy = UniversalArchitecturePipeline.Policy.builder(new JavaParserFrontend(), JavaParserFrontend.PROVIDER)
+                .resolutions(Map.of(key, resolution))
+                .defaultPlatform(exact.platform())
+                .build();
+
+        var report = new UniversalArchitecturePipeline().run(input, policy);
+        assertNotNull(report);
+        assertTrue(report.entryPoints().stream().anyMatch(e ->
+                e.kind() == UniversalArchitectureReport.EntryPointKind.CONTROLLER_ENDPOINT
+                        && e.detail().equals("ANY /api/pettypes")),
+                () -> "EntryPoints=" + report.entryPoints());
+    }
 }
