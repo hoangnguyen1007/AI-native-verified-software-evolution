@@ -86,6 +86,8 @@ class LocalAnalysisRunnerTest {
             for (var reportId : result.reports()) {
                 var report = reports.get(reportId).orElseThrow();
                 assertFalse(report.evaluation().findings().isEmpty()); assertEquals(graph.identity(),report.evaluation().graph());
+                assertEquals(Set.of("metric.density", "metric.concentration"), report.assessment().orElseThrow().structuralInputs()
+                        .stream().map(metric -> metric.metric().id()).collect(java.util.stream.Collectors.toSet()));
                 var response = AnalysisJobApiTest.call(api,"POST","/api/v1/graphs/"+graph.identity().value()+"/reports/"+reportId.value()+"/assessment","{}");
                 assertEquals(200,response.status()); assertEquals(CanonicalJson.write(report.assessment().orElseThrow()),CanonicalJson.write(AnalysisJobApiTest.data(response)));
             }

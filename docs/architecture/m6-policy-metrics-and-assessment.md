@@ -19,6 +19,10 @@ Invalid external policy remains WITHHELD with its original typed gaps.
 structuralInputs, limits)` computes health from those canonical outputs.
 `assess(...)` obtains the required structural inputs through the existing
 `ArchitectureMetricsService`, sharing the query service's operational guard.
+CLI and backend publication call `assess` with the same policy metrics report
+they expose alongside the assessment. A Java or Spring rule used in a canonical
+partition outside its applicable scope retains a withheld rule row with
+`POLICY_SCOPE_NOT_APPLICABLE_TO_CONTEXT` and an unknown verdict.
 Repeated uses of a metric share one canonical operand. One metric ID must use
 one declared scope within a model. These are stable, storage-neutral domain
 services for later CLI/API consumers; presentation does not recompute formulas.

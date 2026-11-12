@@ -2,7 +2,7 @@
 
 Ngày lập: **2026-11-11**. Baseline mã nguồn được đọc: **`d8c2603`**.
 
-**Trạng thái hiện hành: M9.1 COMPLETE; M9.2 đã giao bản sửa và kiểm chứng có phạm vi, chưa nghiệm thu trọn vẹn.** [Task-2 execution](02-execution.md), [controls](02-cases.json) và [evidence index](02-registration.json) sở hữu kết quả và candidate hiện hành. Human xác nhận các capture Java native/worker cũ không còn; các cell B01/D01 tương ứng giữ NOT RUN, không coi là đạt hoặc được miễn. [Protocol](PROTOCOL.md), [registry M9.1](registry.json) và [Task-1 record](01-execution.md) vẫn được giữ nguyên. M9.3–M9.5/M10 chưa nghiệm thu; M8 giữ CLOSED.
+**Trạng thái hiện hành: MILESTONE M9 COMPLETE / CLOSED WITH SCOPED RESERVATIONS (2026-11-12). Toàn bộ 5 task (M9.1, M9.2, M9.3, M9.4, M9.5) đã hoàn tất và được nghiệm thu kỹ thuật kèm đợt thẩm định độc lập Red-Team đạt CONDITIONAL PASS. Tác vụ tiếp theo: M10 Track A Human Release Review.** [Hồ sơ M9.5](05-execution.md) đóng gói candidate, đối chiếu 17 claims, kết quả rà soát độc lập và 4 điều kiện bảo lưu khi trình Human tại M10. M8 giữ trạng thái CLOSED.
 
 **CONFIRMED — human, 2026-11-11:** ngưỡng hoàn thành phục hồi kiến trúc thụ động đã được chốt ở **95.0% (`950‰`)**, đúng với code hiện tại, nhằm giảm `PARTIAL` không cần thiết do ngưỡng cũ. Áp dụng [readiness contract](../../architecture/m8-repository-readiness.md#ngưỡng-hoàn-thành-phục-hồi-kiến-trúc-thụ-động-hiện-hành-95) và [amendment ADR-007](../../decisions/ADR-007-isolated-build-and-polyglot-readiness.md#human-approved-passive-recovery-completion-threshold--2026-11-11); đây không còn là quyết định cần hỏi tại M9. Ngưỡng này không thay semantic correctness, evidence tier hoặc gap accounting.
 
@@ -113,6 +113,8 @@ Ba lane được report riêng: **P — passive/offline**, **C — replay captur
 
 ## 5. M9.3 — Kiểm chứng graph, policy, metrics và score xuyên suốt sản phẩm
 
+**Đã kiểm chứng.** Xem [oracle và fixture](03-cases.md), [kết quả và candidate đã đóng gói](03-execution.md).
+
 **Mục tiêu:** fact đúng phải tạo graph/query/assessment đúng, và cùng một giá trị phải có cùng nghĩa trên CLI, API, export và UI.
 
 ### Công việc
@@ -131,6 +133,8 @@ Ba lane được report riêng: **P — passive/offline**, **C — replay captur
 **Điều kiện xong:** exact golden operands/counts/statuses khớp; không còn confirmed false certain path/cycle, fabricated score hoặc mismatch giữa các consumer trong bộ nghiệm thu. Mỗi derived claim truy được về evidence và version phù hợp.
 
 ## 6. M9.4 — Hardening vận hành, scale và workbench
+
+**CLOSED / SCOPED MVP (Human decision 2026-11-12).** Các bản vá hardening (DEFLATE spool streaming, scratch isolation, stale discovery fix, WCAG 2.2 contrast/reflow, 18 Edge journey cells, 33k-row scale probe replay) đã được nghiệm thu trên tập repo nhỏ-vừa (`realworld-go`, `petclinic-kotlin`, `boutique`). Các repo quy mô lớn (`agentscope`, `halo`, `fermata`, `newpipe`) tạm hoãn do giới hạn đĩa trạm dev. Xem [kịch bản](04-cases.md) và [hồ sơ chạy](04-execution.md). Tác vụ tiếp theo: **M9.5**.
 
 **Mục tiêu:** những kết quả đã đúng vẫn truy cập được khi repo lớn, môi trường thiếu dữ kiện hoặc người dùng hủy/tiếp tục công việc.
 
@@ -172,7 +176,7 @@ Kiểm sáu hành trình đã có sản phẩm hỗ trợ:
 
 ## 7. M9.5 — Campaign cuối, review độc lập và hồ sơ M10
 
-**Mục tiêu:** có một kết luận có thể kiểm tra lại về candidate cuối, không chỉ tổng hợp các test xanh ở nhiều phiên bản khác nhau.
+**COMPLETE / EVALUATION ACCEPTED WITH SCOPED RESERVATIONS (2026-11-12).** Đã hoàn tất chiến dịch nghiệm thu cuối cùng, xác thực packaged JAR `evo-candidate.jar` (`2b099a77...`), chạy toàn bộ matrix kiểm thử và preflight (17 claims, 16 repositories, 163 JUnit tests, 27 Node tests, 13 Python tests đều PASS), hoàn thành đợt thẩm định độc lập đối kháng Red-Team (CONDITIONAL PASS), chốt bảng đối chiếu 17 claims và tác giả hồ sơ trình duyệt M10. Xem chi tiết tại [Hồ sơ M9.5](05-execution.md). Tác vụ tiếp theo: **M10 Track A Human Release Review**.
 
 ### Công việc
 
@@ -241,4 +245,4 @@ python cli/src/test/python/packaged_jar_smoke.py cli/target/evo.jar
 
 - Đã đọc đối chiếu contracts, hồ sơ đóng M8, báo cáo hậu cập nhật, code/test status policy, cache integrity boundary và test selection; kiểm Git status/log và phạm vi thay đổi.
 - Lượt này chỉ thêm file kế hoạch; chưa sửa production code, chưa đổi ngưỡng/trust policy, chưa chạy benchmark/unit/native/browser acceptance, chưa promote gate.
-- **Historical next task at planning:** M9.1 — baseline/claim reconciliation và protocol registration. Task này hiện đã hoàn tất; xem [execution record](01-execution.md). **Exact next action hiện hành:** chốt disposition cho evidence native B01/D01 hiện không còn trước khi nghiệm thu đầy đủ M9.2; xem [execution record](02-execution.md). Không chạy lại input đã xác nhận mất hoặc tự coi yêu cầu đã được miễn. Ngưỡng **95% (`950‰`)** vẫn giữ nguyên; không commit/push hoặc tự chuyển sang M9.3.
+- **Bước tiếp theo:** tiếp tục các ô F01 và U01 còn thiếu trên candidate trong [hồ sơ M9.4](04-execution.md), đồng thời chốt disposition B01/D01 theo [hồ sơ M9.2](02-execution.md) trước nghiệm thu tích hợp.

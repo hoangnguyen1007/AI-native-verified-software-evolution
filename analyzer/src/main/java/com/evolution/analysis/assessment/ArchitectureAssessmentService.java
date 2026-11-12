@@ -18,11 +18,19 @@ public final class ArchitectureAssessmentService {
                                                 ArchitectureQueryService queries, Optional<ArchitectureScoreModel> model,
                                                 PolicyMetrics.Limits policyLimits, ArchitectureMetric.Limits metricLimits, ArchitectureAssessment.Limits limits) {
         var metrics = new PolicyMetricsService().compute(compilation, plan, evaluation, queries, policyLimits);
+        return assess(metrics, evaluation, queries, model, plan.limits().query(), metricLimits, limits);
+    }
+
+    /** Reuse the policy metrics report published alongside the assessment. */
+    public ArchitectureAssessment.Result assess(PolicyMetrics.Report metrics, PolicyEvaluation.Result evaluation,
+                                                ArchitectureQueryService queries, Optional<ArchitectureScoreModel> model,
+                                                ArchitectureQuery.Limits queryLimits, ArchitectureMetric.Limits metricLimits,
+                                                ArchitectureAssessment.Limits limits) {
         var inputs = new ArrayList<ArchitectureMetric.Result>();
         var engine = new ArchitectureMetricsService(queries.graph(), metricLimits, queries::assessmentStopReason, Optional.empty(), List.of());
         var requested = new TreeMap<String, ArchitectureScoreModel.MetricInput>();
         model.ifPresent(m -> m.dimensions().forEach(d -> d.metric().ifPresent(spec -> requested.putIfAbsent(spec.metric().id(), spec))));
-        requested.values().forEach(spec -> inputs.add(engine.compute(request(metrics.context(), spec.scope(), plan.limits().query()), spec.metric().id(), plan.context())));
+        requested.values().forEach(spec -> inputs.add(engine.compute(request(metrics.context(), spec.scope(), queryLimits), spec.metric().id(), metrics.context().partition())));
         return evaluate(metrics, evaluation, queries, model, inputs, limits);
     }
     public ArchitectureAssessment.Result evaluate(PolicyMetrics.Report metrics, PolicyEvaluation.Result evaluation, ArchitectureQueryService queries,

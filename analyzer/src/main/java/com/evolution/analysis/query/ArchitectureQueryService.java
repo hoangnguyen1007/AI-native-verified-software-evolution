@@ -28,6 +28,15 @@ public final class ArchitectureQueryService {
             return StopReason.NONE;};
     }
     public KnowledgeGraph graph(){return graph;}
+    /** Applicability of the Java and Spring policy/metric projections. Inventory queries remain available in every context. */
+    public boolean supportsArchitectureScope(KnowledgeGraph.Context context, Scope scope) {
+        return switch (graph.evidence(context.evidence()).orElseThrow().family()) {
+            case "analysis.manifest" -> scope != Scope.SPRING_COMPONENT;
+            case "spring.context" -> scope == Scope.SPRING_COMPONENT;
+            case "repository.snapshot", "repository.inventory-snapshot", "polyglot.context" -> false;
+            default -> true; // Older/custom context evidence has no declared language boundary.
+        };
+    }
     /** Additive M6 assessment/metric orchestration shares this query service's cancellation and operational guard. */
     public StopReason assessmentStopReason(){return Objects.requireNonNull(guard.get());}
     static final class LogicalEdge {

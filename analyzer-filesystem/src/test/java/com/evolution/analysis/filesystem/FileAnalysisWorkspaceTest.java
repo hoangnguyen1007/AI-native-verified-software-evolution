@@ -10,6 +10,38 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class FileAnalysisWorkspaceTest {
     @TempDir Path directory;
+    @Test void openingAnotherWorkspaceLeavesSiblingScratchAndCallerDirectoriesAlone() throws Exception {
+        var callerFile = Files.writeString(Files.createDirectory(directory.resolve("analysis-caller")).resolve("owned.txt"), "caller");
+        try (var first = new FileAnalysisWorkspace(directory)) {
+            var rows = first.<String>list();
+            rows.add("first analysis");
+            try (var second = new FileAnalysisWorkspace(directory)) {
+                var others = second.<String>list();
+                others.add("second analysis");
+                assertEquals("caller", Files.readString(callerFile));
+                assertEquals("first analysis", rows.getFirst());
+                assertEquals("second analysis", others.getFirst());
+            }
+            assertEquals("first analysis", rows.getFirst());
+        }
+        assertEquals("caller", Files.readString(callerFile));
+    }
+
+    @Test void repetitiveRowsUseLessScratchAndReplayExactJavaCodeUnits() throws Exception {
+        try (var spool = new FileAnalysisWorkspace(directory)) {
+            String payload = "captured symbol metadata \ue000\ud800".repeat(1024);
+            var rows = spool.<String>list();
+            for (int index = 0; index < 32; index++) rows.add(payload + index);
+            var replay = spool.freeze(rows);
+            Path bytes;
+            try (var paths = Files.walk(directory)) {
+                bytes = paths.filter(file -> file.getFileName().toString().equals("values.bin")).findFirst().orElseThrow();
+            }
+            assertTrue(Files.size(bytes) < 64 * 1024, "Repetitive spool rows must fit in the authored scratch budget");
+            for (int index = 0; index < 32; index++) assertEquals(payload + index, replay.get(index));
+        }
+    }
+
     @Test void nestedReplayListsCannotMoveTheAppendWriterOrCorruptTheirSourceRows()throws Exception {
         try(var spool=new FileAnalysisWorkspace(directory)) {
             var original=spool.<String>list();original.add("original");var replay=spool.freeze(original);

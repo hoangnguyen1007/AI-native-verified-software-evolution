@@ -53,6 +53,61 @@ class AssessmentMetricsIntegrationTest {
         assertEquals(Set.of("metric.concentration", "metric.density"), result.structuralInputs().stream().map(m -> m.metric().id()).collect(java.util.stream.Collectors.toSet()));
         assertTrue(result.structuralInputs().stream().allMatch(m -> m.status() == AssessmentStatus.COMPLETE && m.context().projection().projection() == ArchitectureQuery.Projection.BOUNDED_UNION));
     }
+    @Test void scoreIgnoresRepeatedObservationsAndUncoupledTypesInTheSamePackages() {
+        var f = fixture();
+        var original = assess(f.graph(), ArchitectureMetric.Limits.defaults(), () -> ArchitectureQuery.StopReason.NONE);
+        var edge = f.edges.stream().filter(row -> row.kind().equals("graph.depends-on")).findFirst().orElseThrow();
+        f.edges.add(new KnowledgeGraph.Edge(id("another-observation"), f.context, edge.kind(), edge.source(), edge.target(), edge.evidence(), edge.region()));
+        f.type("p", "Another", false);
+        var larger = assess(f.graph(), ArchitectureMetric.Limits.defaults(), () -> ArchitectureQuery.StopReason.NONE);
+        assertEquals(original.score(), larger.score());
+        assertEquals(new BigDecimal("67.5"), larger.score().orElseThrow());
+        assertTrue(larger.confidence().sufficient());
+        assertEquals(original.structuralInputs().stream().map(ArchitectureMetric.Result::ratio).toList(),
+                larger.structuralInputs().stream().map(ArchitectureMetric.Result::ratio).toList());
+    }
+    @Test void polyglotAndAcquisitionContextsHaveInventoryButNoJavaOrSpringMetric() {
+        var f = new Fixture();
+        for (String family : List.of("polyglot.context", "repository.snapshot", "repository.inventory-snapshot")) {
+            var proof = GraphEvidence.capture(family, Map.of("fixture", "non-JVM"));
+            var syntax = GraphEvidence.capture("polyglot.source-syntax", Map.of("fields", Map.of("rowType", "DOCUMENT", "language", "python")));
+            var document = new KnowledgeGraph.Node(id("script"), f.context, "SOURCE_DOCUMENT", List.of(syntax.identity()));
+            var graph = new KnowledgeGraph(f.snapshot, List.of(new KnowledgeGraph.Context(f.context, f.snapshot, Optional.empty(), proof.identity())),
+                    List.of(document), List.of(), List.of(proof, syntax));
+            var metrics = new ArchitectureMetricsService(graph);
+            var java = ArchitectureQuery.Request.dependencies(graph.identity(), f.context);
+            var spring = new ArchitectureQuery.Request(graph.identity(), f.context, ArchitectureQuery.Scope.SPRING_COMPONENT, java.projection(),
+                    java.direction(), Set.of("spring.selected-binding"), java.population(), false, Optional.empty(), java.limits());
+            assertEquals(1L, metrics.queries().summary(java).items().getFirst().nodeCounts().get("SOURCE_DOCUMENT"));
+            var fanOut = metrics.compute(java, "metric.fan-out", f.context);
+            var beans = metrics.compute(spring, "metric.spring", f.context);
+            for (var result : List.of(fanOut, beans)) {
+                assertEquals(AssessmentStatus.NOT_APPLICABLE, result.status(), family);
+                assertTrue(result.value().isEmpty());
+                assertTrue(result.ratio().isEmpty());
+                assertTrue(result.evidence().contains(proof.identity()));
+            }
+        }
+    }
+
+    @Test void javaPolicyOnNonJavaPartitionRetainsUnknownRuleAndWithheldAssessment() {
+        var f = new Fixture();
+        var proof = GraphEvidence.capture("polyglot.context", Map.of("fixture", "non-JVM"));
+        var graph = new KnowledgeGraph(f.snapshot, List.of(new KnowledgeGraph.Context(f.context, f.snapshot, Optional.empty(), proof.identity())),
+                List.of(), List.of(), List.of(proof));
+        var queries = new ArchitectureMetricsService(graph).queries();
+        var compiled = new PolicyCompiler().compile(POLICY.getBytes(StandardCharsets.UTF_8), EvidenceContext.forSnapshot(graph.snapshot()), PolicyCompiler.Limits.defaults());
+        var plan = new PolicyGraphMapper().bind(compiled, queries, f.context, PolicyGraphMapper.Limits.defaults());
+        var evaluation = new PolicyEvaluator().evaluate(compiled, plan, queries, PolicyEvaluation.Limits.defaults());
+        assertEquals(2, evaluation.rules().size());
+        assertTrue(evaluation.rules().stream().allMatch(rule -> rule.classification() == ArchitectureQuery.Classification.UNKNOWN));
+        assertTrue(evaluation.gaps().stream().anyMatch(gap -> gap.reasonCode().equals("POLICY_SCOPE_NOT_APPLICABLE_TO_CONTEXT")));
+        assertTrue(evaluation.findings().isEmpty());
+        var result = assess(graph, ArchitectureMetric.Limits.defaults(), () -> ArchitectureQuery.StopReason.NONE);
+        assertEquals(AssessmentStatus.WITHHELD, result.status());
+        assertTrue(result.score().isEmpty());
+        assertFalse(result.confidence().sufficient());
+    }
     @Test void aSourcePopulationGapCannotBecomeAnImprovedScore() {
         var f = fixture(); var good = assess(f.graph(), ArchitectureMetric.Limits.defaults(), () -> ArchitectureQuery.StopReason.NONE); assertTrue(good.score().isPresent());
         var doc = f.nodes.stream().filter(n -> n.kind().equals("SOURCE_DOCUMENT")).findFirst().orElseThrow();

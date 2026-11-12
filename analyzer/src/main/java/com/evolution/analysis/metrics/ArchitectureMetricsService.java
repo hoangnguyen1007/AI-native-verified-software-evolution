@@ -27,7 +27,7 @@ public final class ArchitectureMetricsService implements Metrics {
     }
     public ArchitectureQueryService queries(){return new ArchitectureQueryService(graph,guard,Optional.of(this));}
     public ArchitectureMetric.Result compute(Request request,String metric,String subject){
-        Objects.requireNonNull(subject);var definition=MetricCatalog.require(metric);validate(request);
+        Objects.requireNonNull(subject);var definition=MetricCatalog.require(metric);var context=validate(request);
         var input=new MetricEvidence(graph,request,definition,limits,guard);
         if(!definition.scopes().contains(request.scope()))return input.absent(subject,AssessmentStatus.NOT_APPLICABLE,"METRIC_SCOPE_NOT_APPLICABLE",Map.of(),Optional.empty(),layers);
         if(Set.of("metric.inventory","metric.quality","metric.physical-loc","metric.operational","metric.spring").contains(metric)&&!subject.equals(request.context()))return input.absent(subject,AssessmentStatus.NOT_APPLICABLE,"WHOLE_CONTEXT_SUBJECT_REQUIRED",Map.of(),Optional.empty(),layers);
@@ -45,6 +45,11 @@ public final class ArchitectureMetricsService implements Metrics {
             if(input.incomplete())return input.absent(subject,AssessmentStatus.WITHHELD,"UNVERIFIED_PHASE_MEASUREMENT",Map.of(),Optional.empty(),layers);
             BigDecimal duration=measurements.stream().map(m->BigDecimal.valueOf(m.durationNanos())).reduce(BigDecimal.ZERO,BigDecimal::add);measurements.forEach(m->input.references.add(m.observation()));
             return input.result(subject,AssessmentStatus.COMPLETE,Optional.of(duration),Optional.empty(),Map.of("phases",measurements,"failures",measurements.stream().filter(PhaseMeasurement::failed).count()),layers);
+        }
+        if (!input.queries.supportsArchitectureScope(context, request.scope())) {
+            input.references.add(context.evidence());
+            return input.absent(subject, AssessmentStatus.NOT_APPLICABLE, "METRIC_SCOPE_NOT_APPLICABLE_TO_CONTEXT",
+                    Map.of("contextEvidenceFamily", graph.evidence(context.evidence()).orElseThrow().family()), Optional.empty(), layers);
         }
         if(metric.equals("metric.spring"))return spring(input,subject);
         if(request.projection()==Projection.UNKNOWN_OVERLAY){input.gap("UNKNOWN_PROJECTION_HAS_NO_DEFINITE_METRIC");return input.absent(subject,AssessmentStatus.WITHHELD,"UNKNOWN_DEPENDENCIES",Map.of(),Optional.empty(),layers);}
@@ -92,7 +97,11 @@ public final class ArchitectureMetricsService implements Metrics {
         else {detail.put("endpointCountStatus","OBSERVED_DECLARATIONS");detail.put("endpointPopulationMeaning","Captured declaration rows; activation and runtime traffic require separate evidence.");}
         return input.count(subject,counts.getOrDefault("BEAN_DEFINITION_CANDIDATE",0L),detail,layers);
     }
-    private void validate(Request request){if(!graph.identity().equals(request.graph())||graph.contexts().stream().noneMatch(c->c.identity().equals(request.context())))throw new IllegalArgumentException("Foreign metric graph/context");}
+    private KnowledgeGraph.Context validate(Request request){
+        if(!graph.identity().equals(request.graph()))throw new IllegalArgumentException("Foreign metric graph/context");
+        return graph.contexts().stream().filter(context->context.identity().equals(request.context())).findFirst()
+                .orElseThrow(()->new IllegalArgumentException("Foreign metric graph/context"));
+    }
     @Override public Optional<Map<String,Object>> definition(String metric){
         return Optional.of(GraphJson.object(GraphJson.read(CanonicalJson.write(MetricCatalog.require(metric)),GraphJson.Limits.defaults())));
     }

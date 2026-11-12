@@ -10,8 +10,12 @@ import java.security.*;
 import java.sql.*;
 import java.util.*;
 import java.util.function.Function;
+import java.util.zip.Deflater;
+import java.util.zip.DeflaterOutputStream;
+import java.util.zip.Inflater;
+import java.util.zip.InflaterInputStream;
 
-/** Private, disposable analysis spool. Values are streamed to disk, with disk indexes and
+/** Private, disposable analysis spool. Compressed rows are streamed to disk, with disk indexes and
  * SHA-256 row checks. Only classes encountered in this process may be reconstructed;
  * input bytes cannot name or load a class. This is scratch state, never an evidence format. */
 public final class FileAnalysisWorkspace implements AnalysisWorkspace, AutoCloseable {
@@ -19,6 +23,8 @@ public final class FileAnalysisWorkspace implements AnalysisWorkspace, AutoClose
     private final Path directory;
     private final Connection db;
     private final RandomAccessFile data;
+    private final Deflater compressor;
+    private final Inflater decompressor;
     private final Map<Integer,Integer> sizes=new HashMap<>();
     private final Map<String,PreparedStatement> queries=new HashMap<>();
     private final List<Class<?>> classes=new ArrayList<>();
@@ -29,7 +35,6 @@ public final class FileAnalysisWorkspace implements AnalysisWorkspace, AutoClose
     private boolean closed;
     public FileAnalysisWorkspace(Path parent)throws IOException {
         Files.createDirectories(parent);
-        cleanStale(parent);
         directory=Files.createTempDirectory(parent,"analysis-");
         data=new RandomAccessFile(directory.resolve("values.bin").toFile(),"rw");
         try {
@@ -43,6 +48,8 @@ public final class FileAnalysisWorkspace implements AnalysisWorkspace, AutoClose
             db.setAutoCommit(false);
             org.sqlite.ProgressHandler.setHandler(db,1000,new org.sqlite.ProgressHandler(){protected int progress(){return Thread.currentThread().isInterrupted()?1:0;}});
         } catch(SQLException failed){throw new IOException("ANALYSIS_SPOOL_OPEN_FAILED",failed);}
+        compressor = new Deflater(Deflater.BEST_SPEED);
+        decompressor = new Inflater();
     }
     private void requireOpen(){if(closed)throw new IllegalStateException("ANALYSIS_SPOOL_CLOSED");if(Thread.currentThread().isInterrupted())throw new java.util.concurrent.CancellationException();}
     private synchronized int space(){requireOpen();int next=sequence++;sizes.put(next,0);return next;}
@@ -129,7 +136,11 @@ public final class FileAnalysisWorkspace implements AnalysisWorkspace, AutoClose
         try {
             long start=data.length();data.seek(start);var digest=sha256();
             var destination=new OutputStream(){public void write(int b)throws IOException{data.write(b);}public void write(byte[] b,int off,int len)throws IOException{data.write(b,off,len);}};
-            try(var out=new DataOutputStream(new BufferedOutputStream(new DigestOutputStream(destination,digest),65536))){encode(out,value);}
+            compressor.reset();
+            var compressed = new DeflaterOutputStream(new DigestOutputStream(destination, digest), compressor, 8192);
+            try (var out = new DataOutputStream(new BufferedOutputStream(compressed, 65536))) {
+                encode(out, value);
+            }
             var q=query("INSERT OR REPLACE INTO rows VALUES(?,?,?,?,?,?)");q.setInt(1,space);q.setInt(2,index);q.setString(3,key);q.setLong(4,start);q.setLong(5,data.getFilePointer()-start);q.setBytes(6,digest.digest());q.executeUpdate();
             sizes.put(space,Math.max(sizes.get(space),index+1));
         }catch(IOException|SQLException failed){throw failure(failed);}
@@ -141,7 +152,13 @@ public final class FileAnalysisWorkspace implements AnalysisWorkspace, AutoClose
                 if(!r.next())throw new IllegalStateException("ANALYSIS_SPOOL_ROW_MISSING");long start=r.getLong(1),length=r.getLong(2);byte[] expected=r.getBytes(3);
                 var digest=sha256();try(var in=new DigestInputStream(slice(start,length),digest)){in.transferTo(OutputStream.nullOutputStream());}
                 if(!MessageDigest.isEqual(digest.digest(),expected))throw new IOException("ANALYSIS_SPOOL_HASH_MISMATCH");
-                try(var in=new DataInputStream(new BufferedInputStream(slice(start,length),65536))){Object value=decode(in);if(in.read()!=-1)throw new IOException("ANALYSIS_SPOOL_TRAILING_BYTES");return new Stored<>((T)value,new Location(start,length,expected));}
+                decompressor.reset();
+                var compressed = new InflaterInputStream(slice(start, length), decompressor, 8192);
+                try (var in = new DataInputStream(new BufferedInputStream(compressed, 65536))) {
+                    Object value = decode(in);
+                    if (in.read() != -1) throw new IOException("ANALYSIS_SPOOL_TRAILING_BYTES");
+                    return new Stored<>((T)value, new Location(start,length,expected));
+                }
             }
         }catch(IOException|SQLException failed){throw failure(failed);}
     }
@@ -208,23 +225,13 @@ public final class FileAnalysisWorkspace implements AnalysisWorkspace, AutoClose
     private static IOException retain(IOException first,IOException next){if(first==null)return next;if(first!=next)first.addSuppressed(next);return first;}
     @Override public synchronized void close()throws IOException {
         if(closed)return;closed=true;IOException failure=null;
+        compressor.end();
+        decompressor.end();
         try{db.close();}catch(SQLException failed){failure=new IOException("ANALYSIS_SPOOL_CLOSE",failed);}
         try{data.close();}catch(IOException failed){failure=retain(failure,failed);}
         // Only this constructor's private flat directory; never follow links or remove caller files.
         try(var paths=Files.list(directory)){for(var path:paths.toList())Files.delete(path);}catch(IOException failed){failure=retain(failure,failed);}
         try{Files.delete(directory);}catch(IOException failed){failure=retain(failure,failed);}
         if(failure!=null)throw failure;
-    }
-    private static void cleanStale(Path parent) {
-        try (var stream = Files.list(parent)) {
-            for (var path : stream.toList()) {
-                if (Files.isDirectory(path) && path.getFileName().toString().startsWith("analysis-")) {
-                    try (var files = Files.list(path)) {
-                        for (var f : files.toList()) Files.deleteIfExists(f);
-                    } catch (IOException ignored) {}
-                    try { Files.deleteIfExists(path); } catch (IOException ignored) {}
-                }
-            }
-        } catch (IOException ignored) {}
     }
 }

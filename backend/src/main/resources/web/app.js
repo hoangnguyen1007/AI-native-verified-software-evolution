@@ -50,7 +50,7 @@
   }
   const repoLabel = id => state.connections.find(c => c.setup === id)?.label || id;
   function invalidate() { state.epoch++; state.view?.abort(); state.cy?.destroy(); state.cy = null; closeInspector(); $('view-status').textContent = ''; }
-  function resetResult() { invalidate(); state.graphFocus = null; state.explorer = null; state.graph = null; state.context = ''; state.contexts = []; state.reports = []; $('analysis-workspace').hidden = true; $('welcome').hidden = false; }
+  function resetResult() { state.discovery?.abort(); invalidate(); state.graphFocus = null; state.explorer = null; state.graph = null; state.context = ''; state.contexts = []; state.reports = []; $('analysis-workspace').hidden = true; $('welcome').hidden = false; }
   function renderSidebar() {
     const repos = $('repositories'); repos.replaceChildren();
     if (!state.setups.length) repos.append(el('p', 'muted small', state.online ? 'No repositories connected yet.' : 'Server unavailable. Refresh to retry.'));
@@ -107,7 +107,7 @@
     $('welcome').querySelector('button').textContent = 'Connect another repository';
     $('repository-title').textContent = repoLabel(id); $('repository-description').textContent = 'Run an analysis to inspect this repository. Results stay linked to their captured source.';
     $('analyze').disabled = !state.online; $('analyze').textContent = 'Run analysis ↗';
-    const latest = state.jobs.find(job => job.setup === id); renderSidebar(); document.querySelector('.app-shell').classList.remove('mobile-sidebar-open');
+    closeMobileSidebar(); const latest = state.jobs.find(job => job.setup === id); renderSidebar();
     if (latest) await selectJob(latest);
   }
   async function connectRepository(event) {
@@ -133,6 +133,7 @@
     $('job-state').replaceWith(Object.assign(badge(job.state), {id: 'job-state'})); $('job-title').textContent = M.terminal(job) ? 'Analysis result' : 'Analysis in progress';
     const messages = {PARTIAL: 'Some evidence is missing. Inspect limitations before drawing conclusions.', FAILED: 'Analysis failed. Open input diagnostics and the receipt for the recorded reason.', EMPTY: 'No analyzable Java source was found in this selection.', CANCELLED: 'Analysis was cancelled. No completed result is claimed.', TIMED_OUT: 'Analysis reached its execution limit.', SUCCEEDED: 'Analysis completed. Completion does not mean the architecture has no issues.'};
     $('job-description').textContent = (messages[job.state] || (job.state === 'CANCELLING' ? 'Cancellation requested. Waiting for the worker to stop.' : 'Current step: ' + job.stage.toLowerCase() + '.')) + ' · ' + (job.elapsedMillis / 1000).toFixed(1) + ' s' + (job.result ? ' · ' + job.result.gapCount + ' recorded limitations' : '');
+    $('job-evidence-tier').hidden = !job.result?.graph;
     if (job.result?.graph) $('repository-description').textContent = 'Captured ' + new Date(job.finishedAt || job.submittedAt).toLocaleString() + ' · Run a new analysis after changing the source.';
     $('cancel-job').hidden = M.terminal(job); $('cancel-job').disabled = job.state === 'CANCELLING'; $('analyze').disabled = !M.terminal(job);
     $('job-diagnostics').disabled = !M.terminal(job); $('job-gaps').disabled = !M.terminal(job);
@@ -140,41 +141,52 @@
   }
   async function selectJob(job) {
     state.job = job; state.setup = job.setup; state.retry = null; state.pollGeneration++; resetResult(); $('repository-title').textContent = repoLabel(job.setup); renderJob(job); renderSidebar();
-    if (job.result?.graph) await loadGraph(job.result.graph, job.id);
-    if (!M.terminal(job)) poll(job.id, state.pollGeneration);
+    const generation = state.pollGeneration;
+    if (job.result?.graph) await loadGraph(job.result.graph, job.id, generation);
+    if (!M.terminal(job)) poll(job.id, generation);
   }
+  const selectedJob = (id, generation) => state.job?.id === id && state.pollGeneration === generation;
   async function poll(id, generation) {
-    if (state.job?.id !== id || generation !== state.pollGeneration) return;
+    if (!selectedJob(id, generation)) return;
     try {
-      const job = await api('/analysis/jobs/' + id); if (state.job?.id !== id || generation !== state.pollGeneration) return;
+      const job = await api('/analysis/jobs/' + id); if (!selectedJob(id, generation)) return;
+      if (job.revision < state.job.revision) { setTimeout(() => safe(() => poll(id, generation)), 1200); return; }
       state.job = job; state.jobs = state.jobs.map(item => item.id === id ? job : item); renderJob(job); renderSidebar();
-      if (M.terminal(job)) { if (job.result?.graph) await loadGraph(job.result.graph, id); await refreshHistory(); }
+      if (M.terminal(job)) {
+        if (job.result?.graph) await loadGraph(job.result.graph, id, generation);
+        if (selectedJob(id, generation)) await refreshHistory();
+      }
       else setTimeout(() => safe(() => poll(id, generation)), 1200);
-    } catch (error) { if (state.job?.id === id && generation === state.pollGeneration) { notice(error.message + ' Use Refresh history to reconnect.', true); $('analyze').disabled = true; } }
+    } catch (error) { if (selectedJob(id, generation)) { notice(error.message + ' Use Refresh history to reconnect.', true); $('analyze').disabled = true; } }
   }
-  async function loadGraph(graph, jobId) {
-    const discovery = await api('/graphs/' + graph); if (state.job?.id !== jobId) return;
-    state.graph = graph; state.contexts = discovery.contexts; state.reports = [];
+  async function loadGraph(graph, jobId, generation) {
+    const controller = new AbortController(); state.discovery = controller;
+    const {signal} = controller;
+    const discovery = await api('/graphs/' + graph, undefined, signal); if (!selectedJob(jobId, generation)) return;
+    const reports = [];
     for (const id of discovery.reports) {
-      const report = await api('/graphs/' + graph + '/reports/' + id);
-      if (state.job?.id !== jobId) return;
-      state.reports.push(report);
+      const report = await api('/graphs/' + graph + '/reports/' + id, undefined, signal);
+      if (!selectedJob(jobId, generation)) return;
+      reports.push(report);
     }
+    state.graph = graph; state.contexts = discovery.contexts; state.reports = reports;
     $('analysis-workspace').hidden = false; $('welcome').hidden = true;
     $('context').replaceChildren(el('option', '', 'Choose a context…')); $('context').firstChild.value = ''; let index = 0;
-    for (const context of state.contexts) { const option = el('option', '', context.analysis ? 'Java analysis ' + (++index) : 'Repository / acquisition'); option.value = context.identity; option.title = context.identity; $('context').append(option); }
+    for (const context of state.contexts) { const option = el('option', '', context.analysis ? 'Analysis context ' + (++index) : 'Repository / acquisition'); option.value = context.identity; option.title = context.identity; $('context').append(option); }
     state.context = state.contexts.length === 1 ? state.contexts[0].identity : ''; $('context').value = state.context;
     await loadTab(state.tab);
     // Optional human-readable labels come only from recorded canonical provenance.
-    for (const context of state.contexts) {
+    for (const context of discovery.contexts) {
+      if (!selectedJob(jobId, generation)) return;
       try {
-        const value = await api('/graphs/' + graph + '/queries/provenance', {request: M.request(context.identity), arguments: {}});
-        if (state.job?.id !== jobId || state.graph !== graph) return;
+        const value = await api('/graphs/' + graph + '/queries/provenance', {request: M.request(context.identity), arguments: {}}, signal);
+        if (!selectedJob(jobId, generation)) return;
         const evidence=value.items?.[0],build = evidence?.metadata?.build?.moduleSourceSet;
         state.moduleLabels ||= new Map();if(evidence?.metadata?.module&&evidence.metadata.modulePath)state.moduleLabels.set(evidence.metadata.module,evidence.metadata.modulePath);
         state.contextKinds ||= new Map();state.contextKinds.set(context.identity,evidence?.family);
         const option = [...$('context').options].find(n => n.value === context.identity);
         if(option&&build){const module=state.moduleLabels.get(build.module)||(build.module?.includes('sha256:')?null:build.module);option.textContent=[evidence.metadata.modulePath||module||(evidence.family==='spring.context'?'Spring configuration':'Java analysis'),evidence.family==='spring.context'&&module?'Spring':null,build.sourceSet?.toLowerCase()].filter(Boolean).join(' / ');}
+        else if(option&&evidence?.family==='spring.context')option.textContent='Spring configuration';
         else if(option&&evidence?.metadata?.modulePath)option.textContent=evidence.metadata.modulePath+' / '+(evidence.metadata.sourceSet?.toLowerCase()||'Java');
       } catch (_) { /* Generic explicit context labels remain available if metadata cannot be read. */ }
     }
@@ -189,7 +201,7 @@
     invalidate(); state.tab = tab; const epoch = state.epoch;
     document.querySelectorAll('[role=tab]').forEach(n => { const selected = n.dataset.tab === tab; n.setAttribute('aria-selected', selected); n.tabIndex = selected ? 0 : -1; });
     document.querySelectorAll('[role=tabpanel]').forEach(n => n.hidden = n.id !== 'panel-' + tab); const panel = $('panel-' + tab);
-    if (!state.context) { panel.replaceChildren(empty('Choose an analysis context', 'Select the module or repository context above. Results are scoped to that selection.')); return; }
+    if (!state.context) { panel.setAttribute('aria-busy','false');panel.replaceChildren(empty('Choose an analysis context', 'Select the module or repository context above. Results are scoped to that selection.')); return; }
     state.view = new AbortController(); const env = envFor(state.view.signal); panel.setAttribute('aria-busy','true');$('view-status').textContent='Loading '+document.querySelector('[data-tab="'+tab+'"]').textContent+'…';panel.replaceChildren(empty('Loading…', 'Reading the captured analysis.'));
     try { const view = await views[tab](env); if (epoch !== state.epoch) return; panel.replaceChildren(view.node || view); panel.setAttribute('aria-busy','false');$('view-status').textContent = view.status || 'View loaded for the selected analysis context.'; view.after?.(); }
     catch (error) { if (epoch === state.epoch && error.name !== 'AbortError') { panel.setAttribute('aria-busy','false');panel.replaceChildren(empty('Unable to load this view', error.message), btn('Retry', () => loadTab(tab))); $('view-status').textContent = 'Request failed. Retry to read this analysis.'; } }
@@ -329,6 +341,18 @@
     }
     return inspect(rule?.name||rule?.id||'Rule evidence','POLICY EVIDENCE',finding,actions);
   }
+  async function inspectScoreDimension(assessment, dimension, reportId, env) {
+    const needsFindings = dimension.contributions.some(contribution => contribution.unit === 'potential-root');
+    const page = needsFindings ? await env.report(reportId, 'findings', {}, {size: 50}) : null;
+    if (env.signal.aborted) return;
+    const evidence = M.scoreEvidence(assessment, dimension, page?.items);
+    const actions = evidence.findings.map(item => ({
+      label: `Open ${item.result.rule.id} finding (${M.shortDigest(item.identity)})`,
+      run: () => inspectFinding(item, reportId, env)
+    }));
+    if (evidence.metric) actions.push({label: 'Inspect metric operand', run: () => inspect('Score metric operand', 'CANONICAL METRIC', evidence.metric)});
+    return inspect('Score dimension', 'ASSESSMENT EVIDENCE', dimension, actions);
+  }
   function layoutConfig(name) {
     if (name === 'concentric') return {name: 'concentric', padding: 36, animate: false, minNodeSpacing: 28, concentric: node => node.degree(), levelWidth: () => 2};
     if (name === 'circle') return {name: 'circle', padding: 36, animate: false, spacingFactor: 1.2};
@@ -338,9 +362,13 @@
   const views = {
     async overview(env) {
       const summary = await env.query('summary'), node = el('div'), counts = summary.items?.[0], stats = el('div', 'stats');
-      for (const [label, kind] of [['Types & references', 'TYPE'], ['Modules', 'MODULE'], ['Source documents', 'SOURCE_DOCUMENT'], ['Recorded gaps', 'CAPABILITY_GAP']]) {
-        const stat = btn('', () => loadTab(label === 'Recorded gaps' ? 'gaps' : 'structure'), 'stat');
-        append(stat, el('span', '', label), el('strong', '', counts?.nodeCounts?.[kind] ?? (counts ? 0 : '—')), el('small', '', summary.status === 'COMPLETE' ? 'In the selected context' : 'Observed · click to inspect')); stats.append(stat);
+      for (const card of M.summaryCards(summary)) {
+        const stat = btn('', () => {
+          if (card.tab === 'structure') { state.structureFocus = card.kind; $('search').value = ''; }
+          else state.gapFocus = card.kind;
+          return loadTab(card.tab);
+        }, 'stat');
+        append(stat, el('span', '', card.label), el('strong', '', card.count ?? '—'), el('small', '', card.observed ? 'Observed · click to inspect' : 'In the selected context')); stats.append(stat);
       }
       node.append(stats); const grid = el('div', 'content-grid'); node.append(grid);
       const health = card('Architecture assessment', 'Based on the selected policy and the evidence available for this analysis.'); grid.append(health);
@@ -377,7 +405,8 @@
     async structure(env) {
       const node = card('Repository structure', 'Open a module, package or class to browse its recorded contents. Use Details for source locations, dependencies and impact.');
       const levelOptions = [['MODULE','Modules'],['PACKAGE','Packages'],['TYPE','Classes'],['MEMBER','Members'],['SOURCE_DOCUMENT','Source files'],['SOURCE_ROOT','Source roots']];
-      const level = selectControl('Browse level', levelOptions, $('search').value.trim() ? 'TYPE' : 'MODULE');
+      const focus = state.structureFocus; state.structureFocus = null;
+      const level = selectControl('Browse level', levelOptions, focus || ($('search').value.trim() ? 'TYPE' : 'MODULE'));
       const population = selectControl('Symbol population', [['all','All captured origins'],['PROJECT','Project code'],['JDK','JDK types'],['DEPENDENCY','External dependencies'],['SYNTHETIC','Synthetic evidence']]);
       const sourceSet = selectControl('Source set', [['','All source sets'],['MAIN','Main'],['TEST','Test'],['GENERATED_MAIN','Generated main'],['GENERATED_TEST','Generated test']]);
       const quickPills = el('div', 'chip-bar');
@@ -389,7 +418,7 @@
       const breadcrumbs = el('nav', 'breadcrumbs'); breadcrumbs.setAttribute('aria-label','Structure location');
       const selection = el('div', 'selection-bar'), results = el('div');
       node.append(quickPills, append(el('div','toolbar'),field('Browse',level),field('Origin',population),field('Source set',sourceSet)),breadcrumbs,selection,results);
-      let version = 0, trail = state.explorer?.context === env.context ? state.explorer.trail : [];
+      let version = 0, trail = !focus && state.explorer?.context === env.context ? state.explorer.trail : [];
       const memberKinds = ['METHOD','CONSTRUCTOR','FIELD','PARAMETER','TYPE_PARAMETER','RECORD_COMPONENT','INITIALIZER','LAMBDA'];
       async function load() {
         syncPills();
@@ -412,6 +441,7 @@
       level.addEventListener('change',()=>{trail=[];safe(load);});population.addEventListener('change',()=>safe(load));sourceSet.addEventListener('change',()=>safe(load)); await load(); return node;
     },
     async gaps(env) {
+      const focus = state.gapFocus; state.gapFocus = null;
       const node = card('Analysis limitations & capability boundaries', 'Missing or unsupported evidence is recorded explicitly with plain-English explanations so partial coverage is never mistaken for clean architecture.');
       const labels = new Map(), rawSupplemental = [];
       if (env.jobId) {
@@ -442,7 +472,8 @@
         breakdown.append(list);
         node.append(breakdown);
       }
-      await pagedList(node, env, cursor => env.query('gaps', {}, {size: 20, ...(cursor ? {cursor} : {})}), item => {
+      await pagedList(node, env, cursor => env.query('gaps', {}, {size: 20, ...(cursor ? {cursor} : {})},
+        focus ? {population: {nodeKinds: [focus]}} : {}), item => {
         const text = labels.get(item.identity) || M.label(item);
         return row({...item, label: text}, () => inspectEntity(item, env), 'Click to inspect exact source coordinates & diagnostic trail');
       }, 'No gap entries returned', 'Read the result status and input diagnostics as well. An empty page alone does not prove complete analysis.'); return node;
@@ -540,11 +571,11 @@
       if(!env.reportIds.length)assessmentCard.append(empty('Score unavailable — no policy report','Connect this repository with architecture rules, then run a new analysis. Structural metrics below do not require a policy.'),btn('Configure rules & scoring',configureRules,'button primary'));
       else{
         const reportSelect=selectControl('Assessment report',env.reportIds.map((report,index)=>[report.identity,'Policy report '+(index+1)]));assessmentCard.append(field('Report',reportSelect));const detail=el('div');assessmentCard.append(detail);let version=0;
-        async function score(){const current=++version;detail.replaceChildren(empty('Loading assessment…','Reading the published score and explanation.'));
-          try{const value=await env.report(reportSelect.value,'assessment');if(env.signal.aborted||current!==version)return;
+        async function score(){const current=++version, reportId=reportSelect.value;detail.replaceChildren(empty('Loading assessment…','Reading the published score and explanation.'));
+          try{const value=await env.report(reportId,'assessment');if(env.signal.aborted||current!==version)return;
             detail.replaceChildren(append(el('div','score-heading'),el('strong','score',M.assessment(value)),badge(value.status)));
             detail.append(el('p','muted',value.confidence?.sufficient?'The model’s required evidence is sufficient.':'Required evidence is incomplete. Review the recorded reasons before interpreting this assessment.'));
-            for(const dimension of value.dimensions||[])detail.append(append(el('div','dimension'),btn(dimension.id.replace(/^health\./,'').replaceAll('-',' '),()=>inspect('Score dimension','ASSESSMENT EVIDENCE',dimension,[{label:'Review contributing findings',run:()=>{closeInspector();return loadTab('policy');}}]),'text-button'),el('strong','',dimension.score??'Unavailable')));
+            for(const dimension of value.dimensions||[])detail.append(append(el('div','dimension'),btn(dimension.id.replace(/^health\./,'').replaceAll('-',' '),()=>inspectScoreDimension(value,dimension,reportId,env),'text-button'),el('strong','',dimension.score??'Unavailable')));
             detail.append(append(el('div','toolbar'),btn('Explain score & withheld reasons',()=>inspect('Architecture assessment','ASSESSMENT',value,[{label:'Review findings',run:()=>{closeInspector();return loadTab('policy');}}]),'text-button'),btn('Policy metrics',()=>inspect('Policy metrics','METRICS',signal=>api('/graphs/'+env.graph+'/reports/'+reportSelect.value+'/policy-metrics',{arguments:{}},signal)),'text-button')));
           }catch(error){if(!env.signal.aborted&&current===version)detail.replaceChildren(empty('Assessment unavailable',error.message));}}
         reportSelect.addEventListener('change',()=>safe(score));await score();
@@ -730,12 +761,21 @@
   }
   document.querySelectorAll('[data-action=connect]').forEach(n => n.addEventListener('click', () => { $('connect-title').textContent='Connect your code'; $('connect-error').hidden = true; $('connect-dialog').showModal(); }));
   $('policy-example').addEventListener('click',()=>{if($('repository-policy').value.trim()){$('connect-error').textContent='The policy field already contains rules. Clear it before inserting an example.';$('connect-error').hidden=false;return;}$('repository-policy').value='schema: architecture-policy:v1\nid: project.cycles\nversion: "1"\nrules:\n  - id: project.no-cycles\n    version: "1"\n    kind: ACYCLIC\n    severity: ERROR\n    scope: TYPE\n    relationships: [graph.depends-on]\n    within: {origins: [PROJECT]}\n';});
-  document.querySelectorAll('[data-action=refresh]').forEach(n => n.addEventListener('click', () => safe(async () => { await connectServer(); if (state.job) { const id = state.job.id, latest = await api('/analysis/jobs/' + id); if (state.job?.id === id) await selectJob(latest); } })));
+  document.querySelectorAll('[data-action=refresh]').forEach(n => n.addEventListener('click', () => safe(async () => {
+    await connectServer();
+    if (!state.job) return;
+    const id = state.job.id, generation = state.pollGeneration, latest = await api('/analysis/jobs/' + id);
+    if (selectedJob(id, generation) && latest.revision >= state.job.revision) await selectJob(latest);
+  })));
   document.querySelectorAll('[data-close]').forEach(n => n.addEventListener('click', () => n.dataset.close === 'inspector' ? closeInspector() : $(n.dataset.close).close()));
   $('inspector').addEventListener('cancel', closeInspector);
   $('connect-form').addEventListener('submit', connectRepository);
   $('analyze').addEventListener('click', () => safe(submit));
-  $('cancel-job').addEventListener('click', () => safe(async () => { const id = state.job?.id; if (!id) return; const job = await api('/analysis/jobs/' + id + '/cancel', {}); if (state.job?.id === id) { state.job = job; renderJob(job); } }));
+  $('cancel-job').addEventListener('click', () => safe(async () => {
+    const id = state.job?.id, generation = state.pollGeneration; if (!id) return;
+    const job = await api('/analysis/jobs/' + id + '/cancel', {});
+    if (selectedJob(id, generation) && job.revision >= state.job.revision) { state.job = job; renderJob(job); }
+  }));
   $('history-more').addEventListener('click', () => safe(() => refreshHistory(true)));
   $('context').addEventListener('change', () => { state.graphFocus=null;state.explorer=null;state.metricSubject=null;state.context = $('context').value; safe(() => loadTab(state.tab)); });
   $('tabs').addEventListener('click', event => { const tab = event.target.closest('[data-tab]'); if (tab) safe(() => loadTab(tab.dataset.tab)); });
@@ -771,7 +811,25 @@
   }
   let theme = 'dark'; try { theme = localStorage.getItem('evo_theme') === 'light' ? 'light' : 'dark'; } catch (_) {} applyTheme(theme);
   $('theme-toggle').addEventListener('click', () => { applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'); if (state.tab === 'graph' && state.context) safe(() => loadTab('graph')); });
-  $('sidebar-toggle').addEventListener('click', () => { const shell = document.querySelector('.app-shell'), mobile = window.matchMedia('(max-width:760px)').matches; shell.classList.toggle(mobile ? 'mobile-sidebar-open' : 'sidebar-collapsed'); $('sidebar-toggle').setAttribute('aria-expanded', mobile ? shell.classList.contains('mobile-sidebar-open') : !shell.classList.contains('sidebar-collapsed')); state.cy?.resize(); });
+  function closeMobileSidebar() {
+    const shell = document.querySelector('.app-shell');
+    if (!shell.classList.contains('mobile-sidebar-open')) return;
+    const restoreFocus = $('sidebar').contains(document.activeElement);
+    shell.classList.remove('mobile-sidebar-open');
+    syncSidebarState();
+    if (restoreFocus) $('sidebar-toggle').focus();
+  }
+  $('sidebar-toggle').addEventListener('click', () => {
+    const shell = document.querySelector('.app-shell'), mobile = window.matchMedia('(max-width:760px)').matches;
+    const expanded = shell.classList.toggle(mobile ? 'mobile-sidebar-open' : 'sidebar-collapsed');
+    syncSidebarState();
+    if (mobile && expanded) $('sidebar').querySelector('a').focus();
+    state.cy?.resize();
+  });
+  $('sidebar').addEventListener('keydown', event => { if (event.key === 'Escape') closeMobileSidebar(); });
+  document.addEventListener('focusin', event => {
+    if (!$('sidebar').contains(event.target) && event.target !== $('sidebar-toggle') && !event.target.closest('dialog')) closeMobileSidebar();
+  });
   function syncSidebarState() { const shell = document.querySelector('.app-shell'); $('sidebar-toggle').setAttribute('aria-expanded', window.matchMedia('(max-width:760px)').matches ? shell.classList.contains('mobile-sidebar-open') : !shell.classList.contains('sidebar-collapsed')); }
   window.addEventListener('resize', () => { state.cy?.resize(); syncSidebarState(); });
   syncSidebarState();

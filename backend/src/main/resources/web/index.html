@@ -19,8 +19,8 @@
 <header class="topbar">
 <button id="sidebar-toggle" class="icon-button" aria-label="Toggle sidebar" aria-expanded="true" aria-controls="sidebar">☰</button>
 <div class="topbar-nav" role="navigation" aria-label="View switcher">
-<a href="/" class="topbar-nav-link active" aria-current="page"><span class="nav-icon" aria-hidden="true">⊞</span> <span class="nav-text">Architecture Workbench</span></a>
-<a href="/bridges.html" class="topbar-nav-link"><span class="nav-icon" aria-hidden="true">⇄</span> <span class="nav-text">Polyglot Bridges</span></a>
+<a href="/" class="topbar-nav-link active" aria-current="page" aria-label="Architecture Workbench"><span class="nav-icon" aria-hidden="true">⊞</span> <span class="nav-text">Architecture Workbench</span></a>
+<a href="/bridges.html" class="topbar-nav-link" aria-label="Polyglot Bridges"><span class="nav-icon" aria-hidden="true">⇄</span> <span class="nav-text">Polyglot Bridges</span></a>
 </div>
 <span class="topbar-title sr-only">Architecture workspace</span>
 <div class="topbar-actions">
@@ -31,7 +31,7 @@
 <main id="main" tabindex="-1">
 <div class="page-heading"><div><h1 id="repository-title">Explore your architecture</h1><p id="repository-description" class="muted">Connect a repository, run an analysis, then follow the evidence.</p></div><div class="heading-actions"><button id="analyze" class="button primary" disabled>Run analysis ↗</button></div></div>
 <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
-<section id="job-panel" class="card job-panel" aria-label="Analysis progress" hidden><div class="section-heading"><div><span class="badge" id="job-state"></span><h2 id="job-title">Analysis</h2><p id="job-description" class="muted small"></p></div><button id="cancel-job" class="button danger" hidden>Cancel analysis</button></div><ol id="job-events" class="job-events"></ol><div class="job-links"><button id="job-diagnostics" class="text-button">Input diagnostics</button><button id="job-gaps" class="text-button">Analysis limitations</button><button id="job-receipt" class="text-button">View receipt</button></div></section>
+<section id="job-panel" class="card job-panel" aria-label="Analysis progress" hidden><div class="section-heading"><div><span class="badge" id="job-state"></span><h2 id="job-title">Analysis</h2><p id="job-description" class="muted small"></p><p id="job-evidence-tier" class="muted small" hidden>Evidence tier unavailable in this workbench receipt.</p></div><button id="cancel-job" class="button danger" hidden>Cancel analysis</button></div><ol id="job-events" class="job-events"></ol><div class="job-links"><button id="job-diagnostics" class="text-button">Input diagnostics</button><button id="job-gaps" class="text-button">Analysis limitations</button><button id="job-receipt" class="text-button">View receipt</button></div></section>
 <div id="welcome" class="welcome card">
 <img src="/logo.svg" alt="" width="56" height="56">
 <h2>Start with your repository</h2>

@@ -139,7 +139,9 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
                 var plan = new PolicyGraphMapper().bind(compiled,queries,context.identity(),PolicyGraphMapper.Limits.defaults());
                 var evaluation = new PolicyEvaluator().evaluate(compiled,plan,queries,PolicyEvaluation.Limits.defaults());
                 var metrics = new PolicyMetricsService().compute(compiled,plan,evaluation,queries,PolicyMetrics.Limits.defaults());
-                var score = new ArchitectureAssessmentService().evaluate(metrics,evaluation,queries,Optional.of(ArchitectureScoreModel.candidate(selected.scoreScope())),List.of(),ArchitectureAssessment.Limits.defaults());
+                var score = new ArchitectureAssessmentService().assess(metrics,evaluation,queries,
+                        Optional.of(ArchitectureScoreModel.candidate(selected.scoreScope())),plan.limits().query(),
+                        ArchitectureMetric.Limits.defaults(),ArchitectureAssessment.Limits.defaults());
                 reports.add(new PublishedReports.Report(evaluation,Optional.of(metrics),Optional.of(score)));
                 gaps.addAll(plan.gaps()); gaps.addAll(evaluation.gaps()); gaps.addAll(metrics.gaps()); gaps.addAll(score.gaps());
             }

@@ -51,7 +51,11 @@ public final class PolicyGraphMapper {
                     header.relationships(),Population.all(),false,Optional.empty(),limits.query());
             var local=new ArrayList<CapabilityGapRecord>();var selections=new TreeMap<String,Map<String,Match>>();var candidates=new ArrayList<Candidate>();
             Optional<ContentDigest> projection=Optional.empty();boolean withheld=remaining<=0||cancelled;
-            if(withheld)local.add(gap(evidenceContext,compilation,rule,request,cancelled?"MAPPING_CANCELLED":"MAPPING_LIMIT"));
+            if (!service.supportsArchitectureScope(selected, header.scope())) {
+                withheld = true;
+                local.add(PolicyGaps.create(evidenceContext, VERSION, compilation.identity(), "POLICY_SCOPE_NOT_APPLICABLE_TO_CONTEXT",
+                        List.of(rule.identity(), request.identity(), selected.evidence())));
+            } else if(withheld)local.add(gap(evidenceContext,compilation,rule,request,cancelled?"MAPPING_CANCELLED":"MAPPING_LIMIT"));
             else {
                 var projected=service.metricProjection(request);projection=Optional.of(projected.query());local.addAll(projected.gaps());
                 cancelled=projected.operation()==Operation.CANCELLED;

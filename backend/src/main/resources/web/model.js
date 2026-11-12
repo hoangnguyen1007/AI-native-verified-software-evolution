@@ -12,6 +12,20 @@
   };
   const request = context => ({context, scope: 'TYPE', projection: 'BOUNDED_UNION', direction: 'OUTGOING', relationshipKinds: ['graph.depends-on']});
   const assessment = value => value?.score == null ? 'Unavailable' : `${value.score} / 100`;
+  const summaryCards = summary => {
+    const counts = summary.items?.[0]?.nodeCounts;
+    return [
+      ['Types & references', 'TYPE', 'structure'], ['Modules', 'MODULE', 'structure'],
+      ['Source documents', 'SOURCE_DOCUMENT', 'structure'], ['Recorded gaps', 'CAPABILITY_GAP', 'gaps']
+    ].map(([label, kind, tab]) => ({label, kind, tab, count: counts ? counts[kind] ?? 0 : undefined,
+      observed: summary.status !== 'COMPLETE'}));
+  };
+  const scoreEvidence = (assessment, dimension, findings = []) => {
+    const spec = assessment.model?.dimensions.find(entry => entry.id === dimension.id)?.metric;
+    const metric = spec && assessment.structuralInputs.find(input => input.metric.id === spec.metric.id);
+    const references = new Set((dimension.contributions || []).flatMap(contribution => contribution.inputs));
+    return {metric, findings: findings.filter(item => references.has(item.identity))};
+  };
   const realizationRequest = selection => {
     if (!selection?.realization) throw new Error('Choose a recorded configuration first.');
     return {projection: 'REALIZED', realization: selection.realization};
@@ -98,7 +112,7 @@
       yaml: 'schema: architecture-policy:v1\nid: spring.cycles\nversion: "1"\nrules:\n  - id: spring.no-bean-cycles\n    version: "1"\n    kind: ACYCLIC\n    severity: ERROR\n    scope: SPRING_COMPONENT\n    relationships: [spring.selected-binding]\n    within: {origins: [PROJECT]}\n'
     }
   ];
-  const model = {terminal, label, pageInfo, request, assessment, apiError, realizationRequest, compareEdges, completePage, shortDigest, humanReason, summarizeGaps, policyTemplates};
+  const model = {terminal, label, pageInfo, request, assessment, summaryCards, scoreEvidence, apiError, realizationRequest, compareEdges, completePage, shortDigest, humanReason, summarizeGaps, policyTemplates};
   if (typeof module !== 'undefined') module.exports = model;
   else root.EvoModel = model;
 })(globalThis);

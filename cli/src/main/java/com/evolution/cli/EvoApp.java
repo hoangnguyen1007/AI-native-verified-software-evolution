@@ -377,7 +377,9 @@ public final class EvoApp {
         var compiled=new PolicyCompiler().compile(bytes,EvidenceContext.forSnapshot(graph.snapshot()),PolicyCompiler.Limits.defaults());var queries=new ArchitectureMetricsService(graph).queries();
         var plan=new PolicyGraphMapper().bind(compiled,queries,context,PolicyGraphMapper.Limits.defaults());var evaluation=new PolicyEvaluator().evaluate(compiled,plan,queries,PolicyEvaluation.Limits.defaults());
         var metrics=new PolicyMetricsService().compute(compiled,plan,evaluation,queries,PolicyMetrics.Limits.defaults());
-        var score=new ArchitectureAssessmentService().evaluate(metrics,evaluation,queries,Optional.of(ArchitectureScoreModel.candidate(Scope.valueOf(r.scope.toUpperCase(Locale.ROOT).replace('-','_')))),List.of(),ArchitectureAssessment.Limits.defaults());
+        var model=ArchitectureScoreModel.candidate(Scope.valueOf(r.scope.toUpperCase(Locale.ROOT).replace('-','_')));
+        var score=new ArchitectureAssessmentService().assess(metrics,evaluation,queries,Optional.of(model),plan.limits().query(),
+                ArchitectureMetric.Limits.defaults(),ArchitectureAssessment.Limits.defaults());
         return new PublishedReports.Report(evaluation,Optional.of(metrics),Optional.of(score));
     }
     @Command(name="captured-java",mixinStandardHelpOptions=true,description="Analyze a registered captured Java context without building")
@@ -607,6 +609,7 @@ public final class EvoApp {
                     if(interactiveDefaults!=null){interactiveDefaults.graph=null;interactiveDefaults.context=null;}
                     var gaps=new TreeSet<>(remaining.gaps());gaps.add(scanner.javaWorkerGap(remaining));
                     var data=new TreeMap<String,Object>();data.putAll(Map.of("status","PARTIAL","acquisition",captured,"graphCreated",true,"snapshotSelected",true,"graph",graph.graph(),"contexts",contextRows(graph.contexts()),"selectedContext",context,"polyglot",remaining.summary(),"javaAnalysis","COMPATIBILITY_WORKER_REQUIRED"));
+                    data.put("evidenceTier",SemanticDepth.evidenceTier(UniversalArchitectureReport.Status.PARTIAL,false,false));
                     data.put("gapSummary",graphGapSummary(graph,gaps.size()));
                     data.put("semanticDepth",Map.of("scope","JAVA_COMPATIBILITY_NOT_ANALYZED","level","NO_ANALYSIS","sourceRecoveryContexts",0,"relationships",Map.of("attempted",0,"resolved",0),"spring",Map.of("status","NOT_EVALUATED","selectedBindingFactRows",0)));
                     if(nativeBuild!=null)data.put("nativeBuild",nativeBuild);return emit(r,"scan",envelope(data),3);

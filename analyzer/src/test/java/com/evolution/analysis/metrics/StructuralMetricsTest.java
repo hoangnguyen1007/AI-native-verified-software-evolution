@@ -70,6 +70,19 @@ class StructuralMetricsTest {
         assertEquals(AssessmentStatus.WITHHELD,result.status());assertTrue(result.value().isEmpty());assertFalse(result.gaps().isEmpty());
         assertTrue(result.gaps().stream().anyMatch(g->g.reasonCode().equals("UNKNOWN_FEASIBILITY")));assertFalse(result.gaps().stream().anyMatch(g->g.reasonCode().equals("COMPONENT_OWNER_UNAVAILABLE")));
     }
+    @Test void springInventoryKeepsDiscoveredActiveAndSelectedPopulationsSeparate() {
+        var fixture = springFixture(false);
+        var result = new ArchitectureMetricsService(fixture.graph()).compute(springRequest(fixture), "metric.spring", fixture.context);
+        assertEquals(AssessmentStatus.PARTIAL, result.status());
+        assertEquals(new BigDecimal("2"), amount(result));
+        assertEquals(new BigDecimal("2"), result.details().get("projectedActiveDefinitions"));
+        assertEquals(BigDecimal.ZERO, result.details().get("unknownActivationDefinitions"));
+        assertEquals(BigDecimal.ONE, result.details().get("candidateUsePopulation"));
+        assertEquals(BigDecimal.ONE, result.details().get("selectedBindingFactRows"));
+        assertEquals(BigDecimal.ONE, result.details().get("projectedSelectedBindingPairs"));
+        assertEquals("WITHHELD", result.details().get("endpointCountStatus"));
+        assertTrue(result.gaps().stream().anyMatch(gap -> gap.reasonCode().equals("ENDPOINT_COVERAGE_UNAVAILABLE")));
+    }
     @Test void nonMartinJavaMetricsStillValidateTheirProductionPopulation(){
         var f=new Fixture().type("p","P",false);f.nodes.removeIf(n->n.kind().equals("SOURCE_DOCUMENT"));
         var result=new ArchitectureMetricsService(f.graph()).compute(f.request(),"metric.density",f.context);

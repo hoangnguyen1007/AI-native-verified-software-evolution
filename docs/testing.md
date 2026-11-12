@@ -165,6 +165,23 @@ The existing Spring binding oracle can reuse an explicitly selected Maven2 cache
 
 Native TypeScript fixture source/NDJSON files must retain their checked-in LF bytes. Their source hashes and UTF offsets are evidence; converting them to CRLF is an input change, not a reason to rewrite expected hashes or silently normalize production inputs. `.gitattributes` pins this checkout behavior.
 
+## M9.3 graph, assessment and consumer controls
+
+The [M9.3 record](tasks/m9/03-execution.md) gives the four-module packaging command, registered candidate and measured outcomes. The [registered controls](tasks/m9/03-cases.md) define the golden and degraded inputs. The Java tests use authored snapshots and loopback HTTP. Use installed platform dependencies from compatible sources.
+
+To exercise the same immutable graph through the packaged CLI and the workbench model, use the SHA-256-checked JAR from the selected candidate registry and an absolute path to the registered Node runtime.
+
+```powershell
+.\mvnw.cmd -q -pl analyzer,backend,cli '-Denforcer.skipRules=reactorModuleConvergence' `
+  '-Dsurefire.failIfNoSpecifiedTests=false' '-Dplatform.build.directory=target/m9.3' `
+  '-Dtest=InMemoryGraphStoreTest,PublishedReportsTest#actualM6FindingsBundlesMetricsAndWithheldAssessmentRetainCanonicalValues,M9ConsumerConformanceTest' `
+  '-Dm9.candidateJar=<absolute-evo.jar>' '-Dm9.node=<absolute-node.exe>' test
+node --check backend/src/main/resources/web/app.js
+node --test backend/src/test/js/workbench-model.test.cjs backend/src/test/js/bridge-model.test.cjs backend/src/test/js/m9-consumer-model.test.cjs
+```
+
+`m9.candidateJar` selects fresh packaged CLI processes. `m9.node` adds JavaScript assertions over the exact HTTP payloads after CLI/export parity. The default JUnit path uses the in-process CLI. Each external invocation has a bounded wait and uses the temporary authored graph and policy. Browser interactions and performance have their own M9.4 protocol.
+
 ## Basis
 
 JUnit 5.11 distinguishes [tag filtering from conditional disabling](https://junit.org/junit5/docs/5.11.0/user-guide/index.html#writing-tests-tagging-and-filtering). Surefire 3.5.5 supports [JUnit tag expressions through `groups` / `excludedGroups`](https://maven.apache.org/surefire-archives/surefire-3.5.5/maven-surefire-plugin/examples/junit-platform.html#filtering-by-tags). Native preflight uses Maven Enforcer's [required-file rule](https://maven.apache.org/enforcer/enforcer-rules/requireFilesExist.html); the native readers provide the authenticity checks. Java 21 defines [`Deflater.NO_COMPRESSION`](https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/util/zip/Deflater.html#NO_COMPRESSION) for the adapter's temporary ZIP representation.

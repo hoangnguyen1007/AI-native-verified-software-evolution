@@ -1,7 +1,11 @@
 package com.evolution.analysis.filesystem;
 
 import com.evolution.analysis.contract.common.ContentDigest;
+import com.evolution.analysis.contract.identity.AnalysisIdentity;
+import com.evolution.analysis.contract.serialization.CanonicalJson;
 import com.evolution.analysis.graph.*;
+import com.evolution.analysis.query.ArchitectureQuery;
+import com.evolution.analysis.query.ArchitectureQueryService;
 import java.nio.file.*;
 import java.util.*;
 import org.junit.jupiter.api.Test;
@@ -89,6 +93,76 @@ class PartitionedGraphStoreTest {
         Files.writeString(source,com.evolution.analysis.contract.serialization.CanonicalJson.write(Map.of("format",GraphSnapshotCodec.FORMAT,"identity",digest,"graph",form)));
         var dangling=new PartitionedGraphStore(directory.resolve("dangling"));assertThrows(java.io.IOException.class,()->dangling.importSnapshot(source,digest,()->false));
         assertFalse(Files.exists(directory.resolve("dangling/"+digest.value().substring(7)+".partitions.json")));
+    }
+    @Test void singlePassBytesAndColdPartitionsMatchTheSameIndependentContextRows() throws Exception {
+        var snapshot = FileGraphStoreTest.graph().snapshot();
+        var root = GraphEvidence.capture("repository.snapshot", Map.of("fixture", "one physical source"));
+        var main = GraphEvidence.capture("analysis.manifest", Map.of("sourceSet", "main", "variant", "debug"));
+        var test = GraphEvidence.capture("analysis.manifest", Map.of("sourceSet", "test", "variant", "release"));
+        var debug = AnalysisIdentity.fromCanonicalManifestInputs(main.canonicalJson());
+        var release = AnalysisIdentity.fromCanonicalManifestInputs(test.canonicalJson());
+        var contexts = List.of(new KnowledgeGraph.Context(snapshot.value(), snapshot, Optional.empty(), root.identity()),
+                new KnowledgeGraph.Context(debug.value(), snapshot, Optional.of(debug), main.identity()),
+                new KnowledgeGraph.Context(release.value(), snapshot, Optional.of(release), test.identity()));
+        String document = KnowledgeGraph.derivedIdentity("fixture-source", "Shared.java");
+        String a = KnowledgeGraph.derivedIdentity("fixture-type", "A"), b = KnowledgeGraph.derivedIdentity("fixture-type", "B");
+        var nodes = new ArrayList<KnowledgeGraph.Node>();
+        for (var context : contexts) {
+            nodes.add(new KnowledgeGraph.Node(document, context.identity(), "SOURCE_DOCUMENT", List.of(root.identity())));
+            if (context.analysis().isEmpty()) continue;
+            for (String type : List.of(a, b)) nodes.add(new KnowledgeGraph.Node(type, context.identity(), "TYPE", List.of(context.evidence())));
+        }
+        var edges = List.of(scopedDependency(debug, a, b, main), scopedDependency(release, b, a, test));
+        var proofs = List.of(root, main, test);
+        var expectedPayload = CanonicalJson.write(Map.of("schema", "knowledge-graph:m5.1-v1", "snapshot", snapshot,
+                "contexts", contexts.stream().sorted(Comparator.comparing(KnowledgeGraph.Context::identity)).toList(),
+                "nodes", nodes.stream().sorted(Comparator.comparing(KnowledgeGraph.Node::context).thenComparing(KnowledgeGraph.Node::identity)).toList(),
+                "edges", edges.stream().sorted(Comparator.comparing(KnowledgeGraph.Edge::context).thenComparing(KnowledgeGraph.Edge::identity)).toList(),
+                "evidence", proofs.stream().sorted(Comparator.comparing(GraphEvidence::identity)).toList()));
+        var digest = ContentDigest.sha256Utf8(expectedPayload);
+        var repeated = new ArrayList<>(nodes.reversed()); repeated.add(nodes.getFirst());
+        var memory = new KnowledgeGraph(snapshot, contexts.reversed(), repeated, edges.reversed(), proofs.reversed());
+        assertEquals(digest, memory.identity());
+
+        Path snapshots = directory.resolve("multi-context-snapshots"), pages = directory.resolve("multi-context-pages");
+        var published = new PartitionedGraphStore(pages).build(memory, snapshots, () -> false, ignored -> {});
+        assertEquals(digest, published.graph());
+        assertEquals(7, published.nodes()); assertEquals(2, published.edges()); assertEquals(3, published.evidence());
+        var stored = snapshots.resolve(digest.value().substring(7) + ".graph.json");
+        assertEquals("{\"format\":\"" + GraphSnapshotCodec.FORMAT + "\",\"graph\":" + expectedPayload + ",\"identity\":\"" + digest.value() + "\"}", Files.readString(stored));
+        assertEquals(digest, new FileGraphStore(snapshots).load(digest).orElseThrow().identity());
+
+        var cold = new PartitionedGraphStore(pages);
+        var partitions = cold.partitions(digest, 3, Optional.empty());
+        assertEquals(3, partitions.items().size()); assertTrue(partitions.continuation().isEmpty());
+        var byContext = new HashMap<String, PartitionedGraphReader.Partition>();
+        for (var partition : partitions.items()) {
+            byContext.put(partition.context(), partition);
+            var actual = new ArrayList<KnowledgeGraph.Node>(); Optional<String> cursor = Optional.empty();
+            do {
+                var page = cold.nodes(partition, 1, cursor);
+                actual.addAll(page.items()); cursor = page.continuation();
+            } while (cursor.isPresent());
+            assertEquals(memory.nodes().stream().filter(node -> node.context().equals(partition.context())).toList(), actual);
+            var request = new ArchitectureQuery.Request(digest, partition.context(), ArchitectureQuery.Scope.ENTITY,
+                    ArchitectureQuery.Projection.BOUNDED_UNION, ArchitectureQuery.Direction.OUTGOING, Set.of("fixture.dependency"),
+                    ArchitectureQuery.Population.all(), false, Optional.empty(), ArchitectureQuery.Limits.defaults());
+            assertEquals(Optional.of(0L), new ArchitectureQueryService(memory).findCycles(request).exactTotal());
+        }
+        assertEquals(1, byContext.get(snapshot.value()).nodes());
+        var debugRows = byContext.get(debug.value()); var releaseRows = byContext.get(release.value());
+        assertEquals(List.of(edges.getFirst()), cold.adjacency(debugRows, a, false, 1, Optional.empty()).items());
+        assertEquals(List.of(edges.getLast()), cold.adjacency(releaseRows, a, true, 1, Optional.empty()).items());
+        assertTrue(cold.adjacency(debugRows, a, true, 1, Optional.empty()).items().isEmpty());
+        var cursor = cold.nodes(debugRows, 1, Optional.empty()).continuation();
+        assertTrue(cursor.isPresent());
+        assertThrows(IllegalArgumentException.class, () -> cold.nodes(releaseRows, 1, cursor));
+        for (var proof : proofs) assertEquals(Optional.of(proof), cold.evidence(digest, proof.identity()));
+    }
+
+    private static KnowledgeGraph.Edge scopedDependency(AnalysisIdentity analysis, String source, String target, GraphEvidence proof) {
+        return new KnowledgeGraph.Edge(KnowledgeGraph.derivedIdentity("fixture-dependency", List.of(source, target)), analysis.value(), "fixture.dependency", source,
+                new KnowledgeGraph.Target(KnowledgeGraph.TargetState.RESOLVED, List.of(target), Optional.empty()), List.of(proof.identity()), Optional.empty());
     }
     @Test void aRehashedDerivedIndexCannotSilentlyOmitOrRedirectCanonicalEdges()throws Exception{
         var graph=fixture();new PartitionedGraphStore(directory).save(graph,()->false);

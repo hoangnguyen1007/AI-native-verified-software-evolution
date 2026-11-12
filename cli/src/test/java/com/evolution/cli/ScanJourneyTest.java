@@ -52,11 +52,31 @@ class ScanJourneyTest {
         try(var output=Files.newOutputStream(source.resolve("Huge.java"))){output.write("//".getBytes(java.nio.charset.StandardCharsets.UTF_8));for(int i=0;i<1222;i++)output.write(block);}
         Files.writeString(source.resolve("small.py"),"print('fallback')\n");
         var result=run("scan",source.toString(),"--offline","--build","off","--json");assertEquals(3,result.code,result.err+result.out);
+        assertEquals("PARTIAL",result.data().get("status"));assertEquals("PARTIAL_RECOVERY",result.data().get("evidenceTier"));
         assertEquals("COMPATIBILITY_WORKER_REQUIRED",result.data().get("javaAnalysis"));assertEquals(Boolean.TRUE,result.data().get("graphCreated"));
         var graph=new Workspace(workspace).selectedGraph();assertEquals(2,graph.nodes().stream().filter(n->n.kind().equals("INVENTORY_ENTRY")).count());
         assertEquals(1,graph.nodes().stream().filter(n->n.kind().equals("CALL_SITE")).count());
         assertTrue(graph.evidence().stream().anyMatch(e->e.family().equals("evidence.gap")&&e.canonicalJson().contains("JAVA_COMPATIBILITY_WORKER_REQUIRED")));
         assertTrue(graph.contexts().stream().allMatch(c->c.analysis().isEmpty()));
+    }
+    @Test void purePolyglotCompletionKeepsSyntaxInventoryAndDoesNotPublishAJavaHealthScore() throws Exception {
+        Path source = Files.createDirectory(workspace.resolve("python-source"));
+        Files.writeString(source.resolve("logic.py"), "def answer():\n    return 42\n\nprint(answer())\n");
+        var scan = run("scan", source.toString(), "--offline", "--build", "off", "--json");
+        assertEquals(0, scan.code, scan.err);
+        assertEquals("COMPLETE", scan.data().get("status"));
+        assertEquals("PASSIVE_ARCHITECTURE_RECOVERY", scan.data().get("evidenceTier"));
+        var graph = new Workspace(workspace).selectedGraph();
+        assertEquals(1, graph.nodes().stream().filter(node -> node.kind().equals("INVENTORY_ENTRY")).count());
+        assertTrue(graph.nodes().stream().anyMatch(node -> node.kind().equals("SOURCE_DECLARATION")));
+        assertTrue(graph.contexts().stream().allMatch(context -> context.analysis().isEmpty()));
+        var metric = run("metrics", "metric.fan-out", "--json");
+        var row = GraphJson.object(GraphJson.array(metric.data().get("items")).getFirst());
+        assertEquals("NOT_APPLICABLE", row.get("status")); assertNull(row.get("value"));
+        Path policy = Path.of("src/test/resources/fixtures/tiny/policy.yaml").toAbsolutePath();
+        var score = run("score", "--policy", policy.toString(), "--json");
+        assertEquals(3, score.code, score.err);
+        assertEquals("WITHHELD", score.data().get("status")); assertNull(score.data().get("score"));
     }
     @Test void declaredMavenReleaseUsesMatchingSymbolsInsteadOfTheCliFallback()throws Exception {
         Path source=Files.createDirectory(workspace.resolve("release17"));Files.createDirectories(source.resolve("src/main/java/p"));
