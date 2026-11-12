@@ -31,9 +31,17 @@ class SpringBindingOracleIT {
     }
     @Test void normalizedEngineConformsToPinnedSpringContainer() throws Exception {
         var jars = Path.of("..", "benchmarks", "m4-r0", ".cache", "jars");
+        String repository = System.getProperty("spring.oracle.repository");
         var paths = new ArrayList<Path>();
         for (var pin : new TreeMap<>(PINS).entrySet()) {
             var path = jars.resolve(pin.getKey());
+            if (repository != null) {
+                boolean annotation = pin.getKey().startsWith("jakarta.annotation-api-");
+                String version = annotation ? "2.1.1" : "6.2.0";
+                String artifact = pin.getKey().substring(0, pin.getKey().length() - ("-" + version + ".jar").length());
+                path = Path.of(repository).resolve(annotation ? "jakarta/annotation" : "org/springframework")
+                        .resolve(artifact).resolve(version).resolve(pin.getKey());
+            }
             assertTrue(Files.isRegularFile(path), "Acquire R0 locked artifacts before running the oracle IT: " + pin.getKey());
             assertEquals("sha256:" + pin.getValue(), ContentDigest.sha256(Files.readAllBytes(path)).value()); paths.add(path);
         }

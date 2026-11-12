@@ -356,7 +356,7 @@ class ResolutionInputsTest {
                 () -> new JavaParserFrontend().analyze(reqWithoutB)).diagnostic().code());
     }
 
-    @Test void sourceRecoveryResolvesWildcardImportsInlineQualifiedTypesAndWithholdsDuplicateTypes() {
+    @Test void sourceRecoveryRetainsUnprovedWildcardAndQualifiedTypesAndWithholdsDuplicates() {
         var sources = Map.of(
                 "src/main/java/demo/Owner.java", """
                         package demo;
@@ -385,7 +385,7 @@ class ResolutionInputsTest {
                 () -> new JavaParserFrontend().analyze(base)).diagnostic().code());
 
         // Source-recovery mode withholds the duplicate source document with a warning diagnostic
-        // and resolves wildcard annotations/types + inline package-qualified types/annotations
+        // and retains unproved wildcard/qualified types without inventing declarations.
         var options = new TreeMap<>(base.manifest().configuration().values());
         options.put(FrontendRequest.RESOLUTION_MODE, FrontendRequest.SOURCE_RECOVERY);
         var component = new ManifestComponent(
@@ -420,7 +420,7 @@ class ResolutionInputsTest {
                         .contains(o.category().value()))
                 .toList();
         assertFalse(structuralObs.isEmpty());
-        assertTrue(structuralObs.stream().allMatch(o -> o.attribution() == SemanticStatus.RESOLVED),
-                () -> "Unresolved structural observations: " + structuralObs);
+        assertTrue(structuralObs.stream().allMatch(o -> o.attribution() == SemanticStatus.UNRESOLVED));
+        assertTrue(structuralObs.stream().allMatch(o -> o.span().isPresent() && !o.diagnostics().isEmpty()));
     }
 }

@@ -606,6 +606,8 @@ final class Extraction {
         if (type.toAst().filter(this::isSourceOrReactorNode).isPresent()) {
             Node ast = type.toAst().orElseThrow(); unit(ast); return typeOwnerName(ast);
         }
+        if (environment.isRecoveryScaffold(type))
+            throw new MappingFailure(SemanticStatus.UNRESOLVED,"java.declaration-evidence-required");
         // ReflectionAnnotationDeclaration does not implement containerType(). Its verified
         // canonical name still distinguishes package and nested declaration components.
         if (type.isAnnotation()) {
@@ -768,166 +770,12 @@ final class Extraction {
         var nativeCall=nativeMembers.resolve(expression);if(nativeCall.isPresent())return nativeCall.orElseThrow();
         var generated=lombok.resolve(expression);
         if(generated.isPresent()){if(expression instanceof MethodCallExpr call)recoveryCallInputs.add(call);return generated.orElseThrow();}
-        if(request.sourceRecovery()) {
-            var recoveredExternal=resolveRecoveredExternalCall(expression);
-            if(recoveredExternal.isPresent()){if(expression instanceof MethodCallExpr call)recoveryCallInputs.add(call);return recoveredExternal.orElseThrow();}
-        }
         if(request.sourceRecovery()&&expression instanceof MethodCallExpr call)requireRecoveryReceiver(call);
         if(expression instanceof MethodCallExpr call) {
             if(!request.sourceRecovery()&&boundedReceiver(call.getScope()))requireRecoverySelected(call,recoveryReceiver(call,call.getScope()));
             var result=callable(call.resolve(),call);if(request.sourceRecovery())recoveryCallInputs.add(call);return result;
         }
         return callable(((ObjectCreationExpr)expression).resolve());
-    }
-    private Optional<Entity> resolveRecoveredExternalCall(Expression expression) {
-        if (!request.sourceRecovery()) return Optional.empty();
-        if (expression instanceof MethodCallExpr call) {
-            ExplicitImportTypeSolver.ExplicitImportTypeDeclaration owner = null;
-            if (call.getScope().isPresent()) {
-                Expression scope = call.getScope().orElseThrow();
-                try {
-                    requireRecoveryInputs(scope, null);
-                    var scopeType = scope.calculateResolvedType();
-                    if (scopeType.isReferenceType()
-                            && scopeType.asReferenceType().getTypeDeclaration().orElse(null)
-                                    instanceof ExplicitImportTypeSolver.ExplicitImportTypeDeclaration decl
-                            && decl.isExplicitlyImported()) {
-                        owner = decl;
-                    }
-                } catch (RuntimeException notValue) {
-                    if (scope instanceof NameExpr || scope instanceof FieldAccessExpr) {
-                        try {
-                            var context = com.github.javaparser.symbolsolver.javaparsermodel.JavaParserFactory.getContext(scope, environment.solver);
-                            if (!(scope instanceof NameExpr name && context.solveSymbol(name.getNameAsString()).isSolved())) {
-                                var named = context.solveType(scope.toString());
-                                if (named.isSolved()
-                                        && named.getCorrespondingDeclaration().asReferenceType()
-                                                instanceof ExplicitImportTypeSolver.ExplicitImportTypeDeclaration decl
-                                        && decl.isExplicitlyImported()) {
-                                    owner = decl;
-                                }
-                            }
-                        } catch (RuntimeException ignored) {}
-                    }
-                }
-            } else {
-                var staticOwner = environment.explicitImports
-                        .resolveStaticImportOwner(call.findCompilationUnit().orElse(null), call.getNameAsString())
-                        .orElse(null);
-                if (staticOwner != null) {
-                    boolean resolvedLocally = false;
-                    try {
-                        call.resolve();
-                        resolvedLocally = true;
-                    } catch (RuntimeException ignored) {}
-                    if (!resolvedLocally) {
-                        owner = staticOwner;
-                    }
-                }
-            }
-            if (owner == null) return Optional.empty();
-            var erasedArgs = new ArrayList<ErasedType>();
-            for (var arg : call.getArguments()) {
-                requireRecoveryInputs(arg, null);
-                erasedArgs.add(erased(arg.calculateResolvedType(), new HashSet<>()));
-            }
-            var symbol = JavaSymbolName.method(typeName(owner), call.getNameAsString(), erasedArgs);
-            var origin = environment.origin(owner.getQualifiedName());
-            var entity = Entity.create(origin.kind(), origin.scope(), EntityKind.METHOD, symbol.canonicalName(), Optional.empty());
-            declarations.putIfAbsent(
-                    entity.identity(),
-                    new DeclarationRecord(
-                            entity,
-                            call.getNameAsString(),
-                            SemanticStatus.RESOLVED,
-                            environment.nativeDerivation(owner.getQualifiedName()),
-                            List.of(),
-                            List.of()));
-            return Optional.of(entity);
-        }
-        if (expression instanceof ObjectCreationExpr creation && creation.getAnonymousClassBody().isEmpty()) {
-            ExplicitImportTypeSolver.ExplicitImportTypeDeclaration owner = null;
-            try {
-                var resolvedType = creation.getType().resolve();
-                if (resolvedType.isReferenceType()
-                        && resolvedType.asReferenceType().getTypeDeclaration().orElse(null)
-                                instanceof ExplicitImportTypeSolver.ExplicitImportTypeDeclaration decl
-                        && decl.isExplicitlyImported()) {
-                    owner = decl;
-                }
-            } catch (RuntimeException ignored) {}
-            if (owner == null) return Optional.empty();
-            var erasedArgs = new ArrayList<ErasedType>();
-            for (var arg : creation.getArguments()) {
-                requireRecoveryInputs(arg, null);
-                erasedArgs.add(erased(arg.calculateResolvedType(), new HashSet<>()));
-            }
-            var symbol = JavaSymbolName.constructor(typeName(owner), erasedArgs);
-            var origin = environment.origin(owner.getQualifiedName());
-            var entity = Entity.create(origin.kind(), origin.scope(), EntityKind.CONSTRUCTOR, symbol.canonicalName(), Optional.empty());
-            declarations.putIfAbsent(
-                    entity.identity(),
-                    new DeclarationRecord(
-                            entity,
-                            owner.getName(),
-                            SemanticStatus.RESOLVED,
-                            environment.nativeDerivation(owner.getQualifiedName()),
-                            List.of(),
-                            List.of()));
-            return Optional.of(entity);
-        }
-        return Optional.empty();
-    }
-    Optional<Entity> resolveRecoveredExternalField(Expression expression) {
-        if (!request.sourceRecovery()) return Optional.empty();
-        ExplicitImportTypeSolver.ExplicitImportTypeDeclaration owner = null;
-        String fieldName = null;
-        if (expression instanceof FieldAccessExpr access) {
-            fieldName = access.getNameAsString();
-            Expression scope = access.getScope();
-            try {
-                requireRecoveryInputs(scope, null);
-                var scopeType = scope.calculateResolvedType();
-                if (scopeType.isReferenceType()
-                        && scopeType.asReferenceType().getTypeDeclaration().orElse(null)
-                                instanceof ExplicitImportTypeSolver.ExplicitImportTypeDeclaration decl) {
-                    owner = decl;
-                }
-            } catch (RuntimeException notValue) {
-                if (scope instanceof NameExpr || scope instanceof FieldAccessExpr) {
-                    try {
-                        var context = com.github.javaparser.symbolsolver.javaparsermodel.JavaParserFactory.getContext(scope, environment.solver);
-                        if (!(scope instanceof NameExpr name && context.solveSymbol(name.getNameAsString()).isSolved())) {
-                            var named = context.solveType(scope.toString());
-                            if (named.isSolved()
-                                    && named.getCorrespondingDeclaration().asReferenceType()
-                                            instanceof ExplicitImportTypeSolver.ExplicitImportTypeDeclaration decl) {
-                                owner = decl;
-                            }
-                        }
-                    } catch (RuntimeException ignored) {}
-                }
-            }
-        } else if (expression instanceof NameExpr name) {
-            fieldName = name.getNameAsString();
-            owner = environment.explicitImports
-                    .resolveStaticImportOwner(name.findCompilationUnit().orElse(null), fieldName)
-                    .orElse(null);
-        }
-        if (owner == null || fieldName == null) return Optional.empty();
-        var symbol = JavaSymbolName.field(typeName(owner), fieldName);
-        var origin = environment.origin(owner.getQualifiedName());
-        var entity = Entity.create(origin.kind(), origin.scope(), EntityKind.FIELD, symbol.canonicalName(), Optional.empty());
-        declarations.putIfAbsent(
-                entity.identity(),
-                new DeclarationRecord(
-                        entity,
-                        fieldName,
-                        SemanticStatus.RESOLVED,
-                        environment.nativeDerivation(owner.getQualifiedName()),
-                        List.of(),
-                        List.of()));
-        return Optional.of(entity);
     }
     private boolean boundedReceiver(Optional<Expression> scope) {
         if(scope.isEmpty())return false;
@@ -950,7 +798,7 @@ final class Extraction {
         if(input instanceof MethodCallExpr call&&recoveryCallInputs.contains(call))return;
         input.walk(Node.TreeTraversal.POSTORDER,node->{
             if(node instanceof MethodCallExpr nested&&!recoveryCallInputs.contains(nested)) {
-                if(lombok.resolve(nested).isPresent()||resolveRecoveredExternalCall(nested).isPresent()){recoveryCallInputs.add(nested);return;}
+                if(lombok.resolve(nested).isPresent()){recoveryCallInputs.add(nested);return;}
                 requireRecoveryReceiverType(nested);
                 if(nested!=deferred){nested.resolve();recoveryCallInputs.add(nested);}
             }
@@ -1053,6 +901,8 @@ final class Extraction {
         return type.isReferenceType()&&type.asReferenceType().typeParametersValues().stream().anyMatch(this::hasLowerWildcard);
     }
     private void requireRecoverySelected(MethodCallExpr call,ResolvedReferenceTypeDeclaration receiver) {
+        for (var argument : call.getArguments())
+            requireRecoveryArgumentType(argument.calculateResolvedType(), new HashSet<>());
         // A fixed own zero-argument declaration shadows any inherited alternative;
         // varargs and inherited selections still require the receiver hierarchy.
         if(call.getArguments().isEmpty()) {
@@ -1060,6 +910,26 @@ final class Extraction {
             if(ownZeroArgumentMethod(selected,receiver))return;
         }
         requireRecoveryHierarchy(receiver);
+    }
+    private void requireRecoveryArgumentType(ResolvedType type, Set<String> visited) {
+        if (!visited.add(type.describe())) return;
+        if (type.isArray()) {
+            requireRecoveryArgumentType(type.asArrayType().getComponentType(), visited);
+        } else if (type.isReferenceType()) {
+            var reference = type.asReferenceType();
+            var declaration = reference.getTypeDeclaration().orElseThrow();
+            if (declaration.toAst().filter(this::isSourceOrReactorNode).isEmpty())
+                environment.origin(declaration.getQualifiedName());
+            for (var parameter : reference.typeParametersValues())
+                requireRecoveryArgumentType(parameter, visited);
+        } else if (type.isTypeVariable()) {
+            for (var bound : type.asTypeVariable().asTypeParameter().getBounds())
+                requireRecoveryArgumentType(bound.getType(), visited);
+        } else if (type.isWildcard() && type.asWildcard().isBounded()) {
+            requireRecoveryArgumentType(type.asWildcard().getBoundedType(), visited);
+        } else if (type.isConstraint()) {
+            requireRecoveryArgumentType(type.asConstraintType().getBound(), visited);
+        }
     }
     private boolean ownZeroArgumentMethod(ResolvedMethodLikeDeclaration selected,ResolvedReferenceTypeDeclaration receiver) {
         return selected.getNumberOfParams()==0&&selected.toAst().filter(this::isSourceOrReactorNode).filter(MethodDeclaration.class::isInstance).isPresent()
@@ -1203,7 +1073,14 @@ final class Extraction {
         return owner;
     }
     boolean isTypeName(Node context, String name) {
-        try { return com.github.javaparser.symbolsolver.javaparsermodel.JavaParserFactory.getContext(context,environment.solver).solveType(name).isSolved(); }
+        try {
+            var selected = com.github.javaparser.symbolsolver.javaparsermodel.JavaParserFactory.getContext(context,environment.solver).solveType(name);
+            if (!selected.isSolved()) return false;
+            var declaration = selected.getCorrespondingDeclaration();
+            if (declaration.toAst().filter(this::isSourceOrReactorNode).isEmpty())
+                environment.origin(declaration.asReferenceType().getQualifiedName());
+            return true;
+        }
         catch (RuntimeException failure) { return false; }
     }
     ResolvedTypeDeclaration resolveTypeName(Node node,String name){

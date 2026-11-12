@@ -1,0 +1,79 @@
+{
+  "schema": "m9-task2-controls-v1",
+  "registration": "Source-authored before first scoring; original M9.1 registry and historical outcomes remain immutable",
+  "claims": ["I01", "J01", "J02", "B01", "S01", "L01", "D01"],
+  "oraclePolicy": "Valid javac compilations alone oracle bindings; rejected compilations establish diagnostic/absence controls, never recovered bindings",
+  "newControls": {
+    "cli/src/test/java/com/evolution/cli/ScanJourneyTest.java": {
+      "passiveScanCompletesWithPassiveArchitectureRecoveryTierUnderApprovedNinetyFivePercentPolicy": "Local source-proven structure above the approved 950-per-mille threshold completes with recovery tier and retained gaps",
+      "unprovedImportedStructureCannotEarnPassiveCompletion": "The original missing Spring/JPA/generated gRPC dependency fixture remains PARTIAL with its full gap denominator; no fabricated bindings can earn completion"
+    },
+    "backend/src/test/java/com/evolution/backend/analysis/M9InventoryCensusIT.java": {
+      "everyFrozenPhysicalEntryAndDescriptorOwnerHasAnExplicitDisposition": "All 16 frozen physical censuses versus actual product acquisition paths/hashes/lengths and complete readiness ownership ledger; each descriptor has passive-evidence or unrealized disposition, generator/effective-context completeness stays unproven; this does not score holdout semantic quality"
+    },
+    "analyzer/src/test/java/com/evolution/analysis/spring/condition/M9InteractionTest.java": {
+      "profilePropertyOrderQualifierAndPrimaryFallbackHaveClosedWorldOutcomes": "96 source-authored normalized cells: 2 profiles x 3 property values x 2 registration orders x 2 configured qualifier matches x 2 fallback qualifier matches x 2 fallback-primary flags; explicit optional absence and exact selected bean, no binding/registration issues; discovery-only gaps retained; semantic replay only"
+    },
+    "analyzer-javaparser/src/test/java/com/evolution/analysis/javaparser/M9JavacOracleTest.java": {
+      "exactAndRecoveryAgreeWithJavacOnShadowingInheritanceGenericsAndLocalOwners": "13 explicit calls/constructors/references per strict and recovery lane; javac-selected declaration/erasure/origin, execution owner and original complete spans must agree, no omitted or extra occurrence"
+    },
+    "analyzer-javaparser/src/test/java/com/evolution/analysis/javaparser/M9RecoveryEvidenceTest.java": {
+      "missingImportsCannotInventTypesMembersOrOrigins": "All written external type/member obligations retained as non-certain with original spans, no fabricated declaration/origin; the declared source receiver field remains certain",
+      "wildcardAndFrameworkLookalikesCannotProveADeclaration": "Absent classpath cannot prove a wildcard, named framework, or qualified declaration",
+      "unknownArgumentCannotSelectAnExactOverload": "Unknown Payload may implement CharSequence; Object overload is not proven",
+      "callableIdentityCannotUseAGuessedImportedParameterType": "A physically written method has an unresolved identity when its parameter erasure needs a guessed declaration/package boundary; the declaration and call remain source-anchored ledger obligations",
+      "androidNamesCannotSubstituteForSdkOrGeneratorEvidence": "Absent SDK/R/BuildConfig outputs remain unresolved, never guessed native/generated evidence",
+      "exactRemovalAndRestorationKeepTargetsSpansAndReplayIdentity": "Exact authored dependency has two bindings; removal retains two unresolved calls and spans; restoration reproduces canonical output",
+      "sameSizeAndMtimeCannotBypassDependencyByteVerification": "Changed SHA-256 rejected even after a warm archive/digest cache, identical path/length/mtime"
+    }
+  },
+  "labelAmendments": [
+    "The first green attempt exposed an overly broad reads-field negative: C.field is a physically written field, whereas Client.VALUE has no declaration evidence. Narrow that one predicate and positively protect C.field; keep both earlier failing attempts.",
+    "The initial Spring fixture inherited hasQualifier=FALSE from a generic helper. Set it explicitly to TRUE to exercise the registered qualifier matches; false matches are intentionally irrelevant to an unqualified dependency. Preserve the original failed fixture run.",
+    "DiscoveryTransitions retains its pre-registration REGISTRATION_NOT_EVALUATED/CANDIDATE_TYPES_UNRESOLVED records. Protect their exact reason set and check registration/binding issues separately; do not require deletion of historical-stage evidence.",
+    "Native TypeScript fixtures checked out as CRLF contradict the immutable source hash/offsets. Restore exact HEAD blobs (source SHA-256 77145e0ed8ec3d6b0e23cb7d44c8af3d4a32c39bacbde334d57563caaca3a5be) and pin LF checkout, without changing capture expectations or regeneration.",
+    "PlatformReactorModelTest omitted analyzer-treesitter/pom.xml although the actual root declares it; add that POM and expect nine modules including root.",
+    "KotlinAstLoweringTest silently chose a workstation corpus or fallback fixture and asserted historical 980-per-mille coverage without complete dependencies. Replace that nonregistered input with the fixed, source-anchored three-annotation span control; no external Kotlin correctness result is inferred.",
+    "The CLI completion fixture relied on fabricated Spring/JPA/generated gRPC types. Preserve its bytes as a negative PARTIAL control and separately protect approved 950-per-mille completion using source-proven local declarations; the numerical policy is unchanged.",
+    "A final negative exposed guessed imported parameter erasure in a source callable identity. Withhold that identity; dependent return-type observations keep their source spans but cannot invent an owner, even when the return type itself is known JDK String."
+  ],
+  "existingControls": "Reuse frozen M9.1 source-authored goldens, M2 javac modern fixture, M4 exhaustive/formal oracles and explicit immutable native captures; revisions to unsound expectations require a documented reason",
+  "additionalExistingControls": [
+    "analyzer-javaparser/src/test/java/com/evolution/analysis/javaparser/NativeAnonymousConstructorsTest.java",
+    "analyzer-javaparser/src/test/java/com/evolution/analysis/javaparser/NativeCanonicalEligibilityTest.java",
+    "analyzer-javaparser/src/test/java/com/evolution/analysis/javaparser/NativeJavaSymbolMappingTest.java"
+  ],
+  "holdoutExposure": "Acquisition and passive-readiness accounting observes the three registered holdouts without executing their sources, scoring semantic correctness or using them for debugging/selection. They are no longer unseen inventory/readiness inputs; semantic holdout scoring remains unrun.",
+  "springRuntimeOracle": {
+    "case": "analyzer/src/test/java/com/evolution/analysis/spring/condition/SpringBindingOracleIT.java#normalizedEngineConformsToPinnedSpringContainer",
+    "selection": "23 existing source-authored normalized binding cases against SHA-256-pinned Spring 6.2.0 and Jakarta annotations 2.1.1",
+    "inputs": "Explicit -Dspring.oracle.repository selects the existing Maven2 cache; the original seven SHA-256 pins remain mandatory, no downloads or duplicate SDK",
+    "trust": "Trusted authored fixture/container experiment, not execution of analyzed repositories, universal Spring equivalence or native worker qualification"
+  },
+  "nativePolicy": "Register explicit capture/context/tool/lineage pins before replay; retain public-test/unqualified methods; no new worker or host target execution",
+  "nativeAvailability": {
+    "authority": "CONFIRMED human in this task: the two m844 native-validation captures and the mvp-261fd9b5c76d428f8c8291c498b55319 worker no longer exist",
+    "affected": ["B01 authenticated MapStruct/Protobuf/generated output replay", "D01 captured artifact/generated/config removal-restoration campaign"],
+    "outcome": "NOT_RUN_CAPTURE_UNAVAILABLE",
+    "acceptance": "Missing data is not passed evidence or a waiver; no retry of deleted paths, worker recreation or host target-build fallback"
+  },
+  "representativePassiveChecks": {
+    "cases": ["petclinic-microservices", "petclinic-kotlin", "mapstruct"],
+    "lane": "P; frozen source commits and independent censuses inherited from registry.json",
+    "selection": ["--offline", "--build=off", "--all-files", "--include-tests", "--release=21"],
+    "resources": "Pinned JDK, 2048-MiB heap, fresh explicit empty artifact cache and external workspace per case; 300-second observation allocation",
+    "expectation": "Account for all physical inputs, retain source/context/classpath evidence, tier and gaps; record actual COMPLETE/PARTIAL/FAILED/TIMEOUT without forcing success",
+    "semanticCorrectness": "External precision/recall N/A because these snapshots have no independent occurrence labels; no native/exact/whole-repository correctness promotion"
+  },
+  "authoredNativeReplay": {
+    "root": "authored:m845-mixed-20261102-v3",
+    "capture.json": "a30801224c22f8659e94853dab6941fdf3a6d8f27cfa5355926458acbe049740",
+    "request.json": "c95b459794f118e0f2f2c582a11619618b7c1f8e552c32af95be4f7220c1742b",
+    "read-policy.json": "9bdb94223d822139cc2ac70503987968aa1e709336cd123b1bc8b1e9c431923d",
+    "head": "bridges/98ed0a5fd382050beff474f4d5c1117f52379ce9a0eeecd7858612b59ae3d079.json",
+    "expected": "33 original M1 sources, 8 partitions, broken sibling and 2 reopened obligations retained, qualified=false; CAS/source/context/producer hashes checked by existing replay consumer",
+    "trust": "AUTHORED_NATIVE_PRODUCER_CAPTURE_UNQUALIFIED; this is data-only consumer replay, not a fresh worker observation or production method qualification"
+  },
+  "unavailable": "Record NOT_RUN per missing capture/language/category with reason; never promote an honesty control to semantic completeness",
+  "excludedAcceptance": ["M9.3 graph/metric/score acceptance", "M9.4 performance/UI campaigns", "M9.5 independent review", "M10 approval"]
+}

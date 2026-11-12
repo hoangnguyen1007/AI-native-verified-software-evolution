@@ -16,7 +16,7 @@ class JmodPlatformTest {
         var request=TestInputs.request(baseline.sources(),platform,List.of());var result=new JavaParserFrontend().analyze(request);
         assertEquals(FrontendResult.State.COMPLETED,result.state());assertEquals(1,result.typeDeclarations().size());
         assertEquals(result,new JavaParserFrontend().analyze(request));
-        assertEquals("3.28.2-m8.4-lambda-input-v11",JavaParserFrontend.PROVIDER.version());
+        assertEquals("3.28.2-m9.2-evidenced-recovery-v12",JavaParserFrontend.PROVIDER.version());
     }
     @Test void emptyArchiveWithoutValidModuleDescriptorStillFails()throws Exception{
         var baseline=TestInputs.request("class C {}");var file=directory.resolve("empty.jmod");try(var jar=new JarOutputStream(Files.newOutputStream(file))){}

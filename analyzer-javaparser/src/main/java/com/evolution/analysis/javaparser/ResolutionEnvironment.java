@@ -29,15 +29,6 @@ final class ResolutionEnvironment {
 
     private record PlatformCacheKey(PlatformInput.Format format, int release, ContentDigest digest) {}
     private record JarCacheKey(int targetRelease, ContentDigest digest) {}
-    private record FileStamp(Path path, long size, long lastModifiedMillis) {}
-    private static final Map<FileStamp, ContentDigest> VERIFIED_FILE_DIGESTS =
-            Collections.synchronizedMap(new LinkedHashMap<>(512, 0.75f, true) {
-                @Override
-                protected boolean removeEldestEntry(Map.Entry<FileStamp, ContentDigest> eldest) {
-                    return size() > 2048;
-                }
-            });
-
     final MemoryTypeSolver project = new MemoryTypeSolver();
     final CombinedTypeSolver platform = new CombinedTypeSolver();
     final MemoryTypeSolver androidProject = new MemoryTypeSolver();
@@ -241,20 +232,8 @@ final class ResolutionEnvironment {
         verify(entry.contentDigest(), bytes);
     }
     private static void verify(ContentDigest expected, Path path) throws IOException {
-        FileStamp cacheableStamp = null;
-        try {
-            var attrs = Files.readAttributes(path, java.nio.file.attribute.BasicFileAttributes.class);
-            long mtime = attrs.lastModifiedTime().toMillis();
-            if (attrs.isRegularFile() && attrs.size() >= 65_536 && System.currentTimeMillis() - mtime > 2_000) {
-                cacheableStamp = new FileStamp(path, attrs.size(), mtime);
-                ContentDigest prev = VERIFIED_FILE_DIGESTS.get(cacheableStamp);
-                if (expected.equals(prev)) {
-                    return;
-                }
-            }
-        } catch (IOException ignored) {
-            // Fall through to full stream verification.
-        }
+        // A path, length and mtime do not authenticate mutable bytes. Rehash on
+        // every request; only the parsed, content-addressed archive is reusable.
         java.security.MessageDigest digest;
         try { digest = java.security.MessageDigest.getInstance("SHA-256"); }
         catch (java.security.NoSuchAlgorithmException impossible) { throw new AssertionError(impossible); }
@@ -268,9 +247,6 @@ final class ResolutionEnvironment {
         String computed = "sha256:" + HexFormat.of().formatHex(digest.digest());
         if (!expected.value().equals(computed)) {
             throw new FrontendInputException("frontend.artifact-digest", "Artifact bytes differ from the manifest");
-        }
-        if (cacheableStamp != null) {
-            VERIFIED_FILE_DIGESTS.put(cacheableStamp, expected);
         }
     }
     private static void verify(ContentDigest expected, byte[] bytes) {
@@ -687,6 +663,19 @@ final class ResolutionEnvironment {
         return false;
     }
 
+    boolean isRecoveryScaffold(com.github.javaparser.resolution.declarations.ResolvedReferenceTypeDeclaration type) {
+        if (type instanceof ExplicitImportTypeSolver.ExplicitImportTypeDeclaration) return true;
+        // Match the actual detached Android AST, not its name: independently
+        // captured native member evidence may legitimately have the same name.
+        for (var memory : List.of(androidProject,androidPlatform)) {
+            var candidate = memory.tryToSolveType(type.getQualifiedName());
+            if (!candidate.isSolved()) continue;
+            var registered = candidate.getCorrespondingDeclaration();
+            if (registered == type || type.toAst().filter(node -> registered.toAst().filter(other -> other == node).isPresent()).isPresent()) return true;
+        }
+        return false;
+    }
+
     Origin origin(String qualifiedName) {
         if (isKnownInPlatform(qualifiedName)) return origin(EntityOrigin.JDK, platformEntry);
         for (var artifact : artifacts) {
@@ -698,17 +687,13 @@ final class ResolutionEnvironment {
                 return origin(EntityOrigin.DEPENDENCY, artifact.input().originEntry());
             }
         }
-        if (androidProject.tryToSolveType(qualifiedName).isSolved()) {
-            return new Origin(EntityOrigin.PROJECT, EntityScope.project(request.module()));
-        }
-        if (androidPlatform.tryToSolveType(qualifiedName).isSolved() || explicitImports.isRecoveredType(qualifiedName)) {
-            return new Origin(
-                    EntityOrigin.DEPENDENCY,
-                    EntityScope.external(
-                            EntityOrigin.DEPENDENCY,
-                            "source-recovery:explicit-import",
-                            ContentDigest.sha256Utf8(request.manifest().snapshot().identity().value())));
-        }
+        // Recovery solvers are parser scaffolding, not declaration evidence.
+        // Imports/Android names cannot establish an artifact, generated output,
+        // member signature or origin. The caller retains an unresolved record.
+        if (androidProject.tryToSolveType(qualifiedName).isSolved()
+                || androidPlatform.tryToSolveType(qualifiedName).isSolved()
+                || explicitImports.isRecoveredType(qualifiedName))
+            throw new com.github.javaparser.resolution.UnsolvedSymbolException(qualifiedName);
         throw new IllegalArgumentException("selected declaration has no verified origin");
     }
     com.github.javaparser.resolution.declarations.ResolvedReferenceTypeDeclaration nativeType(ContentDigest slot,String qualifiedName){

@@ -39,12 +39,6 @@ final class FieldExtraction {
                         context.observe(expression, mode, lombokField::orElseThrow, () -> context.fieldOwner(expression));
                     continue;
                 }
-                var recoveredField = context.resolveRecoveredExternalField(expression);
-                if (recoveredField.isPresent()) {
-                    for (var mode : modes(expression))
-                        context.observe(expression, mode, recoveredField::orElseThrow, () -> context.fieldOwner(expression));
-                    continue;
-                }
                 // Dotted names can contain package/type qualifiers, which are not evaluated field reads.
                 if (!hasValueRoot(expression) && (typeName(expression) || qualifierFragment(expression))) continue;
                 if (expression instanceof FieldAccessExpr) emit(expression,() -> { throw failure; });

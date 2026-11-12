@@ -147,6 +147,24 @@ The final native journey body took 114.848 seconds; it is a pre-handoff integrat
 
 The [quality follow-up](tasks/m8/04-step5-step3-execution.md#quality-follow-up--2026-11-02) supersedes the blanket exit claim and owns the newer 51-case selection, native config/SDK controls, fixture v3 and its timings. `PythonBridgeNativeIT` uses the same `bridge.node`, `bridge.python` and `bridge.languages` properties; it checks real SDK declaration targets, local builtin shadowing, changed support-byte rejection and core import. Existing Python native controls can reuse a verified SDK via process-local `EVO_PYRIGHT_SDK` (pinned Pyright 1.1.396), avoiding their historical cache path; Node must still resolve in that test process. These controls do not run target applications or establish production method qualification. Bridge stats distinguish concrete bindings from evidence obligations; always verify both denominators and raw outcomes when comparing captures.
 
+## M9.2 explicit evidence checks
+
+The [Task-2 controls](tasks/m9/02-cases.json) register the semantic checks; the execution record separates bounded passes from unavailable native cells. Ordinary tests do not recreate deleted workers or captures. No test run below certifies production native methods or whole-repository semantic correctness.
+
+The existing Spring binding oracle can reuse an explicitly selected Maven2 cache, without copying an SDK or weakening its seven original SHA-256 pins:
+
+```powershell
+.\mvnw.cmd -q -pl analyzer "-Denforcer.skipRules=reactorModuleConvergence" "-Dtest=SpringBindingOracleIT" "-Dspring.oracle.repository=C:/Users/Admin/.m2/repository" test
+```
+
+`M9InventoryCensusIT` is selected explicitly. Supply the frozen registry, corpus and independent inventory roots, and a **new, nonexistent** external output directory. It compares every physical path/hash/length, pages the actual product inventory, checks the complete ownership ledger, and records passive descriptor/context dispositions. Its census of 16 repositories is independent of semantic scoring; unknown effective contexts and generators remain pending. It never evaluates build scripts or runs target code.
+
+```powershell
+.\mvnw.cmd -q -pl backend "-Denforcer.skipRules=reactorModuleConvergence" "-Dtest=M9InventoryCensusIT" "-Dm9.registry=<absolute-checkout>/docs/tasks/m9/registry.json" "-Dm9.corpusRoot=<explicit-corpus-root>" "-Dm9.inventoryRoot=<registered-inventory-root>" "-Dm9.censusOutput=<new-external-output-directory>" test
+```
+
+Native TypeScript fixture source/NDJSON files must retain their checked-in LF bytes. Their source hashes and UTF offsets are evidence; converting them to CRLF is an input change, not a reason to rewrite expected hashes or silently normalize production inputs. `.gitattributes` pins this checkout behavior.
+
 ## Basis
 
 JUnit 5.11 distinguishes [tag filtering from conditional disabling](https://junit.org/junit5/docs/5.11.0/user-guide/index.html#writing-tests-tagging-and-filtering). Surefire 3.5.5 supports [JUnit tag expressions through `groups` / `excludedGroups`](https://maven.apache.org/surefire-archives/surefire-3.5.5/maven-surefire-plugin/examples/junit-platform.html#filtering-by-tags). Native preflight uses Maven Enforcer's [required-file rule](https://maven.apache.org/enforcer/enforcer-rules/requireFilesExist.html); the native readers provide the authenticity checks. Java 21 defines [`Deflater.NO_COMPRESSION`](https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/util/zip/Deflater.html#NO_COMPRESSION) for the adapter's temporary ZIP representation.

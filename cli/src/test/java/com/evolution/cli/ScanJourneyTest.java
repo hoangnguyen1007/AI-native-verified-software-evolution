@@ -179,6 +179,26 @@ class ScanJourneyTest {
         assertEquals(0L,((Number)GraphJson.object(depth.get("relationships")).get("resolved")).longValue(),"Mismatched decoding cannot become exact attribution");
     }
     @Test void passiveScanCompletesWithPassiveArchitectureRecoveryTierUnderApprovedNinetyFivePercentPolicy()throws Exception{
+        Path source=Files.createDirectory(workspace.resolve("arch-evidenced"));
+        Files.createDirectories(source.resolve("src/main/java/demo"));
+        Files.writeString(source.resolve("src/main/java/demo/OwnerController.java"),"""
+                package demo;
+                @interface Marker {}
+                class Base {}
+                @Marker public class OwnerController extends Base {
+                    public String list() { return "ok"; }
+                }
+                """);
+        Files.writeString(source.resolve("build.gradle"),"plugins { id 'java' }\n");
+        var scan=run("scan",source.toString(),"--offline","--build","off","--json");
+        assertEquals(0,scan.code,scan.err+scan.out);
+        assertEquals("COMPLETE",scan.data().get("status"));
+        assertEquals("PASSIVE_ARCHITECTURE_RECOVERY",scan.data().get("evidenceTier"));
+        var gapSummary=GraphJson.object(scan.data().get("gapSummary"));
+        assertTrue(((Number)gapSummary.get("total")).longValue()>0,"Passive capability gaps must remain preserved");
+        assertTrue(GraphJson.object(gapSummary.get("byObligation")).containsKey("ISOLATED_EXECUTION_REQUIRED"));
+    }
+    @Test void unprovedImportedStructureCannotEarnPassiveCompletion()throws Exception{
         Path source=Files.createDirectory(workspace.resolve("arch-complete"));
         Files.createDirectories(source.resolve("src/main/java/demo"));
         Files.writeString(source.resolve("src/main/java/demo/OwnerController.java"),"""
@@ -195,9 +215,9 @@ class ScanJourneyTest {
                 """);
         Files.writeString(source.resolve("build.gradle"),"plugins { id 'java' }\n");
         var scan=run("scan",source.toString(),"--offline","--build","off","--json");
-        assertEquals(0,scan.code,scan.err+scan.out);
-        assertEquals("COMPLETE",scan.data().get("status"));
-        assertEquals("PASSIVE_ARCHITECTURE_RECOVERY",scan.data().get("evidenceTier"));
+        assertEquals(3,scan.code,scan.err+scan.out);
+        assertEquals("PARTIAL",scan.data().get("status"));
+        assertEquals("PARTIAL_RECOVERY",scan.data().get("evidenceTier"));
         var gapSummary=GraphJson.object(scan.data().get("gapSummary"));
         assertTrue(((Number)gapSummary.get("total")).longValue()>0,"Passive capability gaps must remain preserved");
         assertTrue(GraphJson.object(gapSummary.get("byObligation")).containsKey("ISOLATED_EXECUTION_REQUIRED"));

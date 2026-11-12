@@ -11,6 +11,9 @@
 *.properties text eol=lf
 *.yaml text eol=lf
 *.yml text eol=lf
+# Native fixture source/capture bytes are hashed and their offsets use LF.
+analyzer/src/test/resources/polyglot/**/*.ts text eol=lf
+analyzer/src/test/resources/polyglot/**/*.ndjson text eol=lf
 .mvn/wrapper/maven-wrapper.properties text eol=lf
 mvnw text eol=lf
 mvnw.cmd text eol=crlf

@@ -913,7 +913,8 @@ public final class SpringMechanismScanner {
                         new VersionedIdentifier("frontend.javaparser","3.28.2-m8.4-lombok-compat-v8"),
                         new VersionedIdentifier("frontend.javaparser","3.28.2-m8.4-inference-http-v9"),
                         new VersionedIdentifier("frontend.javaparser","3.28.2-m8.4-inference-http-v10"),
-                        new VersionedIdentifier("frontend.javaparser","3.28.2-m8.4-lambda-input-v11")).contains(frontend.frontend())
+                        new VersionedIdentifier("frontend.javaparser","3.28.2-m8.4-lambda-input-v11"),
+                        new VersionedIdentifier("frontend.javaparser","3.28.2-m9.2-evidenced-recovery-v12")).contains(frontend.frontend())
                 ||constructor.entity().origin()!=EntityOrigin.PROJECT||!constructor.entity().stableScope().equals(owner.entity().stableScope())
                 ||!constructor.uncertainties().isEmpty()||!constructor.diagnostics().isEmpty()
                 ||constructor.derivation().kind()!=DerivationKind.DERIVED||!constructor.derivation().method().equals(new VersionedIdentifier("java.default-constructor","1"))

@@ -1,0 +1,678 @@
+{
+  "schema": "m9-task2-evidence-index-v1",
+  "dates": "2026-11-11–12",
+  "status": "BOUNDED_IMPLEMENTATION_VERIFIED_FULL_TASK2_ACCEPTANCE_PENDING",
+  "parentRegistry": {
+    "path": "repo:docs/tasks/m9/registry.json",
+    "sha256": "05924578f664ea1749439b9bd73a92a42286724898f0ecd76cde38d69957fd96"
+  },
+  "candidate": {
+    "commit": "82ea7a722e1a7d329bfa201e92b7fd046ebf829a",
+    "runtimeSourceSha256": "e7972b98d1ab7cdffe19855cb1ae8a42943272ffec61f7b894e2f2b91d645a7b",
+    "runtimeDirtyPatchSha256": "6a36f35ddc7b61796ba1b2a02ccb792384def341b0cb0c24bb623b64e5cac2f0",
+    "files": 635,
+    "revision": "m9.2-r3-final-input-pins",
+    "jar": {
+      "path": "corpus:m9-task2-20261111-r1/evo-candidate-final.jar",
+      "sha256": "972c463c4f4141b36a20d73ddc0a50670c8d1f749f3d893c87fa8a9620c23486"
+    },
+    "jarBytes": 46215566,
+    "packaging": "mvnw.cmd -q -pl cli -Denforcer.skipRules=reactorModuleConvergence -Dtest=ScanJourneyTest package",
+    "registry": {
+      "path": "corpus:m9-task2-20261111-r1/candidate-registry-v3.json",
+      "sha256": "0b51f9152981f5c0228445c0cf17aaf0eee386838d17731470ded8972f8e7975"
+    },
+    "controls": {
+      "path": "repo:docs/tasks/m9/02-cases.json",
+      "sha256": "5de64efb250ae978a54a5e93995fcfd9814aee351f7c8000d5c7bac51b6d40f9"
+    }
+  },
+  "verification": {
+    "junitCases": 516,
+    "junitSuites": 59,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "modules": [
+      {
+        "module": "analyzer",
+        "suites": 23,
+        "tests": 228,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "suiteNames": [
+          "M9InteractionTest",
+          "ConditionLoweringTest",
+          "FiniteConfigurationEvaluationTest",
+          "RegistrationDiscoveryTest",
+          "BeanRegistrationTransitionsTest",
+          "InjectionBindingsTest",
+          "InjectionBindingBoundaryTest",
+          "TruthRegionEvaluationTest",
+          "ScopedIngestionRecoveryTest",
+          "UniversalBuildIngestionTest",
+          "CapturedBuildEvidenceTest",
+          "CapturedSemanticProviderTest",
+          "SourceMappedSemanticProviderTest",
+          "SourceCoordinatesTest",
+          "SemanticCoordinatesTest",
+          "EmbeddedSourceMapTest",
+          "JvmBridgeDescriptorsTest",
+          "LanguageBridgeImportTest",
+          "ArchitectureCaptureTest",
+          "ArchitectureCaptureAuditTest",
+          "GrpcServiceCallProjectionTest",
+          "HttpServiceCallProjectionTest",
+          "SpringBindingOracleIT"
+        ],
+        "testSourcesSha256": "272cf0e5e71c4bec5f79786766f78b331c28f9c5f90b47066282bdf8aa3181a3",
+        "currentReportsSha256": "01a70463ea9c5135da9d05bc35da630d42d1e9368ed0fb12c8ff72ebec5c3290",
+        "reportDirectory": "repo:analyzer/target/surefire-reports"
+      },
+      {
+        "module": "analyzer-maven",
+        "suites": 5,
+        "tests": 43,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "suiteNames": [
+          "MavenBuildModelProviderTest",
+          "PlatformReactorModelTest",
+          "SourcePlanProjectionTest",
+          "UniversalMavenIngestionTest",
+          "GradleDependencyArtifactResolverTest"
+        ],
+        "testSourcesSha256": "ede441ae837aaf3ab131419b04540d20f429442d29727834c3737a576a9309c7",
+        "currentReportsSha256": "cd761a311ae58b68dd91883426b3159996fd47e18e0a4a52fc471a48d1a1507d",
+        "reportDirectory": "repo:analyzer-maven/target/surefire-reports"
+      },
+      {
+        "module": "analyzer-javaparser",
+        "suites": 20,
+        "tests": 196,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "suiteNames": [
+          "M9JavacOracleTest",
+          "M9RecoveryEvidenceTest",
+          "SourceRecoveryAttributionTest",
+          "ResolutionInputsTest",
+          "ModernFixtureTest",
+          "JmodPlatformTest",
+          "GenericRecoveryTest",
+          "LambdaBoundaryTest",
+          "ReactorSourceResolutionTest",
+          "KotlinAstLoweringTest",
+          "LombokIngestionTest",
+          "LombokCompatibilityTest",
+          "GeneratedSymbolResolutionTest",
+          "GeneratedConstructorIntegrationTest",
+          "SourceToSpringPlanTest",
+          "ResourceFieldIngestionTest",
+          "UniversalIngestionPipelineTest",
+          "NativeAnonymousConstructorsTest",
+          "NativeCanonicalEligibilityTest",
+          "NativeJavaSymbolMappingTest"
+        ],
+        "testSourcesSha256": "e18a7bac8eef9d8ed0d8cc25cc44128b315e78eee0f99941f75067a96bcc2fb2",
+        "currentReportsSha256": "adaf7036475fb0c9d564eff92fe07a339451fb9501f0ef04b393b2d5546711ae",
+        "reportDirectory": "repo:analyzer-javaparser/target/surefire-reports"
+      },
+      {
+        "module": "backend",
+        "suites": 9,
+        "tests": 25,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "suiteNames": [
+          "MavenScanReactorTest",
+          "GradleScanTest",
+          "PolyglotScanTest",
+          "CapturedJavaRegistrationTest",
+          "ReadinessReportsTest",
+          "SemanticDepthArchitectureTest",
+          "GapObligationsTest",
+          "BridgeMixedReplayIT",
+          "M9InventoryCensusIT"
+        ],
+        "testSourcesSha256": "d4163f419f35e948a284e56ac8e3cdfc2145a55555bf995cdc6fa2f51705aec5",
+        "currentReportsSha256": "7d765dc3c42f9056ed4c1abd2ed9c6e63c20332f8d7f589cc1b87af688abc4f3",
+        "reportDirectory": "repo:backend/target/surefire-reports"
+      },
+      {
+        "module": "cli",
+        "suites": 2,
+        "tests": 24,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "suiteNames": [
+          "ScanJourneyTest",
+          "TerminalReportsTest"
+        ],
+        "testSourcesSha256": "b043c610b743d8ec7b0c3e912f6021d13edbc66272448953fd3cdcb4fa5e0202",
+        "currentReportsSha256": "783b57fbe15219bcfaa75ed13a35377660a11596df72f2f0fb179ea1360e004c",
+        "reportDirectory": "repo:cli/target/surefire-reports"
+      }
+    ],
+    "aggregateHashAlgorithm": "SHA-256 of canonical sorted [{path,sha256}] using m9_protocol.canonical; report digests pin existing generated Surefire reports, which must not be silently reused after overwrite",
+    "pythonProtocolTests": 13,
+    "jdkOracle": {
+      "labels": 34,
+      "passed": 34,
+      "admissibleTargets": 30,
+      "errorCompilationControls": 4,
+      "identifierRelations": 3,
+      "summary": {
+        "path": "corpus:m9-task2-20261111-r1/m2-oracle/20261111T162523-d0fd746c/summary.json",
+        "sha256": "6a826de33a6f71187b877f63fe935a0c997240f4561b83c9f56554ffa0665276"
+      }
+    },
+    "formalOracle": {
+      "cases": 70,
+      "passed": 70,
+      "cnfCases": 64,
+      "cnfPassed": 64,
+      "raw": {
+        "path": "corpus:m9-task2-20261111-r1/m4-formal-result.json",
+        "sha256": "46fc446ebb856b929d9e8645a87c2bba850bb9e552ddb8eefda0b4359944d7c3"
+      }
+    },
+    "candidateCompilerComparisons": 41,
+    "springInteractionCells": 96,
+    "spring620RuntimeBindingCases": 23,
+    "mixedReplay": {
+      "m1Sources": 33,
+      "contexts": 8,
+      "reopenedBindings": 2,
+      "qualified": false
+    },
+    "packagedClassByteMatches": 8,
+    "testFixtureClassesInDistribution": 0,
+    "fullReactor": "NOT_RUN",
+    "independentReview": "NOT_RUN_M9.5"
+  },
+  "inventoryAccounting": {
+    "repositories": 16,
+    "physicalEntries": 18367,
+    "accountedEntries": 18367,
+    "descriptors": 376,
+    "passiveRoots": 82,
+    "passiveContexts": 910,
+    "unknownDimensions": 718,
+    "effectiveContextCompleteness": "UNPROVEN",
+    "generatorClosure": "NOT_ESTABLISHED_BY_INVENTORY",
+    "rows": [
+      {
+        "repository": "agentscope",
+        "physicalEntries": 5469,
+        "accountedEntries": 5469,
+        "descriptors": 107,
+        "passiveRoots": 10,
+        "passiveContexts": 226,
+        "unknownDimensions": 68,
+        "raw": {
+          "path": "corpus:m9-task2-20261111-r1/census-r1/agentscope/reconciliation.json",
+          "sha256": "aa853c4987f4a893ee5cb548b03dec8a952a1f3043d542ad9962499937d41fb9"
+        }
+      },
+      {
+        "repository": "boutique",
+        "physicalEntries": 364,
+        "accountedEntries": 364,
+        "descriptors": 8,
+        "passiveRoots": 11,
+        "passiveContexts": 24,
+        "unknownDimensions": 12,
+        "raw": {
+          "path": "corpus:m9-task2-20261111-r1/census-r1/boutique/reconciliation.json",
+          "sha256": "ced463f7bb79d61a2830e75d66f4f0be004b1e317077a20f304486984507491b"
+        }
+      },
+      {
+        "repository": "create-vue",
+        "physicalEntries": 192,
+        "accountedEntries": 192,
+        "descriptors": 22,
+        "passiveRoots": 22,
+        "passiveContexts": 29,
+        "unknownDimensions": 29,
+        "raw": {
+          "path": "corpus:m9-task2-20261111-r1/census-r1/create-vue/reconciliation.json",
+          "sha256": "e10e2a535f11a6987ed6b6dbb7d69903fd7f2390ff8064ec311e199ba7687f32"
+        }
+      },
+      {
+        "repository": "fastapi",
+        "physicalEntries": 252,
+        "accountedEntries": 252,
+        "descriptors": 5,
+        "passiveRoots": 5,
+        "passiveContexts": 10,
+        "unknownDimensions": 10,
+        "raw": {
+          "path": "corpus:m9-task2-20261111-r1/census-r1/fastapi/reconciliation.json",
+          "sha256": "e3727019c2f89a18464a678ed7793121f34ff77f7203bd82ff7a363b7354e50c"
+        }
+      },
+      {
+        "repository": "fermata",
+        "physicalEntries": 792,
+        "accountedEntries": 792,
+        "descriptors": 20,
+        "passiveRoots": 2,
+        "passiveContexts": 37,
+        "unknownDimensions": 14,
+        "raw": {
+          "path": "corpus:m9-task2-20261111-r1/census-r1/fermata/reconciliation.json",
+          "sha256": "7f4d6ff8992cd0ed0cfceaf5a334d55e99fb7ed48da733eb2345e9ec44112084"
+        }
+      },
+      {
+        "repository": "gorm",
+        "physicalEntries": 185,
+        "accountedEntries": 185,
+        "descriptors": 2,
+        "passiveRoots": 2,
+        "passiveContexts": 2,
+        "unknownDimensions": 2,
+        "raw": {
+          "path": "corpus:m9-task2-20261111-r1/census-r1/gorm/reconciliation.json",
+          "sha256": "26d87d7cc2eb08f9442763445d806b1c2b1607bfdf02dd1d1b2fcd97c9f36f44"
+        }
+      },
+      {
+        "repository": "halo",
+        "physicalEntries": 3328,
+        "accountedEntries": 3328,
+        "descriptors": 14,
+        "passiveRoots": 9,
+        "passiveContexts": 79,
+        "unknownDimensions": 68,
+        "raw": {
+          "path": "corpus:m9-task2-20261111-r1/census-r1/halo/reconciliation.json",
+          "sha256": "4373fa1bb33e6749eb20f09ba23b138f8f549eab9173447af0d84851b902b61c"
+        }
+      },
+      {
+        "repository": "mapstruct",
+        "physicalEntries": 283,
+        "accountedEntries": 283,
+        "descriptors": 40,
+        "passiveRoots": 10,
+        "passiveContexts": 173,
+        "unknownDimensions": 44,
+        "raw": {
+          "path": "corpus:m9-task2-20261111-r1/census-r1/mapstruct/reconciliation.json",
+          "sha256": "e610590052ff247d427a4d4e6aed86539c776df46de3fda73f6a062e90754d16"
+        }
+      },
+      {
+        "repository": "newpipe",
+        "physicalEntries": 4496,
+        "accountedEntries": 4496,
+        "descriptors": 7,
+        "passiveRoots": 2,
+        "passiveContexts": 23,
+        "unknownDimensions": 15,
+        "raw": {
+          "path": "corpus:m9-task2-20261111-r1/census-r1/newpipe/reconciliation.json",
+          "sha256": "945752fafc4592a84aec5abb1df2730b0648913ab836fa786d55f2f620b9036b"
+        }
+      },
+      {
+        "repository": "petclinic-kotlin",
+        "physicalEntries": 105,
+        "accountedEntries": 105,
+        "descriptors": 2,
+        "passiveRoots": 1,
+        "passiveContexts": 3,
+        "unknownDimensions": 2,
+        "raw": {
+          "path": "corpus:m9-task2-20261111-r1/census-r1/petclinic-kotlin/reconciliation.json",
+          "sha256": "b69463e6a49b8d87e742655f38326d7971e8d7ebd9460e883dd89db172a3e15b"
+        }
+      },
+      {
+        "repository": "petclinic-microservices",
+        "physicalEntries": 205,
+        "accountedEntries": 205,
+        "descriptors": 9,
+        "passiveRoots": 1,
+        "passiveContexts": 18,
+        "unknownDimensions": 9,
+        "raw": {
+          "path": "corpus:m9-task2-20261111-r1/census-r1/petclinic-microservices/reconciliation.json",
+          "sha256": "06bf268a224e6a112b1f8a1b954073534edfc021a96f147c3315a1e843bcec5b"
+        }
+      },
+      {
+        "repository": "piggymetrics",
+        "physicalEntries": 204,
+        "accountedEntries": 204,
+        "descriptors": 10,
+        "passiveRoots": 1,
+        "passiveContexts": 21,
+        "unknownDimensions": 14,
+        "raw": {
+          "path": "corpus:m9-task2-20261111-r1/census-r1/piggymetrics/reconciliation.json",
+          "sha256": "27a2d13bcb46fec59b88eedaeeaae26ff9f3a4148c0ef2854bd69ff8a1faac38"
+        }
+      },
+      {
+        "repository": "quarkus",
+        "physicalEntries": 2147,
+        "accountedEntries": 2147,
+        "descriptors": 124,
+        "passiveRoots": 3,
+        "passiveContexts": 252,
+        "unknownDimensions": 423,
+        "raw": {
+          "path": "corpus:m9-task2-20261111-r1/census-r1/quarkus/reconciliation.json",
+          "sha256": "d6815c4bb8fcda62c24c1073b236ab80c9f31f6700dc64afcf05b0c0e2944607"
+        }
+      },
+      {
+        "repository": "realworld-go",
+        "physicalEntries": 41,
+        "accountedEntries": 41,
+        "descriptors": 1,
+        "passiveRoots": 1,
+        "passiveContexts": 1,
+        "unknownDimensions": 1,
+        "raw": {
+          "path": "corpus:m9-task2-20261111-r1/census-r1/realworld-go/reconciliation.json",
+          "sha256": "601456bb902c9976884747807fcb1dc86e593b022a6a2dc0ddbccf2b04ac0c83"
+        }
+      },
+      {
+        "repository": "realworld-java",
+        "physicalEntries": 142,
+        "accountedEntries": 142,
+        "descriptors": 1,
+        "passiveRoots": 1,
+        "passiveContexts": 2,
+        "unknownDimensions": 1,
+        "raw": {
+          "path": "corpus:m9-task2-20261111-r1/census-r1/realworld-java/reconciliation.json",
+          "sha256": "f815faaf8de8613c751b78e67369590c77c6454dfc59213a54c2623373e994f6"
+        }
+      },
+      {
+        "repository": "sunflower",
+        "physicalEntries": 162,
+        "accountedEntries": 162,
+        "descriptors": 4,
+        "passiveRoots": 1,
+        "passiveContexts": 10,
+        "unknownDimensions": 6,
+        "raw": {
+          "path": "corpus:m9-task2-20261111-r1/census-r1/sunflower/reconciliation.json",
+          "sha256": "0f75b882ec250649b614cbb2dae6a0919952d36d75da6c7e7a94a255a1602116"
+        }
+      }
+    ]
+  },
+  "passiveCheckpoints": [
+    {
+      "case": "mapstruct",
+      "exit": 3,
+      "wallSeconds": 44.859,
+      "status": "PARTIAL",
+      "evidenceTier": "PARTIAL_RECOVERY",
+      "gaps": 4538,
+      "contexts": 53,
+      "physicalEntries": 283,
+      "physicalCensusMatch": true,
+      "structure": {
+        "attempted": 1382,
+        "notResolved": 277,
+        "resolved": 1105,
+        "resolvedPerMille": 799
+      },
+      "usage": {
+        "attempted": 4100,
+        "notResolved": 1905,
+        "resolved": 2195,
+        "resolvedPerMille": 535
+      },
+      "semanticPrecision": "N/A_UNLABELED",
+      "semanticRecall": "N/A_UNLABELED",
+      "raw": {
+        "path": "corpus:m9-task2-20261111-r1/passive-final/mapstruct/result.json",
+        "sha256": "e62edc3d69398dab90c63875d016d403769f414e2d63e4b5ee02d824ba4cf553"
+      },
+      "receipt": {
+        "path": "corpus:m9-task2-20261111-r1/passive-final/mapstruct/stdout.json",
+        "sha256": "40604077e050e1e17b00a605bdd5fc1b5937e32fe87e168306a1bcd767227030"
+      }
+    },
+    {
+      "case": "petclinic-kotlin",
+      "exit": 3,
+      "wallSeconds": 18.172,
+      "status": "PARTIAL",
+      "evidenceTier": "PARTIAL_RECOVERY",
+      "gaps": 1490,
+      "contexts": 3,
+      "physicalEntries": 105,
+      "physicalCensusMatch": true,
+      "structure": {
+        "attempted": 546,
+        "notResolved": 285,
+        "resolved": 261,
+        "resolvedPerMille": 478
+      },
+      "usage": {
+        "attempted": 1362,
+        "notResolved": 899,
+        "resolved": 463,
+        "resolvedPerMille": 339
+      },
+      "semanticPrecision": "N/A_UNLABELED",
+      "semanticRecall": "N/A_UNLABELED",
+      "raw": {
+        "path": "corpus:m9-task2-20261111-r1/passive-final/petclinic-kotlin/result.json",
+        "sha256": "aa7d75934f5b75b54c705751b74f7411491bb584507075fdf365649341e09c56"
+      },
+      "receipt": {
+        "path": "corpus:m9-task2-20261111-r1/passive-final/petclinic-kotlin/stdout.json",
+        "sha256": "54c177380e3102fcd04ae6566e9f6c2d2d864554b115cfd694eb5d0439a8a2b5"
+      }
+    },
+    {
+      "case": "petclinic-microservices",
+      "exit": 3,
+      "wallSeconds": 24.203,
+      "status": "PARTIAL",
+      "evidenceTier": "PARTIAL_RECOVERY",
+      "gaps": 2015,
+      "contexts": 15,
+      "physicalEntries": 205,
+      "physicalCensusMatch": true,
+      "structure": {
+        "attempted": 724,
+        "notResolved": 331,
+        "resolved": 393,
+        "resolvedPerMille": 542
+      },
+      "usage": {
+        "attempted": 1645,
+        "notResolved": 921,
+        "resolved": 724,
+        "resolvedPerMille": 440
+      },
+      "semanticPrecision": "N/A_UNLABELED",
+      "semanticRecall": "N/A_UNLABELED",
+      "raw": {
+        "path": "corpus:m9-task2-20261111-r1/passive-final/petclinic-microservices/result.json",
+        "sha256": "85c4ebdd8ee54f202520466aebf407fb3c4ec4bf4aa70a7d19196604bfb763c2"
+      },
+      "receipt": {
+        "path": "corpus:m9-task2-20261111-r1/passive-final/petclinic-microservices/stdout.json",
+        "sha256": "734c9be3ac7713b9cc3490875fc9d3de751fd2927f1b8b5c40c6edba81fc7cad"
+      }
+    }
+  ],
+  "requiredProgrammingPacks": [
+    {
+      "language": "c",
+      "engineFamily": "clang",
+      "qualificationRetained": "REQUIRED_UNQUALIFIED",
+      "task2Scope": "NO_CURRENT_NATIVE_PACK_ACCEPTANCE_RUN",
+      "fullA01A12Qualification": "NOT_CLAIMED_NOT_REOPENED_M8_EXIT"
+    },
+    {
+      "language": "cpp",
+      "engineFamily": "clang",
+      "qualificationRetained": "REQUIRED_UNQUALIFIED",
+      "task2Scope": "NO_CURRENT_NATIVE_PACK_ACCEPTANCE_RUN",
+      "fullA01A12Qualification": "NOT_CLAIMED_NOT_REOPENED_M8_EXIT"
+    },
+    {
+      "language": "csharp",
+      "engineFamily": "roslyn",
+      "qualificationRetained": "REQUIRED_UNQUALIFIED",
+      "task2Scope": "NO_CURRENT_NATIVE_PACK_ACCEPTANCE_RUN",
+      "fullA01A12Qualification": "NOT_CLAIMED_NOT_REOPENED_M8_EXIT"
+    },
+    {
+      "language": "dart",
+      "engineFamily": "dart-analyzer",
+      "qualificationRetained": "REQUIRED_UNQUALIFIED",
+      "task2Scope": "NO_CURRENT_NATIVE_PACK_ACCEPTANCE_RUN",
+      "fullA01A12Qualification": "NOT_CLAIMED_NOT_REOPENED_M8_EXIT"
+    },
+    {
+      "language": "go",
+      "engineFamily": "go-types",
+      "qualificationRetained": "REQUIRED_UNQUALIFIED",
+      "task2Scope": "NO_CURRENT_NATIVE_PACK_ACCEPTANCE_RUN",
+      "fullA01A12Qualification": "NOT_CLAIMED_NOT_REOPENED_M8_EXIT"
+    },
+    {
+      "language": "groovy",
+      "engineFamily": "groovy-compiler",
+      "qualificationRetained": "REQUIRED_UNQUALIFIED",
+      "task2Scope": "NO_CURRENT_NATIVE_PACK_ACCEPTANCE_RUN",
+      "fullA01A12Qualification": "NOT_CLAIMED_NOT_REOPENED_M8_EXIT"
+    },
+    {
+      "language": "java",
+      "engineFamily": "javaparser",
+      "qualificationRetained": "LEGACY_JAVA_CONTRACT",
+      "task2Scope": "BOUNDED_COMPILER_AND_AUTHORED_GENERATOR_CONTROLS; AUTHENTICATED_REPOSITORY_CAPTURE_NOT_RUN",
+      "fullA01A12Qualification": "NOT_CLAIMED_NOT_REOPENED_M8_EXIT"
+    },
+    {
+      "language": "javascript",
+      "engineFamily": "typescript-checker",
+      "qualificationRetained": "REQUIRED_UNQUALIFIED",
+      "task2Scope": "NO_CURRENT_NATIVE_PACK_ACCEPTANCE_RUN",
+      "fullA01A12Qualification": "NOT_CLAIMED_NOT_REOPENED_M8_EXIT"
+    },
+    {
+      "language": "kotlin",
+      "engineFamily": "kotlin-compiler",
+      "qualificationRetained": "REQUIRED_UNQUALIFIED",
+      "task2Scope": "PASSIVE_ANNOTATION_SPAN_CONTROL; NATIVE_PACK_ACCEPTANCE_NOT_RUN",
+      "fullA01A12Qualification": "NOT_CLAIMED_NOT_REOPENED_M8_EXIT"
+    },
+    {
+      "language": "objectivec",
+      "engineFamily": "clang",
+      "qualificationRetained": "REQUIRED_UNQUALIFIED",
+      "task2Scope": "NO_CURRENT_NATIVE_PACK_ACCEPTANCE_RUN",
+      "fullA01A12Qualification": "NOT_CLAIMED_NOT_REOPENED_M8_EXIT"
+    },
+    {
+      "language": "php",
+      "engineFamily": "phpstan",
+      "qualificationRetained": "REQUIRED_UNQUALIFIED",
+      "task2Scope": "NO_CURRENT_NATIVE_PACK_ACCEPTANCE_RUN",
+      "fullA01A12Qualification": "NOT_CLAIMED_NOT_REOPENED_M8_EXIT"
+    },
+    {
+      "language": "python",
+      "engineFamily": "pyright",
+      "qualificationRetained": "REQUIRED_UNQUALIFIED",
+      "task2Scope": "AUTHORED_MIXED_UNQUALIFIED_CALL_REPLAY_CHECKED",
+      "fullA01A12Qualification": "NOT_CLAIMED_NOT_REOPENED_M8_EXIT"
+    },
+    {
+      "language": "ruby",
+      "engineFamily": "sorbet",
+      "qualificationRetained": "REQUIRED_UNQUALIFIED",
+      "task2Scope": "NO_CURRENT_NATIVE_PACK_ACCEPTANCE_RUN",
+      "fullA01A12Qualification": "NOT_CLAIMED_NOT_REOPENED_M8_EXIT"
+    },
+    {
+      "language": "rust",
+      "engineFamily": "rust-analyzer",
+      "qualificationRetained": "REQUIRED_UNQUALIFIED",
+      "task2Scope": "NO_CURRENT_NATIVE_PACK_ACCEPTANCE_RUN",
+      "fullA01A12Qualification": "NOT_CLAIMED_NOT_REOPENED_M8_EXIT"
+    },
+    {
+      "language": "scala",
+      "engineFamily": "scala-compiler",
+      "qualificationRetained": "REQUIRED_UNQUALIFIED",
+      "task2Scope": "NO_CURRENT_NATIVE_PACK_ACCEPTANCE_RUN",
+      "fullA01A12Qualification": "NOT_CLAIMED_NOT_REOPENED_M8_EXIT"
+    },
+    {
+      "language": "swift",
+      "engineFamily": "swift-compiler",
+      "qualificationRetained": "REQUIRED_UNQUALIFIED",
+      "task2Scope": "NO_CURRENT_NATIVE_PACK_ACCEPTANCE_RUN",
+      "fullA01A12Qualification": "NOT_CLAIMED_NOT_REOPENED_M8_EXIT"
+    },
+    {
+      "language": "typescript",
+      "engineFamily": "typescript-checker",
+      "qualificationRetained": "REQUIRED_UNQUALIFIED",
+      "task2Scope": "UNQUALIFIED_CAPTURE_SOURCE_MAP_CONTRACTS_CHECKED",
+      "fullA01A12Qualification": "NOT_CLAIMED_NOT_REOPENED_M8_EXIT"
+    },
+    {
+      "language": "visualbasic",
+      "engineFamily": "roslyn-vb",
+      "qualificationRetained": "REQUIRED_UNQUALIFIED",
+      "task2Scope": "NO_CURRENT_NATIVE_PACK_ACCEPTANCE_RUN",
+      "fullA01A12Qualification": "NOT_CLAIMED_NOT_REOPENED_M8_EXIT"
+    }
+  ],
+  "unavailableNativeCells": [
+    {
+      "claim": "B01",
+      "scope": "authenticated MapStruct/Protobuf/generated-output replay",
+      "outcome": "NOT_RUN_CAPTURE_UNAVAILABLE"
+    },
+    {
+      "claim": "D01",
+      "scope": "authenticated artifact/generated/config removal-restoration",
+      "outcome": "NOT_RUN_CAPTURE_UNAVAILABLE"
+    }
+  ],
+  "nativeAbsenceAuthority": "CONFIRMED human: historical m844 captures and named mvp worker no longer exist; this is not a waiver or passing evidence",
+  "preservedInputs": {
+    "baselineControls": {
+      "path": "corpus:m9-task2-20261111-r1/baseline-controls.json",
+      "sha256": "469df352fbc79070e0d08033c1f2ae206fd52006ee4f3bd9dba6b39d159f3784"
+    },
+    "baselineJavaControl": {
+      "path": "corpus:m9-task2-20261111-r1/baseline-M9RecoveryEvidenceTest.java",
+      "sha256": "6dedc5d1e8b3cd4bb05c2b6da91c9f09882270d37405e011a0eaa64a9eda7774"
+    },
+    "finalControls": {
+      "path": "corpus:m9-task2-20261111-r1/final-controls.json",
+      "sha256": "5de64efb250ae978a54a5e93995fcfd9814aee351f7c8000d5c7bac51b6d40f9"
+    }
+  },
+  "gitActions": "No commit, push, destructive cleanup, worker creation or host target build",
+  "nextAction": "Establish prospectively registered replacement evidence or an explicit human acceptance-criteria decision for the existing unavailable native cells before full M9.2 acceptance; no automatic M9.3 start"
+}

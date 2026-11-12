@@ -170,7 +170,7 @@ class SourceRecoveryAttributionTest {
         var reads=fields.observations().stream().filter(o->o.category().value().equals("java.reads-field")).toList();
         assertEquals(1,reads.size());assertTrue(reads.stream().noneMatch(o->o.attribution()==SemanticStatus.RESOLVED));
     }
-    @Test void explicitImportsRecoverExternalTypesCallsConstructorsAndStaticMembersWhilePreservingHierarchyGuards() {
+    @Test void explicitImportsRetainExternalObligationsWithoutInventingMembersOrOrigins() {
         String source = """
                 package app;
                 import org.slf4j.Logger;
@@ -196,15 +196,15 @@ class SourceRecoveryAttributionTest {
         var result = new JavaParserFrontend().analyze(LombokIngestionTest.recovery(TestInputs.request(source)));
         var calls = result.observations().stream().filter(o -> o.category().value().equals("java.calls")).toList();
         assertEquals(5, calls.size());
-        assertEquals(4, calls.stream().filter(o -> o.attribution() == SemanticStatus.RESOLVED).count());
+        assertEquals(0, calls.stream().filter(o -> o.attribution() == SemanticStatus.RESOLVED).count());
         assertEquals(1, calls.stream().filter(o -> o.attribution() == SemanticStatus.UNRESOLVED && o.reference().contains("helper")).count());
         var ctors = result.observations().stream().filter(o -> o.category().value().equals("java.constructor-calls")).toList();
-        assertTrue(ctors.stream().anyMatch(o -> o.attribution() == SemanticStatus.RESOLVED && o.reference().contains("new ExternalClient")));
-        assertTrue(result.declarations().stream().anyMatch(d ->
+        assertTrue(ctors.stream().anyMatch(o -> o.attribution() == SemanticStatus.UNRESOLVED && o.reference().contains("new ExternalClient")));
+        assertTrue(result.declarations().stream().noneMatch(d ->
                 d.entity().origin() == EntityOrigin.DEPENDENCY
                 && d.derivation().method().id().equals("java.explicit-import-recovery")));
     }
-    @Test void androidSyntheticDeclarationsResolveResourcesBuildConfigViewBindingAidlAndLifecycleHierarchy() {
+    @Test void androidSdkAndGeneratedMembersRequireEvidenceRatherThanSyntheticDeclarations() {
         String source = """
                 package com.example.app;
                 import android.content.Intent;
@@ -238,17 +238,19 @@ class SourceRecoveryAttributionTest {
         var unresolvedCalls = result.observations().stream()
                 .filter(o -> o.category().value().equals("java.calls") && o.attribution() != SemanticStatus.RESOLVED)
                 .toList();
-        assertEquals(List.of(), unresolvedCalls);
+        assertTrue(unresolvedCalls.stream().anyMatch(o -> o.reference().contains("setContentView")));
+        assertTrue(unresolvedCalls.stream().anyMatch(o -> o.reference().contains("fetchStatus")));
         var unresolvedFields = result.observations().stream()
                 .filter(o -> o.category().value().equals("java.reads-field") && o.attribution() != SemanticStatus.RESOLVED)
                 .toList();
-        assertEquals(List.of(), unresolvedFields);
-        assertTrue(result.declarations().stream().anyMatch(d ->
+        assertTrue(unresolvedFields.stream().anyMatch(o -> o.reference().contains("BuildConfig.DEBUG")));
+        assertTrue(unresolvedFields.stream().anyMatch(o -> o.reference().contains("R.layout.activity_main")));
+        assertTrue(result.declarations().stream().noneMatch(d ->
                 d.entity().origin() == EntityOrigin.PROJECT
                 && d.derivation().method().id().equals("java.android-synthetic-recovery")));
     }
 
-    @Test void unambiguousExternalWildcardAndOverloadedJdkCallsWithRecoveredArgumentResolveCleanly() {
+    @Test void externalWildcardAndOverloadedJdkCallsRetainTheirMissingTypeObligations() {
         String source = """
                 package com.example.arch;
                 import java.util.*;
@@ -268,10 +270,14 @@ class SourceRecoveryAttributionTest {
         var unresolvedStructure = result.observations().stream()
                 .filter(o -> structureCategories.contains(o.category().value()) && o.attribution() != SemanticStatus.RESOLVED)
                 .toList();
-        assertEquals(List.of(), unresolvedStructure);
+        assertEquals(Set.of("NovelComponent", "ExternalProcessor<String>", "ExternalPayload", "String"),
+                unresolvedStructure.stream().map(o -> o.reference().replaceFirst("^@", "")).collect(java.util.stream.Collectors.toSet()));
+        assertTrue(unresolvedStructure.stream().filter(o -> o.reference().equals("String")).allMatch(o -> o.mappedOccurrence().isEmpty()),
+                "The known return type cannot acquire a guessed callable owner identity");
         var unresolvedCalls = result.observations().stream()
                 .filter(o -> o.category().value().equals("java.calls") && o.attribution() != SemanticStatus.RESOLVED)
                 .toList();
-        assertEquals(List.of(), unresolvedCalls);
+        assertEquals(1, unresolvedCalls.size());
+        assertEquals("String.valueOf(payload)", unresolvedCalls.getFirst().reference());
     }
 }
