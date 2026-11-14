@@ -35,7 +35,7 @@ public final class GitSnapshotAcquirer {
             var provenance=Map.of("schema","git-capture-request:m8.4-v2","selection",request,"remote",uri.toASCIIString(),"ref",ref,"gitVersion",version,"credential",policy.credentialReference(uri));
             var descriptor=content.put(new ByteArrayInputStream(CanonicalJson.write(provenance).getBytes(StandardCharsets.UTF_8)),cancelled);
             inventory.create(revision+".request."+descriptor.digest().value().substring(7,23),identity,Optional.of(descriptor));
-            if(!Files.exists(git))run(workspace,List.of("init","--bare","--template="+workspace.resolve("empty-config"),git.toString()),Optional.empty(),cancelled);
+            if(!Files.exists(git))run(workspace,List.of("init","--bare","--template="+workspace.resolve("empty-config"),"objects.git"),Optional.empty(),cancelled);
             String commit;
             if(job.payload().isPresent())try(var input=content.open(job.payload().orElseThrow())){commit=new String(input.readNBytes(129),StandardCharsets.US_ASCII);}
             else{
@@ -47,13 +47,13 @@ public final class GitSnapshotAcquirer {
                         quarantineIncompleteObjects(workspace,git);
                         var endpoint=policy.endpoint(uri);
                         // Fetch all blobs: no partial-checkout claim and no history/size admission limit.
-                        var args=new ArrayList<>(List.of("--git-dir="+git,"fetch","--progress","--no-tags","--no-recurse-submodules"));if(attempt==0)args.add("--depth=1");args.addAll(List.of("--",uri.toASCIIString(),ref));
+                        var args=new ArrayList<>(List.of("--git-dir=objects.git","fetch","--progress","--no-tags","--no-recurse-submodules"));if(attempt==0)args.add("--depth=1");args.addAll(List.of("--",uri.toASCIIString(),ref));
                         run(workspace,args,Optional.of(endpoint),cancelled);recordAttempt(revision,uri,ref,attempt,started,"SUCCEEDED","");last=null;break;
                     }catch(IOException failure){last=failure;String reason=failure.getMessage();if(reason==null||!reason.matches("[A-Z_]+"))reason="GIT_IO_UNAVAILABLE";recordAttempt(revision,uri,ref,attempt,started,"FAILED",reason);if(List.of("GIT_ACCESS_REQUIRED","GIT_NOT_FOUND","GIT_TLS_FAILED","ENDPOINT_DENIED").contains(failure.getMessage()))throw failure;
                         if(attempt<2){try{Thread.sleep(100L*(1L<<attempt)+new java.security.SecureRandom().nextInt(100));}catch(InterruptedException interrupted){Thread.currentThread().interrupt();throw new CancellationException();}}}
                 }
                 if(last!=null)throw last;
-                commit=small(workspace,List.of("--git-dir="+git,"rev-parse","--verify","FETCH_HEAD^{commit}"),cancelled).strip();
+                commit=small(workspace,List.of("--git-dir=objects.git","rev-parse","--verify","FETCH_HEAD^{commit}"),cancelled).strip();
                 if(!commit.matches("[0-9a-f]{40}|[0-9a-f]{64}"))throw new IOException("GIT_INVALID_COMMIT");
                 var pin=content.put(new ByteArrayInputStream(commit.getBytes(StandardCharsets.US_ASCII)),cancelled);
                 job=inventory.transition(revision,job.revision(),JobJournal.State.RUNNING,"PINNED_COMMIT",Optional.of(pin));
@@ -62,7 +62,7 @@ public final class GitSnapshotAcquirer {
             if(!ancestry.add(uri+"@"+commit))throw new IOException("SUBMODULE_CYCLE");
             if(inventory.get(revision+".git-tree").isEmpty()){
                 ContentHandle commitBytes;
-                try(var objects=new SafeGitProcess(executable,workspace,List.of("--git-dir="+git,"cat-file","--batch"),Optional.empty(),policy,cancelled,idleMillis)){
+                try(var objects=new SafeGitProcess(executable,workspace,List.of("--git-dir=objects.git","cat-file","--batch"),Optional.empty(),policy,cancelled,idleMillis)){
                     commitBytes=captureObject(objects,commit,"commit",cancelled);
                     String first;try(var input=content.range(commitBytes,0,Math.min(256,commitBytes.size()))){first=new String(input.readAllBytes(),StandardCharsets.US_ASCII).split("\n",2)[0];}
                     if(!first.matches("tree ([0-9a-f]{40}|[0-9a-f]{64})"))throw new IOException("GIT_INVALID_COMMIT");String tree=first.substring(5);var treeBytes=captureObject(objects,tree,"tree",cancelled);
@@ -159,8 +159,8 @@ public final class GitSnapshotAcquirer {
     }
     private void hydrate(Path workspace,Path git,String commit,String revision,StreamingAcquisitionRequest request,BooleanSupplier cancelled)throws IOException{
         var batch=new ArrayList<SqliteInventoryStore.Observation>(256);
-        try(var tree=new SafeGitProcess(executable,workspace,List.of("--git-dir="+git,"ls-tree","-rzt","--full-tree",commit),Optional.empty(),policy,cancelled,idleMillis);
-            var blobs=new SafeGitProcess(executable,workspace,List.of("--git-dir="+git,"cat-file","--batch"),Optional.empty(),policy,cancelled,idleMillis)){
+        try(var tree=new SafeGitProcess(executable,workspace,List.of("--git-dir=objects.git","ls-tree","-rzt","--full-tree",commit),Optional.empty(),policy,cancelled,idleMillis);
+            var blobs=new SafeGitProcess(executable,workspace,List.of("--git-dir=objects.git","cat-file","--batch"),Optional.empty(),policy,cancelled,idleMillis)){
             byte[] record;
             while((record=terminated(tree.output,0,1_048_576))!=null){
                 if(cancelled.getAsBoolean())throw new CancellationException();int tab=-1;for(int i=0;i<record.length;i++)if(record[i]=='\t'){tab=i;break;}if(tab<0)throw new IOException("GIT_INVALID_TREE");

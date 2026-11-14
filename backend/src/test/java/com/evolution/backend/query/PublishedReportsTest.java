@@ -8,19 +8,53 @@ import com.evolution.analysis.contract.semantic.*;
 import com.evolution.analysis.contract.serialization.CanonicalJson;
 import com.evolution.analysis.contract.source.*;
 import com.evolution.analysis.evidence.EvidenceContext;
+import com.evolution.analysis.evolution.SnapshotComparison;
+import com.evolution.analysis.acquisition.streaming.LogicalPath;
+import com.evolution.analysis.filesystem.SqliteInventoryStore;
+import com.evolution.analysis.filesystem.StreamingContentStore;
 import com.evolution.analysis.frontend.JavaSymbolName;
 import com.evolution.analysis.graph.*;
 import com.evolution.analysis.metrics.*;
 import com.evolution.analysis.policy.*;
 import com.evolution.analysis.query.*;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.*;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import static org.junit.jupiter.api.Assertions.*;
 import static com.evolution.backend.query.ArchitectureQueryApiTest.*;
 import static com.evolution.analysis.query.ArchitectureQuery.*;
 
 class PublishedReportsTest {
+    @Test void publishedReportVerificationRejectsForeignGraphsAndCorruptContent(@TempDir Path root) throws Exception {
+        var fixture = fixture();
+        try (var disk = new PersistentReports(root)) {
+            var reports = new PublishedReports(disk);
+            var identity = reports.publish(fixture.report());
+            assertTrue(reports.verifyPublished(identity, fixture.graph().identity(), () -> false));
+            assertFalse(reports.verifyPublished(identity, ContentDigest.sha256Utf8("foreign graph"), () -> false));
+            var ref=new SnapshotComparison.ReportRef(SnapshotComparison.Side.LEFT,identity,fixture.report().evaluation().context());
+            assertEquals(SnapshotComparison.ReportStatus.AVAILABLE,reports.verifyEvolutionReport(fixture.graph().identity(),ref,()->false));
+            assertEquals(SnapshotComparison.ReportStatus.CORRUPT,reports.verifyEvolutionReport(fixture.graph().identity(),
+                    new SnapshotComparison.ReportRef(ref.side(),identity,ref.context()+"-foreign"),()->false));
+            assertEquals(SnapshotComparison.ReportStatus.MISSING,reports.verifyEvolutionReport(fixture.graph().identity(),
+                    new SnapshotComparison.ReportRef(ref.side(),ContentDigest.sha256Utf8("missing"),ref.context()),()->false));
+            var content = new StreamingContentStore(root.resolve("content"));
+            try (var index = new SqliteInventoryStore(root.resolve("metadata"), content, true)) {
+                var handle = index.observation("reports", LogicalPath.utf8(identity.value().substring(7))).orElseThrow()
+                        .entry().content().orElseThrow();
+                var hex = handle.digest().value().substring(7);
+                var file = root.resolve("content/sha256").resolve(hex.substring(0, 2)).resolve(hex.substring(2));
+                var bytes = Files.readAllBytes(file);
+                bytes[bytes.length / 2] ^= 1;
+                Files.write(file, bytes);
+            }
+            assertFalse(reports.verifyPublished(identity, fixture.graph().identity(), () -> false));
+            assertEquals(SnapshotComparison.ReportStatus.CORRUPT,reports.verifyEvolutionReport(fixture.graph().identity(),ref,()->false));
+        }
+    }
     @Test void replayUsesPublishedFindingAndRetainsFormulaVersusRuntimeMeaning() {
         var f=fixture();var published=new PublishedReports();var id=published.publish(f.report);
         var api=new ArchitectureQueryApi(f.store(),published,ApiLimits.defaults());

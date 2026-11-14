@@ -3,6 +3,7 @@ package com.evolution.backend.query;
 import com.evolution.analysis.assessment.ArchitectureAssessment;
 import com.evolution.analysis.contract.common.ContentDigest;
 import com.evolution.analysis.contract.serialization.CanonicalJson;
+import com.evolution.analysis.evolution.SnapshotComparison;
 import com.evolution.analysis.metrics.PolicyMetrics;
 import com.evolution.analysis.policy.PolicyEvaluation;
 import java.util.*;
@@ -47,7 +48,7 @@ public final class PublishedReports {
         var additions = new TreeMap<ContentDigest,Report>();
         var identities = new ArrayList<ContentDigest>();
         for (var report : batch) {
-            Objects.requireNonNull(report); BoundedJson.encode(report,16_777_216);
+            Objects.requireNonNull(report); BoundedJson.encode(report,2_000_000_000);
             var identity = report.identity(); identities.add(identity);
             if (!reports.containsKey(identity)) additions.putIfAbsent(identity,report);
         }
@@ -56,6 +57,27 @@ public final class PublishedReports {
         return List.copyOf(identities);
     }
     public synchronized Optional<Report> get(ContentDigest identity) { if(disk!=null)try{return disk.get(identity);}catch(java.io.IOException failure){throw new IllegalStateException("Report persistence unavailable",failure);}return Optional.ofNullable(reports.get(identity)); }
+    public boolean verifyPublished(ContentDigest identity, ContentDigest graph,
+                                                 java.util.function.BooleanSupplier cancelled) throws java.io.IOException {
+        if (cancelled.getAsBoolean()) return false;
+        if (disk != null) return disk.verifyPublished(identity, graph, cancelled);
+        synchronized (this) {
+            var report = reports.get(identity);
+            return report != null && report.evaluation().graph().equals(graph);
+        }
+    }
+    /** M11.2 input adapter: authentication only, never compare policy or infer coverage here. */
+    public SnapshotComparison.ReportStatus verifyEvolutionReport(ContentDigest graph,SnapshotComparison.ReportRef ref,
+                                                                  java.util.function.BooleanSupplier cancelled)throws java.io.IOException {
+        com.evolution.analysis.evolution.EvolutionSnapshot.check(cancelled);
+        if(disk!=null)return disk.verifyEvolution(graph,ref,cancelled);
+        synchronized(this){
+            var report=reports.get(ref.identity());
+            if(report==null)return SnapshotComparison.ReportStatus.MISSING;
+            return report.evaluation().graph().equals(graph)&&report.evaluation().context().equals(ref.context())
+                    ?SnapshotComparison.ReportStatus.AVAILABLE:SnapshotComparison.ReportStatus.CORRUPT;
+        }
+    }
     public synchronized List<ContentDigest> forGraph(ContentDigest graph) {
         if(disk!=null)try{return disk.forGraph(graph);}catch(java.io.IOException failure){throw new IllegalStateException("Report persistence unavailable",failure);}
         return reports.entrySet().stream().filter(e -> e.getValue().evaluation().graph().equals(graph)).map(Map.Entry::getKey).toList();

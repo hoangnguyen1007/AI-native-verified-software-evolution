@@ -103,6 +103,9 @@ public final class ArchitectureQueryApi {
                         if(!Set.of("after","size").containsAll(input.keySet()))throw new IllegalArgumentException();
                         long after=input.containsKey("after")?new java.math.BigDecimal(input.get("after").toString()).longValueExact():0;int size=input.containsKey("size")?new java.math.BigDecimal(input.get("size").toString()).intValueExact():20;
                         data=connections.acquisitionHistory(after,size);
+                    }else if(rawPath.endsWith("/overview")){
+                        QueryJson.object(input);
+                        data=connections.publishedOverview(rawPath.substring("/api/v2/acquisitions/".length(),rawPath.length()-"/overview".length()));
                     }else if(rawPath.endsWith("/readiness")){
                         if(!Set.of("section","size","cursor").containsAll(input.keySet()))throw new IllegalArgumentException();
                         var paging=new TreeMap<String,Object>(input);Object section=paging.remove("section");var page=QueryJson.page(paging);
@@ -180,12 +183,15 @@ public final class ArchitectureQueryApi {
             if(cancelled.getAsBoolean())throw new Failure(409,"REQUEST_CANCELLED");
             var data=Map.of("graph",graph,"scope","RAW_CONTEXT_FACTS","page",result,"semanticAccuracy","NOT_CERTIFIED");
             byte[] canonical=BoundedJson.encode(data,limits.responseBytes());return new Response(200,BoundedJson.encode(Map.of("apiVersion","architecture.graph-pages:m8.4-v1","resultIdentity",ContentDigest.sha256(canonical),"data",data),limits.responseBytes()));
+        }catch(PartitionedGraphReader.IndexPending pending){
+            throw new Failure(503,pending.workerBusy() ? "PARTITION_INDEX_BUSY" : "PARTITION_INDEX_PREPARING");
         }catch(java.util.concurrent.CancellationException stopped){throw new Failure(409,"REQUEST_CANCELLED");}
         catch(java.io.IOException unavailable){throw new Failure(503,"PARTITION_STORE_UNAVAILABLE");}
     }
     private static long integer64(Object value){if(!(value instanceof Number))throw new IllegalArgumentException();try{return new java.math.BigDecimal(value.toString()).longValueExact();}catch(ArithmeticException invalid){throw new IllegalArgumentException();}}
     static String allowedMethods(String path) {
         if(path.startsWith("/api/v1/graph-pages/"))return "POST";
+        if(path.startsWith("/api/v2/acquisitions/"))return "POST";
         if(path.startsWith("/api/v1/bridges/"))return "POST";
         if(path.startsWith("/api/v2/executions/"))return "POST";
         if (path.equals("/api/v1/analysis/connections")) return "GET, POST";
@@ -206,6 +212,8 @@ public final class ArchitectureQueryApi {
             case "RESPONSE_TOO_LARGE" -> "The complete response exceeds the transport limit; narrow the query or page.";
             case "FORBIDDEN_ORIGIN" -> "The local API accepts only same-origin requests.";
             case "BUSY" -> "The local API is at its concurrent request limit.";
+            case "PARTITION_INDEX_PREPARING" -> "The graph page index is being prepared. Retry this request shortly.";
+            case "PARTITION_INDEX_BUSY" -> "Another graph page index is being prepared. Retry this request shortly.";
             case "GRAPH_STORE_UNAVAILABLE" -> "Graph storage could not supply a verified snapshot.";
             case "JOBS_UNAVAILABLE" -> "Analysis jobs are not configured in this local server.";
             default -> "The request could not be completed.";
@@ -218,11 +226,12 @@ public final class ArchitectureQueryApi {
             capabilities.putAll(Map.of("operations",OPERATIONS,"reportOperations",REPORT_OPERATIONS,"transportLimits",limits,
                     "queryLimits",Limits.defaults(),"graphSchema",KnowledgeGraph.SCHEMA));
             capabilities.put("jobVersion",AnalysisJobs.VERSION); capabilities.put("analysisJobsEnabled",jobs != null);
+            capabilities.put("analysisResultReuseEnabled", jobs != null && jobs.resultReuseEnabled());
             capabilities.put("repositoryConnectionsEnabled",connections != null);
             capabilities.put("partitionedGraphsEnabled",partitionReaders != null);
             capabilities.put("acquisitionVersion","repository.acquisition-api:m8.4-v2");
             capabilities.put("readinessVersion",com.evolution.analysis.readiness.ReadinessPlan.SCHEMA);
-            capabilities.put("acquisitionRoutes",List.of("/api/v2/acquisitions/history","/api/v2/acquisitions/{revision}","/api/v2/acquisitions/{revision}/readiness","/api/v2/analysis/jobs/{id}/resume"));
+            capabilities.put("acquisitionRoutes",List.of("/api/v2/acquisitions/history","/api/v2/acquisitions/{revision}","/api/v2/acquisitions/{revision}/readiness","/api/v2/acquisitions/{revision}/overview","/api/v2/analysis/jobs/{id}/resume"));
             if (jobs != null) capabilities.put("jobLimits",jobs.limits());
             return capabilities;
         }
@@ -232,8 +241,8 @@ public final class ArchitectureQueryApi {
         var graphId=new ContentDigest(parts[4]);
         if (parts.length==5) {
             requireMethod(method,"GET"); requireEmpty(body);
-            var graph=load(graphId);
-            return Map.of("graph",graph.identity(),"snapshot",graph.snapshot(),"contexts",graph.contexts(),"reports",reports.forGraph(graphId));
+            var manifest=store.manifest(graphId).orElseThrow(() -> new Failure(404,"GRAPH_NOT_FOUND"));
+            return Map.of("graph",graphId,"snapshot",manifest.snapshot().value(),"contexts",manifest.contexts(),"reports",reports.forGraph(graphId));
         }
         if (parts.length==7 && parts[5].equals("queries") && OPERATIONS.contains(parts[6])) {
             requireMethod(method,"POST");
@@ -253,9 +262,9 @@ public final class ArchitectureQueryApi {
             if (parts.length==7) { requireMethod(method,"GET"); requireEmpty(body); }
             else if (REPORT_OPERATIONS.contains(parts[7])) requireMethod(method,"POST");
             else throw new Failure(404,"NOT_FOUND");
-            var graph=load(graphId);
+            var contexts=store.manifest(graphId).map(GraphManifest::contexts).orElseThrow(() -> new Failure(404,"GRAPH_NOT_FOUND"));
             var report=reports.get(reportId).filter(r -> r.evaluation().graph().equals(graphId)).orElseThrow(() -> new Failure(404,"REPORT_NOT_FOUND"));
-            var partition=graph.contexts().stream().filter(c -> c.identity().equals(report.evaluation().context())).findFirst()
+            var partition=contexts.stream().filter(c -> c.identity().equals(report.evaluation().context())).findFirst()
                     .orElseThrow(() -> new Failure(404,"REPORT_NOT_FOUND"));
             if (report.metrics().isPresent() && (!report.metrics().orElseThrow().context().snapshot().equals(partition.snapshot())
                     || !report.metrics().orElseThrow().context().analysis().equals(partition.analysis())))
@@ -271,7 +280,7 @@ public final class ArchitectureQueryApi {
             var args=input.containsKey("arguments") ? GraphJson.object(input.get("arguments")) : Map.<String,Object>of();
             long deadline=System.nanoTime()+limits.queryTimeoutMillis()*1_000_000;
             var guard=ArchitectureQueryService.operationalGuard(cancelled,deadline,8_000_000);
-            var service=factory.apply(graph,guard);
+            var service=factory.apply(load(graphId),guard);
             return report(parts[7],reportId,report,args,QueryJson.page(input.get("page")),input.containsKey("page"),service);
         }
         throw new Failure(404,"NOT_FOUND");

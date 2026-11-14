@@ -13,6 +13,28 @@ import static com.evolution.analysis.query.ArchitectureQuery.*;
 import static com.evolution.backend.query.QueryFixture.id;
 
 class ArchitectureQueryApiTest {
+    @Test void preparingRawGraphPagesReturnsATypedRetryableOutcome() {
+        var api = ArchitectureQueryApi.withPartitionedGraphs(new ArchitectureQueryApi(new InMemoryGraphStore()),
+                cancelled -> new PartitionedGraphReader() {
+                    @Override public Page<Partition> partitions(ContentDigest graph, int size, Optional<String> cursor) throws java.io.IOException {
+                        throw new IndexPending(size > 1);
+                    }
+                    @Override public Page<KnowledgeGraph.Node> nodes(Partition partition, int size, Optional<String> cursor) {
+                        throw new AssertionError("Unexpected node request");
+                    }
+                    @Override public Page<KnowledgeGraph.Edge> adjacency(Partition partition, String node, boolean incoming, int size, Optional<String> cursor) {
+                        throw new AssertionError("Unexpected adjacency request");
+                    }
+                });
+        var graph = ContentDigest.sha256Utf8("raw-page-preparation");
+        for (int size : List.of(1, 2)) {
+            var response = api.handle("POST", "/api/v1/graph-pages/" + graph.value() + "/partitions",
+                    "application/json", ("{\"size\":" + size + "}").getBytes(StandardCharsets.UTF_8), () -> false);
+            assertEquals(503, response.status());
+            assertEquals(size == 1 ? "PARTITION_INDEX_PREPARING" : "PARTITION_INDEX_BUSY",
+                    GraphJson.object(body(response).get("error")).get("code"));
+        }
+    }
     @Test void currentAndHistoricalGapViewsAreExplicitAndKeepTheirDenominators(){
         var f=new QueryFixture().node("a");
         f.nodes.add(new KnowledgeGraph.Node(id("old-gap"),f.context,"HISTORICAL_CAPABILITY_GAP",List.of(f.evidence.getFirst().identity())));

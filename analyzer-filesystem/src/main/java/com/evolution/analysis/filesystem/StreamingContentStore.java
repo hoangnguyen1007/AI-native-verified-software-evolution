@@ -173,9 +173,15 @@ public final class StreamingContentStore implements RepositoryContentStore {
         };
     }
     @Override public boolean verify(ContentHandle handle) throws IOException {
+        return verify(handle, () -> false);
+    }
+    public boolean verify(ContentHandle handle, BooleanSupplier cancelled) throws IOException {
         try (var input = open(handle)) {
             var digest = sha256(); byte[] buffer = new byte[64 * 1024]; int count; long bytes = 0;
-            while ((count = input.read(buffer)) != -1) { digest.update(buffer, 0, count); bytes = Math.addExact(bytes, count); }
+            while ((count = input.read(buffer)) != -1) {
+                if (cancelled.getAsBoolean()) throw new CancellationException();
+                digest.update(buffer, 0, count); bytes = Math.addExact(bytes, count);
+            }
             return bytes == handle.size() && handle.digest().value().equals("sha256:" + HexFormat.of().formatHex(digest.digest()));
         } catch (NoSuchFileException missing) { return false; }
     }

@@ -20,11 +20,13 @@ public final class RepositoryIntake implements AutoCloseable {
     private final Path root;
     private final StreamingContentStore content;
     private final SqliteInventoryStore inventory;
+    private final boolean readOnly;
     public RepositoryIntake(Path root)throws IOException{
         this(root,false);
     }
-    public RepositoryIntake(Path root,boolean readOnly)throws IOException{this.root=root.toAbsolutePath().normalize();content=new StreamingContentStore(this.root.resolve("content"));inventory=new SqliteInventoryStore(this.root.resolve("metadata"),content,readOnly);}
+    public RepositoryIntake(Path root,boolean readOnly)throws IOException{this.root=root.toAbsolutePath().normalize();this.readOnly=readOnly;content=new StreamingContentStore(this.root.resolve("content"));inventory=new SqliteInventoryStore(this.root.resolve("metadata"),content,readOnly);}
     public InventoryReader inventory(){return inventory;}
+    boolean hasUncapturedEntries(String revision) throws IOException { return inventory.hasUncapturedEntries(revision); }
     /** Product capture drains traversal in one invocation and retries only an unsettled
      * filesystem checkpoint. Missing LFS/content/resources and cancellation never spin. */
     public StreamingRepositoryAcquirer.Receipt localComplete(Path source,String revision,StreamingAcquisitionRequest request,BooleanSupplier cancelled)throws IOException {
@@ -48,8 +50,14 @@ public final class RepositoryIntake implements AutoCloseable {
         if(cancelled.getAsBoolean()||Thread.currentThread().isInterrupted())throw new IOException("READINESS_CANCELLED");
         var manifest=inventory.manifest(revision).orElseThrow(()->new IOException("SEALED_INVENTORY_REQUIRED"));
         var request=IngestionEvidence.digest(List.of(ReadinessPlan.PROVIDER,manifest,policy));
+        if(Files.isRegularFile(root.resolve("readiness/index.sqlite"),LinkOption.NOFOLLOW_LINKS)){
+            try(var reports=new ReadinessReports(root.resolve("readiness"),content,true)){
+                var saved=reports.get(request,cancelled);if(saved.isPresent())return saved.orElseThrow();
+            }catch(IOException unavailable){if(readOnly)throw unavailable;}
+        }
+        if(readOnly)throw new IOException("READINESS_PLAN_NOT_PUBLISHED");
         try(var reports=new ReadinessReports(root.resolve("readiness"),content)){
-            var saved=reports.get(request);if(saved.isPresent())return saved.orElseThrow();
+            var saved=reports.get(request,cancelled);if(saved.isPresent())return saved.orElseThrow();
             var plan=new ReadinessPlanner(List.of(new PassiveReadinessDiscovery(),new MavenReadinessDiscovery())).plan(revision,inventory,content,policy,cancelled);
             reports.save(request,plan,cancelled);return plan;
         }
@@ -70,6 +78,23 @@ public final class RepositoryIntake implements AutoCloseable {
         int end=(int)Math.min(rows.size(),(long)offset+size);
         return Map.of("schema",plan.schema(),"identity",plan.identity(),"inventory",plan.inventory(),"selection",Map.of("identity",plan.selection().identity(),"discovered",plan.selection().discovered().size(),"selected",plan.selection().selected().size(),"unselected",plan.selection().unselected().size(),"unknownDimensions",plan.selection().unknown().size()),
                 "ownership",plan.ownership(),"section",section,"rows",rows.subList(offset,end),"total",rows.size(),"continuation",end<rows.size()?Optional.of(plan.identity().value().substring(7)+":"+section+":"+end):Optional.empty(),"semanticCoverage","NOT_EVALUATED");
+    }
+    public Map<String,Object> publishedOverview(String revision)throws IOException{
+        if(!readOnly)throw new IllegalStateException("Overview must use published readiness");
+        var plan=readiness(revision,ReadinessPlanner.Policy.comprehensive(),()->Thread.currentThread().isInterrupted());
+        int size=24;
+        var roots=plan.roots().stream().limit(size).map(root->Map.of("id",root.id(),"directory",root.directory(),
+                "family",root.family(),"relatedRootCount",root.relatedRoots().size())).toList();
+        var modules=plan.modules().stream().limit(size).map(module->Map.of("id",module.id(),"root",module.root(),
+                "directory",module.directory(),"target",module.target(),"languages",module.languages(),
+                "declaredDependencyCount",module.dependencies().size())).toList();
+        var selection=plan.selection();
+        return Map.of("schema","repository.readiness-overview:v1","plan",plan.identity(),"inventory",plan.inventory().inventory(),
+                "roots",roots,"rootCount",plan.roots().size(),"modules",modules,"moduleCount",plan.modules().size(),
+                "coverage",Map.of("discovered",selection.discovered().size(),"selected",selection.selected().size(),
+                        "unknownDimensions",selection.unknown().size(),"pending",plan.requirements().stream()
+                                .filter(requirement->requirement.state()==ReadinessPlan.State.PENDING).count()),
+                "semanticCoverage","NOT_EVALUATED");
     }
     public Optional<String> pinnedCommit(String revision)throws IOException{
         var job=inventory.get(revision);if(job.isEmpty()||job.orElseThrow().payload().isEmpty())return Optional.empty();

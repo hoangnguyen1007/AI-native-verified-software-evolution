@@ -35,8 +35,16 @@ final class StreamingGraphJson {
         Member(int depth){this.depth=depth;}
         private void consume(){if(consumed)throw new IllegalArgumentException("Graph member already consumed");consumed=true;}
         public Object read()throws IOException{consume();return value(depth);}
+        public void skip()throws IOException{consume();skipValue(depth);}
         public void object(GraphJson.ObjectConsumer consumer)throws IOException{consume();StreamingGraphJson.this.object(consumer,depth);}
         public void array(GraphJson.ValueConsumer consumer)throws IOException{consume();StreamingGraphJson.this.array(consumer,depth);}
+    }
+    private void skipValue(int depth)throws IOException {
+        whitespace();int c=peek();
+        if(c=='{'){object((key,member)->member.skip(),depth);return;}
+        if(c=='['){spend(depth);require('[');whitespace();if(take(']'))return;
+            do{skipValue(depth+1);whitespace();if(take(']'))return;require(',');}while(true);}
+        value(depth);
     }
     private Object value(int depth)throws IOException {
         spend(depth);

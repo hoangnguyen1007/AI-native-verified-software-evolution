@@ -14,6 +14,12 @@ public interface PartitionedGraphReader {
         public Partition{if(!SCHEMA.equals(schema)||nodes<0||edges<0)throw new IllegalArgumentException("Invalid graph partition");Objects.requireNonNull(graph);Objects.requireNonNull(context);Objects.requireNonNull(segment);}
     }
     record Page<T>(List<T> items,Optional<String> continuation){public Page{items=List.copyOf(items);Objects.requireNonNull(continuation);}}
+    /** The caller can retry once the requested preparation or the shared worker is ready. */
+    final class IndexPending extends IOException {
+        private final boolean workerBusy;
+        public IndexPending(boolean workerBusy) { this.workerBusy = workerBusy; }
+        public boolean workerBusy() { return workerBusy; }
+    }
     Page<Partition> partitions(ContentDigest graph,int size,Optional<String> cursor)throws IOException;
     Page<KnowledgeGraph.Node> nodes(Partition partition,int size,Optional<String> cursor)throws IOException;
     Page<KnowledgeGraph.Edge> adjacency(Partition partition,String node,boolean incoming,int size,Optional<String> cursor)throws IOException;

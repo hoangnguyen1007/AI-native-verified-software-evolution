@@ -52,7 +52,7 @@ class LocalAnalysisRunnerTest {
             var result=finishedReal(jobs,id);assertTrue(Set.of(AnalysisJobs.State.SUCCEEDED,AnalysisJobs.State.PARTIAL).contains(result.state()),()->CanonicalJson.write(result));assertEquals(1,graphs.load(result.result().orElseThrow().graph().orElseThrow()).orElseThrow().nodes().stream().filter(n->n.kind().equals("TYPE")).count());
         }
     }
-    private static final String POLICY = """
+    static final String POLICY = """
             schema: architecture-policy:v1
             id: test.backend
             version: "1"

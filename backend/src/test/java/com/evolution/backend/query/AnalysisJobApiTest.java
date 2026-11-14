@@ -64,6 +64,7 @@ class AnalysisJobApiTest {
             var view = call(api,"GET","/api/v1/analysis/jobs/"+id,""); assertEquals("SUCCEEDED",data(view).get("state"));
             assertEquals(f.graph().identity().value(),GraphJson.object(data(view).get("result")).get("graph"));
             var retry = call(api,"POST","/api/v1/analysis/jobs","{\"setup\":\"local\",\"idempotencyKey\":\"once\"}"); assertEquals(200,retry.status()); assertEquals(id,data(retry).get("id"));
+            assertEquals(409,call(api,"POST","/api/v1/analysis/jobs","{\"setup\":\"local\",\"idempotencyKey\":\"once\",\"force\":true}").status());
             ArchitectureQueryApiTest.parity(api,f.request(),"summary",Map.of(),new com.evolution.analysis.query.ArchitectureQueryService(f.graph()).summary(f.request()));
             assertEquals(200,call(api,"POST","/api/v1/analysis/jobs/"+id+"/gaps","{}").status());
             assertEquals(200,call(api,"POST","/api/v1/analysis/jobs/"+id+"/cancel","{}").status());
@@ -77,7 +78,9 @@ class AnalysisJobApiTest {
             var api = new ArchitectureQueryApi(store,reports,ApiLimits.defaults(),jobs); String route = "/api/v1/analysis/jobs";
             for (String input : List.of("{}","[]","null","{\"setup\":\"local\"}","{\"setup\":\"local\",\"setup\":\"local\",\"idempotencyKey\":\"x\"}",
                     "{\"setup\":\"local\",\"idempotencyKey\":\"x\",\"source\":\"C:/private\"}","{\"setup\":\"../escape\",\"idempotencyKey\":\"x\"}",
-                    "{\"setup\":\"local\",\"idempotencyKey\":true}")) assertEquals(400,call(api,"POST",route,input).status());
+                    "{\"setup\":\"local\",\"idempotencyKey\":true}",
+                    "{\"setup\":\"local\",\"idempotencyKey\":\"x\",\"force\":\"true\"}",
+                    "{\"setup\":\"local\",\"idempotencyKey\":\"x\",\"force\":null}")) assertEquals(400,call(api,"POST",route,input).status());
             assertEquals(400,api.handle("POST",route,"application/json",new byte[]{(byte)0xc3,0x28},() -> false).status());
             assertEquals(415,api.handle("POST",route,"text/plain",new byte[0],() -> false).status());
             assertEquals(413,api.handle("POST",route,"application/json",new byte[65_537],() -> false).status());

@@ -175,6 +175,13 @@ public final class SqliteInventoryStore implements InventoryReader, JobJournal, 
             p.setString(1,revision); p.setString(2,path.key()); try (var r=p.executeQuery()) { return r.next()?Optional.of(new Observation(InventoryCodec.entry(r.getBytes(1)),r.getString(2))):Optional.empty(); }
         } catch (SQLException failure) { throw new IOException("INVENTORY_UNAVAILABLE",failure); }
     }
+    /** A seal accounts for gaps too. Result reuse requires captured bytes for every selected entry. */
+    public synchronized boolean hasUncapturedEntries(String revision) throws IOException {
+        try (var statement = db.prepareStatement("SELECT 1 FROM inventory WHERE revision=? AND status IN ('GAP','PENDING') LIMIT 1")) {
+            statement.setString(1, revision);
+            try (var result = statement.executeQuery()) { return result.next(); }
+        } catch (SQLException failure) { throw new IOException("INVENTORY_UNAVAILABLE", failure); }
+    }
     @Override public synchronized Page page(String revision,int size,Optional<String> cursor) throws IOException {
         if (size<1||size>1000) throw new IllegalArgumentException("Invalid page size");
         String after="";

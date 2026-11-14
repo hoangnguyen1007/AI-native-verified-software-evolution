@@ -11,4 +11,8 @@ public interface GraphStore {
     Optional<KnowledgeGraph> load(ContentDigest identity);
     default Optional<GraphManifest> manifest(ContentDigest identity) {return load(identity).map(KnowledgeGraph::manifest);}
     default boolean available(ContentDigest identity) {return load(identity).isPresent();}
+    /** Verify a published snapshot before a different job refers to it. */
+    default boolean verifyPublished(ContentDigest identity, BooleanSupplier cancelled) {
+        return !cancelled.getAsBoolean() && available(identity);
+    }
 }

@@ -68,7 +68,7 @@ public final class ArchitectureQueryService {
                 }
                 return;
             }
-            for(var node:graph.nodes())if(node.context().equals(request.context())){
+            for(var node:graph.nodes(request.context())){
                 if(!budget.scan())break;
                 if(nodes.size()>=request.limits().maxVertices()){budget.halt(StopReason.INPUT);break;}
                 if(!budget.reserve(3))break;nodes.put(node.identity(),node);
@@ -101,15 +101,18 @@ public final class ArchitectureQueryService {
             }
             // Analysis-wide/snapshot gaps remain relevant even when evidence is partitioned in a Spring context.
             var selected=graph.contexts().stream().filter(c->c.identity().equals(request.context())).findFirst().orElseThrow();
-            for(var node:graph.nodes())if((node.kind().equals("CAPABILITY_GAP")||node.kind().equals("PROVIDER_CONFLICT"))
-                    &&(node.context().equals(graph.snapshot().value())||selected.analysis().map(a->a.value().equals(node.context())).orElse(false)))
+            if(hasGap(graph.snapshot().value())||selected.analysis().map(a->hasGap(a.value())).orElse(false))
                 budget.qualify("UPSTREAM_CAPABILITY_GAP");
             if(project&&budget.running()){catalog=new GraphRegionCatalog(graph,request,budget,nodes);project();}
+        }
+        private boolean hasGap(String context) {
+            return graph.nodes(context).stream().anyMatch(node ->
+                    node.kind().equals("CAPABILITY_GAP") || node.kind().equals("PROVIDER_CONFLICT"));
         }
         private void project(){
             var owners=new HashMap<String,String>();var parent=new HashMap<String,String>();
             int count=0;
-            for(var edge:graph.edges())if(edge.context().equals(request.context())){
+            for(var edge:graph.edges(request.context())){
                 if(!budget.scan())return;
                 if(++count>request.limits().maxEdges()){budget.halt(StopReason.INPUT);return;}
                 if(edge.target().state()==KnowledgeGraph.TargetState.RESOLVED){String target=edge.target().identities().getFirst();

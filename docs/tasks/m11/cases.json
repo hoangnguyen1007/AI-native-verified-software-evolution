@@ -1,0 +1,156 @@
+{
+  "schema": "architecture.evolution.case-registry:v1",
+  "registered": "2026-11-14",
+  "engineRunStatus": "NOT_RUN",
+  "firstSlice": {
+    "baselineSource": "package p; class A { } class B { }\n",
+    "targetSource": "package p; class A { B peer; } class B { }\n",
+    "selection": {"language": "java", "sourceSet": "MAIN", "nodeKinds": ["TYPE"], "relationshipKinds": ["graph.depends-on"]},
+    "scope": {"repository": "authored-m11", "root": ".", "module": "."},
+    "cases": ["E01-SELF", "E01-REVISION", "E01-EDIT", "E01-REVERSE", "E03-CENSUS", "E04-PROVIDER", "E05-OCCURRENCE", "E10-LOSS", "E16-PAGE"]
+  },
+  "examples": {
+    "note": "Non-wire projections: readable names stand in for real scoped artifact references. Proof names describe expected authenticated operands to be supplied by the fixture.",
+    "positive": {
+      "status": "COMPLETE", "capability": "STRUCTURE", "compatibility": "COMPARABLE",
+      "census": {"left": {"MATCHED": 2, "NOT_SELECTED": 1}, "right": {"MATCHED": 2, "NOT_SELECTED": 1}},
+      "entityMatches": [["p.A", "p.A"], ["p.B", "p.B"]],
+      "events": [{"family": "STRUCTURE", "kind": "RELATION_ADDED", "context": "MAIN", "from": "p.A", "to": "p.B", "before": {"truth": "F", "proof": "closed MAIN type-dependency census"}, "after": {"truth": "T", "proof": "field type-use with resolved target and type owners"}}],
+      "residual": []
+    },
+    "degraded": {
+      "status": "PARTIAL", "capability": "STRUCTURE", "compatibility": "UNKNOWN",
+      "census": {"left": {"MATCHED": 2, "NOT_SELECTED": 1}, "right": {"MATCHED": 2, "NOT_SELECTED": 1}},
+      "observations": [{"family": "STRUCTURE", "context": "MAIN", "from": "p.A", "to": "p.B", "before": {"truth": "T", "proof": "prior type-use support"}, "after": {"truth": "U", "proof": null, "gapRef": "right relevant evidence obligation"}}],
+      "events": [], "residual": ["RIGHT_RELATION_COVERAGE_UNPROVED"],
+      "forbidden": ["RELATION_REMOVED", "RESOLVED", "HEALTH_IMPROVED"]
+    }
+  },
+  "regionOracle": {
+    "worlds": ["w0", "w1", "w2"],
+    "vectors": {"MUST": "TTT", "MAY": "TFF", "NEVER": "FFF", "UNKNOWN": "TUU"},
+    "caseId": "E06-<left>-<right>",
+    "caseCount": 16,
+    "table": {"FF": "CLEAN", "FT": "INTRODUCED", "FU": "UNCERTAIN", "TF": "RESOLVED", "TT": "PERSISTED", "TU": "UNCERTAIN", "UF": "UNCERTAIN", "UT": "UNCERTAIN", "UU": "UNCERTAIN"},
+    "shapes": [
+      {"id": "E06-EXPAND", "left": "TFF", "right": "TTF", "introduced": ["w1"], "resolved": [], "shape": "EXPANDED"},
+      {"id": "E06-SHRINK", "left": "TTF", "right": "TFF", "introduced": [], "resolved": ["w1"], "shape": "SHRUNK"},
+      {"id": "E06-RESHAPE", "left": "TFT", "right": "FTT", "introduced": ["w1"], "resolved": ["w0"], "shape": "RESHAPED"},
+      {"id": "E06-RESIDUAL", "left": "TFU", "right": "TTU", "introduced": ["w1"], "resolved": [], "shape": "UNKNOWN"}
+    ]
+  },
+  "families": [
+    {"id": "E01", "task": "M11.2", "cases": [
+      {"id": "E01-SELF", "input": "same graph/selection on both sides", "expected": "no semantic event; identical result digest on repeated request"},
+      {"id": "E01-REVISION", "input": "same source/profile with revision label change only", "expected": "zero semantic events; exact graph provenance may differ"},
+      {"id": "E01-EDIT", "input": "firstSlice baseline to target", "expected": "examples.positive"},
+      {"id": "E01-REVERSE", "input": "firstSlice target to baseline", "expected": "one scoped RELATION_REMOVED with right-side absence; distinct request key"}
+    ]},
+    {"id": "E02", "task": "M11.2", "cases": [
+      {"id": "E02-IDENTITY", "input": "two modules each declare p.A; p.A overloads f(int) and f(String) with nested/local/generated declarations", "expected": "only same typed scope, origin and full canonical identity pair; each overload stays distinct"},
+      {"id": "E02-MOVE", "input": "unproved module move with two same-name candidates and changed generated lineage", "expected": "ambiguous or unmatched with both candidate references; zero definite rename/merge"}
+    ]},
+    {"id": "E03", "task": "M11.2", "cases": [
+      {"id": "E03-CENSUS", "input": "repository + MAIN match; TEST exists but not selected on both sides", "expected": "2 MATCHED + 1 NOT_SELECTED on each side; no deleted context"},
+      {"id": "E03-MULTIROOT", "input": "left matched + missing selected context + unselected variant; right matched + evidenced new root", "expected": "left MATCHED 1/UNAVAILABLE 1/NOT_SELECTED 1; right MATCHED 1/RIGHT_ONLY 1; no deletion inferred for missing selection"}
+    ]},
+    {"id": "E04", "task": "M11.2", "cases": [
+      {"id": "E04-PROVIDER", "input": "same source, provider version string unchanged but binary digest differs", "expected": "affected semantic capability QUALIFIED with tool drift, no unqualified source-change attribution"},
+      {"id": "E04-SCHEMA", "input": "unsupported graph schema without adapter or changed result-affecting solver limit", "expected": "unsupported side cannot support inference; limit drift separately qualifies affected reasoning"},
+      {"id": "E04-ORDER", "input": "same binary set with classpath order swapped", "expected": "ordered build profile drift retained; exact Java semantic comparison withheld where affected"}
+    ]},
+    {"id": "E05", "task": "M11.2", "cases": [
+      {"id": "E05-OCCURRENCE", "input": "same A→B dependency moved and second occurrence added", "expected": "same logical relation; location and occurrence count 1→2; no add/remove of relation"},
+      {"id": "E05-TARGET", "input": "unresolved B observation becomes resolved p.B", "expected": "retain old unresolved candidate and new proof as different observations; no inferred continuity from spelling"},
+      {"id": "E05-PAYLOAD", "input": "matched declaration with source-proved semantic modifier edit", "expected": "matched subject with changed semantic payload; no fabricated identity change"}
+    ]},
+    {"id": "E06", "task": "M11.3", "cases": [
+      {"id": "E06-QUANTIFIERS", "input": "all 16 ordered regionOracle vector pairs", "expected": "exact T/F/U intersection memberships plus regionOracle.shapes; no inference from witness counts"}
+    ]},
+    {"id": "E07", "task": "M11.3", "cases": [
+      {"id": "E07-SIDE-ONLY", "input": "left w0:F,w1:T; right w0:F,w2:T; w1 and w2 proved distinct and feasible", "expected": "Kc={w0}; clean={w0}; left-only w1, right-only w2; no introduced/resolved"},
+      {"id": "E07-EMPTY", "input": "no common feasible world or changed OTHER/MISSING meaning with unproved mapping", "expected": "empty versus unknown explicitly distinguished; no MUST/NEVER or false resolution"}
+    ]},
+    {"id": "E08", "task": "M11.3", "cases": [
+      {"id": "E08-FORMULA", "input": "two Boolean variables; before A AND B, after A; both feasible", "expected": "introduced={(true,false)}, persisted={(true,true)}, resolved=empty; symbolic and finite labels agree"},
+      {"id": "E08-INFEASIBLE", "input": "joint path requires A AND NOT A; repeat with exhausted proof budget", "expected": "UNSAT only with proof; budget stop preserves UNKNOWN/residual, never clean by omission"}
+    ]},
+    {"id": "E09", "task": "M11.3", "cases": [
+      {"id": "E09-BINDING", "input": "same candidates P and Q, material order selects P then Q in mapped worlds", "expected": "candidate set unchanged, selected binding transition P→Q only with replay and comparable order semantics"},
+      {"id": "E09-WITNESS", "input": "same truth region {w0,w1} represented by w0 then w1", "expected": "witness-only observation; both replay in their own context; no region change"}
+    ]},
+    {"id": "E10", "task": "M11.2–4", "cases": [
+      {"id": "E10-LOSS", "input": "firstSlice target with relationship present to separately sealed degraded observation with support unavailable", "expected": "examples.degraded"},
+      {"id": "E10-CORRUPT", "input": "change canonical stored bytes while retaining original handle", "expected": "integrity failure scoped to input, never materialize absence"},
+      {"id": "E10-RESTORE", "input": "lose then restore exact artifact/generated lineage with conflict ledger retained", "expected": "same restored fact under verified input; separate evidence revisions; no architecture fix from loss or gap omission"}
+    ]},
+    {"id": "E11", "task": "M11.4", "cases": [
+      {"id": "E11-REGIONAL", "input": "same finding; Kc w0..w2; before TFT, after TTF", "expected": "persisted w0, introduced w1, resolved w2; each has proof"},
+      {"id": "E11-POLICY", "input": "present finding followed by removed/changed rule, or missing result due to bounded page", "expected": "policy drift or unknown scope; no RESOLVED"}
+    ]},
+    {"id": "E12", "task": "M11.4", "cases": [
+      {"id": "E12-RETURN", "input": "explicit linear parent chain with T,F,T for same scope", "expected": "REINTRODUCED at third side, earliest observed limited to declared interval"},
+      {"id": "E12-GAP", "input": "T,U,T or missing merge-parent/ambiguous mapping interval", "expected": "no REINTRODUCED; continuity unknown where unproved"}
+    ]},
+    {"id": "E13", "task": "M11.4", "cases": [
+      {"id": "E13-EXACT", "input": "directed dependency density, two vertices, 0 of 2 then 1 of 2 edges", "expected": "delta +1/2; relative percent null (baseline zero)"},
+      {"id": "E13-DRIFT", "input": "same metric label but different definition/version or projection truncation", "expected": "two qualified values if available; numeric delta withheld"}
+    ]},
+    {"id": "E14", "task": "M11.4", "cases": [
+      {"id": "E14-SCORE", "input": "reuse M9 A01 operands 1/2 and 1/1; duplicate contributing symptom, then missing mandatory operand", "expected": "67.5 and original calibration for full operand control; no double counting; missing side WITHHELD, no apparent improvement"},
+      {"id": "E14-MODEL", "input": "score model digest changes with same graph", "expected": "explain model drift, no compatible health trend"}
+    ]},
+    {"id": "E15", "task": "M11.2–5", "cases": [
+      {"id": "E15-TIER", "input": "syntax-only call label and separately captured native target with changed provider", "expected": "preserve tier/context and unknown continuity; no syntax promotion"},
+      {"id": "E15-BRIDGE", "input": "one bound declaration-compatible bridge loses descriptor or endpoint context", "expected": "unknown scoped bridge continuity; no runtime claim or definite deletion"}
+    ]},
+    {"id": "E16", "task": "M11.2, M11.5", "cases": [
+      {"id": "E16-PAGE", "input": "firstSlice repeated with page sizes 1/2/50 and reversed enumeration", "expected": "same canonical result and counts; every source edge appears once"},
+      {"id": "E16-REOPEN", "input": "verified result reopened; foreign cursor; tampered leaf; injected cancellation/disk pressure and concurrent retries", "expected": "exact completed digest on reopen/resume, foreign/tampered rejected, no interrupted final publication or conflicting overwrite"}
+    ]},
+    {"id": "E17", "task": "M11.5", "cases": [
+      {"id": "E17-PARITY", "input": "positive and degraded cases through canonical service, CLI, HTTP, export and Workbench", "expected": "same direction, regions, evidence links and dispositions; bounded/redacted payloads; unknown not rendered as zero"},
+      {"id": "E17-STALE", "input": "slow first request after selection change; keyboard and 320px reflow; embedded sensitive config literal", "expected": "new selection persists, keyboard/focus and status text work, sensitive value not emitted"}
+    ]},
+    {"id": "E18", "task": "M11.6", "cases": [
+      {"id": "E18-NATURAL-MODULE", "input": "naturalHistory.module", "expected": "source-labeled declared module/route additions and build drift; exact runtime/violation claims unlabelled"},
+      {"id": "E18-NATURAL-DOC", "input": "naturalHistory.documentation", "expected": "only README bytes differ; no fabricated structural/lifecycle delta"},
+      {"id": "E18-NATURAL-CONFIG", "input": "naturalHistory.configuration", "expected": "local config declarations removed and external import retained; no effective value or resolved violation proven"},
+      {"id": "E18-REPLAY", "input": "registered natural pair and fixed generator under protocol allocations", "expected": "identical completed digests for fixed inputs; censored trials retained; independent adjudication required"}
+    ]}
+  ],
+  "naturalHistory": {
+    "repository": "https://github.com/spring-petclinic/spring-petclinic-microservices.git",
+    "sourceStatus": "VERIFIED_GIT_BLOB_INVENTORIES",
+    "analysisStatus": "NOT_RUN",
+    "revisions": {
+      "a": {"commit": "f2c142215eba561136940be914046a49b5914674", "tree": "256149716e022a0ba71b57e48c43deeac5dba9c5", "entries": 184, "bytes": 1937246, "inventorySha256": "05bfce03b49bea6db77bc3d75ac2e2391de03eaba4f008602ba5f03335580f68"},
+      "b": {"commit": "79b527a35d2141f619386bb94a9e18355aab7880", "tree": "089c2e2e68c586e30cd069b2188bf488714fbab5", "entries": 205, "bytes": 2263583, "inventorySha256": "ddf4c77a05590c98d20586fb506e9191ff8d2491f928a53e6127730c62d6f1dc"},
+      "c": {"commit": "104410a0cdac5ddcc4e43f659db0732cdc972c0d", "tree": "1451cc778d277f091daf979b6a66b5f231c05b89", "entries": 205, "bytes": 2263767, "inventorySha256": "af35175cb7354e91586b7baa8814d3429e4ed0f29c901bfafabbed4d4d4d2c98"},
+      "d": {"commit": "ce0a734dbff4887edc1033e4d066befabce4ad00", "tree": "fc46005c1d9e6045954bf64533300c21bec1a861", "entries": 205, "bytes": 2268455, "inventorySha256": "919a16baa9d710cbf179fc076ef83da1f496be27b1dd23860e305bdbed6bad6a"},
+      "e": {"commit": "f9fd559361f11b79e622ee0c0c660f42980a36ac", "tree": "78b7e1931c189e73341d455cb8fd1444838aedf4", "entries": 205, "bytes": 2268301, "inventorySha256": "3eb1db560ced441d9657ee60060ae4a0017e4a48ee3c6476d3a1d806b90b5961"}
+    },
+    "module": {
+      "left": "a", "right": "b", "directParent": true,
+      "labels": ["root POM adds spring-petclinic-genai-service", "gateway YAML declares genai-service load-balanced route", "root Spring Boot parent changes 3.2.7→3.3.4"],
+      "anchors": [
+        {"path": "pom.xml", "leftSha256": "cbd59c209bc76e775c3476aaa6667f0f61ee9a96177457c659bebff0794b377b", "rightSha256": "921274b4eee4de3f52c41d78316a9dbdfaef8f9b684253089d60081edd8a870b"},
+        {"path": "spring-petclinic-genai-service/pom.xml", "leftSha256": null, "rightSha256": "fa3f65e6f2a03dcf695aa32344c29654884ba943a443fab4f44e9c6cfb2d23ad"},
+        {"path": "spring-petclinic-api-gateway/src/main/resources/application.yml", "leftSha256": "bc3d67681baed50a34851b463138c29ae4e56555322991d2c821bb313d4ed230", "rightSha256": "65f779155703bccdd1769bfdde7810c436290cabd3fcd3c2aed58f1ba72f2291"}
+      ]
+    },
+    "documentation": {
+      "left": "b", "right": "c", "directParent": true,
+      "labels": ["README.md is the only changed tracked path"],
+      "anchors": [{"path": "README.md", "leftSha256": "c6d9df6427ab53732f6c5f50da3e597c49b42536d234d366165509009290a12c", "rightSha256": "3ab3df0a6a704c1d39effea0b638e3365ce71fe8157237ec9c077fb35e692856"}]
+    },
+    "configuration": {
+      "left": "d", "right": "e", "directParent": true,
+      "labels": ["local spring.zipkin.baseUrl, server.port and eureka.client.serviceUrl.defaultZone disappear from genai application.yml", "config-server import remains declared", "docker-compose.yml also changes a JVM option"],
+      "anchors": [
+        {"path": "spring-petclinic-genai-service/src/main/resources/application.yml", "leftSha256": "f118ab95ee39335b056932062def176e3a41852a1e0f21251424106033b9a628", "rightSha256": "4f697bad0044d5f7c113477ad9d43f575e6fe1c61185c2c70bdca11606e66aac"},
+        {"path": "docker-compose.yml", "leftSha256": "09f36f6b57180367fff32cdc8b86c7ae0ab963e48854d72519c117eb8dac5868", "rightSha256": "629bcbf3b18500e986be3acad047c5d73c592d0d89ad110b647a44b7f22d0560"}
+      ]
+    }
+  }
+}

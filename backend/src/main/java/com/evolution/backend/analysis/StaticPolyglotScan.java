@@ -73,8 +73,13 @@ public final class StaticPolyglotScan {
         }
     }
     private static byte[] source(RepositoryContentStore content,ContentHandle source,int fileBudget)throws IOException {
-        if(source.size()>fileBudget)throw new IOException("SYNTAX_FILE_WORKER_REQUIRED");if(!content.verify(source))throw new IOException("SYNTAX_SOURCE_UNAVAILABLE");
-        try(var captured=content.open(source)){byte[] bytes=captured.readNBytes(fileBudget+1);if(bytes.length!=source.size())throw new IOException("SYNTAX_SOURCE_SIZE_MISMATCH");return bytes;}
+        if(source.size()>fileBudget)throw new IOException("SYNTAX_FILE_WORKER_REQUIRED");
+        try(var captured=content.open(source)){
+            byte[] bytes=captured.readNBytes(Math.toIntExact(source.size())+1);
+            if(bytes.length!=source.size())throw new IOException("SYNTAX_SOURCE_SIZE_MISMATCH");
+            if(!ContentDigest.sha256(bytes).equals(source.digest()))throw new IOException("SYNTAX_SOURCE_UNAVAILABLE");
+            return bytes;
+        }
     }
     private record DeclEntry(String id,String document,String langGroup,String normPath,String dirPath,String fileStem,String symbolName,String proof) {}
     private record SiteEntry(String siteId,String document,String langGroup,String language,String normPath,String dirPath,String category,String name,String written,String proof) {}

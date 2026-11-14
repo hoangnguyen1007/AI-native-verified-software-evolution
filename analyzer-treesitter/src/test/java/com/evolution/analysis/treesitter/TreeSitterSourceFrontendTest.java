@@ -131,6 +131,21 @@ class TreeSitterSourceFrontendTest {
         var calls=facts.stream().filter(f->f.category().equals("CALL")).toList();assertEquals(1,calls.size());var call=calls.getFirst();
         assertEquals("print('é')",source.substring(call.span().start(),call.span().end()));assertEquals(4,call.span().startLine());assertEquals(5,call.span().startColumn());
     }
+    @Test void transcodedGrammarBytesStillPointToTheOriginalBomAndUnicodeDocument()throws Exception {
+        String source="\uFEFF# " + "😀".repeat(257) + "\r\ndef f():\r\n    print('é😀')\r\n";
+        var frontend = new TreeSitterSourceFrontend();
+        var expected = new ArrayList<TreeSitterSourceFrontend.Fact>();
+        var summary = frontend.parse("python",source.getBytes(StandardCharsets.UTF_8),expected::add,()->false);
+        var call = expected.stream().filter(fact -> fact.category().equals("CALL")).findFirst().orElseThrow();
+        assertEquals("print('é😀')",source.substring(call.span().start(),call.span().end()));
+        assertEquals(3,call.span().startLine());
+        assertEquals(5,call.span().startColumn());
+        for (var encoding : List.of(StandardCharsets.UTF_16LE,StandardCharsets.UTF_16BE)) {
+            var observed = new ArrayList<TreeSitterSourceFrontend.Fact>();
+            assertEquals(summary,frontend.parse("python",source.getBytes(encoding),observed::add,()->false));
+            assertEquals(expected,observed);
+        }
+    }
     @Test void everyBundledGrammarLoadsAndKeepsActualDeclarations()throws Exception {
         var sources=Map.ofEntries(Map.entry("typescript","function f(): void { g(); } function g(): void {}"),Map.entry("tsx","function f() { g(); return <div/>; } function g() {}"),
                 Map.entry("c","void f(){g();} void g(){}"),Map.entry("cpp","struct C { void f(){g();} void g(){} };"),Map.entry("kotlin","fun f(){g()}\nfun g(){}"),

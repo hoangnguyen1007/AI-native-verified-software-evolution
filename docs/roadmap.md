@@ -251,7 +251,7 @@ Exit gate: the entire Track A analysis/evidence workflow runs locally without ba
 
 ### M8 - Backend API and Complete Architecture Workbench
 
-**Status: CLOSED / FINAL ARCHITECTURAL RECOVERY BASELINE (Human-Accepted 2026-11-10).** M8.1–M8.4 and the Master Upgrade Plan are complete within their recorded bounds; the [closure report](research/M8.4-Step6-Real-Repository-Scale-Evaluation-Report.md) preserves historical evidence. Active work is M9 under its [five-task plan](tasks/m9/README.md). The current passive completion policy is the human-approved 95% with guards and truthful evidence tiers; it does not recalculate historical runs. The full product acceptance criteria below remain relevant to M9 evaluation and M10 human release review.
+**Status: CLOSED / FINAL ARCHITECTURAL RECOVERY BASELINE (Human-Accepted 2026-11-10).** M8.1–M8.4 and the Master Upgrade Plan are complete within their recorded bounds; the [closure report](research/M8.4-Step6-Real-Repository-Scale-Evaluation-Report.md) preserves historical evidence. The current passive completion policy is the human-approved 95% with guards and truthful evidence tiers; it does not recalculate historical runs. The product acceptance criteria below informed the M9 evaluation and M10 human release review.
 
 Deliver asynchronous cancellable analysis jobs and versioned query APIs plus the required workbench:
 
@@ -294,11 +294,15 @@ M9 Track A evaluation acceptance: independent review supports the exact bounded 
 
 ### M10 - Track A Release Gate
 
+**Status: PASSED / CLOSED BY HUMAN APPROVAL (2026-11-14).** Human supervisor signed off on Track A product release based on the M9.5 dossier ([01-release-sign-off.md](tasks/m10/01-release-sign-off.md)), ratifying the frozen candidate (`evo-candidate.jar`), 17-claim evaluation baseline, and 4 mandatory release reservations. Track A is formally released. Milestone M11 (Track B) is authorized to begin.
+
 Freeze Track A contracts and claim language. Resolve all blocking semantic, Spring, graph, metric, score, policy, evidence, robustness, accessibility, and product defects before Track B. Track A cannot pass with an analyzer/CLI-only result.
 
 Human approval is mandatory to continue.
 
 ### M11 - Track B Architecture Evolution
+
+The [six-task plan](tasks/m11/README.md), [design contract](architecture/m11-compatible-snapshot-evolution.md) and [registered protocol](tasks/m11/PROTOCOL.md) define the implementation sequence and evidence. Operational progress belongs in [current state](current-state.md).
 
 Deliver compatible snapshot comparison for semantic facts, conditional regions, graph/policy/metric/score results, bindings, witnesses and evidence; classify introduced/resolved/persisted/reintroduced findings plus region expanded/shrunk and `MUST`/`MAY`/`NEVER`/`UNKNOWN` transitions; provide evidence-backed comparison queries/UI and one labeled historical corpus. Reject or visibly qualify comparisons across incompatible analyzer, build-context, configuration-space, framework/registration, policy, metric, score or result-affecting limit versions.
 
@@ -423,6 +427,5 @@ Paper readiness, venue selection, extensive artifact badging, and elaborate defe
 ## Immediate Sequence
 
 1. Preserve delivered M0–M8 contracts and immutable G2–G6 evidence within their original scopes, including scoped MVP acceptance and unqualified native-method markers.
-2. Use the [M9 Task-1 protocol](tasks/m9/PROTOCOL.md) and frozen identities before evaluating semantic/evidence correctness in M9.2.
-3. Complete M9.2–M9.5 under the [five-task plan](tasks/m9/README.md), including registered multi-repository/product hardening and independent review. Required repeated trials and representative checkpoints follow the frozen protocol and resource policy.
-4. Obtain M10 human Track A product approval before M11 conditional architecture evolution and M12 integration. No M8.4 plan or implementation result automatically authorizes Track B.
+2. Preserve the [M9 evaluation](tasks/m9/05-execution.md) and the four reservations ratified by [M10 human approval](tasks/m10/01-release-sign-off.md).
+3. Deliver M11 under its [six-task plan](tasks/m11/README.md) and independently adjudicate G7 before starting M12 integration.

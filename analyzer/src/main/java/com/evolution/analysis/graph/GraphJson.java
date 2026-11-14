@@ -27,6 +27,7 @@ public final class GraphJson {
     @FunctionalInterface public interface ValueConsumer {void accept(Object value)throws java.io.IOException;}
     public interface MemberReader {
         Object read()throws java.io.IOException;
+        void skip()throws java.io.IOException;
         void object(ObjectConsumer consumer)throws java.io.IOException;
         void array(ValueConsumer consumer)throws java.io.IOException;
     }

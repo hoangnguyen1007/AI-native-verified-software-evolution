@@ -52,6 +52,27 @@ class PartitionedGraphStoreTest {
         assertFalse(Files.exists(aborted.resolve(graph.identity().value().substring(7)+".partitions.json")));
     }
     @TempDir Path directory;
+    @Test void typedPublicationKeepsTheSameRootWithoutRebuildingADiskProjection()throws Exception {
+        var base=FileGraphStoreTest.graph();
+        var proof=GraphEvidence.capture("fixture.utf8",Map.of("text","Tiếng Việt \uD83D\uDCFA \"quote\" \\ slash\n"));
+        var proofs=new ArrayList<>(base.evidence());proofs.add(proof);
+        var graph=new KnowledgeGraph(base.snapshot(),base.contexts(),base.nodes(),base.edges(),proofs);
+        Path direct=directory.resolve("direct"),legacy=directory.resolve("legacy"),snapshots=directory.resolve("snapshots");
+        var store=new PartitionedGraphStore(direct,64_000_000,1,channel->{
+            try(var paths=Files.list(direct)) {
+                assertFalse(paths.anyMatch(p->p.getFileName().toString().endsWith(".sqlite")),
+                        "Publishing an already validated graph must not spool it through SQLite");
+            }
+            channel.force(true);
+        });
+        store.save(graph,()->false);
+        new PartitionedGraphStore(legacy).build(graph,snapshots,()->false,workspace->{});
+        String pointer=graph.identity().value().substring(7)+".partitions.json";
+        assertArrayEquals(Files.readAllBytes(legacy.resolve(pointer)),Files.readAllBytes(direct.resolve(pointer)));
+        var reopened=new PartitionedGraphStore(direct);
+        assertEquals(Optional.of(proof),reopened.evidence(graph.identity(),proof.identity()));
+        assertTrue(reopened.verifyPublished(graph.identity(),()->false));
+    }
     @Test void legacyGraphAssemblyRetainsEdgesAndNeverPublishesDanglingContributions()throws Exception {
         var graph=fixture();Path snapshots=directory.resolve("snapshots");var store=new PartitionedGraphStore(directory.resolve("pages"));
         var result=store.build(graph,snapshots,()->false,workspace->{});assertEquals(graph.identity(),result.graph());
@@ -208,8 +229,10 @@ class PartitionedGraphStoreTest {
         assertThrows(java.util.concurrent.CancellationException.class,()->store.save(graph,()->true));
         assertThrows(java.io.IOException.class,()->store.partitions(graph.identity(),10,Optional.empty()));
         store.save(graph,()->false);var partition=store.partitions(graph.identity(),10,Optional.empty()).items().getFirst();
+        assertTrue(store.verifyPublished(graph.identity(), () -> false));
         String hex=partition.segment().digest().value().substring(7);
         Files.writeString(directory.resolve("content/sha256/"+hex.substring(0,2)+"/"+hex.substring(2)),"corrupt");
+        assertThrows(java.io.IOException.class,()->store.verifyPublished(graph.identity(), () -> false));
         assertThrows(java.io.IOException.class,()->new PartitionedGraphStore(directory).nodes(partition,10,Optional.empty()));
     }
     @Test void publicStoreCoalescesIntermediateLeafForcesAndPreservesColdIntegrity()throws Exception{

@@ -120,7 +120,8 @@ public final class CanonicalGraphBuilder {
         });
         for(var spring:input.spring())p.spring(spring);
         input.issues().forEach(i->p.node(i.identity().value(),repository,"ACQUISITION_ISSUE",p.artifact("ingestion.issue",i)));
-        input.gaps().forEach(g->p.gapRecord(repository,g));
+        p.gapRecords(repository, input.gaps(), input.ingestion()
+                .map(UniversalIngestionPipeline.Result::gaps).orElseGet(List::of));
         ledgers.forEach(p::ledger);
         return p;
     }
@@ -134,6 +135,14 @@ public final class CanonicalGraphBuilder {
         final Map<String,ContentDigest> statements;
         final Map<String,String> injectionUses=new HashMap<>();
         final Map<String,ContentDigest> requiredAttempts;
+        // Scope the cache to one projection and keep at most one variant per stable gap.
+        // The full record decides reuse. The stable ID excludes diagnostics and history.
+        final Map<CapabilityGapIdentity, EncodedGap> gapEvidence = new LinkedHashMap<>(256, .75f, true) {
+            @Override protected boolean removeEldestEntry(Map.Entry<CapabilityGapIdentity, EncodedGap> eldest) {
+                return size() > 4096;
+            }
+        };
+        record EncodedGap(CapabilityGapRecord record, ContentDigest evidence) {}
         Optional<SnapshotIdentity> javaBase=Optional.empty();
         Set<String> historicalGaps=Set.of();
         final Map<String,ContentDigest> gapDispositions=new HashMap<>();
@@ -531,11 +540,35 @@ public final class CanonicalGraphBuilder {
         }
         void gapRecord(String context,CapabilityGapRecord gap) {
             if(!gap.context().snapshotIdentity().equals(snapshot)&&!javaBase.filter(gap.context().snapshotIdentity()::equals).isPresent())throw new IllegalArgumentException("Foreign graph capability gap snapshot");
-            var payload=artifact("evidence.gap",gap);node(gap.gapIdentity().value(),context,historicalGaps.contains(gap.gapIdentity().value())?"HISTORICAL_CAPABILITY_GAP":"CAPABILITY_GAP",payload);
-            var disposition=gapDispositions.get(gap.gapIdentity().value());
-            if(disposition!=null)node(gap.gapIdentity().value(),context,historicalGaps.contains(gap.gapIdentity().value())?"HISTORICAL_CAPABILITY_GAP":"CAPABILITY_GAP",disposition);
+            var id = gap.gapIdentity();
+            var encoded = gapEvidence.get(id);
+            if (encoded == null || !encoded.record().equals(gap)) {
+                encoded = new EncodedGap(gap, artifact("evidence.gap", gap));
+                gapEvidence.put(id, encoded);
+            }
+            var payload = encoded.evidence();
+            String kind = historicalGaps.contains(id.value()) ? "HISTORICAL_CAPABILITY_GAP" : "CAPABILITY_GAP";
+            node(id.value(), context, kind, payload);
+            var disposition=gapDispositions.get(id.value());
+            if(disposition!=null)node(id.value(),context,kind,disposition);
             String expectedContext=gap.context().analysisIdentity().map(AnalysisIdentity::value).orElse(snapshot.value());
             gap.acquisitionAttemptReferences().forEach(ref->requiredAttempts.put(key(expectedContext,ref.value()),payload));
+        }
+        void gapRecords(String context, List<CapabilityGapRecord> gaps, List<CapabilityGapRecord> projected) {
+            // The ingestion and final lists are usually sorted by gap ID. Walk the
+            // earlier list once and use the node's existing evidence only on exact
+            // record equality. No index proportional to the gap population is needed.
+            var previous = projected.iterator();
+            CapabilityGapRecord prior = previous.hasNext() ? previous.next() : null;
+            for (var gap : gaps) {
+                while (prior != null && prior.compareTo(gap) < 0)
+                    prior = previous.hasNext() ? previous.next() : null;
+                if (gap.equals(prior) && gap.acquisitionAttemptReferences().isEmpty()) {
+                    // Same repository node, kind, evidence and disposition already written.
+                    continue;
+                }
+                gapRecord(context, gap);
+            }
         }
         void projectionGap(String context,String subjectIdentity,ContentDigest support,String reason) {
             var provider=new VersionedIdentifier("graph.canonical-builder","m5.1-v1");

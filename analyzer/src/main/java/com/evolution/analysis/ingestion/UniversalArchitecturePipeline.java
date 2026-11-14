@@ -295,10 +295,17 @@ public final class UniversalArchitecturePipeline {
     }
 
     public DetailedResult runWithEvidence(RepositoryAcquisitionResult acquisition, Policy policy) {
-        Objects.requireNonNull(acquisition);
         Objects.requireNonNull(policy);
-        var decoder = new RepositoryInputDecoder();
-        var decoded = decoder.decode(acquisition, policy.decodePolicy());
+        return runWithEvidence(new RepositoryInputDecoder.Prepared(acquisition, policy.decodePolicy()), policy);
+    }
+
+    public DetailedResult runWithEvidence(RepositoryInputDecoder.Prepared prepared, Policy policy) {
+        Objects.requireNonNull(prepared);
+        Objects.requireNonNull(policy);
+        if (!prepared.policy().equals(policy.decodePolicy()))
+            throw new IllegalArgumentException("Prepared decoding policy differs from analysis policy");
+        var acquisition = prepared.acquisition();
+        var decoded = prepared.result();
         if (decoded.inputs().isEmpty()) {
             return new DetailedResult(
                     buildTerminalReport(decoded.identity(), acquisition.snapshot(), Optional.of(decoded.inventory()),
@@ -1038,7 +1045,7 @@ public final class UniversalArchitecturePipeline {
                                     pipelineResult.sourceIngestion(), List.of(unit), List.of(),
                                     workspace.freeze(relatedRows));
                             var plan = pipeline.prepareSpring(scopedPipeline, unit.sourceSet(), scope.get(),
-                                    Math.min(policy.maxTypes(), 1000));
+                                    policy.maxTypes());
                             allGaps.addAll(plan.gaps());
                             int artifactIndex = springArtifacts.size();
                             springArtifacts.add(new com.evolution.analysis.graph.CanonicalGraphInput.SpringSlice(

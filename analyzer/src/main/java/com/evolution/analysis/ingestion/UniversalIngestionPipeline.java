@@ -33,7 +33,8 @@ public final class UniversalIngestionPipeline {
         public ContentDigest identity(){return IngestionEvidence.digest(List.of(inputIdentity,sourceIngestion.identity(),units,issues,gaps));}
     }
     public Result run(UniversalSourceIngestion.Result sources,SemanticFrontend frontend,VersionedIdentifier frontendProvider,int maxTypes,int maxParameters) {
-        return run(sources,frontend,frontendProvider,maxTypes,maxParameters,Runtime.getRuntime().availableProcessors(),Math.max(32L<<20,Runtime.getRuntime().maxMemory()/3));
+        return run(sources,frontend,frontendProvider,maxTypes,maxParameters,
+                com.evolution.analysis.concurrent.BoundedTasks.automaticWorkers(),Math.max(32L<<20,Runtime.getRuntime().maxMemory()/3));
     }
     /** Scheduling bounds are operational, not semantic inputs. Merge in input order so
      * identical captured evidence yields identical results at every worker count. */
@@ -76,7 +77,17 @@ public final class UniversalIngestionPipeline {
             if(failure.getCause() instanceof RuntimeException runtime)throw runtime;
             if(failure.getCause() instanceof Error error)throw error;
             throw new IllegalStateException("INGESTION_WORKER_FAILED",failure.getCause());
-        } finally {for(var task:active.keySet())task.cancel(true);executor.shutdownNow();if(active.isEmpty())((ConcurrentSemanticFrontend)frontend).releaseCompletedContexts();}
+        } finally {
+            for(var task:active.keySet())task.cancel(true);
+            executor.shutdownNow();
+            // Workers can still own request rows and provider caches after cancellation.
+            boolean interrupted=Thread.interrupted();
+            try {
+                while(!executor.isTerminated())try{executor.awaitTermination(100,java.util.concurrent.TimeUnit.MILLISECONDS);}
+                catch(InterruptedException again){interrupted=true;}
+                if(!active.isEmpty())((ConcurrentSemanticFrontend)frontend).releaseCompletedContexts();
+            } finally {if(interrupted)Thread.currentThread().interrupt();}
+        }
         return merge(sources,identity,Arrays.asList(results));
     }
     private Result merge(UniversalSourceIngestion.Result sources,ContentDigest identity,Collection<Result> results) {

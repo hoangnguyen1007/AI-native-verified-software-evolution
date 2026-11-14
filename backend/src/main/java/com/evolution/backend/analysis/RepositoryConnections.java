@@ -100,12 +100,18 @@ public final class RepositoryConnections {
         if(!revision.matches("[A-Za-z0-9._-]{1,256}"))throw new IllegalArgumentException("Invalid acquisition revision");
         try(var intake=new RepositoryIntake(directory.resolve("acquisition"))){return intake.readinessPage(revision,section,size,cursor);}
     }
+    public Object publishedOverview(String revision)throws IOException{
+        if(!revision.matches("[A-Za-z0-9._-]{1,256}"))throw new IllegalArgumentException("Invalid acquisition revision");
+        try(var intake=new RepositoryIntake(directory.resolve("acquisition"),true)){
+            return intake.publishedOverview(revision);
+        }
+    }
     private LocalAnalysisRunner.Input input(Path source,RepositoryIdentity repository,Optional<String> revision,boolean dirty,Optional<LocalAnalysisRunner.PolicyInput> policy) {
         var normalized=directory.toAbsolutePath().normalize();
         var exclusions=normalized.startsWith(source) ? List.of(source.relativize(normalized).toString().replace('\\','/')) : List.<String>of();
         return new LocalAnalysisRunner.Input(source,repository,jdk,release,cache,revision,dirty,false,exclusions,policy,LocalAnalysisRunner.SpringInput.absent());
     }
-    private AnalysisJobs.Outcome cloneAndRun(String url,RepositoryIdentity repository,Optional<LocalAnalysisRunner.PolicyInput> policy,AnalysisJobs.Control control) throws Exception {
+    private AnalysisJobs.RunResult cloneAndRun(String url,RepositoryIdentity repository,Optional<LocalAnalysisRunner.PolicyInput> policy,AnalysisJobs.Control control) throws Exception {
         control.stage(AnalysisJobs.Stage.ACQUISITION);
         String code="REMOTE_FETCH_FAILED";RepositoryAcquisitionResult acquisition=null;Optional<String> pin=Optional.empty();
         try(var intake=new RepositoryIntake(directory.resolve("acquisition"))) {

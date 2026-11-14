@@ -24,7 +24,7 @@ final class SafeGitProcess implements AutoCloseable {
         Path empty=StreamingContentStore.directory(workspace.resolve("empty-config"));
         var command=new ArrayList<String>(List.of(executable,"-c","credential.helper=","-c","core.hooksPath="+empty,"-c","protocol.allow=never",
                 "-c","protocol.https.allow=always","-c","protocol.ssh.allow=always","-c","http.followRedirects=false","-c","http.sslVerify=true",
-                "-c","http.proxy=","-c","http.emptyAuth=false","-c","http.delegation=none","-c","http.proactiveAuth=none","-c","core.autocrlf=false","-c","http.lowSpeedLimit=1","-c","http.lowSpeedTime="+Math.max(1,idleMillis/1000),"-c","fetch.fsckObjects=true","-c","transfer.fsckObjects=true"));
+                "-c","http.proxy=","-c","http.emptyAuth=false","-c","http.delegation=none","-c","http.proactiveAuth=none","-c","core.autocrlf=false","-c","core.longpaths=true","-c","http.lowSpeedLimit=1","-c","http.lowSpeedTime="+Math.max(1,idleMillis/1000),"-c","fetch.fsckObjects=true","-c","transfer.fsckObjects=true"));
         if(endpoint.isPresent()){
             var target=endpoint.orElseThrow();String host=target.uri().getHost();
             if(target.uri().getScheme().equals("https")){

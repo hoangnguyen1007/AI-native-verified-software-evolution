@@ -41,7 +41,13 @@ public final class ArchitectureHttpServer implements AutoCloseable {
                 sendJsonResponse(exchange, api.error(403,"FORBIDDEN_ORIGIN"));
                 return;
             }
-            if (!(acquired=slots.tryAcquire())) {
+            try {
+                if (!(acquired=slots.tryAcquire(Math.min(api.limits().queryTimeoutMillis(), 30_000L), TimeUnit.MILLISECONDS))) {
+                    sendJsonResponse(exchange, api.error(503,"BUSY"));
+                    return;
+                }
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
                 sendJsonResponse(exchange, api.error(503,"BUSY"));
                 return;
             }

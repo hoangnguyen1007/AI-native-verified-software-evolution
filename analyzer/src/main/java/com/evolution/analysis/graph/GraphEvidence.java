@@ -11,6 +11,8 @@ import java.util.*;
 
 /** Lossless canonical provider payload; its digest is distinct from provider semantic identity. */
 public record GraphEvidence(ContentDigest identity, String family, String canonicalJson) {
+    private static final Set<String> SEMANTIC_PROVENANCE = Set.of("repository.snapshot", "analysis.manifest",
+            "source.request", "repository.acquisition", "evidence.attempt", "evidence.ledger", "evidence.ledger-index");
     private record Accessor(String name,Method method) {}
     // RecordComponent.getAccessor() creates fresh Method objects. Repeating that per value also
     // rebuilds JDK method-handle accessors across large observation/gap ledgers.
@@ -20,11 +22,14 @@ public record GraphEvidence(ContentDigest identity, String family, String canoni
         }
     };
     public GraphEvidence {
-        Objects.requireNonNull(identity); family=ContractChecks.token(family,"graph evidence family");
-        Objects.requireNonNull(canonicalJson);
-        if (!canonicalJson.equals(CanonicalJson.write(GraphJson.read(canonicalJson, GraphJson.Limits.defaults()))))
+        Objects.requireNonNull(identity);
+        family = ContractChecks.token(family, "graph evidence family");
+        // Retain the legacy round trip for rejected fast-path inputs so the
+        // decoder still classifies unusual spellings and limits precisely.
+        if (!CanonicalEvidenceJson.isCanonical(Objects.requireNonNull(canonicalJson))
+                && !canonicalJson.equals(CanonicalJson.write(GraphJson.read(canonicalJson, GraphJson.Limits.defaults()))))
             throw new IllegalArgumentException("Noncanonical graph evidence");
-        if(!identity.equals(digest(family,canonicalJson))) throw new IllegalArgumentException("Graph evidence hash mismatch");
+        if (!identity.equals(digest(family, canonicalJson))) throw new IllegalArgumentException("Graph evidence hash mismatch");
     }
     public static GraphEvidence capture(String family, Object payload) {
         String json=CanonicalJson.write(form(payload,0));
@@ -32,22 +37,20 @@ public record GraphEvidence(ContentDigest identity, String family, String canoni
     }
     /** Semantic replay excludes only known provenance timestamps/revision labels, never configuration values. */
     public ContentDigest semanticIdentity() {
-        Object form=GraphJson.read(canonicalJson,GraphJson.Limits.defaults());
-        if(Set.of("repository.snapshot","analysis.manifest","source.request","repository.acquisition","evidence.attempt","evidence.ledger","evidence.ledger-index").contains(family)) {
-            var copy=new TreeMap<>(GraphJson.object(form));
-            switch(family) {
-                case "repository.snapshot" -> removeSnapshotLabels(copy);
-                case "analysis.manifest","repository.acquisition" -> snapshotMember(copy);
-                case "source.request" -> {
-                    var manifest=new TreeMap<>(GraphJson.object(copy.get("manifest")));snapshotMember(manifest);copy.put("manifest",manifest);
-                }
-                case "evidence.attempt" -> removeTiming(copy);
-                case "evidence.ledger","evidence.ledger-index" -> copy.put("attempts",GraphJson.array(copy.get("attempts")).stream().map(a->{var row=new TreeMap<>(GraphJson.object(a));removeTiming(row);return row;}).toList());
-                default -> throw new IllegalStateException("Unknown semantic evidence family");
+        // Construction has already checked both the canonical preimage and the digest.
+        if (!SEMANTIC_PROVENANCE.contains(family)) return identity;
+        var copy=new TreeMap<>(GraphJson.object(GraphJson.read(canonicalJson,GraphJson.Limits.defaults())));
+        switch(family) {
+            case "repository.snapshot" -> removeSnapshotLabels(copy);
+            case "analysis.manifest","repository.acquisition" -> snapshotMember(copy);
+            case "source.request" -> {
+                var manifest=new TreeMap<>(GraphJson.object(copy.get("manifest")));snapshotMember(manifest);copy.put("manifest",manifest);
             }
-            form=copy;
+            case "evidence.attempt" -> removeTiming(copy);
+            case "evidence.ledger","evidence.ledger-index" -> copy.put("attempts",GraphJson.array(copy.get("attempts")).stream().map(a->{var row=new TreeMap<>(GraphJson.object(a));removeTiming(row);return row;}).toList());
+            default -> throw new IllegalStateException("Unknown semantic evidence family");
         }
-        return digest(family,CanonicalJson.write(form));
+        return digest(family,CanonicalJson.write(copy));
     }
     private static void removeSnapshotLabels(Map<String,Object> snapshot) {snapshot.remove("revision");snapshot.remove("dirty");}
     private static void removeTiming(Map<String,Object> attempt) {attempt.remove("startedAt");attempt.remove("completedAt");}

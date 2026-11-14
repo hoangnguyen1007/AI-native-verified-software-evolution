@@ -49,6 +49,8 @@ public final class KnowledgeGraph {
     private final ContentDigest identity;
     private final Map<String,List<Edge>> outgoing,incoming;
     private final Map<ContentDigest,GraphEvidence> evidenceIndex;
+    private volatile ContentDigest semanticIdentity;
+    private volatile GraphManifest manifest;
     public KnowledgeGraph(SnapshotIdentity snapshot,List<Context> contexts,List<Node> nodes,List<Edge> edges,List<GraphEvidence> evidence) {
         this.snapshot=Objects.requireNonNull(snapshot);this.contexts=sorted(contexts,Context::identity);
         this.nodes=sorted(nodes,n->key(n.context(),n.identity()));this.edges=sorted(edges,e->key(e.context(),e.identity()));
@@ -77,20 +79,61 @@ public final class KnowledgeGraph {
     public List<Context> contexts() {return contexts;}
     public List<Node> nodes() {return nodes;}
     public List<Edge> edges() {return edges;}
+    public List<Node> nodes(String context) {return inContext(nodes,Node::context,context);}
+    public List<Edge> edges(String context) {return inContext(edges,Edge::context,context);}
+    private static <T> List<T> inContext(List<T> rows,Function<T,String> key,String context) {
+        // Rows are ordered by context + "|" + identity; use the delimiter to preserve
+        // that exact ordering even when one valid context string prefixes another.
+        String prefix=context+"|";
+        return rows.subList(lower(rows,key,prefix),lower(rows,key,context+"}"));
+    }
+    private static <T> int lower(List<T> rows,Function<T,String> key,String boundary) {
+        int from=0,to=rows.size();
+        while(from<to){
+            int mid=(from+to)>>>1;
+            if((key.apply(rows.get(mid))+"|").compareTo(boundary)<0)from=mid+1;
+            else to=mid;
+        }
+        return from;
+    }
     public List<GraphEvidence> evidence() {return evidence;}
     public ContentDigest identity() {return identity;}
-    public GraphManifest manifest() {return new GraphManifest(SCHEMA,identity,semanticIdentity(),snapshot,contexts,nodes.size(),edges.size(),evidence.size());}
+    public GraphManifest manifest() {
+        var m = manifest;
+        if (m != null) return m;
+        return manifest = new GraphManifest(SCHEMA,identity,semanticIdentity(),snapshot,contexts,nodes.size(),edges.size(),evidence.size());
+    }
     /** Content identity above preserves every byte; this identity is for semantic replay across telemetry changes. */
     public ContentDigest semanticIdentity() {
+        var cached = semanticIdentity;
+        if (cached != null) return cached;
         var semantic=new HashMap<ContentDigest,ContentDigest>();evidence.forEach(e->semantic.put(e.identity(),e.semanticIdentity()));
-        var contextValues=contexts.stream().map(c->List.of(c.identity(),c.snapshot(),c.analysis(),semantic.get(c.evidence()))).toList();
-        var nodeValues=nodes.stream().map(n->List.of(n.identity(),n.context(),n.kind(),n.evidence().stream().map(semantic::get).distinct().sorted().toList())).toList();
-        var edgeValues=edges.stream().map(e->List.of(e.identity(),e.context(),e.kind(),e.source(),e.target(),e.evidence().stream().map(semantic::get).distinct().sorted().toList(),e.region())).toList();
-        return CanonicalJson.sha256(List.of(SCHEMA,"semantic-replay:v1",snapshot,contextValues,nodeValues,edgeValues,semantic.values().stream().distinct().sorted().toList()));
+        var contextValues=mapped(contexts,c->List.of(c.identity(),c.snapshot(),c.analysis(),semantic.get(c.evidence())));
+        var nodeValues=mapped(nodes,n->List.of(n.identity(),n.context(),n.kind(),semanticSupport(n.evidence(),semantic)));
+        var edgeValues=mapped(edges,e->List.of(e.identity(),e.context(),e.kind(),e.source(),e.target(),semanticSupport(e.evidence(),semantic),e.region()));
+        return semanticIdentity = CanonicalJson.sha256(List.of(SCHEMA,"semantic-replay:v1",snapshot,contextValues,nodeValues,edgeValues,semantic.values().stream().distinct().sorted().toList()));
+    }
+    private static List<ContentDigest> semanticSupport(List<ContentDigest> rows, Map<ContentDigest, ContentDigest> semantic) {
+        return rows.size() == 1 ? List.of(semantic.get(rows.getFirst()))
+                : rows.stream().map(semantic::get).distinct().sorted().toList();
+    }
+    private static <T,R> List<R> mapped(List<T> rows, Function<T,R> projection) {
+        return new AbstractList<>() {
+            @Override public int size() { return rows.size(); }
+            @Override public R get(int index) { return projection.apply(rows.get(index)); }
+        };
     }
     public List<String> entityIdentities() {return nodes.stream().filter(n->n.identity().startsWith("entity:")).map(Node::identity).distinct().toList();}
     public List<Edge> outgoing(String context,String node) {return outgoing.getOrDefault(key(context,node),List.of());}
     public List<Edge> incoming(String context,String node) {return incoming.getOrDefault(key(context,node),List.of());}
+    public record Adjacent(String node, Edge edge) {}
+    /** In context/node/edge identity order, using the indexes already validated by this graph. */
+    public java.util.stream.Stream<Adjacent> adjacency(boolean reverse) {
+        return (reverse ? incoming : outgoing).entrySet().stream().flatMap(entry -> {
+            String node = entry.getKey().substring(entry.getKey().indexOf('|') + 1);
+            return entry.getValue().stream().map(edge -> new Adjacent(node, edge));
+        });
+    }
     public Optional<GraphEvidence> evidence(ContentDigest digest) {return Optional.ofNullable(evidenceIndex.get(Objects.requireNonNull(digest)));}
     public Object canonicalForm() {return Map.of("schema",SCHEMA,"snapshot",snapshot,"contexts",contexts,"nodes",nodes,"edges",edges,"evidence",evidence);}
     public static String derivedIdentity(String kind,Object inputs) {

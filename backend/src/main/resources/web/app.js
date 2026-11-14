@@ -2,7 +2,7 @@
 (() => {
   'use strict';
   const M = window.EvoModel, $ = id => document.getElementById(id);
-  const state = {setups: [], connections: [], jobs: [], labels: new Map(), setup: null, job: null, graph: null, contexts: [], reports: [], context: '', tab: 'overview', epoch: 0, pollGeneration: 0, historyLimit: 20, cy: null, online: false, retry: null};
+  const state = {setups: [], connections: [], jobs: [], labels: new Map(), setup: null, job: null, resultJob: null, graph: null, contexts: [], reports: [], context: '', tab: 'overview', epoch: 0, pollGeneration: 0, historyLimit: 50, cy: null, online: false, retry: null, submitting: null};
   const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = String(text); return n; };
   const append = (parent, ...children) => { children.filter(Boolean).forEach(child => parent.append(child)); return parent; };
   const safe = async action => { try { await action(); } catch (error) { if (error.name !== 'AbortError') notice(error.message, true); } };
@@ -40,9 +40,9 @@
   }
   function notice(message, error = false) { $('notice').hidden = !message; $('notice').textContent = message || ''; $('notice').classList.toggle('error', error); }
   async function api(path, body, signal) {
-    const timeout = AbortSignal.timeout(30000), combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
+    const timeout = AbortSignal.timeout(180000), combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
     let response;
-    try { response = await fetch('/api/v1' + path, {method: body === undefined ? 'GET' : 'POST', headers: {Accept: 'application/json', ...(body === undefined ? {} : {'Content-Type': 'application/json'})}, ...(body === undefined ? {} : {body: JSON.stringify(body)}), signal: combined}); }
+    try { response = await fetch((path.startsWith('/api/') ? '' : '/api/v1') + path, {method: body === undefined ? 'GET' : 'POST', headers: {Accept: 'application/json', ...(body === undefined ? {} : {'Content-Type': 'application/json'})}, ...(body === undefined ? {} : {body: JSON.stringify(body)}), signal: combined}); }
     catch (error) { if (signal?.aborted) throw error; throw new Error(error.name === 'TimeoutError' ? 'The server took too long. Retry or narrow the request.' : 'Cannot reach the analysis server. Check that it is running, then refresh.'); }
     const envelope = await response.json();
     if (!response.ok || envelope.error) throw new Error(M.apiError(envelope.error?.code));
@@ -50,7 +50,35 @@
   }
   const repoLabel = id => state.connections.find(c => c.setup === id)?.label || id;
   function invalidate() { state.epoch++; state.view?.abort(); state.cy?.destroy(); state.cy = null; closeInspector(); $('view-status').textContent = ''; }
-  function resetResult() { state.discovery?.abort(); invalidate(); state.graphFocus = null; state.explorer = null; state.graph = null; state.context = ''; state.contexts = []; state.reports = []; $('analysis-workspace').hidden = true; $('welcome').hidden = false; }
+  function clearReadiness() {
+    state.readiness?.abort(); state.readiness = null;
+    $('readiness-overview').hidden = true; $('readiness-overview').replaceChildren();
+  }
+  function resetResult() { state.discovery?.abort(); state.publication?.abort(); clearReadiness(); invalidate(); state.graphFocus = null; state.explorer = null; state.graph = null; state.resultJob = null; state.context = ''; state.contexts = []; state.reports = []; $('analysis-workspace').hidden = true; $('welcome').hidden = false; updateResultStatus(); }
+  function updateResultStatus() {
+    const job = state.job, displayed = state.resultJob;
+    const checking = (state.submitting && state.submitting === state.retry) ||
+      (job && !M.terminal(job) && ['QUEUED', 'ACQUISITION', 'PLATFORM'].includes(job.stage));
+    let message = '';
+    if (displayed && (checking || displayed.id !== job?.id)) {
+      message = checking ? 'Checking current inputs. Showing a previous analysis until verification finishes.'
+        : 'Showing a previous analysis. Its results are not verified against the current inputs.';
+    } else if (job?.reuse) {
+      message = 'Matching inputs verified. Reused the analysis from ' + new Date(job.reuse.sourceFinishedAt).toLocaleString() + '.';
+    } else if (checking) {
+      message = 'Checking current inputs…';
+    }
+    if ($('result-status').textContent !== message) $('result-status').textContent = message;
+  }
+  function syncRunControls() {
+    const busy = state.submitting || (state.job && !M.terminal(state.job));
+    const unavailable = !state.online || !state.setup || Boolean(busy);
+    $('analyze').disabled = unavailable;
+    $('analyze').textContent = state.retry && !state.submitting ? 'Retry submission' : 'Run analysis ↗';
+    $('analyze-force').hidden = !state.capabilities?.analysisResultReuseEnabled ||
+      !(state.job?.result?.graph || state.resultJob?.setup === state.setup && state.resultJob?.result?.graph);
+    $('analyze-force').disabled = unavailable || Boolean(state.retry);
+  }
   function renderSidebar() {
     const repos = $('repositories'); repos.replaceChildren();
     if (!state.setups.length) repos.append(el('p', 'muted small', state.online ? 'No repositories connected yet.' : 'Server unavailable. Refresh to retry.'));
@@ -70,7 +98,7 @@
   }
   async function refreshHistory(more = false) {
     if (!state.online || !state.capabilities?.analysisJobsEnabled) return;
-    if (more) { state.historyLimit += 20; renderSidebar(); return; }
+    if (more) { state.historyLimit += 50; renderSidebar(); return; }
     let cursor, jobs = [];
     do { const page = await api('/analysis/jobs/history', {size: 50, ...(cursor ? {cursor} : {})}); jobs.push(...page.items); cursor = page.continuation; } while (cursor);
     state.jobs = jobs;
@@ -95,20 +123,21 @@
       let saved; try { saved = localStorage.getItem('evo_repository'); } catch (_) {}
       if (!state.setup && state.setups.some(setup => setup.id === saved)) await selectRepo(saved);
       else if (!state.setup && state.setups.length === 1) await selectRepo(state.setups[0].id); else renderSidebar();
+      syncRunControls();
       if (!state.capabilities.analysisJobsEnabled) notice('This server is read-only. Start the workbench server to connect repositories and run analyses.');
-    } catch (error) { state.online = false; $('connection-status').textContent = 'Server unavailable'; $('connection-dot').classList.remove('online'); $('analyze').disabled = true; renderSidebar(); notice(error.message, true); }
+    } catch (error) { state.online = false; $('connection-status').textContent = 'Server unavailable'; $('connection-dot').classList.remove('online'); syncRunControls(); renderSidebar(); notice(error.message, true); }
   }
   async function selectRepo(id) {
     state.setup = id; state.job = null; state.retry = null; state.pollGeneration++; resetResult(); $('job-panel').hidden = true;
     try { localStorage.setItem('evo_repository', id); } catch (_) {}
-    $('search').value = ''; state.tab = 'overview'; state.historyLimit = 20;
+    $('search').value = ''; state.tab = 'overview'; state.historyLimit = 50;
     $('welcome').querySelector('h2').textContent = 'Ready to inspect your code';
     $('welcome').querySelector('p').textContent = 'Run an analysis to capture the current source, then explore its architecture and evidence.';
     $('welcome').querySelector('button').textContent = 'Connect another repository';
     $('repository-title').textContent = repoLabel(id); $('repository-description').textContent = 'Run an analysis to inspect this repository. Results stay linked to their captured source.';
-    $('analyze').disabled = !state.online; $('analyze').textContent = 'Run analysis ↗';
+    syncRunControls();
     closeMobileSidebar(); const latest = state.jobs.find(job => job.setup === id); renderSidebar();
-    if (latest) await selectJob(latest);
+    if (latest) await selectJob(latest, true);
   }
   async function connectRepository(event) {
     event.preventDefault(); $('connect-error').hidden = true; $('connect-submit').disabled = true;
@@ -120,13 +149,21 @@
     } catch (error) { $('connect-error').textContent = error.message; $('connect-error').hidden = false; $('repository-source').focus(); }
     finally { $('connect-submit').disabled = false; }
   }
-  async function submit() {
-    if (!state.setup) return;
-    $('analyze').disabled = true; notice(''); const setup = state.setup;
-    state.retry ||= {setup, idempotencyKey: crypto.randomUUID()};
-    try { const job = await api('/analysis/jobs', state.retry); state.retry = null; if (state.setup === setup) await selectJob(job); await refreshHistory(); }
-    catch (error) { if (state.setup === setup) $('analyze').textContent = 'Retry submission'; throw error; }
-    finally { if (!state.job || M.terminal(state.job)) $('analyze').disabled = !state.online; }
+  async function submit(force = false) {
+    if (!state.setup || state.submitting || (state.job && !M.terminal(state.job))) return;
+    notice('');
+    const setup = state.setup, generation = state.pollGeneration;
+    const request = state.retry ||= {setup, idempotencyKey: crypto.randomUUID(), ...(force ? {force: true} : {})};
+    state.submitting = request; syncRunControls(); updateResultStatus();
+    try {
+      const job = await api('/analysis/jobs', request);
+      if (state.retry === request) state.retry = null;
+      if (state.setup === setup && state.pollGeneration === generation) await selectJob(job, true);
+      await refreshHistory();
+    } finally {
+      if (state.submitting === request) state.submitting = null;
+      syncRunControls(); updateResultStatus();
+    }
   }
   function renderJob(job) {
     $('job-panel').hidden = false; $('welcome').hidden = true;
@@ -134,66 +171,125 @@
     const messages = {PARTIAL: 'Some evidence is missing. Inspect limitations before drawing conclusions.', FAILED: 'Analysis failed. Open input diagnostics and the receipt for the recorded reason.', EMPTY: 'No analyzable Java source was found in this selection.', CANCELLED: 'Analysis was cancelled. No completed result is claimed.', TIMED_OUT: 'Analysis reached its execution limit.', SUCCEEDED: 'Analysis completed. Completion does not mean the architecture has no issues.'};
     $('job-description').textContent = (messages[job.state] || (job.state === 'CANCELLING' ? 'Cancellation requested. Waiting for the worker to stop.' : 'Current step: ' + job.stage.toLowerCase() + '.')) + ' · ' + (job.elapsedMillis / 1000).toFixed(1) + ' s' + (job.result ? ' · ' + job.result.gapCount + ' recorded limitations' : '');
     $('job-evidence-tier').hidden = !job.result?.graph;
-    if (job.result?.graph) $('repository-description').textContent = 'Captured ' + new Date(job.finishedAt || job.submittedAt).toLocaleString() + ' · Run a new analysis after changing the source.';
-    $('cancel-job').hidden = M.terminal(job); $('cancel-job').disabled = job.state === 'CANCELLING'; $('analyze').disabled = !M.terminal(job);
+    if (job.result?.graph) $('repository-description').textContent = 'Captured ' + new Date(job.reuse?.sourceFinishedAt || job.finishedAt || job.submittedAt).toLocaleString() + ' · Run a new analysis after changing the source.';
+    $('cancel-job').hidden = M.terminal(job); $('cancel-job').disabled = job.state === 'CANCELLING'; syncRunControls(); updateResultStatus();
     $('job-diagnostics').disabled = !M.terminal(job); $('job-gaps').disabled = !M.terminal(job);
     $('job-events').replaceChildren(...job.events.map(event => el('li', '', event.stage.toLowerCase())));
   }
-  async function selectJob(job) {
-    state.job = job; state.setup = job.setup; state.retry = null; state.pollGeneration++; resetResult(); $('repository-title').textContent = repoLabel(job.setup); renderJob(job); renderSidebar();
+  async function selectJob(job, keepPrevious = false) {
+    state.job = job; state.setup = job.setup; state.retry = null; state.pollGeneration++;
+    state.discovery?.abort();
+    clearReadiness();
+    if (!keepPrevious || state.resultJob?.setup !== job.setup) resetResult();
+    $('repository-title').textContent = repoLabel(job.setup); renderJob(job); renderSidebar();
     const generation = state.pollGeneration;
-    if (job.result?.graph) await loadGraph(job.result.graph, job.id, generation);
+    const previous = keepPrevious && !state.graph && state.jobs.find(item => item.setup === job.setup && item.id !== job.id && item.result?.graph);
     if (!M.terminal(job)) poll(job.id, generation);
+    requestReadiness(job, generation);
+    try {
+      if (job.result?.graph) await loadGraph(job, job.id, generation);
+      else if (previous) await loadGraph(previous, job.id, generation);
+    } catch (error) { if (error.name !== 'AbortError') throw error; }
   }
   const selectedJob = (id, generation) => state.job?.id === id && state.pollGeneration === generation;
-  async function poll(id, generation) {
+  function requestReadiness(job, generation) {
+    if (state.readiness || M.terminal(job) || !['PLATFORM','ANALYSIS','GRAPH','POLICY','PUBLICATION'].includes(job.stage)
+        || !state.capabilities?.acquisitionRoutes?.some(route => route.endsWith('/overview'))) return;
+    const controller = new AbortController(); state.readiness = controller;
+    api('/api/v2/acquisitions/' + job.id + '/overview', {}, controller.signal).then(view => {
+      if (!selectedJob(job.id, generation) || M.terminal(state.job) || controller.signal.aborted) return;
+      const panel = $('readiness-overview');
+      const heading = el('h2', '', 'Build structure preview');
+      const qualification = el('p', 'muted small', 'From the captured build descriptors. Semantic relationships, variants and policy results are still being checked.');
+      const totals = el('p', 'small', view.rootCount + ' candidate roots · ' + view.moduleCount + ' candidate modules · ' +
+        view.coverage.selected + ' selected contexts · ' + view.coverage.unknownDimensions + ' unresolved configuration dimensions');
+      const details = append(el('details'), el('summary', '', 'Candidate modules'), el('p', 'muted small', 'Declared module information for this captured input.'));
+      const modules = el('ul');
+      for (const module of view.modules) modules.append(el('li', '', module.directory + ' · ' + module.target +
+        (module.languages.length ? ' · ' + module.languages.join(', ') : '')));
+      details.append(modules);
+      if (view.modules.length < view.moduleCount) details.append(el('p', 'muted small', 'Showing ' + view.modules.length + ' of ' + view.moduleCount + ' modules in this preview.'));
+      panel.replaceChildren(heading, qualification, totals, details);
+      panel.hidden = false;
+    }).catch(() => { /* An unpublished preview does not affect the running analysis. */ });
+  }
+  async function poll(id, generation, since = performance.now()) {
     if (!selectedJob(id, generation)) return;
+    const next = () => setTimeout(() => safe(() => poll(id, generation, since)), performance.now() - since < 2000 ? 250 : 1200);
     try {
       const job = await api('/analysis/jobs/' + id); if (!selectedJob(id, generation)) return;
-      if (job.revision < state.job.revision) { setTimeout(() => safe(() => poll(id, generation)), 1200); return; }
+      if (job.revision < state.job.revision) { next(); return; }
       state.job = job; state.jobs = state.jobs.map(item => item.id === id ? job : item); renderJob(job); renderSidebar();
       if (M.terminal(job)) {
-        if (job.result?.graph) await loadGraph(job.result.graph, id, generation);
+        clearReadiness();
+        if (job.result?.graph) await loadGraph(job, id, generation);
         if (selectedJob(id, generation)) await refreshHistory();
       }
-      else setTimeout(() => safe(() => poll(id, generation)), 1200);
-    } catch (error) { if (selectedJob(id, generation)) { notice(error.message + ' Use Refresh history to reconnect.', true); $('analyze').disabled = true; } }
+      else { requestReadiness(job, generation); next(); }
+    } catch (error) { if (selectedJob(id, generation) && error.name !== 'AbortError') { notice(error.message + ' Use Refresh history to reconnect.', true); syncRunControls(); } }
   }
-  async function loadGraph(graph, jobId, generation) {
+  async function loadGraph(publication, jobId, generation) {
+    const graph = publication.result.graph;
+    const displayed = state.resultJob;
+    if (state.graph === graph && publication.reuse && displayed &&
+        publication.reuse.sourceJob === (displayed.reuse?.sourceJob ?? displayed.id)) {
+      state.resultJob = publication; updateResultStatus(); return;
+    }
+    state.discovery?.abort();
     const controller = new AbortController(); state.discovery = controller;
     const {signal} = controller;
-    const discovery = await api('/graphs/' + graph, undefined, signal); if (!selectedJob(jobId, generation)) return;
-    const reports = [];
-    for (const id of discovery.reports) {
-      const report = await api('/graphs/' + graph + '/reports/' + id, undefined, signal);
-      if (!selectedJob(jobId, generation)) return;
-      reports.push(report);
-    }
-    state.graph = graph; state.contexts = discovery.contexts; state.reports = reports;
+    const current = () => state.discovery === controller && selectedJob(jobId, generation);
+    const discovery = await api('/graphs/' + graph, undefined, signal); if (!current()) return;
+    state.publication?.abort(); state.publication = new AbortController();
+    state.graph = graph; state.resultJob = publication; state.contexts = discovery.contexts; state.reports = []; updateResultStatus();
+    state.reportIds = publication.result.reports ?? discovery.reports ?? [];
+    state.reportLoad = null;
+    state.moduleLabels = new Map(); state.contextKinds = new Map();
     $('analysis-workspace').hidden = false; $('welcome').hidden = true;
     $('context').replaceChildren(el('option', '', 'Choose a context…')); $('context').firstChild.value = ''; let index = 0;
     for (const context of state.contexts) { const option = el('option', '', context.analysis ? 'Analysis context ' + (++index) : 'Repository / acquisition'); option.value = context.identity; option.title = context.identity; $('context').append(option); }
     state.context = state.contexts.length === 1 ? state.contexts[0].identity : ''; $('context').value = state.context;
     await loadTab(state.tab);
-    // Optional human-readable labels come only from recorded canonical provenance.
-    for (const context of discovery.contexts) {
-      if (!selectedJob(jobId, generation)) return;
-      try {
-        const value = await api('/graphs/' + graph + '/queries/provenance', {request: M.request(context.identity), arguments: {}}, signal);
-        if (!selectedJob(jobId, generation)) return;
+  }
+  // Label only the selected context, from recorded provenance.
+  async function labelContext(identity) {
+    const graph = state.graph, publication = state.publication;
+    if (!identity || !publication || state.contextKinds.has(identity)) return;
+    try {
+        const value = await api('/graphs/' + graph + '/queries/provenance', {request: M.request(identity), arguments: {}}, publication.signal);
+        if (state.publication !== publication || publication.signal.aborted) return;
         const evidence=value.items?.[0],build = evidence?.metadata?.build?.moduleSourceSet;
-        state.moduleLabels ||= new Map();if(evidence?.metadata?.module&&evidence.metadata.modulePath)state.moduleLabels.set(evidence.metadata.module,evidence.metadata.modulePath);
-        state.contextKinds ||= new Map();state.contextKinds.set(context.identity,evidence?.family);
-        const option = [...$('context').options].find(n => n.value === context.identity);
+        if(evidence?.metadata?.module&&evidence.metadata.modulePath)state.moduleLabels.set(evidence.metadata.module,evidence.metadata.modulePath);
+        state.contextKinds.set(identity,evidence?.family);
+        const option = [...$('context').options].find(n => n.value === identity);
         if(option&&build){const module=state.moduleLabels.get(build.module)||(build.module?.includes('sha256:')?null:build.module);option.textContent=[evidence.metadata.modulePath||module||(evidence.family==='spring.context'?'Spring configuration':'Java analysis'),evidence.family==='spring.context'&&module?'Spring':null,build.sourceSet?.toLowerCase()].filter(Boolean).join(' / ');}
         else if(option&&evidence?.family==='spring.context')option.textContent='Spring configuration';
         else if(option&&evidence?.metadata?.modulePath)option.textContent=evidence.metadata.modulePath+' / '+(evidence.metadata.sourceSet?.toLowerCase()||'Java');
-      } catch (_) { /* Generic explicit context labels remain available if metadata cannot be read. */ }
-    }
+    } catch (_) { /* Generic explicit context labels remain available if metadata cannot be read. */ }
+  }
+  async function loadReports() {
+    if (!state.reportIds?.length || state.reportLoad) return state.reportLoad;
+    const graph = state.graph, ids = state.reportIds, signal = state.publication?.signal;
+    const load = (async () => {
+      const reports = [];
+      for (let from = 0; from < ids.length; from += 4) {
+        const results = await Promise.allSettled(ids.slice(from, from + 4)
+          .map(id => api('/graphs/' + graph + '/reports/' + id, undefined, signal)));
+        if (signal?.aborted || graph !== state.graph) return;
+        for (const result of results) {
+          if (result.status === 'rejected') throw result.reason;
+          reports.push(result.value);
+        }
+      }
+      if (!signal?.aborted && graph === state.graph) state.reports = reports;
+    })();
+    state.reportLoad = load;
+    load.catch(() => { if (state.reportLoad === load) state.reportLoad = null; });
+    return load;
   }
   function envFor(signal) {
     const graph = state.graph, context = state.context, request = M.request(context), reportIds = state.reports.filter(r => r.context === context);
-    return {graph, context, request, reportIds, signal, jobId: state.job?.id,springContext:state.contextKinds?.get(context)==='spring.context',
+    return {graph, context, request, reportIds, signal, jobId: state.resultJob?.id,springContext:state.contextKinds?.get(context)==='spring.context',
       query: (op, args = {}, page, overrides = {}) => api('/graphs/' + graph + '/queries/' + op, {request: {...request, ...overrides}, arguments: args, ...(page ? {page} : {})}, signal),
       report: (id, op, args = {}, page) => api('/graphs/' + graph + '/reports/' + id + '/' + op, {arguments: args, ...(page ? {page} : {})}, signal)};
   }
@@ -202,8 +298,15 @@
     document.querySelectorAll('[role=tab]').forEach(n => { const selected = n.dataset.tab === tab; n.setAttribute('aria-selected', selected); n.tabIndex = selected ? 0 : -1; });
     document.querySelectorAll('[role=tabpanel]').forEach(n => n.hidden = n.id !== 'panel-' + tab); const panel = $('panel-' + tab);
     if (!state.context) { panel.setAttribute('aria-busy','false');panel.replaceChildren(empty('Choose an analysis context', 'Select the module or repository context above. Results are scoped to that selection.')); return; }
-    state.view = new AbortController(); const env = envFor(state.view.signal); panel.setAttribute('aria-busy','true');$('view-status').textContent='Loading '+document.querySelector('[data-tab="'+tab+'"]').textContent+'…';panel.replaceChildren(empty('Loading…', 'Reading the captured analysis.'));
-    try { const view = await views[tab](env); if (epoch !== state.epoch) return; panel.replaceChildren(view.node || view); panel.setAttribute('aria-busy','false');$('view-status').textContent = view.status || 'View loaded for the selected analysis context.'; view.after?.(); }
+    state.view = new AbortController(); const signal = state.view.signal; panel.setAttribute('aria-busy','true');$('view-status').textContent='Loading '+document.querySelector('[data-tab="'+tab+'"]').textContent+'…';panel.replaceChildren(empty('Loading…', 'Reading the captured analysis.'));
+    try {
+      const reports = ['overview','policy','metrics'].includes(tab) ? loadReports() : null;
+      const label = labelContext(state.context);
+      if (tab !== 'overview') await label;
+      await reports;
+      if (epoch !== state.epoch) return;
+      const view = await views[tab](envFor(signal)); if (epoch !== state.epoch) return; panel.replaceChildren(view.node || view); panel.setAttribute('aria-busy','false');$('view-status').textContent = view.status || 'View loaded for the selected analysis context.'; view.after?.();
+    }
     catch (error) { if (epoch === state.epoch && error.name !== 'AbortError') { panel.setAttribute('aria-busy','false');panel.replaceChildren(empty('Unable to load this view', error.message), btn('Retry', () => loadTab(tab))); $('view-status').textContent = 'Request failed. Retry to read this analysis.'; } }
   }
   function row(item, action, subtitle) {
@@ -430,7 +533,7 @@
         results.replaceChildren(empty('Loading…', 'Reading matching symbols.'));
         const overrides = {scope: parent ? 'ENTITY' : ['MODULE','PACKAGE','TYPE'].includes(level.value) ? level.value : 'ENTITY',
           population:{nodeKinds:parent?[]:level.value==='MEMBER'?memberKinds:[level.value],origins:population.value==='all'?[]:[population.value],sourceSets:sourceSet.value?[sourceSet.value]:[]}};
-        try { await pagedList(target, env, cursor => env.query(parent?'children':'entities', parent?{identity:parent.identity}:{search}, {size:20,...(cursor?{cursor}:{})}, overrides), item => {
+        try { await pagedList(target, env, cursor => env.query(parent?'children':'entities', parent?{identity:parent.identity}:{search}, {size:50,...(cursor?{cursor}:{})}, overrides), item => {
           const entry=el('div','explorer-row');const navigable=['MODULE','PACKAGE','TYPE','METHOD','CONSTRUCTOR','SOURCE_ROOT'].includes(item.kind);
           entry.append(row(item,()=>{if(navigable){trail.push(item);$('search').value='';return load();}return inspectEntity(item,env);}));
           entry.append(btn('Details',()=>inspectEntity(item,env),'button subtle'));return entry;
@@ -472,7 +575,7 @@
         breakdown.append(list);
         node.append(breakdown);
       }
-      await pagedList(node, env, cursor => env.query('gaps', {}, {size: 20, ...(cursor ? {cursor} : {})},
+      await pagedList(node, env, cursor => env.query('gaps', {}, {size: 50, ...(cursor ? {cursor} : {})},
         focus ? {population: {nodeKinds: [focus]}} : {}), item => {
         const text = labels.get(item.identity) || M.label(item);
         return row({...item, label: text}, () => inspectEntity(item, env), 'Click to inspect exact source coordinates & diagnostic trail');
@@ -488,7 +591,7 @@
       async function load() {
         const current = ++version, id = reports.value, op = kinds.value, target = el('div');
         results.replaceChildren(empty('Loading…', 'Reading the selected report.'));
-        try { await pagedList(target, env, cursor => env.report(id, op, {}, {size: 20, ...(cursor ? {cursor} : {})}), item => {
+        try { await pagedList(target, env, cursor => env.report(id, op, {}, {size: 50, ...(cursor ? {cursor} : {})}), item => {
           const finding = item.result, rule = finding.rule?.header || finding.rule;
           return row({label: rule?.name || rule?.id || finding.kind || 'Evaluated rule', kind: finding.classification || finding.status}, () => op==='findings'?inspectFinding(item,id,env):inspect(rule?.name || rule?.id || 'Rule evidence','POLICY EVIDENCE',finding), [rule?.severity, finding.status].filter(Boolean).join(' · '));
         }, op === 'findings' ? 'No observed findings' : 'No evaluated rules', 'Review the report status and rule denominator before interpreting this result.');
@@ -506,7 +609,7 @@
       async function load() {
         const current = ++version, category = select.value, target = el('div');
         results.replaceChildren(empty('Loading…', 'Reading the selected Spring evidence.'));
-        try { await pagedList(target, env, cursor => env.query(category === 'configurations' ? 'configurations' : 'spring', category === 'configurations' ? {} : {kinds: category === 'endpoints' ? ['ENDPOINT'] : category==='registration'?['REGISTRATION_EVENT','REGISTRATION_TRANSITION']:['BEAN_PRODUCER', 'BEAN_DEFINITION_CANDIDATE', 'INJECTION_POINT', 'INJECTION_USE']}, {size: 20, ...(cursor ? {cursor} : {})}), item => row(item, () => inspectEntity(item, env)), 'No evidence available in this context', 'Try another context or inspect limitations.');
+        try { await pagedList(target, env, cursor => env.query(category === 'configurations' ? 'configurations' : 'spring', category === 'configurations' ? {} : {kinds: category === 'endpoints' ? ['ENDPOINT'] : category==='registration'?['REGISTRATION_EVENT','REGISTRATION_TRANSITION']:['BEAN_PRODUCER', 'BEAN_DEFINITION_CANDIDATE', 'INJECTION_POINT', 'INJECTION_USE']}, {size: 50, ...(cursor ? {cursor} : {})}), item => row(item, () => inspectEntity(item, env)), 'No evidence available in this context', 'Try another context or inspect limitations.');
           if (!env.signal.aborted && current === version) results.replaceChildren(target);
         } catch (error) { if (!env.signal.aborted && current === version) results.replaceChildren(empty('Spring evidence unavailable', error.message), btn('Retry', load)); }
       }
@@ -637,14 +740,14 @@
       for (const [value, label] of [['MODULE', 'Modules'], ['PACKAGE', 'Packages'], ['TYPE', 'Classes'],['SPRING_COMPONENT','Spring components'],['ENTITY','Members & entities']]) { const option = el('option', '', label); option.value = value; scope.append(option); }
       for (const [value, label] of [['BOUNDED_UNION', 'All observed (UNION)'], ['MUST', 'Required in all configs (MUST)'], ['MAY', 'Conditional (MAY)'], ['UNKNOWN_OVERLAY', 'Uncertain (UNKNOWN)']]) { const option = el('option', '', label); option.value = value; projection.append(option); }
       if(focus.realization){const option=el('option','','Selected recorded configuration');option.value='REALIZED';projection.append(option);}
-      scope.value=focus.scope||(env.springContext?'SPRING_COMPONENT':'MODULE');projection.value=focus.projection||'BOUNDED_UNION';
+      scope.value=focus.scope||(env.springContext?'SPRING_COMPONENT':(env.context?.startsWith('analysis:')?'TYPE':'MODULE'));projection.value=focus.projection||'BOUNDED_UNION';
       const depth=selectControl('Neighborhood depth',[['1','1 hop (direct)'],['2','2 hops'],['3','3 hops']]);depth.hidden=!focus.seed;
       const clear=btn('Reset to full view',()=>{focus={...focus,seed:null};depth.hidden=true;clear.hidden=true;return load();});clear.hidden=!focus.seed;
       toolbar.append(field('Scope',scope),field('Dependency view',projection),field('Layout',layoutSelect),depth,clear); node.append(toolbar); const content = el('div'); node.append(content); let version = 0;
       async function load() {
         const current = ++version; content.replaceChildren(empty('Loading graph…', 'Reading bounded canonical dependencies.'));
         try {
-          const graph = await env.query('visual-graph', focus.seed?{seed:focus.seed,depth:Number(depth.value)}:{}, undefined, {scope: scope.value,relationshipKinds:focus.relationshipKinds||relationshipKinds(scope.value), projection: projection.value,...(projection.value==='REALIZED'?{realization:focus.realization}:{}), limits: {maxVertices: 1500, maxEdges: 4000, maxAuxiliaryStates: 20000}});
+          const graph = await env.query('visual-graph', focus.seed?{seed:focus.seed,depth:Number(depth.value)}:{}, undefined, {scope: scope.value,relationshipKinds:focus.relationshipKinds||relationshipKinds(scope.value), projection: projection.value,...(projection.value==='REALIZED'?{realization:focus.realization}:{})});
           if (env.signal.aborted || current !== version) return;
           state.cy?.destroy(); state.cy = null; content.replaceChildren();
           content.append(el('p', 'muted small', graph.nodes.length + ' displayed nodes · ' + graph.edges.length + ' displayed edges · '+(graph.metadata.status||'Observed projection') + (graph.metadata.isTruncated ? ' · Result limited — narrow the scope' : '')));
@@ -765,12 +868,13 @@
     await connectServer();
     if (!state.job) return;
     const id = state.job.id, generation = state.pollGeneration, latest = await api('/analysis/jobs/' + id);
-    if (selectedJob(id, generation) && latest.revision >= state.job.revision) await selectJob(latest);
+    if (selectedJob(id, generation) && latest.revision >= state.job.revision) await selectJob(latest, true);
   })));
   document.querySelectorAll('[data-close]').forEach(n => n.addEventListener('click', () => n.dataset.close === 'inspector' ? closeInspector() : $(n.dataset.close).close()));
   $('inspector').addEventListener('cancel', closeInspector);
   $('connect-form').addEventListener('submit', connectRepository);
-  $('analyze').addEventListener('click', () => safe(submit));
+  $('analyze').addEventListener('click', () => safe(() => submit()));
+  $('analyze-force').addEventListener('click', () => safe(() => submit(true)));
   $('cancel-job').addEventListener('click', () => safe(async () => {
     const id = state.job?.id, generation = state.pollGeneration; if (!id) return;
     const job = await api('/analysis/jobs/' + id + '/cancel', {});
@@ -796,7 +900,7 @@
   $('job-receipt').addEventListener('click', () => safe(() => inspect('Analysis receipt', 'ANALYSIS', state.job)));
   for (const [id, op, label] of [['job-diagnostics', 'input-diagnostics', 'Input diagnostics'], ['job-gaps', 'gaps', 'Supplemental analysis limitations']]) $(id).addEventListener('click', () => safe(async () => {
     const job = state.job;
-    return inspect(label, 'ANALYSIS EVIDENCE', (signal, cursor) => api('/analysis/jobs/' + job.id + '/' + op, {size: 20, ...(cursor ? {cursor} : {})}, signal), [{label: 'View graph limitations', run: async () => { closeInspector(); if (state.graph) await loadTab('gaps'); else notice('No graph was published for this analysis. Input diagnostics retain acquisition failures.'); }}]);
+    return inspect(label, 'ANALYSIS EVIDENCE', (signal, cursor) => api('/analysis/jobs/' + job.id + '/' + op, {size: 20, ...(cursor ? {cursor} : {})}, signal), [{label: 'View graph limitations', run: async () => { closeInspector(); if (state.resultJob?.id === job.id) await loadTab('gaps'); else notice('The displayed graph does not belong to this analysis.'); }}]);
   }));
   $('download-details').addEventListener('click', () => download(state.details, 'evo-evidence.json'));
   function applyTheme(theme) {

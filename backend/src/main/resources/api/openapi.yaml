@@ -203,6 +203,23 @@ paths:
       responses:
         '200': {$ref: '#/components/responses/SemanticSuccess'}
         default: {$ref: '#/components/responses/SemanticError'}
+  /api/v2/acquisitions/{revision}/overview:
+    parameters:
+      - in: path
+        name: revision
+        required: true
+        schema: {type: string, pattern: '^[A-Za-z0-9._-]{1,256}$'}
+    post:
+      operationId: publishedReadinessOverview
+      description: Read candidate roots and modules from an already published passive plan. Semantic coverage is not evaluated. The totals include rows beyond the bounded preview; the readiness route exposes the full paged plan. This route never starts discovery.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: object, additionalProperties: false}
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
   /api/v2/acquisitions/{revision}/readiness:
     parameters:
       - in: path
@@ -282,6 +299,36 @@ paths:
       operationId: graphContextsAndReports
       responses:
         '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/graph-pages/{graph}/{operation}:
+    parameters:
+      - {$ref: '#/components/parameters/Graph'}
+      - in: path
+        name: operation
+        required: true
+        schema: {type: string, enum: [partitions, nodes, adjacency]}
+    post:
+      operationId: rawGraphPage
+      description: Read an authenticated raw graph page. For partitions send size and cursor if needed. For nodes and adjacency include a partition returned by partitions. Adjacency also requires a node identity and accepts an optional direction.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                size: {type: integer, minimum: 1, maximum: 50, default: 50}
+                cursor: {type: string}
+                partition: {type: object}
+                node: {type: string}
+                incoming: {type: boolean, default: false}
+      responses:
+        '200':
+          description: Raw facts, the next continuation when available, and the canonical response digest.
+        '503':
+          description: Retry PARTITION_INDEX_PREPARING or PARTITION_INDEX_BUSY. PARTITION_STORE_UNAVAILABLE indicates a storage failure.
+          $ref: '#/components/responses/Error'
         default: {$ref: '#/components/responses/Error'}
   /api/v1/graphs/{graph}/queries/{operation}:
     parameters:
@@ -377,7 +424,7 @@ paths:
         default: {$ref: '#/components/responses/Error'}
     post:
       operationId: submitAnalysis
-      description: Select a registered setup. The required idempotency key prevents duplicate work after transport interruption. A job is independent of its submitting HTTP connection.
+      description: Select a registered setup. The required idempotency key prevents duplicate submissions after transport interruption. When supported, a new job may reuse a published result after verifying its inputs. A job is independent of its submitting HTTP connection.
       requestBody:
         required: true
         content:
@@ -389,6 +436,7 @@ paths:
               properties:
                 setup: {$ref: '#/components/schemas/JobIdentifier'}
                 idempotencyKey: {$ref: '#/components/schemas/JobIdentifier'}
+                force: {type: boolean, default: false, description: Recompute even if a matching result is available.}
       responses:
         '202': {$ref: '#/components/responses/JobDetail'}
         '200': {$ref: '#/components/responses/JobDetail'}
@@ -633,7 +681,7 @@ components:
             - {$ref: '#/components/schemas/SemanticCursor'}
             - {type: 'null'}
     JobIdentifier: {type: string, pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$', maxLength: 64}
-    JobStage: {type: string, enum: [QUEUED, ACQUISITION, PLATFORM, ANALYSIS, GRAPH, POLICY, PUBLICATION, FINISHED]}
+    JobStage: {type: string, enum: [QUEUED, ACQUISITION, PLATFORM, ANALYSIS, GRAPH, POLICY, PUBLICATION, REUSED, FINISHED]}
     AnalysisJob:
       type: object
       additionalProperties: false
@@ -648,6 +696,19 @@ components:
         startedAt: {type: [string, 'null'], format: date-time}
         finishedAt: {type: [string, 'null'], format: date-time}
         elapsedMillis: {type: integer, minimum: 0}
+        force: {type: boolean, default: false}
+        reuseDecision: {type: [string, 'null'], enum: [INPUTS_UNVERIFIED, NO_MATCH, RESULT_UNAVAILABLE, BYPASSED, REUSED, null]}
+        reuse:
+          description: Present when this job verified its inputs and reused an earlier published result.
+          anyOf:
+            - {type: 'null'}
+            - type: object
+              additionalProperties: false
+              required: [sourceJob, sourceFinishedAt, verifiedAt]
+              properties:
+                sourceJob: {type: string, format: uuid}
+                sourceFinishedAt: {type: string, format: date-time}
+                verifiedAt: {type: string, format: date-time}
         stop: {type: [string, 'null'], enum: [USER_CANCELLED, DEADLINE_EXCEEDED, SERVICE_CLOSED, PROVIDER_INTERRUPTED, null]}
         error: {type: [string, 'null'], enum: [ANALYSIS_FAILED, RESULT_STORAGE_FAILED, RESULT_PUBLICATION_FAILED, null]}
         events:

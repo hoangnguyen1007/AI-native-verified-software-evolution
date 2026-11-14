@@ -19,12 +19,23 @@ class ReadinessReportsTest {
         var repo=RepositoryIdentity.fromCanonicalCoordinate("urn:test:durable-readiness");ReadinessPlan first;
         try(var intake=new RepositoryIntake(root.resolve("state"))){
             var receipt=intake.local(source,"capture",new StreamingAcquisitionRequest(repo,Optional.empty(),true,List.of()),()->false);
+            try(var reader=new RepositoryIntake(root.resolve("state"),true)){
+                assertThrows(java.io.IOException.class,()->reader.publishedOverview("capture"));
+            }
             first=intake.readiness("capture",ReadinessPlanner.Policy.comprehensive(),()->false);
             assertEquals(receipt.manifest().orElseThrow().entries(),first.ownership().entries());
             assertTrue(first.roots().stream().map(Root::directory).toList().containsAll(List.of(".","nested","worker")));
             assertTrue(first.contexts().stream().anyMatch(context->context.sourceSet().equals("integration")));
             assertTrue(first.requirements().stream().anyMatch(requirement->requirement.kind()==Kind.BUILD_VALIDATION));
             assertTrue(first.requirements().stream().allMatch(requirement->requirement.state()==State.PENDING));
+            // The Workbench can read this projection while the analysis still owns the writer.
+            try(var reader=new RepositoryIntake(root.resolve("state"),true)){
+                var overview=reader.publishedOverview("capture");
+                assertEquals(first.identity(),overview.get("plan"));
+                assertEquals(first.roots().size(),overview.get("rootCount"));
+                assertEquals(first.modules().size(),overview.get("moduleCount"));
+                assertEquals("NOT_EVALUATED",overview.get("semanticCoverage"));
+            }
             var selected=intake.readiness("capture",new ReadinessPlanner.Policy(Map.of("sourceSet",List.of("main")),true,1_000_000),()->false);
             assertFalse(selected.selection().unselected().isEmpty());assertNotEquals(first.identity(),selected.identity());
             assertEquals(first.inventory(),selected.inventory());

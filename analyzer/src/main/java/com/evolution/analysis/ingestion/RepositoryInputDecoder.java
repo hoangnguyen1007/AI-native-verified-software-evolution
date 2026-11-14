@@ -33,6 +33,25 @@ public final class RepositoryInputDecoder {
         }
     }
 
+    /** Request-local, lazy decode of one immutable capture. The preparer and semantic
+     * consumer use exactly the same acquisition, policy and byte-derived result. */
+    public static final class Prepared {
+        private final RepositoryAcquisitionResult acquisition;
+        private final Policy policy;
+        private Result result;
+
+        public Prepared(RepositoryAcquisitionResult acquisition, Policy policy) {
+            this.acquisition = Objects.requireNonNull(acquisition);
+            this.policy = Objects.requireNonNull(policy);
+        }
+        public RepositoryAcquisitionResult acquisition() { return acquisition; }
+        public Policy policy() { return policy; }
+        public synchronized Result result() {
+            if (result == null) result = new RepositoryInputDecoder().decode(acquisition, policy);
+            return result;
+        }
+    }
+
     public Result decode(RepositoryAcquisitionResult acquisition, Policy policy) {
         Objects.requireNonNull(acquisition); Objects.requireNonNull(policy);
         var inventory = RepositoryUnderstandingInventory.from(acquisition);

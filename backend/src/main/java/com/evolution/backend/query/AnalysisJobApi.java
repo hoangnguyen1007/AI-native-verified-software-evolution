@@ -17,6 +17,7 @@ final class AnalysisJobApi {
     AnalysisJobApi(AnalysisJobs jobs, ApiLimits limits) { this(jobs,limits,null); }
     AnalysisJobApi(AnalysisJobs jobs, ApiLimits limits, RepositoryConnections connections) { this.jobs = jobs; this.limits = limits; this.connections=connections; }
     AnalysisJobs.Limits limits() { return jobs.limits(); }
+    boolean resultReuseEnabled() { return jobs.resultReuseEnabled(); }
     private static final class Failure extends RuntimeException {
         final int status; final String code;
         Failure(int status, String code) { this.status = status; this.code = code; }
@@ -37,8 +38,11 @@ final class AnalysisJobApi {
             } else if (path.equals("/api/v1/analysis/jobs")) {
                 if (method.equals("GET")) { empty(body); data = jobs.history(20,Optional.empty()); }
                 else {
-                    method(method,"POST"); var input = decode(body,contentType,"setup","idempotencyKey");
-                    var submission = jobs.submit(QueryJson.text(input,"setup"),QueryJson.text(input,"idempotencyKey"));
+                    method(method,"POST"); var input = decode(body,contentType,"setup","idempotencyKey","force");
+                    if (input.containsKey("force") && !(input.get("force") instanceof Boolean))
+                        throw new IllegalArgumentException("Expected boolean force");
+                    var submission = jobs.submit(QueryJson.text(input,"setup"),QueryJson.text(input,"idempotencyKey"),
+                            Boolean.TRUE.equals(input.get("force")));
                     data = submission.job(); status = submission.created() ? 202 : 200;
                 }
             } else if (path.equals("/api/v1/analysis/jobs/history")) {

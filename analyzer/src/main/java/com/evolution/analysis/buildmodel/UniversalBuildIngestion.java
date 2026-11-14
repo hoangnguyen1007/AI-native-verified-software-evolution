@@ -17,7 +17,7 @@ public final class UniversalBuildIngestion {
             if(maxFiles<1||maxCharacters<1||maxTokens<1||maxDepth<1||maxDepth>128
                     ||syntaxLevel.filter(v->v<1).isPresent()||platformRelease.filter(v->v<1).isPresent())throw new IllegalArgumentException("Invalid build ingestion limits");
             encoding.ifPresent(v->ContractChecks.text(v,"build encoding")); }
-        public static Policy defaults(){return new Policy(Optional.empty(),Optional.empty(),Optional.empty(),2048,1_000_000,200_000,64);}
+        public static Policy defaults(){return new Policy(Optional.empty(),Optional.empty(),Optional.empty(),16_384,10_000_000,2_000_000,128);}
     }
     public UniversalBuildModel ingest(RepositoryInputs inputs,Policy policy,Optional<BuildModelProvider> maven,
                                       Map<MavenCoordinate,PomInput> externalPoms,BuildModelPolicy mavenPolicy) {

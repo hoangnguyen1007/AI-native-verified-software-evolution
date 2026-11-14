@@ -16,8 +16,12 @@ public final class GradleScan {
     private GradleScan() {}
     public static Optional<UniversalBuildModel> model(RepositoryAcquisitionResult acquisition,UniversalBuildIngestion.Policy policy,
                                                     RepositoryInputDecoder.Policy decoding,Map<MavenCoordinate,PomInput> poms) {
-        if(acquisition.files().stream().noneMatch(f->f.path().endsWith("build.gradle")||f.path().endsWith("build.gradle.kts")||f.path().endsWith("settings.gradle")||f.path().endsWith("settings.gradle.kts")))return Optional.empty();
-        return new RepositoryInputDecoder().decode(acquisition,decoding).inputs().map(inputs->new UniversalBuildIngestion().ingest(inputs,policy,Optional.of(new MavenBuildModelProvider()),poms,MavenScan.POLICY));
+        return model(new RepositoryInputDecoder.Prepared(acquisition,decoding),policy,poms);
+    }
+    public static Optional<UniversalBuildModel> model(RepositoryInputDecoder.Prepared prepared,UniversalBuildIngestion.Policy policy,
+                                                    Map<MavenCoordinate,PomInput> poms) {
+        if(prepared.acquisition().files().stream().noneMatch(f->f.path().endsWith("build.gradle")||f.path().endsWith("build.gradle.kts")||f.path().endsWith("settings.gradle")||f.path().endsWith("settings.gradle.kts")))return Optional.empty();
+        return prepared.result().inputs().map(inputs->new UniversalBuildIngestion().ingest(inputs,policy,Optional.of(new MavenBuildModelProvider()),poms,MavenScan.POLICY));
     }
     public static Set<Integer> platformReleases(Optional<UniversalBuildModel> model) {
         var releases=new TreeSet<Integer>();model.ifPresent(value->value.modules().stream().filter(m->m.tool()!=UniversalBuildModel.Tool.MAVEN).flatMap(m->m.sourcePlan().sourceSets().stream())

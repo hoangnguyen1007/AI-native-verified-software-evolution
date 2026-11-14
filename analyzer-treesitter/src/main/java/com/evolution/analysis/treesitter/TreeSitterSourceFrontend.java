@@ -37,8 +37,12 @@ public final class TreeSitterSourceFrontend {
         if(language.equals("protobuf"))return ProtobufSourceFrontend.parse(bytes,sink,cancelled);
         if(System.getProperty("tree-sitter-lib")!=null)throw new IOException("SYNTAX_EXTERNAL_LIBRARY_OVERRIDE_REJECTED");
         var grammar=GRAMMARS.get(language);if(grammar==null)throw new IOException("SYNTAX_GRAMMAR_UNAVAILABLE");
-        check(cancelled);var coordinates=new SourceCoordinates(bytes,charset(bytes));var utf8=coordinates.text().getBytes(StandardCharsets.UTF_8);
-        var positions=new SourceCoordinates(utf8,"UTF-8");
+        check(cancelled);
+        var encoding = charset(bytes);
+        var positions = new SourceCoordinates(bytes, encoding);
+        // SourceCoordinates measures UTF-8 offsets over the original decoded text.
+        // UTF-8 inputs have already been validated and can go straight to the parser.
+        byte[] utf8 = encoding.equals("UTF-8") ? bytes : positions.text().getBytes(StandardCharsets.UTF_8);
         String tool=toolIdentity(grammar);long nodes=0,facts=0,errors=0;
         try(var parser=new TSParser()) {
             var binding=(TSLanguage)Class.forName(grammar.binding()).getConstructor().newInstance();

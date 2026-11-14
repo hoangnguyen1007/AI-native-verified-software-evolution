@@ -101,6 +101,8 @@ M7.2 introduced versioned auxiliary `ingestion.outcome-index:m7.2-v1`, `frontend
 
 Canonical serialization caches record accessors and streams hashes/writes with unchanged golden preimages. Structural preflight counts the decoder's actual JSON values/depth, including flattened identifiers/optionals. Streaming parser regressions cover fragmented reads, stable EOF, malformed JSON, duplicate keys and resource limits. File-store tests cover canonical UTF-8 equivalence, corruption, cancellation and independent byte/character/structural ceilings. See [M7.2 verification](../tasks/m7/02-evo-cli.md) for executed scope.
 
+Evidence admission checks the exact canonical JSON spelling directly and independently verifies its SHA-256. The canonical check compares decoded object keys in UTF-16 order and enforces the existing Unicode, number, character and structural limits. The regular reader diagnoses rejected spellings so resource exhaustion retains its existing error type. Projection can reuse a gap payload when the complete immutable record matches, including history and diagnostics. If an identical gap was already projected in the repository context, projection can also reuse that node when the record has no attempt references to update. [NewTube comparison](../research/2026-11-13-newtube-architecture-analysis-performance.md#7-tối-ưu-dựng-và-đọc-đồ-thị)
+
 
 ### M8.4 disk-retained intermediates and paged ingestion references — 2026-11-04
 

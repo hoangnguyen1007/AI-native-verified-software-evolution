@@ -1,6 +1,7 @@
 package com.evolution.analysis.filesystem;
 
 import com.evolution.analysis.contract.common.ContentDigest;
+import com.evolution.analysis.contract.serialization.CanonicalJson;
 import com.evolution.analysis.graph.*;
 import java.io.*;
 import java.nio.*;
@@ -49,6 +50,15 @@ public final class FileGraphStore implements GraphStore {
         var codec=new GraphSnapshotCodec();
         Path pending=null;
         try {
+            if(Files.exists(destination,NOFOLLOW_LINKS)){
+                // Preserve the admission checks for an existing snapshot without encoding
+                // another full copy or reconstructing the graph just to compare it.
+                if(!CanonicalJson.fitsStructure(Map.of("format",GraphSnapshotCodec.FORMAT,
+                        "identity",graph.identity(),"graph",graph.canonicalForm()),jsonLimits.maxDepth(),jsonLimits.maxValues()))
+                    throw new GraphJson.LimitExceededException("Graph JSON structural limit");
+                verifyExisting(graph.identity(),cancelled);
+                return;
+            }
             pending=Files.createTempFile(directory,"graph-pending-",".tmp");
             try(var channel=FileChannel.open(pending,StandardOpenOption.WRITE,NOFOLLOW_LINKS)) {
                 var stream=new LimitedBytes(java.nio.channels.Channels.newOutputStream(channel),maxBytes,cancelled);
@@ -61,18 +71,33 @@ public final class FileGraphStore implements GraphStore {
             if(cancelled.getAsBoolean())throw new GraphStoreException(CANCELLED);
             checkDirectory();path(graph.identity());
             // Never replace an already published snapshot, including from another store instance.
-            if(Files.exists(destination,NOFOLLOW_LINKS)){verifyExisting(graph);return;}
+            if(Files.exists(destination,NOFOLLOW_LINKS)){verifyExisting(graph.identity(),cancelled);return;}
             // Atomic create-if-absent publication: unlike ATOMIC_MOVE, cannot replace a racing destination.
             try{Files.createLink(destination,pending);}
-            catch(FileAlreadyExistsException raced){verifyExisting(graph);}
+            catch(FileAlreadyExistsException raced){verifyExisting(graph.identity(),cancelled);}
         } catch(GraphStoreException failure){throw failure;}
         catch(GraphJson.LimitExceededException|StorageLimit limit){var failure=new GraphStoreException(LIMIT_EXCEEDED);failure.initCause(limit);throw failure;}
         catch(IOException failure){throw new GraphStoreException(IO_FAILURE);}
         finally {if(pending!=null)try{Files.deleteIfExists(pending);}catch(IOException ignored){/* Not published; existing snapshots remain intact. */}}
     }
-    private void verifyExisting(KnowledgeGraph graph) {
-        var existing=load(graph.identity()).orElseThrow(()->new GraphStoreException(CORRUPT_SNAPSHOT));
-        if(!existing.canonicalForm().equals(graph.canonicalForm()))throw new GraphStoreException(CORRUPT_SNAPSHOT);
+    private void verifyExisting(ContentDigest id, BooleanSupplier cancelled) throws IOException {
+        Path source=path(id);
+        if(Files.size(source)>maxBytes)throw new GraphStoreException(LIMIT_EXCEEDED);
+        if(!verifyPublished(id,cancelled))throw new GraphStoreException(CORRUPT_SNAPSHOT);
+        if(jsonLimits.maxCharacters()<Files.size(source)) {
+            // UTF-8 may have more bytes than characters. Check this uncommon tighter
+            // bound without loading graph rows into memory.
+            try(var reader=new BufferedReader(new InputStreamReader(
+                    Files.newInputStream(source,StandardOpenOption.READ,NOFOLLOW_LINKS),
+                    StandardCharsets.UTF_8.newDecoder()))){
+                long remaining=jsonLimits.maxCharacters();
+                var buffer=new char[8192];int count;
+                while((count=reader.read(buffer))!=-1){
+                    if(cancelled.getAsBoolean())throw new GraphStoreException(CANCELLED);
+                    if((remaining-=count)<0)throw new GraphStoreException(LIMIT_EXCEEDED);
+                }
+            }
+        }
     }
     private static class StorageLimit extends IOException {}
     private static final class ByteLimit extends StorageLimit {}
@@ -94,6 +119,18 @@ public final class FileGraphStore implements GraphStore {
         var source=path(identity);
         if(!Files.exists(source,NOFOLLOW_LINKS))return Optional.empty();
         var graph=readPath(source);if(!graph.identity().equals(identity))throw new GraphStoreException(CORRUPT_SNAPSHOT);return Optional.of(graph);
+    }
+    @Override public boolean verifyPublished(ContentDigest identity, BooleanSupplier cancelled) {
+        var source = path(identity);
+        if (!Files.isRegularFile(source, NOFOLLOW_LINKS)) return false;
+        try (var input = Files.newInputStream(source, StandardOpenOption.READ, NOFOLLOW_LINKS)) {
+            long size = Files.size(source);
+            return size <= maxBytes && CanonicalFrameVerifier.verify(input, size,
+                    "{\"format\":\"" + GraphSnapshotCodec.FORMAT + "\",\"graph\":",
+                    ",\"identity\":\"" + identity.value() + "\"}", identity, Optional.empty(), cancelled);
+        } catch (IOException unavailable) {
+            return false;
+        }
     }
     public static KnowledgeGraph readSnapshot(Path file,int maximum,GraphJson.Limits limits){
         Path source=file.toAbsolutePath().normalize();return new FileGraphStore(source.getParent(),maximum,limits).readPath(source);

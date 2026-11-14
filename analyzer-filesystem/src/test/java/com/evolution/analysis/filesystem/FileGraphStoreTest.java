@@ -46,6 +46,19 @@ class FileGraphStoreTest {
                 List.of(edge),List.of(payload));
     }
     Path file(KnowledgeGraph graph) {return directory.resolve(graph.identity().value().substring(7)+".graph.json");}
+    @Test void publishedGraphVerificationRejectsSameLengthCorruption() throws Exception {
+        var graph = graph();
+        var store = new FileGraphStore(directory);
+        assertFalse(store.verifyPublished(graph.identity(), () -> false));
+        store.save(graph);
+        assertTrue(store.verifyPublished(graph.identity(), () -> false));
+        var bytes = Files.readAllBytes(file(graph));
+        int offset = new String(bytes, StandardCharsets.UTF_8).indexOf("fixture.dependency");
+        assertTrue(offset > 0);
+        bytes[offset] = 'x';
+        Files.write(file(graph), bytes);
+        assertFalse(store.verifyPublished(graph.identity(), () -> false));
+    }
     @Test void freshInstanceRestoresAllEvidenceAndMatchesInMemoryStore() {
         var graph=graph();var store=new FileGraphStore(directory);var memory=new InMemoryGraphStore();
         assertFalse(store.available(graph.identity()));store.save(graph);store.save(graph);memory.save(graph);

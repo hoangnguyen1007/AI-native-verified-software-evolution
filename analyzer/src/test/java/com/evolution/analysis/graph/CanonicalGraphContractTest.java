@@ -21,6 +21,38 @@ class CanonicalGraphContractTest {
         }
     }
     public record ProviderRow(String name,List<Integer> values,Optional<String> detail) {}
+    @Test void authenticatedEvidenceRejectsNoncanonicalSpellingEvenWithTheMatchingDigest() {
+        String family = "fixture.wire";
+        for (String payload : List.of(
+                " {\"a\":1}", "{\"b\":1,\"a\":2}", "{\"a\":1,\"a\":2}",
+                "{\"a\":1.0}", "{\"a\":1e2}", "{\"a\":-0}", "{\"a\":01}",
+                "{\"a\":\"\\u0061\"}", "{\"a\":\"\\u000a\"}", "{\"a\":\"\\/\"}",
+                "{\"a\":\"\uD800\"}", "[true,]", "[false]x")) {
+            var identity = CanonicalJson.sha256(List.of("graph.evidence:m5.1-v1",family,
+                    payload.replace("\uD800","x")));
+            assertThrows(IllegalArgumentException.class, () -> new GraphEvidence(identity,family,payload), payload);
+        }
+        var source = new TreeMap<String,Object>();
+        source.put("z",List.of(true,-1,new java.math.BigDecimal("-0.01")));
+        source.put("a\"\n\\",List.of("a/😀\r\n\u0001",new java.math.BigDecimal("0.0002")));
+        source.put("a#",Optional.empty());
+        source.put("a0",List.of());
+        var captured = GraphEvidence.capture(family,source);
+        var parsed = GraphJson.read(captured.canonicalJson(),GraphJson.Limits.defaults());
+        assertEquals(CanonicalJson.write(parsed),captured.canonicalJson());
+        assertEquals(captured,new GraphEvidence(captured.identity(),family,captured.canonicalJson()));
+    }
+    @Test void evidenceAdmissionRetainsReaderDepthAndNumberBounds() {
+        String family = "fixture.limits";
+        for (String payload : List.of("[".repeat(129)+"0"+"]".repeat(129),
+                "1"+"0".repeat(4096), "0."+"0".repeat(4096)+"1", "{\"z\":1,\"a\":1e4097}")) {
+            var identity = CanonicalJson.sha256(List.of("graph.evidence:m5.1-v1",family,payload));
+            assertThrows(GraphJson.LimitExceededException.class, () -> new GraphEvidence(identity,family,payload));
+        }
+        String exponentNormalizesScale = "0."+"0".repeat(4096)+"1e4097";
+        var identity = CanonicalJson.sha256(List.of("graph.evidence:m5.1-v1",family,exponentNormalizesScale));
+        assertThrowsExactly(IllegalArgumentException.class, () -> new GraphEvidence(identity,family,exponentNormalizesScale));
+    }
     @Test void streamedIngestionHashesRemainCompatibleWithCanonicalUtf8Bytes(){
         for(Object value:List.of(occurrences().frontend(),Map.of("source","Xin chào\r\n𝄞","nested",List.of("☃",42))))
             assertEquals(ContentDigest.sha256Utf8(CanonicalJson.write(value)),com.evolution.analysis.ingestion.IngestionEvidence.digest(value));
@@ -157,6 +189,16 @@ class CanonicalGraphContractTest {
         var missing=new CanonicalGraphBuilder().build(new CanonicalGraphInput(raw,Optional.empty(),Optional.empty(),List.of(),List.of(),List.of(gap)));
         assertTrue(missing.evidence().stream().anyMatch(e->e.family().equals("evidence.gap")&&e.canonicalJson().contains("REFERENCED_EVIDENCE_UNAVAILABLE")));
         assertTrue(missing.evidence().stream().anyMatch(e->e.family().equals("graph.unavailable-reference")&&e.canonicalJson().contains(attempt.attemptIdentity().value())));
+        var withHistory = CapabilityGapRecord.create(context, VERSION, "java.calls", "SEMANTIC_UNRESOLVED", subject,
+                List.of(), List.of(right), List.of(requirement), List.of(), gap.affectedOutputs(),
+                List.of(attempt.attemptIdentity()), List.of(), List.of("A different observation"));
+        assertEquals(gap.gapIdentity(), withHistory.gapIdentity());
+        var input = new CanonicalGraphInput(raw, Optional.empty(), Optional.empty(), List.of(), List.of(),
+                List.of(gap, gap, withHistory));
+        var repeated = new CanonicalGraphBuilder().build(input);
+        var retained = repeated.nodes().stream().filter(n -> n.identity().equals(gap.gapIdentity().value())).findFirst().orElseThrow();
+        assertEquals(Set.of(GraphEvidence.capture("evidence.gap", gap).identity(),
+                GraphEvidence.capture("evidence.gap", withHistory).identity()), Set.copyOf(retained.evidence()));
     }
 
     record Fixture(AnalysisManifest manifest,FrontendResult frontend,Entity source) {}
