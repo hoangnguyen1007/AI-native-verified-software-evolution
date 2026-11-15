@@ -1,0 +1,28 @@
+.evolution-page { overflow: auto; }
+.evolution-top { position: static; flex-wrap: wrap; height: auto; min-height: 64px; gap: .75rem; padding: .75rem clamp(.75rem, 4vw, 2.5rem); }
+.evolution-top .topbar-nav { flex-wrap: wrap; margin: 0; min-width: 0; }
+.evolution-page main { width: min(78rem, 100%); margin: auto; padding: 1rem clamp(.75rem, 4vw, 2.5rem) 3rem; overflow-wrap: anywhere; }
+.evolution-page .card { margin-block: .8rem; padding: clamp(.8rem, 2vw, 1.4rem); min-width: 0; }
+.evolution-page label { display: grid; gap: .25rem; min-width: 0; }
+.evolution-page input, .evolution-page select { width: 100%; min-width: 0; min-height: 2.5rem; }
+.evolution-page :focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
+.compare-pair, .compare-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .8rem; margin-block: .7rem; }
+.compare-actions { display: flex; flex-wrap: wrap; gap: .7rem; align-items: end; margin-block: .65rem; }
+.compare-actions label { min-width: min(100%, 13rem); }
+.evolution-page details { margin-block: .65rem; }
+.evolution-page summary { cursor: pointer; padding-block: .45rem; }
+.comparison-record { border-top: 1px solid var(--border); }
+.comparison-record > summary { font-weight: 600; }
+.evolution-page pre { white-space: pre-wrap; overflow-wrap: anywhere; margin: .5rem 0; font-size: .82rem; }
+.evolution-page code { display: inline-block; max-width: 100%; overflow-wrap: anywhere; }
+.comparison-pin, .comparison-graph-side { min-width: 0; padding: .8rem; border: 1px solid var(--border); border-radius: .55rem; }
+.comparison-graph-side li { margin-block: .4rem; }
+.evolution-page dialog { max-width: min(48rem, calc(100vw - 1.5rem)); max-height: 85vh; overflow: auto; }
+.evolution-page [hidden] { display: none !important; }
+@media (max-width: 640px) {
+  .compare-pair, .compare-fields { grid-template-columns: minmax(0, 1fr); }
+  .evolution-top .topbar-nav-link { white-space: normal; min-height: 40px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .evolution-page *, .evolution-page *::before, .evolution-page *::after { animation-duration: 0s !important; transition-duration: 0s !important; }
+}

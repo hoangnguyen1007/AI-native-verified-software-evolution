@@ -2,6 +2,7 @@ package com.evolution.backend.analysis;
 
 import com.evolution.analysis.contract.identity.RepositoryIdentity;
 import com.evolution.analysis.contract.common.ContentDigest;
+import com.evolution.analysis.evolution.EvolutionSnapshot;
 import com.evolution.analysis.filesystem.FileGraphStore;
 import com.evolution.analysis.filesystem.PartitionedGraphStore;
 import com.evolution.analysis.graph.*;
@@ -85,13 +86,18 @@ public final class WorkbenchApiMain {
             try(var jobs = new AnalysisJobs(List.of(runner.registration("local")),store,reports,AnalysisJobs.Limits.defaults(),disk)) {
                 var connections=new RepositoryConnections(jobs,jdk,Integer.parseInt(args[3]),cache,directory,policy);
                 connections.describe("local",source.getFileName().toString(),"LOCAL",RepositoryIdentity.fromCanonicalCoordinate(args[1]));
-                try (var pageIndex = new LazyGraphPages(directory, pages, store::cached)) {
+                try (var pageIndex = new LazyGraphPages(directory, pages, store::cached);
+                     var evolution = new EvolutionJobs(directory.resolve("evolution"), pages, reports, pageIndex::evolution)) {
                     var api=ArchitectureQueryApi.withPartitionedGraphs(
                             new ArchitectureQueryApi(store,reports,ApiLimits.defaults(),jobs,connections),pageIndex::reader);
-                    try (var server = new ArchitectureHttpServer(api,args.length >= 7 ? Integer.parseInt(args[6]) : 8080)) {
+                    try (var server = new ArchitectureHttpServer(ArchitectureQueryApi.withEvolution(api,evolution,
+                            new EvolutionQueries(evolution.results(),pages)),args.length >= 7 ? Integer.parseInt(args[6]) : 8080)) {
                         var stopped = new CountDownLatch(1);
                         var shutdown = new Thread(() -> {
                             server.close();
+                            try { evolution.close(); } catch (IOException unavailable) {
+                                System.err.println("Comparison worker did not close cleanly. Pending jobs can be reopened.");
+                            }
                             pageIndex.close();
                             jobs.close();
                             stopped.countDown();
@@ -160,8 +166,34 @@ public final class WorkbenchApiMain {
                 synchronized (this) {
                     if (failure != null) failures.put(id, failure);
                     preparing = null;
+                    notifyAll();
                 }
             }
+        }
+
+        EvolutionSnapshot evolution(ContentDigest graph, BooleanSupplier cancelled,
+                                    java.util.function.Consumer<String> progress) throws IOException {
+            boolean waited = false;
+            synchronized (this) {
+                var source = snapshots.resolve(graph.value().substring(7)+".graph.json");
+                while (!pages.hasIndex(graph) && Files.isRegularFile(source,LinkOption.NOFOLLOW_LINKS)) {
+                    EvolutionSnapshot.check(cancelled);
+                    try { ensure(graph,cancelled); }
+                    catch (PartitionedGraphReader.IndexPending pending) {
+                        if (!waited) progress.accept("INDEX_PREPARING");
+                        waited = true;
+                        try { wait(100); }
+                        catch (InterruptedException stopped) {
+                            Thread.currentThread().interrupt();
+                            throw new CancellationException();
+                        }
+                    } catch (IOException unavailable) {
+                        throw new EvolutionSnapshot.ReadFailure(EvolutionSnapshot.Failure.UNAVAILABLE,unavailable);
+                    }
+                }
+            }
+            if (waited) progress.accept("COMPARING");
+            return pages.openEvolution(graph,cancelled);
         }
 
         @Override public void close() {

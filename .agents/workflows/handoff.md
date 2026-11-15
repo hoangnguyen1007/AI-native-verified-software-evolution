@@ -4,7 +4,7 @@ description:
 
 # Handoff — One Continuable Task Result
 
-Cover every field below, combining related/empty fields in concise prose or a table. Do not emit twelve headings or repeat this handoff for every workflow step.
+Use the fields below for consequential decisions and broad claims. For routine demo work, report what changed, the check and result, and the next step or blocker. Do not repeat a handoff for each workflow step.
 
 | Field | Required content |
 |---|---|
@@ -61,7 +61,7 @@ Required:
 
 * inspect changed diff;
 * targeted tests;
-* relevant integration/build verification;
+* integration/build verification when the changed boundary or demo journey calls for it;
 * update `docs/current-state.md` only if operational project state changed;
 * concise handoff.
 
@@ -80,6 +80,8 @@ Use only for:
 FULL closeout may reread canonical state, roadmap/gates, reproducibility evidence, worker status and broader Git state.
 
 Default to the cheapest closeout level that still preserves correctness.
+
+Historical gate closure by human decision does not require new runtime evidence. Demo closeout uses the pinned journey and a compact run note; it does not require separate gate sign-off or a formal evidence package.
 
 Do not perform ceremonial reads or duplicate checks when the same facts were verified earlier in the current task and have not changed.
 

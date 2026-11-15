@@ -4,6 +4,9 @@ import com.evolution.analysis.acquisition.streaming.*;
 import com.evolution.analysis.contract.common.ContentDigest;
 import com.evolution.analysis.contract.serialization.CanonicalJson;
 import com.evolution.analysis.graph.GraphJson;
+import com.evolution.analysis.evolution.SnapshotComparison;
+import com.evolution.analysis.evolution.EvolutionSnapshot;
+import com.evolution.analysis.contract.identity.SnapshotIdentity;
 import com.evolution.analysis.polyglot.*;
 import java.io.*;
 import java.nio.ByteBuffer;
@@ -73,6 +76,64 @@ public final class BridgePublicationStore {
     public Optional<ContentHandle> head(ContentDigest scope)throws IOException{
         Path pointer=path(scope);if(!Files.exists(pointer,LinkOption.NOFOLLOW_LINKS))return Optional.empty();if(!Files.isRegularFile(pointer,LinkOption.NOFOLLOW_LINKS)||Files.size(pointer)>4096)throw new IOException("BRIDGE_PUBLICATION_POINTER_INVALID");
         try{var value=GraphJson.object(GraphJson.read(Files.readString(pointer,StandardCharsets.UTF_8),new GraphJson.Limits(4096,8,128)));if(!value.keySet().equals(Set.of("document")))throw new IOException("BRIDGE_PUBLICATION_POINTER_INVALID");return Optional.of(handle(value.get("document")));}catch(IllegalArgumentException|ClassCastException|ArithmeticException invalid){throw new IOException("BRIDGE_PUBLICATION_POINTER_INVALID",invalid);}
+    }
+
+    /** Replays the exact pinned publication. Current head and live withdrawal state do not replace historical operands. */
+    public SnapshotComparison.ReportStatus readEvolution(SnapshotComparison.BridgeRef ref,
+            SnapshotIdentity snapshot,SnapshotComparison.BridgeObservation observe,
+            BooleanSupplier cancelled)throws IOException {
+        var handle=ref.publication();
+        if(handle.size()>65536)return SnapshotComparison.ReportStatus.UNSUPPORTED;
+        final ArchitectureBridges.Input input;
+        final ArchitectureBridges.Result result;
+        try {
+            if(!content.verify(handle))return SnapshotComparison.ReportStatus.UNAVAILABLE;
+            var record=read(handle);
+            if(!record.keySet().equals(Set.of("schema","evaluator","input","result","revoked","revision","parent"))
+                    ||!"architecture-bridge-publication:m8.4-v1".equals(record.get("schema"))
+                    ||!CanonicalJson.write(ArchitectureBridges.PROVIDER).equals(CanonicalJson.write(record.get("evaluator"))))
+                return SnapshotComparison.ReportStatus.UNSUPPORTED;
+            if(number(record,"revision")<1)return SnapshotComparison.ReportStatus.CORRUPT;
+            input=ArchitectureBridges.input(record.get("input"));
+            if(!snapshot.equals(input.root().snapshotIdentity()))return SnapshotComparison.ReportStatus.CORRUPT;
+            if(!input.policy().equals(policy.get()))return SnapshotComparison.ReportStatus.UNAVAILABLE;
+            var withdrawals=new TreeSet<ContentDigest>();
+            for(Object value:GraphJson.array(record.get("revoked")))
+                if(!withdrawals.add(new ContentDigest(GraphJson.string(value))))return SnapshotComparison.ReportStatus.CORRUPT;
+            result=ArchitectureBridges.result(record.get("result"));
+            if(!result.equals(evaluate(input,withdrawals,cancelled)))return SnapshotComparison.ReportStatus.CORRUPT;
+        } catch(IllegalArgumentException | ArithmeticException | ClassCastException | NullPointerException invalid) {
+            return SnapshotComparison.ReportStatus.CORRUPT;
+        } catch(IOException unavailable) {
+            EvolutionSnapshot.check(cancelled);
+            return SnapshotComparison.ReportStatus.UNAVAILABLE;
+        }
+        var operands=Map.of("partitions",input.partitions(),"endpoints",input.endpoints(),
+                "requirements",input.requirements(),"relations",result.relations(),"gaps",result.gaps());
+        for(var entry:new TreeMap<>(operands).entrySet())
+            if(!emitEvolutionRows(entry.getKey(),entry.getValue(),observe,cancelled))return SnapshotComparison.ReportStatus.UNAVAILABLE;
+        observe.accept("evaluation",result.identity(),Map.of("scope",input.scope(),"policy",input.policy(),"counts",result.counts(),
+                "qualified",result.qualified(),"complete",result.complete(),"revocations",result.revocations()));
+        return input.policy().equals(policy.get())?SnapshotComparison.ReportStatus.AVAILABLE:SnapshotComparison.ReportStatus.UNAVAILABLE;
+    }
+
+    private boolean emitEvolutionRows(String family,SemanticTables.Table table,SnapshotComparison.BridgeObservation observer,
+                                      BooleanSupplier cancelled)throws IOException {
+        final SemanticTables.Reader session;
+        try{session=tables.open(table,cancelled);}
+        catch(IOException missing){EvolutionSnapshot.check(cancelled);return false;}
+        try(session) {
+            long count=0;
+            while(true) {
+                final SemanticTables.Row row;
+                try{row=session.next();}
+                catch(IOException missing){EvolutionSnapshot.check(cancelled);return false;}
+                if(row==null)return count==table.rows();
+                EvolutionSnapshot.check(cancelled);
+                observer.accept(family,row.identity(),row.fields());
+                count++;
+            }
+        }
     }
     private ArchitectureBridges.Result evaluate(ArchitectureBridges.Input input,Set<ContentDigest> withdrawn,BooleanSupplier cancelled)throws IOException{try(var index=SqliteSemanticCensusIndex.temporary(root.resolve("work"),65536)){return new ArchitectureBridges(content,tables,64_000_000,1024).reconcile(input,index,withdrawn,policy,cancelled);}}
     private Evaluated evaluateTracked(ArchitectureBridges.Input input,Set<ContentDigest> withdrawn,BooleanSupplier cancelled)throws IOException{

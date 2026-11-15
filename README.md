@@ -1,8 +1,8 @@
 # AI-Native Verified Software Evolution
 
-This repository is the SE121 software architecture intelligence platform. The Java 21 Maven reactor contains parser-neutral contracts, the M2 JavaParser frontend, progressive effective-POM/source-plan modeling, bounded filesystem and dependency-artifact acquisition, exact Maven classpaths, deterministic source decoding, explicit analyzed-JDK symbol views, per-source-set frontend-input assembly, and normalized capability-gap/acquisition records. Gate G2 is formally PASSED following independent semantic adjudication across representative archetypes. Gate M4-R0 (Research and Semantics Gate) is PASSED following human review and acceptance. See [current state](docs/current-state.md) for verified scope and limitations.
+This platform turns repository snapshots into an evidence-backed architecture workbench: build and language context, conditional Spring facts, graph, metrics, policy findings, impact and compatible snapshot comparison.
 
-The active milestone is **M9: Multi-Repository Evaluation and Hardening**. M8 (M8.1–M8.4) is CLOSED within its human-accepted bounds. [M9 Task 1](docs/tasks/m9/PROTOCOL.md) registers the candidate baseline, corpus, labels, denominators and evaluation protocol; Task 2 is the next semantic/evidence verification step. Passive completion uses the approved **95%** threshold with existing guards and explicit evidence tiers/gaps. The [evo CLI](cli/README.md), canonical queries/metrics/policy/assessment, workbench and exports remain available. M9 acceptance and M10 human Track A release approval remain pending; see [current state](docs/current-state.md), the [workbench API](backend/README.md) and [M9 plan](docs/tasks/m9/README.md).
+**Next delivery: one full-pipeline demo** from repository analysis to AI diagnosis, reviewable repair, isolated verification and a local Verified PR/CI result. M11 and G7 are closed by human decision; G7 is not certified passed. See the [demo roadmap](docs/roadmap.md#full-pipeline-demo) and [current state](docs/current-state.md) for the planned work and existing capabilities.
 
 ## Try evo
 
@@ -27,7 +27,9 @@ The palette keeps terminal scrollback; direct commands support `--json`, exact c
 
 The repository Maven Wrapper pins Maven 3.9.16 and verifies its binary distribution before execution.
 
-## Clean verification
+## Optional full verification
+
+This is the broad platform check. For routine work use the [smallest sufficient check](docs/testing.md#lean-verification-for-the-demo).
 
 From the repository root on Windows PowerShell:
 
@@ -73,7 +75,7 @@ The root reactor owns all shared build and test policy and builds in this order:
 6. `backend` (local job orchestration over existing passive adapters, canonical query/report HTTP/JSON and its own test boundary)
 7. `cli` (`evo` composition root and presentation, using existing adapters/services without starting a backend server)
 
-The adapter accepts exact supplied source bytes and verified resolution inputs; it does not execute target builds. Bounded Spring, canonical graph, conditional query/metric, typed policy compilation, configuration-qualified findings, Evidence Bundles, policy metrics and scoring are implemented. The score baseline is human-approved; presentation preserves emitted calibration/status unchanged. M7 supplies query/report HTTP APIs and `evo`; M8 supplies asynchronous local backend jobs and the scoped visual workbench. M9 evaluates the integrated product before M10 release review.
+The adapter accepts exact supplied source bytes and verified resolution inputs; it does not execute target builds. Bounded Spring, canonical graph, conditional query/metric, typed policy compilation, configuration-qualified findings, Evidence Bundles, policy metrics and scoring are implemented. The score baseline is human-approved; presentation preserves emitted calibration/status unchanged. M7 supplies query/report HTTP APIs and `evo`; M8 supplies asynchronous local backend jobs and the scoped visual workbench. M9 evaluated a bounded candidate; M10 accepted Track A within its release reservations.
 
 The Maven adapter implements `BuildModelProvider` in the neutral `com.evolution.analysis.buildmodel` package. It models root/nested modules, relative parents, supplied artifact parents/BOMs, inheritance, properties, explicit/property/default profiles, dependency management, scopes, optional flags and exclusions. M3.2 adds per-module main/test candidate source plans with inherited directories, separate syntax/bytecode/API requirements, encoding declarations, plugin configuration and provenance. Result schema `build-model-result-v2` includes source-plan gaps in `hasGaps()`.
 

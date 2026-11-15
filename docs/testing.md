@@ -2,17 +2,26 @@
 
 The Maven Wrapper pins Maven 3.9.16; use JDK 21. These commands build/test trusted platform code. Native tests replay captured evidence; they never run a target lifecycle on the host or launch a worker to repair missing fixtures.
 
+## Lean verification for the demo
+
+- **Docs only:** inspect the diff and check changed links and status consistency. No application build or test.
+- **Behavior change:** run the smallest regression or contract check that differentiates success from failure. Reuse the result at handoff if the relevant inputs are unchanged. Add a direct consumer check when its contract changed or the focused test leaves a material risk uncovered. Use current platform dependencies.
+- **Demo integration:** run the pinned local journey once after meaningful integration changes. For the repair verifier, cover the intended baseline/candidate delta and one decisive rejection case. Reuse captures and unaffected stage results where their identities still match. Replayed model text and actual sandbox execution have separate statuses.
+- **Broader scope:** full reactor, scale/native campaigns, repeated runs and independent sign-off are not routine prerequisites. Run broader checks only for a concrete risk or a claim the focused evidence cannot support. Keep a compact record of what ran, what failed and which relevant checks were not run.
+
+The commands and campaign denominators below describe available checks and historical evidence. Selection depends on the actual change, not the number of modules touched.
+
 ## Select the intended scope
 
 | Command selection | Included | Excluded / not established |
 |---|---|---|
 | `test` or `verify`, without a test profile | All self-contained tests, including Spring integration tests | `native-campaign`; native acceptance is **NOT RUN** by this command |
-| `-Pfast-tests` | Self-contained tests except those tagged `integration` | Spring integration suites and native campaign; insufficient alone for handoff |
-| `-Pnative-campaign` | Only tests tagged `native-campaign`, on explicitly supplied captured inputs | Other unit/integration tests; insufficient alone for handoff |
+| `-Pfast-tests` | Self-contained tests except those tagged `integration` | Spring integration suites and native campaign |
+| `-Pnative-campaign` | Only tests tagged `native-campaign`, on explicitly supplied captured inputs | Other unit/integration tests |
 
 The profiles are mutually exclusive. Missing native inputs fail in Maven `validate`, rather than producing skipped tests. The five native suites have no property-based JUnit disable conditions. A zero-test selection fails, including an explicitly selected native class without its profile. A green build proves only the selected scope; tag exclusions do not mean those tests passed. In an IDE, exclude the `native-campaign` tag for the self-contained selection; selecting native tests directly requires the same captured inputs and trusted fixture classpath.
 
-The two expensive self-contained suites, `SourceToSpringPlanTest` (80 cases) and `ResourceFieldIngestionTest` (12), carry `integration`. They **still run by default**. `fast-tests` is a convenience selection, not a promise that every remaining class or Maven invocation finishes within five seconds. For the inner TDD loop, select one relevant method; the full bounded affected-module set belongs before handoff.
+The two expensive self-contained suites, `SourceToSpringPlanTest` (80 cases) and `ResourceFieldIngestionTest` (12), carry `integration`. They **still run by default**. Select a specific method when it covers the behavior under test. Only select complete classes when needed.
 
 The JMOD adapter also avoids recompressing its temporary solver JAR: it uses compression level 0. Original artifact SHA256 verification, class bytes, duplicate checks, sorted entries and timestamps remain unchanged. This removes compression work without sharing mutable solver state or introducing a cross-analysis cache. The view is built in memory; JavaParser 3.28.2's `JarTypeSolver(InputStream)` also materializes it as a temporary file with `deleteOnExit`. The larger ZIP representation can therefore consume more memory **and temporary disk**, until the provider process exits. The captured native campaign uses an explicit 1,536 MiB test heap. This is not a general performance or resource-capacity certificate.
 
@@ -25,7 +34,7 @@ The JMOD adapter also avoids recompressing its temporary solver JAR: it uses com
 # Broader local iteration; this does not establish native/Spring acceptance.
 .\mvnw.cmd test -pl analyzer-javaparser -Pfast-tests -q
 
-# Before handoff: bounded affected self-contained classes, no fast-tests profile.
+# Example when the change affects both Spring ingestion contracts.
 .\mvnw.cmd test -pl analyzer-javaparser "-Dtest=SourceToSpringPlanTest,ResourceFieldIngestionTest" -q
 ```
 

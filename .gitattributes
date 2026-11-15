@@ -14,6 +14,8 @@
 # Native fixture source/capture bytes are hashed and their offsets use LF.
 analyzer/src/test/resources/polyglot/**/*.ts text eol=lf
 analyzer/src/test/resources/polyglot/**/*.ndjson text eol=lf
+# The sealed embedded fixture intentionally mixes LF script bytes and CRLF container lines.
+analyzer/src/test/resources/polyglot/typescript-embedded-v1/component.vue -text whitespace=cr-at-eol
 .mvn/wrapper/maven-wrapper.properties text eol=lf
 mvnw text eol=lf
 mvnw.cmd text eol=crlf

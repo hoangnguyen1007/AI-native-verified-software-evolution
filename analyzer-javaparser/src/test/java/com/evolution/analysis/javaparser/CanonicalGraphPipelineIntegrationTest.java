@@ -1,5 +1,8 @@
 package com.evolution.analysis.javaparser;
 
+import com.evolution.analysis.evolution.*;
+import com.evolution.analysis.filesystem.FileSnapshotComparison;
+import com.evolution.analysis.filesystem.PartitionedGraphStore;
 import com.evolution.analysis.contract.common.*;
 import com.evolution.analysis.contract.identity.*;
 import com.evolution.analysis.contract.source.*;
@@ -11,6 +14,9 @@ import com.evolution.analysis.spring.condition.*;
 import com.evolution.analysis.spring.registration.*;
 import com.evolution.analysis.spring.truth.*;
 import com.evolution.analysis.spring.universal.*;
+import com.evolution.analysis.policy.*;
+import com.evolution.analysis.evidence.EvidenceContext;
+import com.evolution.analysis.query.ArchitectureQueryService;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 import org.junit.jupiter.api.Test;
@@ -107,7 +113,7 @@ class CanonicalGraphPipelineIntegrationTest {
         assertTrue(retained.canonicalJson().contains("SUCCEEDED"));assertTrue(retained.canonicalJson().contains(Base64.getEncoder().encodeToString(file.bytes())));
     }
 
-    @Test void explicitAndSymbolicSpringRegionsPreserveOwnerUsesAndReplayedWitnesses() throws Exception {
+    @Test void explicitAndSymbolicSpringRegionsPreserveOwnerUsesAndReplayedWitnesses(@org.junit.jupiter.api.io.TempDir java.nio.file.Path dir) throws Exception {
         var helper=new SourceToSpringPlanTest();
         var fixture=helper.sourceFixture(Map.of("base/Base.java","""
                 package base;
@@ -151,12 +157,314 @@ class CanonicalGraphPipelineIntegrationTest {
         assertEquals(symbolic.regions().size(),symbolicGraph.nodes().stream().filter(n->n.kind().equals("TRUTH_REGION")).count());
         assertTrue(symbolicGraph.nodes().stream().anyMatch(n->n.kind().equals("REGION_FORMULA")));
         assertEquals(symbolicGraph.identity(),codec.decode(codec.encode(symbolicGraph),GraphJson.Limits.defaults()).identity());
+        var compared=conditional(graph,symbolicGraph,2);
+        var summaries=rows(compared,SnapshotComparison.Section.REGIONS).stream().filter(r->"FACT_SUMMARY".equals(r.get("kind"))).toList();
+        assertEquals(explicit.regions().size(),summaries.size(),()->compared.summary().status().name());
+        assertTrue(summaries.stream().allMatch(r->"UNCHANGED".equals(r.get("shape"))));
+        assertEquals(0,compared.summary().census(SnapshotComparison.Section.EVENTS).rows());
+        assertEquals(compared.summary(),conditional(graph,symbolicGraph,17).summary());
+        var store=new PartitionedGraphStore(dir.resolve("graphs"));
+        store.save(graph,()->false);store.save(symbolicGraph,()->false);
+        try(var session=FileSnapshotComparison.compare(store,dir.resolve("scratch"),conditionalRequest(graph,symbolicGraph),7,()->false)) {
+            assertEquals(compared.summary(),session.result().summary());
+            assertEquals(rows(compared,SnapshotComparison.Section.PROOFS),rows(session.result(),SnapshotComparison.Section.PROOFS));
+        }
         var changedBaseline=new ConfigurationAssignment(Map.of(variable,FiniteDomain.Value.bool(true)),proof);
         assertThrows(IllegalArgumentException.class,()->new CanonicalGraphInput.SpringSlice(fixture.key(),plan,Optional.of(space),Optional.of(changedBaseline),Optional.of(explicit),Optional.empty(),slice.parameters()));
         assertThrows(IllegalArgumentException.class,()->new CanonicalGraphInput.SpringSlice(fixture.key(),plan,Optional.of(space),Optional.of(changedBaseline),Optional.empty(),Optional.of(symbolic),symbolicSlice.parameters()));
         var alteredLimits=new TruthRegionEvaluation.Limits(limits.enumeration(),1,limits.maxRegionCells(),limits.maxWitnessReplays());
         assertThrows(IllegalArgumentException.class,()->new CanonicalGraphInput.SpringSlice(fixture.key(),plan,Optional.of(space),Optional.of(baseline),Optional.of(explicit),Optional.empty(),
                 Optional.of(new CanonicalGraphInput.EvaluationParameters(alteredLimits,ExhaustiveConfigurationReasoner.INSTANCE.policy(),artifact,0,Optional.empty()))));
+    }
+
+    @Test void conditionalEvolutionSeparatesRegistrationOrderFromSelectedBindings() throws Exception {
+        var helper=new SourceToSpringPlanTest();
+        var f=helper.sourceFixture("""
+                package app;
+                @org.springframework.context.annotation.ComponentScan("app") class App {}
+                class Store {}
+                @org.springframework.context.annotation.Configuration(proxyBeanMethods=false) class ConfigFirst {
+                  @org.springframework.context.annotation.Bean Store first() { return new Store(); }
+                }
+                @org.springframework.context.annotation.Configuration(proxyBeanMethods=false) class ConfigSecond {
+                  @org.springframework.context.annotation.Bean
+                  @org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean(name="first")
+                  Store second() { return new Store(); }
+                }
+                """);
+        var l=helper.beanPlan(f,true,"ConfigFirst","first","ConfigSecond","second");
+        var r=helper.beanPlan(f,true,"ConfigSecond","second","ConfigFirst","first");
+        var a=evolutionGraph(f,l,List.of(),Map.of());var b=evolutionGraph(f,r,List.of(),Map.of());
+        var order=conditional(a,b,2);
+        var events=rows(order,SnapshotComparison.Section.EVENTS);
+        assertEquals(List.of("REGION_INTRODUCED","REGION_INTRODUCED"),events.stream().map(e->e.get("kind")).toList(),
+                rows(order,SnapshotComparison.Section.COMPATIBILITY).stream().map(e->e.get("reasons")).toList()+" "+
+                        rows(order,SnapshotComparison.Section.REGIONS).stream().map(e->List.of(e.get("kind"),
+                                e.getOrDefault("shape","?"),Objects.toString(e.get("reason"),"-"))).toList());
+        assertEquals(List.of("REGION_RESOLVED","REGION_RESOLVED"),rows(conditional(b,a,4),SnapshotComparison.Section.EVENTS).stream().map(e->e.get("kind")).toList());
+        var unproved=evolutionGraph(f,helper.beanPlan(f,false),List.of(),Map.of());
+        assertTrue(rows(conditional(a,unproved,3),SnapshotComparison.Section.EVENTS).isEmpty());
+
+        var first=selectionPriority(helper,true);var second=selectionPriority(helper,false);
+        var g1=evolutionGraph(first,helper.beanPlan(first,true,"Config","first","second","Client"),List.of(),Map.of());
+        var g2=evolutionGraph(second,helper.beanPlan(second,true,"Config","first","second","Client"),List.of(),Map.of());
+        var selection=conditional(g1,g2,3);
+        var binding=rows(selection,SnapshotComparison.Section.EVENTS).stream().filter(e->"SELECTED_BINDING_CHANGED".equals(e.get("kind"))).toList();
+        assertEquals(2,binding.size(),()->selection.summary().toString());
+        assertNotEquals(binding.getFirst().get("before"),binding.getFirst().get("after"));
+        var candidate=rows(selection,SnapshotComparison.Section.REGIONS).stream().filter(e->"INJECTION_CANDIDATE".equals(e.get("factKind"))).toList();
+        assertEquals(4,candidate.size());
+        assertTrue(candidate.stream().allMatch(e->"UNCHANGED".equals(e.get("shape"))));
+    }
+
+    @Test void conditionalEvolutionDistinguishesDomainChangesAndWitnessObservations() throws Exception {
+        var helper=new SourceToSpringPlanTest();
+        var f=helper.sourceFixture("""
+                package app;
+                @org.springframework.context.annotation.ComponentScan("app") class App {}
+                @org.springframework.stereotype.Component class Store {}
+                """);
+        var plan=helper.beanPlan(f,true,"Store");
+        var variable=new FiniteDomain.Variable(FiniteDomain.Kind.PROPERTY,"flavor");
+        var zero=FiniteDomain.Value.exact("vanilla");
+        var one=FiniteDomain.Value.exact("chocolate");
+        var two=FiniteDomain.Value.exact("strawberry");
+        var g1=evolutionGraph(f,plan,List.of(zero,one),Map.of(variable,zero));
+        var g2=evolutionGraph(f,plan,List.of(zero,two),Map.of(variable,zero));
+        var delta=conditional(g1,g2,2);
+        assertEquals(Set.of("DOMAIN_ADDED","DOMAIN_REMOVED"),new HashSet<>(rows(delta,SnapshotComparison.Section.EVENTS).stream().map(e->e.get("kind")).toList()));
+        var reps=evolutionGraph(f,plan,List.of(zero,one),Map.of(variable,one));
+        var changed=conditional(g1,reps,3);
+        assertTrue(rows(changed,SnapshotComparison.Section.EVENTS).isEmpty());
+        var witnesses=rows(changed,SnapshotComparison.Section.EVIDENCE).stream().filter(e->"WITNESS_OBSERVATION_CHANGED".equals(e.get("kind"))).toList();
+        assertEquals(1,witnesses.size());
+        var left=GraphJson.object(witnesses.getFirst().get("left"));
+        var right=GraphJson.object(witnesses.getFirst().get("right"));
+        assertEquals(g1.identity().value(),left.get("graph"));
+        assertEquals(reps.identity().value(),right.get("graph"));
+        assertEquals("CAPTURED_EVALUATOR_REPLAY",left.get("tier"));
+        assertNotEquals(left.get("assignment"),right.get("assignment"));
+        var other=FiniteDomain.Value.other(Optional.empty());
+        var unknown=evolutionGraph(f,plan,List.of(zero,other),Map.of(variable,zero));
+        assertTrue(rows(conditional(g1,unknown,4),SnapshotComparison.Section.EVENTS).isEmpty());
+    }
+
+    @Test void findingLifecycleUsesRealSpringRegionsAcrossAuthenticatedReaders(@org.junit.jupiter.api.io.TempDir java.nio.file.Path dir) throws Exception {
+        var helper=new SourceToSpringPlanTest();
+        var variable=new FiniteDomain.Variable(FiniteDomain.Kind.PROPERTY,"flavor");
+        var vanilla=FiniteDomain.Value.exact("vanilla");
+        var chocolate=FiniteDomain.Value.exact("chocolate");
+        var strawberry=FiniteDomain.Value.exact("strawberry");
+        var values=List.of(vanilla,chocolate,strawberry);
+        var left=regionalGraph(helper,"chocolate",values,Map.of(variable,vanilla),false);
+        var right=regionalGraph(helper,"strawberry",values,Map.of(variable,vanilla),false);
+        var a=springPolicy(left);var b=springPolicy(right);
+        assertEquals(1,a.evaluation().findings().size(),()->a.evaluation().gaps().stream().map(g->g.reasonCode()).toList().toString());
+        assertEquals(1,b.evaluation().findings().size());
+        var refs=List.of(new SnapshotComparison.ReportRef(SnapshotComparison.Side.LEFT,a.identity(),a.evaluation().context()),
+                new SnapshotComparison.ReportRef(SnapshotComparison.Side.RIGHT,b.identity(),b.evaluation().context()));
+        var reports=Map.of(a.identity(),a,b.identity(),b);
+        var reader=new SnapshotComparison.ReportReader() {
+            public SnapshotComparison.ReportStatus verify(ContentDigest graph,SnapshotComparison.ReportRef report,java.util.function.BooleanSupplier stop) {
+                return SnapshotComparison.ReportStatus.AVAILABLE;
+            }
+            public Optional<EvolutionReport> read(ContentDigest graph,SnapshotComparison.ReportRef report,java.util.function.BooleanSupplier stop) {
+                return Optional.ofNullable(reports.get(report.identity()));
+            }
+        };
+        var request=new SnapshotComparison.Request(TestInputs.REPO,left.identity(),right.identity(),SnapshotComparison.Mode.STRICT,
+                new SnapshotComparison.Selection(Set.of("MAIN"),Set.of(),Set.of(),false,false,true,false,false));
+        var result=SnapshotComparison.compare(request,EvolutionSnapshot.memory(left,right),refs,reader,EvolutionIndex.memory(),3,()->false);
+        var outcomes=rows(result,SnapshotComparison.Section.FINDINGS);
+        assertEquals(Set.of("INTRODUCED","RESOLVED","PERSISTED"),new HashSet<>(outcomes.stream()
+                .filter(r->"FINDING_TRANSITION".equals(r.get("kind"))).map(r->r.get("transition")).toList()),
+                ()->outcomes.stream().map(r->Arrays.asList(r.get("kind"),r.get("transition"),r.get("reasons"))).toList()+" "+
+                        a.evaluation().rules().getFirst().findings().getFirst().bundle().gaps().stream().map(g->g.reasonCode()).toList()+" "+
+                        a.evaluation().gaps().stream().map(g->g.reasonCode()).toList()+" "+
+                        left.evidence().stream().filter(e->"evidence.gap".equals(e.family())).map(e->
+                                GraphJson.object(GraphJson.read(e.canonicalJson(),GraphJson.Limits.defaults())).get("reasonCode")).distinct().toList());
+        var proofs=rows(result,SnapshotComparison.Section.PROOFS);
+        assertEquals(3,proofs.stream().filter(r->"FINDING_REGION".equals(r.get("kind"))).count());
+        var graphs=new PartitionedGraphStore(dir.resolve("graphs"));
+        graphs.save(left,()->false);graphs.save(right,()->false);
+        try(var replay=FileSnapshotComparison.compare(graphs,dir.resolve("scratch"),request,refs,reader,1,()->false)) {
+            assertEquals(result.summary(),replay.result().summary());
+            assertEquals(outcomes,rows(replay.result(),SnapshotComparison.Section.FINDINGS));
+        }
+
+        var symbolic=regionalGraph(helper,"strawberry",values,Map.of(variable,vanilla),true);
+        var middle=regionalGraph(helper,"vanilla",values,Map.of(variable,vanilla),true);
+        var c=springPolicy(symbolic);var m=springPolicy(middle);
+        var mixedReader=new SnapshotComparison.ReportReader() {
+            public SnapshotComparison.ReportStatus verify(ContentDigest graph,SnapshotComparison.ReportRef ref,java.util.function.BooleanSupplier stop) {
+                return SnapshotComparison.ReportStatus.AVAILABLE;
+            }
+            public Optional<EvolutionReport> read(ContentDigest graph,SnapshotComparison.ReportRef ref,java.util.function.BooleanSupplier stop) {
+                return Optional.ofNullable(Map.of(a.identity(),a,c.identity(),c,m.identity(),m).get(ref.identity()));
+            }
+        };
+        var mixed=new SnapshotComparison.Request(TestInputs.REPO,left.identity(),symbolic.identity(),request.mode(),request.selection());
+        var mixedResult=SnapshotComparison.compare(mixed,EvolutionSnapshot.memory(left,symbolic),
+                List.of(refs.getFirst(),new SnapshotComparison.ReportRef(SnapshotComparison.Side.RIGHT,c.identity(),c.evaluation().context())),
+                mixedReader,EvolutionIndex.memory(),2,()->false);
+        assertEquals(Set.of("INTRODUCED","RESOLVED","PERSISTED"),new HashSet<>(rows(mixedResult,SnapshotComparison.Section.FINDINGS).stream()
+                .filter(r->"FINDING_TRANSITION".equals(r.get("kind"))).map(r->r.get("transition")).toList()));
+        var p=historyInterval(left,middle);var q=historyInterval(middle,symbolic);
+        var history=new SnapshotComparison.History(List.of(historyStep(left,a,null),historyStep(middle,m,p),historyStep(symbolic,c,q)));
+        var historyRequest=new SnapshotComparison.Request(TestInputs.REPO,middle.identity(),symbolic.identity(),request.mode(),request.selection());
+        var historyResult=SnapshotComparison.compare(historyRequest,EvolutionSnapshot.memory(left,middle,symbolic),
+                List.of(new SnapshotComparison.ReportRef(SnapshotComparison.Side.LEFT,m.identity(),m.evaluation().context()),
+                        new SnapshotComparison.ReportRef(SnapshotComparison.Side.RIGHT,c.identity(),c.evaluation().context())),
+                mixedReader,List.of(),(ref,s,o,stop)->SnapshotComparison.ReportStatus.UNAVAILABLE,Optional.of(history),
+                (id,stop)->Optional.ofNullable(Map.of(p.identity(),p,q.identity(),q).get(id)),EvolutionIndex.memory(),3,()->false);
+        assertEquals(1,rows(historyResult,SnapshotComparison.Section.HISTORY).stream().filter(r->"REINTRODUCED".equals(r.get("transition"))).count());
+        String export = System.getProperty("evolution.history.fixture");
+        if (export != null) exportHistoryFixture(java.nio.file.Path.of(export), List.of(left,middle,symbolic), List.of(a,m,c));
+    }
+
+    private static void exportHistoryFixture(java.nio.file.Path output, List<KnowledgeGraph> graphs,
+                                             List<EvolutionReport> operands) throws Exception {
+        var path = java.nio.file.Files.createDirectory(output.toAbsolutePath().normalize());
+        var store = new PartitionedGraphStore(path.resolve("graph-pages"));
+        var revisions = new ArrayList<Map<String,Object>>();
+        for (int i = 0; i < graphs.size(); i++) {
+            var graph = graphs.get(i);
+            var operand = operands.get(i);
+            var queries = new ArchitectureQueryService(graph);
+            var metrics = new com.evolution.analysis.metrics.PolicyMetricsService().compute(
+                    operand.compilation().orElseThrow(), operand.mapping().orElseThrow(), operand.evaluation(),
+                    queries, com.evolution.analysis.metrics.PolicyMetrics.Limits.defaults());
+            store.save(graph, () -> false);
+            revisions.add(Map.of("graph", graph.identity(), "snapshot", graph.snapshot(), "context",
+                    operand.evaluation().context(), "report",
+                    Map.of("evaluation", operand.evaluation(), "metrics", metrics, "assessment", Optional.empty())));
+        }
+        java.nio.file.Files.writeString(path.resolve("revisions.json"),
+                com.evolution.analysis.contract.serialization.CanonicalJson.write(
+                        Map.of("repository", TestInputs.REPO, "revisions", revisions)),
+                java.nio.file.StandardOpenOption.CREATE_NEW);
+    }
+
+    private static SnapshotComparison.HistoryProof historyInterval(KnowledgeGraph from,KnowledgeGraph to) {
+        return new SnapshotComparison.HistoryProof(SnapshotComparison.HistoryBasis.DECLARED_SEQUENCE,TestInputs.REPO,
+                from.identity(),to.identity(),from.snapshot(),to.snapshot(),List.of(),true,ContentDigest.sha256Utf8("authored sequence"));
+    }
+
+    private static SnapshotComparison.HistoryStep historyStep(KnowledgeGraph graph,EvolutionReport report,SnapshotComparison.HistoryProof proof) {
+        return new SnapshotComparison.HistoryStep(new SnapshotComparison.HistoryRevision(graph.identity(),
+                List.of(new SnapshotComparison.HistoryReport(report.identity(),report.evaluation().context()))),
+                Optional.ofNullable(proof).map(SnapshotComparison.HistoryProof::identity));
+    }
+
+    private static KnowledgeGraph regionalGraph(SourceToSpringPlanTest helper,String excluded,List<FiniteDomain.Value> values,
+                                               Map<FiniteDomain.Variable,FiniteDomain.Value> assignment,boolean symbolic) throws Exception {
+        var f=helper.sourceFixture("""
+                package app;
+                @org.springframework.context.annotation.ComponentScan("app") class App {}
+                class Store {}
+                @org.springframework.context.annotation.Configuration(proxyBeanMethods=false) class Config {
+                  @org.springframework.context.annotation.Bean
+                  @org.springframework.boot.autoconfigure.condition.ConditionalOnProperty(name="flavor", havingValue="%s")
+                  @org.springframework.context.annotation.Primary
+                  Store fallback() { return new Store(); }
+                  @org.springframework.context.annotation.Bean Store store() { return new Store(); }
+                }
+                @org.springframework.stereotype.Component class Client {
+                  @org.springframework.beans.factory.annotation.Autowired Store store;
+                }
+                """.formatted(excluded));
+        return evolutionGraph(f,helper.beanPlan(f,true,"Config","fallback","store","Client"),values,assignment,symbolic);
+    }
+
+    private static EvolutionReport springPolicy(KnowledgeGraph graph) {
+        var text="""
+                schema: architecture-policy:v1
+                id: evolution.regional
+                version: "1"
+                rules:
+                  - {id: dependency.rule, version: "1", kind: FORBIDDEN_DEPENDENCY, severity: ERROR, scope: SPRING_COMPONENT, relationships: [spring.selected-binding], from: {names: ['*']}, to: {names: ['store']}}
+                """;
+        var queries=new ArchitectureQueryService(graph);
+        var context=graph.contexts().stream().filter(c->"spring.context".equals(graph.evidence(c.evidence()).orElseThrow().family()))
+                .findFirst().orElseThrow().identity();
+        var compiled=new PolicyCompiler().compile(text.getBytes(StandardCharsets.UTF_8),EvidenceContext.forSnapshot(graph.snapshot()),PolicyCompiler.Limits.defaults());
+        var plan=new PolicyGraphMapper().bind(compiled,queries,context,PolicyGraphMapper.Limits.defaults());
+        var evaluation=new PolicyEvaluator().evaluate(compiled,plan,queries,PolicyEvaluation.Limits.defaults());
+        return new EvolutionReport(evaluation,Optional.empty(),Optional.empty(),Optional.of(compiled),Optional.of(plan));
+    }
+
+    private static SourceToSpringPlanTest.Fixture selectionPriority(SourceToSpringPlanTest helper,boolean first)throws Exception {
+        String primary="@org.springframework.context.annotation.Primary";
+        return helper.sourceFixture("""
+                package app;
+                @org.springframework.context.annotation.ComponentScan("app") class App {}
+                class Store {}
+                @org.springframework.context.annotation.Configuration(proxyBeanMethods=false) class Config {
+                  @org.springframework.context.annotation.Bean %s Store first() { return new Store(); }
+                  @org.springframework.context.annotation.Bean %s Store second() { return new Store(); }
+                }
+                @org.springframework.stereotype.Component class Client {
+                  @org.springframework.beans.factory.annotation.Autowired Store store;
+                }
+                """.formatted(first?primary:"",first?"":primary));
+    }
+
+    private static KnowledgeGraph evolutionGraph(SourceToSpringPlanTest.Fixture f,com.evolution.analysis.spring.universal.SourceToSpringPlan.Result plan,
+                                                 List<FiniteDomain.Value> values,Map<FiniteDomain.Variable,FiniteDomain.Value> assignment) {
+        return evolutionGraph(f,plan,values,assignment,false);
+    }
+
+    private static KnowledgeGraph evolutionGraph(SourceToSpringPlanTest.Fixture f,SourceToSpringPlan.Result plan,
+                                                 List<FiniteDomain.Value> values,Map<FiniteDomain.Variable,FiniteDomain.Value> assignment,
+                                                 boolean symbolic) {
+        var version=new VersionedIdentifier("graph.evolution-config","1");
+        var proof=new ConditionEvidence.Derived(List.of(f.source().identity()),version,"finite-space");
+        // Keep a typed profile even for unconditional fixture classes; the staged
+        // source acquisition models an explicit finite environment.
+        var variables=assignment.isEmpty()?Map.of(new FiniteDomain.Variable(FiniteDomain.Kind.PROFILE,"dev"),FiniteDomain.Value.bool(false)):assignment;
+        var choices=assignment.isEmpty()?List.of(FiniteDomain.Value.bool(false),FiniteDomain.Value.bool(true)):values;
+        var domains=variables.keySet().stream().map(v->new FiniteDomain(v,choices,proof)).toList();
+        var space=new ConfigurationSpace(f.build(),new ConfigurationEnvelope(ConfigurationEnvelope.Layer.REPOSITORY,List.of(),List.of(),
+                ContentDigest.sha256Utf8("authored empty envelope policy")),
+                Optional.empty(),domains,List.of(),
+                new ConfigurationSpace.PrecedencePolicy(ExogenousConditionEvaluator.PRECEDENCE,List.of(),proof),
+                new ConfigurationSpace.ProfilePolicy(ExogenousConditionEvaluator.PROFILES,List.of(),Map.of(),List.of(),proof),version,
+                new ConfigurationSpace.FeasibilityPolicy(version,ConfigurationSpace.Limits.conservative(),proof));
+        var baseline=new ConfigurationAssignment(variables,proof);
+        var limits=TruthRegionEvaluation.Limits.conservative();
+        var artifact=ContentDigest.sha256Utf8("graph-authored-evaluator");
+        if(symbolic) {
+            var symbolicLimits=SymbolicConfiguration.Limits.defaults();
+            var truth=plan.evaluateSymbolic(space,baseline,limits,artifact,8,symbolicLimits).truth();
+            var parameters=new CanonicalGraphInput.EvaluationParameters(limits,SatConfigurationReasoner.INSTANCE.policy(),artifact,8,Optional.of(symbolicLimits));
+            var slice=new CanonicalGraphInput.SpringSlice(f.key(),plan,Optional.of(space),Optional.of(baseline),Optional.empty(),Optional.of(truth),Optional.of(parameters));
+            return new CanonicalGraphBuilder().build(f.source().manifest(),f.source().frontend(),List.of(slice));
+        }
+        var truth=plan.evaluate(space,baseline,limits,artifact).truth();
+        if(values.isEmpty()&&"COMPLETE".equals(plan.binding().registrationPlan().order().name()))
+            assertTrue(truth.regions().stream().anyMatch(region->region.classification()!=TruthRegionEvaluation.Classification.UNKNOWN),
+                    ()->truth.issues().stream().map(i->i.reason().name()).toList().toString()+" "+
+                            truth.capabilityGaps().stream().map(g->g.reasonCode()).distinct().sorted().toList());
+        var parameters=new CanonicalGraphInput.EvaluationParameters(limits,ExhaustiveConfigurationReasoner.INSTANCE.policy(),artifact,0,Optional.empty());
+        var slice=new CanonicalGraphInput.SpringSlice(f.key(),plan,Optional.of(space),Optional.of(baseline),Optional.of(truth),Optional.empty(),Optional.of(parameters));
+        return new CanonicalGraphBuilder().build(f.source().manifest(),f.source().frontend(),List.of(slice));
+    }
+
+    private static SnapshotComparison.Result conditional(KnowledgeGraph a,KnowledgeGraph b,int page)throws Exception {
+        return SnapshotComparison.compare(conditionalRequest(a,b),EvolutionSnapshot.memory(a,b),EvolutionIndex.memory(),page,()->false);
+    }
+
+    private static SnapshotComparison.Request conditionalRequest(KnowledgeGraph a,KnowledgeGraph b) {
+        var selection=new SnapshotComparison.Selection(Set.of("MAIN"),Set.of(),Set.of(),true,false);
+        return new SnapshotComparison.Request(TestInputs.REPO,a.identity(),b.identity(),SnapshotComparison.Mode.STRICT,selection);
+    }
+
+    private static List<Map<String,Object>> rows(SnapshotComparison.Result result,SnapshotComparison.Section section)throws Exception {
+        var all=new ArrayList<Map<String,Object>>();Optional<String> cursor=Optional.empty();
+        do {
+            var page=result.page(section,13,cursor);all.addAll(page.items());cursor=page.continuation();
+        } while(cursor.isPresent());
+        return all;
     }
 
     @Test void sameQualifiedNameAcrossMavenModulesStaysInSeparateAnalysisContexts() {

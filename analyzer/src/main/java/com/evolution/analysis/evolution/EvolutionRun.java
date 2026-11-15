@@ -12,20 +12,58 @@ import static com.evolution.analysis.evolution.EvolutionRows.*;
 import static com.evolution.analysis.evolution.SnapshotComparison.*;
 
 final class EvolutionRun {
-    static final VersionedIdentifier PROVIDER=new VersionedIdentifier("architecture.evolution","m11.2-v1");
+    static final VersionedIdentifier PROVIDER=new VersionedIdentifier("architecture.evolution","m11.6-v1");
     final Request request;
     final ContentDigest requestIdentity;
     final EvolutionIndex index;
     final int size;
     final BooleanSupplier cancelled;
-    private boolean useful,comparable,residual,comparedJava;
+    private boolean useful,comparable,residual,comparedJava,comparedSpring;
+    private final Map<String,List<ReportRef>> reportRefs=new HashMap<>();
+    private long findingCells=SpringEvolution.MAX_CELLS;
+    private long findingSolves=4096;
 
     EvolutionRun(Request request,ContentDigest requestIdentity,EvolutionIndex index,int size,BooleanSupplier cancelled) {
         this.request=request;this.requestIdentity=requestIdentity;this.index=index;this.size=size;this.cancelled=cancelled;
     }
 
-    Result compare(EvolutionSnapshot.Reader reader,List<ReportRef> reports,ReportReader reportReader)throws IOException {
-        var left=read("LEFT",request.left(),reader);var right=read("RIGHT",request.right(),reader);
+    Result compare(EvolutionSnapshot.Reader reader,List<ReportRef> reports,ReportReader reportReader,
+                   List<BridgeRef> bridges,BridgeReader bridgeReader,Optional<History> history,HistoryReader historyReader)throws IOException {
+        return compare(reader,reports,reportReader,bridges,bridgeReader,history,historyReader,Optional.empty());
+    }
+
+    Result compare(EvolutionSnapshot.Reader reader,List<ReportRef> reports,ReportReader reportReader,
+                   List<BridgeRef> bridges,BridgeReader bridgeReader,Optional<History> history,HistoryReader historyReader,
+                   Optional<Map<String,Object>> checkpoint)throws IOException {
+        var left = checkpoint.isEmpty() ? read("LEFT",request.left(),reader) :
+                restore("LEFT",request.left(),obj(checkpoint.orElseThrow().get("left")),reader);
+        var right = checkpoint.isEmpty() ? read("RIGHT",request.right(),reader) :
+                restore("RIGHT",request.right(),obj(checkpoint.orElseThrow().get("right")),reader);
+        var l=new Rows(index,"scopes",left.name+"|");var r=new Rows(index,"scopes",right.name+"|");
+        if(!left.readable)l=null;if(!right.readable)r=null;
+        if (checkpoint.isPresent()) {
+            var state=checkpoint.orElseThrow();
+            var through=text(state,"throughScope");
+            if (l!=null) l.after(left.name+"|"+through+"|\uffff");
+            if (r!=null) r.after(right.name+"|"+through+"|\uffff");
+            useful=Boolean.TRUE.equals(state.get("useful"));
+            comparable=Boolean.TRUE.equals(state.get("comparable"));
+            residual=Boolean.TRUE.equals(state.get("residual"));
+            comparedJava=Boolean.TRUE.equals(state.get("comparedJava"));
+            comparedSpring=Boolean.TRUE.equals(state.get("comparedSpring"));
+        }
+        while(head(l)!=null||head(r)!=null) {
+            EvolutionSnapshot.check(cancelled);
+            String key=scopeKey(head(l),head(r));
+            var a=group(l,key);var b=group(r,key);
+            align(key,left,a,right,b);
+            if (left.readable && right.readable) {
+                index.put("run","checkpoint",row("request",requestIdentity,"throughScope",key,
+                        "left",left.checkpoint(),"right",right.checkpoint(),"useful",useful,"comparable",comparable,
+                        "residual",residual,"comparedJava",comparedJava,"comparedSpring",comparedSpring));
+                index.checkpoint();
+            }
+        }
         for(var ref:reports) {
             EvolutionSnapshot.check(cancelled);
             var side=ref.side()==Side.LEFT?left:right;
@@ -35,19 +73,41 @@ final class EvolutionRun {
             put(Section.INPUTS,side.name+"|report|"+ref.identity().value()+"|"+ref.context(),
                     row("side",side.name,"graph",side.graph,"context",ref.context(),"artifact",ref.identity(),"kind","REPORT","status",status));
             if(status!=ReportStatus.AVAILABLE){residual=true;if(side.header!=null)gap(side,ref.context(),"REPORT_"+status.name(),List.of(ref.identity()));}
+            reportRefs.computeIfAbsent(side.name+"|"+ref.context(),ignored->new ArrayList<>()).add(ref);
         }
-        var l=new Rows(index,"scopes",left.name+"|");var r=new Rows(index,"scopes",right.name+"|");
-        if(!left.readable)l=null;if(!right.readable)r=null;
-        while(head(l)!=null||head(r)!=null) {
+        for(var ref:bridges) {
+            var side=ref.side()==Side.LEFT?left:right;
             EvolutionSnapshot.check(cancelled);
-            String key=scopeKey(head(l),head(r));
-            var a=group(l,key);var b=group(r,key);
-            align(key,left,a,right,b);
-            index.put("run","checkpoint",row("request",requestIdentity,"throughScope",key));
+            var status=side.readable&&side.lineage&&!side.foreign?bridgeReader.read(ref,side.header.snapshot(),
+                    (family,id,data)->EvolutionEvidence.bridge(side,ref,family,id,data),cancelled):ReportStatus.UNAVAILABLE;
+            put(Section.INPUTS,side.name+"|bridge",row("side",side.name,"graph",side.graph,"artifact",ref.publication(),
+                    "kind","BRIDGE_PUBLICATION","status",status));
+            if(status!=ReportStatus.AVAILABLE) {
+                unresolved();
+                if(side.header!=null)gap(side,null,"BRIDGE_"+status.name(),List.of(ref.publication().digest()));
+            }
         }
-        if(!left.readable||!right.readable||!comparedJava) {
+        if(request.selection().evidence()&&left.readable&&right.readable&&left.lineage&&right.lineage&&!left.foreign&&!right.foreign) {
+            new EvolutionEvidence(this,left,right).compare(bridges);
+            new DeclaredYamlEvolution(this).compare(left,right);
+            comparable=true;
+        } else if(request.selection().evidence()) {
             residual=true;
-            if(!comparedJava){
+            compatibility(hash("evolution.evidence-scope:v1",request.repository()).value(),"EVIDENCE","UNKNOWN",
+                    Set.of("EVIDENCE_INPUT_UNPROVED"),List.of(left.graph,right.graph));
+        }
+        if(request.selection().conditional()&&!comparedSpring) {
+            residual=true;
+            if(left.readable)gap(left,null,"SELECTED_SPRING_CONTEXT_UNAVAILABLE",List.of(left.graph));
+            if(right.readable)gap(right,null,"SELECTED_SPRING_CONTEXT_UNAVAILABLE",List.of(right.graph));
+        }
+        if(request.selection().reports()) {
+            new ReportEvolution(this,reportReader).compare(left,right,reportRefs);
+        }
+        if (history.isPresent()) new FindingHistory(this,reader,reportReader,historyReader,right).compare(history.orElseThrow());
+        if(!left.readable||!right.readable||request.selection().structural()&&!comparedJava) {
+            residual=true;
+            if(request.selection().structural()&&!comparedJava){
                 if(left.readable)gap(left,null,"SELECTED_JAVA_CONTEXT_UNAVAILABLE",List.of(left.graph));
                 if(right.readable)gap(right,null,"SELECTED_JAVA_CONTEXT_UNAVAILABLE",List.of(right.graph));
             }
@@ -67,14 +127,21 @@ final class EvolutionRun {
         return new Result(new Summary(requestIdentity,id,status,sections),index);
     }
 
+    private EvolutionInput restore(String side,ContentDigest graph,Map<String,Object> state,EvolutionSnapshot.Reader reader)throws IOException {
+        var input=new EvolutionInput(this,side,graph);
+        input.restore(state,reader);
+        return input;
+    }
+
     private EvolutionInput read(String side,ContentDigest graph,EvolutionSnapshot.Reader reader)throws IOException {
         var input=new EvolutionInput(this,side,graph);
         try {input.read(reader);}
         catch(EvolutionSnapshot.ReadFailure failure){input.failed(failure.reason().name());}
         catch(GraphJson.LimitExceededException limit){input.failed("RESOURCE_LIMIT");}
         catch(IllegalArgumentException invalid){input.failed("CORRUPT");}
-        put(Section.INPUTS,side+"|graph",row("side",side,"graph",graph,"snapshot",input.header==null?null:input.header.snapshot(),
-                "kind","GRAPH","status",input.disposition));
+        var provenance = input.readable ? index.get("input-revision", side).orElse(Map.of()) : Map.of();
+        put(Section.INPUTS,"0|"+side+"|graph",graphInput(Side.valueOf(side),graph,
+                input.header==null?null:input.header.snapshot(),input.disposition,provenance.get("revision"),provenance.get("dirty")));
         if(!input.readable) {
             put(Section.CONTEXTS,side+"|input",row("side",side,"graph",graph,"context",null,
                     "disposition","UNAVAILABLE","reason",input.disposition));
@@ -105,7 +172,11 @@ final class EvolutionRun {
             residual=true;
             if(request.mode()==Mode.OBSERVATION&&(x!=null||y!=null))useful=true;
             String reason=switch(disposition){case "AMBIGUOUS"->"CONTEXT_AMBIGUOUS";case "LEFT_ONLY","RIGHT_ONLY"->"CONTEXT_ONE_SIDED";default->"CONTEXT_UNAVAILABLE";};
-            compatibility(key,"STRUCTURE","UNKNOWN",Set.of(reason),refs);
+            String family=x!=null?text(x,"family"):y!=null?text(y,"family"):a.first!=null?text(a.first,"family"):text(b.first,"family");
+            if(family.equals("spring.context")){
+                compatibility(key,"REGION","UNKNOWN",Set.of(reason),refs);
+                compatibility(key,"BINDING","UNKNOWN",Set.of(reason),refs);
+            }else compatibility(key,"STRUCTURE","UNKNOWN",Set.of(reason),refs);
             if(x!=null)gap(left,text(x,"context"),reason,refs);if(y!=null)gap(right,text(y,"context"),reason,refs);
             return;
         }
@@ -120,6 +191,11 @@ final class EvolutionRun {
             if(!reasons.isEmpty())residual=true;
             return;
         }
+        if(family.equals("spring.context")) {
+            if(request.selection().conditional())spring(key,left,x,right,y,reasons,refs);
+            return;
+        }
+        if(!request.selection().structural())return;
         if(!family.equals("analysis.manifest")) {
             reasons.add("CAPABILITY_UNSUPPORTED");residual=true;
             compatibility(key,"STRUCTURE",foreign?"INCOMPATIBLE":"UNKNOWN",reasons,refs);
@@ -182,6 +258,37 @@ final class EvolutionRun {
         }
     }
 
+    private void spring(String key,EvolutionInput left,Map<String,Object> x,EvolutionInput right,Map<String,Object> y,
+                        Set<String> reasons,List<ContentDigest> refs)throws IOException {
+        comparedSpring=true;
+        var lp=obj(index.get("spring-parent",left.name+"|"+text(x,"parentAnalysis")).orElseThrow().get("profile"));
+        var rp=obj(index.get("spring-parent",right.name+"|"+text(y,"parentAnalysis")).orElseThrow().get("profile"));
+        for(String field:List.of("tool","classpath","platform","schema","provider"))
+            if(!Objects.equals(lp.get(field),rp.get(field)))reasons.add(field.toUpperCase(Locale.ROOT)+"_DRIFT");
+        for(String field:List.of("toolKnown","platformKnown","schemaKnown"))
+            if(!Boolean.TRUE.equals(lp.get(field))||!Boolean.TRUE.equals(rp.get(field)))reasons.add("PARENT_PROFILE_UNPROVED");
+        var lc=obj(lp.get("configuration"));var rc=obj(rp.get("configuration"));
+        for(String field:List.of("java.release","java.resolution-mode","java.reactor-sources","java.classpath-manifest"))
+            if(!Objects.equals(lc.get(field),rc.get(field)))reasons.add("BUILD_PROFILE_DRIFT");
+        if(reasons.isEmpty())try {
+            var a=new SpringRegionInput(left,x,SpringEvolution.LIMITS);
+            var b=new SpringRegionInput(right,y,SpringEvolution.LIMITS);
+            if(new SpringEvolution(this,key,a,b).compare())comparable=true;
+            else if(request.mode()==Mode.OBSERVATION)useful=true;
+            return;
+        } catch(EvolutionSnapshot.ReadFailure invalid) {
+            reasons.add("OPERAND_"+invalid.reason().name());
+        } catch(IllegalArgumentException | ArithmeticException | ClassCastException invalid) {
+            reasons.add(invalid instanceof GraphJson.LimitExceededException?"OPERAND_RESOURCE_LIMIT":"OPERAND_CORRUPT");
+        }
+        var verdict=reasons.contains("REPOSITORY_MISMATCH")?"INCOMPATIBLE":
+                reasons.stream().anyMatch(r->r.endsWith("_DRIFT"))?"QUALIFIED":"UNKNOWN";
+        compatibility(key,"REGION",verdict,reasons,refs);
+        compatibility(key,"BINDING",verdict,reasons,refs);
+        for(var reason:reasons){gap(left,text(x,"context"),reason,refs);gap(right,text(y,"context"),reason,refs);}
+        residual=true;
+    }
+
     private EvolutionInput.Coverage coverage(EvolutionInput input,Map<String,Object> context)throws IOException {
         try{return input.coverage(context);}
         catch(EvolutionSnapshot.ReadFailure|IllegalArgumentException failure){
@@ -193,7 +300,7 @@ final class EvolutionRun {
         }
     }
 
-    private void compatibility(String scope,String capability,String verdict,Set<String> reasons,List<ContentDigest> refs)throws IOException {
+    void compatibility(String scope,String capability,String verdict,Set<String> reasons,List<ContentDigest> refs)throws IOException {
         boolean proved=verdict.equals("COMPARABLE");
         put(Section.COMPATIBILITY,scope+"|"+capability,row("scope",scope,"capability",capability,"verdict",verdict,
                 "reasons",reasons,"evidence",refs,"allowedOperations",proved?List.of("COMPARE"):
@@ -202,7 +309,10 @@ final class EvolutionRun {
     }
 
     void gap(EvolutionInput side,String context,String reason,List<ContentDigest> evidence)throws IOException {
-        String subjectId=context==null?side.graph.value():context;
+        gap(side, context, reason, evidence, context==null?side.graph.value():context);
+    }
+
+    void gap(EvolutionInput side,String context,String reason,List<ContentDigest> evidence,String subjectId)throws IOException {
         var subject=new EvidenceSubject(EvidenceSubject.Kind.ARTIFACT,subjectId);
         var origin=new TreeSet<ContentDigest>(evidence);if(origin.isEmpty())origin.add(side.graph);
         var observation=origin.stream().map(ref->ProviderObservationReference.create(PROVIDER,"architecture.evolution",
@@ -219,6 +329,10 @@ final class EvolutionRun {
 
     void put(Section section,String key,Map<String,Object> value)throws IOException {index.put(section.name(),key,value);}
     void unresolved(){residual=true;}
+    void comparable(){comparable=true;}
+    void observed(){if(request.mode()==Mode.OBSERVATION)useful=true;}
+    boolean spendFindingCells(long cost){return (findingCells-=cost)>=0;}
+    boolean spendFindingSolves(long cost){return (findingSolves-=cost)>=0;}
     private static boolean available(Map<String,Object> row){return Boolean.TRUE.equals(row.get("available"));}
     private static EvolutionIndex.Entry head(Rows rows)throws IOException{return rows==null?null:rows.head();}
     private static String scopeKey(EvolutionIndex.Entry left,EvolutionIndex.Entry right) {

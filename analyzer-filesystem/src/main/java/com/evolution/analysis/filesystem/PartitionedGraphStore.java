@@ -230,6 +230,26 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
         };
     }
 
+    /** Compact captured revision metadata for the exact repository context, after closure revalidation by the caller. */
+    public Optional<Map<String,Object>> evolutionRevision(EvolutionSnapshot snapshot, BooleanSupplier cancelled) throws IOException {
+        var graph = snapshot.header().graph();
+        var id = snapshot.header().snapshot().value();
+        var rows = new ArrayList<Entry>(1);
+        visit(root(graph,cancelled).trees().get("contexts"),id,id+"\0",null,rows::add,cancelled,0);
+        if (rows.size()!=1) return Optional.empty();
+        var context = GraphSnapshotCodec.context(rows.getFirst().row());
+        var evidence = snapshot.evidence(context.evidence());
+        if (evidence.isEmpty() || !evidence.orElseThrow().family().equals("repository.snapshot")) return Optional.empty();
+        var canonical = evidence.orElseThrow().canonicalJson();
+        var provenance = new TreeMap<String,Object>();
+        GraphJson.streamObject(new StringReader(canonical),
+                new GraphJson.StreamLimits(canonical.length(),128,Long.MAX_VALUE),(field,member) -> {
+                    if (Set.of("revision","dirty","repository").contains(field)) provenance.put(field,member.read());
+                    else member.skip();
+                });
+        return Optional.of(provenance);
+    }
+
     @FunctionalInterface private interface EvolutionDecoder<T>{T decode(Object row)throws IOException;}
     private static EvolutionSnapshot.ReadFailure evolutionFailure(IOException cause) {
         String code=Objects.toString(cause.getMessage(),"");

@@ -37,6 +37,9 @@ class PublishedReportsTest {
             assertFalse(reports.verifyPublished(identity, ContentDigest.sha256Utf8("foreign graph"), () -> false));
             var ref=new SnapshotComparison.ReportRef(SnapshotComparison.Side.LEFT,identity,fixture.report().evaluation().context());
             assertEquals(SnapshotComparison.ReportStatus.AVAILABLE,reports.verifyEvolutionReport(fixture.graph().identity(),ref,()->false));
+            var operands=reports.evolutionReader().read(fixture.graph().identity(),ref,()->false).orElseThrow();
+            assertEquals(identity,operands.identity());
+            assertEquals(fixture.report().evaluation(),operands.evaluation());
             assertEquals(SnapshotComparison.ReportStatus.CORRUPT,reports.verifyEvolutionReport(fixture.graph().identity(),
                     new SnapshotComparison.ReportRef(ref.side(),identity,ref.context()+"-foreign"),()->false));
             assertEquals(SnapshotComparison.ReportStatus.MISSING,reports.verifyEvolutionReport(fixture.graph().identity(),
@@ -53,6 +56,8 @@ class PublishedReportsTest {
             }
             assertFalse(reports.verifyPublished(identity, fixture.graph().identity(), () -> false));
             assertEquals(SnapshotComparison.ReportStatus.CORRUPT,reports.verifyEvolutionReport(fixture.graph().identity(),ref,()->false));
+            assertThrows(com.evolution.analysis.evolution.EvolutionSnapshot.ReadFailure.class,
+                    ()->reports.evolutionReader().read(fixture.graph().identity(),ref,()->false));
         }
     }
     @Test void replayUsesPublishedFindingAndRetainsFormulaVersusRuntimeMeaning() {

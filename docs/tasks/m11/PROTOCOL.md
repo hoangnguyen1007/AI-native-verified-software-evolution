@@ -1,5 +1,7 @@
 # M11 — Registered verification protocol
 
+**Historical protocol.** [ADR-011](../../decisions/ADR-011-full-pipeline-demo.md) closes M11/G7 without certifying G7 passed. The registered checks and denominators below still describe the original campaign; they are no longer demo acceptance requirements.
+
 2026-11-14. **PROVISIONAL implementation/evaluation design; case expectations registered before implementation.** [Cases](cases.json) is the compact registry; [contract](../../architecture/m11-compatible-snapshot-evolution.md) defines semantics; [M11.1 record](01-execution.md) owns what was actually checked. A registered case is `NOT_RUN` until an identified implementation run provides evidence. A source-history label verified in M11.1 is not an engine result.
 
 ## M11.2 first slice

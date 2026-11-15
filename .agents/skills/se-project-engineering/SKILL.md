@@ -1,6 +1,6 @@
 ---
 name: se-project-engineering
-description: Route non-trivial work in this SE121 repository to applicable roles, workflows, rules, and verification. Use for engineering, research, reviews, benchmarks, and governance changes; skip simple prose edits.
+description: Route non-trivial work in the software evolution platform to applicable roles, workflows, rules, and verification. Use for engineering, research, reviews, benchmarks, and governance changes; skip simple prose edits.
 ---
 
 # SE Project Engineering
@@ -30,4 +30,4 @@ Windows examples, after confirming a JDK 21 runtime:
 
 On POSIX use `sh ./mvnw` with the same arguments. Inspect the actual runner before executing a standalone experiment: tests may regenerate evidence or require separately built artifacts/classpaths.
 
-Use focused checks while iterating. Before handoff verify the final relevant state, inspect the diff, and report what was and was not tested. Avoid reopening a passed check without a changed input or concrete remaining risk.
+Use the [lean verification policy](../../../docs/testing.md#lean-verification-for-the-demo) to select only the required scope. Inspect the final diff and report what the named check established. Reuse it at handoff if the relevant inputs stayed unchanged.

@@ -3,7 +3,7 @@
 [AGENTS.md](../../AGENTS.md) owns bootstrap, task routing, authority and completion. Apply it without repeating the same procedure at each workflow step.
 
 - Work from current repository evidence and explicit human decisions. Investigate discrepancies rather than copying stale status.
-- Systematic LLM Action Loop: (1) Reconstruct contract boundary; (2) Formulate deterministic design covering common and edge cases; (3) Implement via TDD with unit/negative tests; (4) Apply AGENTS.md's two-tier targeted verification, keeping platform reactor checks proportional and required target builds inside the validated sandbox; (5) Update durable state. Documentation-only work uses document validation, not artificial behavior tests.
+- Reconstruct the affected contract, implement the smallest coherent change, apply [lean verification](../../docs/testing.md#lean-verification-for-the-demo), and update durable state if it changed. Target execution stays inside the validated sandbox.
 - Turn the request into a bounded outcome and observable exit criteria. Short prompts still require relevant contracts and instructions.
 - Research only consequential uncertainty; do not reopen approved choices without new evidence.
 - Exercise full technical autonomy for implementation details within approved scope. Do not block for routine decisions already authorized.

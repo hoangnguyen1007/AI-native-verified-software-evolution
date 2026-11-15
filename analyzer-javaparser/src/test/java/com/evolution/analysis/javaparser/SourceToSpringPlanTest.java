@@ -125,7 +125,8 @@ class SourceToSpringPlanTest {
         var key=new UniversalSourceIngestion.SourceSet(build.modules().getFirst().descriptor().identity(),SourcePlanModel.Kind.MAIN);
         var component=new ManifestComponent(new VersionedIdentifier("test.components","1"),ContentDigest.sha256Utf8("source-plan-test"));
         var assembled=new UniversalSourceIngestion().assemble(inputs,build,Map.of(key,new UniversalSourceIngestion.Resolution(
-                artifactFixture.request().platform(),binaries,ContentDigest.sha256Utf8("captured-spring-classpath"),Optional.empty(),!recovery)),component,component,component);
+                artifactFixture.request().platform(),binaries,ContentDigest.sha256Utf8("captured-spring-classpath"),Optional.empty(),!recovery)),component,component,
+                com.evolution.analysis.graph.KnowledgeGraph.schemaComponent());
         var pipeline=new UniversalIngestionPipeline();
         var result=pipeline.run(assembled,new JavaParserFrontend(),JavaParserFrontend.PROVIDER,100,100);
         var unit=result.units().stream().filter(u -> u.sourceSet().equals(key)).findFirst().orElseThrow();

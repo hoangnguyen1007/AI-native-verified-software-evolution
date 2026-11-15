@@ -232,16 +232,49 @@ class WorkbenchApiMainTest {
             assertFalse(Files.exists(source.resolve("target-executed.txt"))); assertFalse(Files.exists(directory.resolve("target-executed.txt")));
             var discovery = client.send(HttpRequest.newBuilder(URI.create(base+"/graphs/"+graph)).GET().build(),HttpResponse.BodyHandlers.ofString()); assertEquals(200,discovery.statusCode());
             assertFalse(Files.exists(index));
-            pageResult = readPreparedRawPage(client, base, graph);
+            var repository = com.evolution.analysis.contract.identity.RepositoryIdentity.fromCanonicalCoordinate("urn:test:launcher");
+            var graphId = new com.evolution.analysis.contract.common.ContentDigest(graph);
+            var selection = new com.evolution.analysis.evolution.SnapshotComparison.Selection(
+                    Set.of(), Set.of(), Set.of(), false, true);
+            var comparison = new com.evolution.analysis.evolution.SnapshotComparison.Request(repository,graphId,graphId,
+                    com.evolution.analysis.evolution.SnapshotComparison.Mode.STRICT,selection);
+            var submission = new EvolutionRequest(EvolutionRequest.VERSION,comparison,List.of(),List.of(),Optional.empty());
+            var pinned = client.send(HttpRequest.newBuilder(URI.create(base+"/evolution/jobs"))
+                    .header("Content-Type","application/json").POST(HttpRequest.BodyPublishers.ofString(
+                            com.evolution.analysis.contract.serialization.CanonicalJson.write(Map.of("request",submission))))
+                    .build(),HttpResponse.BodyHandlers.ofString());
+            assertEquals(202,pinned.statusCode());
+            var comparisonJob=GraphJson.string(data(pinned.body()).get("job"));
+            var result = awaitComparison(client,base,comparisonJob);
+            var summary = client.send(HttpRequest.newBuilder(URI.create(base+"/evolution/results/"+result)).GET().build(),
+                    HttpResponse.BodyHandlers.ofString());
+            assertEquals(200,summary.statusCode());
+            assertEquals(List.of("AVAILABLE","AVAILABLE"), GraphJson.array(data(summary.body()).get("inputs")).stream()
+                    .map(value->GraphJson.object(value).get("status")).toList());
+            pageResult = readPreparedRawPage(client, base, graph, false);
             assertEquals("RAW_CONTEXT_FACTS",data(pageResult).get("scope"));
             assertFalse(GraphJson.array(GraphJson.object(data(pageResult).get("page")).get("items")).isEmpty());
             assertTrue(Files.isRegularFile(index));
         } finally { process.destroyForcibly(); assertTrue(process.waitFor(5,TimeUnit.SECONDS)); }
         try (var restarted = start(args)) {
-            assertEquals(pageResult, readPreparedRawPage(HttpClient.newHttpClient(), restarted.base(), graph));
+            assertEquals(pageResult, readPreparedRawPage(HttpClient.newHttpClient(), restarted.base(), graph, true));
         }
     }
-    private static String readPreparedRawPage(HttpClient client, URI base, String graph) throws Exception {
+    private static String awaitComparison(HttpClient client, URI base, String job) throws Exception {
+        var request = HttpRequest.newBuilder(URI.create(base+"/evolution/jobs/"+job)).timeout(Duration.ofSeconds(5)).GET().build();
+        long deadline = System.nanoTime()+TimeUnit.SECONDS.toNanos(30);
+        while (System.nanoTime()<deadline) {
+            var response=client.send(request,HttpResponse.BodyHandlers.ofString());
+            assertEquals(200,response.statusCode());
+            var view=data(response.body());
+            if ("SUCCEEDED".equals(view.get("state"))) return GraphJson.string(view.get("result"));
+            assertTrue(Set.of("QUEUED","RUNNING").contains(view.get("state")),view::toString);
+            Thread.sleep(30);
+        }
+        throw new AssertionError("Comparison did not finish");
+    }
+
+    private static String readPreparedRawPage(HttpClient client, URI base, String graph, boolean requiresPreparation) throws Exception {
         var request = HttpRequest.newBuilder(URI.create(base+"/graph-pages/"+graph+"/partitions"))
                 .timeout(Duration.ofSeconds(5)).header("Content-Type","application/json")
                 .POST(HttpRequest.BodyPublishers.ofString("{\"size\":1}")).build();
@@ -250,7 +283,7 @@ class WorkbenchApiMainTest {
         while (System.nanoTime()<deadline) {
             var response = client.send(request,HttpResponse.BodyHandlers.ofString());
             if (response.statusCode()==200) {
-                assertTrue(wasPreparing);
+                assertEquals(requiresPreparation,wasPreparing);
                 return response.body();
             }
             assertEquals(503,response.statusCode(),response.body());

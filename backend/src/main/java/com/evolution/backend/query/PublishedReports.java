@@ -4,6 +4,8 @@ import com.evolution.analysis.assessment.ArchitectureAssessment;
 import com.evolution.analysis.contract.common.ContentDigest;
 import com.evolution.analysis.contract.serialization.CanonicalJson;
 import com.evolution.analysis.evolution.SnapshotComparison;
+import com.evolution.analysis.evolution.EvolutionReport;
+import com.evolution.analysis.evolution.EvolutionSnapshot;
 import com.evolution.analysis.metrics.PolicyMetrics;
 import com.evolution.analysis.policy.PolicyEvaluation;
 import java.util.*;
@@ -77,6 +79,29 @@ public final class PublishedReports {
             return report.evaluation().graph().equals(graph)&&report.evaluation().context().equals(ref.context())
                     ?SnapshotComparison.ReportStatus.AVAILABLE:SnapshotComparison.ReportStatus.CORRUPT;
         }
+    }
+
+    /** The comparison owns inference. This adapter returns the exact immutable M6 operands. */
+    public SnapshotComparison.ReportReader evolutionReader() {
+        return new SnapshotComparison.ReportReader() {
+            @Override public SnapshotComparison.ReportStatus verify(ContentDigest graph,SnapshotComparison.ReportRef ref,
+                                                                    java.util.function.BooleanSupplier cancelled) throws java.io.IOException {
+                return verifyEvolutionReport(graph,ref,cancelled);
+            }
+            @Override public Optional<EvolutionReport> read(ContentDigest graph,SnapshotComparison.ReportRef ref,
+                                                            java.util.function.BooleanSupplier cancelled) throws java.io.IOException {
+                EvolutionSnapshot.check(cancelled);
+                Optional<Report> original;
+                if (disk!=null) original=disk.readEvolution(ref.identity(),cancelled);
+                else synchronized (PublishedReports.this) {original=Optional.ofNullable(reports.get(ref.identity()));}
+                if (original.isEmpty()) return Optional.empty();
+                var report=original.orElseThrow();
+                if (!report.identity().equals(ref.identity()) || !report.evaluation().graph().equals(graph)
+                        || !report.evaluation().context().equals(ref.context()))
+                    throw new EvolutionSnapshot.ReadFailure(EvolutionSnapshot.Failure.CORRUPT);
+                return Optional.of(new EvolutionReport(report.evaluation(),report.metrics(),report.assessment(),Optional.empty(),Optional.empty()));
+            }
+        };
     }
     public synchronized List<ContentDigest> forGraph(ContentDigest graph) {
         if(disk!=null)try{return disk.forGraph(graph);}catch(java.io.IOException failure){throw new IllegalStateException("Report persistence unavailable",failure);}

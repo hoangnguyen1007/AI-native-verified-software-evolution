@@ -5,6 +5,7 @@ import com.evolution.analysis.contract.common.*;
 import com.evolution.analysis.contract.identity.*;
 import com.evolution.analysis.contract.serialization.CanonicalJson;
 import com.evolution.analysis.evidence.*;
+import com.evolution.analysis.evolution.SnapshotComparison;
 import com.evolution.analysis.polyglot.*;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
@@ -32,6 +33,25 @@ class BridgePublicationStoreTest {
         return new ArchitectureBridges.Input(root,inventory,policy.get(),table(SemanticTables.Kind.CONTEXT,parts),table(SemanticTables.Kind.OBSERVATION,endpoints),table(SemanticTables.Kind.CENSUS,census));
     }
     BridgePublicationStore store()throws IOException{return new BridgePublicationStore(directory.resolve("bridges"),content,tables,policy::get,revoked::get);}
+    @Test void evolutionReadsPinnedPublicationWithBothEndpointsAndUnqualifiedTrust()throws Exception {
+        var input=input();var store=store();
+        var initial=store.commit(input,Optional.empty(),()->false);
+        var ref=new SnapshotComparison.BridgeRef(SnapshotComparison.Side.LEFT,initial.publication());
+        revoked.set(Set.of(registration.digest()));
+        var current=store.commit(input,Optional.of(initial.publication().digest()),()->false);
+        assertNotEquals(initial.result().identity(),current.result().identity());
+        var observe=new TreeMap<String,List<Map<String,Object>>>();
+        assertEquals(SnapshotComparison.ReportStatus.AVAILABLE,store.readEvolution(ref,input.root().snapshotIdentity(),
+                (family,id,data)->observe.computeIfAbsent(family,k->new ArrayList<>()).add(data),()->false));
+        assertEquals(3,observe.get("partitions").size());
+        assertEquals(2,observe.get("endpoints").size());
+        assertEquals(24,observe.get("requirements").size());
+        assertEquals(1L,com.evolution.analysis.graph.GraphJson.object(observe.get("evaluation").getFirst().get("counts")).get("BOUND"));
+        assertEquals(false,observe.get("evaluation").getFirst().get("qualified"));
+        assertEquals(SnapshotComparison.ReportStatus.CORRUPT,store.readEvolution(ref,
+                SnapshotIdentity.from(RepositoryIdentity.fromCanonicalCoordinate("urn:test:foreign"),input.inventory()),
+                (family,id,data)->fail("Foreign publication must not emit rows"),()->false));
+    }
     @Test void catalogIsBoundedAndRetainsUnreadableSiblingsWithoutGrantingAuthority()throws Exception{
         var input=input();var store=store();store.commit(input,Optional.empty(),()->false);var unavailable=ContentDigest.sha256Utf8("unreadable saved analysis");Files.writeString(directory.resolve("bridges").resolve(unavailable.value().substring(7)+".json"),"{");var all=store.queries().catalog(Optional.empty(),20,()->false);assertEquals(2,all.items().size());assertTrue(all.items().stream().anyMatch(item->item.scope().equals(unavailable)&&item.availability().equals("UNAVAILABLE")));assertTrue(all.items().stream().anyMatch(item->item.scope().equals(input.scope())&&item.availability().equals("SAVED_UNVERIFIED")));
         var first=store.queries().catalog(Optional.empty(),1,()->false);assertEquals(1,first.items().size());assertTrue(first.continuation().isPresent());var second=store.queries().catalog(first.continuation(),1,()->false);assertEquals(1,second.items().size());assertFalse(second.continuation().isPresent());assertNotEquals(first.items().getFirst().scope(),second.items().getFirst().scope());

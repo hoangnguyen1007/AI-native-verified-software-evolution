@@ -1295,8 +1295,8 @@ final class Extraction {
         Entity source = null, target = null; SemanticStatus status = SemanticStatus.RESOLVED;
         var local = new ArrayList<Diagnostic>();
         try {
-            source = ownerSupplier.get();
-            target = targetSupplier.get();
+            source = observableDeclaration(ownerSupplier.get());
+            target = observableDeclaration(targetSupplier.get());
         }
         catch (UnsolvedSymbolException exception) { status = SemanticStatus.UNRESOLVED; local.add(diagnostic("java.unresolved", status, span)); }
         catch (MappingFailure failure) { status = failure.status; local.add(diagnostic(failure.code, status, span)); }
@@ -1324,6 +1324,12 @@ final class Extraction {
                 target != null ? ObservationRecord.EvidenceState.VERIFIED : ObservationRecord.EvidenceState.MISSING,
                 span.isPresent() ? ObservationRecord.EvidenceState.VERIFIED : ObservationRecord.EvidenceState.MISSING,
                 mapped, reference, local));
+    }
+
+    private Entity observableDeclaration(Entity entity) {
+        if (entity != null && duplicateDeclarations.contains(entity.identity()))
+            throw new MappingFailure(SemanticStatus.ERROR, "java.duplicate-declaration");
+        return entity;
     }
     private static Diagnostic diagnostic(String code, SemanticStatus status, Optional<SourceSpan> span) {
         return new Diagnostic(status == SemanticStatus.ERROR ? DiagnosticSeverity.ERROR : DiagnosticSeverity.WARNING, code,

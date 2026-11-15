@@ -147,6 +147,11 @@ public final class EvoApp {
         command.addSubcommand("core-mvp",new CoreMvp(r));
         command.addSubcommand("captured-java",new CapturedJava(r));
         command.addSubcommand("graph-pages",new GraphPages(r));
+        var evolution = new CommandLine(new EvolutionCommand.Group());
+        evolution.addSubcommand("compare",new EvolutionCommand.Compare(directory,out,()->r.storage().root,()->r.request));
+        evolution.addSubcommand("inspect",new EvolutionCommand.Inspect(directory,out,()->r.storage().root,()->r.cursor));
+        evolution.addSubcommand("export",new EvolutionCommand.Export(directory,out,()->r.storage().root,()->r.cursor));
+        command.addSubcommand("evolution",evolution);
         command.addSubcommand("build",new NativeBuild(r));
         command.addSubcommand("build-register",new NativeBuildRegister(r));
         command.addSubcommand("build-profile",new NativeBuildDescribe(r));

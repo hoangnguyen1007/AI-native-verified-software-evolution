@@ -23,18 +23,10 @@ A completion claim needs evidence from the relevant final state, not confidence 
 | Semantic accuracy | Independent labeled expectations and explicit denominator/outcomes |
 | Reproducible experiment | Pinned inputs, environment, commands and preserved raw outputs |
 | Agent completed | Actual artifacts/diff plus relevant checks |
-| Governance improved | Structural checks plus representative behavior evaluation; no claim of universal compliance |
+| Governance changed | Structural and precedence checks on affected instructions; evaluate a representative behavior only where the change leaves material uncertainty |
 
 A command run earlier in the same task remains valid if its inputs, configuration and toolchain have not changed. Re-run affected checks after relevant edits. Never describe historical results as freshly executed; unrelated documentation changes do not require repeating an unchanged build.
 
-## Verification Granularity: Slice vs Gate Review
-
-- **Intermediate Slice Verification (Lean Dev Loop):**
-  - Follow AGENTS.md's two-tier targeted verification. Inner loops isolate one relevant method or small class in quiet mode; before handoff run the bounded unit/contract and direct integration set across every affected module. Include provider/version checks and identify the selected tests and remaining coverage limits.
-  - Inspect `git diff` to ensure clean, bounded edits.
-  - **Prohibited for Slices:** Generating `reproducibility/` folders, multi-thousand-line `input-hashes.json` files, JSON test logs, or running full multi-module reactor builds.
-- **Milestone Gate Review (Major Milestone Closeout Only):**
-  - Used ONLY when formally closing an entire milestone (e.g. G1, G2, G3 sign-off).
-  - Executes full reactor suite and generates formal reproducibility records as authorized by the human lead.
+Use the repository's [lean verification policy](../../../docs/testing.md#lean-verification-for-the-demo) to choose scope. A relevant check can serve iteration and handoff. A meaningful demo integration change calls for the pinned end-to-end journey. A human closure decision changes delivery status; it does not change the actual test result or require a campaign rerun.
 
 For a read-only review, findings and missing verification are valid outputs. For implementation self-checks, repair supported in-scope failures and reverify. Do not revert shared/user code solely to demonstrate red; use an isolated baseline when needed.

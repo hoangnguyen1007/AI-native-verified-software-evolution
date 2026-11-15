@@ -17,19 +17,32 @@ final class SqliteEvolutionIndex implements EvolutionIndex {
     private final Connection connection;
     private final PreparedStatement get,put,page;
     private final BooleanSupplier cancelled;
+    private final CheckpointSink checkpoint;
+    private final boolean durable;
+    private int completedScopes;
     private boolean closed;
 
+    @FunctionalInterface interface CheckpointSink { void save(Path database) throws IOException; }
+
     SqliteEvolutionIndex(Path scratch,BooleanSupplier cancelled)throws IOException {
+        this(Files.createTempFile(StreamingContentStore.directory(scratch),"evolution-",".sqlite"),cancelled,false,null);
+    }
+
+    SqliteEvolutionIndex(Path file,BooleanSupplier cancelled,boolean restore,CheckpointSink checkpoint)throws IOException {
         this.cancelled=Objects.requireNonNull(cancelled);
-        file=Files.createTempFile(StreamingContentStore.directory(scratch),"evolution-",".sqlite");
+        this.file=file;
+        this.checkpoint=checkpoint;
+        durable=checkpoint!=null;
         Connection opened=null;
         try {
             opened=DriverManager.getConnection("jdbc:sqlite:"+file);
             try(var sql=opened.createStatement()) {
                 sql.execute("PRAGMA journal_mode=DELETE");
+                if (durable) sql.execute("PRAGMA synchronous=FULL");
                 sql.execute("PRAGMA cache_size=-2048");
                 sql.execute("PRAGMA temp_store=FILE");
-                sql.execute("CREATE TABLE comparison_rows (space TEXT NOT NULL, k TEXT NOT NULL, payload TEXT NOT NULL, PRIMARY KEY(space,k)) WITHOUT ROWID");
+                if (!restore)
+                    sql.execute("CREATE TABLE comparison_rows (space TEXT NOT NULL, k TEXT NOT NULL, payload TEXT NOT NULL, PRIMARY KEY(space,k)) WITHOUT ROWID");
             }
             opened.setAutoCommit(false);
             get=opened.prepareStatement("SELECT payload FROM comparison_rows WHERE space=? AND k=?");
@@ -76,6 +89,17 @@ final class SqliteEvolutionIndex implements EvolutionIndex {
             }
             return new Batch(result,false);
         }catch(SQLException failure){throw storage(failure);}
+    }
+
+    @Override public void checkpoint() throws IOException {
+        if (!durable || completedScopes++ % 8 != 0) return;
+        check();
+        try {
+            connection.commit();
+            checkpoint.save(file);
+        } catch (SQLException failure) {
+            throw storage(failure);
+        }
     }
 
     private static Map<String,Object> decode(String value){return GraphJson.object(GraphJson.read(value,GraphJson.Limits.defaults()));}

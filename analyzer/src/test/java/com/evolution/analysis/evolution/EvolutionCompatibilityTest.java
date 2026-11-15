@@ -18,6 +18,40 @@ class EvolutionCompatibilityTest {
     static final VersionedIdentifier VERSION = new VersionedIdentifier("java.fixture", "1");
     static final String PATH = "src/main/java/p/A.java";
 
+    @Test void exactEvidenceLossAndRestorationDoNotProveSemanticAbsence() throws Exception {
+        var empty=graph(0,"tool","r1");
+        // These are authored graph observations, not a native authority or a tool execution.
+        var lineage=GraphEvidence.capture("java.evidence.source-map",Map.of("projectedPath","generated/A.java",
+                "lineage",ContentDigest.sha256Utf8("authored generator lineage"),"content",ContentDigest.sha256Utf8("authored bytes")));
+        var proof=GraphEvidence.capture("java.evidence.proof",Map.of("trust","PRODUCER_ASSERTED","outcome","UNQUALIFIED"));
+        var conflict=GraphEvidence.capture("java.evidence.post-conflict",Map.of("state","UNRESOLVED","reason","authored observation conflict"));
+        var present=withEvidence(empty,lineage,proof,conflict);
+        var missing=withEvidence(empty,conflict);
+        for(var pair:List.of(List.of(present,missing),List.of(missing,present))) {
+            var a=pair.getFirst();var b=pair.getLast();
+            var req=new SnapshotComparison.Request(REPO,a.identity(),b.identity(),SnapshotComparison.Mode.STRICT,
+                    new SnapshotComparison.Selection(Set.of(),Set.of(),Set.of(),false,true));
+            var result=SnapshotComparison.compare(req,EvolutionSnapshot.memory(a,b),EvolutionIndex.memory(),1,()->false);
+            assertTrue(kinds(result).isEmpty());
+            var evidence=items(result,SnapshotComparison.Section.EVIDENCE);
+            assertEquals(3,evidence.size());
+            assertTrue(evidence.stream().allMatch(e->Boolean.FALSE.equals(e.get("semanticAbsenceProved"))));
+            var retained=evidence.stream().filter(e->"LEDGER_OBSERVATION_RETAINED".equals(e.get("kind"))).findFirst().orElseThrow();
+            assertEquals(conflict.identity().value(),GraphJson.object(retained.get("left")).get("digest"));
+            assertEquals(conflict.identity().value(),GraphJson.object(retained.get("right")).get("digest"));
+            var side=a==present?"left":"right";
+            var generated=evidence.stream().filter(e->"GENERATED_LINEAGE_OBSERVATION_CHANGED".equals(e.get("kind"))).findFirst().orElseThrow();
+            assertEquals(lineage.identity().value(),GraphJson.object(generated.get(side)).get("digest"));
+            var tool=evidence.stream().filter(e->"java.evidence.proof".equals(e.get("family"))).findFirst().orElseThrow();
+            assertEquals("PRODUCER_ASSERTED",GraphJson.object(GraphJson.object(tool.get(side)).get("metadata")).get("trust"));
+        }
+    }
+
+    private static KnowledgeGraph withEvidence(KnowledgeGraph graph,GraphEvidence... more) {
+        var evidence=new ArrayList<>(graph.evidence());evidence.addAll(Arrays.asList(more));
+        return new KnowledgeGraph(graph.snapshot(),graph.contexts(),graph.nodes(),graph.edges(),evidence);
+    }
+
     @Test void sourceEditKeepsComparablePolicy() throws Exception {
         var left = graph(0, "tool", "r1");
         var right = graph(1, "tool", "r2");
@@ -112,6 +146,66 @@ class EvolutionCompatibilityTest {
         assertEquals(List.of("RELATION_ADDED"),kinds(result));
     }
 
+    @Test void multiRootCensusDistinguishesMissingSelectedAndUnselectedVariants() throws Exception {
+        var left = multiRootGraph(false);
+        var right = multiRootGraph(true);
+        var result = compare(left,right,2);
+        var contexts = items(result,SnapshotComparison.Section.CONTEXTS).stream()
+                .filter(row -> String.valueOf(row.get("path")).startsWith("roots/")).toList();
+        for (var side : List.of("LEFT","RIGHT")) {
+            var rows = contexts.stream().filter(row -> side.equals(row.get("side"))).toList();
+            var actual = rows.stream().map(row -> row.get("path")+":"+row.get("disposition")).sorted().toList();
+            var expected = side.equals("LEFT") ? List.of("roots/base:MATCHED","roots/base:NOT_SELECTED",
+                    "roots/pending:UNAVAILABLE") : List.of("roots/base:MATCHED","roots/new:RIGHT_ONLY");
+            assertEquals(expected, actual);
+        }
+        assertTrue(contexts.stream().anyMatch(row -> "extra-reactor".equals(row.get("root"))
+                && "RIGHT_ONLY".equals(row.get("disposition"))));
+        assertTrue(contexts.stream().anyMatch(row -> "ci".equals(row.get("variant"))
+                && "NOT_SELECTED".equals(row.get("disposition"))));
+        assertTrue(kinds(result).isEmpty());
+    }
+
+    private static KnowledgeGraph multiRootGraph(boolean target) {
+        var repository = RepositorySnapshot.create(REPO,Optional.empty(),false,List.of(),List.of());
+        var base = ModuleDescriptor.create(REPO,"roots/base","base");
+        var extra = ModuleDescriptor.create(REPO,"roots/new","extra");
+        var graphBuilder = new CanonicalGraphBuilder();
+        var baseGraph = emptyRoot(graphBuilder,repository,base,"base-reactor","MAIN","default");
+        var sibling = target ? emptyRoot(graphBuilder,repository,extra,"extra-reactor","MAIN","default") :
+                emptyRoot(graphBuilder,repository,base,"base-reactor","TEST","ci");
+        var contexts = new ArrayList<>(baseGraph.contexts());
+        contexts.addAll(sibling.contexts());
+        var nodes = new ArrayList<>(baseGraph.nodes());
+        nodes.addAll(sibling.nodes());
+        var edges = new ArrayList<>(baseGraph.edges());
+        edges.addAll(sibling.edges());
+        var evidence = new TreeMap<ContentDigest,GraphEvidence>();
+        for (var graph : List.of(baseGraph,sibling)) graph.evidence().forEach(e -> evidence.put(e.identity(),e));
+        if (!target) {
+            var pending = GraphEvidence.capture("build.module",Map.of("descriptor",ModuleDescriptor.create(REPO,"roots/pending","pending"),
+                    "sourcePlan",Map.of("sourceSets",List.of(Map.of("name","main","semanticRole","MAIN")))));
+            evidence.put(pending.identity(),pending);
+        }
+        return new KnowledgeGraph(repository.identity(),contexts,nodes,edges,List.copyOf(evidence.values()));
+    }
+
+    private static KnowledgeGraph emptyRoot(CanonicalGraphBuilder builder, RepositorySnapshot snapshot,
+                                            ModuleDescriptor module, String root, String role, String variant) {
+        var component = new ManifestComponent(VERSION,ContentDigest.sha256Utf8("multi-root fixture"));
+        var jdk = ContentDigest.sha256Utf8("fixture JDK");
+        var config = AnalysisConfiguration.create(VERSION,Map.of("java.module",module.identity().value(),
+                "java.source-set",role,"java.platform.symbol-digest",jdk.value(),"readiness.build-root",root,
+                "readiness.context-variant",variant,"java.source-plan",CanonicalJson.sha256(List.of()).value()));
+        var manifest = AnalysisManifest.create(VERSION,snapshot,List.of(module),
+                List.of(new ClasspathEntry(ClasspathEntryKind.JDK_MODULE,"java.base",jdk)),config,component,
+                component,KnowledgeGraph.schemaComponent());
+        var coverage = FrontendRequest.CATEGORIES.stream().map(c -> new CategoryCoverage(new RelationshipKind("java."+c),
+                CategoryCoverage.Support.IMPLEMENTED,0,0,0)).toList();
+        return builder.build(manifest,new FrontendResult(manifest.identity(),VERSION,FrontendResult.State.COMPLETED,
+                List.of(),List.of(),List.of(),List.of(),coverage,List.of()));
+    }
+
     @Test void strictModeWithholdsOnProviderDriftAndRejectsReusingScratch() throws Exception {
         var a=graph(0,"tool","r1");var b=graph(1,"other tool","r2");
         var base=request(a,b);
@@ -151,43 +245,124 @@ class EvolutionCompatibilityTest {
 
     @Test void sameSpellingInDistinctModulesAndOverloadsKeepSeparateIdentities() throws Exception {
         var first=ModuleDescriptor.create(REPO,"modules/a","a");var second=ModuleDescriptor.create(REPO,"modules/b","b");
-        var docs=List.of(SourceDocument.create(REPO,first,"modules/a/Same.java",ContentDigest.sha256Utf8("first authored source"),SourceClassification.MAIN),
-                SourceDocument.create(REPO,second,"modules/b/Same.java",ContentDigest.sha256Utf8("second authored source"),SourceClassification.MAIN));
-        var left=identityGraph(first,second,docs,false);var right=identityGraph(first,second,docs,true);
+        String firstSource = """
+                package p;
+                class A {
+                    class Nested {}
+                    void f(int x) { class Local {} }
+                    void f(String x) {}
+                }
+                """;
+        String secondSource = "package p; class A {}";
+        String generatedSource = "package p; class Generated {}";
+        var primary = SourceDocument.create(REPO,first,"modules/a/A.java",ContentDigest.sha256Utf8(firstSource),SourceClassification.MAIN);
+        var sibling = SourceDocument.create(REPO,second,"modules/b/A.java",ContentDigest.sha256Utf8(secondSource),SourceClassification.MAIN);
+        var generated = SourceDocument.create(REPO,first,"modules/a/generated/Generated.java",
+                ContentDigest.sha256Utf8(generatedSource),SourceClassification.GENERATED_MAIN);
+        var type = JavaSymbolName.topLevelType("p","A");
+        var integer = JavaSymbolName.method(type,"f",List.of(ErasedType.primitive("int")));
+        var string = JavaSymbolName.method(type,"f",List.of(ErasedType.declared(JavaSymbolName.topLevelType("java.lang","String"))));
+        var declarations = List.of(
+                authoredDeclaration(primary, firstSource, "A {", "A", EntityKind.TYPE, type),
+                authoredDeclaration(primary, firstSource, "Nested", "Nested", EntityKind.TYPE, JavaSymbolName.memberType(type,"Nested")),
+                authoredDeclaration(primary, firstSource, "Local", "Local", EntityKind.TYPE,
+                        JavaSymbolName.localType(integer,primary.identity(),firstSource.indexOf("Local"),"Local",false)),
+                authoredDeclaration(primary, firstSource, "f(int", "f", EntityKind.METHOD, integer),
+                authoredDeclaration(primary, firstSource, "f(String", "f", EntityKind.METHOD, string),
+                authoredDeclaration(sibling, secondSource, "A {", "A", EntityKind.TYPE, type),
+                authoredDeclaration(generated, generatedSource, "Generated", "Generated", EntityKind.TYPE,
+                        JavaSymbolName.topLevelType("p","Generated")));
+        var docs = List.of(primary,sibling,generated);
+        var left=identityGraph(List.of(first,second),docs,declarations);
+        var right=identityGraph(List.of(first,second),docs,declarations.reversed());
         var selection=new SnapshotComparison.Selection(Set.of("MAIN"),Set.of("TYPE","METHOD"),Set.of());
         var request=new SnapshotComparison.Request(REPO,left.identity(),right.identity(),SnapshotComparison.Mode.STRICT,selection);
         var result=SnapshotComparison.compare(request,EvolutionSnapshot.memory(left,right),EvolutionIndex.memory(),2,()->false);
         var matches=items(result,SnapshotComparison.Section.CORRESPONDENCE);
-        assertEquals(4,matches.size());
-        assertEquals(4,matches.stream().filter(r->"MATCHED".equals(r.get("disposition"))).count());
+        assertEquals(7,matches.size());
+        assertEquals(6,matches.stream().filter(r->"MATCHED".equals(r.get("disposition"))).count());
         var ids=matches.stream().map(r->GraphJson.object(r.get("left")).get("identity")).collect(java.util.stream.Collectors.toSet());
-        assertEquals(4,ids.size());assertTrue(kinds(result).isEmpty());
+        assertEquals(7,ids.size());
+        var withheld = matches.stream().filter(r->"UNAVAILABLE".equals(r.get("disposition"))).findFirst().orElseThrow();
+        assertEquals(declarations.getLast().entity().identity().value(),GraphJson.object(withheld.get("left")).get("identity"));
+        assertTrue(kinds(result).isEmpty());
     }
 
-    private static KnowledgeGraph identityGraph(ModuleDescriptor first,ModuleDescriptor second,List<SourceDocument> docs,boolean reverse) {
-        var snapshot=RepositorySnapshot.create(REPO,Optional.empty(),false,docs.stream().map(SnapshotFile::from).toList(),docs);
-        var component=new ManifestComponent(VERSION,ContentDigest.sha256Utf8("identity fixture tool"));
-        var jdk=ContentDigest.sha256Utf8("identity fixture JDK");
-        var coverage=FrontendRequest.CATEGORIES.stream().map(c->new CategoryCoverage(new RelationshipKind("java."+c),CategoryCoverage.Support.IMPLEMENTED,0,0,0)).toList();
-        var decl=new ArrayList<DeclarationRecord>();var outcomes=new ArrayList<SourceOutcome>();
+    private static DeclarationRecord authoredDeclaration(SourceDocument doc,String source,String marker,String name,
+                                                         EntityKind kind,JavaSymbolName symbol) {
+        int offset = source.indexOf(marker);
+        int line = 1 + (int)source.substring(0,offset).chars().filter(c -> c == '\n').count();
+        int column = offset - source.lastIndexOf('\n',offset);
+        var span = new SourceSpan(doc.identity(),line,column,line,column+name.length());
+        return declaration(Entity.create(EntityOrigin.PROJECT,EntityScope.project(doc.module()),kind,symbol.canonicalName(),Optional.of(span)));
+    }
+
+    @Test void possibleMoveWithTwoCandidatesAndChangedLineageStaysUnmatched() throws Exception {
+        var original = ModuleDescriptor.create(REPO,"modules/original","original");
+        var candidateA = ModuleDescriptor.create(REPO,"modules/candidate-a","candidate-a");
+        var candidateB = ModuleDescriptor.create(REPO,"modules/candidate-b","candidate-b");
+        var source = DocumentedCandidate.create(original,"authored lineage before");
+        var a = DocumentedCandidate.create(candidateA,"authored lineage after A");
+        var b = DocumentedCandidate.create(candidateB,"authored lineage after B");
+        var left = withEvidence(identityGraph(List.of(original),List.of(source.document()),false),source.lineage());
+        var right = withEvidence(identityGraph(List.of(candidateA,candidateB),List.of(a.document(),b.document()),false),
+                a.lineage(),b.lineage());
+        var selection = new SnapshotComparison.Selection(Set.of("MAIN"),Set.of("TYPE"),Set.of(),false,true);
+        var request = new SnapshotComparison.Request(REPO,left.identity(),right.identity(),SnapshotComparison.Mode.OBSERVATION,selection);
+        var result = SnapshotComparison.compare(request,EvolutionSnapshot.memory(left,right),EvolutionIndex.memory(),2,()->false);
+        var newScopes = items(result,SnapshotComparison.Section.CONTEXTS).stream()
+                .filter(row -> "RIGHT_ONLY".equals(row.get("disposition")))
+                .map(row -> row.get("module")).collect(java.util.stream.Collectors.toSet());
+        assertEquals(Set.of(candidateA.identity().value(),candidateB.identity().value()),newScopes);
+        assertTrue(items(result,SnapshotComparison.Section.CORRESPONDENCE).stream()
+                .noneMatch(row -> "MATCHED".equals(row.get("disposition"))));
+        assertTrue(kinds(result).isEmpty());
+        var candidates = items(result,SnapshotComparison.Section.EVIDENCE).stream()
+                .filter(row -> "GENERATED_LINEAGE_OBSERVATION_CHANGED".equals(row.get("kind")) && row.get("right") != null)
+                .map(row -> GraphJson.object(row.get("right")).get("digest")).collect(java.util.stream.Collectors.toSet());
+        assertEquals(Set.of(a.lineage().identity().value(),b.lineage().identity().value()),candidates);
+    }
+
+    private record DocumentedCandidate(SourceDocument document,GraphEvidence lineage) {
+        static DocumentedCandidate create(ModuleDescriptor module,String authoredLineage) {
+            String path = module.path()+"/generated/Same.java";
+            var digest = ContentDigest.sha256Utf8("package p; class Same {}");
+            var source = SourceDocument.create(REPO,module,path,digest,SourceClassification.GENERATED_MAIN);
+            var evidence = GraphEvidence.capture("java.evidence.source-map",Map.of("projectedPath",path,
+                    "lineage",ContentDigest.sha256Utf8(authoredLineage),"content",digest,"trust","PRODUCER_ASSERTED"));
+            return new DocumentedCandidate(source,evidence);
+        }
+    }
+
+    private static KnowledgeGraph identityGraph(List<ModuleDescriptor> modules,List<SourceDocument> docs,boolean reverse) {
+        var first=modules.getFirst();
+        var decl=new ArrayList<DeclarationRecord>();
         var type=JavaSymbolName.topLevelType("p","Same");
         for(var doc:docs){
-            outcomes.add(new SourceOutcome(doc.identity(),SourceOutcome.State.PROCESSED,List.of()));
             var origin=EntityScope.project(doc.module());var span=Optional.of(new SourceSpan(doc.identity(),1,1,1,2));
             decl.add(declaration(Entity.create(EntityOrigin.PROJECT,origin,EntityKind.TYPE,type.canonicalName(),span)));
             if(doc.module().equals(first.identity()))for(String p:List.of("int","long"))decl.add(declaration(Entity.create(EntityOrigin.PROJECT,origin,
                     EntityKind.METHOD,JavaSymbolName.method(type,"f",List.of(ErasedType.primitive(p))).canonicalName(),span)));
         }
         if(reverse)Collections.reverse(decl);
+        return identityGraph(modules,docs,decl);
+    }
+
+    private static KnowledgeGraph identityGraph(List<ModuleDescriptor> modules,List<SourceDocument> docs,List<DeclarationRecord> decl) {
+        var snapshot=RepositorySnapshot.create(REPO,Optional.empty(),false,docs.stream().map(SnapshotFile::from).toList(),docs);
+        var component=new ManifestComponent(VERSION,ContentDigest.sha256Utf8("identity fixture tool"));
+        var jdk=ContentDigest.sha256Utf8("identity fixture JDK");
+        var coverage=FrontendRequest.CATEGORIES.stream().map(c->new CategoryCoverage(new RelationshipKind("java."+c),CategoryCoverage.Support.IMPLEMENTED,0,0,0)).toList();
+        var outcomes=docs.stream().map(d->new SourceOutcome(d.identity(),SourceOutcome.State.PROCESSED,List.of())).toList();
         var contexts=new ArrayList<KnowledgeGraph.Context>();var nodes=new ArrayList<KnowledgeGraph.Node>();var edges=new ArrayList<KnowledgeGraph.Edge>();
         var evidence=new TreeMap<ContentDigest,GraphEvidence>();
-        for(var module:List.of(first,second)) {
-            var scoped=docs.stream().filter(d->d.module().equals(module.identity())).toList();
+        for(var module:modules) {
+            var scoped=docs.stream().filter(d->d.module().equals(module.identity())).sorted().toList();
             var scopedIds=scoped.stream().map(SourceDocument::identity).collect(java.util.stream.Collectors.toSet());
             var selected=decl.stream().filter(d->d.entity().stableScope().value().equals(module.identity().value())).toList();
             var config=AnalysisConfiguration.create(VERSION,Map.of("java.module",module.identity().value(),"java.source-set","MAIN",
                     "java.platform.symbol-digest",jdk.value(),"java.source-plan",CanonicalJson.sha256(scoped).value()));
-            var manifest=AnalysisManifest.create(VERSION,snapshot,List.of(first,second),List.of(new ClasspathEntry(ClasspathEntryKind.JDK_MODULE,"java.base",jdk)),
+            var manifest=AnalysisManifest.create(VERSION,snapshot,modules,List.of(new ClasspathEntry(ClasspathEntryKind.JDK_MODULE,"java.base",jdk)),
                     config,component,component,KnowledgeGraph.schemaComponent());
             var result=new FrontendResult(manifest.identity(),VERSION,FrontendResult.State.COMPLETED,selected,List.of(),List.of(),
                     outcomes.stream().filter(o->scopedIds.contains(o.document())).toList(),coverage,List.of());
@@ -252,12 +427,37 @@ class EvolutionCompatibilityTest {
         return graph(occurrences,tool,revision,false,false);
     }
 
+    @Test void unresolvedSpellingAndResolvedTargetRemainSeparateObservations() throws Exception {
+        var left = graph(1,"tool","r1",false,false,"class",true,false);
+        var right = graph(1,"tool","r2",false,false,"class",true,true);
+        var selection = new SnapshotComparison.Selection(Set.of("MAIN"),Set.of("TYPE","FIELD"),Set.of("java.field-type"));
+        var request = new SnapshotComparison.Request(REPO,left.identity(),right.identity(),SnapshotComparison.Mode.OBSERVATION,selection);
+        var result = SnapshotComparison.compare(request,EvolutionSnapshot.memory(left,right),EvolutionIndex.memory(),3,()->false);
+        var relationships = items(result,SnapshotComparison.Section.CORRESPONDENCE).stream()
+                .filter(r -> "RELATION".equals(r.get("family"))).toList();
+        assertEquals(2, relationships.size());
+        var stages = new TreeSet<String>();
+        for (var row : relationships) {
+            assertNotEquals("MATCHED", row.get("disposition"));
+            var operand = GraphJson.object(row.get(row.get("left") != null ? "left" : "right"));
+            assertFalse(GraphJson.array(operand.get("evidence")).isEmpty());
+            stages.add((String) GraphJson.object(operand.get("target")).get("state"));
+        }
+        assertEquals(Set.of("RESOLVED","UNRESOLVED"), stages);
+        assertEquals(List.of("OBSERVATION_CHANGED","OBSERVATION_CHANGED"), kinds(result));
+    }
+
     private static KnowledgeGraph graph(int occurrences,String tool,String revision,boolean reverseClasspath,boolean duplicateMain) {
         return graph(occurrences,tool,revision,reverseClasspath,duplicateMain,"class",true);
     }
 
     private static KnowledgeGraph graph(int occurrences,String tool,String revision,boolean reverseClasspath,boolean duplicateMain,
                                         String kindOfA,boolean publishRelation) {
+        return graph(occurrences,tool,revision,reverseClasspath,duplicateMain,kindOfA,publishRelation,true);
+    }
+
+    private static KnowledgeGraph graph(int occurrences,String tool,String revision,boolean reverseClasspath,boolean duplicateMain,
+                                        String kindOfA,boolean publishRelation,boolean resolveTarget) {
         var module = ModuleDescriptor.create(REPO,"fixture",".");
         var fields=new StringBuilder();for(int i=0;i<occurrences;i++)fields.append("B peer").append(i).append("; ");
         var java = "package p;\n"+kindOfA+" A { " + fields + "}\nclass B { }\n";
@@ -290,12 +490,17 @@ class EvolutionCompatibilityTest {
                     JavaSymbolName.field(JavaSymbolName.topLevelType("p","A"),"peer"+i).canonicalName(),
                     Optional.of(new SourceSpan(doc.identity(),2,13+9*i,2,18+9*i)));
             declarations.add(new DeclarationRecord(field,"peer"+i,SemanticStatus.RESOLVED,derivation,List.of(),List.of()));
-            var relationship=SemanticRelationship.create(field.identity(),kind,new RelationshipTarget.Resolved(b.identity()));
+            RelationshipTarget target = resolveTarget ? new RelationshipTarget.Resolved(b.identity()) : new RelationshipTarget.Unresolved("B");
+            var status = resolveTarget ? SemanticStatus.RESOLVED : SemanticStatus.UNRESOLVED;
+            var relationship=SemanticRelationship.create(field.identity(),kind,target);
             var span=new SourceSpan(doc.identity(),2,11+9*i,2,12+9*i);
-            var occurrence=RelationshipOccurrence.create(relationship,span,0,SemanticStatus.RESOLVED,derivation,List.of(),List.of());
+            var uncertainty = resolveTarget ? List.<Uncertainty>of() :
+                    List.of(new Uncertainty("fixture.unresolved-target","No verified target",List.of("binding for B")));
+            var occurrence=RelationshipOccurrence.create(relationship,span,0,status,derivation,uncertainty,List.of());
             if(!publishRelation)continue;
             uses.add(occurrence);observations.add(new ObservationRecord(doc.identity(),kind,Optional.of(span),
-                    SemanticStatus.RESOLVED,ObservationRecord.EvidenceState.VERIFIED,ObservationRecord.EvidenceState.VERIFIED,
+                    status,resolveTarget ? ObservationRecord.EvidenceState.VERIFIED : ObservationRecord.EvidenceState.MISSING,
+                    ObservationRecord.EvidenceState.VERIFIED,
                     Optional.of(occurrence.identity()),"B",List.of()));
         }
         var coverage=FrontendRequest.CATEGORIES.stream().map(c -> {var k=new RelationshipKind("java."+c);

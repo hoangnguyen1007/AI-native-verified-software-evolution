@@ -12,6 +12,8 @@ public interface EvolutionIndex extends AutoCloseable {
     Optional<Map<String,Object>> get(String table,String key) throws IOException;
     void put(String table,String key,Map<String,Object> value) throws IOException;
     Batch page(String table,String afterExclusive,int size) throws IOException;
+    /** Called only after the domain has recorded a consistent scope boundary. */
+    default void checkpoint() throws IOException {}
     @Override default void close() throws IOException {}
 
     static EvolutionIndex memory() {

@@ -16,3 +16,9 @@ The [contract](../architecture/m11-compatible-snapshot-evolution.md) owns propos
 Implement behind the analyzer domain and reader ports using existing filesystem/backend/CLI boundaries. No changes to M1/M5/M6 IDs, graph/report formats, score model, release reservations or isolated execution authority are needed. Rolling back the evolution consumer leaves all Track A inputs readable. M11.2 can implement and test the internal design; the additive public schema/CLI/HTTP proposal remains provisional until reviewed for public adoption in M11.5. No new remote access, execution permissions or cross-repository trust model is granted.
 
 Revisit exact matching if labeled misses demonstrate a justified evidence source; revisit reasoner or external indexing only after measured constraints and equivalence checks. Require [registered positive and negative controls](../tasks/m11/PROTOCOL.md), natural-history evidence and independent review before G7. This record describes a design decision and its tradeoffs, not measured engine behavior.
+
+## M11.5 implementation outcome
+
+The additive local API implements request and query v1 after checking the existing loopback transport, CLI and Workbench conventions. The [implemented contract](../architecture/m11-compatible-snapshot-evolution.md#9-implemented-m115-consumer-contract) records the exact shapes, authentication boundaries and recovery granularity. The durable archive keeps ordered section trees in a local content store and a separate receipt journal. Existing graph and report publishers remain the input authority.
+
+**2026-11-15 disposition:** [ADR-011](ADR-011-full-pipeline-demo.md) closes M11 and G7 by human decision without a G7 pass certification. The registered G7 protocol and independent review are historical evidence; their remaining work is no longer a delivery prerequisite. The comparison contract and qualification boundaries are unchanged.

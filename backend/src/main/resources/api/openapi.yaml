@@ -6,6 +6,128 @@ info:
 servers:
   - url: http://127.0.0.1:8080
 paths:
+  /api/v1/evolution/jobs:
+    post:
+      operationId: submitEvolution
+      description: Compare registered immutable inputs. An explicit idempotency key retries the original receipt. An unkeyed submission re-evaluates input availability.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [request]
+              additionalProperties: false
+              properties:
+                request: {$ref: '#/components/schemas/EvolutionRequest'}
+                idempotencyKey: {type: string, pattern: '^[A-Za-z0-9_-]{1,96}$'}
+      responses:
+        '200': {$ref: '#/components/responses/EvolutionSuccess'}
+        '202': {$ref: '#/components/responses/EvolutionSuccess'}
+        default: {$ref: '#/components/responses/EvolutionError'}
+  /api/v1/evolution/jobs/{job}:
+    parameters:
+      - {name: job, in: path, required: true, schema: {$ref: '#/components/schemas/Digest'}}
+    get:
+      operationId: evolutionJob
+      responses:
+        '200': {$ref: '#/components/responses/EvolutionSuccess'}
+        default: {$ref: '#/components/responses/EvolutionError'}
+  /api/v1/evolution/jobs/{job}/cancel:
+    parameters:
+      - {name: job, in: path, required: true, schema: {$ref: '#/components/schemas/Digest'}}
+    post:
+      operationId: cancelEvolution
+      requestBody: {$ref: '#/components/requestBodies/EvolutionEmpty'}
+      responses:
+        '200': {$ref: '#/components/responses/EvolutionSuccess'}
+        default: {$ref: '#/components/responses/EvolutionError'}
+  /api/v1/evolution/jobs/{job}/resume:
+    parameters:
+      - {name: job, in: path, required: true, schema: {$ref: '#/components/schemas/Digest'}}
+    post:
+      operationId: resumeEvolution
+      requestBody: {$ref: '#/components/requestBodies/EvolutionEmpty'}
+      responses:
+        '200': {$ref: '#/components/responses/EvolutionSuccess'}
+        default: {$ref: '#/components/responses/EvolutionError'}
+  /api/v1/evolution/results/{result}:
+    parameters:
+      - {$ref: '#/components/parameters/EvolutionResult'}
+    get:
+      operationId: evolutionSummary
+      description: Open a verified archive root with direction, exact stored row counts, and domain disposition.
+      responses:
+        '200': {$ref: '#/components/responses/EvolutionSuccess'}
+        default: {$ref: '#/components/responses/EvolutionError'}
+  /api/v1/evolution/results/{result}/query:
+    parameters:
+      - {$ref: '#/components/parameters/EvolutionResult'}
+    post:
+      operationId: evolutionQuery
+      requestBody: {$ref: '#/components/requestBodies/EvolutionPage'}
+      responses:
+        '200': {$ref: '#/components/responses/EvolutionSuccess'}
+        default: {$ref: '#/components/responses/EvolutionError'}
+  /api/v1/evolution/results/{result}/export:
+    parameters:
+      - {$ref: '#/components/parameters/EvolutionResult'}
+    get:
+      operationId: startEvolutionExport
+      description: First chunk of the canonical redacted export.
+      responses:
+        '200': {$ref: '#/components/responses/EvolutionSuccess'}
+        default: {$ref: '#/components/responses/EvolutionError'}
+    post:
+      operationId: evolutionExportPage
+      requestBody: {$ref: '#/components/requestBodies/EvolutionPage'}
+      responses:
+        '200': {$ref: '#/components/responses/EvolutionSuccess'}
+        default: {$ref: '#/components/responses/EvolutionError'}
+  /api/v1/evolution/results/{result}/graph:
+    parameters:
+      - {$ref: '#/components/parameters/EvolutionResult'}
+    post:
+      operationId: evolutionGraph
+      description: Read a pinned side and exact context as paged raw nodes or directed edges.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [side, context]
+              additionalProperties: false
+              properties:
+                side: {enum: [LEFT, RIGHT]}
+                context: {type: string, maxLength: 512}
+                edges: {type: boolean, default: false}
+                node: {type: string, description: Exact source node for outgoing expansion when edges is true.}
+                size: {type: integer, minimum: 1, maximum: 50, default: 20}
+                cursor: {type: string}
+      responses:
+        '200': {$ref: '#/components/responses/EvolutionSuccess'}
+        default: {$ref: '#/components/responses/EvolutionError'}
+  /api/v1/evolution/results/{result}/evidence:
+    parameters:
+      - {$ref: '#/components/parameters/EvolutionResult'}
+    post:
+      operationId: evolutionEvidence
+      description: Resolve an existing evidence reference against the pinned immutable graph of one side.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [side, identity]
+              additionalProperties: false
+              properties:
+                side: {enum: [LEFT, RIGHT]}
+                identity: {$ref: '#/components/schemas/Digest'}
+      responses:
+        '200': {$ref: '#/components/responses/EvolutionSuccess'}
+        default: {$ref: '#/components/responses/EvolutionError'}
   /api/v1/bridges/catalog:
     post:
       operationId: bridgeCatalog
@@ -490,12 +612,27 @@ paths:
 components:
   # The semantic adapter has its own version and does not add queryVersion.
   requestBodies:
+    EvolutionEmpty:
+      required: true
+      content:
+        application/json:
+          schema: {type: object, maxProperties: 0}
+    EvolutionPage:
+      required: true
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/EvolutionPage'}
     JobPage:
       required: true
       content:
         application/json:
           schema: {$ref: '#/components/schemas/Page'}
   parameters:
+    EvolutionResult:
+      in: path
+      name: result
+      required: true
+      schema: {$ref: '#/components/schemas/Digest'}
     Job:
       in: path
       name: job
@@ -512,6 +649,28 @@ components:
       required: true
       schema: {$ref: '#/components/schemas/Digest'}
   responses:
+    EvolutionSuccess:
+      description: Versioned data. The resultIdentity hashes the redacted canonical data. Domain COMPLETE, PARTIAL and WITHHELD are valid results.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [apiVersion, resultIdentity, data]
+            additionalProperties: false
+            properties:
+              apiVersion: {const: 'architecture.evolution.query:v1'}
+              resultIdentity: {$ref: '#/components/schemas/Digest'}
+              data: {type: object}
+    EvolutionError:
+      description: Invalid request or foreign cursor (400), absent artifact (404), idempotency conflict or cancellation (409), request or response limit (413/422), unavailable worker or integrity failure (503).
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [apiVersion, error]
+            properties:
+              apiVersion: {type: string}
+              error: {type: object, required: [code], properties: {code: {type: string}}}
     BridgeSuccess:
       description: architecture.bridge-query:m8.4-v1 data. Counts/revision/cursor positions are lossless decimal strings. Summary accounting separates concrete bindings from endpoint-free evidence obligations, retaining their per-state sum and original outcomes. Context states describe captured children, not method qualification. Canonical data identity includes the complete selected view. Trust remains PRODUCER_ASSERTION; qualified and complete remain false, assessment WITHHELD. Exact declaration matching is distinct from semantic authority, deployed reachability and observed traffic.
       content:
@@ -633,6 +792,114 @@ components:
                   code: {type: string}
                   message: {type: string}
   schemas:
+    EvolutionRequest:
+      type: object
+      additionalProperties: false
+      required: [schema, comparison]
+      properties:
+        schema: {const: 'architecture.evolution.request:v1'}
+        comparison:
+          type: object
+          additionalProperties: false
+          required: [repository, left, right, mode, selection]
+          properties:
+            repository: {type: string, pattern: '^repository:sha256:[0-9a-f]{64}$'}
+            left: {$ref: '#/components/schemas/Digest'}
+            right: {$ref: '#/components/schemas/Digest'}
+            mode: {enum: [STRICT, OBSERVATION]}
+            selection: {$ref: '#/components/schemas/EvolutionSelection'}
+        reports:
+          type: array
+          uniqueItems: true
+          items:
+            type: object
+            required: [side, identity, context]
+            additionalProperties: false
+            properties:
+              side: {enum: [LEFT, RIGHT]}
+              identity: {$ref: '#/components/schemas/Digest'}
+              context: {type: string}
+        bridges:
+          type: array
+          maxItems: 2
+          items:
+            type: object
+            required: [side, publication]
+            additionalProperties: false
+            properties:
+              side: {enum: [LEFT, RIGHT]}
+              publication:
+                type: object
+                required: [digest, size]
+                additionalProperties: false
+                properties:
+                  digest: {$ref: '#/components/schemas/Digest'}
+                  size: {type: integer, minimum: 0}
+        history:
+          oneOf:
+            - {type: 'null'}
+            - type: object
+              required: [steps]
+              additionalProperties: false
+              properties:
+                steps:
+                  type: array
+                  minItems: 2
+                  items:
+                    type: object
+                    additionalProperties: false
+                    required: [revision, interval]
+                    properties:
+                      revision: {$ref: '#/components/schemas/EvolutionHistoryRevision'}
+                      interval:
+                        oneOf:
+                          - {type: 'null'}
+                          - {$ref: '#/components/schemas/Digest'}
+    EvolutionHistoryRevision:
+      type: object
+      required: [graph, reports]
+      additionalProperties: false
+      properties:
+        graph: {$ref: '#/components/schemas/Digest'}
+        reports:
+          type: array
+          uniqueItems: true
+          items:
+            type: object
+            required: [identity, context]
+            additionalProperties: false
+            properties:
+              identity: {$ref: '#/components/schemas/Digest'}
+              context: {type: string}
+    EvolutionSelection:
+      type: object
+      required: [sourceSets, nodeKinds, relationshipKinds, conditional, evidence, findings, metrics, score]
+      additionalProperties: false
+      properties:
+        sourceSets: {type: array, uniqueItems: true, items: {type: string}}
+        nodeKinds: {type: array, uniqueItems: true, items: {type: string}}
+        relationshipKinds: {type: array, uniqueItems: true, items: {type: string}}
+        conditional: {type: boolean}
+        evidence: {type: boolean}
+        findings: {type: boolean}
+        metrics: {type: boolean}
+        score: {type: boolean}
+    EvolutionPage:
+      type: object
+      required: [section]
+      additionalProperties: false
+      properties:
+        section: {enum: [CONTEXTS, COMPATIBILITY, CORRESPONDENCE, EVENTS, GAPS, INPUTS, REGIONS, PROOFS, EVIDENCE, FINDINGS, HISTORY, METRICS, SCORES]}
+        size: {type: integer, minimum: 1, maximum: 50, default: 20}
+        cursor: {type: string}
+        filter:
+          type: object
+          additionalProperties: false
+          properties:
+            side: {enum: [LEFT, RIGHT]}
+            kind: {type: string, minLength: 1, maxLength: 512}
+            scope: {type: string, minLength: 1, maxLength: 512}
+            subject: {type: string, minLength: 1, maxLength: 512}
     BridgeScopeFields:
       type: object
       required: [scope]

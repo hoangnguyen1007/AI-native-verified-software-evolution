@@ -16,9 +16,9 @@ class HttpClientRecoveryTest {
     }
     private FrontendResult analyze(String source)throws Exception {
         var base=ComponentIngestionTest.fixture(Map.of("fixture/C.java",source),false).request();var binaries=new ArrayList<>(base.dependencies());
-        for(var entry:Map.<String,Class<?>>of("org.springframework:spring-webflux:6.2.0",org.springframework.web.reactive.function.client.WebClient.class,
+        for(var entry:new TreeMap<>(Map.<String,Class<?>>of("org.springframework:spring-webflux:6.2.0",org.springframework.web.reactive.function.client.WebClient.class,
                 "io.projectreactor:reactor-core:3.7.0",reactor.core.publisher.Mono.class,"org.reactivestreams:reactive-streams:1.0.4",org.reactivestreams.Publisher.class,
-                "org.springframework.cloud:spring-cloud-commons:4.2.0",org.springframework.cloud.client.circuitbreaker.ReactiveCircuitBreaker.class).entrySet()) {
+                "org.springframework.cloud:spring-cloud-commons:4.2.0",org.springframework.cloud.client.circuitbreaker.ReactiveCircuitBreaker.class)).entrySet()) {
             var jar=Path.of(entry.getValue().getProtectionDomain().getCodeSource().getLocation().toURI());
             binaries.add(new BinaryInput(new ClasspathEntry(ClasspathEntryKind.DEPENDENCY,entry.getKey()+"@jar",ContentDigest.sha256(Files.readAllBytes(jar))),jar));
         }
@@ -81,6 +81,16 @@ class HttpClientRecoveryTest {
             """);
         var failures=result.observations().stream().filter(o->o.attribution()==com.evolution.analysis.contract.semantic.SemanticStatus.ERROR).toList();
         assertTrue(failures.isEmpty(),()->failures.stream().map(o->o.reference()+":"+o.diagnostics()).toList().toString());
-        assertEquals(2,result.observations().stream().filter(o->o.attribution()==com.evolution.analysis.contract.semantic.SemanticStatus.UNSUPPORTED&&o.diagnostics().stream().anyMatch(d->d.code().equals("java.parser-inference-collision"))).count());
+        var collisions=result.observations().stream().filter(o->o.attribution()==com.evolution.analysis.contract.semantic.SemanticStatus.UNSUPPORTED
+                &&o.diagnostics().stream().anyMatch(d->d.code().equals("java.parser-inference-collision"))).toList();
+        assertEquals(4,collisions.size());
+        assertTrue(collisions.stream().allMatch(o -> o.category().value().equals("java.calls")));
+        var spans=collisions.stream().map(o -> {
+            var span=o.span().orElseThrow();
+            return List.of(span.startLine(),span.startColumn(),span.endLine(),span.endColumn());
+        }).collect(java.util.stream.Collectors.toSet());
+        // Each nested call remains separately auditable when the pinned provider conflates its type parameters.
+        assertEquals(Set.of(List.of(8,125,9,113),List.of(8,153,9,112),
+                List.of(8,153,9,93),List.of(9,60,9,89)),spans);
     }
 }

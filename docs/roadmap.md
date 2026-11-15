@@ -1,22 +1,18 @@
-# SE121 Technical Roadmap
+# Technical Roadmap
 
 ## Status and Intent
 
-This is the canonical future-direction document. Operational status belongs in `docs/current-state.md`.
+The active direction is **one full-pipeline demo** following the [2026-11-15 decision](decisions/ADR-011-full-pipeline-demo.md). Use the existing Track A analysis/workbench and Track B snapshot evolution as foundations. SE121, SE122 and KLTN no longer determine delivery order. [Current state](current-state.md) records what is implemented and what comes next.
 
-The approved SE121 North Star is **Track A + Track B**:
+## Full-Pipeline Demo
 
-- **Track A:** complete correctness foundation and usable architecture-intelligence product.
-- **Track B:** architecture evolution across compatible snapshots after Track A gates.
-- **Track C:** moonshot research; never required to make Track A + B credible.
+Use one pinned, safe local Java/Spring fixture with compatible snapshots, a traceable architecture finding, and a small repair. Reuse the existing engine and Workbench surfaces. Deliver these connected slices in the same demo:
 
-The roadmap is tech-first. Ground truth, benchmarks, evidence, and reproducibility remain mandatory engineering verification. Publication and extensive defense packaging are later/optional activities.
+1. **Analyze and compare.** Ingest the fixture through the real acquisition, build-context, semantic, Spring, graph, metric and policy pipeline. In Workbench, navigate from inventory, score and snapshot comparison to one conditional finding, witness, impact and source evidence. Keep gaps visible and coverage separate from the score.
+2. **Diagnose and propose.** From that finding, retrieve bounded, snapshot-scoped graph and evidence context for AI diagnosis (RAG). Show a cited explanation, affected scope, and a reviewable repair plan and patch. Support an applicable OpenRewrite recipe for the demo refactoring. Keep a replaceable model adapter and a labeled replay mode for repeatable local checks; prove the live AI path separately before claiming it. Missing or mismatched evidence must withhold a supported diagnosis.
+3. **Verify and hand off.** Stage the proposal in an isolated disposable workspace and run the smallest relevant baseline/candidate build and tests. Reanalyze the candidate, compare compatible results against the baseline, and confirm the intended finding transition. Include one targeted negative or mutation control that shows verification can reject a bad candidate. Present the patch, affected region and actual verdict in Workbench and a local Verified PR preview. Expose the same verifier through a runnable CI entry point with an exit status and a machine-readable check result. Missing evidence or execution is explicitly unverified. Remote publication and automatic merge are outside the local demo.
 
-On 2026-09-09, [ADR-004](decisions/ADR-004-staged-conditional-architecture-semantics.md) accepted bounded phase/order-aware conditional architecture semantics as the M4+ direction. The decision strengthens Track A+B but does not bypass the independent G2 semantic-adjudication gate or advance G2/G3.
-
-Tracks and milestones define delivery order and acceptance claims, not permanent capability ceilings. Architecture work must preserve safe extension paths for deeper repository evidence even when the corresponding provider is not an SE121 deliverable.
-
-**CONFIRMED scope change (2026-10-17):** [ADR-007](decisions/ADR-007-isolated-build-and-polyglot-readiness.md) brings isolated target builds, comprehensive acquisition without fixed repository ceilings, and language-specific semantic engines into M8.4. Execution follows the six-step plan; [current state](current-state.md) records implemented slices and the next task. Historical gates are preserved and M10/Track B approval remains separate.
+**Done:** One documented local run uses the real analyzer, an authorized live model on the demo fixture and the isolated verifier. It links the starting snapshot and finding to the exact patch, candidate snapshot, checks and PR/CI output. A reviewer can repeat the journey on the pinned input; a local replay is useful for iteration and is labeled separately from live model output, unknown or partial outcomes, and unrun checks. The [comprehensive coverage mandate](architecture/comprehensive-repository-coverage-problems.md) still applies to the platform. See [lean verification](testing.md#lean-verification-for-the-demo).
 
 ## Protected Principles
 
@@ -29,7 +25,7 @@ Tracks and milestones define delivery order and acceptance claims, not permanent
 7. Analysis identity is content-addressed. M8.4 requires CAS/checkpoint/evidence caching to remove demonstrated scale constraints; broader temporal incremental analysis stays gated.
 8. Source-only analysis is a baseline, not a ceiling. Unresolved/unsupported cases are registered by reason and may trigger progressively stronger evidence providers; provider implementation remains gate- and evidence-driven.
 9. Evaluation runs throughout implementation rather than at the end.
-10. No SE122/KLTN production features enter SE121 silently.
+10. AI proposals remain separate from deterministic evidence, verdicts and execution authority.
 11. Architecture health, analysis confidence, and semantic coverage remain separate outputs.
 12. Metrics and scores are versioned, deterministic, explainable, and withheld when required evidence is insufficient.
 13. Track A must deliver the required visual product workflow; an analyzer or CLI alone is not product completion.
@@ -91,15 +87,17 @@ See [ADR-003: Progressive Evidence Acquisition and Capability Boundaries](decisi
 - Advanced evidence-provider research beyond needs already justified by Track A/B gaps, including selective bytecode/runtime correlation
 - AOT/JVM architecture comparison and multi-build-context federation
 
-### Post-M12 Capability Horizons
+### Broader Capability Horizons
 
-These horizons preserve a coherent path toward a broader real-world product; they are not SE121 commitments and cannot bypass Track A+B gates.
+These capabilities can grow beyond the demonstrated scope as evidence and practical needs justify them.
 
 - **Horizon D — Context federation:** Maven/Gradle/POM-less build-context families, generated/deployment/AOT/runtime evidence and configuration descriptors from container/orchestration systems.
 - **Horizon E — System-of-systems assurance:** cross-repository API, event, schema, database-migration and ownership architecture with enterprise CI/PR/IDE integration.
-- **Horizon F — Verified AI evolution:** evidence-grounded explanation, gap prioritization, policy drafting, change planning and transformation proposals; deterministic analysis and isolated verification remain authoritative.
+- **Horizon F — Production verified evolution:** broader repair coverage, authenticated provider integrations and production change assurance beyond the local demo.
 
 ## Milestones
+
+Historical delivery roadmap through M11. Its gate and campaign requirements describe the original scope and do not add work to the active demo.
 
 ### M-1 - Project Operating System Hardening
 
@@ -302,17 +300,13 @@ Human approval is mandatory to continue.
 
 ### M11 - Track B Architecture Evolution
 
-The [six-task plan](tasks/m11/README.md), [design contract](architecture/m11-compatible-snapshot-evolution.md) and [registered protocol](tasks/m11/PROTOCOL.md) define the implementation sequence and evidence. Operational progress belongs in [current state](current-state.md).
-
-Deliver compatible snapshot comparison for semantic facts, conditional regions, graph/policy/metric/score results, bindings, witnesses and evidence; classify introduced/resolved/persisted/reintroduced findings plus region expanded/shrunk and `MUST`/`MAY`/`NEVER`/`UNKNOWN` transitions; provide evidence-backed comparison queries/UI and one labeled historical corpus. Reject or visibly qualify comparisons across incompatible analyzer, build-context, configuration-space, framework/registration, policy, metric, score or result-affecting limit versions.
-
-Exit gate G7: known configuration-hidden evolution events and affected regions are reproduced; analyzer/build/configuration/evidence drift is distinguished from repository change; evidence loss never becomes a resolved violation.
+**CLOSED / HUMAN ACCEPTED (2026-11-15).** The [comparison contract](architecture/m11-compatible-snapshot-evolution.md) defines the delivered boundaries. The [six-task plan](tasks/m11/README.md) and [registered protocol](tasks/m11/PROTOCOL.md) are historical. G7 is closed by human decision and is not certified passed; the review and failures remain in [M11.6](tasks/m11/06-execution.md).
 
 ### M12 - Technical Integration and Final Reproducibility
 
-Deliver the Track A + B integrated visual product, clean-clone reproduction, current architecture documentation, benchmark evidence, known limitations and a reliable local demonstration covering dashboard, metrics, score, conditional graph/findings, witness, evidence, impact, provenance and compatible conditional snapshot comparison. Publication packaging and post-M12 context/AI horizons remain optional future work.
+Local integration and reproduction are part of the [full-pipeline demo](#full-pipeline-demo). The separate M12 closeout and G8 sign-off are retired under [ADR-011](decisions/ADR-011-full-pipeline-demo.md).
 
-## Milestone DAG
+## Historical Milestone DAG
 
 ```text
 M-1 Human approval [COMPLETE: 86c4ca2]
@@ -336,27 +330,10 @@ M-1 Human approval [COMPLETE: 86c4ca2]
   M8.4 + M2 + M3 + M4 + M6 -> M9 External evaluation
   M9 -> M10 Track A gate
   M10 human approval -> M11 Conditional architecture evolution
-  M11 -> M12 Technical integration
-  M12 -> optional Track C -> post-M12 horizons D/E/F
+  M11 human closure -> Full-Pipeline Demo (includes M12 integration)
 ```
 
-## Gate-Driven Capability Waves
-
-The former approximate 24-week calendar is retired as an authority. The owner prioritizes technical depth and has not imposed a delivery deadline; forcing calendar estimates would encourage shallow scope cuts and make research uncertainty look scheduled. Progress is governed by evidence-bearing gates:
-
-| Wave | Capability boundary | Exit evidence |
-|---|---|---|
-| Foundation | M0–M3/G2 | Reproducible build context and reviewed semantic denominator |
-| Conditional semantics | M4-R0–M4E/G3 | Versioned Spring fragment, closed mechanism denominator, truth-region/witness correctness |
-| Architecture assurance | M5–M6/G4–G5 | Conditional graph/query/policy/metric/assessment invariants |
-| Product hardening | M7–M10/G6 | Complete evidence-oriented workbench and multi-repository acceptance |
-| Evolution | M11/G7 | Reproduced conditional/evidence deltas on historical cases |
-| Integration | M12/G8 | Clean reproducible Track A+B demonstration |
-| Optional expansion | Track C and horizons D/E/F | Separate human-approved gates and evidence |
-
-Estimates may be introduced locally only after a wave has an approved denominator and measured throughput. They never authorize skipping a gate.
-
-## Parallel Workstreams
+## Historical Workstreams
 
 | Workstream | Starts | Primary outputs |
 |---|---|---|
@@ -371,7 +348,7 @@ Estimates may be introduced locally only after a wave has an approved denominato
 | Evolution | M11 | Conditional fact/finding/evidence deltas and affected regions |
 | Documentation | Continuous | Current contracts, decisions, state |
 
-## Stage Gates
+## Historical Stage Gates
 
 | Gate | Decision |
 |---|---|
@@ -384,41 +361,12 @@ Estimates may be introduced locally only after a wave has an approved denominato
 | G4 | Canonical conditional graph/metric/query invariants pass, including infeasible-path rejection |
 | G5 — PASSED | Conditional policy/evidence/score correctness passes region mutations, negatives, witness replay and sensitivity checks |
 | G6 — PASSED | Track A release preparation complete: Query HTTP API, evo CLI, visual workbench projections, policy-qualified impact, multi-format exports, and offline local acceptance pass without network/database |
-| G7 | Track B conditional/evidence evolution events and affected regions are correct and reproducible |
-| G8 | Final Track A + B integration is reproducible |
+| G7 — CLOSED BY HUMAN DECISION / NOT CERTIFIED PASSED | See [M11.6](tasks/m11/06-execution.md) for scoped results and open assertions |
+| G8 — RETIRED AS SEPARATE SIGN-OFF | Local integration and reproduction are checked in the demo |
 
-## Continuous Evaluation
+## Verification and scope tradeoffs
 
-- Exhaustive microfixtures and contract tests on semantic changes
-- Parser/Spring ground truth at their gates
-- Exhaustive-oracle conformance for the supported condition/registration fragment
-- False-certainty and false-unconditional-warning measurements
-- Witness validity/minimality and affected-region precision/recall
-- Early representative real-repository coverage checkpoints across registered categories with reason-level breakdowns before late-stage M9 hardening
-- Rule mutation and negative-control tests on policy changes
-- Full corpus runs at major gates
-- Immutable versioned raw results
-- Repeated deterministic output comparison
-- End-to-end phase time and memory measurement
-- Golden inventory/metric counts and hand-computed micrograph checks
-- Score missing-evidence, sensitivity, versioning, and explanation checks
-- Registered graph/query/UI scale and primary-workflow accessibility checks
-- Traceability from dashboard and score values to canonical inputs/evidence
-- Independent review for parser promotion, Spring claims, Track A, and Track B
-
-## Fallback and Scope Cuts
-
-Cut in this order if time/evidence requires:
-
-1. Track C incremental analysis and large history
-2. Advanced architecture blame/hotspot analysis
-3. Selective runtime/AOT evidence unless a registered correctness gap makes it gate-critical; preserve provider boundaries and capability-gap records
-4. SAT/BDD optimization if the exhaustive oracle and bounded enumeration satisfy the approved fragment; preserve the reasoner port
-5. Advanced comparison visualizations beyond the required conditional Track B flow
-6. Neo4j persistence, retaining canonical graph/file output
-7. Nonessential backend/workbench extras, retaining the required Track A dashboard, metrics, score, conditional graph/finding, witness, evidence and provenance workflow
-
-Never cut semantic ground truth, uncertainty, provenance, configuration-space identity, no-false-universal semantics, graph/metric invariants, policy evidence, witness correctness, explainable score safeguards, the required Track A workbench, deterministic output, reproducibility or honest limitations.
+Use [lean verification](testing.md#lean-verification-for-the-demo). Preserve evidence, typed gaps, isolated execution, canonical semantics and honest verdicts. Keep all demo stages; reduce fixture size, provider count, UI polish and optional infrastructure before dropping a stage or weakening an invariant. Track C, deployment federation and enterprise-scale claims do not block the demo.
 
 ## Publication and Defense
 
@@ -426,6 +374,4 @@ Paper readiness, venue selection, extensive artifact badging, and elaborate defe
 
 ## Immediate Sequence
 
-1. Preserve delivered M0–M8 contracts and immutable G2–G6 evidence within their original scopes, including scoped MVP acceptance and unqualified native-method markers.
-2. Preserve the [M9 evaluation](tasks/m9/05-execution.md) and the four reservations ratified by [M10 human approval](tasks/m10/01-release-sign-off.md).
-3. Deliver M11 under its [six-task plan](tasks/m11/README.md) and independently adjudicate G7 before starting M12 integration.
+Start with a Workbench action from one existing architecture finding to an AI diagnosis with validated evidence links. Reuse a pinned Java/Spring fixture and prove the finding-to-citation round trip with a focused contract check. Build proposal, sandbox verification and local PR/CI review on that path.

@@ -1,6 +1,8 @@
 # M11 — Kế hoạch Architecture Evolution trên các snapshot tương thích
 
-Ngày lập: **2026-11-14**. **M11.1 đã hoàn tất thiết kế và đăng ký ca kiểm; M11.2 đã triển khai so sánh cấu trúc nội bộ.** Hợp đồng public còn **PROVISIONAL**, G7 chưa được nghiệm thu. Xem [hồ sơ M11.1](01-execution.md), [hồ sơ M11.2](02-execution.md), [hợp đồng](../../architecture/m11-compatible-snapshot-evolution.md), [ADR-010](../../decisions/ADR-010-compatible-snapshot-evolution.md) và [protocol](PROTOCOL.md). Các đề xuất ban đầu dưới đây là lịch sử lập kế hoạch; nếu khác nhau, dùng hợp đồng, registry và hồ sơ thực hiện.
+**M11 đã đóng theo quyết định của human (2026-11-15). G7 đã đóng và không được chứng nhận PASS.** [ADR-011](../../decisions/ADR-011-full-pipeline-demo.md) thay thế các yêu cầu nghiệm thu còn lại trong kế hoạch lịch sử dưới đây. Review độc lập trả CHANGES REQUIRED; ba assertion chưa đạt và kết quả cũ vẫn nằm trong [M11.6](06-execution.md). Hướng triển khai tiếp theo là [demo toàn tuyến](../../roadmap.md#full-pipeline-demo).
+
+Kế hoạch lập ngày **2026-11-14**. Xem [M11.1](01-execution.md), [M11.2](02-execution.md), [M11.3](03-execution.md), [M11.4](04-execution.md), [M11.5](05-execution.md), [hợp đồng](../../architecture/m11-compatible-snapshot-evolution.md), [ADR-010](../../decisions/ADR-010-compatible-snapshot-evolution.md) và [protocol lịch sử](PROTOCOL.md).
 
 **CONFIRMED — quyết định human đã ghi trong repository:** [M10 đã CLOSED / APPROVED](../m10/01-release-sign-off.md); Track B được mở khóa. Không cần xin lại quyền bắt đầu M11. Kế hoạch này cụ thể hóa phạm vi M11 trong [roadmap](../../roadmap.md), không thay đổi quyết định Track A, các bảo lưu release hay phạm vi M12/Track C.
 
@@ -235,6 +237,8 @@ Luồng mặc định **M11.1 → M11.2 → M11.3 → M11.4 → M11.5 → M11.6*
 
 ### M11.3 — Conditional regions, bindings, witness và evidence
 
+**CONFIRMED / triển khai nội bộ và kiểm chứng theo phạm vi:** [Hồ sơ M11.3](03-execution.md) ghi các ca đã chạy, mức replay và giới hạn còn lại. G7 chưa có phán quyết.
+
 **Slices nội bộ:** common-domain mapping → explicit-region oracle → symbolic operations → bindings/witness/evidence integration.
 
 1. Implement config-space correspondence có proof; preserve version, envelope precedence, domain types/abstractions, feasibility và material order. Không đồng nhất identity đơn thuần hoặc tên biến.
@@ -247,6 +251,8 @@ Luồng mặc định **M11.1 → M11.2 → M11.3 → M11.4 → M11.5 → M11.6*
 **Exit:** mọi transition đã đăng ký khớp oracle; không false MUST/NEVER; evidence/domain loss không sinh definitely-resolved region; symbolic path không bị ép enumerate Cartesian; witnesses hợp lệ với đúng side và context.
 
 ### M11.4 — Lifecycle, bounded history và assessment delta
+
+**CONFIRMED / triển khai nội bộ.** [Hồ sơ kiểm chứng E11–E14](04-execution.md).
 
 **Slices nội bộ:** pair lifecycle → explicit history → metric/score integration.
 

@@ -57,6 +57,7 @@ final class EvolutionRows {
         private EvolutionIndex.Entry head;
         private boolean exhausted;
         Rows(EvolutionIndex index,String table,String prefix){this.index=index;this.table=table;this.prefix=prefix;this.after=prefix;}
+        void after(String key) { after=key; }
         EvolutionIndex.Entry head()throws IOException {
             if(head==null&&!exhausted) {
                 if(!page.hasNext())page=index.page(table,after,32).rows().iterator();

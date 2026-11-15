@@ -20,6 +20,8 @@ final class EvolutionInput {
     private static final ContentDigest GRAPH_SCHEMA=KnowledgeGraph.schemaComponent().contentDigest();
     private static final Set<String> JAVA_DEPENDENCIES=Set.copyOf(FrontendRequest.CATEGORIES.stream()
             .filter(s->!Set.of("declares","has-parameter").contains(s)).map(s->"java."+s).toList());
+    private static final Set<String> STRUCTURAL_PROOFS = Set.of("java.declaration", "java.occurrence", "java.derived-relationship");
+    private static final int MAX_INDEXED_PROOF_CHARACTERS = 65_536;
 
     final EvolutionRun run;
     final String name;
@@ -33,6 +35,26 @@ final class EvolutionInput {
     EvolutionInput(EvolutionRun run,String name,ContentDigest graph){this.run=run;this.name=name;this.graph=graph;}
     void failed(String reason){disposition=reason;readable=false;}
 
+    Map<String,Object> checkpoint() {
+        return row("graph",graph,"readable",readable,"foreign",foreign,"lineage",lineage,
+                "expectedCensus",expectedCensus,"disposition",disposition,
+                "snapshot",header==null?null:header.snapshot());
+    }
+
+    void restore(Map<String,Object> state,EvolutionSnapshot.Reader reader) throws IOException {
+        if (!graph.value().equals(state.get("graph")) || !Boolean.TRUE.equals(state.get("readable")))
+            throw new IOException("EVOLUTION_CHECKPOINT_INPUT_CHANGED");
+        snapshot=reader.open(graph,run.cancelled);
+        header=snapshot.header();
+        if (!header.graph().equals(graph) || !header.snapshot().value().equals(state.get("snapshot"))
+                || !KnowledgeGraph.SCHEMA.equals(header.schema())) throw new IOException("EVOLUTION_CHECKPOINT_INPUT_CHANGED");
+        readable=true;
+        foreign=Boolean.TRUE.equals(state.get("foreign"));
+        lineage=Boolean.TRUE.equals(state.get("lineage"));
+        expectedCensus=Boolean.TRUE.equals(state.get("expectedCensus"));
+        disposition=text(state,"disposition");
+    }
+
     void read(EvolutionSnapshot.Reader reader)throws IOException {
         snapshot=reader.open(graph,run.cancelled);var candidate=snapshot.header();
         if(!candidate.graph().equals(graph))throw corrupt();
@@ -42,6 +64,7 @@ final class EvolutionInput {
         expectedCensus=foundBuildModel&&!openBuildModel;
         verifySourceBytes();
         scan(cursor->snapshot.contexts(run.size,cursor),header.contexts(),run.size,run.cancelled,this::context);
+        finishSpring();
         addExpected();
         readable=true;disposition="AVAILABLE";
     }
@@ -56,7 +79,19 @@ final class EvolutionInput {
     }
 
     private void evidenceRow(GraphEvidence evidence)throws IOException {
-        unique(run.index,"seen-evidence",name+"|"+evidence.identity().value(),row("seen",true));
+        // The intake already visits and authenticates these proofs. Reuse the exact bytes in
+        // the private scratch index so each selected node does not reopen its graph page.
+        var seen = run.request.selection().structural() && STRUCTURAL_PROOFS.contains(evidence.family())
+                && evidence.canonicalJson().length() <= MAX_INDEXED_PROOF_CHARACTERS
+                ? row("family", evidence.family(), "json", evidence.canonicalJson()) : row("seen", true);
+        unique(run.index,"seen-evidence",name+"|"+evidence.identity().value(),seen);
+        if(run.request.selection().spring())try{SpringOperands.index(this,evidence);}
+        catch(EvolutionSnapshot.ReadFailure | IllegalArgumentException | ArithmeticException | ClassCastException invalid){
+            String reason=invalid instanceof GraphJson.LimitExceededException?"SPRING_OPERAND_RESOURCE_LIMIT":"SPRING_OPERAND_CORRUPT";
+            run.unresolved();
+            run.gap(this,null,reason,List.of(evidence.identity()));
+        }
+        if(run.request.selection().evidence()) EvolutionEvidence.index(this,evidence);
         switch(evidence.family()) {
             case "frontend.result-index" -> frontendIndex(evidence);
             case "build.module" -> {
@@ -111,6 +146,7 @@ final class EvolutionInput {
                 var raw=payload(evidence);var doc=obj(raw.get("document"));
                 unique(run.index,"source-bytes",name+"|"+evidence.identity().value(),row("document",text(doc,"identity"),
                         "digest",text(raw,"contentDigest"),"documentDigest",text(doc,"contentDigest"),"content",text(raw,"contentEvidence")));
+                if(run.request.selection().evidence()) DeclaredYamlEvolution.source(this,evidence,raw,doc);
             }
             case "java.type-shape","java.member-shape" -> {
                 var shape=payload(evidence);String id=text(shape,evidence.family().equals("java.type-shape")?"type":"member");
@@ -170,9 +206,16 @@ final class EvolutionInput {
         var data=new TreeMap<>(details);data.put("side",name);data.put("graph",graph);
         data.put("context",context.identity());data.put("family",family);data.put("evidence",evidence.identity());
         data.put("analysis",context.analysis());data.put("nodes",partition.nodes());data.put("edges",partition.edges());
-        unique(run.index,"context-id",name+"|"+context.identity(),row("analysis",context.analysis()));
+        unique(run.index,"context-id",name+"|"+context.identity(),data);
+        if(family.equals("spring.context")&&run.request.selection().spring()) {
+            unique(run.index,"pending-spring",name+"|"+context.identity(),data);
+            return;
+        }
         unique(run.index,"scopes",name+"|"+text(data,"scope")+"|"+context.identity(),data);
-        if(family.equals("analysis.manifest"))run.index.put("realized",name+"|"+text(data,"scope"),row("present",true));
+        if(family.equals("analysis.manifest")){
+            run.index.put("realized",name+"|"+text(data,"scope"),row("present",true));
+            if(run.request.selection().spring())unique(run.index,"spring-parent",name+"|"+context.identity(),data);
+        }
     }
 
     private Map<String,Object> repository(KnowledgeGraph.Context context,GraphEvidence evidence)throws IOException {
@@ -182,10 +225,11 @@ final class EvolutionInput {
                     new GraphJson.StreamLimits(Math.max(1,evidence.canonicalJson().length()),128,Long.MAX_VALUE),
                     (field,member)->{
                         switch(field) {
-                            case "identity","repository","contentDigest" -> raw.put(field,member.read());
+                            case "identity","repository","contentDigest","revision","dirty" -> raw.put(field,member.read());
                             case "files" -> member.array(file->{
                                 EvolutionSnapshot.check(run.cancelled);digest.add(file);var value=obj(file);
                                 unique(run.index,"inventory",name+"|"+hash("evolution.source-path",text(value,"path")).value(),value);
+                                if(run.request.selection().evidence()) DeclaredYamlEvolution.inventory(this,value,evidence.identity());
                             });
                             default -> member.skip();
                         }
@@ -195,6 +239,7 @@ final class EvolutionInput {
         var repository=new RepositoryIdentity(text(raw,"repository"));
         if(!context.identity().equals(header.snapshot().value())||!boundSnapshot(raw,repository))throw corrupt();
         bindRepository(repository);
+        run.index.put("input-revision",name,row("revision",raw.get("revision"),"dirty",raw.get("dirty")));
         return row("scope",scope(evidence.family(),repository),"selected",true,"available",true,
                 "repository",repository);
     }
@@ -263,6 +308,28 @@ final class EvolutionInput {
                 "parentAnalysis",analysis,"regionInput",raw.get("space"));
     }
 
+    private void finishSpring()throws IOException {
+        if(!run.request.selection().spring())return;
+        var rows=new Rows(run.index,"pending-spring",name+"|");
+        for(var next=rows.next();next!=null;next=rows.next()) {
+            EvolutionSnapshot.check(run.cancelled);
+            var data=new TreeMap<>(next.value());
+            var parent=run.index.get("spring-parent",name+"|"+text(data,"parentAnalysis")).orElse(Map.of());
+            String container=null;
+            try{container=SpringOperands.container(this,data);}
+            catch(EvolutionSnapshot.ReadFailure | IllegalArgumentException invalid){
+                data.put("operandStatus",invalid instanceof GraphJson.LimitExceededException?"RESOURCE_LIMIT":"CORRUPT");
+            }
+            data.put("container",container);
+            data.put("available",container!=null&&Boolean.TRUE.equals(parent.get("available")));
+            data.put("selected",parent.isEmpty()||Boolean.TRUE.equals(parent.get("selected")));
+            data.put("sourceSet",parent.get("sourceSet"));
+            data.put("scope",scope("spring.context",Arrays.asList(parent.get("scope"),container)));
+            run.index.put("context-id",name+"|"+text(data,"context"),data);
+            unique(run.index,"scopes",name+"|"+text(data,"scope")+"|"+text(data,"context"),data);
+        }
+    }
+
     private void addExpected()throws IOException {
         var rows=new Rows(run.index,"expected",name+"|");
         for(var e=rows.next();e!=null;e=rows.next()) {
@@ -290,6 +357,9 @@ final class EvolutionInput {
 
     record Coverage(boolean closed,List<ContentDigest> references,boolean readable) {}
     Coverage coverage(Map<String,Object> context)throws IOException {
+        return coverage(context,run.request.selection().relationshipKinds());
+    }
+    Coverage coverage(Map<String,Object> context,Set<String> relationships)throws IOException {
         String id=text(context,"context"),scope=text(context,"scope");
         var found=run.index.get("frontends",name+"|"+id).orElse(Map.of());
         var manifest=new ContentDigest(text(context,"evidence"));
@@ -297,7 +367,7 @@ final class EvolutionInput {
         boolean closed="frontend.result-index:m8.4-v2".equals(found.get("indexSchema"))&&"COMPLETED".equals(found.get("state"))
                 &&Boolean.TRUE.equals(found.get("processed"))&&context.get("sourcePlan")!=null
                 &&!FrontendRequest.SOURCE_RECOVERY.equals(context.get("resolutionMode"));
-        if(closed&&!run.request.selection().relationshipKinds().isEmpty())closed=categoryCoverage(list(found.get("coverage")));
+        if(closed&&!relationships.isEmpty())closed=categoryCoverage(list(found.get("coverage")),relationships);
         var refs=new ArrayList<ContentDigest>();refs.add(manifest);
         if(evidenceId!=null)refs.add(new ContentDigest(evidenceId));
         final boolean[] complete={closed};
@@ -305,7 +375,7 @@ final class EvolutionInput {
         String prefix=name+"|"+evidenceId+"|";
         scan(cursor->snapshot.nodes(id,run.size,cursor),number(context.get("nodes")),run.size,run.cancelled,node->{
             if(!id.equals(node.context()))throw corrupt();
-            unique(run.index,"seen-nodes",name+"|"+id+"|"+node.identity(),row("seen",true));
+            run.index.put("seen-nodes",name+"|"+id+"|"+node.identity(),row("seen",true));
             if(node.kind().equals("SOURCE_DOCUMENT")) {
                 for(var ref:node.evidence()){
                     var proof=evidence(ref);if(!proof.family().equals("source.document"))continue;
@@ -317,7 +387,7 @@ final class EvolutionInput {
                     if(!SourceDocumentIdentity.from(repository,path).value().equals(node.identity()))throw corrupt();
                     var entry=run.index.get("inventory",name+"|"+hash("evolution.source-path",path).value());
                     if(entry.isPresent()&&!Objects.equals(entry.orElseThrow().get("contentDigest"),document.get("contentDigest")))throw corrupt();
-                    unique(run.index,"documents",name+"|"+id+"|"+node.identity(),document);
+                    run.index.put("documents",name+"|"+id+"|"+node.identity(),document);
                     if(context.get("module").equals(document.get("module"))&&roleMatches(text(context,"sourceSet"),text(document,"classification"))){
                         sourceCount[0]++;
                         var outcome=run.index.get("processed",prefix+node.identity());
@@ -337,10 +407,10 @@ final class EvolutionInput {
                     var proof=evidence(ref);
                     if(proof.family().equals("evidence.gap")) {
                         complete[0]=false;
-                    } else if(proof.family().equals("java.observation")&&!run.request.selection().relationshipKinds().isEmpty()) {
+                    } else if(proof.family().equals("java.observation")&&!relationships.isEmpty()) {
                         var raw=payload(proof);
                         if(!frontendMember(id,"observations",ref))complete[0]=false;
-                        if(relevantCategory(category(raw.get("category")))&&(!"RESOLVED".equals(raw.get("attribution"))
+                        if(relevantCategory(category(raw.get("category")),relationships)&&(!"RESOLVED".equals(raw.get("attribution"))
                                 ||!"VERIFIED".equals(raw.get("provenance"))||!"VERIFIED".equals(raw.get("origin"))))complete[0]=false;
                     }
                 }
@@ -361,9 +431,9 @@ final class EvolutionInput {
         return new Coverage(complete[0],List.copyOf(refs),true);
     }
 
-    private boolean categoryCoverage(List<Object> values) {
+    private boolean categoryCoverage(List<Object> values,Set<String> relationships) {
         var required=new HashSet<String>();
-        for(var kind:run.request.selection().relationshipKinds()) {
+        for(var kind:relationships) {
             if(kind.equals("graph.depends-on"))required.addAll(JAVA_DEPENDENCIES);
             else if(kind.startsWith("java."))required.add(kind);
             else return false;
@@ -375,9 +445,8 @@ final class EvolutionInput {
         return required.isEmpty();
     }
 
-    private boolean relevantCategory(String category) {
-        return run.request.selection().relationshipKinds().contains(category)
-                ||run.request.selection().relationshipKinds().contains("graph.depends-on")&&JAVA_DEPENDENCIES.contains(category);
+    private boolean relevantCategory(String category,Set<String> relationships) {
+        return relationships.contains(category)||relationships.contains("graph.depends-on")&&JAVA_DEPENDENCIES.contains(category);
     }
     static String category(Object value){return value instanceof String s?s:text(obj(value),"value");}
     Optional<AnalysisIdentity> analysis(String context)throws IOException {
@@ -396,6 +465,17 @@ final class EvolutionInput {
         return id!=null&&run.index.get("frontend-members",name+"|"+id+"|"+family+"|"+ref.value()).isPresent();
     }
     GraphEvidence evidence(ContentDigest ref)throws IOException {
+        if (run.request.selection().structural()) {
+            var cached = run.index.get("seen-evidence", name + "|" + ref.value());
+            if (cached.isPresent() && cached.orElseThrow().containsKey("json")) {
+                try {
+                    var proof = cached.orElseThrow();
+                    return new GraphEvidence(ref, text(proof, "family"), text(proof, "json"));
+                } catch (IllegalArgumentException invalid) {
+                    throw new EvolutionSnapshot.ReadFailure(EvolutionSnapshot.Failure.CORRUPT, invalid);
+                }
+            }
+        }
         var value=snapshot.evidence(ref).orElseThrow(EvolutionInput::corrupt);
         if(!value.identity().equals(ref))throw corrupt();return value;
     }

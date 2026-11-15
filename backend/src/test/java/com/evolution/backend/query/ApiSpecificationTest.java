@@ -10,7 +10,12 @@ class ApiSpecificationTest {
     @Test void packagedOpenApiNamesEveryImplementedRouteAndOperation() throws Exception {
         try(var input=getClass().getResourceAsStream("/api/openapi.yaml")) {
             assertNotNull(input); var spec=map(new Yaml().load(input)); assertEquals("3.1.0",spec.get("openapi"));
-            var paths=map(spec.get("paths")); assertEquals(22,paths.size());
+            var paths=map(spec.get("paths"));
+            var expectedEvolution=Set.of("jobs","jobs/{job}","jobs/{job}/cancel","jobs/{job}/resume",
+                    "results/{result}","results/{result}/query","results/{result}/export","results/{result}/graph","results/{result}/evidence");
+            var evolutionPrefix="/api/v1/evolution/";
+            assertEquals(expectedEvolution,paths.keySet().stream().filter(path->path.startsWith(evolutionPrefix))
+                    .map(path->path.substring(evolutionPrefix.length())).collect(java.util.stream.Collectors.toSet()));
             for(String operation:List.of("summary","contexts","gaps","root-gaps","answers"))assertTrue(paths.containsKey("/api/v1/semantic/"+operation));
             for(String path:List.of("/api/v2/acquisitions/{revision}","/api/v2/acquisitions/history","/api/v2/acquisitions/{revision}/readiness","/api/v2/analysis/jobs/{job}/resume"))assertTrue(paths.containsKey(path));
             assertTrue(paths.containsKey("/api/v1/analysis/connections"));

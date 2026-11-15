@@ -2,7 +2,7 @@
 
 ## Mission
 
-Build a deterministic, evidence-first platform that understands repositories through a protected Java/Spring Boot foundation and language-specific semantic engines, reconstructs architecture-relevant semantics across declared configuration spaces, measures architecture structure and health, detects configuration-qualified architecture violations, explains every assessment through evidence and counterexample configurations, and presents the results through a complete visual workbench with a stable foundation for later verified software evolution.
+Build a deterministic, evidence-first platform that understands repositories through a protected Java/Spring Boot foundation and language-specific semantic engines, reconstructs architecture-relevant semantics across declared configuration spaces, measures architecture structure and health, detects configuration-qualified architecture violations, explains every assessment through evidence and counterexample configurations, presents the results through a visual workbench, and uses that evidence to diagnose architecture problems, propose repairs and verify changes.
 
 ## Product Capability Philosophy
 
@@ -18,58 +18,11 @@ Milestone scope sequences implementation delivery, but never serves as a ceiling
 
 **CONFIRMED bounded delivery acceptance (2026-10-29): M8.4 Step 5 / Bước 1 is CLOSED / CORE MVP**, accepted by the human for the delivered 18 adapters and scoped native journeys, explicit unsupported outcomes, replay, embedded/cross-provider paths and authentication mechanisms. Full A01–A12 qualification and production-method registration are withdrawn from this task's closure criteria, without treating them as passed or creating replacement tasks. Existing semantic gaps and unqualified trust markers remain truthful. This is delivery acceptance, not universal language/repository completeness or Step-5/milestone promotion. See the amendment to [ADR-007](decisions/ADR-007-isolated-build-and-polyglot-readiness.md).
 
-## Academic Context
+## Delivery Context
 
-- Course phase: SE121 - Software Architecture Intelligence Platform
-- Intended SE121 North Star: Track A correctness foundation plus Track B architecture evolution
-- Future phases: SE122 and KLTN
-- Protected foundation: Java and Spring Boot; language-specific semantic engines enter SE121 in M8.4
+**CONFIRMED human decision (2026-11-15):** deliver one [full-pipeline demo](roadmap.md#full-pipeline-demo) across the former SE121, SE122 and KLTN boundaries. Track A and Track B are the existing analysis, product and evolution foundations. The same demo adds graph-guided AI diagnosis, repair planning and patch/refactoring, isolated differential and targeted mutation verification, and local Verified PR/CI output. See [ADR-011](decisions/ADR-011-full-pipeline-demo.md) for the G7/M11 closure and the verification policy.
 
-## Human-Approved Priorities
-
-1. Technical depth
-2. System correctness
-3. Architecture quality
-4. Engineering quality
-5. Product quality
-6. Empirical validation
-7. Paper/publication readiness later
-
-Research discipline remains required for ground truth, benchmarks, evidence, reproducibility, and honest claims. Immediate work is not optimized around paper writing, venue selection, extensive publication packaging, defense scripting, or unnecessary statistical ceremony.
-
-## SE121 Scope
-
-- Semantic Java source analysis
-- Polyglot semantic engines, compiler-backed evidence and qualified cross-language relationships in M8.4
-- Comprehensive streaming snapshot acquisition, durable recovery and isolated target build evidence
-- Multi-module workspace intelligence
-- Safe Maven/build-model understanding
-- Spring semantic intelligence
-- Versioned finite configuration-space modeling and phase/order-aware Spring registration semantics
-- `MUST`/`MAY`/`NEVER`/`UNKNOWN` architecture facts with reproducible witnesses where applicable
-- Software Knowledge Graph construction
-- Dependency and architecture-policy modeling
-- Evidence-backed architecture violation detection
-- Basic, bounded impact analysis
-- Stable architecture query services
-- Detailed repository, semantic-quality, Spring, policy, and operational metrics
-- Versioned and explainable architecture health scoring, separate from analysis confidence
-- Focused interactive architecture visualization and evidence navigation
-- A usable dashboard/workbench with inventory, metrics, score, graph, violations, Spring, impact, and provenance views
-- Reproducible benchmark and evaluation infrastructure
-- Track B comparison of compatible repository snapshots, conditional architecture regions, evidence, and architecture evolution
-
-Architecture-mutation fixtures used to evaluate rule detection are part of SE121 benchmarking.
-
-## SE121 Delivery Non-Goals
-
-- AI diagnosis and graph-guided RAG
-- Automated refactoring, patch generation, or OpenRewrite transformation execution
-- Sandbox verification of generated changes
-- Differential/mutation testing of generated patches
-- CI/CD verification and Verified Pull Requests
-
-These remain SE122/KLTN concerns unless a later explicit human decision changes scope. This scheduling does not make them forbidden platform capabilities or prevent preserving clean extension points during SE121.
+Prioritize finishing the integrated journey with a small, pinned setup. Retain the comprehensive-coverage mandate and all evidence, safety and correctness invariants. Verification is proportional to the behavior changed and the claim made; campaigns, publication packaging and enterprise qualification are separate work only when needed.
 
 ## Durable Architectural Constraints
 
@@ -121,9 +74,9 @@ Lower-authority claims cannot become confirmed without higher-authority evidence
 |---|---|
 | Java 21 compile baseline | CONFIRMED |
 | Maven and monorepo | CONFIRMED |
-| Track A + Track B SE121 target | CONFIRMED |
+| Single full-pipeline demo on Track A + Track B | CONFIRMED (2026-11-15); see ADR-011 |
 | JavaParser + SymbolSolver behind SemanticFrontend | CONFIRMED human choice (2026-09-02); G2 subsequently recorded PASSED in current state; see ADR-001 |
-| OpenRewrite | Independent comparator; possible future transformation technology outside SE121 |
+| OpenRewrite | Existing independent comparator; a bounded transformation route is in demo scope, implementation pending |
 | Storage-neutral canonical graph | CONFIRMED direction; detailed schema pending |
 | Neo4j Community adapter | PROVISIONAL/experimental |
 | Typed external policy representation | Approved direction; exact format pending |
@@ -136,7 +89,7 @@ Lower-authority claims cannot become confirmed without higher-authority evidence
 | Polyglot semantic engines and scalable readiness | CONFIRMED M8.4 scope expansion; native engine/CAS/VM adapter choices PROVISIONAL under ADR-007 |
 | Staged conditional architecture semantics for M4+ | ACCEPTED direction and bounded M4B–D implementation; empirical G3 acceptance pending; see ADR-004/current state |
 | Solver backend for configuration reasoning | Pure-Java DPLL and exhaustive backends implemented within recorded fragment; broader performance/coverage unmeasured |
-| Post-M12 context federation, cross-system assurance, and verified AI evolution | FUTURE HORIZONS; not SE121 commitments |
+| Deployment federation, cross-system assurance, and production verified evolution | Broader horizons beyond the local demo |
 
 ## Document Responsibilities
 

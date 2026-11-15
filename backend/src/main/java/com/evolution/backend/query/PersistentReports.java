@@ -1,6 +1,7 @@
 package com.evolution.backend.query;
 
 import com.evolution.analysis.evolution.SnapshotComparison;
+import com.evolution.analysis.evolution.EvolutionSnapshot;
 
 import com.evolution.analysis.acquisition.streaming.*;
 import com.evolution.analysis.contract.common.*;
@@ -17,7 +18,11 @@ import java.util.*;
 public final class PersistentReports implements AutoCloseable {
     public record Envelope(String schema,PublishedReports.Report report){public Envelope{if(!schema.equals("published-report:m8.4-v2"))throw new IllegalArgumentException("Unknown report schema");}}
     private final StreamingContentStore content;private final SqliteInventoryStore index;
-    public PersistentReports(Path root)throws IOException{content=new StreamingContentStore(root.resolve("content"));index=new SqliteInventoryStore(root.resolve("metadata"),content);}
+    public PersistentReports(Path root)throws IOException { this(root,false); }
+    public PersistentReports(Path root, boolean readOnly)throws IOException {
+        content=new StreamingContentStore(root.resolve("content"));
+        index=new SqliteInventoryStore(root.resolve("metadata"),content,readOnly);
+    }
     synchronized List<ContentDigest> publish(List<PublishedReports.Report> batch)throws IOException{
         if(batch.size()>32)throw new IllegalArgumentException("Invalid report batch");var entries=new ArrayList<SqliteInventoryStore.Observation>();var identities=new ArrayList<ContentDigest>();
         for(var report:batch){var id=report.identity();identities.add(id);byte[] bytes=BoundedJson.encode(new Envelope("published-report:m8.4-v2",report),2_000_000_000);var handle=content.put(new ByteArrayInputStream(bytes),()->false);
@@ -27,11 +32,34 @@ public final class PersistentReports implements AutoCloseable {
         if(!entries.isEmpty())index.entries("reports",entries);return List.copyOf(identities);
     }
     synchronized Optional<PublishedReports.Report> get(ContentDigest identity)throws IOException{
+        return decode(identity,2_000_000_000,200_000_000,()->false);
+    }
+    synchronized Optional<PublishedReports.Report> readEvolution(ContentDigest identity,
+                                                                 java.util.function.BooleanSupplier cancelled)throws IOException {
+        try {
+            return decode(identity,32_000_000,2_000_000,cancelled);
+        } catch (GraphJson.LimitExceededException limit) {
+            throw new EvolutionSnapshot.ReadFailure(EvolutionSnapshot.Failure.RESOURCE_LIMIT,limit);
+        } catch (EvolutionSnapshot.ReadFailure failure) {
+            throw failure;
+        } catch (IOException corrupt) {
+            throw new EvolutionSnapshot.ReadFailure(EvolutionSnapshot.Failure.CORRUPT,corrupt);
+        }
+    }
+    private Optional<PublishedReports.Report> decode(ContentDigest identity,int limit,int values,
+                                                     java.util.function.BooleanSupplier cancelled)throws IOException {
         var found=index.observation("reports",LogicalPath.utf8(identity.value().substring(7)));if(found.isEmpty())return Optional.empty();var handle=found.orElseThrow().entry().content().orElseThrow();
-        if(handle.size()>2_000_000_000||!content.verify(handle))throw new IOException("REPORT_CORRUPT");
-        try(var reader=new InputStreamReader(content.open(handle),StandardCharsets.UTF_8)){
-            var report=CanonicalRecordReader.read(GraphJson.read(reader,new GraphJson.Limits(2_000_000_000,128,200_000_000)),Envelope.class).report();
+        if(handle.size()>limit)throw new EvolutionSnapshot.ReadFailure(EvolutionSnapshot.Failure.RESOURCE_LIMIT);
+        if(!content.verify(handle,cancelled))throw new IOException("REPORT_CORRUPT");
+        try(var reader=new FilterReader(new InputStreamReader(content.open(handle),StandardCharsets.UTF_8)){
+            @Override public int read(char[] chars,int offset,int length)throws IOException {
+                EvolutionSnapshot.check(cancelled);
+                return super.read(chars,offset,length);
+            }
+        }){
+            var report=CanonicalRecordReader.read(GraphJson.read(reader,new GraphJson.Limits(limit,128,values)),Envelope.class).report();
             if(!report.identity().equals(identity)||!CanonicalJson.sha256(new Envelope("published-report:m8.4-v2",report)).equals(handle.digest()))throw new IOException("REPORT_NONCANONICAL");return Optional.of(report);
+        }catch(GraphJson.LimitExceededException limitExceeded){throw limitExceeded;
         }catch(IllegalArgumentException invalid){throw new IOException("REPORT_CORRUPT",invalid);}
     }
     boolean verifyPublished(ContentDigest identity, ContentDigest graph, java.util.function.BooleanSupplier cancelled) throws IOException {

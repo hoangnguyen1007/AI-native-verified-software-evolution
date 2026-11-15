@@ -2,12 +2,12 @@
 
 Use [verification-before-completion](../skills/verification-before-completion/SKILL.md). Identify requirements, affected inputs and the precise claim being checked.
 
-- Select the cheapest sufficient test, contract/integration check, build or manual experiment. Follow AGENTS.md's two-tier targeted verification: method/small-class inner loops, then a bounded pre-handoff set covering changed behavior and direct consumers across all affected modules, in quiet mode.
-- Never generate ceremonial `reproducibility/` folders, multi-thousand-line hash manifests, or raw output JSON dumps for intermediate slices.
+- Use [lean verification](../../docs/testing.md#lean-verification-for-the-demo): inspect docs without application tests, run one focused behavior check where sufficient, and add only the materially affected consumer or demo journey. Reuse a check at handoff when its inputs did not change.
+- Keep evidence compact; no new formal package or raw dump for routine work or demo closeout.
 - Inspect exit code, executed cases, skips, errors and output. Zero cases is not a passing behavioral check.
-- Broaden to full reactor or formal reproducibility packages ONLY for milestone completion gates or explicitly authorized benchmark campaigns.
+- Broaden only for a material risk or an explicit claim not supported by narrower evidence. Demo delivery does not reopen historical gates.
 - For experiments check pinned inputs, environment, identity, provenance, denominators and reproducibility.
-- For governance check file/skill/link structure and representative agent behavior; neither proves universal compliance.
+- For governance check links, precedence and representative decision paths. Reserve live agent evaluation for a material uncertainty about behavior.
 - Classify failures before choosing a remedy.
 
 A verifier assigned independently remains read-only and returns findings. During implementation self-checks, the implementer may repair in-scope issues, then rerun affected checks.

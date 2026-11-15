@@ -39,6 +39,7 @@ public final class ArchitectureQueryApi {
     private AnalysisJobApi jobs;
     private SemanticQueryApi semantics;
     private BridgeQueryApi bridges;
+    private EvolutionHttpApi evolution;
     private Function<BooleanSupplier,PartitionedGraphReader> partitionReaders;
     private RepositoryConnections connections;
     public ArchitectureQueryApi(GraphStore store) { this(store,new PublishedReports(),ApiLimits.defaults()); }
@@ -63,18 +64,26 @@ public final class ArchitectureQueryApi {
         Objects.requireNonNull(existing);
         if(existing.executions!=null)throw new IllegalArgumentException("EXECUTION_PORT_ALREADY_CONFIGURED");
         var api=new ArchitectureQueryApi(existing.store,existing.reports,existing.limits,existing.factory);
-        api.jobs=existing.jobs;api.connections=existing.connections;api.semantics=existing.semantics;api.bridges=existing.bridges;api.partitionReaders=existing.partitionReaders;api.executions=Objects.requireNonNull(executions);return api;
+        api.jobs=existing.jobs;api.connections=existing.connections;api.semantics=existing.semantics;api.bridges=existing.bridges;api.evolution=existing.evolution;api.partitionReaders=existing.partitionReaders;api.executions=Objects.requireNonNull(executions);return api;
     }
     public static ArchitectureQueryApi withSemanticQueries(ArchitectureQueryApi existing,com.evolution.analysis.polyglot.SemanticQueryService queries){
-        Objects.requireNonNull(existing);if(existing.semantics!=null)throw new IllegalArgumentException("SEMANTIC_QUERY_SERVICE_ALREADY_CONFIGURED");var api=new ArchitectureQueryApi(existing.store,existing.reports,existing.limits,existing.factory);api.jobs=existing.jobs;api.connections=existing.connections;api.executions=existing.executions;api.bridges=existing.bridges;api.partitionReaders=existing.partitionReaders;api.semantics=new SemanticQueryApi(queries,existing.limits);return api;
+        Objects.requireNonNull(existing);if(existing.semantics!=null)throw new IllegalArgumentException("SEMANTIC_QUERY_SERVICE_ALREADY_CONFIGURED");var api=new ArchitectureQueryApi(existing.store,existing.reports,existing.limits,existing.factory);api.jobs=existing.jobs;api.connections=existing.connections;api.executions=existing.executions;api.bridges=existing.bridges;api.evolution=existing.evolution;api.partitionReaders=existing.partitionReaders;api.semantics=new SemanticQueryApi(queries,existing.limits);return api;
     }
     public static ArchitectureQueryApi withBridgeQueries(ArchitectureQueryApi existing,com.evolution.analysis.polyglot.BridgeQueryService queries){
-        Objects.requireNonNull(existing);if(existing.bridges!=null)throw new IllegalArgumentException("BRIDGE_QUERY_SERVICE_ALREADY_CONFIGURED");var api=new ArchitectureQueryApi(existing.store,existing.reports,existing.limits,existing.factory);api.jobs=existing.jobs;api.connections=existing.connections;api.executions=existing.executions;api.semantics=existing.semantics;api.partitionReaders=existing.partitionReaders;api.bridges=new BridgeQueryApi(queries,existing.limits);return api;
+        Objects.requireNonNull(existing);if(existing.bridges!=null)throw new IllegalArgumentException("BRIDGE_QUERY_SERVICE_ALREADY_CONFIGURED");var api=new ArchitectureQueryApi(existing.store,existing.reports,existing.limits,existing.factory);api.jobs=existing.jobs;api.connections=existing.connections;api.executions=existing.executions;api.semantics=existing.semantics;api.evolution=existing.evolution;api.partitionReaders=existing.partitionReaders;api.bridges=new BridgeQueryApi(queries,existing.limits);return api;
     }
     public static ArchitectureQueryApi withPartitionedGraphs(ArchitectureQueryApi existing,Function<BooleanSupplier,PartitionedGraphReader> readers){
         Objects.requireNonNull(existing);if(existing.partitionReaders!=null)throw new IllegalArgumentException("PARTITION_READER_ALREADY_CONFIGURED");
         var api=new ArchitectureQueryApi(existing.store,existing.reports,existing.limits,existing.factory);
-        api.jobs=existing.jobs;api.connections=existing.connections;api.executions=existing.executions;api.semantics=existing.semantics;api.bridges=existing.bridges;api.partitionReaders=Objects.requireNonNull(readers);return api;
+        api.jobs=existing.jobs;api.connections=existing.connections;api.executions=existing.executions;api.semantics=existing.semantics;api.bridges=existing.bridges;api.evolution=existing.evolution;api.partitionReaders=Objects.requireNonNull(readers);return api;
+    }
+    public static ArchitectureQueryApi withEvolution(ArchitectureQueryApi existing, EvolutionJobs jobs, EvolutionQueries queries) {
+        if (existing.evolution != null) throw new IllegalArgumentException("EVOLUTION_SERVICE_ALREADY_CONFIGURED");
+        var api = new ArchitectureQueryApi(existing.store,existing.reports,existing.limits,existing.factory);
+        api.jobs=existing.jobs;api.connections=existing.connections;api.executions=existing.executions;
+        api.semantics=existing.semantics;api.bridges=existing.bridges;api.partitionReaders=existing.partitionReaders;
+        api.evolution=new EvolutionHttpApi(jobs,queries,existing.limits);
+        return api;
     }
     /** Job and query adapters share the same canonical publication stores. */
     public ArchitectureQueryApi(GraphStore store,PublishedReports reports,ApiLimits limits,AnalysisJobs jobs) {
@@ -92,6 +101,13 @@ public final class ArchitectureQueryApi {
             if(rawPath.startsWith("/api/v1/bridges/"))return bridges==null?error(503,"BRIDGE_QUERIES_UNAVAILABLE"):bridges.handle(method,rawPath,contentType,body,cancelled);
             if(rawPath.startsWith("/api/v1/semantic/"))return semantics==null?SemanticQueryApi.unavailable(limits):semantics.handle(method,rawPath,contentType,body,cancelled);
             if (body.length > limits.requestBytes()) throw new Failure(413,"REQUEST_TOO_LARGE");
+            if (rawPath.startsWith(EvolutionHttpApi.PREFIX)) {
+                if (evolution == null) return error(503,"EVOLUTION_SERVICE_UNAVAILABLE");
+                if (!Arrays.asList(allowedMethods(rawPath).split(", ")).contains(method))
+                    return error(405,"METHOD_NOT_ALLOWED");
+                if (!method.equals("POST")) requireEmpty(body);
+                return evolution.handle(this,method,rawPath,method.equals("POST")?decode(body,contentType):Map.of(),cancelled);
+            }
             if(rawPath.startsWith("/api/v1/graph-pages/"))return graphPages(method,rawPath,contentType,body,cancelled);
             if(rawPath.startsWith("/api/v2/executions/"))return execution(method,rawPath,contentType,body,cancelled);
             if(rawPath.startsWith("/api/v2/analysis/jobs/"))return jobs==null?error(503,"JOBS_UNAVAILABLE"):jobs.handle(method,rawPath,contentType,body,cancelled);
@@ -190,6 +206,12 @@ public final class ArchitectureQueryApi {
     }
     private static long integer64(Object value){if(!(value instanceof Number))throw new IllegalArgumentException();try{return new java.math.BigDecimal(value.toString()).longValueExact();}catch(ArithmeticException invalid){throw new IllegalArgumentException();}}
     static String allowedMethods(String path) {
+        if (path.startsWith(EvolutionHttpApi.PREFIX)) {
+            if (path.endsWith("/export")) return "GET, POST";
+            if (path.endsWith("/jobs") || path.endsWith("/query") || path.endsWith("/graph") ||
+                    path.endsWith("/evidence") || path.endsWith("/resume") || path.endsWith("/cancel")) return "POST";
+            return "GET";
+        }
         if(path.startsWith("/api/v1/graph-pages/"))return "POST";
         if(path.startsWith("/api/v2/acquisitions/"))return "POST";
         if(path.startsWith("/api/v1/bridges/"))return "POST";
@@ -229,6 +251,7 @@ public final class ArchitectureQueryApi {
             capabilities.put("analysisResultReuseEnabled", jobs != null && jobs.resultReuseEnabled());
             capabilities.put("repositoryConnectionsEnabled",connections != null);
             capabilities.put("partitionedGraphsEnabled",partitionReaders != null);
+            capabilities.put("evolutionEnabled",evolution != null);
             capabilities.put("acquisitionVersion","repository.acquisition-api:m8.4-v2");
             capabilities.put("readinessVersion",com.evolution.analysis.readiness.ReadinessPlan.SCHEMA);
             capabilities.put("acquisitionRoutes",List.of("/api/v2/acquisitions/history","/api/v2/acquisitions/{revision}","/api/v2/acquisitions/{revision}/readiness","/api/v2/acquisitions/{revision}/overview","/api/v2/analysis/jobs/{id}/resume"));

@@ -13,12 +13,21 @@ import static com.evolution.analysis.query.ArchitectureQuery.*;
 /** Pure Java architecture queries over one immutable graph and one exact context per request. */
 public final class ArchitectureQueryService {
     private final KnowledgeGraph graph;
+    private final ContentDigest graphIdentity;
     private final Supplier<StopReason> guard;
     private final Optional<Metrics> metrics;
     /** Operational guards are outside query identity; never treat interrupted output as a complete cache entry. */
     public ArchitectureQueryService(KnowledgeGraph graph){this(graph,operationalGuard(()->false,0,8_000_000),Optional.empty());}
     public ArchitectureQueryService(KnowledgeGraph graph,Supplier<StopReason> guard,Optional<Metrics> metrics){
+        this(graph,graph.identity(),guard,metrics);
+    }
+    private ArchitectureQueryService(KnowledgeGraph graph,ContentDigest graphIdentity,Supplier<StopReason> guard,Optional<Metrics> metrics){
         this.graph=Objects.requireNonNull(graph);this.guard=Objects.requireNonNull(guard);this.metrics=Objects.requireNonNull(metrics);
+        this.graphIdentity=Objects.requireNonNull(graphIdentity);
+    }
+    /** The caller authenticates the complete selected partition and applicable ancestor evidence. */
+    public static ArchitectureQueryService replayPartition(KnowledgeGraph partition,ContentDigest graph,BooleanSupplier cancelled){
+        return new ArchitectureQueryService(partition,graph,operationalGuard(cancelled,0,0),Optional.empty());
     }
     public static Supplier<StopReason> operationalGuard(BooleanSupplier cancelled,long deadlineNanos,long minimumAvailableHeapBytes){
         if(minimumAvailableHeapBytes<0)throw new IllegalArgumentException("Negative heap reserve");
@@ -191,7 +200,7 @@ public final class ArchitectureQueryService {
         }
     }
     private void validate(Request request){
-        if(!graph.identity().equals(request.graph()))throw new IllegalArgumentException("Foreign/stale graph identity");
+        if(!graphIdentity.equals(request.graph()))throw new IllegalArgumentException("Foreign/stale graph identity");
         if(graph.contexts().stream().noneMatch(c->c.identity().equals(request.context())))throw new IllegalArgumentException("Foreign context");
     }
     public Result<EntityView> entities(Request request,String search,Page page){
@@ -330,7 +339,10 @@ public final class ArchitectureQueryService {
         return result(p,"condition",List.of(ArchitectureCondition.VERSION,predicate),List.of(value),Optional.empty(),Optional.of(1L));
     }
     public Result<ArchitectureCondition.Evaluation> ruleCondition(Request request,ArchitectureCondition.RulePredicate predicate){
-        var region=prepareRuleRegion(request,predicate);var p=region.prepared();var union=region.union();
+        return ruleCondition(prepareRuleRegion(request,predicate),request,predicate);
+    }
+    private Result<ArchitectureCondition.Evaluation> ruleCondition(RuleRegion region,Request request,ArchitectureCondition.RulePredicate predicate){
+        var p=region.prepared();var union=region.union();
         var classification=union.classify(p.budget);var yes=union.check(p.budget,Optional.empty());var no=union.negate().check(p.budget,Optional.empty());
         if(!p.budget.running())classification=Classification.UNKNOWN;
         if(classification==Classification.UNKNOWN)p.budget.qualify("PREDICATE_TRUTH_UNKNOWN");
@@ -338,6 +350,18 @@ public final class ArchitectureQueryService {
         Function<Witness,Witness> bind=w->new Witness(w.world(),w.assignment(),regionId,w.formulaReplayed(),w.semanticReplayed());
         var value=new ArchitectureCondition.Evaluation(regionId,classification,yes.witness().map(bind),no.witness().map(bind),bounded(region.evidence(),p.budget),bounded(region.regions(),p.budget));
         return result(p,"rule-condition",List.of(ArchitectureCondition.RULE_VERSION,predicate),List.of(value),Optional.empty(),Optional.of(1L));
+    }
+    /** Exact truth operands of a canonical rule replay, for comparison on a separately proved domain. */
+    public record RuleTruth(Result<ArchitectureCondition.Evaluation> evaluation, String encoding, boolean closed,
+                            Set<String> trueWorlds, Set<String> possibleWorlds, Set<String> worlds,
+                            com.evolution.analysis.spring.truth.SymbolicConfiguration.Formula trueFormula,
+                            com.evolution.analysis.spring.truth.SymbolicConfiguration.Formula possibleFormula,
+                            com.evolution.analysis.spring.truth.SymbolicConfiguration.Formula universeFormula) {}
+    public RuleTruth ruleTruth(Request request,ArchitectureCondition.RulePredicate predicate){
+        var prepared=prepareRuleRegion(request,predicate);var r=prepared.union();
+        var evaluation=ruleCondition(prepared,request,predicate);
+        return new RuleTruth(evaluation,r.encoding.name(),r.closed,r.yes,r.possible,r.universe,
+                r.trueFormula,r.possibleFormula,r.universeFormula);
     }
     private record RuleRegion(Prepared prepared,QueryRegion union,SortedSet<ContentDigest> evidence,SortedSet<String> regions) {}
     private static ContentDigest ruleRegionIdentity(Request request,QueryRegion union){
@@ -609,7 +633,7 @@ public final class ArchitectureQueryService {
     static ContentDigest queryId(Request request,String operation,Object argument){return ContentDigest.sha256Utf8(CanonicalJson.write(List.of(VERSION,request.identity(),operation,argument)));}
     private CapabilityGapRecord gap(Prepared p,ContentDigest query,String reason){
         var context=graph.contexts().stream().filter(c->c.identity().equals(p.request.context())).findFirst().orElseThrow();
-        var observation=ProviderObservationReference.create(VERSION,"query.execution",graph.identity(),query);var subject=EvidenceSubject.observation(observation.identity());
+        var observation=ProviderObservationReference.create(VERSION,"query.execution",graphIdentity,query);var subject=EvidenceSubject.observation(observation.identity());
         var requirement=new EvidenceRequirement(EvidenceRequirement.Kind.REPOSITORY_CONTENT,"query.complete-evidence",List.of(subject),EvidenceRequirement.AuthorizationClass.PASSIVE,
                 List.of("Supply compatible complete graph/region evidence or rerun with sufficient bounded query resources."));
         return CapabilityGapRecord.create(new VersionedIdentifier("evidence.query-gaps","m5.2-v1"),new EvidenceContext(graph.snapshot(),context.analysis()),VERSION,

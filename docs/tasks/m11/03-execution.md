@@ -1,0 +1,27 @@
+# M11.3 — Common-domain proofs and conditional evolution
+
+2026-11-14. Entry: clean `main` at `4b52040`; Track B authorized by M10, M11.2 implemented, G7 undecided. No staging, commit or push.
+
+**CONFIRMED / implemented internally.** The analyzer aligns Spring partitions through the exact Java parent scope and evidenced container. It binds the persisted M4 plan, typed configuration domains, envelopes, registration order and truth results to each side. It compares matched definition/activation, candidate and selected-binding facts independently. `REGIONS` exposes native and common-domain classifications, definite cells, side-only and unknown dispositions. `PROOFS` carries the common-domain operands, bounded SAT results and formula DAG; finite assignments and symbolic queries bind both graph contexts. `EVIDENCE` separates observed artifact, lineage, qualification, conflict, gap/ledger and witness changes. The filesystem adapter accepts explicitly pinned bridge publications and replays the exact capture and tables against the graph snapshot. Neither an unavailable operand nor a missing reference is a fix or a gap resolution.
+
+The implementation is in the [analyzer evolution package](../../../analyzer/src/main/java/com/evolution/analysis/evolution) and the [filesystem adapters](../../../analyzer-filesystem/src/main/java/com/evolution/analysis/filesystem). Existing graph, policy and score preimages remain unchanged. The new rows are internal and versioned; the [architecture contract](../../architecture/m11-compatible-snapshot-evolution.md#7-implemented-m113-boundary) describes their limits.
+
+| Registered controls | Evidence |
+|---|---|
+| E06 | All 16 ordered combinations of MUST/MAY/NEVER/UNKNOWN vectors match the independent T/F/U world table. Expansion, shrink, reshape, unchanged and unknown residual shapes match their labels. |
+| E07 | Finite controls distinguish a common world, both directions of side-only feasibility, proved empty, unmapped coordinates and unknown feasibility. Authenticated graph controls verify both directions of domain changes and withholding for unproved OTHER. |
+| E08 | The SAT control proves the expected A∧B→A gain and persistence, and replays the representative assignments. Contradiction yields UNSAT; an exhausted limit yields UNKNOWN. Explicit and symbolic graph observations agree on matched regions and canonical output is stable across typed/SQLite readers and input page sizes. |
+| E09 | Authored Spring evaluation: reversing a proved missing-bean registration schedule changes presence in both mapped configurations; unproved order yields no event. A source edit changes the unique selected binding while all four candidate facts stay unchanged. Changing a witness representative alone produces an evidence observation with separate per-side captured replays and no semantic event. |
+| E10 | Existing structural loss/tampering controls remain in the selected set. An authored loss/restore control retains generated-lineage references, producer-asserted trust and conflicting evidence, and never proves semantic absence. The existing mixed native capture replays its exact independent bridge publication with eight contexts, original endpoint/relationship operands, and `qualified=false`. |
+
+Run on JDK 21.0.12.1 with Maven 3.9.16:
+
+```powershell
+.\mvnw.cmd -B -ntp -q -pl backend -am '-Dtest=ConditionalRegionDeltaTest,EvolutionCompatibilityTest,TruthRegionEvaluationTest,SatConfigurationReasonerTest,CanonicalGraphContractTest,CanonicalGraphPipelineIntegrationTest,SourceToSpringPlanTest#missingBeanConditionUsesActualRegistrationPrefixAndReversingItChangesPresence,FileSnapshotComparisonTest,BridgePublicationStoreTest,UniversalMavenIngestionTest,OutputCensusTest,PublishedReportsTest,BridgeQueryApiTest,TreeSitterSourceFrontendTest' '-Dsurefire.failIfNoSpecifiedTests=false' test
+```
+
+Final selected command: exit 0 in **39.771 s**, **118 tests in 14 suites**, no failures/errors/skips. The preceding run included `BridgeMixedReplayIT#evolutionReplaysPinnedNativeOperandsFromExistingCapture` and `-Dbridge.fixtureRoot=D:/UIT/evo-authored-fixtures/m845-mixed-20261102-v3`: exit 0, 119 tests in 15 suites, no failures/errors/skips, 41.225 s wall time. The bridge adapter and native replay inputs were unchanged by the final region/evidence-row edits. The native test is data-only; no new worker, target build, SDK run or qualification was performed. Early red checks caught the absent API and a fixture that did not bind the current graph schema. Early narrowed reactor runs that selected no tests in a dependency did not contribute PASS evidence.
+
+Exact matching remains scoped to supported, authenticated declarations and configuration interpretation. Unproved source/configuration mappings, OTHER semantics, missing publication and incomplete proofs retain gaps. An aggregate or deferred binding does not imply a unique selected target. A formula/ledger replay does not certify runtime behavior. Native/polyglot evidence remains at the producer's recorded trust; the authored generated-lineage loss/restore is not a fresh native lineage experiment. Natural historical pairs, product publication, independent review and G7 remain open. No new human decision is needed for the internal slice.
+
+**Exact next task: M11.4.** Match authenticated policy rule and route operands, then derive finding lifecycle on proved subregions. Preserve unknown intervals and apply compatible metric/assessment arithmetic only after validating the populations and definitions.

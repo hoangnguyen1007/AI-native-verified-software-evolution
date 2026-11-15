@@ -46,6 +46,12 @@ Compatible snapshots
   -> Comparison Compatibility Check
   -> Fact Region / Relationship / Metric / Score / Finding / Evidence Deltas
   -> Evolution Queries and UI
+
+Planned full-pipeline demo extension
+  -> Finding + Scoped Graph/Evidence Retrieval
+  -> Cited AI Diagnosis and Reviewable Repair Proposal
+  -> Isolated Candidate Build/Test + Deterministic Snapshot Comparison
+  -> Workbench Verdict + Local Verified PR/CI Output
 ```
 
 Evidence acquisition is a feedback loop around the pipeline, not a one-time source-loading step. A provider may report a fact, a candidate set, a conflict, or an unresolved capability gap. Registered gaps can request the least invasive useful next provider—declarative build/configuration metadata, dependencies or generated sources, bytecode, controlled sandbox/build output, runtime observation, or a future source frontend—subject to phase scope, authorization and safety. Each pass produces new provenance; it never mutates an earlier observation into false certainty.
@@ -75,6 +81,8 @@ Evidence acquisition is a feedback loop around the pipeline, not a one-time sour
 | Versioned API | Bounded access to application/query services | Arbitrary graph-store queries |
 | Architecture workbench | Dashboard, explorer, graph, metrics, score, violations, Spring, impact, provenance | Recomputing canonical facts, metrics, or scores |
 | Evolution service | Compatible conditional/evidence snapshot deltas, affected regions and event classification | Comparing incompatible identities silently or reporting evidence loss as improvement |
+| AI diagnosis and proposal (planned) | Evidence retrieval, cited explanation, bounded repair plan and reviewable patch | Canonical facts, direct execution, or verification verdicts |
+| Change verification and review (planned) | Isolated baseline/candidate checks, deterministic comparison and verdict, local PR/CI output | Publishing a change without approval or treating an unrun check as success |
 
 ## Dependency Direction
 
@@ -228,11 +236,9 @@ M8.4 now brings additional language/build providers, generated-source/binary acq
 - arbitrary runtime-observation providers beyond the registered build evidence contract;
 - deployment-configuration and AOT runtime-world federation beyond M8.4's selected build contexts;
 - cross-repository API/event/schema architecture assurance;
+- production change verification and authenticated remote delivery.
 
-- graph-guided RAG or AI diagnosis;
-- automated repair/refactoring;
-- transformation/sandbox verification;
-- verified pull requests or CI/CD product integration.
+Graph-guided diagnosis, repair proposals, scoped candidate verification, and local Verified PR/CI output are active [demo scope](../roadmap.md#full-pipeline-demo).
 
 ## Related Documents
 
