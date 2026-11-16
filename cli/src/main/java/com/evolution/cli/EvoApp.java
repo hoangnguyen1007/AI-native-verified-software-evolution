@@ -156,6 +156,7 @@ public final class EvoApp {
         command.addSubcommand("build-register",new NativeBuildRegister(r));
         command.addSubcommand("build-profile",new NativeBuildDescribe(r));
         command.addSubcommand("build-recover",new NativeBuildRecover(r));
+        command.addSubcommand("verify-repair",new VerifyRepair(r));
         command.addSubcommand("semantic",new SemanticInspect(r));
         command.addSubcommand("bridges",new BridgeInspect(r));
         command.addSubcommand("acquire",new Acquire(r));
@@ -173,6 +174,64 @@ public final class EvoApp {
         command.addSubcommand("open",new Open(r));command.addSubcommand("use",new Use(r));command.addSubcommand("export",new Export(r));
         command.addSubcommand("next",new Next(r));
         command.addSubcommand("completion",new Completion(command,r));
+    }
+
+    @Command(name="verify-repair",mixinStandardHelpOptions=true,description="Read a pinned repair verdict from the local Workbench verifier")
+    private final class VerifyRepair implements Callable<Integer> {
+        private final Root root;
+        VerifyRepair(Root root) { this.root=root; }
+        @Parameters(index="0",paramLabel="PROPOSAL_JSON",description="Workbench repair proposal export") Path proposal;
+        @Option(names="--port",defaultValue="8080",description="Loopback Workbench port") int port;
+        @Option(names="--candidate-report") String candidateReport;
+        @Option(names="--control-report") String controlReport;
+
+        @Override public Integer call() throws Exception {
+            if (port<1 || port>65535) throw new IllegalArgumentException("INVALID_PORT");
+            var outcome=GraphJson.object(Workspace.json(resolve(proposal),65536));
+            var envelope=GraphJson.object(outcome.get("proposal"));
+            var candidate=GraphJson.object(envelope.get("candidate"));
+            var pin=GraphJson.object(candidate.get("baseline"));
+            String graph=digest(pin,"graph"), report=digest(pin,"report"), identity=digest(envelope,"identity");
+            String patch=digest(candidate,"patchDigest");
+            if (!RepairProposal.VERSION.equals(outcome.get("version")) || !"PROPOSED".equals(outcome.get("status"))
+                    || !CanonicalJson.sha256(List.of(RepairProposal.VERSION,candidate)).value().equals(identity)
+                    || !ContentDigest.sha256Utf8(GraphJson.string(candidate.get("patch"))).value().equals(patch))
+                throw new IllegalArgumentException("INVALID_REPAIR_PROPOSAL");
+            var arguments=new TreeMap<String,String>(Map.of("identity",digest(pin,"finding"),"bundle",digest(pin,"bundle"),
+                    "context",GraphJson.string(pin.get("context")),"diagnosisInput",digest(candidate,"diagnosisInput"),"proposal",identity));
+            if (candidateReport!=null) arguments.put("candidateReport",new ContentDigest(candidateReport).value());
+            if (controlReport!=null) arguments.put("controlReport",new ContentDigest(controlReport).value());
+            var uri=java.net.URI.create("http://127.0.0.1:"+port+"/api/v1/graphs/"+graph+"/reports/"+report+"/repair-verification");
+            var timeout=java.time.Duration.ofSeconds(180);
+            var request=java.net.http.HttpRequest.newBuilder(uri).timeout(timeout).header("Content-Type","application/json")
+                    .POST(java.net.http.HttpRequest.BodyPublishers.ofString(CanonicalJson.write(Map.of("arguments",arguments)))).build();
+            try (var http=java.net.http.HttpClient.newBuilder().connectTimeout(java.time.Duration.ofSeconds(5))
+                    .proxy(java.net.ProxySelector.of(null)).build()) {
+                var response=http.send(request,java.net.http.HttpResponse.BodyHandlers.ofInputStream());
+                try (var body=response.body()) {
+                    if (response.statusCode()!=200) return error(root,response.statusCode()/100==4?2:1,"REPAIR_VERIFIER_RESPONSE",
+                            "Workbench rejected the verification request (HTTP "+response.statusCode()+").","Workbench từ chối xác minh (HTTP "+response.statusCode()+").");
+                    byte[] raw=body.readNBytes(65_537);
+                    if (raw.length>65_536) throw new IOException("REPAIR_RESULT_LIMIT");
+                    var result=GraphJson.object(GraphJson.read(Workspace.utf8(raw),GraphJson.Limits.defaults()));
+                    var data=GraphJson.object(result.get("data"));
+                    if (!identity.equals(data.get("proposal")) || !RepairVerification.VERSION.equals(data.get("version"))
+                            || !patch.equals(GraphJson.object(data.get("plan")).get("patch"))
+                            || !patch.equals(ContentDigest.sha256Utf8(GraphJson.string(data.get("patch"))).value())
+                            || !CanonicalJson.sha256(data).value().equals(result.get("resultIdentity"))) throw new IOException("REPAIR_RESULT_MISMATCH");
+                    int exit=switch (RepairVerification.Verdict.valueOf(GraphJson.string(data.get("verdict")))) {
+                        case VERIFIED, VERIFIED_DEMO -> 0;
+                        case UNVERIFIED -> 3;
+                        case REJECTED -> 4;
+                    };
+                    return emit(root,"verify-repair",result,exit);
+                }
+            }
+        }
+
+        private String digest(Map<String,Object> record,String field) {
+            return new ContentDigest(GraphJson.string(record.get(field))).value();
+        }
     }
     @Command(name="bridges",mixinStandardHelpOptions=true,description="Inspect captured cross-context architecture / Đọc liên kết kiến trúc liên context")
     private final class BridgeInspect implements Callable<Integer>{

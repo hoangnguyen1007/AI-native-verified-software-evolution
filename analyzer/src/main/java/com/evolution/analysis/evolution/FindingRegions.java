@@ -115,8 +115,11 @@ final class FindingRegions {
             return new Predicates(feasible,and(legal,not(or(denied))),
                     and(legal,or(yes)),and(legal,or(no)));
         }
-        if (truth==null || !"SYMBOLIC".equals(truth.encoding()))
-            return new Predicates(SymbolicConfiguration.FALSE,legal,SymbolicConfiguration.FALSE,SymbolicConfiguration.FALSE);
+        if (truth==null || !"SYMBOLIC".equals(truth.encoding())) {
+            // Missing route evidence leaves truth open. Feasibility still has independent trace evidence.
+            var feasible=and(legal,input.provedSymbolicUniverse());
+            return new Predicates(feasible,legal,SymbolicConfiguration.FALSE,SymbolicConfiguration.FALSE);
+        }
         var formulas=new HashMap<ContentDigest,Formula>();
         var modeled=and(legal,normalize(input.domain,truth.universeFormula(),formulas));
         var feasible=input.complete?modeled:and(modeled,input.provedSymbolicUniverse());

@@ -2,6 +2,7 @@ package com.evolution.analysis.javaparser;
 
 import com.evolution.analysis.contract.common.*;
 import com.evolution.analysis.evidence.EvidenceContext;
+import com.evolution.analysis.evolution.*;
 import com.evolution.analysis.filesystem.FileGraphStore;
 import com.evolution.analysis.graph.*;
 import com.evolution.analysis.ingestion.UniversalArchitecturePipeline;
@@ -25,6 +26,12 @@ import static com.evolution.analysis.javaparser.CanonicalGraphPipelineIntegratio
 /** Passive source -> frontend -> graph -> typed policy; no analyzed target execution. */
 class M6PolicyIntegrationTest {
     @TempDir Path directory;
+    private static final String CLIENT = "package app; @org.springframework.stereotype.Component @org.springframework.context.annotation.Profile(\"dev\") class Client { public Client(Store store){} }";
+    private static Map<String,String> profileSources(String client) {
+        return Map.of("app/App.java","package app; @org.springframework.context.annotation.ComponentScan(\"app\") class App {}",
+                "app/Client.java",client,
+                "app/Store.java","package app; @org.springframework.stereotype.Component public class Store { public Store(){} }");
+    }
     static PolicyCompiler.Result compile(KnowledgeGraph graph,String yaml){return new PolicyCompiler().compile(yaml.getBytes(StandardCharsets.UTF_8),
             EvidenceContext.forSnapshot(graph.snapshot()),PolicyCompiler.Limits.defaults());}
     static ArchitectureScoreModel scoreModel(){return new ArchitectureScoreModel(new VersionedIdentifier("test.source-policy-score","1"),
@@ -91,10 +98,7 @@ class M6PolicyIntegrationTest {
         assertEquals(2,identities.size());
     }
     @Test void actualProfileBindingStaysMayUnderExplicitAndSymbolicPolicyPredicates() throws Exception {
-        var helper=new SourceToSpringPlanTest();var fixture=helper.sourceFixture(Map.of(
-                "app/App.java","package app; @org.springframework.context.annotation.ComponentScan(\"app\") class App {}",
-                "app/Client.java","package app; @org.springframework.stereotype.Component @org.springframework.context.annotation.Profile(\"dev\") class Client { public Client(Store store){} }",
-                "app/Store.java","package app; @org.springframework.stereotype.Component public class Store { public Store(){} }"));
+        var helper=new SourceToSpringPlanTest();var fixture=helper.sourceFixture(profileSources(CLIENT));
         var spring=helper.beanPlan(fixture,true,"Store","Client");
         assertFalse(spring.binding().dependencies().isEmpty(),()->spring.gaps().stream().map(g->g.reasonCode()).distinct().toList().toString());
         var version=new VersionedIdentifier("policy.authored-config","1");
@@ -172,5 +176,139 @@ class M6PolicyIntegrationTest {
                 java.nio.file.Files.writeString(directory.resolve(name+".policy.yaml"),yaml);
             }
         }
+    }
+
+    @Test void repairVariantsRetainTheirExactChangedSourceInPassiveGraphs() throws Exception {
+        var helper = new SourceToSpringPlanTest();
+        String repaired = CLIENT.replace("(Store store)","()");
+        String unchangedDependency = CLIENT.replace("{} }","{ /* retained injection */ } }");
+        var candidate = repairGraph(helper,repaired);
+        var control = repairGraph(helper,unchangedDependency);
+        var baseline = repairGraph(helper,CLIENT);
+        assertNotEquals(candidate.snapshot(),control.snapshot());
+        long baselineBindings = baseline.edges().stream().filter(edge -> edge.kind().equals("spring.selected-binding")).count();
+        assertTrue(baselineBindings>0,"A confounding absent baseline binding cannot establish removal");
+        assertTrue(candidate.edges().stream().noneMatch(edge -> edge.kind().equals("spring.selected-binding")),"Removed injection has no selected binding");
+        assertEquals(baselineBindings,control.edges().stream().filter(edge -> edge.kind().equals("spring.selected-binding")).count(),"An unrelated comment must leave the profiled binding in the graph");
+        assertEquals(Set.of("CLEAN","PERSISTED"),repairTransitions(baseline,control));
+        // The profile space is known. Partial Spring binding coverage cannot certify a missing route.
+        assertEquals(Set.of("UNCERTAIN"),repairTransitions(baseline,candidate));
+        var census=repairCensus(candidate,repaired).orElseThrow();
+        assertTrue(repairCensus(control,unchangedDependency).isEmpty(),"The retained Store parameter cannot attest zero sites");
+        assertTrue(repairCensus(candidate,unchangedDependency).isEmpty(),"Foreign source bytes cannot close the pinned snapshot");
+        assertEquals(Set.of("CLEAN","RESOLVED"),repairTransitions(baseline,candidate,Optional.of(census)));
+        for (var input : Map.of(candidate,repaired,control,unchangedDependency).entrySet()) {
+            assertTrue(input.getKey().evidence().stream().filter(e -> e.family().equals("source.document"))
+                    .map(e -> GraphJson.object(GraphJson.read(e.canonicalJson(),GraphJson.Limits.defaults())))
+                    .anyMatch(doc -> "src/main/java/app/Client.java".equals(doc.get("path"))
+                            && ContentDigest.sha256Utf8(input.getValue()).value().equals(doc.get("contentDigest"))));
+        }
+        String repairExport = System.getProperty("evo.repair.fixture.output");
+        if (repairExport != null) {
+            Path output = java.nio.file.Files.createDirectory(Path.of(repairExport));
+            for (var capture : Map.of("baseline",baseline,"candidate",candidate,"control",control).entrySet())
+                java.nio.file.Files.writeString(output.resolve(capture.getKey()+".graph.json"),new GraphSnapshotCodec().encode(capture.getValue()),java.nio.file.StandardOpenOption.CREATE_NEW);
+        }
+    }
+
+    private static Set<String> repairTransitions(KnowledgeGraph baseline,KnowledgeGraph candidate) throws Exception {
+        return repairTransitions(baseline,candidate,Optional.empty());
+    }
+
+    private static Optional<DemoBindingCensus> repairCensus(KnowledgeGraph graph,String client) {
+        var bytes=new HashMap<String,byte[]>();
+        bytes.put("build.gradle","plugins { java }".getBytes(StandardCharsets.UTF_8));
+        profileSources(client).forEach((path,source)->bytes.put("src/main/java/"+path,source.getBytes(StandardCharsets.UTF_8)));
+        var context=graph.contexts().stream().map(KnowledgeGraph.Context::identity)
+                .filter(s->s.startsWith("spring-context:")).findFirst().orElseThrow();
+        return DemoBindingCensus.verify(TestInputs.REPO,graph.snapshot(),graph.identity(),context,bytes);
+    }
+
+    private static Set<String> repairTransitions(KnowledgeGraph baseline,KnowledgeGraph candidate,
+                                                 Optional<DemoBindingCensus> census) throws Exception {
+        String yaml="""
+                schema: architecture-policy:v1
+                id: application.spring
+                version: "2"
+                rules:
+                  - id: client.no-store
+                    version: "2"
+                    kind: FORBIDDEN_DEPENDENCY
+                    severity: ERROR
+                    scope: SPRING_COMPONENT
+                    relationships: [spring.selected-binding]
+                    from: {names: [client]}
+                    to: {names: [store]}
+                """;
+        var selection=new SnapshotComparison.Selection(Set.of("MAIN"),Set.of(),Set.of(),false,false,true,false,false);
+        var request=new SnapshotComparison.Request(TestInputs.REPO,baseline.identity(),candidate.identity(),SnapshotComparison.Mode.STRICT,selection);
+        var left=repairReport(baseline,yaml);
+        var right=repairReport(candidate,yaml);
+        var reports=Map.of(left.identity(),left,right.identity(),right);
+        var references=List.of(new SnapshotComparison.ReportRef(SnapshotComparison.Side.LEFT,left.identity(),left.evaluation().context()),
+                new SnapshotComparison.ReportRef(SnapshotComparison.Side.RIGHT,right.identity(),right.evaluation().context()));
+        var reader=new SnapshotComparison.ReportReader() {
+            @Override public SnapshotComparison.ReportStatus verify(ContentDigest graph,SnapshotComparison.ReportRef ref,
+                    java.util.function.BooleanSupplier cancelled) {
+                var report=reports.get(ref.identity());
+                return report!=null && report.evaluation().graph().equals(graph) && report.evaluation().context().equals(ref.context())
+                        ? SnapshotComparison.ReportStatus.AVAILABLE : SnapshotComparison.ReportStatus.CORRUPT;
+            }
+            @Override public Optional<EvolutionReport> read(ContentDigest graph,SnapshotComparison.ReportRef ref,
+                    java.util.function.BooleanSupplier cancelled) {
+                return Optional.ofNullable(reports.get(ref.identity()));
+            }
+        };
+        try (var index=EvolutionIndex.memory()) {
+            var graphs=EvolutionSnapshot.memory(baseline,candidate);
+            var result=census.isPresent()
+                    ? SnapshotComparison.compareWithDemoBindingCensus(request,graphs,references,reader,census.orElseThrow(),index,32,()->false)
+                    : SnapshotComparison.compare(request,graphs,references,reader,index,32,()->false);
+            var rows=result.page(SnapshotComparison.Section.FINDINGS,50,Optional.empty());
+            assertTrue(rows.continuation().isEmpty());
+            var rule=rows.items().stream().filter(row -> "RULE_RESULT".equals(row.get("kind"))).findFirst().orElseThrow();
+            assertTrue(((List<?>)rule.get("reasons")).contains("RULE_COVERAGE_UNPROVED"),rule::toString);
+            if (census.isPresent()) {
+                var resolved=rows.items().stream().filter(row->"RESOLVED".equals(row.get("transition"))).findFirst();
+                assertTrue(resolved.isPresent(),()->rows.items().stream().map(row -> row.get("transition")).toList().toString());
+                assertEquals(census.orElseThrow().receipt().identity().value(),resolved.orElseThrow().get("bindingCensus"));
+                assertTrue(result.page(SnapshotComparison.Section.PROOFS,50,Optional.empty()).items().stream()
+                        .anyMatch(row->"CLOSED_BINDING_CENSUS".equals(row.get("kind"))));
+            }
+            return rows.items().stream().filter(row -> "FINDING_TRANSITION".equals(row.get("kind")))
+                    .map(row -> (String)row.get("transition")).collect(java.util.stream.Collectors.toSet());
+        }
+    }
+
+    private static EvolutionReport repairReport(KnowledgeGraph graph,String yaml) {
+        var context=graph.contexts().stream().map(KnowledgeGraph.Context::identity).filter(s->s.startsWith("spring-context:")).findFirst().orElseThrow();
+        var queries=new ArchitectureQueryService(graph);
+        var compilation=compile(graph,yaml);
+        var mapping=new PolicyGraphMapper().bind(compilation,queries,context,PolicyGraphMapper.Limits.defaults());
+        var evaluation=new PolicyEvaluator().evaluate(compilation,mapping,queries,PolicyEvaluation.Limits.defaults());
+        return new EvolutionReport(evaluation,Optional.empty(),Optional.empty(),Optional.of(compilation),Optional.of(mapping));
+    }
+
+    private static KnowledgeGraph repairGraph(SourceToSpringPlanTest helper, String client) throws Exception {
+        var fixture = helper.sourceFixture(profileSources(client));
+        var spring = helper.beanPlan(fixture,true,"Store","Client");
+        var version = new VersionedIdentifier("policy.authored-config","1");
+        var proof = new ConditionEvidence.Derived(List.of(fixture.source().identity()),version,"finite-space");
+        var dev = new FiniteDomain.Variable(FiniteDomain.Kind.PROFILE,"dev");
+        var environment = com.evolution.analysis.contract.serialization.CanonicalJson.sha256(Map.of(
+                "schema","demo.spring-inputs:v1","repositorySources",List.of(),"deploymentSources",List.of(),"profile","dev","values",List.of(false,true)));
+        var space = new ConfigurationSpace(fixture.build(),new ConfigurationEnvelope(ConfigurationEnvelope.Layer.REPOSITORY,List.of(),List.of(),environment),Optional.empty(),
+                List.of(new FiniteDomain(dev,List.of(FiniteDomain.Value.bool(false),FiniteDomain.Value.bool(true)),proof)),List.of(),
+                new ConfigurationSpace.PrecedencePolicy(ExogenousConditionEvaluator.PRECEDENCE,List.of(),proof),
+                new ConfigurationSpace.ProfilePolicy(ExogenousConditionEvaluator.PROFILES,List.of(),Map.of(),List.of(),proof),version,
+                new ConfigurationSpace.FeasibilityPolicy(version,ConfigurationSpace.Limits.conservative(),proof));
+        var baseline = new ConfigurationAssignment(Map.of(dev,FiniteDomain.Value.bool(false)),proof);
+        var limits = TruthRegionEvaluation.Limits.conservative();
+        var symbolicLimits = SymbolicConfiguration.Limits.defaults();
+        var artifact = ContentDigest.sha256Utf8("m6-authored-evaluation");
+        var truth = spring.evaluateSymbolic(space,baseline,limits,artifact,4,symbolicLimits).truth();
+        var slice = new CanonicalGraphInput.SpringSlice(fixture.key(),spring,Optional.of(space),Optional.of(baseline),Optional.empty(),Optional.of(truth),
+                Optional.of(new CanonicalGraphInput.EvaluationParameters(limits,SatConfigurationReasoner.INSTANCE.policy(),artifact,4,Optional.of(symbolicLimits))));
+        return new CanonicalGraphBuilder().build(fixture.source().manifest(),fixture.source().frontend(),List.of(slice));
     }
 }

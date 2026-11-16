@@ -37,7 +37,7 @@ final class FindingHistory {
             // Pair working state is namespaced within the caller's scratch store.
             var index=new IntervalIndex(key);
             var identity=hash("evolution.history.interval:v1",List.of(run.requestIdentity,interval,request.identity(),refs));
-            var pair=new EvolutionRun(request,identity,index,run.size,run.cancelled);
+            var pair=new EvolutionRun(request,identity,index,run.size,run.cancelled,Optional.empty());
             var result=pair.compare(graphs,refs,reports,List.of(),(ref,s,o,c)->ReportStatus.UNAVAILABLE,
                     Optional.empty(),ancestry);
             var linkage=linkage(steps.get(interval).interval(),a,b,index);

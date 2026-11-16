@@ -26,6 +26,16 @@ final class TerminalReports {
         v.title(command);
         if(envelope.containsKey("error")){compact(envelope.get("error"),0);return;}
         Map<String,Object> data=map(envelope.get("data"));String status=str(data.getOrDefault("status",data.getOrDefault("evaluationStatus","AVAILABLE")));
+        if (command.equals("verify-repair")) {
+            String verdict=str(data.get("verdict"));
+            v.tone("["+verdict+"]",!Set.of("VERIFIED","VERIFIED_DEMO").contains(verdict));
+            field("Proposal","Đề xuất",data.get("proposal"));
+            for (var check : list(data.get("checks"))) {
+                var row=map(check);
+                line("  "+str(row.get("id"))+"  "+str(row.get("status"))+"  "+str(row.get("reason")));
+            }
+            return;
+        }
         v.tone("["+status+"] "+statusLabel(status),!Set.of("COMPLETE","AVAILABLE","NOT_APPLICABLE").contains(status));
         if(!selection.isEmpty()){
             line("  "+str(selection.get("scope"))+" / "+str(selection.get("projection"))+" / "+tr("context ","ngữ cảnh ")+name(selection.get("context")));

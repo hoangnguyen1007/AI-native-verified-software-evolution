@@ -331,16 +331,25 @@
     }
     return load();
   }
-  async function inspect(title, kind, loader, actions = [], previousItems = [], cursor) {
+  async function inspect(title, kind, loader, actions = [], previousItems = [], cursor, render) {
     state.inspector?.abort(); state.inspector = new AbortController(); const controller = state.inspector;
     state.details = null;
-    $('inspector-title').textContent = /^sha256:[0-9a-f]{16,}$/i.test(String(title)) ? M.shortDigest(String(title)) : title;
-    $('inspector-kind').textContent = kind; $('inspector-body').replaceChildren(el('p', 'muted', 'Loading evidence…')); $('download-details').disabled = true;
+    const heading = $('inspector-title');
+    heading.textContent = /^sha256:[0-9a-f]{16,}$/i.test(String(title)) ? M.shortDigest(String(title)) : title;
+    const loading = el('p', 'muted', 'Loading evidence…'); loading.setAttribute('role', 'status');
+    $('inspector-kind').textContent = kind; $('inspector-body').replaceChildren(loading); $('download-details').disabled = true;
     if (!$('inspector').open) $('inspector').showModal();
+    if (render) { heading.tabIndex = -1; heading.focus(); }
     const contextEnv = state.graph && state.context ? envFor(controller.signal) : null;
     try { const page = typeof loader === 'function' ? await loader(controller.signal, cursor) : loader; if (controller.signal.aborted) return;
       const value = page?.items && previousItems.length ? {...page, items: [...previousItems, ...page.items]} : page;
       state.details = value; const body = $('inspector-body'); body.replaceChildren();
+      const finish = () => {
+        if (actions.length) body.append(append(el('div','detail-actions'),...actions.map(action => btn(action.label,action.run,'button subtle'))));
+        body.append(append(el('details'),el('summary','','Recorded data and source coordinates (Raw JSON)'),el('pre','',JSON.stringify(value,null,2))));
+        $('download-details').disabled = false;
+      };
+      if (render) { render(body,value); finish(); return; }
       const firstGap = value?.reasonCode ? value : Array.isArray(value?.items) && value.items.length === 1 && value.items[0]?.reasonCode ? value.items[0] : null;
       if (firstGap?.reasonCode) {
         const info = M.humanReason(firstGap.reasonCode);
@@ -383,8 +392,7 @@
         if (!value.items.length) body.append(empty('No records returned', 'Read the status and limitations before interpreting an empty result.'));
         if (value.continuation && typeof loader === 'function') body.append(btn('Load more evidence', () => inspect(title, kind, loader, actions, value.items, value.continuation)));
       } else renderFields(body, value, 0, true);
-      if (actions.length) body.append(append(el('div', 'detail-actions'), ...actions.map(action => btn(action.label, action.run, 'button subtle'))));
-      body.append(append(el('details'), el('summary', '', 'Recorded data and source coordinates (Raw JSON)'), el('pre', '', JSON.stringify(value, null, 2)))); $('download-details').disabled = false;
+      finish();
     } catch (error) { if (!controller.signal.aborted) $('inspector-body').replaceChildren(empty('Details unavailable', error.message)); }
   }
   function renderFields(parent, value, depth, objectsOnly = false) {
@@ -424,6 +432,7 @@
   async function inspectFinding(item, reportId, env) {
     const finding=item.result,bundle=finding.bundle,rule=finding.rule?.header||finding.rule,actions=[];
     if(bundle){
+      if (item.bundleIdentity) actions.push({label:'Diagnose finding',run:()=>inspectDiagnosis(item,reportId,env)});
       actions.push({label:'Exact source evidence',run:async()=>{
         const sourceContext=bundle.analysis&&state.contexts.some(context=>context.identity===bundle.analysis)?bundle.analysis:env.context;
         await resolveLabels(bundle.sources.map(source=>source.span.document),{...env,query:(op,args,page,overrides)=>env.query(op,args,page,{...overrides,context:sourceContext})});
@@ -443,6 +452,151 @@
       if(bundle.path.length)actions.push({label:'Show finding graph',run:()=>{state.graphFocus={seed:bundle.path[0],scope:bundle.request.scope,relationshipKinds:bundle.request.relationshipKinds};closeInspector();return loadTab('graph');}});
     }
     return inspect(rule?.name||rule?.id||'Rule evidence','POLICY EVIDENCE',finding,actions);
+  }
+  const diagnosisReasons = Object.freeze({
+    UNSUPPORTED_FINDING: 'This diagnosis supports a single forbidden dependency with a known modeled classification.',
+    MISSING_SOURCE_EVIDENCE: 'The finding has missing or mismatched source evidence. Review its evidence and gaps.',
+    GRAPH_PROOF_MISMATCH: 'The dependency or its modeled configuration could not be reproduced for this finding.',
+    QUERY_LIMIT: 'The server could not complete the evidence check within its limits.',
+    MODEL_SCOPE_NOT_REGISTERED: 'Live diagnosis is configured for one exact demo input. This finding does not match it.',
+    MODEL_UNAVAILABLE: 'The diagnosis provider did not return a result.',
+    INVALID_MODEL_CITATIONS: 'The diagnosis provider returned citations that could not be verified for this finding.'
+  });
+  function inspectDiagnosis(item, reportId, env, previous) {
+    const args = {identity:item.identity,bundle:item.bundleIdentity,context:env.context};
+    const loader = previous ?? (signal => api('/graphs/'+env.graph+'/reports/'+reportId+'/diagnosis',{arguments:args},signal));
+    const back = {label:'Back to finding',run:()=>inspectFinding(item,reportId,env)};
+    return inspect('Finding diagnosis','AI DIAGNOSIS',loader,[back],[],undefined,(body, diagnosis) => {
+      const status = el('div','notice'); status.setAttribute('role','status');
+      const local = diagnosis.mode === 'LOCAL_REPLAY';
+      const validated = diagnosis.status === 'CITATIONS_VALIDATED';
+      append(status, el('strong','', (local ? 'Local replay' : 'Live model') + ' · ' + (validated ? 'Citations validated' : 'Diagnosis withheld')),
+        el('p','small', local ? 'Uses an authored response. No live AI model was called.'
+          : 'The local model selects citations. The explanation comes from checked graph evidence.'));
+      body.append(status);
+      if (diagnosis.evidenceStatus !== 'COMPLETE') body.append(el('p','muted small','Finding evidence status: '+diagnosis.evidenceStatus
+        +' · Recorded gaps: '+diagnosis.gaps.length+'.'));
+      if (!validated) {
+        body.append(empty('No supported diagnosis', diagnosisReasons[diagnosis.reason] || 'The evidence check did not support a diagnosis.'));
+        return;
+      }
+      body.append(el('p','',diagnosis.explanation), el('h3','','Source citations'));
+      const list = el('ol','dependency-path');
+      for (const citation of diagnosis.citations) {
+        const s = citation.span;
+        const label = citation.path+' · '+s.startLine+':'+s.startColumn+'–'+s.endLine+':'+s.endColumn;
+        const open = () => inspect('Cited source evidence','SOURCE EVIDENCE',async signal => {
+          const evidence = await api('/graphs/'+env.graph+'/queries/evidence',{
+            request:{...M.request(citation.context),scope:'ENTITY'},arguments:{reference:citation.evidence}
+          },signal);
+          const record = evidence.items.find(row => row.identity === citation.evidence && row.family === citation.family);
+          if (!record) throw new Error('The cited evidence is no longer available in this snapshot.');
+          return {citation,record};
+        },[{label:'Back to diagnosis',run:()=>inspectDiagnosis(item,reportId,env,diagnosis)}],[],undefined,(detail,data) => {
+          detail.append(el('p','source-coord-pill diagnosis-coordinate',label));
+          renderFields(detail,data,0);
+        });
+        list.append(append(el('li'),btn(label,open,'text-button')));
+      }
+      body.append(list);
+      body.append(btn('Review repair proposal', () => inspectRepairProposal(item,reportId,env,diagnosis,args), 'button primary'));
+    });
+  }
+  const repairReasons = Object.freeze({
+    DIAGNOSIS_WITHHELD: 'Run diagnosis again to establish the evidence for this finding.',
+    FIXTURE_NOT_REGISTERED: 'The available repair recipe is registered for the demo finding only.',
+    SOURCE_MISMATCH: 'The evidence no longer matches the registered source bytes and span.',
+    TRANSFORMATION_UNAVAILABLE: 'OpenRewrite could not reproduce the registered source change.',
+    QUERY_LIMIT: 'The proposal request exceeded its work limit.'
+  });
+  function inspectRepairProposal(item, reportId, env, diagnosis, diagnosisArguments) {
+    const request = {arguments:{...diagnosisArguments,diagnosisInput:diagnosis.input}};
+    const load = signal => api('/graphs/'+env.graph+'/reports/'+reportId+'/repair-proposal',request,signal);
+    const back = {label:'Back to diagnosis',run:()=>inspectDiagnosis(item,reportId,env,diagnosis)};
+    return inspect('Repair proposal','PROPOSED CHANGE',load,[back],[],undefined,(body,outcome) => {
+      if (outcome.status !== 'PROPOSED') {
+        const message = empty('Proposal withheld',repairReasons[outcome.reason] || 'The source change could not be proposed.');
+        message.setAttribute('role','status'); body.append(message);
+        return;
+      }
+      const {plan,affectedScope,edit,engine,patch} = outcome.proposal.candidate;
+      const status = el('div','notice'); status.setAttribute('role','status');
+      append(status,el('strong','','Unverified repair proposal'),el('p','small','OpenRewrite '+engine.version));
+      if (diagnosis.mode === 'LIVE') status.append(el('p','small','The recipe rechecks the same graph and source evidence independently.'));
+      body.append(status,el('p','',plan.summary),
+        el('p','muted small',affectedScope.rule.id+' · '+affectedScope.classification+' · '+affectedScope.relationships.join(', ')));
+      const steps = el('ol','dependency-path');
+      for (const step of plan.steps) steps.append(el('li','',step));
+      body.append(steps,el('h3','',edit.path));
+      const diff = el('pre','repair-patch',patch);
+      diff.setAttribute('aria-label','Unified patch for '+edit.path);
+      body.append(diff,btn('Download patch',() => downloadBlob(new Blob([patch],{type:'text/x-diff'}),'repair.patch')));
+      body.append(btn('View verification',() => inspectRepairVerification(item,reportId,env,diagnosis,diagnosisArguments,outcome),'button primary'));
+      const checks = el('ul','dependency-path');
+      for (const check of plan.verificationChecks) checks.append(el('li','',check));
+      body.append(el('h3','','Planned verification'),checks);
+    });
+  }
+  const repairCheckNames = {
+    'fixture-inputs':'Baseline and patch', 'candidate-finding':'Candidate finding',
+    'mutation-control':'Negative control', 'isolated-runtime':'Isolated build and Spring checks'
+  };
+  function inspectRepairVerification(item,reportId,env,diagnosis,diagnosisArguments,outcome,operands = {}) {
+    const proposal = outcome.proposal;
+    const argumentsForCheck = {...diagnosisArguments,diagnosisInput:diagnosis.input,proposal:proposal.identity,...operands};
+    const load = signal => api('/graphs/'+env.graph+'/reports/'+reportId+'/repair-verification',{arguments:argumentsForCheck},signal);
+    const back = {label:'Back to proposal',run:()=>inspectRepairProposal(item,reportId,env,diagnosis,diagnosisArguments)};
+    return inspect('Local PR preview','REPAIR VERIFICATION',load,[back],[],undefined,(body,result) => {
+      const status = el('div','notice'); status.setAttribute('role','status');
+      const verdict = {VERIFIED:'Verified repair',VERIFIED_DEMO:'Verified in the demo VM',UNVERIFIED:'Unverified repair',REJECTED:'Repair rejected'};
+      append(status,el('strong','',verdict[result.verdict]), el('p','small',proposal.candidate.plan.summary));
+      body.append(status,el('h3','','Verification checks'));
+      const list = el('ul','dependency-path');
+      for (const check of result.checks) {
+        const label = repairCheckNames[check.id] || check.id;
+        const states = {PASSED:'Passed',FAILED:'Failed',NOT_RUN:'Not run',INCONCLUSIVE:'Inconclusive'};
+        const explanation = {
+          REGISTERED_WORKER_EVIDENCE_REQUIRED:'A protected worker result is required.',
+          PROTECTED_RECEIPT_MISSING:'The worker receipt is missing.',
+          REANALYSIS_REPORT_REQUIRED:'Add the published report for this snapshot.',
+          REANALYSIS_SNAPSHOT_MISMATCH:'This report belongs to different source bytes.',
+          FINDING_RESOLVED_IN_DEMO_SCOPE:'The source census and strict comparison prove this finding is resolved for the demo profile scope.',
+          FINDING_TRANSITION_UNPROVED:'The comparison could not prove a finding transition.'
+        }[check.reason];
+        list.append(append(el('li'),el('strong','',label+' · '+states[check.status]),explanation && el('div','muted small',explanation)));
+      }
+      body.append(list);
+      if (result.demoProof) {
+        body.append(el('h3','','Spring dependency by profile'),el('p','muted small','The demo VM checked the sealed fixture with dev off and on. The canonical snapshot comparison keeps its own verdict.'));
+        const table = el('table','comparison-table');
+        const heading = append(el('tr'),...['Profile','Baseline','Candidate','Negative control'].map(label => el('th','',label)));
+        for (const cell of heading.children) cell.scope = 'col';
+        table.append(append(el('thead'),heading));
+        const rows = el('tbody');
+        for (const cell of result.demoProof.cells) {
+          const label = el('th','',cell.dev ? 'dev on' : 'dev off'); label.scope = 'row';
+          const row = append(el('tr'),label);
+          for (const value of [cell.baseline,cell.candidate,cell.control]) row.append(el('td','',value ? 'Present' : 'Absent'));
+          rows.append(row);
+        }
+        body.append(append(el('div','table-scroll'),append(table,rows)));
+      }
+      const form = el('form');
+      const fields = ['candidateReport','controlReport'].map((name,index) => {
+        const input = el('input'); input.name = name; input.value = operands[name] || '';
+        input.pattern = 'sha256:[0-9a-f]{64}'; input.maxLength = 71; input.spellcheck = false;
+        form.append(append(el('label'),el('p','small',index === 0 ? 'Candidate report digest' : 'Negative control report digest'),input));
+        return input;
+      });
+      const submit = el('button','button','Check published reports'); submit.type = 'submit'; form.append(submit);
+      form.addEventListener('submit',event => {
+        event.preventDefault();
+        const reports = Object.fromEntries(fields.filter(input=>input.value).map(input=>[input.name,input.value]));
+        return safe(()=>inspectRepairVerification(item,reportId,env,diagnosis,diagnosisArguments,outcome,reports));
+      });
+      body.append(append(el('details'),el('summary','','Attach published comparison inputs'),form),
+        el('h3','',proposal.candidate.edit.path),el('pre','repair-patch',result.patch));
+    });
   }
   async function inspectScoreDimension(assessment, dimension, reportId, env) {
     const needsFindings = dimension.contributions.some(contribution => contribution.unit === 'potential-root');

@@ -1,0 +1,12 @@
+schema: architecture-policy:v1
+id: application.spring
+version: "2"
+rules:
+  - id: client.no-store
+    version: "2"
+    kind: FORBIDDEN_DEPENDENCY
+    severity: ERROR
+    scope: SPRING_COMPONENT
+    relationships: [spring.selected-binding]
+    from: {names: [client]}
+    to: {names: [store]}

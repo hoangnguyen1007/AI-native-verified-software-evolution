@@ -22,7 +22,9 @@ public final class ArchitectureQueryApi {
     public static final List<String> OPERATIONS = List.of("summary","provenance","entities","entity","edges","dependencies",
             "relationships","expand","paths","shortest-path","cycles","reachability","impact","evidence","explain","gaps",
             "spring","configurations","artifacts","metric-catalog","metric","comparison-preparation","visual-graph","children","realizations","metric-definition");
-    public static final List<String> REPORT_OPERATIONS = List.of("rules","findings","finding","bundle","policy-metrics","assessment","policy-impact","visual-graph","replay");
+    public static final List<String> REPORT_OPERATIONS = List.of("rules","findings","finding","bundle","policy-metrics","assessment","policy-impact","visual-graph","replay","diagnosis","repair-proposal","repair-verification");
+    private static final FindingDiagnosis REPLAY_DIAGNOSIS = FindingDiagnosis.localReplay();
+    private static final RepairProposal REPAIR = new RepairProposal();
     public record Response(int status, byte[] body) {
         public Response { body = body.clone(); }
         @Override public byte[] body() { return body.clone(); }
@@ -42,6 +44,9 @@ public final class ArchitectureQueryApi {
     private EvolutionHttpApi evolution;
     private Function<BooleanSupplier,PartitionedGraphReader> partitionReaders;
     private RepositoryConnections connections;
+    private RepairVerification.WorkerEvidence repairWorker;
+    private DemoRepairCapture demoRepairCapture;
+    private FindingDiagnosis diagnosis = REPLAY_DIAGNOSIS;
     public ArchitectureQueryApi(GraphStore store) { this(store,new PublishedReports(),ApiLimits.defaults()); }
     public ArchitectureQueryApi(GraphStore store,PublishedReports reports,ApiLimits limits) {
         this(store,reports,limits,(graph,guard) -> new ArchitectureMetricsService(graph,ArchitectureMetric.Limits.defaults(),guard,Optional.empty(),List.of()).queries());
@@ -53,6 +58,43 @@ public final class ArchitectureQueryApi {
         this.limits=Objects.requireNonNull(limits); this.factory=Objects.requireNonNull(factory);
     }
     public ApiLimits limits() { return limits; }
+    /** A local operator can opt in one exact diagnosis input. No request can set a model route or change its pin. */
+    public static ArchitectureQueryApi withConfiguredDemoDiagnosis(ArchitectureQueryApi existing) {
+        var port=System.getProperty("evo.demo.diagnosis.port");
+        var model=System.getProperty("evo.demo.diagnosis.model");
+        var input=System.getProperty("evo.demo.diagnosis.input");
+        if (port==null && model==null && input==null) return existing;
+        if (port==null || model==null || input==null) throw new IllegalArgumentException("DEMO_DIAGNOSIS_CONFIGURATION");
+        return withDemoDiagnosis(existing,Integer.parseInt(port),model,new ContentDigest(input));
+    }
+    static ArchitectureQueryApi withDemoDiagnosis(ArchitectureQueryApi existing, int port, String model, ContentDigest input) {
+        if (existing.diagnosis!=REPLAY_DIAGNOSIS) throw new IllegalArgumentException("DEMO_DIAGNOSIS_ALREADY_CONFIGURED");
+        var api=new ArchitectureQueryApi(existing);
+        api.diagnosis=new FindingDiagnosis(new LoopbackDiagnosisModel(port,model,input));
+        return api;
+    }
+    private ArchitectureQueryApi(ArchitectureQueryApi existing) {
+        this(existing.store,existing.reports,existing.limits,existing.factory);
+        jobs=existing.jobs; connections=existing.connections; executions=existing.executions;
+        semantics=existing.semantics; bridges=existing.bridges; evolution=existing.evolution;
+        partitionReaders=existing.partitionReaders; repairWorker=existing.repairWorker; demoRepairCapture=existing.demoRepairCapture;
+        diagnosis=existing.diagnosis;
+    }
+    /** Local operator configuration outside all selected source and HTTP inputs. */
+    public static ArchitectureQueryApi withConfiguredDemoRepairCapture(ArchitectureQueryApi existing) throws java.io.IOException {
+        var path=System.getProperty("evo.demo.repair.capture");
+        var pin=System.getProperty("evo.demo.repair.capture.pin");
+        if (path==null && pin==null) return existing;
+        if (path==null || pin==null || existing.demoRepairCapture!=null) throw new IllegalArgumentException("DEMO_CAPTURE_CONFIGURATION");
+        var api=new ArchitectureQueryApi(existing);
+        api.demoRepairCapture=new DemoRepairCapture(java.nio.file.Path.of(path),new ContentDigest(pin));
+        return api;
+    }
+    /** Local operator composition. Target inputs and request JSON never register evidence authorities. */
+    public static ArchitectureQueryApi withRepairWorkerEvidence(ArchitectureQueryApi existing,RepairVerification.WorkerEvidence evidence) {
+        if (existing.repairWorker!=null) throw new IllegalArgumentException("REPAIR_WORKER_EVIDENCE_ALREADY_CONFIGURED");
+        var api=new ArchitectureQueryApi(existing); api.repairWorker=Objects.requireNonNull(evidence); return api;
+    }
     /** Operator composition only. Request JSON cannot register an executor or launch policy. */
     public static ArchitectureQueryApi withExecutions(GraphStore store,PublishedReports reports,ApiLimits limits,
             com.evolution.analysis.execution.RegisteredExecutionPort executions){
@@ -63,25 +105,21 @@ public final class ArchitectureQueryApi {
             com.evolution.analysis.execution.RegisteredExecutionPort executions){
         Objects.requireNonNull(existing);
         if(existing.executions!=null)throw new IllegalArgumentException("EXECUTION_PORT_ALREADY_CONFIGURED");
-        var api=new ArchitectureQueryApi(existing.store,existing.reports,existing.limits,existing.factory);
-        api.jobs=existing.jobs;api.connections=existing.connections;api.semantics=existing.semantics;api.bridges=existing.bridges;api.evolution=existing.evolution;api.partitionReaders=existing.partitionReaders;api.executions=Objects.requireNonNull(executions);return api;
+        var api=new ArchitectureQueryApi(existing); api.executions=Objects.requireNonNull(executions);return api;
     }
     public static ArchitectureQueryApi withSemanticQueries(ArchitectureQueryApi existing,com.evolution.analysis.polyglot.SemanticQueryService queries){
-        Objects.requireNonNull(existing);if(existing.semantics!=null)throw new IllegalArgumentException("SEMANTIC_QUERY_SERVICE_ALREADY_CONFIGURED");var api=new ArchitectureQueryApi(existing.store,existing.reports,existing.limits,existing.factory);api.jobs=existing.jobs;api.connections=existing.connections;api.executions=existing.executions;api.bridges=existing.bridges;api.evolution=existing.evolution;api.partitionReaders=existing.partitionReaders;api.semantics=new SemanticQueryApi(queries,existing.limits);return api;
+        Objects.requireNonNull(existing);if(existing.semantics!=null)throw new IllegalArgumentException("SEMANTIC_QUERY_SERVICE_ALREADY_CONFIGURED");var api=new ArchitectureQueryApi(existing);api.semantics=new SemanticQueryApi(queries,existing.limits);return api;
     }
     public static ArchitectureQueryApi withBridgeQueries(ArchitectureQueryApi existing,com.evolution.analysis.polyglot.BridgeQueryService queries){
-        Objects.requireNonNull(existing);if(existing.bridges!=null)throw new IllegalArgumentException("BRIDGE_QUERY_SERVICE_ALREADY_CONFIGURED");var api=new ArchitectureQueryApi(existing.store,existing.reports,existing.limits,existing.factory);api.jobs=existing.jobs;api.connections=existing.connections;api.executions=existing.executions;api.semantics=existing.semantics;api.evolution=existing.evolution;api.partitionReaders=existing.partitionReaders;api.bridges=new BridgeQueryApi(queries,existing.limits);return api;
+        Objects.requireNonNull(existing);if(existing.bridges!=null)throw new IllegalArgumentException("BRIDGE_QUERY_SERVICE_ALREADY_CONFIGURED");var api=new ArchitectureQueryApi(existing);api.bridges=new BridgeQueryApi(queries,existing.limits);return api;
     }
     public static ArchitectureQueryApi withPartitionedGraphs(ArchitectureQueryApi existing,Function<BooleanSupplier,PartitionedGraphReader> readers){
         Objects.requireNonNull(existing);if(existing.partitionReaders!=null)throw new IllegalArgumentException("PARTITION_READER_ALREADY_CONFIGURED");
-        var api=new ArchitectureQueryApi(existing.store,existing.reports,existing.limits,existing.factory);
-        api.jobs=existing.jobs;api.connections=existing.connections;api.executions=existing.executions;api.semantics=existing.semantics;api.bridges=existing.bridges;api.evolution=existing.evolution;api.partitionReaders=Objects.requireNonNull(readers);return api;
+        var api=new ArchitectureQueryApi(existing);api.partitionReaders=Objects.requireNonNull(readers);return api;
     }
     public static ArchitectureQueryApi withEvolution(ArchitectureQueryApi existing, EvolutionJobs jobs, EvolutionQueries queries) {
         if (existing.evolution != null) throw new IllegalArgumentException("EVOLUTION_SERVICE_ALREADY_CONFIGURED");
-        var api = new ArchitectureQueryApi(existing.store,existing.reports,existing.limits,existing.factory);
-        api.jobs=existing.jobs;api.connections=existing.connections;api.executions=existing.executions;
-        api.semantics=existing.semantics;api.bridges=existing.bridges;api.partitionReaders=existing.partitionReaders;
+        var api = new ArchitectureQueryApi(existing);
         api.evolution=new EvolutionHttpApi(jobs,queries,existing.limits);
         return api;
     }
@@ -226,6 +264,9 @@ public final class ArchitectureQueryApi {
             case "INVALID_REQUEST" -> "The request does not satisfy the API contract.";
             case "GRAPH_NOT_FOUND" -> "The requested graph is unavailable.";
             case "REPORT_NOT_FOUND", "REPORT_ARTIFACT_UNAVAILABLE" -> "The requested canonical report artifact is unavailable.";
+            case "DIAGNOSIS_SCOPE_MISMATCH" -> "The selected context or evidence bundle no longer matches this finding.";
+            case "DIAGNOSIS_INPUT_MISMATCH" -> "The diagnosis input changed. Run diagnosis again before requesting a proposal.";
+            case "REPAIR_PROPOSAL_MISMATCH" -> "The proposal could not be reproduced for this finding and its pinned inputs.";
             case "NOT_FOUND" -> "The requested API operation is unavailable.";
             case "METHOD_NOT_ALLOWED" -> "This route does not support the requested HTTP method.";
             case "UNSUPPORTED_MEDIA_TYPE" -> "Use application/json with UTF-8 and no content encoding.";
@@ -366,7 +407,13 @@ public final class ArchitectureQueryApi {
     private Object report(String op,ContentDigest id,PublishedReports.Report report,Map<String,Object> args,Page page,boolean hasPage,ArchitectureQueryService service) {
         boolean paged=op.equals("rules") || op.equals("findings");
         if (hasPage && !paged) throw new IllegalArgumentException("Page not applicable");
-        if (op.equals("finding") || op.equals("bundle") || op.equals("policy-impact")) {
+        if (op.equals("repair-verification")) {
+            QueryJson.object(args,"identity","bundle","context","diagnosisInput","proposal","candidateReport","controlReport");
+        } else if (op.equals("repair-proposal")) {
+            QueryJson.object(args,"identity","bundle","context","diagnosisInput");
+        } else if (op.equals("diagnosis")) {
+            QueryJson.object(args,"identity","bundle","context");
+        } else if (op.equals("finding") || op.equals("bundle") || op.equals("policy-impact")) {
             QueryJson.object(args, "identity");
         } else if (op.equals("replay")) {
             QueryJson.object(args,"identity","counterWitness");
@@ -389,6 +436,32 @@ public final class ArchitectureQueryApi {
                 yield op.equals("finding") ? finding : finding.bundle();
             }
             case "policy-metrics" -> report.metrics().orElseThrow(() -> new Failure(404,"REPORT_ARTIFACT_UNAVAILABLE"));
+            case "diagnosis","repair-proposal","repair-verification" -> {
+                var target = new ContentDigest(QueryJson.text(args,"identity"));
+                var bundle = new ContentDigest(QueryJson.text(args,"bundle"));
+                var context = QueryJson.text(args,"context");
+                var input = op.equals("diagnosis") ? Optional.<ContentDigest>empty()
+                        : Optional.of(new ContentDigest(QueryJson.text(args,"diagnosisInput")));
+                var finding = e.findings().stream().filter(f -> f.identity().equals(target)).findFirst()
+                        .orElseThrow(() -> new Failure(404,"REPORT_ARTIFACT_UNAVAILABLE"));
+                if (!finding.bundle().identity().equals(bundle) || !e.context().equals(context))
+                    throw new Failure(409,"DIAGNOSIS_SCOPE_MISMATCH");
+                if (input.isEmpty()) yield diagnosis.diagnose(id,finding,service);
+                // Recipe and verification recompute canonical evidence without depending on live model availability or selection.
+                var replay = REPLAY_DIAGNOSIS.diagnose(id,finding,service);
+                if (replay.input().isPresent() && !replay.input().equals(input))
+                    throw new Failure(409,"DIAGNOSIS_INPUT_MISMATCH");
+                var proposed = REPAIR.prepare(replay,finding,service::assessmentStopReason);
+                if (op.equals("repair-proposal")) yield proposed;
+                var proposal = new ContentDigest(QueryJson.text(args,"proposal"));
+                var pinned = proposed.proposal().filter(p -> p.identity().equals(proposal))
+                        .orElseThrow(() -> new Failure(409,"REPAIR_PROPOSAL_MISMATCH"));
+                Optional<ContentDigest> candidate = Optional.empty(), control = Optional.empty();
+                if (args.containsKey("candidateReport")) candidate = Optional.of(new ContentDigest(QueryJson.text(args,"candidateReport")));
+                if (args.containsKey("controlReport")) control = Optional.of(new ContentDigest(QueryJson.text(args,"controlReport")));
+                yield new RepairVerification(repairWorker,demoRepairCapture).verify(pinned,service.graph(),report,candidate,control,store,reports,
+                        () -> service.assessmentStopReason()!=StopReason.NONE);
+            }
             case "replay" -> {
                 var target=new ContentDigest(QueryJson.text(args,"identity"));boolean counter=Boolean.TRUE.equals(args.get("counterWitness"));
                 var bundle=e.findings().stream().filter(f->f.identity().equals(target)).findFirst()

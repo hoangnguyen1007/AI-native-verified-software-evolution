@@ -24,6 +24,7 @@ final class SpringDomain {
     final Map<String,Choice> atoms;
     final Map<String,Map<String,Object>> sources;
     final boolean supported;
+    private final boolean onlyProfileInputs;
 
     SpringDomain(EvolutionInput input, GraphEvidence space) throws IOException {
         var raw=EvolutionInput.payload(space);
@@ -86,7 +87,16 @@ final class SpringDomain {
                 "profile",SpringOperands.fields(profile,"version","defaultProfiles","groups","includes"),
                 "abstraction",raw.get("abstractionVersion"),"feasibility",SpringOperands.fields(feasibility,"version","limits"));
         supported=known&&visited.size()==bySource.size()&&choices.values().stream().flatMap(Set::stream).noneMatch(v->v.kind()==ValueKind.OTHER);
+        onlyProfileInputs=bySource.isEmpty() && envelopes.size()==1 && "REPOSITORY".equals(envelopes.getFirst().get("layer"))
+                && list(envelopes.getFirst().get("documents")).isEmpty() && list(raw.get("constraints")).isEmpty()
+                && list(profile.get("defaultProfiles")).isEmpty() && list(profile.get("includes")).isEmpty()
+                && obj(profile.get("groups")).isEmpty();
         evidence=List.copyOf(refs);domains=Map.copyOf(choices);atoms=Map.copyOf(symbols);sources=Map.copyOf(bySource);
+    }
+
+    boolean isClosedBooleanProfile(String name) {
+        var profile=new Coordinate(new Variable(Kind.PROFILE,name),BASELINE,"");
+        return supported && onlyProfileInputs && domains.equals(Map.of(profile,Set.of(Value.bool(false),Value.bool(true))));
     }
 
     boolean alignable(SpringDomain other) {

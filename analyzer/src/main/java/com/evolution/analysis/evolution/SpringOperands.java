@@ -17,9 +17,13 @@ final class SpringOperands {
     static void index(EvolutionInput side, GraphEvidence evidence) throws IOException {
         String family=evidence.family();
         switch(family) {
-            case "java.declaration", "source.document" -> {
+            case "java.declaration", "source.document", "java.type-use" -> {
                 var raw=EvolutionInput.payload(evidence);
-                String id=family.equals("java.declaration")?text(obj(raw.get("entity")),"identity"):text(raw,"identity");
+                String id=switch(family) {
+                    case "java.declaration" -> text(obj(raw.get("entity")),"identity");
+                    case "source.document" -> text(raw,"identity");
+                    default -> CanonicalJson.sha256(raw).value();
+                };
                 unique(side.run.index,"spring-source-support",side.name+"|"+id+"|"+evidence.identity().value(),
                         row("evidence",evidence.identity(),"family",family));
             }
@@ -44,7 +48,8 @@ final class SpringOperands {
             var value=item.value();
             if(!family.equals(value.get("family")))continue;
             var ref=new ContentDigest(text(value,"evidence"));
-            if(analysis==null||side.frontendMember(analysis,"declarations",ref)){
+            String membership=family.equals("java.type-use")?"types":"declarations";
+            if(analysis==null||side.frontendMember(analysis,membership,ref)){
                 result.add(side.evidence(ref));
                 if(result.size()==2)break; // ambiguity is explicit; no need to materialize the rest
             }

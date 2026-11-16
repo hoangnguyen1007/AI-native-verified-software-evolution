@@ -374,4 +374,4 @@ Paper readiness, venue selection, extensive artifact badging, and elaborate defe
 
 ## Immediate Sequence
 
-Start with a Workbench action from one existing architecture finding to an AI diagnosis with validated evidence links. Reuse a pinned Java/Spring fixture and prove the finding-to-citation round trip with a focused contract check. Build proposal, sandbox verification and local PR/CI review on that path.
+The [current state](current-state.md#exact-next-task) owns the active task sequence and the closure status for the pinned demo. The [Step 5 run](architecture/demo-finding-transition.md#closure-run) records the completed local journey.

@@ -90,8 +90,10 @@ public final class WorkbenchApiMain {
                      var evolution = new EvolutionJobs(directory.resolve("evolution"), pages, reports, pageIndex::evolution)) {
                     var api=ArchitectureQueryApi.withPartitionedGraphs(
                             new ArchitectureQueryApi(store,reports,ApiLimits.defaults(),jobs,connections),pageIndex::reader);
-                    try (var server = new ArchitectureHttpServer(ArchitectureQueryApi.withEvolution(api,evolution,
-                            new EvolutionQueries(evolution.results(),pages)),args.length >= 7 ? Integer.parseInt(args[6]) : 8080)) {
+                    var localApi = ArchitectureQueryApi.withConfiguredDemoRepairCapture(ArchitectureQueryApi.withEvolution(api,evolution,
+                            new EvolutionQueries(evolution.results(),pages)));
+                    try (var server = new ArchitectureHttpServer(ArchitectureQueryApi.withConfiguredDemoDiagnosis(localApi),
+                            args.length >= 7 ? Integer.parseInt(args[6]) : 8080)) {
                         var stopped = new CountDownLatch(1);
                         var shutdown = new Thread(() -> {
                             server.close();

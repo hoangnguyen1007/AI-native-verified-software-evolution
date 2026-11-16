@@ -13,7 +13,7 @@ import static com.evolution.analysis.evolution.EvolutionRows.*;
 /** Canonical comparison engine. Product consumers use a disclosure projection of these internal rows. */
 public final class SnapshotComparison {
     private SnapshotComparison() {}
-    public static final String VERSION="architecture.evolution.internal:m11.6-v1";
+    public static final String VERSION="architecture.evolution.internal:m11.6-v2";
     public enum Mode { STRICT, OBSERVATION }
     public enum Status { COMPLETE, PARTIAL, WITHHELD }
     public enum Section { CONTEXTS, COMPATIBILITY, CORRESPONDENCE, EVENTS, GAPS, INPUTS, REGIONS, PROOFS, EVIDENCE,
@@ -160,7 +160,19 @@ public final class SnapshotComparison {
                                  Optional<History> history,HistoryReader historyReader,
                                  EvolutionIndex scratch,int inputPageSize,BooleanSupplier cancelled)throws IOException {
         return compare(request,reader,reports,reportReader,bridges,bridgeReader,history,historyReader,scratch,
-                inputPageSize,cancelled,false);
+                inputPageSize,cancelled,false,Optional.empty());
+    }
+
+    /** Exact supplemental candidate evidence for the strict, sealed demo pair. */
+    public static Result compareWithDemoBindingCensus(Request request,EvolutionSnapshot.Reader reader,Collection<ReportRef> reports,
+            ReportReader reportReader,DemoBindingCensus census,EvolutionIndex scratch,int inputPageSize,BooleanSupplier cancelled)
+            throws IOException {
+        var proof=census.receipt();
+        if (request.mode()!=Mode.STRICT || !request.selection().findings() || !request.right().equals(proof.graph())
+                || reports.stream().noneMatch(ref->ref.side()==Side.RIGHT && ref.context().equals(proof.context())))
+            throw new IllegalArgumentException("Foreign binding census");
+        return compare(request,reader,reports,reportReader,List.of(),(b,s,o,c)->ReportStatus.UNAVAILABLE,
+                Optional.empty(),(p,c)->Optional.empty(),scratch,inputPageSize,cancelled,false,Optional.of(census));
     }
 
     /** The caller must authenticate the durable index and reverify the exact graph publications before resuming. */
@@ -169,13 +181,14 @@ public final class SnapshotComparison {
                                           Optional<History> history,HistoryReader historyReader,EvolutionIndex scratch,
                                           int inputPageSize,BooleanSupplier cancelled)throws IOException {
         return compare(request,reader,reports,reportReader,bridges,bridgeReader,history,historyReader,scratch,
-                inputPageSize,cancelled,true);
+                inputPageSize,cancelled,true,Optional.empty());
     }
 
     private static Result compare(Request request,EvolutionSnapshot.Reader reader,Collection<ReportRef> reports,
                                  ReportReader reportReader,Collection<BridgeRef> bridges,BridgeReader bridgeReader,
                                  Optional<History> history,HistoryReader historyReader,
-                                 EvolutionIndex scratch,int inputPageSize,BooleanSupplier cancelled,boolean resume)throws IOException {
+                                 EvolutionIndex scratch,int inputPageSize,BooleanSupplier cancelled,boolean resume,
+                                 Optional<DemoBindingCensus> census)throws IOException {
         checkSize(inputPageSize);
         var ordered=reports.stream().sorted(Comparator.comparing(ReportRef::side).thenComparing(ReportRef::identity)
                 .thenComparing(ReportRef::context)).toList();
@@ -196,8 +209,10 @@ public final class SnapshotComparison {
                 if(!expected.equals(actual))throw new IllegalArgumentException("History endpoint report mismatch");
             }
         });
-        var identity=ordered.isEmpty()&&orderedBridges.isEmpty()&&history.isEmpty()?request.identity():
+        var baseIdentity=ordered.isEmpty()&&orderedBridges.isEmpty()&&history.isEmpty()?request.identity():
                 hash("architecture.evolution.request:v1",List.of(request.identity(),ordered,orderedBridges,history));
+        var identity=census.map(c -> hash("architecture.evolution.scoped-census-request:v1",List.of(baseIdentity,c.receipt().identity())))
+                .orElse(baseIdentity);
         var owner=scratch.get("run","owner");
         var checkpoint=Optional.<Map<String,Object>>empty();
         if (resume) {
@@ -209,7 +224,7 @@ public final class SnapshotComparison {
             if(owner.isPresent())throw new IllegalArgumentException("Comparison index already owned");
             scratch.put("run","owner",row("request",identity));
         }
-        var result=new EvolutionRun(request,identity,scratch,inputPageSize,cancelled)
+        var result=new EvolutionRun(request,identity,scratch,inputPageSize,cancelled,census)
                 .compare(reader,ordered,reportReader,orderedBridges,bridgeReader,history,historyReader,checkpoint);
         EvolutionSnapshot.check(cancelled);
         scratch.put("run","complete",row("result",result.summary().identity()));

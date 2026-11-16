@@ -15,6 +15,8 @@ import static com.evolution.analysis.ingestion.IngestionEvidence.Reason.*;
 /** Constructor-site acquisition. Candidate matching and conditional activation remain downstream. */
 public final class ConstructorInjectionIngestion {
     public static final VersionedIdentifier PROVIDER=new VersionedIdentifier("spring.constructor-ingestion","m8.4-local-fragment-v3");
+    private static final VersionedIdentifier JAVA_V13 = new VersionedIdentifier("frontend.javaparser","3.28.2-m9.2-evidenced-recovery-v13");
+    private static final VersionedIdentifier V13_PROVIDER = new VersionedIdentifier("spring.constructor-ingestion","m8.4-local-fragment-v4");
     public enum Status { SELECTED, NOT_SELECTED, UNKNOWN }
     public record Parameter(EntityIdentity constructor,EntityIdentity parameter,int index,JavaType type,ConditionEvidence evidence) {
         public Parameter {Objects.requireNonNull(constructor);Objects.requireNonNull(parameter);Objects.requireNonNull(type);Objects.requireNonNull(evidence);if(index<0)throw new IllegalArgumentException("Negative parameter index");}
@@ -38,7 +40,9 @@ public final class ConstructorInjectionIngestion {
         if(maxParameters<1)throw new IllegalArgumentException("Positive parameter limit required");
         if(!frontend.analysis().equals(discovery.analysis()) || !IngestionEvidence.digest(frontend).equals(discovery.frontendEvidence())||!framework.identity().equals(discovery.frameworkEvidence()))
             throw new IllegalArgumentException("Constructor and component evidence differ");
-        var identity=IngestionEvidence.digest(List.of(PROVIDER,discovery.frontendEvidence(),discovery.identity(),framework.identity(),maxParameters));
+        boolean currentJavaContract = JAVA_V13.equals(frontend.frontend());
+        var provider = currentJavaContract ? V13_PROVIDER : PROVIDER;
+        var identity=IngestionEvidence.digest(List.of(provider,discovery.frontendEvidence(),discovery.identity(),framework.identity(),maxParameters));
         Map<EntityIdentity,DeclarationRecord> declarations=new HashMap<>();frontend.declarations().forEach(d->declarations.put(d.entity().identity(),d));
         var unrelatedCallDiagnostics=new HashSet<Diagnostic>();
         for(var occurrence:frontend.occurrences()){
@@ -58,7 +62,7 @@ public final class ConstructorInjectionIngestion {
         for(var type:frontend.types())if(type.owner().isPresent()&&type.role().value().equals("java.parameter-type"))parameterTypes.computeIfAbsent(type.owner().orElseThrow(),key->new ArrayList<>()).add(type);
         var supportedShapes=new HashSet<EntityIdentity>();frontend.typeDeclarations().stream().filter(t->Set.of(TypeDeclarationRecord.Kind.CLASS,TypeDeclarationRecord.Kind.RECORD).contains(t.kind())).forEach(t->supportedShapes.add(t.type()));
         boolean frameworkKnown=framework.declarationFragmentKnown()&&framework.artifacts().stream().anyMatch(a->a.artifactId().equals("spring-beans")&&framework.verifiedArtifact(a));
-        boolean providerKnown=Set.of(new VersionedIdentifier("frontend.javaparser","3.28.2-m4u.1"),
+        boolean providerKnown=currentJavaContract || Set.of(new VersionedIdentifier("frontend.javaparser","3.28.2-m4u.1"),
                 new VersionedIdentifier("frontend.javaparser","3.28.2-m4uv2.2"),
                 new VersionedIdentifier("frontend.javaparser","3.28.2-m4uv2.2-injection-v1"),
                 new VersionedIdentifier("frontend.javaparser","3.28.2-m7.2-platform-v1"),
@@ -81,7 +85,7 @@ public final class ConstructorInjectionIngestion {
                         new VersionedIdentifier("frontend.javaparser","3.28.2-m8.4-lambda-input-v11"),
                         new VersionedIdentifier("frontend.javaparser","3.28.2-m9.2-evidenced-recovery-v12")).contains(frontend.frontend());
         for(var component:discovery.rows()) {
-            var evidence=new ConditionEvidence.Derived(List.of(identity,component.evidence().identity()),PROVIDER,"constructor-selection:"+component.type().value());
+            var evidence=new ConditionEvidence.Derived(List.of(identity,component.evidence().identity()),provider,"constructor-selection:"+component.type().value());
             if(component.status()!=ComponentScanIngestion.Status.INCLUDED) {
                 rows.add(new Row(component.type(),component.status()==ComponentScanIngestion.Status.UNKNOWN?Status.UNKNOWN:Status.NOT_SELECTED,Optional.empty(),List.of(),evidence));continue;
             }
@@ -105,7 +109,7 @@ public final class ConstructorInjectionIngestion {
                 try {
                     String key=parameter.entity().canonicalName();int index=Integer.parseInt(key.substring(key.lastIndexOf(',')+1,key.length()-1));
                     if(types.size()!=1 || types.getFirst().type().status()!=SemanticStatus.RESOLVED)throw new IllegalArgumentException();
-                    var parameterEvidence=new ConditionEvidence.Derived(List.of(evidence.identity(),IngestionEvidence.digest(parameter),IngestionEvidence.digest(types.getFirst())),PROVIDER,"parameter:"+index);
+                    var parameterEvidence=new ConditionEvidence.Derived(List.of(evidence.identity(),IngestionEvidence.digest(parameter),IngestionEvidence.digest(types.getFirst())),provider,"parameter:"+index);
                     parameters.add(new Parameter(constructor.entity().identity(),parameter.entity().identity(),index,types.getFirst().type(),parameterEvidence));
                 }catch(IllegalArgumentException failure){incomplete=true;issue(issues,SOURCE_INCOMPLETE,parameter.entity().identity().value(),identity);}
             }
@@ -115,7 +119,7 @@ public final class ConstructorInjectionIngestion {
             rows.add(new Row(component.type(),incomplete?Status.UNKNOWN:Status.SELECTED,Optional.of(constructor.entity().identity()),parameters,evidence));
         }
         var sorted=issues.stream().distinct().sorted(Comparator.comparing(IngestionEvidence.Issue::identity)).toList();
-        var gaps=new TreeSet<>(discovery.gaps());gaps.addAll(IngestionEvidence.gaps(discovery.snapshot(),PROVIDER,identity,sorted));
+        var gaps=new TreeSet<>(discovery.gaps());gaps.addAll(IngestionEvidence.gaps(discovery.snapshot(),provider,identity,sorted));
         return new Result(identity,frontend.analysis(),discovery.snapshot(),rows,sorted,List.copyOf(gaps));
     }
     private static boolean overlaps(SourceSpan a,SourceSpan b) {

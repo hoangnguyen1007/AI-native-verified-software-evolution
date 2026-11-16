@@ -175,11 +175,14 @@ final class EvolutionInput {
                             String id=GraphJson.string(raw);
                             unique(run.index,"context-shapes",prefix+id,row("evidence",id));
                         });
-                        case "declarations","occurrences","observations","derivedRelationships" -> member.array(raw->{
-                            EvolutionSnapshot.check(run.cancelled);var id=GraphJson.string(raw);
-                            run.index.put("frontend-members",prefix+field+"|"+id,row("present",true));
-                        });
-                        case "types","annotations","diagnostics","constructorCandidates","httpClientCalls" -> member.skip();
+                        case "types","declarations","occurrences","observations","derivedRelationships" -> {
+                            if (field.equals("types") && !run.request.selection().spring()) member.skip();
+                            else member.array(raw->{
+                                EvolutionSnapshot.check(run.cancelled);var id=GraphJson.string(raw);
+                                run.index.put("frontend-members",prefix+field+"|"+id,row("present",true));
+                            });
+                        }
+                        case "annotations","diagnostics","constructorCandidates","httpClientCalls" -> member.skip();
                         default -> member.skip();
                     }
                 });

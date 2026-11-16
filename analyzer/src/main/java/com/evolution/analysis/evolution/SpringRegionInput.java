@@ -3,9 +3,11 @@ package com.evolution.analysis.evolution;
 import com.evolution.analysis.contract.common.ContentDigest;
 import com.evolution.analysis.contract.serialization.CanonicalJson;
 import com.evolution.analysis.graph.GraphEvidence;
+import com.evolution.analysis.graph.GraphJson;
 import com.evolution.analysis.graph.KnowledgeGraph;
 import com.evolution.analysis.spring.condition.LogicalValue;
 import com.evolution.analysis.spring.condition.ComponentScanIngestion;
+import com.evolution.analysis.spring.condition.ConstructorInjectionIngestion;
 import com.evolution.analysis.spring.condition.ConditionExpression;
 import com.evolution.analysis.spring.binding.BindingProcessing;
 import com.evolution.analysis.spring.registration.BeanRegistrationProcessing;
@@ -36,6 +38,7 @@ final class SpringRegionInput {
     final List<ContentDigest> references;
     final Object semantics, order, workPolicy;
     final boolean complete, orderComplete;
+    private final boolean emptyDemoBindingPlan;
     final Map<String,World> worlds = new TreeMap<>();
     final Map<String,Fact> facts=new TreeMap<>();
     final Map<String,Operand> unaligned=new TreeMap<>();
@@ -90,6 +93,10 @@ final class SpringRegionInput {
         workPolicy=fields(parameters,"reasonerPolicy","symbolicLimits","maxSignatures","evaluatorArtifact");
         orderComplete="COMPLETE".equals(discoveryInputs.get("orderCompleteness"))&&"COMPLETE".equals(registration.get("order"))
                 &&"COMPLETE".equals(registration.get("initialRegistry"))&&"COMPLETE".equals(registration.get("noParentContainer"));
+        emptyDemoBindingPlan=side.run.bindingCensus.map(DemoBindingCensus::receipt)
+                .filter(census -> side.graph.equals(census.graph()) && context.equals(census.context()))
+                .filter(census -> registeredDemoClasspath(buildForm,census.classpathCensus()))
+                .isPresent() && emptyDemoBindingPlan(plan,binding);
 
         scan(cursor->side.snapshot.nodes(context,side.run.size,cursor),number(partition.get("nodes")),side.run.size,side.run.cancelled,
                 node->read(node,limits));
@@ -149,6 +156,56 @@ final class SpringRegionInput {
     }
 
     boolean authenticatedPolicyRegion(String identity) {return authenticatedPolicyRegions.contains(identity);}
+
+    boolean supports(DemoBindingCensus.Receipt census) throws IOException {
+        if (!complete || !orderComplete || !emptyDemoBindingPlan || !sites.isEmpty()
+                || candidates.size()!=2 || policyEndpoints.size()!=2 || !domain.isClosedBooleanProfile(census.profile())
+                || !side.header.snapshot().equals(census.snapshot()) || !side.graph.equals(census.graph())
+                || !context.equals(census.context())) return false;
+        var names=new TreeSet<String>();
+        for (var candidate:candidates.values()) {
+            var producer=obj(candidate.raw.get("producer"));
+            var name=obj(candidate.raw.get("declaredNameKey"));
+            String bean=text(name,"primary");
+            if (!"COMPONENT_CLASS".equals(producer.get("producerKind")) || !"EXACT".equals(name.get("status"))
+                    || !list(name.get("aliases")).isEmpty() || !census.beans().contains(bean) || !names.add(bean)) return false;
+            String type=bean.equals("client")?"Client":"Store";
+            String path="src/main/java/app/"+type+".java";
+            var expected=census.files().stream().filter(file -> file.path().equals(path)).findFirst().orElseThrow();
+            var declarations=sourceSupport(side,text(producer,"declarationSlot"),"java.declaration",analysis);
+            if (declarations.size()!=1) return false;
+            var declaration=obj(EvolutionInput.payload(declarations.getFirst()).get("entity"));
+            if (!("java:v1:"+CanonicalJson.write(List.of("type",List.of("app"),type))).equals(declaration.get("canonicalName"))) return false;
+            var documents=sourceSupport(side,text(obj(declaration.get("declaration")),"document"),"source.document",null);
+            if (documents.size()!=1) return false;
+            var doc=EvolutionInput.payload(documents.getFirst());
+            if (!path.equals(doc.get("path")) || !expected.contentDigest().value().equals(doc.get("contentDigest"))) return false;
+        }
+        return names.equals(new TreeSet<>(census.beans()));
+    }
+
+    private static boolean registeredDemoClasspath(Map<String,Object> build,ContentDigest expected) {
+        var entries=list(build.get("orderedResolutionInputs"));
+        if (entries.size()!=9 || !"MAIN".equals(obj(build.get("moduleSourceSet")).get("sourceSet"))) return false;
+        // The ordinary compatibility check separately requires the same ordering on both sides.
+        var byName=entries.stream().map(EvolutionRows::obj)
+                .sorted(Comparator.comparing(entry -> text(obj(entry.get("entry")),"logicalName"))).toList();
+        return expected.equals(CanonicalJson.sha256(byName));
+    }
+
+    private static boolean emptyDemoBindingPlan(Map<String,Object> plan,Map<String,Object> binding) {
+        var environment=obj(binding.get("environment"));
+        var framework=obj(obj(plan.get("inventory")).get("frameworkEvidence"));
+        var discovery=obj(plan.get("discovery"));
+        var events=list(discovery.get("events"));
+        return Boolean.TRUE.equals(framework.get("completeClasspath"))
+                && list(binding.get("dependencies")).isEmpty() && list(binding.get("definitions")).size()==2
+                && "COMPLETE".equals(environment.get("noResolvableDependencies"))
+                && "COMPLETE".equals(environment.get("noPostRegistrationMutation"))
+                && "NONE".equals(environment.get("comparator")) && list(discovery.get("initialDefinitions")).isEmpty()
+                && events.size()==2 && events.stream().map(EvolutionRows::obj).allMatch(event ->
+                    "COMPONENT".equals(event.get("kind")) && "COMPLETE".equals(event.get("membership")) && event.get("parent")==null);
+    }
 
     Formula provedSymbolicUniverse()throws IOException {
         if(provedSymbolicUniverse!=null)return provedSymbolicUniverse;
@@ -393,10 +450,12 @@ final class SpringRegionInput {
         var doc=text(obj(span),"document");
         boolean evidenced=switch(text(declaration,"kind")){
             case "SOURCE"->declaration.get("span")!=null&&doc.equals(declaration.get("document"));
-            case "DERIVED"->"COMPONENT_CLASS".equals(raw.get("producerKind"))&&
-                    CanonicalJson.write(ComponentScanIngestion.PROVIDER).equals(CanonicalJson.write(declaration.get("method")))&&
-                    ("component-type:"+id).equals(declaration.get("slot"))&&
-                    list(declaration.get("inputs")).contains(CanonicalJson.sha256(data).value());
+            case "DERIVED"->"CONSTRUCTOR_PARAMETER".equals(raw.get("siteKind"))
+                    ?constructorParameter(raw,entity,doc,declaration)
+                    :"COMPONENT_CLASS".equals(raw.get("producerKind"))&&
+                        CanonicalJson.write(ComponentScanIngestion.PROVIDER).equals(CanonicalJson.write(declaration.get("method")))&&
+                        ("component-type:"+id).equals(declaration.get("slot"))&&
+                        list(declaration.get("inputs")).contains(CanonicalJson.sha256(data).value());
             default->false;
         };
         if(!evidenced)return false;
@@ -405,6 +464,44 @@ final class SpringRegionInput {
         var source=EvolutionInput.payload(documents.getFirst());
         return (!"SOURCE".equals(declaration.get("kind"))||Objects.equals(declaration.get("rawDigest"),source.get("contentDigest")))
                 &&Set.of("MAIN","TEST").contains(text(source,"classification"));
+    }
+
+    private boolean constructorParameter(Map<String,Object> point,Map<String,Object> owner,String doc,
+                                         Map<String,Object> evidence)throws IOException {
+        var method=obj(evidence.get("method"));
+        if (!ConstructorInjectionIngestion.PROVIDER.id().equals(method.get("id"))
+                || !Set.of(ConstructorInjectionIngestion.PROVIDER.version(),"m8.4-local-fragment-v4").contains(method.get("version"))
+                || !"TYPE".equals(owner.get("kind"))) return false;
+        String parameterId=text(point,"siteSlot");
+        var supports=sourceSupport(side,parameterId,"java.declaration",analysis);
+        if (supports.size()!=1) return false;
+        var parameter=EvolutionInput.payload(supports.getFirst());
+        var entity=obj(parameter.get("entity"));
+        if (!"RESOLVED".equals(parameter.get("status")) || !"PROJECT".equals(entity.get("origin"))
+                || !"PARAMETER".equals(entity.get("kind")) || !Objects.equals(entity.get("stableScope"),owner.get("stableScope"))
+                || entity.get("declaration")==null || !doc.equals(obj(entity.get("declaration")).get("document"))) return false;
+        String name=text(entity,"canonicalName");
+        if (!name.startsWith("java:v1:")) return false;
+        var parts=list(GraphJson.read(name.substring("java:v1:".length()),new GraphJson.Limits(8192,32,512)));
+        if (parts.size()!=3 || !"parameter".equals(parts.getFirst()) || !numBetween(parts.get(2),0,Integer.MAX_VALUE)
+                || !("parameter:"+number(parts.get(2))).equals(evidence.get("slot"))) return false;
+        var constructor=list(parts.get(1));
+        if (constructor.size()!=3 || !"constructor".equals(constructor.getFirst())
+                || !("java:v1:"+CanonicalJson.write(constructor.get(1))).equals(owner.get("canonicalName"))) return false;
+        var inputs=list(evidence.get("inputs"));
+        if (inputs.size()!=3) return false;
+        String declaration=CanonicalJson.sha256(parameter).value();
+        if (!inputs.contains(declaration)) return false;
+        for (var input:inputs) {
+            if (input.equals(declaration)) continue;
+            var types=sourceSupport(side,GraphJson.string(input),"java.type-use",analysis);
+            if (types.size()!=1) continue;
+            var type=EvolutionInput.payload(types.getFirst());
+            if (parameterId.equals(type.get("owner")) && "java.parameter-type".equals(EvolutionInput.category(type.get("role")))
+                    && "RESOLVED".equals(obj(type.get("type")).get("status")) && type.get("span")!=null
+                    && doc.equals(obj(type.get("span")).get("document"))) return true;
+        }
+        return false;
     }
 
     private Fact fact(Map<String,Object> raw,Operand region,Map<String,Endpoint> candidates,Map<String,Endpoint> sites)throws IOException {

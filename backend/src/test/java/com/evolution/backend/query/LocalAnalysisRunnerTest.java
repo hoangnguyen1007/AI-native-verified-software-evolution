@@ -2,15 +2,21 @@ package com.evolution.backend.query;
 
 import com.evolution.analysis.assessment.ArchitectureAssessment;
 import com.evolution.analysis.contract.assessment.AssessmentStatus;
+import com.evolution.analysis.contract.common.ContentDigest;
 import com.evolution.analysis.contract.identity.RepositoryIdentity;
 import com.evolution.analysis.contract.serialization.CanonicalJson;
 import com.evolution.analysis.graph.*;
 import com.evolution.analysis.query.ArchitectureQuery.Scope;
 import com.evolution.backend.analysis.*;
+import com.sun.net.httpserver.HttpServer;
+import java.math.BigDecimal;
+import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import static org.junit.jupiter.api.Assertions.*;
@@ -97,6 +103,164 @@ class LocalAnalysisRunnerTest {
             assertEquals(List.of(AnalysisJobs.Stage.QUEUED,AnalysisJobs.Stage.ACQUISITION,AnalysisJobs.Stage.PLATFORM,AnalysisJobs.Stage.ANALYSIS,
                     AnalysisJobs.Stage.GRAPH,AnalysisJobs.Stage.POLICY,AnalysisJobs.Stage.PUBLICATION,AnalysisJobs.Stage.FINISHED),second.events().stream().map(AnalysisJobs.Event::stage).toList());
         }
+    }
+    @Test void diagnosisRoundTripsToCapturedSourceAndRejectsAnotherBundle() throws Exception {
+        var store = new InMemoryGraphStore(); var reports = new PublishedReports();
+        try (var jobs = new AnalysisJobs(List.of(runner(false,false,POLICY).registration("local")),store,reports,new AnalysisJobs.Limits(1,1,4,90_000,100))) {
+            var result = finishedReal(jobs,jobs.submit("local","diagnosis").job().id()).result().orElseThrow();
+            var graph = result.graph().orElseThrow(); var reportId = result.reports().getFirst();
+            var finding = reports.get(reportId).orElseThrow().evaluation().findings().getFirst();
+            var bundle = finding.bundle(); var api = new ArchitectureQueryApi(store,reports,ApiLimits.defaults(),jobs);
+            var base = "/api/v1/graphs/"+graph.value()+"/reports/"+reportId.value();
+            var args = Map.of("identity",finding.identity().value(),"bundle",bundle.identity().value(),"context",bundle.context());
+            var request = CanonicalJson.write(Map.of("arguments",args));
+            var response = AnalysisJobApiTest.call(api,"POST",base+"/diagnosis",request);
+            assertEquals(200,response.status());
+            var diagnosis = AnalysisJobApiTest.data(response);
+            assertEquals("CITATIONS_VALIDATED",diagnosis.get("status"),() -> CanonicalJson.write(diagnosis));
+            assertEquals("LOCAL_REPLAY",diagnosis.get("mode"));
+            var pin = GraphJson.object(diagnosis.get("pin"));
+            assertEquals(graph.value(),pin.get("graph")); assertEquals(result.snapshot().orElseThrow().value(),pin.get("snapshot"));
+            assertEquals(reportId.value(),pin.get("report")); assertEquals(finding.identity().value(),pin.get("finding"));
+            var citations = GraphJson.array(diagnosis.get("citations")); assertFalse(citations.isEmpty());
+            var expected = com.evolution.analysis.contract.common.ContentDigest.sha256Utf8("package api; public class Controller { private data.Repository repository;  }\n");
+            assertTrue(citations.stream().map(GraphJson::object).anyMatch(c -> expected.value().equals(c.get("sourceDigest"))
+                    && "src/main/java/api/Controller.java".equals(c.get("path"))));
+            for (var value:citations) {
+                var citation=GraphJson.object(value);
+                var evidenceRequest=CanonicalJson.write(Map.of("request",Map.of("context",citation.get("context"),"scope","ENTITY",
+                        "projection","BOUNDED_UNION","direction","OUTGOING","relationshipKinds",List.of("graph.depends-on")),
+                        "arguments",Map.of("reference",citation.get("evidence"))));
+                var reopened=AnalysisJobApiTest.call(api,"POST","/api/v1/graphs/"+graph.value()+"/queries/evidence",evidenceRequest);
+                var row=GraphJson.object(GraphJson.array(AnalysisJobApiTest.data(reopened).get("items")).getFirst());
+                assertEquals(citation.get("evidence"),row.get("identity"));
+            }
+            assertArrayEquals(response.body(), AnalysisJobApiTest.call(api,"POST",base+"/diagnosis",request).body());
+            checkLiveDiagnosis(api,base+"/diagnosis",request,GraphJson.string(diagnosis.get("input")),citations);
+            var proposalArgs = new TreeMap<String,String>(args);
+            proposalArgs.put("diagnosisInput",GraphJson.string(diagnosis.get("input")));
+            var proposal = AnalysisJobApiTest.call(api,"POST",base+"/repair-proposal",CanonicalJson.write(Map.of("arguments",proposalArgs)));
+            assertEquals(200,proposal.status());
+            assertEquals("WITHHELD",AnalysisJobApiTest.data(proposal).get("status"),"A valid diagnosis outside the approved repair fixture cannot produce a patch");
+            assertNull(AnalysisJobApiTest.data(proposal).get("proposal"));
+            proposalArgs.put("proposal",reportId.value());
+            var verification = AnalysisJobApiTest.call(api,"POST",base+"/repair-verification",CanonicalJson.write(Map.of("arguments",proposalArgs)));
+            assertEquals(409,verification.status());
+            assertEquals("REPAIR_PROPOSAL_MISMATCH",GraphJson.object(GraphJson.object(GraphJson.read(new String(verification.body(),StandardCharsets.UTF_8),GraphJson.Limits.defaults())).get("error")).get("code"));
+            proposalArgs.remove("proposal");
+            proposalArgs.put("diagnosisInput",reportId.value());
+            assertEquals(409,AnalysisJobApiTest.call(api,"POST",base+"/repair-proposal",CanonicalJson.write(Map.of("arguments",proposalArgs))).status());
+            var wrong = new TreeMap<String,String>(args); wrong.put("bundle",reportId.value());
+            assertEquals(409,AnalysisJobApiTest.call(api,"POST",base+"/diagnosis",CanonicalJson.write(Map.of("arguments",wrong))).status());
+            wrong.putAll(args); wrong.put("context",result.snapshot().orElseThrow().value());
+            assertEquals(409,AnalysisJobApiTest.call(api,"POST",base+"/diagnosis",CanonicalJson.write(Map.of("arguments",wrong))).status());
+
+            var queries = new com.evolution.analysis.query.ArchitectureQueryService(store.load(graph).orElseThrow());
+            var model = new FindingDiagnosis(new FindingDiagnosis.Model() {
+                @Override public FindingDiagnosis.Mode mode() { return FindingDiagnosis.Mode.LOCAL_REPLAY; }
+                @Override public com.evolution.analysis.contract.common.VersionedIdentifier version() {
+                    return new com.evolution.analysis.contract.common.VersionedIdentifier("test.foreign-citation","1");
+                }
+                @Override public Optional<FindingDiagnosis.Proposal> propose(FindingDiagnosis.Input input,
+                        java.util.function.Supplier<com.evolution.analysis.query.ArchitectureQuery.StopReason> stop) {
+                    return Optional.of(new FindingDiagnosis.Proposal(input.identity(),List.of(reportId)));
+                }
+            });
+            var absent = model.diagnose(reportId,withSources(finding,List.of()),queries);
+            assertEquals(Optional.of(FindingDiagnosis.Reason.MISSING_SOURCE_EVIDENCE),absent.reason());
+            assertTrue(absent.explanation().isEmpty()); assertTrue(absent.citations().isEmpty());
+            var original = bundle.sources().getFirst();
+            var tampered = new com.evolution.analysis.policy.PolicyEvaluation.SourceEvidence(original.span(),reportId,original.evidence());
+            assertEquals(Optional.of(FindingDiagnosis.Reason.MISSING_SOURCE_EVIDENCE),model.diagnose(reportId,withSources(finding,List.of(tampered)),queries).reason());
+            var rejected = model.diagnose(reportId,finding,queries);
+            assertEquals(Optional.of(FindingDiagnosis.Reason.INVALID_MODEL_CITATIONS),rejected.reason());
+            assertTrue(rejected.explanation().isEmpty()); assertTrue(rejected.citations().isEmpty());
+        }
+    }
+    private static void checkLiveDiagnosis(ArchitectureQueryApi api,String route,String request,String input,List<Object> citations) throws Exception {
+        var server=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0);
+        var requests=new AtomicInteger();
+        var redirected=new AtomicInteger();
+        var completion=new AtomicReference<>("{\"citations\":[1]}");
+        var lastRequest=new AtomicReference<Map<String,Object>>();
+        String model="fixture-model";
+        server.createContext("/v1/chat/completions",exchange -> {
+            try (exchange) {
+                requests.incrementAndGet();
+                lastRequest.set(GraphJson.object(GraphJson.read(new String(exchange.getRequestBody().readAllBytes(),StandardCharsets.UTF_8),
+                        GraphJson.Limits.defaults())));
+                var content=completion.get();
+                if (content==null) {
+                    exchange.sendResponseHeaders(503,-1);
+                    return;
+                }
+                if ("redirect".equals(content)) {
+                    exchange.getResponseHeaders().set("Location","/redirected");
+                    exchange.sendResponseHeaders(307,-1);
+                    return;
+                }
+                var body=CanonicalJson.write(Map.of("model",model,"choices",List.of(Map.of(
+                        "finish_reason","stop","message",Map.of("role","assistant","content",content))))).getBytes(StandardCharsets.UTF_8);
+                exchange.sendResponseHeaders(200,body.length);
+                exchange.getResponseBody().write(body);
+            }
+        });
+        server.createContext("/redirected",exchange -> {
+            try (exchange) {
+                redirected.incrementAndGet();
+                exchange.sendResponseHeaders(503,-1);
+            }
+        });
+        server.start();
+        try {
+            var mismatched=ArchitectureQueryApi.withDemoDiagnosis(api,server.getAddress().getPort(),model,
+                    ContentDigest.sha256Utf8("different diagnosis"));
+            var outOfScope=AnalysisJobApiTest.data(AnalysisJobApiTest.call(mismatched,"POST",route,request));
+            assertEquals("MODEL_SCOPE_NOT_REGISTERED",outOfScope.get("reason"));
+            assertEquals(0,requests.get(),"An unregistered input must never be sent to the model");
+
+            var configured=ArchitectureQueryApi.withDemoDiagnosis(api,server.getAddress().getPort(),model,
+                    new ContentDigest(input));
+            var live=AnalysisJobApiTest.data(AnalysisJobApiTest.call(configured,"POST",route,request));
+            assertEquals(1,requests.get());
+            assertEquals("LIVE",live.get("mode"));
+            assertEquals("CITATIONS_VALIDATED",live.get("status"));
+            assertEquals(input,live.get("input"));
+            assertEquals(List.of(citations.getFirst()),live.get("citations"));
+            Object ordinalSchema=lastRequest.get();
+            for (var field:List.of("response_format","schema","properties","citations","items","enum"))
+                ordinalSchema=GraphJson.object(ordinalSchema).get(field);
+            assertEquals(java.util.stream.IntStream.rangeClosed(1,citations.size()).mapToObj(BigDecimal::valueOf).toList(),ordinalSchema,
+                    "The generation schema must offer citation ordinals, not arbitrary coordinate numbers");
+
+            for (var invalid:List.of("{\"citations\":[17]}","{\"citations\":[1,1]}","{\"citations\":[1],\"claim\":\"extra text\"}")) {
+                completion.set(invalid);
+                var withheld=AnalysisJobApiTest.data(AnalysisJobApiTest.call(configured,"POST",route,request));
+                assertEquals("WITHHELD",withheld.get("status"));
+                assertEquals("INVALID_MODEL_CITATIONS",withheld.get("reason"));
+                assertEquals(List.of(),withheld.get("citations"));
+                assertNull(withheld.get("explanation"));
+            }
+            for (var failed:Arrays.asList(null,"redirect"," ".repeat(33_000))) {
+                completion.set(failed);
+                var unavailable=AnalysisJobApiTest.data(AnalysisJobApiTest.call(configured,"POST",route,request));
+                assertEquals("LIVE",unavailable.get("mode"));
+                assertEquals("MODEL_UNAVAILABLE",unavailable.get("reason"));
+                assertEquals(List.of(),unavailable.get("citations"));
+            }
+            assertEquals(0,redirected.get(),"A model response must never forward the request");
+        } finally {
+            server.stop(0);
+        }
+    }
+    private static com.evolution.analysis.policy.PolicyEvaluation.Finding withSources(
+            com.evolution.analysis.policy.PolicyEvaluation.Finding finding,
+            List<com.evolution.analysis.policy.PolicyEvaluation.SourceEvidence> sources) {
+        var b = finding.bundle();
+        var altered = new com.evolution.analysis.policy.PolicyEvaluation.EvidenceBundle(b.snapshot(),b.analysis(),b.graph(),b.context(),
+                b.policy(),b.policySource(),b.compilation(),b.mapping(),b.configurationSpaces(),b.provenance(),b.upstreamEvidence(),
+                b.rule(),b.request(),b.query(),b.predicate(),b.region(),b.path(),b.relationships(),b.supports(),sources,b.evidence(),b.status(),b.gaps(),b.limitations());
+        return new com.evolution.analysis.policy.PolicyEvaluation.Finding(finding.rule(),finding.kind(),finding.classification(),altered);
     }
     @Test void missingClasspathKeepsTypedGapsAndNeverProducesACompleteJob() throws Exception {
         var runner = runner(true,false,POLICY); var store = new InMemoryGraphStore(); var reports = new PublishedReports();

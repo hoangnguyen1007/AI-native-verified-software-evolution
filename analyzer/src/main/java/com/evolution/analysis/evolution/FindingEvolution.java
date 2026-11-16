@@ -109,8 +109,18 @@ final class FindingEvolution {
             run.index.put("finding-routes",subject.value(),row("scope",scope,"rule",ruleKey,"key",key,"vertices",route.vertices(),"edges",route.edges()));
             var before=lReplay.truth(x,route,lm.closed());
             var after=rReplay.truth(y,route,rm.closed());
+            DemoBindingCensus.Receipt usedCensus=null;
+            if (before!=null && after==null && y==null && rm.closed() && run.bindingCensus.isPresent()) {
+                var census=run.bindingCensus.orElseThrow().receipt();
+                after=rReplay.scopedAbsence(route,census);
+                if (after!=null) {
+                    usedCensus=census;
+                    run.put(Section.PROOFS,scope+"|binding-census|"+census.identity().value(),
+                            row("kind","CLOSED_BINDING_CENSUS","identity",census.identity(),"proof",census));
+                }
+            }
             if (before==null || after==null) reasons.add("ROUTE_TRUTH_UNPROVED");
-            compareRegion(ruleRow,subject,x,y,before,after,reasons);
+            compareRegion(ruleRow,subject,x,y,before,after,usedCensus,reasons);
         }
         for (var unaligned : lm.unaligned()) observation(ruleRow,unaligned,null,Set.of("ROUTE_CORRESPONDENCE_UNPROVED"));
         for (var unaligned : rm.unaligned()) observation(ruleRow,null,unaligned,Set.of("ROUTE_CORRESPONDENCE_UNPROVED"));
@@ -208,6 +218,7 @@ final class FindingEvolution {
         final Operand side;
         final Request request;
         final PolicyEvaluation.RuleResult rule;
+        final boolean replayed;
         final boolean closed;
 
         RuleReplay(Operand side,PolicyEvaluation.RuleResult rule,Request request) throws IOException {
@@ -216,8 +227,9 @@ final class FindingEvolution {
                     && request.scope()==rule.rule().header().scope() && request.relationshipKinds().equals(rule.rule().header().relationships())
                     && request.projection()==Projection.BOUNDED_UNION && request.direction()==Direction.OUTGOING;
             var replay=valid?side.partition().queries.ruleCondition(request,rule.predicate()):null;
-            closed=replay!=null && replay.query().equals(rule.query()) && replay.items().getFirst().equals(rule.region())
-                    && completed(replay) && replay.status()==AssessmentStatus.COMPLETE && rule.status()==AssessmentStatus.COMPLETE
+            replayed=replay!=null && completed(replay) && replay.items().size()==1
+                    && replay.query().equals(rule.query()) && replay.items().getFirst().equals(rule.region());
+            closed=replayed && replay.status()==AssessmentStatus.COMPLETE && rule.status()==AssessmentStatus.COMPLETE
                     && rule.predicate().complete() && side.report().evaluation().status()!=AssessmentStatus.WITHHELD
                     && (side.partition().spring!=null || side.partition().dependenciesClosed(side.context())) && mappingClosed();
         }
@@ -294,6 +306,30 @@ final class FindingEvolution {
             return side.partition().queries.ruleTruth(request,new ArchitectureCondition.RulePredicate(List.of(),true));
         }
 
+        ArchitectureQueryService.RuleTruth scopedAbsence(Route route,DemoBindingCensus.Receipt census) throws IOException {
+            var spring=side.partition().spring;
+            if (!replayed || side.input()!=right.input() || spring==null
+                    || rule.status()==AssessmentStatus.WITHHELD || !rule.findings().isEmpty() || !rule.predicate().alternatives().isEmpty()
+                    || !(rule.rule() instanceof ArchitecturePolicy.Forbidden forbidden)
+                    || !forbidden.header().id().equals("client.no-store") || !forbidden.header().version().equals("2")
+                    || !forbidden.from().equals(named("client")) || !forbidden.to().equals(named("store"))
+                    || request.scope()!=Scope.SPRING_COMPONENT || !request.relationshipKinds().equals(Set.of("spring.selected-binding"))
+                    || !request.population().equals(Population.all()) || request.realization().isPresent() || !spring.supports(census)) return null;
+            var projected=projection();
+            if (!completed(projected) || projected.items().size()!=1) return null;
+            var view=projected.items().getFirst();
+            if (!view.edges().isEmpty() || view.entities().size()!=2) return null;
+            var endpoints=side.partition().endpoints(Scope.SPRING_COMPONENT);
+            var from=view.entities().stream().filter(e -> PolicySelector.match(forbidden.from(),e)==PolicySelector.Match.YES).toList();
+            var to=view.entities().stream().filter(e -> PolicySelector.match(forbidden.to(),e)==PolicySelector.Match.YES).toList();
+            if (from.size()!=1 || to.size()!=1 || route.vertices().size()!=2
+                    || !route.vertices().getFirst().equals(endpoints.get(from.getFirst().identity()))
+                    || !route.vertices().getLast().equals(endpoints.get(to.getFirst().identity()))) return null;
+            var truth=side.partition().queries.ruleTruth(request,new ArchitectureCondition.RulePredicate(List.of(),true));
+            return completed(truth.evaluation()) && truth.closed() && truth.evaluation().items().size()==1
+                    && truth.evaluation().items().getFirst().classification()==Classification.NEVER ? truth : null;
+        }
+
         private ArchitectureQuery.Result<MetricProjection> projection;
         private ArchitectureQuery.Result<MetricProjection> projection() {
             if(projection==null) projection=side.partition().queries.metricProjection(request);
@@ -312,22 +348,27 @@ final class FindingEvolution {
         private Map<String,EdgeView> projectedEdges;
     }
 
+    private static ArchitecturePolicy.Selector named(String name) {
+        return new ArchitecturePolicy.Selector(Set.of(),Set.of(name),Set.of(),Set.of(),Set.of(),Set.of());
+    }
+
     private static boolean completed(ArchitectureQuery.Result<?> result) {
         return result.operation()==Operation.COMPLETED && !result.bounds().truncated()
                 && result.bounds().frontier().isEmpty() && result.continuation().isEmpty();
     }
 
     private void compareRegion(String rule,ContentDigest subject,Finding a,Finding b,
-                               ArchitectureQueryService.RuleTruth x,ArchitectureQueryService.RuleTruth y,Set<String> reasons) throws IOException {
+                               ArchitectureQueryService.RuleTruth x,ArchitectureQueryService.RuleTruth y,
+                               DemoBindingCensus.Receipt census,Set<String> reasons) throws IOException {
         if (left.partition().spring==null && right.partition().spring==null) {
             var before=structural(x,a);var after=structural(y,b);
             if(before==LogicalValue.UNKNOWN || after==LogicalValue.UNKNOWN)reasons.add("ROUTE_TRUTH_UNPROVED");
-            transition(rule,subject,a,b,bucket(before,after),"STRUCTURAL_CONTEXT",truthRef(x),truthRef(y),before,after);
+            transition(rule,subject,a,b,bucket(before,after),"STRUCTURAL_CONTEXT",truthRef(x),truthRef(y),before,after,null);
         } else if (left.partition().spring!=null && right.partition().spring!=null) {
             new FindingRegions(run,scope,left,right).compare(x,y,a,b,(bucket,region,proofLeft,proofRight,before,after) -> {
                 if (!proved(bucket))
                     reasons.add(bucket.equals("PROOF_BUDGET")?"FINDING_PROOF_BUDGET":"ROUTE_REGION_UNPROVED");
-                transition(rule,subject,a,b,bucket,region,proofLeft,proofRight,before,after);
+                transition(rule,subject,a,b,bucket,region,proofLeft,proofRight,before,after,census);
             });
         }
     }
@@ -352,13 +393,15 @@ final class FindingEvolution {
     }
 
     private void transition(String rule,ContentDigest subject,Finding a,Finding b,String bucket,Object region,Object l,Object r,
-                            LogicalValue before,LogicalValue after) throws IOException {
+                            LogicalValue before,LogicalValue after,DemoBindingCensus.Receipt census) throws IOException {
+        if (census!=null) r=row("truth",r,"bindingCensus",census.identity());
         var proof=row("scope",scope,"subject",subject,"region",region,"before",l,"after",r,"leftTruth",before,"rightTruth",after,
                 "rule",rule,"leftReport",left.referenceRow(),"rightReport",right.referenceRow(),"verifier",SnapshotComparison.VERSION);
         var id=hash("evolution.finding-proof:v1",proof);
         run.put(Section.PROOFS,scope+"|finding|"+id.value(),row("identity",id,"kind","FINDING_REGION","proof",proof));
-        var data=row("kind","FINDING_TRANSITION","scope",scope,"subject",subject,"transition",bucket,"region",region,"proof",id,
-                "before",findingRef(left,a),"after",findingRef(right,b),"observationOnly",false);
+        var data=new TreeMap<>(row("kind","FINDING_TRANSITION","scope",scope,"subject",subject,"transition",bucket,"region",region,"proof",id,
+                "before",findingRef(left,a),"after",findingRef(right,b),"observationOnly",false));
+        if (census!=null) data.put("bindingCensus",census.identity().value());
         run.put(Section.FINDINGS,rule+"|"+subject.value()+"|"+id.value(),data);
         used(rule,left,a);used(rule,right,b);
         if (proved(bucket)) run.comparable();

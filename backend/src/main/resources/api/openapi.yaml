@@ -490,10 +490,23 @@ paths:
         required: true
         schema:
           type: string
-          enum: [rules, findings, finding, bundle, policy-metrics, assessment, policy-impact, visual-graph, replay]
+          enum: [rules, findings, finding, bundle, policy-metrics, assessment, policy-impact, visual-graph, replay, diagnosis, repair-proposal, repair-verification]
     post:
       operationId: publishedReportArtifact
-      description: Returns immutable canonical results. Replay checks the published finding predicate and captured witness through bounded canonical region reasoning; it does not execute target code or recompute scores. Missing reports, findings and witnesses are 404.
+      description: >-
+        Returns immutable canonical results or a diagnosis proposal. Replay checks the published finding predicate
+        and captured witness through bounded canonical region reasoning. Diagnosis requires arguments identity (finding
+        digest), bundle (evidence bundle digest), and context (graph context identity), with no page.
+        It returns CITATIONS_VALIDATED or a typed WITHHELD result, labeled LOCAL_REPLAY by default or LIVE when
+        configured by the local operator for one exact diagnosis input. The request cannot select a provider.
+        Repair-proposal adds the exact diagnosisInput digest and returns a reviewable PROPOSED patch with UNVERIFIED status
+        for the registered Java/Spring fixture, or a typed WITHHELD result. Repair independently replays canonical evidence.
+        Missing artifacts return 404. Mismatched pins return 409.
+        Repair-verification also requires the proposal digest and accepts optional published candidateReport and controlReport digests.
+        It returns the pinned verification plan, per-check outcomes and a local verdict.
+        When available, the candidate comparison includes a checked bindingCensus for the sealed demo source inventory.
+        The census supports the resolved route in the demo profile scope and preserves aggregate coverage qualifications.
+        VERIFIED_DEMO requires an operator-pinned capture for the sealed two-profile fixture. VERIFIED requires the general evidence contract.
       requestBody:
         required: true
         content:
@@ -502,7 +515,7 @@ paths:
               type: object
               additionalProperties: false
               properties:
-                arguments: {type: object, description: 'finding/bundle/policy-impact require identity; replay requires finding identity and boolean counterWitness. See the workbench contract for visual-graph operands.'}
+                arguments: {type: object, description: 'Finding/bundle/policy-impact require identity. Replay requires finding identity and boolean counterWitness. Diagnosis requires finding identity, bundle digest and context. Repair-proposal also requires diagnosisInput. See the workbench contract for visual-graph operands.'}
                 page: {$ref: '#/components/schemas/Page'}
       responses:
         '200': {$ref: '#/components/responses/Success'}

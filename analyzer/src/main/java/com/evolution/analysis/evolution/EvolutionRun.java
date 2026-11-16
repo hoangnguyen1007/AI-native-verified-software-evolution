@@ -12,19 +12,22 @@ import static com.evolution.analysis.evolution.EvolutionRows.*;
 import static com.evolution.analysis.evolution.SnapshotComparison.*;
 
 final class EvolutionRun {
-    static final VersionedIdentifier PROVIDER=new VersionedIdentifier("architecture.evolution","m11.6-v1");
+    static final VersionedIdentifier PROVIDER=new VersionedIdentifier("architecture.evolution","m11.6-v2");
     final Request request;
     final ContentDigest requestIdentity;
     final EvolutionIndex index;
     final int size;
     final BooleanSupplier cancelled;
+    final Optional<DemoBindingCensus> bindingCensus;
     private boolean useful,comparable,residual,comparedJava,comparedSpring;
     private final Map<String,List<ReportRef>> reportRefs=new HashMap<>();
     private long findingCells=SpringEvolution.MAX_CELLS;
     private long findingSolves=4096;
 
-    EvolutionRun(Request request,ContentDigest requestIdentity,EvolutionIndex index,int size,BooleanSupplier cancelled) {
+    EvolutionRun(Request request,ContentDigest requestIdentity,EvolutionIndex index,int size,BooleanSupplier cancelled,
+                 Optional<DemoBindingCensus> bindingCensus) {
         this.request=request;this.requestIdentity=requestIdentity;this.index=index;this.size=size;this.cancelled=cancelled;
+        this.bindingCensus=bindingCensus;
     }
 
     Result compare(EvolutionSnapshot.Reader reader,List<ReportRef> reports,ReportReader reportReader,

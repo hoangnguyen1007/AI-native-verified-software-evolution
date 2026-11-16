@@ -16,6 +16,10 @@
         Local asynchronous analysis orchestration and canonical query/report HTTP adapters.
     </description>
 
+    <properties>
+        <rewrite.version>8.87.7</rewrite.version>
+    </properties>
+
     <dependencies>
         <!-- Analyzer domain model -->
         <dependency>
@@ -29,6 +33,10 @@
         <dependency><groupId>com.evolution</groupId><artifactId>analyzer-maven</artifactId><version>${project.version}</version></dependency>
         <dependency><groupId>com.evolution</groupId><artifactId>analyzer-javaparser</artifactId><version>${project.version}</version></dependency>
         <dependency><groupId>com.evolution</groupId><artifactId>analyzer-treesitter</artifactId><version>${project.version}</version></dependency>
+
+        <!-- Trusted in-memory source transformation for the pinned local demo fixture. -->
+        <dependency><groupId>org.openrewrite</groupId><artifactId>rewrite-java</artifactId><version>${rewrite.version}</version></dependency>
+        <dependency><groupId>org.openrewrite</groupId><artifactId>rewrite-java-21</artifactId><version>${rewrite.version}</version><scope>runtime</scope></dependency>
 
         <!-- First-party generated-code journey; no target lifecycle/plugin execution. -->
         <dependency><groupId>io.grpc</groupId><artifactId>grpc-protobuf</artifactId><version>1.63.0</version><scope>test</scope></dependency>

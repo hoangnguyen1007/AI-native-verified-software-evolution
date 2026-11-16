@@ -1069,6 +1069,7 @@ kbd {
 .human-explain-banner p { margin: 3px 0; font-size: 12.5px; line-height: 1.6; color: var(--text-2); }
 .human-action-hint { margin-top: 7px !important; padding-top: 7px; border-top: 1px dashed rgba(245,158,11,0.28); color: var(--warn) !important; font-weight: 550; }
 .source-coord-pill { display: inline-flex; align-items: center; padding: 3px 9px; border-radius: 5px; background: var(--surface-2); border: 1px solid var(--line-mid); font-family: var(--font-mono); font-size: 11.5px; color: var(--cyan); margin: 3px 0 10px; }
+.diagnosis-coordinate { display: block; overflow-wrap: anywhere; }
 .gap-summary-box { padding: 14px 16px; border-radius: 9px; border: 1px solid var(--line); background: var(--surface-2); margin-bottom: 16px; }
 .gap-group-card { padding: 11px 13px; border-radius: 7px; border: 1px solid var(--line); background: var(--surface); }
 
