@@ -25,6 +25,8 @@ public final class RepositoryConnections {
     private final Optional<LocalAnalysisRunner.PolicyInput> defaultPolicy;
     private final GitHostPolicy hostPolicy;
     private final Map<String,Connection> connections = new LinkedHashMap<>();
+    private final Map<ContentDigest,LocalAnalysisRunner.PolicyInput> policies = new LinkedHashMap<>();
+    private final Map<RepositoryIdentity,Path> localCheckouts = new LinkedHashMap<>();
     public RepositoryConnections(AnalysisJobs jobs, Path jdk, int release, Path cache, Path directory, Optional<LocalAnalysisRunner.PolicyInput> policy) {
         this(jobs,jdk,release,cache,directory,policy,"git");
     }
@@ -35,19 +37,44 @@ public final class RepositoryConnections {
     public RepositoryConnections(AnalysisJobs jobs,Path jdk,int release,Path cache,Path directory,Optional<LocalAnalysisRunner.PolicyInput> policy,String gitExecutable,GitHostPolicy hostPolicy){
         this.jobs=jobs; this.jdk=jdk; this.release=release; this.cache=cache; this.directory=directory; this.defaultPolicy=policy; this.gitExecutable=gitExecutable;
         this.hostPolicy=Objects.requireNonNull(hostPolicy);
+        policy.ifPresent(p -> policies.put(ContentDigest.sha256(p.bytes()),p));
         try(var catalog=new ConnectionCatalog(directory.resolve("connections"))){for(var saved:catalog.load())connect(saved.source(),saved.policy(),false);}
         catch(IOException unavailable){throw new IllegalStateException("Connection catalog unavailable",unavailable);}
     }
     public synchronized void describe(String setup,String label,String kind,RepositoryIdentity repository) {
         connections.put(setup,new Connection(setup,label,kind,repository));
     }
+    public synchronized void describeLocal(String setup,String label,RepositoryIdentity repository,Path checkout,Optional<LocalAnalysisRunner.PolicyInput> policy) {
+        describe(setup,label,"LOCAL",repository);
+        if (checkout!=null) localCheckouts.put(repository,checkout.toAbsolutePath().normalize());
+        policy.ifPresent(p -> policies.put(ContentDigest.sha256(p.bytes()),p));
+    }
+    public synchronized Optional<LocalAnalysisRunner.PolicyInput> policy(ContentDigest digest) {
+        return Optional.ofNullable(policies.get(digest));
+    }
+    public synchronized Optional<Path> localCheckout(RepositoryIdentity repository) {
+        return Optional.ofNullable(localCheckouts.get(repository));
+    }
     public synchronized List<Connection> list() { return List.copyOf(connections.values()); }
+    public synchronized boolean has(String setupId) { return connections.containsKey(setupId); }
+    public synchronized void disconnect(String setupId) {
+        if (setupId == null || setupId.isBlank()) throw new IllegalArgumentException("Invalid setup");
+        var removed = connections.remove(setupId);
+        if (removed == null) throw new IllegalArgumentException("Connection not found: " + setupId);
+        jobs.unregister(setupId);
+        try (var catalog = new ConnectionCatalog(directory.resolve("connections"))) {
+            catalog.delete(setupId);
+        } catch (IOException unavailable) {
+            throw new IllegalStateException("Connection catalog unavailable", unavailable);
+        }
+    }
     public synchronized Connection connect(String source,Optional<String> policyText) {
         return connect(source,policyText,true);
     }
     private synchronized Connection connect(String source,Optional<String> policyText,boolean persist) {
         if (source == null || source.isBlank() || source.length()>4096 || source.indexOf('\n')>=0 || source.indexOf('\r')>=0) throw new IllegalArgumentException("Invalid source");
         var policy=policyText.map(text -> new LocalAnalysisRunner.PolicyInput(text.getBytes(java.nio.charset.StandardCharsets.UTF_8),Scope.TYPE)).or(() -> defaultPolicy);
+        policy.ifPresent(p -> policies.put(ContentDigest.sha256(p.bytes()),p));
         boolean remote = source.contains("://") || source.startsWith("git@");
         String coordinate, label; Path local=null;
         if (remote) { var uri=GitHostPolicy.syntax(source);if(uri.getScheme().equals("ssh")){if(hostPolicy.ssh(uri.getHost()).isEmpty())throw new IllegalArgumentException("SSH identity required");coordinate=uri.toASCIIString();}else coordinate=configuredRemote(uri); label=URI.create(coordinate).getHost()+URI.create(coordinate).getPath().replaceFirst("\\.git$",""); }
@@ -69,7 +96,10 @@ public final class RepositoryConnections {
         AnalysisJobs.Runner runner=remote ? control -> cloneAndRun(coordinate,repository,policy,control) : new LocalAnalysisRunner(input(sourcePath,repository,Optional.empty(),true,policy),directory.resolve("acquisition"));
         jobs.register(new AnalysisJobs.Registration(setup,runner));
         if(persist)try(var catalog=new ConnectionCatalog(directory.resolve("connections"))){catalog.save(id,source,policyText);}catch(IOException unavailable){throw new IllegalStateException("Connection catalog unavailable",unavailable);}
-        var connection=new Connection(id,label,remote ? URI.create(coordinate).getScheme().equals("ssh")?"GIT_SSH":"GIT_HTTPS" : "LOCAL",repository); connections.put(id,connection); return connection;
+        var connection=new Connection(id,label,remote ? URI.create(coordinate).getScheme().equals("ssh")?"GIT_SSH":"GIT_HTTPS" : "LOCAL",repository);
+        connections.put(id,connection);
+        if (!remote && sourcePath!=null) localCheckouts.put(repository,sourcePath);
+        return connection;
     }
     private String configuredRemote(URI uri){
         try{return remote(uri.toASCIIString());}

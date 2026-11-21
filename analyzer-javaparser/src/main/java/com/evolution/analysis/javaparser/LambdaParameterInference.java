@@ -15,7 +15,8 @@ final class LambdaParameterInference {
     static final DataKey<Boolean> IMPLICIT=new DataKey<>() {};
     static final DataKey<Boolean> INPUT=new DataKey<>() {};
     private LambdaParameterInference() {}
-    static void prepare(CompilationUnit unit) {
+    static boolean prepare(CompilationUnit unit) {
+        boolean rewrote = false;
         for(var lambda:unit.findAll(LambdaExpr.class)) {
             if(lambda.getParameters().isEmpty()||lambda.getParameters().stream().anyMatch(p->!p.getType().isUnknownType()&&!p.getType().isVarType()))continue;
             try {
@@ -53,6 +54,7 @@ final class LambdaParameterInference {
                     type.setData(written.isUnknownType()?IMPLICIT:RecordPatternInference.INFERRED,true);types.add(type);
                 }
                 for(int i=0;i<types.size();i++)lambda.getParameter(i).setType(types.get(i));
+                rewrote = true;
                 clearTypes(lambda);
                 normalizeInputs(lambda);
             }catch(RuntimeException unavailable) {
@@ -62,7 +64,10 @@ final class LambdaParameterInference {
         }
         // An outer lambda's rewrite can invalidate nested input caches. Restore
         // proven inputs once, without depending on source traversal order.
-        for(var lambda:unit.findAll(LambdaExpr.class))if(lambda.getParameters().stream().anyMatch(p->p.getType().containsData(IMPLICIT)||p.getType().containsData(RecordPatternInference.INFERRED)))normalizeInputs(lambda);
+        if (rewrote) {
+            for(var lambda:unit.findAll(LambdaExpr.class))if(lambda.getParameters().stream().anyMatch(p->p.getType().containsData(IMPLICIT)||p.getType().containsData(RecordPatternInference.INFERRED)))normalizeInputs(lambda);
+        }
+        return rewrote;
     }
     private static ResolvedType explicitFactoryReturn(MethodCallExpr call) {
         if(call.getTypeArguments().isPresent())throw new IllegalArgumentException("Explicit factory arguments require their own substitution");

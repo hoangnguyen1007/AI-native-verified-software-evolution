@@ -22,7 +22,9 @@ Milestone scope sequences implementation delivery, but never serves as a ceiling
 
 **CONFIRMED human decision (2026-11-15):** deliver one [full-pipeline demo](roadmap.md#full-pipeline-demo) across the former SE121, SE122 and KLTN boundaries. Track A and Track B are the existing analysis, product and evolution foundations. The same demo adds graph-guided AI diagnosis, repair planning and patch/refactoring, isolated differential and targeted mutation verification, and local Verified PR/CI output. See [ADR-011](decisions/ADR-011-full-pipeline-demo.md) for the G7/M11 closure and the verification policy.
 
-Prioritize finishing the integrated journey with a small, pinned setup. Retain the comprehensive-coverage mandate and all evidence, safety and correctness invariants. Verification is proportional to the behavior changed and the claim made; campaigns, publication packaging and enterprise qualification are separate work only when needed.
+The pinned delivery prioritized finishing the integrated journey with a small, reproducible setup. The comprehensive-coverage mandate and evidence, safety and correctness invariants remain in force. Verification is proportional to the behavior changed and the claim made; campaigns, publication packaging and enterprise qualification are separate work only when needed.
+
+**CONFIRMED human direction (2026-11-16):** move backend repair beyond the completed fixture. Provide usable recipes and optional AI-written edits, then check changed source with a compiler before generating a Git patch. Use captured inputs and retain the distinction between syntax, verified correctness and unsupported cases. The [repository repair contract](architecture/captured-repository-repair.md) describes the current scope and operating boundary; the earlier fixture's evidence remains intact.
 
 ## Durable Architectural Constraints
 

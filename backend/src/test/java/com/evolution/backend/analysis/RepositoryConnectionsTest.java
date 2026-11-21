@@ -49,6 +49,25 @@ class RepositoryConnectionsTest {
             assertThrows(IllegalArgumentException.class,() -> connections.connect(root.resolve("cache").toString(),Optional.of("x".repeat(262145))));
         }
     }
+    @Test void disconnectsRepositoryAndCleansCatalogOnDisk() throws Exception {
+        var source = Files.createDirectory(root.resolve("to-delete"));
+        var cache = Files.createDirectory(root.resolve("cache-delete"));
+        try (var jobs = new AnalysisJobs(List.of(), new InMemoryGraphStore(), new PublishedReports(), AnalysisJobs.Limits.defaults())) {
+            var connections = new RepositoryConnections(jobs, Path.of(System.getProperty("java.home")), 21, cache, root, Optional.empty());
+            var conn = connections.connect(source.toString(), Optional.empty());
+            assertEquals(1, connections.list().size());
+            assertEquals(1, jobs.setups().size());
+
+            connections.disconnect(conn.setup());
+            assertEquals(0, connections.list().size());
+            assertEquals(0, jobs.setups().size());
+        }
+        try (var jobs = new AnalysisJobs(List.of(), new InMemoryGraphStore(), new PublishedReports(), AnalysisJobs.Limits.defaults())) {
+            var connections = new RepositoryConnections(jobs, Path.of(System.getProperty("java.home")), 21, cache, root, Optional.empty());
+            assertEquals(0, connections.list().size());
+            assertEquals(0, jobs.setups().size());
+        }
+    }
     @Test void rejectsCredentialedLocalNetworkAndExecutableRemoteOperands() {
         for (var source : List.of("http://github.com/team/repo","https://user:secret@github.com/team/repo",
                 "ssh://git@github.com/team/repo","https://127.0.0.1/repo","https://github.com:444/team/repo",

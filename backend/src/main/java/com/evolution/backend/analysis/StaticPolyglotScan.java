@@ -17,14 +17,26 @@ import java.util.function.BooleanSupplier;
 /** Bundled grammar parsing of immutable bytes, one file at a time. No project
  * compiler, plugin, interpreter, model request or target library is loaded. */
 public final class StaticPolyglotScan {
+    private static final int MEMORY_ROW_CAP = 65_536;
+    private static final Set<String> BASELINE_LANGUAGES = LanguageProfile.baseline().stream()
+            .map(LanguageProfile::language).collect(java.util.stream.Collectors.toUnmodifiableSet());
     public record Result(SemanticTables.Table records,Map<String,Long> categories,Map<String,Long> failures,long documents,long parsed,long workerFileBytes) {
         public Result{categories=Map.copyOf(categories);failures=Map.copyOf(failures);}
         public Map<String,Object> summary(){var values=new TreeMap<String,Object>(Map.of("provider",TreeSitterSourceFrontend.provider(),"records",records.identity(),"documents",documents,"parsedDocuments",parsed,"categories",categories,"failures",failures,"trust","SOURCE_SYNTAX","boundCallTargets",false,"workerFileBytes",workerFileBytes,"population","LANGUAGE_DOCUMENT_ATTEMPTS"));values.put("javaRpcProvider",JavaGrpcSourceFrontend.PROVIDER);values.put("javaRpcAcquisition","SELECTIVE_SOURCE_SYNTAX");return Map.copyOf(values);}
     }
     public Result run(PolyglotInventory.Report inventory,SemanticTables tables,RepositoryContentStore content,Path scratch,BooleanSupplier cancelled)throws IOException {
+        return run(inventory,tables,content,scratch,cancelled,Map.of(),false);
+    }
+    public Result run(PolyglotInventory.Report inventory,SemanticTables tables,RepositoryContentStore content,Path scratch,BooleanSupplier cancelled,
+                      Map<ContentDigest,byte[]> verifiedBytes,boolean fastArchitecture)throws IOException {
         var categories=new TreeMap<String,Long>();var failures=new TreeMap<String,Long>();long documents=0,parsed=0;
         int fileBudget=(int)Math.min(64_000_000L,Math.max(1_000_000L,Runtime.getRuntime().maxMemory()/16));
-        try(var index=SqliteSemanticCensusIndex.temporary(scratch,65536);var input=tables.open(inventory.entries(),cancelled)) {
+        var supportedGrammars=TreeSitterSourceFrontend.languages();
+        var treeSitter=new TreeSitterSourceFrontend();
+        var javaGrpc=new JavaGrpcSourceFrontend();
+        var memoryRows=new TreeMap<String,SemanticTables.Row>();
+        SemanticRootCensus.Index spilled=null;
+        try(var input=tables.open(inventory.entries(),cancelled)) {
             SemanticTables.Row row;while((row=input.next())!=null) {
                 if(!"FILE".equals(row.fields().get("kind"))||!"ACQUIRED".equals(row.fields().get("disposition")))continue;
                 var languages=GraphJson.array(row.fields().get("languageCandidates")).stream().map(GraphJson::string).toList();
@@ -32,48 +44,74 @@ public final class StaticPolyglotScan {
                     String path=new LogicalPath(GraphJson.string(row.fields().get("rawPath"))).utf8().orElse("");
                     String language=hinted.equals("typescript")&&path.endsWith(".tsx")?"tsx":hinted;
                     // Unknown/document languages retain the full inventory and native obligations.
-                    if(!hinted.equals("protobuf")&&LanguageProfile.baseline().stream().noneMatch(p->p.language().equals(hinted)))continue;
+                    if(!hinted.equals("protobuf")&&!BASELINE_LANGUAGES.contains(hinted))continue;
                     var source=PolyglotScan.handle(row.fields().get("content"));
                     byte[] javaBytes=null;IOException javaFailure=null;
-                    if(hinted.equals("java"))try{javaBytes=source(content,source,fileBudget);if(!JavaGrpcSourceFrontend.candidate(javaBytes))continue;}catch(IOException failure){javaFailure=failure;}
+                    if(hinted.equals("java"))try{javaBytes=source(content,source,fileBudget,verifiedBytes);if(!JavaGrpcSourceFrontend.candidate(javaBytes))continue;}catch(IOException failure){javaFailure=failure;}
                     documents++;String document=KnowledgeGraph.derivedIdentity("syntax-document",List.of(inventory.inventory(),row.key(),hinted));
                     String provider=hinted.equals("java")?JavaGrpcSourceFrontend.PROVIDER:TreeSitterSourceFrontend.provider();
                     var metadata=new TreeMap<String,Object>();metadata.put("rowType","DOCUMENT");metadata.put("document",document);metadata.put("path",row.fields().get("rawPath"));metadata.put("language",hinted);metadata.put("content",source);metadata.put("workerFileBytes",fileBudget);metadata.put("provider",provider);
                     try {
-                        if(!hinted.equals("java")&&!TreeSitterSourceFrontend.languages().contains(language))throw new IOException("SYNTAX_GRAMMAR_UNAVAILABLE");
-                        if(javaFailure!=null)throw javaFailure;byte[] bytes=javaBytes==null?source(content,source,fileBudget):javaBytes;
+                        if(!hinted.equals("java")&&!supportedGrammars.contains(language))throw new IOException("SYNTAX_GRAMMAR_UNAVAILABLE");
+                        if(javaFailure!=null)throw javaFailure;byte[] bytes=javaBytes==null?source(content,source,fileBudget,verifiedBytes):javaBytes;
+                        var spillRef=new SemanticRootCensus.Index[]{spilled};
                         TreeSitterSourceFrontend.Sink receive=fact->{
                             var fields=new TreeMap<String,Object>();fields.put("rowType","FACT");fields.put("document",document);fields.put("content",source);fields.put("language",hinted);fields.put("path",metadata.get("path"));fields.put("semanticBinding","NOT_ESTABLISHED");fields.put("provider",provider);
-                            fields.put("fact",GraphJson.object(GraphJson.read(CanonicalJson.write(fact),GraphJson.Limits.defaults())));
+                            fields.put("fact",fact.toMap());
                             String key=CanonicalJson.sha256(fact.category().startsWith("RPC_")?List.of(document,fact.category(),fact.nodeKind(),fact.span(),fact.name(),fact.attributes()):List.of(document,fact.category(),fact.nodeKind(),fact.span())).value();
-                            index.put("syntax",key,new SemanticTables.Row(SemanticTables.Kind.OBSERVATION,key,inventory.inventory(),fields));categories.merge(hinted+":"+fact.category(),1L,Long::sum);
+                            var obsRow=new SemanticTables.Row(SemanticTables.Kind.OBSERVATION,key,inventory.inventory(),fields);
+                            putSyntaxRow(memoryRows,spillRef,scratch,key,obsRow);
+                            categories.merge(hinted+":"+fact.category(),1L,Long::sum);
                         };
                         TreeSitterSourceFrontend.Summary summary;
                         if(hinted.equals("java")) {
-                            var parsedJava=new JavaGrpcSourceFrontend().parse(bytes,fact->receive.accept(new TreeSitterSourceFrontend.Fact(fact.category(),fact.nodeKind(),fact.name(),fact.written(),fact.span(),fact.owner(),fact.recovered(),fact.attributes())),cancelled);
+                            var parsedJava=javaGrpc.parse(bytes,fact->receive.accept(new TreeSitterSourceFrontend.Fact(fact.category(),fact.nodeKind(),fact.name(),fact.written(),fact.span(),fact.owner(),fact.recovered(),fact.attributes())),cancelled);
                             summary=new TreeSitterSourceFrontend.Summary(parsedJava.nodes(),parsedJava.facts(),parsedJava.errors(),parsedJava.grammar(),parsedJava.toolIdentity());
-                        } else summary=new TreeSitterSourceFrontend().parse(language,bytes,receive,cancelled);
-                        parsed++;metadata.put("status",summary.errors()==0?(hinted.equals("protobuf")?"SCHEMA_DECLARATIONS_OBSERVED":"PARSED"):"RECOVERED_SYNTAX");metadata.put("summary",GraphJson.object(GraphJson.read(CanonicalJson.write(summary),GraphJson.Limits.defaults())));
+                        } else summary=treeSitter.parse(language,bytes,receive,cancelled,fastArchitecture);
+                        spilled=spillRef[0];
+                        parsed++;metadata.put("status",summary.errors()==0?(hinted.equals("protobuf")?"SCHEMA_DECLARATIONS_OBSERVED":"PARSED"):"RECOVERED_SYNTAX");metadata.put("summary",summary.toMap());
                         if(summary.errors()>0)failures.merge(hinted+":SYNTAX_ERROR",1L,Long::sum);
                     }catch(IOException|IllegalArgumentException failure) {
                         if(cancelled.getAsBoolean()||Thread.currentThread().isInterrupted())throw new IOException("SYNTAX_CANCELLED");
                         String reason=failure.getMessage();if(reason==null||!reason.matches("[A-Z][A-Z0-9_]{0,100}"))reason="SYNTAX_SOURCE_OR_PROVIDER_FAILED";
                         metadata.put("status",reason);failures.merge(hinted+":"+reason,1L,Long::sum);
                     }
-                    String key="document:"+document;index.put("syntax",key,new SemanticTables.Row(SemanticTables.Kind.OBSERVATION,key,inventory.inventory(),metadata));
+                    String key="document:"+document;
+                    var spillRef=new SemanticRootCensus.Index[]{spilled};
+                    putSyntaxRow(memoryRows,spillRef,scratch,key,new SemanticTables.Row(SemanticTables.Kind.OBSERVATION,key,inventory.inventory(),metadata));
+                    spilled=spillRef[0];
                 }
             }
-            try(var rows=index.rows("syntax",false)) {
+            if(spilled==null) {
+                return new Result(tables.write(SemanticTables.Kind.OBSERVATION,memoryRows.values().iterator(),cancelled),categories,failures,documents,parsed,fileBudget);
+            }
+            try(var rows=spilled.rows("syntax",false)) {
                 var iterator=new Iterator<SemanticTables.Row>(){SemanticTables.Row next;boolean end;
                     public boolean hasNext(){if(next!=null)return true;if(end)return false;try{next=rows.next();end=next==null;return !end;}catch(IOException failure){throw new UncheckedIOException(failure);}}
                     public SemanticTables.Row next(){if(!hasNext())throw new NoSuchElementException();var value=next;next=null;return value;}
                 };
                 return new Result(tables.write(SemanticTables.Kind.OBSERVATION,iterator,cancelled),categories,failures,documents,parsed,fileBudget);
             }catch(UncheckedIOException failure){throw failure.getCause();}
+        } finally {
+            if(spilled!=null)try{spilled.close();}catch(IOException ignored){}
         }
     }
-    private static byte[] source(RepositoryContentStore content,ContentHandle source,int fileBudget)throws IOException {
+    private static void putSyntaxRow(TreeMap<String,SemanticTables.Row> memoryRows,SemanticRootCensus.Index[] spillRef,Path scratch,String key,SemanticTables.Row row)throws IOException {
+        if(spillRef[0]!=null){spillRef[0].put("syntax",key,row);return;}
+        memoryRows.put(key,row);
+        if(memoryRows.size()>=MEMORY_ROW_CAP) {
+            var index=SqliteSemanticCensusIndex.temporary(scratch,65536);
+            for(var entry:memoryRows.entrySet())index.put("syntax",entry.getKey(),entry.getValue());
+            memoryRows.clear();
+            spillRef[0]=index;
+        }
+    }
+    private static byte[] source(RepositoryContentStore content,ContentHandle source,int fileBudget,Map<ContentDigest,byte[]> verifiedBytes)throws IOException {
         if(source.size()>fileBudget)throw new IOException("SYNTAX_FILE_WORKER_REQUIRED");
+        if(verifiedBytes!=null&&!verifiedBytes.isEmpty()) {
+            byte[] cached=verifiedBytes.get(source.digest());
+            if(cached!=null&&cached.length==source.size())return cached;
+        }
         try(var captured=content.open(source)){
             byte[] bytes=captured.readNBytes(Math.toIntExact(source.size())+1);
             if(bytes.length!=source.size())throw new IOException("SYNTAX_SOURCE_SIZE_MISMATCH");

@@ -30,8 +30,11 @@ public final class CapturedWorkbenchAcceptance {
             return new AnalysisJobs.Outcome(AnalysisJobs.Completion.PARTIAL,Optional.of(graph),results,List.of(),Optional.empty(),Optional.empty(),List.of());
         };
         try(var jobs=new AnalysisJobs(List.of(new AnalysisJobs.Registration(setup,runner)),store,reports,AnalysisJobs.Limits.defaults())){
-            var api=ArchitectureQueryApi.withConfiguredDemoRepairCapture(new ArchitectureQueryApi(store,reports,ApiLimits.defaults(),jobs));
-            try(var server=new ArchitectureHttpServer(ArchitectureQueryApi.withConfiguredDemoDiagnosis(api),Integer.parseInt(args[2]))){
+            var api=ArchitectureQueryApi.withConfiguredCapturedRepairCapture(
+                    ArchitectureQueryApi.withConfiguredDemoRepairCapture(new ArchitectureQueryApi(store,reports,ApiLimits.defaults(),jobs)));
+            try(var server=new ArchitectureHttpServer(ArchitectureQueryApi.withConfiguredLiveDiagnosis(
+                    ArchitectureQueryApi.withConfiguredRepairModel(
+                            ArchitectureQueryApi.withConfiguredDemoDiagnosis(api))),Integer.parseInt(args[2]))){
                 server.start();System.out.println("Source-generated acceptance workbench: "+server.uri());new CountDownLatch(1).await();
             }
         }

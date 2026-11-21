@@ -31,6 +31,11 @@ import java.util.TreeMap;
  * rejected. Collections retain their contract-defined order; sets are sorted by encoded value.
  */
 public final class CanonicalJson {
+    /** Custom canonical JSON projection for types with optional backward-compatible fields. */
+    public interface CanonicalValue {
+        Object canonicalValue();
+    }
+
     private record RecordField(String name,Method accessor) {}
     /** Cache class metadata only. Retaining accessors avoids repeated reflection inflation in sort comparisons. */
     private static final ClassValue<List<RecordField>> RECORD_FIELDS=new ClassValue<>() {
@@ -42,6 +47,13 @@ public final class CanonicalJson {
             }).toList();
         }
     };
+    private static final ThreadLocal<MessageDigest> SHA256_DIGEST = ThreadLocal.withInitial(() -> {
+        try {
+            return MessageDigest.getInstance("SHA-256");
+        } catch (NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException("Canonical digest unavailable", impossible);
+        }
+    });
 
     private CanonicalJson() {}
 
@@ -61,6 +73,7 @@ public final class CanonicalJson {
     }
     private static boolean fits(Object value,int depth,int maxDepth,long[] remaining){
         if(value instanceof Optional<?> optional)return fits(optional.orElse(null),depth,maxDepth,remaining);
+        if(value instanceof CanonicalValue custom)return fits(custom.canonicalValue(),depth,maxDepth,remaining);
         if(depth>maxDepth||--remaining[0]<0)return false;
         if(value==null||value instanceof CanonicalIdentifier||value instanceof CharSequence||value instanceof Character||value instanceof Number||value instanceof Boolean||value instanceof Enum<?>||value instanceof URI||value instanceof Instant)return true;
         if(value instanceof Map<?,?> map){for(Object member:map.values())if(!fits(member,depth+1,maxDepth,remaining))return false;return true;}
@@ -73,11 +86,130 @@ public final class CanonicalJson {
 
     /** Same canonical UTF-8 preimage as write(...), without materializing a whole-document string. */
     public static ContentDigest sha256(Object value){
-        try{
-            var digest=MessageDigest.getInstance("SHA-256");
-            try(var writer=new BufferedWriter(new OutputStreamWriter(new DigestOutputStream(OutputStream.nullOutputStream(),digest),StandardCharsets.UTF_8),8192)){append(value,writer);}
-            return new ContentDigest("sha256:"+HexFormat.of().formatHex(digest.digest()));
-        }catch(IOException|NoSuchAlgorithmException impossible){throw new IllegalStateException("Canonical digest unavailable",impossible);}
+        if (value instanceof com.evolution.analysis.frontend.FrontendResult frontend) {
+            return frontend.contentDigest();
+        }
+        return computeSha256(value);
+    }
+
+    public static ContentDigest computeSha256(Object value){
+        var digest = SHA256_DIGEST.get();
+        digest.reset();
+        try (var writer = new Utf8DigestWriter(digest)) {
+            append(value, writer);
+        } catch (IOException impossible) {
+            throw new IllegalStateException("Canonical digest unavailable", impossible);
+        }
+        return new ContentDigest("sha256:" + HexFormat.of().formatHex(digest.digest()));
+    }
+
+    /** Unsynchronized UTF-8 streaming writer feeding MessageDigest without per-char monitor locks. */
+    private static final class Utf8DigestWriter extends Writer {
+        private final MessageDigest digest;
+        private final byte[] buf = new byte[4096];
+        private int pos;
+        private char highSurrogate;
+
+        Utf8DigestWriter(MessageDigest digest) {
+            this.digest = digest;
+        }
+
+        private void flushBuf() {
+            if (pos > 0) {
+                digest.update(buf, 0, pos);
+                pos = 0;
+            }
+        }
+
+        private void putByte(int b) {
+            if (pos == buf.length) flushBuf();
+            buf[pos++] = (byte) b;
+        }
+
+        private void putChar(char c) {
+            if (highSurrogate != 0) {
+                char hi = highSurrogate;
+                highSurrogate = 0;
+                if (Character.isLowSurrogate(c)) {
+                    int cp = Character.toCodePoint(hi, c);
+                    if (pos + 4 > buf.length) flushBuf();
+                    buf[pos++] = (byte) (0xF0 | (cp >>> 18));
+                    buf[pos++] = (byte) (0x80 | ((cp >>> 12) & 0x3F));
+                    buf[pos++] = (byte) (0x80 | ((cp >>> 6) & 0x3F));
+                    buf[pos++] = (byte) (0x80 | (cp & 0x3F));
+                    return;
+                }
+                putByte('?');
+            }
+            if (c < 0x80) {
+                if (pos == buf.length) flushBuf();
+                buf[pos++] = (byte) c;
+            } else if (c < 0x800) {
+                if (pos + 2 > buf.length) flushBuf();
+                buf[pos++] = (byte) (0xC0 | (c >>> 6));
+                buf[pos++] = (byte) (0x80 | (c & 0x3F));
+            } else if (Character.isHighSurrogate(c)) {
+                highSurrogate = c;
+            } else if (Character.isLowSurrogate(c)) {
+                putByte('?');
+            } else {
+                if (pos + 3 > buf.length) flushBuf();
+                buf[pos++] = (byte) (0xE0 | (c >>> 12));
+                buf[pos++] = (byte) (0x80 | ((c >>> 6) & 0x3F));
+                buf[pos++] = (byte) (0x80 | (c & 0x3F));
+            }
+        }
+
+        @Override
+        public void write(int c) {
+            putChar((char) c);
+        }
+
+        @Override
+        public void write(char[] cbuf, int off, int len) {
+            int end = off + len;
+            for (int i = off; i < end; i++) putChar(cbuf[i]);
+        }
+
+        @Override
+        public void write(String str, int off, int len) {
+            int end = off + len;
+            for (int i = off; i < end; i++) putChar(str.charAt(i));
+        }
+
+        @Override
+        public Writer append(CharSequence csq) {
+            String s = csq == null ? "null" : csq.toString();
+            write(s, 0, s.length());
+            return this;
+        }
+
+        @Override
+        public Writer append(CharSequence csq, int start, int end) {
+            CharSequence cs = csq == null ? "null" : csq;
+            for (int i = start; i < end; i++) putChar(cs.charAt(i));
+            return this;
+        }
+
+        @Override
+        public Writer append(char c) {
+            putChar(c);
+            return this;
+        }
+
+        @Override
+        public void flush() {
+            flushBuf();
+        }
+
+        @Override
+        public void close() {
+            if (highSurrogate != 0) {
+                highSurrogate = 0;
+                putByte('?');
+            }
+            flushBuf();
+        }
     }
 
     private static void append(Object value, Appendable output) throws IOException {
@@ -85,6 +217,8 @@ public final class CanonicalJson {
             output.append("null");
         } else if (value instanceof Optional<?> optional) {
             append(optional.orElseThrow(), output);
+        } else if (value instanceof CanonicalValue custom) {
+            append(custom.canonicalValue(), output);
         } else if (value instanceof CanonicalIdentifier identifier) {
             appendString(identifier.value(), output);
         } else if (value instanceof String string) {
@@ -134,6 +268,26 @@ public final class CanonicalJson {
     }
 
     private static void appendMap(Map<?, ?> map, Appendable output) throws IOException {
+        if (map instanceof java.util.SortedMap<?, ?> sortedMap && sortedMap.comparator() == null) {
+            for (Object key : sortedMap.keySet()) {
+                if (!(key instanceof String)) {
+                    throw new IllegalArgumentException("Canonical JSON map keys must be strings");
+                }
+            }
+            output.append('{');
+            boolean first = true;
+            for (Map.Entry<?, ?> entry : sortedMap.entrySet()) {
+                if (!first) {
+                    output.append(',');
+                }
+                first = false;
+                appendString((String) entry.getKey(), output);
+                output.append(':');
+                append(entry.getValue(), output);
+            }
+            output.append('}');
+            return;
+        }
         TreeMap<String, Object> sorted = new TreeMap<>();
         map.forEach((key, value) -> {
             if (!(key instanceof String stringKey)) {

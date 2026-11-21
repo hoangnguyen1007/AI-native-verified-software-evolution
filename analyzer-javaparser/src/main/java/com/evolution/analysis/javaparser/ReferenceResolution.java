@@ -149,17 +149,63 @@ final class ReferenceResolution {
         target=groundTarget(target);
         return target.asReferenceType().typeParametersMap().replaceAll(FunctionalInterfaceLogic.getFunctionalMethod(target).orElseThrow().returnType());
     }
+    private static final DataKey<Map<String, Optional<ResolvedValueDeclaration>>> VALUE_CACHE = new DataKey<>() {};
+
     static Optional<ResolvedValueDeclaration> value(MethodReferenceExpr reference, String name) {
+        Map<String, Optional<ResolvedValueDeclaration>> cache = reference.containsData(VALUE_CACHE)
+                ? reference.getData(VALUE_CACHE) : null;
+        if (cache != null) {
+            var cached = cache.get(name);
+            if (cached != null) return cached;
+        }
         // The grammar represents an ambiguous receiver such as field::method as TypeExpr.
         // Reparse only for binding; all emitted evidence uses the original node's span.
+        Optional<ResolvedValueDeclaration> resolved = Optional.empty();
         Expression receiver = null;
         try {
-            receiver = StaticJavaParser.parseExpression(name);
+            receiver = buildSimpleOrDottedReceiver(name);
+            if (receiver == null) {
+                receiver = StaticJavaParser.parseExpression(name);
+            }
             receiver.setParentNode(reference);
-            if (receiver instanceof NameExpr simple) return Optional.of(simple.resolve());
-            if (receiver instanceof FieldAccessExpr field) return Optional.of(field.resolve());
+            if (receiver instanceof NameExpr simple) resolved = Optional.of(simple.resolve());
+            else if (receiver instanceof FieldAccessExpr field) resolved = Optional.of(field.resolve());
         } catch (RuntimeException failure) { /* A type qualifier has no value binding. */ }
         finally { if (receiver != null) receiver.setParentNode(null); }
-        return Optional.empty();
+        if (cache == null) {
+            cache = new HashMap<>(4);
+            reference.setData(VALUE_CACHE, cache);
+        }
+        cache.put(name, resolved);
+        return resolved;
+    }
+
+    private static Expression buildSimpleOrDottedReceiver(String name) {
+        if (name.isEmpty()) return null;
+        int start = 0;
+        Expression expr = null;
+        for (int i = 0; i <= name.length(); i++) {
+            if (i == name.length() || name.charAt(i) == '.') {
+                if (i == start) return null;
+                String part = name.substring(start, i);
+                if (!isPlainIdentifier(part) || part.equals("this") || part.equals("super") || part.equals("class")) {
+                    return null;
+                }
+                expr = expr == null ? new NameExpr(part) : new FieldAccessExpr(expr, part);
+                start = i + 1;
+            } else {
+                char c = name.charAt(i);
+                if (!Character.isJavaIdentifierPart(c)) return null;
+            }
+        }
+        return expr;
+    }
+
+    private static boolean isPlainIdentifier(String s) {
+        if (s.isEmpty() || !Character.isJavaIdentifierStart(s.charAt(0))) return false;
+        for (int i = 1; i < s.length(); i++) {
+            if (!Character.isJavaIdentifierPart(s.charAt(i))) return false;
+        }
+        return true;
     }
 }

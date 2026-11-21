@@ -30,7 +30,8 @@ public final class RepairProposal {
     private static final RecipeSpec RECIPE = new RecipeSpec(DemoRepairRecipe.class.getName(),"1");
 
     enum Status { PROPOSED, WITHHELD }
-    enum Reason { DIAGNOSIS_WITHHELD, FIXTURE_NOT_REGISTERED, SOURCE_MISMATCH, TRANSFORMATION_UNAVAILABLE, QUERY_LIMIT }
+    enum Reason { DIAGNOSIS_WITHHELD, FIXTURE_NOT_REGISTERED, SOURCE_MISMATCH, TRANSFORMATION_UNAVAILABLE, COMPILER_UNAVAILABLE,
+        CANDIDATE_SYNTAX_REJECTED, QUERY_LIMIT }
     enum Verification { UNVERIFIED }
     enum ExpectedFindingChange { REMOVED }
 
@@ -65,6 +66,10 @@ public final class RepairProposal {
         if (stop.get() != StopReason.NONE) return withheld(Reason.QUERY_LIMIT);
         String expected = SOURCE.substring(0,139) + SOURCE.substring(150);
         if (!after.equals(expected)) return withheld(Reason.TRANSFORMATION_UNAVAILABLE);
+        var syntax=JavaRepairSyntax.parse(after,new JavaRepairSyntax.Profile(21,false,"REGISTERED_FIXTURE",Optional.empty())).check();
+        if (syntax.status()==JavaRepairSyntax.Status.UNAVAILABLE) return withheld(Reason.COMPILER_UNAVAILABLE);
+        if (syntax.status()==JavaRepairSyntax.Status.REJECTED) return withheld(Reason.CANDIDATE_SYNTAX_REJECTED);
+        if (stop.get() != StopReason.NONE) return withheld(Reason.QUERY_LIMIT);
 
         String patch = "diff --git a/" + PATH + " b/" + PATH + "\n--- a/" + PATH + "\n+++ b/" + PATH
                 + "\n@@ -1 +1 @@\n-" + SOURCE + "\n\\ No newline at end of file\n+" + after + "\n\\ No newline at end of file\n";

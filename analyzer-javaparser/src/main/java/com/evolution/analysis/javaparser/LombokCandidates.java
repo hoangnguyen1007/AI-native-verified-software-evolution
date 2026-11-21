@@ -13,8 +13,23 @@ final class LombokCandidates {
         return extract(context,units,uses,Set.of());
     }
     static List<LombokConstructorCandidate> extract(Extraction context,List<CompilationUnit> units,List<TypeUseRecord> uses,Set<String> allSourceTypes) {
-        var sourceTypes=new HashSet<String>(allSourceTypes);
-        for(var unit:units)for(TypeDeclaration<?> type:unit.findAll(TypeDeclaration.class))type.getFullyQualifiedName().ifPresent(sourceTypes::add);
+        boolean hasCandidateType = false;
+        for (var unit : units) {
+            for (var type : unit.findAll(ClassOrInterfaceDeclaration.class)) {
+                if (type.isInterface()) continue;
+                for (var ann : type.getAnnotations()) {
+                    if (GENERATORS.contains(ann.getName().getIdentifier())) {
+                        hasCandidateType = true;
+                        break;
+                    }
+                }
+                if (hasCandidateType) break;
+            }
+            if (hasCandidateType) break;
+        }
+        if (!hasCandidateType) return List.of();
+        var sourceTypes=allSourceTypes.isEmpty()?new HashSet<String>():new HashSet<String>(allSourceTypes);
+        for(var unit:units)for(TypeDeclaration<?> type:unit.findAll(TypeDeclaration.class))type.getFullyQualifiedName().ifPresent(s->{if(!allSourceTypes.contains(s))sourceTypes.add(s);});
         var fieldTypes=new HashMap<com.evolution.analysis.contract.identity.EntityIdentity,JavaType>();
         for(var use:uses)if(use.role().value().equals("java.field-type"))use.owner().ifPresent(id->fieldTypes.put(id,use.type()));
         var result=new ArrayList<LombokConstructorCandidate>();

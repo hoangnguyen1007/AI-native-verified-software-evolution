@@ -137,9 +137,15 @@ final class LocalArtifactCache {
                 throw failure(coordinate, kind, relative, Reason.NON_REGULAR_ARTIFACT, AttemptOutcome.DENIED);
             }
             reserve(coordinate, kind, ArtifactOrigin.LOCAL_CACHE, relative, before.size(), perFileLimit);
-            byte[] bytes;
+            byte[] bytes = null;
+            StreamedJar streamedJar = null;
             try {
-                bytes = readBounded(path, Math.min(perFileLimit, policy.maxTotalBytes() - totalBytes));
+                long allowed = Math.min(perFileLimit, policy.maxTotalBytes() - totalBytes);
+                if (kind == ArtifactKind.JAR) {
+                    streamedJar = streamJar(path, allowed);
+                } else {
+                    bytes = readBounded(path, allowed);
+                }
             } catch (LimitExceeded exception) {
                 Reason reason = before.size() > perFileLimit
                         ? limitReason(kind)
@@ -155,20 +161,23 @@ final class LocalArtifactCache {
                 throw failure(coordinate, kind, relative, Reason.ARTIFACT_CHANGED_DURING_READ, AttemptOutcome.FAILED);
             }
             if (Files.isSymbolicLink(path)
-                    || !after.isRegularFile()
-                    || before.size() != after.size()
-                    || !before.lastModifiedTime().equals(after.lastModifiedTime())
-                    || before.fileKey() != null && after.fileKey() != null
-                            && !before.fileKey().equals(after.fileKey())) {
+                || !after.isRegularFile()
+                || before.size() != after.size()
+                || !before.lastModifiedTime().equals(after.lastModifiedTime())
+                || before.fileKey() != null && after.fileKey() != null
+                        && !before.fileKey().equals(after.fileKey())) {
                 throw failure(coordinate, kind, relative, Reason.ARTIFACT_CHANGED_DURING_READ, AttemptOutcome.FAILED);
             }
-            ContentDigest digest = ContentDigest.sha256(bytes);
+            ContentDigest digest = streamedJar != null ? streamedJar.digest() : ContentDigest.sha256(bytes);
+            long byteLen = streamedJar != null ? streamedJar.size() : bytes.length;
             var record = new ArtifactRecord(coordinate, kind, ArtifactOrigin.LOCAL_CACHE,
-                    Optional.of(relative), digest, bytes.length);
-            var material = new Material(record, bytes);
+                    Optional.of(relative), digest, byteLen);
+            var material = streamedJar != null
+                    ? new Material(record, streamedJar.header())
+                    : new Material(record, bytes);
             materials.put(coordinate, material);
             artifacts.add(record);
-            totalBytes += bytes.length;
+            totalBytes += byteLen;
             attempts.add(new Attempt(kind, coordinate, ArtifactOrigin.LOCAL_CACHE,
                     relative, AttemptOutcome.SUCCEEDED, Optional.of(digest)));
             return material;
@@ -247,6 +256,49 @@ final class LocalArtifactCache {
         return real;
     }
 
+    private record StreamedJar(ContentDigest digest, long size, byte[] header) {}
+
+    private static final ThreadLocal<java.security.MessageDigest> JAR_SHA256 = ThreadLocal.withInitial(() -> {
+        try {
+            return java.security.MessageDigest.getInstance("SHA-256");
+        } catch (java.security.NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException(impossible);
+        }
+    });
+
+    private static StreamedJar streamJar(Path path, long allowed) throws IOException, LimitExceeded {
+        try (SeekableByteChannel channel = Files.newByteChannel(
+                path, Set.of(StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS))) {
+            var md = JAR_SHA256.get();
+            md.reset();
+            ByteBuffer buffer = ByteBuffer.allocate(65_536);
+            byte[] header = new byte[4];
+            int headerLen = 0;
+            long count = 0;
+            while (channel.read(buffer) >= 0) {
+                buffer.flip();
+                int amount = buffer.remaining();
+                if (amount == 0) {
+                    buffer.clear();
+                    continue;
+                }
+                if (headerLen < 4) {
+                    int copy = Math.min(4 - headerLen, amount);
+                    System.arraycopy(buffer.array(), buffer.position(), header, headerLen, copy);
+                    headerLen += copy;
+                }
+                count += amount;
+                if (count > allowed) throw new LimitExceeded();
+                md.update(buffer);
+                buffer.clear();
+            }
+            return new StreamedJar(
+                    new ContentDigest("sha256:" + java.util.HexFormat.of().formatHex(md.digest())),
+                    count,
+                    headerLen == 4 ? header : Arrays.copyOf(header, headerLen));
+        }
+    }
+
     private static byte[] readBounded(Path path, long allowed) throws IOException, LimitExceeded {
         try (SeekableByteChannel channel = Files.newByteChannel(
                 path, Set.of(StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS))) {
@@ -273,6 +325,10 @@ final class LocalArtifactCache {
         @Override
         public byte[] bytes() {
             return bytes.clone();
+        }
+
+        boolean hasZipMagic() {
+            return record.size() >= 4 && bytes.length >= 2 && bytes[0] == 'P' && bytes[1] == 'K';
         }
     }
 

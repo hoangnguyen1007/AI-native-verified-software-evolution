@@ -84,6 +84,13 @@ public final class ConstructorInjectionIngestion {
                         new VersionedIdentifier("frontend.javaparser","3.28.2-m8.4-inference-http-v10"),
                         new VersionedIdentifier("frontend.javaparser","3.28.2-m8.4-lambda-input-v11"),
                         new VersionedIdentifier("frontend.javaparser","3.28.2-m9.2-evidenced-recovery-v12")).contains(frontend.frontend());
+        var relevantDiagnosticsByDoc = new HashMap<SourceDocumentIdentity, List<SourceSpan>>();
+        for (var d : frontend.diagnostics()) {
+            if (!unrelatedCallDiagnostics.contains(d) && d.span().isPresent()) {
+                var sp = d.span().orElseThrow();
+                relevantDiagnosticsByDoc.computeIfAbsent(sp.document(), k -> new ArrayList<>()).add(sp);
+            }
+        }
         for(var component:discovery.rows()) {
             var evidence=new ConditionEvidence.Derived(List.of(identity,component.evidence().identity()),provider,"constructor-selection:"+component.type().value());
             if(component.status()!=ComponentScanIngestion.Status.INCLUDED) {
@@ -94,8 +101,8 @@ public final class ConstructorInjectionIngestion {
                     .filter(d->d.entity().kind()==EntityKind.CONSTRUCTOR).sorted().toList();
             boolean supportedShape=supportedShapes.contains(component.type());
             boolean incomplete=!frameworkKnown || !providerKnown || !supportedShape || owner==null || owner.status()!=SemanticStatus.RESOLVED
-                    || owner.entity().declaration().isEmpty() || frontend.diagnostics().stream().anyMatch(d->!unrelatedCallDiagnostics.contains(d)&&d.span().isPresent()
-                        && overlaps(owner.entity().declaration().orElseThrow(),d.span().orElseThrow()));
+                    || owner.entity().declaration().isEmpty() || relevantDiagnosticsByDoc.getOrDefault(owner.entity().declaration().orElseThrow().document(), List.of())
+                        .stream().anyMatch(sp -> overlaps(owner.entity().declaration().orElseThrow(), sp));
             if(constructors.size()!=1 || incomplete) {
                 issue(issues,COMPONENT_ELIGIBILITY_UNKNOWN,component.type().value(),identity);
                 rows.add(new Row(component.type(),Status.UNKNOWN,Optional.empty(),List.of(),evidence));continue;

@@ -33,6 +33,27 @@ public final class AcquiredFile implements Comparable<AcquiredFile> {
         return contentDigest;
     }
 
+    public java.nio.ByteBuffer readOnlyBuffer() {
+        return java.nio.ByteBuffer.wrap(bytes).asReadOnlyBuffer();
+    }
+
+    public boolean containsAsciiCaseInsensitive(String asciiNeedle) {
+        int n = asciiNeedle.length();
+        int limit = bytes.length - n;
+        outer:
+        for (int i = 0; i <= limit; i++) {
+            for (int j = 0; j < n; j++) {
+                int b = bytes[i + j] & 0xFF;
+                if (b >= 'A' && b <= 'Z') b += 32;
+                char target = asciiNeedle.charAt(j);
+                if (target >= 'A' && target <= 'Z') target = (char) (target + 32);
+                if (b != target) continue outer;
+            }
+            return true;
+        }
+        return false;
+    }
+
     @Override
     public int compareTo(AcquiredFile other) {
         return path.compareTo(other.path);

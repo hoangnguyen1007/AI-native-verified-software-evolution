@@ -422,6 +422,31 @@ paths:
       responses:
         '200': {$ref: '#/components/responses/Success'}
         default: {$ref: '#/components/responses/Error'}
+  /api/v1/graphs/{graph}/architecture-insights:
+    parameters:
+      - {$ref: '#/components/parameters/Graph'}
+    post:
+      operationId: architectureInsights
+      description: Deterministic Tarjan SCC cycle/tangle detector, minimal cycle-breaking edge candidates backed by canonical edge evidence, Martin Instability and blast-radius hotspot ranking, cross-layer coupling matrix (DSM), and executive Markdown report.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [request]
+              properties:
+                request: {$ref: '#/components/schemas/Request'}
+                arguments:
+                  type: object
+                  additionalProperties: false
+                  properties:
+                    report: {$ref: '#/components/schemas/Digest'}
+                    topN: {type: integer, minimum: 1, maximum: 50, default: 15}
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
   /api/v1/graph-pages/{graph}/{operation}:
     parameters:
       - {$ref: '#/components/parameters/Graph'}
@@ -490,7 +515,7 @@ paths:
         required: true
         schema:
           type: string
-          enum: [rules, findings, finding, bundle, policy-metrics, assessment, policy-impact, visual-graph, replay, diagnosis, repair-proposal, repair-verification]
+          enum: [rules, findings, finding, bundle, policy-metrics, assessment, policy-impact, visual-graph, replay, diagnosis, repair-options, repair-proposal, repair-reanalysis, repair-verification]
     post:
       operationId: publishedReportArtifact
       description: >-
@@ -499,10 +524,15 @@ paths:
         digest), bundle (evidence bundle digest), and context (graph context identity), with no page.
         It returns CITATIONS_VALIDATED or a typed WITHHELD result, labeled LOCAL_REPLAY by default or LIVE when
         configured by the local operator for one exact diagnosis input. The request cannot select a provider.
-        Repair-proposal adds the exact diagnosisInput digest and returns a reviewable PROPOSED patch with UNVERIFIED status
-        for the registered Java/Spring fixture, or a typed WITHHELD result. Repair independently replays canonical evidence.
+        Repair-options adds the exact diagnosisInput digest and returns the recipe catalog, captured-source eligibility
+        and, when configured, the exact AI input digest and files that would be sent. It does not call the model.
+        Repair-proposal accepts the same pins with strategy RECIPE and a registered recipe ID in recipe,
+        or strategy AI and the exact modelInput digest from repair-options. The latter authorizes sending that
+        input to the operator-configured endpoint. Both strategies require compiler syntax checks of all changes
+        before creating a Git patch and return UNVERIFIED or WITHHELD. Omitting strategy selects the legacy demo.
+        Repair independently replays canonical evidence.
         Missing artifacts return 404. Mismatched pins return 409.
-        Repair-verification also requires the proposal digest and accepts optional published candidateReport and controlReport digests.
+        Legacy repair-verification also requires the proposal digest and accepts optional published candidateReport and controlReport digests.
         It returns the pinned verification plan, per-check outcomes and a local verdict.
         When available, the candidate comparison includes a checked bindingCensus for the sealed demo source inventory.
         The census supports the resolved route in the demo profile scope and preserves aggregate coverage qualifications.
@@ -544,6 +574,29 @@ paths:
       responses:
         '201': {$ref: '#/components/responses/JobSuccess'}
         default: {$ref: '#/components/responses/Error'}
+  /api/v1/analysis/connections/{setup}:
+    delete:
+      operationId: disconnectRepository
+      description: Unregister a repository connection, free active setup capacity, and clean catalog records on disk.
+      parameters:
+        - name: setup
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200': {$ref: '#/components/responses/JobSuccess'}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      operationId: disconnectRepositoryPost
+      description: Alternative POST endpoint to disconnect a repository connection.
+      parameters:
+        - name: setup
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200': {$ref: '#/components/responses/JobSuccess'}
+        default: {$ref: '#/components/responses/Error'}
   /api/v1/analysis/setups:
     get:
       operationId: analysisSetups
@@ -572,6 +625,7 @@ paths:
                 setup: {$ref: '#/components/schemas/JobIdentifier'}
                 idempotencyKey: {$ref: '#/components/schemas/JobIdentifier'}
                 force: {type: boolean, default: false, description: Recompute even if a matching result is available.}
+                mode: {type: string, enum: [FULL, FAST_ARCHITECTURE], default: FULL, description: Explicit analysis execution profile.}
       responses:
         '202': {$ref: '#/components/responses/JobDetail'}
         '200': {$ref: '#/components/responses/JobDetail'}
@@ -589,6 +643,14 @@ paths:
       operationId: analysisJob
       responses:
         '200': {$ref: '#/components/responses/JobDetail'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/analysis/jobs/{job}/telemetry:
+    parameters: [{$ref: '#/components/parameters/Job'}]
+    get:
+      operationId: analysisJobTelemetry
+      description: Operational per-stage millisecond execution telemetry and mode/reuse status. Operational timing never enters canonical graph or report digests.
+      responses:
+        '200': {$ref: '#/components/responses/JobSuccess'}
         default: {$ref: '#/components/responses/Error'}
   /api/v1/analysis/jobs/{job}/cancel:
     parameters: [{$ref: '#/components/parameters/Job'}]

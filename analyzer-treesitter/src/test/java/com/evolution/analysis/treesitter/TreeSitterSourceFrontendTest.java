@@ -161,4 +161,33 @@ class TreeSitterSourceFrontendTest {
         var facts=new ArrayList<TreeSitterSourceFrontend.Fact>();var result=new TreeSitterSourceFrontend().parse("python","def broken(:\n".getBytes(StandardCharsets.UTF_8),facts::add,()->false);
         assertTrue(result.errors()>0);assertThrows(java.io.IOException.class,()->new TreeSitterSourceFrontend().parse("go",new byte[0],facts::add,()->true));
     }
+    @Test void factToMapAndFastArchitectureModePreserveCanonicalParityAndArchitecturalFacts()throws Exception {
+        String tsSource = "import { Base } from './base';\nexport class CartController extends Base {\n  load(id: string): Promise<number> {\n    app.get('/cart', handler);\n    return fetch('/api/items');\n  }\n}\n";
+        byte[] bytes = tsSource.getBytes(StandardCharsets.UTF_8);
+        var frontend = new TreeSitterSourceFrontend();
+        var fullFacts = new ArrayList<TreeSitterSourceFrontend.Fact>();
+        var fullSummary = frontend.parse("typescript", bytes, fullFacts::add, () -> false, false);
+        assertEquals(
+                com.evolution.analysis.graph.GraphJson.object(com.evolution.analysis.graph.GraphJson.read(
+                        com.evolution.analysis.contract.serialization.CanonicalJson.write(fullSummary),
+                        com.evolution.analysis.graph.GraphJson.Limits.defaults())),
+                fullSummary.toMap());
+        for (var fact : fullFacts) {
+            var viaJson = com.evolution.analysis.graph.GraphJson.object(com.evolution.analysis.graph.GraphJson.read(
+                    com.evolution.analysis.contract.serialization.CanonicalJson.write(fact),
+                    com.evolution.analysis.graph.GraphJson.Limits.defaults()));
+            assertEquals(viaJson, fact.toMap());
+            assertEquals(com.evolution.analysis.contract.serialization.CanonicalJson.write(fact),
+                    com.evolution.analysis.contract.serialization.CanonicalJson.write(fact.toMap()));
+        }
+        assertTrue(fullFacts.stream().anyMatch(f -> f.category().equals("TYPE_SYNTAX")));
+
+        var fastFacts = new ArrayList<TreeSitterSourceFrontend.Fact>();
+        var fastSummary = frontend.analyze("typescript", bytes, fastFacts::add, () -> false, true);
+        assertEquals(0, fastSummary.errors());
+        assertTrue(fastFacts.stream().noneMatch(f -> f.category().equals("TYPE_SYNTAX")));
+        assertEquals(
+                fullFacts.stream().filter(f -> !f.category().equals("TYPE_SYNTAX")).toList(),
+                fastFacts);
+    }
 }

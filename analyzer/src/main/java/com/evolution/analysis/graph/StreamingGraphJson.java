@@ -5,11 +5,23 @@ import java.util.*;
 
 /** One bounded parser for String and UTF-8 stream callers; never buffers the whole document. */
 final class StreamingGraphJson {
-    private final java.io.Reader input;private final GraphJson.StreamLimits limits;
-    private final char[] buffer=new char[8192];private int position,length;private long characters,values;
+    private final java.io.Reader input;private final String source;private final GraphJson.StreamLimits limits;
+    private final char[] buffer;private int position,length;private long characters,values;
+    StreamingGraphJson(String source,GraphJson.Limits limits){
+        this.input=null;this.source=Objects.requireNonNull(source);this.limits=GraphJson.StreamLimits.from(Objects.requireNonNull(limits));
+        this.buffer=null;this.length=source.length();
+    }
     StreamingGraphJson(java.io.Reader input,GraphJson.Limits limits){this(input,GraphJson.StreamLimits.from(limits));}
-    StreamingGraphJson(java.io.Reader input,GraphJson.StreamLimits limits){this.input=Objects.requireNonNull(input);this.limits=Objects.requireNonNull(limits);}
-    private int peek()throws IOException {if(length<0)return -1;while(position==length){length=input.read(buffer);position=0;if(length<0)return -1;}return buffer[position];}
+    StreamingGraphJson(java.io.Reader input,GraphJson.StreamLimits limits){
+        this.input=Objects.requireNonNull(input);this.source=null;this.limits=Objects.requireNonNull(limits);
+        this.buffer=new char[8192];
+    }
+    private int peek()throws IOException {
+        if(source!=null)return position<length?source.charAt(position):-1;
+        if(length<0)return -1;
+        while(position==length){length=input.read(buffer);position=0;if(length<0)return -1;}
+        return buffer[position];
+    }
     private int next()throws IOException {int c=peek();if(c>=0){position++;if(++characters>limits.maxCharacters())throw new GraphJson.LimitExceededException("Graph JSON character limit");}return c;}
     private boolean take(char c)throws IOException {if(peek()==c){next();return true;}return false;}
     private void require(char c)throws IOException {if(!take(c))throw new IllegalArgumentException("Invalid graph JSON delimiter");}

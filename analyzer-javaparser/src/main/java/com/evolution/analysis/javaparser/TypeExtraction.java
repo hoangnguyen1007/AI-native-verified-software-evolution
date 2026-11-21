@@ -51,6 +51,7 @@ final class TypeExtraction {
             for (var implemented : type.getImplementedTypes()) add(type,implemented,"implements",false);
         for (var type : unit.findAll(Type.class)) {
             if (handled.contains(type) || type instanceof TypeParameter || type instanceof UnknownType) continue;
+            if (context.fastArchitecture && type instanceof VarType) continue;
             if (type.getParentNode().orElse(null) instanceof TypeExpr expression
                     && expression.getParentNode().orElse(null) instanceof MethodReferenceExpr reference
                     && ReferenceResolution.value(reference,expression.toString()).isPresent()) {

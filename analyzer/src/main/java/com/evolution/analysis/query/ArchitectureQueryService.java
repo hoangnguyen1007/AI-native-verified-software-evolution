@@ -16,6 +16,8 @@ public final class ArchitectureQueryService {
     private final ContentDigest graphIdentity;
     private final Supplier<StopReason> guard;
     private final Optional<Metrics> metrics;
+    private final java.util.concurrent.ConcurrentHashMap<ContentDigest, Map<String, Object>> parsedEvidenceCache = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final java.util.concurrent.ConcurrentHashMap<String, String> QUALIFIED_NAME_CACHE = new java.util.concurrent.ConcurrentHashMap<>();
     /** Operational guards are outside query identity; never treat interrupted output as a complete cache entry. */
     public ArchitectureQueryService(KnowledgeGraph graph){this(graph,operationalGuard(()->false,0,8_000_000),Optional.empty());}
     public ArchitectureQueryService(KnowledgeGraph graph,Supplier<StopReason> guard,Optional<Metrics> metrics){
@@ -140,7 +142,7 @@ public final class ArchitectureQueryService {
                 }
                 entities.entrySet().removeIf(e->e.getValue().kind().equals(request.scope().name()));entities.putAll(eligibleOwners);
             }
-            for(var edge:graph.edges())if(edge.context().equals(request.context())&&request.relationshipKinds().contains(edge.kind())){
+            for(var edge:graph.edges(request.context()))if(request.relationshipKinds().contains(edge.kind())){
                 if(!budget.scan())break;
                 if(!catalog.preferred(edge))continue;
                 if(knownExcluded(descriptions.get(edge.source()),request.population()))continue;
@@ -219,7 +221,7 @@ public final class ArchitectureQueryService {
         var p=new Prepared(request,false);
         if(!p.nodes.containsKey(identity)&&p.budget.running())throw new IllegalArgumentException("Parent outside context");
         var children=new TreeMap<String,EntityView>();int count=0;
-        for(var edge:graph.edges())if(edge.context().equals(request.context())){
+        for(var edge:graph.edges(request.context())){
             if(!p.budget.scan())break;if(++count>request.limits().maxEdges()){p.budget.halt(StopReason.INPUT);break;}
             if(!edge.source().equals(identity)||!Set.of("graph.contains","graph.declares","graph.owns-source").contains(edge.kind()))continue;
             if(edge.target().state()!=KnowledgeGraph.TargetState.RESOLVED){p.budget.qualify("UNRESOLVED_CONTAINMENT");continue;}
@@ -238,7 +240,7 @@ public final class ArchitectureQueryService {
     /** Raw denominator including candidate/unresolved rows; never promoted to a definite projected edge. */
     public Result<RelationshipView> relationships(Request request,Page page){
         var p=new Prepared(request,false);var values=new ArrayList<RelationshipView>();int count=0;
-        for(var e:graph.edges())if(e.context().equals(request.context())&&request.relationshipKinds().contains(e.kind())){
+        for(var e:graph.edges(request.context()))if(request.relationshipKinds().contains(e.kind())){
             if(!p.budget.scan())break;if(++count>request.limits().maxEdges()){p.budget.halt(StopReason.INPUT);break;}
             if(!p.entities.containsKey(e.source()))continue;
             values.add(new RelationshipView(e.identity(),e.source(),e.kind(),e.target().state().name(),bounded(e.target().identities(),p.budget),
@@ -714,8 +716,13 @@ public final class ArchitectureQueryService {
     /** Display only: structural M1 names remain canonical identity authority. */
     private static String qualifiedName(String canonical){
         if(!canonical.startsWith("java:v1:"))return canonical;
-        try {return label(GraphJson.array(GraphJson.read(canonical.substring(8),new GraphJson.Limits(100_000,64,10_000))),0);}
-        catch(IllegalArgumentException unknown){return canonical;}
+        String cached = QUALIFIED_NAME_CACHE.get(canonical);
+        if (cached != null) return cached;
+        String computed;
+        try {computed = label(GraphJson.array(GraphJson.read(canonical.substring(8),new GraphJson.Limits(100_000,64,10_000))),0);}
+        catch(IllegalArgumentException unknown){computed = canonical;}
+        if (QUALIFIED_NAME_CACHE.size() < 65_536) QUALIFIED_NAME_CACHE.putIfAbsent(canonical, computed);
+        return computed;
     }
     private static String label(List<Object> tuple,int depth){
         if(depth>64||tuple.size()<2)throw new IllegalArgumentException("Unknown symbol grammar");
@@ -761,7 +768,20 @@ public final class ArchitectureQueryService {
         return values;
     }
     private Map<String,Object> read(GraphEvidence evidence,QueryBudget budget){
-        try{return GraphJson.object(GraphJson.read(evidence.canonicalJson(),new GraphJson.Limits(8_000_000,128,budget.limits.maxAuxiliaryStates())));}
+        String raw = evidence.canonicalJson();
+        if (raw.length() <= 16_384 && budget.limits.maxAuxiliaryStates() > raw.length()) {
+            var cached = parsedEvidenceCache.get(evidence.identity());
+            if (cached != null) return cached;
+            try {
+                var parsed = Collections.unmodifiableMap(GraphJson.object(GraphJson.read(raw, new GraphJson.Limits(8_000_000, 128, budget.limits.maxAuxiliaryStates()))));
+                if (parsedEvidenceCache.size() < 65_536) parsedEvidenceCache.putIfAbsent(evidence.identity(), parsed);
+                return parsed;
+            } catch (IllegalArgumentException malformed) {
+                budget.qualify("EVIDENCE_DESCRIPTOR_LIMIT");
+                return Map.of();
+            }
+        }
+        try{return GraphJson.object(GraphJson.read(raw,new GraphJson.Limits(8_000_000,128,budget.limits.maxAuxiliaryStates())));}
         catch(IllegalArgumentException malformed){budget.qualify("EVIDENCE_DESCRIPTOR_LIMIT");return Map.of();}
     }
     private static final Set<String> SAFE_FIELDS=Set.of("identity","kind","entity","canonicalName","spelling","origin","stableScope","module","classification","document","span","sourceSpan","sourceSpans",

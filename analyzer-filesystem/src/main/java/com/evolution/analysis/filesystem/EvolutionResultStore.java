@@ -12,7 +12,6 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.security.DigestOutputStream;
 import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.util.*;
 import java.util.concurrent.CancellationException;
 import java.util.function.BooleanSupplier;
@@ -23,6 +22,7 @@ public final class EvolutionResultStore {
     private static final int FANOUT = 32;
     private static final int LEAF_TARGET = 256 * 1024;
     private static final int MAX_OBJECT_BYTES = 192_000_000;
+    private static final ThreadLocal<Boolean> DEFER_LEAF_FORCE = ThreadLocal.withInitial(() -> Boolean.FALSE);
     private static final Set<String> SECTIONS = Arrays.stream(Section.values()).map(Enum::name)
             .collect(java.util.stream.Collectors.toUnmodifiableSet());
     private final StreamingContentStore content;
@@ -37,12 +37,16 @@ public final class EvolutionResultStore {
     private record Root(String schema, Summary summary, Map<String,Node> sections, Map<String,Object> selection) {}
 
     public EvolutionResultStore(Path directory) throws IOException {
-        this(directory,null);
+        this(directory, null);
     }
 
     EvolutionResultStore(Path directory, StreamingContentStore supplied) throws IOException {
         var root = StreamingContentStore.directory(directory);
-        content = supplied == null ? new StreamingContentStore(root.resolve("cas")) : supplied;
+        content = supplied == null
+                ? new StreamingContentStore(root.resolve("cas"), 0, channel -> {
+                    if (!DEFER_LEAF_FORCE.get()) channel.force(true);
+                })
+                : supplied;
         references = StreamingContentStore.directory(root.resolve("results"));
         candidates = StreamingContentStore.directory(root.resolve("candidates"));
     }
@@ -59,7 +63,7 @@ public final class EvolutionResultStore {
             var root = writeSection(result, section, cancelled);
             root.ifPresent(node -> sections.put(section.name(), node));
         }
-        return put(new Root(SCHEMA, result.summary(), sections, Map.copyOf(selection)), cancelled);
+        return put(new Root(SCHEMA, result.summary(), sections, Map.copyOf(selection)), cancelled, false);
     }
 
     public final class Prepared {
@@ -80,7 +84,7 @@ public final class EvolutionResultStore {
         var view = readRoot(receipt, cancelled);
         var values = view.rows(Section.INPUTS, 0, 2, cancelled);
         if (values.size() != 2) return false;
-        var graphs = List.of(left,right);
+        var graphs = List.of(left, right);
         for (int index = 0; index < graphs.size(); index++) {
             var graph = graphs.get(index);
             var row = values.get(index);
@@ -109,7 +113,7 @@ public final class EvolutionResultStore {
 
     public void requireUnambiguous(View view) throws IOException {
         var folder = candidateFolder(view);
-        StreamingContentStore.safe(folder);
+        StreamingContentStore.safeWithin(candidates, folder);
         try (var roots = Files.list(folder)) {
             if (roots.filter(path -> path.getFileName().toString().matches("[0-9a-f]{64}\\.json")).limit(2).count() > 1)
                 throw new IOException("EVOLUTION_RESULT_CONFLICT");
@@ -134,18 +138,19 @@ public final class EvolutionResultStore {
 
     public Optional<ContentHandle> findReusable(ContentDigest request, List<Map<String,Object>> inputRows,
                                                 BooleanSupplier cancelled) throws IOException {
-        var folder = candidateFolder(request, CanonicalJson.sha256(inputRows));
+        ContentDigest inputsDigest = CanonicalJson.sha256(inputRows);
+        var folder = candidateFolder(request, inputsDigest);
         if (!Files.isDirectory(folder, LinkOption.NOFOLLOW_LINKS)) return Optional.empty();
-        StreamingContentStore.safe(folder);
+        StreamingContentStore.safeWithin(candidates, folder);
         try (var files = Files.list(folder)) {
             var known = files.filter(path -> path.getFileName().toString().matches("[0-9a-f]{64}\\.json"))
                     .limit(2).toList();
             if (known.size() != 1) return Optional.empty();
             var name = known.getFirst().getFileName().toString();
-            var id = new ContentDigest("sha256:" + name.substring(0,64));
+            var id = new ContentDigest("sha256:" + name.substring(0, 64));
             var candidate = open(id, cancelled);
             if (!candidate.summary().request().equals(request) ||
-                    !candidate.summary().census(Section.INPUTS).digest().equals(CanonicalJson.sha256(inputRows))) throw corrupt();
+                    !candidate.summary().census(Section.INPUTS).digest().equals(inputsDigest)) throw corrupt();
             verify(candidate, cancelled);
             requireUnambiguous(candidate);
             return Optional.of(candidate.receipt());
@@ -156,20 +161,24 @@ public final class EvolutionResultStore {
     public void verify(View view, BooleanSupplier cancelled) throws IOException {
         for (var section : Section.values()) {
             var root = view.root.sections().get(section.name());
-            var hash = digest();
-            try (var writer = new BufferedWriter(new OutputStreamWriter(
-                    new DigestOutputStream(OutputStream.nullOutputStream(), hash), StandardCharsets.UTF_8))) {
-                writer.write('[');
-                var first = new boolean[]{true};
-                if (root != null) visit(root, 0, root.rows(), row -> {
-                    if (!first[0]) writer.write(',');
-                    first[0] = false;
-                    CanonicalJson.writeTo(row, writer);
-                }, cancelled, 0);
-                writer.write(']');
+            MessageDigest hash = StreamingContentStore.borrowSha256();
+            try {
+                try (var writer = new BufferedWriter(new OutputStreamWriter(
+                        new DigestOutputStream(OutputStream.nullOutputStream(), hash), StandardCharsets.UTF_8), 65536)) {
+                    writer.write('[');
+                    var first = new boolean[]{true};
+                    if (root != null) visit(root, 0, root.rows(), row -> {
+                        if (!first[0]) writer.write(',');
+                        first[0] = false;
+                        CanonicalJson.writeTo(row, writer);
+                    }, cancelled, 0);
+                    writer.write(']');
+                }
+                if (!("sha256:" + HexFormat.of().formatHex(hash.digest())).equals(view.summary().census(section).digest().value()))
+                    throw corrupt();
+            } finally {
+                StreamingContentStore.releaseSha256(hash);
             }
-            if (!("sha256:" + HexFormat.of().formatHex(hash.digest())).equals(view.summary().census(section).digest().value()))
-                throw corrupt();
         }
     }
 
@@ -211,39 +220,61 @@ public final class EvolutionResultStore {
     private Optional<Node> writeSection(Result result, Section section, BooleanSupplier cancelled) throws IOException {
         var tree = new TreeWriter(cancelled);
         var census = result.summary().census(section);
-        var hash = digest();
+        MessageDigest hash = StreamingContentStore.borrowSha256();
         long rows = 0;
-        try (var canonical = new BufferedWriter(new OutputStreamWriter(
-                new DigestOutputStream(OutputStream.nullOutputStream(), hash), StandardCharsets.UTF_8))) {
-            canonical.write('[');
-            Optional<String> cursor = Optional.empty();
-            var leaf = new ArrayList<Map<String,Object>>();
-            int bytes = 0;
-            do {
-                check(cancelled);
-                var page = result.page(section, 20, cursor);
-                cursor = page.continuation();
-                for (var row : page.items()) {
-                    if (rows++ > 0) canonical.write(',');
-                    var encoded = CanonicalJson.write(row);
-                    canonical.write(encoded);
-                    // UTF-8 requires at most three bytes per UTF-16 code unit.
-                    int weight = Math.addExact(Math.multiplyExact(encoded.length(), 3), 1);
-                    if (!leaf.isEmpty() && bytes + weight > LEAF_TARGET) {
-                        tree.add(new Node(put(leaf, cancelled), leaf.size()), 0);
-                        leaf.clear();
-                        bytes = 0;
+        try {
+            try (var canonical = new BufferedWriter(new OutputStreamWriter(
+                    new DigestOutputStream(OutputStream.nullOutputStream(), hash), StandardCharsets.UTF_8), 65536)) {
+                canonical.write('[');
+                Optional<String> cursor = Optional.empty();
+                var leaf = new ArrayList<String>();
+                int bytes = 0;
+                do {
+                    check(cancelled);
+                    var page = result.page(section, 50, cursor);
+                    cursor = page.continuation();
+                    for (var row : page.items()) {
+                        if (rows++ > 0) canonical.write(',');
+                        var encoded = CanonicalJson.write(row);
+                        canonical.write(encoded);
+                        // UTF-8 requires at most three bytes per UTF-16 code unit.
+                        int weight = Math.addExact(Math.multiplyExact(encoded.length(), 3), 1);
+                        if (!leaf.isEmpty() && bytes + weight > LEAF_TARGET) {
+                            tree.add(new Node(putPreencodedArray(leaf, cancelled), leaf.size()), 0);
+                            leaf.clear();
+                            bytes = 0;
+                        }
+                        leaf.add(encoded);
+                        bytes += weight;
                     }
-                    leaf.add(row);
-                    bytes += weight;
-                }
-            } while (cursor.isPresent());
-            if (!leaf.isEmpty()) tree.add(new Node(put(leaf, cancelled), leaf.size()), 0);
-            canonical.write(']');
+                } while (cursor.isPresent());
+                if (!leaf.isEmpty()) tree.add(new Node(putPreencodedArray(leaf, cancelled), leaf.size()), 0);
+                canonical.write(']');
+            }
+            if (rows != census.rows() || !new ContentDigest("sha256:" + HexFormat.of().formatHex(hash.digest()))
+                    .equals(census.digest())) throw corrupt();
+            return tree.finish();
+        } finally {
+            StreamingContentStore.releaseSha256(hash);
         }
-        if (rows != census.rows() || !new ContentDigest("sha256:" + HexFormat.of().formatHex(hash.digest()))
-                .equals(census.digest())) throw corrupt();
-        return tree.finish();
+    }
+
+    private ContentHandle putPreencodedArray(List<String> encodedItems, BooleanSupplier cancelled) throws IOException {
+        DEFER_LEAF_FORCE.set(Boolean.TRUE);
+        try {
+            return content.write(output -> {
+                var writer = new BufferedWriter(new OutputStreamWriter(output, StandardCharsets.UTF_8), 65536);
+                writer.write('[');
+                for (int i = 0; i < encodedItems.size(); i++) {
+                    if (i > 0) writer.write(',');
+                    writer.write(encodedItems.get(i));
+                }
+                writer.write(']');
+                writer.flush();
+            }, cancelled);
+        } finally {
+            DEFER_LEAF_FORCE.remove();
+        }
     }
 
     private final class TreeWriter {
@@ -271,7 +302,7 @@ public final class EvolutionResultStore {
         private Node branch(List<Node> nodes) throws IOException {
             long rows = 0;
             for (var node : nodes) rows = Math.addExact(rows, node.rows());
-            return new Node(put(Map.of("children", nodes), cancelled), rows);
+            return new Node(put(Map.of("children", nodes), cancelled, false), rows);
         }
     }
 
@@ -286,7 +317,7 @@ public final class EvolutionResultStore {
                 if (leaf.size() != node.rows()) throw corrupt();
                 for (long i = from; i < until; i++) {
                     check(cancelled);
-                    consumer.accept(GraphJson.object(leaf.get((int)i)));
+                    consumer.accept(GraphJson.object(leaf.get((int) i)));
                 }
                 return;
             }
@@ -321,7 +352,7 @@ public final class EvolutionResultStore {
                 sections.put(name, new Census(number(row.get("rows")), id(row.get("digest"))));
             });
             var nodes = new TreeMap<String,Node>();
-            GraphJson.object(envelope.get("sections")).forEach((name,value) -> nodes.put(name, node(value)));
+            GraphJson.object(envelope.get("sections")).forEach((name, value) -> nodes.put(name, node(value)));
             if (!sections.keySet().containsAll(nodes.keySet())) throw corrupt();
             for (var section : sections.entrySet()) {
                 var node = nodes.get(section.getKey());
@@ -339,24 +370,29 @@ public final class EvolutionResultStore {
         check(cancelled);
         if (handle.size() > MAX_OBJECT_BYTES) throw corrupt();
         try (var input = content.open(handle)) {
-            var bytes = input.readNBytes((int)handle.size() + 1);
+            var bytes = input.readNBytes((int) handle.size() + 1);
             if (bytes.length != handle.size() || !ContentDigest.sha256(bytes).equals(handle.digest())) throw corrupt();
             return GraphJson.read(new String(bytes, StandardCharsets.UTF_8),
                     new GraphJson.Limits(MAX_OBJECT_BYTES, 130, MAX_OBJECT_BYTES));
         }
     }
 
-    private ContentHandle put(Object value, BooleanSupplier cancelled) throws IOException {
-        return content.write(output -> {
-            var writer = new BufferedWriter(new OutputStreamWriter(output, StandardCharsets.UTF_8));
-            CanonicalJson.writeTo(value, writer);
-            writer.flush();
-        }, cancelled);
+    private ContentHandle put(Object value, BooleanSupplier cancelled, boolean deferForce) throws IOException {
+        if (deferForce) DEFER_LEAF_FORCE.set(Boolean.TRUE);
+        try {
+            return content.write(output -> {
+                var writer = new BufferedWriter(new OutputStreamWriter(output, StandardCharsets.UTF_8), 65536);
+                CanonicalJson.writeTo(value, writer);
+                writer.flush();
+            }, cancelled);
+        } finally {
+            if (deferForce) DEFER_LEAF_FORCE.remove();
+        }
     }
 
     private Path reference(ContentDigest identity) throws IOException {
         var path = references.resolve(identity.value().substring(7) + ".json");
-        StreamingContentStore.safe(path);
+        StreamingContentStore.safeWithin(references, path);
         return path;
     }
 
@@ -403,13 +439,9 @@ public final class EvolutionResultStore {
         return new ContentHandle(id(row.get("digest")), number(row.get("size")));
     }
     private static ContentDigest id(Object value) { return new ContentDigest(GraphJson.string(value)); }
-    private static long number(Object value) { return ((BigDecimal)value).longValueExact(); }
+    private static long number(Object value) { return ((BigDecimal) value).longValueExact(); }
     private static IOException corrupt() { return new IOException("EVOLUTION_ARCHIVE_CORRUPT"); }
     private static void check(BooleanSupplier cancelled) {
         if (cancelled.getAsBoolean() || Thread.currentThread().isInterrupted()) throw new CancellationException();
-    }
-    private static MessageDigest digest() {
-        try { return MessageDigest.getInstance("SHA-256"); }
-        catch (NoSuchAlgorithmException impossible) { throw new IllegalStateException(impossible); }
     }
 }

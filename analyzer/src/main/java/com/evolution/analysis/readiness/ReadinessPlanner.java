@@ -25,6 +25,7 @@ public final class ReadinessPlanner {
         var manifest=inventory.manifest(revision).orElseThrow(()->new IOException("SEALED_INVENTORY_REQUIRED"));
         var descriptors=new TreeMap<String,ReadinessDiscovery.Descriptor>();var issues=new ArrayList<Requirement>();
         var sourceAnchors=new TreeMap<String,Set<String>>();var languageHints=new TreeMap<String,Set<String>>();
+        var cachedSourceHints=new HashMap<String,SourceHint>();
         Optional<String> cursor=Optional.empty();
         do{
             check(cancelled);var page=inventory.page(revision,512,cursor);cursor=page.continuation();
@@ -35,6 +36,7 @@ public final class ReadinessPlanner {
                 String readinessReason=path.endsWith("/module-info.java")||path.equals("module-info.java")?"JPMS_MANIFEST_REQUIRED":path.endsWith(".jsp")?"JSP_GENERATION_REQUIRED":path.endsWith(".fxml")?"JAVAFX_PLATFORM_REQUIRED":path.endsWith(".aj")?"WOVEN_BYTECODE_REQUIRED":filename(path).equals("AndroidManifest.xml")?"ANDROID_SDK_REQUIRED":null;
                 if(readinessReason!=null)issues.add(requirement(Kind.PLATFORM,path,readinessReason,List.of(),List.of(new Evidence(path,entry.content().orElseThrow().digest()))));
                 var sourceHint=sourceHint(entry,content);
+                cachedSourceHints.put(path,sourceHint);
                 if(sourceHint.unavailable())issues.add(requirement(Kind.DISCOVERY,path,"SOURCE_CLASSIFICATION_INPUT_UNAVAILABLE",List.of(),List.of(new Evidence(path,entry.content().orElseThrow().digest()))));
                 if(sourceHint.language().isPresent())sourceAnchors.computeIfAbsent(anchor(path),key->new TreeSet<>()).add(sourceSet(path));
                 sourceHint.language().ifPresent(language->languageHints.computeIfAbsent(anchor(path),key->new TreeSet<>()).add(language));
@@ -131,7 +133,7 @@ public final class ReadinessPlanner {
                     List.of("guest-overlay","broker-cache-downloads"),List.of("exact-input-closure","independent-protected-observation","context-and-toolchain-match","output-digests-and-paths")));
         }
         OwnershipSummary summary;
-        try(var stream=new OwnershipStream(revision,inventory,content,List.copyOf(modules.values()),List.copyOf(contexts.values()),cancelled)){
+        try(var stream=new OwnershipStream(revision,inventory,content,List.copyOf(modules.values()),List.copyOf(contexts.values()),cachedSourceHints,cancelled)){
             var ledger=content.put(stream,cancelled);summary=new OwnershipSummary(stream.total,stream.counts,ledger);
         }
         if(summary.counts().getOrDefault("UNOWNED",0L)>0||summary.counts().getOrDefault("AMBIGUOUS",0L)>0||summary.counts().getOrDefault("UNAVAILABLE",0L)>0)
@@ -165,13 +167,43 @@ public final class ReadinessPlanner {
         if(hints.stream().anyMatch(Set.of("json","yaml","toml","xml","hcl","html","css","scss","sass","less","notebook")::contains))return Optional.empty();
         return hints.size()==1?Optional.of(hints.getFirst()):Optional.empty();
     }
+    private static final Set<String> NON_SOURCE_BINARY_EXTENSIONS = Set.of(
+            "jar","war","ear","apk","aab","zip","tar","gz","tgz","xz","zst","7z","rar",
+            "so","dll","dylib","exe","bin","o","a","class","jmod","pyc","wasm",
+            "png","jpg","jpeg","gif","webp","ico","bmp","pdf",
+            "mp3","mp4","mov","avi","mkv","wav","ogg",
+            "woff","woff2","ttf","otf","eot","sqlite","db","pack");
+    public static boolean isNonSourceBinaryExtension(String path) {
+        String name = filename(path);
+        int dot = name.lastIndexOf('.');
+        return dot >= 0 && NON_SOURCE_BINARY_EXTENSIONS.contains(name.substring(dot + 1).toLowerCase(Locale.ROOT));
+    }
     private record SourceHint(Optional<String> language,boolean unavailable){}
     /** Preserve legacy filename hints; add captured shebang evidence for names
      * that have no recognized suffix. This discovers inputs, never executes them. */
     private static SourceHint sourceHint(InventoryEntry entry,RepositoryContentStore content){
-        var path=entry.path().utf8();if(path.isEmpty())return new SourceHint(Optional.empty(),true);var legacy=language(path.orElseThrow());
-        if(legacy.isPresent()||entry.population()==InventoryEntry.Population.DOCUMENTATION||!com.evolution.analysis.polyglot.LanguageDiscovery.hints(path.orElseThrow()).isEmpty())return new SourceHint(legacy,false);
-        try{var bytes=entry.content().orElseThrow();if(!content.verify(bytes))return new SourceHint(Optional.empty(),true);try(var prefix=content.open(bytes)){return new SourceHint(com.evolution.analysis.polyglot.LanguageDiscovery.detect(path.orElseThrow(),prefix.readNBytes(8192),Optional.empty()).language(),false);}}
+        var path=entry.path().utf8();if(path.isEmpty())return new SourceHint(Optional.empty(),true);
+        String p=path.orElseThrow();
+        var legacy=language(p);
+        if(legacy.isPresent()||entry.population()==InventoryEntry.Population.DOCUMENTATION||!com.evolution.analysis.polyglot.LanguageDiscovery.hints(p).isEmpty())return new SourceHint(legacy,false);
+        try{
+            var bytes=entry.content().orElseThrow();
+            boolean mustFullVerify = entry.population() == InventoryEntry.Population.SOURCE
+                    || entry.population() == InventoryEntry.Population.UNKNOWN
+                    || bytes.size() <= 65_536
+                    || !isNonSourceBinaryExtension(p);
+            if(mustFullVerify){
+                if(!content.verify(bytes))return new SourceHint(Optional.empty(),true);
+                try(var prefix=content.open(bytes)){return new SourceHint(com.evolution.analysis.polyglot.LanguageDiscovery.detect(p,prefix.readNBytes(8192),Optional.empty()).language(),false);}
+            } else {
+                int len=(int)Math.min(bytes.size(),8192L);
+                try(var prefix=content.range(bytes,0,len)){
+                    byte[] head=prefix.readNBytes(len);
+                    if(head.length!=len)return new SourceHint(Optional.empty(),true);
+                    return new SourceHint(com.evolution.analysis.polyglot.LanguageDiscovery.detect(p,head,Optional.empty()).language(),false);
+                }
+            }
+        }
         catch(IOException unavailable){return new SourceHint(Optional.empty(),true);}
     }
     private static String anchor(String path){String rooted="/"+path;int src=rooted.indexOf("/src/");return src<0?directory(path):src==0?".":rooted.substring(1,src);}
@@ -181,10 +213,10 @@ public final class ReadinessPlanner {
     public static boolean within(String path,String directory){return directory.equals(".")||path.equals(directory)||path.startsWith(directory+"/");}
     private static void check(BooleanSupplier cancelled)throws IOException{if(cancelled.getAsBoolean()||Thread.currentThread().isInterrupted())throw new IOException("READINESS_CANCELLED");}
     private static final class OwnershipStream extends InputStream {
-        final String revision;final InventoryReader inventory;final RepositoryContentStore content;final List<Module> modules;final List<Context> contexts;final BooleanSupplier cancelled;
+        final String revision;final InventoryReader inventory;final RepositoryContentStore content;final List<Module> modules;final List<Context> contexts;final Map<String,SourceHint> cachedHints;final BooleanSupplier cancelled;
         final Map<String,Long> counts=new TreeMap<>();long total;Optional<String> cursor=Optional.empty();boolean ended;
         Iterator<InventoryEntry> entries=Collections.emptyIterator();byte[] pending=new byte[0];int offset;
-        OwnershipStream(String revision,InventoryReader inventory,RepositoryContentStore content,List<Module> modules,List<Context> contexts,BooleanSupplier cancelled){this.revision=revision;this.inventory=inventory;this.content=content;this.modules=modules;this.contexts=contexts;this.cancelled=cancelled;}
+        OwnershipStream(String revision,InventoryReader inventory,RepositoryContentStore content,List<Module> modules,List<Context> contexts,Map<String,SourceHint> cachedHints,BooleanSupplier cancelled){this.revision=revision;this.inventory=inventory;this.content=content;this.modules=modules;this.contexts=contexts;this.cachedHints=cachedHints;this.cancelled=cancelled;}
         private boolean fill()throws IOException{
             while(offset==pending.length){
                 check(cancelled);
@@ -192,7 +224,7 @@ public final class ReadinessPlanner {
                     if(ended)return false;
                     var page=inventory.page(revision,512,cursor);entries=page.entries().iterator();cursor=page.continuation();ended=cursor.isEmpty();if(!entries.hasNext())continue;
                 }
-                var entry=entries.next();var ownership=ownership(entry,content,modules,contexts);counts.merge(ownership.disposition().name(),1L,Math::addExact);total=Math.addExact(total,1);
+                var entry=entries.next();var ownership=ownership(entry,content,modules,contexts,cachedHints);counts.merge(ownership.disposition().name(),1L,Math::addExact);total=Math.addExact(total,1);
                 pending=(CanonicalJson.write(ownership)+"\n").getBytes(StandardCharsets.UTF_8);offset=0;
             }
             return true;
@@ -200,13 +232,14 @@ public final class ReadinessPlanner {
         @Override public int read()throws IOException{return fill()?Byte.toUnsignedInt(pending[offset++]):-1;}
         @Override public int read(byte[] output,int start,int length)throws IOException{Objects.checkFromIndexSize(start,length,output.length);if(length==0)return 0;if(!fill())return -1;int count=Math.min(length,pending.length-offset);System.arraycopy(pending,offset,output,start,count);offset+=count;return count;}
     }
-    private static Ownership ownership(InventoryEntry entry,RepositoryContentStore content,List<Module> modules,List<Context> contexts){
+    private static Ownership ownership(InventoryEntry entry,RepositoryContentStore content,List<Module> modules,List<Context> contexts,Map<String,SourceHint> cachedHints){
         if(entry.disposition()==InventoryEntry.Disposition.EXCLUDED)return new Ownership(entry.path(),Disposition.EXCLUDED,List.of(),"EXPLICIT_SELECTION");
         if(entry.disposition()!=InventoryEntry.Disposition.ACQUIRED)return new Ownership(entry.path(),Disposition.UNAVAILABLE,List.of(),"ACQUISITION_GAP");
         if(entry.path().utf8().isEmpty())return new Ownership(entry.path(),Disposition.UNAVAILABLE,List.of(),"RAW_PATH_PROVIDER_REQUIRED");
         String path=entry.path().utf8().orElseThrow();
         if(entry.kind()!=InventoryEntry.Kind.FILE)return new Ownership(entry.path(),Disposition.NON_SOURCE,List.of(),"INVENTORIED");
-        var hint=sourceHint(entry,content);
+        var hint=cachedHints.get(path);
+        if(hint==null)hint=sourceHint(entry,content);
         if(hint.unavailable())return new Ownership(entry.path(),Disposition.UNAVAILABLE,List.of(),"SOURCE_CLASSIFICATION_INPUT_UNAVAILABLE");
         if(hint.language().isEmpty()){
             boolean unknown=entry.population()==InventoryEntry.Population.UNKNOWN||entry.population()==InventoryEntry.Population.SOURCE;

@@ -18,14 +18,25 @@ import static com.evolution.analysis.graph.KnowledgeGraph.*;
 /** Projects neutral provider outputs; never parses source or runs target code. */
 public final class CanonicalGraphBuilder {
     public KnowledgeGraph build(AnalysisManifest manifest, FrontendResult frontend) {
-        return build(manifest,frontend,List.of());
+        return build(manifest,frontend,List.of(),false);
+    }
+    public KnowledgeGraph build(AnalysisManifest manifest, FrontendResult frontend, boolean fastArchitecture) {
+        return build(manifest,frontend,List.of(),fastArchitecture);
     }
     public KnowledgeGraph build(AnalysisManifest manifest, FrontendResult frontend,List<CanonicalGraphInput.SpringSlice> spring) {
-        return build(manifest,frontend,spring,List.of());
+        return build(manifest,frontend,spring,List.of(),false);
+    }
+    public KnowledgeGraph build(AnalysisManifest manifest, FrontendResult frontend,List<CanonicalGraphInput.SpringSlice> spring, boolean fastArchitecture) {
+        return build(manifest,frontend,spring,List.of(),fastArchitecture);
     }
     public KnowledgeGraph build(AnalysisManifest manifest, FrontendResult frontend,List<CanonicalGraphInput.SpringSlice> spring,
             Collection<EvidenceAcquisitionLedger> ledgers) {
-        var projection=new Projection(manifest.snapshot().identity());
+        return build(manifest,frontend,spring,ledgers,false);
+    }
+    public KnowledgeGraph build(AnalysisManifest manifest, FrontendResult frontend,List<CanonicalGraphInput.SpringSlice> spring,
+            Collection<EvidenceAcquisitionLedger> ledgers, boolean fastArchitecture) {
+        boolean fast = fastArchitecture || "FAST_ARCHITECTURE".equals(manifest.configuration().values().get("analysis.profile"));
+        var projection=new Projection(manifest.snapshot().identity(), GraphProjectionStore.memory(), fast);
         projection.frontend(manifest,frontend);
         spring.forEach(projection::spring);
         ledgers.forEach(projection::ledger);
@@ -33,27 +44,52 @@ public final class CanonicalGraphBuilder {
     }
 
     public KnowledgeGraph build(CanonicalGraphInput input) {
-        return build(input,List.of());
+        return build(input,List.of(),false);
+    }
+    public KnowledgeGraph build(CanonicalGraphInput input, boolean fastArchitecture) {
+        return build(input,List.of(),fastArchitecture);
     }
     public KnowledgeGraph build(CanonicalGraphInput input,Collection<EvidenceAcquisitionLedger> ledgers) {
-        return project(input,ledgers,GraphProjectionStore.memory()).finish();
+        return build(input,ledgers,false);
+    }
+    public KnowledgeGraph build(CanonicalGraphInput input,Collection<EvidenceAcquisitionLedger> ledgers, boolean fastArchitecture) {
+        return project(input,ledgers,GraphProjectionStore.memory(),fastArchitecture).finish();
     }
     public KnowledgeGraph build(CanonicalGraphInput input,Collection<EvidenceAcquisitionLedger> ledgers,GraphProjectionStore.Contribution contribution) throws java.io.IOException {
+        return build(input,ledgers,contribution,false);
+    }
+    public KnowledgeGraph build(CanonicalGraphInput input,Collection<EvidenceAcquisitionLedger> ledgers,GraphProjectionStore.Contribution contribution, boolean fastArchitecture) throws java.io.IOException {
         var store=GraphProjectionStore.memory();
-        var p=project(input,ledgers,store);
+        var p=project(input,ledgers,store,fastArchitecture);
         contribution.project(store);
         return p.finish();
     }
     /** Assemble identical canonical rows without constructing or indexing a KnowledgeGraph. */
     public void project(CanonicalGraphInput input,GraphProjectionStore store) {
-        project(input,store,List.of());
+        project(input,store,List.of(),false);
+    }
+    public void project(CanonicalGraphInput input,GraphProjectionStore store, boolean fastArchitecture) {
+        project(input,store,List.of(),fastArchitecture);
     }
     public void project(CanonicalGraphInput input,GraphProjectionStore store,Collection<EvidenceAcquisitionLedger> ledgers) {
-        project(input,ledgers,store).complete();
+        project(input,store,ledgers,false);
     }
-    private Projection project(CanonicalGraphInput input,Collection<EvidenceAcquisitionLedger> ledgers,GraphProjectionStore store) {
+    public void project(CanonicalGraphInput input,GraphProjectionStore store,Collection<EvidenceAcquisitionLedger> ledgers, boolean fastArchitecture) {
+        project(input,ledgers,store,fastArchitecture).complete();
+    }
+    public void buildInto(CanonicalGraphInput input,GraphProjectionStore store,Collection<EvidenceAcquisitionLedger> ledgers, boolean fastArchitecture) {
+        project(input,store,ledgers,fastArchitecture);
+    }
+    private static boolean hasFastArchitectureProfile(CanonicalGraphInput input) {
+        return input.ingestion().stream()
+                .flatMap(ing -> ing.sourceIngestion().outcomes().stream())
+                .flatMap(o -> o.request().stream())
+                .anyMatch(r -> "FAST_ARCHITECTURE".equals(r.manifest().configuration().values().get("analysis.profile")));
+    }
+    private Projection project(CanonicalGraphInput input,Collection<EvidenceAcquisitionLedger> ledgers,GraphProjectionStore store, boolean fastArchitecture) {
         Objects.requireNonNull(input);
-        var p=new Projection(input.repository().snapshot().identity(),store);
+        boolean effectiveFast = fastArchitecture || hasFastArchitectureProfile(input);
+        var p=new Projection(input.repository().snapshot().identity(),store,effectiveFast);
         input.javaEvidence().ifPresent(binding->{try{binding.requireCurrent();}catch(java.io.IOException unavailable){throw new IllegalArgumentException("Unavailable post-analysis Java evidence");}p.javaBase=Optional.of(binding.base());p.historicalGaps=binding.historicalGapIds();binding.evidence().forEach(p::nativeEvidence);});
         String repository=p.repository(input);
         input.javaEvidence().ifPresent(binding->{
@@ -75,7 +111,10 @@ public final class CanonicalGraphBuilder {
             p.artifact("source.ownership",Map.of("inputIdentity",ingestion.sourceIngestion().inputIdentity(),
                     "sources",ingestion.sourceIngestion().sources(),"issues",ingestion.sourceIngestion().issues(),
                     "gaps",ingestion.sourceIngestion().gaps(),"providerResultIdentity",ingestion.sourceIngestion().identity()));
+            var outcomesBySet = new HashMap<UniversalSourceIngestion.SourceSet, UniversalSourceIngestion.Outcome>(
+                    Math.max(16, ingestion.sourceIngestion().outcomes().size() * 2));
             for(var outcome:ingestion.sourceIngestion().outcomes()) {
+                outcomesBySet.put(outcome.sourceSet(), outcome);
                 p.artifact("source.configuration",outcome.configuration());
                 outcome.metadata().forEach(m->p.artifact("source.metadata",m));
                 outcome.request().ifPresent(request->{
@@ -89,7 +128,7 @@ public final class CanonicalGraphBuilder {
             }
             for(var unit:ingestion.units()) {
                 p.artifact("ingestion.unit",Map.of("sourceSet",unit.sourceSet(),"status",unit.status()));
-                var outcome=ingestion.sourceIngestion().outcomes().stream().filter(o->o.sourceSet().equals(unit.sourceSet())).findFirst().orElseThrow();
+                var outcome=Objects.requireNonNull(outcomesBySet.get(unit.sourceSet()));
                 unit.frontend().ifPresent(frontend->p.frontend(outcome.request().orElseThrow().manifest(),frontend));
                 unit.sourceWiring().ifPresent(wiring->p.sourceWiring(outcome.request().orElseThrow(),wiring));
                 unit.components().ifPresent(c->p.artifact("spring.components",c));
@@ -97,9 +136,18 @@ public final class CanonicalGraphBuilder {
                 unit.spring().ifPresent(s->{
                     p.artifact("spring.universal",s);
                     var request=outcome.request().orElseThrow();
+                    Map<EntityIdentity, Entity> projectEntitiesById = null;
+                    if (!s.web().routes().isEmpty()) {
+                        projectEntitiesById = new HashMap<>();
+                        for (var decl : unit.frontend().orElseThrow().declarations()) {
+                            if (decl.entity().origin() == EntityOrigin.PROJECT) {
+                                projectEntitiesById.putIfAbsent(decl.entity().identity(), decl.entity());
+                            }
+                        }
+                    }
                     for(var route:s.web().routes()) {
-                        var handler=unit.frontend().orElseThrow().declarations().stream().map(DeclarationRecord::entity)
-                                .filter(e->e.identity().equals(route.handler())&&e.origin()==EntityOrigin.PROJECT).findFirst().orElseThrow(()->new IllegalArgumentException("Foreign endpoint declaration"));
+                        var handler = projectEntitiesById.get(route.handler());
+                        if (handler == null) throw new IllegalArgumentException("Foreign endpoint declaration");
                         String context=request.manifest().identity().value();
                         var payload=p.artifact("spring.endpoint-declaration",Map.of("schema","spring.endpoint-declaration:m8.4-v1",
                                 "route",route,"module",handler.stableScope().value(),"sourceSet",request.sourceSet(),
@@ -150,9 +198,12 @@ public final class CanonicalGraphBuilder {
         final Map<ContentDigest,ContentDigest> contentArtifacts=new HashMap<>();
         final Map<ModuleIdentity,ContentDigest> moduleArtifacts=new HashMap<>();
         final Map<SourceDocumentIdentity,ContentDigest> documentArtifacts=new HashMap<>();
-        Projection(SnapshotIdentity snapshot) {this(snapshot,GraphProjectionStore.memory());}
-        Projection(SnapshotIdentity snapshot,GraphProjectionStore store) {
+        final boolean fastArchitecture;
+        Projection(SnapshotIdentity snapshot) {this(snapshot,GraphProjectionStore.memory(),false);}
+        Projection(SnapshotIdentity snapshot,GraphProjectionStore store) {this(snapshot,store,false);}
+        Projection(SnapshotIdentity snapshot,GraphProjectionStore store, boolean fastArchitecture) {
             this.snapshot=snapshot;
+            this.fastArchitecture=fastArchitecture;
             contexts=store.records("contexts",GraphSnapshotCodec::context);
             nodes=store.records("nodes",GraphSnapshotCodec::node);
             edges=store.records("edges",GraphSnapshotCodec::edge);
@@ -192,6 +243,9 @@ public final class CanonicalGraphBuilder {
         ContentDigest sourceBytes(SourceInput s) {
             var digest=s.document().contentDigest();
             var contentRef=contentArtifacts.computeIfAbsent(digest,d->{
+                if(fastArchitecture) {
+                    return artifact("source.content",Map.of("contentDigest",d,"size",s.byteLength()));
+                }
                 byte[] raw=s.bytes();
                 return artifact("source.content",Map.of("contentDigest",d,"size",raw.length,"bytesBase64",Base64.getEncoder().encodeToString(raw)));
             });
@@ -218,19 +272,32 @@ public final class CanonicalGraphBuilder {
             input.repository().files().values().forEach(s->{var payload=sourceBytes(s);node(s.document().identity().value(),context,"SOURCE_DOCUMENT",payload);});
             input.build().ifPresent(build->{
                 artifact("build.model",build);
+                Map<UniversalSourceIngestion.SourceSet, List<UniversalSourceIngestion.SourceRow>> ownedBySet = new HashMap<>();
+                input.ingestion().ifPresent(ingestion -> {
+                    for (var row : ingestion.sourceIngestion().sources()) {
+                        if (row.status() == UniversalSourceIngestion.Status.OWNED && input.repository().files().containsKey(row.path())) {
+                            for (var claim : row.claims()) {
+                                ownedBySet.computeIfAbsent(claim, k -> new ArrayList<>()).add(row);
+                            }
+                        }
+                    }
+                });
                 for(var module:build.modules()) {
                     var payload=artifact("build.module",module);String id=module.descriptor().identity().value();node(id,context,"MODULE",payload);
                     link(context,"graph.contains",input.repository().snapshot().repository().value(),id,payload);
-                    for(var set:module.sourcePlan().sourceSets()) for(var root:set.sourceRoots())root.value().ifPresent(path->{
-                        String rootId=derivedIdentity("source-root",List.of(id,set.kind(),set.name(),path));
-                        node(rootId,context,"SOURCE_ROOT",payload);link(context,"graph.contains",id,rootId,payload);
-                        input.ingestion().ifPresent(ingestion->ingestion.sourceIngestion().sources().stream()
-                                .filter(row->row.status()==UniversalSourceIngestion.Status.OWNED)
-                                .filter(row->row.claims().contains(new UniversalSourceIngestion.SourceSet(module.descriptor().identity(),set.kind(),set.name())))
-                                .filter(row->path.equals(".")||row.path().startsWith(path+"/"))
-                                .filter(row->input.repository().files().containsKey(row.path()))
-                                .forEach(row->link(context,"graph.owns-source",rootId,input.repository().files().get(row.path()).document().identity().value(),artifact("source.ownership-row",row))));
-                    });
+                    for(var set:module.sourcePlan().sourceSets()) {
+                        var setKey = new UniversalSourceIngestion.SourceSet(module.descriptor().identity(),set.kind(),set.name());
+                        var claimedRows = ownedBySet.getOrDefault(setKey, List.of());
+                        for(var root:set.sourceRoots())root.value().ifPresent(path->{
+                            String rootId=derivedIdentity("source-root",List.of(id,set.kind(),set.name(),path));
+                            node(rootId,context,"SOURCE_ROOT",payload);link(context,"graph.contains",id,rootId,payload);
+                            for (var row : claimedRows) {
+                                if (path.equals(".") || row.path().startsWith(path + "/")) {
+                                    link(context,"graph.owns-source",rootId,input.repository().files().get(row.path()).document().identity().value(),artifact("source.ownership-row",row));
+                                }
+                            }
+                        });
+                    }
                 }
             });return context;
         }
@@ -291,16 +358,23 @@ public final class CanonicalGraphBuilder {
             for(int i=0;i<frontend.declarations().size();i++) {
                 var declaration=frontend.declarations().get(i);
                 var entity=declaration.entity();var payload=declarationPayloads.get(i);
-                ownerTuple(entity.canonicalName()).ifPresent(owner->{
-                    var parent=byCanonical.get(entity.stableScope().value()+"|java:v1:"+CanonicalJson.write(owner));
-                    if(parent!=null)link(context,"graph.declares",parent.identity().value(),entity.identity().value(),payload);
-                });
-                if(entity.kind()==EntityKind.TYPE)packageName(entity.canonicalName()).ifPresent(name->{
-                    var pkg=EntityIdentity.from(entity.origin(),entity.stableScope(),EntityKind.PACKAGE,JavaSymbolName.packageName(name).canonicalName());
-                    node(pkg.value(),context,"PACKAGE",payload);link(context,"graph.contains",pkg.value(),entity.identity().value(),payload);
-                    if(entity.origin()==EntityOrigin.PROJECT)link(context,"graph.contains",entity.stableScope().value(),pkg.value(),payload);
-                });
+                var parsedTuple = tuple(entity.canonicalName());
+                if (parsedTuple.isPresent()) {
+                    var parts = parsedTuple.get();
+                    if (parts.size() >= 2 && parts.get(1) instanceof List<?> owner && !Set.of("package","type").contains(parts.getFirst())) {
+                        var parent=byCanonical.get(entity.stableScope().value()+"|java:v1:"+CanonicalJson.write(owner));
+                        if(parent!=null)link(context,"graph.declares",parent.identity().value(),entity.identity().value(),payload);
+                    }
+                    if (entity.kind()==EntityKind.TYPE) {
+                        packageNameFromTuple(parts).ifPresent(name->{
+                            var pkg=EntityIdentity.from(entity.origin(),entity.stableScope(),EntityKind.PACKAGE,JavaSymbolName.packageName(name).canonicalName());
+                            node(pkg.value(),context,"PACKAGE",payload);link(context,"graph.contains",pkg.value(),entity.identity().value(),payload);
+                            if(entity.origin()==EntityOrigin.PROJECT)link(context,"graph.contains",entity.stableScope().value(),pkg.value(),payload);
+                        });
+                    }
+                }
             }
+            var typeOwnerCache = new HashMap<String, Optional<Entity>>(Math.max(16, byId.size() * 2));
             var occurrencePayloads=new ArrayList<ContentDigest>(frontend.occurrences().size());
             for(var occurrence:frontend.occurrences()) {
                 if(!nodes.containsKey(key(context,occurrence.span().document().value())))throw new IllegalArgumentException("Occurrence source absent from manifest");
@@ -308,13 +382,13 @@ public final class CanonicalGraphBuilder {
                 node(occurrence.identity().value(),context,"OCCURRENCE",payload);
                 statement(context,"java.occurrence",occurrence.identity().value(),payload);
                 relationship(context,occurrence.relationship(),payload);
-                if(occurrence.status()==SemanticStatus.RESOLVED)dependency(context,occurrence.relationship(),byCanonical,byId,payload);
+                if(occurrence.status()==SemanticStatus.RESOLVED)dependency(context,occurrence.relationship(),byCanonical,byId,typeOwnerCache,payload);
             }
             var derivedPayloads=new ArrayList<ContentDigest>(frontend.derivedRelationships().size());
             for(var derived:frontend.derivedRelationships()) {
                 var payload=artifact("java.derived-relationship",derived);derivedPayloads.add(payload);
                 relationship(context,derived.relationship(),payload);
-                if(derived.status()==SemanticStatus.RESOLVED)dependency(context,derived.relationship(),byCanonical,byId,payload);
+                if(derived.status()==SemanticStatus.RESOLVED)dependency(context,derived.relationship(),byCanonical,byId,typeOwnerCache,payload);
             }
             var httpClientCallPayloads=new ArrayList<ContentDigest>(frontend.httpClientCalls().size());
             for(var call:frontend.httpClientCalls()) {
@@ -384,14 +458,23 @@ public final class CanonicalGraphBuilder {
             };
             edge(new Edge(relation.identity().value(),context,relation.kind().value(),relation.source().value(),target,List.of(payload),Optional.empty()));
         }
-        void dependency(String context,SemanticRelationship relation,Map<String,Entity> byCanonical,Map<String,Entity> byId,ContentDigest payload) {
+        void dependency(String context,SemanticRelationship relation,Map<String,Entity> byCanonical,Map<String,Entity> byId,Map<String,Optional<Entity>> typeOwnerCache,ContentDigest payload) {
             if(Set.of("java.declares","java.has-parameter").contains(relation.kind().value()) || !(relation.target() instanceof RelationshipTarget.Resolved target))return;
-            Entity from=typeOwner(byId.get(relation.source().value()),byCanonical),to=typeOwner(byId.get(target.target().value()),byCanonical);
+            Entity from=cachedTypeOwner(byId.get(relation.source().value()),byCanonical,typeOwnerCache),to=cachedTypeOwner(byId.get(target.target().value()),byCanonical,typeOwnerCache);
             if(from!=null&&to!=null&&!from.identity().equals(to.identity()))link(context,"graph.depends-on",from.identity().value(),to.identity().value(),payload);
             else if(from==null||to==null) {
                 var source=byId.get(relation.source().value());
                 if(source!=null&&source.kind()!=EntityKind.PACKAGE)projectionGap(context,relation.identity().value(),payload,"TYPE_OWNER_UNAVAILABLE");
             }
+        }
+        Entity cachedTypeOwner(Entity entity,Map<String,Entity> entities,Map<String,Optional<Entity>> cache) {
+            if (entity == null) return null;
+            if (entity.kind() == EntityKind.TYPE) return entity;
+            var cached = cache.get(entity.identity().value());
+            if (cached != null) return cached.orElse(null);
+            Entity resolved = typeOwner(entity, entities);
+            cache.put(entity.identity().value(), Optional.ofNullable(resolved));
+            return resolved;
         }
         Entity typeOwner(Entity entity,Map<String,Entity> entities) {
             var seen=new HashSet<String>();
@@ -629,7 +712,10 @@ public final class CanonicalGraphBuilder {
         catch(IllegalArgumentException unknown){return Optional.empty();}
     }
     private static Optional<String> packageName(String name) {
-        var tuple=tuple(name);if(tuple.isEmpty())return Optional.empty();var parts=tuple.orElseThrow();
+        var tuple=tuple(name);if(tuple.isEmpty())return Optional.empty();
+        return packageNameFromTuple(tuple.orElseThrow());
+    }
+    private static Optional<String> packageNameFromTuple(List<Object> parts) {
         for(int depth=0;depth<64;depth++) {
             if(parts.isEmpty())return Optional.empty();
             if(parts.getFirst().equals("type"))return Optional.of(String.join(".",GraphJson.array(parts.get(1)).stream().map(GraphJson::string).toList()));

@@ -367,8 +367,12 @@ public final class TruthRegionEvaluation {
                         binding = Optional.of(result); inheritedGaps.addAll(result.capabilityGaps());
                         status = operationalStatus(result); reasons.addAll(operationalReasons(result));
                     }
-                    for (var fact : facts) values.put(fact.identity(),
-                            binding.map(result -> factTruth(fact, result, dependencies)).orElse(UNKNOWN));
+                    if (binding.isPresent()) {
+                        var indexed = indexWorldFacts(binding.get(), dependencies);
+                        for (var fact : facts) values.put(fact.identity(), indexed.truth(fact));
+                    } else {
+                        for (var fact : facts) values.put(fact.identity(), UNKNOWN);
+                    }
                 } else if (exogenous.assignmentFeasibility() == FALSE) {
                     status = OperationalStatus.NOT_EVALUATED; reasons.add("INFEASIBLE_ASSIGNMENT");
                 } else {
@@ -413,6 +417,17 @@ public final class TruthRegionEvaluation {
                 return;
             }
             int used = 0;
+            record WitnessRank(DeltaAssignment delta, String digest) {}
+            var rankByWorld = new HashMap<ConfigurationReasoner.WorldKey, WitnessRank>();
+            for (var w : worlds) {
+                if (witnessEligible(w)) {
+                    rankByWorld.put(w.identity(), new WitnessRank(delta(w.assignment()),
+                            TruthIdentity.digest(w.assignment().canonicalForm()).value()));
+                }
+            }
+            Comparator<World> witnessComparator = Comparator
+                    .comparingInt((World w) -> rankByWorld.get(w.identity()).delta().changedDimensions())
+                    .thenComparing(w -> rankByWorld.get(w.identity()).digest());
             for (var region : regions) {
                 for (var truth : List.of(TRUE, FALSE, UNKNOWN)) {
                     var candidates = switch (truth) {
@@ -424,12 +439,11 @@ public final class TruthRegionEvaluation {
                         return;
                     }
                     var selected = candidates.stream().map(worldsById::get)
-                            .filter(this::witnessEligible)
-                            .min(Comparator.comparingInt((World w) -> delta(w.assignment()).changedDimensions())
-                                    .thenComparing(w -> TruthIdentity.digest(w.assignment().canonicalForm()).value()))
+                            .filter(w -> rankByWorld.containsKey(w.identity()))
+                            .min(witnessComparator)
                             .orElse(null);
                     if (selected == null) continue;
-                    var delta = delta(selected.assignment());
+                    var delta = rankByWorld.get(selected.identity()).delta();
                     var identity = new WitnessIdentity(TruthIdentity.derive("spring-witness", Map.ofEntries(
                             Map.entry("factRegionIdentity", region.identity()),
                             Map.entry("baselineConfigurationIdentity", baselineIdentity(request.baseline())),
@@ -558,6 +572,50 @@ public final class TruthRegionEvaluation {
             }
         }
         return List.copyOf(facts);
+    }
+
+    private record WorldFactIndex(
+            Map<BeanDefinitionCandidate.Identity, LogicalValue> presenceByCandidate,
+            Map<Object, InjectionBindings.Row> rowsByPointAndOwner) {
+        LogicalValue truth(ConditionalFactKey fact) {
+            return switch (fact.kind()) {
+                case DEFINITION_PRESENT -> presenceByCandidate.getOrDefault(fact.definition().orElseThrow(), UNKNOWN);
+                case INJECTION_CANDIDATE, SELECTED_BINDING -> {
+                    var row = rowsByPointAndOwner.get(List.of(fact.injectionPoint().orElseThrow(), fact.bindingOwner()));
+                    if (row == null) yield UNKNOWN;
+                    var targetId = fact.target().orElseThrow();
+                    boolean established = false;
+                    for (var t : (fact.kind() == ConditionalFactKey.Kind.INJECTION_CANDIDATE ? row.eligibleCandidates() : row.selected())) {
+                        if (t.candidate().equals(targetId)) {
+                            established = true;
+                            break;
+                        }
+                    }
+                    if (established) yield TRUE;
+                    yield switch (row.outcome()) {
+                        case SELECTED, AGGREGATE, ABSENT_OPTIONAL, UNSATISFIED, AMBIGUOUS, NOT_ACTIVE, GROUP_SKIPPED -> FALSE;
+                        case DEFERRED, UNKNOWN, ERROR, NOT_REACHED -> UNKNOWN;
+                    };
+                }
+            };
+        }
+    }
+
+    static WorldFactIndex indexWorldFacts(InjectionBindings.Result result,
+            Map<ContentDigest, InjectionBindingPlan.Dependency> dependencies) {
+        var presence = new HashMap<BeanDefinitionCandidate.Identity, LogicalValue>(
+                Math.max(16, result.registration().candidates().size() * 2));
+        for (var c : result.registration().candidates()) {
+            presence.putIfAbsent(c.candidate(), c.finalPresence());
+        }
+        var rows = new HashMap<Object, InjectionBindings.Row>(Math.max(16, result.rows().size() * 2));
+        for (var r : result.rows()) {
+            var descriptor = dependencies.get(r.dependency());
+            if (descriptor != null) {
+                rows.putIfAbsent(List.of(r.point(), descriptor.owner()), r);
+            }
+        }
+        return new WorldFactIndex(presence, rows);
     }
 
     static LogicalValue factTruth(ConditionalFactKey fact, InjectionBindings.Result result,

@@ -2,96 +2,135 @@
 <html lang="en" data-theme="dark">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Snapshot comparison · Evo</title><link rel="icon" href="/logo.svg" type="image/svg+xml">
+<title>Snapshot Evolution · Evo</title><link rel="icon" href="/logo.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/styles.css"><link rel="stylesheet" href="/evolution.css">
 <script defer src="/evolution.js"></script>
 </head>
 <body class="evolution-page"><a class="skip-link" href="#main">Skip to content</a>
 <header class="topbar evolution-top">
-  <a class="brand" href="/" aria-label="Evo home"><img src="/logo.svg" width="32" height="32" alt=""><span>evo<span class="brand-dot">.</span></span></a>
-  <nav class="topbar-nav" aria-label="Workbench views">
-    <a href="/" class="topbar-nav-link">Architecture Workbench</a>
-    <a href="/evolution.html" class="topbar-nav-link active" aria-current="page">Snapshot comparison</a>
+  <a class="brand" href="/" aria-label="Evo home"><img src="/logo.svg" width="28" height="28" alt=""><span>evo<span class="brand-dot">.</span></span></a>
+  <nav class="topbar-nav" aria-label="Views">
+    <a href="/" class="topbar-nav-link"><span class="nav-icon">⊞</span> <span class="nav-text">Workbench</span></a>
+    <a href="/bridges.html" class="topbar-nav-link"><span class="nav-icon">⇄</span> <span class="nav-text">Bridges</span></a>
+    <a href="/evolution.html" class="topbar-nav-link active" aria-current="page"><span class="nav-icon">↔</span> <span class="nav-text">Evolution</span></a>
   </nav>
-  <button id="compare-theme" class="button" type="button">Light theme</button>
+  <div class="topbar-actions">
+    <button id="compare-theme" class="button subtle" type="button">Light theme</button>
+  </div>
 </header>
+
 <main id="main" tabindex="-1">
-  <div class="page-heading"><div><h1>Snapshot comparison</h1><p class="muted">Compare two immutable analyses in baseline-to-target order.</p></div></div>
-  <form id="compare-form" class="card">
-    <div class="compare-pair">
-      <label>Baseline<select id="baseline"><option value="">Choose an analysis</option></select></label>
-      <label>Target<select id="target"><option value="">Choose an analysis</option></select></label>
+  <div class="page-heading">
+    <div>
+      <h1>Snapshot evolution</h1>
+      <p class="muted">Compare two immutable analyses in baseline-to-target order.</p>
     </div>
-    <p id="catalog-status" class="muted small"></p>
-    <div class="compare-actions">
-      <button class="button" id="more-analyses" type="button" hidden>More analyses</button>
-      <button class="button" id="swap" type="button">Swap baseline and target</button>
-      <label>Mode<select id="mode"><option value="STRICT">Strict</option><option value="OBSERVATION">Observation</option></select></label>
-      <button class="button primary" id="compare-submit" type="submit">Run comparison</button>
-    </div>
-    <details>
-      <summary>Pinned graph IDs and request options</summary>
-      <div class="compare-fields">
-        <label>Repository identity<input id="repository-id" autocomplete="off" spellcheck="false"></label>
-        <label>Baseline graph ID<input id="baseline-id" autocomplete="off" spellcheck="false"></label>
-        <label>Target graph ID<input id="target-id" autocomplete="off" spellcheck="false"></label>
-        <label>Load versioned request JSON<input id="request-file" type="file" accept=".json,application/json"></label>
+  </div>
+
+  <!-- Setup card — compact, two selects in one row -->
+  <div class="card" style="margin-bottom:12px;">
+    <form id="compare-form">
+      <div class="compare-pair">
+        <label>Baseline<select id="baseline"><option value="">Choose an analysis</option></select></label>
+        <label>Target<select id="target"><option value="">Choose an analysis</option></select></label>
       </div>
-      <p class="muted small">A request file can pin exact policy reports, bridge publications and a declared history.</p>
-    </details>
-  </form>
-  <form id="reopen-form" class="card compare-actions">
-    <label>Saved result or job ID<input id="saved-id" required spellcheck="false" autocomplete="off" placeholder="sha256:…"></label>
-    <button class="button" name="open" value="result">Open result</button>
-    <button class="button" name="open" value="job">Open job</button>
-  </form>
-  <section id="comparison-job" class="card" aria-label="Comparison job">
-    <p id="comparison-status" role="status" aria-atomic="true">Choose a baseline and target or open a saved result.</p>
+      <p id="catalog-status" class="muted small"></p>
+      <div class="compare-actions" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px;">
+        <button class="button" id="more-analyses" type="button" hidden>More analyses</button>
+        <button class="button" id="swap" type="button">⇅ Swap</button>
+        <label style="display:flex;align-items:center;gap:6px;font-size:12px;"><span class="muted">Mode</span><select id="mode" style="min-height:32px;padding:5px 10px;"><option value="STRICT">Strict</option><option value="OBSERVATION">Observation</option></select></label>
+        <button class="button primary" id="compare-submit" type="submit" style="margin-left:auto;">Run comparison →</button>
+      </div>
+      <details style="margin-top:12px;">
+        <summary>Pinned IDs & advanced options</summary>
+        <div class="compare-fields" style="display:grid;gap:8px;margin-top:10px;">
+          <label>Repository identity<input id="repository-id" autocomplete="off" spellcheck="false"></label>
+          <label>Baseline graph ID<input id="baseline-id" autocomplete="off" spellcheck="false"></label>
+          <label>Target graph ID<input id="target-id" autocomplete="off" spellcheck="false"></label>
+          <label>Load versioned request JSON<input id="request-file" type="file" accept=".json,application/json"></label>
+        </div>
+        <p class="muted small">A request file can pin exact policy reports, bridge publications and a declared history.</p>
+      </details>
+    </form>
+  </div>
+
+  <!-- Reopen saved result — collapsed to minimal inline form -->
+  <details style="margin-bottom:16px;">
+    <summary>Open saved result or job ID</summary>
+    <form id="reopen-form" style="display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap;">
+      <input id="saved-id" required spellcheck="false" autocomplete="off" placeholder="sha256:…" style="flex:1;min-width:220px;">
+      <button class="button" name="open" value="result">Open result</button>
+      <button class="button" name="open" value="job">Open job</button>
+    </form>
+  </details>
+
+  <!-- Job progress -->
+  <section id="comparison-job" class="card" aria-label="Comparison job" style="margin-bottom:12px;">
+    <p id="comparison-status" role="status" aria-atomic="true">Choose a baseline and target, or open a saved result.</p>
     <code id="comparison-job-id"></code>
-    <div class="compare-actions">
-      <button class="button" id="cancel-comparison" type="button" hidden>Cancel job</button>
+    <div style="display:flex;gap:8px;margin-top:10px;">
+      <button class="button danger" id="cancel-comparison" type="button" hidden>Cancel job</button>
       <button class="button" id="resume-comparison" type="button" hidden>Resume job</button>
     </div>
   </section>
+
+  <!-- Results -->
   <section id="comparison-result" hidden aria-labelledby="result-title">
-    <div class="card">
+    <div class="card" style="margin-bottom:12px;">
       <h2 id="result-title" tabindex="-1">Comparison result</h2>
       <p id="comparison-outcome" class="badge"></p><code id="comparison-result-id"></code>
       <p id="comparison-selection" class="muted small"></p>
       <div class="compare-pair" id="comparison-pins"></div>
     </div>
-    <section class="card" aria-labelledby="rows-title">
-      <h2 id="rows-title">Evidence and changes</h2>
-      <form id="comparison-filters" class="compare-fields">
-        <label>View<select id="comparison-section">
-          <option value="COMPATIBILITY">Compatibility and drift</option><option value="CONTEXTS">Context coverage</option>
-          <option value="EVENTS">Events</option><option value="REGIONS">Regions and bindings</option>
-          <option value="FINDINGS">Finding lifecycle</option><option value="HISTORY">History intervals</option>
-          <option value="METRICS">Metrics</option><option value="SCORES">Scores and contributions</option>
-          <option value="EVIDENCE">Evidence changes and witnesses</option><option value="PROOFS">Proofs</option>
-          <option value="GAPS">Gaps</option><option value="INPUTS">Pinned inputs</option><option value="CORRESPONDENCE">Correspondence</option>
-        </select></label>
-        <label>Side<select id="filter-side"><option value="">Both</option><option value="LEFT">Baseline</option><option value="RIGHT">Target</option></select></label>
-        <label>Event kind or capability<input id="filter-kind" maxlength="128" type="search"></label>
-        <label>Scope or context ID<input id="filter-scope" maxlength="512" type="search"></label>
-        <label>Subject or proof ID<input id="filter-subject" maxlength="512" type="search"></label>
-        <button class="button" type="submit">Apply filters</button>
-      </form>
+
+    <div class="card" style="margin-bottom:12px;" aria-labelledby="rows-title">
+      <div class="card-heading">
+        <h2 id="rows-title">Evidence & changes</h2>
+        <!-- Single-line filter row: view selector + key filters -->
+        <form id="comparison-filters" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+          <select id="comparison-section" style="min-width:200px;">
+            <option value="COMPATIBILITY">Compatibility & drift</option>
+            <option value="CONTEXTS">Context coverage</option>
+            <option value="EVENTS">Events</option>
+            <option value="REGIONS">Regions & bindings</option>
+            <option value="FINDINGS">Finding lifecycle</option>
+            <option value="HISTORY">History intervals</option>
+            <option value="METRICS">Metrics</option>
+            <option value="SCORES">Scores</option>
+            <option value="EVIDENCE">Evidence changes</option>
+            <option value="PROOFS">Proofs</option>
+            <option value="GAPS">Gaps</option>
+            <option value="INPUTS">Pinned inputs</option>
+            <option value="CORRESPONDENCE">Correspondence</option>
+          </select>
+          <select id="filter-side" style="min-width:100px;">
+            <option value="">Both sides</option>
+            <option value="LEFT">Baseline</option>
+            <option value="RIGHT">Target</option>
+          </select>
+          <input id="filter-kind"    maxlength="128" type="search" placeholder="Event kind…" style="min-width:140px;flex:1;">
+          <input id="filter-scope"   maxlength="512" type="search" placeholder="Scope / context ID…" style="min-width:140px;flex:1;" aria-label="Scope or context ID">
+          <input id="filter-subject" maxlength="512" type="search" placeholder="Subject / proof ID…"  style="min-width:140px;flex:1;" aria-label="Subject or proof ID">
+          <button class="button" type="submit">Apply</button>
+        </form>
+      </div>
       <p id="comparison-count" role="status" aria-atomic="true"></p>
       <div id="comparison-rows" aria-busy="false"></div>
-      <div class="compare-actions">
-        <button class="button" id="comparison-back" type="button" disabled>Previous page</button>
-        <button class="button" id="comparison-more" type="button" disabled>Next page</button>
-        <button class="button" id="comparison-export" type="button" disabled>Export JSON page</button>
+      <div style="display:flex;gap:8px;margin-top:14px;align-items:center;">
+        <button class="button" id="comparison-back"   type="button" disabled>← Previous</button>
+        <button class="button" id="comparison-more"   type="button" disabled>Next →</button>
+        <button class="button subtle" id="comparison-export" type="button" disabled>Export JSON</button>
       </div>
-    </section>
-    <section class="card" aria-labelledby="graph-title">
-      <h2 id="graph-title">Baseline and target graphs</h2>
-      <p class="muted">Choose a context from the coverage view or enter a pinned context ID. Expand a node to inspect its outgoing edges.</p>
+    </div>
+
+    <div class="card" aria-labelledby="graph-title">
+      <h2 id="graph-title">Baseline & target graphs</h2>
+      <p class="muted small">Choose a context from the coverage view or enter a pinned context ID. Expand a node to inspect its outgoing edges.</p>
       <div id="comparison-graphs" class="compare-pair"></div>
-    </section>
+    </div>
   </section>
 </main>
+
 <dialog id="evolution-detail" aria-labelledby="evolution-detail-title">
   <h2 id="evolution-detail-title">Captured evidence</h2>
   <div id="evolution-detail-body" aria-live="polite"></div>

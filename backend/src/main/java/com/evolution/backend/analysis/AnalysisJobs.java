@@ -128,6 +128,15 @@ public final class AnalysisJobs implements AutoCloseable {
     }
     public record Page<T>(List<T> items, int total, Optional<String> continuation) {}
     public record Submission(View job, boolean created) {}
+    public record StageTiming(Stage stage, long durationMillis, Instant startedAt, Optional<Instant> endedAt) {}
+    public record Telemetry(String jobId, String setup, AnalysisMode mode, State state, Stage currentStage,
+                            boolean reused, Optional<ReuseDecision> reuseDecision, long totalElapsedMillis,
+                            Map<String, Long> stageMillis, List<StageTiming> stages) {
+        public Telemetry {
+            stageMillis = Collections.unmodifiableMap(new LinkedHashMap<>(stageMillis));
+            stages = List.copyOf(stages);
+        }
+    }
     public static final class Rejected extends RuntimeException {
         private final String code;
         public Rejected(String code) { super(code); this.code = code; }
@@ -139,6 +148,7 @@ public final class AnalysisJobs implements AutoCloseable {
         @Override public boolean getAsBoolean() { return job.stop != null || Thread.currentThread().isInterrupted(); }
         public void checkpoint() { if (getAsBoolean()) throw new CancellationException(); }
         public String id() { return job.id.toString(); }
+        public AnalysisMode mode() { return job.mode; }
         boolean beginReuseCheck() {
             if (disk == null) return false;
             job.reuseDecision = job.force ? ReuseDecision.BYPASSED : ReuseDecision.INPUTS_UNVERIFIED;
@@ -149,7 +159,9 @@ public final class AnalysisJobs implements AutoCloseable {
             if (disk == null) return Optional.empty();
             if (job.inputKey != null || job.stage.ordinal() >= Stage.ANALYSIS.ordinal())
                 throw new IllegalStateException("Reuse requires a single lookup before analysis");
-            job.inputKey = CanonicalJson.sha256(List.of("workbench-result-lookup:v1", job.registration.setup(), verifiedInputs));
+            job.inputKey = job.mode == AnalysisMode.FULL
+                    ? CanonicalJson.sha256(List.of("workbench-result-lookup:v1", job.registration.setup(), verifiedInputs))
+                    : CanonicalJson.sha256(List.of("workbench-result-lookup:v1", job.registration.setup(), verifiedInputs, job.mode.name()));
             if (job.force) return Optional.empty();
             job.reuseDecision = ReuseDecision.NO_MATCH;
             try {
@@ -176,7 +188,11 @@ public final class AnalysisJobs implements AutoCloseable {
             synchronized (AnalysisJobs.this) {
                 checkpoint();
                 if (stage == Stage.FINISHED || stage == Stage.REUSED || stage.ordinal() <= job.stage.ordinal()) throw new IllegalArgumentException("Invalid progress transition");
-                job.stage = stage; job.events.add(new Event(stage, Instant.now())); job.revision++;
+                long nowNanos = System.nanoTime();
+                job.closeActiveStage(nowNanos);
+                job.stage = stage;
+                job.stageStartNanos.put(stage, nowNanos);
+                job.events.add(new Event(stage, Instant.now())); job.revision++;
                 persist(job);
             }
         }
@@ -186,6 +202,8 @@ public final class AnalysisJobs implements AutoCloseable {
         final Instant submitted; final List<Event> events = new ArrayList<>();
         String retry;
         final long submittedNanos = System.nanoTime(); long finishedNanos;
+        final EnumMap<Stage, Long> stageStartNanos = new EnumMap<>(Stage.class);
+        final EnumMap<Stage, Long> stageElapsedNanos = new EnumMap<>(Stage.class);
         State state = State.QUEUED; Stage stage = Stage.QUEUED; long revision = 1;
         volatile Stop stop; Instant started, finished; Thread thread; Runnable task;
         ScheduledFuture<?> deadline; Result result; String error;
@@ -193,6 +211,7 @@ public final class AnalysisJobs implements AutoCloseable {
         List<InputProblem> inputProblems = List.of();
         AnalysisJobDiskStore.PreparedLedgers preparedLedgers;
         boolean force;
+        AnalysisMode mode = AnalysisMode.FULL;
         ContentDigest inputKey;
         Reuse reuse;
         volatile ReuseDecision reuseDecision;
@@ -200,11 +219,22 @@ public final class AnalysisJobs implements AutoCloseable {
         Job(Registration registration, int sequence) { this(registration,sequence,null); }
         Job(Registration registration,int sequence,AnalysisJobDiskStore.Saved previous){
             this.registration=registration;this.sequence=sequence;this.id=previous==null?UUID.randomUUID():UUID.fromString(previous.view().id());this.submitted=previous==null?Instant.now():previous.view().submittedAt();
-            if(previous!=null){this.revision=previous.view().revision()+1;this.force=previous.view().force();}events.add(new Event(stage,Instant.now()));
+            if(previous!=null){this.revision=previous.view().revision()+1;this.force=previous.view().force();}
+            stageStartNanos.put(stage, submittedNanos);
+            events.add(new Event(stage,Instant.now()));
+        }
+        void closeActiveStage(long nowNanos) {
+            Long startedAt = stageStartNanos.remove(stage);
+            if (startedAt != null) {
+                stageElapsedNanos.merge(stage, Math.max(0L, nowNanos - startedAt), Long::sum);
+            }
         }
     }
     private final SortedMap<String, Registration> setups = new TreeMap<>();
     private final LinkedHashMap<UUID, Job> jobs = new LinkedHashMap<>();
+    private final LinkedHashMap<UUID, Telemetry> completedTelemetry = new LinkedHashMap<>(32, 0.75f, true) {
+        @Override protected boolean removeEldestEntry(Map.Entry<UUID, Telemetry> eldest) { return size() > 128; }
+    };
     private final Map<String, Job> retries = new HashMap<>();
     private final UUID session = UUID.randomUUID();
     private final GraphStore graphs; private final PublishedReports reports; private final Limits limits;
@@ -238,13 +268,22 @@ public final class AnalysisJobs implements AutoCloseable {
         if (setups.putIfAbsent(registration.setup().id(),registration) != null) throw new IllegalArgumentException("Duplicate setup");
         if(disk!=null){try{disk.recover(registration.setup());}catch(IOException failure){throw new Rejected("JOB_STORAGE_UNAVAILABLE");}dispatchPending();}
     }
-    public Submission submit(String setup, String idempotencyKey) { return submit(setup, idempotencyKey, false); }
-    public synchronized Submission submit(String setup, String idempotencyKey, boolean force) {
+    public synchronized void unregister(String setupId) {
+        if (closed) throw new Rejected("JOBS_CLOSED");
+        boolean hasRunning = jobs.values().stream().anyMatch(j -> j.registration.setup().id().equals(setupId) && !terminal(j.state));
+        if (hasRunning) throw new Rejected("JOB_RUNNING");
+        setups.remove(setupId);
+        retries.entrySet().removeIf(e -> e.getValue().registration.setup().id().equals(setupId));
+    }
+    public Submission submit(String setup, String idempotencyKey) { return submit(setup, idempotencyKey, false, AnalysisMode.FULL); }
+    public Submission submit(String setup, String idempotencyKey, boolean force) { return submit(setup, idempotencyKey, force, AnalysisMode.FULL); }
+    public synchronized Submission submit(String setup, String idempotencyKey, boolean force, AnalysisMode mode) {
+        Objects.requireNonNull(mode);
         identifier(setup); identifier(idempotencyKey);
         if (closed) throw new Rejected("JOBS_CLOSED");
         var existing = retries.get(idempotencyKey);
         if (existing != null) {
-            if (!existing.registration.setup().id().equals(setup) || existing.force != force) throw new Rejected("IDEMPOTENCY_CONFLICT");
+            if (!existing.registration.setup().id().equals(setup) || existing.force != force || existing.mode != mode) throw new Rejected("IDEMPOTENCY_CONFLICT");
             return new Submission(view(existing), false);
         }
         var registration = setups.get(setup);
@@ -255,12 +294,64 @@ public final class AnalysisJobs implements AutoCloseable {
             if(previous!=null){if(!previous.view().setup().equals(setup)||previous.view().force()!=force||!disk.intent(UUID.fromString(previous.view().id())).equals(registration.setup()))throw new Rejected("IDEMPOTENCY_CONFLICT");if(terminal(previous.view().state()))return new Submission(previous.view(),false);}
         }catch(IOException failure){throw new Rejected("JOB_STORAGE_UNAVAILABLE");}
         if (disk==null&&jobs.size() >= limits.history()) throw new Rejected("JOB_HISTORY_FULL");
-        var job = new Job(registration, jobs.size() + 1,previous);job.force=force;job.retry=idempotencyKey; job.task = () -> execute(job);
+        var job = new Job(registration, jobs.size() + 1,previous);job.force=force;job.mode=mode;job.retry=idempotencyKey; job.task = () -> execute(job);
         persist(job);
         // The monitor prevents the worker from observing a job before admission is committed.
         try { executor.execute(job.task); jobs.put(job.id, job); retries.put(idempotencyKey, job); }
         catch (RejectedExecutionException full) { if(disk==null)throw new Rejected("JOB_QUEUE_FULL"); }
         return new Submission(view(job), true);
+    }
+    public synchronized Telemetry telemetry(UUID id) {
+        Objects.requireNonNull(id);
+        var active = jobs.get(id);
+        if (active != null) return buildLiveTelemetry(active);
+        var recent = completedTelemetry.get(id);
+        if (recent != null) return recent;
+        var historical = saved(id).view();
+        return buildHistoricalTelemetry(historical);
+    }
+    private Telemetry buildLiveTelemetry(Job job) {
+        long nowNanos = job.finished == null ? System.nanoTime() : job.finishedNanos;
+        long totalMs = Math.max(0L, TimeUnit.NANOSECONDS.toMillis(nowNanos - job.submittedNanos));
+        var stageMs = new LinkedHashMap<String, Long>();
+        for (Stage s : Stage.values()) {
+            if (s == Stage.FINISHED) continue;
+            long nanos = job.stageElapsedNanos.getOrDefault(s, 0L);
+            Long inFlight = job.stageStartNanos.get(s);
+            if (inFlight != null && job.finished == null) {
+                nanos += Math.max(0L, nowNanos - inFlight);
+            }
+            if (nanos > 0L || job.events.stream().anyMatch(e -> e.stage() == s)) {
+                stageMs.put(s.name(), Math.max(0L, TimeUnit.NANOSECONDS.toMillis(nanos)));
+            }
+        }
+        var stages = new ArrayList<StageTiming>();
+        var evs = job.events;
+        for (int i = 0; i < evs.size(); i++) {
+            var ev = evs.get(i);
+            if (ev.stage() == Stage.FINISHED) continue;
+            Optional<Instant> ended = (i + 1 < evs.size()) ? Optional.of(evs.get(i + 1).at()) : Optional.ofNullable(job.finished);
+            long dur = stageMs.getOrDefault(ev.stage().name(),
+                    ended.map(end -> Math.max(0L, end.toEpochMilli() - ev.at().toEpochMilli())).orElse(0L));
+            stages.add(new StageTiming(ev.stage(), dur, ev.at(), ended));
+        }
+        return new Telemetry(job.id.toString(), job.registration.setup().id(), job.mode, job.state, job.stage,
+                job.reuse != null, Optional.ofNullable(job.reuseDecision), totalMs, stageMs, stages);
+    }
+    private static Telemetry buildHistoricalTelemetry(View view) {
+        var stageMs = new LinkedHashMap<String, Long>();
+        var stages = new ArrayList<StageTiming>();
+        var evs = view.events();
+        for (int i = 0; i < evs.size(); i++) {
+            var ev = evs.get(i);
+            if (ev.stage() == Stage.FINISHED) continue;
+            Optional<Instant> ended = (i + 1 < evs.size()) ? Optional.of(evs.get(i + 1).at()) : view.finishedAt();
+            long dur = ended.map(end -> Math.max(0L, end.toEpochMilli() - ev.at().toEpochMilli())).orElse(0L);
+            stageMs.merge(ev.stage().name(), dur, Long::sum);
+            stages.add(new StageTiming(ev.stage(), dur, ev.at(), ended));
+        }
+        return new Telemetry(view.id(), view.setup(), AnalysisMode.FULL, view.state(), view.stage(),
+                view.reuse().isPresent(), view.reuseDecision(), view.elapsedMillis(), stageMs, stages);
     }
     public synchronized View get(UUID id) { var active=jobs.get(id);return active!=null?view(active):saved(id).view(); }
     /** Explicit v2 continuation; ordinary retry keys keep their original idempotent meaning. */
@@ -319,6 +410,9 @@ public final class AnalysisJobs implements AutoCloseable {
                     var publication = reused.publication();
                     var source = publication.view();
                     var now = Instant.now();
+                    long reuseNanos = System.nanoTime();
+                    job.closeActiveStage(reuseNanos);
+                    job.stageElapsedNanos.put(Stage.REUSED, 0L);
                     job.reuse = new Reuse(source.id(), source.finishedAt().orElseThrow(), now);
                     job.reuseDecision = ReuseDecision.REUSED;
                     job.reusedPublication = publication;
@@ -368,12 +462,17 @@ public final class AnalysisJobs implements AutoCloseable {
         }
     }
     private void finish(Job job, State state) {
-        job.state = state; job.stage = Stage.FINISHED; job.finished = Instant.now(); job.finishedNanos = System.nanoTime(); job.events.add(new Event(Stage.FINISHED, job.finished)); job.revision++;
+        long endNanos = System.nanoTime();
+        job.closeActiveStage(endNanos);
+        job.state = state; job.stage = Stage.FINISHED; job.finished = Instant.now(); job.finishedNanos = endNanos; job.events.add(new Event(Stage.FINISHED, job.finished)); job.revision++;
         try{persist(job);}catch(Rejected unavailable){
             job.state=State.FAILED;job.error="JOB_STORAGE_UNAVAILABLE";job.result=null;
             if (job.reuse != null) job.reuseDecision = ReuseDecision.RESULT_UNAVAILABLE;
-            job.reuse=null;return;
+            job.reuse=null;
+            completedTelemetry.put(job.id, buildLiveTelemetry(job));
+            return;
         }
+        completedTelemetry.put(job.id, buildLiveTelemetry(job));
         if(disk!=null){jobs.remove(job.id);retries.remove(job.retry);try{dispatchPending();}catch(Rejected unavailable){/* Accepted queued receipts remain durable until storage recovers. */}}
     }
     public static boolean terminal(State state) { return state != State.QUEUED && state != State.RUNNING && state != State.CANCELLING; }

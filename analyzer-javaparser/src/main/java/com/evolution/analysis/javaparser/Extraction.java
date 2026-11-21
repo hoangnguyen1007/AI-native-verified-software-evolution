@@ -23,10 +23,53 @@ import java.util.function.Supplier;
 final class Extraction {
     private static final VersionedIdentifier VERSION = JavaParserFrontend.PROVIDER;
     private static final Derivation DIRECT = new Derivation(DerivationKind.DIRECT, new VersionedIdentifier("java.source", "1"), List.of());
+    private static final Set<String> HTTP_CLIENT_METHODS = Set.of(
+            "getForObject", "getForEntity", "postForObject", "postForEntity", "postForLocation",
+            "put", "patchForObject", "delete", "headForHeaders", "optionsForAllow", "exchange", "uri");
+    private static final Set<String> WEB_CLIENT_VERB_METHODS = Set.of(
+            "get", "post", "put", "patch", "delete", "head", "options");
+    private static final Set<String> SPRING_BOUNDARY_METHODS = Set.of(
+            "getBean", "getBeanProvider", "getBeansOfType", "publishEvent", "registerBean", "run",
+            "send", "convertAndSend", "execute", "query", "queryForObject", "queryForList", "update");
+    private static final Set<String> SPRING_CONFIG_ANNOTATIONS = Set.of(
+            "Configuration", "SpringBootConfiguration", "SpringBootApplication", "AutoConfiguration", "Bean");
+    private static final SkeletonLruCache REACTOR_SKELETON_CACHE = new SkeletonLruCache(96L << 20);
+
+    private record SkeletonCacheKey(int syntaxLevel, com.evolution.analysis.contract.common.ContentDigest digest) {}
+    private record CachedReactorSkeleton(UnicodeSource translated, CompilationUnit template, long weightBytes) {}
+
+    private static final class SkeletonLruCache {
+        private final long maxBytes;
+        private final LinkedHashMap<SkeletonCacheKey, CachedReactorSkeleton> map = new LinkedHashMap<>(128, 0.75f, true);
+        private long usedBytes;
+
+        SkeletonLruCache(long maxBytes) {
+            this.maxBytes = maxBytes;
+        }
+
+        synchronized CachedReactorSkeleton get(SkeletonCacheKey key) {
+            return map.get(key);
+        }
+
+        synchronized void put(SkeletonCacheKey key, CachedReactorSkeleton value) {
+            if (value.weightBytes() > maxBytes) return;
+            var prev = map.put(key, value);
+            if (prev != null) usedBytes -= prev.weightBytes();
+            usedBytes += value.weightBytes();
+            var it = map.entrySet().iterator();
+            while (usedBytes > maxBytes && it.hasNext()) {
+                usedBytes -= it.next().getValue().weightBytes();
+                it.remove();
+            }
+        }
+    }
+
     private final FrontendRequest request;
     private final boolean compactBodies;
+    final boolean fastArchitecture;
     private final ResolutionEnvironment environment;
     private final Map<CompilationUnit, Unit> units = new IdentityHashMap<>();
+    private final Map<Unit, Unit> retainedFullUnits = new IdentityHashMap<>();
     private final List<Unit> orderedUnits = new ArrayList<>();
     private final List<ReactorUnit> reactorUnits = new ArrayList<>();
     private final Map<Node, JavaSymbolName> names = new IdentityHashMap<>();
@@ -35,6 +78,9 @@ final class Extraction {
     private final Set<Node> reactorNodes = Collections.newSetFromMap(new IdentityHashMap<>());
     private final Set<DerivedRelationshipRecord> derived = new TreeSet<>();
     private final Map<EntityIdentity, DeclarationRecord> declarations = new TreeMap<>();
+    private final Map<String, List<EntityIdentity>> projectIdsByCanonical = new HashMap<>();
+    private final Map<EntityIdentity, List<TypeUseRecord>> directTypesByOwner = new HashMap<>();
+    private final Map<SourceDocumentIdentity, Map<SourceSpan, RelationshipOccurrence>> resolvedCallsByDoc = new HashMap<>();
     private final Set<EntityIdentity> duplicateDeclarations = new HashSet<>();
     private final Set<String> duplicateTypeWarnings = new HashSet<>();
     private final Map<OccurrenceIdentity, RelationshipOccurrence> occurrences = new TreeMap<>();
@@ -47,7 +93,13 @@ final class Extraction {
     private record ClosureFailure(SemanticStatus status,String code) {}
     private final Map<String,Optional<ClosureFailure>> recoveryHierarchies=new HashMap<>();
     private final Set<MethodCallExpr> recoveryCallInputs=Collections.newSetFromMap(new IdentityHashMap<>());
+    private final Map<Expression, Object> unitValueCache = new IdentityHashMap<>();
+    private final Map<Expression, Object> unitTypeNameCache = new IdentityHashMap<>();
     final Set<String> sourceTypeNames = new HashSet<>();
+    private final Set<String> architecturalSimpleTypeNames = new HashSet<>();
+    private boolean lombokConfigInitialized;
+    private boolean hasRootLombokConfig;
+    private Set<String> lombokConfigPrefixes = Set.of();
     private boolean reactorResolutionDegraded;
     final LombokExtraction lombok = new LombokExtraction(this);
     private final AndroidSyntheticDeclarations android = new AndroidSyntheticDeclarations();
@@ -55,10 +107,16 @@ final class Extraction {
 
     private static final class Unit {
         final SourceInput input;
+        final UnicodeSource translated;
         final OriginalSource source;
         final CompilationUnit ast;
         final Set<Diagnostic> diagnostics = new TreeSet<>();
-        Unit(SourceInput input, CompilationUnit ast,UnicodeSource translated) { this.input = input; this.ast = ast; source = new OriginalSource(input.document().identity(), input.text(),translated); }
+        Unit(SourceInput input, CompilationUnit ast, UnicodeSource translated) {
+            this.input = input;
+            this.ast = ast;
+            this.translated = translated;
+            this.source = new OriginalSource(input.document().identity(), input.text(), translated);
+        }
     }
     private record ReactorUnit(ReactorSourceInput input, Unit unit) {}
     private static final class MappingFailure extends RuntimeException {
@@ -71,6 +129,7 @@ final class Extraction {
     Extraction(FrontendRequest request,boolean compactBodies) {
         this.request = Objects.requireNonNull(request);
         this.compactBodies=compactBodies;
+        this.fastArchitecture = "FAST_ARCHITECTURE".equals(request.manifest().configuration().values().get("analysis.profile"));
         environment = new ResolutionEnvironment(request);
         diagnostics.addAll(environment.diagnostics);
     }
@@ -80,6 +139,9 @@ final class Extraction {
         if(request.sourceRecovery())diagnostics.add(new Diagnostic(DiagnosticSeverity.WARNING,"java.source-recovery",
                 "Available source, platform and artifact bindings are attributed individually; build closure remains incomplete",
                 Optional.empty(),Map.of("mode",FrontendRequest.SOURCE_RECOVERY)));
+        if(fastArchitecture)diagnostics.add(new Diagnostic(DiagnosticSeverity.WARNING,"java.fast-architecture",
+                "Architecture-focused profile skips non-boundary local expression attribution; declarations, hierarchy, annotations, written types and boundary calls remain exact",
+                Optional.empty(),Map.of("profile","FAST_ARCHITECTURE")));
         indexTypes();
         // Materialize declaration identities before emitting edges, so collisions can be withheld.
         for (var unit : orderedUnits) for (var node : unit.ast.stream().filter(this::isDeclaration).toList()) {
@@ -94,40 +156,82 @@ final class Extraction {
         for (var header : orderedUnits) {
             // Only declaration skeletons live across files. Method/initializer bodies and
             // expression resolver caches belong to one active source document at a time.
-            var unit=compactBodies?parse(parser(),header.input,Optional.empty()).orElseThrow():header;
-            RecordPatternInference.prepare(unit.ast);
-            SwitchAndPatternInference.prepare(unit.ast);
-            lombok.prepareExpressions(unit.ast);
-            LambdaParameterInference.prepare(unit.ast);
-            SwitchAndPatternInference.prepare(unit.ast);
-            lombok.prepareExpressions(unit.ast);
+            Unit unit;
+            if (compactBodies) {
+                Unit retained = retainedFullUnits.remove(header);
+                if (retained != null) {
+                    units.put(retained.ast, retained);
+                    unit = retained;
+                } else {
+                    unit = parse(parser(), header.input, Optional.empty()).orElseThrow();
+                }
+            } else {
+                unit = header;
+            }
+            unitValueCache.clear();
+            unitTypeNameCache.clear();
+            if (!fastArchitecture) {
+                RecordPatternInference.prepare(unit.ast);
+                SwitchAndPatternInference.prepare(unit.ast);
+                lombok.prepareExpressions(unit.ast);
+                if (LambdaParameterInference.prepare(unit.ast)) {
+                    SwitchAndPatternInference.prepare(unit.ast);
+                    lombok.prepareExpressions(unit.ast);
+                }
+            }
             unit.ast.stream().filter(this::membershipNode).forEach(sourceNodes::add);
             if(compactBodies)implicit.declarations(unit.ast,true);
             for (var node : unit.ast.stream().filter(this::isDeclaration).toList()) observe(node, "declares", () -> entity(node), () -> owner(node));
-            for (var node : unit.ast.findAll(MethodCallExpr.class)) observe(node, "calls", () -> resolveCall(node), () -> owner(node));
-            httpClientCalls.addAll(httpClientCalls(unit.ast));
-            for (var node : unit.ast.findAll(ObjectCreationExpr.class)) observe(node, "constructor-calls", () -> resolveCall(node), () -> owner(node));
-            for (var node : unit.ast.findAll(ExplicitConstructorInvocationStmt.class)) observe(node, "constructor-calls", () -> callable(node.resolve()), () -> owner(node));
-            var references = new ReferenceResolution(environment.solver);
-            for (var node : unit.ast.findAll(MethodReferenceExpr.class)) observe(node,"method-references",() -> {
-                var generated=lombok.resolveReference(node,references);if(generated.isPresent())return generated.orElseThrow();
-                var selected=references.resolve(node);
-                if(request.sourceRecovery()&&selected instanceof ResolvedMethodDeclaration method) {
-                    var receiver=recoveryReceiver(node,Optional.of(node.getScope()));
-                    if(!ownZeroArgumentMethod(method,receiver))requireRecoveryHierarchy(receiver);
+            if (fastArchitecture) {
+                Set<String> injectedNames = collectUnitBoundaryMemberNames(unit.ast);
+                for (var node : unit.ast.findAll(MethodCallExpr.class)) {
+                    if (isArchitecturalCall(node, injectedNames)) {
+                        observe(node, "calls", () -> resolveCall(node), () -> owner(node));
+                    }
                 }
-                return callable(selected,node);
-            },() -> owner(node));
-            types.addAll(new TypeExtraction(this).extract(unit.ast));
-            new ExpressionTypeExtraction(this).extract(unit.ast);
-            new FieldExtraction(this).extract(unit.ast);
+                httpClientCalls.addAll(httpClientCalls(unit));
+                for (var node : unit.ast.findAll(ObjectCreationExpr.class)) {
+                    if (isArchitecturalCreation(node)) {
+                        observe(node, "constructor-calls", () -> resolveCall(node), () -> owner(node));
+                    }
+                }
+                for (var node : unit.ast.findAll(ExplicitConstructorInvocationStmt.class)) {
+                    observe(node, "constructor-calls", () -> callable(node.resolve()), () -> owner(node));
+                }
+            } else {
+                for (var node : unit.ast.findAll(MethodCallExpr.class)) observe(node, "calls", () -> resolveCall(node), () -> owner(node));
+                httpClientCalls.addAll(httpClientCalls(unit));
+                for (var node : unit.ast.findAll(ObjectCreationExpr.class)) observe(node, "constructor-calls", () -> resolveCall(node), () -> owner(node));
+                for (var node : unit.ast.findAll(ExplicitConstructorInvocationStmt.class)) observe(node, "constructor-calls", () -> callable(node.resolve()), () -> owner(node));
+                var references = new ReferenceResolution(environment.solver);
+                for (var node : unit.ast.findAll(MethodReferenceExpr.class)) observe(node,"method-references",() -> {
+                    var generated=lombok.resolveReference(node,references);if(generated.isPresent())return generated.orElseThrow();
+                    var selected=references.resolve(node);
+                    if(request.sourceRecovery()&&selected instanceof ResolvedMethodDeclaration method) {
+                        var receiver=recoveryReceiver(node,Optional.of(node.getScope()));
+                        if(!ownZeroArgumentMethod(method,receiver))requireRecoveryHierarchy(receiver);
+                    }
+                    return callable(selected,node);
+                },() -> owner(node));
+            }
+            var unitTypes = new TypeExtraction(this).extract(unit.ast);
+            types.addAll(unitTypes);
+            recordDirectTypes(unitTypes);
+            if (fastArchitecture) {
+                new FieldExtraction(this).extractAnnotationConstantsOnly(unit.ast);
+            } else {
+                new ExpressionTypeExtraction(this).extract(unit.ast);
+                new FieldExtraction(this).extract(unit.ast);
+            }
             new AnnotationExtraction(this).extract(unit.ast);
             implicit.relationships(unit.ast);
             if(compactBodies)lombok.relationships(header.ast);
             lombok.relationships(unit.ast);
             shapes.addAll(typeDeclarations(unit));members.addAll(memberDeclarations(unit));
-            constructorCandidates.addAll(LombokCandidates.extract(this,List.of(unit.ast),types,sourceTypeNames));
+            constructorCandidates.addAll(LombokCandidates.extract(this,List.of(unit.ast),unitTypes,sourceTypeNames));
             header.diagnostics.addAll(unit.diagnostics);
+            unitValueCache.clear();
+            unitTypeNameCache.clear();
             if(compactBodies)releaseBody(unit);
         }
         var outcomesByDoc = new LinkedHashMap<SourceDocumentIdentity, SourceOutcome>();
@@ -153,11 +257,19 @@ final class Extraction {
         for (var obs : observations) {
             if (seenObs.add(obs)) distinctObservations.add(obs);
         }
+        var obsCountByCategory = new HashMap<RelationshipKind, Long>();
+        for (var obs : distinctObservations) {
+            obsCountByCategory.merge(obs.category(), 1L, Long::sum);
+        }
+        var occCountByCategory = new HashMap<RelationshipKind, Long>();
+        for (var occ : occurrences.values()) {
+            occCountByCategory.merge(occ.relationship().kind(), 1L, Long::sum);
+        }
         var coverage = FrontendRequest.CATEGORIES.stream().map(c -> {
             var kind = new RelationshipKind("java." + c);
-            long attempted = distinctObservations.stream().filter(o -> o.category().equals(kind)).count();
-            long emitted = occurrences.values().stream().filter(o -> o.relationship().kind().equals(kind)).count();
-            return new CategoryCoverage(kind, c.equals("calls") ? CategoryCoverage.Support.IMPLEMENTED : CategoryCoverage.Support.PARTIAL, attempted, emitted, attempted - emitted);
+            long attempted = obsCountByCategory.getOrDefault(kind, 0L);
+            long emitted = occCountByCategory.getOrDefault(kind, 0L);
+            return new CategoryCoverage(kind, !fastArchitecture && c.equals("calls") ? CategoryCoverage.Support.IMPLEMENTED : CategoryCoverage.Support.PARTIAL, attempted, emitted, attempted - emitted);
         }).toList();
         var distinctTypes = new ArrayList<TypeUseRecord>(new TreeSet<>(types));
         var distinctAnnotations = new ArrayList<AnnotationUseRecord>(new TreeSet<>(annotations));
@@ -170,19 +282,95 @@ final class Extraction {
         var distinctCandidates = new ArrayList<LombokConstructorCandidate>(new TreeSet<>(constructorCandidates));
         var distinctHttp = new ArrayList<HttpClientCallRecord>(new TreeSet<>(httpClientCalls));
         return new FrontendResult(request.manifest().identity(), VERSION,
-                !request.sourceRecovery() && !reactorResolutionDegraded && outcomes.stream().allMatch(s -> s.state() == SourceOutcome.State.PROCESSED)
+                !fastArchitecture && !request.sourceRecovery() && !reactorResolutionDegraded && outcomes.stream().allMatch(s -> s.state() == SourceOutcome.State.PROCESSED)
                         ? FrontendResult.State.COMPLETED : FrontendResult.State.PARTIAL,
                 declarations.values().stream().filter(d -> !duplicateDeclarations.contains(d.entity().identity())).toList(),
                 List.copyOf(occurrences.values()), distinctObservations, outcomes, coverage, List.copyOf(diagnostics), distinctTypes, distinctAnnotations,
                 List.copyOf(derived),distinctShapes,distinctMembers,distinctCandidates,distinctHttp);
     }
-    private List<HttpClientCallRecord> httpClientCalls(CompilationUnit unit) {
-        var result=new ArrayList<HttpClientCallRecord>();
-        var bindings=new HashMap<SourceSpan,RelationshipOccurrence>();
-        for(var occurrence:occurrences.values())if(occurrence.relationship().kind().value().equals("java.calls")&&occurrence.status()==SemanticStatus.RESOLVED)bindings.put(occurrence.span(),occurrence);
-        for(var call:unit.findAll(MethodCallExpr.class)) {
-            String method=call.getNameAsString();
-            if(!Set.of("getForObject","getForEntity","postForObject","postForEntity","postForLocation","put","patchForObject","delete","headForHeaders","optionsForAllow","exchange","uri").contains(method))continue;
+
+    private Set<String> collectUnitBoundaryMemberNames(CompilationUnit ast) {
+        var names = new HashSet<String>();
+        for (var field : ast.findAll(FieldDeclaration.class)) {
+            if (field.isStatic() && field.isFinal()) continue;
+            for (var v : field.getVariables()) names.add(v.getNameAsString());
+        }
+        for (var record : ast.findAll(RecordDeclaration.class)) {
+            for (var p : record.getParameters()) names.add(p.getNameAsString());
+        }
+        return names;
+    }
+
+    private boolean isInSpringConfigContext(Node node) {
+        for (Node cur = node.getParentNode().orElse(null); cur != null; cur = cur.getParentNode().orElse(null)) {
+            if (cur instanceof MethodDeclaration m) {
+                for (var a : m.getAnnotations()) {
+                    if (SPRING_CONFIG_ANNOTATIONS.contains(a.getName().getIdentifier())) return true;
+                }
+            } else if (cur instanceof ClassOrInterfaceDeclaration c) {
+                for (var a : c.getAnnotations()) {
+                    if (SPRING_CONFIG_ANNOTATIONS.contains(a.getName().getIdentifier())) return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private boolean isArchitecturalCall(MethodCallExpr call, Set<String> unitBoundaryMemberNames) {
+        String method = call.getNameAsString();
+        if (HTTP_CLIENT_METHODS.contains(method)
+                || WEB_CLIENT_VERB_METHODS.contains(method)
+                || SPRING_BOUNDARY_METHODS.contains(method)) {
+            return true;
+        }
+        if (isInSpringConfigContext(call)) return true;
+        if (call.getScope().isEmpty()) {
+            return true;
+        }
+        Expression root = call.getScope().orElseThrow();
+        while (root instanceof FieldAccessExpr fa) {
+            if (fa.getScope() instanceof ThisExpr || fa.getScope() instanceof SuperExpr) {
+                return true;
+            }
+            if (architecturalSimpleTypeNames.contains(fa.getNameAsString())
+                    || unitBoundaryMemberNames.contains(fa.getNameAsString())) {
+                return true;
+            }
+            root = fa.getScope();
+        }
+        if (root instanceof ThisExpr || root instanceof SuperExpr) return true;
+        if (root instanceof NameExpr ne) {
+            String id = ne.getNameAsString();
+            return unitBoundaryMemberNames.contains(id) || architecturalSimpleTypeNames.contains(id);
+        }
+        if (root instanceof MethodCallExpr nested) {
+            return isArchitecturalCall(nested, unitBoundaryMemberNames);
+        }
+        if (root instanceof ObjectCreationExpr oc) {
+            return isArchitecturalCreation(oc);
+        }
+        return false;
+    }
+
+    private boolean isArchitecturalCreation(ObjectCreationExpr creation) {
+        if (creation.getAnonymousClassBody().isPresent()) return true;
+        if (architecturalSimpleTypeNames.contains(creation.getType().getNameAsString())) return true;
+        return isInSpringConfigContext(creation);
+    }
+
+    private List<HttpClientCallRecord> httpClientCalls(Unit unit) {
+        var candidates = new ArrayList<MethodCallExpr>();
+        for (var call : unit.ast.findAll(MethodCallExpr.class)) {
+            if (HTTP_CLIENT_METHODS.contains(call.getNameAsString())) {
+                candidates.add(call);
+            }
+        }
+        if (candidates.isEmpty()) return List.of();
+        var bindings = resolvedCallsByDoc.getOrDefault(unit.input.document().identity(), Map.of());
+        if (bindings.isEmpty()) return List.of();
+        var result = new ArrayList<HttpClientCallRecord>();
+        for (var call : candidates) {
+            String method = call.getNameAsString();
             try {
                 var selected=call.resolve();String type=selected.declaringType().getQualifiedName();
                 boolean rest=Set.of("org.springframework.web.client.RestTemplate","org.springframework.web.client.RestOperations").contains(type);
@@ -276,25 +464,148 @@ final class Extraction {
         return result;
     }
 
+    private static long totalPrimaryChars(List<SourceInput> sources) {
+        long total = 0L;
+        for (var s : sources) total += s.text().length();
+        return total;
+    }
+
+    private static void copyRanges(Node src, Node dst) {
+        src.getRange().ifPresent(dst::setRange);
+        var srcChildren = src.getChildNodes();
+        var dstChildren = dst.getChildNodes();
+        if (srcChildren.size() == dstChildren.size()) {
+            for (int i = 0; i < srcChildren.size(); i++) {
+                copyRanges(srcChildren.get(i), dstChildren.get(i));
+            }
+        }
+    }
+
+    private static CompilationUnit cloneWithRangesAndSolver(
+            CompilationUnit template, JavaSymbolSolver symbolSolver) {
+        CompilationUnit cloned = template.clone();
+        copyRanges(template, cloned);
+        if (symbolSolver != null) {
+            cloned.setData(Node.SYMBOL_RESOLVER_KEY, symbolSolver);
+        } else {
+            cloned.removeData(Node.SYMBOL_RESOLVER_KEY);
+        }
+        return cloned;
+    }
+
+    private static CompilationUnit extractSkeletonClone(
+            CompilationUnit fullAst, JavaSymbolSolver symbolSolver) {
+        record SavedBlock(
+                com.github.javaparser.ast.stmt.BlockStmt block,
+                NodeList<com.github.javaparser.ast.stmt.Statement> statements) {}
+        record SavedLambda(LambdaExpr lambda, com.github.javaparser.ast.stmt.Statement body) {}
+        var savedBlocks = new ArrayList<SavedBlock>();
+        var savedLambdas = new ArrayList<SavedLambda>();
+        for (var method : fullAst.findAll(MethodDeclaration.class)) {
+            method.getBody().ifPresent(b -> {
+                if (!b.getStatements().isEmpty()) {
+                    savedBlocks.add(new SavedBlock(b, b.getStatements()));
+                    b.setStatements(new NodeList<>());
+                }
+            });
+        }
+        for (var ctor : fullAst.findAll(ConstructorDeclaration.class)) {
+            var b = ctor.getBody();
+            if (!b.getStatements().isEmpty()) {
+                savedBlocks.add(new SavedBlock(b, b.getStatements()));
+                b.setStatements(new NodeList<>());
+            }
+        }
+        for (var ctor : fullAst.findAll(CompactConstructorDeclaration.class)) {
+            var b = ctor.getBody();
+            if (!b.getStatements().isEmpty()) {
+                savedBlocks.add(new SavedBlock(b, b.getStatements()));
+                b.setStatements(new NodeList<>());
+            }
+        }
+        for (var init : fullAst.findAll(InitializerDeclaration.class)) {
+            var b = init.getBody();
+            if (!b.getStatements().isEmpty()) {
+                savedBlocks.add(new SavedBlock(b, b.getStatements()));
+                b.setStatements(new NodeList<>());
+            }
+        }
+        for (var lambda : fullAst.findAll(LambdaExpr.class)) {
+            var oldBody = lambda.getBody();
+            savedLambdas.add(new SavedLambda(lambda, oldBody));
+            var emptyBody = new com.github.javaparser.ast.stmt.BlockStmt();
+            oldBody.getRange().ifPresent(emptyBody::setRange);
+            lambda.setBody(emptyBody);
+        }
+        CompilationUnit cloned = cloneWithRangesAndSolver(fullAst, symbolSolver);
+        for (int i = savedLambdas.size() - 1; i >= 0; i--) {
+            var sl = savedLambdas.get(i);
+            sl.lambda().setBody(sl.body());
+        }
+        for (int i = savedBlocks.size() - 1; i >= 0; i--) {
+            var sb = savedBlocks.get(i);
+            sb.block().setStatements(sb.statements());
+        }
+        return cloned;
+    }
+
     private void parse() {
         var parser = parser();
+        boolean retainPrimaryBodies = compactBodies
+                && request.sources().size() <= 250
+                && totalPrimaryChars(request.sources()) <= 4_000_000L;
         for (var input : request.sources()) {
             if(Thread.currentThread().isInterrupted())throw new java.util.concurrent.CancellationException();
             parse(parser, input, Optional.empty()).ifPresent(unit -> {
                 android.observeUnit(unit.ast);
                 if(request.sourceRecovery())environment.explicitImports.observeUnit(unit.ast);
-                if(compactBodies)skeleton(unit.ast);
-                orderedUnits.add(unit);
-                unit.ast.stream().filter(this::membershipNode).forEach(sourceNodes::add);
+                if (retainPrimaryBodies) {
+                    CompilationUnit headerAst = extractSkeletonClone(
+                            unit.ast, new JavaSymbolSolver(environment.solver));
+                    units.remove(unit.ast);
+                    var headerUnit = new Unit(input, headerAst, unit.translated);
+                    units.put(headerAst, headerUnit);
+                    retainedFullUnits.put(headerUnit, unit);
+                    orderedUnits.add(headerUnit);
+                    headerAst.stream().filter(this::membershipNode).forEach(sourceNodes::add);
+                } else {
+                    if(compactBodies)skeleton(unit.ast);
+                    orderedUnits.add(unit);
+                    unit.ast.stream().filter(this::membershipNode).forEach(sourceNodes::add);
+                }
             });
         }
+        int syntaxKey = request.plan().syntaxLevel().orElse(21);
         for (ReactorSourceInput reactor : request.reactorSources()) {
             for (SourceInput input : reactor.sources()) {
-                parse(parser, input, Optional.of(reactor)).ifPresent(unit -> {
-                    if(compactBodies)skeleton(unit.ast);
-                    reactorUnits.add(new ReactorUnit(reactor, unit));
-                    unit.ast.stream().filter(this::membershipNode).forEach(reactorNodes::add);
-                });
+                if (compactBodies && !input.document().path().endsWith(".kt")) {
+                    var cacheKey = new SkeletonCacheKey(syntaxKey, input.document().contentDigest());
+                    var cached = REACTOR_SKELETON_CACHE.get(cacheKey);
+                    if (cached != null) {
+                        CompilationUnit cloned = cloneWithRangesAndSolver(
+                                cached.template(), new JavaSymbolSolver(environment.solver));
+                        var unit = new Unit(input, cloned, cached.translated());
+                        units.put(cloned, unit);
+                        reactorUnits.add(new ReactorUnit(reactor, unit));
+                        unit.ast.stream().filter(this::membershipNode).forEach(reactorNodes::add);
+                        continue;
+                    }
+                    parse(parser, input, Optional.of(reactor)).ifPresent(unit -> {
+                        skeleton(unit.ast);
+                        CompilationUnit template = cloneWithRangesAndSolver(unit.ast, null);
+                        long weight = (long) unit.translated.text.length() * 4 + 1024L;
+                        REACTOR_SKELETON_CACHE.put(
+                                cacheKey, new CachedReactorSkeleton(unit.translated, template, weight));
+                        reactorUnits.add(new ReactorUnit(reactor, unit));
+                        unit.ast.stream().filter(this::membershipNode).forEach(reactorNodes::add);
+                    });
+                } else {
+                    parse(parser, input, Optional.of(reactor)).ifPresent(unit -> {
+                        if(compactBodies)skeleton(unit.ast);
+                        reactorUnits.add(new ReactorUnit(reactor, unit));
+                        unit.ast.stream().filter(this::membershipNode).forEach(reactorNodes::add);
+                    });
+                }
             }
         }
     }
@@ -315,6 +626,29 @@ final class Extraction {
         }
     }
 
+    private static void detachTokensAndNormalizeIdentifiers(CompilationUnit ast, boolean detachTokens) {
+        ast.walk(node -> {
+            if (detachTokens) {
+                var range = node.getRange().orElse(null);
+                node.setTokenRange(null);
+                node.setRange(range);
+            }
+            if (node instanceof SimpleName n) {
+                String raw = n.getIdentifier();
+                String norm = semanticIdentifier(raw);
+                if (!norm.equals(raw)) n.setIdentifier(norm);
+            } else if (node instanceof Name n) {
+                String raw = n.getIdentifier();
+                String norm = semanticIdentifier(raw);
+                if (!norm.equals(raw)) n.setIdentifier(norm);
+            } else if (node instanceof MethodReferenceExpr n) {
+                String raw = n.getIdentifier();
+                String norm = semanticIdentifier(raw);
+                if (!norm.equals(raw)) n.setIdentifier(norm);
+            }
+        });
+    }
+
     private Optional<Unit> parse(
             JavaParser parser, SourceInput input, Optional<ReactorSourceInput> reactor) {
         if (input.document().path().endsWith(".kt")) {
@@ -326,9 +660,7 @@ final class Extraction {
             }
             var ast = KotlinAstLowering.lower(
                     input.document().path(), ktSource, new JavaSymbolSolver(environment.solver));
-            ast.findAll(SimpleName.class).forEach(n -> n.setIdentifier(semanticIdentifier(n.getIdentifier())));
-            ast.findAll(Name.class).forEach(n -> n.setIdentifier(semanticIdentifier(n.getIdentifier())));
-            ast.findAll(MethodReferenceExpr.class).forEach(n -> n.setIdentifier(semanticIdentifier(n.getIdentifier())));
+            detachTokensAndNormalizeIdentifiers(ast, false);
             var unit = new Unit(input, ast, ktSource);
             units.put(ast, unit);
             return Optional.of(unit);
@@ -359,11 +691,7 @@ final class Extraction {
         // JavaParser derives source ranges while storing tokens. Detach its linked
         // token stream only after preserving those ranges, so headers cannot retain
         // every token from discarded bodies and raw source spans remain exact.
-        ast.walk(node->{var range=node.getRange().orElse(null);node.setTokenRange(null);node.setRange(range);});
-        // Java identifier-ignorable characters do not participate in symbol equality.
-        ast.findAll(SimpleName.class).forEach(n -> n.setIdentifier(semanticIdentifier(n.getIdentifier())));
-        ast.findAll(Name.class).forEach(n -> n.setIdentifier(semanticIdentifier(n.getIdentifier())));
-        ast.findAll(MethodReferenceExpr.class).forEach(n -> n.setIdentifier(semanticIdentifier(n.getIdentifier())));
+        detachTokensAndNormalizeIdentifiers(ast, true);
         var unit = new Unit(input, ast,translated);
         units.put(ast, unit);
         return Optional.of(unit);
@@ -406,7 +734,19 @@ final class Extraction {
         };
     }
     private static String semanticIdentifier(String raw) {
-        var result = new StringBuilder(); raw.codePoints().filter(c -> !Character.isIdentifierIgnorable(c)).forEach(result::appendCodePoint); return result.toString();
+        boolean purePrintableAscii = true;
+        for (int i = 0; i < raw.length(); i++) {
+            char c = raw.charAt(i);
+            if (c < 0x20 || c > 0x7E) {
+                purePrintableAscii = false;
+                break;
+            }
+        }
+        if (purePrintableAscii) return raw;
+        var result = new StringBuilder(raw.length());
+        raw.codePoints().filter(c -> !Character.isIdentifierIgnorable(c)).forEach(result::appendCodePoint);
+        String built = result.toString();
+        return built.equals(raw) ? raw : built;
     }
     private static boolean isMainSourcePath(Unit unit) {
         String p = unit.input.document().path().replace('\\', '/');
@@ -461,6 +801,7 @@ final class Extraction {
                         Optional.empty(), Map.of("type", duplicateName, "document", unit.input.document().identity().value()));
                 diagnostics.add(warning);
                 rejected.add(new SourceOutcome(unit.input.document().identity(), SourceOutcome.State.PARTIAL, List.of(warning)));
+                retainedFullUnits.remove(unit);
                 releaseBody(unit);
                 unitIterator.remove();
                 continue;
@@ -514,6 +855,18 @@ final class Extraction {
                     environment,
                     !environment.hasAnyLombokClassInDependencies());
         }
+        if (fastArchitecture) {
+            for (String fqn : sourceTypeNames) {
+                int dot = fqn.lastIndexOf('.');
+                architecturalSimpleTypeNames.add(dot >= 0 ? fqn.substring(dot + 1) : fqn);
+            }
+            for (var reactor : reactorUnits) {
+                for (TypeDeclaration<?> td : reactor.unit().ast.findAll(TypeDeclaration.class)) {
+                    architecturalSimpleTypeNames.add(td.getNameAsString());
+                }
+            }
+        }
+        environment.invalidateSolverCaches();
     }
     private boolean isSourceOrReactorNode(Node node) {
         return sourceNodes.contains(node) || reactorNodes.contains(node);
@@ -721,6 +1074,12 @@ final class Extraction {
             unit(node).diagnostics.add(diagnostic); diagnostics.add(diagnostic);
         }
     }
+    private void recordProjectCanonical(Entity entity) {
+        if (entity.origin() == EntityOrigin.PROJECT) {
+            projectIdsByCanonical.computeIfAbsent(entity.canonicalName(), k -> new ArrayList<>(2)).add(entity.identity());
+        }
+    }
+
     private Entity register(JavaSymbolName name, EntityKind kind, Optional<SourceSpan> span, String spelling, Derivation derivation) {
         return register(name, kind, span, spelling, derivation, request.module());
     }
@@ -729,7 +1088,9 @@ final class Extraction {
         var entity = Entity.create(EntityOrigin.PROJECT, EntityScope.project(module), kind, name.canonicalName(), span);
         var record = new DeclarationRecord(entity, spelling, SemanticStatus.RESOLVED, derivation, List.of(), List.of());
         var prior = declarations.putIfAbsent(entity.identity(), record);
-        if (prior != null && !prior.entity().declaration().equals(span)) {
+        if (prior == null) {
+            recordProjectCanonical(entity);
+        } else if (!prior.entity().declaration().equals(span)) {
             duplicateDeclarations.add(entity.identity()); throw new MappingFailure(SemanticStatus.ERROR, "java.duplicate-declaration");
         }
         return entity;
@@ -1072,11 +1433,50 @@ final class Extraction {
             throw new MappingFailure(SemanticStatus.UNSUPPORTED,"java.field-execution-owner");
         return owner;
     }
+    ResolvedValueDeclaration resolveValueCached(Expression expression) {
+        Object cached = unitValueCache.get(expression);
+        if (cached != null) {
+            if (cached instanceof ResolvedValueDeclaration val) return val;
+            throw (RuntimeException) cached;
+        }
+        try {
+            ResolvedValueDeclaration resolved = expression instanceof FieldAccessExpr access
+                    ? access.resolve()
+                    : ((NameExpr) expression).resolve();
+            unitValueCache.put(expression, resolved);
+            return resolved;
+        } catch (RuntimeException failure) {
+            unitValueCache.put(expression, failure);
+            throw failure;
+        }
+    }
+
+    ResolvedTypeDeclaration resolveTypeNameCached(Expression expression, String name) {
+        Object cached = unitTypeNameCache.get(expression);
+        if (cached != null) {
+            if (cached instanceof ResolvedTypeDeclaration type) return type;
+            throw (RuntimeException) cached;
+        }
+        try {
+            ResolvedTypeDeclaration resolved = resolveTypeName(expression, name);
+            unitTypeNameCache.put(expression, resolved);
+            return resolved;
+        } catch (RuntimeException failure) {
+            unitTypeNameCache.put(expression, failure);
+            throw failure;
+        }
+    }
+
     boolean isTypeName(Node context, String name) {
         try {
-            var selected = com.github.javaparser.symbolsolver.javaparsermodel.JavaParserFactory.getContext(context,environment.solver).solveType(name);
-            if (!selected.isSolved()) return false;
-            var declaration = selected.getCorrespondingDeclaration();
+            ResolvedTypeDeclaration declaration;
+            if (context instanceof Expression expr) {
+                declaration = resolveTypeNameCached(expr, name);
+            } else {
+                var selected = com.github.javaparser.symbolsolver.javaparsermodel.JavaParserFactory.getContext(context,environment.solver).solveType(name);
+                if (!selected.isSolved()) return false;
+                declaration = selected.getCorrespondingDeclaration();
+            }
             if (declaration.toAst().filter(this::isSourceOrReactorNode).isEmpty())
                 environment.origin(declaration.asReferenceType().getQualifiedName());
             return true;
@@ -1113,8 +1513,18 @@ final class Extraction {
     }
     OriginalSource source(Node node) { return unit(node).source; }
     Entity existing(JavaSymbolName symbol) {
-        String canonical=symbol.canonicalName();
-        var found=declarations.values().stream().filter(d -> d.entity().origin()==EntityOrigin.PROJECT && d.entity().canonicalName().equals(canonical)).findFirst().orElse(null);
+        String canonical = symbol.canonicalName();
+        List<EntityIdentity> ids = projectIdsByCanonical.get(canonical);
+        DeclarationRecord found = null;
+        if (ids != null && !ids.isEmpty()) {
+            if (ids.size() == 1) {
+                found = declarations.get(ids.get(0));
+            } else {
+                var sorted = new ArrayList<>(ids);
+                Collections.sort(sorted);
+                found = declarations.get(sorted.get(0));
+            }
+        }
         if (found==null || duplicateDeclarations.contains(found.entity().identity())) throw new MappingFailure(SemanticStatus.UNSUPPORTED,"java.implicit-callable");
         return found.entity();
     }
@@ -1131,7 +1541,9 @@ final class Extraction {
         var entity=Entity.create(EntityOrigin.PROJECT,EntityScope.project(request.module()),kind,symbol.canonicalName(),Optional.empty());
         if(declarations.containsKey(entity.identity()))throw new FrontendInputException("frontend.native-member-conflict","An augmentation would overwrite an existing declaration");
         var derivation=new Derivation(DerivationKind.DERIVED,new VersionedIdentifier("java.native-correspondence","m8.4-v1"),List.of(mapping.record().identity().value(),mapping.record().text("proof"),mapping.source().identity().value()));
-        declarations.put(entity.identity(),new DeclarationRecord(entity,mapping.spelling(),SemanticStatus.RESOLVED,derivation,List.of(),List.of()));return entity;
+        declarations.put(entity.identity(),new DeclarationRecord(entity,mapping.spelling(),SemanticStatus.RESOLVED,derivation,List.of(),List.of()));
+        recordProjectCanonical(entity);
+        return entity;
     }
     record JavaEvidenceMapping(com.evolution.analysis.javaevidence.JavaEvidenceRecord record,Entity source,String spelling){}
     private Entity reactorImplicit(JavaSymbolName symbol, EntityKind kind, Node ownerNode,
@@ -1147,6 +1559,7 @@ final class Extraction {
                 new VersionedIdentifier(rule, "1"), List.of(evidence.identity().value()));
         declarations.put(identity, new DeclarationRecord(
                 member, spelling, SemanticStatus.RESOLVED, derivation, List.of(), List.of()));
+        recordProjectCanonical(member);
         return member;
     }
     private void warnDuplicateExternal(String qualifiedName) {
@@ -1179,11 +1592,40 @@ final class Extraction {
         unit(node).diagnostics.add(problem); diagnostics.add(problem);
     }
     boolean isImplicit(Entity entity) { return declarations.get(entity.identity()).derivation().kind()==DerivationKind.DERIVED; }
-    boolean hasDeclaration(JavaSymbolName name) {String canonical=name.canonicalName();var scope=EntityScope.project(request.module());return declarations.values().stream().anyMatch(d->d.entity().canonicalName().equals(canonical)&&d.entity().stableScope().equals(scope)); }
+    boolean hasDeclaration(JavaSymbolName name) {
+        String canonical = name.canonicalName();
+        List<EntityIdentity> ids = projectIdsByCanonical.get(canonical);
+        if (ids == null || ids.isEmpty()) return false;
+        var scope = EntityScope.project(request.module());
+        for (var id : ids) {
+            var d = declarations.get(id);
+            if (d != null && d.entity().stableScope().equals(scope)) return true;
+        }
+        return false;
+    }
     boolean hasLombokConfiguration(Node node) {
-        String path=unit(node).input.document().path();
-        return request.manifest().snapshot().files().stream().anyMatch(f->f.path().equals("lombok.config")
-                ||f.path().endsWith("/lombok.config")&&path.startsWith(f.path().substring(0,f.path().lastIndexOf('/')+1)));
+        if (!lombokConfigInitialized) {
+            lombokConfigInitialized = true;
+            var prefixes = new HashSet<String>();
+            for (var f : request.manifest().snapshot().files()) {
+                String fp = f.path();
+                if (fp.equals("lombok.config")) {
+                    hasRootLombokConfig = true;
+                } else if (fp.endsWith("/lombok.config")) {
+                    prefixes.add(fp.substring(0, fp.lastIndexOf('/') + 1));
+                }
+            }
+            lombokConfigPrefixes = prefixes.isEmpty() ? Set.of() : Set.copyOf(prefixes);
+        }
+        if (hasRootLombokConfig) return true;
+        if (lombokConfigPrefixes.isEmpty()) return false;
+        String path = unit(node).input.document().path();
+        int slash = path.indexOf('/');
+        while (slash >= 0) {
+            if (lombokConfigPrefixes.contains(path.substring(0, slash + 1))) return true;
+            slash = path.indexOf('/', slash + 1);
+        }
+        return false;
     }
     boolean isLombok(Entity entity,String name) {
         int dot=name.lastIndexOf('.');
@@ -1198,10 +1640,19 @@ final class Extraction {
         var problem=new Diagnostic(DiagnosticSeverity.WARNING,code,"Generated-member evidence is incomplete",Optional.of(source(node).span(node)),Map.of());
         unit(node).diagnostics.add(problem);diagnostics.add(problem);
     }
+    private void recordDirectTypes(List<TypeUseRecord> unitTypes) {
+        for (var use : unitTypes) {
+            use.owner().ifPresent(id -> directTypesByOwner.computeIfAbsent(id, k -> new ArrayList<>(2)).add(use));
+        }
+    }
     void derivedMemberTypes(Node input,Entity target,String role,String rule) {
         var inputId=entity(input).identity();
-        for(var use:List.copyOf(types))if(use.owner().equals(Optional.of(inputId))) {
-            types.add(new TypeUseRecord(Optional.of(target.identity()),new RelationshipKind("java."+role),use.span(),use.type(),use.variadic()));
+        var owned = directTypesByOwner.get(inputId);
+        if (owned == null || owned.isEmpty()) return;
+        for (var use : List.copyOf(owned)) {
+            var derivedUse = new TypeUseRecord(Optional.of(target.identity()),new RelationshipKind("java."+role),use.span(),use.type(),use.variadic());
+            types.add(derivedUse);
+            directTypesByOwner.computeIfAbsent(target.identity(), k -> new ArrayList<>(2)).add(derivedUse);
             for(var id:use.type().referencedEntities())derive(target,declarations.get(id).entity(),role,input,rule);
         }
     }
@@ -1315,7 +1766,14 @@ final class Extraction {
             var relation = SemanticRelationship.create(source.identity(), new RelationshipKind("java." + category), targetState);
             var uncertainty = status == SemanticStatus.RESOLVED ? List.<Uncertainty>of() : List.of(new Uncertainty("java.attribution", "Attribution remains incomplete", List.of("verified declaration binding")));
             var occurrence = RelationshipOccurrence.create(relation, span.orElseThrow(), 0, status, DIRECT, uncertainty, local);
-            if (occurrences.putIfAbsent(occurrence.identity(), occurrence) == null) mapped = Optional.of(occurrence.identity());
+            if (occurrences.putIfAbsent(occurrence.identity(), occurrence) == null) {
+                mapped = Optional.of(occurrence.identity());
+                if (category.equals("calls") && status == SemanticStatus.RESOLVED) {
+                    resolvedCallsByDoc
+                            .computeIfAbsent(unit.input.document().identity(), k -> new HashMap<>())
+                            .put(occurrence.span(), occurrence);
+                }
+            }
             else local.add(diagnostic("java.duplicate-fact", SemanticStatus.ERROR, span));
         }
         if (mapped.isEmpty() && local.isEmpty()) local.add(diagnostic("java.mapping", SemanticStatus.ERROR, span));

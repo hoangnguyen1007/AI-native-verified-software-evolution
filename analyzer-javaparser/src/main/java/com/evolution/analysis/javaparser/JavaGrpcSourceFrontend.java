@@ -71,11 +71,25 @@ public final class JavaGrpcSourceFrontend {
             }
             for(String service:services)emit(call,"RPC_CALL_CANDIDATE","method_call",service+"."+call.getNameAsString(),"",attributes(service,call.getNameAsString(),"GENERATED_JAVA_CLIENT_SYNTAX"),coordinates,recovered,sink,counts);
         }
-        String tool;
-        try(var own=JavaGrpcSourceFrontend.class.getResourceAsStream("JavaGrpcSourceFrontend.class");var core=JavaParser.class.getResourceAsStream("JavaParser.class")) {
-            if(own==null||core==null)throw new IOException("JAVA_RPC_TOOL_BYTES_UNAVAILABLE");tool=CanonicalJson.sha256(List.of(PROVIDER,"javaparser:3.28.2",ContentDigest.sha256(own.readAllBytes()),ContentDigest.sha256(core.readAllBytes()))).value();
-        }
+        String tool = toolIdentity();
         return new Summary(unit.stream().count(),counts[1],parsed.getProblems().size(),PROVIDER,tool);
+    }
+    private static volatile String cachedToolIdentity;
+
+    private static String toolIdentity() throws IOException {
+        String existing = cachedToolIdentity;
+        if (existing != null) return existing;
+        try (var own = JavaGrpcSourceFrontend.class.getResourceAsStream("JavaGrpcSourceFrontend.class");
+                var core = JavaParser.class.getResourceAsStream("JavaParser.class")) {
+            if (own == null || core == null) throw new IOException("JAVA_RPC_TOOL_BYTES_UNAVAILABLE");
+            String computed = CanonicalJson.sha256(List.of(
+                    PROVIDER,
+                    "javaparser:3.28.2",
+                    ContentDigest.sha256(own.readAllBytes()),
+                    ContentDigest.sha256(core.readAllBytes()))).value();
+            cachedToolIdentity = computed;
+            return computed;
+        }
     }
     private static Optional<String> factory(Expression value) {
         if(!value.isMethodCallExpr())return Optional.empty();var call=value.asMethodCallExpr();

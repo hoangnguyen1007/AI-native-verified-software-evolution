@@ -84,13 +84,33 @@ public final class UniversalSourceIngestion {
         }).sorted(Comparator.comparing(IngestionEvidence::digest)).toList();
         var identity=IngestionEvidence.digest(readinessOptions.isEmpty()?List.of(PROVIDER,inputs.identity(),build.identity(),resolutionKeys,analyzer,rules,schema):List.of(PROVIDER,inputs.identity(),build.identity(),resolutionKeys,analyzer,rules,schema,readinessOptions));
         var plans=build.modules().stream().flatMap(m->m.sourcePlan().sourceSets().stream()).toList();
+        var descriptorsById = new HashMap<ModuleIdentity, ModuleDescriptor>(Math.max(16, descriptors.size() * 2));
+        for (var d : descriptors) descriptorsById.put(d.identity(), d);
+        record IndexedPlan(SourceSet key, SourcePlanModel.SourceSetPlan plan, List<String> roots) {}
+        var indexedPlans = new ArrayList<IndexedPlan>(plans.size());
+        var plansByKey = new HashMap<SourceSet, SourcePlanModel.SourceSetPlan>(Math.max(16, plans.size() * 2));
+        for (var p : plans) {
+            var k = new SourceSet(p.module(), p.kind(), p.name());
+            plansByKey.putIfAbsent(k, p);
+            var roots = p.sourceRoots().stream().flatMap(r -> r.value().stream())
+                    .flatMap(root -> UniversalBuildIngestion.normalizeRepositoryPath(root).stream()).toList();
+            indexedPlans.add(new IndexedPlan(k, p, roots));
+        }
+        var snapshotFilePaths = new HashSet<String>(Math.max(16, inputs.snapshot().files().size() * 2));
+        for (var f : inputs.snapshot().files()) snapshotFilePaths.add(f.path());
         var issues=new ArrayList<IngestionEvidence.Issue>();var rows=new ArrayList<SourceRow>();
         Map<SourceSet,List<SourceInput>> owned=new HashMap<>();Set<SourceSet> incomplete=new HashSet<>();
         for(var file:inputs.snapshot().files())if(file.path().endsWith(".java")||file.path().endsWith(".kt")) {
-            var declared=plans.stream().filter(p->p.sourceRoots().stream().flatMap(r->r.value().stream())
-                    .flatMap(root->UniversalBuildIngestion.normalizeRepositoryPath(root).stream())
-                    .anyMatch(root->root.equals(".")||file.path().startsWith(root+"/")))
-                    .map(p->new SourceSet(p.module(),p.kind(),p.name())).distinct().toList();
+            var declaredSet = new LinkedHashSet<SourceSet>();
+            for (var ip : indexedPlans) {
+                for (String root : ip.roots()) {
+                    if (root.equals(".") || file.path().startsWith(root + "/")) {
+                        declaredSet.add(ip.key());
+                        break;
+                    }
+                }
+            }
+            var declared = List.copyOf(declaredSet);
             if(file.path().endsWith(".kt")&&declared.isEmpty())continue;
             var original=inputs.files().get(file.path());
             // A handwritten Java file outside every build-declared root is still analyzable source. It is attached to the
@@ -101,9 +121,7 @@ public final class UniversalSourceIngestion {
                 incomplete.add(enclosing.orElseThrow());
                 issues.add(new IngestionEvidence.Issue(CUSTOM_SOURCE_LAYOUT,file.path()+"#ENCLOSING_MODULE_OWNER",List.of(file.contentDigest())));
             }
-            var claimedPlan=claims.size()==1?plans.stream().filter(p->p.module().equals(claims.getFirst().module())
-                    &&p.kind()==claims.getFirst().kind()&&p.name().equals(claims.getFirst().name()))
-                    .findFirst():Optional.<SourcePlanModel.SourceSetPlan>empty();
+            var claimedPlan=claims.size()==1?Optional.ofNullable(plansByKey.get(claims.getFirst())):Optional.<SourcePlanModel.SourceSetPlan>empty();
             boolean classificationConflict=claims.size()==1&&original!=null
                     && (original.document().classification()==SourceClassification.GENERATED_MAIN&&claimedPlan.orElseThrow().semanticRole()!=SourceClassification.MAIN
                     || original.document().classification()==SourceClassification.GENERATED_TEST&&claimedPlan.orElseThrow().semanticRole()!=SourceClassification.TEST);
@@ -115,16 +133,19 @@ public final class UniversalSourceIngestion {
                         :status==Status.OVERLAPPING||status==Status.CLASSIFICATION_CONFLICT?AMBIGUOUS_INPUT:CUSTOM_SOURCE_LAYOUT,
                         file.path(),List.of(file.contentDigest())));continue;
             }
-            var claim=claims.getFirst();var module=descriptors.stream().filter(m->m.identity().equals(claim.module())).findFirst().orElseThrow();
+            var claim=claims.getFirst();var module=Objects.requireNonNull(descriptorsById.get(claim.module()));
             var classification=original.document().classification();
             if(classification!=SourceClassification.GENERATED_MAIN&&classification!=SourceClassification.GENERATED_TEST)
                 classification=claimedPlan.orElseThrow().semanticRole();
             var document=SourceDocument.create(inputs.snapshot().repository(),module,file.path(),file.contentDigest(),classification);
-            owned.computeIfAbsent(claim,k->new ArrayList<>()).add(new SourceInput(document,original.bytes(),original.decoding()));
+            owned.computeIfAbsent(claim,k->new ArrayList<>()).add(original.rebindDocument(document));
         }
         var documents=owned.values().stream().flatMap(Collection::stream).map(SourceInput::document).toList();
-        var snapshot=RepositorySnapshot.create(inputs.snapshot().repository(),inputs.snapshot().revision(),inputs.snapshot().dirty(),inputs.snapshot().files(),documents);
+        var snapshot=inputs.snapshot().withDocuments(documents);
         var outcomes=new ArrayList<Outcome>();
+        var configIngestion = new ConfigDataIngestion();
+        var configByLocations = new HashMap<List<String>, ConfigDataIngestion.Result>();
+        var defaults=ConfigDataIngestion.Policy.defaults();
         for(var plan:plans) {
             if(plan.gaps().contains(SourcePlanModel.Gap.PLUGIN_EFFECTS_NOT_EVALUATED))
                 issues.add(new IngestionEvidence.Issue(SOURCE_INCOMPLETE,plan.module().value()+"#PLUGIN_EFFECTS_NOT_EVALUATED",List.of(identity)));
@@ -135,7 +156,8 @@ public final class UniversalSourceIngestion {
             var locations=resources.stream().flatMap(r->r.value().stream())
                     .flatMap(root->UniversalBuildIngestion.normalizeRepositoryPath(root).stream())
                     .flatMap(p->java.util.stream.Stream.of(p,p.equals(".")?"config":p+"/config")).distinct().toList();
-            var defaults=ConfigDataIngestion.Policy.defaults();var config=new ConfigDataIngestion().ingest(inputs,new ConfigDataIngestion.Policy(locations,List.of(),Map.of(),defaults.maxDocuments(),defaults.maxCharacters(),defaults.maxDepth(),defaults.maxProperties()));
+            var config=configByLocations.computeIfAbsent(locations, locs ->
+                    configIngestion.ingest(inputs,new ConfigDataIngestion.Policy(locs,List.of(),Map.of(),defaults.maxDocuments(),defaults.maxCharacters(),defaults.maxDepth(),defaults.maxProperties())));
             if(!owned.getOrDefault(key,List.of()).isEmpty()) {
                 if(resolution==null)issues.add(new IngestionEvidence.Issue(CLASSPATH_RESOLUTION_REQUIRED,key.toString(),List.of(identity)));
                 else try {
@@ -143,7 +165,7 @@ public final class UniversalSourceIngestion {
                     boolean reactorComplete=true;
                     int skippedReactorSlots=0;
                     for(var slot:resolution.reactorSlots()) {
-                        var sibling=plans.stream().filter(p->p.module().equals(slot.sourceSet().module())&&p.kind()==slot.sourceSet().kind()&&p.name().equals(slot.sourceSet().name())).findFirst();
+                        var sibling=Optional.ofNullable(plansByKey.get(slot.sourceSet()));
                         var siblingSources=owned.getOrDefault(slot.sourceSet(),List.of());
                         if(sibling.isEmpty()||siblingSources.isEmpty()||siblingSources.stream().anyMatch(s->s.document().classification()!=sibling.orElseThrow().semanticRole())||incomplete.contains(slot.sourceSet())
                                 ||!sibling.orElseThrow().syntaxLevel().value().equals(plan.syntaxLevel().value())
@@ -188,7 +210,7 @@ public final class UniversalSourceIngestion {
             for(String root:resources.stream().flatMap(r->r.value().stream()).distinct().toList())for(String name:List.of("META-INF/spring.factories","META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports")) {
                 String path=root.equals(".")?name:root+"/"+name;var file=inputs.files().get(path);
                 if(file!=null)metadata.add(new AutoConfigurationMetadata.Resource(path,file.bytes(),new ConditionEvidence.Source(file.document().identity(),file.document().contentDigest(),Optional.empty(),0)));
-                else if(inputs.snapshot().files().stream().anyMatch(f->f.path().equals(path)))issues.add(new IngestionEvidence.Issue(INPUT_UNAVAILABLE,path,List.of(identity)));
+                else if(snapshotFilePaths.contains(path))issues.add(new IngestionEvidence.Issue(INPUT_UNAVAILABLE,path,List.of(identity)));
             }
             outcomes.add(new Outcome(key,request,config,metadata));
         }

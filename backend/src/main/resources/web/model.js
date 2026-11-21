@@ -53,7 +53,10 @@
     GRAPH_STORE_UNAVAILABLE: 'The verified analysis snapshot could not be read.',
     REMOTE_FETCH_FAILED: 'The public repository could not be downloaded. Check the URL, network and Git installation. Private repositories require a local checkout.',
     REMOTE_TIMEOUT: 'Repository download exceeded two minutes. Use a local checkout.',
-    REMOTE_SIZE_LIMIT: 'Repository download reached the current acquisition limit. Connect a full local checkout; if it also reaches a limit, inspect input diagnostics for the exact blocker.'
+    REMOTE_SIZE_LIMIT: 'Repository download reached the current acquisition limit. Connect a full local checkout; if it also reaches a limit, inspect input diagnostics for the exact blocker.',
+    CONNECTION_NOT_FOUND: 'The repository is no longer connected.',
+    SETUP_CAPACITY: 'The maximum repository limit (32) has been reached. Disconnect unused repositories to connect more.',
+    JOB_RUNNING: 'An analysis is currently running for this repository. Wait for it to complete or cancel it before disconnecting.'
   })[code] || `The request could not be completed (${code || 'connection unavailable'}).`;
   const shortDigest = value => typeof value === 'string' && /^sha256:[0-9a-f]{16,}$/i.test(value) ? '#' + value.slice(7, 15) : String(value ?? '');
   const reasonCatalog = {
@@ -97,6 +100,12 @@
   };
   const policyTemplates = [
     {
+      id: 'layering',
+      label: 'Layering: Web cannot call Repository',
+      description: 'Enforces clean 3-tier layering by forbidding direct dependencies from Web/Controller to Repository/Data.',
+      yaml: 'schema: architecture-policy:v1\nid: layering.boundary\nversion: "1"\nrules:\n  - id: web.no-repository\n    version: "1"\n    kind: FORBIDDEN_DEPENDENCY\n    severity: ERROR\n    scope: TYPE\n    relationships: [graph.depends-on]\n    from: {packages: [controller, web, api]}\n    to: {packages: [repository, dao, data]}\n'
+    },
+    {
       id: 'cycles',
       label: 'No class dependency cycles',
       description: 'Detects circular dependencies (SCCs) between project classes.',
@@ -107,6 +116,12 @@
       label: 'No package-level cycles',
       description: 'Ensures packages form a clean directed acyclic graph (DAG) with no circular coupling.',
       yaml: 'schema: architecture-policy:v1\nid: package.cycles\nversion: "1"\nrules:\n  - id: package.no-cycles\n    version: "1"\n    kind: ACYCLIC\n    severity: ERROR\n    scope: PACKAGE\n    relationships: [graph.depends-on]\n    within: {origins: [PROJECT]}\n'
+    },
+    {
+      id: 'spring-boundary',
+      label: 'Spring component isolation',
+      description: 'Forbids client components from directly referencing internal store components.',
+      yaml: 'schema: architecture-policy:v1\nid: spring.boundary\nversion: "1"\nrules:\n  - id: client.no-store\n    version: "1"\n    kind: FORBIDDEN_DEPENDENCY\n    severity: ERROR\n    scope: SPRING_COMPONENT\n    relationships: [spring.selected-binding]\n    from: {names: [client]}\n    to: {names: [store]}\n'
     },
     {
       id: 'spring-cycles',

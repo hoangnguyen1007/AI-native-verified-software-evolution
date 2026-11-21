@@ -44,8 +44,19 @@ public final class PolyglotInventory {
                 if(entry.path().utf8().isEmpty())reason="RAW_PATH_CLASSIFIER_REQUIRED";
                 else if(entry.disposition()!=InventoryEntry.Disposition.ACQUIRED)reason="INPUT_UNAVAILABLE_OR_EXCLUDED";
                 else try{
-                    var handle=entry.content().orElseThrow();if(!content.verify(handle))throw new IOException("CONTENT_UNAVAILABLE");
-                    try(var stream=content.range(handle,0,Math.min(handle.size(),8192))){detection=LanguageDiscovery.detect(entry.path().utf8().orElseThrow(),stream.readNBytes(8192),Optional.empty());}
+                    String utf8Path=entry.path().utf8().orElseThrow();
+                    var handle=entry.content().orElseThrow();
+                    boolean mustFullVerify = entry.population() == InventoryEntry.Population.SOURCE
+                            || entry.population() == InventoryEntry.Population.UNKNOWN
+                            || handle.size() <= 65_536
+                            || !com.evolution.analysis.readiness.ReadinessPlanner.isNonSourceBinaryExtension(utf8Path);
+                    if(mustFullVerify && !content.verify(handle))throw new IOException("CONTENT_UNAVAILABLE");
+                    int prefixLen=(int)Math.min(handle.size(),8192L);
+                    try(var stream=content.range(handle,0,prefixLen)){
+                        byte[] head=stream.readNBytes(prefixLen);
+                        if(head.length!=prefixLen)throw new IOException("CONTENT_UNAVAILABLE");
+                        detection=LanguageDiscovery.detect(utf8Path,head,Optional.empty());
+                    }
                 }catch(IOException failure){reason="CLASSIFICATION_INPUT_UNAVAILABLE";}
                 if(detection.state()==LanguageDiscovery.State.UNKNOWN||detection.state()==LanguageDiscovery.State.AMBIGUOUS||detection.state()==LanguageDiscovery.State.CONFLICTED||!reason.equals("CLASSIFICATION_HINT_ONLY"))unknown=Math.addExact(unknown,1);
             }

@@ -116,19 +116,30 @@ public final class RepositoryIntake implements AutoCloseable {
     }
     public RepositoryAcquisitionResult compatibility(String revision,RepositoryIdentity repository,Optional<String> sourceRevision,boolean dirty,boolean includeTests,boolean allFiles,List<String> exclusions)throws IOException{
         RepositoryAcquisitionRequest request;try{request=new RepositoryAcquisitionRequest(repository,sourceRevision,dirty,"pom.xml",new RepositoryAcquisitionPolicy(500_000,500_000,10_000_000L,8_000_000_000L,256,exclusions));}catch(IllegalArgumentException unsupported){throw new IOException("V1_SELECTION_UNREPRESENTABLE");}
+        var existsCache=new HashMap<String,Boolean>();
         try{return new StreamingRepositoryAcquirer(content,inventory).compatibility(revision,request,e->{
             if(e.kind()==InventoryEntry.Kind.DIRECTORY||!ScanSelection.semanticInput(e,includeTests,allFiles))return false;
             String path=e.path().utf8().orElse("");if(exclusions.stream().anyMatch(p->path.equals(p)||path.startsWith(p+"/")))return false;
-            return allFiles||!declaredOutput(revision,path);
+            return allFiles||!declaredOutput(revision,path,existsCache);
         },com.evolution.analysis.contract.serialization.CanonicalJson.write(Map.of("selector","java.compatibility:m8.4-v2","includeTests",includeTests,"allFiles",allFiles,"exclusions",exclusions)));}catch(UncheckedIOException unavailable){throw unavailable.getCause();}
     }
-    private boolean declaredOutput(String revision,String path){
+    private boolean declaredOutput(String revision,String path,Map<String,Boolean> existsCache){
+        if(!path.contains("target/")&&!path.contains("build/")&&!path.contains(".gradle/")&&!path.contains("node_modules/"))return false;
         String[] parts=path.split("/");String parent="";
-        try{for(int i=0;i<parts.length-1;i++){
+        for(int i=0;i<parts.length-1;i++){
             String segment=parts[i];String prefix=parent.isEmpty()?"":parent+"/";
-            if(segment.equals("target")&&exists(revision,prefix+"pom.xml")||(segment.equals("build")||segment.equals(".gradle"))&&(exists(revision,prefix+"build.gradle")||exists(revision,prefix+"build.gradle.kts"))||segment.equals("node_modules")&&exists(revision,prefix+"package.json"))return true;
+            if(segment.equals("target")&&cachedExists(revision,prefix+"pom.xml",existsCache)
+                    ||(segment.equals("build")||segment.equals(".gradle"))&&(cachedExists(revision,prefix+"build.gradle",existsCache)||cachedExists(revision,prefix+"build.gradle.kts",existsCache))
+                    ||segment.equals("node_modules")&&cachedExists(revision,prefix+"package.json",existsCache))return true;
             parent=prefix+segment;
-        }return false;}catch(IOException unavailable){throw new UncheckedIOException(unavailable);}
+        }
+        return false;
+    }
+    private boolean cachedExists(String revision,String path,Map<String,Boolean> existsCache){
+        var cached=existsCache.get(path);
+        if(cached!=null)return cached;
+        try{boolean present=exists(revision,path);existsCache.put(path,present);return present;}
+        catch(IOException unavailable){throw new UncheckedIOException(unavailable);}
     }
     private boolean exists(String revision,String path)throws IOException{return inventory.observation(revision,LogicalPath.utf8(path)).filter(o->o.entry().kind()==InventoryEntry.Kind.FILE&&o.entry().disposition()==InventoryEntry.Disposition.ACQUIRED).isPresent();}
     @Override public void close()throws IOException{inventory.close();}

@@ -1,0 +1,914 @@
+package com.evolution.backend.query;
+
+import com.evolution.analysis.contract.assessment.AssessmentStatus;
+import com.evolution.analysis.contract.common.ContentDigest;
+import com.evolution.analysis.contract.common.VersionedIdentifier;
+import com.evolution.analysis.contract.serialization.CanonicalJson;
+import com.evolution.analysis.evidence.CapabilityGapRecord;
+import com.evolution.analysis.policy.PolicyEvaluation;
+import com.evolution.analysis.query.ArchitectureQuery;
+import com.evolution.analysis.query.ArchitectureQuery.*;
+import com.evolution.analysis.query.ArchitectureQueryService;
+
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.util.*;
+
+/**
+ * Deterministic, zero-hallucination Architecture Insights & Refactoring Advisor.
+ * Computes exact Tarjan Strongly Connected Components (cycles & tangles), minimal cycle-breaking
+ * edge candidates backed by canonical edge evidence, Robert C. Martin Instability & SDP violations,
+ * condensation-DAG transitive blast radius, cross-layer coupling matrix (DSM), and an executive
+ * Markdown report — strictly from canonical ArchitectureQueryService projections.
+ */
+public final class ArchitectureInsightsAdvisor {
+    public static final VersionedIdentifier VERSION = new VersionedIdentifier("architecture.insights", "m9-advisor-v1");
+    private static final int MAX_SCC_EXACT_CUT_NODES = 120;
+    private static final int MAX_EXACT_BLAST_COMPONENTS = 8_192;
+
+    private ArchitectureInsightsAdvisor() {}
+
+    public record CycleBreakCandidate(
+            String edgeIdentity,
+            String source,
+            String sourceLabel,
+            String target,
+            String targetLabel,
+            Classification classification,
+            int supportCount,
+            List<ContentDigest> evidence,
+            boolean breaksEntireTangle,
+            int remainingLargestComponentSize,
+            int splitComponentCount,
+            String recommendedStrategy,
+            String rationale) {
+        public CycleBreakCandidate {
+            evidence = List.copyOf(evidence);
+        }
+    }
+
+    public record Tangle(
+            String id,
+            String severity,
+            int memberCount,
+            int internalEdgeCount,
+            int totalSupportWeight,
+            List<String> members,
+            List<String> memberLabels,
+            List<CycleBreakCandidate> breakCandidates) {
+        public Tangle {
+            members = List.copyOf(members);
+            memberLabels = List.copyOf(memberLabels);
+            breakCandidates = List.copyOf(breakCandidates);
+        }
+    }
+
+    public record Hotspot(
+            String identity,
+            String label,
+            String kind,
+            String group,
+            String archetype,
+            int hotspotScore,
+            int fanIn,
+            int fanOut,
+            int externalDependencies,
+            BigDecimal instability,
+            int transitiveDependents,
+            boolean inCycle,
+            int policyViolations,
+            boolean sdpViolation) {}
+
+    public record CouplingCell(
+            String fromGroup,
+            String toGroup,
+            int edgeCount,
+            int supportWeight,
+            boolean bidirectional,
+            boolean backEdge) {}
+
+    public record CouplingMatrix(
+            List<String> orderedGroups,
+            Map<String, Integer> groupSizes,
+            List<CouplingCell> cells,
+            int backEdgeCellCount,
+            int bidirectionalPairCount) {
+        public CouplingMatrix {
+            orderedGroups = List.copyOf(orderedGroups);
+            groupSizes = Collections.unmodifiableMap(new LinkedHashMap<>(groupSizes));
+            cells = List.copyOf(cells);
+        }
+    }
+
+    public record SummaryMetrics(
+            int analyzedEntities,
+            int internalDependencies,
+            int externalDependencies,
+            int tangleCount,
+            int tangledEntityCount,
+            BigDecimal tangledEntityRatio,
+            BigDecimal averageInstability,
+            int maxBlastRadius,
+            int sdpViolationCount,
+            int policyFindingCount) {}
+
+    public record InsightsReport(
+            VersionedIdentifier schemaVersion,
+            ContentDigest graph,
+            String context,
+            Scope scope,
+            Projection projection,
+            AssessmentStatus status,
+            Operation operation,
+            List<CapabilityGapRecord> gaps,
+            Bounds bounds,
+            SummaryMetrics summary,
+            List<Tangle> tangles,
+            List<Hotspot> hotspots,
+            CouplingMatrix couplingMatrix,
+            String markdownReport) {
+        public InsightsReport {
+            gaps = List.copyOf(gaps);
+            tangles = List.copyOf(tangles);
+            hotspots = List.copyOf(hotspots);
+        }
+    }
+
+    public static InsightsReport analyze(
+            ArchitectureQueryService service,
+            Request baseRequest,
+            Optional<PublishedReports.Report> publishedReport,
+            int topLimit) {
+        Objects.requireNonNull(service);
+        Objects.requireNonNull(baseRequest);
+        Objects.requireNonNull(publishedReport);
+        int topN = Math.max(1, Math.min(50, topLimit));
+
+        var projRequest = new Request(
+                baseRequest.graph(),
+                baseRequest.context(),
+                baseRequest.scope(),
+                baseRequest.projection(),
+                Direction.OUTGOING,
+                baseRequest.relationshipKinds(),
+                baseRequest.population(),
+                baseRequest.includeMust(),
+                baseRequest.realization(),
+                baseRequest.limits());
+
+        Result<MetricProjection> projected = service.metricProjection(projRequest);
+        MetricProjection mp = projected.items().isEmpty()
+                ? new MetricProjection(List.of(), List.of(), List.of(), List.of())
+                : projected.items().getFirst();
+
+        Map<String, EntityView> allEntities = new LinkedHashMap<>();
+        for (EntityView ev : mp.entities()) {
+            allEntities.put(ev.identity(), ev);
+        }
+
+        // Partition internal project entities vs external JDK/DEPENDENCY targets
+        Map<String, EntityView> projectEntities = new TreeMap<>();
+        for (EntityView ev : mp.entities()) {
+            if (isProjectEntity(ev)) {
+                projectEntities.put(ev.identity(), ev);
+            }
+        }
+        if (projectEntities.isEmpty() && !allEntities.isEmpty()) {
+            projectEntities.putAll(allEntities);
+        }
+
+        int n = projectEntities.size();
+        List<String> nodeIds = List.copyOf(projectEntities.keySet());
+        Map<String, Integer> nodeIndex = new HashMap<>(n * 2);
+        for (int i = 0; i < n; i++) {
+            nodeIndex.put(nodeIds.get(i), i);
+        }
+
+        int[] fanIn = new int[n];
+        int[] fanOut = new int[n];
+        int[] extDeps = new int[n];
+        boolean[] selfLoop = new boolean[n];
+        List<List<Integer>> outAdj = new ArrayList<>(n);
+        List<EdgeView> internalEdges = new ArrayList<>();
+        int externalEdgeCount = 0;
+
+        for (int i = 0; i < n; i++) {
+            outAdj.add(new ArrayList<>());
+        }
+
+        for (EdgeView edge : mp.edges()) {
+            Integer u = nodeIndex.get(edge.source());
+            if (u == null) continue;
+            Integer v = nodeIndex.get(edge.target());
+            if (v == null) {
+                extDeps[u]++;
+                externalEdgeCount++;
+                continue;
+            }
+            internalEdges.add(edge);
+            if (u.intValue() == v.intValue()) {
+                selfLoop[u] = true;
+            } else {
+                outAdj.get(u).add(v);
+                fanOut[u]++;
+                fanIn[v]++;
+            }
+        }
+        for (int i = 0; i < n; i++) {
+            var adj = outAdj.get(i);
+            if (adj.size() > 1) {
+                Collections.sort(adj);
+            }
+        }
+
+        // 1. Exact Iterative Tarjan SCC
+        SccResult scc = tarjanScc(n, outAdj);
+        int compCount = scc.components.size();
+        boolean[] inCycle = new boolean[n];
+        int tangledEntityCount = 0;
+        List<int[]> cyclicComps = new ArrayList<>();
+        for (int c = 0; c < compCount; c++) {
+            int[] members = scc.components.get(c);
+            if (members.length > 1 || (members.length == 1 && selfLoop[members[0]])) {
+                cyclicComps.add(members);
+                for (int u : members) {
+                    inCycle[u] = true;
+                    tangledEntityCount++;
+                }
+            }
+        }
+
+        // Index internal edges per SCC for tangle reporting & minimal cycle-breaker analysis
+        Map<Integer, List<EdgeView>> edgesByComp = new HashMap<>();
+        for (EdgeView edge : internalEdges) {
+            int u = nodeIndex.get(edge.source());
+            int v = nodeIndex.get(edge.target());
+            if (scc.compOf[u] == scc.compOf[v] && inCycle[u]) {
+                edgesByComp.computeIfAbsent(scc.compOf[u], k -> new ArrayList<>()).add(edge);
+            }
+        }
+
+        // Sort cyclic components: largest size desc, internal edges desc, first canonical ID asc
+        cyclicComps.sort((a, b) -> {
+            int cmp = Integer.compare(b.length, a.length);
+            if (cmp != 0) return cmp;
+            int ea = edgesByComp.getOrDefault(scc.compOf[a[0]], List.of()).size();
+            int eb = edgesByComp.getOrDefault(scc.compOf[b[0]], List.of()).size();
+            cmp = Integer.compare(eb, ea);
+            if (cmp != 0) return cmp;
+            return nodeIds.get(a[0]).compareTo(nodeIds.get(b[0]));
+        });
+
+        List<Tangle> tangles = new ArrayList<>();
+        for (int idx = 0; idx < Math.min(topN, cyclicComps.size()); idx++) {
+            int[] members = cyclicComps.get(idx);
+            int compId = scc.compOf[members[0]];
+            List<EdgeView> cEdges = edgesByComp.getOrDefault(compId, List.of());
+            List<String> mIds = new ArrayList<>(members.length);
+            List<String> mLabels = new ArrayList<>(members.length);
+            for (int u : members) {
+                String id = nodeIds.get(u);
+                mIds.add(id);
+                mLabels.add(shortLabel(projectEntities.get(id), baseRequest.scope()));
+            }
+            int supportSum = 0;
+            for (EdgeView e : cEdges) supportSum += Math.max(1, e.supportCount());
+            String tangleDigest = CanonicalJson.sha256(List.of("tangle", mIds)).value();
+            String severity = members.length >= 8 ? "CRITICAL" : members.length >= 4 ? "HIGH" : "MODERATE";
+            List<CycleBreakCandidate> breaks = computeBreakCandidates(
+                    members, cEdges, nodeIds, nodeIndex, projectEntities, fanIn, fanOut, baseRequest.scope());
+            tangles.add(new Tangle(
+                    tangleDigest, severity, members.length, cEdges.size(), supportSum, mIds, mLabels, breaks));
+        }
+
+        // 2. Exact Condensation-DAG Transitive Incoming Blast Radius
+        int[] transitiveDependents = computeBlastRadius(n, outAdj, scc);
+
+        // 3. Policy Violation Concentration per Entity
+        Map<String, Integer> violationsByEntity = new HashMap<>();
+        int totalPolicyFindings = 0;
+        if (publishedReport.isPresent()) {
+            List<PolicyEvaluation.Finding> findings = publishedReport.orElseThrow().evaluation().findings();
+            totalPolicyFindings = findings.size();
+            for (PolicyEvaluation.Finding f : findings) {
+                for (String vId : new LinkedHashSet<>(f.bundle().path())) {
+                    violationsByEntity.merge(vId, 1, Integer::sum);
+                }
+            }
+        }
+
+        // 4. Common Package Prefix for clean DSM & Hotspot Grouping
+        String commonPkgPrefix = computeCommonPackagePrefix(projectEntities.values(), baseRequest.scope());
+        Map<String, String> groupByNode = new HashMap<>(n * 2);
+        for (int i = 0; i < n; i++) {
+            String id = nodeIds.get(i);
+            groupByNode.put(id, groupName(projectEntities.get(id), baseRequest.scope(), commonPkgPrefix));
+        }
+
+        // 5. Hotspots, Instability & SDP Violations
+        BigDecimal instabilitySum = BigDecimal.ZERO;
+        int maxBlast = 0;
+        int sdpViolations = 0;
+        List<Hotspot> allHotspots = new ArrayList<>(n);
+
+        for (int i = 0; i < n; i++) {
+            String id = nodeIds.get(i);
+            EntityView ev = projectEntities.get(id);
+            int ca = fanIn[i];
+            int ce = fanOut[i];
+            int ext = extDeps[i];
+            int blast = transitiveDependents[i];
+            if (blast > maxBlast) maxBlast = blast;
+            BigDecimal inst = (ca + ce == 0)
+                    ? BigDecimal.ZERO.setScale(4, RoundingMode.HALF_UP)
+                    : BigDecimal.valueOf(ce).divide(BigDecimal.valueOf(ca + ce), 4, RoundingMode.HALF_UP);
+            instabilitySum = instabilitySum.add(inst);
+
+            boolean sdp = ca >= 3 && ce >= 2 && inst.compareTo(new BigDecimal("0.6500")) > 0;
+            if (sdp) sdpViolations++;
+            int pViolations = violationsByEntity.getOrDefault(id, 0);
+            boolean cyclic = inCycle[i];
+
+            String archetype = classifyArchetype(ca, ce, blast, cyclic, sdp, pViolations, n);
+            int score = computeHotspotScore(ca, ce, blast, cyclic, sdp, pViolations, n);
+            allHotspots.add(new Hotspot(
+                    id,
+                    shortLabel(ev, baseRequest.scope()),
+                    ev.kind(),
+                    groupByNode.get(id),
+                    archetype,
+                    score,
+                    ca,
+                    ce,
+                    ext,
+                    inst,
+                    blast,
+                    cyclic,
+                    pViolations,
+                    sdp));
+        }
+
+        allHotspots.sort((a, b) -> {
+            int cmp = Integer.compare(b.hotspotScore(), a.hotspotScore());
+            if (cmp != 0) return cmp;
+            cmp = Integer.compare(b.transitiveDependents(), a.transitiveDependents());
+            if (cmp != 0) return cmp;
+            cmp = Integer.compare(b.fanIn() + b.fanOut(), a.fanIn() + a.fanOut());
+            if (cmp != 0) return cmp;
+            return a.identity().compareTo(b.identity());
+        });
+        List<Hotspot> topHotspots = allHotspots.subList(0, Math.min(topN, allHotspots.size()));
+
+        // 6. Cross-Module / Package Layer Coupling Matrix (DSM)
+        CouplingMatrix dsm = buildCouplingMatrix(nodeIds, groupByNode, internalEdges);
+
+        BigDecimal tangledRatio = n == 0
+                ? BigDecimal.ZERO.setScale(4, RoundingMode.HALF_UP)
+                : BigDecimal.valueOf(tangledEntityCount).divide(BigDecimal.valueOf(n), 4, RoundingMode.HALF_UP);
+        BigDecimal avgInstability = n == 0
+                ? BigDecimal.ZERO.setScale(4, RoundingMode.HALF_UP)
+                : instabilitySum.divide(BigDecimal.valueOf(n), 4, RoundingMode.HALF_UP);
+
+        SummaryMetrics summary = new SummaryMetrics(
+                n,
+                internalEdges.size(),
+                externalEdgeCount,
+                cyclicComps.size(),
+                tangledEntityCount,
+                tangledRatio,
+                avgInstability,
+                maxBlast,
+                sdpViolations,
+                totalPolicyFindings);
+
+        String markdown = renderMarkdown(
+                baseRequest, projected.status(), projected.gaps(), summary, tangles, topHotspots, dsm);
+
+        return new InsightsReport(
+                VERSION,
+                baseRequest.graph(),
+                baseRequest.context(),
+                baseRequest.scope(),
+                baseRequest.projection(),
+                projected.status(),
+                projected.operation(),
+                projected.gaps(),
+                projected.bounds(),
+                summary,
+                tangles,
+                topHotspots,
+                dsm,
+                markdown);
+    }
+
+    private static boolean isProjectEntity(EntityView ev) {
+        return ev.origin().isEmpty() || "PROJECT".equals(ev.origin().orElse(""));
+    }
+
+    private record SccResult(int[] compOf, List<int[]> components) {}
+
+    /** Exact iterative Tarjan's Strongly Connected Components algorithm. Zero recursion depth risk. */
+    private static SccResult tarjanScc(int n, List<List<Integer>> adj) {
+        int[] disc = new int[n];
+        int[] low = new int[n];
+        int[] compOf = new int[n];
+        Arrays.fill(disc, -1);
+        Arrays.fill(compOf, -1);
+        boolean[] onStack = new boolean[n];
+        int[] tarjanStack = new int[n];
+        int sp = 0;
+        int[] callNode = new int[n];
+        int[] callEdgeIdx = new int[n];
+        int timer = 0;
+        List<int[]> components = new ArrayList<>();
+
+        for (int root = 0; root < n; root++) {
+            if (disc[root] != -1) continue;
+            int depth = 0;
+            callNode[0] = root;
+            callEdgeIdx[0] = 0;
+            disc[root] = low[root] = timer++;
+            tarjanStack[sp++] = root;
+            onStack[root] = true;
+
+            while (depth >= 0) {
+                int u = callNode[depth];
+                List<Integer> neighbors = adj.get(u);
+                int ei = callEdgeIdx[depth];
+                if (ei < neighbors.size()) {
+                    callEdgeIdx[depth] = ei + 1;
+                    int v = neighbors.get(ei);
+                    if (disc[v] == -1) {
+                        depth++;
+                        callNode[depth] = v;
+                        callEdgeIdx[depth] = 0;
+                        disc[v] = low[v] = timer++;
+                        tarjanStack[sp++] = v;
+                        onStack[v] = true;
+                    } else if (onStack[v]) {
+                        if (disc[v] < low[u]) low[u] = disc[v];
+                    }
+                } else {
+                    if (low[u] == disc[u]) {
+                        int count = 0;
+                        for (int k = sp - 1; k >= 0; k--) {
+                            count++;
+                            if (tarjanStack[k] == u) break;
+                        }
+                        int[] comp = new int[count];
+                        int compId = components.size();
+                        for (int k = 0; k < count; k++) {
+                            int w = tarjanStack[--sp];
+                            onStack[w] = false;
+                            compOf[w] = compId;
+                            comp[k] = w;
+                        }
+                        Arrays.sort(comp);
+                        components.add(comp);
+                    }
+                    depth--;
+                    if (depth >= 0) {
+                        int parent = callNode[depth];
+                        if (low[u] < low[parent]) low[parent] = low[u];
+                    }
+                }
+            }
+        }
+        return new SccResult(compOf, components);
+    }
+
+    private static List<CycleBreakCandidate> computeBreakCandidates(
+            int[] members,
+            List<EdgeView> compEdges,
+            List<String> nodeIds,
+            Map<String, Integer> globalIdx,
+            Map<String, EntityView> entities,
+            int[] fanIn,
+            int[] fanOut,
+            Scope scope) {
+        if (compEdges.isEmpty()) return List.of();
+        int m = members.length;
+        Map<Integer, Integer> localIdx = new HashMap<>(m * 2);
+        for (int i = 0; i < m; i++) localIdx.put(members[i], i);
+
+        // Pre-sort candidate edges by lowest supportCount, conditional MAY preference, then canonical ID
+        List<EdgeView> sortedEdges = new ArrayList<>(compEdges);
+        sortedEdges.sort((a, b) -> {
+            int cmp = Integer.compare(Math.max(1, a.supportCount()), Math.max(1, b.supportCount()));
+            if (cmp != 0) return cmp;
+            boolean aMay = a.classification() == Classification.MAY;
+            boolean bMay = b.classification() == Classification.MAY;
+            if (aMay != bMay) return aMay ? -1 : 1;
+            return a.identity().compareTo(b.identity());
+        });
+
+        boolean exactCutAnalysis = m <= MAX_SCC_EXACT_CUT_NODES && sortedEdges.size() <= 400;
+        int evalLimit = Math.min(sortedEdges.size(), exactCutAnalysis ? 48 : 8);
+
+        List<CycleBreakCandidate> evaluated = new ArrayList<>(evalLimit);
+        for (int eIdx = 0; eIdx < evalLimit; eIdx++) {
+            EdgeView candidate = sortedEdges.get(eIdx);
+            int gu = globalIdx.get(candidate.source());
+            int gv = globalIdx.get(candidate.target());
+            int largestRemaining = m;
+            int splitCount = 1;
+            if (m == 1 && gu == gv) {
+                largestRemaining = 1;
+                splitCount = 1;
+            } else if (exactCutAnalysis) {
+                List<List<Integer>> subAdj = new ArrayList<>(m);
+                for (int i = 0; i < m; i++) subAdj.add(new ArrayList<>());
+                for (EdgeView e : compEdges) {
+                    if (e.identity().equals(candidate.identity())) continue;
+                    int lu = localIdx.get(globalIdx.get(e.source()));
+                    int lv = localIdx.get(globalIdx.get(e.target()));
+                    if (lu != lv) subAdj.get(lu).add(lv);
+                }
+                SccResult afterCut = tarjanScc(m, subAdj);
+                splitCount = afterCut.components.size();
+                largestRemaining = 1;
+                for (int[] subComp : afterCut.components) {
+                    if (subComp.length > largestRemaining) largestRemaining = subComp.length;
+                }
+            }
+            boolean breaksAll = m > 1 && largestRemaining == 1;
+            EntityView srcEv = entities.get(candidate.source());
+            EntityView dstEv = entities.get(candidate.target());
+            String srcLabel = shortLabel(srcEv, scope);
+            String dstLabel = shortLabel(dstEv, scope);
+            String strategy = recommendDecouplingStrategy(scope, m, fanIn[gu], fanOut[gu], fanIn[gv], fanOut[gv], candidate);
+            int supports = Math.max(1, candidate.supportCount());
+            String rationale = breaksAll
+                    ? "Single-cut cycle breaker: severing or inverting this edge (" + supports + " support ref" + (supports == 1 ? "" : "s") + ") decomposes all " + m + " components into a DAG."
+                    : (largestRemaining < m
+                            ? "Reduces largest cyclic cluster from " + m + " to " + largestRemaining + " (" + splitCount + " sub-components) with only " + supports + " support ref" + (supports == 1 ? "" : "s") + "."
+                            : "Lowest-friction internal link (" + supports + " support ref" + (supports == 1 ? "" : "s") + "); combine with secondary cut to untangle this dense cluster.");
+            evaluated.add(new CycleBreakCandidate(
+                    candidate.identity(),
+                    candidate.source(),
+                    srcLabel,
+                    candidate.target(),
+                    dstLabel,
+                    candidate.classification(),
+                    supports,
+                    candidate.evidence(),
+                    breaksAll,
+                    largestRemaining,
+                    splitCount,
+                    strategy,
+                    rationale));
+        }
+
+        evaluated.sort((a, b) -> {
+            if (a.breaksEntireTangle() != b.breaksEntireTangle()) return a.breaksEntireTangle() ? -1 : 1;
+            int cmp = Integer.compare(a.remainingLargestComponentSize(), b.remainingLargestComponentSize());
+            if (cmp != 0) return cmp;
+            cmp = Integer.compare(a.supportCount(), b.supportCount());
+            if (cmp != 0) return cmp;
+            return a.edgeIdentity().compareTo(b.edgeIdentity());
+        });
+        return evaluated.subList(0, Math.min(3, evaluated.size()));
+    }
+
+    private static String recommendDecouplingStrategy(
+            Scope scope, int sccSize, int srcFanIn, int srcFanOut, int dstFanIn, int dstFanOut, EdgeView edge) {
+        if (scope == Scope.SPRING_COMPONENT || edge.classification() == Classification.MAY) {
+            return sccSize == 2 ? "PUBLISH_DOMAIN_EVENT_OR_LAZY_PORT" : "EXTRACT_SPI_PORT_BEAN";
+        }
+        if (scope == Scope.PACKAGE || scope == Scope.MODULE) {
+            return "EXTRACT_SHARED_CONTRACT_PACKAGE";
+        }
+        if (dstFanIn >= srcFanIn + 2) {
+            return "DEPENDENCY_INVERSION_EXTRACT_INTERFACE";
+        }
+        if (sccSize == 2) {
+            return "EXTRACT_VALUE_TYPE_OR_EVENT_CALLBACK";
+        }
+        return "INTRODUCE_PORT_INTERFACE_AT_BOUNDARY";
+    }
+
+    /** Exact condensation-DAG BitSet reachability for incoming blast radius (excluding self). */
+    private static int[] computeBlastRadius(int n, List<List<Integer>> outAdj, SccResult scc) {
+        int[] result = new int[n];
+        if (n == 0) return result;
+        int cCount = scc.components.size();
+        if (cCount > MAX_EXACT_BLAST_COMPONENTS) {
+            // Bounded reverse BFS fallback for massive 10k+ component graphs
+            List<List<Integer>> revAdj = new ArrayList<>(n);
+            for (int i = 0; i < n; i++) revAdj.add(new ArrayList<>());
+            for (int u = 0; u < n; u++) {
+                for (int v : outAdj.get(u)) revAdj.get(v).add(u);
+            }
+            int[] visitedStamp = new int[n];
+            int[] queue = new int[Math.min(n, 2048)];
+            int stamp = 1;
+            for (int start = 0; start < n; start++, stamp++) {
+                int head = 0, tail = 0;
+                visitedStamp[start] = stamp;
+                queue[tail++] = start;
+                int count = 0;
+                while (head < tail && tail < queue.length) {
+                    int curr = queue[head++];
+                    for (int dep : revAdj.get(curr)) {
+                        if (visitedStamp[dep] != stamp) {
+                            visitedStamp[dep] = stamp;
+                            count++;
+                            if (tail < queue.length) queue[tail++] = dep;
+                        }
+                    }
+                }
+                result[start] = count;
+            }
+            return result;
+        }
+
+        // Tarjan emits components in reverse topological order:
+        // If u -> v in DAG, compOf[v] < compOf[u].
+        // We want incoming dependents of v: all u that can reach v!
+        // Since compOf[u] > compOf[v], iterating c from cCount - 1 down to 0 processes upstream callers first!
+        BitSet[] callersOfComp = new BitSet[cCount];
+        for (int c = 0; c < cCount; c++) {
+            BitSet bs = new BitSet(cCount);
+            bs.set(c);
+            callersOfComp[c] = bs;
+        }
+        for (int c = cCount - 1; c >= 0; c--) {
+            BitSet callers = callersOfComp[c];
+            for (int u : scc.components.get(c)) {
+                for (int v : outAdj.get(u)) {
+                    int cv = scc.compOf[v];
+                    if (cv != c) {
+                        callersOfComp[cv].or(callers);
+                    }
+                }
+            }
+        }
+        for (int c = 0; c < cCount; c++) {
+            int totalNodes = 0;
+            BitSet bs = callersOfComp[c];
+            for (int bit = bs.nextSetBit(0); bit >= 0; bit = bs.nextSetBit(bit + 1)) {
+                totalNodes += scc.components.get(bit).length;
+            }
+            int dependentsExcludingSelf = Math.max(0, totalNodes - 1);
+            for (int u : scc.components.get(c)) {
+                result[u] = dependentsExcludingSelf;
+            }
+        }
+        return result;
+    }
+
+    private static String classifyArchetype(
+            int ca, int ce, int blast, boolean cyclic, boolean sdp, int violations, int totalNodes) {
+        if (violations > 0 && cyclic) return "CYCLIC_POLICY_HOTSPOT";
+        if (ca >= 3 && ce >= 3) return "HUB_BOTTLENECK";
+        if (sdp) return "UNSTABLE_FOUNDATION";
+        if (cyclic) return "CYCLE_PARTICIPANT";
+        if (violations > 0) return "POLICY_HOTSPOT";
+        if (ce >= 6 && ca <= 1) return "HIGH_EFFERENT_COORDINATOR";
+        if (ca >= 4 && ce == 0) return "STABLE_CORE_ABSTRACTION";
+        if (blast >= Math.max(4, totalNodes / 4)) return "HIGH_BLAST_FOUNDATION";
+        return "BALANCED_COMPONENT";
+    }
+
+    private static int computeHotspotScore(
+            int ca, int ce, int blast, boolean cyclic, boolean sdp, int violations, int totalNodes) {
+        double blastRatio = totalNodes <= 1 ? 0.0 : (double) blast / (totalNodes - 1);
+        double hubProduct = Math.min(25.0, Math.sqrt((double) ca * ce) * 5.0);
+        double blastPoints = Math.min(25.0, blastRatio * 25.0 + Math.min(10.0, ca * 1.5));
+        double cyclePoints = cyclic ? 22.0 : 0.0;
+        double sdpPoints = sdp ? 14.0 : 0.0;
+        double policyPoints = Math.min(20.0, violations * 10.0);
+        double fanOutPoints = Math.min(10.0, ce * 1.0);
+        int raw = (int) Math.round(hubProduct + blastPoints + cyclePoints + sdpPoints + policyPoints + fanOutPoints);
+        return Math.max(0, Math.min(100, raw));
+    }
+
+    private static CouplingMatrix buildCouplingMatrix(
+            List<String> nodeIds, Map<String, String> groupByNode, List<EdgeView> internalEdges) {
+        Map<String, Integer> groupSizes = new TreeMap<>();
+        for (String id : nodeIds) {
+            groupSizes.merge(groupByNode.get(id), 1, Integer::sum);
+        }
+        record Pair(String from, String to) {}
+        Map<Pair, int[]> pairCounts = new LinkedHashMap<>();
+        Map<String, Integer> outFlow = new HashMap<>();
+        Map<String, Integer> inFlow = new HashMap<>();
+
+        for (EdgeView edge : internalEdges) {
+            String gFrom = groupByNode.get(edge.source());
+            String gTo = groupByNode.get(edge.target());
+            if (gFrom == null || gTo == null || gFrom.equals(gTo)) continue;
+            int weight = Math.max(1, edge.supportCount());
+            int[] stats = pairCounts.computeIfAbsent(new Pair(gFrom, gTo), k -> new int[2]);
+            stats[0]++;
+            stats[1] += weight;
+            outFlow.merge(gFrom, weight, Integer::sum);
+            inFlow.merge(gTo, weight, Integer::sum);
+        }
+
+        // Order groups from upper/consumer layers (high net outFlow - inFlow) down to foundational layers
+        List<String> orderedGroups = new ArrayList<>(groupSizes.keySet());
+        orderedGroups.sort((a, b) -> {
+            int netA = outFlow.getOrDefault(a, 0) - inFlow.getOrDefault(a, 0);
+            int netB = outFlow.getOrDefault(b, 0) - inFlow.getOrDefault(b, 0);
+            int cmp = Integer.compare(netB, netA);
+            return cmp != 0 ? cmp : a.compareTo(b);
+        });
+        Map<String, Integer> rankOf = new HashMap<>();
+        for (int i = 0; i < orderedGroups.size(); i++) rankOf.put(orderedGroups.get(i), i);
+
+        List<CouplingCell> cells = new ArrayList<>(pairCounts.size());
+        int backEdges = 0;
+        Set<String> bidirPairs = new HashSet<>();
+        for (var entry : pairCounts.entrySet()) {
+            String from = entry.getKey().from();
+            String to = entry.getKey().to();
+            boolean bidir = pairCounts.containsKey(new Pair(to, from));
+            if (bidir) {
+                bidirPairs.add(from.compareTo(to) < 0 ? from + "<->" + to : to + "<->" + from);
+            }
+            boolean backEdge = rankOf.getOrDefault(from, 0) > rankOf.getOrDefault(to, 0);
+            if (backEdge) backEdges++;
+            cells.add(new CouplingCell(from, to, entry.getValue()[0], entry.getValue()[1], bidir, backEdge));
+        }
+        cells.sort((a, b) -> {
+            int cmp = Integer.compare(b.supportWeight(), a.supportWeight());
+            if (cmp != 0) return cmp;
+            cmp = a.fromGroup().compareTo(b.fromGroup());
+            return cmp != 0 ? cmp : a.toGroup().compareTo(b.toGroup());
+        });
+
+        Map<String, Integer> orderedSizes = new LinkedHashMap<>();
+        for (String g : orderedGroups) orderedSizes.put(g, groupSizes.get(g));
+        return new CouplingMatrix(orderedGroups, orderedSizes, cells, backEdges, bidirPairs.size());
+    }
+
+    private static String computeCommonPackagePrefix(Collection<EntityView> entities, Scope scope) {
+        if (scope == Scope.MODULE) return "";
+        String common = null;
+        int seen = 0;
+        for (EntityView ev : entities) {
+            String qn = ev.qualifiedName().or(ev::canonicalName).orElse("");
+            int lastDot = scope == Scope.PACKAGE ? qn.length() : qn.lastIndexOf('.');
+            if (lastDot <= 0) continue;
+            String pkg = qn.substring(0, lastDot);
+            seen++;
+            if (common == null) {
+                common = pkg;
+            } else {
+                common = sharedDotPrefix(common, pkg);
+                if (common.isEmpty()) break;
+            }
+        }
+        return seen >= 2 && common != null ? common : "";
+    }
+
+    private static String sharedDotPrefix(String a, String b) {
+        String[] pa = a.split("\\.");
+        String[] pb = b.split("\\.");
+        int limit = Math.min(pa.length, pb.length);
+        int match = 0;
+        while (match < limit && pa[match].equals(pb[match])) match++;
+        if (match == 0) return "";
+        return String.join(".", Arrays.copyOf(pa, match));
+    }
+
+    private static String groupName(EntityView ev, Scope scope, String commonPrefix) {
+        if (scope == Scope.MODULE) {
+            return shortLabel(ev, scope);
+        }
+        String qn = ev.qualifiedName().or(ev::canonicalName).orElse("");
+        if (scope == Scope.PACKAGE) {
+            if (!commonPrefix.isEmpty() && qn.startsWith(commonPrefix + ".")) {
+                String rem = qn.substring(commonPrefix.length() + 1);
+                int dot = rem.indexOf('.');
+                return dot > 0 ? rem.substring(0, dot) : rem;
+            }
+            return qn.isEmpty() ? "(default)" : qn;
+        }
+        int lastDot = qn.lastIndexOf('.');
+        if (lastDot <= 0) return ev.module().orElse("(root)");
+        String pkg = qn.substring(0, lastDot);
+        if (!commonPrefix.isEmpty()) {
+            if (pkg.equals(commonPrefix)) return "(root)";
+            if (pkg.startsWith(commonPrefix + ".")) {
+                String rem = pkg.substring(commonPrefix.length() + 1);
+                int dot = rem.indexOf('.');
+                return dot > 0 ? rem.substring(0, dot) : rem;
+            }
+        }
+        int lastPkgDot = pkg.lastIndexOf('.');
+        return lastPkgDot >= 0 ? pkg.substring(lastPkgDot + 1) : pkg;
+    }
+
+    private static String shortLabel(EntityView ev, Scope scope) {
+        if (ev == null) return "unknown";
+        String raw = ev.qualifiedName().or(ev::canonicalName).or(ev::spelling).orElse(ev.identity());
+        if (scope == Scope.TYPE || scope == Scope.SPRING_COMPONENT) {
+            int dot = raw.lastIndexOf('.');
+            if (dot > 0 && dot + 1 < raw.length() && !raw.startsWith("sha256:")) {
+                int prevDot = raw.lastIndexOf('.', dot - 1);
+                return prevDot >= 0 ? raw.substring(prevDot + 1) : raw;
+            }
+        }
+        return raw;
+    }
+
+    private static String renderMarkdown(
+            Request req,
+            AssessmentStatus status,
+            List<CapabilityGapRecord> gaps,
+            SummaryMetrics s,
+            List<Tangle> tangles,
+            List<Hotspot> hotspots,
+            CouplingMatrix dsm) {
+        var md = new StringBuilder(4096);
+        md.append("# Architecture Intelligence & Refactoring Executive Report\n\n");
+        md.append("- **Graph Digest:** `").append(req.graph().value()).append("`\n");
+        md.append("- **Context:** `").append(req.context()).append("`\n");
+        md.append("- **Scope / Projection:** `").append(req.scope()).append("` / `").append(req.projection()).append("`\n");
+        md.append("- **Evidence Status:** `").append(status).append("` (Recorded capability gaps: ").append(gaps.size()).append(")\n\n");
+
+        if (status != AssessmentStatus.COMPLETE || !gaps.isEmpty()) {
+            md.append("> **Qualification Notice:** This projection carries `").append(status)
+              .append("` status with ").append(gaps.size())
+              .append(" explicit capability gap(s). Unobserved dynamic or missing-classpath dependencies are never guessed.\n\n");
+        }
+
+        md.append("## 1. Structural Summary KPIs\n\n");
+        md.append("| Metric | Value |\n|---|---|\n");
+        md.append("| Analyzed Project Entities | ").append(s.analyzedEntities()).append(" |\n");
+        md.append("| Internal Dependencies | ").append(s.internalDependencies()).append(" |\n");
+        md.append("| Cyclic Tangles (SCCs) | ").append(s.tangleCount())
+          .append(" (").append(s.tangledEntityCount()).append(" entities, ")
+          .append(s.tangledEntityRatio().multiply(BigDecimal.valueOf(100)).setScale(1, RoundingMode.HALF_UP)).append("%) |\n");
+        md.append("| Average Martin Instability ($I$) | ").append(s.averageInstability()).append(" |\n");
+        md.append("| Max Incoming Blast Radius | ").append(s.maxBlastRadius()).append(" dependents |\n");
+        md.append("| Stable Dependencies Principle (SDP) Warnings | ").append(s.sdpViolationCount()).append(" |\n");
+        md.append("| Active Policy Violations | ").append(s.policyFindingCount()).append(" |\n\n");
+
+        md.append("## 2. Cycle & Tangle Detector (Tarjan SCC + Minimal Cycle-Breakers)\n\n");
+        if (tangles.isEmpty()) {
+            md.append("No structural dependency cycles detected in this scope (`0` non-trivial SCCs).\n\n");
+        } else {
+            for (int i = 0; i < tangles.size(); i++) {
+                Tangle t = tangles.get(i);
+                md.append("### Tangle #").append(i + 1).append(" — `").append(t.severity())
+                  .append("` (").append(t.memberCount()).append(" components, ")
+                  .append(t.internalEdgeCount()).append(" internal edges)\n");
+                md.append("- **Members:** ")
+                  .append(String.join(", ", t.memberLabels().subList(0, Math.min(12, t.memberLabels().size()))))
+                  .append(t.memberLabels().size() > 12 ? " …" : "").append("\n");
+                for (CycleBreakCandidate c : t.breakCandidates()) {
+                    md.append("- **Recommended Cut:** `").append(c.sourceLabel()).append(" -> ").append(c.targetLabel())
+                      .append("` (`").append(c.recommendedStrategy()).append("`, supports=").append(c.supportCount())
+                      .append(", breaksAll=").append(c.breaksEntireTangle()).append(") — ").append(c.rationale()).append("\n");
+                }
+                md.append("\n");
+            }
+        }
+
+        md.append("## 3. Top Architectural Hotspots & Blast Radius\n\n");
+        if (hotspots.isEmpty()) {
+            md.append("No project entities in scope.\n\n");
+        } else {
+            md.append("| Rank | Component | Archetype | Score | Fan-In ($C_a$) | Fan-Out ($C_e$) | Instability ($I$) | Blast Radius | Violations |\n");
+            md.append("|---|---|---|---|---|---|---|---|---|\n");
+            for (int i = 0; i < Math.min(10, hotspots.size()); i++) {
+                Hotspot h = hotspots.get(i);
+                md.append("| ").append(i + 1)
+                  .append(" | `").append(h.label()).append("`")
+                  .append(" | ").append(h.archetype())
+                  .append(" | **").append(h.hotspotScore()).append("**")
+                  .append(" | ").append(h.fanIn())
+                  .append(" | ").append(h.fanOut())
+                  .append(" | ").append(h.instability())
+                  .append(" | ").append(h.transitiveDependents())
+                  .append(" | ").append(h.policyViolations()).append(" |\n");
+            }
+            md.append("\n");
+        }
+
+        md.append("## 4. Cross-Layer / Package Coupling Matrix (DSM Top Flows)\n\n");
+        if (dsm.cells().isEmpty()) {
+            md.append("No cross-group dependencies observed in this scope.\n");
+        } else {
+            md.append("- **Ordered Layers (Consumer -> Foundation):** ")
+              .append(String.join(" -> ", dsm.orderedGroups())).append("\n");
+            md.append("- **Bidirectional Layer Tangles:** ").append(dsm.bidirectionalPairCount())
+              .append(" · **Upward Back-Edges:** ").append(dsm.backEdgeCellCount()).append("\n\n");
+            md.append("| From Layer/Group | To Layer/Group | Edges | Support Weight | Flags |\n");
+            md.append("|---|---|---|---|---|\n");
+            for (int i = 0; i < Math.min(15, dsm.cells().size()); i++) {
+                CouplingCell c = dsm.cells().get(i);
+                List<String> flags = new ArrayList<>();
+                if (c.bidirectional()) flags.add("BIDIRECTIONAL_TANGLE");
+                if (c.backEdge()) flags.add("UPWARD_BACK_EDGE");
+                md.append("| `").append(c.fromGroup()).append("` | `").append(c.toGroup()).append("` | ")
+                  .append(c.edgeCount()).append(" | ").append(c.supportWeight()).append(" | ")
+                  .append(flags.isEmpty() ? "OK" : String.join(", ", flags)).append(" |\n");
+            }
+        }
+        return md.toString();
+    }
+}

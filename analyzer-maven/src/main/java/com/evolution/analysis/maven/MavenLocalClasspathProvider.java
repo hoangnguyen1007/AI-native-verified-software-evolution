@@ -304,8 +304,7 @@ public final class MavenLocalClasspathProvider implements ClasspathProvider {
             } else {
                 try {
                     LocalArtifactCache.Material material = cache.jar(node.coordinate);
-                    byte[] bytes = material.bytes();
-                    if (bytes.length < 4 || bytes[0] != 'P' || bytes[1] != 'K') {
+                    if (!material.hasZipMagic()) {
                         problem(Reason.INVALID_JAR,
                                 node.coordinate.notation(), Requirement.DEPENDENCY_ARTIFACT,
                                 merge(node.evidence, List.of(material.record().evidence())));

@@ -59,17 +59,31 @@ public final class PolyglotScan {
 
     public Result run(String revision,RepositoryIntake intake,ReadinessPlan readiness,EvidenceContext context,
             Optional<Published> published,Path scratch,BooleanSupplier cancelled)throws IOException {
+        return run(revision,intake,readiness,context,published,scratch,cancelled,Map.of(),false);
+    }
+
+    public Result run(String revision,RepositoryIntake intake,ReadinessPlan readiness,EvidenceContext context,
+            Optional<Published> published,Path scratch,BooleanSupplier cancelled,
+            Map<ContentDigest,byte[]> verifiedBytes,boolean fastArchitecture)throws IOException {
         var tables=new SemanticTables(intake.content(),65536);
         var inventory=new PolyglotInventory().scan(revision,intake.inventory(),intake.content(),tables,cancelled);
         var languages=new TreeMap<String,Long>();var uncovered=new TreeMap<String,Long>();long[] counts={0,0,0};
         var profiles=LanguageProfile.baseline().stream().map(LanguageProfile::language).collect(java.util.stream.Collectors.toSet());
         profiles.add("protobuf");
-        try(var index=SqliteSemanticCensusIndex.temporary(scratch,65536)) {
+        if(published.isEmpty()) {
             try(var rows=tables.open(inventory.entries(),cancelled)){SemanticTables.Row row;while((row=rows.next())!=null) {
-                index.put("inventory",row.key(),row);if(!"FILE".equals(row.fields().get("kind")))continue;
-                for(String language:languages(row))if(profiles.contains(language))languages.merge(language,1L,Long::sum);
+                if(!"FILE".equals(row.fields().get("kind")))continue;
+                for(String language:languages(row))if(profiles.contains(language)) {
+                    languages.merge(language,1L,Long::sum);
+                    if(!language.equals("java"))uncovered.merge(language,1L,Long::sum);
+                }
             }}
-            if(published.isPresent()) {
+        } else {
+            try(var index=SqliteSemanticCensusIndex.temporary(scratch,65536)) {
+                try(var rows=tables.open(inventory.entries(),cancelled)){SemanticTables.Row row;while((row=rows.next())!=null) {
+                    index.put("inventory",row.key(),row);if(!"FILE".equals(row.fields().get("kind")))continue;
+                    for(String language:languages(row))if(profiles.contains(language))languages.merge(language,1L,Long::sum);
+                }}
                 var nativeInput=published.orElseThrow();nativeInput.current().check();var expected=SnapshotIdentity.from(readiness.inventory().repository(),inventory.inventory());
                 if(!nativeInput.plan().inventory().equals(inventory)||!context.snapshotIdentity().equals(nativeInput.plan().root().snapshotIdentity())&&!expected.equals(nativeInput.plan().root().snapshotIdentity()))
                     throw new IOException("SEMANTIC_SCAN_SNAPSHOT_OR_INVENTORY_MISMATCH");
@@ -87,16 +101,16 @@ public final class PolyglotScan {
                     var receipt=read(nativeInput.content(),handle(row.fields().get("receipt")));
                     if(receipt.get("observations")!=null)counts[2]=Math.addExact(counts[2],table(receipt.get("observations")).rows());
                 }}
+                try(var rows=tables.open(inventory.entries(),cancelled)){SemanticTables.Row row;while((row=rows.next())!=null) {
+                    if(!"FILE".equals(row.fields().get("kind"))||index.get("covered",row.key()).isPresent())continue;
+                    for(String language:languages(row))if(profiles.contains(language)&&!language.equals("java"))uncovered.merge(language,1L,Long::sum);
+                }}
             }
-            try(var rows=tables.open(inventory.entries(),cancelled)){SemanticTables.Row row;while((row=rows.next())!=null) {
-                if(!"FILE".equals(row.fields().get("kind"))||index.get("covered",row.key()).isPresent())continue;
-                for(String language:languages(row))if(profiles.contains(language)&&!language.equals("java"))uncovered.merge(language,1L,Long::sum);
-            }}
         }
         var gaps=new ArrayList<CapabilityGapRecord>();
         for(var language:uncovered.entrySet())gaps.add(gap(context,inventory,language.getKey(),language.getValue(),language.getKey().equals("protobuf")?"PROTOBUF_GENERATOR_REQUIRED":"NATIVE_CONTEXT_REQUIRED"));
         if(published.isPresent()&&!Boolean.TRUE.equals(published.orElseThrow().report().get("complete")))gaps.add(gap(context,inventory,"polyglot",counts[0],"NATIVE_PUBLICATION_PARTIAL"));
-        var syntax=new StaticPolyglotScan().run(inventory,tables,intake.content(),scratch,cancelled);
+        var syntax=new StaticPolyglotScan().run(inventory,tables,intake.content(),scratch,cancelled,verifiedBytes,fastArchitecture);
         boolean strongerNativeComplete=published.filter(p->p.trust().equals("VALIDATED_OBSERVATION")&&Boolean.TRUE.equals(p.report().get("complete"))).isPresent();
         syntax.failures().forEach((failure,count)->{int separator=failure.indexOf(':');String reason=failure.substring(separator+1);
             // A missing optional grammar is already covered by native-context/root
@@ -136,8 +150,10 @@ public final class PolyglotScan {
         var writer=new Projection(store);String context=graphSnapshot.value();
         if(result.published().isPresent())result.published().orElseThrow().current().check();
         var modules=new TreeMap<String,String>();
+        var moduleIdsByDir=new HashMap<String,List<String>>();
         for(var module:result.readiness().modules()) {
             String identity=KnowledgeGraph.derivedIdentity("inventory-component",List.of(result.inventory().inventory(),module.id()));modules.put(module.id(),identity);
+            moduleIdsByDir.computeIfAbsent(module.directory(),k->new ArrayList<>()).add(identity);
             writer.node(identity,context,"BUILD_COMPONENT",writer.evidence("polyglot.build-component",module));
         }
         writer.evidence("polyglot.scan",result.summary());
@@ -148,8 +164,18 @@ public final class PolyglotScan {
             var support=writer.evidence("polyglot.inventory-entry",row);String identity=KnowledgeGraph.derivedIdentity("inventory-document",List.of(result.inventory().inventory(),row.key()));
             writer.node(identity,context,"INVENTORY_ENTRY",support);
             var path=new LogicalPath(GraphJson.string(row.fields().get("rawPath"))).utf8();
-            if(path.isPresent())for(var module:result.readiness().modules())if(module.directory().equals(".")||path.orElseThrow().equals(module.directory())||path.orElseThrow().startsWith(module.directory()+"/"))
-                writer.edge(context,"graph.inventory-under-component",modules.get(module.id()),identity,support);
+            if(path.isPresent()) {
+                String p=path.orElseThrow();
+                for(String compId:moduleIdsByDir.getOrDefault(".",List.of()))writer.edge(context,"graph.inventory-under-component",compId,identity,support);
+                if(!p.equals(".")) {
+                    int slash=p.indexOf('/');
+                    while(slash>0) {
+                        for(String compId:moduleIdsByDir.getOrDefault(p.substring(0,slash),List.of()))writer.edge(context,"graph.inventory-under-component",compId,identity,support);
+                        slash=p.indexOf('/',slash+1);
+                    }
+                    for(String compId:moduleIdsByDir.getOrDefault(p,List.of()))writer.edge(context,"graph.inventory-under-component",compId,identity,support);
+                }
+            }
         }}
         if(result.published().isPresent()) {
             var nativeInput=result.published().orElseThrow();writer.evidence("polyglot.publication",read(nativeInput.content(),nativeInput.publication().document()));

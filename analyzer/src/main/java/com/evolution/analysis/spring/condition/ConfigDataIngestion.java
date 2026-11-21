@@ -44,13 +44,22 @@ public final class ConfigDataIngestion {
         public ContentDigest identity() { return IngestionEvidence.digest(Map.of("input",inputIdentity,"documents",documents,
                 "properties",properties,"profiles",activeProfiles,"assignment",assignment.map(ConfigurationAssignment::identity),"issues",issues,"gaps",gaps)); }
     }
+    private static boolean isApplicationConfigFile(String name) {
+        if (!name.startsWith("application")) return false;
+        int dot = name.lastIndexOf('.');
+        if (dot < 11) return false;
+        if (dot > 11 && (name.charAt(11) != '-' || dot == 12)) return false;
+        String ext = name.substring(dot + 1);
+        return ext.equals("properties") || ext.equals("yml") || ext.equals("yaml");
+    }
     public Result ingest(RepositoryInputs inputs, Policy policy) {
         var identity = IngestionEvidence.digest(Map.of("provider",PROVIDER,"inputs",inputs.identity(),"policy",policy));
         var issues = new ArrayList<IngestionEvidence.Issue>();
         var parsed = new ArrayList<Document>();
         for (var file : inputs.snapshot().files()) {
             String path = file.path();
-            if (location(path,policy) < 0 || !filename(path).matches("application(?:-.+)?\\.(properties|ya?ml)")) continue;
+            String fname = filename(path);
+            if (!isApplicationConfigFile(fname) || location(path,policy) < 0) continue;
             var source = inputs.files().get(path);
             if (source == null) { issue(issues,INPUT_UNAVAILABLE,path,file.contentDigest()); continue; }
             if (source.text().length() > policy.maxCharacters()) { issue(issues,INPUT_LIMIT,path,file.contentDigest()); continue; }

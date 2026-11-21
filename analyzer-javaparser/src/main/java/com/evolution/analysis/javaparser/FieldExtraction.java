@@ -24,30 +24,44 @@ final class FieldExtraction {
             }
         }
         for (var node : unit.stream().filter(n -> n instanceof FieldAccessExpr || n instanceof NameExpr).toList()) {
-            var expression = (Expression)node;
-            if (expression instanceof NameExpr name && (compactParameter(name,name.getNameAsString()) || name.containsData(SwitchAndPatternInference.PATTERN_VAR))) continue;
-            if (expression instanceof FieldAccessExpr access && arrayLength(access)) {
-                emit(expression,() -> { throw new UnsupportedOperationException("Array length has no declared field entity"); });
-                continue;
-            }
-            ResolvedValueDeclaration value;
-            try { value = expression instanceof FieldAccessExpr access ? access.resolve() : ((NameExpr)expression).resolve(); }
-            catch (RuntimeException failure) {
-                var lombokField = context.lombok.resolveField(expression);
-                if (lombokField.isPresent()) {
-                    for (var mode : modes(expression))
-                        context.observe(expression, mode, lombokField::orElseThrow, () -> context.fieldOwner(expression));
-                    continue;
-                }
-                // Dotted names can contain package/type qualifiers, which are not evaluated field reads.
-                if (!hasValueRoot(expression) && (typeName(expression) || qualifierFragment(expression))) continue;
-                if (expression instanceof FieldAccessExpr) emit(expression,() -> { throw failure; });
-                else for (var mode : modes(expression)) context.unmapped(expression,mode,Extraction.failureStatus(failure),"java.unclassified-name");
-                continue;
-            }
-            if (value.isField() || value.isEnumConstant()) emit(expression,() -> value);
-            // Parameters, locals, pattern variables and types deliberately have no field relationship.
+            extractExpression((Expression) node);
         }
+    }
+
+    void extractAnnotationConstantsOnly(CompilationUnit unit) {
+        var visited = Collections.newSetFromMap(new IdentityHashMap<Expression, Boolean>());
+        for (var ann : unit.findAll(AnnotationExpr.class)) {
+            ann.walk(n -> {
+                if ((n instanceof FieldAccessExpr || n instanceof NameExpr) && visited.add((Expression) n)) {
+                    extractExpression((Expression) n);
+                }
+            });
+        }
+    }
+
+    private void extractExpression(Expression expression) {
+        if (expression instanceof NameExpr name && (compactParameter(name,name.getNameAsString()) || name.containsData(SwitchAndPatternInference.PATTERN_VAR))) return;
+        if (expression instanceof FieldAccessExpr access && arrayLength(access)) {
+            emit(expression,() -> { throw new UnsupportedOperationException("Array length has no declared field entity"); });
+            return;
+        }
+        ResolvedValueDeclaration value;
+        try { value = context.resolveValueCached(expression); }
+        catch (RuntimeException failure) {
+            var lombokField = context.lombok.resolveField(expression);
+            if (lombokField.isPresent()) {
+                for (var mode : modes(expression))
+                    context.observe(expression, mode, lombokField::orElseThrow, () -> context.fieldOwner(expression));
+                return;
+            }
+            // Dotted names can contain package/type qualifiers, which are not evaluated field reads.
+            if (!hasValueRoot(expression) && (typeName(expression) || qualifierFragment(expression))) return;
+            if (expression instanceof FieldAccessExpr) emit(expression,() -> { throw failure; });
+            else for (var mode : modes(expression)) context.unmapped(expression,mode,Extraction.failureStatus(failure),"java.unclassified-name");
+            return;
+        }
+        if (value.isField() || value.isEnumConstant()) emit(expression,() -> value);
+        // Parameters, locals, pattern variables and types deliberately have no field relationship.
     }
     static boolean compactParameter(Node node,String name) {
         for (Node parent=node.getParentNode().orElse(null);parent!=null;parent=parent.getParentNode().orElse(null)) {
@@ -80,12 +94,12 @@ final class FieldExtraction {
             return dottedName(field.getScope()).map(scope -> scope + "." + field.getNameAsString());
         return Optional.empty();
     }
-    private static boolean hasValueRoot(Expression expression) {
+    private boolean hasValueRoot(Expression expression) {
         Expression root = expression;
         while (root instanceof FieldAccessExpr field) root = field.getScope();
         if (!(root instanceof NameExpr name)) return true;
         if (name.containsData(SwitchAndPatternInference.PATTERN_VAR)) return true;
-        try { return !name.resolve().isType(); }
+        try { return !context.resolveValueCached(name).isType(); }
         catch (RuntimeException failure) { return false; }
     }
     private static List<String> modes(Expression expression) {

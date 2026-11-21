@@ -105,11 +105,47 @@ public record FrontendResult(AnalysisIdentity analysis, VersionedIdentifier fron
         var registered = FrontendRequest.CATEGORIES.stream().map(c -> "java." + c).collect(Collectors.toSet());
         if (observations.stream().anyMatch(o -> !registered.contains(o.category().value())))
             throw new IllegalArgumentException("unregistered observation category");
+        var attemptedCounts = new HashMap<RelationshipKind, Long>();
+        for (var o : observations) attemptedCounts.merge(o.category(), 1L, Long::sum);
+        var emittedCounts = new HashMap<RelationshipKind, Long>();
+        for (var o : occurrences) emittedCounts.merge(o.relationship().kind(), 1L, Long::sum);
         for (var c : coverage) {
-            long attempted = observations.stream().filter(o -> o.category().equals(c.category())).count();
-            long emitted = occurrences.stream().filter(o -> o.relationship().kind().equals(c.category())).count();
+            long attempted = attemptedCounts.getOrDefault(c.category(), 0L);
+            long emitted = emittedCounts.getOrDefault(c.category(), 0L);
             if (attempted != c.attempted() || emitted != c.emitted()) throw new IllegalArgumentException("coverage differs from output");
         }
+    }
+
+    private static final java.lang.ref.ReferenceQueue<FrontendResult> DIGEST_QUEUE = new java.lang.ref.ReferenceQueue<>();
+    private static final java.util.concurrent.ConcurrentHashMap<IdentityKey, ContentDigest> DIGEST_CACHE = new java.util.concurrent.ConcurrentHashMap<>();
+
+    private static final class IdentityKey extends java.lang.ref.WeakReference<FrontendResult> {
+        private final int hash;
+        IdentityKey(FrontendResult referent, java.lang.ref.ReferenceQueue<FrontendResult> queue) {
+            super(referent, queue);
+            this.hash = System.identityHashCode(referent);
+        }
+        @Override public int hashCode() { return hash; }
+        @Override public boolean equals(Object other) {
+            if (this == other) return true;
+            if (!(other instanceof IdentityKey that) || this.hash != that.hash) return false;
+            FrontendResult a = this.get();
+            return a != null && a == that.get();
+        }
+    }
+
+    /** Memoized canonical SHA-256 digest of this immutable FrontendResult. */
+    public ContentDigest contentDigest() {
+        var lookup = new IdentityKey(this, null);
+        var existing = DIGEST_CACHE.get(lookup);
+        if (existing != null) return existing;
+        java.lang.ref.Reference<? extends FrontendResult> stale;
+        while ((stale = DIGEST_QUEUE.poll()) != null) {
+            DIGEST_CACHE.remove(stale);
+        }
+        ContentDigest computed = com.evolution.analysis.contract.serialization.CanonicalJson.computeSha256(this);
+        DIGEST_CACHE.put(new IdentityKey(this, DIGEST_QUEUE), computed);
+        return computed;
     }
     public FrontendResult(AnalysisIdentity analysis, VersionedIdentifier frontend, State state,
             List<DeclarationRecord> declarations, List<RelationshipOccurrence> occurrences,

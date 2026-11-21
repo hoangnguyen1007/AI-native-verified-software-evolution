@@ -93,4 +93,43 @@ class StreamingStorageTest {
             var replay=new StreamingRepositoryAcquirer(cas,store).acquire(source,"sealed",request,()->false);assertEquals(JobJournal.State.WAITING_FOR_INPUT,replay.state());assertTrue(replay.manifest().isEmpty());assertEquals("SEALED_CONTENT_UNAVAILABLE",replay.reason());
         }
     }
+    @Test void cleanReopenAndWarmCasAvoidRedundantStagingForcesAndPreserveDeleteEntry()throws Exception{
+        Path source=Files.createDirectory(temp.resolve("warm-source"));
+        byte[] large=new byte[80_000];new Random(42).nextBytes(large);
+        Files.write(source.resolve("large.bin"),large);
+        var forces=new java.util.concurrent.atomic.AtomicInteger();
+        var cas=new StreamingContentStore(temp.resolve("warm-cas"),0,channel->{forces.incrementAndGet();channel.force(true);});
+        var repo=com.evolution.analysis.contract.identity.RepositoryIdentity.fromCanonicalCoordinate("urn:test:warm");
+        var request=new StreamingAcquisitionRequest(repo,Optional.empty(),true,List.of());
+        Path metadata=temp.resolve("warm-metadata");
+        InventoryManifest firstManifest;
+        try(var store=new SqliteInventoryStore(metadata,cas)){
+            var r1=new StreamingRepositoryAcquirer(cas,store).acquire(source,"rev-1",request,()->false);
+            assertEquals(JobJournal.State.COMPLETE,r1.state());
+            firstManifest=r1.manifest().orElseThrow();
+            var handle=cas.put(new ByteArrayInputStream("conn".getBytes()),()->false);
+            store.entries("connections",List.of(new SqliteInventoryStore.Observation(new InventoryEntry(LogicalPath.utf8("c1"),InventoryEntry.Kind.FILE,"100644",InventoryEntry.Population.UNKNOWN,InventoryEntry.Disposition.ACQUIRED,Optional.of(handle),Optional.empty(),Optional.of("UTF-8"),List.of(),Optional.empty()),"")));
+            store.deleteEntry("connections",LogicalPath.utf8("c1"));
+        }
+        int forcesAfterFirst=forces.get();
+        // Clean reopen uses journal_meta anchor; warm CAS capture of unchanged large.bin needs 0 blob forces for large.bin itself.
+        try(var store=new SqliteInventoryStore(metadata,cas)){
+            assertTrue(store.observation("connections",LogicalPath.utf8("c1")).isEmpty());
+            var verified=new HashSet<ContentHandle>();
+            int beforeBlob=forces.get();
+            var reused=cas.putLocalFile(source.resolve("large.bin"),verified,()->false);
+            assertEquals(beforeBlob,forces.get(),"Warm CAS large-file capture must not write or force a new staging blob");
+            assertEquals(80_000L,reused.size());
+            var r2=new StreamingRepositoryAcquirer(cas,store).acquire(source,"rev-2",request,()->false);
+            assertEquals(JobJournal.State.COMPLETE,r2.state());
+            assertEquals(firstManifest.inventory(),r2.manifest().orElseThrow().inventory());
+        }
+        assertTrue(forces.get()>forcesAfterFirst);
+        // Corrupting index.sqlite forces full replay from operations/*.commit and still preserves deleteEntry.
+        Files.writeString(metadata.resolve("index.sqlite"),"corrupt");
+        try(var store=new SqliteInventoryStore(metadata,cas)){
+            assertTrue(store.observation("connections",LogicalPath.utf8("c1")).isEmpty());
+            assertEquals(firstManifest,store.manifest("rev-1").orElseThrow());
+        }
+    }
 }

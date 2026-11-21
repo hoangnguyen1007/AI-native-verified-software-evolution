@@ -214,16 +214,31 @@ final class SwitchAndPatternInference {
         return Optional.empty();
     }
 
+    private static volatile List<DataKey<ResolvedType>> cachedFacadeTypeKeys;
+
     @SuppressWarnings("unchecked")
     static void cacheResolvedType(Expression node, ResolvedType resolvedType) {
         try {
-            var probe = new BooleanLiteralExpr(true);
-            node.getParentNode().ifPresent(probe::setParentNode);
-            probe.calculateResolvedType();
-            for (var key : new ArrayList<>(probe.getDataKeys())) {
-                if (key.getClass().getEnclosingClass() == com.github.javaparser.symbolsolver.javaparsermodel.JavaParserFacade.class) {
-                    node.setData((DataKey<ResolvedType>) key, resolvedType);
+            List<DataKey<ResolvedType>> keys = cachedFacadeTypeKeys;
+            if (keys == null) {
+                var probe = new BooleanLiteralExpr(true);
+                node.getParentNode().ifPresent(probe::setParentNode);
+                probe.calculateResolvedType();
+                var discovered = new ArrayList<DataKey<ResolvedType>>(2);
+                for (var key : new ArrayList<>(probe.getDataKeys())) {
+                    if (key.getClass().getEnclosingClass() == com.github.javaparser.symbolsolver.javaparsermodel.JavaParserFacade.class) {
+                        discovered.add((DataKey<ResolvedType>) key);
+                    }
                 }
+                if (!discovered.isEmpty()) {
+                    keys = List.copyOf(discovered);
+                    cachedFacadeTypeKeys = keys;
+                } else {
+                    return;
+                }
+            }
+            for (var key : keys) {
+                node.setData(key, resolvedType);
             }
         } catch (RuntimeException ignored) {}
     }

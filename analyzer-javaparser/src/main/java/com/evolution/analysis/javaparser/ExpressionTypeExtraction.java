@@ -17,17 +17,17 @@ final class ExpressionTypeExtraction {
             if(!(root instanceof NameExpr first))continue;
             var terminal=expression instanceof NameExpr simple?simple.getName():((FieldAccessExpr)expression).getName();
             if(expression instanceof FieldAccessExpr access){
-                try{access.resolve();continue;}
+                try{context.resolveValueCached(access);continue;}
                 catch(UnsolvedSymbolException noField){/* A qualified nested type can still bind below. */}
                 catch(RuntimeException failure){context.unmapped(terminal,"type-uses",Extraction.failureStatus(failure),"java.expression-type-classification");continue;}
             }
             // A value in expression scope wins over a same-spelled type, even when a later field is unresolved.
             if(context.lombok.resolveField(first).isPresent()||first.containsData(SwitchAndPatternInference.PATTERN_VAR))continue;
-            try{first.resolve();continue;}
+            try{context.resolveValueCached(first);continue;}
             catch(UnsolvedSymbolException noValue){/* A type or package qualifier can still bind below. */}
             catch(RuntimeException failure){context.unmapped(terminal,"type-uses",Extraction.failureStatus(failure),"java.expression-type-classification");continue;}
             ResolvedTypeDeclaration type;
-            try{type=context.resolveTypeName(expression,name.orElseThrow());}
+            try{type=context.resolveTypeNameCached(expression,name.orElseThrow());}
             catch(UnsolvedSymbolException noType){continue;}
             catch(RuntimeException failure){context.unmapped(terminal,"type-uses",Extraction.failureStatus(failure),"java.expression-type-classification");continue;}
             context.observe(terminal,"type-uses",()->context.typeEntity(type),()->context.typeUseOwner(expression));

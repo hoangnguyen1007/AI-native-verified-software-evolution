@@ -18,20 +18,107 @@ import org.apache.maven.model.resolution.UnresolvableModelException;
 
 /** One effective-model attempt and its immutable, bounded, allowlisted input store. */
 final class ModelInputs {
+    static final class SharedCache {
+        private final BuildModelRequest request;
+        private final Map<com.evolution.analysis.contract.common.ContentDigest, CachedPom> pomCache = new HashMap<>();
+        private Map<String, String> rootCiProperties;
+        private Map<MavenCoordinate, String> workspaceBomIndex;
+
+        private record CachedPom(Model model, Reason rejectedReason) {}
+
+        SharedCache(BuildModelRequest request) {
+            this.request = request;
+        }
+
+        Model readModel(PomInput input) throws SecurePomReader.Rejected {
+            var cached = pomCache.get(input.digest());
+            if (cached != null) {
+                if (cached.rejectedReason() != null) throw new SecurePomReader.Rejected(cached.rejectedReason());
+                return cached.model().clone();
+            }
+            try {
+                Model parsed = SecurePomReader.read(input.bytes());
+                pomCache.put(input.digest(), new CachedPom(parsed, null));
+                return parsed.clone();
+            } catch (SecurePomReader.Rejected rejected) {
+                pomCache.put(input.digest(), new CachedPom(null, rejected.reason));
+                throw rejected;
+            }
+        }
+
+        Map<String, String> rootCiFriendlyProperties() {
+            if (rootCiProperties != null) return rootCiProperties;
+            var result = new LinkedHashMap<String, String>();
+            PomInput rootInput = request.workspacePoms().get(request.rootPom());
+            if (rootInput != null && rootInput.size() <= request.policy().maxPomBytes()) {
+                try {
+                    Model rootModel = readModel(rootInput);
+                    for (String key : List.of("revision", "sha1", "changelist")) {
+                        String value = rootModel.getProperties().getProperty(key);
+                        if (value != null && !value.contains("${")) result.put(key, value);
+                    }
+                } catch (SecurePomReader.Rejected ignored) {
+                    // Root model validation errors are handled when inspecting the root POM.
+                }
+            }
+            rootCiProperties = Map.copyOf(result);
+            return rootCiProperties;
+        }
+
+        Map<String, String> effectiveProperties(Model model, boolean workspaceSource) {
+            var props = new LinkedHashMap<String, String>();
+            if (workspaceSource) props.putAll(rootCiFriendlyProperties());
+            if (model.getProperties() != null) {
+                model.getProperties().forEach((k, v) -> props.put(k.toString(), v.toString()));
+            }
+            props.putAll(request.policy().userProperties());
+            return props;
+        }
+
+        String workspaceBomPath(MavenCoordinate coordinate) {
+            if (workspaceBomIndex == null) {
+                var index = new LinkedHashMap<MavenCoordinate, String>();
+                for (var entry : request.workspacePoms().entrySet()) {
+                    if (entry.getValue().size() > request.policy().maxPomBytes()) continue;
+                    try {
+                        Model model = readModel(entry.getValue());
+                        var props = effectiveProperties(model, true);
+                        var parent = model.getParent();
+                        String group = interpolate(model.getGroupId() == null && parent != null ? parent.getGroupId() : model.getGroupId(), props);
+                        String artifact = interpolate(model.getArtifactId(), props);
+                        String version = interpolate(model.getVersion() == null && parent != null ? parent.getVersion() : model.getVersion(), props);
+                        if (group != null && artifact != null && version != null
+                                && !group.contains("${") && !artifact.contains("${") && !version.contains("${")) {
+                            index.putIfAbsent(new MavenCoordinate(group, artifact, version), entry.getKey());
+                        }
+                    } catch (SecurePomReader.Rejected | IllegalArgumentException ignored) {
+                        // Invalid workspace POMs remain governed by direct inspection.
+                    }
+                }
+                workspaceBomIndex = Map.copyOf(index);
+            }
+            return workspaceBomIndex.get(coordinate);
+        }
+    }
+
     final String root;
     final Map<String, PomEvidence> used = new TreeMap<>();
     private final BuildModelRequest request;
     private final List<Problem> problems;
     private final List<Attempt> attempts;
-    private Map<MavenCoordinate, String> workspaceBomIndex;
-    private Map<String, String> rootCiProperties;
+    private final SharedCache shared;
     private int modelReads;
 
     ModelInputs(BuildModelRequest request, String root, List<Problem> problems, List<Attempt> attempts) {
+        this(request, root, problems, attempts, new SharedCache(request));
+    }
+
+    ModelInputs(BuildModelRequest request, String root, List<Problem> problems, List<Attempt> attempts, SharedCache shared) {
         this.request = request;
         this.root = root;
         this.problems = problems;
         this.attempts = attempts;
+        this.shared = shared;
     }
 
     Source workspace(String path, String requester, AttemptKind kind) throws SecurePomReader.Rejected {
@@ -55,7 +142,7 @@ final class ModelInputs {
         try {
             if (++modelReads > request.policy().maxModelReads()) throw new SecurePomReader.Rejected(Reason.MODEL_READ_LIMIT);
             if (source.input.size() > request.policy().maxPomBytes()) throw new SecurePomReader.Rejected(Reason.INPUT_LIMIT);
-            Model model = SecurePomReader.read(source.input.bytes());
+            Model model = shared.readModel(source.input);
             if (source.coordinate.isPresent()) validateCoordinate(model, source.coordinate.orElseThrow(), source.path.isPresent());
             checkProfiles(model, source.id, evidence);
             if (model.getBuild() != null && (!model.getBuild().getExtensions().isEmpty()
@@ -103,32 +190,11 @@ final class ModelInputs {
     }
 
     Map<String, String> rootCiFriendlyProperties() {
-        if (rootCiProperties != null) return rootCiProperties;
-        var result = new LinkedHashMap<String, String>();
-        PomInput rootInput = request.workspacePoms().get(request.rootPom());
-        if (rootInput != null && rootInput.size() <= request.policy().maxPomBytes()) {
-            try {
-                Model rootModel = SecurePomReader.read(rootInput.bytes());
-                for (String key : List.of("revision", "sha1", "changelist")) {
-                    String value = rootModel.getProperties().getProperty(key);
-                    if (value != null && !value.contains("${")) result.put(key, value);
-                }
-            } catch (SecurePomReader.Rejected ignored) {
-                // Root model validation errors are handled when inspecting the root POM.
-            }
-        }
-        rootCiProperties = Map.copyOf(result);
-        return rootCiProperties;
+        return shared.rootCiFriendlyProperties();
     }
 
     private Map<String, String> effectiveProperties(Model model, boolean workspaceSource) {
-        var props = new LinkedHashMap<String, String>();
-        if (workspaceSource) props.putAll(rootCiFriendlyProperties());
-        if (model.getProperties() != null) {
-            model.getProperties().forEach((k, v) -> props.put(k.toString(), v.toString()));
-        }
-        props.putAll(request.policy().userProperties());
-        return props;
+        return shared.effectiveProperties(model, workspaceSource);
     }
 
     private static String interpolate(String value, Map<String, String> properties) {
@@ -147,28 +213,7 @@ final class ModelInputs {
     }
 
     private String workspaceBomPath(MavenCoordinate coordinate) {
-        if (workspaceBomIndex == null) {
-            var index = new LinkedHashMap<MavenCoordinate, String>();
-            for (var entry : request.workspacePoms().entrySet()) {
-                if (entry.getValue().size() > request.policy().maxPomBytes()) continue;
-                try {
-                    Model model = SecurePomReader.read(entry.getValue().bytes());
-                    var props = effectiveProperties(model, true);
-                    var parent = model.getParent();
-                    String group = interpolate(model.getGroupId() == null && parent != null ? parent.getGroupId() : model.getGroupId(), props);
-                    String artifact = interpolate(model.getArtifactId(), props);
-                    String version = interpolate(model.getVersion() == null && parent != null ? parent.getVersion() : model.getVersion(), props);
-                    if (group != null && artifact != null && version != null
-                            && !group.contains("${") && !artifact.contains("${") && !version.contains("${")) {
-                        index.putIfAbsent(new MavenCoordinate(group, artifact, version), entry.getKey());
-                    }
-                } catch (SecurePomReader.Rejected | IllegalArgumentException ignored) {
-                    // Invalid workspace POMs remain governed by direct inspection.
-                }
-            }
-            workspaceBomIndex = Map.copyOf(index);
-        }
-        return workspaceBomIndex.get(coordinate);
+        return shared.workspaceBomPath(coordinate);
     }
 
     ModelResolver resolver() {

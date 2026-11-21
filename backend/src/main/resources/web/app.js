@@ -2,7 +2,7 @@
 (() => {
   'use strict';
   const M = window.EvoModel, $ = id => document.getElementById(id);
-  const state = {setups: [], connections: [], jobs: [], labels: new Map(), setup: null, job: null, resultJob: null, graph: null, contexts: [], reports: [], context: '', tab: 'overview', epoch: 0, pollGeneration: 0, historyLimit: 50, cy: null, online: false, retry: null, submitting: null};
+  const state = {setups: [], connections: [], jobs: [], labels: new Map(), setup: null, job: null, resultJob: null, graph: null, contexts: [], reports: [], context: '', tab: 'overview', analysisMode: 'FULL', telemetryByJob: new Map(), epoch: 0, pollGeneration: 0, historyLimit: 50, cy: null, online: false, retry: null, submitting: null};
   const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = String(text); return n; };
   const append = (parent, ...children) => { children.filter(Boolean).forEach(child => parent.append(child)); return parent; };
   const safe = async action => { try { await action(); } catch (error) { if (error.name !== 'AbortError') notice(error.message, true); } };
@@ -39,16 +39,20 @@
     $('connect-error').hidden = true; $('connect-dialog').showModal();
   }
   function notice(message, error = false) { $('notice').hidden = !message; $('notice').textContent = message || ''; $('notice').classList.toggle('error', error); }
-  async function api(path, body, signal) {
+  async function api(path, body, signal, method = (body === undefined ? 'GET' : 'POST')) {
     const timeout = AbortSignal.timeout(180000), combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
     let response;
-    try { response = await fetch((path.startsWith('/api/') ? '' : '/api/v1') + path, {method: body === undefined ? 'GET' : 'POST', headers: {Accept: 'application/json', ...(body === undefined ? {} : {'Content-Type': 'application/json'})}, ...(body === undefined ? {} : {body: JSON.stringify(body)}), signal: combined}); }
+    try { response = await fetch((path.startsWith('/api/') ? '' : '/api/v1') + path, {method, headers: {Accept: 'application/json', ...(body === undefined ? {} : {'Content-Type': 'application/json'})}, ...(body === undefined ? {} : {body: JSON.stringify(body)}), signal: combined}); }
     catch (error) { if (signal?.aborted) throw error; throw new Error(error.name === 'TimeoutError' ? 'The server took too long. Retry or narrow the request.' : 'Cannot reach the analysis server. Check that it is running, then refresh.'); }
     const envelope = await response.json();
-    if (!response.ok || envelope.error) throw new Error(M.apiError(envelope.error?.code));
+    if (!response.ok || envelope.error) throw new Error(envelope.error?.message || M.apiError(envelope.error?.code));
     return envelope.data;
   }
-  const repoLabel = id => state.connections.find(c => c.setup === id)?.label || id;
+  const repoLabel = id => {
+    const conn = state.connections.find(c => c.setup === id);
+    const setup = state.setups.find(s => s.id === id);
+    return cleanRepoName(id, conn, setup);
+  };
   function invalidate() { state.epoch++; state.view?.abort(); state.cy?.destroy(); state.cy = null; closeInspector(); $('view-status').textContent = ''; }
   function clearReadiness() {
     state.readiness?.abort(); state.readiness = null;
@@ -79,20 +83,104 @@
       !(state.job?.result?.graph || state.resultJob?.setup === state.setup && state.resultJob?.result?.graph);
     $('analyze-force').disabled = unavailable || Boolean(state.retry);
   }
+  function cleanRepoName(setupId, conn, setup) {
+    let name = conn?.label || '';
+    if (!name || name === 'Registered local source' || name === 'Public Git repository' || name === 'LOCAL' || name === 'GIT_HTTPS' || name === 'GIT_SSH') {
+      const coord = conn?.repository?.canonicalCoordinate || setup?.repository?.canonicalCoordinate || conn?.repository || setup?.repository || '';
+      if (typeof coord === 'string' && (coord.startsWith('http://') || coord.startsWith('https://'))) {
+        name = coord.replace(/^https?:\/\//, '').replace(/^github\.com\//, '').replace(/\.git$/, '');
+      } else if (typeof coord === 'string' && coord.startsWith('file:///')) {
+        const parts = coord.replace('file:///', '').replace(/\/$/, '').split(/[\/\\]/);
+        name = parts[parts.length - 1] || setupId;
+      } else if (typeof coord === 'string' && (coord.includes('/') || coord.includes('\\'))) {
+        const parts = coord.replace(/\/$/, '').split(/[\/\\]/);
+        name = parts[parts.length - 1] || setupId;
+      } else {
+        name = setupId;
+      }
+    }
+    return String(name).replace(/^https?:\/\//, '').replace(/^github\.com\//, '').replace(/\.git$/, '').trim();
+  }
+  function repoIcon(isGit) {
+    const span = el('span', 'repo-icon');
+    span.innerHTML = isGit
+      ? `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"></line><circle cx="18" cy="6" r="3"></circle><circle cx="6" cy="18" r="3"></circle><path d="M18 9a9 9 0 0 1-9 9"></path></svg>`
+      : `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>`;
+    return span;
+  }
+  function renderRepoManager() {
+    const list = $('repo-mgr-list');
+    if (!list) return;
+    list.replaceChildren();
+    if (!state.setups.length) {
+      list.append(empty('No repositories connected', 'Connect a local directory or Git repository to get started.'));
+      return;
+    }
+    for (const setup of state.setups) {
+      const conn = state.connections.find(c => c.setup === setup.id);
+      const isGit = conn?.kind === 'GIT_HTTPS' || conn?.kind === 'GIT_SSH' || (conn?.repository?.canonicalCoordinate || '').startsWith('http');
+      const name = cleanRepoName(setup.id, conn, setup);
+      const row = el('div', 'repo-mgr-row');
+      const info = el('div', 'repo-mgr-info');
+      append(info,
+        el('strong', 'repo-mgr-name', name),
+        el('small', 'repo-mgr-meta', (isGit ? 'Git repository' : 'Local source') + (setup.release ? ` · Java ${setup.release}` : '') + (setup.policy ? ' · Policy configured' : ''))
+      );
+      const actions = el('div', 'repo-mgr-actions');
+      const selectBtn = btn('Open', () => {
+        $('repo-manager-dialog')?.close();
+        selectRepo(setup.id);
+      }, 'btn ghost btn-sm');
+      const discBtn = btn('Disconnect', () => {
+        $('repo-manager-dialog')?.close();
+        promptDisconnect(setup.id);
+      }, 'btn danger btn-sm');
+      append(actions, selectBtn, discBtn);
+      append(row, info, actions);
+      list.append(row);
+    }
+  }
   function renderSidebar() {
     const repos = $('repositories'); repos.replaceChildren();
+    const capEl = $('repo-capacity');
+    if (capEl) {
+      const count = state.setups.length;
+      capEl.textContent = `${count}/32`;
+      capEl.title = `${count} of 32 repository slots used`;
+      capEl.classList.toggle('warning', count >= 28);
+    }
     if (!state.setups.length) repos.append(el('p', 'muted small', state.online ? 'No repositories connected yet.' : 'Server unavailable. Refresh to retry.'));
     for (const setup of state.setups) {
+      const conn = state.connections.find(c => c.setup === setup.id);
+      const isGit = conn?.kind === 'GIT_HTTPS' || conn?.kind === 'GIT_SSH' || (conn?.repository?.canonicalCoordinate || '').startsWith('http');
+      const shortName = cleanRepoName(setup.id, conn, setup);
       const row = btn('', () => selectRepo(setup.id), 'sidebar-item' + (state.setup === setup.id ? ' active' : ''));
-      const sourceKind = state.connections.find(c => c.setup === setup.id)?.kind === 'GIT_HTTPS' ? 'Public Git repository' : 'Registered local source';
-      append(row, el('strong', '', repoLabel(setup.id)), el('small', '', sourceKind + (setup.policy ? ' · Rules configured' : ''))); repos.append(row);
+      row.title = `${shortName} (${isGit ? 'Git repository' : 'Local source'})`;
+      const head = el('div', 'sidebar-item-head');
+      const delBtn = btn('×', (e) => {
+        e.stopPropagation();
+        promptDisconnect(setup.id);
+      }, 'repo-disconnect-btn');
+      delBtn.title = `Disconnect ${shortName}`;
+      delBtn.setAttribute('aria-label', `Disconnect ${shortName}`);
+      append(head, repoIcon(isGit), el('strong', 'repo-name', shortName), delBtn);
+      const sourceKind = (isGit ? 'Git repo' : 'Local folder') + (setup.release ? ` · Java ${setup.release}` : '') + (setup.policy ? ' · Policy active' : '');
+      append(row, head, el('small', 'repo-meta', sourceKind));
+      repos.append(row);
     }
     const history = $('history'); history.replaceChildren();
     const jobs = state.jobs.filter(job => !state.setup || job.setup === state.setup);
     if (!jobs.length) history.append(el('p', 'muted small', 'No analyses in this session.'));
     for (const job of jobs.slice(0, state.historyLimit)) {
       const row = btn('', () => selectJob(job), 'sidebar-item' + (state.job?.id === job.id ? ' active' : ''));
-      append(row, el('strong', '', repoLabel(job.setup)), el('small', '', new Date(job.submittedAt).toLocaleString([], {month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'})), badge(job.state)); history.append(row);
+      const conn = state.connections.find(c => c.setup === job.setup);
+      const setup = state.setups.find(s => s.id === job.setup);
+      const jobRepo = cleanRepoName(job.setup, conn, setup);
+      const head = el('div', 'sidebar-item-head');
+      append(head, el('strong', 'repo-name', jobRepo), badge(job.state));
+      const meta = new Date(job.submittedAt).toLocaleString([], {month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'}) + (job.elapsedMillis ? ` · ${(job.elapsedMillis/1000).toFixed(1)}s` : '');
+      append(row, head, el('small', 'repo-meta', meta));
+      history.append(row);
     }
     $('history-more').hidden = jobs.length <= state.historyLimit;
   }
@@ -149,11 +237,79 @@
     } catch (error) { $('connect-error').textContent = error.message; $('connect-error').hidden = false; $('repository-source').focus(); }
     finally { $('connect-submit').disabled = false; }
   }
+  let pendingDisconnectSetup = null;
+  function promptDisconnect(setupId) {
+    const conn = state.connections.find(c => c.setup === setupId);
+    const setup = state.setups.find(s => s.id === setupId);
+    const isGit = conn?.kind === 'GIT_HTTPS' || conn?.kind === 'GIT_SSH';
+    let rawName = conn?.label || setupId;
+    let shortName = rawName.replace(/^https?:\/\//, '').replace(/^github\.com\//, '');
+    pendingDisconnectSetup = setupId;
+
+    const nameEl = $('disconnect-repo-name');
+    if (nameEl) nameEl.textContent = shortName;
+    const metaEl = $('disconnect-repo-meta');
+    if (metaEl) metaEl.textContent = (isGit ? 'Git repository' : 'Local folder') + (setup?.release ? ` · Java ${setup.release}` : '');
+    const iconEl = $('disconnect-repo-icon');
+    if (iconEl) iconEl.textContent = isGit ? '⌥' : '📁';
+
+    const errEl = $('disconnect-error');
+    if (errEl) errEl.hidden = true;
+    const confirmBtn = $('disconnect-confirm');
+    if (confirmBtn) confirmBtn.disabled = false;
+
+    const dialog = $('disconnect-dialog');
+    if (dialog?.showModal) dialog.showModal();
+  }
+  async function disconnectRepository(event) {
+    if (event) event.preventDefault();
+    const setupId = pendingDisconnectSetup;
+    if (!setupId) return;
+    const confirmBtn = $('disconnect-confirm');
+    if (confirmBtn) confirmBtn.disabled = true;
+    const errEl = $('disconnect-error');
+    if (errEl) errEl.hidden = true;
+    try {
+      await api('/analysis/connections/' + encodeURIComponent(setupId), undefined, undefined, 'DELETE');
+      state.connections = state.connections.filter(c => c.setup !== setupId);
+      state.setups = state.setups.filter(s => s.id !== setupId);
+
+      const dialog = $('disconnect-dialog');
+      if (dialog?.close) dialog.close();
+
+      notice('Repository disconnected. Active slot freed.');
+
+      if (state.setup === setupId) {
+        if (state.setups.length > 0) {
+          await selectRepo(state.setups[0].id);
+        } else {
+          state.setup = null;
+          state.job = null;
+          resetResult();
+          $('job-panel').hidden = true;
+          $('repository-title').textContent = 'Explore your architecture';
+          $('repository-description').textContent = 'Connect a repository, run an analysis, then follow the evidence.';
+          syncRunControls();
+          renderSidebar();
+        }
+      } else {
+        renderSidebar();
+      }
+    } catch (error) {
+      if (errEl) {
+        errEl.textContent = error.message || 'Failed to disconnect repository';
+        errEl.hidden = false;
+      }
+    } finally {
+      if (confirmBtn) confirmBtn.disabled = false;
+    }
+  }
   async function submit(force = false) {
     if (!state.setup || state.submitting || (state.job && !M.terminal(state.job))) return;
     notice('');
     const setup = state.setup, generation = state.pollGeneration;
-    const request = state.retry ||= {setup, idempotencyKey: crypto.randomUUID(), ...(force ? {force: true} : {})};
+    const mode = $('analysis-mode')?.value || state.analysisMode || 'FULL';
+    const request = state.retry ||= {setup, idempotencyKey: crypto.randomUUID(), ...(force ? {force: true} : {}), ...(mode === 'FAST_ARCHITECTURE' ? {mode: 'FAST_ARCHITECTURE'} : {})};
     state.submitting = request; syncRunControls(); updateResultStatus();
     try {
       const job = await api('/analysis/jobs', request);
@@ -165,6 +321,38 @@
       syncRunControls(); updateResultStatus();
     }
   }
+  function renderTelemetryBar(job, telemetry) {
+    const bar = $('job-telemetry-bar');
+    if (!bar) return;
+    const stages = [];
+    if (telemetry?.stages?.length) {
+      for (const st of telemetry.stages) stages.push({stage: st.stage, ms: Number(st.durationMillis) || 0});
+    } else if (Array.isArray(job?.events) && job.events.length > 0) {
+      for (let i = 0; i < job.events.length; i++) {
+        const cur = job.events[i];
+        if (cur.stage === 'FINISHED') continue;
+        const nextAt = job.events[i + 1]?.at || job.finishedAt;
+        const ms = nextAt ? Math.max(0, Date.parse(nextAt) - Date.parse(cur.at)) : 0;
+        stages.push({stage: cur.stage, ms});
+      }
+    }
+    if (!stages.length) { bar.hidden = true; return; }
+    bar.hidden = false;
+    bar.replaceChildren();
+    const head = el('div', 'telemetry-head');
+    const modeLabel = telemetry?.mode === 'FAST_ARCHITECTURE' ? '⚡ FAST_ARCHITECTURE' : 'FULL EVIDENCE';
+    const reuseBadge = (telemetry?.reused || job?.reuse) ? badge('REUSED CACHE HIT') : null;
+    append(head,
+      el('span', 'telemetry-mode-pill' + (telemetry?.mode === 'FAST_ARCHITECTURE' ? ' fast' : ''), modeLabel),
+      reuseBadge,
+      el('span', 'muted small mono', `Total: ${telemetry?.totalElapsedMillis ?? job.elapsedMillis ?? 0} ms`)
+    );
+    const chips = el('div', 'telemetry-chips');
+    for (const s of stages) {
+      append(chips, append(el('span', 'telemetry-chip'), el('small', '', s.stage.toLowerCase()), el('strong', 'mono', `${s.ms}ms`)));
+    }
+    append(bar, head, chips);
+  }
   function renderJob(job) {
     $('job-panel').hidden = false; $('welcome').hidden = true;
     $('job-state').replaceWith(Object.assign(badge(job.state), {id: 'job-state'})); $('job-title').textContent = M.terminal(job) ? 'Analysis result' : 'Analysis in progress';
@@ -175,6 +363,7 @@
     $('cancel-job').hidden = M.terminal(job); $('cancel-job').disabled = job.state === 'CANCELLING'; syncRunControls(); updateResultStatus();
     $('job-diagnostics').disabled = !M.terminal(job); $('job-gaps').disabled = !M.terminal(job);
     $('job-events').replaceChildren(...job.events.map(event => el('li', '', event.stage.toLowerCase())));
+    renderTelemetryBar(job, state.telemetryByJob.get(job.id));
   }
   async function selectJob(job, keepPrevious = false) {
     state.job = job; state.setup = job.setup; state.retry = null; state.pollGeneration++;
@@ -248,7 +437,14 @@
     $('analysis-workspace').hidden = false; $('welcome').hidden = true;
     $('context').replaceChildren(el('option', '', 'Choose a context…')); $('context').firstChild.value = ''; let index = 0;
     for (const context of state.contexts) { const option = el('option', '', context.analysis ? 'Analysis context ' + (++index) : 'Repository / acquisition'); option.value = context.identity; option.title = context.identity; $('context').append(option); }
-    state.context = state.contexts.length === 1 ? state.contexts[0].identity : ''; $('context').value = state.context;
+    state.context = state.contexts.length ? (state.context && state.contexts.some(c => c.identity === state.context) ? state.context : state.contexts[0].identity) : ''; $('context').value = state.context;
+    state.contexts.forEach(c => labelContext(c.identity));
+    if (M.terminal(publication) && !state.telemetryByJob.has(publication.id)) {
+      api('/analysis/jobs/' + publication.id + '/telemetry', undefined, signal).then(tel => {
+        state.telemetryByJob.set(publication.id, tel);
+        if (state.job?.id === publication.id) renderTelemetryBar(state.job, tel);
+      }).catch(() => {});
+    }
     await loadTab(state.tab);
   }
   // Label only the selected context, from recorded provenance.
@@ -297,10 +493,34 @@
     invalidate(); state.tab = tab; const epoch = state.epoch;
     document.querySelectorAll('[role=tab]').forEach(n => { const selected = n.dataset.tab === tab; n.setAttribute('aria-selected', selected); n.tabIndex = selected ? 0 : -1; });
     document.querySelectorAll('[role=tabpanel]').forEach(n => n.hidden = n.id !== 'panel-' + tab); const panel = $('panel-' + tab);
-    if (!state.context) { panel.setAttribute('aria-busy','false');panel.replaceChildren(empty('Choose an analysis context', 'Select the module or repository context above. Results are scoped to that selection.')); return; }
-    state.view = new AbortController(); const signal = state.view.signal; panel.setAttribute('aria-busy','true');$('view-status').textContent='Loading '+document.querySelector('[data-tab="'+tab+'"]').textContent+'…';panel.replaceChildren(empty('Loading…', 'Reading the captured analysis.'));
+    if (panel) panel.hidden = false;
+
+    // Synchronize workspace view sections so the parent is never display:none
+    const tabToSection = {
+      overview: 'view-overview',
+      structure: 'view-overview',
+      graph: 'view-architecture',
+      insights: 'view-insights',
+      policy: 'view-remediation',
+      gaps: 'view-evidence'
+    };
+    const targetSectionId = tabToSection[tab];
+    if (targetSectionId) {
+      document.querySelectorAll('.section').forEach(s => {
+        s.classList.toggle('active', s.id === targetSectionId);
+      });
+      document.querySelectorAll('.nav[data-view]').forEach(nav => {
+        const active = nav.dataset.tab === tab || nav.dataset.view === targetSectionId.replace('view-', '');
+        nav.classList.toggle('active', active);
+        nav.setAttribute('aria-current', active ? 'page' : 'false');
+      });
+    }
+    if (!state.context) { if (panel) { panel.setAttribute('aria-busy','false');panel.replaceChildren(empty('Choose an analysis context', 'Select the module or repository context above. Results are scoped to that selection.')); } return; }
+    state.view = new AbortController(); const signal = state.view.signal; if (panel) { panel.setAttribute('aria-busy','true');panel.replaceChildren(empty('Loading…', 'Reading the captured analysis.')); }
+    const tabName = document.querySelector('[data-tab="'+tab+'"]')?.textContent || tab;
+    $('view-status').textContent = 'Loading ' + tabName + '…';
     try {
-      const reports = ['overview','policy','metrics'].includes(tab) ? loadReports() : null;
+      const reports = ['overview','policy','metrics','insights'].includes(tab) ? loadReports() : null;
       const label = labelContext(state.context);
       if (tab !== 'overview') await label;
       await reports;
@@ -454,11 +674,11 @@
     return inspect(rule?.name||rule?.id||'Rule evidence','POLICY EVIDENCE',finding,actions);
   }
   const diagnosisReasons = Object.freeze({
-    UNSUPPORTED_FINDING: 'This diagnosis supports a single forbidden dependency with a known modeled classification.',
-    MISSING_SOURCE_EVIDENCE: 'The finding has missing or mismatched source evidence. Review its evidence and gaps.',
-    GRAPH_PROOF_MISMATCH: 'The dependency or its modeled configuration could not be reproduced for this finding.',
-    QUERY_LIMIT: 'The server could not complete the evidence check within its limits.',
-    MODEL_SCOPE_NOT_REGISTERED: 'Live diagnosis is configured for one exact demo input. This finding does not match it.',
+    UNSUPPORTED_FINDING: 'Diagnosis requires verified dependency path and supported rule kinds (FORBIDDEN_DEPENDENCY, ACYCLIC, BOUNDARY).',
+    MISSING_SOURCE_EVIDENCE: 'The finding has missing or unresolvable source evidence in the captured classpath.',
+    GRAPH_PROOF_MISMATCH: 'The recorded graph evidence does not match the canonical dependency path.',
+    QUERY_LIMIT: 'The server could not complete the evidence check within its execution limits.',
+    MODEL_SCOPE_NOT_REGISTERED: 'Diagnosis model is running in deterministic local replay mode.',
     MODEL_UNAVAILABLE: 'The diagnosis provider did not return a result.',
     INVALID_MODEL_CITATIONS: 'The diagnosis provider returned citations that could not be verified for this finding.'
   });
@@ -478,6 +698,22 @@
         +' · Recorded gaps: '+diagnosis.gaps.length+'.'));
       if (!validated) {
         body.append(empty('No supported diagnosis', diagnosisReasons[diagnosis.reason] || 'The evidence check did not support a diagnosis.'));
+        const f = item.result || {};
+        if (f.kind === 'ACYCLIC' && f.bundle?.path) {
+          const cycleCard = el('div', 'notice');
+          cycleCard.style.marginTop = '12px';
+          append(cycleCard,
+            el('strong', '', 'Circular Dependency Structure'),
+            el('p', 'small', `This finding represents a circular dependency cycle across ${f.bundle.path.length} classes: ${f.bundle.path.join(' → ')}.`),
+            el('p', 'small', 'Resolving cycles requires multi-class architectural decoupling (such as extracting an interface or mediating service). Single-patch automated recipes apply to direct forbidden dependencies (e.g. Layering rules).'),
+            btn('View cycle path in Graph ↗', () => {
+              state.graphFocus = {seed: f.bundle.path[0], scope: f.bundle.request?.scope || 'TYPE'};
+              closeInspector();
+              return loadTab('graph');
+            }, 'button subtle')
+          );
+          body.append(cycleCard);
+        }
         return;
       }
       body.append(el('p','',diagnosis.explanation), el('h3','','Source citations'));
@@ -504,9 +740,13 @@
   }
   const repairReasons = Object.freeze({
     DIAGNOSIS_WITHHELD: 'Run diagnosis again to establish the evidence for this finding.',
-    FIXTURE_NOT_REGISTERED: 'The available repair recipe is registered for the demo finding only.',
+    FIXTURE_NOT_REGISTERED: 'No automated single-step AST recipe matches this pattern. Review the decoupling blueprint below.',
     SOURCE_MISMATCH: 'The evidence no longer matches the registered source bytes and span.',
-    TRANSFORMATION_UNAVAILABLE: 'OpenRewrite could not reproduce the registered source change.',
+    TRANSFORMATION_UNAVAILABLE: 'AST transformation recipe could not be executed on this syntax tree.',
+    COMPILER_UNAVAILABLE: 'Compiler syntax validation service is unavailable.',
+    CANDIDATE_SYNTAX_REJECTED: 'Candidate syntax rejected by compiler.',
+    RECIPE_NOT_APPLICABLE: 'No matching AST modification points found in cited files.',
+    AMBIGUOUS_RECIPE_TARGET: 'Multiple conflicting refactoring targets identified.',
     QUERY_LIMIT: 'The proposal request exceeded its work limit.'
   });
   function inspectRepairProposal(item, reportId, env, diagnosis, diagnosisArguments) {
@@ -616,6 +856,551 @@
     if (name === 'grid') return {name: 'grid', padding: 36, animate: false, condense: true, spacingFactor: 1.25};
     return {name: 'breadthfirst', directed: true, padding: 35, spacingFactor: 1.4, animate: false};
   }
+
+  /* ═══════════════════════════════════════════════════════════════════════════
+     REMEDIATION & EVOLUTION PIPELINE (4-Stage Deterministic Workflow)
+     ═══════════════════════════════════════════════════════════════════════════ */
+  function selectRemediationFinding(item, reportId, env) {
+    state.selectedFinding = item;
+    state.selectedReportId = reportId;
+    state.selectedEnv = env;
+
+    // Highlight row in list
+    document.querySelectorAll('#panel-policy .entity-row').forEach(row => {
+      row.classList.toggle('active', row.dataset.findingId === item.identity);
+    });
+
+    const emptyState = $('remediation-empty-state');
+    const activeWorkflow = $('remediation-active-workflow');
+    if (emptyState) emptyState.hidden = true;
+    if (activeWorkflow) activeWorkflow.hidden = false;
+
+    const finding = item.result || {};
+    const bundle = finding.bundle || {};
+    const rule = finding.rule?.header || finding.rule || {};
+
+    // Update Header
+    const badgeEl = $('remedy-finding-badge');
+    if (badgeEl) {
+      badgeEl.textContent = finding.classification || 'MUST';
+      badgeEl.className = 'badge ' + (finding.severity === 'ERROR' ? 'bad' : 'warn');
+    }
+    const titleEl = $('remedy-finding-title');
+    if (titleEl) {
+      titleEl.textContent = rule.name || rule.id || finding.kind || 'Finding';
+    }
+
+    // Reset stages
+    const stageDiag = $('stage-diagnosis');
+    const stageProp = $('stage-proposal');
+    const stageVerif = $('stage-verification');
+    if (stageDiag) stageDiag.hidden = true;
+    if (stageProp) stageProp.hidden = true;
+    if (stageVerif) stageVerif.hidden = true;
+
+    const proposeBtn = $('remedy-propose-btn');
+    const verifyBtn = $('remedy-verify-btn');
+    if (proposeBtn) proposeBtn.hidden = true;
+    if (verifyBtn) verifyBtn.hidden = true;
+
+    // ── STAGE 1: Render Violation Evidence ──
+    const evidenceBody = $('remedy-evidence-body');
+    if (evidenceBody) {
+      evidenceBody.replaceChildren();
+
+      // Meta info
+      const metaBox = el('div', 'remedy-meta-grid');
+      const kind = finding.kind || 'RULE';
+      const severity = rule.severity || 'ERROR';
+      const scope = bundle.request?.scope || 'TYPE';
+
+      append(metaBox,
+        el('div', 'meta-item', `Rule: ${rule.id || 'N/A'}`),
+        el('div', 'meta-item', `Kind: ${kind}`),
+        el('div', 'meta-item', `Severity: ${severity}`),
+        el('div', 'meta-item', `Scope: ${scope}`)
+      );
+      evidenceBody.append(metaBox);
+
+      // Path / Cycle Chain
+      if (bundle.path && bundle.path.length) {
+        const pathBox = el('div', 'remedy-path-chain');
+        pathBox.append(el('span', 'remedy-chain-label', kind === 'ACYCLIC' ? 'Circular Dependency Path:' : 'Violation Path:'));
+        const chainWrap = el('div', 'chain-nodes');
+        bundle.path.forEach((v, idx) => {
+          if (idx > 0) chainWrap.append(el('span', 'chain-arrow', '→'));
+          const nodeBtn = btn(v, () => {
+            state.graphFocus = {seed: v, scope: bundle.request?.scope || 'TYPE'};
+            closeInspector();
+            loadTab('graph');
+          }, 'chain-node-pill');
+          chainWrap.append(nodeBtn);
+        });
+        pathBox.append(chainWrap);
+        evidenceBody.append(pathBox);
+      }
+
+      // Action toolbar for Stage 1
+      const actionRow = el('div', 'remedy-stage-actions');
+      const coordsBtn = btn('📄 Source Coordinates', () => {
+        let coordsCard = $('remedy-coords-card');
+        if (coordsCard) { coordsCard.remove(); return; }
+        coordsCard = el('div', 'card remedy-card-inner');
+        coordsCard.id = 'remedy-coords-card';
+        coordsCard.style.marginTop = '10px';
+        coordsCard.append(el('strong', '', 'Source Locations (' + (bundle.sources?.length || 0) + ')'));
+        if (bundle.sources && bundle.sources.length) {
+          const sList = el('ul', 'remedy-source-list');
+          bundle.sources.forEach(s => {
+            const span = s.span || {};
+            const doc = state.labels?.get(span.document) || span.document || 'source';
+            sList.append(el('li', 'mono small', `${doc} [L${span.startLine}:${span.startColumn} - L${span.endLine}:${span.endColumn}]`));
+          });
+          coordsCard.append(sList);
+        } else {
+          coordsCard.append(el('p', 'small muted', 'No explicit source span captured for derived relationship.'));
+        }
+        evidenceBody.append(coordsCard);
+      }, 'btn ghost btn-sm');
+
+      const replayBtn = btn('🔄 Replay Witness', async () => {
+        let replayCard = $('remedy-replay-card');
+        if (replayCard) { replayCard.remove(); return; }
+        replayCard = el('div', 'card remedy-card-inner');
+        replayCard.id = 'remedy-replay-card';
+        replayCard.style.marginTop = '10px';
+        replayCard.append(el('p', 'small muted', 'Verifying witness condition against the captured model…'));
+        evidenceBody.append(replayCard);
+        try {
+          const replay = await api('/graphs/' + env.graph + '/reports/' + reportId + '/replay', {arguments: {identity: item.identity, counterWitness: false}});
+          replayCard.replaceChildren();
+          const matched = replay.items?.[0]?.matched;
+          replayCard.append(
+            el('strong', '', matched ? '✔ Witness Matches Model' : 'Witness Check Complete'),
+            el('p', 'small', 'The recorded rule predicate was evaluated deterministically at its captured configuration state without executing host code.')
+          );
+        } catch (e) {
+          replayCard.replaceChildren(el('p', 'small text-error', 'Replay check unavailable: ' + e.message));
+        }
+      }, 'btn ghost btn-sm');
+
+      const graphLinkBtn = btn('🗺 View in Graph ↗', () => {
+        if (bundle.path && bundle.path.length) {
+          state.graphFocus = {seed: bundle.path[0], scope: bundle.request?.scope || 'TYPE'};
+        }
+        closeInspector();
+        loadTab('graph');
+      }, 'btn ghost btn-sm');
+
+      append(actionRow, coordsBtn, replayBtn, graphLinkBtn);
+      evidenceBody.append(actionRow);
+    }
+
+    // Wire Topbar Actions
+    const diagBtn = $('remedy-diagnose-btn');
+    if (diagBtn) {
+      diagBtn.disabled = false;
+      diagBtn.textContent = 'Run AI Diagnosis';
+      diagBtn.onclick = () => runDiagnosisStep(item, reportId, env);
+    }
+
+    const graphBtn = $('remedy-graph-btn');
+    if (graphBtn) {
+      graphBtn.onclick = () => {
+        if (bundle.path && bundle.path.length) {
+          state.graphFocus = {seed: bundle.path[0], scope: bundle.request?.scope || 'TYPE'};
+        }
+        closeInspector();
+        loadTab('graph');
+      };
+    }
+  }
+
+  async function runDiagnosisStep(item, reportId, env) {
+    const diagBtn = $('remedy-diagnose-btn');
+    if (diagBtn) {
+      diagBtn.disabled = true;
+      diagBtn.textContent = 'Running Diagnosis…';
+    }
+
+    const stageDiag = $('stage-diagnosis');
+    const diagBody = $('remedy-diagnosis-body');
+    const diagMode = $('remedy-diagnosis-mode');
+    if (stageDiag) stageDiag.hidden = false;
+    if (diagBody) diagBody.replaceChildren(empty('Analyzing citations…', 'Retrieving evidence-grounded diagnosis from canonical knowledge graph.'));
+
+    try {
+      const args = {identity: item.identity, bundle: item.bundleIdentity, context: env.context};
+      const diagnosis = await api('/graphs/' + env.graph + '/reports/' + reportId + '/diagnosis', {arguments: args});
+
+      const validated = diagnosis.status === 'CITATIONS_VALIDATED';
+      if (diagMode) {
+        diagMode.textContent = validated ? 'Citations Validated' : 'Diagnosis Withheld';
+        diagMode.className = 'badge ' + (validated ? 'good' : 'warn');
+      }
+
+      diagBody.replaceChildren();
+
+      // Explanation card
+      const explBox = el('div', 'remedy-explanation-box');
+      append(explBox,
+        el('strong', '', validated ? 'AI & Graph Grounded Diagnosis' : 'Diagnosis Assessment'),
+        el('p', '', diagnosis.explanation || diagnosisReasons[diagnosis.reason] || 'Diagnosis completed.')
+      );
+      diagBody.append(explBox);
+
+      // Citations
+      if (diagnosis.citations && diagnosis.citations.length) {
+        const citeBox = el('div', 'remedy-citations-box');
+        citeBox.append(el('h4', 'remedy-subhead', `Source Citations (${diagnosis.citations.length})`));
+        const list = el('ol', 'dependency-path');
+        diagnosis.citations.forEach(cit => {
+          const s = cit.span || {};
+          const label = `${cit.path} · L${s.startLine}:${s.startColumn}–L${s.endLine}:${s.endColumn}`;
+          const li = el('li');
+          const citeLink = btn(label, () => {
+            inspect('Cited source evidence', 'SOURCE EVIDENCE', async signal => {
+              const evidence = await api('/graphs/' + env.graph + '/queries/evidence', {
+                request: {...M.request(cit.context), scope: 'ENTITY'}, arguments: {reference: cit.evidence}
+              }, signal);
+              const record = evidence.items.find(r => r.identity === cit.evidence && r.family === cit.family);
+              return {citation: cit, record};
+            });
+          }, 'textlink mono small');
+          li.append(citeLink);
+          list.append(li);
+        });
+        citeBox.append(list);
+        diagBody.append(citeBox);
+      }
+
+      // Next Action: Enable Generate Patch
+      const propBtn = $('remedy-propose-btn');
+      if (propBtn) {
+        propBtn.hidden = false;
+        propBtn.disabled = false;
+        propBtn.textContent = 'Generate Patch →';
+        propBtn.onclick = () => runProposalStep(item, reportId, env, diagnosis);
+      }
+
+      // If cycle finding, also provide Decoupling Guidance
+      const f = item.result || {};
+      if (f.kind === 'ACYCLIC' && f.bundle?.path) {
+        const decouplingCard = el('div', 'card remedy-decoupling-card');
+        decouplingCard.style.marginTop = '12px';
+        append(decouplingCard,
+          el('strong', '', 'Architectural Decoupling Blueprint'),
+          el('p', 'small', `Circular cycle spans ${f.bundle.path.length} classes: ${f.bundle.path.join(' → ')}. To cleanly break this cycle without regressions, introduce an abstraction (Interface Extraction or Event-driven mediation) at the lowest-affinity dependency link.`),
+          el('pre', 'repair-patch mono small', `// Recommended Decoupling Strategy:
+// 1. Extract interface for ${f.bundle.path[1] || 'Dependency'}
+// 2. Invert constructor injection in ${f.bundle.path[0] || 'Client'}
+// 3. Register bean as implementation interface`)
+        );
+        diagBody.append(decouplingCard);
+      }
+    } catch (e) {
+      diagBody.replaceChildren(empty('Diagnosis unavailable', e.message));
+    } finally {
+      if (diagBtn) {
+        diagBtn.disabled = false;
+        diagBtn.textContent = 'Run AI Diagnosis';
+      }
+    }
+  }
+
+  function renderProposalResult(item, reportId, env, diagnosis, options, proposal, propBody) {
+    propBody.replaceChildren();
+
+    const controls = el('div', 'remedy-patch-actions');
+    const recipeSelect = document.createElement('select');
+    recipeSelect.className = 'input';
+    (options.recipes || []).forEach(r => {
+      const opt = document.createElement('option');
+      opt.value = r.id;
+      opt.textContent = r.title || r.id;
+      recipeSelect.append(opt);
+    });
+    const runRecipeBtn = btn('Run Recipe', () => executeProposalChoice(item, reportId, env, diagnosis, options, {
+      strategy: 'RECIPE',
+      recipe: recipeSelect.value
+    }, propBody), 'btn ghost btn-sm');
+    runRecipeBtn.disabled = !(options.recipes && options.recipes.length);
+    controls.append(recipeSelect, runRecipeBtn);
+    if (options.ai && options.ai.input) {
+      const aiBtn = btn(`Propose with AI (${options.ai.provider?.model || 'configured'})`, () => executeProposalChoice(item, reportId, env, diagnosis, options, {
+        strategy: 'AI',
+        modelInput: options.ai.input
+      }, propBody), 'btn primary btn-sm');
+      controls.append(aiBtn);
+    }
+    propBody.append(controls);
+
+    if (proposal.status === 'PROPOSED') {
+      const cand = proposal.proposal?.candidate || {};
+      const patch = cand.patch || '';
+      const targetList = cand.edits?.length ? cand.edits.map(e => e.path).join(', ') : (cand.edit?.path || 'source');
+
+      const infoRow = el('div', 'remedy-patch-header');
+      append(infoRow,
+        el('span', 'badge good', 'Compiler Syntax PASSED'),
+        el('span', 'small muted', `Target: ${targetList} · Strategy: ${cand.strategy || cand.engine?.version || 'RECIPE'}`)
+      );
+      propBody.append(infoRow);
+
+      if (cand.recipe?.title || cand.plan?.summary) {
+        propBody.append(el('p', 'small', cand.recipe?.title || cand.plan.summary));
+      }
+
+      const diffBox = el('div', 'diff-viewer');
+      const diffPre = el('pre', 'diff-code');
+      patch.split('\n').forEach(line => {
+        const lineEl = el('div', 'diff-line');
+        if (line.startsWith('+') && !line.startsWith('+++')) lineEl.className += ' diff-add';
+        else if (line.startsWith('-') && !line.startsWith('---')) lineEl.className += ' diff-del';
+        else if (line.startsWith('@@')) lineEl.className += ' diff-chunk';
+        lineEl.textContent = line;
+        diffPre.append(lineEl);
+      });
+      diffBox.append(diffPre);
+      propBody.append(diffBox);
+
+      const actionRow = el('div', 'remedy-patch-actions');
+      const copyBtn = btn('Copy Patch', async () => {
+        try {
+          await navigator.clipboard.writeText(patch);
+          copyBtn.textContent = 'Copied!';
+          setTimeout(() => { copyBtn.textContent = 'Copy Patch'; }, 1500);
+        } catch (_) {}
+      }, 'btn ghost btn-sm');
+
+      const dlBtn = btn('Download .patch', () => {
+        downloadBlob(new Blob([patch], {type: 'text/x-diff'}), 'evolution-repair.patch');
+      }, 'btn ghost btn-sm');
+
+      const dlProposalBtn = btn('Download proposal.json', () => {
+        downloadBlob(new Blob([JSON.stringify(proposal, null, 2)], {type: 'application/json'}), 'repair-proposal.json');
+      }, 'btn ghost btn-sm');
+
+      append(actionRow, copyBtn, dlBtn, dlProposalBtn);
+      propBody.append(actionRow);
+
+      const topDlBtn = $('remedy-download-btn');
+      if (topDlBtn) {
+        topDlBtn.onclick = () => downloadBlob(new Blob([patch], {type: 'text/x-diff'}), 'evolution-repair.patch');
+      }
+
+      const verifBtn = $('remedy-verify-btn');
+      if (verifBtn) {
+        verifBtn.hidden = false;
+        verifBtn.disabled = false;
+        verifBtn.textContent = 'Verify Candidate →';
+        verifBtn.onclick = () => runVerificationStep(item, reportId, env, diagnosis, proposal);
+      }
+    } else {
+      const msg = el('div', 'notice');
+      append(msg,
+        el('strong', '', 'Repair Proposal Withheld'),
+        el('p', 'small', repairReasons[proposal.reason] || proposal.reason || 'Select a recipe above or configure an AI repair model for this finding.'),
+        el('p', 'small muted', 'Available registered recipes: ' + (options.recipes?.map(r => r.id).join(', ') || 'none'))
+      );
+      propBody.append(msg);
+
+      const verifBtn = $('remedy-verify-btn');
+      if (verifBtn) {
+        verifBtn.hidden = true;
+        verifBtn.disabled = true;
+      }
+    }
+  }
+
+  async function executeProposalChoice(item, reportId, env, diagnosis, options, extraArgs, propBody) {
+    propBody.replaceChildren(empty('Generating proposal…', 'Running compiler syntax verification…'));
+    try {
+      const args = Object.assign(
+        {identity: item.identity, bundle: item.bundleIdentity, context: env.context, diagnosisInput: diagnosis.input},
+        extraArgs
+      );
+      const proposal = await api('/graphs/' + env.graph + '/reports/' + reportId + '/repair-proposal', {arguments: args});
+      renderProposalResult(item, reportId, env, diagnosis, options, proposal, propBody);
+    } catch (e) {
+      propBody.replaceChildren(empty('Proposal unavailable', e.message));
+    }
+  }
+
+  async function runProposalStep(item, reportId, env, diagnosis) {
+    const propBtn = $('remedy-propose-btn');
+    if (propBtn) {
+      propBtn.disabled = true;
+      propBtn.textContent = 'Generating Patch…';
+    }
+
+    const stageProp = $('stage-proposal');
+    const propBody = $('remedy-proposal-body');
+    if (stageProp) stageProp.hidden = false;
+    if (propBody) propBody.replaceChildren(empty('Generating proposal…', 'Checking repair options and compiler syntax…'));
+
+    try {
+      const baseArgs = {identity: item.identity, bundle: item.bundleIdentity, context: env.context, diagnosisInput: diagnosis.input};
+      const options = await api('/graphs/' + env.graph + '/reports/' + reportId + '/repair-options', {arguments: baseArgs});
+      let proposal = await api('/graphs/' + env.graph + '/reports/' + reportId + '/repair-proposal', {arguments: baseArgs});
+
+      if (proposal.status !== 'PROPOSED' && options.recipes?.length) {
+        for (const r of options.recipes) {
+          const candidate = await api('/graphs/' + env.graph + '/reports/' + reportId + '/repair-proposal', {
+            arguments: Object.assign({}, baseArgs, {strategy: 'RECIPE', recipe: r.id})
+          });
+          if (candidate.status === 'PROPOSED') {
+            proposal = candidate;
+            break;
+          }
+        }
+      }
+      renderProposalResult(item, reportId, env, diagnosis, options, proposal, propBody);
+    } catch (e) {
+      propBody.replaceChildren(empty('Proposal unavailable', e.message));
+    } finally {
+      if (propBtn) {
+        propBtn.disabled = false;
+        propBtn.textContent = 'Generate Patch';
+      }
+    }
+  }
+
+  async function runVerificationStep(item, reportId, env, diagnosis, proposal, operands = {}) {
+    const verifBtn = $('remedy-verify-btn');
+    if (verifBtn) {
+      verifBtn.disabled = true;
+      verifBtn.textContent = 'Verifying…';
+    }
+
+    const stageVerif = $('stage-verification');
+    const verifBody = $('remedy-verification-body');
+    const verifBadge = $('remedy-verification-verdict');
+    if (stageVerif) stageVerif.hidden = false;
+    if (verifBody) verifBody.replaceChildren(empty('Verifying proposal…', 'Checking server-side baseline pins, reanalysis comparisons, and isolated VM proof.'));
+
+    try {
+      const propId = proposal?.proposal?.identity;
+      if (!propId) {
+        throw new Error('Verification requires a compiler-checked proposal.');
+      }
+      const args = {
+        identity: item.identity,
+        bundle: item.bundleIdentity,
+        context: env.context,
+        diagnosisInput: diagnosis.input,
+        proposal: propId
+      };
+      if (operands.candidateReport) args.candidateReport = operands.candidateReport;
+      if (operands.controlReport) args.controlReport = operands.controlReport;
+
+      const outcome = await api('/graphs/' + env.graph + '/reports/' + reportId + '/repair-verification', {arguments: args});
+      const verified = outcome.verdict === 'VERIFIED' || outcome.verdict === 'VERIFIED_DEMO';
+      const rejected = outcome.verdict === 'REJECTED';
+
+      if (verifBadge) {
+        verifBadge.textContent = outcome.verdict || 'UNVERIFIED';
+        verifBadge.className = 'badge ' + (verified ? 'good' : (rejected ? 'bad' : 'warn'));
+      }
+
+      verifBody.replaceChildren();
+
+      const actionRow = el('div', 'remedy-patch-actions');
+      if (state.capabilities?.repairReanalysisEnabled) {
+        const reanalyzeBtn = btn('Run Candidate Reanalysis + Control', async () => {
+          reanalyzeBtn.disabled = true;
+          try {
+            reanalyzeBtn.textContent = 'Reanalyzing candidate + control in parallel…';
+            const reResult = await api('/graphs/' + env.graph + '/reports/' + reportId + '/repair-reanalysis', {arguments: Object.assign({}, args, {includeControl: true})});
+            await runVerificationStep(item, reportId, env, diagnosis, proposal, {
+              candidateReport: reResult.candidateReport || operands.candidateReport,
+              controlReport: reResult.controlReport || operands.controlReport
+            });
+          } catch (err) {
+            verifBody.prepend(el('p', 'small bad', 'Reanalysis error: ' + err.message));
+            reanalyzeBtn.disabled = false;
+            reanalyzeBtn.textContent = 'Run Candidate Reanalysis + Control';
+          }
+        }, 'btn primary btn-sm');
+        actionRow.append(reanalyzeBtn);
+      }
+      const refreshBtn = btn('Refresh Verification', () => runVerificationStep(item, reportId, env, diagnosis, proposal, operands), 'btn ghost btn-sm');
+      actionRow.append(refreshBtn);
+      verifBody.append(actionRow);
+
+      const checkCard = el('div', 'card remedy-verif-card');
+      checkCard.append(el('strong', '', 'Verification Checks'));
+      const list = el('ul', 'remedy-check-list');
+      (outcome.checks || []).forEach(c => {
+        const passed = c.status === 'PASSED';
+        const failed = c.status === 'FAILED';
+        const icon = passed ? '✔' : (failed ? '✘' : '•');
+        const li = el('li', 'check-item');
+        append(li,
+          el('span', 'check-icon', icon),
+          append(el('div', 'check-text'),
+            el('strong', '', `${c.id} (${c.status})`),
+            el('p', 'small muted', c.reason + (c.evidence ? ` · ${M.shortDigest(c.evidence)}` : '')))
+        );
+        list.append(li);
+      });
+      checkCard.append(list);
+      verifBody.append(checkCard);
+
+      if (outcome.candidateComparison) {
+        const cc = outcome.candidateComparison;
+        const cmpCard = el('div', 'card remedy-verif-card');
+        append(cmpCard,
+          el('strong', '', 'Candidate Snapshot Comparison'),
+          el('p', 'small', `Status: ${cc.status} · Transitions: ${(cc.transitions || []).join(', ') || 'none'} · Regression: ${cc.regressionDetected ? 'YES' : 'NO'}`),
+          el('p', 'small muted', `Reasons: ${(cc.reasons || []).join(', ') || 'none'}`)
+        );
+        verifBody.append(cmpCard);
+      }
+
+      if (outcome.isolatedProof) {
+        const vm = outcome.isolatedProof;
+        const vmCard = el('div', 'card remedy-verif-card');
+        append(vmCard,
+          el('strong', '', 'Isolated QEMU VM Build & Test Proof'),
+          el('p', 'small', `Tool: ${vm.buildTool} · Modules: ${(vm.modules || []).join(', ')} · Compile exit: ${vm.compileExit} · Test exit: ${vm.testExit}`),
+          el('p', 'small', `Tests run: ${vm.testsRun}, failed: ${vm.testsFailed}, errors: ${vm.testsErrors} · Bytecode classes: ${vm.classCount}`),
+          el('p', 'small mono muted', `Capture: ${M.shortDigest(vm.capture)} · Census: ${M.shortDigest(vm.classCensusDigest)}`)
+        );
+        verifBody.append(vmCard);
+      }
+
+      const prCard = el('div', 'remedy-pr-box');
+      if (verified) {
+        append(prCard,
+          el('strong', '', 'Verified Patch Receipt'),
+          el('p', 'small mono', `Plan: ${M.shortDigest(outcome.planIdentity)} · Proposal: ${M.shortDigest(propId)}`),
+          el('p', 'small', 'Server-verified: all required checks passed and original policy finding is resolved.')
+        );
+      } else {
+        append(prCard,
+          el('strong', '', rejected ? 'Verification Rejected' : 'Verification Incomplete'),
+          el('p', 'small mono', `Plan: ${M.shortDigest(outcome.planIdentity)} · Proposal: ${M.shortDigest(propId)}`),
+          el('p', 'small', rejected
+            ? 'One or more verification checks failed. Inspect failed checks above before using this patch.'
+            : 'Run candidate reanalysis and configure an isolated VM capture (capture.json) to complete verification.')
+        );
+      }
+      verifBody.append(prCard);
+    } catch (e) {
+      if (verifBadge) {
+        verifBadge.textContent = 'UNVERIFIED';
+        verifBadge.className = 'badge warn';
+      }
+      verifBody.replaceChildren(empty('Verification unavailable', e.message));
+    } finally {
+      if (verifBtn) {
+        verifBtn.disabled = false;
+        verifBtn.textContent = 'Verify Candidate →';
+      }
+    }
+  }
+
   const views = {
     async overview(env) {
       const summary = await env.query('summary'), node = el('div'), counts = summary.items?.[0], stats = el('div', 'stats');
@@ -631,14 +1416,47 @@
       const health = card('Architecture assessment', 'Based on the selected policy and the evidence available for this analysis.'); grid.append(health);
       if (env.reportIds.length !== 1) health.append(empty(env.reportIds.length ? 'Select a policy report' : 'Score unavailable — no rules configured', env.reportIds.length ? 'Open Metrics & score to choose an exact report.' : 'A score needs explicit architecture rules and enough evidence. Structural metrics are available without a policy.'),btn(env.reportIds.length?'Open Metrics & score':'Configure rules & scoring',()=>env.reportIds.length?loadTab('metrics'):configureRules(),'button primary'));
       else {
-        try { const assessment = await env.report(env.reportIds[0].identity, 'assessment'); health.append(el('div', 'score', M.assessment(assessment)), badge(assessment.status));
-          if (assessment.confidence) health.append(el('p', 'muted small', assessment.confidence.sufficient ? 'Required assessment evidence is sufficient.' : 'Required assessment evidence is incomplete.'));
-          for (const dimension of assessment.dimensions || []) health.append(append(el('div', 'dimension'), el('span', '', dimension.id), el('strong', '', dimension.score ?? 'Unavailable')));
-          health.append(btn('View score breakdown', () => loadTab('metrics'), 'text-button'));
+        try {
+          const assessment = await env.report(env.reportIds[0].identity, 'assessment');
+          health.append(el('div', 'score', M.assessment(assessment)), badge(assessment.status));
+          if (assessment.status === 'WITHHELD') {
+            const banner = el('div', 'assessment-withheld-banner');
+            const gapCount = state.resultJob?.result?.gapCount || 'unresolved';
+            append(banner,
+              el('strong', '', 'Score Withheld: Incomplete Input Evidence'),
+              el('p', '', `The overall architecture score cannot be computed because this offline analysis recorded ${gapCount} capability limitations (such as missing external JARs or dynamic Spring profiles).`),
+              el('p', '', 'All structural facts, dependency graphs, and individual code metrics remain 100% verified and available.')
+            );
+            health.append(banner);
+          } else if (assessment.confidence) {
+            health.append(el('p', 'muted small', assessment.confidence.sufficient ? 'Required assessment evidence is sufficient.' : 'Required assessment evidence is incomplete.'));
+          }
+          const DIM_NAMES = {
+            'health:boundaries': 'Package Boundaries',
+            'health:coupling': 'Coupling & Modularity',
+            'health:cyclicity': 'Dependency Acyclicity',
+            'health:hotspots': 'Structural Hotspots',
+            'health:policy': 'Policy Conformance'
+          };
+          const dimWrap = el('div', 'dimensions-table');
+          dimWrap.style.margin = '10px 0';
+          for (const dimension of assessment.dimensions || []) {
+            const row = el('div', 'dimension-row');
+            const dName = DIM_NAMES[dimension.id] || dimension.id;
+            const dVal = dimension.score != null ? `${dimension.score} / 100` : 'Pending complete evidence';
+            append(row,
+              el('span', 'dimension-name', dName),
+              el('strong', 'dimension-val' + (dimension.score == null ? ' dim-withheld' : ''), dVal)
+            );
+            dimWrap.append(row);
+          }
+          health.append(dimWrap);
+          health.append(btn('View score breakdown & metrics', () => loadTab('metrics'), 'text-button'));
         } catch (error) { health.append(empty('Assessment unavailable', error.message)); }
       }
       const guide = card('Follow the evidence', 'Jump directly to the workflow that matches your architectural question.'); grid.append(guide);
       for (const [label, sub, tab] of [
+        ['Open Refactoring & Cycle Advisor →', 'Tarjan SCC tangles, minimal cycle-breakers, blast radius, DSM & Markdown export', 'insights'],
         ['Browse captured structure →', 'Navigate modules, packages, classes, methods and source files', 'structure'],
         ['Explore dependency graph →', 'Interactive canvas with layout switcher, ego-spotlight and shortest path', 'graph'],
         ['Compare modeled configurations →', 'Diff required (MUST) vs conditional (MAY) dependencies across profiles', 'configurations'],
@@ -646,7 +1464,7 @@
         ['Review rules and findings →', 'Check cyclic dependencies and policy violations with source witnesses', 'policy'],
         ['Inspect limitations & gaps →', 'Plain-English root-cause breakdown of unresolved or dynamic boundaries', 'gaps']
       ]) guide.append(row({label, kind: tab}, () => loadTab(tab), sub));
-      const inventory = append(el('details', 'card'), el('summary', '', 'Captured inventory — visual distribution & counts'));
+      const inventory = card('Captured inventory — visual distribution & counts', 'All discovered AST entities, source documents, and dependencies in this context.');
       const nodeEntries = Object.entries(counts?.nodeCounts || {}).sort((a, b) => b[1] - a[1]);
       const maxCount = Math.max(1, ...nodeEntries.map(([, c]) => Number(c) || 0));
       const invGrid = el('div', 'dist-list');
@@ -747,9 +1565,26 @@
         results.replaceChildren(empty('Loading…', 'Reading the selected report.'));
         try { await pagedList(target, env, cursor => env.report(id, op, {}, {size: 50, ...(cursor ? {cursor} : {})}), item => {
           const finding = item.result, rule = finding.rule?.header || finding.rule;
-          return row({label: rule?.name || rule?.id || finding.kind || 'Evaluated rule', kind: finding.classification || finding.status}, () => op==='findings'?inspectFinding(item,id,env):inspect(rule?.name || rule?.id || 'Rule evidence','POLICY EVIDENCE',finding), [rule?.severity, finding.status].filter(Boolean).join(' · '));
+          const label = rule?.name || rule?.id || finding.kind || 'Evaluated rule';
+          const r = row({label, kind: finding.classification || finding.status}, () => {
+            if (op === 'findings') {
+              selectRemediationFinding(item, id, env);
+            } else {
+              inspect(label, 'POLICY EVIDENCE', finding);
+            }
+          }, [rule?.severity, finding.status].filter(Boolean).join(' · '));
+          r.dataset.findingId = item.identity;
+          return r;
         }, op === 'findings' ? 'No observed findings' : 'No evaluated rules', 'Review the report status and rule denominator before interpreting this result.');
-        if (!env.signal.aborted && current === version) results.replaceChildren(target);
+        if (!env.signal.aborted && current === version) {
+          results.replaceChildren(target);
+          if (op === 'findings') {
+            const firstRow = target.querySelector('.entity-row');
+            if (firstRow && !state.selectedFinding) {
+              firstRow.click();
+            }
+          }
+        }
         } catch (error) { if (!env.signal.aborted && current === version) results.replaceChildren(empty('Report unavailable', error.message), btn('Retry', load)); }
       }
       reports.addEventListener('change', () => safe(load)); kinds.addEventListener('change', () => safe(load)); await load(); return node;
@@ -968,6 +1803,38 @@
             pathStatus.textContent=path?'Path highlighted where present in this bounded graph. '+M.pageInfo(result):'No path returned. '+M.pageInfo(result);
             await inspect('Shortest dependency path','PATH EVIDENCE',result);
           })),pathStatus);
+          function renderGraphOverview() {
+            const titleEl = $('node-title'), descEl = $('node-desc'), detailsEl = $('node-details');
+            if (!titleEl || !detailsEl) return;
+            titleEl.textContent = 'Graph Overview';
+            if (descEl) descEl.textContent = `${graph.nodes.length} nodes · ${graph.edges.length} dependencies in active context.`;
+            detailsEl.replaceChildren();
+
+            const summary = el('div', 'graph-summary-card');
+            append(summary,
+              el('p', 'small muted', `Active layout: ${layoutSelect.value} · Edge projection: ${projection.value}`),
+              el('p', 'small', 'Click any node on canvas to spotlight 1-hop blast radius, or pick a top connected hub below:')
+            );
+            detailsEl.append(summary);
+
+            if (state.cy) {
+              const hubs = state.cy.nodes().filter(n => !n.id().startsWith('compound:'))
+                .map(n => ({node: n, degree: n.degree(false), label: n.data('label') || n.id(), kind: n.data('kind')}))
+                .sort((a, b) => b.degree - a.degree)
+                .slice(0, 6);
+              if (hubs.length) {
+                const hubBox = el('div', 'graph-hubs-box');
+                hubBox.style.marginTop = '12px';
+                hubBox.append(el('p', 'eyebrow-mini', 'TOP CONNECTED HUBS'));
+                for (const hub of hubs) {
+                  const chip = btn('', () => spotlightNode(hub.node), 'graph-hub-chip');
+                  append(chip, el('strong', '', hub.label), el('small', 'muted', ` (${hub.degree} links)`));
+                  hubBox.append(chip);
+                }
+                detailsEl.append(hubBox);
+              }
+            }
+          }
           function spotlightNode(cyNode) {
             const item = cyNode.data();
             if (item.id.startsWith('compound:')) return inspect(item.label, item.kind, item);
@@ -984,10 +1851,25 @@
                 btn('Inspect details', () => inspectEntity({...item, identity: item.id}, env), 'button primary'),
                 btn('Isolate 1-hop subgraph', () => { focus = {...focus, seed: item.id}; depth.value = '1'; depth.hidden = false; clear.hidden = false; return load(); }, 'button subtle'),
                 btn('Set as path target', () => { destination.value = item.id; }, 'button subtle'),
-                btn('Clear spotlight', () => { state.cy.elements().removeClass('dimmed ego-highlight'); spotlightBar.hidden = true; }, 'text-button')
+                btn('Clear spotlight', () => { state.cy.elements().removeClass('dimmed ego-highlight'); spotlightBar.hidden = true; renderGraphOverview(); }, 'text-button')
               )
             );
+            const titleEl = $('node-title'), descEl = $('node-desc'), detailsEl = $('node-details');
+            if (titleEl && detailsEl) {
+              titleEl.textContent = item.label;
+              if (descEl) descEl.textContent = `${item.kind || 'Component'} · ${inDeg} incoming, ${outDeg} outgoing relationships`;
+              detailsEl.replaceChildren();
+              const actions = el('div', 'arch-inspector-actions');
+              actions.style.display = 'flex'; actions.style.flexDirection = 'column'; actions.style.gap = '8px'; actions.style.marginTop = '10px';
+              append(actions,
+                btn('Inspect entity details & source ↗', () => inspectEntity({...item, identity: item.id}, env), 'button primary'),
+                btn('Isolate 1-hop neighborhood', () => { focus = {...focus, seed: item.id}; depth.value = '1'; depth.hidden = false; clear.hidden = false; return load(); }, 'button subtle'),
+                btn('Reset to graph overview', () => { state.cy.elements().removeClass('dimmed ego-highlight'); spotlightBar.hidden = true; renderGraphOverview(); }, 'text-button')
+              );
+              detailsEl.append(actions);
+            }
           }
+          renderGraphOverview();
           state.cy.on('tap', 'node', event => safe(() => spotlightNode(event.target)));
           state.cy.on('tap','edge',event=>safe(()=>{
             const item=event.target.data(),actions=[];
@@ -1006,6 +1888,193 @@
       }
       layoutSelect.addEventListener('change', () => { if (state.cy) state.cy.layout(layoutConfig(layoutSelect.value)).run(); });
       scope.addEventListener('change', () => {focus={...focus,seed:null,relationshipKinds:null};depth.hidden=true;clear.hidden=true;safe(load);}); projection.addEventListener('change', () => safe(load));depth.addEventListener('change',()=>safe(load)); return {node, after: () => safe(load)};
+    },
+    async ai(env) {
+      // AI Pipeline view — surfaces the pipeline panel from the HTML.
+      // The actual diagnosis/repair content is triggered from the Rules tab
+      // via "Diagnose finding" actions; this view just presents the shell.
+      const node = document.createElement('div');
+      const pipelineContent = document.getElementById('ai-pipeline-content');
+      if (pipelineContent) {
+        // Clone the current pipeline content so it shows in the tab panel
+        node.appendChild(pipelineContent.cloneNode(true));
+      }
+      // Show a contextual guide if no diagnosis is in progress
+      const existing = node.querySelector('.empty');
+      if (!existing) {
+        node.append(
+          (() => { const d = document.createElement('div'); d.className = 'empty'; d.innerHTML = '<h3>No finding selected</h3><p>Open the <strong>Rules</strong> tab, inspect a violation finding, and choose <em>Diagnose finding</em> to start the AI pipeline.</p>'; return d; })()
+        );
+      }
+      return { node, status: 'AI Pipeline — Diagnosis · Repair · Verification' };
+    },
+    async insights(env) {
+      const root = el('div');
+      const scopeSel = selectControl('Analysis scope', env.springContext
+        ? [['SPRING_COMPONENT', 'Spring Components']]
+        : [['TYPE', 'Classes / Types'], ['PACKAGE', 'Packages'], ['MODULE', 'Modules']], env.springContext ? 'SPRING_COMPONENT' : 'TYPE');
+      const toolbar = el('div', 'toolbar');
+      const exportBar = el('div', 'toolbar-actions');
+      const body = el('div');
+      append(toolbar, field('Advisor scope', scopeSel), exportBar);
+      append(root, toolbar, body);
+
+      async function loadInsights() {
+        const sc = scopeSel.value;
+        body.replaceChildren(empty('Computing architectural insights…', 'Running Tarjan SCC cycle detection, cut-edge simulation, and condensation-DAG blast radius.'));
+        exportBar.replaceChildren();
+        try {
+          const req = {...env.request, scope: sc, relationshipKinds: relationshipKinds(sc)};
+          const args = {topN: 15, ...(env.reportIds?.[0]?.identity ? {report: env.reportIds[0].identity} : {})};
+          const data = await api('/graphs/' + env.graph + '/architecture-insights', {request: req, arguments: args}, env.signal);
+          if (env.signal.aborted) return;
+          body.replaceChildren();
+
+          const copyMdBtn = btn('📋 Copy Markdown Report', async () => {
+            try {
+              await navigator.clipboard.writeText(data.markdownReport || '');
+              copyMdBtn.textContent = '✔ Copied Markdown!';
+              setTimeout(() => { copyMdBtn.textContent = '📋 Copy Markdown Report'; }, 1600);
+            } catch (_) {}
+          }, 'btn ghost btn-sm');
+          const dlMdBtn = btn('⬇ Download Executive Report (.md)', () => {
+            downloadBlob(new Blob([data.markdownReport || ''], {type: 'text/markdown;charset=utf-8'}), 'architecture-executive-report.md');
+          }, 'btn primary btn-sm');
+          append(exportBar, copyMdBtn, dlMdBtn);
+
+          const s = data.summary || {};
+          const kpis = el('div', 'stats');
+          for (const [label, val, sub] of [
+            ['Project Entities', s.analyzedEntities ?? 0, `${sc.toLowerCase()} scope`],
+            ['Internal Edges', s.internalDependencies ?? 0, `${s.externalDependencies ?? 0} external`],
+            ['Cyclic Tangles (SCC)', s.tangleCount ?? 0, `${s.tangledEntityCount ?? 0} tangled (${((Number(s.tangledEntityRatio) || 0) * 100).toFixed(1)}%)`],
+            ['Avg Instability (I)', Number(s.averageInstability ?? 0).toFixed(2), `${s.sdpViolationCount ?? 0} SDP warnings`],
+            ['Max Blast Radius', s.maxBlastRadius ?? 0, 'Transitive dependents'],
+            ['Policy Violations', s.policyFindingCount ?? 0, data.status || 'EVALUATED']
+          ]) {
+            const st = el('div', 'stat');
+            append(st, el('span', '', label), el('strong', '', val), el('small', '', sub));
+            kpis.append(st);
+          }
+          body.append(kpis);
+
+          // 1. Cycle & Tangle Detector + Minimal Cut-Edge Advisor
+          const tangleCard = card('1. Cycle & Tangle Detector (Tarjan SCC + Verified Minimal Cut-Edges)',
+            'Exact strongly connected components ranked by blast impact, with simulated single-edge cut candidates backed by canonical edge evidence.');
+          if (!data.tangles?.length) {
+            tangleCard.append(empty('Zero Dependency Cycles (Clean DAG)', 'No strongly connected component cycles were observed in this scope.'));
+          } else {
+            for (const [idx, t] of data.tangles.entries()) {
+              const box = el('div', 'tangle-card');
+              const head = el('div', 'tangle-head');
+              const focusBtn = btn('Highlight in Graph ↗', () => {
+                state.graphFocus = {seed: t.members[0], scope: sc, relationshipKinds: relationshipKinds(sc)};
+                return loadTab('graph');
+              }, 'btn ghost btn-sm');
+              append(head,
+                append(el('div'),
+                  el('strong', '', `Tangle #${idx + 1} · ${t.memberCount} components · ${t.internalEdgeCount} internal edges`),
+                  el('p', 'small muted', t.memberLabels.slice(0, 10).join(' ⇄ ') + (t.memberLabels.length > 10 ? ' …' : ''))
+                ),
+                append(el('div', 'tangle-badges'), badge(t.severity), focusBtn)
+              );
+              box.append(head);
+              if (t.breakCandidates?.length) {
+                const cutList = el('div', 'cut-list');
+                for (const c of t.breakCandidates) {
+                  const cutRow = el('div', 'cut-candidate');
+                  append(cutRow,
+                    append(el('div'),
+                      el('strong', 'mono small', `✂ Cut: ${c.sourceLabel} → ${c.targetLabel}`),
+                      el('p', 'small', c.rationale),
+                      el('p', 'small muted mono', `Strategy: ${c.recommendedStrategy} · Supports: ${c.supportCount} · Edge: ${M.shortDigest(c.edgeIdentity)}`)
+                    ),
+                    badge(c.breaksEntireTangle ? 'SINGLE-CUT DAG' : `MAX SCC → ${c.remainingLargestComponentSize}`)
+                  );
+                  cutList.append(cutRow);
+                }
+                box.append(cutList);
+              }
+              tangleCard.append(box);
+            }
+          }
+          tangleCard.style.marginBottom = '16px';
+          body.append(tangleCard);
+
+          // 2. Architectural Hotspots & Blast-Radius Table
+          const hotCard = card('2. Architectural Hotspots, Instability (I) & Transitive Blast Radius',
+            'Ranked by structural risk: hub bottlenecks, Stable Dependencies Principle (SDP) violations, cycle membership, and condensation-DAG reachability.');
+          if (!data.hotspots?.length) {
+            hotCard.append(empty('No hotspots available', 'Select an analysis context with project entities.'));
+          } else {
+            const tbl = el('table', 'comparison-table dsm-table');
+            tbl.append(append(el('thead'), append(el('tr'),
+              ...['Component', 'Archetype', 'Risk', 'Fan-In (Ca)', 'Fan-Out (Ce)', 'Instability (I)', 'Blast Radius', 'Flags'].map(h => el('th', '', h)))));
+            const tb = el('tbody');
+            for (const h of data.hotspots) {
+              const tr = el('tr');
+              const nameBtn = btn(h.label, () => {
+                state.graphFocus = {seed: h.identity, scope: sc, relationshipKinds: relationshipKinds(sc)};
+                return loadTab('graph');
+              }, 'text-button mono');
+              const flags = [];
+              if (h.inCycle) flags.push(badge('IN CYCLE'));
+              if (h.sdpViolation) flags.push(badge('SDP WARN'));
+              if (h.policyViolations > 0) flags.push(badge(`${h.policyViolations} VIOLATIONS`));
+              append(tr,
+                append(el('td'), nameBtn),
+                el('td', 'small', h.archetype.replaceAll('_', ' ')),
+                append(el('td'), el('strong', 'mono', h.hotspotScore)),
+                el('td', 'mono', h.fanIn),
+                el('td', 'mono', h.fanOut),
+                el('td', 'mono', Number(h.instability).toFixed(2)),
+                el('td', 'mono', h.transitiveDependents),
+                append(el('td'), ...(flags.length ? flags : [el('span', 'muted small', 'OK')]))
+              );
+              tb.append(tr);
+            }
+            tbl.append(tb);
+            hotCard.append(append(el('div', 'table-scroll'), tbl));
+          }
+          hotCard.style.marginBottom = '16px';
+          body.append(hotCard);
+
+          // 3. Cross-Layer / Package Coupling Matrix (DSM)
+          const dsm = data.couplingMatrix || {};
+          const dsmCard = card('3. Cross-Layer / Package Coupling Matrix (DSM)',
+            dsm.orderedGroups?.length ? 'Ordered Consumer → Foundation: ' + dsm.orderedGroups.join(' → ') : 'Cross-package/module coupling flows.');
+          if (!dsm.cells?.length) {
+            dsmCard.append(empty('No cross-group coupling', 'All observed dependencies stay within a single package/module group.'));
+          } else {
+            const tbl = el('table', 'comparison-table dsm-table');
+            tbl.append(append(el('thead'), append(el('tr'),
+              ...['From Layer / Group', 'To Layer / Group', 'Distinct Edges', 'Support Weight', 'Layering Status'].map(h => el('th', '', h)))));
+            const tb = el('tbody');
+            for (const cell of dsm.cells.slice(0, 20)) {
+              const statusBadges = [];
+              if (cell.bidirectional) statusBadges.push(badge('BIDIRECTIONAL TANGLE'));
+              if (cell.backEdge) statusBadges.push(badge('UPWARD BACK-EDGE'));
+              if (!statusBadges.length) statusBadges.push(badge('CLEAN FLOW'));
+              append(tb, append(el('tr'),
+                el('td', 'mono', cell.fromGroup),
+                el('td', 'mono', cell.toGroup),
+                el('td', 'mono', cell.edgeCount),
+                el('td', 'mono', cell.supportWeight),
+                append(el('td'), ...statusBadges)
+              ));
+            }
+            tbl.append(tb);
+            dsmCard.append(append(el('div', 'table-scroll'), tbl));
+          }
+          body.append(dsmCard);
+        } catch (err) {
+          if (!env.signal.aborted) body.replaceChildren(empty('Insights unavailable', err.message));
+        }
+      }
+
+      scopeSel.addEventListener('change', () => safe(loadInsights));
+      await loadInsights();
+      return {node: root, status: 'Architecture Insights & Refactoring Advisor loaded.'};
     }
   };
   const presetBox = $('policy-presets');
@@ -1027,6 +2096,8 @@
   document.querySelectorAll('[data-close]').forEach(n => n.addEventListener('click', () => n.dataset.close === 'inspector' ? closeInspector() : $(n.dataset.close).close()));
   $('inspector').addEventListener('cancel', closeInspector);
   $('connect-form').addEventListener('submit', connectRepository);
+  $('disconnect-form')?.addEventListener('submit', disconnectRepository);
+  $('analysis-mode')?.addEventListener('change', e => { state.analysisMode = e.target.value || 'FULL'; state.retry = null; syncRunControls(); });
   $('analyze').addEventListener('click', () => safe(() => submit()));
   $('analyze-force').addEventListener('click', () => safe(() => submit(true)));
   $('cancel-job').addEventListener('click', () => safe(async () => {
@@ -1057,6 +2128,10 @@
     return inspect(label, 'ANALYSIS EVIDENCE', (signal, cursor) => api('/analysis/jobs/' + job.id + '/' + op, {size: 20, ...(cursor ? {cursor} : {})}, signal), [{label: 'View graph limitations', run: async () => { closeInspector(); if (state.resultJob?.id === job.id) await loadTab('gaps'); else notice('The displayed graph does not belong to this analysis.'); }}]);
   }));
   $('download-details').addEventListener('click', () => download(state.details, 'evo-evidence.json'));
+  $('open-repo-manager')?.addEventListener('click', () => {
+    renderRepoManager();
+    $('repo-manager-dialog')?.showModal();
+  });
   function applyTheme(theme) {
     document.documentElement.dataset.theme = theme;
     const label = 'Switch to ' + (theme === 'dark' ? 'light' : 'dark') + ' theme';
@@ -1090,6 +2165,8 @@
   });
   function syncSidebarState() { const shell = document.querySelector('.app-shell'); $('sidebar-toggle').setAttribute('aria-expanded', window.matchMedia('(max-width:760px)').matches ? shell.classList.contains('mobile-sidebar-open') : !shell.classList.contains('sidebar-collapsed')); }
   window.addEventListener('resize', () => { state.cy?.resize(); syncSidebarState(); });
+  window.EvoApp = { state, loadTab, selectRepo, selectJob, configureRules, api };
   syncSidebarState();
+  window.EvoApp = { state, api, loadTab, inspectFinding, inspectDiagnosis, inspectRepairProposal, inspectRepairVerification, selectRemediationFinding };
   safe(connectServer);
 })();

@@ -11,6 +11,7 @@ public final class SourceCoordinates {
     public record Point(int offset,int line,int column){}
     private final String text;
     private static final int STRIDE=256;
+    private final boolean ascii;
     private final int[] characterCheckpoints,codePointCheckpoints,lineStarts;
     private final long[] byteCheckpoints;
     private final int codePoints;
@@ -20,6 +21,39 @@ public final class SourceCoordinates {
         boolean big=bytes.length>=2&&(bytes[0]&255)==254&&(bytes[1]&255)==255;
         if(selected.equals(StandardCharsets.UTF_16))selected=little?StandardCharsets.UTF_16LE:StandardCharsets.UTF_16BE;
         if(little&&selected.equals(StandardCharsets.UTF_16BE)||big&&selected.equals(StandardCharsets.UTF_16LE))throw new IllegalArgumentException("SOURCE_BOM_CONFLICT");
+        if (selected.equals(StandardCharsets.UTF_8) || selected.equals(StandardCharsets.US_ASCII) || selected.equals(StandardCharsets.ISO_8859_1)) {
+            boolean allAscii = true;
+            int asciiLines = 1;
+            for (int i = 0; i < bytes.length; i++) {
+                byte b = bytes[i];
+                if (b < 0) {
+                    allAscii = false;
+                    break;
+                }
+                if (b == '\n' || b == '\r' && (i + 1 == bytes.length || bytes[i + 1] != '\n')) {
+                    asciiLines++;
+                }
+            }
+            if (allAscii) {
+                this.ascii = true;
+                this.text = new String(bytes, StandardCharsets.US_ASCII);
+                this.codePoints = bytes.length;
+                this.characterCheckpoints = null;
+                this.codePointCheckpoints = null;
+                this.byteCheckpoints = null;
+                int[] starts = new int[asciiLines];
+                int lineIdx = 1;
+                for (int i = 0; i < bytes.length; i++) {
+                    byte b = bytes[i];
+                    if (b == '\n' || b == '\r' && (i + 1 == bytes.length || bytes[i + 1] != '\n')) {
+                        starts[lineIdx++] = i + 1;
+                    }
+                }
+                this.lineStarts = starts;
+                return;
+            }
+        }
+        this.ascii = false;
         try{text=selected.newDecoder().onMalformedInput(CodingErrorAction.REPORT).onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(bytes)).toString();}
         catch(CharacterCodingException invalid){throw new IllegalArgumentException("SOURCE_DECODING_FAILED",invalid);}
         // A sparse index bounds each conversion by one checkpoint interval. Per-site
@@ -54,6 +88,10 @@ public final class SourceCoordinates {
     }
     private int offset(long wanted,Encoding encoding){
         if(wanted<0)throw new IllegalArgumentException("SOURCE_RANGE_SPLITS_CODEPOINT_OR_EXCEEDS_DOCUMENT");
+        if (ascii) {
+            if (wanted > codePoints) throw new IllegalArgumentException("SOURCE_RANGE_SPLITS_CODEPOINT_OR_EXCEEDS_DOCUMENT");
+            return (int) wanted;
+        }
         if(encoding==Encoding.UTF16){
             if(wanted>text.length()||wanted<text.length()&&Character.isLowSurrogate(text.charAt((int)wanted)))throw new IllegalArgumentException("SOURCE_RANGE_SPLITS_CODEPOINT_OR_EXCEEDS_DOCUMENT");
             return (int)wanted;

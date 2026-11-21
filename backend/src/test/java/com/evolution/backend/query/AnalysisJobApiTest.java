@@ -34,6 +34,13 @@ class AnalysisJobApiTest {
             assertEquals(400,call(api,"POST","/api/v1/analysis/connections","{\"source\":\"https://user:secret@github.com/team/repo\"}").status());
             assertEquals(400,call(api,"POST","/api/v1/analysis/connections","{\"source\":\"https://github.com/team/repo\",\"command\":\"exec\"}").status());
             assertEquals(405,call(api,"DELETE","/api/v1/analysis/connections","").status());
+            var setup = (String) data(created).get("setup");
+            var deleted = call(api, "DELETE", "/api/v1/analysis/connections/" + setup, "");
+            assertEquals(200, deleted.status());
+            assertEquals(setup, data(deleted).get("disconnected"));
+            assertEquals(0, connections.list().size());
+            assertEquals(0, jobs.setups().size());
+            assertEquals(404, call(api, "DELETE", "/api/v1/analysis/connections/missing-repo", "").status());
         }
     }
     static Map<String,Object> data(ArchitectureQueryApi.Response response) {

@@ -37,7 +37,7 @@ public final class GraphJson {
     public static Object read(String json, Limits limits) {
         Objects.requireNonNull(json); Objects.requireNonNull(limits);
         if (json.length() > limits.maxCharacters()) throw new LimitExceededException("Graph JSON character limit");
-        try{return read(new java.io.StringReader(json),limits);}catch(java.io.IOException impossible){throw new IllegalStateException(impossible);}
+        try{return new StreamingGraphJson(json,limits).read();}catch(java.io.IOException impossible){throw new IllegalStateException(impossible);}
     }
     public static Object read(java.io.Reader reader,Limits limits)throws java.io.IOException {return new StreamingGraphJson(reader,limits).read();}
     @SuppressWarnings("unchecked")

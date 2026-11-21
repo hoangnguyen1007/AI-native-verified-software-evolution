@@ -10,6 +10,8 @@ import java.util.function.BooleanSupplier;
  * Unknown syntax and malformed input retain recovered rows and an explicit document outcome. */
 final class ProtobufSourceFrontend {
     static final String PROVIDER="source.protobuf-schema:m8.4-v1";
+    private static final java.util.regex.Pattern IDENTIFIER = java.util.regex.Pattern.compile("[A-Za-z_][A-Za-z0-9_]*");
+    private static volatile String cachedToolIdentity;
     private record Token(String text,int start,int end) {}
     private record Draft(String category,String kind,String name,int start,int end,int owner,Map<String,String> attributes) {}
     private final SourceCoordinates coordinates;
@@ -33,8 +35,11 @@ final class ProtobufSourceFrontend {
             sink.accept(new TreeSitterSourceFrontend.Fact(row.category(),row.kind(),row.name(),written,span,
                     owners.getOrDefault(row.owner(),""),parser.errors>0,row.attributes()));
         }
-        String tool;
-        try(var code=ProtobufSourceFrontend.class.getResourceAsStream("ProtobufSourceFrontend.class")){if(code==null)throw new IOException("PROTOBUF_PARSER_IDENTITY_UNAVAILABLE");tool=ContentDigest.sha256(code.readAllBytes()).value();}
+        String tool = cachedToolIdentity;
+        if (tool == null) {
+            try(var code=ProtobufSourceFrontend.class.getResourceAsStream("ProtobufSourceFrontend.class")){if(code==null)throw new IOException("PROTOBUF_PARSER_IDENTITY_UNAVAILABLE");tool=ContentDigest.sha256(code.readAllBytes()).value();}
+            cachedToolIdentity = tool;
+        }
         return new TreeSitterSourceFrontend.Summary(parser.nodes,parser.rows.size(),parser.errors,PROVIDER,tool);
     }
     private int scope(String prefix,int owner,String kind,int depth)throws IOException {
@@ -63,7 +68,7 @@ final class ProtobufSourceFrontend {
             int equals=-1;for(int i=0;i<tokens.size();i++)if(tokens.get(i).text().equals("=")){equals=i;break;}
             if((kind.equals("message")||kind.equals("oneof")||kind.equals("enum"))&&equals>=1&&equals+1<tokens.size()) {
                 String name=tokens.get(equals-1).text();
-                if(!name.matches("[A-Za-z_][A-Za-z0-9_]*"))throw malformed();
+                if(!IDENTIFIER.matcher(name).matches())throw malformed();
                 var attributes=new TreeMap<String,String>();attributes.put("qualifiedName",join(prefix,name));
                 String number=tokens.get(equals+1).text();if(number.equals("-")&&equals+2<tokens.size())number+=tokens.get(equals+2).text();
                 long value;try{value=Long.decode(number);}catch(NumberFormatException invalid){throw malformed();}
@@ -103,7 +108,7 @@ final class ProtobufSourceFrontend {
     private void add(String category,String kind,String name,int start,int end,int owner,Map<String,String> attributes) {
         rows.add(new Draft(category,kind,name,start,end,owner,attributes));
     }
-    private String identifier()throws IOException {var token=take();if(!token.text().matches("[A-Za-z_][A-Za-z0-9_]*"))throw malformed();return token.text();}
+    private String identifier()throws IOException {var token=take();if(!IDENTIFIER.matcher(token.text()).matches())throw malformed();return token.text();}
     private String qualified()throws IOException {var result=new StringBuilder();if(accept("."))result.append('.');result.append(identifier());while(accept("."))result.append('.').append(identifier());return result.toString();}
     private static String join(String prefix,String name){return prefix.isEmpty()?name:prefix+"."+name;}
     private boolean accept(String value)throws IOException {if(!peek().text().equals(value))return false;take();return true;}

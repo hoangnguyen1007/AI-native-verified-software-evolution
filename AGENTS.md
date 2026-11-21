@@ -4,11 +4,11 @@
 
 Build a deterministic, evidence-first software architecture intelligence platform, with a protected Java/Spring Boot foundation and M8.4 polyglot semantic engines.
 
-Current delivery: **one full-pipeline demo**, from repository analysis and compatible snapshot comparison through AI diagnosis, repair proposal, isolated verification and local Verified PR/CI output. Track A and Track B are the existing foundations. SE121, SE122 and KLTN no longer divide delivery scope. The [demo roadmap](docs/roadmap.md#full-pipeline-demo) owns the journey and exit criteria.
+Completed delivery: **one full-pipeline demo**, from repository analysis and compatible snapshot comparison through AI diagnosis, repair proposal, isolated verification and local Verified PR/CI output. Track A and Track B are the existing foundations. SE121, SE122 and KLTN no longer divide delivery scope. The [demo roadmap](docs/roadmap.md#full-pipeline-demo) preserves its journey and exit criteria.
 
-Demo scope governs current delivery and claim language. The platform adapts to repositories through progressive, provenance-preserving evidence acquisition rather than requiring repositories to fit one frontend, build convention, or static-analysis envelope.
+**CONFIRMED human direction (2026-11-16):** extend backend repair beyond the fixture with usable recipes, optional model-authored edits and compiler syntax checks before Git patch creation. The [active roadmap](docs/roadmap.md) and [repository repair contract](docs/architecture/captured-repository-repair.md) govern that work. Claim only demonstrated language, repository and verification scope. Preserve the completed demo as a reproducible compatibility check.
 
-Priority: finish the complete demo quickly within the safety, correctness and evidence invariants. Reuse existing product surfaces and captured evidence before expanding polish, campaigns or publication work.
+Priority: deliver useful repair coverage within the safety, correctness and evidence invariants. Adapt to repositories through progressive, provenance-preserving evidence acquisition. Reuse product surfaces and captured evidence before expanding polish, campaigns or publication work.
 
 Protected foundation: Java and polyglot semantics, safe multi-module build modeling, bounded configuration-space and phase/order-aware Spring intelligence, canonical Software Knowledge Graph projections, configuration-qualified policies and evidence-backed violations, bounded impact, metrics and explainable assessment, stable queries, visualization, and compatible conditional snapshot comparison.
 

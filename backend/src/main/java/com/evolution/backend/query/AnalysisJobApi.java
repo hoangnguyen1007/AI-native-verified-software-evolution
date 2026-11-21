@@ -4,6 +4,7 @@ import com.evolution.analysis.contract.common.ContentDigest;
 import com.evolution.analysis.graph.GraphJson;
 import com.evolution.analysis.query.ArchitectureQuery;
 import com.evolution.backend.analysis.AnalysisJobs;
+import com.evolution.backend.analysis.AnalysisMode;
 import com.evolution.backend.analysis.RepositoryConnections;
 import java.nio.ByteBuffer;
 import java.nio.charset.*;
@@ -33,16 +34,27 @@ final class AnalysisJobApi {
                     method(method,"POST"); var input=decode(body,contentType,"source","policy");
                     data=connections.connect(QueryJson.text(input,"source"),QueryJson.optionalText(input,"policy")); status=201;
                 }
+            } else if (path.startsWith("/api/v1/analysis/connections/")) {
+                if (connections==null) throw new Failure(503,"CONNECTIONS_UNAVAILABLE");
+                var parts = path.split("/",-1);
+                if (parts.length != 6 && !(parts.length == 7 && parts[6].equals("disconnect"))) throw new Failure(404,"NOT_FOUND");
+                var setup = parts[5];
+                if (!connections.has(setup)) throw new Failure(404,"CONNECTION_NOT_FOUND");
+                if (method.equals("DELETE") || method.equals("POST")) {
+                    connections.disconnect(setup);
+                    data = Map.of("disconnected", setup);
+                } else throw new Failure(405,"METHOD_NOT_ALLOWED");
             } else if (path.equals("/api/v1/analysis/setups")) {
                 method(method,"GET"); empty(body); data = Map.of("items",jobs.setups(),"versionControl","NOT_INSPECTED");
             } else if (path.equals("/api/v1/analysis/jobs")) {
                 if (method.equals("GET")) { empty(body); data = jobs.history(20,Optional.empty()); }
                 else {
-                    method(method,"POST"); var input = decode(body,contentType,"setup","idempotencyKey","force");
+                    method(method,"POST"); var input = decode(body,contentType,"setup","idempotencyKey","force","mode");
                     if (input.containsKey("force") && !(input.get("force") instanceof Boolean))
                         throw new IllegalArgumentException("Expected boolean force");
+                    var mode = input.containsKey("mode") ? AnalysisMode.parse(QueryJson.text(input,"mode")) : AnalysisMode.FULL;
                     var submission = jobs.submit(QueryJson.text(input,"setup"),QueryJson.text(input,"idempotencyKey"),
-                            Boolean.TRUE.equals(input.get("force")));
+                            Boolean.TRUE.equals(input.get("force")),mode);
                     data = submission.job(); status = submission.created() ? 202 : 200;
                 }
             } else if (path.equals("/api/v1/analysis/jobs/history")) {
@@ -53,6 +65,7 @@ final class AnalysisJobApi {
                 if (parts.length < 6 || parts.length > 7 || !parts[4].equals("jobs")) throw new Failure(404,"NOT_FOUND");
                 var id = uuid(parts[5]);
                 if (parts.length == 6) { method(method,"GET"); empty(body); data = jobs.get(id); }
+                else if (parts[6].equals("telemetry")) { method(method,"GET"); empty(body); data = jobs.telemetry(id); }
                 else if (parts[6].equals("cancel")) { method(method,"POST"); decode(body,contentType); var view = jobs.cancel(id); data = view; status = AnalysisJobs.terminal(view.state()) ? 200 : 202; }
                 else if (parts[6].equals("gaps")) { method(method,"POST"); var page = QueryJson.page(decode(body,contentType,"size","cursor")); data = jobs.gaps(id,page.size(),page.cursor()); }
                 else if (parts[6].equals("input-diagnostics")) { method(method,"POST"); var page = QueryJson.page(decode(body,contentType,"size","cursor")); data = jobs.inputProblems(id,page.size(),page.cursor()); }

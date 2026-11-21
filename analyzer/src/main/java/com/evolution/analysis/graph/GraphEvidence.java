@@ -21,19 +21,30 @@ public record GraphEvidence(ContentDigest identity, String family, String canoni
             return Arrays.stream(type.getRecordComponents()).map(c->new Accessor(c.getName(),c.getAccessor())).toList();
         }
     };
+    private static final ThreadLocal<ContentDigest> TRUSTED_CAPTURE = new ThreadLocal<>();
     public GraphEvidence {
         Objects.requireNonNull(identity);
         family = ContractChecks.token(family, "graph evidence family");
-        // Retain the legacy round trip for rejected fast-path inputs so the
-        // decoder still classifies unusual spellings and limits precisely.
-        if (!CanonicalEvidenceJson.isCanonical(Objects.requireNonNull(canonicalJson))
-                && !canonicalJson.equals(CanonicalJson.write(GraphJson.read(canonicalJson, GraphJson.Limits.defaults()))))
-            throw new IllegalArgumentException("Noncanonical graph evidence");
-        if (!identity.equals(digest(family, canonicalJson))) throw new IllegalArgumentException("Graph evidence hash mismatch");
+        Objects.requireNonNull(canonicalJson);
+        if (TRUSTED_CAPTURE.get() != identity) {
+            // Retain the legacy round trip for rejected fast-path inputs so the
+            // decoder still classifies unusual spellings and limits precisely.
+            if (!CanonicalEvidenceJson.isCanonical(canonicalJson)
+                    && !canonicalJson.equals(CanonicalJson.write(GraphJson.read(canonicalJson, GraphJson.Limits.defaults()))))
+                throw new IllegalArgumentException("Noncanonical graph evidence");
+            if (!identity.equals(digest(family, canonicalJson))) throw new IllegalArgumentException("Graph evidence hash mismatch");
+        }
     }
     public static GraphEvidence capture(String family, Object payload) {
-        String json=CanonicalJson.write(form(payload,0));
-        return new GraphEvidence(digest(family,json),family,json);
+        String checkedFamily = ContractChecks.token(family, "graph evidence family");
+        String json = CanonicalJson.write(form(payload, 0));
+        ContentDigest id = digest(checkedFamily, json);
+        TRUSTED_CAPTURE.set(id);
+        try {
+            return new GraphEvidence(id, checkedFamily, json);
+        } finally {
+            TRUSTED_CAPTURE.remove();
+        }
     }
     /** Semantic replay excludes only known provenance timestamps/revision labels, never configuration values. */
     public ContentDigest semanticIdentity() {
@@ -84,7 +95,14 @@ public record GraphEvidence(ContentDigest identity, String family, String canoni
             return form(Map.of("rootIdentity",formula.identity(),"formulas",List.copyOf(nodes.values())),depth+1);
         }
         if(value instanceof Map<?,?> map) {
-            if(map.keySet().stream().allMatch(String.class::isInstance)) {
+            boolean stringKeys = true;
+            for (Object k : map.keySet()) {
+                if (!(k instanceof String)) {
+                    stringKeys = false;
+                    break;
+                }
+            }
+            if(stringKeys) {
                 var result=new TreeMap<String,Object>();map.forEach((k,v)->result.put((String)k,form(v,depth+1)));return result;
             }
             return map.entrySet().stream().map(e->Arrays.asList(form(e.getKey(),depth+1),form(e.getValue(),depth+1)))

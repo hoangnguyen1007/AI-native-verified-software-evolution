@@ -22,7 +22,7 @@ public final class ArchitectureQueryApi {
     public static final List<String> OPERATIONS = List.of("summary","provenance","entities","entity","edges","dependencies",
             "relationships","expand","paths","shortest-path","cycles","reachability","impact","evidence","explain","gaps",
             "spring","configurations","artifacts","metric-catalog","metric","comparison-preparation","visual-graph","children","realizations","metric-definition");
-    public static final List<String> REPORT_OPERATIONS = List.of("rules","findings","finding","bundle","policy-metrics","assessment","policy-impact","visual-graph","replay","diagnosis","repair-proposal","repair-verification");
+    public static final List<String> REPORT_OPERATIONS = List.of("rules","findings","finding","bundle","policy-metrics","assessment","policy-impact","visual-graph","replay","diagnosis","repair-options","repair-proposal","repair-reanalysis","repair-verification");
     private static final FindingDiagnosis REPLAY_DIAGNOSIS = FindingDiagnosis.localReplay();
     private static final RepairProposal REPAIR = new RepairProposal();
     public record Response(int status, byte[] body) {
@@ -47,6 +47,17 @@ public final class ArchitectureQueryApi {
     private RepairVerification.WorkerEvidence repairWorker;
     private DemoRepairCapture demoRepairCapture;
     private FindingDiagnosis diagnosis = REPLAY_DIAGNOSIS;
+    private RepairChatModel repairModel;
+    private RepairProposalStore repairStore = new RepairProposalStore();
+    private RepairReanalysis.Port repairReanalysis;
+    private CapturedRepairExecution capturedRepairExecution;
+    private java.util.Map<com.evolution.analysis.contract.identity.SnapshotIdentity, ContentDigest> reanalyzedGraphs =
+            java.util.Collections.synchronizedMap(new java.util.LinkedHashMap<>(32, 0.75f, true) {
+                @Override
+                protected boolean removeEldestEntry(java.util.Map.Entry<com.evolution.analysis.contract.identity.SnapshotIdentity, ContentDigest> eldest) {
+                    return size() > 128;
+                }
+            });
     public ArchitectureQueryApi(GraphStore store) { this(store,new PublishedReports(),ApiLimits.defaults()); }
     public ArchitectureQueryApi(GraphStore store,PublishedReports reports,ApiLimits limits) {
         this(store,reports,limits,(graph,guard) -> new ArchitectureMetricsService(graph,ArchitectureMetric.Limits.defaults(),guard,Optional.empty(),List.of()).queries());
@@ -73,12 +84,78 @@ public final class ArchitectureQueryApi {
         api.diagnosis=new FindingDiagnosis(new LoopbackDiagnosisModel(port,model,input));
         return api;
     }
+    /** Opt in a fixed model endpoint at startup; client requests can only approve a pinned input. */
+    public static ArchitectureQueryApi withConfiguredRepairModel(ArchitectureQueryApi existing) {
+        var endpoint=System.getProperty("evo.repair.ai.endpoint");
+        var model=System.getProperty("evo.repair.ai.model");
+        boolean remote=Boolean.getBoolean("evo.repair.ai.allowRemote");
+        if (endpoint==null && model==null && !remote) return existing;
+        if (endpoint==null || model==null) throw new IllegalArgumentException("REPAIR_MODEL_CONFIGURATION");
+        return withRepairModel(existing,new RepairChatModel(java.net.URI.create(endpoint),model,System.getenv("EVO_REPAIR_AI_API_KEY"),remote));
+    }
+    static ArchitectureQueryApi withRepairModel(ArchitectureQueryApi existing,RepairChatModel model) {
+        if (existing.repairModel!=null) throw new IllegalArgumentException("REPAIR_MODEL_ALREADY_CONFIGURED");
+        var api=new ArchitectureQueryApi(existing);
+        api.repairModel=Objects.requireNonNull(model);
+        return api;
+    }
     private ArchitectureQueryApi(ArchitectureQueryApi existing) {
         this(existing.store,existing.reports,existing.limits,existing.factory);
         jobs=existing.jobs; connections=existing.connections; executions=existing.executions;
         semantics=existing.semantics; bridges=existing.bridges; evolution=existing.evolution;
         partitionReaders=existing.partitionReaders; repairWorker=existing.repairWorker; demoRepairCapture=existing.demoRepairCapture;
-        diagnosis=existing.diagnosis;
+        diagnosis=existing.diagnosis; repairModel=existing.repairModel;
+        repairStore=existing.repairStore; repairReanalysis=existing.repairReanalysis;
+        capturedRepairExecution=existing.capturedRepairExecution; reanalyzedGraphs=existing.reanalyzedGraphs;
+    }
+    /** Persist and replay syntax-checked captured proposals outside the demo fixture. */
+    public static ArchitectureQueryApi withRepairStore(ArchitectureQueryApi existing,RepairProposalStore store) {
+        var api=new ArchitectureQueryApi(existing);
+        api.repairStore=Objects.requireNonNull(store);
+        return api;
+    }
+    /** Attach passive multi-module candidate reanalysis without target code execution. */
+    public static ArchitectureQueryApi withRepairReanalysis(ArchitectureQueryApi existing,RepairReanalysis.Port port) {
+        if (existing.repairReanalysis!=null) throw new IllegalArgumentException("REPAIR_REANALYSIS_ALREADY_CONFIGURED");
+        var api=new ArchitectureQueryApi(existing);
+        api.repairReanalysis=Objects.requireNonNull(port);
+        return api;
+    }
+    /** Operator-configured isolated QEMU VM capture or capture directory for arbitrary multi-module repos. */
+    public static ArchitectureQueryApi withConfiguredCapturedRepairCapture(ArchitectureQueryApi existing) throws java.io.IOException {
+        var path=System.getProperty("evo.repair.capture");
+        var pin=System.getProperty("evo.repair.capture.pin");
+        var dir=System.getProperty("evo.repair.capture.dir");
+        if (path==null && pin==null && dir==null) return existing;
+        if (existing.capturedRepairExecution!=null) throw new IllegalArgumentException("CAPTURED_REPAIR_CAPTURE_ALREADY_CONFIGURED");
+        if (dir!=null && (path!=null || pin!=null)) throw new IllegalArgumentException("CAPTURED_REPAIR_CAPTURE_CONFIGURATION");
+        if (dir==null && (path==null || pin==null)) throw new IllegalArgumentException("CAPTURED_REPAIR_CAPTURE_CONFIGURATION");
+        var api=new ArchitectureQueryApi(existing);
+        api.capturedRepairExecution=dir!=null
+                ? new CapturedRepairExecution(java.nio.file.Path.of(dir))
+                : new CapturedRepairExecution(java.nio.file.Path.of(path),new ContentDigest(pin));
+        return api;
+    }
+    static ArchitectureQueryApi withCapturedRepairExecution(ArchitectureQueryApi existing,CapturedRepairExecution execution) {
+        if (existing.capturedRepairExecution!=null) throw new IllegalArgumentException("CAPTURED_REPAIR_CAPTURE_ALREADY_CONFIGURED");
+        var api=new ArchitectureQueryApi(existing);
+        api.capturedRepairExecution=Objects.requireNonNull(execution);
+        return api;
+    }
+    /** Opt in a general operator-configured Chat Completions model for structural finding diagnosis. */
+    public static ArchitectureQueryApi withConfiguredLiveDiagnosis(ArchitectureQueryApi existing) {
+        var endpoint=System.getProperty("evo.diagnosis.ai.endpoint");
+        var model=System.getProperty("evo.diagnosis.ai.model");
+        boolean remote=Boolean.getBoolean("evo.diagnosis.ai.allowRemote");
+        if (endpoint==null && model==null && !remote) return existing;
+        if (endpoint==null || model==null) throw new IllegalArgumentException("DIAGNOSIS_MODEL_CONFIGURATION");
+        return withLiveDiagnosis(existing,new ChatDiagnosisModel(java.net.URI.create(endpoint),model,System.getenv("EVO_DIAGNOSIS_AI_API_KEY"),remote));
+    }
+    static ArchitectureQueryApi withLiveDiagnosis(ArchitectureQueryApi existing,FindingDiagnosis.Model model) {
+        if (existing.diagnosis!=REPLAY_DIAGNOSIS) throw new IllegalArgumentException("DIAGNOSIS_MODEL_ALREADY_CONFIGURED");
+        var api=new ArchitectureQueryApi(existing);
+        api.diagnosis=new FindingDiagnosis(Objects.requireNonNull(model));
+        return api;
     }
     /** Local operator configuration outside all selected source and HTTP inputs. */
     public static ArchitectureQueryApi withConfiguredDemoRepairCapture(ArchitectureQueryApi existing) throws java.io.IOException {
@@ -255,8 +332,10 @@ public final class ArchitectureQueryApi {
         if(path.startsWith("/api/v1/bridges/"))return "POST";
         if(path.startsWith("/api/v2/executions/"))return "POST";
         if (path.equals("/api/v1/analysis/connections")) return "GET, POST";
+        if (path.startsWith("/api/v1/analysis/connections/")) return "DELETE, POST";
         if (path.equals("/api/v1/analysis/jobs")) return "GET, POST";
         if (path.equals("/api/v1/analysis/jobs/history") || path.startsWith("/api/v1/analysis/jobs/") && (path.endsWith("/cancel") || path.endsWith("/gaps") || path.endsWith("/input-diagnostics"))) return "POST";
+        if (path.startsWith("/api/v1/graphs/") && path.endsWith("/architecture-insights")) return "POST";
         return path.contains("/queries/") || path.split("/",-1).length == 8 ? "POST" : "GET";
     }
     private static String message(String code) {
@@ -267,6 +346,7 @@ public final class ArchitectureQueryApi {
             case "DIAGNOSIS_SCOPE_MISMATCH" -> "The selected context or evidence bundle no longer matches this finding.";
             case "DIAGNOSIS_INPUT_MISMATCH" -> "The diagnosis input changed. Run diagnosis again before requesting a proposal.";
             case "REPAIR_PROPOSAL_MISMATCH" -> "The proposal could not be reproduced for this finding and its pinned inputs.";
+            case "REPAIR_REANALYSIS_UNAVAILABLE" -> "Candidate reanalysis is not configured on this server.";
             case "NOT_FOUND" -> "The requested API operation is unavailable.";
             case "METHOD_NOT_ALLOWED" -> "This route does not support the requested HTTP method.";
             case "UNSUPPORTED_MEDIA_TYPE" -> "Use application/json with UTF-8 and no content encoding.";
@@ -297,6 +377,10 @@ public final class ArchitectureQueryApi {
             capabilities.put("readinessVersion",com.evolution.analysis.readiness.ReadinessPlan.SCHEMA);
             capabilities.put("acquisitionRoutes",List.of("/api/v2/acquisitions/history","/api/v2/acquisitions/{revision}","/api/v2/acquisitions/{revision}/readiness","/api/v2/acquisitions/{revision}/overview","/api/v2/analysis/jobs/{id}/resume"));
             if (jobs != null) capabilities.put("jobLimits",jobs.limits());
+            capabilities.put("analysisModes",List.of("FULL","FAST_ARCHITECTURE"));
+            capabilities.put("architectureInsightsEnabled",true);
+            capabilities.put("repairReanalysisEnabled",repairReanalysis != null);
+            capabilities.put("repairModelConfigured",repairModel != null);
             return capabilities;
         }
         String[] parts=path.split("/",-1);
@@ -307,6 +391,40 @@ public final class ArchitectureQueryApi {
             requireMethod(method,"GET"); requireEmpty(body);
             var manifest=store.manifest(graphId).orElseThrow(() -> new Failure(404,"GRAPH_NOT_FOUND"));
             return Map.of("graph",graphId,"snapshot",manifest.snapshot().value(),"contexts",manifest.contexts(),"reports",reports.forGraph(graphId));
+        }
+        if (parts.length==6 && parts[5].equals("architecture-insights")) {
+            requireMethod(method,"POST");
+            var input=decode(body,contentType);
+            QueryJson.object(input,"request","arguments");
+            var request=QueryJson.request(graphId,input.get("request"));
+            var args=input.containsKey("arguments") ? GraphJson.object(input.get("arguments")) : Map.<String,Object>of();
+            QueryJson.object(args,"report","topN");
+            int topN = 15;
+            if (args.containsKey("topN")) {
+                if (!(args.get("topN") instanceof java.math.BigDecimal bd)) throw new IllegalArgumentException("Invalid topN");
+                try { topN = bd.intValueExact(); } catch (ArithmeticException invalid) { throw new IllegalArgumentException("Invalid topN"); }
+                if (topN < 1 || topN > 50) throw new IllegalArgumentException("Invalid topN range");
+            }
+            var graphLoaded = load(graphId);
+            Optional<PublishedReports.Report> published = Optional.empty();
+            if (args.containsKey("report")) {
+                var reportId = new ContentDigest(QueryJson.text(args,"report"));
+                published = Optional.of(reports.get(reportId)
+                        .filter(r -> r.evaluation().graph().equals(graphId) && r.evaluation().context().equals(request.context()))
+                        .orElseThrow(() -> new Failure(404,"REPORT_NOT_FOUND")));
+            } else {
+                for (var reportDigest : reports.forGraph(graphId)) {
+                    var candidate = reports.get(reportDigest);
+                    if (candidate.isPresent() && candidate.orElseThrow().evaluation().context().equals(request.context())) {
+                        published = candidate;
+                        break;
+                    }
+                }
+            }
+            long deadline=System.nanoTime()+limits.queryTimeoutMillis()*1_000_000;
+            var guard=ArchitectureQueryService.operationalGuard(cancelled,deadline,8_000_000);
+            var service=factory.apply(graphLoaded,guard);
+            return ArchitectureInsightsAdvisor.analyze(service,request,published,topN);
         }
         if (parts.length==7 && parts[5].equals("queries") && OPERATIONS.contains(parts[6])) {
             requireMethod(method,"POST");
@@ -409,7 +527,11 @@ public final class ArchitectureQueryApi {
         if (hasPage && !paged) throw new IllegalArgumentException("Page not applicable");
         if (op.equals("repair-verification")) {
             QueryJson.object(args,"identity","bundle","context","diagnosisInput","proposal","candidateReport","controlReport");
+        } else if (op.equals("repair-reanalysis")) {
+            QueryJson.object(args,"identity","bundle","context","diagnosisInput","proposal","includeControl");
         } else if (op.equals("repair-proposal")) {
+            QueryJson.object(args,"identity","bundle","context","diagnosisInput","strategy","recipe","modelInput");
+        } else if (op.equals("repair-options")) {
             QueryJson.object(args,"identity","bundle","context","diagnosisInput");
         } else if (op.equals("diagnosis")) {
             QueryJson.object(args,"identity","bundle","context");
@@ -436,7 +558,7 @@ public final class ArchitectureQueryApi {
                 yield op.equals("finding") ? finding : finding.bundle();
             }
             case "policy-metrics" -> report.metrics().orElseThrow(() -> new Failure(404,"REPORT_ARTIFACT_UNAVAILABLE"));
-            case "diagnosis","repair-proposal","repair-verification" -> {
+            case "diagnosis","repair-options","repair-proposal","repair-reanalysis","repair-verification" -> {
                 var target = new ContentDigest(QueryJson.text(args,"identity"));
                 var bundle = new ContentDigest(QueryJson.text(args,"bundle"));
                 var context = QueryJson.text(args,"context");
@@ -451,15 +573,65 @@ public final class ArchitectureQueryApi {
                 var replay = REPLAY_DIAGNOSIS.diagnose(id,finding,service);
                 if (replay.input().isPresent() && !replay.input().equals(input))
                     throw new Failure(409,"DIAGNOSIS_INPUT_MISMATCH");
+                var captured=new CapturedRepair(repairModel);
+                if (op.equals("repair-options")) yield captured.options(replay,service.graph(),service::assessmentStopReason);
+                if (op.equals("repair-proposal") && args.containsKey("strategy")) {
+                    var strategy=CapturedRepair.Strategy.valueOf(QueryJson.text(args,"strategy"));
+                    Optional<JavaRepairRecipes.Recipe> recipe=Optional.empty();
+                    Optional<ContentDigest> modelInput=Optional.empty();
+                    if (strategy==CapturedRepair.Strategy.RECIPE) {
+                        if (args.containsKey("modelInput")) throw new IllegalArgumentException("Model input is only valid for AI");
+                        recipe=Optional.of(JavaRepairRecipes.find(QueryJson.text(args,"recipe"))
+                                .orElseThrow(() -> new IllegalArgumentException("Unknown repair recipe")));
+                    } else {
+                        if (args.containsKey("recipe")) throw new IllegalArgumentException("Recipe is only valid for RECIPE");
+                        modelInput=Optional.of(new ContentDigest(QueryJson.text(args,"modelInput")));
+                    }
+                    var outcome = captured.propose(replay,service.graph(),strategy,recipe,modelInput,service::assessmentStopReason);
+                    if ("PROPOSED".equals(outcome.status()) && outcome.proposal().isPresent()) {
+                        repairStore.put(outcome.proposal().orElseThrow());
+                    }
+                    yield outcome;
+                }
+                if (args.containsKey("recipe") || args.containsKey("modelInput")) throw new IllegalArgumentException("Repair strategy required");
                 var proposed = REPAIR.prepare(replay,finding,service::assessmentStopReason);
                 if (op.equals("repair-proposal")) yield proposed;
                 var proposal = new ContentDigest(QueryJson.text(args,"proposal"));
-                var pinned = proposed.proposal().filter(p -> p.identity().equals(proposal))
-                        .orElseThrow(() -> new Failure(409,"REPAIR_PROPOSAL_MISMATCH"));
+                if (op.equals("repair-reanalysis")) {
+                    if (repairReanalysis == null) throw new Failure(501,"REPAIR_REANALYSIS_UNAVAILABLE");
+                    Object rawControl = args.get("includeControl");
+                    if (rawControl != null && !(rawControl instanceof Boolean)) throw new IllegalArgumentException("Invalid includeControl flag");
+                    boolean includeControl = Boolean.TRUE.equals(rawControl);
+                    var stored = repairStore.get(proposal)
+                            .filter(p -> p.candidate().baseline().finding().equals(target)
+                                    && p.candidate().baseline().bundle().equals(bundle)
+                                    && p.candidate().baseline().context().equals(context)
+                                    && p.candidate().diagnosisInput().equals(input.orElseThrow()))
+                            .orElseThrow(() -> new Failure(409,"REPAIR_PROPOSAL_MISMATCH"));
+                    var reanalyzed = repairReanalysis.reanalyze(stored,service.graph(),report,includeControl,() -> service.assessmentStopReason()!=StopReason.NONE);
+                    reanalyzed.candidateGraph().ifPresent(g -> reanalyzedGraphs.put(reanalyzed.candidateSnapshot(),g));
+                    if (reanalyzed.controlSnapshot().isPresent() && reanalyzed.controlGraph().isPresent()) {
+                        reanalyzedGraphs.put(reanalyzed.controlSnapshot().orElseThrow(),reanalyzed.controlGraph().orElseThrow());
+                    }
+                    yield reanalyzed;
+                }
                 Optional<ContentDigest> candidate = Optional.empty(), control = Optional.empty();
                 if (args.containsKey("candidateReport")) candidate = Optional.of(new ContentDigest(QueryJson.text(args,"candidateReport")));
                 if (args.containsKey("controlReport")) control = Optional.of(new ContentDigest(QueryJson.text(args,"controlReport")));
-                yield new RepairVerification(repairWorker,demoRepairCapture).verify(pinned,service.graph(),report,candidate,control,store,reports,
+                var demoPinned = proposed.proposal().filter(p -> p.identity().equals(proposal));
+                if (demoPinned.isPresent()) {
+                    yield new RepairVerification(repairWorker,demoRepairCapture).verify(demoPinned.orElseThrow(),service.graph(),report,candidate,control,store,reports,
+                            () -> service.assessmentStopReason()!=StopReason.NONE);
+                }
+                var capturedPinned = repairStore.get(proposal)
+                        .filter(p -> p.candidate().baseline().finding().equals(target)
+                                && p.candidate().baseline().bundle().equals(bundle)
+                                && p.candidate().baseline().context().equals(context)
+                                && p.candidate().diagnosisInput().equals(input.orElseThrow()))
+                        .orElseThrow(() -> new Failure(409,"REPAIR_PROPOSAL_MISMATCH"));
+                java.util.Map<com.evolution.analysis.contract.identity.SnapshotIdentity, ContentDigest> snapshotGraphs;
+                synchronized (reanalyzedGraphs) { snapshotGraphs = java.util.Map.copyOf(reanalyzedGraphs); }
+                yield new CapturedRepairVerification(repairWorker,capturedRepairExecution,snapshotGraphs).verify(capturedPinned,service.graph(),report,candidate,control,store,reports,
                         () -> service.assessmentStopReason()!=StopReason.NONE);
             }
             case "replay" -> {

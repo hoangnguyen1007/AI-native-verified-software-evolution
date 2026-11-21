@@ -94,7 +94,7 @@ public final class JavaPolyglotFrontend {
         var census=tables.write(SemanticTables.Kind.CENSUS,ordered.values().stream().map(site->obligation(scope,site,prefixes)).iterator(),cancelled);
         // Entire M1 request meaning is retained; path-based binary inputs are represented by exact ordered origin slots.
         var resolution=put(Map.of("schema","java-polyglot-resolution:m8.4-v1","manifest",input.manifest(),"catalog",FrontendRequest.CATALOG,"plan",input.plan(),"origins",input.originClasspath(),"reactorSources",input.reactorSources().stream().map(r->Map.of("order",r.order(),"documents",r.sources().stream().map(SourceInput::document).toList())).toList()),cancelled);
-        var tool=CanonicalJson.sha256(Map.of("provider",PROVIDER,"legacyProvider",JavaParserFrontend.PROVIDER,"catalog",FrontendRequest.CATALOG,"components",List.of(component(JavaPolyglotFrontend.class),component(JavaParser.class),component(com.github.javaparser.symbolsolver.JavaSymbolSolver.class))));
+        var tool=toolDigest();
         var request=new LanguageSemanticRequest(EvidenceContext.forAnalysis(input.manifest()),context.inventory(),context.root(),input.module().value(),context.sourceSet(),context.variant(),"java",Integer.toString(input.plan().syntaxLevel().orElseThrow()),documentTable,census,resolution,PROVIDER,tool,context.policy(),context.workPolicy());
         return new Prepared(input,request,List.copyOf(ordered.values()),prefixes);
     }
@@ -172,6 +172,23 @@ public final class JavaPolyglotFrontend {
     private static boolean declaration(Node node){return node instanceof TypeDeclaration<?>||node instanceof CallableDeclaration<?>||node instanceof CompactConstructorDeclaration||node instanceof AnnotationMemberDeclaration||node instanceof Parameter||node instanceof TypeParameter||node instanceof EnumConstantDeclaration||node instanceof InitializerDeclaration||node instanceof LambdaExpr||node instanceof VariableDeclarator v&&v.getParentNode().filter(FieldDeclaration.class::isInstance).isPresent()||node instanceof ObjectCreationExpr o&&o.getAnonymousClassBody().isPresent();}
     private static String ownerAnchor(Node node){for(Node parent=node.getParentNode().orElse(null);parent!=null;parent=parent.getParentNode().orElse(null))if(declaration(parent)||parent instanceof VariableDeclarator)return parent.getClass().getSimpleName()+parent.getRange().map(Object::toString).orElse("");return "document";}
     private static ParserConfiguration.LanguageLevel level(int version){String value=version<5?"JAVA_1_"+version:"JAVA_"+version;try{return ParserConfiguration.LanguageLevel.valueOf(value);}catch(IllegalArgumentException unsupported){throw new FrontendInputException("frontend.syntax-level","No syntax census provider for selected Java version");}}
+    private static volatile ContentDigest cachedToolDigest;
+
+    private static ContentDigest toolDigest() throws IOException {
+        ContentDigest existing = cachedToolDigest;
+        if (existing != null) return existing;
+        ContentDigest computed = CanonicalJson.sha256(Map.of(
+                "provider", PROVIDER,
+                "legacyProvider", JavaParserFrontend.PROVIDER,
+                "catalog", FrontendRequest.CATALOG,
+                "components", List.of(
+                        component(JavaPolyglotFrontend.class),
+                        component(JavaParser.class),
+                        component(com.github.javaparser.symbolsolver.JavaSymbolSolver.class))));
+        cachedToolDigest = computed;
+        return computed;
+    }
+
     private static ContentDigest component(Class<?> type)throws IOException{
         try{
             Path location=Path.of(type.getProtectionDomain().getCodeSource().getLocation().toURI());

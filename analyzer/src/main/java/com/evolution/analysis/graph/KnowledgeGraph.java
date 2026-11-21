@@ -141,16 +141,47 @@ public final class KnowledgeGraph {
     }
     static String key(String context,String identity) {return context+"|"+identity;}
     static void requireIdentity(String identity) {
-        if(identity==null || !IDENTITY.matcher(identity).matches())throw new IllegalArgumentException("Invalid graph canonical identity");
+        if(!isValidIdentity(identity))throw new IllegalArgumentException("Invalid graph canonical identity");
+    }
+    private static boolean isValidIdentity(String s) {
+        if (s == null || s.length() < 71) return false;
+        int shaOffset = s.length() - 71;
+        if (!s.startsWith("sha256:", shaOffset)) return false;
+        for (int i = shaOffset + 7; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) return false;
+        }
+        if (shaOffset == 0) return true;
+        if (shaOffset < 2 || s.charAt(shaOffset - 1) != ':') return false;
+        char first = s.charAt(0);
+        if (first < 'a' || first > 'z') return false;
+        for (int i = 1; i < shaOffset - 1; i++) {
+            char c = s.charAt(i);
+            if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '.' || c == '-')) return false;
+        }
+        return true;
     }
     private static void checkEvidence(Set<ContentDigest> available,List<ContentDigest> references) {
+        if (references.size() == 1) {
+            if (!available.contains(references.getFirst())) throw new IllegalArgumentException("Missing graph evidence payload");
+            return;
+        }
         if(!available.containsAll(references))throw new IllegalArgumentException("Missing graph evidence payload");
     }
     private static Map<String,List<Edge>> freeze(Map<String,List<Edge>> map) {
         var result=new TreeMap<String,List<Edge>>();map.forEach((k,v)->result.put(k,List.copyOf(v)));return Collections.unmodifiableMap(result);
     }
     static <T> List<T> sorted(Collection<T> values,Function<T,String> key) {
-        Objects.requireNonNull(values);var sorted=new TreeMap<String,T>();
+        Objects.requireNonNull(values);
+        int size = values.size();
+        if (size == 0) return List.of();
+        if (size == 1) {
+            T single = values instanceof List<T> list ? list.getFirst() : values.iterator().next();
+            Objects.requireNonNull(single);
+            Objects.requireNonNull(key.apply(single));
+            return List.of(single);
+        }
+        var sorted=new TreeMap<String,T>();
         for(T value:values) {Objects.requireNonNull(value);String id=key.apply(value);var previous=sorted.putIfAbsent(id,value);
             if(previous!=null&&!previous.equals(value))throw new IllegalArgumentException("Conflicting graph identity");}
         return List.copyOf(sorted.values());

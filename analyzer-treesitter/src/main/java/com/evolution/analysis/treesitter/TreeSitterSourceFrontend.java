@@ -30,10 +30,56 @@ public final class TreeSitterSourceFrontend {
     public record Fact(String category,String nodeKind,String name,String written,SourceCoordinates.Range span,String owner,boolean recovered,Map<String,String> attributes) {
         public Fact {attributes=Map.copyOf(attributes);}
         public Fact(String category,String nodeKind,String name,String written,SourceCoordinates.Range span,String owner,boolean recovered){this(category,nodeKind,name,written,span,owner,recovered,Map.of());}
+        public Map<String, Object> toMap() {
+            var attrs = new TreeMap<String, Object>(attributes);
+            var spanMap = new TreeMap<String, Object>();
+            spanMap.put("end", java.math.BigDecimal.valueOf(span.end()));
+            spanMap.put("endColumn", java.math.BigDecimal.valueOf(span.endColumn()));
+            spanMap.put("endLine", java.math.BigDecimal.valueOf(span.endLine()));
+            spanMap.put("start", java.math.BigDecimal.valueOf(span.start()));
+            spanMap.put("startColumn", java.math.BigDecimal.valueOf(span.startColumn()));
+            spanMap.put("startLine", java.math.BigDecimal.valueOf(span.startLine()));
+            var map = new TreeMap<String, Object>();
+            map.put("attributes", attrs);
+            map.put("category", category);
+            map.put("name", name);
+            map.put("nodeKind", nodeKind);
+            map.put("owner", owner);
+            map.put("recovered", recovered);
+            map.put("span", spanMap);
+            map.put("written", written);
+            return map;
+        }
     }
-    public record Summary(long nodes,long facts,long errors,String grammar,String toolIdentity) {}
+    public record Summary(long nodes,long facts,long errors,String grammar,String toolIdentity) {
+        public Map<String, Object> toMap() {
+            var map = new TreeMap<String, Object>();
+            map.put("errors", java.math.BigDecimal.valueOf(errors));
+            map.put("facts", java.math.BigDecimal.valueOf(facts));
+            map.put("grammar", grammar);
+            map.put("nodes", java.math.BigDecimal.valueOf(nodes));
+            map.put("toolIdentity", toolIdentity);
+            return map;
+        }
+    }
     @FunctionalInterface public interface Sink {void accept(Fact fact)throws IOException;}
+    private static final Map<String, java.lang.reflect.Constructor<?>> GRAMMAR_CTORS = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final java.util.regex.Pattern PYTHON_HTTP_CLIENT = java.util.regex.Pattern.compile("(?:requests|httpx)\\.(?:get|post|put|patch|delete|head|options)");
+    private static final java.util.regex.Pattern CSHARP_HTTP_CLIENT = java.util.regex.Pattern.compile("[A-Za-z_][A-Za-z0-9_.]*\\.(?:GetAsync|PostAsync|PutAsync|PatchAsync|DeleteAsync|GetStringAsync|GetByteArrayAsync)");
+    private static final java.util.regex.Pattern JS_HTTP_CLIENT = java.util.regex.Pattern.compile("(?:axios|http|this\\.http)\\.(?:get|post|put|patch|delete|head|options)");
+    private static final java.util.regex.Pattern HTTP_METHOD_PREFIX = java.util.regex.Pattern.compile("^(?:Map|Http)");
+    private static final java.util.regex.Pattern HTTP_METHOD_SUFFIX = java.util.regex.Pattern.compile("Async$");
+
+    public Summary analyze(String language,byte[] bytes,Sink sink,BooleanSupplier cancelled)throws IOException {
+        return parse(language,bytes,sink,cancelled,false);
+    }
+    public Summary analyze(String language,byte[] bytes,Sink sink,BooleanSupplier cancelled,boolean fastArchitecture)throws IOException {
+        return parse(language,bytes,sink,cancelled,fastArchitecture);
+    }
     public Summary parse(String language,byte[] bytes,Sink sink,BooleanSupplier cancelled)throws IOException {
+        return parse(language,bytes,sink,cancelled,false);
+    }
+    public Summary parse(String language,byte[] bytes,Sink sink,BooleanSupplier cancelled,boolean fastArchitecture)throws IOException {
         if(language.equals("protobuf"))return ProtobufSourceFrontend.parse(bytes,sink,cancelled);
         if(System.getProperty("tree-sitter-lib")!=null)throw new IOException("SYNTAX_EXTERNAL_LIBRARY_OVERRIDE_REJECTED");
         var grammar=GRAMMARS.get(language);if(grammar==null)throw new IOException("SYNTAX_GRAMMAR_UNAVAILABLE");
@@ -45,7 +91,9 @@ public final class TreeSitterSourceFrontend {
         byte[] utf8 = encoding.equals("UTF-8") ? bytes : positions.text().getBytes(StandardCharsets.UTF_8);
         String tool=toolIdentity(grammar);long nodes=0,facts=0,errors=0;
         try(var parser=new TSParser()) {
-            var binding=(TSLanguage)Class.forName(grammar.binding()).getConstructor().newInstance();
+            var ctor=GRAMMAR_CTORS.get(grammar.binding());
+            if(ctor==null){ctor=Class.forName(grammar.binding()).getConstructor();GRAMMAR_CTORS.put(grammar.binding(),ctor);}
+            var binding=(TSLanguage)ctor.newInstance();
             if(!parser.setLanguage(binding))throw new IOException("SYNTAX_GRAMMAR_ABI_MISMATCH");
             try(var tree=parser.parseWithOptions(new byte[8192],null,(buffer,offset,point)->{
                 if(offset>=utf8.length)return 0;int count=Math.min(buffer.length,utf8.length-offset);System.arraycopy(utf8,offset,buffer,0,count);return count;
@@ -53,6 +101,7 @@ public final class TreeSitterSourceFrontend {
                 check(cancelled);var root=tree.getRootNode();boolean recovered=root.hasError();var pending=new ArrayDeque<Frame>();pending.push(new Frame(root,""));
                 while(!pending.isEmpty()) {
                     check(cancelled);var frame=pending.pop();var node=frame.node();nodes++;String kind=node.getType(),category=category(kind);String owner=frame.owner();
+                    if(fastArchitecture&&category.equals("TYPE_SYNTAX"))category="";
                     if(language.equals("dart")&&kind.equals("selector")&&node.getNamedChildCount()>0&&node.getNamedChild(0).getType().equals("argument_part"))category="CALL";
                     if(language.equals("python")&&kind.equals("argument_list")&&!node.getParent().isNull()&&node.getParent().getType().equals("class_definition"))category="HERITAGE";
                     if(node.isError()||node.isMissing()){errors++;category="ERROR";}
@@ -85,15 +134,15 @@ public final class TreeSitterSourceFrontend {
         return new Summary(nodes,facts,errors,grammar.library()+":"+grammar.version(),tool);
     }
     private static boolean httpClient(String language,String written) {
-        if(language.equals("python"))return written.matches("(?:requests|httpx)\\.(?:get|post|put|patch|delete|head|options)");
+        if(language.equals("python"))return PYTHON_HTTP_CLIENT.matcher(written).matches();
         if(language.equals("go"))return Set.of("http.Get","http.Post","http.Head").contains(written);
-        if(language.equals("csharp"))return written.matches("[A-Za-z_][A-Za-z0-9_.]*\\.(?:GetAsync|PostAsync|PutAsync|PatchAsync|DeleteAsync|GetStringAsync|GetByteArrayAsync)");
+        if(language.equals("csharp"))return CSHARP_HTTP_CLIENT.matcher(written).matches();
         if(!Set.of("javascript","typescript","tsx").contains(language))return false;
         return Set.of("fetch","window.fetch","globalThis.fetch").contains(written)
-                ||written.matches("(?:axios|http|this\\.http)\\.(?:get|post|put|patch|delete|head|options)");
+                ||JS_HTTP_CLIENT.matcher(written).matches();
     }
     private static String httpMethod(String tail) {
-        String method=tail.replaceFirst("^(?:Map|Http)","").replaceFirst("Async$","").toUpperCase(Locale.ROOT);
+        String method=HTTP_METHOD_SUFFIX.matcher(HTTP_METHOD_PREFIX.matcher(tail).replaceFirst("")).replaceFirst("").toUpperCase(Locale.ROOT);
         if(Set.of("GETSTRING","GETBYTEARRAY").contains(method))method="GET";
         return Set.of("GET","POST","PUT","PATCH","DELETE","HEAD","OPTIONS","TRACE").contains(method)?method:"UNKNOWN";
     }

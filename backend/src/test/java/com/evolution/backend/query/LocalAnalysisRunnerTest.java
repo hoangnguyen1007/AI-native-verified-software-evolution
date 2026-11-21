@@ -11,6 +11,7 @@ import com.evolution.backend.analysis.*;
 import com.sun.net.httpserver.HttpServer;
 import java.math.BigDecimal;
 import java.net.InetSocketAddress;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.util.*;
@@ -139,6 +140,10 @@ class LocalAnalysisRunnerTest {
             checkLiveDiagnosis(api,base+"/diagnosis",request,GraphJson.string(diagnosis.get("input")),citations);
             var proposalArgs = new TreeMap<String,String>(args);
             proposalArgs.put("diagnosisInput",GraphJson.string(diagnosis.get("input")));
+            var options = AnalysisJobApiTest.call(api,"POST",base+"/repair-options",CanonicalJson.write(Map.of("arguments",proposalArgs)));
+            assertEquals(200,options.status(),"A real captured repository can discover repair strategies");
+            checkCapturedRepair(api,base,proposalArgs);
+            checkCapturedAi(api,base,proposalArgs);
             var proposal = AnalysisJobApiTest.call(api,"POST",base+"/repair-proposal",CanonicalJson.write(Map.of("arguments",proposalArgs)));
             assertEquals(200,proposal.status());
             assertEquals("WITHHELD",AnalysisJobApiTest.data(proposal).get("status"),"A valid diagnosis outside the approved repair fixture cannot produce a patch");
@@ -176,6 +181,106 @@ class LocalAnalysisRunnerTest {
             assertEquals(Optional.of(FindingDiagnosis.Reason.INVALID_MODEL_CITATIONS),rejected.reason());
             assertTrue(rejected.explanation().isEmpty()); assertTrue(rejected.citations().isEmpty());
         }
+    }
+    private void checkCapturedRepair(ArchitectureQueryApi api,String base,Map<String,String> pinned) throws Exception {
+        var args = new TreeMap<>(pinned);
+        args.put("strategy","RECIPE");
+        args.put("recipe","java.remove-unused-private-field");
+        var result = AnalysisJobApiTest.call(api,"POST",base+"/repair-proposal",CanonicalJson.write(Map.of("arguments",args)));
+        assertEquals(200,result.status());
+        var data = AnalysisJobApiTest.data(result);
+        assertEquals("PROPOSED",data.get("status"),() -> CanonicalJson.write(data));
+        var candidate = GraphJson.object(GraphJson.object(data.get("proposal")).get("candidate"));
+        assertEquals("UNVERIFIED",candidate.get("verification"));
+        var patch = GraphJson.string(candidate.get("patch"));
+        var source = directory.resolve("source/src/main/java/api/Controller.java");
+        var workspace = Files.createDirectory(directory.resolve("patch-checkout"));
+        var target = workspace.resolve("src/main/java/api/Controller.java");
+        Files.createDirectories(target.getParent());
+        Files.copy(source,target);
+        var patchFile = Files.writeString(directory.resolve("repair.patch"),patch);
+        var git = new ProcessBuilder("git","-c","core.autocrlf=false","apply",patchFile.toString()).directory(workspace.toFile()).redirectErrorStream(true).start();
+        assertTrue(git.waitFor(10,TimeUnit.SECONDS));
+        assertEquals(0,git.exitValue(),() -> new String(readGitOutput(git),StandardCharsets.UTF_8));
+        assertEquals("package api; public class Controller {   }\n",Files.readString(target));
+        assertEquals("package api; public class Controller { private data.Repository repository;  }\n",Files.readString(source));
+        var edit = GraphJson.object(GraphJson.array(candidate.get("edits")).getFirst());
+        assertEquals(ContentDigest.sha256(Files.readAllBytes(target)).value(),edit.get("after"));
+        assertArrayEquals(result.body(),AnalysisJobApiTest.call(api,"POST",base+"/repair-proposal",CanonicalJson.write(Map.of("arguments",args))).body());
+    }
+    private static byte[] readGitOutput(Process git) {
+        try { return git.getInputStream().readAllBytes(); } catch (java.io.IOException failure) { throw new java.io.UncheckedIOException(failure); }
+    }
+    private static void checkCapturedAi(ArchitectureQueryApi api,String base,Map<String,String> pinned) throws Exception {
+        var model=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0);
+        var requests=new AtomicInteger();
+        var reply=new AtomicReference<String>();
+        var requestBody=new AtomicReference<String>();
+        model.createContext("/v1/chat/completions",exchange -> {
+            try (exchange) {
+                requests.incrementAndGet();
+                requestBody.set(new String(exchange.getRequestBody().readAllBytes(),StandardCharsets.UTF_8));
+                byte[] body=CanonicalJson.write(Map.of("model","captured-repair-test","choices",List.of(
+                        Map.of("finish_reason","stop","message",Map.of("role","assistant","content",reply.get())))))
+                        .getBytes(StandardCharsets.UTF_8);
+                exchange.sendResponseHeaders(200,body.length);
+                exchange.getResponseBody().write(body);
+            }
+        });
+        model.start();
+        try {
+            var configured=ArchitectureQueryApi.withRepairModel(api,new RepairChatModel(
+                    URI.create("http://127.0.0.1:"+model.getAddress().getPort()+"/v1/chat/completions"),"captured-repair-test",null,false));
+            var catalog=AnalysisJobApiTest.data(AnalysisJobApiTest.call(configured,"POST",base+"/repair-options",
+                    CanonicalJson.write(Map.of("arguments",pinned))));
+            assertEquals(0,requests.get(),"Discovery never transmits source");
+            assertEquals(5,GraphJson.array(catalog.get("recipes")).size());
+            var ai=GraphJson.object(catalog.get("ai"));
+            var files=GraphJson.array(ai.get("files"));
+            int controller=0; String before="";
+            for (int i=0;i<files.size();i++) {
+                var file=GraphJson.object(files.get(i));
+                if ("src/main/java/api/Controller.java".equals(file.get("path"))) {
+                    controller=i+1; before=GraphJson.string(file.get("digest"));
+                }
+            }
+            assertTrue(controller>0);
+            var args=new TreeMap<>(pinned);
+            args.put("strategy","AI");
+            args.put("modelInput",pinned.get("diagnosisInput"));
+            var stale=AnalysisJobApiTest.data(AnalysisJobApiTest.call(configured,"POST",base+"/repair-proposal",
+                    CanonicalJson.write(Map.of("arguments",args))));
+            assertEquals("MODEL_INPUT_MISMATCH",stale.get("reason"));
+            assertEquals(0,requests.get(),"A stale approval must not transmit source");
+            args.put("modelInput",GraphJson.string(ai.get("input")));
+            var body=CanonicalJson.write(Map.of("arguments",args));
+            String old="private data.Repository repository;";
+            reply.set(CanonicalJson.write(Map.of("edits",List.of(Map.of("file",controller,"before",before,
+                    "oldText",old,"newText","private void broken( {")))));
+            var invalid=AnalysisJobApiTest.data(AnalysisJobApiTest.call(configured,"POST",base+"/repair-proposal",body));
+            assertEquals("CANDIDATE_SYNTAX_REJECTED",invalid.get("reason"));
+            assertNull(invalid.get("proposal"),"Even a schema-valid model reply must not produce a malformed patch");
+            var checks=GraphJson.array(invalid.get("syntax"));
+            assertFalse(GraphJson.array(GraphJson.object(GraphJson.object(checks.getFirst()).get("result")).get("diagnostics")).isEmpty());
+            assertTrue(requestBody.get().contains(old));
+            assertFalse(requestBody.get().contains("example.test/backend-fixture"),"Never send repository URLs");
+
+            reply.set(CanonicalJson.write(Map.of("edits",List.of(Map.of("file",controller,"before",pinned.get("diagnosisInput"),
+                    "oldText",old,"newText","")))));
+            var foreign=AnalysisJobApiTest.data(AnalysisJobApiTest.call(configured,"POST",base+"/repair-proposal",body));
+            assertEquals("INVALID_MODEL_OUTPUT",foreign.get("reason"));
+            assertNull(foreign.get("proposal"));
+
+            reply.set(CanonicalJson.write(Map.of("edits",List.of(Map.of("file",controller,"before",before,"oldText",old,"newText","")))));
+            var proposed=AnalysisJobApiTest.data(AnalysisJobApiTest.call(configured,"POST",base+"/repair-proposal",body));
+            assertEquals("PROPOSED",proposed.get("status"),() -> CanonicalJson.write(proposed));
+            var patch=GraphJson.object(GraphJson.object(proposed.get("proposal")).get("candidate"));
+            assertEquals("UNVERIFIED",patch.get("verification"));
+            assertEquals("AI",patch.get("strategy"));
+            assertEquals(ContentDigest.sha256Utf8(reply.get()).value(),patch.get("modelResponse"));
+            assertEquals(ContentDigest.sha256Utf8(GraphJson.string(patch.get("patch"))).value(),patch.get("patchDigest"));
+            assertEquals(3,requests.get());
+        } finally { model.stop(0); }
     }
     private static void checkLiveDiagnosis(ArchitectureQueryApi api,String route,String request,String input,List<Object> citations) throws Exception {
         var server=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0);

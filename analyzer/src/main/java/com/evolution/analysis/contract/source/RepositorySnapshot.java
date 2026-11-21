@@ -20,25 +20,49 @@ public record RepositorySnapshot(
         List<SourceDocument> documents,
         ContentDigest contentDigest) {
 
+    private static final ThreadLocal<ContentDigest> TRUSTED_FILES_DIGEST = new ThreadLocal<>();
+
     public RepositorySnapshot {
         ContractChecks.notNull(identity, "snapshot identity");
         ContractChecks.notNull(repository, "repository");
         revision = ContractChecks.notNull(revision, "revision")
                 .map(value -> ContractChecks.text(value, "revision"));
-        files = ContractChecks.sortedDistinct(
-                files, Comparator.naturalOrder(), "snapshot files");
+        boolean trustedFiles = TRUSTED_FILES_DIGEST.get() == contentDigest;
+        if (!trustedFiles) {
+            files = ContractChecks.sortedDistinct(
+                    files, Comparator.naturalOrder(), "snapshot files");
+        }
         documents = ContractChecks.sortedDistinct(
                 documents, Comparator.naturalOrder(), "snapshot documents");
         ContractChecks.notNull(contentDigest, "snapshot content digest");
         validateDocumentRepositories(repository, documents);
         validateSourceInventory(files, documents);
-        ContentDigest expectedContent = digestFiles(files);
-        if (!contentDigest.equals(expectedContent)) {
-            throw new IllegalArgumentException("snapshot content digest does not match file inventory");
+        if (!trustedFiles) {
+            ContentDigest expectedContent = digestFiles(files);
+            if (!contentDigest.equals(expectedContent)) {
+                throw new IllegalArgumentException("snapshot content digest does not match file inventory");
+            }
+            SnapshotIdentity expectedIdentity = SnapshotIdentity.from(repository, contentDigest);
+            if (!identity.equals(expectedIdentity)) {
+                throw new IllegalArgumentException("snapshot identity does not match content inputs");
+            }
         }
-        SnapshotIdentity expectedIdentity = SnapshotIdentity.from(repository, contentDigest);
-        if (!identity.equals(expectedIdentity)) {
-            throw new IllegalArgumentException("snapshot identity does not match content inputs");
+    }
+
+    /** Rebind documents onto an already verified file inventory without re-sorting or re-hashing SnapshotFiles. */
+    public RepositorySnapshot withDocuments(List<SourceDocument> updatedDocuments) {
+        TRUSTED_FILES_DIGEST.set(this.contentDigest);
+        try {
+            return new RepositorySnapshot(
+                    this.identity,
+                    this.repository,
+                    this.revision,
+                    this.dirty,
+                    this.files,
+                    updatedDocuments,
+                    this.contentDigest);
+        } finally {
+            TRUSTED_FILES_DIGEST.remove();
         }
     }
 
@@ -50,19 +74,21 @@ public record RepositorySnapshot(
             List<SourceDocument> documents) {
         List<SnapshotFile> sortedFiles = ContractChecks.sortedDistinct(
                 files, Comparator.naturalOrder(), "snapshot files");
-        List<SourceDocument> sorted = ContractChecks.sortedDistinct(
-                documents, Comparator.naturalOrder(), "snapshot documents");
-        validateDocumentRepositories(repository, sorted);
-        validateSourceInventory(sortedFiles, sorted);
         ContentDigest contentDigest = digestFiles(sortedFiles);
-        return new RepositorySnapshot(
-                SnapshotIdentity.from(repository, contentDigest),
-                repository,
-                revision,
-                dirty,
-                sortedFiles,
-                sorted,
-                contentDigest);
+        SnapshotIdentity id = SnapshotIdentity.from(repository, contentDigest);
+        TRUSTED_FILES_DIGEST.set(contentDigest);
+        try {
+            return new RepositorySnapshot(
+                    id,
+                    repository,
+                    revision,
+                    dirty,
+                    sortedFiles,
+                    documents,
+                    contentDigest);
+        } finally {
+            TRUSTED_FILES_DIGEST.remove();
+        }
     }
 
     private static void validateDocumentRepositories(

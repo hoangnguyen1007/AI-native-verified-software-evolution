@@ -420,18 +420,8 @@ final class LombokExtraction {
         });
     }
 
-    @SuppressWarnings("unchecked")
     private static void cacheResolvedType(Expression node,ResolvedType resolvedType) {
-        try {
-            var probe=new BooleanLiteralExpr(true);
-            node.getParentNode().ifPresent(probe::setParentNode);
-            probe.calculateResolvedType();
-            for(var key:new ArrayList<>(probe.getDataKeys())) {
-                if(key.getClass().getEnclosingClass()==com.github.javaparser.symbolsolver.javaparsermodel.JavaParserFacade.class) {
-                    node.setData((DataKey<ResolvedType>)key,resolvedType);
-                }
-            }
-        }catch(RuntimeException ignored){}
+        SwitchAndPatternInference.cacheResolvedType(node, resolvedType);
     }
 
     private Optional<ResolvedType> inferredReturnType(MethodCallExpr call) {

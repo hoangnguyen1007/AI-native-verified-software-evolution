@@ -19,9 +19,7 @@ public final class SpringSourceEvidence {
         if(Set.of(FrontendResult.State.INVALID_INPUT,FrontendResult.State.FAILED,FrontendResult.State.CANCELED).contains(frontend.state()))return false;
         var row=declarations.get(id);
         if(row==null||row.entity().origin()!=EntityOrigin.PROJECT||row.status()!=SemanticStatus.RESOLVED||row.entity().declaration().isEmpty())return false;
-        var document=row.entity().declaration().orElseThrow().document();
-        return frontend.sources().stream().anyMatch(s->s.document().equals(document)
-                &&(s.state()==SourceOutcome.State.PROCESSED||s.state()==SourceOutcome.State.PARTIAL));
+        return parsedDocuments.contains(row.entity().declaration().orElseThrow().document());
     }
     public record Annotation(AnnotationUseRecord use,Optional<String> name,ConditionEvidence evidence) {}
     /** Child-to-parent source declarations, including the verified prefix on failure.
@@ -45,6 +43,13 @@ public final class SpringSourceEvidence {
     private final Map<EntityIdentity,List<EntityIdentity>> parents=new TreeMap<>();
     private final Map<EntityIdentity,EntityIdentity> owners=new TreeMap<>();
     private final Map<EntityIdentity,SpringFrameworkEvidence.Artifact> artifacts=new TreeMap<>();
+    private final Set<SourceDocumentIdentity> parsedDocuments=new HashSet<>();
+    private final Map<SourceDocumentIdentity,com.evolution.analysis.contract.source.SourceDocument> snapshotDocsById=new HashMap<>();
+    private final Map<Object,List<EntityIdentity>> annotationTargets=new HashMap<>();
+    private final Map<EntityIdentity,TypeDeclarationRecord> typeShapesById=new HashMap<>();
+    private final Map<SourceDocumentIdentity,List<com.evolution.analysis.contract.source.SourceSpan>> diagnosticSpansByDoc=new HashMap<>();
+    private final Map<EntityIdentity,List<TypeUseRecord>> typesByOwner=new HashMap<>();
+    private final Map<EntityIdentity,List<SemanticRelationship>> relationsBySource=new HashMap<>();
     private final List<SemanticRelationship> relations;
     private final ContentDigest identity;
     public SpringSourceEvidence(AnalysisManifest manifest,FrontendResult frontend,SpringFrameworkEvidence framework) {
@@ -55,24 +60,41 @@ public final class SpringSourceEvidence {
     }
     private SpringSourceEvidence(AnalysisManifest manifest,FrontendResult frontend,SpringFrameworkEvidence framework,List<com.evolution.analysis.contract.analysis.ClasspathEntry> origins){
         this.manifest=Objects.requireNonNull(manifest);this.frontend=Objects.requireNonNull(frontend);this.framework=Objects.requireNonNull(framework);
+        for (var s : frontend.sources()) {
+            if (s.state() == SourceOutcome.State.PROCESSED || s.state() == SourceOutcome.State.PARTIAL) {
+                parsedDocuments.add(s.document());
+            }
+        }
+        for (var d : manifest.snapshot().documents()) snapshotDocsById.put(d.identity(), d);
+        for (var shape : frontend.typeDeclarations()) typeShapesById.putIfAbsent(shape.type(), shape);
+        for (var diag : frontend.diagnostics()) {
+            diag.span().ifPresent(sp -> diagnosticSpansByDoc.computeIfAbsent(sp.document(), k -> new ArrayList<>()).add(sp));
+        }
+        for (var t : frontend.types()) {
+            t.owner().ifPresent(ownerId -> typesByOwner.computeIfAbsent(ownerId, k -> new ArrayList<>()).add(t));
+        }
         var relationships=new ArrayList<SemanticRelationship>();
         frontend.occurrences().stream().filter(o->o.status()==SemanticStatus.RESOLVED).forEach(o->relationships.add(o.relationship()));
         frontend.derivedRelationships().stream().filter(d->d.status()==SemanticStatus.RESOLVED).forEach(d->relationships.add(d.relationship()));
         relations=relationships.stream().distinct().sorted().toList();
+        for (var rel : relations) relationsBySource.computeIfAbsent(rel.source(), k -> new ArrayList<>()).add(rel);
         if(!manifest.identity().equals(frontend.analysis()))throw new IllegalArgumentException("Foreign frontend evidence");
         for(var artifact:framework.artifacts())if(origins.stream().noneMatch(c->c.logicalName().equals(artifact.classpathLogicalName())&&c.contentDigest().equals(artifact.contentDigest())))
             throw new IllegalArgumentException("Artifact evidence is outside the exact classpath");
         identity=IngestionEvidence.digest(List.of("spring.source-index:m4u.2-v1",manifest.identity(),IngestionEvidence.digest(frontend),framework.identity()));
+        var artifactsByScope = new HashMap<CanonicalIdentifier, SpringFrameworkEvidence.Artifact>();
+        for (var a : framework.artifacts()) artifactsByScope.putIfAbsent(a.entityScope(), a);
         for(var declaration:frontend.declarations()) {
             declarations.put(declaration.entity().identity(),declaration);
-            if(declaration.entity().origin()==EntityOrigin.DEPENDENCY)framework.artifacts().stream()
-                    .filter(a->a.entityScope().equals(declaration.entity().stableScope())).findFirst().ifPresent(a->artifacts.put(declaration.entity().identity(),a));
+            if(declaration.entity().origin()==EntityOrigin.DEPENDENCY) {
+                var matchedArtifact = artifactsByScope.get(declaration.entity().stableScope());
+                if (matchedArtifact != null) artifacts.put(declaration.entity().identity(), matchedArtifact);
+            }
         }
         for(var relation:relationships())if(relation.target() instanceof RelationshipTarget.Resolved target) {
             if(Set.of("java.extends","java.implements").contains(relation.kind().value()))parents.computeIfAbsent(relation.source(),k->new ArrayList<>()).add(target.target());
             if(relation.kind().value().equals("java.declares"))owners.put(target.target(),relation.source());
         }
-        var annotationTargets=new HashMap<Object,List<EntityIdentity>>();
         frontend.occurrences().stream().filter(o->o.status()==SemanticStatus.RESOLVED&&o.relationship().kind().value().equals("java.annotated-with")&&o.relationship().target() instanceof RelationshipTarget.Resolved)
                 .forEach(o->annotationTargets.computeIfAbsent(List.of(o.relationship().source(),o.span()),k->new ArrayList<>()).add(((RelationshipTarget.Resolved)o.relationship().target()).target()));
         for(var use:frontend.annotations()) {
@@ -89,7 +111,7 @@ public final class SpringSourceEvidence {
                         n.startsWith("jakarta.annotation.")?artifact.groupId().equals("jakarta.annotation"):false;
                 if(!valid)name=Optional.empty();
             }
-            var document=manifest.snapshot().documents().stream().filter(d->d.identity().equals(use.span().document())).findFirst().orElseThrow();
+            var document=Objects.requireNonNull(snapshotDocsById.get(use.span().document()));
             ConditionEvidence evidence=new ConditionEvidence.Source(document.identity(),document.contentDigest(),Optional.of(use.span()),0);
             annotations.computeIfAbsent(use.owner(),k->new ArrayList<>()).add(new Annotation(use,name,evidence));
         }
@@ -102,20 +124,17 @@ public final class SpringSourceEvidence {
     public List<Annotation> annotations(EntityIdentity owner){return List.copyOf(annotations.getOrDefault(owner,List.of()));}
     /** JDK Override is declaration metadata, not an unresolved Spring annotation. */
     public boolean javaOverride(Annotation annotation) {
-        return frontend.occurrences().stream().filter(o -> o.status()==SemanticStatus.RESOLVED
-                &&o.relationship().kind().value().equals("java.annotated-with")
-                &&o.relationship().source().equals(annotation.use().owner())&&o.span().equals(annotation.use().span()))
-                .anyMatch(o -> o.relationship().target() instanceof RelationshipTarget.Resolved r
-                        &&declarations.containsKey(r.target())&&declarations.get(r.target()).entity().origin()==EntityOrigin.JDK
-                        &&"java.lang.Override".equals(typeName(r.target())));
+        for (var target : annotationTargets.getOrDefault(List.of(annotation.use().owner(), annotation.use().span()), List.of())) {
+            var decl = declarations.get(target);
+            if (decl != null && decl.entity().origin() == EntityOrigin.JDK && "java.lang.Override".equals(typeName(target))) {
+                return true;
+            }
+        }
+        return false;
     }
     public Optional<SpringFrameworkEvidence.Artifact> artifact(EntityIdentity type){return Optional.ofNullable(artifacts.get(type));}
     public Optional<SpringFrameworkEvidence.Artifact> annotationArtifact(Annotation annotation) {
-        var targets=frontend.occurrences().stream().filter(o -> o.status()==SemanticStatus.RESOLVED
-                &&o.relationship().kind().value().equals("java.annotated-with")
-                &&o.relationship().source().equals(annotation.use().owner())&&o.span().equals(annotation.use().span()))
-                .filter(o -> o.relationship().target() instanceof RelationshipTarget.Resolved)
-                .map(o -> ((RelationshipTarget.Resolved)o.relationship().target()).target()).distinct().toList();
+        var targets = annotationTargets.getOrDefault(List.of(annotation.use().owner(), annotation.use().span()), List.of()).stream().distinct().toList();
         return targets.size()==1?artifact(targets.getFirst()):Optional.empty();
     }
     public Optional<EntityIdentity> owner(EntityIdentity member){return Optional.ofNullable(owners.get(member));}
@@ -141,8 +160,8 @@ public final class SpringSourceEvidence {
                 return new SourceHierarchy(chain,HierarchyProblem.SOURCE_DECLARATION_MISSING);
             chain.add(current);
             var id=current;
-            boolean ordinary=frontend.typeDeclarations().stream().anyMatch(t -> t.type().equals(id)
-                    &&t.kind()==TypeDeclarationRecord.Kind.CLASS&&t.independent());
+            var shapeRec = typeShapesById.get(id);
+            boolean ordinary=shapeRec != null && shapeRec.kind()==TypeDeclarationRecord.Kind.CLASS && shapeRec.independent();
             String header=declaration.spelling();
             for(var annotation:annotations(current))header=header.replace(annotation.use().spelling()," ");
             var matcher=ORDINARY_CLASS.matcher(header.replaceAll("(?s)/\\*.*?\\*/|//[^\\r\\n]*"," "));
@@ -152,13 +171,15 @@ public final class SpringSourceEvidence {
                 else if(!ordinary||!syntax)problem=HierarchyProblem.SOURCE_SHAPE_UNSUPPORTED;
             }
             var span=declaration.entity().declaration().orElseThrow();
-            boolean diagnostics=frontend.diagnostics().stream().anyMatch(d -> d.span().filter(s -> s.document().equals(span.document())
-                    &&before(s.startLine(),s.startColumn(),span.endLine(),span.endColumn())
-                    &&before(span.startLine(),span.startColumn(),s.endLine(),s.endColumn())).isPresent());
+            boolean diagnostics=diagnosticSpansByDoc.getOrDefault(span.document(), List.of()).stream()
+                    .anyMatch(s -> before(s.startLine(),s.startColumn(),span.endLine(),span.endColumn())
+                            &&before(span.startLine(),span.startColumn(),s.endLine(),s.endColumn()));
             if(problem==HierarchyProblem.NONE&&diagnostics)problem=HierarchyProblem.SOURCE_TYPES_INCOMPLETE;
+            var ownerTypes = typesByOwner.getOrDefault(id, List.of());
+            var ownerRels = relationsBySource.getOrDefault(id, List.of());
             if(problem==HierarchyProblem.NONE){
-                var implemented=frontend.types().stream().filter(t->t.owner().equals(Optional.of(id))&&t.role().value().equals("java.implements")).toList();
-                var interfaceEdges=relations.stream().filter(r->r.source().equals(id)&&r.kind().value().equals("java.implements"))
+                var implemented=ownerTypes.stream().filter(t->t.role().value().equals("java.implements")).toList();
+                var interfaceEdges=ownerRels.stream().filter(r->r.kind().value().equals("java.implements"))
                         .flatMap(r->r.target() instanceof RelationshipTarget.Resolved target?java.util.stream.Stream.of(target.target()):java.util.stream.Stream.empty()).distinct().toList();
                 int declared=matcher.group(2)==null?0:matcher.group(2).split(",").length;
                 if(declared>limit-chain.size())problem=HierarchyProblem.LIMIT;
@@ -173,8 +194,8 @@ public final class SpringSourceEvidence {
                     if(problem==HierarchyProblem.NONE&&!targets.equals(new HashSet<>(interfaceEdges)))problem=HierarchyProblem.PARENT_EVIDENCE_CONFLICT;
                 }
             }
-            var written=frontend.types().stream().filter(t -> t.owner().equals(Optional.of(id))&&t.role().value().equals("java.extends")).toList();
-            var edges=relations.stream().filter(r -> r.source().equals(id)&&r.kind().value().equals("java.extends"))
+            var written=ownerTypes.stream().filter(t -> t.role().value().equals("java.extends")).toList();
+            var edges=ownerRels.stream().filter(r -> r.kind().value().equals("java.extends"))
                     .flatMap(r -> r.target() instanceof RelationshipTarget.Resolved t?java.util.stream.Stream.of(t.target()):java.util.stream.Stream.empty()).distinct().toList();
             if(written.isEmpty()&&edges.isEmpty())return new SourceHierarchy(chain,
                     problem!=HierarchyProblem.NONE?problem:matcher.group(1)==null?HierarchyProblem.NONE:HierarchyProblem.PARENT_EVIDENCE_MISSING);
@@ -194,13 +215,15 @@ public final class SpringSourceEvidence {
     }
     private boolean emptySourceMarker(EntityIdentity type){
         var declaration=declarations.get(type);
+        var shape = typeShapesById.get(type);
         if(declaration==null||declaration.status()!=SemanticStatus.RESOLVED||declaration.entity().origin()!=EntityOrigin.PROJECT||declaration.entity().declaration().isEmpty()
                 ||!declaration.uncertainties().isEmpty()||!declaration.diagnostics().isEmpty()||!annotations(type).isEmpty()
-                ||frontend.typeDeclarations().stream().noneMatch(shape->shape.type().equals(type)&&shape.kind()==TypeDeclarationRecord.Kind.INTERFACE&&shape.independent()))return false;
+                ||shape==null||shape.kind()!=TypeDeclarationRecord.Kind.INTERFACE||!shape.independent())return false;
         String text=declaration.spelling();if(text.contains("\\u")||!EMPTY_MARKER.matcher(text.replaceAll("(?s)/\\*.*?\\*/|//[^\\r\\n]*"," ")).matches())return false;
-        if(relations.stream().anyMatch(r->r.source().equals(type)&&Set.of("java.extends","java.implements","java.declares").contains(r.kind().value())))return false;
+        if(relationsBySource.getOrDefault(type, List.of()).stream().anyMatch(r->Set.of("java.extends","java.implements","java.declares").contains(r.kind().value())))return false;
         var span=declaration.entity().declaration().orElseThrow();
-        return frontend.diagnostics().stream().noneMatch(d->d.span().filter(s->s.document().equals(span.document())&&before(s.startLine(),s.startColumn(),span.endLine(),span.endColumn())&&before(span.startLine(),span.startColumn(),s.endLine(),s.endColumn())).isPresent());
+        return diagnosticSpansByDoc.getOrDefault(span.document(), List.of()).stream()
+                .noneMatch(s->before(s.startLine(),s.startColumn(),span.endLine(),span.endColumn())&&before(span.startLine(),span.startColumn(),s.endLine(),s.endColumn()));
     }
     private static boolean before(int line,int column,int otherLine,int otherColumn) {
         return line<otherLine||line==otherLine&&column<otherColumn;
@@ -209,8 +232,8 @@ public final class SpringSourceEvidence {
         var declaration=declarations.get(entity);
         if(declaration!=null&&declaration.entity().declaration().isPresent()) {
             var span=declaration.entity().declaration().orElseThrow();
-            var doc=manifest.snapshot().documents().stream().filter(d->d.identity().equals(span.document())).findFirst();
-            if(doc.isPresent())return new ConditionEvidence.Source(span.document(),doc.orElseThrow().contentDigest(),Optional.of(span),0);
+            var doc=snapshotDocsById.get(span.document());
+            if(doc!=null)return new ConditionEvidence.Source(span.document(),doc.contentDigest(),Optional.of(span),0);
         }
         return UniversalSpringEvidence.derived(identity,"entity:"+entity.value());
     }

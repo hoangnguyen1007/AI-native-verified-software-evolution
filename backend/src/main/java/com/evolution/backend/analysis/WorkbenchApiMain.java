@@ -84,15 +84,24 @@ public final class WorkbenchApiMain {
             try (var reportDisk=new PersistentReports(directory.resolve("reports"));var disk = new AnalysisJobDiskStore(directory.resolve("jobs"))) {
             var reports=new PublishedReports(reportDisk);
             try(var jobs = new AnalysisJobs(List.of(runner.registration("local")),store,reports,AnalysisJobs.Limits.defaults(),disk)) {
+                var repositoryId = RepositoryIdentity.fromCanonicalCoordinate(args[1]);
                 var connections=new RepositoryConnections(jobs,jdk,Integer.parseInt(args[3]),cache,directory,policy);
-                connections.describe("local",source.getFileName().toString(),"LOCAL",RepositoryIdentity.fromCanonicalCoordinate(args[1]));
+                connections.describeLocal("local",source.getFileName().toString(),repositoryId,source,policy);
                 try (var pageIndex = new LazyGraphPages(directory, pages, store::cached);
                      var evolution = new EvolutionJobs(directory.resolve("evolution"), pages, reports, pageIndex::evolution)) {
+                    var repairStore = new com.evolution.backend.query.RepairProposalStore(directory.resolve("repairs"));
+                    var repairReanalysis = new CandidateRepairReanalysis(jdk,Integer.parseInt(args[3]),cache,directory,store,reports,connections);
                     var api=ArchitectureQueryApi.withPartitionedGraphs(
-                            new ArchitectureQueryApi(store,reports,ApiLimits.defaults(),jobs,connections),pageIndex::reader);
-                    var localApi = ArchitectureQueryApi.withConfiguredDemoRepairCapture(ArchitectureQueryApi.withEvolution(api,evolution,
-                            new EvolutionQueries(evolution.results(),pages)));
-                    try (var server = new ArchitectureHttpServer(ArchitectureQueryApi.withConfiguredDemoDiagnosis(localApi),
+                            new ArchitectureQueryApi(store,reports,new ApiLimits(65_536,16_777_216,32,100_000,8,300_000),jobs,connections),pageIndex::reader);
+                    var evolvedApi = ArchitectureQueryApi.withEvolution(api,evolution,new EvolutionQueries(evolution.results(),pages));
+                    var capturedApi = ArchitectureQueryApi.withConfiguredCapturedRepairCapture(
+                            ArchitectureQueryApi.withConfiguredDemoRepairCapture(
+                                    ArchitectureQueryApi.withRepairReanalysis(
+                                            ArchitectureQueryApi.withRepairStore(evolvedApi,repairStore),
+                                            repairReanalysis)));
+                    try (var server = new ArchitectureHttpServer(ArchitectureQueryApi.withConfiguredLiveDiagnosis(
+                            ArchitectureQueryApi.withConfiguredRepairModel(
+                                    ArchitectureQueryApi.withConfiguredDemoDiagnosis(capturedApi))),
                             args.length >= 7 ? Integer.parseInt(args[6]) : 8080)) {
                         var stopped = new CountDownLatch(1);
                         var shutdown = new Thread(() -> {

@@ -41,6 +41,18 @@ public final class SpringInjectionSites {
             var site=new Site(row.type(),p.parameter(),Kind.CONSTRUCTOR,Optional.of(p.type()),Optional.empty(),metadata.qualifier(),true,
                     metadata.valid()?Status.ACQUIRED:Status.UNKNOWN,p.evidence());sites.put(p.parameter().value(),site);
         }
+        var memberShapesById = new HashMap<EntityIdentity, MemberDeclarationRecord>();
+        for (var m : source.frontend().memberDeclarations()) memberShapesById.putIfAbsent(m.member(), m);
+        var parametersByOwner = new HashMap<EntityIdentity, List<EntityIdentity>>();
+        for (var r : source.relationships()) {
+            if (r.kind().value().equals("java.has-parameter") && r.target() instanceof RelationshipTarget.Resolved res) {
+                parametersByOwner.computeIfAbsent(r.source(), k -> new ArrayList<>()).add(res.target());
+            }
+        }
+        var typesByOwner = new HashMap<EntityIdentity, List<TypeUseRecord>>();
+        for (var t : source.frontend().types()) {
+            t.owner().ifPresent(ownerId -> typesByOwner.computeIfAbsent(ownerId, k -> new ArrayList<>()).add(t));
+        }
         for(var declaration:source.declarations().values())if(declaration.entity().origin()==EntityOrigin.PROJECT) {
             var element=declaration.entity().identity();
             var annotations=source.annotations(element).stream().filter(a->a.name().filter(n -> INJECT.contains(n)||n.equals(BeanMethodIngestion.BEAN)).isPresent()).toList();
@@ -51,7 +63,7 @@ public final class SpringInjectionSites {
             boolean namespace=compatible(name,generation);if(!namespace)issues.add(new UniversalSpringEvidence.Issue(UniversalSpringEvidence.Reason.NAMESPACE_INCOMPATIBLE,element.value(),List.of(annotation.evidence())));
             var kind=name.equals(BeanMethodIngestion.BEAN)?Kind.BEAN_PARAMETER:name.endsWith(".Resource")?Kind.RESOURCE:name.endsWith(".Value")?Kind.VALUE:
                     declaration.entity().kind()==EntityKind.CONSTRUCTOR?Kind.CONSTRUCTOR:declaration.entity().kind()==EntityKind.FIELD?Kind.FIELD:Kind.METHOD;
-            var shape=source.frontend().memberDeclarations().stream().filter(m -> m.member().equals(element)).findFirst();
+            var shape=Optional.ofNullable(memberShapesById.get(element));
             boolean memberComplete=kind!=Kind.FIELD&&kind!=Kind.METHOD || shape.filter(m -> !m.staticMember()&&!m.abstractMember()&&!m.genericMethod()).isPresent()
                     &&declaration.status()==SemanticStatus.RESOLVED
                     &&source.annotations(element).stream().allMatch(a -> a.name().filter(MEMBER_METADATA::contains).isPresent()
@@ -64,8 +76,7 @@ public final class SpringInjectionSites {
                             &&a.contentDigest().value().equals("sha256:2f0a0a2a5fe653794bdb1b9531bc9bea53c92c11e0b693e74cf8e396aa2ff325")).isPresent()
                     &&source.annotations(element).stream().allMatch(a -> a.name().filter(n -> n.equals("jakarta.annotation.Resource")
                             ||n.equals("org.springframework.beans.factory.annotation.Qualifier")).isPresent()||source.javaOverride(a));
-            var parameters=source.relationships().stream().filter(r->r.source().equals(element)&&r.kind().value().equals("java.has-parameter")&&r.target() instanceof RelationshipTarget.Resolved)
-                    .map(r->((RelationshipTarget.Resolved)r.target()).target()).distinct().toList();
+            var parameters=parametersByOwner.getOrDefault(element, List.of()).stream().distinct().toList();
             if(kind==Kind.RESOURCE&&declaration.entity().kind()==EntityKind.METHOD)memberComplete&=parameters.size()==1;
             List<EntityIdentity> targets=declaration.entity().kind()==EntityKind.FIELD||declaration.entity().kind()==EntityKind.PARAMETER?List.of(element):parameters;
             if(targets.isEmpty()&&kind!=Kind.CONSTRUCTOR&&kind!=Kind.BEAN_PARAMETER)issues.add(new UniversalSpringEvidence.Issue(UniversalSpringEvidence.Reason.ANNOTATION_UNSUPPORTED,element.value(),List.of(annotation.evidence())));
@@ -85,10 +96,10 @@ public final class SpringInjectionSites {
                     }
                     else if(kind!=Kind.VALUE&&kind!=Kind.BEAN_PARAMETER){if(!Set.of("required").containsAll(values.keySet()))valid=false;required=LiteralConditionAnnotation.bool(values,"required",true);}
                 }catch(IllegalArgumentException malformed){valid=false;}
-                var types=source.frontend().types().stream().filter(t->t.owner().equals(Optional.of(target))&&Set.of("java.parameter-type","java.field-type").contains(t.role().value())).map(TypeUseRecord::type).toList();
+                var types=typesByOwner.getOrDefault(target, List.of()).stream().filter(t->Set.of("java.parameter-type","java.field-type").contains(t.role().value())).map(TypeUseRecord::type).toList();
                 var metadata=metadata(source,target,generation,issues);
                 if(kind==Kind.METHOD||kind==Kind.RESOURCE&&declaration.entity().kind()==EntityKind.METHOD)
-                    metadata=methodMetadata(source,element,target,metadata,generation,issues);
+                    metadata=methodMetadata(source,element,target,metadata,generation,issues,typesByOwner);
                 valid&=metadata.valid()&&types.size()==1&&types.getFirst().status()==SemanticStatus.RESOLVED;
                 if(!valid)issues.add(new UniversalSpringEvidence.Issue(UniversalSpringEvidence.Reason.ANNOTATION_UNSUPPORTED,target.value(),List.of(annotation.evidence())));
                 sites.put(target.value(),new Site(kind==Kind.BEAN_PARAMETER?element:owner.orElseThrow(),target,kind,types.size()==1?Optional.of(types.getFirst()):Optional.empty(),resourceName,metadata.qualifier(),required,valid?Status.ACQUIRED:Status.UNKNOWN,source.evidence(target),resourceDefault));
@@ -110,7 +121,8 @@ public final class SpringInjectionSites {
         return Character.toLowerCase(property.charAt(0))+property.substring(1);
     }
     private static Metadata methodMetadata(SpringSourceEvidence source,EntityIdentity method,EntityIdentity parameter,
-                                           Metadata parameterMetadata,FrameworkGeneration generation,List<UniversalSpringEvidence.Issue> issues) {
+                                           Metadata parameterMetadata,FrameworkGeneration generation,List<UniversalSpringEvidence.Issue> issues,
+                                           Map<EntityIdentity, List<TypeUseRecord>> typesByOwner) {
         // Framework 6.2.0 checks parameter qualifiers first. A matched parameter qualifier
         // takes precedence, even over a different method qualifier. Only void methods
         // use method annotations as a fallback (factory return metadata is not a request).
@@ -118,7 +130,7 @@ public final class SpringInjectionSites {
         var methodQualifiers=source.annotations(method).stream().filter(a -> a.name().filter(n ->
                 n.equals("org.springframework.beans.factory.annotation.Qualifier")||n.equals("javax.inject.Named")||n.equals("jakarta.inject.Named")).isPresent()).toList();
         if(methodQualifiers.isEmpty())return parameterMetadata;
-        var returns=source.frontend().types().stream().filter(t -> t.owner().equals(Optional.of(method))&&t.role().value().equals("java.returns"))
+        var returns=typesByOwner.getOrDefault(method, List.of()).stream().filter(t -> t.role().value().equals("java.returns"))
                 .map(TypeUseRecord::type).toList();
         if(returns.size()!=1||returns.getFirst().status()!=SemanticStatus.RESOLVED) {
             issues.add(new UniversalSpringEvidence.Issue(UniversalSpringEvidence.Reason.EVIDENCE_MISSING,parameter.value(),List.of(source.evidence(method))));

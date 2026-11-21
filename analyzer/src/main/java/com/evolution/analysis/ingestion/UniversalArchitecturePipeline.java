@@ -82,7 +82,9 @@ public final class UniversalArchitecturePipeline {
             Optional<ConfigurationSpace> configurationSpace,
             Optional<ConfigurationAssignment> baselineConfiguration,
             TruthRegionEvaluation.Limits truthLimits,
-            Optional<ContentDigest> readinessPlan) {
+            Optional<ContentDigest> readinessPlan,
+            Optional<UniversalBuildModel> precomputedBuild,
+            Map<String, String> analysisOptions) {
         public Policy(UniversalBuildIngestion.Policy buildPolicy, RepositoryInputDecoder.Policy decodePolicy,
                 SemanticFrontend frontend, VersionedIdentifier frontendProvider,
                 Map<UniversalSourceIngestion.SourceSet, UniversalSourceIngestion.Resolution> resolutions,
@@ -94,17 +96,50 @@ public final class UniversalArchitecturePipeline {
                 Optional<ConfigurationAssignment> baselineConfiguration, TruthRegionEvaluation.Limits truthLimits) {
             this(buildPolicy, decodePolicy, frontend, frontendProvider, resolutions, defaultPlatform, mavenProvider,
                     externalPoms, mavenPolicy, maxTypes, maxParameters, truthEvaluationMode, springScopes,
-                    configurationSpace, baselineConfiguration, truthLimits, Optional.empty());
+                    configurationSpace, baselineConfiguration, truthLimits, Optional.empty(), Optional.empty(), Map.of());
+        }
+
+        public Policy(UniversalBuildIngestion.Policy buildPolicy, RepositoryInputDecoder.Policy decodePolicy,
+                SemanticFrontend frontend, VersionedIdentifier frontendProvider,
+                Map<UniversalSourceIngestion.SourceSet, UniversalSourceIngestion.Resolution> resolutions,
+                Optional<PlatformInput> defaultPlatform, Optional<BuildModelProvider> mavenProvider,
+                Map<MavenCoordinate, PomInput> externalPoms, BuildModelPolicy mavenPolicy, int maxTypes,
+                int maxParameters, TruthEvaluationMode truthEvaluationMode,
+                Map<UniversalSourceIngestion.SourceSet, SourceToSpringPlan.Scope> springScopes,
+                Optional<ConfigurationSpace> configurationSpace,
+                Optional<ConfigurationAssignment> baselineConfiguration, TruthRegionEvaluation.Limits truthLimits,
+                Optional<ContentDigest> readinessPlan) {
+            this(buildPolicy, decodePolicy, frontend, frontendProvider, resolutions, defaultPlatform, mavenProvider,
+                    externalPoms, mavenPolicy, maxTypes, maxParameters, truthEvaluationMode, springScopes,
+                    configurationSpace, baselineConfiguration, truthLimits, readinessPlan, Optional.empty(), Map.of());
         }
 
         public Policy withReadiness(ContentDigest plan) {
             return new Policy(buildPolicy, decodePolicy, frontend, frontendProvider, resolutions, defaultPlatform,
                     mavenProvider, externalPoms, mavenPolicy, maxTypes, maxParameters, truthEvaluationMode,
-                    springScopes, configurationSpace, baselineConfiguration, truthLimits, Optional.of(plan));
+                    springScopes, configurationSpace, baselineConfiguration, truthLimits, Optional.of(plan),
+                    precomputedBuild, analysisOptions);
+        }
+
+        public Policy withPrecomputedBuild(UniversalBuildModel build) {
+            return new Policy(buildPolicy, decodePolicy, frontend, frontendProvider, resolutions, defaultPlatform,
+                    mavenProvider, externalPoms, mavenPolicy, maxTypes, maxParameters, truthEvaluationMode,
+                    springScopes, configurationSpace, baselineConfiguration, truthLimits, readinessPlan,
+                    Optional.ofNullable(build), analysisOptions);
+        }
+
+        public Policy withAnalysisOptions(Map<String, String> options) {
+            return new Policy(buildPolicy, decodePolicy, frontend, frontendProvider, resolutions, defaultPlatform,
+                    mavenProvider, externalPoms, mavenPolicy, maxTypes, maxParameters, truthEvaluationMode,
+                    springScopes, configurationSpace, baselineConfiguration, truthLimits, readinessPlan,
+                    precomputedBuild, options == null ? Map.of() : options);
         }
 
         public Policy {
             Objects.requireNonNull(readinessPlan);
+            Objects.requireNonNull(precomputedBuild);
+            Objects.requireNonNull(analysisOptions);
+            analysisOptions = Collections.unmodifiableMap(new TreeMap<>(analysisOptions));
             Objects.requireNonNull(buildPolicy);
             Objects.requireNonNull(decodePolicy);
             Objects.requireNonNull(frontend);
@@ -149,6 +184,9 @@ public final class UniversalArchitecturePipeline {
             private Optional<ConfigurationSpace> configurationSpace = Optional.empty();
             private Optional<ConfigurationAssignment> baselineConfiguration = Optional.empty();
             private TruthRegionEvaluation.Limits truthLimits = TruthRegionEvaluation.Limits.conservative();
+            private Optional<ContentDigest> readinessPlan = Optional.empty();
+            private Optional<UniversalBuildModel> precomputedBuild = Optional.empty();
+            private Map<String, String> analysisOptions = new TreeMap<>();
 
             public Builder(SemanticFrontend frontend, VersionedIdentifier frontendProvider) {
                 this.frontend = Objects.requireNonNull(frontend);
@@ -235,6 +273,21 @@ public final class UniversalArchitecturePipeline {
                 return this;
             }
 
+            public Builder readinessPlan(ContentDigest readinessPlan) {
+                this.readinessPlan = Optional.ofNullable(readinessPlan);
+                return this;
+            }
+
+            public Builder precomputedBuild(UniversalBuildModel precomputedBuild) {
+                this.precomputedBuild = Optional.ofNullable(precomputedBuild);
+                return this;
+            }
+
+            public Builder analysisOptions(Map<String, String> analysisOptions) {
+                this.analysisOptions = analysisOptions == null ? new TreeMap<>() : new TreeMap<>(analysisOptions);
+                return this;
+            }
+
             public Policy build() {
                 var effectiveBuildPolicy = buildPolicy;
                 var effectiveMavenPolicy = mavenPolicy;
@@ -266,7 +319,8 @@ public final class UniversalArchitecturePipeline {
                 return new Policy(effectiveBuildPolicy, decodePolicy, frontend, frontendProvider, resolutions,
                         defaultPlatform,
                         mavenProvider, externalPoms, effectiveMavenPolicy, maxTypes, maxParameters, truthEvaluationMode,
-                        springScopes, configurationSpace, baselineConfiguration, truthLimits);
+                        springScopes, configurationSpace, baselineConfiguration, truthLimits, readinessPlan,
+                        precomputedBuild, analysisOptions);
             }
         }
     }
@@ -444,6 +498,7 @@ public final class UniversalArchitecturePipeline {
         // 1. Build Ingestion
         var buildIngestion = new UniversalBuildIngestion();
         var buildModel = prepared.map(com.evolution.analysis.javaevidence.JavaEvidenceAssembler.Prepared::model)
+                .or(() -> policy.precomputedBuild().filter(b -> b.repositoryInputIdentity().equals(inputs.identity())))
                 .orElseGet(() -> buildIngestion.ingest(inputs, policy.buildPolicy(), policy.mavenProvider(),
                         policy.externalPoms(), policy.mavenPolicy()));
         allIssues.addAll(buildModel.issues());
@@ -476,20 +531,32 @@ public final class UniversalArchitecturePipeline {
         // context.
         // Passive declarations can belong to an inactive source set or variant.
         if (prepared.isEmpty()) {
+            var resolvedBinaryLogicalNames = new ArrayList<String>();
+            for (var r : resolutions.values()) {
+                for (var b : r.binaries()) {
+                    resolvedBinaryLogicalNames.add(b.entry().logicalName());
+                }
+            }
+            var inputIdentity = inputs.identity();
             for (var mavenResult : buildModel.mavenModels()) {
                 for (var mod : mavenResult.modules()) {
                     if (mod.effectivePom().isPresent()) {
                         var effective = mod.effectivePom().get();
                         for (var dep : effective.dependencies()) {
                             String notation = dep.groupId() + ":" + dep.artifactId() + ":" + dep.version();
-                            boolean hasBinary = resolutions.values().stream()
-                                    .flatMap(r -> r.binaries().stream())
-                                    .anyMatch(b -> b.entry().logicalName().contains(dep.artifactId()));
+                            boolean hasBinary = false;
+                            String artifactId = dep.artifactId();
+                            for (String logicalName : resolvedBinaryLogicalNames) {
+                                if (logicalName.contains(artifactId)) {
+                                    hasBinary = true;
+                                    break;
+                                }
+                            }
                             if (!hasBinary) {
                                 allIssues.add(new IngestionEvidence.Issue(
                                         IngestionEvidence.Reason.CLASSPATH_RESOLUTION_REQUIRED,
                                         mod.pomPath() + "#" + notation,
-                                        List.of(inputs.identity())));
+                                        List.of(inputIdentity)));
                             }
                         }
                     }
@@ -498,14 +565,19 @@ public final class UniversalArchitecturePipeline {
             for (var module : buildModel.modules()) {
                 if (!module.dependencies().isEmpty()) {
                     for (var dep : module.dependencies()) {
-                        boolean hasBinary = resolutions.values().stream()
-                                .flatMap(r -> r.binaries().stream())
-                                .anyMatch(b -> b.entry().logicalName().contains(dep.notation()));
+                        boolean hasBinary = false;
+                        String notation = dep.notation();
+                        for (String logicalName : resolvedBinaryLogicalNames) {
+                            if (logicalName.contains(notation)) {
+                                hasBinary = true;
+                                break;
+                            }
+                        }
                         if (!hasBinary) {
                             allIssues.add(new IngestionEvidence.Issue(
                                     IngestionEvidence.Reason.CLASSPATH_RESOLUTION_REQUIRED,
-                                    module.descriptor().displayName() + "#" + dep.notation(),
-                                    List.of(inputs.identity())));
+                                    module.descriptor().displayName() + "#" + notation,
+                                    List.of(inputIdentity)));
                         }
                     }
                 }
@@ -518,6 +590,9 @@ public final class UniversalArchitecturePipeline {
         var schemaComp = com.evolution.analysis.graph.KnowledgeGraph.schemaComponent();
         var sourceIngestion = new UniversalSourceIngestion();
         var inputOptions = new TreeMap<String, String>();
+        if (!policy.analysisOptions().isEmpty()) {
+            inputOptions.putAll(policy.analysisOptions());
+        }
         policy.readinessPlan().ifPresent(identity -> inputOptions.put("readiness.plan", identity.value()));
         prepared.ifPresent(value -> inputOptions.putAll(value.options()));
         compiler.ifPresent(bundle -> inputOptions.putAll(bundle.options(prepared.orElseThrow().policy())));
@@ -798,6 +873,9 @@ public final class UniversalArchitecturePipeline {
                 }
 
                 // Source-level Spring component, producer, and injection detection
+                Map<EntityIdentity, String> memberNameById = null;
+                Map<EntityIdentity, EntityIdentity> declaringTypeByMember = null;
+                Map<EntityIdentity, List<TypeUseRecord>> typesByOwner = null;
                 for (var ann : frontend.annotations()) {
                     String spelling = ann.spelling();
                     if (spelling.contains("Component") || spelling.contains("Service") ||
@@ -820,14 +898,29 @@ public final class UniversalArchitecturePipeline {
                         components.add(new UniversalArchitectureReport.ComponentRecord(
                                 "component:" + fqn, beanName, fqn,
                                 kind, "source-annotation", List.of(), false));
-                    } else if (spelling.contains("Bean")) {
+                    } else if (spelling.contains("Bean") || spelling.contains("Autowired") || spelling.contains("Inject")) {
+                        if (memberNameById == null) {
+                            memberNameById = new HashMap<>(Math.max(16, frontend.memberDeclarations().size() * 2));
+                            for (var m : frontend.memberDeclarations()) memberNameById.putIfAbsent(m.member(), m.name());
+                            declaringTypeByMember = new HashMap<>();
+                            for (var o : frontend.occurrences()) {
+                                if (o.relationship().kind().value().contains("declares")
+                                        && o.relationship().target() instanceof RelationshipTarget.Resolved r) {
+                                    declaringTypeByMember.putIfAbsent(r.target(), o.relationship().source());
+                                }
+                            }
+                            typesByOwner = new HashMap<>();
+                            for (var t : frontend.types()) {
+                                if (t.owner().isPresent()) {
+                                    typesByOwner.computeIfAbsent(t.owner().get(), k -> new ArrayList<>()).add(t);
+                                }
+                            }
+                        }
+                        if (spelling.contains("Bean")) {
                         var declOpt = Optional.ofNullable(declarationsByIdentity.get(ann.owner()));
                         if (declOpt.isPresent()) {
                             var decl = declOpt.get();
-                            String methodName = frontend.memberDeclarations().stream()
-                                    .filter(m -> m.member().equals(ann.owner()))
-                                    .map(MemberDeclarationRecord::name)
-                                    .findFirst()
+                            String methodName = Optional.ofNullable(memberNameById.get(ann.owner()))
                                     .orElseGet(() -> {
                                         String c = decl.entity().canonicalName();
                                         if (c.contains("#"))
@@ -844,12 +937,7 @@ public final class UniversalArchitecturePipeline {
                                 methodName = "bean";
                             }
 
-                            Optional<EntityIdentity> ownerTypeOpt = frontend.occurrences().stream()
-                                    .filter(o -> o.relationship().kind().value().contains("declares") &&
-                                            o.relationship().target() instanceof RelationshipTarget.Resolved r &&
-                                            r.target().equals(ann.owner()))
-                                    .map(o -> o.relationship().source())
-                                    .findFirst();
+                            Optional<EntityIdentity> ownerTypeOpt = Optional.ofNullable(declaringTypeByMember.get(ann.owner()));
 
                             String factoryType = ownerTypeOpt
                                     .map(id -> typeIdentityToFqn.getOrDefault(id, id.value()))
@@ -868,10 +956,9 @@ public final class UniversalArchitecturePipeline {
                             factoryType = factoryType.strip();
                             methodName = methodName.strip();
 
-                            var returnTypeOpt = frontend.types().stream()
-                                    .filter(t -> t.owner().equals(Optional.of(ann.owner())) &&
-                                            (t.role().value().contains("returns")
-                                                    || t.role().value().equals("java.return-type")))
+                            var returnTypeOpt = typesByOwner.getOrDefault(ann.owner(), List.of()).stream()
+                                    .filter(t -> t.role().value().contains("returns")
+                                            || t.role().value().equals("java.return-type"))
                                     .map(t -> t.type().spelling().strip())
                                     .filter(s -> !s.isBlank())
                                     .findFirst();
@@ -882,16 +969,11 @@ public final class UniversalArchitecturePipeline {
                             producers.add(new UniversalArchitectureReport.ProducerRecord(
                                     factoryType, methodName, productType, methodName, List.of()));
                         }
-                    } else if (spelling.contains("Autowired") || spelling.contains("Inject")) {
+                        } else {
                         var declOpt = Optional.ofNullable(declarationsByIdentity.get(ann.owner()));
                         if (declOpt.isPresent()) {
                             var decl = declOpt.get();
-                            Optional<EntityIdentity> ownerTypeOpt = frontend.occurrences().stream()
-                                    .filter(o -> o.relationship().kind().value().contains("declares") &&
-                                            o.relationship().target() instanceof RelationshipTarget.Resolved r &&
-                                            r.target().equals(ann.owner()))
-                                    .map(o -> o.relationship().source())
-                                    .findFirst();
+                            Optional<EntityIdentity> ownerTypeOpt = Optional.ofNullable(declaringTypeByMember.get(ann.owner()));
 
                             String ownerClass = ownerTypeOpt
                                     .map(id -> typeIdentityToFqn.getOrDefault(id, id.value()))
@@ -909,17 +991,13 @@ public final class UniversalArchitecturePipeline {
                             }
                             ownerClass = ownerClass.strip();
 
-                            String rawMemberName = frontend.memberDeclarations().stream()
-                                    .filter(m -> m.member().equals(ann.owner()))
-                                    .map(MemberDeclarationRecord::name)
-                                    .findFirst()
+                            String rawMemberName = Optional.ofNullable(memberNameById.get(ann.owner()))
                                     .orElse(decl.spelling());
                             final String memberName = (rawMemberName.isBlank() ? "injected" : rawMemberName).strip();
 
                             String siteKind = decl.entity().kind().name().strip();
 
-                            var paramTypes = frontend.types().stream()
-                                    .filter(t -> t.owner().equals(Optional.of(ann.owner())))
+                            var paramTypes = typesByOwner.getOrDefault(ann.owner(), List.of()).stream()
                                     .map(t -> t.type().spelling().strip())
                                     .filter(s -> !s.isBlank())
                                     .toList();
@@ -938,6 +1016,7 @@ public final class UniversalArchitecturePipeline {
                                 injectionSites.add(new UniversalArchitectureReport.InjectionSiteRecord(
                                         ownerClass, memberName, targetType.strip(), siteKind, List.of(), true));
                             }
+                        }
                         }
                     }
                 }
@@ -1616,7 +1695,10 @@ public final class UniversalArchitecturePipeline {
 
         for (var entry : inputs.files().entrySet()) {
             String path = entry.getKey();
-            if (!path.endsWith(".xml"))
+            if (!path.endsWith(".xml") || path.equals("pom.xml") || path.endsWith("/pom.xml"))
+                continue;
+            String xmlText = entry.getValue().text();
+            if (xmlText.isEmpty() || (!containsIgnoreCaseAscii(xmlText, "<bean") && !containsIgnoreCaseAscii(xmlText, "<servlet")))
                 continue;
             byte[] bytes = entry.getValue().bytes();
             if (bytes.length == 0)
@@ -1733,6 +1815,21 @@ public final class UniversalArchitecturePipeline {
                 // invariant
             }
         }
+    }
+
+    private static boolean containsIgnoreCaseAscii(String haystack, String lowerNeedle) {
+        int n = lowerNeedle.length();
+        int limit = haystack.length() - n;
+        outer:
+        for (int i = 0; i <= limit; i++) {
+            for (int j = 0; j < n; j++) {
+                char c = haystack.charAt(i + j);
+                if (c >= 'A' && c <= 'Z') c = (char) (c + 32);
+                if (c != lowerNeedle.charAt(j)) continue outer;
+            }
+            return true;
+        }
+        return false;
     }
 
     private static List<String> detectLanguages(List<String> paths) {

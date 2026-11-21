@@ -30,6 +30,7 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
             BRANCH = "graph.page-branch:m8.4-v1";
     private static final int FANOUT = 128, PAGE_ROWS = 256, PAGE_CHARACTERS = 1_048_576;
     private static final ThreadLocal<Boolean> DEFER_LEAF_FORCE = ThreadLocal.withInitial(() -> Boolean.FALSE);
+    private static final ThreadLocal<Map<ContentHandle, Object>> LOCAL_PAGE_CACHE = new ThreadLocal<>();
     private final Path directory;
     private final StreamingContentStore content;
     private final int rowBytes;
@@ -458,9 +459,10 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
             Path pending = cleanup.add(Files.createTempFile(snapshots, "graph-snapshot-", ".part"));
             try (Connection database = DriverManager.getConnection("jdbc:sqlite:" + scratch)) {
                 try (var sql = database.createStatement()) {
-                    sql.execute("PRAGMA journal_mode=DELETE");
-                    sql.execute("PRAGMA temp_store=FILE");
-                    sql.execute("PRAGMA cache_size=-2048");
+                    sql.execute("PRAGMA journal_mode=OFF");
+                    sql.execute("PRAGMA synchronous=OFF");
+                    sql.execute("PRAGMA temp_store=MEMORY");
+                    sql.execute("PRAGMA cache_size=-16384");
                     sql.execute(
                             "CREATE TABLE rows(space TEXT NOT NULL,k TEXT NOT NULL,payload TEXT NOT NULL,kind TEXT,PRIMARY KEY(space,k)) WITHOUT ROWID");
                 }
@@ -472,15 +474,20 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
                             workspace.records("contexts", GraphSnapshotCodec::context).values());
                     var kinds = new TreeMap<String, Long>();
                     try (var insert = database.prepareStatement("INSERT INTO rows(space,k,payload) VALUES(?,?,?)")) {
+                        int batched = 0;
                         for (var edge : workspace.records("edges", GraphSnapshotCodec::edge).values()) {
                             kinds.merge(edge.kind(), 1L, Long::sum);
                             String id = key(edge.context(), edge.identity());
-                            insert(workspace, insert, "outgoing", key(edge.context(), edge.source(), edge.identity()),
+                            addInsertBatch(workspace, insert, "outgoing", key(edge.context(), edge.source(), edge.identity()),
                                     id, cancelled);
-                            for (String target : edge.target().identities())
-                                insert(workspace, insert, "incoming", key(edge.context(), target, edge.identity()), id,
+                            if (++batched == 1024) { insert.executeBatch(); batched = 0; }
+                            for (String target : edge.target().identities()) {
+                                addInsertBatch(workspace, insert, "incoming", key(edge.context(), target, edge.identity()), id,
                                         cancelled);
+                                if (++batched == 1024) { insert.executeBatch(); batched = 0; }
+                            }
                         }
+                        if (batched > 0) insert.executeBatch();
                     }
                     database.commit();
                     var digest = StreamingContentStore.sha256();
@@ -488,15 +495,16 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
                     var frame = StreamingContentStore.sha256();
                     try (var channel = java.nio.channels.FileChannel.open(pending, StandardOpenOption.WRITE,
                             LinkOption.NOFOLLOW_LINKS)) {
-                        var destination = new DigestOutputStream(java.nio.channels.Channels.newOutputStream(channel),
+                        var destination = new DigestOutputStream(
+                                new BufferedOutputStream(java.nio.channels.Channels.newOutputStream(channel), 65536),
                                 frame);
-                        var writer = new BufferedWriter(new OutputStreamWriter(destination, StandardCharsets.UTF_8));
+                        var writer = new BufferedWriter(new OutputStreamWriter(destination, StandardCharsets.UTF_8), 65536);
                         writer.write("{\"format\":");
                         CanonicalJson.writeTo(GraphSnapshotCodec.FORMAT, writer);
                         writer.write(",\"graph\":");
                         writer.flush();
                         var graphWriter = new BufferedWriter(new OutputStreamWriter(
-                                new DigestOutputStream(destination, digest), StandardCharsets.UTF_8));
+                                new DigestOutputStream(destination, digest), StandardCharsets.UTF_8), 65536);
                         writeGraph(database, workspace, snapshot.value(), graphWriter, cancelled);
                         graphWriter.flush();
                         identity = new ContentDigest("sha256:" + HexFormat.of().formatHex(digest.digest()));
@@ -504,6 +512,7 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
                         CanonicalJson.writeTo(identity, writer);
                         writer.write("}");
                         writer.flush();
+                        destination.flush();
                         channel.force(true);
                     }
                     // Audits endpoints, evidence, contexts and both adjacency indexes before
@@ -643,9 +652,10 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
         try (var cleanup = new TemporaryFiles(scratch);
                 Connection database = DriverManager.getConnection("jdbc:sqlite:" + scratch)) {
             try (var sql = database.createStatement()) {
-                sql.execute("PRAGMA journal_mode=DELETE");
-                sql.execute("PRAGMA temp_store=FILE");
-                sql.execute("PRAGMA cache_size=-2048");
+                sql.execute("PRAGMA journal_mode=OFF");
+                sql.execute("PRAGMA synchronous=OFF");
+                sql.execute("PRAGMA temp_store=MEMORY");
+                sql.execute("PRAGMA cache_size=-16384");
                 sql.execute(
                         "CREATE TABLE rows(space TEXT NOT NULL,k TEXT NOT NULL,payload TEXT NOT NULL,kind TEXT,PRIMARY KEY(space,k)) WITHOUT ROWID");
             }
@@ -656,7 +666,8 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
                 var members = new HashSet<String>();
                 var digest = MessageDigest.getInstance("SHA-256");
                 try (var insert = database.prepareStatement("INSERT INTO rows(space,k,payload) VALUES(?,?,?)");
-                        var input = new DigestInputStream(Files.newInputStream(source, LinkOption.NOFOLLOW_LINKS),
+                        var input = new DigestInputStream(
+                                new BufferedInputStream(Files.newInputStream(source, LinkOption.NOFOLLOW_LINKS), 65536),
                                 digest);
                         var reader = new InputStreamReader(input,
                                 StandardCharsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
@@ -812,13 +823,27 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
     private void insert(SqliteGraphProjection workspace, PreparedStatement statement, String space, String key,
             Object value, BooleanSupplier cancelled) throws SQLException, IOException {
         check(cancelled);
-        String encoded = CanonicalJson.write(value);
-        if (encoded.getBytes(StandardCharsets.UTF_8).length > rowBytes)
+        String encoded = encodeGraphValue(value);
+        if (encoded.length() > rowBytes || encoded.length() > rowBytes / 3
+                && encoded.getBytes(StandardCharsets.UTF_8).length > rowBytes)
             throw new IOException("GRAPH_PARTITION_ROW_WORKER_REQUIRED");
         statement.setString(1, space);
         statement.setString(2, key);
         statement.setString(3, workspace.encoded(encoded));
         statement.executeUpdate();
+    }
+
+    private void addInsertBatch(SqliteGraphProjection workspace, PreparedStatement statement, String space, String key,
+            Object value, BooleanSupplier cancelled) throws SQLException, IOException {
+        check(cancelled);
+        String encoded = encodeGraphValue(value);
+        if (encoded.length() > rowBytes || encoded.length() > rowBytes / 3
+                && encoded.getBytes(StandardCharsets.UTF_8).length > rowBytes)
+            throw new IOException("GRAPH_PARTITION_ROW_WORKER_REQUIRED");
+        statement.setString(1, space);
+        statement.setString(2, key);
+        statement.setString(3, workspace.encoded(encoded));
+        statement.addBatch();
     }
 
     private Tree build(Connection database, SqliteGraphProjection workspace, String space, BooleanSupplier cancelled,
@@ -844,7 +869,7 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
             while (input.hasNext()) {
                 check(cancelled);
                 var row = input.next();
-                pages.add(new EncodedEntry(key.apply(row), CanonicalJson.write(value.apply(row))));
+                pages.add(new EncodedEntry(key.apply(row), encodeGraphValue(value.apply(row))));
             }
         }
         return pages.finish();
@@ -909,7 +934,7 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
             // Rows can only come from CanonicalJson or the hash-checked private projection.
             // Write the same canonical frame without parsing each row to recreate it.
             handle = content.write(output -> {
-                var writer = new BufferedWriter(new OutputStreamWriter(output, StandardCharsets.UTF_8));
+                var writer = new BufferedWriter(new OutputStreamWriter(output, StandardCharsets.UTF_8), 65536);
                 writer.write("{\"rows\":[");
                 boolean first = true;
                 for (var row : entries) {
@@ -1054,7 +1079,7 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
                         frame.update(values, offset, length);
                 }
             };
-            try (var writer = new BufferedWriter(new OutputStreamWriter(output, StandardCharsets.UTF_8))) {
+            try (var writer = new BufferedWriter(new OutputStreamWriter(output, StandardCharsets.UTF_8), 65536)) {
                 writer.write("{");
                 boolean first = true;
                 for (String name : List.of("contexts", "edges", "evidence", "nodes")) {
@@ -1092,7 +1117,7 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
                         if (member[0])
                             writer.write(",");
                         member[0] = true;
-                        CanonicalJson.writeTo(row, writer);
+                        writeGraphValue(row, writer);
                     }, cancelled, 0);
                     writer.write("]");
                 }
@@ -1123,11 +1148,14 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
      * index.
      */
     private final class Audit implements AutoCloseable {
+        private static final int DEDUP_CAP = 131_072;
         final Root root;
         final BooleanSupplier cancelled;
         final Path file;
         final Connection database;
         final PreparedStatement insert;
+        final Map<String, Set<String>> seenKeys = new HashMap<>();
+        int batched;
 
         Audit(Root root, BooleanSupplier cancelled) throws IOException {
             this.root = root;
@@ -1138,9 +1166,10 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
             try {
                 opened = DriverManager.getConnection("jdbc:sqlite:" + file);
                 try (var sql = opened.createStatement()) {
-                    sql.execute("PRAGMA journal_mode=DELETE");
-                    sql.execute("PRAGMA temp_store=FILE");
-                    sql.execute("PRAGMA cache_size=-2048");
+                    sql.execute("PRAGMA journal_mode=OFF");
+                    sql.execute("PRAGMA synchronous=OFF");
+                    sql.execute("PRAGMA temp_store=MEMORY");
+                    sql.execute("PRAGMA cache_size=-16384");
                     sql.execute(
                             "CREATE TABLE audit(space TEXT,k TEXT,payload TEXT,PRIMARY KEY(space,k)) WITHOUT ROWID");
                 }
@@ -1172,14 +1201,31 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
 
         void add(String space, String key, String value) throws IOException {
             check(cancelled);
+            if (value.isEmpty()) {
+                var set = seenKeys.computeIfAbsent(space, ignored -> new HashSet<>(256));
+                if (set.contains(key)) return;
+                if (set.size() < DEDUP_CAP) set.add(key);
+            }
             try {
                 insert.setString(1, space);
                 insert.setString(2, key);
                 insert.setString(3, value);
-                insert.executeUpdate();
+                insert.addBatch();
+                if (++batched == 1024) {
+                    insert.executeBatch();
+                    batched = 0;
+                }
             } catch (SQLException failure) {
                 throw new IOException("GRAPH_PARTITION_AUDIT_WRITE", failure);
             }
+        }
+
+        private void flushBatch() throws SQLException {
+            if (batched > 0) {
+                insert.executeBatch();
+                batched = 0;
+            }
+            seenKeys.clear();
         }
 
         void accept(Object value) throws IOException {
@@ -1213,6 +1259,7 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
 
         void finish() throws IOException {
             try {
+                flushBatch();
                 for (String[] pair : new String[][] { { "contexts", "context-refs" }, { "nodes", "node-refs" },
                         { "evidence", "evidence-refs" } })
                     try (var query = database.prepareStatement(
@@ -1345,24 +1392,32 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
             Optional<String> cursor, BooleanSupplier cancelled) throws IOException {
         if (node == null || !node.matches("(?:[a-z][a-z0-9.-]*:)?sha256:[0-9a-f]{64}"))
             throw new IllegalArgumentException("GRAPH_PARTITION_NODE_ID");
-        var root = partitionRoot(partition, cancelled);
-        String space = incoming ? "incoming" : "outgoing", prefix = key(partition.context(), node) + "|";
-        var page = page(root.trees().get(space), prefix, upper(prefix),
-                query(partition.graph(), space, size, List.of(partition, node)), size, cursor, cancelled);
-        var values = new ArrayList<KnowledgeGraph.Edge>();
-        for (var entry : page.items()) {
-            String id = text(entry.row());
-            var exact = new ArrayList<Entry>();
-            visit(root.trees().get("edges"), id, id + "\0", null, exact::add, cancelled, 0);
-            if (exact.size() != 1)
-                throw new IOException("GRAPH_PARTITION_EDGE_MISSING");
-            var edge = GraphSnapshotCodec.edge(exact.getFirst().row());
-            if (!edge.context().equals(partition.context())
-                    || !(incoming ? edge.target().identities().contains(node) : edge.source().equals(node)))
-                throw new IOException("GRAPH_PARTITION_EDGE_SCOPE");
-            values.add(edge);
+        boolean ownedCache = LOCAL_PAGE_CACHE.get() == null;
+        if (ownedCache) LOCAL_PAGE_CACHE.set(new LinkedHashMap<>(32, 0.75f, true) {
+            @Override protected boolean removeEldestEntry(Map.Entry<ContentHandle, Object> eldest) { return size() > 32; }
+        });
+        try {
+            var root = partitionRoot(partition, cancelled);
+            String space = incoming ? "incoming" : "outgoing", prefix = key(partition.context(), node) + "|";
+            var page = page(root.trees().get(space), prefix, upper(prefix),
+                    query(partition.graph(), space, size, List.of(partition, node)), size, cursor, cancelled);
+            var values = new ArrayList<KnowledgeGraph.Edge>();
+            for (var entry : page.items()) {
+                String id = text(entry.row());
+                var exact = new ArrayList<Entry>();
+                visit(root.trees().get("edges"), id, id + "\0", null, exact::add, cancelled, 0);
+                if (exact.size() != 1)
+                    throw new IOException("GRAPH_PARTITION_EDGE_MISSING");
+                var edge = GraphSnapshotCodec.edge(exact.getFirst().row());
+                if (!edge.context().equals(partition.context())
+                        || !(incoming ? edge.target().identities().contains(node) : edge.source().equals(node)))
+                    throw new IOException("GRAPH_PARTITION_EDGE_SCOPE");
+                values.add(edge);
+            }
+            return new Page<>(values, page.continuation());
+        } finally {
+            if (ownedCache) LOCAL_PAGE_CACHE.remove();
         }
-        return new Page<>(values, page.continuation());
     }
 
     private Root partitionRoot(Partition partition, BooleanSupplier cancelled) throws IOException {
@@ -1492,12 +1547,139 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
         check(cancelled);
         if (handle.size() > rowBytes)
             throw new IOException("GRAPH_PARTITION_PAGE_WORKER_REQUIRED");
+        var localCache = LOCAL_PAGE_CACHE.get();
+        if (localCache != null) {
+            Object hit = localCache.get(handle);
+            if (hit != null) return hit;
+        }
         try (var input = content.open(handle)) {
             byte[] bytes = input.readNBytes(Math.addExact(rowBytes, 1));
             if (bytes.length != handle.size() || !ContentDigest.sha256(bytes).equals(handle.digest()))
                 throw new IOException("GRAPH_PARTITION_CONTENT_CORRUPT");
-            return parse(utf8(bytes));
+            Object parsed = parse(utf8(bytes));
+            if (localCache != null && handle.size() <= 1_048_576) {
+                localCache.put(handle, parsed);
+            }
+            return parsed;
         }
+    }
+
+    private static String encodeGraphValue(Object value) {
+        if (value instanceof KnowledgeGraph.Node || value instanceof KnowledgeGraph.Edge
+                || value instanceof KnowledgeGraph.Context || value instanceof GraphEvidence
+                || value instanceof String) {
+            var out = new StringBuilder(256);
+            try { writeGraphValue(value, out); }
+            catch (IOException impossible) { throw new IllegalStateException(impossible); }
+            return out.toString();
+        }
+        return CanonicalJson.write(value);
+    }
+
+    private static void writeGraphValue(Object value, Appendable out) throws IOException {
+        if (value instanceof String s) {
+            appendJsonString(s, out);
+        } else if (value instanceof KnowledgeGraph.Context c) {
+            out.append("{\"analysis\":");
+            if (c.analysis().isPresent()) appendJsonString(c.analysis().orElseThrow().value(), out);
+            else out.append("null");
+            out.append(",\"evidence\":");
+            appendJsonString(c.evidence().value(), out);
+            out.append(",\"identity\":");
+            appendJsonString(c.identity(), out);
+            out.append(",\"snapshot\":");
+            appendJsonString(c.snapshot().value(), out);
+            out.append('}');
+        } else if (value instanceof KnowledgeGraph.Node n) {
+            out.append("{\"context\":");
+            appendJsonString(n.context(), out);
+            out.append(",\"evidence\":[");
+            var ev = n.evidence();
+            for (int i = 0; i < ev.size(); i++) {
+                if (i > 0) out.append(',');
+                appendJsonString(ev.get(i).value(), out);
+            }
+            out.append("],\"identity\":");
+            appendJsonString(n.identity(), out);
+            out.append(",\"kind\":");
+            appendJsonString(n.kind(), out);
+            out.append('}');
+        } else if (value instanceof KnowledgeGraph.Edge e) {
+            out.append("{\"context\":");
+            appendJsonString(e.context(), out);
+            out.append(",\"evidence\":[");
+            var ev = e.evidence();
+            for (int i = 0; i < ev.size(); i++) {
+                if (i > 0) out.append(',');
+                appendJsonString(ev.get(i).value(), out);
+            }
+            out.append("],\"identity\":");
+            appendJsonString(e.identity(), out);
+            out.append(",\"kind\":");
+            appendJsonString(e.kind(), out);
+            out.append(",\"region\":");
+            if (e.region().isPresent()) appendJsonString(e.region().orElseThrow(), out);
+            else out.append("null");
+            out.append(",\"source\":");
+            appendJsonString(e.source(), out);
+            var t = e.target();
+            out.append(",\"target\":{\"identities\":[");
+            var ids = t.identities();
+            for (int i = 0; i < ids.size(); i++) {
+                if (i > 0) out.append(',');
+                appendJsonString(ids.get(i), out);
+            }
+            out.append("],\"state\":");
+            appendJsonString(t.state().name(), out);
+            out.append(",\"unresolvedReference\":");
+            if (t.unresolvedReference().isPresent()) appendJsonString(t.unresolvedReference().orElseThrow(), out);
+            else out.append("null");
+            out.append("}}");
+        } else if (value instanceof GraphEvidence g) {
+            out.append("{\"canonicalJson\":");
+            appendJsonString(g.canonicalJson(), out);
+            out.append(",\"family\":");
+            appendJsonString(g.family(), out);
+            out.append(",\"identity\":");
+            appendJsonString(g.identity().value(), out);
+            out.append('}');
+        } else if (out instanceof Writer w) {
+            CanonicalJson.writeTo(value, w);
+        } else {
+            out.append(CanonicalJson.write(value));
+        }
+    }
+
+    private static void appendJsonString(String value, Appendable output) throws IOException {
+        output.append('"');
+        int start = 0;
+        for (int index = 0; index < value.length(); index++) {
+            char character = value.charAt(index);
+            if (character == '"' || character == '\\' || character < 0x20) {
+                if (index > start) output.append(value, start, index);
+                switch (character) {
+                    case '"' -> output.append("\\\"");
+                    case '\\' -> output.append("\\\\");
+                    case '\b' -> output.append("\\b");
+                    case '\f' -> output.append("\\f");
+                    case '\n' -> output.append("\\n");
+                    case '\r' -> output.append("\\r");
+                    case '\t' -> output.append("\\t");
+                    default -> output.append("\\u00")
+                            .append("0123456789abcdef".charAt(character >>> 4))
+                            .append("0123456789abcdef".charAt(character & 15));
+                }
+                start = index + 1;
+            } else if (Character.isHighSurrogate(character)) {
+                if (index + 1 >= value.length() || !Character.isLowSurrogate(value.charAt(index + 1)))
+                    throw new IllegalArgumentException("String contains an unpaired surrogate");
+                index++;
+            } else if (Character.isLowSurrogate(character)) {
+                throw new IllegalArgumentException("String contains an unpaired surrogate");
+            }
+        }
+        if (start < value.length()) output.append(value, start, value.length());
+        output.append('"');
     }
 
     private Object parse(String encoded) {
@@ -1506,7 +1688,7 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
 
     private Path pointer(ContentDigest graph) throws IOException {
         var path = directory.resolve(graph.value().substring(7) + ".partitions.json");
-        StreamingContentStore.safe(path);
+        StreamingContentStore.safeWithin(directory, path);
         return path;
     }
 

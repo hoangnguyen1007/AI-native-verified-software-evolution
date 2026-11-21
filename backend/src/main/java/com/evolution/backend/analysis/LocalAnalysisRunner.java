@@ -25,9 +25,28 @@ import com.evolution.backend.query.PublishedReports;
 import java.io.IOException;
 import java.nio.file.*;
 import java.util.*;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.BooleanSupplier;
 
 /** Passive filesystem/local-cache composition over the same providers as evo scan. No target execution or network. */
 public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
+    private static final ExecutorService POLYGLOT_WORKERS = Executors.newFixedThreadPool(
+            Math.max(1, Math.min(4, Runtime.getRuntime().availableProcessors() / 2)),
+            runnable -> {
+                var thread = new Thread(runnable, "evo-polyglot-scan");
+                thread.setDaemon(true);
+                return thread;
+            });
+    private interface Progress extends BooleanSupplier {
+        String id();
+        default AnalysisMode mode() { return AnalysisMode.FULL; }
+        void stage(AnalysisJobs.Stage stage);
+        void checkpoint();
+        boolean beginReuseCheck();
+        Optional<AnalysisJobs.Reused> reuse(ContentDigest key);
+        void withholdReuse();
+    }
     public record PolicyInput(byte[] bytes, Scope scoreScope) {
         public PolicyInput { bytes = bytes.clone(); Objects.requireNonNull(scoreScope); if (bytes.length > 262_144) throw new IllegalArgumentException("Policy limit"); }
         @Override public byte[] bytes() { return bytes.clone(); }
@@ -49,6 +68,26 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
             if (release < 8 || release > 26) throw new IllegalArgumentException("Invalid target release");
         }
     }
+    private record PlatformCacheKey(Path jdk, int release) {}
+    private static final int PLATFORM_CACHE_CAPACITY = 6;
+    private static final Map<PlatformCacheKey, PlatformSymbolResult> PLATFORM_CACHE = Collections.synchronizedMap(
+            new LinkedHashMap<>(8, 0.75f, true) {
+                @Override protected boolean removeEldestEntry(Map.Entry<PlatformCacheKey, PlatformSymbolResult> eldest) {
+                    return size() > PLATFORM_CACHE_CAPACITY;
+                }
+            });
+    public static PlatformSymbolResult acquireCachedPlatform(Path jdk, int release) {
+        return acquirePlatform(jdk, release);
+    }
+    private static PlatformSymbolResult acquirePlatform(Path jdk, int release) {
+        var normalized = jdk.toAbsolutePath().normalize();
+        var key = new PlatformCacheKey(normalized, release);
+        var cached = PLATFORM_CACHE.get(key);
+        if (cached != null) return cached;
+        var acquired = new FilesystemJdkPlatformProvider().acquire(normalized, new PlatformSymbolRequest(release, 128, 128_000_000, 512_000_000));
+        if (acquired.platform().isPresent()) PLATFORM_CACHE.put(key, acquired);
+        return acquired;
+    }
     private final Input input;
     private final Path intakeDirectory;
     public LocalAnalysisRunner(Input input) { this(input,input.source().resolve(".evo/acquisition")); }
@@ -58,25 +97,90 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
                 input.policy().map(p -> ContentDigest.sha256(p.bytes())),input.spring().space().map(s -> s.identity().value())),this);
     }
     @Override public AnalysisJobs.RunResult run(AnalysisJobs.Control control) throws Exception {
-        control.stage(AnalysisJobs.Stage.ACQUISITION);
-        return runAcquired(control);
+        var adapter = new Progress() {
+            @Override public boolean getAsBoolean() { return control.getAsBoolean(); }
+            @Override public String id() { return control.id(); }
+            @Override public AnalysisMode mode() { return control.mode(); }
+            @Override public void stage(AnalysisJobs.Stage stage) { control.stage(stage); }
+            @Override public void checkpoint() { control.checkpoint(); }
+            @Override public boolean beginReuseCheck() { return control.beginReuseCheck(); }
+            @Override public Optional<AnalysisJobs.Reused> reuse(ContentDigest key) { return control.reuse(key); }
+            @Override public void withholdReuse() { control.withholdReuse(); }
+        };
+        adapter.stage(AnalysisJobs.Stage.ACQUISITION);
+        return runAcquired(adapter);
     }
-    AnalysisJobs.RunResult runAcquired(AnalysisJobs.Control control) throws Exception {
-        var source = safe(input.source()); var cache = safe(input.mavenCache());
+    /** Synchronous passive analysis without registering an AnalysisJobs history entry. */
+    public AnalysisJobs.Outcome analyzeDirect(String runId, BooleanSupplier cancelled) throws Exception {
+        return analyzeDirect(runId, AnalysisMode.FULL, cancelled);
+    }
+    public AnalysisJobs.Outcome analyzeDirect(String runId, AnalysisMode mode, BooleanSupplier cancelled) throws Exception {
+        Objects.requireNonNull(runId);
+        Objects.requireNonNull(mode);
+        Objects.requireNonNull(cancelled);
+        var direct = new Progress() {
+            @Override public boolean getAsBoolean() { return cancelled.getAsBoolean() || Thread.currentThread().isInterrupted(); }
+            @Override public String id() { return runId; }
+            @Override public AnalysisMode mode() { return mode; }
+            @Override public void stage(AnalysisJobs.Stage stage) { checkpoint(); }
+            @Override public void checkpoint() { if (getAsBoolean()) throw new java.util.concurrent.CancellationException(); }
+            @Override public boolean beginReuseCheck() { return false; }
+            @Override public Optional<AnalysisJobs.Reused> reuse(ContentDigest key) { return Optional.empty(); }
+            @Override public void withholdReuse() {}
+        };
+        return (AnalysisJobs.Outcome) runAcquired(direct);
+    }
+    AnalysisJobs.RunResult runAcquired(Progress control) throws Exception {
+        var source = safe(input.source());
         var excluded = new TreeSet<>(input.exclusions());
-        boolean captured=false;
-        if(Files.isRegularFile(intakeDirectory.resolve("metadata/index.sqlite"),LinkOption.NOFOLLOW_LINKS))try(var intake=new RepositoryIntake(intakeDirectory,true)){captured=intake.inventory().manifest(control.id()).isPresent();}
-        if (!Files.isDirectory(source,LinkOption.NOFOLLOW_LINKS)&&!captured) {
+        boolean sourceDirExists = Files.isDirectory(source, LinkOption.NOFOLLOW_LINKS);
+        if (!sourceDirExists && !Files.isRegularFile(intakeDirectory.resolve("metadata/index.sqlite"), LinkOption.NOFOLLOW_LINKS)) {
             var unavailable = new FilesystemRepositoryAcquirer().acquire(source,new RepositoryAcquisitionRequest(input.repository(),input.revision(),input.dirty(),"pom.xml",new RepositoryAcquisitionPolicy(1,1,1,1,1,List.copyOf(excluded))));
             return new AnalysisJobs.Outcome(AnalysisJobs.Completion.FAILED,Optional.empty(),List.of(),List.of(),Optional.of(unavailable.identity()),Optional.empty(),inputProblems(unavailable));
         }
-        var selection = ScanSelection.plan(source,input.includeTests(),false,List.copyOf(excluded)); excluded.addAll(selection.excluded());
-        var acquisition = acquire(source,excluded,control); control.checkpoint();
-        if (acquisition.snapshot().isEmpty()) return new AnalysisJobs.Outcome(AnalysisJobs.Completion.FAILED,Optional.empty(),List.of(),List.of(),Optional.of(acquisition.identity()),Optional.empty(),inputProblems(acquisition));
-        return runCaptured(acquisition,control);
+        var selection = ScanSelection.plan(source,input.includeTests(),false,List.copyOf(excluded));
+        excluded.addAll(selection.excluded());
+        var fullExcluded = new TreeSet<>(input.exclusions());
+        fullExcluded.add(".git");
+        if (intakeDirectory.startsWith(source)) fullExcluded.add(source.relativize(intakeDirectory).toString().replace('\\','/'));
+        RepositoryAcquisitionResult acquisition;
+        ReadinessPlan readiness;
+        boolean verifiedInventory = false;
+        try (var intake = new RepositoryIntake(intakeDirectory)) {
+            if (!sourceDirExists && intake.inventory().manifest(control.id()).isEmpty()) {
+                var unavailable = new FilesystemRepositoryAcquirer().acquire(source,new RepositoryAcquisitionRequest(input.repository(),input.revision(),input.dirty(),"pom.xml",new RepositoryAcquisitionPolicy(1,1,1,1,1,List.copyOf(excluded))));
+                return new AnalysisJobs.Outcome(AnalysisJobs.Completion.FAILED,Optional.empty(),List.of(),List.of(),Optional.of(unavailable.identity()),Optional.empty(),inputProblems(unavailable));
+            }
+            var request = new StreamingAcquisitionRequest(input.repository(),input.revision(),input.dirty(),List.copyOf(fullExcluded));
+            var receipt = intake.localComplete(source,control.id(),request,control);
+            control.checkpoint();
+            if (receipt.manifest().isEmpty()) throw new IOException(receipt.reason());
+            acquisition = intake.compatibility(control.id(),input.repository(),input.revision(),input.dirty(),input.includeTests(),false,List.copyOf(excluded));
+            control.checkpoint();
+            if (acquisition.snapshot().isEmpty()) {
+                return new AnalysisJobs.Outcome(AnalysisJobs.Completion.FAILED,Optional.empty(),List.of(),List.of(),Optional.of(acquisition.identity()),Optional.empty(),inputProblems(acquisition));
+            }
+            readiness = intake.readiness(control.id(),ReadinessPlanner.Policy.comprehensive(),control);
+            if (control.beginReuseCheck() && (input.dirty() || input.revision().isPresent())) {
+                try { verifiedInventory = !intake.hasUncapturedEntries(control.id()); }
+                catch (IOException unavailable) { /* Reuse is optional; keep the normal analysis path. */ }
+            }
+        }
+        return runCapturedWithReadiness(acquisition, readiness, verifiedInventory, control);
     }
     AnalysisJobs.RunResult runCaptured(RepositoryAcquisitionResult acquisition,AnalysisJobs.Control control)throws Exception {
-        var cache=safe(input.mavenCache());
+        return runCaptured(acquisition,new Progress() {
+            @Override public boolean getAsBoolean() { return control.getAsBoolean(); }
+            @Override public String id() { return control.id(); }
+            @Override public AnalysisMode mode() { return control.mode(); }
+            @Override public void stage(AnalysisJobs.Stage stage) { control.stage(stage); }
+            @Override public void checkpoint() { control.checkpoint(); }
+            @Override public boolean beginReuseCheck() { return control.beginReuseCheck(); }
+            @Override public Optional<AnalysisJobs.Reused> reuse(ContentDigest key) { return control.reuse(key); }
+            @Override public void withholdReuse() { control.withholdReuse(); }
+        });
+    }
+    AnalysisJobs.RunResult runCaptured(RepositoryAcquisitionResult acquisition,Progress control)throws Exception {
         ReadinessPlan readiness;
         boolean verifiedInventory = false;
         try(var intake=new RepositoryIntake(intakeDirectory)){
@@ -86,19 +190,28 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
                 catch (IOException unavailable) { /* Reuse is optional; keep the normal analysis path. */ }
             }
         }
+        return runCapturedWithReadiness(acquisition, readiness, verifiedInventory, control);
+    }
+    private AnalysisJobs.RunResult runCapturedWithReadiness(
+            RepositoryAcquisitionResult acquisition,
+            ReadinessPlan readiness,
+            boolean verifiedInventory,
+            Progress control) throws Exception {
+        var cache=safe(input.mavenCache());
+        boolean fast = control.mode().isFastArchitecture();
         control.stage(AnalysisJobs.Stage.PLATFORM);
-        var platform = new FilesystemJdkPlatformProvider().acquire(safe(input.jdk()),new PlatformSymbolRequest(input.release(),128,128_000_000,512_000_000));
+        var platform = acquirePlatform(safe(input.jdk()), input.release());
         control.checkpoint();
         var models = MavenScan.models(acquisition,cache,List.of());
         var defaults = UniversalBuildIngestion.Policy.defaults();
         var buildPolicy=new UniversalBuildIngestion.Policy(Optional.of(input.release()),Optional.of(input.release()),Optional.of("UTF-8"),32_768,defaults.maxCharacters(),defaults.maxTokens(),128);
-        var decoded=new RepositoryInputDecoder.Prepared(acquisition,new RepositoryInputDecoder.Policy("UTF-8",500_000,100_000_000));
+        var decoded=new RepositoryInputDecoder.Prepared(acquisition,new RepositoryInputDecoder.Policy("UTF-8",500_000,100_000_000,fast));
         var gradleModel=GradleScan.model(decoded,buildPolicy,Map.of());
         var requiredReleases=new TreeSet<>(MavenScan.platformReleases(models));requiredReleases.addAll(GradleScan.platformReleases(gradleModel));
         var platformViews=new TreeMap<Integer,PlatformSymbolResult>();platformViews.put(input.release(),platform);
         var additionalPlatforms=new ArrayList<PlatformSymbolResult>();
         for(int target:requiredReleases)if(!platformViews.containsKey(target)) {
-            var view=new FilesystemJdkPlatformProvider().acquire(safe(input.jdk()),new PlatformSymbolRequest(target,128,128_000_000,512_000_000));
+            var view=acquirePlatform(safe(input.jdk()), target);
             platformViews.put(target,view);additionalPlatforms.add(view);
         }
         var availablePlatforms=new TreeMap<Integer,com.evolution.analysis.frontend.PlatformInput>();platformViews.forEach((target,view)->view.platform().ifPresent(value->availablePlatforms.put(target,value)));
@@ -124,7 +237,12 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
                 buildPolicy,decoded.policy(),guarded,JavaParserFrontend.PROVIDER,
                 dependencies.resolutions(),platform.platform(),Optional.of(new MavenBuildModelProvider()),dependencies.externalPoms(),MavenScan.POLICY,
                 100_000,1_000,UniversalArchitecturePipeline.TruthEvaluationMode.AUTO,input.spring().scopes(),input.spring().space(),input.spring().baseline(),
-                com.evolution.analysis.spring.truth.TruthRegionEvaluation.Limits.conservative()).withReadiness(readiness.identity());
+                com.evolution.analysis.spring.truth.TruthRegionEvaluation.Limits.conservative())
+                .withReadiness(readiness.identity())
+                .withPrecomputedBuild(dependencies.externalPoms().isEmpty() ? gradleModel.orElse(null) : null);
+        if (fast) {
+            policy = policy.withAnalysisOptions(Map.of("analysis.profile", "FAST_ARCHITECTURE"));
+        }
         var allPlatforms=new ArrayList<PlatformSymbolResult>();allPlatforms.add(platform);allPlatforms.addAll(additionalPlatforms);
         var reuseKey = verifiedInventory ? WorkbenchReuseInputs.key(acquisition, readiness, allPlatforms,
                 models.stream().map(model -> model.identity()).toList(), gradleModel.map(model -> model.identity()),
@@ -134,11 +252,41 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
             if (reusable.isPresent()) return reusable.orElseThrow();
         }
         control.stage(AnalysisJobs.Stage.ANALYSIS);
-        var detailed = new UniversalArchitecturePipeline().runWithEvidence(decoded,policy); control.checkpoint();
+        var verifiedPolyglotBytes = extractPolyglotBytes(acquisition);
+        var failedFlag = new AtomicBoolean(false);
+        BooleanSupplier subCancelled = () -> failedFlag.get() || control.getAsBoolean();
+        var snapshotId = acquisition.snapshot().orElseThrow().identity();
+        var finalPolicy = policy;
+        CompletableFuture<PolyglotScan.Result> polyglotFuture = CompletableFuture.supplyAsync(() -> {
+            try (var intake = new RepositoryIntake(intakeDirectory, true)) {
+                return new PolyglotScan().run(
+                        control.id(), intake, readiness, EvidenceContext.forSnapshot(snapshotId),
+                        Optional.empty(), intakeDirectory.resolve("semantic-work"), subCancelled,
+                        verifiedPolyglotBytes, fast);
+            } catch (Exception failure) {
+                failedFlag.set(true);
+                throw new CompletionException(failure);
+            }
+        }, POLYGLOT_WORKERS);
+
+        UniversalArchitecturePipeline.DetailedResult detailed;
         PolyglotScan.Result polyglot;
-        try(var intake=new RepositoryIntake(intakeDirectory,true)){
-            polyglot=new PolyglotScan().run(control.id(),intake,readiness,EvidenceContext.forSnapshot(acquisition.snapshot().orElseThrow().identity()),Optional.empty(),intakeDirectory.resolve("semantic-work"),control);
+        try {
+            detailed = new UniversalArchitecturePipeline().runWithEvidence(decoded, finalPolicy);
+            control.checkpoint();
+            polyglot = polyglotFuture.join();
+        } catch (CompletionException asyncFailure) {
+            failedFlag.set(true);
+            Throwable cause = asyncFailure.getCause();
+            if (cause instanceof Exception ex) throw ex;
+            if (cause instanceof Error err) throw err;
+            throw asyncFailure;
+        } catch (Throwable primaryFailure) {
+            failedFlag.set(true);
+            polyglotFuture.cancel(true);
+            throw primaryFailure;
         }
+        control.checkpoint();
         var gaps = new TreeSet<>(detailed.report().gaps()); gaps.addAll(dependencies.gaps());
         gaps.addAll(readiness.gaps(acquisition.snapshot().orElseThrow().identity()));
         gaps.addAll(polyglot.gaps());
@@ -149,8 +297,12 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
         control.stage(AnalysisJobs.Stage.GRAPH);
         var captured = detailed.graphInput().orElseThrow(); gaps.addAll(captured.gaps());
         var graphLedgers=new ArrayList<>(dependencies.ledgers());graphLedgers.addAll(platformLedgers);
-        var graph = new CanonicalGraphBuilder().build(new CanonicalGraphInput(captured.repository(),captured.build(),captured.ingestion(),captured.spring(),captured.issues(),List.copyOf(gaps),captured.acquisition(),captured.javaEvidence()),
-                graphLedgers,store->new PolyglotScan().project(polyglot,store,control));
+        var finalPolyglot = polyglot;
+        var graph = new CanonicalGraphBuilder().build(
+                new CanonicalGraphInput(captured.repository(),captured.build(),captured.ingestion(),captured.spring(),captured.issues(),List.copyOf(gaps),captured.acquisition(),captured.javaEvidence()),
+                graphLedgers,
+                store->new PolyglotScan().project(finalPolyglot,store,control),
+                fast);
         control.checkpoint();
         var reports = new ArrayList<PublishedReports.Report>();
         if (input.policy().isPresent()) {
@@ -186,15 +338,15 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
     private static List<AnalysisJobs.InputProblem> inputProblems(RepositoryAcquisitionResult acquisition) {
         return acquisition.problems().stream().map(p -> new AnalysisJobs.InputProblem(acquisition.provider(),acquisition.identity(),p)).toList();
     }
-    private RepositoryAcquisitionResult acquire(Path source,Set<String> excluded,AnalysisJobs.Control control)throws IOException {
-        var full=new TreeSet<>(input.exclusions());full.add(".git");
-        if(intakeDirectory.startsWith(source))full.add(source.relativize(intakeDirectory).toString().replace('\\','/'));
-        try(var intake=new RepositoryIntake(intakeDirectory)){
-            var request=new StreamingAcquisitionRequest(input.repository(),input.revision(),input.dirty(),List.copyOf(full));
-            var receipt=intake.localComplete(source,control.id(),request,control);control.checkpoint();
-            if(receipt.manifest().isEmpty())throw new IOException(receipt.reason());
-            return intake.compatibility(control.id(),input.repository(),input.revision(),input.dirty(),input.includeTests(),false,List.copyOf(excluded));
+    private static Map<ContentDigest, byte[]> extractPolyglotBytes(RepositoryAcquisitionResult acquisition) {
+        var map = new HashMap<ContentDigest, byte[]>();
+        for (var file : acquisition.files()) {
+            String p = file.path();
+            if (!p.endsWith(".java") || p.endsWith("Grpc.java") || p.contains("grpc")) {
+                map.putIfAbsent(file.contentDigest(), file.bytes());
+            }
         }
+        return map;
     }
     static Path safe(Path input) throws IOException {
         Path path = input.toAbsolutePath().normalize();

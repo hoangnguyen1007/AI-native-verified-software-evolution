@@ -2,16 +2,22 @@ package com.evolution.analysis.ingestion;
 
 import com.evolution.analysis.acquisition.*;
 import com.evolution.analysis.contract.common.*;
+import com.evolution.analysis.contract.serialization.CanonicalJson;
 import com.evolution.analysis.contract.source.*;
 import com.evolution.analysis.evidence.CapabilityGapRecord;
 import com.evolution.analysis.frontend.*;
+import java.nio.charset.StandardCharsets;
 import java.util.*;
 
 /** Converts complete captured bytes into selective text inputs; unreadable text stays in the file denominator. */
 public final class RepositoryInputDecoder {
     public static final VersionedIdentifier PROVIDER =
             new VersionedIdentifier("repository.input-decoder", "m4uv2.1-v1");
-    public record Policy(String charset, int maxTextFiles, int maxTextBytes) {
+    public record Policy(String charset, int maxTextFiles, int maxTextBytes, boolean architecturalInputsOnly)
+            implements CanonicalJson.CanonicalValue {
+        public Policy(String charset, int maxTextFiles, int maxTextBytes) {
+            this(charset, maxTextFiles, maxTextBytes, false);
+        }
         public Policy {
             charset = ContractChecks.text(charset, "intake charset");
             if (!Set.of("UTF-8", "UTF-16", "UTF-16BE", "UTF-16LE", "ISO-8859-1", "US-ASCII")
@@ -19,6 +25,20 @@ public final class RepositoryInputDecoder {
                 throw new IllegalArgumentException("Intake charset outside the portable decoding catalog");
             if (maxTextFiles < 1 || maxTextBytes < 1)
                 throw new IllegalArgumentException("Positive intake decode bounds required");
+        }
+        public Policy withArchitecturalInputsOnly(boolean architecturalInputsOnly) {
+            return new Policy(charset, maxTextFiles, maxTextBytes, architecturalInputsOnly);
+        }
+        @Override
+        public Object canonicalValue() {
+            var map = new TreeMap<String, Object>();
+            map.put("charset", charset);
+            map.put("maxTextBytes", maxTextBytes);
+            map.put("maxTextFiles", maxTextFiles);
+            if (architecturalInputsOnly) {
+                map.put("architecturalInputsOnly", true);
+            }
+            return map;
         }
     }
     public record Result(ContentDigest identity, RepositoryUnderstandingInventory inventory,
@@ -70,7 +90,7 @@ public final class RepositoryInputDecoder {
             Map<String, SourceInput> decoded = new TreeMap<>();
             int attempted = 0;
             for (var file : acquisition.files()) {
-                if (!isText(file.path())) continue;
+                if (!(policy.architecturalInputsOnly() ? isArchitecturalText(file) : isText(file.path()))) continue;
                 if (++attempted > policy.maxTextFiles() || file.size() > policy.maxTextBytes()) {
                     issues.add(new IngestionEvidence.Issue(IngestionEvidence.Reason.INPUT_LIMIT,
                             file.path(), List.of(file.contentDigest())));
@@ -83,13 +103,13 @@ public final class RepositoryInputDecoder {
                 }
                 var document = SourceDocument.create(snapshot.repository(), provisionalModule,
                         file.path(), file.contentDigest(), classification(file.path()));
-                var detectedBom = SourceInput.Bom.detect(file.bytes());
+                var detectedBom = detectBom(file.readOnlyBuffer());
                 String charset = selectCharset(policy.charset(), detectedBom);
                 try {
                     var decoding = new SourceInput.Decoding("source-decoding-v1", charset,
                             SourceInput.EncodingOrigin.ANALYSIS_POLICY, List.of(),
                             detectedBom, SourceInput.LineEndings.from(""));
-                    decoded.put(file.path(), new SourceInput(document, file.bytes(), decoding));
+                    decoded.put(file.path(), SourceInput.fromAcquired(document, file, decoding));
                 } catch (FrontendInputException failure) {
                     if (isProperties(file.path()) && detectedBom == SourceInput.Bom.NONE
                             && !"ISO-8859-1".equalsIgnoreCase(charset)) {
@@ -97,7 +117,7 @@ public final class RepositoryInputDecoder {
                             var fallback = new SourceInput.Decoding("source-decoding-v1", "ISO-8859-1",
                                     SourceInput.EncodingOrigin.ANALYSIS_POLICY, List.of(),
                                     SourceInput.Bom.NONE, SourceInput.LineEndings.from(""));
-                            decoded.put(file.path(), new SourceInput(document, file.bytes(), fallback));
+                            decoded.put(file.path(), SourceInput.fromAcquired(document, file, fallback));
                             continue;
                         } catch (FrontendInputException ignored) {
                             // Retain MALFORMED_INPUT below if ISO-8859-1 fallback ever fails.
@@ -128,6 +148,38 @@ public final class RepositoryInputDecoder {
 
     private static boolean isProperties(String path) {
         return path.substring(path.lastIndexOf('/') + 1).toLowerCase(Locale.ROOT).endsWith(".properties");
+    }
+
+    private static SourceInput.Bom detectBom(java.nio.ByteBuffer buf) {
+        int len = buf.remaining();
+        if (len >= 3 && (buf.get(0) & 0xFF) == 0xEF && (buf.get(1) & 0xFF) == 0xBB && (buf.get(2) & 0xFF) == 0xBF) {
+            return SourceInput.Bom.UTF8;
+        }
+        if (len >= 2 && (buf.get(0) & 0xFF) == 0xFE && (buf.get(1) & 0xFF) == 0xFF) {
+            return SourceInput.Bom.UTF16_BE;
+        }
+        if (len >= 2 && (buf.get(0) & 0xFF) == 0xFF && (buf.get(1) & 0xFF) == 0xFE) {
+            return SourceInput.Bom.UTF16_LE;
+        }
+        return SourceInput.Bom.NONE;
+    }
+
+    private static boolean isArchitecturalText(AcquiredFile file) {
+        String path = file.path();
+        if (!isText(path)) return false;
+        String lowerPath = "/" + path.toLowerCase(Locale.ROOT);
+        if (lowerPath.contains("/node_modules/") || lowerPath.contains("/bower_components/")
+                || lowerPath.contains("/.idea/") || lowerPath.contains("/.vscode/")) {
+            return false;
+        }
+        String name = path.substring(path.lastIndexOf('/') + 1).toLowerCase(Locale.ROOT);
+        if (name.endsWith(".json")) {
+            return false;
+        }
+        if (name.endsWith(".xml") && !name.equals("pom.xml")) {
+            return file.containsAsciiCaseInsensitive("<bean") || file.containsAsciiCaseInsensitive("<servlet");
+        }
+        return true;
     }
 
     private static boolean isText(String path) {

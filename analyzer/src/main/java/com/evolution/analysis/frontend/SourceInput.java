@@ -60,8 +60,63 @@ public final class SourceInput {
             throw new FrontendInputException("frontend.encoding", "Source bytes are invalid under the selected charset");
         }
     }
+    private SourceInput(SourceDocument document, byte[] verifiedBytes, String text, Decoding decoding) {
+        this.document = Objects.requireNonNull(document);
+        this.bytes = verifiedBytes;
+        this.text = text;
+        this.decoding = decoding;
+    }
+
+    /** Zero-copy, zero-rehash construction from an already digest-verified AcquiredFile. */
+    public static SourceInput fromAcquired(SourceDocument document,
+            com.evolution.analysis.acquisition.AcquiredFile file, Decoding requested) {
+        Objects.requireNonNull(document);
+        Objects.requireNonNull(file);
+        Objects.requireNonNull(requested);
+        if (!file.contentDigest().equals(document.contentDigest())) {
+            throw new FrontendInputException("frontend.source-digest", "Source bytes differ from the inventory");
+        }
+        byte[] ownedBytes = file.bytes();
+        try {
+            Charset charset = portableCharset(requested.charset());
+            Bom detected = Bom.detect(ownedBytes);
+            if (requested.bom() != detected || !detected.compatibleWith(charset)) {
+                throw new FrontendInputException("frontend.encoding-bom", "Source BOM conflicts with the selected charset");
+            }
+            int offset = detected.byteCount();
+            Charset decoderCharset = charset.name().equals("UTF-16") && detected == Bom.UTF16_LE
+                    ? StandardCharsets.UTF_16LE
+                    : charset.name().equals("UTF-16") && detected == Bom.UTF16_BE
+                            ? StandardCharsets.UTF_16BE : charset;
+            String decodedText = decoderCharset.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(CodingErrorAction.REPORT)
+                    .decode(ByteBuffer.wrap(ownedBytes, offset, ownedBytes.length - offset)).toString();
+            LineEndings actual = LineEndings.from(decodedText);
+            Decoding finalDecoding = new Decoding(
+                    requested.schemaVersion(),
+                    charset.name(),
+                    requested.origin(),
+                    requested.evidence(),
+                    detected,
+                    actual);
+            return new SourceInput(document, ownedBytes, decodedText, finalDecoding);
+        } catch (CharacterCodingException exception) {
+            throw new FrontendInputException("frontend.encoding", "Source bytes are invalid under the selected charset");
+        }
+    }
+
+    /** Zero-copy, zero-rehash, zero-redecode rebind when only module/classification metadata changes. */
+    public SourceInput rebindDocument(SourceDocument rebound) {
+        Objects.requireNonNull(rebound);
+        if (!rebound.contentDigest().equals(this.document.contentDigest())) {
+            throw new FrontendInputException("frontend.source-digest", "Source bytes differ from the inventory");
+        }
+        return new SourceInput(rebound, this.bytes, this.text, this.decoding);
+    }
+
     public SourceDocument document() { return document; }
     public byte[] bytes() { return bytes.clone(); }
+    public int byteLength() { return bytes.length; }
     public String text() { return text; }
     public Decoding decoding() { return decoding; }
 

@@ -2,7 +2,9 @@
 
 ## Status and Intent
 
-The active direction is **one full-pipeline demo** following the [2026-11-15 decision](decisions/ADR-011-full-pipeline-demo.md). Use the existing Track A analysis/workbench and Track B snapshot evolution as foundations. SE121, SE122 and KLTN no longer determine delivery order. [Current state](current-state.md) records what is implemented and what comes next.
+The [full-pipeline demo](#full-pipeline-demo) is complete in its pinned scope. **CONFIRMED human direction (2026-11-16):** extend the repair backend for use on real repositories beyond that fixture. Build on Track A analysis and Track B snapshot evolution. SE121, SE122 and KLTN no longer determine delivery order. [Current state](current-state.md) records what is implemented and what comes next.
+
+The [repository repair API](architecture/captured-repository-repair.md) starts with deterministic recipes and an optional model adapter over authenticated source evidence. A compiler syntax check gates patch creation. Support for additional languages and isolated build, test and finding verification must be established separately for their actual toolchains and contexts. Preserve explicit gaps rather than expanding the claims of the pinned run.
 
 ## Full-Pipeline Demo
 

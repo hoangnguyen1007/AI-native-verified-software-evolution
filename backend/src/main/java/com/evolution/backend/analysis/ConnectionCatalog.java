@@ -18,6 +18,9 @@ final class ConnectionCatalog implements AutoCloseable {
         var selection=new Selection("repository-connection:m8.4-v2",source,policy);var handle=content.put(new ByteArrayInputStream(CanonicalJson.write(selection).getBytes(StandardCharsets.UTF_8)),()->false);
         index.entries("connections",List.of(new SqliteInventoryStore.Observation(new InventoryEntry(LogicalPath.utf8(id),InventoryEntry.Kind.FILE,"100644",InventoryEntry.Population.UNKNOWN,InventoryEntry.Disposition.ACQUIRED,Optional.of(handle),Optional.empty(),Optional.of("UTF-8"),List.of(),Optional.empty()),"")));
     }
+    void delete(String id)throws IOException{
+        index.deleteEntry("connections",LogicalPath.utf8(id));
+    }
     List<Selection> load()throws IOException{
         // Connection admission remains an explicit bounded operator allocation; job history has its own disk denominator.
         var page=index.page("connections",33,Optional.empty());if(page.continuation().isPresent()||page.entries().size()>32)throw new IOException("CONNECTION_ALLOCATION_REQUIRED");var result=new ArrayList<Selection>();

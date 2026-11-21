@@ -28,8 +28,35 @@ public final class MavenBuildModelProvider implements BuildModelProvider {
         private final List<Attempt> attempts = new ArrayList<>();
         private final Set<String> visited = new HashSet<>();
         private final Set<String> moduleDirectories = new HashSet<>();
+        private final ModelInputs.SharedCache sharedCache;
+        private final Map<String, String> effectiveUserProperties;
+        private final DefaultModelBuilder builder;
 
-        private Run(BuildModelRequest request) { this.request = request; }
+        private Run(BuildModelRequest request) {
+            this.request = request;
+            this.sharedCache = new ModelInputs.SharedCache(request);
+            var policy = request.policy();
+            var mergedProps = new LinkedHashMap<String, String>(sharedCache.rootCiFriendlyProperties());
+            mergedProps.putAll(policy.userProperties());
+            this.effectiveUserProperties = Collections.unmodifiableMap(mergedProps);
+            this.builder = new DefaultModelBuilderFactory() {
+                @Override protected ProfileSelector newProfileSelector() {
+                    var selector = new DefaultProfileSelector().addProfileActivator(new PropertyProfileActivator());
+                    // Maven creates fresh import requests. Keep the declared policy for BOMs as well.
+                    return (profiles, activationContext, collector) -> {
+                        var isolated = new DefaultProfileActivationContext()
+                                .setActiveProfileIds(policy.activeProfiles())
+                                .setInactiveProfileIds(policy.inactiveProfiles())
+                                .setSystemProperties(Map.<String, String>of())
+                                .setUserProperties(effectiveUserProperties);
+                        var projectProperties = new Properties();
+                        projectProperties.putAll(activationContext.getProjectProperties());
+                        isolated.setProjectProperties(projectProperties);
+                        return selector.getActiveProfiles(profiles, isolated, collector);
+                    };
+                }
+            }.newInstance();
+        }
 
         private BuildModelResult build() {
             var pending = new ArrayDeque<Pending>();
@@ -48,7 +75,7 @@ public final class MavenBuildModelProvider implements BuildModelProvider {
                     problem(Reason.DUPLICATE_MODULE, next.path);
                     continue;
                 }
-                var context = new ModelInputs(request, next.path, problems, attempts);
+                var context = new ModelInputs(request, next.path, problems, attempts, sharedCache);
                 var descriptor = ModuleDescriptor.create(request.snapshot().repository(), PomPaths.directory(next.path), next.path);
                 Optional<EffectivePom> effective = Optional.empty();
                 Model raw = null;
@@ -60,8 +87,6 @@ public final class MavenBuildModelProvider implements BuildModelProvider {
                     var source = context.workspace(next.path, next.aggregator.orElse(next.path), AttemptKind.MODULE);
                     raw = context.inspect(source);
                     var policy = request.policy();
-                    var effectiveUserProperties = new LinkedHashMap<String, String>(context.rootCiFriendlyProperties());
-                    effectiveUserProperties.putAll(policy.userProperties());
                     var properties = new Properties();
                     properties.putAll(effectiveUserProperties);
                     var modelRequest = new DefaultModelBuildingRequest()
@@ -74,23 +99,6 @@ public final class MavenBuildModelProvider implements BuildModelProvider {
                             .setActiveProfileIds(policy.activeProfiles())
                             .setInactiveProfileIds(policy.inactiveProfiles())
                             .setModelResolver(context.resolver());
-                    var builder = new DefaultModelBuilderFactory() {
-                        @Override protected ProfileSelector newProfileSelector() {
-                            var selector = new DefaultProfileSelector().addProfileActivator(new PropertyProfileActivator());
-                            // Maven creates fresh import requests. Keep the declared policy for BOMs as well.
-                            return (profiles, activationContext, collector) -> {
-                                var isolated = new DefaultProfileActivationContext()
-                                        .setActiveProfileIds(policy.activeProfiles())
-                                        .setInactiveProfileIds(policy.inactiveProfiles())
-                                        .setSystemProperties(Map.<String, String>of())
-                                        .setUserProperties(effectiveUserProperties);
-                                var projectProperties = new Properties();
-                                projectProperties.putAll(activationContext.getProjectProperties());
-                                isolated.setProjectProperties(projectProperties);
-                                return selector.getActiveProfiles(profiles, isolated, collector);
-                            };
-                        }
-                    }.newInstance();
                     var result = builder.build(modelRequest);
                     if (!result.getProblems().isEmpty()) problem(Reason.MODEL_WARNING, next.path);
                     try {

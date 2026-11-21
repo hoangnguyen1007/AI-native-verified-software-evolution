@@ -14,8 +14,10 @@ import java.nio.charset.CodingErrorAction;
 import java.nio.charset.CharacterCodingException;
 import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Optional;
 import java.util.regex.Matcher;
@@ -55,7 +57,7 @@ public final class FilesystemJdkPlatformProvider implements PlatformSymbolProvid
                         "release", releaseAttributes.isSymbolicLink()
                                 ? PlatformSymbolResult.Outcome.DENIED : PlatformSymbolResult.Outcome.FAILED);
             }
-            byte[] releaseBytes = read(root, releaseFile, "release", RELEASE_FILE_LIMIT, attempts);
+            byte[] releaseBytes = readSmallBytes(root, releaseFile, "release", RELEASE_FILE_LIMIT, attempts);
             String metadata = decodeRelease(releaseBytes);
             String version = property(metadata, "JAVA_VERSION").orElseThrow();
             String vendor = property(metadata, "IMPLEMENTOR")
@@ -72,13 +74,13 @@ public final class FilesystemJdkPlatformProvider implements PlatformSymbolProvid
                             PlatformSymbolResult.Reason.ARTIFACT_BYTE_LIMIT, "lib/ct.sym", PlatformSymbolResult.Outcome.LIMIT_EXCEEDED);
                     if (attributes.size() > request.maxTotalBytes()) return failed(request, problems, attempts,
                             PlatformSymbolResult.Reason.TOTAL_BYTE_LIMIT, "lib/ct.sym", PlatformSymbolResult.Outcome.LIMIT_EXCEEDED);
-                    byte[] bytes = read(root, ctSym, "lib/ct.sym#release-" + request.release(),
+                    ContentDigest digest = readDigest(root, ctSym, "lib/ct.sym#release-" + request.release(),
                             Math.min(request.maxArtifactBytes(), request.maxTotalBytes()), attempts);
                     if (!validCtSym(ctSym, request.release())) return failed(request, problems, attempts,
                             PlatformSymbolResult.Reason.RELEASE_NOT_IN_CT_SYM, "release:" + request.release(),
                             PlatformSymbolResult.Outcome.UNAVAILABLE);
                     var artifact = new PlatformInput.Artifact(
-                            "lib/ct.sym#release-" + request.release(), ContentDigest.sha256(bytes), ctSym,
+                            "lib/ct.sym#release-" + request.release(), digest, ctSym,
                             PlatformInput.Format.CT_SYM);
                     PlatformInput input = PlatformInput.create(request.release(),
                             "release-" + request.release() + "-from-" + version, vendor, List.of(artifact));
@@ -122,7 +124,7 @@ public final class FilesystemJdkPlatformProvider implements PlatformSymbolProvid
                     PlatformSymbolResult.Reason.ARTIFACT_COUNT_LIMIT, "platform-symbols", PlatformSymbolResult.Outcome.LIMIT_EXCEEDED);
 
             long total = 0;
-            List<PlatformInput.Artifact> artifacts = new ArrayList<>();
+            List<PlatformInput.Artifact> artifacts = new ArrayList<>(symbols.size());
             for (Path symbol : symbols) {
                 String logical = feature <= 8 ? "lib/rt.jar" : "jmods/" + symbol.getFileName();
                 BasicFileAttributes attributes = Files.readAttributes(symbol, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
@@ -135,11 +137,11 @@ public final class FilesystemJdkPlatformProvider implements PlatformSymbolProvid
                 if (attributes.size() > request.maxTotalBytes() - total) return failed(request, problems, attempts,
                         PlatformSymbolResult.Reason.TOTAL_BYTE_LIMIT, "platform-symbols", PlatformSymbolResult.Outcome.LIMIT_EXCEEDED);
                 total += attributes.size();
-                byte[] bytes = read(root, symbol, logical, request.maxArtifactBytes(), attempts);
+                ContentDigest digest = readDigest(root, symbol, logical, request.maxArtifactBytes(), attempts);
                 if (!validArchive(symbol, format)) return failed(request, problems, attempts,
                         PlatformSymbolResult.Reason.INVALID_SYMBOL_ARCHIVE, logical,
                         PlatformSymbolResult.Outcome.FAILED);
-                artifacts.add(new PlatformInput.Artifact(logical, ContentDigest.sha256(bytes), symbol, format));
+                artifacts.add(new PlatformInput.Artifact(logical, digest, symbol, format));
             }
             PlatformInput input = PlatformInput.create(feature, version, vendor, artifacts);
             return PlatformSymbolResult.create(request, PROVIDER, Optional.of(input), List.of(), attempts);
@@ -152,7 +154,7 @@ public final class FilesystemJdkPlatformProvider implements PlatformSymbolProvid
         }
     }
 
-    private static byte[] read(
+    private static byte[] readSmallBytes(
             Path root, Path path, String logical, long limit,
             List<PlatformSymbolResult.Attempt> attempts) throws IOException {
         Path real = path.toRealPath(LinkOption.NOFOLLOW_LINKS);
@@ -172,6 +174,39 @@ public final class FilesystemJdkPlatformProvider implements PlatformSymbolProvid
         attempts.add(new PlatformSymbolResult.Attempt(logical, PlatformSymbolResult.Outcome.SUCCEEDED,
                 Optional.of(ContentDigest.sha256(bytes))));
         return bytes;
+    }
+
+    private static ContentDigest readDigest(
+            Path root, Path path, String logical, long limit,
+            List<PlatformSymbolResult.Attempt> attempts) throws IOException {
+        Path real = path.toRealPath(LinkOption.NOFOLLOW_LINKS);
+        if (!real.startsWith(root) || Files.isSymbolicLink(path)) throw new IOException("denied");
+        BasicFileAttributes before = Files.readAttributes(real, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+        long size = before.size();
+        if (size > limit) throw new IOException("limit");
+        byte[] buffer = StreamingContentStore.borrowBuffer();
+        MessageDigest sha = StreamingContentStore.borrowSha256();
+        long readBytes = 0;
+        ContentDigest digest;
+        try (InputStream input = Files.newInputStream(real, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS)) {
+            int count;
+            while ((count = input.read(buffer)) != -1) {
+                readBytes += count;
+                if (readBytes > limit) throw new IOException("limit");
+                sha.update(buffer, 0, count);
+            }
+            digest = new ContentDigest("sha256:" + HexFormat.of().formatHex(sha.digest()));
+        } finally {
+            StreamingContentStore.releaseSha256(sha);
+            StreamingContentStore.releaseBuffer(buffer);
+        }
+        BasicFileAttributes after = Files.readAttributes(real, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+        if (before.size() != after.size() || before.lastModifiedTime().compareTo(after.lastModifiedTime()) != 0
+                || !java.util.Objects.equals(before.fileKey(), after.fileKey()) || readBytes != before.size()) {
+            throw new IOException("changed");
+        }
+        attempts.add(new PlatformSymbolResult.Attempt(logical, PlatformSymbolResult.Outcome.SUCCEEDED, Optional.of(digest)));
+        return digest;
     }
 
     private static Optional<String> property(String text, String name) {
