@@ -2,96 +2,315 @@
 <html lang="en" data-theme="dark">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Evo Architecture Workbench</title><link rel="icon" href="/logo.svg" type="image/svg+xml">
+<title>Evo · Architecture Workbench</title><link rel="icon" href="/logo.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,300..700;1,14..32,300..600&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,300..700;1,14..32,300..600&family=JetBrains+Mono:wght@400;500;600&display=swap">
 <link rel="stylesheet" href="/styles.css">
 <script defer src="/vendor/cytoscape-3.30.2.min.js"></script><script defer src="/model.js"></script><script defer src="/app.js"></script><script defer src="/ux.js"></script>
 </head>
 <body>
 <a class="skip-link" href="#main">Skip to content</a>
 <div class="app-shell">
+
+<!-- ═══════════════════ SIDEBAR ═══════════════════ -->
 <aside class="sidebar" id="sidebar" aria-label="Workspace">
-  <a class="brand" href="/" aria-label="Evo home"><img src="/logo.svg" alt="" width="32" height="32"><span>evo<span class="brand-dot">.</span></span><span class="brand-tag">workbench</span></a>
-  <button class="button primary wide" data-action="connect">＋ Connect repository</button>
-  <div class="sidebar-section"><p class="eyebrow">REPOSITORIES</p><div id="repositories" class="sidebar-list"><p class="muted small">Connecting to server…</p></div></div>
-  <div class="sidebar-section history-section"><div class="section-heading"><p class="eyebrow">RECENT ANALYSES</p><button class="icon-button" data-action="refresh" aria-label="Refresh analysis history" title="Refresh history">↻</button></div><div id="history" class="sidebar-list"></div><button id="history-more" class="button subtle wide" hidden>Load more analyses</button></div>
-  <div class="sidebar-bottom"><span class="connection-dot" id="connection-dot"></span><span id="connection-status">Connecting…</span></div>
-</aside>
-<div class="workspace">
-<header class="topbar">
-  <button id="sidebar-toggle" class="icon-button" aria-label="Toggle sidebar" aria-expanded="true" aria-controls="sidebar">☰</button>
-  <div class="topbar-nav" role="navigation" aria-label="View switcher">
-    <a href="/" class="topbar-nav-link active" aria-current="page" aria-label="Architecture Workbench"><span class="nav-icon" aria-hidden="true">⊞</span> <span class="nav-text">Architecture Workbench</span></a>
-    <a href="/bridges.html" class="topbar-nav-link" aria-label="Polyglot Bridges"><span class="nav-icon" aria-hidden="true">⇄</span> <span class="nav-text">Polyglot Bridges</span></a>
-    <a href="/evolution.html" class="topbar-nav-link" aria-label="Snapshot comparison"><span class="nav-icon" aria-hidden="true">↔</span> <span class="nav-text">Snapshot comparison</span></a>
+  <div class="brand">
+    <img src="/logo.svg" alt="" class="brand-logo" loading="lazy">
+    <span class="brand-name">evo<span class="brand-dot">.</span></span>
+    <span class="brand-tag">workbench</span>
   </div>
-  <span class="topbar-title sr-only">Architecture workspace</span>
-  <div class="topbar-actions">
-    <span class="shortcut-pill muted small" title="Press / anywhere to search symbols">Press <kbd>/</kbd> to search</span>
-    <button id="theme-toggle" class="icon-button" aria-label="Switch to light theme" data-tooltip><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/></svg></button>
-  </div>
-</header>
-<main id="main" tabindex="-1">
-  <div class="page-heading"><div><h1 id="repository-title">Explore your architecture</h1><p id="repository-description" class="muted">Connect a repository, run an analysis, then follow the evidence.</p><p id="result-status" class="muted small" role="status"></p></div><div class="heading-actions"><button id="analyze" class="button primary" disabled>Run analysis ↗</button><button id="analyze-force" class="button" hidden disabled>Run from scratch</button></div></div>
-  <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
-  <section id="job-panel" class="card job-panel" aria-label="Analysis progress" hidden><div class="section-heading"><div><span class="badge" id="job-state"></span><h2 id="job-title">Analysis</h2><p id="job-description" class="muted small"></p><p id="job-evidence-tier" class="muted small" hidden>Evidence tier unavailable in this workbench receipt.</p></div><button id="cancel-job" class="button danger" hidden>Cancel analysis</button></div><ol id="job-events" class="job-events"></ol><div class="job-links"><button id="job-diagnostics" class="text-button">Input diagnostics</button><button id="job-gaps" class="text-button">Analysis limitations</button><button id="job-receipt" class="text-button">View receipt</button></div></section>
-  <section id="readiness-overview" class="card" aria-label="Build structure preview" hidden></section>
-  <div id="welcome" class="welcome">
-    <img src="/logo.svg" alt="" width="48" height="48">
-    <h2>Start with your repository</h2>
-    <p class="muted">Inspect how your software connects across modules, rules, and configurations.<br>Find dependencies, verify architecture rules, and trace each result to its verified source.</p>
-    <div class="workflow-steps" aria-label="How it works">
-      <div class="workflow-step"><span class="step-num">01</span><div><strong>Connect source</strong><p>Point to a local project directory or public HTTPS Git repository.</p></div></div>
-      <div class="workflow-step"><span class="step-num">02</span><div><strong>Capture &amp; analyze</strong><p>Passively extracts AST, types, Spring wiring and build boundaries without executing untrusted builds.</p></div></div>
-      <div class="workflow-step"><span class="step-num">03</span><div><strong>Explore &amp; verify</strong><p>Inspect interactive graphs, shortest paths, blast radius and explained capability boundaries.</p></div></div>
+  <div class="sidebar-inner">
+    <button class="btn-connect-repo" data-action="connect" aria-label="Connect a repository">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      Connect repository
+    </button>
+
+    <div class="sidebar-section">
+      <div class="sidebar-section-header">
+        <p class="eyebrow">Repositories</p>
+      </div>
+      <div id="repositories" class="sidebar-list">
+        <p class="muted small" style="padding:4px 10px">Connecting to server…</p>
+      </div>
     </div>
-    <button class="button primary" data-action="connect">Connect repository →</button>
-    <p class="small muted">Local folders or public Git repositories. Source code is never executed directly on the host.</p>
+
+    <div class="sidebar-section history-section">
+      <div class="sidebar-section-header">
+        <p class="eyebrow">Recent Analyses</p>
+        <button class="icon-button" data-action="refresh" aria-label="Refresh history" title="Refresh" style="width:22px;height:22px;font-size:12px;border:0;background:transparent;color:var(--text-3)">↻</button>
+      </div>
+      <div id="history" class="sidebar-list"></div>
+      <button id="history-more" class="button subtle" style="margin:6px 10px 0;font-size:11px;" hidden>Load more</button>
+    </div>
   </div>
-  <section id="analysis-workspace" hidden aria-label="Analysis results">
-    <div class="context-bar"><div class="context-bar-main"><label for="context">Analysis context</label><select id="context"></select><span class="muted small" id="context-hint">Choose one module and source set to inspect.</span></div><button id="provenance" class="text-button">View provenance &amp; hashes</button></div>
-    <form id="search-form" class="search-bar"><span aria-hidden="true">⌕</span><label class="sr-only" for="search">Search classes and symbols</label><input id="search" type="search" placeholder="Find a class, component, or symbol (e.g. UserController)… Press / to focus" autocomplete="off"><kbd class="kbd-hint" aria-hidden="true">/</kbd><button class="button" type="submit">Search →</button></form>
-    <nav id="tabs" class="tabs" aria-label="Analysis views" role="tablist">
-      <button role="tab" id="tab-overview" aria-controls="panel-overview" aria-selected="true" data-tab="overview">Overview</button>
-      <button role="tab" id="tab-structure" aria-controls="panel-structure" aria-selected="false" tabindex="-1" data-tab="structure">Structure</button>
-      <button role="tab" id="tab-graph" aria-controls="panel-graph" aria-selected="false" tabindex="-1" data-tab="graph">Dependency graph</button>
-      <button role="tab" id="tab-policy" aria-controls="panel-policy" aria-selected="false" tabindex="-1" data-tab="policy">Rules &amp; findings</button>
-      <button role="tab" id="tab-spring" aria-controls="panel-spring" aria-selected="false" tabindex="-1" data-tab="spring">Spring</button>
-      <button role="tab" id="tab-configurations" aria-controls="panel-configurations" aria-selected="false" tabindex="-1" data-tab="configurations">Configurations</button>
-      <button role="tab" id="tab-metrics" aria-controls="panel-metrics" aria-selected="false" tabindex="-1" data-tab="metrics">Metrics &amp; score</button>
-      <button role="tab" id="tab-impact" aria-controls="panel-impact" aria-selected="false" tabindex="-1" data-tab="impact">Change impact</button>
-      <button role="tab" id="tab-gaps" aria-controls="panel-gaps" aria-selected="false" tabindex="-1" data-tab="gaps">Limitations</button>
+
+  <div class="sidebar-bottom">
+    <span class="connection-dot" id="connection-dot"></span>
+    <span id="connection-status" style="font-size:11px;">Connecting…</span>
+  </div>
+</aside>
+
+<!-- ═══════════════════ WORKSPACE ═══════════════════ -->
+<div class="workspace">
+
+  <!-- TOP BAR -->
+  <header class="topbar">
+    <button id="sidebar-toggle" class="icon-button" aria-label="Toggle sidebar" aria-expanded="true" aria-controls="sidebar" style="width:28px;height:28px;font-size:13px;">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+    </button>
+
+    <nav class="topbar-nav" role="navigation" aria-label="Views">
+      <a href="/" class="topbar-nav-link active" aria-current="page" aria-label="Architecture">
+        <span class="nav-icon" aria-hidden="true">⊞</span>
+        <span class="nav-text">Architecture</span>
+      </a>
+      <a href="/bridges.html" class="topbar-nav-link" aria-label="Bridges">
+        <span class="nav-icon" aria-hidden="true">⇄</span>
+        <span class="nav-text">Bridges</span>
+      </a>
+      <a href="/evolution.html" class="topbar-nav-link" aria-label="Evolution">
+        <span class="nav-icon" aria-hidden="true">↔</span>
+        <span class="nav-text">Evolution</span>
+      </a>
     </nav>
-    <div id="view-status" class="muted small" role="status" aria-live="polite"></div>
-    <section role="tabpanel" id="panel-overview" aria-labelledby="tab-overview" tabindex="0"></section>
-    <section role="tabpanel" id="panel-structure" aria-labelledby="tab-structure" tabindex="0" hidden></section>
-    <section role="tabpanel" id="panel-graph" aria-labelledby="tab-graph" tabindex="0" hidden></section>
-    <section role="tabpanel" id="panel-policy" aria-labelledby="tab-policy" tabindex="0" hidden></section>
-    <section role="tabpanel" id="panel-spring" aria-labelledby="tab-spring" tabindex="0" hidden></section>
-    <section role="tabpanel" id="panel-configurations" aria-labelledby="tab-configurations" tabindex="0" hidden></section>
-    <section role="tabpanel" id="panel-metrics" aria-labelledby="tab-metrics" tabindex="0" hidden></section>
-    <section role="tabpanel" id="panel-impact" aria-labelledby="tab-impact" tabindex="0" hidden></section>
-    <section role="tabpanel" id="panel-gaps" aria-labelledby="tab-gaps" tabindex="0" hidden></section>
-    <!-- Canvas overlay — Adaptive Canvas shell, JS wiring deferred -->
+
+    <span class="topbar-title sr-only">Architecture workspace</span>
+    <div class="topbar-actions">
+      <span class="shortcut-pill muted small" title="Ctrl+K or / to search"><kbd>⌃K</kbd> search</span>
+      <button id="theme-toggle" class="icon-button" aria-label="Switch theme" data-tooltip>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- PAGE HEADING -->
+  <div class="page-heading">
+    <div>
+      <h1 id="repository-title">Explore your architecture</h1>
+      <p id="repository-description" class="muted small" style="display:none;"></p>
+      <p id="result-status"></p>
+    </div>
+    <div class="heading-actions">
+      <button id="analyze" class="button primary" disabled>
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><polygon points="5,3 19,12 5,21"/></svg>
+        Run analysis
+      </button>
+      <button id="analyze-force" class="button subtle" hidden disabled>Re-run</button>
+    </div>
+  </div>
+
+  <!-- MAIN CONTENT -->
+  <main id="main" tabindex="-1">
+
+    <!-- Notice banner (kept for compat, toasts used instead) -->
+    <div id="notice" class="notice" role="status" aria-live="polite" hidden style="margin:12px 24px 0;"></div>
+
+    <!-- Job progress -->
+    <section id="job-panel" class="card job-panel" aria-label="Analysis progress" hidden style="margin:12px 24px 0;">
+      <div class="section-heading">
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span class="badge" id="job-state"></span>
+          <h2 id="job-title" style="font-size:13px;margin:0;">Analysis</h2>
+        </div>
+        <button id="cancel-job" class="button danger" hidden style="height:26px;font-size:11px;">Cancel</button>
+      </div>
+      <p id="job-description" class="muted small" style="margin:4px 0 0;"></p>
+      <p id="job-evidence-tier" class="muted small" hidden>Evidence tier unavailable.</p>
+      <ol id="job-events" class="job-events"></ol>
+      <div class="job-links">
+        <button id="job-diagnostics" class="text-button" style="font-size:11px;">Input diagnostics</button>
+        <button id="job-gaps" class="text-button" style="font-size:11px;" hidden>Limitations</button>
+        <button id="job-receipt" class="text-button" style="font-size:11px;">View receipt</button>
+      </div>
+    </section>
+
+    <!-- Readiness overview -->
+    <section id="readiness-overview" class="card" aria-label="Build structure" hidden style="margin:12px 24px 0;"></section>
+
+    <!-- Welcome screen -->
+    <div id="welcome" class="welcome">
+      <img src="/logo.svg" alt="" class="welcome-logo" loading="lazy">
+      <h2>Architecture Intelligence</h2>
+      <p class="muted">Connect a repository, run an analysis, then follow the evidence — from dependencies to AI-powered repair proposals.</p>
+      <div class="workflow-steps" aria-label="How it works">
+        <div class="workflow-step">
+          <span class="step-num">01</span>
+          <strong>Connect</strong>
+          <p>Local folder or Git URL</p>
+        </div>
+        <div class="workflow-step">
+          <span class="step-num">02</span>
+          <strong>Analyze</strong>
+          <p>Passive AST &amp; type capture</p>
+        </div>
+        <div class="workflow-step">
+          <span class="step-num">03</span>
+          <strong>Repair</strong>
+          <p>AI diagnosis &amp; patch</p>
+        </div>
+      </div>
+      <div class="welcome-chips" aria-label="Features">
+        <span class="welcome-chip"><span class="wc-dot"></span>Dependency graph</span>
+        <span class="welcome-chip"><span class="wc-dot"></span>Policy rules</span>
+        <span class="welcome-chip"><span class="wc-dot"></span>AI diagnosis</span>
+        <span class="welcome-chip"><span class="wc-dot"></span>Spring intelligence</span>
+        <span class="welcome-chip"><span class="wc-dot"></span>Config compare</span>
+        <span class="welcome-chip"><span class="wc-dot"></span>Impact analysis</span>
+        <span class="welcome-chip"><span class="wc-dot"></span>Metrics &amp; score</span>
+        <span class="welcome-chip"><span class="wc-dot"></span>Verified PR</span>
+      </div>
+      <button class="button primary" data-action="connect" style="height:38px;padding:0 22px;font-size:13px;">Connect repository →</button>
+      <p class="small muted" style="max-width:400px;">Source is never executed directly. Local folders and public Git repositories supported.</p>
+    </div>
+
+    <!-- Analysis workspace -->
+    <section id="analysis-workspace" hidden aria-label="Analysis results">
+
+      <!-- Toolbar: context selector + search -->
+      <div class="analysis-toolbar">
+        <div class="context-bar">
+          <div class="context-bar-main">
+            <label for="context" class="sr-only">Analysis context</label>
+            <select id="context" style="min-width:200px;max-width:380px;"></select>
+            <span class="muted small" id="context-hint"></span>
+          </div>
+          <button id="provenance" class="text-button" style="font-size:11px;">Provenance &amp; hashes</button>
+        </div>
+
+        <form id="search-form" class="search-bar" style="margin-bottom:0;margin-top:0;">
+          <span aria-hidden="true" style="font-size:13px;">⌕</span>
+          <label class="sr-only" for="search">Search classes and symbols</label>
+          <input id="search" type="search" placeholder="Search symbol, class, component… (/ to focus)" autocomplete="off">
+          <kbd class="kbd-hint" aria-hidden="true">/</kbd>
+          <button class="button" type="submit" style="height:26px;padding:0 10px;font-size:11.5px;">Search</button>
+        </form>
+
+        <!-- Tabs — pill segmented nav -->
+        <nav id="tabs" class="tabs" aria-label="Analysis views" role="tablist" style="margin-bottom:0;margin-top:12px;">
+          <button role="tab" id="tab-overview"        aria-controls="panel-overview"        aria-selected="true"  data-tab="overview">Overview</button>
+          <button role="tab" id="tab-structure"       aria-controls="panel-structure"       aria-selected="false" tabindex="-1" data-tab="structure">Structure</button>
+          <button role="tab" id="tab-graph"           aria-controls="panel-graph"           aria-selected="false" tabindex="-1" data-tab="graph">Graph</button>
+          <button role="tab" id="tab-policy"          aria-controls="panel-policy"          aria-selected="false" tabindex="-1" data-tab="policy">Findings</button>
+          <button role="tab" id="tab-spring"          aria-controls="panel-spring"          aria-selected="false" tabindex="-1" data-tab="spring">Spring</button>
+          <button role="tab" id="tab-configurations" aria-controls="panel-configurations"  aria-selected="false" tabindex="-1" data-tab="configurations">Configurations</button>
+          <button role="tab" id="tab-metrics"         aria-controls="panel-metrics"         aria-selected="false" tabindex="-1" data-tab="metrics">Metrics</button>
+          <button role="tab" id="tab-impact"          aria-controls="panel-impact"          aria-selected="false" tabindex="-1" data-tab="impact">Impact</button>
+        </nav>
+      </div>
+
+      <!-- Analysis content -->
+      <div class="analysis-content">
+        <div id="view-status" class="muted small" role="status" aria-live="polite"></div>
+        <section role="tabpanel" id="panel-overview"        aria-labelledby="tab-overview"        tabindex="0"></section>
+        <section role="tabpanel" id="panel-structure"       aria-labelledby="tab-structure"       tabindex="0" hidden></section>
+        <section role="tabpanel" id="panel-graph"           aria-labelledby="tab-graph"           tabindex="0" hidden></section>
+        <section role="tabpanel" id="panel-policy"          aria-labelledby="tab-policy"          tabindex="0" hidden></section>
+        <section role="tabpanel" id="panel-spring"          aria-labelledby="tab-spring"          tabindex="0" hidden></section>
+        <section role="tabpanel" id="panel-configurations"  aria-labelledby="tab-configurations"  tabindex="0" hidden></section>
+        <section role="tabpanel" id="panel-metrics"         aria-labelledby="tab-metrics"         tabindex="0" hidden></section>
+        <section role="tabpanel" id="panel-impact"          aria-labelledby="tab-impact"          tabindex="0" hidden></section>
+        <section role="tabpanel" id="panel-gaps"            aria-labelledby="tab-gaps"            tabindex="0" hidden></section>
+      </div>
+    </section>
+
+    <!-- AI Repair Canvas Overlay -->
     <div class="canvas-overlay" id="canvas-overlay" hidden>
       <div class="canvas-panel">
-        <button class="canvas-close" id="canvas-close" aria-label="Close canvas">×</button>
+        <button class="canvas-close" id="canvas-close" aria-label="Close panel">×</button>
+        <div class="canvas-panel-header" id="canvas-header">
+          <p class="eyebrow" id="canvas-kind">DETAILS</p>
+          <div class="canvas-panel-actions" id="canvas-actions"></div>
+        </div>
         <div class="canvas-body" id="canvas-body"></div>
       </div>
     </div>
-  </section>
-  <footer class="footer">Evo · Evidence-First Software Architecture Intelligence Workbench</footer>
-</main></div></div>
+
+  </main>
+
+</div><!-- .workspace -->
+</div><!-- .app-shell -->
+
+<!-- Graph fullscreen overlay -->
+<div class="graph-fullscreen-overlay" id="graph-fullscreen" hidden aria-label="Graph fullscreen" role="dialog" aria-modal="true">
+  <div class="graph-fullscreen-toolbar">
+    <h3 id="graph-fullscreen-title">Dependency Graph</h3>
+    <div id="graph-fullscreen-controls" style="display:flex;gap:6px;margin-left:auto;"></div>
+    <button class="button subtle" id="graph-fullscreen-close" aria-label="Close fullscreen" style="margin-left:8px;">✕ Close</button>
+  </div>
+  <div id="graph-fullscreen-canvas" style="flex:1;min-height:0;"></div>
+</div>
+
+<!-- Keyboard shortcut overlay -->
+<div class="shortcut-overlay" id="shortcut-overlay" hidden role="dialog" aria-modal="true" aria-label="Keyboard shortcuts">
+  <div class="shortcut-panel">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+      <h3 style="margin:0;">Keyboard shortcuts</h3>
+      <button class="icon-button" id="shortcut-overlay-close" aria-label="Close">×</button>
+    </div>
+    <div class="shortcut-list">
+      <kbd>/</kbd><span>Focus search</span>
+      <kbd>⌃K</kbd><span>Focus search</span>
+      <kbd>O</kbd><span>Overview tab</span>
+      <kbd>G</kbd><span>Graph tab</span>
+      <kbd>R</kbd><span>Findings tab</span>
+      <kbd>M</kbd><span>Metrics tab</span>
+      <kbd>S</kbd><span>Structure tab</span>
+      <kbd>C</kbd><span>Focus context selector</span>
+      <kbd>F</kbd><span>Fullscreen graph</span>
+      <kbd>?</kbd><span>Toggle this overlay</span>
+      <kbd>Esc</kbd><span>Close dialogs / panels</span>
+    </div>
+    <p class="small muted" style="margin-top:16px;margin-bottom:0;">Shortcuts active when not in a text field.</p>
+  </div>
+</div>
+
+<!-- Toast container -->
+<div id="toast-container" aria-live="polite" aria-label="Notifications"></div>
+
+<!-- Connect Repository Dialog -->
 <dialog id="connect-dialog" aria-labelledby="connect-title">
-<form id="connect-form"><div class="dialog-heading"><div><h2 id="connect-title">Connect your code</h2></div><button type="button" class="icon-button" data-close="connect-dialog" aria-label="Close repository dialog">×</button></div>
-<p class="muted">Paste an absolute local folder path or a public HTTPS Git URL.</p>
-<label for="repository-source">Repository location</label><input id="repository-source" required maxlength="4096" placeholder="C:/projects/my-app or https://github.com/team/repo" aria-describedby="source-help" autocomplete="off">
-<p id="source-help" class="muted small">Public HTTPS Git hosts are supported. Private access and SSH require operator configuration. Analysis reads captured source and available dependencies without running your build.</p>
-<details id="policy-settings"><summary>Architecture rules &amp; scoring (optional)</summary><label for="repository-policy">Policy YAML</label><div id="policy-presets" class="preset-chips" aria-label="Policy templates"></div><textarea id="repository-policy" rows="6" maxlength="8192" placeholder="Paste your architecture policy YAML or choose a preset above"></textarea><p class="muted small">A score requires explicit rules and enough evidence. With no policy, structural metrics remain available and the score is unavailable.</p><button id="policy-example" class="text-button" type="button">Insert cycle-check example</button><p class="muted small">Templates check structural cycles. Review and customize rules for your repository.</p></details>
-<p id="connect-error" class="form-error" role="alert" hidden></p><div class="dialog-actions"><button type="button" class="button" data-close="connect-dialog">Cancel</button><button id="connect-submit" class="button primary" type="submit">Connect repository</button></div>
-</form></dialog>
-<dialog id="inspector" class="inspector" aria-labelledby="inspector-title"><div class="dialog-heading"><div><p class="eyebrow" id="inspector-kind">DETAILS</p><h2 id="inspector-title"></h2></div><button class="icon-button" data-close="inspector" aria-label="Close details">×</button></div><div id="inspector-body"></div><div class="dialog-actions"><button id="download-details" class="button">Download JSON</button><button class="button primary" data-close="inspector">Done</button></div></dialog>
-<noscript>This workspace needs JavaScript to connect to the local analysis API.</noscript>
+<form id="connect-form">
+  <div class="dialog-heading">
+    <div>
+      <p class="eyebrow" style="margin-bottom:4px;">Source</p>
+      <h2 id="connect-title">Connect your code</h2>
+    </div>
+    <button type="button" class="icon-button" data-close="connect-dialog" aria-label="Close">×</button>
+  </div>
+  <label for="repository-source">Repository location</label>
+  <input id="repository-source" required maxlength="4096" placeholder="C:/projects/my-app  or  https://github.com/team/repo" aria-describedby="source-help" autocomplete="off">
+  <p id="source-help" class="muted small" style="margin-top:5px;">Local absolute path or public HTTPS Git URL. Source is never executed on the host.</p>
+  <details id="policy-settings" style="margin-top:14px;">
+    <summary>Architecture rules &amp; scoring <span class="muted small">(optional)</span></summary>
+    <label for="repository-policy" style="margin-top:10px;">Policy YAML</label>
+    <div id="policy-presets" class="preset-chips" aria-label="Policy templates"></div>
+    <textarea id="repository-policy" rows="5" maxlength="8192" placeholder="Paste architecture policy YAML or choose a preset"></textarea>
+    <button id="policy-example" class="text-button" type="button" style="font-size:11px;">Insert cycle-check example</button>
+  </details>
+  <p id="connect-error" class="form-error" role="alert" hidden></p>
+  <div class="dialog-actions">
+    <button type="button" class="button" data-close="connect-dialog">Cancel</button>
+    <button id="connect-submit" class="button primary" type="submit">Connect</button>
+  </div>
+</form>
+</dialog>
+
+<!-- Inspector Dialog -->
+<dialog id="inspector" class="inspector" aria-labelledby="inspector-title">
+  <div class="dialog-heading">
+    <div>
+      <p class="eyebrow" id="inspector-kind">DETAILS</p>
+      <h2 id="inspector-title"></h2>
+    </div>
+    <button class="icon-button" data-close="inspector" aria-label="Close details">×</button>
+  </div>
+  <div id="inspector-body"></div>
+  <div class="dialog-actions">
+    <button id="download-details" class="button">Download JSON</button>
+    <button class="button primary" data-close="inspector">Done</button>
+  </div>
+</dialog>
+
+<noscript>This workspace requires JavaScript to connect to the analysis API.</noscript>
 </body></html>
