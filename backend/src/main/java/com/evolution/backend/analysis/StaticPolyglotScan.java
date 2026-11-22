@@ -13,6 +13,7 @@ import java.io.*;
 import java.nio.file.Path;
 import java.util.*;
 import java.util.function.BooleanSupplier;
+import java.util.function.Function;
 
 /** Bundled grammar parsing of immutable bytes, one file at a time. No project
  * compiler, plugin, interpreter, model request or target library is loaded. */
@@ -25,10 +26,14 @@ public final class StaticPolyglotScan {
         public Map<String,Object> summary(){var values=new TreeMap<String,Object>(Map.of("provider",TreeSitterSourceFrontend.provider(),"records",records.identity(),"documents",documents,"parsedDocuments",parsed,"categories",categories,"failures",failures,"trust","SOURCE_SYNTAX","boundCallTargets",false,"workerFileBytes",workerFileBytes,"population","LANGUAGE_DOCUMENT_ATTEMPTS"));values.put("javaRpcProvider",JavaGrpcSourceFrontend.PROVIDER);values.put("javaRpcAcquisition","SELECTIVE_SOURCE_SYNTAX");return Map.copyOf(values);}
     }
     public Result run(PolyglotInventory.Report inventory,SemanticTables tables,RepositoryContentStore content,Path scratch,BooleanSupplier cancelled)throws IOException {
-        return run(inventory,tables,content,scratch,cancelled,Map.of(),false);
+        return run(inventory,tables,content,scratch,cancelled,digest->null,false);
     }
     public Result run(PolyglotInventory.Report inventory,SemanticTables tables,RepositoryContentStore content,Path scratch,BooleanSupplier cancelled,
                       Map<ContentDigest,byte[]> verifiedBytes,boolean fastArchitecture)throws IOException {
+        return run(inventory,tables,content,scratch,cancelled,verifiedBytes::get,fastArchitecture);
+    }
+    Result run(PolyglotInventory.Report inventory,SemanticTables tables,RepositoryContentStore content,Path scratch,BooleanSupplier cancelled,
+                      Function<ContentDigest,byte[]> verifiedBytes,boolean fastArchitecture)throws IOException {
         var categories=new TreeMap<String,Long>();var failures=new TreeMap<String,Long>();long documents=0,parsed=0;
         int fileBudget=(int)Math.min(64_000_000L,Math.max(1_000_000L,Runtime.getRuntime().maxMemory()/16));
         var supportedGrammars=TreeSitterSourceFrontend.languages();
@@ -39,6 +44,7 @@ public final class StaticPolyglotScan {
         try(var input=tables.open(inventory.entries(),cancelled)) {
             SemanticTables.Row row;while((row=input.next())!=null) {
                 if(!"FILE".equals(row.fields().get("kind"))||!"ACQUIRED".equals(row.fields().get("disposition")))continue;
+                if(PolyglotInventory.INSTALLED_DEPENDENCY_DEFERRED.equals(row.fields().get("reason")))continue;
                 var languages=GraphJson.array(row.fields().get("languageCandidates")).stream().map(GraphJson::string).toList();
                 for(String hinted:languages) {
                     String path=new LogicalPath(GraphJson.string(row.fields().get("rawPath"))).utf8().orElse("");
@@ -106,12 +112,10 @@ public final class StaticPolyglotScan {
             spillRef[0]=index;
         }
     }
-    private static byte[] source(RepositoryContentStore content,ContentHandle source,int fileBudget,Map<ContentDigest,byte[]> verifiedBytes)throws IOException {
+    private static byte[] source(RepositoryContentStore content,ContentHandle source,int fileBudget,Function<ContentDigest,byte[]> verifiedBytes)throws IOException {
         if(source.size()>fileBudget)throw new IOException("SYNTAX_FILE_WORKER_REQUIRED");
-        if(verifiedBytes!=null&&!verifiedBytes.isEmpty()) {
-            byte[] cached=verifiedBytes.get(source.digest());
-            if(cached!=null&&cached.length==source.size())return cached;
-        }
+        byte[] cached=verifiedBytes.apply(source.digest());
+        if(cached!=null&&cached.length==source.size())return cached;
         try(var captured=content.open(source)){
             byte[] bytes=captured.readNBytes(Math.toIntExact(source.size())+1);
             if(bytes.length!=source.size())throw new IOException("SYNTAX_SOURCE_SIZE_MISMATCH");

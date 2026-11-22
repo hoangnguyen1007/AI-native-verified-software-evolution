@@ -14,7 +14,7 @@ import java.util.*;
 
 /** Opens captured file bytes using only the validated finding and its graph partition. */
 public final class RepairSource {
-    static final int MAX_FILE_BYTES = 256 * 1024;
+    static final int MAX_FILE_BYTES = 1024 * 1024;
     private static final int MAX_ENCODED_BYTES = ((MAX_FILE_BYTES + 2) / 3) * 4;
     private static final GraphJson.Limits SOURCE_JSON = new GraphJson.Limits(MAX_ENCODED_BYTES + 8192,20,1024);
 
@@ -29,13 +29,17 @@ public final class RepairSource {
                 List<FindingDiagnosis.Citation> citations) {}
 
     static File open(KnowledgeGraph graph,List<FindingDiagnosis.Citation> citations) {
+        return read(graph,citations,true);
+    }
+
+    static File read(KnowledgeGraph graph,List<FindingDiagnosis.Citation> citations,boolean editable) {
         var citation=citations.getFirst();
         String id=citation.span().document().value(), path=citation.path(), digest=citation.sourceDigest().value();
         if (!citations.stream().allMatch(c -> c.span().document().value().equals(id)
                 && c.path().equals(path) && c.sourceDigest().value().equals(digest)))
             throw new Unavailable(Issue.SOURCE_INTEGRITY_MISMATCH);
         if (!safePath(path)) throw new Unavailable(Issue.SOURCE_NOT_EDITABLE);
-        if (!path.endsWith(".java")) throw new Unavailable(Issue.COMPILER_UNSUPPORTED);
+        if (editable && !path.endsWith(".java")) throw new Unavailable(Issue.COMPILER_UNSUPPORTED);
         var rows=graph.nodes(graph.snapshot().value());
         int index=Collections.binarySearch(rows,new KnowledgeGraph.Node(id,graph.snapshot().value(),
                 "SOURCE_DOCUMENT",List.of(citation.evidence())),Comparator.comparing(KnowledgeGraph.Node::identity));
@@ -52,7 +56,7 @@ public final class RepairSource {
                     || !digest.equals(document.get("contentDigest")))
                 throw new Unavailable(Issue.SOURCE_INTEGRITY_MISMATCH);
             var role=SourceClassification.valueOf(QueryJson.text(document,"classification"));
-            if (role==SourceClassification.GENERATED_MAIN || role==SourceClassification.GENERATED_TEST)
+            if (editable && (role==SourceClassification.GENERATED_MAIN || role==SourceClassification.GENERATED_TEST))
                 throw new Unavailable(Issue.SOURCE_NOT_EDITABLE);
             var decoding=GraphJson.object(row.get("decoding"));
             if (!Set.of("UTF-8","US-ASCII").contains(QueryJson.text(decoding,"charset")) || !"NONE".equals(decoding.get("bom")))

@@ -2,7 +2,11 @@
 
 This platform turns repository snapshots into an evidence-backed architecture workbench: build and language context, conditional Spring facts, graph, metrics, policy findings, impact and compatible snapshot comparison.
 
-**Next delivery: one full-pipeline demo** from repository analysis to AI diagnosis, reviewable repair, isolated verification and a local Verified PR/CI result. M11 and G7 are closed by human decision; G7 is not certified passed. See the [demo roadmap](docs/roadmap.md#full-pipeline-demo) and [current state](docs/current-state.md) for the planned work and existing capabilities.
+The pinned full-pipeline demo connects repository analysis, model-assisted diagnosis, a reviewable repair, isolated verification and local PR/CI output. The active work extends repair to analyzed repositories. See the [demo roadmap](docs/roadmap.md#full-pipeline-demo), [current state](docs/current-state.md) and [product and research assessment](docs/research/2026-11-22-architecture-workbench-assessment.md).
+
+## Architecture chat
+
+Open a published analysis in Workbench and choose **Architecture chat**. Ask about its dependencies, compare design choices, or open a finding in chat to plan a repair. Evidence mode works locally without a model. To connect a provider or enable model-generated Java patches, start with the [.env example](.env.example) and follow the [configuration guide](docs/architecture/workbench-architecture-chat.md).
 
 ## Try evo
 

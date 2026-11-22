@@ -126,6 +126,15 @@ public final class RepositoryConnections {
     public Object acquisitionHistory(long after,int size)throws IOException{
         try(var intake=new RepositoryIntake(directory.resolve("acquisition"),true)){return intake.journal().historyPage(after,size);}
     }
+    @FunctionalInterface
+    public interface InventoryRead<T> {
+        T read(InventoryReader reader) throws IOException;
+    }
+    public <T> T readPublishedInventory(InventoryRead<T> operation) throws IOException {
+        try (var intake = new RepositoryIntake(directory.resolve("acquisition"), true)) {
+            return operation.read(intake.inventory());
+        }
+    }
     public Object readiness(String revision,String section,int size,Optional<String> cursor)throws IOException{
         if(!revision.matches("[A-Za-z0-9._-]{1,256}"))throw new IllegalArgumentException("Invalid acquisition revision");
         try(var intake=new RepositoryIntake(directory.resolve("acquisition"))){return intake.readinessPage(revision,section,size,cursor);}

@@ -68,7 +68,7 @@
   <section id="comparison-result" hidden aria-labelledby="result-title">
     <div class="card">
       <h2 id="result-title" tabindex="-1">Comparison result</h2>
-      <p id="comparison-outcome" class="badge"></p><code id="comparison-result-id"></code>
+      <p id="comparison-outcome" class="muted" hidden></p><code id="comparison-result-id"></code>
       <p id="comparison-selection" class="muted small"></p>
       <div class="compare-pair" id="comparison-pins"></div>
     </div>
@@ -77,7 +77,7 @@
       <form id="comparison-filters" class="compare-fields">
         <label>View<select id="comparison-section">
           <option value="COMPATIBILITY">Compatibility &amp; drift</option>
-          <option value="CONTEXTS">Context coverage</option>
+          <option value="CONTEXTS">Contexts</option>
           <option value="EVENTS">Events</option>
           <option value="REGIONS">Regions &amp; bindings</option>
           <option value="FINDINGS">Finding lifecycle</option>
@@ -86,7 +86,6 @@
           <option value="SCORES">Scores &amp; contributions</option>
           <option value="EVIDENCE">Evidence changes</option>
           <option value="PROOFS">Proofs</option>
-          <option value="GAPS">Gaps</option>
           <option value="INPUTS">Pinned inputs</option>
           <option value="CORRESPONDENCE">Correspondence</option>
         </select></label>
@@ -106,7 +105,7 @@
     </section>
     <section class="card" aria-labelledby="graph-title">
       <h2 id="graph-title">Baseline and target graphs</h2>
-      <p class="muted">Choose a context from the coverage view or enter a pinned context ID.</p>
+      <p class="muted">Choose a context from the context list or enter a pinned context ID.</p>
       <div id="comparison-graphs" class="compare-pair"></div>
     </section>
   </section>

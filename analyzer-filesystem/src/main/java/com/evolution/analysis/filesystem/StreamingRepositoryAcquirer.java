@@ -166,7 +166,7 @@ public final class StreamingRepositoryAcquirer {
             }
 
             // A second stat/hash pass detects changes to previously visited regions, including deleted entries and same-size/mtime mutations.
-            int verifyWorkers = Math.max(1, Math.min(4, BoundedTasks.automaticWorkers()));
+            int verifyWorkers = BoundedTasks.automaticWorkers();
             int maxPendingVerify = verifyWorkers * 4;
             try (var pool = verifyWorkers > 1 ? new BoundedTasks(verifyWorkers, maxPendingVerify, "evo-intake-verify", cancelled) : null) {
                 Optional<String> cursor = Optional.empty();

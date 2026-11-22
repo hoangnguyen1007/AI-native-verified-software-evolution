@@ -199,6 +199,23 @@ class MavenLocalClasspathProviderTest {
                 artifact.coordinate().notation().equals("ext:parent:1@pom")));
         assertTrue(result.artifacts().stream().anyMatch(artifact ->
                 artifact.coordinate().notation().equals("ext:bom:1@pom")));
+
+        assertEquals(result.identity(), resolve(fixture, POLICY, cacheRoot()).identity(),
+                "Warm resolution must retain the same artifacts, attempts and manifests");
+        var bomPath = cacheRoot().resolve("ext/bom/1/bom-1.pom");
+        var previousTime = Files.getLastModifiedTime(bomPath);
+        artifact("ext", "bom", "1", "<packaging>pom</packaging><dependencyManagement><dependencies>"
+                + dependency("ext", "leaf", "5", "compile", false, "")
+                + "</dependencies></dependencyManagement>", false);
+        Files.setLastModifiedTime(bomPath, previousTime);
+        artifact("ext", "leaf", "5", "", true);
+        var changed = resolve(fixture, POLICY, cacheRoot());
+        assertEquals(List.of("ext:lib:1@jar", "ext:leaf:5@jar"),
+                names(manifest(changed, ".", SourcePlanModel.Kind.MAIN)));
+        var changedBom = com.evolution.analysis.contract.common.ContentDigest.sha256(Files.readAllBytes(bomPath));
+        assertTrue(changed.artifacts().stream().anyMatch(artifact ->
+                artifact.coordinate().notation().equals("ext:bom:1@pom")
+                && artifact.contentDigest().equals(changedBom)));
     }
 
     @Test

@@ -99,9 +99,10 @@ public final class WorkbenchApiMain {
                                     ArchitectureQueryApi.withRepairReanalysis(
                                             ArchitectureQueryApi.withRepairStore(evolvedApi,repairStore),
                                             repairReanalysis)));
-                    try (var server = new ArchitectureHttpServer(ArchitectureQueryApi.withConfiguredLiveDiagnosis(
+                    var configuredApi = ArchitectureQueryApi.withConfiguredLiveDiagnosis(
                             ArchitectureQueryApi.withConfiguredRepairModel(
-                                    ArchitectureQueryApi.withConfiguredDemoDiagnosis(capturedApi))),
+                                    ArchitectureQueryApi.withConfiguredDemoDiagnosis(capturedApi)));
+                    try (var server = new ArchitectureHttpServer(ArchitectureQueryApi.withConfiguredArchitectureChat(configuredApi),
                             args.length >= 7 ? Integer.parseInt(args[6]) : 8080)) {
                         var stopped = new CountDownLatch(1);
                         var shutdown = new Thread(() -> {

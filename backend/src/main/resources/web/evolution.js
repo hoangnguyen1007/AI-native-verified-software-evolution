@@ -1,6 +1,6 @@
-(() => {
+function mountEvolution(root) {
   'use strict';
-  const $ = id => document.getElementById(id);
+  const $ = id => root.querySelector('#' + id);
   const state = {controller: null, page: null, result: null, job: null, pageController: null,
     cursor: null, previous: [], history: new Map(), historyCursor: null, request: null};
   const idPattern = /^sha256:[0-9a-f]{64}$/;
@@ -124,12 +124,12 @@
       result.selection.mode, 'Source sets ' + (selection.sourceSets?.join(', ') || 'all'),
       ...(selection.relationshipKinds?.length ? ['Relationships ' + selection.relationshipKinds.join(', ')] : [])
     ].join(' · ') : '';
-    $('comparison-outcome').textContent = result.status;
-    $('comparison-outcome').className = 'badge ' + (result.status === 'COMPLETE' ? 'good' : 'warn');
+    $('comparison-outcome').hidden = result.status !== 'WITHHELD';
+    $('comparison-outcome').textContent = result.status === 'WITHHELD' ? 'Comparison unavailable' : '';
     const pins = result.inputs.map(input => {
       const card = strong('article');
       card.className = 'comparison-pin';
-      card.append(strong('h3', label(input.side)),strong('p',input.status),
+      card.append(strong('h3', label(input.side)),
         strong('p','Revision ' + (typeof input.revision === 'string' ? input.revision : 'unavailable')),
         strong('code',input.graph),strong('p','Snapshot ' + (input.snapshot || 'unavailable')));
       return card;
@@ -137,9 +137,7 @@
     $('comparison-pins').replaceChildren(...pins);
     $('comparison-graphs').replaceChildren(...result.inputs.map(input => graphBoard(input,token)));
     control('comparison-result', true);
-    status(result.status === 'COMPLETE' ? 'Comparison complete.' : result.status === 'WITHHELD' ?
-      'Comparison withheld. Review input dispositions and compatibility.' :
-      'Comparison partial. Review coverage and gaps before interpreting changes.');
+    status('');
     $('result-title').focus();
     await synchronizePage();
   }
@@ -197,7 +195,7 @@
       delete state.activeQuery.cursor;
       state.page = page;
       $('comparison-rows').replaceChildren(...page.items.map(row => record(row,selection)));
-      $('comparison-count').textContent = page.exactTotal == null ? 'At least ' + page.lowerBound + ' matching rows. More data is available.' :
+      $('comparison-count').textContent = page.exactTotal == null ? page.items.length + ' rows shown' + (page.continuation ? ' · More available' : '') :
         String(page.exactTotal) === '0' ? (page.section === 'EVENTS' && result.status === 'COMPLETE' && !Object.keys(query.filter).length ?
           'No events in the selected comparison.' : 'No matching rows in this section.') : page.exactTotal + ' matching rows.';
       $('comparison-more').disabled = !page.continuation;
@@ -225,7 +223,7 @@
     detail.append(heading);
     detail.addEventListener('toggle',() => {
       if (!detail.open || detail.childNodes.length > 1) return;
-      for (const key of ['reasons','scope','transition','delta','nativeClassification','commonClassification']) {
+      for (const key of ['scope','transition','delta','nativeClassification','commonClassification']) {
         if (key in row) detail.append(strong('p',key + ' ' + display(row[key])));
       }
       if (row.context && row.side && typeof row.context === 'string') {
@@ -249,7 +247,6 @@
           actions.append(button(label(side) + ' evidence ' + short(id),() => evidence(side,id,token)));
         detail.append(actions);
       }
-      detail.append(strong('pre',display(row)));
     });
     return detail;
   }
@@ -408,7 +405,7 @@
       setTimeout(() => URL.revokeObjectURL(url),0);
     } catch (error) { if (!token.signal.aborted) status(error.message); }
   });
-  $('compare-theme').addEventListener('click',() => {
+  $('compare-theme')?.addEventListener('click',() => {
     const theme = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
     document.documentElement.dataset.theme = theme;
     $('compare-theme').textContent = theme === 'dark' ? 'Light theme' : 'Dark theme';
@@ -416,4 +413,6 @@
   catalog();
   const saved = new URLSearchParams(window.location.search).get('result');
   if (saved && idPattern.test(saved)) guarded('Opening saved comparison…', token => openResult(saved,token));
-})();
+}
+window.mountEvoEvolution = mountEvolution;
+if (document.body.classList.contains('evolution-page')) mountEvolution(document);

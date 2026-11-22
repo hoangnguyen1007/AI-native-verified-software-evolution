@@ -155,12 +155,13 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
             var receipt = intake.localComplete(source,control.id(),request,control);
             control.checkpoint();
             if (receipt.manifest().isEmpty()) throw new IOException(receipt.reason());
+            control.stage(AnalysisJobs.Stage.PLATFORM);
             acquisition = intake.compatibility(control.id(),input.repository(),input.revision(),input.dirty(),input.includeTests(),false,List.copyOf(excluded));
             control.checkpoint();
             if (acquisition.snapshot().isEmpty()) {
                 return new AnalysisJobs.Outcome(AnalysisJobs.Completion.FAILED,Optional.empty(),List.of(),List.of(),Optional.of(acquisition.identity()),Optional.empty(),inputProblems(acquisition));
             }
-            readiness = intake.readiness(control.id(),ReadinessPlanner.Policy.comprehensive(),control);
+            readiness = intake.readiness(control.id(),ReadinessPlanner.Policy.comprehensive(),control,control.mode().isFastArchitecture());
             if (control.beginReuseCheck() && (input.dirty() || input.revision().isPresent())) {
                 try { verifiedInventory = !intake.hasUncapturedEntries(control.id()); }
                 catch (IOException unavailable) { /* Reuse is optional; keep the normal analysis path. */ }
@@ -184,7 +185,8 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
         ReadinessPlan readiness;
         boolean verifiedInventory = false;
         try(var intake=new RepositoryIntake(intakeDirectory)){
-            readiness=intake.readiness(control.id(),ReadinessPlanner.Policy.comprehensive(),control);
+            control.stage(AnalysisJobs.Stage.PLATFORM);
+            readiness=intake.readiness(control.id(),ReadinessPlanner.Policy.comprehensive(),control,control.mode().isFastArchitecture());
             if (control.beginReuseCheck() && (input.dirty() || input.revision().isPresent())) {
                 try { verifiedInventory = !intake.hasUncapturedEntries(control.id()); }
                 catch (IOException unavailable) { /* Reuse is optional; keep the normal analysis path. */ }
@@ -199,7 +201,6 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
             Progress control) throws Exception {
         var cache=safe(input.mavenCache());
         boolean fast = control.mode().isFastArchitecture();
-        control.stage(AnalysisJobs.Stage.PLATFORM);
         var platform = acquirePlatform(safe(input.jdk()), input.release());
         control.checkpoint();
         var models = MavenScan.models(acquisition,cache,List.of());
@@ -262,7 +263,8 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
                 return new PolyglotScan().run(
                         control.id(), intake, readiness, EvidenceContext.forSnapshot(snapshotId),
                         Optional.empty(), intakeDirectory.resolve("semantic-work"), subCancelled,
-                        verifiedPolyglotBytes, fast);
+                        digest->{var file=verifiedPolyglotBytes.get(digest);return file==null?null:file.bytes();},
+                        fast,fast?intake.installedNodeDependencies(control.id()):path->false);
             } catch (Exception failure) {
                 failedFlag.set(true);
                 throw new CompletionException(failure);
@@ -338,12 +340,12 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
     private static List<AnalysisJobs.InputProblem> inputProblems(RepositoryAcquisitionResult acquisition) {
         return acquisition.problems().stream().map(p -> new AnalysisJobs.InputProblem(acquisition.provider(),acquisition.identity(),p)).toList();
     }
-    private static Map<ContentDigest, byte[]> extractPolyglotBytes(RepositoryAcquisitionResult acquisition) {
-        var map = new HashMap<ContentDigest, byte[]>();
+    private static Map<ContentDigest, com.evolution.analysis.acquisition.AcquiredFile> extractPolyglotBytes(RepositoryAcquisitionResult acquisition) {
+        var map = new HashMap<ContentDigest, com.evolution.analysis.acquisition.AcquiredFile>();
         for (var file : acquisition.files()) {
             String p = file.path();
             if (!p.endsWith(".java") || p.endsWith("Grpc.java") || p.contains("grpc")) {
-                map.putIfAbsent(file.contentDigest(), file.bytes());
+                map.putIfAbsent(file.contentDigest(), file);
             }
         }
         return map;

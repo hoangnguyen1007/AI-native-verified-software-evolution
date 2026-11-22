@@ -5,10 +5,10 @@
   const label = row => row.kind==='PACKAGE'&&row.qualifiedName===''?'(default package)':row.qualifiedName || row.spelling || row.canonicalName || row.label || row.kind?.toLowerCase().replaceAll('_',' ') || row.identity;
   const pageInfo = result => {
     const shown = result.items?.length || 0;
-    const total = result.exactTotal ?? result.total ?? result.returnedTotal;
-    const status = result.status || result.evaluationStatus;
-    const incomplete = status && status !== 'COMPLETE' || result.bounds?.truncated || result.operation && result.operation !== 'COMPLETED';
-    return `${shown}${total == null ? ' shown' : ` of ${total}${result.returnedTotal == null ? '' : ' observed'}`} · ${incomplete ? 'Incomplete evidence' : 'Available results'}${result.continuation ? ' · More available' : ''}`;
+    const total = result.exactTotal ?? result.total;
+    const count = total != null ? shown + ' of ' + total
+      : result.returnedTotal != null ? shown + ' of ' + result.returnedTotal + ' returned' : shown + ' shown';
+    return count + (result.continuation ? ' · More available' : '');
   };
   const request = context => ({context, scope: 'TYPE', projection: 'BOUNDED_UNION', direction: 'OUTGOING', relationshipKinds: ['graph.depends-on']});
   const assessment = value => value?.score == null ? 'Unavailable' : `${value.score} / 100`;
@@ -16,8 +16,8 @@
     const counts = summary.items?.[0]?.nodeCounts;
     return [
       ['Types & references', 'TYPE', 'structure'], ['Modules', 'MODULE', 'structure'],
-      ['Source documents', 'SOURCE_DOCUMENT', 'structure'], ['Recorded gaps', 'CAPABILITY_GAP', 'gaps']
-    ].map(([label, kind, tab]) => ({label, kind, tab, count: counts ? counts[kind] ?? 0 : undefined,
+      ['Source documents', 'SOURCE_DOCUMENT', 'structure']
+    ].map(([label, kind, tab]) => ({label, kind, tab, count: counts?.[kind] ?? (counts && summary.status === 'COMPLETE' ? 0 : undefined),
       observed: summary.status !== 'COMPLETE'}));
   };
   const scoreEvidence = (assessment, dimension, findings = []) => {
@@ -46,6 +46,7 @@
     JOB_QUEUE_FULL: 'The analysis queue is full. Wait for a running analysis to finish.',
     BUSY: 'The server is busy. Try again shortly.',
     RESPONSE_TOO_LARGE: 'The result is too large. Narrow the search or select a smaller graph scope.',
+    INSIGHTS_RESOURCE_LIMIT: 'This scope exceeded the query budget. Try Packages or Modules.',
     REPORT_ARTIFACT_UNAVAILABLE: 'This analysis has no published artifact for this view.',
     DIAGNOSIS_SCOPE_MISMATCH: 'The selected context or evidence no longer matches this finding. Reopen it from the current report.',
     DIAGNOSIS_INPUT_MISMATCH: 'The diagnosis input changed. Reopen the finding and run diagnosis again.',

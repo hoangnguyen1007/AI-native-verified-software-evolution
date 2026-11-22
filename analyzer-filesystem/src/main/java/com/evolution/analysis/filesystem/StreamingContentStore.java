@@ -31,6 +31,7 @@ public final class StreamingContentStore implements RepositoryContentStore {
     private final long reserveBytes;
     private final Force force;
     private final Space space;
+    private final SmallBlobPacks packs;
     private final AtomicIntegerArray createdShards = new AtomicIntegerArray(256);
     private volatile int loosePresence; // 0 = unknown, 1 = empty, 2 = has shard(s)
 
@@ -48,6 +49,7 @@ public final class StreamingContentStore implements RepositoryContentStore {
         this.staging = directory(this.root.resolve("staging"));
         this.reserveBytes = reserveBytes;
         this.sha256Root = directory(this.root.resolve("sha256"));
+        this.packs = new SmallBlobPacks(this.root, reserveBytes);
         var store = space == null ? Files.getFileStore(staging) : null;
         this.space = space == null ? store::getUsableSpace : space;
     }
@@ -248,7 +250,7 @@ public final class StreamingContentStore implements RepositoryContentStore {
                 if (cancelled.getAsBoolean() || Thread.currentThread().isInterrupted()) throw new CancellationException();
                 if (space.usable() < reserveBytes) throw new IOException("WAITING_FOR_DISK");
                 handle = new ContentHandle(new ContentDigest("sha256:" + HexFormat.of().formatHex(hash.digest())), size[0]);
-                if (Files.exists(path(handle), LinkOption.NOFOLLOW_LINKS)) {
+                if (hasLoose(handle) || packs.contains(handle)) {
                     if (!verify(handle, cancelled)) throw new IOException("CAS_CORRUPT");
                     return handle;
                 }
@@ -286,59 +288,41 @@ public final class StreamingContentStore implements RepositoryContentStore {
         }
     }
 
-    Path path(ContentHandle handle) throws IOException {
+    private Path loosePath(ContentHandle handle) {
         String hex = handle.digest().value().substring(7);
-        Path path = sha256Root.resolve(hex.substring(0, 2)).resolve(hex.substring(2));
+        return sha256Root.resolve(hex.substring(0, 2)).resolve(hex.substring(2));
+    }
+
+    Path path(ContentHandle handle) throws IOException {
+        Path path = loosePath(handle);
         safeWithin(root, path);
         return path;
     }
 
+    boolean hasLoose(ContentHandle handle) { return Files.exists(loosePath(handle), LinkOption.NOFOLLOW_LINKS); }
+
     @Override public InputStream open(ContentHandle handle) throws IOException {
-        Path file = path(handle);
-        if (!Files.exists(file, LinkOption.NOFOLLOW_LINKS)) new SmallBlobPacks(root, reserveBytes).recover(handle, this);
-        if (!Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS) || Files.size(file) != handle.size()) throw new IOException("CAS_UNAVAILABLE");
-        return Files.newInputStream(file, LinkOption.NOFOLLOW_LINKS);
+        if (hasLoose(handle)) {
+            Path file = path(handle);
+            if (!Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS) || Files.size(file) != handle.size()) throw new IOException("CAS_UNAVAILABLE");
+            return Files.newInputStream(file, LinkOption.NOFOLLOW_LINKS);
+        }
+        var packed = packs.open(handle);
+        if (packed == null) throw new IOException("CAS_UNAVAILABLE");
+        return packed;
     }
 
-    /** One forced immutable pack precedes all derived loose files and any inventory commit.
+    /** One forced immutable pack precedes any inventory commit.
      * Bounds apply to one batch, never to repository admission. */
     void putSmallBatch(Collection<byte[]> values) throws IOException {
-        new SmallBlobPacks(root, reserveBytes).put(values, this);
+        packs.put(values, this);
     }
 
     void putSmallBatch(Map<ContentHandle, byte[]> entries, Set<ContentHandle> verifiedInRun) throws IOException {
-        new SmallBlobPacks(root, reserveBytes).putPrehashed(entries, verifiedInRun, this);
+        packs.putPrehashed(entries, verifiedInRun, this);
     }
 
     void force(FileChannel channel) throws IOException { force.flush(channel); }
-
-    void cacheSmall(ContentHandle handle, byte[] bytes) throws IOException {
-        cacheSmall(handle, bytes, null);
-    }
-
-    void cacheSmall(ContentHandle handle, byte[] bytes, Set<ContentHandle> verifiedInRun) throws IOException {
-        Path target = path(handle);
-        ensureShard(handle.digest().value().substring(7, 9), target.getParent());
-        if (Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
-            if (verifiedInRun == null || !verifiedInRun.contains(handle)) {
-                if (!verify(handle)) throw new IOException("CAS_CORRUPT");
-                if (verifiedInRun != null) verifiedInRun.add(handle);
-            }
-            return;
-        }
-        Path pending = Files.createTempFile(staging, "packed-", ".part");
-        try {
-            Files.write(pending, bytes, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS);
-            try {
-                Files.createLink(target, pending);
-                loosePresence = 2;
-                if (verifiedInRun != null) verifiedInRun.add(handle);
-            } catch (FileAlreadyExistsException race) {
-                if (!verify(handle)) throw new IOException("CAS_CORRUPT");
-                if (verifiedInRun != null) verifiedInRun.add(handle);
-            }
-        } finally { Files.deleteIfExists(pending); }
-    }
 
     @Override public InputStream range(ContentHandle handle, long offset, long length) throws IOException {
         if (offset < 0 || length < 0 || offset > handle.size() || length > handle.size() - offset) throw new IllegalArgumentException("Invalid content range");

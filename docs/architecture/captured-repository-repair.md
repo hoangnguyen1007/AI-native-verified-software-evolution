@@ -6,7 +6,7 @@ The backend can propose a repair from the captured sources of a published findin
 
 Use the local Workbench API. Let the report prefix be `/api/v1/graphs/{graph}/reports/{report}`. First call `POST {prefix}/diagnosis` with JSON `{"arguments":{"identity":"<finding digest>","bundle":"<bundle digest>","context":"<context identity>"}}`. Proceed when diagnosis returns `data.status: CITATIONS_VALIDATED`. Add its exact `data.input` as `diagnosisInput` to the same arguments for both operations below.
 
-1. `POST {prefix}/repair-options` lists registered recipes, the cited files and any source eligibility gaps. If an AI provider is configured, `data.ai` lists the destination, model, exact input digest and files whose contents would be sent. This operation does not contact the model.
+1. `POST {prefix}/repair-options` lists registered recipes, the cited files and any source eligibility gaps. If an AI provider is configured, `data.ai` lists the destination, model, exact input digest and files whose captured contents or excerpts would be sent. This operation does not contact the model.
 2. `POST {prefix}/repair-proposal` with one of these choices appended to `arguments`:
 
    | Choice | Additional arguments |
@@ -26,18 +26,18 @@ An inapplicable or ambiguous recipe produces `WITHHELD`; a successful recipe rem
 
 ## Configure the repair model
 
-At Workbench startup set the two JVM properties below before `-jar`. They are independent of the demo citation model.
+At Workbench startup use the JVM properties below or set `EVO_REPAIR_AI_ENDPOINT`, `EVO_REPAIR_AI_MODEL` and `EVO_REPAIR_AI_ALLOW_REMOTE` as shown in the [environment template](../../.env.example). Explicit JVM properties take precedence. These settings are independent of the chat and demo citation models. The [Workbench setup guide](workbench-architecture-chat.md#configure-a-model) shows how to import the environment.
 
 | Setting | Purpose |
 |---|---|
-| `-Devo.repair.ai.endpoint=http://127.0.0.1:8081/v1/chat/completions` | Fixed server implementing Chat Completions with JSON object output. |
+| `-Devo.repair.ai.endpoint=http://127.0.0.1:8081/v1` | Chat Completions base URL or full endpoint. |
 | `-Devo.repair.ai.model=<model-id>` | Configured model ID; the completion must report the same ID. |
 | `EVO_REPAIR_AI_API_KEY` | Optional environment variable for a bearer token. Never supply it in a request or put it in the endpoint URL. |
 | `-Devo.repair.ai.allowRemote=true` | Additional operator opt-in for an HTTPS destination outside literal loopback. |
 
-The AI request is explicit: its digest binds the exact source-bearing request and configured recipient to the report and diagnosis pins. Submit it only after reviewing the offered files and authorizing their disclosure to that recipient. The client does not accept endpoints or credentials from an HTTP request, follow redirects, or use a proxy. It sends bounded complete cited source text, the finding's scope and relationship, and relevant spans. Repository source is data, not instructions. Source may contain sensitive literals; make the disclosure choice accordingly. No provider is selected or contacted by default.
+The request digest binds the exact provider payload and configured recipient to the report and diagnosis pins. Workbench shows the files before approval. The provider receives captured source or excerpts, the finding's scope and relationship, and relevant spans. The operator configures the destination and credentials at startup. The client disables redirects and proxies and treats repository text as input data.
 
-The versioned prompt asks for minimal edits as `{file,before,oldText,newText}` records. The backend validates each file number, baseline digest and unique anchor against the captured bytes, rejects overlapping edits, and requires at least one edit to overlap cited evidence. Clients do not submit source, arbitrary paths, commands, raw patches, or executable recipes. A provider may still fail to identify a correct repair; neither its answer nor the syntax check proves that a finding was resolved.
+The versioned prompt asks for minimal edits as `{file,before,oldText,newText}` records with optional `startLine` for a repeated anchor. A single Markdown JSON fence is accepted. Each edit resolves to exact offsets in the offered original file. Whole-line anchors can differ in indentation and line endings when they identify one location. Text blocks and Unicode escapes require exact anchors when indentation could affect interpretation. The backend validates file number, before digest, offered range and nonoverlap, and requires at least one edit to overlap cited evidence. Clients submit only proposal selection and approval pins. A provider may still fail to identify a correct repair.
 
 ## Use the result
 
@@ -47,7 +47,7 @@ The backend uses the [JDK compiler parse phase](https://docs.oracle.com/en/java/
 
 `PROPOSED / UNVERIFIED` means the changed files passed the syntax gate only. Build/type checks, tests, behavior, and removal of the original finding require isolated verification and reanalysis. The existing `repair-verification` route covers the sealed fixture; generic candidate verification is not wired to it. Workbench's existing fixture panel remains unchanged; callers can use the new choices through the backend API.
 
-The current edit boundary admits existing Java files in UTF-8 or ASCII without BOM from the validated finding's evidence. Generated, missing, incompatible or oversized files retain typed source decisions and capability gaps. The limit is 256 KiB per editable file and 32 KiB of source for a model request, separate from repository acquisition scope. Other languages, exact grammar for sources with no captured dialect, arbitrary full builds, and repair correctness across all repositories are not certified by this contract.
+The edit boundary admits existing Java files up to 1 MiB in UTF-8 or ASCII without BOM from the validated finding's evidence. Generated, missing, incompatible or oversized files retain typed source decisions and capability gaps. The model request defaults to 1 MiB of serialized JSON. Increase or decrease the budget in [provider settings](workbench-architecture-chat.md#configure-a-model). When cited full files exceed the budget, the offer selects excerpts around cited lines and can omit files that cannot fit. Edits stay inside the source actually offered. Each stored proposal fits the existing 2 MiB record budget. These limits apply to the proposal workflow independently of repository acquisition.
 
 ## Verification
 

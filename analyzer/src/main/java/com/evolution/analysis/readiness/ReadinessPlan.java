@@ -16,7 +16,7 @@ public record ReadinessPlan(String schema, InventoryManifest inventory, BuildCon
     public enum Family { MAVEN, GRADLE, IDE, ANT, BAZEL, SBT, NODE, PYTHON, CARGO, GO, DOTNET, COMPOSER, RUBY, DART, SWIFT, CMAKE, MAKE, PLAIN, CUSTOM }
     public enum Kind { DISCOVERY, MODEL, DEPENDENCIES, TOOLCHAIN, PLATFORM, GENERATION, BUILD_VALIDATION, SEMANTIC_VALIDATION, OWNERSHIP }
     public enum State { PENDING, SATISFIED, NOT_APPLICABLE }
-    public enum Disposition { OWNED, AMBIGUOUS, UNOWNED, EXCLUDED, NON_SOURCE, UNAVAILABLE }
+    public enum Disposition { OWNED, AMBIGUOUS, UNOWNED, EXCLUDED, NON_SOURCE, UNAVAILABLE, DEPENDENCY_INPUT }
     public record Evidence(String path, ContentDigest digest) {
         public Evidence {Objects.requireNonNull(path);Objects.requireNonNull(digest);}
     }

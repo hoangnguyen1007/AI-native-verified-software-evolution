@@ -55,6 +55,7 @@ class AnalysisModeReuseTest {
                     Optional.of(ContentDigest.sha256Utf8("acq")), Optional.of(ContentDigest.sha256Utf8("src")));
         };
 
+        String fastJobId;
         try (var disk = new AnalysisJobDiskStore(jobsDir);
              var jobs = new AnalysisJobs(List.of(new AnalysisJobs.Registration(setup, runner)),
                 graphs, reports, new AnalysisJobs.Limits(1, 4, 16, 30_000, 1_000), disk)) {
@@ -62,6 +63,7 @@ class AnalysisModeReuseTest {
             assertEquals(Optional.of(AnalysisJobs.ReuseDecision.NO_MATCH), f1.reuseDecision());
 
             var f2 = await(jobs, jobs.submit("app", "fast-2", false, AnalysisMode.FAST_ARCHITECTURE).job().id());
+            fastJobId = f2.id();
             assertEquals(Optional.of(AnalysisJobs.ReuseDecision.REUSED), f2.reuseDecision());
             assertEquals(Optional.of(fastGraph.identity()), f2.result().orElseThrow().graph());
             assertTrue(jobs.telemetry(UUID.fromString(f2.id())).reused());
@@ -73,6 +75,13 @@ class AnalysisModeReuseTest {
             var full2 = await(jobs, jobs.submit("app", "full-2", false, AnalysisMode.FULL).job().id());
             assertEquals(Optional.of(AnalysisJobs.ReuseDecision.REUSED), full2.reuseDecision());
             assertEquals(Optional.of(fullGraph.identity()), full2.result().orElseThrow().graph());
+        }
+        try (var disk = new AnalysisJobDiskStore(jobsDir);
+             var jobs = new AnalysisJobs(List.of(new AnalysisJobs.Registration(setup, runner)),
+                     graphs, reports, new AnalysisJobs.Limits(1, 4, 16, 30_000, 1_000), disk)) {
+            assertEquals(Optional.of(AnalysisMode.FAST_ARCHITECTURE), jobs.telemetry(UUID.fromString(fastJobId)).mode());
+            assertEquals("IDEMPOTENCY_CONFLICT", assertThrows(AnalysisJobs.Rejected.class,
+                    () -> jobs.submit("app", "fast-2", false, AnalysisMode.FULL)).code());
         }
     }
 

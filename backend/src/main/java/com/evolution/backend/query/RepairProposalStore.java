@@ -13,7 +13,7 @@ import java.util.*;
 /** Bounded, content-addressed store for backend-produced captured repair proposals. */
 public final class RepairProposalStore {
     private static final int MAX_MEMORY = 256;
-    private static final int MAX_FILE_BYTES = 2 * 1024 * 1024;
+    static final int MAX_FILE_BYTES = 2 * 1024 * 1024;
     private final Path directory;
     private final Map<ContentDigest, CapturedRepair.Proposal> memory = new LinkedHashMap<>(64, 0.75f, true) {
         @Override protected boolean removeEldestEntry(Map.Entry<ContentDigest, CapturedRepair.Proposal> eldest) {

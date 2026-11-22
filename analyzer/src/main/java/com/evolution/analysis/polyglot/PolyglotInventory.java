@@ -7,17 +7,23 @@ import com.evolution.analysis.contract.serialization.CanonicalJson;
 import java.io.*;
 import java.util.*;
 import java.util.function.BooleanSupplier;
+import java.util.function.Predicate;
 
 /** Classifies every sealed inventory row, including inaccessible/unknown/raw paths. No host materialization. */
 public final class PolyglotInventory {
+    public static final String INSTALLED_DEPENDENCY_DEFERRED="INSTALLED_DEPENDENCY_SEMANTICS_DEFERRED";
     public record Report(ContentDigest inventory,SemanticTables.Table entries,long files,long unresolvedClassification,VersionedIdentifier classifier){
         public Report{Objects.requireNonNull(inventory);Objects.requireNonNull(entries);Objects.requireNonNull(classifier);if(entries.kind()!=SemanticTables.Kind.DOCUMENT||files<0||files>entries.rows()||unresolvedClassification<0||unresolvedClassification>files)throw new IllegalArgumentException("POLYGLOT_INVENTORY_REPORT_COUNTS");}
         public Report(ContentDigest inventory,SemanticTables.Table entries,long files,long unresolvedClassification){this(inventory,entries,files,unresolvedClassification,new VersionedIdentifier("language.discovery",LanguageDiscovery.VERSION));}
         public ContentDigest identity(){return CanonicalJson.sha256(List.of("polyglot-inventory:m8.4-v2",classifier,inventory,entries,files,unresolvedClassification));}
     }
     public Report scan(String revision,InventoryReader inventory,RepositoryContentStore content,SemanticTables tables,BooleanSupplier cancelled)throws IOException{
+        return scan(revision,inventory,content,tables,cancelled,path->false);
+    }
+    public Report scan(String revision,InventoryReader inventory,RepositoryContentStore content,SemanticTables tables,
+                       BooleanSupplier cancelled,Predicate<String> installedDependency)throws IOException{
         var manifest=inventory.manifest(revision).orElseThrow(()->new IOException("SEALED_INVENTORY_REQUIRED"));
-        var iterator=new ClassifiedRows(revision,inventory,content,manifest.inventory(),cancelled);
+        var iterator=new ClassifiedRows(revision,inventory,content,manifest.inventory(),cancelled,installedDependency);
         SemanticTables.Table table;
         try{table=tables.write(SemanticTables.Kind.DOCUMENT,iterator,cancelled);}catch(UncheckedIOException failure){throw failure.getCause();}
         if(table.rows()!=manifest.entries()||!inventory.manifest(revision).filter(manifest::equals).isPresent())throw new IOException("POLYGLOT_INVENTORY_DENOMINATOR_CHANGED");
@@ -25,8 +31,9 @@ public final class PolyglotInventory {
     }
     private static final class ClassifiedRows implements Iterator<SemanticTables.Row> {
         final String revision;final InventoryReader inventory;final RepositoryContentStore content;final ContentDigest scope;final BooleanSupplier cancelled;
+        final Predicate<String> installedDependency;
         Iterator<InventoryEntry> page=Collections.emptyIterator();Optional<String> cursor=Optional.empty();boolean ended;long files,unknown;
-        ClassifiedRows(String revision,InventoryReader inventory,RepositoryContentStore content,ContentDigest scope,BooleanSupplier cancelled){this.revision=revision;this.inventory=inventory;this.content=content;this.scope=scope;this.cancelled=cancelled;}
+        ClassifiedRows(String revision,InventoryReader inventory,RepositoryContentStore content,ContentDigest scope,BooleanSupplier cancelled,Predicate<String> installedDependency){this.revision=revision;this.inventory=inventory;this.content=content;this.scope=scope;this.cancelled=cancelled;this.installedDependency=installedDependency;}
         @Override public boolean hasNext(){
             try{
                 while(!page.hasNext()&&!ended){if(cancelled.getAsBoolean()||Thread.currentThread().isInterrupted())throw new IOException("POLYGLOT_INVENTORY_CANCELLED");
@@ -43,6 +50,7 @@ public final class PolyglotInventory {
             if(entry.kind()==InventoryEntry.Kind.FILE){files=Math.addExact(files,1);reason="CLASSIFICATION_HINT_ONLY";
                 if(entry.path().utf8().isEmpty())reason="RAW_PATH_CLASSIFIER_REQUIRED";
                 else if(entry.disposition()!=InventoryEntry.Disposition.ACQUIRED)reason="INPUT_UNAVAILABLE_OR_EXCLUDED";
+                else if(installedDependency.test(entry.path().utf8().orElseThrow()))reason=INSTALLED_DEPENDENCY_DEFERRED;
                 else try{
                     String utf8Path=entry.path().utf8().orElseThrow();
                     var handle=entry.content().orElseThrow();

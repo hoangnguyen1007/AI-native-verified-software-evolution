@@ -224,17 +224,21 @@ public final class AnalysisJobDiskStore implements AutoCloseable {
     private Envelope readEnvelope(ContentHandle handle) throws IOException {
         try {
             var row = GraphJson.object(readJson(handle));
-            if (!LEGACY_SCHEMA.equals(row.get("schema"))) return checked(row, handle, Envelope.class);
+            var view = new TreeMap<>(GraphJson.object(row.get("view")));
+            boolean legacy = LEGACY_SCHEMA.equals(row.get("schema"));
+            if (!legacy && view.containsKey("mode")) return checked(row, handle, Envelope.class);
             // Authenticate the old preimage before adding defaults. Existing history is never rewritten for migration.
             if (!CanonicalJson.sha256(row).equals(handle.digest())) throw new IOException("JOB_RECEIPT_NONCANONICAL");
-            var view = new TreeMap<>(GraphJson.object(row.get("view")));
-            if (view.containsKey("force") || view.containsKey("reuse") || view.containsKey("reuseDecision"))
-                throw new IOException("JOB_RECEIPT_CORRUPT");
-            view.put("force", false);
-            view.put("reuse", null);
-            view.put("reuseDecision", null);
             var upgraded = new TreeMap<>(row);
-            upgraded.put("schema", PREVIOUS_SCHEMA);
+            if (legacy) {
+                if (view.containsKey("force") || view.containsKey("reuse") || view.containsKey("reuseDecision")
+                        || view.containsKey("mode")) throw new IOException("JOB_RECEIPT_CORRUPT");
+                view.put("force", false);
+                view.put("reuse", null);
+                view.put("reuseDecision", null);
+                upgraded.put("schema", PREVIOUS_SCHEMA);
+            }
+            view.put("mode", null);
             upgraded.put("view", view);
             return CanonicalRecordReader.read(upgraded, Envelope.class);
         } catch (IllegalArgumentException invalid) { throw new IOException("JOB_RECEIPT_CORRUPT", invalid); }
@@ -265,8 +269,8 @@ public final class AnalysisJobDiskStore implements AutoCloseable {
         String setup=expected.id();
         for(String state:List.of("RUNNING","CANCELLING","RECOVERABLE"))for(var row:journal.waiting(state+"."+setup,64)){
             var saved=load(row.payload().orElseThrow());var v=saved.view();boolean cancelled=v.stop().filter(s->s==AnalysisJobs.Stop.USER_CANCELLED).isPresent();
-            var next=new AnalysisJobs.View(v.id(),v.setup(),cancelled?AnalysisJobs.State.CANCELLED:AnalysisJobs.State.QUEUED,cancelled?AnalysisJobs.Stage.FINISHED:AnalysisJobs.Stage.QUEUED,v.revision()+1,v.submittedAt(),Optional.empty(),cancelled?Optional.of(java.time.Instant.now()):Optional.empty(),v.elapsedMillis(),cancelled?v.stop():Optional.empty(),Optional.empty(),List.of(new AnalysisJobs.Event(AnalysisJobs.Stage.QUEUED,java.time.Instant.now())),Optional.empty(),v.force(),Optional.empty(),Optional.empty());
-            var original=intent(UUID.fromString(v.id()));if(!original.equals(expected))next=new AnalysisJobs.View(v.id(),v.setup(),AnalysisJobs.State.FAILED,AnalysisJobs.Stage.FINISHED,v.revision()+1,v.submittedAt(),v.startedAt(),Optional.of(java.time.Instant.now()),v.elapsedMillis(),Optional.empty(),Optional.of("SETUP_CONFIGURATION_CHANGED"),v.events(),v.result(),v.force(),Optional.empty(),Optional.empty());
+            var next=new AnalysisJobs.View(v.id(),v.setup(),cancelled?AnalysisJobs.State.CANCELLED:AnalysisJobs.State.QUEUED,cancelled?AnalysisJobs.Stage.FINISHED:AnalysisJobs.Stage.QUEUED,v.revision()+1,v.submittedAt(),Optional.empty(),cancelled?Optional.of(java.time.Instant.now()):Optional.empty(),v.elapsedMillis(),cancelled?v.stop():Optional.empty(),Optional.empty(),List.of(new AnalysisJobs.Event(AnalysisJobs.Stage.QUEUED,java.time.Instant.now())),Optional.empty(),v.force(),Optional.empty(),Optional.empty(),v.mode());
+            var original=intent(UUID.fromString(v.id()));if(!original.equals(expected))next=new AnalysisJobs.View(v.id(),v.setup(),AnalysisJobs.State.FAILED,AnalysisJobs.Stage.FINISHED,v.revision()+1,v.submittedAt(),v.startedAt(),Optional.of(java.time.Instant.now()),v.elapsedMillis(),Optional.empty(),Optional.of("SETUP_CONFIGURATION_CHANGED"),v.events(),v.result(),v.force(),Optional.empty(),Optional.empty(),v.mode());
             save(saved.retry(),original,next,saved.gaps(),saved.inputProblems());
         }
     }

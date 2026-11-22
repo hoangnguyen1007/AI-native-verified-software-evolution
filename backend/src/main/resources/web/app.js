@@ -2,14 +2,16 @@
 (() => {
   'use strict';
   const M = window.EvoModel, $ = id => document.getElementById(id);
-  const state = {setups: [], connections: [], jobs: [], labels: new Map(), setup: null, job: null, resultJob: null, graph: null, contexts: [], reports: [], context: '', tab: 'overview', analysisMode: 'FULL', telemetryByJob: new Map(), epoch: 0, pollGeneration: 0, historyLimit: 50, cy: null, online: false, retry: null, submitting: null};
+  const state = {setups: [], connections: [], jobs: [], labels: new Map(), setup: null, job: null, resultJob: null, graph: null, contexts: [], reports: [], context: '', tab: 'overview', epoch: 0, pollGeneration: 0, historyLimit: 8, cy: null, online: false, retry: null, submitting: null};
+  let openChatOnFirstResult = new URLSearchParams(location.search).get('view') === 'chat';
   const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = String(text); return n; };
   const append = (parent, ...children) => { children.filter(Boolean).forEach(child => parent.append(child)); return parent; };
   const safe = async action => { try { await action(); } catch (error) { if (error.name !== 'AbortError') notice(error.message, true); } };
   const btn = (text, action, cls = 'button') => { const n = el('button', cls, text); n.type = 'button'; n.addEventListener('click', () => safe(action)); return n; };
   const badge = text => el('span', 'badge' + (/FAILED|CANCELLED|TIMED_OUT|ERROR/i.test(text) ? ' bad' : /PARTIAL|UNKNOWN|MAY|WITHHELD|UNRESOLVED|CANDIDATE/i.test(text) ? ' warn' : /COMPLETE|SUCCEEDED|MUST|RESOLVED|SAT/i.test(text) ? ' good' : ''), text);
   const empty = (title, text) => append(el('div', 'empty'), el('h3', '', title), el('p', '', text));
-  const card = (title, hint) => append(el('div', 'card'), append(el('div', 'card-heading'), append(el('div'), el('h2', '', title), el('p', 'muted', hint))));
+  const card = (title, hint) => append(el('section', 'surface-section'), append(el('div', 'card-heading'),
+    append(el('div'), el('h2', '', title), hint ? el('p', 'muted', hint) : null)));
   function selectControl(label, options, value) {
     const select = el('select'); select.setAttribute('aria-label', label);
     for (const [id, text] of options) { const option = el('option', '', text); option.value = id; select.append(option); }
@@ -17,6 +19,88 @@
   }
   const field = (label, control) => append(el('label', 'control-field'), el('span', 'small muted', label), control);
   const relationshipKinds = scope => scope==='SPRING_COMPONENT'?['spring.selected-binding']:scope==='ENTITY'?['java.calls','java.constructor-calls','java.reads-field','java.writes-field','java.type-uses','java.returns','java.field-type','java.parameter-type','java.throws','java.extends','java.implements','java.method-references','java.type-parameter-bound','java.type-argument']:['graph.depends-on'];
+  const defaultDependencyContext = env => env.context === env.snapshot
+    ? state.contexts.find(context => context.identity.startsWith('analysis:'))?.identity ?? env.context
+    : env.context;
+  let graphRenderer, refreshGraphTheme;
+  function loadGraphRenderer() {
+    if (typeof window.cytoscape === 'function') return Promise.resolve(true);
+    return graphRenderer ??= new Promise(resolve => {
+      const script = el('script');
+      script.src = '/vendor/cytoscape-3.30.2.min.js';
+      const unavailable = () => {
+        script.remove();
+        graphRenderer = null;
+        resolve(false);
+      };
+      script.onload = () => typeof window.cytoscape === 'function' ? resolve(true) : unavailable();
+      script.onerror = unavailable;
+      document.head.append(script);
+    });
+  }
+  const workspaceTools = {
+    '#compare': {name: 'Compare snapshots', page: '/evolution.html', style: '/evolution.css',
+      scripts: ['/evolution.js'], className: 'evolution-page', mount: 'mountEvoEvolution', capability: 'evolutionEnabled'},
+    '#bridge-evidence': {name: 'Captured connections', page: '/bridges.html', style: '/bridges.css',
+      scripts: ['/bridge-model.js', '/bridges.js'], className: 'bridge-page', mount: 'mountEvoBridges', capability: 'bridgesEnabled'}
+  };
+  const toolPanels = new Map();
+  function loadToolAsset(tag, path) {
+    return new Promise((resolve, reject) => {
+      const asset = el(tag);
+      if (tag === 'link') { asset.rel = 'stylesheet'; asset.href = path; }
+      else asset.src = path;
+      asset.onload = resolve;
+      asset.onerror = () => { asset.remove(); reject(new Error('A local tool asset could not be loaded.')); };
+      document.head.append(asset);
+    });
+  }
+  async function updateWorkspaceTool() {
+    if (!state.capabilities) return;
+    const selected = workspaceTools[location.hash], panel = $('workbench-tool'), content = $('workbench-tool-content');
+    $('workspace-tools').open = false;
+    $('repository-workspace').hidden = Boolean(selected);
+    panel.hidden = !selected;
+    if (!selected) {
+      if (state.openTool) $('repository-title').focus({preventScroll: true});
+      state.openTool = null;
+      return;
+    }
+    const previous = state.openTool;
+    state.openTool = selected;
+    let tool = toolPanels.get(selected);
+    if (!tool) {
+      tool = el('section', 'embedded-tool ' + selected.className);
+      content.append(tool);
+      toolPanels.set(selected, tool);
+      if (!state.capabilities[selected.capability]) {
+        tool.append(empty(selected.name + ' unavailable', 'This Workbench server has no data service for this view.'));
+      } else {
+        tool.append(empty('Opening ' + selected.name.toLowerCase() + '…', 'Loading the local view.'));
+        try {
+          const [, source] = await Promise.all([loadToolAsset('link', selected.style),
+            fetch(selected.page).then(response => {
+              if (!response.ok) throw new Error('The local view could not be loaded.');
+              return response.text();
+            })]);
+          const template = new DOMParser().parseFromString(source, 'text/html');
+          const main = template.querySelector('main');
+          if (!main) throw new Error('The local view is incomplete.');
+          tool.replaceChildren(...main.children, ...template.querySelectorAll('body > dialog'));
+          if (!window[selected.mount]) for (const script of selected.scripts) await loadToolAsset('script', script);
+          window[selected.mount](tool);
+        } catch (error) {
+          tool.replaceChildren(empty('Could not open ' + selected.name.toLowerCase(), error.message),
+            btn('Retry', () => { toolPanels.delete(selected); tool.remove(); return updateWorkspaceTool(); }));
+        }
+      }
+    }
+    for (const [key, item] of toolPanels) item.hidden = key !== state.openTool;
+    if (selected !== previous && state.openTool === selected) {
+      $('main').scrollTop = 0;
+      panel.querySelector('a').focus({preventScroll: true});
+    }
+  }
   function digestChip(value) {
     const str = String(value ?? '');
     if (!/^sha256:[0-9a-f]{16,}$/i.test(str)) return el('span', '', str);
@@ -32,20 +116,39 @@
       await Promise.allSettled(pending.slice(offset,offset+3).map(async identity=>{const result=await env.query('entity',{identity});const value=result.items[0];if(value&&!env.signal.aborted)state.labels.set(identity,M.label(value));}));
     }
   }
-  function configureRules() {
-    const connection = state.connections.find(c => c.setup === state.setup);
-    $('repository-source').value = connection?.kind === 'GIT_HTTPS' ? 'https://' + repoLabel(state.setup) : '';
-    $('connect-title').textContent = 'Configure rules & scoring'; $('policy-settings').open = true;
-    $('connect-error').hidden = true; $('connect-dialog').showModal();
+  async function configureRules(openEditor = true) {
+    if (!state.graph) {
+      $('policy-settings').open = true;
+      $('connect-error').hidden = true;
+      $('connect-dialog').showModal();
+      return;
+    }
+    await labelContext(state.context);
+    if (!['analysis.manifest', 'spring.context'].includes(state.contextKinds.get(state.context))) {
+      const next = state.contexts.find(context => context.analysis);
+      if (next) {
+        state.context = next.identity;
+        $('context').value = next.identity;
+      }
+    }
+    await loadTab('metrics');
+    const editor = $('snapshot-policy-editor');
+    if (editor && openEditor) {
+      editor.open = true;
+      editor.querySelector('textarea').focus();
+    }
   }
   function notice(message, error = false) { $('notice').hidden = !message; $('notice').textContent = message || ''; $('notice').classList.toggle('error', error); }
-  async function api(path, body, signal, method = (body === undefined ? 'GET' : 'POST')) {
-    const timeout = AbortSignal.timeout(180000), combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
+  async function api(path, body, signal, method = (body === undefined ? 'GET' : 'POST'), timeoutMillis = 180000) {
+    const timeout = AbortSignal.timeout(timeoutMillis), combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
     let response;
     try { response = await fetch((path.startsWith('/api/') ? '' : '/api/v1') + path, {method, headers: {Accept: 'application/json', ...(body === undefined ? {} : {'Content-Type': 'application/json'})}, ...(body === undefined ? {} : {body: JSON.stringify(body)}), signal: combined}); }
     catch (error) { if (signal?.aborted) throw error; throw new Error(error.name === 'TimeoutError' ? 'The server took too long. Retry or narrow the request.' : 'Cannot reach the analysis server. Check that it is running, then refresh.'); }
     const envelope = await response.json();
-    if (!response.ok || envelope.error) throw new Error(envelope.error?.message || M.apiError(envelope.error?.code));
+    if (!response.ok || envelope.error) {
+      throw Object.assign(new Error(envelope.error?.message || M.apiError(envelope.error?.code)),
+        {code: envelope.error?.code, status: response.status});
+    }
     return envelope.data;
   }
   const repoLabel = id => {
@@ -53,12 +156,19 @@
     const setup = state.setups.find(s => s.id === id);
     return cleanRepoName(id, conn, setup);
   };
-  function invalidate() { state.epoch++; state.view?.abort(); state.cy?.destroy(); state.cy = null; closeInspector(); $('view-status').textContent = ''; }
+  function invalidate() { state.epoch++; state.view?.abort(); state.cy?.destroy(); state.cy = null; refreshGraphTheme = null; closeInspector(); $('view-status').textContent = ''; }
   function clearReadiness() {
     state.readiness?.abort(); state.readiness = null;
-    $('readiness-overview').hidden = true; $('readiness-overview').replaceChildren();
+    state.readinessStage = '';
+    state.buildPreview = null;
   }
-  function resetResult() { state.discovery?.abort(); state.publication?.abort(); clearReadiness(); invalidate(); state.graphFocus = null; state.explorer = null; state.graph = null; state.resultJob = null; state.context = ''; state.contexts = []; state.reports = []; $('analysis-workspace').hidden = true; $('welcome').hidden = false; updateResultStatus(); }
+  function resetResult() { state.discovery?.abort(); state.publication?.abort(); $('result-opening').hidden = true; clearReadiness(); invalidate(); state.graphFocus = null; state.explorer = null; state.graph = null; state.resultJob = null; state.context = ''; state.contexts = []; state.reports = []; $('analysis-workspace').hidden = true; $('welcome').hidden = false; updateResultStatus(); }
+  function showRepositoryPrompt() {
+    $('repository-title').textContent = 'Explore your architecture';
+    $('welcome').querySelector('h2').textContent = 'Connect a repository';
+    $('welcome').querySelector('p').textContent = 'Use a local folder or a Git repository to explore dependencies and findings.';
+    $('welcome').querySelector('button').hidden = false;
+  }
   function updateResultStatus() {
     const job = state.job, displayed = state.resultJob;
     const checking = (state.submitting && state.submitting === state.retry) ||
@@ -71,17 +181,26 @@
       message = 'Matching inputs verified. Reused the analysis from ' + new Date(job.reuse.sourceFinishedAt).toLocaleString() + '.';
     } else if (checking) {
       message = 'Checking current inputs…';
+    } else if (state.submitting) {
+      message = 'Starting analysis…';
     }
     if ($('result-status').textContent !== message) $('result-status').textContent = message;
   }
   function syncRunControls() {
     const busy = state.submitting || (state.job && !M.terminal(state.job));
     const unavailable = !state.online || !state.setup || Boolean(busy);
+    $('run-controls').hidden = !state.setup;
+    $('analysis-mode-field').hidden = !state.capabilities?.analysisModes?.includes('FAST_ARCHITECTURE');
+    $('analysis-mode').disabled = unavailable;
+    $('analysis-mode-note').hidden = $('analysis-mode-field').hidden || $('analysis-mode').value !== 'FAST_ARCHITECTURE';
     $('analyze').disabled = unavailable;
-    $('analyze').textContent = state.retry && !state.submitting ? 'Retry submission' : 'Run analysis ↗';
+    $('analyze').textContent = state.retry && !state.submitting ? 'Retry submission' : 'Run analysis';
     $('analyze-force').hidden = !state.capabilities?.analysisResultReuseEnabled ||
       !(state.job?.result?.graph || state.resultJob?.setup === state.setup && state.resultJob?.result?.graph);
     $('analyze-force').disabled = unavailable || Boolean(state.retry);
+    $('disconnect-repo').hidden = !state.connections.some(connection => connection.setup === state.setup);
+    $('disconnect-repo').disabled = Boolean(busy);
+    $('run-options').hidden = $('analysis-mode-field').hidden && $('analyze-force').hidden && $('disconnect-repo').hidden;
   }
   function cleanRepoName(setupId, conn, setup) {
     let name = conn?.label || '';
@@ -108,85 +227,43 @@
       : `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>`;
     return span;
   }
-  function renderRepoManager() {
-    const list = $('repo-mgr-list');
-    if (!list) return;
-    list.replaceChildren();
-    if (!state.setups.length) {
-      list.append(empty('No repositories connected', 'Connect a local directory or Git repository to get started.'));
-      return;
-    }
-    for (const setup of state.setups) {
-      const conn = state.connections.find(c => c.setup === setup.id);
-      const isGit = conn?.kind === 'GIT_HTTPS' || conn?.kind === 'GIT_SSH' || (conn?.repository?.canonicalCoordinate || '').startsWith('http');
-      const name = cleanRepoName(setup.id, conn, setup);
-      const row = el('div', 'repo-mgr-row');
-      const info = el('div', 'repo-mgr-info');
-      append(info,
-        el('strong', 'repo-mgr-name', name),
-        el('small', 'repo-mgr-meta', (isGit ? 'Git repository' : 'Local source') + (setup.release ? ` · Java ${setup.release}` : '') + (setup.policy ? ' · Policy configured' : ''))
-      );
-      const actions = el('div', 'repo-mgr-actions');
-      const selectBtn = btn('Open', () => {
-        $('repo-manager-dialog')?.close();
-        selectRepo(setup.id);
-      }, 'btn ghost btn-sm');
-      const discBtn = btn('Disconnect', () => {
-        $('repo-manager-dialog')?.close();
-        promptDisconnect(setup.id);
-      }, 'btn danger btn-sm');
-      append(actions, selectBtn, discBtn);
-      append(row, info, actions);
-      list.append(row);
-    }
-  }
   function renderSidebar() {
-    const repos = $('repositories'); repos.replaceChildren();
-    const capEl = $('repo-capacity');
-    if (capEl) {
-      const count = state.setups.length;
-      capEl.textContent = `${count}/32`;
-      capEl.title = `${count} of 32 repository slots used`;
-      capEl.classList.toggle('warning', count >= 28);
-    }
-    if (!state.setups.length) repos.append(el('p', 'muted small', state.online ? 'No repositories connected yet.' : 'Server unavailable. Refresh to retry.'));
+    const repos = $('repositories'), history = $('history');
+    repos.replaceChildren();
+    if (!state.setups.length) repos.append(el('p', 'muted small', state.online ? 'No repositories yet.' : 'Refresh to reconnect.'));
     for (const setup of state.setups) {
       const conn = state.connections.find(c => c.setup === setup.id);
-      const isGit = conn?.kind === 'GIT_HTTPS' || conn?.kind === 'GIT_SSH' || (conn?.repository?.canonicalCoordinate || '').startsWith('http');
-      const shortName = cleanRepoName(setup.id, conn, setup);
-      const row = btn('', () => selectRepo(setup.id), 'sidebar-item' + (state.setup === setup.id ? ' active' : ''));
-      row.title = `${shortName} (${isGit ? 'Git repository' : 'Local source'})`;
-      const head = el('div', 'sidebar-item-head');
-      const delBtn = btn('×', (e) => {
-        e.stopPropagation();
-        promptDisconnect(setup.id);
-      }, 'repo-disconnect-btn');
-      delBtn.title = `Disconnect ${shortName}`;
-      delBtn.setAttribute('aria-label', `Disconnect ${shortName}`);
-      append(head, repoIcon(isGit), el('strong', 'repo-name', shortName), delBtn);
-      const sourceKind = (isGit ? 'Git repo' : 'Local folder') + (setup.release ? ` · Java ${setup.release}` : '') + (setup.policy ? ' · Policy active' : '');
-      append(row, head, el('small', 'repo-meta', sourceKind));
+      const isGit = conn?.kind === 'GIT_HTTPS' || conn?.kind === 'GIT_SSH';
+      const name = cleanRepoName(setup.id, conn, setup), active = state.setup === setup.id;
+      const row = btn('', () => selectRepo(setup.id), 'sidebar-item repository-row' + (active ? ' active' : ''));
+      if (active) row.setAttribute('aria-current', 'true');
+      const icon = repoIcon(isGit);
+      icon.setAttribute('aria-hidden', 'true');
+      const head = append(el('span', 'sidebar-item-head'), icon, el('strong', 'repo-name', name));
+      append(row, head, el('small', 'repo-meta', isGit ? 'Git repository' : 'Local folder'));
       repos.append(row);
     }
-    const history = $('history'); history.replaceChildren();
+    history.replaceChildren();
     const jobs = state.jobs.filter(job => !state.setup || job.setup === state.setup);
-    if (!jobs.length) history.append(el('p', 'muted small', 'No analyses in this session.'));
+    if (!jobs.length) history.append(el('p', 'muted small', 'No runs yet.'));
     for (const job of jobs.slice(0, state.historyLimit)) {
-      const row = btn('', () => selectJob(job), 'sidebar-item' + (state.job?.id === job.id ? ' active' : ''));
-      const conn = state.connections.find(c => c.setup === job.setup);
-      const setup = state.setups.find(s => s.id === job.setup);
-      const jobRepo = cleanRepoName(job.setup, conn, setup);
-      const head = el('div', 'sidebar-item-head');
-      append(head, el('strong', 'repo-name', jobRepo), badge(job.state));
-      const meta = new Date(job.submittedAt).toLocaleString([], {month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'}) + (job.elapsedMillis ? ` · ${(job.elapsedMillis/1000).toFixed(1)}s` : '');
-      append(row, head, el('small', 'repo-meta', meta));
+      const active = state.job?.id === job.id;
+      const row = btn('', () => selectJob(job), 'sidebar-item history-row' + (active ? ' active' : ''));
+      if (active) row.setAttribute('aria-current', 'true');
+      const date = new Date(job.submittedAt).toLocaleString([], {month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'});
+      const jobName = state.setup ? date : repoLabel(job.setup);
+      const status = {FAILED: 'Failed', CANCELLED: 'Cancelled', TIMED_OUT: 'Timed out',
+        QUEUED: 'Queued', RUNNING: 'Running', CANCELLING: 'Cancelling'}[job.state];
+      append(row, append(el('span', 'sidebar-item-head'), el('strong', 'repo-name', jobName),
+        status ? el('span', 'run-state', status) : null));
+      if (!state.setup) row.append(el('small', 'repo-meta', date));
       history.append(row);
     }
     $('history-more').hidden = jobs.length <= state.historyLimit;
   }
   async function refreshHistory(more = false) {
     if (!state.online || !state.capabilities?.analysisJobsEnabled) return;
-    if (more) { state.historyLimit += 50; renderSidebar(); return; }
+    if (more) { state.historyLimit += 20; renderSidebar(); return; }
     let cursor, jobs = [];
     do { const page = await api('/analysis/jobs/history', {size: 50, ...(cursor ? {cursor} : {})}); jobs.push(...page.items); cursor = page.continuation; } while (cursor);
     state.jobs = jobs;
@@ -198,30 +275,43 @@
     try {
       state.capabilities = await api(''); state.online = true;
       $('connection-status').textContent = 'Local server connected'; $('connection-dot').classList.add('online');
-      state.setups = state.capabilities.analysisJobsEnabled ? (await api('/analysis/setups')).items : [];
-      state.connections = state.capabilities.repositoryConnectionsEnabled ? (await api('/analysis/connections')).items : [];
+      const [setups, connections] = await Promise.all([
+        state.capabilities.analysisJobsEnabled ? api('/analysis/setups') : null,
+        state.capabilities.repositoryConnectionsEnabled ? api('/analysis/connections') : null,
+        refreshHistory()
+      ]);
+      state.setups = setups?.items ?? [];
+      state.connections = connections?.items ?? [];
+      $('view-insights').hidden = !state.capabilities.architectureInsightsEnabled;
+      $('tab-architecture-chat').hidden = !state.capabilities.architectureChatEnabled;
+      $('open-comparison').hidden = !state.capabilities.evolutionEnabled;
+      $('open-bridge-captures').hidden = !state.capabilities.bridgesEnabled;
+      $('workspace-tools').hidden = $('open-comparison').hidden && $('open-bridge-captures').hidden;
+      updateWorkspaceTool();
       document.querySelectorAll('[data-action=connect]').forEach(n => { n.disabled = !state.capabilities.repositoryConnectionsEnabled; n.title = n.disabled ? 'Repository connections are not enabled by this server.' : ''; });
-      await refreshHistory();
       if (state.setup && !state.setups.some(setup => setup.id === state.setup)) {
         state.setup = null; state.job = null; resetResult(); $('job-panel').hidden = true;
-        $('repository-title').textContent = 'Explore your architecture'; $('repository-description').textContent = 'Connect a repository, run an analysis, then follow the evidence.';
+        showRepositoryPrompt();
       } else if (state.job && !state.jobs.some(job => job.id === state.job.id)) {
         await selectRepo(state.setup);
       }
       let saved; try { saved = localStorage.getItem('evo_repository'); } catch (_) {}
       if (!state.setup && state.setups.some(setup => setup.id === saved)) await selectRepo(saved);
-      else if (!state.setup && state.setups.length === 1) await selectRepo(state.setups[0].id); else renderSidebar();
+      else if (!state.setup && state.setups.some(setup => setup.id === 'local')) await selectRepo('local');
+      else if (!state.setup && state.setups.length === 1) await selectRepo(state.setups[0].id);
+      else renderSidebar();
       syncRunControls();
       if (!state.capabilities.analysisJobsEnabled) notice('This server is read-only. Start the workbench server to connect repositories and run analyses.');
     } catch (error) { state.online = false; $('connection-status').textContent = 'Server unavailable'; $('connection-dot').classList.remove('online'); syncRunControls(); renderSidebar(); notice(error.message, true); }
   }
   async function selectRepo(id) {
+    stopActivityClock();
     state.setup = id; state.job = null; state.retry = null; state.pollGeneration++; resetResult(); $('job-panel').hidden = true;
     try { localStorage.setItem('evo_repository', id); } catch (_) {}
-    $('search').value = ''; state.tab = 'overview'; state.historyLimit = 50;
+    $('search').value = ''; state.tab = 'overview'; state.historyLimit = 8;
     $('welcome').querySelector('h2').textContent = 'Ready to inspect your code';
     $('welcome').querySelector('p').textContent = 'Run an analysis to capture the current source, then explore its architecture and evidence.';
-    $('welcome').querySelector('button').textContent = 'Connect another repository';
+    $('welcome').querySelector('button').hidden = true;
     $('repository-title').textContent = repoLabel(id); $('repository-description').textContent = 'Run an analysis to inspect this repository. Results stay linked to their captured source.';
     syncRunControls();
     closeMobileSidebar(); const latest = state.jobs.find(job => job.setup === id); renderSidebar();
@@ -233,26 +323,15 @@
       const policy = $('repository-policy').value;
       const connection = await api('/analysis/connections', {source: $('repository-source').value.trim(), ...(policy.trim() ? {policy} : {})});
       state.connections = (await api('/analysis/connections')).items; state.setups = (await api('/analysis/setups')).items;
-      $('connect-dialog').close(); await selectRepo(connection.setup); notice('Repository connected. Run an analysis to capture its current source.');
+      $('connect-dialog').close(); await selectRepo(connection.setup);
+      if (!state.job && state.setup === connection.setup) await safe(() => submit());
     } catch (error) { $('connect-error').textContent = error.message; $('connect-error').hidden = false; $('repository-source').focus(); }
     finally { $('connect-submit').disabled = false; }
   }
   let pendingDisconnectSetup = null;
   function promptDisconnect(setupId) {
-    const conn = state.connections.find(c => c.setup === setupId);
-    const setup = state.setups.find(s => s.id === setupId);
-    const isGit = conn?.kind === 'GIT_HTTPS' || conn?.kind === 'GIT_SSH';
-    let rawName = conn?.label || setupId;
-    let shortName = rawName.replace(/^https?:\/\//, '').replace(/^github\.com\//, '');
     pendingDisconnectSetup = setupId;
-
-    const nameEl = $('disconnect-repo-name');
-    if (nameEl) nameEl.textContent = shortName;
-    const metaEl = $('disconnect-repo-meta');
-    if (metaEl) metaEl.textContent = (isGit ? 'Git repository' : 'Local folder') + (setup?.release ? ` · Java ${setup.release}` : '');
-    const iconEl = $('disconnect-repo-icon');
-    if (iconEl) iconEl.textContent = isGit ? '⌥' : '📁';
-
+    $('disconnect-repo-name').textContent = repoLabel(setupId);
     const errEl = $('disconnect-error');
     if (errEl) errEl.hidden = true;
     const confirmBtn = $('disconnect-confirm');
@@ -287,8 +366,7 @@
           state.job = null;
           resetResult();
           $('job-panel').hidden = true;
-          $('repository-title').textContent = 'Explore your architecture';
-          $('repository-description').textContent = 'Connect a repository, run an analysis, then follow the evidence.';
+          showRepositoryPrompt();
           syncRunControls();
           renderSidebar();
         }
@@ -308,62 +386,218 @@
     if (!state.setup || state.submitting || (state.job && !M.terminal(state.job))) return;
     notice('');
     const setup = state.setup, generation = state.pollGeneration;
-    const mode = $('analysis-mode')?.value || state.analysisMode || 'FULL';
+    const mode = $('analysis-mode-field').hidden ? 'FULL' : $('analysis-mode').value;
     const request = state.retry ||= {setup, idempotencyKey: crypto.randomUUID(), ...(force ? {force: true} : {}), ...(mode === 'FAST_ARCHITECTURE' ? {mode: 'FAST_ARCHITECTURE'} : {})};
-    state.submitting = request; syncRunControls(); updateResultStatus();
+    $('run-options').open = false; state.submitting = request; syncRunControls(); updateResultStatus();
     try {
-      const job = await api('/analysis/jobs', request);
+      const job = await api('/analysis/jobs', request, undefined, 'POST', 15000);
       if (state.retry === request) state.retry = null;
       if (state.setup === setup && state.pollGeneration === generation) await selectJob(job, true);
       await refreshHistory();
+    } catch (error) {
+      if (state.setup === setup && state.pollGeneration === generation) {
+        notice(error.code ? M.apiError(error.code) : error.message, true);
+      }
     } finally {
       if (state.submitting === request) state.submitting = null;
       syncRunControls(); updateResultStatus();
     }
   }
-  function renderTelemetryBar(job, telemetry) {
-    const bar = $('job-telemetry-bar');
-    if (!bar) return;
-    const stages = [];
-    if (telemetry?.stages?.length) {
-      for (const st of telemetry.stages) stages.push({stage: st.stage, ms: Number(st.durationMillis) || 0});
-    } else if (Array.isArray(job?.events) && job.events.length > 0) {
-      for (let i = 0; i < job.events.length; i++) {
-        const cur = job.events[i];
-        if (cur.stage === 'FINISHED') continue;
-        const nextAt = job.events[i + 1]?.at || job.finishedAt;
-        const ms = nextAt ? Math.max(0, Date.parse(nextAt) - Date.parse(cur.at)) : 0;
-        stages.push({stage: cur.stage, ms});
+  async function loadTelemetry() {
+    const job = state.job, panel = $('job-timing'), bar = $('job-telemetry-bar');
+    if (!job || !panel.open || !M.terminal(job) || state.telemetryJob === job.id) return;
+    state.telemetryJob = job.id;
+    bar.textContent = 'Loading stage timings…';
+    try {
+      const telemetry = await api('/analysis/jobs/' + job.id + '/telemetry');
+      if (state.job?.id !== job.id) return;
+      const total = el('p', 'small', 'Total ' + formatDuration(telemetry.totalElapsedMillis));
+      const stages = el('dl', 'job-timing-list');
+      for (const {stage, durationMillis} of telemetry.stages) {
+        stages.append(el('dt', '', analysisSteps[stage]?.[0] || stage), el('dd', '', formatDuration(durationMillis)));
       }
+      bar.replaceChildren(total, stages);
+    } catch (error) {
+      if (state.job?.id !== job.id) return;
+      state.telemetryJob = null;
+      bar.replaceChildren(el('p', 'small muted', error.message), btn('Retry timings', loadTelemetry));
     }
-    if (!stages.length) { bar.hidden = true; return; }
-    bar.hidden = false;
-    bar.replaceChildren();
-    const head = el('div', 'telemetry-head');
-    const modeLabel = telemetry?.mode === 'FAST_ARCHITECTURE' ? '⚡ FAST_ARCHITECTURE' : 'FULL EVIDENCE';
-    const reuseBadge = (telemetry?.reused || job?.reuse) ? badge('REUSED CACHE HIT') : null;
-    append(head,
-      el('span', 'telemetry-mode-pill' + (telemetry?.mode === 'FAST_ARCHITECTURE' ? ' fast' : ''), modeLabel),
-      reuseBadge,
-      el('span', 'muted small mono', `Total: ${telemetry?.totalElapsedMillis ?? job.elapsedMillis ?? 0} ms`)
-    );
-    const chips = el('div', 'telemetry-chips');
-    for (const s of stages) {
-      append(chips, append(el('span', 'telemetry-chip'), el('small', '', s.stage.toLowerCase()), el('strong', 'mono', `${s.ms}ms`)));
+  }
+  const formatDuration = ms => ms < 1000 ? ms + ' ms' : (ms / 1000).toFixed(1) + ' s';
+  const analysisSteps = {
+    QUEUED: ['In queue', 'Queued', 'Waiting for an analysis worker.'],
+    ACQUISITION: ['Capturing repository', 'Repository captured', 'Recording the files and build inputs for this run.'],
+    PLATFORM: ['Preparing analysis', 'Analysis inputs prepared', 'Reading build descriptors, dependency metadata and the selected runtime.'],
+    ANALYSIS: ['Analyzing source', 'Source analyzed', 'Reading source files and resolving relationships across the captured contexts.'],
+    GRAPH: ['Building dependency graph', 'Dependency graph built', 'Assembling the architecture and its dependencies.'],
+    POLICY: ['Checking rules', 'Rules checked', 'Evaluating the configured architecture rules.'],
+    PUBLICATION: ['Saving results', 'Results saved', 'Writing and verifying the result for this run.'],
+    REUSED: ['Reusing saved results', 'Saved results reused', 'The captured inputs match the saved run.']
+  };
+  const runOutcomes = {
+    PARTIAL: 'Results ready', SUCCEEDED: 'Results ready', EMPTY: 'Repository captured',
+    FAILED: 'Analysis failed', CANCELLED: 'Run cancelled', TIMED_OUT: 'Run timed out'
+  };
+  const failureMessages = {
+    ANALYSIS_FAILED: 'The analyzer could not produce a result.',
+    RESULT_PUBLICATION_FAILED: 'The run could not save its results. Try running the analysis again.',
+    RESULT_STORAGE_FAILED: 'The analysis store could not save the graph. Check that the store is writable and has room.',
+    JOB_STORAGE_UNAVAILABLE: 'The run history could not be saved. Check that the analysis store is writable.',
+    SEMANTIC_WORKER_REQUIRED: 'This run needs a compatible analysis worker with enough memory.',
+    SETUP_CONFIGURATION_CHANGED: 'The repository configuration changed. Start a new run.',
+    DEADLINE_EXCEEDED: 'The run reached its execution deadline.',
+    PROVIDER_INTERRUPTED: 'The analysis worker stopped before finishing.',
+    USER_CANCELLED: 'Cancellation was acknowledged.',
+    SERVICE_CLOSED: 'The analysis server shut down during this run.'
+  };
+  const inputFailureMessages = {
+    ROOT_NOT_FOUND: 'The repository folder could not be found. Reconnect using its current path.',
+    ROOT_READ_FAILED: 'The repository folder could not be read. Check its permissions.',
+    ROOT_NOT_DIRECTORY: 'The selected path is no longer a folder.',
+    DIRECTORY_READ_FAILED: 'A directory could not be read. Check its permissions.',
+    FILE_READ_FAILED: 'A repository file could not be read. Check its permissions.',
+    FILE_CHANGED_DURING_READ: 'A file changed during capture. Retry after writes to the repository finish.',
+    DIRECTORY_CHANGED_DURING_READ: 'A directory changed during capture. Retry after writes to the repository finish.'
+  };
+  const activityTime = ms => {
+    const seconds = Math.floor(Math.max(0, ms) / 1000);
+    if (seconds < 60) return seconds + ' s';
+    const minutes = Math.floor(seconds / 60);
+    const hours = Math.floor(minutes / 60);
+    return (hours ? hours + ' h ' : '') + minutes % 60 + ' min ' + String(seconds % 60).padStart(2, '0') + ' s';
+  };
+  let activityClock, activityPulse;
+  function stopActivityClock() {
+    clearInterval(activityPulse);
+    activityPulse = undefined;
+    activityClock = undefined;
+  }
+  function tickActivity() {
+    const clock = activityClock;
+    if (!clock || state.job?.id !== clock.id) { stopActivityClock(); return; }
+    const delta = clock.running ? performance.now() - clock.observedAt : 0;
+    $('job-elapsed').textContent = (clock.stale ? '≈ ' : '') + activityTime(clock.elapsed + delta);
+    if (clock.activeStep) clock.activeStep.textContent = (clock.stale ? '≈ ' : '') + activityTime(clock.stageElapsed + delta);
+  }
+  function syncActivityClock(job) {
+    const running = !M.terminal(job);
+    const activeStep = running ? $('job-events').querySelector('[aria-current="step"] .step-duration') : null;
+    const event = [...(job.events ?? [])].reverse().find(entry => entry.stage === job.stage);
+    const stageElapsed = event ? Math.max(0, job.elapsedMillis - (Date.parse(event.at) - Date.parse(job.submittedAt))) : job.elapsedMillis;
+    activityClock = {id: job.id, elapsed: job.elapsedMillis, stageElapsed, observedAt: performance.now(), running, activeStep};
+    tickActivity();
+    if (running && activityPulse === undefined) activityPulse = setInterval(tickActivity, 1000);
+    else if (!running) stopActivityClock();
+  }
+  function renderActivity(job) {
+    const list = $('job-events'), events = [...(job.events ?? [])];
+    if (M.terminal(job) && events.at(-1)?.stage !== 'FINISHED' && job.finishedAt) {
+      events.push({stage: 'FINISHED', at: job.finishedAt});
     }
-    append(bar, head, chips);
+    const items = new Map([...list.children].map(item => [item.dataset.event, item]));
+    const remaining = new Set(items.values());
+    const failed = job.state === 'FAILED' || job.state === 'TIMED_OUT' || job.state === 'CANCELLED';
+    const failureCode = job.error || job.stop;
+    for (const [index, event] of events.entries()) {
+      const key = event.stage + '/' + event.at;
+      let item = items.get(key);
+      if (!item) {
+        const time = el('time', 'step-started', new Date(event.at).toLocaleTimeString());
+        time.dateTime = event.at;
+        const details = append(el('details'), append(el('summary'),
+          el('span', 'step-title'), el('span', 'step-duration')),
+          time, el('p', 'step-note'), el('p', 'step-observation'));
+        details.dataset.stage = event.stage;
+        item = append(el('li'), details);
+        item.dataset.event = key;
+        list.append(item);
+      }
+      remaining.delete(item);
+      const step = analysisSteps[event.stage], next = events[index + 1], finished = event.stage === 'FINISHED';
+      const active = !M.terminal(job) && event.stage === job.stage && !next;
+      const interrupted = failed && next?.stage === 'FINISHED';
+      if (active) item.setAttribute('aria-current', 'step'); else item.removeAttribute('aria-current');
+      item.querySelector('.step-title').textContent = finished ? runOutcomes[job.state] :
+        step?.[active || interrupted ? 0 : 1] ?? 'Analysis';
+      if (!active) item.querySelector('.step-duration').textContent = next ?
+        activityTime(Date.parse(next.at) - Date.parse(event.at)) + (interrupted ? ' before stopping' : '') : '';
+      item.querySelector('.step-note').textContent = finished ?
+        failureMessages[failureCode] || (failed ? 'The run ended before a result was saved.' : 'Open the overview to explore this run.') :
+        step?.[2] ?? 'The server recorded this step.';
+      const observation = item.querySelector('.step-observation');
+      observation.textContent = event.stage === 'PLATFORM' && state.buildPreview ?
+        state.buildPreview.moduleCount + ' build modules recorded' :
+        finished && job.error && !failureMessages[job.error] ? 'Error code ' + job.error : '';
+      observation.hidden = !observation.textContent;
+    }
+    for (const item of remaining) item.remove();
+  }
+  function showProgressConnection(message = '') {
+    const status = $('job-connection');
+    if (status.textContent !== message) status.textContent = message;
+    status.hidden = !message;
+  }
+  function showRunFailure(job) {
+    const node = $('job-failure');
+    const failed = job.state === 'FAILED' || job.state === 'TIMED_OUT';
+    const message = failed ? failureMessages[job.error || job.stop] || 'The run ended before a result was saved.' : '';
+    node.textContent = message;
+    node.hidden = !failed;
+    if (!failed || !job.result?.inputProblemCount) return;
+    const generation = state.pollGeneration;
+    api('/analysis/jobs/' + job.id + '/input-diagnostics', {size: 5}, undefined, 'POST', 8000).then(data => {
+      if (!selectedJob(job.id, generation)) return;
+      const messages = [...new Set(data.items.map(item => inputFailureMessages[item.problem?.reason]).filter(Boolean))];
+      if (messages.length) node.textContent = messages.join(' ');
+    }).catch(() => { /* The failure reported by the job remains visible. */ });
   }
   function renderJob(job) {
     $('job-panel').hidden = false; $('welcome').hidden = true;
-    $('job-state').replaceWith(Object.assign(badge(job.state), {id: 'job-state'})); $('job-title').textContent = M.terminal(job) ? 'Analysis result' : 'Analysis in progress';
-    const messages = {PARTIAL: 'Some evidence is missing. Inspect limitations before drawing conclusions.', FAILED: 'Analysis failed. Open input diagnostics and the receipt for the recorded reason.', EMPTY: 'No analyzable Java source was found in this selection.', CANCELLED: 'Analysis was cancelled. No completed result is claimed.', TIMED_OUT: 'Analysis reached its execution limit.', SUCCEEDED: 'Analysis completed. Completion does not mean the architecture has no issues.'};
-    $('job-description').textContent = (messages[job.state] || (job.state === 'CANCELLING' ? 'Cancellation requested. Waiting for the worker to stop.' : 'Current step: ' + job.stage.toLowerCase() + '.')) + ' · ' + (job.elapsedMillis / 1000).toFixed(1) + ' s' + (job.result ? ' · ' + job.result.gapCount + ' recorded limitations' : '');
-    $('job-evidence-tier').hidden = !job.result?.graph;
+    const summary = job.state === 'CANCELLING' ? 'Cancelling run' : runOutcomes[job.state] ?? analysisSteps[job.stage]?.[0] ?? 'Analysis in progress';
+    if ($('job-description').textContent !== summary) $('job-description').textContent = summary;
+    const details = $('run-details');
+    if (details.dataset.job !== job.id) {
+      details.dataset.job = job.id;
+      details.open = job.state === 'FAILED' || job.state === 'TIMED_OUT';
+      $('job-events').replaceChildren();
+      showProgressConnection();
+    }
+    const timing = $('job-timing');
+    if (timing.dataset.job !== job.id) {
+      timing.dataset.job = job.id;
+      timing.open = false;
+      state.telemetryJob = null;
+      $('job-telemetry-bar').replaceChildren();
+    }
+    timing.hidden = !M.terminal(job);
+    $('job-mode').textContent = job.mode === 'FAST_ARCHITECTURE' ? 'Quick analysis · reduced Java detail · installed Node packages inventoried'
+      : job.mode === 'FULL' ? 'Deep analysis' : '';
+    $('job-mode').hidden = !$('job-mode').textContent;
     if (job.result?.graph) $('repository-description').textContent = 'Captured ' + new Date(job.reuse?.sourceFinishedAt || job.finishedAt || job.submittedAt).toLocaleString() + ' · Run a new analysis after changing the source.';
     $('cancel-job').hidden = M.terminal(job); $('cancel-job').disabled = job.state === 'CANCELLING'; syncRunControls(); updateResultStatus();
-    $('job-diagnostics').disabled = !M.terminal(job); $('job-gaps').disabled = !M.terminal(job);
-    $('job-events').replaceChildren(...job.events.map(event => el('li', '', event.stage.toLowerCase())));
-    renderTelemetryBar(job, state.telemetryByJob.get(job.id));
+    renderActivity(job);
+    syncActivityClock(job);
+    showRunFailure(job);
+    requestScorePreview(job);
+  }
+  function requestScorePreview(job) {
+    const preview = $('job-score-preview');
+    const graph = job.result?.graph;
+    const active = Boolean(graph || !M.terminal(job) && ['PLATFORM', 'ANALYSIS', 'GRAPH', 'POLICY', 'PUBLICATION'].includes(job.stage));
+    if (!active || preview.dataset.job !== job.id) {
+      preview.dataset.job = job.id;
+      preview.hidden = true;
+      preview.textContent = '';
+    }
+    if (!active || !state.capabilities?.repositoryScoringEnabled) return;
+    const key = job.id + '/' + job.stage;
+    if (state.scorePreviewRequest === key || !preview.hidden) return;
+    state.scorePreviewRequest = key;
+    requestRepositoryScore(job.id, graph, savedScorePaths(job.setup)).then(score => {
+      if (state.job?.id !== job.id || !$('analysis-workspace').hidden || score.status === 'WITHHELD') return;
+      preview.textContent = 'Repository score · ' + (score.score ?? (score.lower + '–' + score.upper)) + ' / 100';
+      preview.hidden = false;
+    }).catch(() => { /* The inventory may not have sealed yet. A later stage can retry. */ });
   }
   async function selectJob(job, keepPrevious = false) {
     state.job = job; state.setup = job.setup; state.retry = null; state.pollGeneration++;
@@ -382,91 +616,173 @@
   }
   const selectedJob = (id, generation) => state.job?.id === id && state.pollGeneration === generation;
   function requestReadiness(job, generation) {
-    if (state.readiness || M.terminal(job) || !['PLATFORM','ANALYSIS','GRAPH','POLICY','PUBLICATION'].includes(job.stage)
+    if (state.buildPreview || state.readinessStage === job.stage || M.terminal(job) || !['PLATFORM','ANALYSIS','GRAPH','POLICY','PUBLICATION'].includes(job.stage)
         || !state.capabilities?.acquisitionRoutes?.some(route => route.endsWith('/overview'))) return;
+    state.readiness?.abort();
+    state.readinessStage = job.stage;
     const controller = new AbortController(); state.readiness = controller;
-    api('/api/v2/acquisitions/' + job.id + '/overview', {}, controller.signal).then(view => {
+    api('/api/v2/acquisitions/' + job.id + '/overview', {}, controller.signal, 'POST', 8000).then(view => {
       if (!selectedJob(job.id, generation) || M.terminal(state.job) || controller.signal.aborted) return;
-      const panel = $('readiness-overview');
-      const heading = el('h2', '', 'Build structure preview');
-      const qualification = el('p', 'muted small', 'From the captured build descriptors. Semantic relationships, variants and policy results are still being checked.');
-      const totals = el('p', 'small', view.rootCount + ' candidate roots · ' + view.moduleCount + ' candidate modules · ' +
-        view.coverage.selected + ' selected contexts · ' + view.coverage.unknownDimensions + ' unresolved configuration dimensions');
-      const details = append(el('details'), el('summary', '', 'Candidate modules'), el('p', 'muted small', 'Declared module information for this captured input.'));
-      const modules = el('ul');
-      for (const module of view.modules) modules.append(el('li', '', module.directory + ' · ' + module.target +
-        (module.languages.length ? ' · ' + module.languages.join(', ') : '')));
-      details.append(modules);
-      if (view.modules.length < view.moduleCount) details.append(el('p', 'muted small', 'Showing ' + view.modules.length + ' of ' + view.moduleCount + ' modules in this preview.'));
-      panel.replaceChildren(heading, qualification, totals, details);
-      panel.hidden = false;
+      state.buildPreview = view;
+      renderActivity(state.job);
     }).catch(() => { /* An unpublished preview does not affect the running analysis. */ });
   }
-  async function poll(id, generation, since = performance.now()) {
+  async function poll(id, generation, since = performance.now(), failures = 0) {
     if (!selectedJob(id, generation)) return;
-    const next = () => setTimeout(() => safe(() => poll(id, generation, since)), performance.now() - since < 2000 ? 250 : 1200);
+    let job;
     try {
-      const job = await api('/analysis/jobs/' + id); if (!selectedJob(id, generation)) return;
-      if (job.revision < state.job.revision) { next(); return; }
-      state.job = job; state.jobs = state.jobs.map(item => item.id === id ? job : item); renderJob(job); renderSidebar();
-      if (M.terminal(job)) {
-        clearReadiness();
-        if (job.result?.graph) await loadGraph(job, id, generation);
-        if (selectedJob(id, generation)) await refreshHistory();
+      job = await api('/analysis/jobs/' + id, undefined, undefined, 'GET', 8000);
+    } catch (error) {
+      if (!selectedJob(id, generation)) return;
+      if (error.code === 'JOB_NOT_FOUND') {
+        showProgressConnection('This run is no longer available. You can start a new analysis.');
+        state.job = null;
+        stopActivityClock();
+        $('cancel-job').hidden = true;
+        syncRunControls();
+        return;
       }
-      else { requestReadiness(job, generation); next(); }
-    } catch (error) { if (selectedJob(id, generation) && error.name !== 'AbortError') { notice(error.message + ' Use Refresh history to reconnect.', true); syncRunControls(); } }
+      if (activityClock) {
+        activityClock.stale = true;
+        tickActivity();
+      }
+      if (failures >= 1) {
+        const age = activityClock ? activityTime(performance.now() - activityClock.observedAt) : '';
+        showProgressConnection(age ? 'Waiting for server status. Last confirmed ' + age + ' ago.' : 'Waiting for server status.');
+      }
+      setTimeout(() => safe(() => poll(id, generation, since, failures + 1)), Math.min(1200 * 2 ** Math.min(4, failures), 12000));
+      return;
+    }
+    if (!selectedJob(id, generation)) return;
+    showProgressConnection();
+    if (job.revision > state.job.revision || job.revision === state.job.revision && M.terminal(job)) {
+      state.job = job;
+      state.jobs = state.jobs.map(item => item.id === id ? job : item);
+      renderJob(job);
+      renderSidebar();
+    } else if (job.revision === state.job.revision) syncActivityClock(job);
+    if (M.terminal(state.job)) {
+      clearReadiness();
+      if (state.job.result?.graph) await loadGraph(state.job, id, generation);
+      if (selectedJob(id, generation)) await refreshHistory();
+      return;
+    }
+    requestReadiness(state.job, generation);
+    const age = performance.now() - since;
+    setTimeout(() => safe(() => poll(id, generation, since)), age < 2000 ? 250 : age < 30000 ? 1000 : 2500);
   }
   async function loadGraph(publication, jobId, generation) {
-    const graph = publication.result.graph;
+    const {graph, snapshot, contexts} = publication.result;
     const displayed = state.resultJob;
-    if (state.graph === graph && publication.reuse && displayed &&
-        publication.reuse.sourceJob === (displayed.reuse?.sourceJob ?? displayed.id)) {
+    if (state.graph === graph && displayed && (displayed.id === publication.id ||
+        publication.reuse?.sourceJob === (displayed.reuse?.sourceJob ?? displayed.id))) {
       state.resultJob = publication; updateResultStatus(); return;
     }
     state.discovery?.abort();
     const controller = new AbortController(); state.discovery = controller;
     const {signal} = controller;
     const current = () => state.discovery === controller && selectedJob(jobId, generation);
-    const discovery = await api('/graphs/' + graph, undefined, signal); if (!current()) return;
+    const loading = $('result-opening');
+    let discovery;
+    const fromReceipt = typeof snapshot === 'string' && Array.isArray(contexts) && contexts.every(identity => typeof identity === 'string');
+    if (fromReceipt) {
+      discovery = {snapshot, contexts: contexts.map(identity => ({identity}))};
+    } else {
+      loading.replaceChildren(el('p', '', 'Reading the saved result…'));
+      loading.hidden = false;
+      try {
+        discovery = await api('/graphs/' + graph, undefined, signal, 'GET', 30000);
+      } catch (error) {
+        if (!current() || error.name === 'AbortError') return;
+        loading.replaceChildren(el('p', '', 'Could not open these results.'), el('p', 'muted small', error.message),
+          btn('Retry opening results', () => loadGraph(publication, jobId, generation)));
+        return;
+      }
+    }
+    if (!current()) return;
+    loading.hidden = true;
+    state.snapshot = discovery.snapshot ?? publication.result.snapshot;
+
     state.publication?.abort(); state.publication = new AbortController();
     state.graph = graph; state.resultJob = publication; state.contexts = discovery.contexts; state.reports = []; updateResultStatus();
-    state.reportIds = publication.result.reports ?? discovery.reports ?? [];
+    state.reportIds = [...new Set([...(publication.result.reports ?? []), ...(discovery.reports ?? [])])];
+    state.reportIndexLoaded = !fromReceipt;
+    state.repositoryScore = null;
+    state.policyRuns = new Map();
+    state.activePolicyReports = new Map();
     state.reportLoad = null;
-    state.moduleLabels = new Map(); state.contextKinds = new Map();
+    state.moduleLabels = new Map(); state.contextKinds = new Map(); state.contextLoads = new Map();
     $('analysis-workspace').hidden = false; $('welcome').hidden = true;
+    $('job-score-preview').hidden = true;
     $('context').replaceChildren(el('option', '', 'Choose a context…')); $('context').firstChild.value = ''; let index = 0;
-    for (const context of state.contexts) { const option = el('option', '', context.analysis ? 'Analysis context ' + (++index) : 'Repository / acquisition'); option.value = context.identity; option.title = context.identity; $('context').append(option); }
-    state.context = state.contexts.length ? (state.context && state.contexts.some(c => c.identity === state.context) ? state.context : state.contexts[0].identity) : ''; $('context').value = state.context;
-    state.contexts.forEach(c => labelContext(c.identity));
-    if (M.terminal(publication) && !state.telemetryByJob.has(publication.id)) {
-      api('/analysis/jobs/' + publication.id + '/telemetry', undefined, signal).then(tel => {
-        state.telemetryByJob.set(publication.id, tel);
-        if (state.job?.id === publication.id) renderTelemetryBar(state.job, tel);
-      }).catch(() => {});
+    for (const context of state.contexts) {
+      const label = context.identity === state.snapshot ? 'Whole repository' : 'Analysis context ' + (++index);
+      const option = el('option', '', label);
+      option.value = context.identity;
+      option.title = context.identity;
+      $('context').append(option);
+    }
+    if (!state.contexts.some(context => context.identity === state.context)) {
+      state.context = state.contexts.find(context => context.identity === state.snapshot)?.identity ?? state.contexts[0]?.identity ?? '';
+    }
+    $('context').value = state.context;
+    if (openChatOnFirstResult && state.capabilities?.architectureChatEnabled) {
+      openChatOnFirstResult = false;
+      await loadTab('architecture-chat');
+      return;
     }
     await loadTab(state.tab);
   }
-  // Label only the selected context, from recorded provenance.
-  async function labelContext(identity) {
-    const graph = state.graph, publication = state.publication;
+  function labelContext(identity) {
+    const graph = state.graph, publication = state.publication, loads = state.contextLoads;
     if (!identity || !publication || state.contextKinds.has(identity)) return;
-    try {
+    if (loads.has(identity)) return loads.get(identity);
+    const load = (async () => {
+      try {
         const value = await api('/graphs/' + graph + '/queries/provenance', {request: M.request(identity), arguments: {}}, publication.signal);
         if (state.publication !== publication || publication.signal.aborted) return;
-        const evidence=value.items?.[0],build = evidence?.metadata?.build?.moduleSourceSet;
-        if(evidence?.metadata?.module&&evidence.metadata.modulePath)state.moduleLabels.set(evidence.metadata.module,evidence.metadata.modulePath);
-        state.contextKinds.set(identity,evidence?.family);
+        const evidence = value.items?.[0], metadata = evidence?.metadata, build = metadata?.build?.moduleSourceSet;
+        if (metadata?.module && metadata.modulePath) state.moduleLabels.set(metadata.module, metadata.modulePath);
+        state.contextKinds.set(identity, evidence?.family);
         const option = [...$('context').options].find(n => n.value === identity);
-        if(option&&build){const module=state.moduleLabels.get(build.module)||(build.module?.includes('sha256:')?null:build.module);option.textContent=[evidence.metadata.modulePath||module||(evidence.family==='spring.context'?'Spring configuration':'Java analysis'),evidence.family==='spring.context'&&module?'Spring':null,build.sourceSet?.toLowerCase()].filter(Boolean).join(' / ');}
-        else if(option&&evidence?.family==='spring.context')option.textContent='Spring configuration';
-        else if(option&&evidence?.metadata?.modulePath)option.textContent=evidence.metadata.modulePath+' / '+(evidence.metadata.sourceSet?.toLowerCase()||'Java');
-    } catch (_) { /* Generic explicit context labels remain available if metadata cannot be read. */ }
+        if (!option) return;
+        if (build) {
+          const path = metadata.modulePath || state.moduleLabels.get(build.module) || (build.module?.includes('sha256:') ? null : build.module);
+          const module = path === '.' ? 'Root module' : path;
+          option.textContent = [module || (evidence.family === 'spring.context' ? 'Spring configuration' : 'Java analysis'),
+            evidence.family === 'spring.context' && module ? 'Spring' : null, build.sourceSet?.toLowerCase()].filter(Boolean).join(' / ');
+        } else if (evidence?.family === 'spring.context') option.textContent = 'Spring configuration';
+        else if (metadata?.modulePath) option.textContent = metadata.modulePath + ' / ' + (metadata.sourceSet?.toLowerCase() || 'Java');
+      } catch (_) {
+        // Keep the existing explicit context label if provenance is unavailable.
+      } finally {
+        loads.delete(identity);
+      }
+    })();
+    loads.set(identity, load);
+    return load;
+  }
+  async function labelContextOptions() {
+    const publication = state.publication;
+    if (!publication || state.contextOptionsLoading === publication) return;
+    state.contextOptionsLoading = publication;
+    const contexts = state.contexts;
+    for (let i = 0; i < contexts.length && !publication.signal.aborted; i += 4) {
+      await Promise.all(contexts.slice(i, i + 4).map(context => labelContext(context.identity)));
+    }
+    if (state.contextOptionsLoading === publication) state.contextOptionsLoading = null;
   }
   async function loadReports() {
-    if (!state.reportIds?.length || state.reportLoad) return state.reportLoad;
-    const graph = state.graph, ids = state.reportIds, signal = state.publication?.signal;
+    if (state.reportLoad) return state.reportLoad;
+    const graph = state.graph, signal = state.publication?.signal;
     const load = (async () => {
+      if (!state.reportIndexLoaded) {
+        const discovery = await api('/graphs/' + graph, undefined, signal);
+        if (signal?.aborted || graph !== state.graph) return;
+        state.reportIds = [...new Set([...state.reportIds, ...(discovery.reports ?? [])])];
+        state.reportIndexLoaded = true;
+      }
+      const ids = state.reportIds;
       const reports = [];
       for (let from = 0; from < ids.length; from += 4) {
         const results = await Promise.allSettled(ids.slice(from, from + 4)
@@ -484,47 +800,47 @@
     return load;
   }
   function envFor(signal) {
-    const graph = state.graph, context = state.context, request = M.request(context), reportIds = state.reports.filter(r => r.context === context);
-    return {graph, context, request, reportIds, signal, jobId: state.resultJob?.id,springContext:state.contextKinds?.get(context)==='spring.context',
+    const graph = state.graph, context = state.context, snapshot = state.snapshot, request = M.request(context), reportIds = state.reports.filter(r => r.context === context);
+    return {graph, context, snapshot, request, reportIds, signal, setup: state.resultJob?.setup, jobId: state.resultJob?.id,
+      contextFamily: state.contextKinds?.get(context), springContext: state.contextKinds?.get(context) === 'spring.context',
       query: (op, args = {}, page, overrides = {}) => api('/graphs/' + graph + '/queries/' + op, {request: {...request, ...overrides}, arguments: args, ...(page ? {page} : {})}, signal),
       report: (id, op, args = {}, page) => api('/graphs/' + graph + '/reports/' + id + '/' + op, {arguments: args, ...(page ? {page} : {})}, signal)};
   }
   async function loadTab(tab) {
+    const panel = $('panel-' + tab);
+    if (!panel) return;
     invalidate(); state.tab = tab; const epoch = state.epoch;
-    document.querySelectorAll('[role=tab]').forEach(n => { const selected = n.dataset.tab === tab; n.setAttribute('aria-selected', selected); n.tabIndex = selected ? 0 : -1; });
-    document.querySelectorAll('[role=tabpanel]').forEach(n => n.hidden = n.id !== 'panel-' + tab); const panel = $('panel-' + tab);
-    if (panel) panel.hidden = false;
-
-    // Synchronize workspace view sections so the parent is never display:none
-    const tabToSection = {
-      overview: 'view-overview',
-      structure: 'view-overview',
-      graph: 'view-architecture',
-      insights: 'view-insights',
-      policy: 'view-remediation',
-      gaps: 'view-evidence'
-    };
-    const targetSectionId = tabToSection[tab];
-    if (targetSectionId) {
-      document.querySelectorAll('.section').forEach(s => {
-        s.classList.toggle('active', s.id === targetSectionId);
-      });
-      document.querySelectorAll('.nav[data-view]').forEach(nav => {
-        const active = nav.dataset.tab === tab || nav.dataset.view === targetSectionId.replace('view-', '');
-        nav.classList.toggle('active', active);
-        nav.setAttribute('aria-current', active ? 'page' : 'false');
-      });
+    const group = panel.closest('[data-view-group]');
+    const primary = group?.dataset.viewGroup ?? tab;
+    for (const control of $('tabs').querySelectorAll('[data-tab]')) {
+      const selected = control.dataset.tab === primary;
+      control.setAttribute('aria-selected', String(selected));
+      control.tabIndex = selected ? 0 : -1;
     }
+    $('search-form').hidden = tab !== 'structure';
+    for (const option of document.querySelectorAll('.view-links [data-open-tab]')) {
+      if (option.dataset.openTab === tab) option.setAttribute('aria-current','page');
+      else option.removeAttribute('aria-current');
+    }
+    const updateSpringViews = () => {
+      const spring = state.contextKinds?.get(state.context) === 'spring.context' || ['spring','configurations'].includes(tab);
+      document.querySelectorAll('[data-spring-view]').forEach(control => control.hidden = !spring);
+    };
+    updateSpringViews();
+    document.querySelectorAll('.analysis-content > [role=tabpanel]').forEach(n => n.hidden = n !== (group || panel));
+    document.querySelectorAll('[data-group-panel]').forEach(n => n.hidden = n !== panel);
+    panel.hidden = false;
+
     if (!state.context) { if (panel) { panel.setAttribute('aria-busy','false');panel.replaceChildren(empty('Choose an analysis context', 'Select the module or repository context above. Results are scoped to that selection.')); } return; }
     state.view = new AbortController(); const signal = state.view.signal; if (panel) { panel.setAttribute('aria-busy','true');panel.replaceChildren(empty('Loading…', 'Reading the captured analysis.')); }
-    const tabName = document.querySelector('[data-tab="'+tab+'"]')?.textContent || tab;
+    const tabName = $('view-' + tab)?.textContent ?? $('tab-' + tab)?.textContent ?? tab;
     $('view-status').textContent = 'Loading ' + tabName + '…';
     try {
-      const reports = ['overview','policy','metrics','insights'].includes(tab) ? loadReports() : null;
-      const label = labelContext(state.context);
-      if (tab !== 'overview') await label;
+      const reports = ['policy','metrics'].includes(tab) ? loadReports() : null;
+      if (tab !== 'overview') await labelContext(state.context);
       await reports;
       if (epoch !== state.epoch) return;
+      updateSpringViews();
       const view = await views[tab](envFor(signal)); if (epoch !== state.epoch) return; panel.replaceChildren(view.node || view); panel.setAttribute('aria-busy','false');$('view-status').textContent = view.status || 'View loaded for the selected analysis context.'; view.after?.();
     }
     catch (error) { if (epoch === state.epoch && error.name !== 'AbortError') { panel.setAttribute('aria-busy','false');panel.replaceChildren(empty('Unable to load this view', error.message), btn('Retry', () => loadTab(tab))); $('view-status').textContent = 'Request failed. Retry to read this analysis.'; } }
@@ -545,7 +861,7 @@
       if (busy) return; busy = true; more.disabled = true;
       try { const result = await fetchPage(continuing ? next : null); if (env.signal.aborted) return;
         if (!continuing) { items = []; list.replaceChildren(); } items.push(...result.items); next = result.continuation;
-        if (!items.length) list.append(empty(title || 'No results available', hint || 'Check the selected context and analysis limitations.')); else result.items.forEach(item => list.append(onRow(item)));
+        if (!items.length) list.append(empty(title || 'No results available', hint || 'Try a different scope or filter.')); else result.items.forEach(item => list.append(onRow(item)));
         footer.replaceChildren(el('span', '', M.pageInfo({...result, items}))); if (next) footer.append(more);
       } finally { busy = false; more.disabled = false; }
     }
@@ -566,19 +882,11 @@
       state.details = value; const body = $('inspector-body'); body.replaceChildren();
       const finish = () => {
         if (actions.length) body.append(append(el('div','detail-actions'),...actions.map(action => btn(action.label,action.run,'button subtle'))));
-        body.append(append(el('details'),el('summary','','Recorded data and source coordinates (Raw JSON)'),el('pre','',JSON.stringify(value,null,2))));
         $('download-details').disabled = false;
       };
       if (render) { render(body,value); finish(); return; }
-      const firstGap = value?.reasonCode ? value : Array.isArray(value?.items) && value.items.length === 1 && value.items[0]?.reasonCode ? value.items[0] : null;
-      if (firstGap?.reasonCode) {
-        const info = M.humanReason(firstGap.reasonCode);
-        const guide = el('div', 'human-explain-banner');
-        append(guide, append(el('div', 'human-explain-header'), el('strong', '', info.title), badge(info.code)), el('p', '', info.explanation), el('p', 'human-action-hint', 'Recommended next step: ' + info.action));
-        body.append(guide);
-      }
       const fields = el('dl', 'data-fields');
-      for (const [key, val] of Object.entries(value || {})) if (val != null && typeof val !== 'object' && !['query','identity','id','setup','graph','snapshot','acquisition','sourceReport','continuation'].includes(key)) {
+      for (const [key, val] of Object.entries(value || {})) if (val != null && typeof val !== 'object' && !technicalField(key, val) && !['query','identity','id','setup','graph','snapshot','acquisition','sourceReport','continuation'].includes(key)) {
         const dd = el('dd');
         if (typeof val === 'string' && /^sha256:[0-9a-f]{16,}$/i.test(val)) dd.append(digestChip(val));
         else dd.textContent = String(val);
@@ -586,13 +894,11 @@
       }
       body.append(fields);
       if (Array.isArray(value?.items)) {
-        body.append(el('p', 'muted small', M.pageInfo(value)));
-        for (const [index, item] of value.items.entries()) {
-          const section = el(item.reasonCode ? 'details' : 'div', 'evidence-item');
-          const gapInfo = item.reasonCode ? M.humanReason(item.reasonCode) : null;
-          const itemTitle = gapInfo ? gapInfo.title + ' (' + item.reasonCode + ') · ' + (item.mechanismCategory || 'GAP') : item.vertices ? 'Dependency path ' + (index + 1) : item.family || item.kind || 'Evidence ' + (index + 1);
-          section.append(el(item.reasonCode ? 'summary' : 'h3', '', itemTitle));
-          if (gapInfo) section.append(el('p', 'small muted', gapInfo.explanation + ' — ' + gapInfo.action));
+        const items = value.items.filter(item => item.kind !== 'CAPABILITY_GAP' && !item.gapIdentity);
+        for (const [index, item] of items.entries()) {
+          const section = el('div', 'evidence-item');
+          const itemTitle = item.vertices ? 'Dependency path ' + (index + 1) : item.family || item.kind || 'Evidence ' + (index + 1);
+          section.append(el('h3', '', itemTitle));
           if (item.vertices && contextEnv) {
             const feasText = item.feasibility === 'SAT' ? 'Feasible in modeled configurations (SAT)' : item.feasibility === 'UNSAT' ? 'Infeasible / contradictory conditions (UNSAT)' : 'Configuration feasibility: ' + item.feasibility;
             section.append(el('p', 'muted small', item.edges.length + ' dependency steps · ' + feasText));
@@ -609,17 +915,21 @@
           } else renderFields(section, item.metadata || item, 0);
           body.append(section);
         }
-        if (!value.items.length) body.append(empty('No records returned', 'Read the status and limitations before interpreting an empty result.'));
+        if (!items.length) body.append(empty('No records returned', ''));
         if (value.continuation && typeof loader === 'function') body.append(btn('Load more evidence', () => inspect(title, kind, loader, actions, value.items, value.continuation)));
       } else renderFields(body, value, 0, true);
       finish();
     } catch (error) { if (!controller.signal.aborted) $('inspector-body').replaceChildren(empty('Details unavailable', error.message)); }
   }
+  function technicalField(key, value) {
+    return /gap|limitation|diagnostic|^bounds$|^confidence$|^evidenceStatus$|^isTruncated$/i.test(key)
+      || /status$/i.test(key) && ['COMPLETE', 'PARTIAL'].includes(value);
+  }
   function renderFields(parent, value, depth, objectsOnly = false) {
     if (!value || typeof value !== 'object') return;
     const fields = el('dl', 'data-fields');
     for (const [key, val] of Object.entries(value)) {
-      if (val == null || objectsOnly && typeof val !== 'object') continue;
+      if (val == null || technicalField(key, val) || objectsOnly && typeof val !== 'object') continue;
       if (typeof val !== 'object') {
         const resolved = ['source','target'].includes(key) ? state.labels.get(val) || val : val;
         const dd = el('dd');
@@ -628,9 +938,9 @@
         append(fields, append(el('div', 'data-field'), el('dt', '', key.replace(/([A-Z])/g, ' $1')), dd));
       } else if (depth < 3 && Object.keys(val).length) {
         const detail = append(el('details'), el('summary', '', key.replace(/([A-Z])/g, ' $1')));
-        if (['entity', 'span', 'sourceSpan', 'declaration', 'path', 'confidence', 'dimensions'].includes(key)) detail.open = true;
+        if (['entity', 'span', 'sourceSpan', 'declaration', 'path', 'dimensions'].includes(key)) detail.open = true;
         renderFields(detail, val, depth + 1); fields.append(detail);
-      } else if (Object.keys(val).length) fields.append(append(el('details'), el('summary', '', key), el('pre', '', JSON.stringify(val, null, 2))));
+      }
     }
     parent.append(fields);
   }
@@ -642,7 +952,7 @@
       {label: 'Dependencies (Outgoing)', run: () => inspect(M.label(item), 'DEPENDENCIES', (signal, cursor) => query('dependencies', {identity: item.identity}, signal, {scope,relationshipKinds:relationshipKinds(scope)}, cursor))},
       {label: 'Dependents (Incoming)', run: () => inspect(M.label(item), 'INCOMING DEPENDENCIES', (signal, cursor) => query('dependencies', {identity: item.identity}, signal, {scope,relationshipKinds:relationshipKinds(scope), direction: 'INCOMING'}, cursor))},
       {label: 'Blast radius / Impact', run: () => inspect(M.label(item), 'POTENTIAL STRUCTURAL IMPACT', signal => query('impact', {identity: item.identity}, signal, {scope,relationshipKinds:relationshipKinds(scope), direction: 'INCOMING'}))},
-      {label: 'Open in graph', run: async () => { state.graphFocus = {seed: item.identity, scope}; closeInspector(); await loadTab('graph'); }},
+      {label: 'Open in graph', run: async () => { state.graphFocus = {seed: item.identity, scope, context: env.context}; closeInspector(); await loadTab('graph'); }},
       {label: 'Metric details', run: async () => { state.metricSubject = item; closeInspector(); await loadTab('metrics'); }}
     ] : [];
     return inspect(M.label(item), item.kind || 'ENTITY', (signal, cursor) => query('explain', {identity: item.identity}, signal, {}, cursor), actions);
@@ -652,7 +962,11 @@
   async function inspectFinding(item, reportId, env) {
     const finding=item.result,bundle=finding.bundle,rule=finding.rule?.header||finding.rule,actions=[];
     if(bundle){
-      if (item.bundleIdentity) actions.push({label:'Diagnose finding',run:()=>inspectDiagnosis(item,reportId,env)});
+      if (item.bundleIdentity) {
+        actions.push({label:'Diagnose finding',run:()=>inspectDiagnosis(item,reportId,env)});
+        if (state.capabilities?.architectureChatEnabled)
+          actions.push({label:'Ask architecture chat',run:()=>askAboutFinding(item,reportId,env)});
+      }
       actions.push({label:'Exact source evidence',run:async()=>{
         const sourceContext=bundle.analysis&&state.contexts.some(context=>context.identity===bundle.analysis)?bundle.analysis:env.context;
         await resolveLabels(bundle.sources.map(source=>source.span.document),{...env,query:(op,args,page,overrides)=>env.query(op,args,page,{...overrides,context:sourceContext})});
@@ -669,15 +983,13 @@
         }});
       }
       actions.push({label:'Finding path',run:()=>inspect('Finding path','DEPENDENCY EVIDENCE',{items:[{vertices:bundle.path,edges:bundle.relationships,feasibility:bundle.region.classification==='UNKNOWN'?'UNKNOWN':'SAT'}],status:bundle.status})});
-      if(bundle.path.length)actions.push({label:'Show finding graph',run:()=>{state.graphFocus={seed:bundle.path[0],scope:bundle.request.scope,relationshipKinds:bundle.request.relationshipKinds};closeInspector();return loadTab('graph');}});
+      if(bundle.path.length)actions.push({label:'Show finding graph',run:()=>{state.graphFocus={seed:bundle.path[0],context:bundle.request.context ?? env.context,scope:bundle.request.scope,relationshipKinds:bundle.request.relationshipKinds};closeInspector();return loadTab('graph');}});
     }
     return inspect(rule?.name||rule?.id||'Rule evidence','POLICY EVIDENCE',finding,actions);
   }
   const diagnosisReasons = Object.freeze({
     UNSUPPORTED_FINDING: 'Diagnosis requires verified dependency path and supported rule kinds (FORBIDDEN_DEPENDENCY, ACYCLIC, BOUNDARY).',
-    MISSING_SOURCE_EVIDENCE: 'The finding has missing or unresolvable source evidence in the captured classpath.',
     GRAPH_PROOF_MISMATCH: 'The recorded graph evidence does not match the canonical dependency path.',
-    QUERY_LIMIT: 'The server could not complete the evidence check within its execution limits.',
     MODEL_SCOPE_NOT_REGISTERED: 'Diagnosis model is running in deterministic local replay mode.',
     MODEL_UNAVAILABLE: 'The diagnosis provider did not return a result.',
     INVALID_MODEL_CITATIONS: 'The diagnosis provider returned citations that could not be verified for this finding.'
@@ -694,10 +1006,8 @@
         el('p','small', local ? 'Uses an authored response. No live AI model was called.'
           : 'The local model selects citations. The explanation comes from checked graph evidence.'));
       body.append(status);
-      if (diagnosis.evidenceStatus !== 'COMPLETE') body.append(el('p','muted small','Finding evidence status: '+diagnosis.evidenceStatus
-        +' · Recorded gaps: '+diagnosis.gaps.length+'.'));
       if (!validated) {
-        body.append(empty('No supported diagnosis', diagnosisReasons[diagnosis.reason] || 'The evidence check did not support a diagnosis.'));
+        body.append(empty('Diagnosis unavailable', diagnosisReasons[diagnosis.reason] || ''));
         const f = item.result || {};
         if (f.kind === 'ACYCLIC' && f.bundle?.path) {
           const cycleCard = el('div', 'notice');
@@ -735,6 +1045,7 @@
         list.append(append(el('li'),btn(label,open,'text-button')));
       }
       body.append(list);
+      body.append(btn('Create captured repair proposal', () => inspectCapturedRepair(item,reportId,env,diagnosis), 'button primary'));
       body.append(btn('Review repair proposal', () => inspectRepairProposal(item,reportId,env,diagnosis,args), 'button primary'));
     });
   }
@@ -749,6 +1060,16 @@
     AMBIGUOUS_RECIPE_TARGET: 'Multiple conflicting refactoring targets identified.',
     QUERY_LIMIT: 'The proposal request exceeded its work limit.'
   });
+  function inspectCapturedRepair(item, reportId, env, diagnosis) {
+    const args = {identity:item.identity,bundle:item.bundleIdentity,context:env.context,diagnosisInput:diagnosis.input};
+    const options = signal => api('/graphs/'+env.graph+'/reports/'+reportId+'/repair-options',{arguments:args},signal);
+    const back = {label:'Back to diagnosis',run:()=>inspectDiagnosis(item,reportId,env,diagnosis)};
+    return inspect('Captured repair options','PROPOSED CHANGE',options,[back],[],undefined,(body,value) => {
+      const workspace = el('section','surface-section');
+      body.append(workspace);
+      renderProposalResult(item,reportId,{...env,signal:state.inspector.signal},diagnosis,value,null,workspace);
+    });
+  }
   function inspectRepairProposal(item, reportId, env, diagnosis, diagnosisArguments) {
     const request = {arguments:{...diagnosisArguments,diagnosisInput:diagnosis.input}};
     const load = signal => api('/graphs/'+env.graph+'/reports/'+reportId+'/repair-proposal',request,signal);
@@ -1045,7 +1366,7 @@
       const explBox = el('div', 'remedy-explanation-box');
       append(explBox,
         el('strong', '', validated ? 'AI & Graph Grounded Diagnosis' : 'Diagnosis Assessment'),
-        el('p', '', diagnosis.explanation || diagnosisReasons[diagnosis.reason] || 'Diagnosis completed.')
+        el('p', '', validated ? diagnosis.explanation : diagnosisReasons[diagnosis.reason] || 'Diagnosis unavailable.')
       );
       diagBody.append(explBox);
 
@@ -1114,6 +1435,7 @@
     const controls = el('div', 'remedy-patch-actions');
     const recipeSelect = document.createElement('select');
     recipeSelect.className = 'input';
+    recipeSelect.setAttribute('aria-label','Repair recipe');
     (options.recipes || []).forEach(r => {
       const opt = document.createElement('option');
       opt.value = r.id;
@@ -1126,15 +1448,26 @@
     }, propBody), 'btn ghost btn-sm');
     runRecipeBtn.disabled = !(options.recipes && options.recipes.length);
     controls.append(recipeSelect, runRecipeBtn);
-    if (options.ai && options.ai.input) {
+    propBody.append(controls);
+    if (options.ai?.input) {
+      const disclosure = el('div','notice');
+      const provider = options.ai.provider;
+      const approval = el('input');
+      approval.type = 'checkbox';
+      const files = el('ul','dependency-path');
+      for (const file of options.ai.files || []) files.append(el('li','',file.path));
       const aiBtn = btn(`Propose with AI (${options.ai.provider?.model || 'configured'})`, () => executeProposalChoice(item, reportId, env, diagnosis, options, {
         strategy: 'AI',
         modelInput: options.ai.input
       }, propBody), 'btn primary btn-sm');
-      controls.append(aiBtn);
+      aiBtn.disabled = true;
+      approval.addEventListener('change',() => { aiBtn.disabled = !approval.checked; });
+      append(disclosure,el('p','','This proposal sends the captured source of the listed files to ' + provider.endpoint + '.'),
+        files,append(el('label'),approval,el('span','',' Allow this source disclosure')),aiBtn);
+      propBody.append(disclosure);
     }
-    propBody.append(controls);
 
+    if (!proposal) return;
     if (proposal.status === 'PROPOSED') {
       const cand = proposal.proposal?.candidate || {};
       const patch = cand.patch || '';
@@ -1143,6 +1476,7 @@
       const infoRow = el('div', 'remedy-patch-header');
       append(infoRow,
         el('span', 'badge good', 'Compiler Syntax PASSED'),
+        el('span', 'badge warn', 'Unverified candidate'),
         el('span', 'small muted', `Target: ${targetList} · Strategy: ${cand.strategy || cand.engine?.version || 'RECIPE'}`)
       );
       propBody.append(infoRow);
@@ -1220,10 +1554,11 @@
         {identity: item.identity, bundle: item.bundleIdentity, context: env.context, diagnosisInput: diagnosis.input},
         extraArgs
       );
-      const proposal = await api('/graphs/' + env.graph + '/reports/' + reportId + '/repair-proposal', {arguments: args});
+      const proposal = await api('/graphs/' + env.graph + '/reports/' + reportId + '/repair-proposal', {arguments: args},env.signal);
       renderProposalResult(item, reportId, env, diagnosis, options, proposal, propBody);
     } catch (e) {
-      propBody.replaceChildren(empty('Proposal unavailable', e.message));
+      if (e.name !== 'AbortError') propBody.replaceChildren(empty('Proposal unavailable', e.message),
+        btn('Back to repair options',() => renderProposalResult(item,reportId,env,diagnosis,options,null,propBody)));
     }
   }
 
@@ -1401,81 +1736,307 @@
     }
   }
 
+  function savedScorePaths(setup) {
+    try { return JSON.parse(localStorage.getItem('evo.rubric.' + setup)) || {}; }
+    catch (_) { return {}; }
+  }
+
+  function requestRepositoryScore(job, graph, paths, signal) {
+    const body = Object.keys(paths).length ? {paths} : undefined;
+    const fromGraph = () => api('/graphs/' + graph + '/repository-score', body, signal);
+    return job ? api('/analysis/jobs/' + job + '/repository-score', body, signal).catch(error => {
+      if (!graph || error.code !== 'SCORE_INVENTORY_UNAVAILABLE') throw error;
+      return fromGraph();
+    }) : fromGraph();
+  }
+
+  function repositoryScoreCard(env, editable = false) {
+    const node = card('Repository score', 'File-based checks for this snapshot.');
+    if (!editable) node.classList.add('overview-score');
+    const result = el('div');
+    result.setAttribute('aria-live', 'polite');
+    node.append(result);
+    const fields = Object.entries({
+      documentation: 'Documentation', tests: 'Tests', automation: 'CI configuration', build: 'Build or package setup'
+    });
+    const key = 'evo.rubric.' + env.setup;
+    let paths = savedScorePaths(env.setup);
+    let version = 0;
+    const feedback = el('p', 'small muted');
+    feedback.setAttribute('role', 'status');
+    let inputs;
+    if (editable) {
+      const editor = el('details', 'snapshot-policy-editor');
+      editor.append(el('summary', '', 'Customize repository checks'),
+        el('p', 'small muted', 'Enter an exact path inside the repository to replace a default check. Leave a path empty to use the convention.'));
+      inputs = fields.map(([id, title]) => {
+        const input = el('input');
+        input.value = paths[id] ?? '';
+        input.maxLength = 1024;
+        input.placeholder = 'Use default convention';
+        editor.append(field(title, input));
+        return [id, input];
+      });
+      editor.append(append(el('div', 'toolbar'), btn('Apply checks', () => read(
+        Object.fromEntries(inputs.map(([id, control]) => [id, control.value.trim()]).filter(([, value]) => value)), true)),
+        btn('Use default checks', () => read({}, true))), feedback);
+      node.append(editor);
+    }
+    async function read(requested = paths, save = false) {
+      const current = ++version, publication = state.publication;
+      if (!save) result.textContent = 'Reading repository score…';
+      else feedback.textContent = 'Evaluating checks…';
+      const cacheKey = JSON.stringify(requested);
+      if (state.repositoryScore?.key !== cacheKey) {
+        const promise = requestRepositoryScore(env.jobId, env.graph, requested, publication.signal);
+        const entry = {key: cacheKey, promise};
+        state.repositoryScore = entry;
+        promise.catch(() => { if (state.repositoryScore === entry) state.repositoryScore = null; });
+      }
+      try {
+        const score = await state.repositoryScore.promise;
+        if (env.signal.aborted || current !== version) return;
+        paths = score.paths ?? {};
+        if (save) {
+          for (const [id, control] of inputs) control.value = paths[id] ?? '';
+          try {
+            localStorage.setItem(key, JSON.stringify(paths));
+            feedback.textContent = 'Checks saved for this repository.';
+          } catch (_) {
+            feedback.textContent = 'Checks applied for this snapshot.';
+          }
+        }
+        const value = score.score == null
+          ? score.status === 'WITHHELD' || score.lower == null || score.upper == null ? 'Unavailable' : (score.lower === score.upper ? score.lower : score.lower + '–' + score.upper) + ' / 100'
+          : score.score + ' / 100';
+        result.replaceChildren(append(el('div', 'score-heading'), el('strong', 'score', value)));
+        const rows = el('dl', 'score-checks');
+        for (const check of score.checks) {
+          const label = fields.find(([id]) => id === check.name)?.[1] ?? check.name;
+          const stateText = {OBSERVED: 'Observed', ABSENT: 'No match', UNKNOWN: '—', NOT_APPLICABLE: 'Not applicable'};
+          const contribution = check.state === 'OBSERVED' ? check.weight + ' / ' + check.weight
+            : check.state === 'ABSENT' ? '0 / ' + check.weight : stateText[check.state];
+          const evidence = el('dd', 'small muted', check.criterion);
+          if (check.evidence) evidence.append(' · ', btn(check.evidence.path, () => inspect('Scoring evidence', 'CAPTURED FILE',
+            {snapshot: score.snapshot, check: check.criterion, path: check.evidence.path, evidence: check.evidence.identity}), 'text-button'));
+          rows.append(el('dt', '', label), el('dd', 'score-points', contribution), evidence);
+        }
+        if (editable) result.append(rows);
+        else result.append(append(el('details'), el('summary', '', 'How this score was calculated'), rows));
+      } catch (error) {
+        if (env.signal.aborted || current !== version) return;
+        if (save) feedback.textContent = error.code === 'INVALID_REQUEST' ? 'Use a path inside the repository, such as qa/smoke.sh.' : error.message;
+        else result.replaceChildren(el('p', '', error.message), btn('Retry score', () => read()));
+      }
+    }
+    read();
+    return node;
+  }
+
+  function architectureScoreCard(env) {
+    const node = card('Architecture assessment', 'Rules are evaluated on the selected Java or Spring context of this snapshot.');
+    if (!['analysis.manifest', 'spring.context'].includes(env.contextFamily) && !env.reportIds.length) {
+      node.append(el('p', 'small muted', 'Select a Java or Spring analysis context to review architecture rules.'));
+      return node;
+    }
+    const applicable = ['analysis.manifest', 'spring.context'].includes(env.contextFamily);
+    const detail = el('div');
+    detail.setAttribute('aria-live', 'polite');
+    node.append(detail);
+    let version = 0;
+    function render(id, value, label) {
+      detail.replaceChildren(append(el('div', 'score-heading'), el('strong', 'score', M.assessment(value))));
+      if (label) detail.append(el('p', 'small muted', label));
+      for (const dimension of value.dimensions ?? []) {
+        detail.append(append(el('div', 'dimension'), btn(dimension.id.replace(/^health[.:]/, '').replaceAll('-', ' '),
+          () => inspectScoreDimension(value, dimension, id, env), 'text-button'), el('strong', '', dimension.score ?? 'Unavailable')));
+      }
+      detail.append(append(el('div', 'toolbar'),
+        btn('View findings', () => { state.activePolicyReports.set(env.context, id); return loadTab('policy'); }),
+        btn('Assessment evidence', () => inspect('Architecture assessment', 'ASSESSMENT', value), 'text-button')));
+    }
+    const preferenceKey = 'evo.rules.' + env.setup + '.' + (env.springContext ? 'spring' : 'java');
+    let saved = '';
+    try { saved = localStorage.getItem(preferenceKey) || ''; } catch (_) {}
+    let editor, input, editorStatus, apply, defaults;
+    const available = env.reportIds.filter(report => report.hasAssessment);
+    if (available.length) {
+      const select = selectControl('Published assessment', available.map((r, i) => [r.identity, 'Published assessment ' + (i + 1)]));
+      const active = state.activePolicyReports.get(env.context);
+      if (available.some(r => r.identity === active)) select.value = active;
+      node.insertBefore(field('Report', select), detail);
+      select.addEventListener('change', () => showPublished(select.value));
+      if (!saved || !applicable) showPublished(select.value);
+    }
+    if (!applicable) return node;
+    editor = el('details', 'snapshot-policy-editor');
+    editor.id = 'snapshot-policy-editor';
+    input = el('textarea');
+    input.rows = 10;
+    input.maxLength = 8192;
+    input.value = saved;
+    const templates = (M.policyTemplates ?? []).filter(item => env.springContext ? item.id.startsWith('spring-') : !item.id.startsWith('spring-'));
+    const starter = templates.find(item => item.id === (env.springContext ? 'spring-cycles' : 'cycles'));
+    if (!input.value) input.value = starter?.yaml ?? '';
+    const preset = selectControl('Rule template', [['', 'Choose a template'], ...templates.map(item => [item.id, item.label])]);
+    preset.addEventListener('change', () => {
+      const selected = templates.find(item => item.id === preset.value);
+      if (selected) input.value = selected.yaml;
+      preset.value = '';
+      input.focus();
+    });
+    editorStatus = el('p', 'small muted');
+    editorStatus.setAttribute('role', 'status');
+    apply = btn('Apply rules', () => run(input.value.trim(), true), 'button primary');
+    defaults = btn('Use default rules', () => run(null, true));
+    editor.append(el('summary', '', 'Customize rules'), field('Template', preset), field('Policy YAML', input),
+      append(el('div', 'toolbar'), apply, defaults), editorStatus);
+    node.append(editor);
+    if (saved || !available.length) run(saved || null, false);
+    return node;
+
+    async function showPublished(id) {
+      const current = ++version;
+      if (apply) apply.disabled = defaults.disabled = false;
+      detail.textContent = 'Reading published assessment…';
+      try {
+        const value = await env.report(id, 'assessment');
+        if (!env.signal.aborted && current === version) render(id, value, 'Published policy');
+      } catch (error) {
+        if (!env.signal.aborted && current === version) detail.textContent = error.message;
+      }
+    }
+
+    async function run(policy, save) {
+      if (policy === '') { editorStatus.textContent = 'Enter policy YAML or choose a template.'; return; }
+      const current = ++version, publication = state.publication;
+      const runs = state.policyRuns, key = JSON.stringify([env.context, policy]);
+      editorStatus.textContent = '';
+      apply.disabled = defaults.disabled = true;
+      if (!save) detail.textContent = 'Evaluating architecture rules…';
+      try {
+        let pending = runs.get(key);
+        if (!pending) {
+          pending = api('/graphs/' + env.graph + '/policy-assessment',
+            {context: env.context, ...(policy == null ? {} : {policy})}, publication.signal);
+          runs.set(key, pending);
+          pending.catch(() => runs.delete(key));
+        }
+        const response = await pending;
+        if (env.signal.aborted || current !== version) return;
+        if (!response.report) {
+          editor.open = true;
+          editorStatus.textContent = response.problems.map(problem =>
+            (problem.location ? 'Line ' + problem.location.line + ' · ' : '') + problem.code.replaceAll('_', ' ')
+            + ' (' + problem.path + ')').join(' · ');
+          if (!save) detail.textContent = 'Correct the saved rules to issue an assessment.';
+          return;
+        }
+        if (policy == null) input.value = response.policy;
+        if (save) {
+          try {
+            if (policy == null) localStorage.removeItem(preferenceKey);
+            else localStorage.setItem(preferenceKey, policy);
+          } catch (_) { editorStatus.textContent = 'Applied for this snapshot. Local rule preferences are unavailable.'; }
+        }
+        if (!state.reportIds.includes(response.report)) {
+          state.reportIds.push(response.report);
+          state.reportLoad = null;
+        }
+        state.activePolicyReports.set(env.context, response.report);
+        render(response.report, response.assessment, response.policyKind === 'DEFAULT' ? 'Default · dependency cycle rule' : 'Custom repository policy');
+      } catch (error) {
+        if (env.signal.aborted || current !== version) return;
+        if (save) editorStatus.textContent = error.message;
+        else detail.replaceChildren(el('p', '', error.message), btn('Retry assessment', () => run(policy, false)));
+      } finally {
+        if (!env.signal.aborted && current === version) apply.disabled = defaults.disabled = false;
+      }
+    }
+  }
+
+  let architectureChatAssets;
+  async function askAboutFinding(item, report, env) {
+    if (env.graph !== state.graph || env.context !== state.context) return;
+    state.chatFinding = {item, report, graph: env.graph, context: env.context};
+    await loadTab('architecture-chat');
+    $('panel-architecture-chat').querySelector('textarea')?.focus();
+  }
+  async function architectureChatView(env) {
+    if (!state.capabilities.architectureChatEnabled) {
+      return empty('Architecture chat unavailable', 'Start a Workbench server with architecture chat support.');
+    }
+    architectureChatAssets ??= Promise.all([loadToolAsset('link','/architecture-chat.css'),
+      loadToolAsset('script','/architecture-chat.js')]).catch(error => { architectureChatAssets = null; throw error; });
+    await architectureChatAssets;
+    const selected = state.chatFinding;
+    const finding = selected?.graph === env.graph && selected.context === env.context ? selected : null;
+    const findingRef = finding && {report: finding.report, identity: finding.item.identity, bundle: finding.item.bundleIdentity};
+    return window.mountEvoArchitectureChat({
+      graph: env.graph, snapshot: env.snapshot, context: env.context, signal: env.signal,
+      contextLabel: $('context').selectedOptions[0]?.textContent || env.context,
+      provider: state.capabilities.architectureChatProvider, finding: findingRef,
+      findingLabel: finding?.item.result?.rule?.id || finding?.item.result?.kind,
+      send: (input, signal) => api('/graphs/' + env.graph + '/architecture-chat',input,signal,'POST',90000),
+      clearFinding: () => { state.chatFinding = null; return loadTab('architecture-chat'); },
+      openFinding: finding && (() => inspectFinding(finding.item,finding.report,env)),
+      openRepair: finding && (() => inspectDiagnosis(finding.item,finding.report,env)),
+      openSource: row => inspect('Cited source evidence','SOURCE EVIDENCE',async signal => {
+        const result = await api('/graphs/' + env.graph + '/queries/evidence',{
+          request: {...M.request(row.context), scope:'ENTITY'}, arguments: {reference:row.reference}
+        },signal);
+        const record = result.items.find(item => item.identity === row.reference);
+        if (!record) throw new Error('This source evidence is unavailable in the selected snapshot.');
+        return {citation:row,record};
+      })
+    });
+  }
   const views = {
-    async overview(env) {
-      const summary = await env.query('summary'), node = el('div'), counts = summary.items?.[0], stats = el('div', 'stats');
-      for (const card of M.summaryCards(summary)) {
-        const stat = btn('', () => {
-          if (card.tab === 'structure') { state.structureFocus = card.kind; $('search').value = ''; }
-          else state.gapFocus = card.kind;
-          return loadTab(card.tab);
-        }, 'stat');
-        append(stat, el('span', '', card.label), el('strong', '', card.count ?? '—'), el('small', '', card.observed ? 'Observed · click to inspect' : 'In the selected context')); stats.append(stat);
-      }
-      node.append(stats); const grid = el('div', 'content-grid'); node.append(grid);
-      const health = card('Architecture assessment', 'Based on the selected policy and the evidence available for this analysis.'); grid.append(health);
-      if (env.reportIds.length !== 1) health.append(empty(env.reportIds.length ? 'Select a policy report' : 'Score unavailable — no rules configured', env.reportIds.length ? 'Open Metrics & score to choose an exact report.' : 'A score needs explicit architecture rules and enough evidence. Structural metrics are available without a policy.'),btn(env.reportIds.length?'Open Metrics & score':'Configure rules & scoring',()=>env.reportIds.length?loadTab('metrics'):configureRules(),'button primary'));
-      else {
+    'architecture-chat': architectureChatView,
+    overview(env) {
+      const node = el('div'), stats = el('div', 'summary-table');
+      const next = append(el('section','workbench-next'),
+        append(el('div'),el('h2','','Explore this snapshot'),
+          el('p','','Open the repository structure, review a finding, or ask about a design decision.')));
+      const routes = append(el('div','workbench-next-actions'),
+        btn('Browse structure',() => loadTab('structure'),'button subtle'),
+        btn('Review findings',() => loadTab('policy'),'button subtle'));
+      if (state.capabilities?.architectureChatEnabled)
+        routes.append(btn('Open architecture chat',() => loadTab('architecture-chat'),'button primary'));
+      next.append(routes);
+      const grid = el('div', 'overview-layout'); node.append(next,grid);
+      if (state.capabilities?.repositoryScoringEnabled) grid.append(repositoryScoreCard(env));
+      const health = card('Architecture assessment');
+      health.classList.add('overview-context');
+      const inventory = append(el('details', 'inventory-details'), el('summary', '', 'Structure counts'), stats);
+      let requested = false;
+      async function readCounts() {
+        requested = true;
+        stats.textContent = 'Reading structure counts…';
         try {
-          const assessment = await env.report(env.reportIds[0].identity, 'assessment');
-          health.append(el('div', 'score', M.assessment(assessment)), badge(assessment.status));
-          if (assessment.status === 'WITHHELD') {
-            const banner = el('div', 'assessment-withheld-banner');
-            const gapCount = state.resultJob?.result?.gapCount || 'unresolved';
-            append(banner,
-              el('strong', '', 'Score Withheld: Incomplete Input Evidence'),
-              el('p', '', `The overall architecture score cannot be computed because this offline analysis recorded ${gapCount} capability limitations (such as missing external JARs or dynamic Spring profiles).`),
-              el('p', '', 'All structural facts, dependency graphs, and individual code metrics remain 100% verified and available.')
-            );
-            health.append(banner);
-          } else if (assessment.confidence) {
-            health.append(el('p', 'muted small', assessment.confidence.sufficient ? 'Required assessment evidence is sufficient.' : 'Required assessment evidence is incomplete.'));
+          const summary = await env.query('summary');
+          if (env.signal.aborted) return;
+          stats.replaceChildren();
+          for (const entry of M.summaryCards(summary)) {
+            if (entry.count == null) continue;
+            const row = btn('', () => {
+              state.structureFocus = entry.kind;
+              $('search').value = '';
+              return loadTab('structure');
+            }, 'summary-row');
+            append(row, el('span', '', entry.label), el('strong', '', entry.count.toLocaleString()));
+            stats.append(row);
           }
-          const DIM_NAMES = {
-            'health:boundaries': 'Package Boundaries',
-            'health:coupling': 'Coupling & Modularity',
-            'health:cyclicity': 'Dependency Acyclicity',
-            'health:hotspots': 'Structural Hotspots',
-            'health:policy': 'Policy Conformance'
-          };
-          const dimWrap = el('div', 'dimensions-table');
-          dimWrap.style.margin = '10px 0';
-          for (const dimension of assessment.dimensions || []) {
-            const row = el('div', 'dimension-row');
-            const dName = DIM_NAMES[dimension.id] || dimension.id;
-            const dVal = dimension.score != null ? `${dimension.score} / 100` : 'Pending complete evidence';
-            append(row,
-              el('span', 'dimension-name', dName),
-              el('strong', 'dimension-val' + (dimension.score == null ? ' dim-withheld' : ''), dVal)
-            );
-            dimWrap.append(row);
-          }
-          health.append(dimWrap);
-          health.append(btn('View score breakdown & metrics', () => loadTab('metrics'), 'text-button'));
-        } catch (error) { health.append(empty('Assessment unavailable', error.message)); }
+          if (!stats.childElementCount) stats.textContent = 'No structure counts are available for this view.';
+        } catch (error) {
+          if (!env.signal.aborted) stats.replaceChildren(el('p', 'muted', error.message), btn('Retry counts', readCounts));
+        }
       }
-      const guide = card('Follow the evidence', 'Jump directly to the workflow that matches your architectural question.'); grid.append(guide);
-      for (const [label, sub, tab] of [
-        ['Open Refactoring & Cycle Advisor →', 'Tarjan SCC tangles, minimal cycle-breakers, blast radius, DSM & Markdown export', 'insights'],
-        ['Browse captured structure →', 'Navigate modules, packages, classes, methods and source files', 'structure'],
-        ['Explore dependency graph →', 'Interactive canvas with layout switcher, ego-spotlight and shortest path', 'graph'],
-        ['Compare modeled configurations →', 'Diff required (MUST) vs conditional (MAY) dependencies across profiles', 'configurations'],
-        ['Inspect coupling & hotspots →', 'Measure incoming/outgoing coupling (Ca/Ce), fan-in/fan-out and LOC', 'metrics'],
-        ['Review rules and findings →', 'Check cyclic dependencies and policy violations with source witnesses', 'policy'],
-        ['Inspect limitations & gaps →', 'Plain-English root-cause breakdown of unresolved or dynamic boundaries', 'gaps']
-      ]) guide.append(row({label, kind: tab}, () => loadTab(tab), sub));
-      const inventory = card('Captured inventory — visual distribution & counts', 'All discovered AST entities, source documents, and dependencies in this context.');
-      const nodeEntries = Object.entries(counts?.nodeCounts || {}).sort((a, b) => b[1] - a[1]);
-      const maxCount = Math.max(1, ...nodeEntries.map(([, c]) => Number(c) || 0));
-      const invGrid = el('div', 'dist-list');
-      for (const [kind, count] of nodeEntries) {
-        const pct = Math.max(2, Math.round((Number(count) || 0) * 100 / maxCount));
-        const bar = append(el('div', 'dist-bar'), el('span', 'dist-fill'));
-        bar.firstChild.style.width = pct + '%';
-        invGrid.append(append(el('div', 'dist-row'), append(el('div', 'dist-meta'), el('span', '', kind.toLowerCase().replaceAll('_', ' ')), el('strong', 'mono', count)), bar));
-      }
-      inventory.append(invGrid);
-      inventory.style.marginTop = '20px'; node.append(inventory); return {node, status: summary.status === 'COMPLETE' ? 'Selected context · Evidence complete' : 'Selected context · Incomplete evidence — review limitations'};
+      inventory.addEventListener('toggle', () => { if (inventory.open && !requested) readCounts(); });
+      health.append(inventory);
+      health.append(append(el('div', 'toolbar'), btn('Review score and rules', () => configureRules(false))));
+      grid.append(health);
+      return node;
     },
     async structure(env) {
       const node = card('Repository structure', 'Open a module, package or class to browse its recorded contents. Use Details for source locations, dependencies and impact.');
@@ -1509,55 +2070,19 @@
           const entry=el('div','explorer-row');const navigable=['MODULE','PACKAGE','TYPE','METHOD','CONSTRUCTOR','SOURCE_ROOT'].includes(item.kind);
           entry.append(row(item,()=>{if(navigable){trail.push(item);$('search').value='';return load();}return inspectEntity(item,env);}));
           entry.append(btn('Details',()=>inspectEntity(item,env),'button subtle'));return entry;
-        }, 'No matching contents', 'Try another origin, source set or browse level. Missing evidence is listed under Limitations.');
+        }, 'No matching contents', 'Try another origin, source set or browse level.');
           if (!env.signal.aborted && current === version) results.replaceChildren(target);
         } catch (error) { if (!env.signal.aborted && current === version) results.replaceChildren(empty('Symbols unavailable', error.message), btn('Retry', load)); }
       }
       level.addEventListener('change',()=>{trail=[];safe(load);});population.addEventListener('change',()=>safe(load));sourceSet.addEventListener('change',()=>safe(load)); await load(); return node;
-    },
-    async gaps(env) {
-      const focus = state.gapFocus; state.gapFocus = null;
-      const node = card('Analysis limitations & capability boundaries', 'Missing or unsupported evidence is recorded explicitly with plain-English explanations so partial coverage is never mistaken for clean architecture.');
-      const labels = new Map(), rawSupplemental = [];
-      if (env.jobId) {
-        try { const supplemental = await api('/analysis/jobs/' + env.jobId + '/gaps', {size: 50}, env.signal);
-          supplemental.items.forEach(gap => {
-            rawSupplemental.push(gap);
-            const info = M.humanReason(gap.reasonCode);
-            labels.set(gap.gapIdentity, info.title + ' (' + gap.reasonCode + ') · ' + gap.mechanismCategory);
-          });
-        } catch (error) { if (env.signal.aborted) throw error; /* Exact graph evidence remains accessible even without supplemental labels. */ }
-      }
-      if (rawSupplemental.length) {
-        const grouped = M.summarizeGaps(rawSupplemental);
-        const maxGap = Math.max(1, ...grouped.map(g => g.count));
-        const breakdown = append(el('div', 'gap-summary-box'), el('h3', '', 'Top observed limitation categories (sample of ' + rawSupplemental.length + ')'));
-        const list = el('div', 'dist-list');
-        for (const group of grouped.slice(0, 6)) {
-          const pct = Math.max(4, Math.round(group.count * 100 / maxGap));
-          const bar = append(el('div', 'dist-bar'), el('span', 'dist-fill warn'));
-          bar.firstChild.style.width = pct + '%';
-          list.append(append(el('div', 'gap-group-card'),
-            append(el('div', 'dist-meta'), el('strong', '', group.info.title), badge(group.code + ' · ' + group.count)),
-            bar,
-            el('p', 'small muted', group.info.explanation),
-            el('p', 'small human-action-hint', 'Fix / Action: ' + group.info.action)
-          ));
-        }
-        breakdown.append(list);
-        node.append(breakdown);
-      }
-      await pagedList(node, env, cursor => env.query('gaps', {}, {size: 50, ...(cursor ? {cursor} : {})},
-        focus ? {population: {nodeKinds: [focus]}} : {}), item => {
-        const text = labels.get(item.identity) || M.label(item);
-        return row({...item, label: text}, () => inspectEntity(item, env), 'Click to inspect exact source coordinates & diagnostic trail');
-      }, 'No gap entries returned', 'Read the result status and input diagnostics as well. An empty page alone does not prove complete analysis.'); return node;
     },
     async policy(env) {
       const node = card('Rules & findings', 'Inspect the evaluated rules and their evidence. An absent report is not a clean architecture verdict.');
       if (!env.reportIds.length) { node.append(empty('No policy report for this context', 'Add architecture policy YAML when connecting the repository, then run a new analysis.'), btn('Configure rules & scoring', configureRules, 'button primary')); return node; }
       const toolbar = el('div', 'toolbar'), reports = el('select'), kinds = el('select'); reports.setAttribute('aria-label', 'Policy report'); kinds.setAttribute('aria-label', 'Rules or findings');
       env.reportIds.forEach((report, index) => { const option = el('option', '', 'Policy report ' + (index + 1)); option.value = report.identity; reports.append(option); });
+      const active = state.activePolicyReports?.get(env.context);
+      if (env.reportIds.some(report => report.identity === active)) reports.value = active;
       for (const op of ['findings', 'rules']) { const option = el('option', '', op === 'rules' ? 'Evaluated rules' : 'Observed findings'); option.value = op; kinds.append(option); }
       toolbar.append(reports, kinds); node.append(toolbar); const results = el('div'); node.append(results); let version = 0;
       async function load() {
@@ -1568,7 +2093,8 @@
           const label = rule?.name || rule?.id || finding.kind || 'Evaluated rule';
           const r = row({label, kind: finding.classification || finding.status}, () => {
             if (op === 'findings') {
-              selectRemediationFinding(item, id, env);
+              if ($('remediation-active-workflow')) return selectRemediationFinding(item,id,env);
+              return inspectFinding(item,id,env);
             } else {
               inspect(label, 'POLICY EVIDENCE', finding);
             }
@@ -1580,7 +2106,7 @@
           results.replaceChildren(target);
           if (op === 'findings') {
             const firstRow = target.querySelector('.entity-row');
-            if (firstRow && !state.selectedFinding) {
+            if (firstRow && $('remediation-active-workflow') && !state.selectedFinding) {
               firstRow.click();
             }
           }
@@ -1598,7 +2124,7 @@
       async function load() {
         const current = ++version, category = select.value, target = el('div');
         results.replaceChildren(empty('Loading…', 'Reading the selected Spring evidence.'));
-        try { await pagedList(target, env, cursor => env.query(category === 'configurations' ? 'configurations' : 'spring', category === 'configurations' ? {} : {kinds: category === 'endpoints' ? ['ENDPOINT'] : category==='registration'?['REGISTRATION_EVENT','REGISTRATION_TRANSITION']:['BEAN_PRODUCER', 'BEAN_DEFINITION_CANDIDATE', 'INJECTION_POINT', 'INJECTION_USE']}, {size: 50, ...(cursor ? {cursor} : {})}), item => row(item, () => inspectEntity(item, env)), 'No evidence available in this context', 'Try another context or inspect limitations.');
+        try { await pagedList(target, env, cursor => env.query(category === 'configurations' ? 'configurations' : 'spring', category === 'configurations' ? {} : {kinds: category === 'endpoints' ? ['ENDPOINT'] : category==='registration'?['REGISTRATION_EVENT','REGISTRATION_TRANSITION']:['BEAN_PRODUCER', 'BEAN_DEFINITION_CANDIDATE', 'INJECTION_POINT', 'INJECTION_USE']}, {size: 50, ...(cursor ? {cursor} : {})}), item => row(item, () => inspectEntity(item, env)), 'No evidence available in this context', 'Try another context.');
           if (!env.signal.aborted && current === version) results.replaceChildren(target);
         } catch (error) { if (!env.signal.aborted && current === version) results.replaceChildren(empty('Spring evidence unavailable', error.message), btn('Retry', load)); }
       }
@@ -1606,7 +2132,7 @@
     },
     async configurations(env) {
       const node=card('Compare configurations','Compare dependencies within this captured analysis. Recorded configurations and modeled examples are distinct from a running application.');
-      node.append(el('p','notice small','“All observed” can include alternatives that never coexist. “Required” keeps dependencies present in every modeled configuration. Missing evidence remains unknown.'));
+      node.append(el('p','notice small','“All observed” can include alternatives that never coexist. “Required” keeps dependencies present in every modeled configuration.'));
       const options=[['MUST','Required in every configuration (MUST)'],['MAY','Conditional dependencies (MAY)'],['UNKNOWN_OVERLAY','Uncertain dependencies (UNKNOWN)'],['BOUNDED_UNION','All observed dependencies (UNION)']];
       const saved=state.comparison?.graph===env.graph&&state.comparison?.context===env.context?state.comparison:null;
       const a=selectControl('View A',options,'MUST'),b=selectControl('View B',options,'MAY'),scope=selectControl('Comparison scope',[['TYPE','Classes'],['PACKAGE','Packages'],['MODULE','Modules'],['SPRING_COMPONENT','Spring components']],saved?.scope||(env.springContext?'SPRING_COMPONENT':'TYPE'));
@@ -1621,7 +2147,7 @@
             const settings=Object.entries(item.profiles||{}).map(([name,active])=>name+': '+(active?'on':'off')).join(', ');
             const option=el('option','',(item.kind==='RECORDED_WORLD'?'Recorded configuration ':'Modeled example ')+(choices.length-page.items.length+index+1)+(settings?' · baseline '+settings:''));option.value=item.identity;select.append(option);
           }
-          choiceStatus.textContent=choices.length?choices.length+' choices loaded. Profile labels show baseline settings; precedence and profile groups can affect activation. Examples do not enumerate the complete space.':'No selectable configuration was recorded in this context. Choose a Spring context or inspect missing configuration evidence.';
+          choiceStatus.textContent = choices.length ? 'Choose two configurations to compare.' : 'Choose a Spring context to compare configurations.';
           more.hidden=!cursor;
         }finally{more.disabled=false;}
       }
@@ -1641,7 +2167,7 @@
             const table=el('table','comparison-table'),head=append(el('tr'),el('th','','Dependency'),el('th','','View A'),el('th','','View B')),body=el('tbody');table.append(el('caption','','Dependencies in the two selected views'),append(el('thead'),head),body);head.querySelectorAll('th').forEach(cell=>cell.scope='col');results.append(append(el('div','table-scroll'),table));
             const rows=M.compareEdges(shown[0],shown[1]);
             for(const value of rows){const edge=value.edge;body.append(append(el('tr'),append(el('td'),btn((state.labels.get(edge.source)||M.shortDigest(edge.source))+' → '+(state.labels.get(edge.target)||M.shortDigest(edge.target)),()=>inspect('Dependency evidence','DEPENDENCY',edge,[{label:'Source details',run:async()=>{const value=await env.query('entity',{identity:edge.source});if(!env.signal.aborted&&value.items[0])return inspectEntity(value.items[0],env);}},{label:'Target details',run:async()=>{const value=await env.query('entity',{identity:edge.target});if(!env.signal.aborted&&value.items[0])return inspectEntity(value.items[0],env);}}]),'text-button')),el('td','',badge(value.a)),el('td','',badge(value.b))));}
-            if(!rows.length)results.append(empty('No dependency rows returned','Inspect each view’s status. Empty partial results do not establish an absence of dependencies.'));
+            if(!rows.length)results.append(empty('No dependency rows returned','Try another configuration or scope.'));
             const controls=el('div','toolbar');results.append(controls);
             for(const index of [0,1])if(shown[index].continuation)controls.append(btn('Load more from '+(index?'B':'A'),async()=>{
               const next=await env.query('edges',{}, {size:20,cursor:shown[index].continuation},{scope:selectedScope,relationshipKinds:relationshipKinds(selectedScope),...(index?right:left)});
@@ -1659,22 +2185,15 @@
       await loadChoices();if(saved){for(const [select,value] of [[a,saved.a],[b,saved.b]])if([...select.options].some(option=>option.value===value))select.value=value;}await compare();return node;
     },
     async metrics(env){
-      const node=el('div'),assessmentCard=card('Architecture score','A score evaluates explicit architecture rules. Evidence sufficiency is reported separately from architecture health.');node.append(assessmentCard);
-      if(!env.reportIds.length)assessmentCard.append(empty('Score unavailable — no policy report','Connect this repository with architecture rules, then run a new analysis. Structural metrics below do not require a policy.'),btn('Configure rules & scoring',configureRules,'button primary'));
-      else{
-        const reportSelect=selectControl('Assessment report',env.reportIds.map((report,index)=>[report.identity,'Policy report '+(index+1)]));assessmentCard.append(field('Report',reportSelect));const detail=el('div');assessmentCard.append(detail);let version=0;
-        async function score(){const current=++version, reportId=reportSelect.value;detail.replaceChildren(empty('Loading assessment…','Reading the published score and explanation.'));
-          try{const value=await env.report(reportId,'assessment');if(env.signal.aborted||current!==version)return;
-            detail.replaceChildren(append(el('div','score-heading'),el('strong','score',M.assessment(value)),badge(value.status)));
-            detail.append(el('p','muted',value.confidence?.sufficient?'The model’s required evidence is sufficient.':'Required evidence is incomplete. Review the recorded reasons before interpreting this assessment.'));
-            for(const dimension of value.dimensions||[])detail.append(append(el('div','dimension'),btn(dimension.id.replace(/^health\./,'').replaceAll('-',' '),()=>inspectScoreDimension(value,dimension,reportId,env),'text-button'),el('strong','',dimension.score??'Unavailable')));
-            detail.append(append(el('div','toolbar'),btn('Explain score & withheld reasons',()=>inspect('Architecture assessment','ASSESSMENT',value,[{label:'Review findings',run:()=>{closeInspector();return loadTab('policy');}}]),'text-button'),btn('Policy metrics',()=>inspect('Policy metrics','METRICS',signal=>api('/graphs/'+env.graph+'/reports/'+reportSelect.value+'/policy-metrics',{arguments:{}},signal)),'text-button')));
-          }catch(error){if(!env.signal.aborted&&current===version)detail.replaceChildren(empty('Assessment unavailable',error.message));}}
-        reportSelect.addEventListener('change',()=>safe(score));await score();
+      const node = el('div');
+      if (state.capabilities?.repositoryScoringEnabled) {
+        node.append(append(el('div', 'content-grid'), repositoryScoreCard(env, true), architectureScoreCard(env)));
+      } else {
+        node.append(architectureScoreCard(env));
       }
-      const catalog=await env.query('metric-catalog',{}, {size:50}),metricCard=card('Architecture metrics','Choose a metric and scope. Values, definitions, units, limitations and supporting evidence come from the canonical backend.');metricCard.style.marginTop='20px';node.append(metricCard);
-      const metricNames={'metric.ca':'Incoming coupling (Ca)','metric.ce':'Outgoing coupling (Ce)','metric.scc':'Connected components (SCC)','metric.physical-loc':'Physical lines of code (LOC)','metric.quality':'Evidence quality','metric.inventory':'Captured inventory','metric.fan-in':'Incoming dependencies (Fan-in)','metric.fan-out':'Outgoing dependencies (Fan-out)','metric.hotspots':'Dependency hotspots','metric.crossings':'Layer boundary crossings','metric.operational':'Measured runtime','metric.spring':'Spring inventory'};
-      const metric=selectControl('Metric',catalog.items.map(id=>[id,metricNames[id]||id.replace(/^metric\./,'').replaceAll('-',' ').replace(/^./,letter=>letter.toUpperCase())]),env.springContext?'metric.spring':'metric.inventory');
+      const catalog=await env.query('metric-catalog',{}, {size:50}),metricCard=card('Architecture metrics','Choose a metric and scope.');metricCard.style.marginTop='20px';node.append(metricCard);
+      const metricNames={'metric.ca':'Incoming coupling (Ca)','metric.ce':'Outgoing coupling (Ce)','metric.scc':'Connected components (SCC)','metric.physical-loc':'Physical lines of code (LOC)','metric.inventory':'Captured inventory','metric.fan-in':'Incoming dependencies (Fan-in)','metric.fan-out':'Outgoing dependencies (Fan-out)','metric.hotspots':'Dependency hotspots','metric.crossings':'Layer boundary crossings','metric.operational':'Measured runtime','metric.spring':'Spring inventory'};
+      const metric=selectControl('Metric',catalog.items.filter(id => id !== 'metric.quality').map(id=>[id,metricNames[id]||id.replace(/^metric\./,'').replaceAll('-',' ').replace(/^./,letter=>letter.toUpperCase())]),env.springContext?'metric.spring':'metric.inventory');
       const subject=state.metricSubject;state.metricSubject=null;
       const scope=selectControl('Metric scope',[['TYPE','Classes'],['PACKAGE','Packages'],['MODULE','Modules'],['SPRING_COMPONENT','Spring components'],['ENTITY','All entities']],subject?(['TYPE','PACKAGE','MODULE'].includes(subject.kind)?subject.kind:'ENTITY'):(env.springContext?'SPRING_COMPONENT':'TYPE'));
       const subjectLabel=el('p','small muted',subject?'Selected subject: '+M.label(subject):'Subject: the complete selected analysis context. Choose an entity’s Metric details to drill down.');metricCard.append(subjectLabel);
@@ -1687,8 +2206,7 @@
           const value=await env.query('metric',{metric:metric.value,subject:selectedSubject},undefined,{scope:scope.value,relationshipKinds:relationshipKinds(scope.value)});if(env.signal.aborted||current!==version)return;
           const data=value.items[0];definition.replaceChildren();if(entry)definition.append(el('p','muted',entry.meaning),append(el('details'),el('summary','','Definition, formula & population'),el('p','',entry.formula),el('p','muted small',entry.population),btn('Full definition',()=>inspect('Metric definition','METRIC DEFINITION',entry),'text-button')));
           result.replaceChildren();if(!data){result.append(empty('Metric unavailable','The backend did not publish a value.'));return;}
-          result.append(append(el('div','metric-result'),el('strong','metric-value',data.value==null?'Unavailable':data.value.amount+' '+data.value.unit),badge(data.status)));
-          if(data.status!=='COMPLETE')result.append(el('p','small muted',data.status==='PARTIAL'?'Observed value with incomplete evidence. Open inputs for the recorded limitations.':data.status==='NOT_APPLICABLE'?'This metric does not apply to this population or has a zero denominator. Open inputs for the exact reason.':'The required evidence is insufficient to publish a value. Open inputs for the recorded reasons.'));
+          result.append(append(el('div','metric-result'),el('strong','metric-value',data.value==null?'Unavailable':data.value.amount+' '+data.value.unit)));
           result.append(append(el('div','toolbar'),btn('Inputs, distribution & evidence',()=>inspect('Metric details','CANONICAL METRIC',value),'text-button'),btn('Download metric JSON',()=>download(value,'architecture-metric.json'),'text-button')));
           const rankings=data.details?.ranking||data.details?.hotspots;if(Array.isArray(rankings)){
             await resolveLabels(rankings.map(value=>value.identity),env);if(env.signal.aborted||current!==version)return;
@@ -1722,172 +2240,342 @@
       }); }); return node;
     },
     async graph(env) {
-      const node = card('Interactive dependency graph', 'Click any node to spotlight its 1-hop neighborhood and reduce visual clutter. Switch layouts or filter by certainty layer.');
+      const node = card('Dependency map');
+      node.classList.add('dependency-map');
       let focus = state.graphFocus || {};
-      const toolbar = el('div', 'toolbar'), scope = el('select'), projection = el('select'), layoutSelect = selectControl('Graph layout', [['breadthfirst', 'Hierarchy (Directed)'], ['concentric', 'Concentric (Centrality)'], ['circle', 'Circular (Ring)'], ['grid', 'Grid (Matrix)']], 'breadthfirst');
-      scope.setAttribute('aria-label', 'Graph scope'); projection.setAttribute('aria-label', 'Dependency view');
-      for (const [value, label] of [['MODULE', 'Modules'], ['PACKAGE', 'Packages'], ['TYPE', 'Classes'],['SPRING_COMPONENT','Spring components'],['ENTITY','Members & entities']]) { const option = el('option', '', label); option.value = value; scope.append(option); }
-      for (const [value, label] of [['BOUNDED_UNION', 'All observed (UNION)'], ['MUST', 'Required in all configs (MUST)'], ['MAY', 'Conditional (MAY)'], ['UNKNOWN_OVERLAY', 'Uncertain (UNKNOWN)']]) { const option = el('option', '', label); option.value = value; projection.append(option); }
-      if(focus.realization){const option=el('option','','Selected recorded configuration');option.value='REALIZED';projection.append(option);}
-      scope.value=focus.scope||(env.springContext?'SPRING_COMPONENT':(env.context?.startsWith('analysis:')?'TYPE':'MODULE'));projection.value=focus.projection||'BOUNDED_UNION';
-      const depth=selectControl('Neighborhood depth',[['1','1 hop (direct)'],['2','2 hops'],['3','3 hops']]);depth.hidden=!focus.seed;
-      const clear=btn('Reset to full view',()=>{focus={...focus,seed:null};depth.hidden=true;clear.hidden=true;return load();});clear.hidden=!focus.seed;
-      toolbar.append(field('Scope',scope),field('Dependency view',projection),field('Layout',layoutSelect),depth,clear); node.append(toolbar); const content = el('div'); node.append(content); let version = 0;
-      async function load() {
-        const current = ++version; content.replaceChildren(empty('Loading graph…', 'Reading bounded canonical dependencies.'));
-        try {
-          const graph = await env.query('visual-graph', focus.seed?{seed:focus.seed,depth:Number(depth.value)}:{}, undefined, {scope: scope.value,relationshipKinds:focus.relationshipKinds||relationshipKinds(scope.value), projection: projection.value,...(projection.value==='REALIZED'?{realization:focus.realization}:{})});
-          if (env.signal.aborted || current !== version) return;
-          state.cy?.destroy(); state.cy = null; content.replaceChildren();
-          content.append(el('p', 'muted small', graph.nodes.length + ' displayed nodes · ' + graph.edges.length + ' displayed edges · '+(graph.metadata.status||'Observed projection') + (graph.metadata.isTruncated ? ' · Result limited — narrow the scope' : '')));
-          if (!graph.nodes.length) { content.append(empty('No dependency nodes available', 'Choose another scope or context. An empty graph does not establish an absence of dependencies.')); return; }
-          if (!window.cytoscape) { content.append(empty('Graph renderer unavailable', 'The local graph library could not be loaded. You can still download the canonical projection.'), btn('Download graph JSON', () => download(graph, 'dependency-graph.json'))); return; }
-          const filterBar = el('div', 'graph-filter-bar'), canvasFilter = el('input');
-          canvasFilter.type = 'search'; canvasFilter.placeholder = 'Filter & spotlight nodes on canvas (e.g. Service, Controller)…'; canvasFilter.setAttribute('aria-label', 'Filter canvas nodes');
-          const lensGroup = el('div', 'chip-bar');
-          const edgeCounts = {ALL: graph.edges.length, MUST: 0, MAY: 0, UNKNOWN: 0};
-          graph.edges.forEach(e => { const c = e.classification || 'MUST'; if (edgeCounts[c] != null) edgeCounts[c]++; });
-          let activeLens = 'ALL';
-          function applyCanvasFilters() {
-            if (!state.cy) return;
-            const q = canvasFilter.value.trim().toLowerCase();
-            state.cy.elements().removeClass('dimmed ego-highlight');
-            state.cy.edges().forEach(edge => {
-              const cls = edge.data('classification') || 'MUST';
-              const matchLens = activeLens === 'ALL' || cls === activeLens;
-              if (!matchLens) edge.addClass('dimmed');
-            });
-            if (q) {
-              const matched = state.cy.nodes().filter(n => !n.id().startsWith('compound:') && String(n.data('label') || '').toLowerCase().includes(q));
-              const neighborhood = matched.union(matched.connectedEdges()).union(matched.neighborhood('node'));
-              state.cy.elements().not(neighborhood).not(':parent').addClass('dimmed');
-              matched.addClass('ego-highlight');
-            }
-          }
-          for (const [lensId, lensLabel] of [['ALL', 'All edges (' + edgeCounts.ALL + ')'], ['MUST', 'Required (' + edgeCounts.MUST + ')'], ['MAY', 'Conditional (' + edgeCounts.MAY + ')'], ['UNKNOWN', 'Uncertain (' + edgeCounts.UNKNOWN + ')']]) {
-            const pill = btn(lensLabel, () => { activeLens = lensId; [...lensGroup.children].forEach(c => c.classList.toggle('active', c.dataset.lens === lensId)); applyCanvasFilters(); }, 'chip' + (lensId === 'ALL' ? ' active' : ''));
-            pill.dataset.lens = lensId; lensGroup.append(pill);
-          }
-          canvasFilter.addEventListener('input', applyCanvasFilters);
-          filterBar.append(canvasFilter, lensGroup);
-          const controls = el('div', 'toolbar'), canvas = el('div', 'graph-canvas'), spotlightBar = el('div', 'node-spotlight-bar');
-          spotlightBar.hidden = true;
-          canvas.setAttribute('aria-label', 'Interactive dependency graph'); canvas.tabIndex = 0;
-          controls.append(btn('Zoom in', () => state.cy.zoom(state.cy.zoom() * 1.25)), btn('Zoom out', () => state.cy.zoom(state.cy.zoom() / 1.25)), btn('Fit graph', () => state.cy.fit(undefined, 36)), btn('Reset highlight', () => { canvasFilter.value = ''; activeLens = 'ALL'; [...lensGroup.children].forEach(c => c.classList.toggle('active', c.dataset.lens === 'ALL')); state.cy.elements().removeClass('dimmed ego-highlight path-highlight'); spotlightBar.hidden = true; }), btn('Projection limits & evidence',()=>inspect('Graph projection','PROJECTION EVIDENCE',graph)), btn('Download graph JSON', () => download(graph, 'dependency-graph.json')),btn('Save graph image',async()=>{
-            const blob=await state.cy.png({output:'blob-promise',full:true,scale:1,maxWidth:3000,maxHeight:3000,bg: getComputedStyle(document.documentElement).getPropertyValue('--surface').trim()});downloadBlob(blob,'dependency-graph.png');
-          })); content.append(filterBar, controls, spotlightBar, canvas);
-          const displayNode=item=>{const module=item.id.startsWith('compound:module:')?state.moduleLabels?.get(item.id.slice('compound:module:'.length)):null;return {...item,label:module==='.'?'Root module':module||(!item.label&&item.kind==='PACKAGE'?'(default package)':item.label),activationStatus:item.properties?.activationStatus,parent:item.parent||undefined};};
-          const elements = [...graph.nodes.map(item => ({data: displayNode(item)})), ...graph.edges.map(item => ({data: item}))], colors = getComputedStyle(document.documentElement);
-          graph.nodes.forEach(item => state.labels.set(item.id, displayNode(item).label));
-          state.cy = cytoscape({container: canvas, elements, layout: layoutConfig(layoutSelect.value), minZoom: .05, maxZoom: 3, wheelSensitivity: .2, style: [
-            {selector: 'node', style: {'background-color': colors.getPropertyValue('--accent').trim(), color: colors.getPropertyValue('--text').trim(), label: 'data(label)', 'font-size': 10, 'text-valign': 'bottom', 'text-margin-y': 8, 'text-wrap': 'ellipsis', 'text-max-width': 140, width: 22, height: 22}},
-            {selector: ':parent', style: {'background-opacity': .08, 'border-width': 1, 'border-color': colors.getPropertyValue('--muted').trim(), padding: 20, 'text-valign': 'top'}},
-            {selector: 'edge', style: {'line-color': colors.getPropertyValue('--muted').trim(), 'target-arrow-color': colors.getPropertyValue('--muted').trim(), 'target-arrow-shape': 'triangle', 'curve-style': 'bezier', width: 1.3, opacity: .65}},
-            {selector: 'edge[classification="MAY"]',style:{'line-style':'dashed','line-color':colors.getPropertyValue('--cyan').trim(),'target-arrow-color':colors.getPropertyValue('--cyan').trim()}},
-            {selector: 'edge[classification="UNKNOWN"]',style:{'line-style':'dotted','line-color':colors.getPropertyValue('--warning').trim(),'target-arrow-color':colors.getPropertyValue('--warning').trim()}},
-            {selector: 'node[activationStatus="UNKNOWN"]',style:{shape:'diamond','border-width':2,'border-style':'dashed','border-color':colors.getPropertyValue('--warning').trim()}},
-            {selector: ':selected', style: {'border-width': 3, 'border-color': colors.getPropertyValue('--warning').trim()}},
-            {selector: '.ego-highlight', style: {'border-width': 3, 'border-color': colors.getPropertyValue('--cyan').trim(), opacity: 1}},
-            {selector: 'edge.ego-highlight', style: {width: 2.5, opacity: 1, 'line-color': colors.getPropertyValue('--accent').trim(), 'target-arrow-color': colors.getPropertyValue('--accent').trim()}},
-            {selector: '.dimmed', style: {opacity: 0.14}},
-            {selector: '.path-highlight',style:{'line-color':colors.getPropertyValue('--warning').trim(),'target-arrow-color':colors.getPropertyValue('--warning').trim(),'border-color':colors.getPropertyValue('--warning').trim(),'border-width':3,width:3,opacity:1}}
-          ]});
-          const actualNodes=graph.nodes.filter(item=>!item.id.startsWith('compound:'));
-          const selected=selectControl('Graph node',actualNodes.map(item=>[item.id,displayNode(item).label]));
-          controls.append(field('Node',selected),btn('Node details',()=>inspectEntity({...graph.nodes.find(item=>item.id===selected.value),identity:selected.value},env)),btn('Focus & expand',()=>{focus={...focus,seed:selected.value};depth.hidden=false;clear.hidden=false;return load();}));
-          const destination=selectControl('Path target',actualNodes.map(item=>[item.id,displayNode(item).label]));
-          const pathStatus=el('p','small muted');content.append(append(el('div','toolbar'),field('Path target',destination),btn('Find shortest path',async()=>{
-            const result=await env.query('shortest-path',{source:selected.value,target:destination.value},undefined,{scope:scope.value,relationshipKinds:focus.relationshipKinds||relationshipKinds(scope.value),projection:projection.value,...(projection.value==='REALIZED'?{realization:focus.realization}:{})});
-            if(env.signal.aborted||current!==version)return;state.cy.elements().removeClass('path-highlight dimmed ego-highlight');
-            const path=result.items[0];if(path){state.cy.elements().not(':parent').addClass('dimmed');state.cy.nodes().filter(node=>path.vertices.includes(node.id())).removeClass('dimmed').addClass('path-highlight');state.cy.edges().filter(edge=>path.edges.some(item=>item.source===edge.source().id()&&item.target===edge.target().id())).removeClass('dimmed').addClass('path-highlight');}
-            pathStatus.textContent=path?'Path highlighted where present in this bounded graph. '+M.pageInfo(result):'No path returned. '+M.pageInfo(result);
-            await inspect('Shortest dependency path','PATH EVIDENCE',result);
-          })),pathStatus);
-          function renderGraphOverview() {
-            const titleEl = $('node-title'), descEl = $('node-desc'), detailsEl = $('node-details');
-            if (!titleEl || !detailsEl) return;
-            titleEl.textContent = 'Graph Overview';
-            if (descEl) descEl.textContent = `${graph.nodes.length} nodes · ${graph.edges.length} dependencies in active context.`;
-            detailsEl.replaceChildren();
-
-            const summary = el('div', 'graph-summary-card');
-            append(summary,
-              el('p', 'small muted', `Active layout: ${layoutSelect.value} · Edge projection: ${projection.value}`),
-              el('p', 'small', 'Click any node on canvas to spotlight 1-hop blast radius, or pick a top connected hub below:')
-            );
-            detailsEl.append(summary);
-
-            if (state.cy) {
-              const hubs = state.cy.nodes().filter(n => !n.id().startsWith('compound:'))
-                .map(n => ({node: n, degree: n.degree(false), label: n.data('label') || n.id(), kind: n.data('kind')}))
-                .sort((a, b) => b.degree - a.degree)
-                .slice(0, 6);
-              if (hubs.length) {
-                const hubBox = el('div', 'graph-hubs-box');
-                hubBox.style.marginTop = '12px';
-                hubBox.append(el('p', 'eyebrow-mini', 'TOP CONNECTED HUBS'));
-                for (const hub of hubs) {
-                  const chip = btn('', () => spotlightNode(hub.node), 'graph-hub-chip');
-                  append(chip, el('strong', '', hub.label), el('small', 'muted', ` (${hub.degree} links)`));
-                  hubBox.append(chip);
-                }
-                detailsEl.append(hubBox);
-              }
-            }
-          }
-          function spotlightNode(cyNode) {
-            const item = cyNode.data();
-            if (item.id.startsWith('compound:')) return inspect(item.label, item.kind, item);
-            selected.value = item.id;
-            state.cy.elements().removeClass('dimmed ego-highlight');
-            const ego = cyNode.closedNeighborhood();
-            state.cy.elements().not(ego).not(':parent').addClass('dimmed');
-            ego.addClass('ego-highlight');
-            const inDeg = cyNode.indegree(false), outDeg = cyNode.outdegree(false);
-            spotlightBar.hidden = false;
-            spotlightBar.replaceChildren(
-              append(el('div', 'spotlight-info'), el('strong', '', item.label), badge((item.kind || 'NODE').toLowerCase()), el('span', 'small muted', inDeg + ' incoming · ' + outDeg + ' outgoing on canvas')),
-              append(el('div', 'spotlight-actions'),
-                btn('Inspect details', () => inspectEntity({...item, identity: item.id}, env), 'button primary'),
-                btn('Isolate 1-hop subgraph', () => { focus = {...focus, seed: item.id}; depth.value = '1'; depth.hidden = false; clear.hidden = false; return load(); }, 'button subtle'),
-                btn('Set as path target', () => { destination.value = item.id; }, 'button subtle'),
-                btn('Clear spotlight', () => { state.cy.elements().removeClass('dimmed ego-highlight'); spotlightBar.hidden = true; renderGraphOverview(); }, 'text-button')
-              )
-            );
-            const titleEl = $('node-title'), descEl = $('node-desc'), detailsEl = $('node-details');
-            if (titleEl && detailsEl) {
-              titleEl.textContent = item.label;
-              if (descEl) descEl.textContent = `${item.kind || 'Component'} · ${inDeg} incoming, ${outDeg} outgoing relationships`;
-              detailsEl.replaceChildren();
-              const actions = el('div', 'arch-inspector-actions');
-              actions.style.display = 'flex'; actions.style.flexDirection = 'column'; actions.style.gap = '8px'; actions.style.marginTop = '10px';
-              append(actions,
-                btn('Inspect entity details & source ↗', () => inspectEntity({...item, identity: item.id}, env), 'button primary'),
-                btn('Isolate 1-hop neighborhood', () => { focus = {...focus, seed: item.id}; depth.value = '1'; depth.hidden = false; clear.hidden = false; return load(); }, 'button subtle'),
-                btn('Reset to graph overview', () => { state.cy.elements().removeClass('dimmed ego-highlight'); spotlightBar.hidden = true; renderGraphOverview(); }, 'text-button')
-              );
-              detailsEl.append(actions);
-            }
-          }
-          renderGraphOverview();
-          state.cy.on('tap', 'node', event => safe(() => spotlightNode(event.target)));
-          state.cy.on('tap','edge',event=>safe(()=>{
-            const item=event.target.data(),actions=[];
-            for(const reference of item.properties?.evidence||[])actions.push({label:'Open source evidence',run:()=>inspect('Dependency source','SOURCE EVIDENCE',signal=>api('/graphs/'+env.graph+'/queries/evidence',{request:env.request,arguments:{reference}},signal))});
-            return inspect('Dependency evidence','DEPENDENCY',item,actions);
-          }));
-          canvas.addEventListener('keydown', event => { if (event.key === '+' || event.key === '=') state.cy.zoom(state.cy.zoom() * 1.2); else if (event.key === '-') state.cy.zoom(state.cy.zoom() / 1.2); else if (event.key === '0') state.cy.fit(undefined, 36); });
-          const legend = append(el('div', 'graph-legend'),
-            el('span', 'legend-must', 'Solid: Required (MUST)'),
-            el('span', 'legend-may', 'Dashed: Conditional (MAY)'),
-            el('span', 'legend-unknown', 'Dotted: Uncertain (UNKNOWN)'),
-            el('span', 'legend-tip', 'Tip: Click any node to spotlight its 1-hop neighborhood · Scroll to zoom · Drag to pan')
-          );
-          content.append(legend);
-        } catch (error) { if (!env.signal.aborted && current === version) content.replaceChildren(empty('Graph unavailable', error.message), btn('Retry graph', load)); }
+      const contexts = [...$('context').options].filter(option => option.value);
+      const initialContext = focus.context && contexts.some(option => option.value === focus.context)
+        ? focus.context : defaultDependencyContext(env);
+      const context = selectControl('Graph context', contexts.map(option =>
+        [option.value, option.value === env.snapshot ? 'Repository source evidence' : option.textContent]), initialContext);
+      const contextField = field('Graph context', context);
+      contextField.hidden = env.context !== env.snapshot && initialContext === env.context;
+      const scope = selectControl('Graph scope', [
+        ['MODULE', 'Modules'], ['PACKAGE', 'Packages'], ['TYPE', 'Classes'],
+        ['SPRING_COMPONENT', 'Spring components'], ['ENTITY', 'Source entities']
+      ]);
+      const projection = selectControl('Dependency view', [
+        ['BOUNDED_UNION', 'All observed'], ['MUST', 'Required'], ['MAY', 'Conditional'], ['UNKNOWN_OVERLAY', 'Uncertain'],
+        ...(focus.realization ? [['REALIZED', 'Recorded configuration']] : [])
+      ], focus.projection || 'BOUNDED_UNION');
+      const layout = selectControl('Graph layout', [
+        ['breadthfirst', 'Hierarchy'], ['concentric', 'Radial'], ['circle', 'Ring'], ['grid', 'Grid']
+      ], 'breadthfirst');
+      const depth = selectControl('Neighborhood depth', [['1','1 hop'],['2','2 hops'],['3','3 hops']]);
+      const clear = btn('Show full map', () => {
+        focus = {...focus, seed: null}; depthField.hidden = clear.hidden = true;
+        return load();
+      });
+      const depthField = field('Neighborhood', depth);
+      depthField.hidden = clear.hidden = !focus.seed;
+      const options = append(el('details', 'graph-options'), el('summary', '', 'View options'),
+        append(el('div', 'graph-option-fields'), field('Relationships', projection), field('Layout', layout)));
+      const content = el('div', 'graph-result');
+      node.append(append(el('div', 'graph-query-controls'), contextField, field('Scope', scope), depthField, clear, options), content);
+      const snapshotKinds = ['syntax.declaration','syntax.import','syntax.heritage','CALLS_SERVICE','INVOKES_RPC',
+        'polyglot.service-call.candidate','polyglot.grpc-service-call.candidate','polyglot.grpc-contract.candidate'];
+      const snapshotPopulation = {nodeKinds: ['SOURCE_DOCUMENT','SOURCE_DECLARATION','SOURCE_IMPORT','SOURCE_HERITAGE',
+        'CALL_SITE','ROUTE_CANDIDATE','PROTOBUF_MESSAGE','PROTOBUF_SERVICE','PROTOBUF_RPC_METHOD']};
+      let version = 0, canvasObserver, expandedDialog;
+      function releaseCanvas() {
+        canvasObserver?.disconnect();
+        if (expandedDialog?.open) expandedDialog.close();
       }
-      layoutSelect.addEventListener('change', () => { if (state.cy) state.cy.layout(layoutConfig(layoutSelect.value)).run(); });
-      scope.addEventListener('change', () => {focus={...focus,seed:null,relationshipKinds:null};depth.hidden=true;clear.hidden=true;safe(load);}); projection.addEventListener('change', () => safe(load));depth.addEventListener('change',()=>safe(load)); return {node, after: () => safe(load)};
+
+      async function setScope() {
+        const selected = context.value;
+        if (selected !== env.snapshot) await labelContext(selected);
+        if (env.signal.aborted || context.value !== selected) return;
+        const spring = state.contextKinds.get(selected) === 'spring.context';
+        for (const option of scope.options) {
+          option.disabled = selected === env.snapshot ? option.value !== 'ENTITY' : option.value === 'SPRING_COMPONENT' && !spring;
+        }
+        const label = [...$('context').options].find(option => option.value === selected);
+        if (label && selected !== env.snapshot) context.selectedOptions[0].textContent = label.textContent;
+        const preferred = focus.scope ?? (selected === env.snapshot ? 'ENTITY' : spring ? 'SPRING_COMPONENT' : 'PACKAGE');
+        scope.value = [...scope.options].some(option => !option.disabled && option.value === preferred) ? preferred : 'ENTITY';
+      }
+
+      function requestFor(selectedContext, layer) {
+        const snapshot = selectedContext === env.snapshot;
+        return {
+          context: selectedContext, scope: layer, projection: projection.value,
+          relationshipKinds: focus.relationshipKinds || (snapshot ? snapshotKinds : relationshipKinds(layer)),
+          ...(snapshot && !focus.relationshipKinds ? {population: snapshotPopulation} : {}),
+          ...(projection.value === 'REALIZED' ? {realization: focus.realization} : {})
+        };
+      }
+
+      async function load(preferRelationships = false) {
+        const current = ++version;
+        const active = () => !env.signal.aborted && current === version;
+        releaseCanvas();
+        state.cy?.destroy();
+        state.cy = null;
+        refreshGraphTheme = null;
+        content.replaceChildren(empty('Loading dependency map', 'Reading relationships from the selected analysis context.'));
+        const selectedContext = context.value;
+        let request = requestFor(selectedContext, scope.value);
+        try {
+          const queryGraph = query => env.query('visual-graph', focus.seed ? {seed: focus.seed, depth: Number(depth.value)} : {}, undefined, query);
+          let graph;
+          try {
+            graph = await queryGraph(request);
+          } catch (error) {
+            if (!active() || !preferRelationships || request.scope !== 'PACKAGE' || error.code !== 'RESPONSE_TOO_LARGE') throw error;
+            request = requestFor(selectedContext, 'MODULE');
+            graph = await queryGraph(request);
+          }
+          // Keep a useful initial map for a single-package repository. Explicit filters stay put.
+          if (active() && preferRelationships && request.scope === 'PACKAGE' && !graph.edges.length) {
+            const typeRequest = requestFor(selectedContext, 'TYPE');
+            // A more detailed projection may be larger than the API can return.
+            const types = await queryGraph(typeRequest).catch(error => {
+              if (graph.nodes.length && error.code === 'RESPONSE_TOO_LARGE') return null;
+              throw error;
+            });
+            if (types && (types.edges.length || !graph.nodes.length && types.nodes.length)) {
+              graph = types;
+              request = typeRequest;
+            }
+          }
+          if (!active()) return;
+          scope.value = request.scope;
+          const graphEnv = {...env, context: selectedContext, request: {...env.request, ...request}};
+          if (!graph.nodes.length) {
+            content.replaceChildren(empty(graph.metadata?.isTruncated ? 'The map reached its query limit' : 'No nodes in this scope',
+              'Try another scope or browse the captured repository structure.'),
+              btn('Browse structure', () => loadTab('structure')));
+            return;
+          }
+          const rendererAvailable = await loadGraphRenderer();
+          if (!active()) return;
+          renderGraph(graph, graphEnv, request, active, rendererAvailable);
+        } catch (error) {
+          if (active()) content.replaceChildren(empty('Could not load the map', error.message), btn('Retry graph', () => load(preferRelationships)));
+        }
+      }
+
+      function renderGraph(graph, graphEnv, request, active, rendererAvailable) {
+        const color = name => getComputedStyle(node).getPropertyValue(name).trim();
+        const compound = item => item.id.startsWith('compound:');
+        const fullLabel = item => {
+          const prefix = 'compound:module:';
+          const module = item.id.startsWith(prefix) ? state.moduleLabels?.get(item.id.slice(prefix.length)) : null;
+          return module === '.' ? 'Root module' : module || item.label || (item.kind === 'PACKAGE' ? '(default package)' : M.shortDigest(item.id));
+        };
+        const nodes = graph.nodes.filter(item => !compound(item));
+        const byId = new Map(graph.nodes.map(item => [item.id, item]));
+        const degree = new Map();
+        for (const {source, target} of graph.edges) {
+          degree.set(source, (degree.get(source) || 0) + 1);
+          degree.set(target, (degree.get(target) || 0) + 1);
+        }
+        const ranked = [...nodes].sort((a,b) => (degree.get(b.id) || 0) - (degree.get(a.id) || 0) || a.id.localeCompare(b.id));
+        const visible = ranked.slice(0, 220);
+        const included = new Set(visible.map(item => item.id));
+        for (const item of visible) {
+          for (let parent = item.parent; byId.has(parent) && !included.has(parent); parent = byId.get(parent).parent) included.add(parent);
+        }
+        const edges = graph.edges.filter(edge => included.has(edge.source) && included.has(edge.target)).slice(0, 700);
+        const limited = visible.length < nodes.length || edges.length < graph.edges.length;
+        const counts = el('p', 'graph-counts',
+          visible.length + ' nodes · ' + edges.length + ' relationships' +
+          (limited ? ' shown of ' + nodes.length + ' nodes and ' + graph.edges.length + ' relationships returned' : ''));
+        counts.setAttribute('role', 'status');
+        const status = graph.metadata?.isTruncated ? el('p', 'graph-message', 'The query reached its limit. Focus a node to explore its neighborhood.') : null;
+        const edgesMissing = !graph.edges.length ? el('p', 'graph-message', 'This scope has nodes and no recorded relationships for the selected view.') : null;
+        const shortCounts = new Map();
+        const shortName = item => fullLabel(item).split('.').at(-1);
+        for (const item of visible) shortCounts.set(shortName(item), (shortCounts.get(shortName(item)) || 0) + 1);
+        const label = item => {
+          const text = fullLabel(item);
+          if (compound(item) || !['TYPE','PACKAGE'].includes(item.kind)) return text;
+          if (item.origin === 'PROJECT' && shortCounts.get(shortName(item)) === 1) return shortName(item);
+          return text.split('.').slice(-2).join('.');
+        };
+        const inspectNode = item => inspectEntity({...item, label: fullLabel(item), identity: item.id}, graphEnv);
+        const details = btn('Download graph JSON', () => download(graph, 'dependency-graph.json'));
+        const nodeList = () => append(el('div','graph-node-list'), ...visible.slice(0, 24).map(item =>
+          btn(fullLabel(item), () => inspectNode(item), 'graph-node-link')));
+        content.replaceChildren(counts, ...[status, edgesMissing].filter(Boolean));
+        if (!rendererAvailable) {
+          content.append(empty('Interactive view unavailable', 'Inspect the captured nodes below or download the projection.'),
+            nodeList(), details, btn('Retry graph', () => load()));
+          return;
+        }
+        const canvas = el('div', 'graph-canvas');
+        canvas.setAttribute('aria-label', 'Interactive dependency graph');
+        canvas.tabIndex = 0;
+        const selected = selectControl('Graph node', [['','Choose a node'], ...visible.map(item => [item.id, fullLabel(item)])], '');
+        const filter = el('input');
+        filter.type = 'search';
+        filter.placeholder = 'Highlight a node';
+        filter.setAttribute('aria-label', 'Filter canvas nodes');
+        const readout = el('p', 'graph-selection', 'Select a node to see where its arrows lead.');
+        readout.setAttribute('role', 'status');
+        const spotlight = btn('Focus & expand', () => {
+          focus = {...focus, seed: selected.value}; depthField.hidden = clear.hidden = false;
+          return load();
+        });
+        const inspectButton = btn('Node details', () => inspectNode(byId.get(selected.value)));
+        spotlight.disabled = inspectButton.disabled = true;
+        const hubs = append(el('div','graph-node-list'), ...ranked.filter(item => degree.has(item.id)).slice(0, 4).map(item =>
+          btn(fullLabel(item), () => selectNode(item.id), 'graph-node-link')));
+        const rail = append(el('aside','graph-rail'), field('Node', selected), readout,
+          append(el('div','graph-node-actions'), inspectButton, spotlight),
+          hubs.children.length ? append(el('div','graph-hubs'),el('h3','','Most connected'),hubs) : null);
+        const zoomBy = scale => cy.zoom({level:cy.zoom() * scale, renderedPosition:{x:cy.width() / 2,y:cy.height() / 2}});
+        const zoom = append(el('div','graph-zoom'),
+          btn('−', () => zoomBy(.8)), btn('+', () => zoomBy(1.25)),
+          btn('Fit', () => cy.fit(undefined, 34)));
+        zoom.children[0].setAttribute('aria-label','Zoom out');
+        zoom.children[1].setAttribute('aria-label','Zoom in');
+        zoom.children[2].setAttribute('aria-label','Fit graph');
+        const dialog = el('dialog','map-fullscreen');
+        dialog.setAttribute('aria-label', 'Expanded dependency map');
+        const expand = btn('Expand map', () => {
+          previousViewport = {zoom:cy.zoom(),pan:cy.pan()};
+          dialog.append(board);
+          dialog.showModal();
+          cy.resize();
+          cy.fit(undefined,34);
+        }, 'button graph-fullscreen-button');
+        expand.title = 'Expand map (F)';
+        zoom.append(expand);
+        const stage = append(el('div','graph-stage'), append(el('div','graph-stage-controls'),filter,zoom), canvas,
+          append(el('div','map-legend'),
+            el('span','legend-must','Required'), el('span','legend-may','Conditional'), el('span','legend-unknown','Uncertain'),
+            visible.some(item => item.origin && item.origin !== 'PROJECT') ? el('span','legend-external','External') : null));
+        const board = append(el('div','graph-board'), stage, rail);
+        dialog.append(append(el('header','map-fullscreen-header'),el('h3','','Dependency map'),btn('Close map',()=>dialog.close())));
+        content.append(board,dialog);
+        let cy, previousViewport;
+        const graphStyle = () => [
+            {selector:'node', style:{label:'data(label)', 'font-size':12, 'font-weight':600, color:color('--map-label'),
+              shape:'round-rectangle', 'background-color':color('--map-node'), 'border-color':color('--map-node-border'), 'border-width':1.2,
+              width:92, height:34, 'text-valign':'center', 'text-halign':'center', 'text-wrap':'ellipsis','text-max-width':83}},
+            {selector:':parent',style:{'background-color':color('--map-group'), 'background-opacity':.22, 'border-width':1,
+              'border-color':color('--map-node-border'), padding:20, 'text-valign':'top','text-halign':'center','text-max-width':165}},
+            {selector:'node[?external]',style:{'background-color':color('--map-external'),'border-color':color('--map-edge')}},
+            {selector:'edge',style:{'curve-style':'bezier','target-arrow-shape':'triangle', 'line-color':color('--map-edge'),
+              'target-arrow-color':color('--map-edge'),width:1.5,opacity:.8}},
+            {selector:'edge[classification="MAY"]',style:{'line-style':'dashed','line-color':color('--map-may'),'target-arrow-color':color('--map-may')}},
+            {selector:'edge[classification="UNKNOWN"]',style:{'line-style':'dotted','line-color':color('--map-unknown'),'target-arrow-color':color('--map-unknown')}},
+            {selector:'node[activationStatus="UNKNOWN"]',style:{'border-style':'dashed','border-color':color('--map-unknown')}},
+            {selector:'.dimmed',style:{opacity:.13}},
+            {selector:'node.map-active',style:{'background-color':color('--map-focus'),'border-width':2.5}},
+            {selector:'edge.map-active',style:{width:2.3,opacity:1}},
+            {selector:'.path-highlight',style:{'border-width':3,'border-color':color('--map-unknown'),'line-color':color('--map-unknown'),'target-arrow-color':color('--map-unknown'),width:3}}
+          ];
+        try {
+          cy = window.cytoscape({container: canvas, elements: [
+            ...graph.nodes.filter(item => included.has(item.id)).map(item => ({data: {...item, label: label(item), fullLabel: fullLabel(item),
+              parent: included.has(item.parent) ? item.parent : undefined, activationStatus: item.properties?.activationStatus,
+              external: Boolean(item.origin && item.origin !== 'PROJECT')}})),
+            ...edges.map(item => ({data:item}))
+          ], layout: layoutConfig(layout.value), minZoom: .06, maxZoom: 3, wheelSensitivity: .17, style:graphStyle()});
+        } catch (error) {
+          stage.replaceChildren(empty('Could not draw the map', error.message), nodeList(), btn('Retry graph', () => load()));
+          rail.replaceChildren(details);
+          return;
+        }
+        state.cy = cy;
+        expandedDialog = dialog;
+        dialog.addEventListener('close', () => {
+          if (!active()) return;
+          dialog.before(board);
+          cy.resize();
+          cy.viewport(previousViewport);
+          expand.focus({preventScroll:true});
+        });
+        refreshGraphTheme = () => cy.style(graphStyle()).update();
+        graph.nodes.forEach(item => state.labels.set(item.id, fullLabel(item)));
+        canvasObserver = new ResizeObserver(() => { if (active() && !cy.destroyed()) cy.resize(); });
+        canvasObserver.observe(canvas);
+
+        function resetHighlight() { cy.elements().removeClass('dimmed map-active path-highlight'); }
+        function selectNode(id) {
+          const item = byId.get(id), picked = cy.getElementById(id);
+          if (!item || compound(item) || !picked.length) return;
+          selected.value = id;
+          spotlight.disabled = inspectButton.disabled = false;
+          filter.value = '';
+          resetHighlight();
+          const neighborhood = picked.closedNeighborhood();
+          cy.elements().not(neighborhood).not(':parent').addClass('dimmed');
+          neighborhood.addClass('map-active');
+          readout.replaceChildren(el('strong','',fullLabel(item)),
+            el('span','',picked.indegree(false) + ' incoming · ' + picked.outdegree(false) + ' outgoing on this map'));
+        }
+        selected.addEventListener('change', () => {
+          if (selected.value) { selectNode(selected.value); return; }
+          resetHighlight();
+          spotlight.disabled = inspectButton.disabled = true;
+          readout.textContent = 'Select a node to see where its arrows lead.';
+        });
+        filter.addEventListener('input', () => {
+          resetHighlight();
+          const term = filter.value.trim().toLowerCase();
+          if (!term) return;
+          const matches = cy.nodes().not(':parent').filter(item => String(item.data('fullLabel')).toLowerCase().includes(term));
+          cy.elements().not(matches.union(matches.neighborhood())).not(':parent').addClass('dimmed');
+          matches.addClass('map-active');
+        });
+        cy.on('tap', 'node', event => selectNode(event.target.id()));
+        cy.on('tap','edge',event=>safe(()=>{
+          const item = event.target.data();
+          const actions = (item.properties?.evidence ?? []).slice(0,8).map(reference => ({label:'Open source evidence',
+            run:()=>inspect('Dependency source','SOURCE EVIDENCE',signal=>api('/graphs/'+env.graph+'/queries/evidence',{request:graphEnv.request,arguments:{reference}},signal))}));
+          return inspect('Dependency evidence','DEPENDENCY',item,actions);
+        }));
+        canvas.addEventListener('keydown', event => {
+          if (!['+','=','-','0'].includes(event.key)) return;
+          event.preventDefault();
+          if (event.key === '0') cy.fit(undefined, 34);
+          else zoomBy(event.key === '-' ? .8 : 1.25);
+        });
+        const destination = selectControl('Path target', visible.map(item=>[item.id,fullLabel(item)]));
+        const pathStatus = el('p','graph-message');
+        rail.append(append(el('details','graph-options'),el('summary','','Paths and export'),
+          field('Path target',destination), btn('Find shortest path', async () => {
+            if (!selected.value) { pathStatus.textContent = 'Select a start node first.'; return; }
+            const result = await env.query('shortest-path',{source:selected.value,target:destination.value},undefined,request);
+            if (!active()) return;
+            const path = result.items[0];
+            resetHighlight();
+            if (path) {
+              cy.elements().not(':parent').addClass('dimmed');
+              cy.nodes().filter(n => path.vertices.includes(n.id())).removeClass('dimmed').addClass('path-highlight');
+              cy.edges().filter(e => path.edges.some(p => p.source === e.source().id() && p.target === e.target().id())).removeClass('dimmed').addClass('path-highlight');
+            }
+            pathStatus.textContent = path ? 'Path highlighted where visible on the map.' : 'No path returned for this query.';
+            await inspect('Shortest dependency path','PATH EVIDENCE',result);
+          }),pathStatus,details,btn('Save graph image',async()=>{
+            const blob=await cy.png({output:'blob-promise',full:true,scale:1,maxWidth:3000,maxHeight:3000,bg:color('--map-paper')});
+            downloadBlob(blob,'dependency-graph.png');
+          })));
+        if (focus.seed && included.has(focus.seed)) selectNode(focus.seed);
+      }
+
+      function resetFocus() { focus = {}; depthField.hidden = clear.hidden = true; }
+      function resetRealization() {
+        for (const option of projection.options) if (option.value === 'REALIZED') option.disabled = true;
+        if (projection.value === 'REALIZED') projection.value = 'BOUNDED_UNION';
+      }
+      context.addEventListener('change', () => safe(async () => {
+        const selected = context.value;
+        resetFocus(); resetRealization();
+        await setScope();
+        if (!env.signal.aborted && context.value === selected) await load(true);
+      }));
+      scope.addEventListener('change', () => safe(() => { resetFocus(); resetRealization(); return load(); }));
+      projection.addEventListener('change', () => safe(() => load()));
+      depth.addEventListener('change', () => safe(() => load()));
+      layout.addEventListener('change', () => state.cy?.layout(layoutConfig(layout.value)).run());
+      env.signal.addEventListener('abort', releaseCanvas, {once:true});
+      await setScope();
+      return {node, after: () => safe(() => load(!focus.scope))};
     },
     async ai(env) {
       // AI Pipeline view — surfaces the pipeline panel from the HTML.
@@ -1908,173 +2596,133 @@
       }
       return { node, status: 'AI Pipeline — Diagnosis · Repair · Verification' };
     },
-    async insights(env) {
-      const root = el('div');
-      const scopeSel = selectControl('Analysis scope', env.springContext
-        ? [['SPRING_COMPONENT', 'Spring Components']]
-        : [['TYPE', 'Classes / Types'], ['PACKAGE', 'Packages'], ['MODULE', 'Modules']], env.springContext ? 'SPRING_COMPONENT' : 'TYPE');
-      const toolbar = el('div', 'toolbar');
-      const exportBar = el('div', 'toolbar-actions');
-      const body = el('div');
-      append(toolbar, field('Advisor scope', scopeSel), exportBar);
-      append(root, toolbar, body);
+    async connections(env) {
+      const node = card('Cross-language connections', 'Trace links between code and contracts. Candidate links still need evidence to confirm their targets.');
+      const kinds = {
+        CALLS_SERVICE: 'Service connection',
+        INVOKES_RPC: 'RPC connection',
+        'polyglot.service-call.candidate': 'HTTP route candidate',
+        'polyglot.grpc-service-call.candidate': 'gRPC route candidate',
+        'polyglot.grpc-contract.candidate': 'gRPC contract candidate',
+        'polyglot.grpc-implements.candidate': 'gRPC implementation candidate'
+      };
+      const overrides = {context: env.snapshot || env.context, scope: 'ENTITY', relationshipKinds: Object.keys(kinds)};
+      node.append(append(el('div', 'toolbar'),
+        btn('Back to dependency graph', () => loadTab('graph'), 'text-button'),
+        state.capabilities?.bridgesEnabled ? Object.assign(el('a', 'button', 'Open captured connections'), {href: '#bridge-evidence'}) : null));
+      const entries = append(el('div', 'connections-list'));
+      node.append(entries);
+      await pagedList(entries, env,
+        cursor => env.query('relationships', {}, {size: 12, ...(cursor ? {cursor} : {})}, overrides), item => {
+          const candidate = item.kind.endsWith('.candidate') || item.targetState !== 'RESOLVED';
+          return append(btn('', () => inspect(kinds[item.kind], candidate ? 'CANDIDATE CONNECTION' : 'CAPTURED CONNECTION',
+            {kind: item.kind, targetState: item.targetState, source: item.source, targets: item.targets, evidence: item.evidence},
+            (item.evidence ?? []).slice(0, 8).map((reference, index) => ({
+              label: 'Open evidence ' + (index + 1),
+              run: () => inspect('Connection evidence', 'SOURCE EVIDENCE', signal =>
+                api('/graphs/' + env.graph + '/queries/evidence',
+                  {request: {...env.request, ...overrides}, arguments: {reference}}, signal))
+            }))), 'entity-row'), append(el('div'), el('strong', '', kinds[item.kind]),
+            el('p', '', item.targets.length + (item.targets.length === 1 ? ' recorded target' : ' recorded targets'))),
+            badge(candidate ? 'Candidate' : 'Recorded'));
+        }, 'No connections in this capture', 'The available analysis has no cross-language connection records for this snapshot.');
+      return node;
+    },
+    insights(env) {
+      const root = el('div', 'insights-view');
+      const context = defaultDependencyContext(env);
+      const scope = selectControl('Insights scope', env.springContext
+        ? [['SPRING_COMPONENT', 'Spring components']]
+        : [['TYPE', 'Types'], ['PACKAGE', 'Packages'], ['MODULE', 'Modules']]);
+      const lastScope = state.insightsScope;
+      if ([...scope.options].some(option => option.value === lastScope)) scope.value = lastScope;
+      const exports = el('div', 'toolbar-actions');
+      const status = el('p', 'small muted');
+      status.setAttribute('role', 'status');
+      const body = el('div', 'insights-results');
+      root.append(append(el('div', 'toolbar'), field('Scope', scope), exports), status, body);
+      let pending;
+
+      const openGraph = (seed, sc) => {
+        state.graphFocus = {seed, scope: sc, context, relationshipKinds: relationshipKinds(sc)};
+        return loadTab('graph');
+      };
+      function table(headers, rows) {
+        const header = append(el('tr'), ...headers.map(label => Object.assign(el('th', '', label), {scope: 'col'})));
+        return append(el('div', 'table-scroll'), append(el('table', 'comparison-table insights-table'),
+          append(el('thead'), header), append(el('tbody'), ...rows)));
+      }
 
       async function loadInsights() {
-        const sc = scopeSel.value;
-        body.replaceChildren(empty('Computing architectural insights…', 'Running Tarjan SCC cycle detection, cut-edge simulation, and condensation-DAG blast radius.'));
-        exportBar.replaceChildren();
+        pending?.abort();
+        const controller = new AbortController();
+        pending = controller;
+        const signal = AbortSignal.any([env.signal, controller.signal]);
+        const sc = scope.value;
+        state.insightsScope = sc;
+        status.textContent = 'Calculating structural insights…';
+        body.setAttribute('aria-busy', 'true');
+        body.replaceChildren();
+        exports.replaceChildren();
         try {
-          const req = {...env.request, scope: sc, relationshipKinds: relationshipKinds(sc)};
-          const args = {topN: 15, ...(env.reportIds?.[0]?.identity ? {report: env.reportIds[0].identity} : {})};
-          const data = await api('/graphs/' + env.graph + '/architecture-insights', {request: req, arguments: args}, env.signal);
-          if (env.signal.aborted) return;
-          body.replaceChildren();
+          const request = {...env.request, context, scope: sc, relationshipKinds: relationshipKinds(sc)};
+          const data = await api('/graphs/' + env.graph + '/architecture-insights', {request, arguments: {topN: 10}}, signal);
+          if (signal.aborted) return;
+          status.textContent = '';
+          exports.append(btn('Download report', () => {
+            downloadBlob(new Blob([data.markdownReport], {type: 'text/markdown;charset=utf-8'}), 'architecture-insights.md');
+          }));
+          const summary = data.summary;
+          const stats = el('div', 'stats');
+          for (const [label, value] of [
+            ['Entities', summary.analyzedEntities], ['Dependencies', summary.internalDependencies],
+            ['Cyclic groups', summary.tangleCount], ['Max. transitive dependents', summary.maxBlastRadius]
+          ]) stats.append(append(el('div', 'stat'), el('span', '', label), el('strong', '', value)));
+          body.append(stats);
 
-          const copyMdBtn = btn('📋 Copy Markdown Report', async () => {
-            try {
-              await navigator.clipboard.writeText(data.markdownReport || '');
-              copyMdBtn.textContent = '✔ Copied Markdown!';
-              setTimeout(() => { copyMdBtn.textContent = '📋 Copy Markdown Report'; }, 1600);
-            } catch (_) {}
-          }, 'btn ghost btn-sm');
-          const dlMdBtn = btn('⬇ Download Executive Report (.md)', () => {
-            downloadBlob(new Blob([data.markdownReport || ''], {type: 'text/markdown;charset=utf-8'}), 'architecture-executive-report.md');
-          }, 'btn primary btn-sm');
-          append(exportBar, copyMdBtn, dlMdBtn);
-
-          const s = data.summary || {};
-          const kpis = el('div', 'stats');
-          for (const [label, val, sub] of [
-            ['Project Entities', s.analyzedEntities ?? 0, `${sc.toLowerCase()} scope`],
-            ['Internal Edges', s.internalDependencies ?? 0, `${s.externalDependencies ?? 0} external`],
-            ['Cyclic Tangles (SCC)', s.tangleCount ?? 0, `${s.tangledEntityCount ?? 0} tangled (${((Number(s.tangledEntityRatio) || 0) * 100).toFixed(1)}%)`],
-            ['Avg Instability (I)', Number(s.averageInstability ?? 0).toFixed(2), `${s.sdpViolationCount ?? 0} SDP warnings`],
-            ['Max Blast Radius', s.maxBlastRadius ?? 0, 'Transitive dependents'],
-            ['Policy Violations', s.policyFindingCount ?? 0, data.status || 'EVALUATED']
-          ]) {
-            const st = el('div', 'stat');
-            append(st, el('span', '', label), el('strong', '', val), el('small', '', sub));
-            kpis.append(st);
-          }
-          body.append(kpis);
-
-          // 1. Cycle & Tangle Detector + Minimal Cut-Edge Advisor
-          const tangleCard = card('1. Cycle & Tangle Detector (Tarjan SCC + Verified Minimal Cut-Edges)',
-            'Exact strongly connected components ranked by blast impact, with simulated single-edge cut candidates backed by canonical edge evidence.');
-          if (!data.tangles?.length) {
-            tangleCard.append(empty('Zero Dependency Cycles (Clean DAG)', 'No strongly connected component cycles were observed in this scope.'));
-          } else {
-            for (const [idx, t] of data.tangles.entries()) {
-              const box = el('div', 'tangle-card');
-              const head = el('div', 'tangle-head');
-              const focusBtn = btn('Highlight in Graph ↗', () => {
-                state.graphFocus = {seed: t.members[0], scope: sc, relationshipKinds: relationshipKinds(sc)};
-                return loadTab('graph');
-              }, 'btn ghost btn-sm');
-              append(head,
-                append(el('div'),
-                  el('strong', '', `Tangle #${idx + 1} · ${t.memberCount} components · ${t.internalEdgeCount} internal edges`),
-                  el('p', 'small muted', t.memberLabels.slice(0, 10).join(' ⇄ ') + (t.memberLabels.length > 10 ? ' …' : ''))
-                ),
-                append(el('div', 'tangle-badges'), badge(t.severity), focusBtn)
-              );
-              box.append(head);
-              if (t.breakCandidates?.length) {
-                const cutList = el('div', 'cut-list');
-                for (const c of t.breakCandidates) {
-                  const cutRow = el('div', 'cut-candidate');
-                  append(cutRow,
-                    append(el('div'),
-                      el('strong', 'mono small', `✂ Cut: ${c.sourceLabel} → ${c.targetLabel}`),
-                      el('p', 'small', c.rationale),
-                      el('p', 'small muted mono', `Strategy: ${c.recommendedStrategy} · Supports: ${c.supportCount} · Edge: ${M.shortDigest(c.edgeIdentity)}`)
-                    ),
-                    badge(c.breaksEntireTangle ? 'SINGLE-CUT DAG' : `MAX SCC → ${c.remainingLargestComponentSize}`)
-                  );
-                  cutList.append(cutRow);
-                }
-                box.append(cutList);
-              }
-              tangleCard.append(box);
+          const cycles = card('Dependency cycles', 'Cycles in the observed graph can include dependencies from different configurations.');
+          if (!data.tangles.length) cycles.append(el('p', 'small muted', 'No cycles observed in this projection.'));
+          for (const tangle of data.tangles) {
+            const item = append(el('details', 'insights-cycle'),
+              el('summary', '', tangle.memberCount + ' entities · ' + tangle.internalEdgeCount + ' internal dependencies'),
+              el('p', 'small', tangle.memberLabels.slice(0, 10).join(', ') + (tangle.memberLabels.length > 10 ? ' …' : '')),
+              btn('Explore group in graph', () => openGraph(tangle.members[0], sc)));
+            for (const cut of tangle.breakCandidates) {
+              item.append(append(el('div', 'insights-cut'), el('strong', '', cut.sourceLabel + ' → ' + cut.targetLabel),
+                el('p', 'small muted', cut.rationale),
+                btn('Inspect edge evidence', () => inspect('Projected edge evidence', 'STRUCTURAL PROJECTION',
+                  {edge: cut.edgeIdentity, evidence: cut.evidence, classification: cut.classification, supports: cut.supportCount}), 'text-button')));
             }
+            cycles.append(item);
           }
-          tangleCard.style.marginBottom = '16px';
-          body.append(tangleCard);
+          body.append(cycles);
 
-          // 2. Architectural Hotspots & Blast-Radius Table
-          const hotCard = card('2. Architectural Hotspots, Instability (I) & Transitive Blast Radius',
-            'Ranked by structural risk: hub bottlenecks, Stable Dependencies Principle (SDP) violations, cycle membership, and condensation-DAG reachability.');
-          if (!data.hotspots?.length) {
-            hotCard.append(empty('No hotspots available', 'Select an analysis context with project entities.'));
-          } else {
-            const tbl = el('table', 'comparison-table dsm-table');
-            tbl.append(append(el('thead'), append(el('tr'),
-              ...['Component', 'Archetype', 'Risk', 'Fan-In (Ca)', 'Fan-Out (Ce)', 'Instability (I)', 'Blast Radius', 'Flags'].map(h => el('th', '', h)))));
-            const tb = el('tbody');
-            for (const h of data.hotspots) {
-              const tr = el('tr');
-              const nameBtn = btn(h.label, () => {
-                state.graphFocus = {seed: h.identity, scope: sc, relationshipKinds: relationshipKinds(sc)};
-                return loadTab('graph');
-              }, 'text-button mono');
-              const flags = [];
-              if (h.inCycle) flags.push(badge('IN CYCLE'));
-              if (h.sdpViolation) flags.push(badge('SDP WARN'));
-              if (h.policyViolations > 0) flags.push(badge(`${h.policyViolations} VIOLATIONS`));
-              append(tr,
-                append(el('td'), nameBtn),
-                el('td', 'small', h.archetype.replaceAll('_', ' ')),
-                append(el('td'), el('strong', 'mono', h.hotspotScore)),
-                el('td', 'mono', h.fanIn),
-                el('td', 'mono', h.fanOut),
-                el('td', 'mono', Number(h.instability).toFixed(2)),
-                el('td', 'mono', h.transitiveDependents),
-                append(el('td'), ...(flags.length ? flags : [el('span', 'muted small', 'OK')]))
-              );
-              tb.append(tr);
-            }
-            tbl.append(tb);
-            hotCard.append(append(el('div', 'table-scroll'), tbl));
-          }
-          hotCard.style.marginBottom = '16px';
-          body.append(hotCard);
+          const hotspots = card('Highest-impact entities', 'Prioritized using observed coupling, cycle membership and available policy findings.');
+          if (data.hotspots.length) {
+            hotspots.append(table(['Entity', 'Risk score', 'Dependents', 'Direct in / out'], data.hotspots.map(h => append(el('tr'),
+              append(el('td'), btn(h.label, () => openGraph(h.identity, sc), 'text-button')),
+              el('td', '', h.hotspotScore), el('td', '', h.transitiveDependents), el('td', '', h.fanIn + ' / ' + h.fanOut)))));
+          } else hotspots.append(el('p', 'small muted', 'No project entities in this projection.'));
+          body.append(hotspots);
 
-          // 3. Cross-Layer / Package Coupling Matrix (DSM)
-          const dsm = data.couplingMatrix || {};
-          const dsmCard = card('3. Cross-Layer / Package Coupling Matrix (DSM)',
-            dsm.orderedGroups?.length ? 'Ordered Consumer → Foundation: ' + dsm.orderedGroups.join(' → ') : 'Cross-package/module coupling flows.');
-          if (!dsm.cells?.length) {
-            dsmCard.append(empty('No cross-group coupling', 'All observed dependencies stay within a single package/module group.'));
-          } else {
-            const tbl = el('table', 'comparison-table dsm-table');
-            tbl.append(append(el('thead'), append(el('tr'),
-              ...['From Layer / Group', 'To Layer / Group', 'Distinct Edges', 'Support Weight', 'Layering Status'].map(h => el('th', '', h)))));
-            const tb = el('tbody');
-            for (const cell of dsm.cells.slice(0, 20)) {
-              const statusBadges = [];
-              if (cell.bidirectional) statusBadges.push(badge('BIDIRECTIONAL TANGLE'));
-              if (cell.backEdge) statusBadges.push(badge('UPWARD BACK-EDGE'));
-              if (!statusBadges.length) statusBadges.push(badge('CLEAN FLOW'));
-              append(tb, append(el('tr'),
-                el('td', 'mono', cell.fromGroup),
-                el('td', 'mono', cell.toGroup),
-                el('td', 'mono', cell.edgeCount),
-                el('td', 'mono', cell.supportWeight),
-                append(el('td'), ...statusBadges)
-              ));
-            }
-            tbl.append(tb);
-            dsmCard.append(append(el('div', 'table-scroll'), tbl));
+          const cells = data.couplingMatrix.cells;
+          if (cells.length) {
+            const coupling = card('Cross-group coupling', 'Showing ' + Math.min(cells.length, 20) + ' of ' + cells.length + ' group pairs by evidence weight.');
+            coupling.append(table(['From', 'To', 'Dependencies', 'Evidence weight'], cells.slice(0, 20).map(cell => append(el('tr'),
+              el('td', '', cell.fromGroup), el('td', '', cell.toGroup), el('td', '', cell.edgeCount), el('td', '', cell.supportWeight)))));
+            body.append(coupling);
           }
-          body.append(dsmCard);
-        } catch (err) {
-          if (!env.signal.aborted) body.replaceChildren(empty('Insights unavailable', err.message));
+        } catch (error) {
+          if (signal.aborted) return;
+          status.textContent = 'Insights unavailable.';
+          body.replaceChildren(el('p', '', error.message), btn('Retry', loadInsights));
+        } finally {
+          if (!signal.aborted) body.setAttribute('aria-busy', 'false');
         }
       }
 
-      scopeSel.addEventListener('change', () => safe(loadInsights));
-      await loadInsights();
-      return {node: root, status: 'Architecture Insights & Refactoring Advisor loaded.'};
+      scope.addEventListener('change', loadInsights);
+      return {node: root, after: loadInsights};
     }
   };
   const presetBox = $('policy-presets');
@@ -2097,7 +2745,9 @@
   $('inspector').addEventListener('cancel', closeInspector);
   $('connect-form').addEventListener('submit', connectRepository);
   $('disconnect-form')?.addEventListener('submit', disconnectRepository);
-  $('analysis-mode')?.addEventListener('change', e => { state.analysisMode = e.target.value || 'FULL'; state.retry = null; syncRunControls(); });
+  $('analysis-mode').addEventListener('change', () => { state.retry = null; syncRunControls(); });
+  $('job-timing').addEventListener('toggle', () => { if ($('job-timing').open) loadTelemetry(); });
+  $('context').addEventListener('focus', labelContextOptions);
   $('analyze').addEventListener('click', () => safe(() => submit()));
   $('analyze-force').addEventListener('click', () => safe(() => submit(true)));
   $('cancel-job').addEventListener('click', () => safe(async () => {
@@ -2108,32 +2758,50 @@
   $('history-more').addEventListener('click', () => safe(() => refreshHistory(true)));
   $('context').addEventListener('change', () => { state.graphFocus=null;state.explorer=null;state.metricSubject=null;state.context = $('context').value; safe(() => loadTab(state.tab)); });
   $('tabs').addEventListener('click', event => { const tab = event.target.closest('[data-tab]'); if (tab) safe(() => loadTab(tab.dataset.tab)); });
-  $('tabs').addEventListener('keydown', event => { if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return; event.preventDefault(); const tabs = [...document.querySelectorAll('[role=tab]')], index = tabs.indexOf(document.activeElement), next = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : (index + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;tabs.forEach((tab,i)=>tab.tabIndex=i===next?0:-1); tabs[next].focus(); });
+  $('tabs').addEventListener('keydown', event => {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+    const tabs = [...$('tabs').querySelectorAll('[role=tab]:not([hidden])')];
+    const index = tabs.indexOf(event.target);
+    if (index < 0) return;
+    event.preventDefault();
+    const next = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1
+      : (index + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
+    tabs.forEach((tab, i) => { tab.tabIndex = i === next ? 0 : -1; });
+    tabs[next].focus();
+  });
   $('search-form').addEventListener('submit', event => { event.preventDefault(); safe(() => loadTab('structure')); });
   window.addEventListener('keydown', event => {
+    if ($('repository-workspace').hidden) return;
     const tag = document.activeElement?.tagName;
     const inInput = ['INPUT', 'TEXTAREA', 'SELECT'].includes(tag) || document.activeElement?.isContentEditable;
     if ((event.key === '/' && !inInput && !event.ctrlKey && !event.metaKey) || ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k')) {
       if (!$('analysis-workspace').hidden && !$('connect-dialog').open && !$('inspector').open) {
         event.preventDefault();
+        if (state.tab !== 'structure') safe(() => loadTab('structure'));
         $('search').focus();
         $('search').select();
       }
     }
   });
-  $('provenance').addEventListener('click', () => safe(() => { if (!state.context) return notice('Choose an analysis context first.'); const env = envFor(); return inspect('Analysis provenance', 'PROVENANCE', signal => api('/graphs/' + env.graph + '/queries/provenance', {request: env.request, arguments: {}}, signal)); }));
-  $('job-receipt').addEventListener('click', () => safe(() => inspect('Analysis receipt', 'ANALYSIS', state.job)));
-  for (const [id, op, label] of [['job-diagnostics', 'input-diagnostics', 'Input diagnostics'], ['job-gaps', 'gaps', 'Supplemental analysis limitations']]) $(id).addEventListener('click', () => safe(async () => {
-    const job = state.job;
-    return inspect(label, 'ANALYSIS EVIDENCE', (signal, cursor) => api('/analysis/jobs/' + job.id + '/' + op, {size: 20, ...(cursor ? {cursor} : {})}, signal), [{label: 'View graph limitations', run: async () => { closeInspector(); if (state.resultJob?.id === job.id) await loadTab('gaps'); else notice('The displayed graph does not belong to this analysis.'); }}]);
-  }));
   $('download-details').addEventListener('click', () => download(state.details, 'evo-evidence.json'));
-  $('open-repo-manager')?.addEventListener('click', () => {
-    renderRepoManager();
-    $('repo-manager-dialog')?.showModal();
+  $('disconnect-repo').addEventListener('click', () => {
+    $('run-options').open = false;
+    promptDisconnect(state.setup);
+  });
+  document.querySelectorAll('.view-links [data-open-tab]').forEach(button =>
+    button.addEventListener('click', () => safe(() => loadTab(button.dataset.openTab))));
+  document.addEventListener('click', event => {
+    for (const menu of document.querySelectorAll('.workbench-menu[open]')) {
+      if (!menu.contains(event.target)) menu.open = false;
+    }
+  });
+  document.addEventListener('keydown', event => {
+    const menu = event.target.closest?.('.workbench-menu[open]');
+    if (event.key === 'Escape' && menu) { menu.open = false; menu.querySelector('summary').focus(); }
   });
   function applyTheme(theme) {
     document.documentElement.dataset.theme = theme;
+    refreshGraphTheme?.();
     const label = 'Switch to ' + (theme === 'dark' ? 'light' : 'dark') + ' theme';
     const paths = theme === 'dark' ? '<circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/>' : '<path d="M20 15.5A8 8 0 0 1 8.5 4 8 8 0 1 0 20 15.5Z"/>';
     $('theme-toggle').innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true">' + paths + '</svg>';
@@ -2156,17 +2824,24 @@
     const shell = document.querySelector('.app-shell'), mobile = window.matchMedia('(max-width:760px)').matches;
     const expanded = shell.classList.toggle(mobile ? 'mobile-sidebar-open' : 'sidebar-collapsed');
     syncSidebarState();
-    if (mobile && expanded) $('sidebar').querySelector('a').focus();
+    if (mobile && expanded) $('sidebar').querySelector('button:not(:disabled), a[href]')?.focus();
     state.cy?.resize();
   });
   $('sidebar').addEventListener('keydown', event => { if (event.key === 'Escape') closeMobileSidebar(); });
   document.addEventListener('focusin', event => {
     if (!$('sidebar').contains(event.target) && event.target !== $('sidebar-toggle') && !event.target.closest('dialog')) closeMobileSidebar();
   });
-  function syncSidebarState() { const shell = document.querySelector('.app-shell'); $('sidebar-toggle').setAttribute('aria-expanded', window.matchMedia('(max-width:760px)').matches ? shell.classList.contains('mobile-sidebar-open') : !shell.classList.contains('sidebar-collapsed')); }
+  function syncSidebarState() {
+    const shell = document.querySelector('.app-shell');
+    const expanded = matchMedia('(max-width:760px)').matches ? shell.classList.contains('mobile-sidebar-open')
+      : !shell.classList.contains('sidebar-collapsed');
+    $('sidebar-toggle').setAttribute('aria-expanded', String(expanded));
+    $('sidebar').inert = !expanded;
+  }
   window.addEventListener('resize', () => { state.cy?.resize(); syncSidebarState(); });
-  window.EvoApp = { state, loadTab, selectRepo, selectJob, configureRules, api };
   syncSidebarState();
-  window.EvoApp = { state, api, loadTab, inspectFinding, inspectDiagnosis, inspectRepairProposal, inspectRepairVerification, selectRemediationFinding };
+  window.EvoApp = { state, api, loadTab, selectRepo, selectJob, configureRules, inspectFinding, inspectDiagnosis, inspectRepairProposal, inspectRepairVerification, selectRemediationFinding };
+  $('disconnect-dialog').addEventListener('close', () => $('run-options').querySelector('summary').focus());
+  window.addEventListener('hashchange', updateWorkspaceTool);
   safe(connectServer);
 })();

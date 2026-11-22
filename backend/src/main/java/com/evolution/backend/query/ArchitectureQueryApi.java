@@ -48,6 +48,7 @@ public final class ArchitectureQueryApi {
     private DemoRepairCapture demoRepairCapture;
     private FindingDiagnosis diagnosis = REPLAY_DIAGNOSIS;
     private RepairChatModel repairModel;
+    private ArchitectureChatModel architectureChat;
     private RepairProposalStore repairStore = new RepairProposalStore();
     private RepairReanalysis.Port repairReanalysis;
     private CapturedRepairExecution capturedRepairExecution;
@@ -86,12 +87,43 @@ public final class ArchitectureQueryApi {
     }
     /** Opt in a fixed model endpoint at startup; client requests can only approve a pinned input. */
     public static ArchitectureQueryApi withConfiguredRepairModel(ArchitectureQueryApi existing) {
-        var endpoint=System.getProperty("evo.repair.ai.endpoint");
-        var model=System.getProperty("evo.repair.ai.model");
-        boolean remote=Boolean.getBoolean("evo.repair.ai.allowRemote");
+        var endpoint=System.getProperty("evo.repair.ai.endpoint",environment("EVO_REPAIR_AI_ENDPOINT"));
+        var model=System.getProperty("evo.repair.ai.model",environment("EVO_REPAIR_AI_MODEL"));
+        boolean remote=Boolean.parseBoolean(System.getProperty("evo.repair.ai.allowRemote",environment("EVO_REPAIR_AI_ALLOW_REMOTE")));
         if (endpoint==null && model==null && !remote) return existing;
         if (endpoint==null || model==null) throw new IllegalArgumentException("REPAIR_MODEL_CONFIGURATION");
-        return withRepairModel(existing,new RepairChatModel(java.net.URI.create(endpoint),model,System.getenv("EVO_REPAIR_AI_API_KEY"),remote));
+        var uri=ChatCompletions.parse(endpoint,"REPAIR_MODEL_CONFIGURATION");
+        if (remoteDisabled(uri,remote,"EVO_REPAIR_AI_ALLOW_REMOTE")) return existing;
+        return withRepairModel(existing,new RepairChatModel(uri,model,environment("EVO_REPAIR_AI_API_KEY"),remote,
+                ChatCompletions.REPAIR.configured(setting -> environment("EVO_REPAIR_AI_"+setting))));
+    }
+    /** Configure a fixed provider for conversational advice independently of diagnosis and patch generation. */
+    public static ArchitectureQueryApi withConfiguredArchitectureChat(ArchitectureQueryApi existing) {
+        var endpoint = environment("EVO_ARCH_CHAT_ENDPOINT");
+        var model = environment("EVO_ARCH_CHAT_MODEL");
+        boolean remote = Boolean.parseBoolean(environment("EVO_ARCH_CHAT_ALLOW_REMOTE"));
+        if (endpoint == null && model == null && !remote) return existing;
+        if (endpoint == null || model == null) throw new IllegalArgumentException("ARCHITECTURE_CHAT_CONFIGURATION");
+        var uri = ChatCompletions.parse(endpoint,"ARCHITECTURE_CHAT_CONFIGURATION");
+        if (remoteDisabled(uri,remote,"EVO_ARCH_CHAT_ALLOW_REMOTE")) return existing;
+        return withArchitectureChat(existing,new ArchitectureChatModel(uri,model,environment("EVO_ARCH_CHAT_API_KEY"),remote,
+                ChatCompletions.CHAT.configured(setting -> environment("EVO_ARCH_CHAT_"+setting))));
+    }
+    private static boolean remoteDisabled(java.net.URI uri, boolean enabled, String flag) {
+        if (enabled || ChatCompletions.loopback(uri) || !"https".equalsIgnoreCase(uri.getScheme()) || uri.getHost()==null)
+            return false;
+        System.err.println("Remote model disabled. Set " + flag + "=true to enable it.");
+        return true;
+    }
+    private static String environment(String name) {
+        String value = System.getenv(name);
+        return value == null || value.isBlank() ? null : value;
+    }
+    static ArchitectureQueryApi withArchitectureChat(ArchitectureQueryApi existing, ArchitectureChatModel model) {
+        if (existing.architectureChat != null) throw new IllegalArgumentException("ARCHITECTURE_CHAT_ALREADY_CONFIGURED");
+        var api = new ArchitectureQueryApi(existing);
+        api.architectureChat = Objects.requireNonNull(model);
+        return api;
     }
     static ArchitectureQueryApi withRepairModel(ArchitectureQueryApi existing,RepairChatModel model) {
         if (existing.repairModel!=null) throw new IllegalArgumentException("REPAIR_MODEL_ALREADY_CONFIGURED");
@@ -104,7 +136,7 @@ public final class ArchitectureQueryApi {
         jobs=existing.jobs; connections=existing.connections; executions=existing.executions;
         semantics=existing.semantics; bridges=existing.bridges; evolution=existing.evolution;
         partitionReaders=existing.partitionReaders; repairWorker=existing.repairWorker; demoRepairCapture=existing.demoRepairCapture;
-        diagnosis=existing.diagnosis; repairModel=existing.repairModel;
+        diagnosis=existing.diagnosis; repairModel=existing.repairModel; architectureChat=existing.architectureChat;
         repairStore=existing.repairStore; repairReanalysis=existing.repairReanalysis;
         capturedRepairExecution=existing.capturedRepairExecution; reanalyzedGraphs=existing.reanalyzedGraphs;
     }
@@ -256,6 +288,10 @@ public final class ArchitectureQueryApi {
             return new Response(200,BoundedJson.encode(Map.of("apiVersion",VERSION,"queryVersion",ArchitectureQuery.VERSION,
                     "resultIdentity",ContentDigest.sha256(canonicalData),"data",data),limits.responseBytes()));
         } catch (Failure failure) { return error(failure.status,failure.code); }
+        catch (ArchitectureInsightsAdvisor.CalculationInterrupted stopped) {
+            return stopped.reason == StopReason.CANCELLED
+                    ? error(409,"REQUEST_CANCELLED") : error(503,"INSIGHTS_RESOURCE_LIMIT");
+        }
         catch (BoundedJson.TooLarge large) { return error(422,"RESPONSE_TOO_LARGE"); }
         catch (GraphJson.LimitExceededException large) { return error(413,"JSON_LIMIT_EXCEEDED"); }
         catch (GraphStoreException unavailable) { return error(503,"GRAPH_STORE_UNAVAILABLE"); }
@@ -336,15 +372,26 @@ public final class ArchitectureQueryApi {
         if (path.equals("/api/v1/analysis/jobs")) return "GET, POST";
         if (path.equals("/api/v1/analysis/jobs/history") || path.startsWith("/api/v1/analysis/jobs/") && (path.endsWith("/cancel") || path.endsWith("/gaps") || path.endsWith("/input-diagnostics"))) return "POST";
         if (path.startsWith("/api/v1/graphs/") && path.endsWith("/architecture-insights")) return "POST";
+        if (path.startsWith("/api/v1/graphs/") && path.endsWith("/architecture-chat")) return "POST";
+        if (path.startsWith("/api/v1/graphs/") && path.endsWith("/policy-assessment")) return "POST";
+        if (path.endsWith("/repository-score")) return "GET, POST";
         return path.contains("/queries/") || path.split("/",-1).length == 8 ? "POST" : "GET";
     }
     private static String message(String code) {
         return switch (code) {
             case "INVALID_REQUEST" -> "The request does not satisfy the API contract.";
             case "GRAPH_NOT_FOUND" -> "The requested graph is unavailable.";
+            case "CONTEXT_NOT_FOUND" -> "This analysis context is unavailable.";
+            case "POLICY_SCOPE_UNAVAILABLE" -> "Select a Java or Spring analysis context to evaluate architecture rules.";
+            case "SCORING_RESOURCE_LIMIT" -> "Scoring reached the workbench resource limit. Try again shortly.";
             case "REPORT_NOT_FOUND", "REPORT_ARTIFACT_UNAVAILABLE" -> "The requested canonical report artifact is unavailable.";
             case "DIAGNOSIS_SCOPE_MISMATCH" -> "The selected context or evidence bundle no longer matches this finding.";
             case "DIAGNOSIS_INPUT_MISMATCH" -> "The diagnosis input changed. Run diagnosis again before requesting a proposal.";
+            case "CHAT_CONSENT_REQUIRED" -> "Approve sending this turn's conversation and architecture evidence to the configured provider.";
+            case "CHAT_PROVIDER_UNAVAILABLE" -> "The chat provider could not answer. Check the endpoint, model and credentials, then retry.";
+            case "CHAT_INVALID_MODEL_OUTPUT" -> "The provider returned an incomplete answer or references outside the offered evidence.";
+            case "CHAT_RESOURCE_LIMIT" -> "The chat request reached its resource limit. Narrow the question or start a fresh conversation.";
+            case "CHAT_BUSY" -> "The architecture chat provider is handling other requests. Try again shortly.";
             case "REPAIR_PROPOSAL_MISMATCH" -> "The proposal could not be reproduced for this finding and its pinned inputs.";
             case "REPAIR_REANALYSIS_UNAVAILABLE" -> "Candidate reanalysis is not configured on this server.";
             case "NOT_FOUND" -> "The requested API operation is unavailable.";
@@ -373,12 +420,16 @@ public final class ArchitectureQueryApi {
             capabilities.put("repositoryConnectionsEnabled",connections != null);
             capabilities.put("partitionedGraphsEnabled",partitionReaders != null);
             capabilities.put("evolutionEnabled",evolution != null);
+            capabilities.put("bridgesEnabled",bridges != null);
             capabilities.put("acquisitionVersion","repository.acquisition-api:m8.4-v2");
             capabilities.put("readinessVersion",com.evolution.analysis.readiness.ReadinessPlan.SCHEMA);
             capabilities.put("acquisitionRoutes",List.of("/api/v2/acquisitions/history","/api/v2/acquisitions/{revision}","/api/v2/acquisitions/{revision}/readiness","/api/v2/acquisitions/{revision}/overview","/api/v2/analysis/jobs/{id}/resume"));
             if (jobs != null) capabilities.put("jobLimits",jobs.limits());
             capabilities.put("analysisModes",List.of("FULL","FAST_ARCHITECTURE"));
             capabilities.put("architectureInsightsEnabled",true);
+            capabilities.put("architectureChatEnabled",true);
+            if (architectureChat != null) capabilities.put("architectureChatProvider",architectureChat.provider());
+            capabilities.put("repositoryScoringEnabled",true);
             capabilities.put("repairReanalysisEnabled",repairReanalysis != null);
             capabilities.put("repairModelConfigured",repairModel != null);
             return capabilities;
@@ -389,8 +440,41 @@ public final class ArchitectureQueryApi {
         var graphId=new ContentDigest(parts[4]);
         if (parts.length==5) {
             requireMethod(method,"GET"); requireEmpty(body);
-            var manifest=store.manifest(graphId).orElseThrow(() -> new Failure(404,"GRAPH_NOT_FOUND"));
-            return Map.of("graph",graphId,"snapshot",manifest.snapshot().value(),"contexts",manifest.contexts(),"reports",reports.forGraph(graphId));
+            var graph = load(graphId);
+            return Map.of("graph", graphId, "snapshot", graph.snapshot().value(),
+                    "contexts", graph.contexts(), "reports", reports.forGraph(graphId));
+        }
+        if (parts.length==6 && parts[5].equals("repository-score")) {
+            Map<String, String> paths;
+            if (method.equals("GET")) { requireEmpty(body); paths = Map.of(); }
+            else {
+                requireMethod(method,"POST");
+                paths = RepositoryScore.customPaths(QueryJson.object(decode(body,contentType),"paths").get("paths"));
+            }
+            var guard = ArchitectureQueryService.operationalGuard(cancelled,
+                    System.nanoTime() + limits.queryTimeoutMillis() * 1_000_000, 8_000_000);
+            scoringCheckpoint(guard);
+            return RepositoryScore.assess(load(graphId), paths, () -> scoringCheckpoint(guard));
+        }
+        if (parts.length==6 && parts[5].equals("policy-assessment")) {
+            requireMethod(method,"POST");
+            var input = QueryJson.object(decode(body,contentType),"context","policy");
+            var guard = ArchitectureQueryService.operationalGuard(cancelled,
+                    System.nanoTime() + limits.queryTimeoutMillis() * 1_000_000, 8_000_000);
+            scoringCheckpoint(guard);
+            var graph = load(graphId);
+            String contextId = QueryJson.text(input,"context");
+            var context = graph.contexts().stream().filter(candidate -> candidate.identity().equals(contextId)).findFirst()
+                    .orElseThrow(() -> new Failure(404,"CONTEXT_NOT_FOUND"));
+            var scope = WorkbenchPolicyAssessment.scope(graph,context);
+            var queries = factory.apply(graph,guard);
+            if (!queries.supportsArchitectureScope(context,scope)) throw new Failure(422,"POLICY_SCOPE_UNAVAILABLE");
+            return WorkbenchPolicyAssessment.evaluate(queries,context,scope,QueryJson.optionalText(input,"policy"),
+                    reports,() -> scoringCheckpoint(guard));
+        }
+        if (parts.length==6 && parts[5].equals("architecture-chat")) {
+            requireMethod(method,"POST");
+            return architectureChat(graphId,ArchitectureChat.Input.read(decode(body,contentType)),cancelled);
         }
         if (parts.length==6 && parts[5].equals("architecture-insights")) {
             requireMethod(method,"POST");
@@ -444,7 +528,7 @@ public final class ArchitectureQueryApi {
             if (parts.length==7) { requireMethod(method,"GET"); requireEmpty(body); }
             else if (REPORT_OPERATIONS.contains(parts[7])) requireMethod(method,"POST");
             else throw new Failure(404,"NOT_FOUND");
-            var contexts=store.manifest(graphId).map(GraphManifest::contexts).orElseThrow(() -> new Failure(404,"GRAPH_NOT_FOUND"));
+            var contexts = load(graphId).contexts();
             var report=reports.get(reportId).filter(r -> r.evaluation().graph().equals(graphId)).orElseThrow(() -> new Failure(404,"REPORT_NOT_FOUND"));
             var partition=contexts.stream().filter(c -> c.identity().equals(report.evaluation().context())).findFirst()
                     .orElseThrow(() -> new Failure(404,"REPORT_NOT_FOUND"));
@@ -467,6 +551,53 @@ public final class ArchitectureQueryApi {
         }
         throw new Failure(404,"NOT_FOUND");
     }
+    private static void scoringCheckpoint(Supplier<StopReason> guard) {
+        var stop = guard.get();
+        if (stop == StopReason.CANCELLED) throw new Failure(409,"REQUEST_CANCELLED");
+        if (stop != StopReason.NONE) throw new Failure(503,"SCORING_RESOURCE_LIMIT");
+    }
+
+    private ArchitectureChat.Result architectureChat(ContentDigest graphId, ArchitectureChat.Input input,
+                                                      BooleanSupplier cancelled) {
+        var model = architectureChat;
+        boolean offTopic = ArchitectureChat.directlyOutOfScope(input);
+        if (!offTopic && !input.evidenceOnly() && model != null && model.provider().remote() && !input.allowRemote())
+            throw new Failure(403,"CHAT_CONSENT_REQUIRED");
+        var guard = ArchitectureQueryService.operationalGuard(cancelled,
+                System.nanoTime() + limits.queryTimeoutMillis() * 1_000_000,8_000_000);
+        var graph = load(graphId);
+        var partition = graph.contexts().stream().filter(context -> context.identity().equals(input.context())).findFirst()
+                .orElseThrow(() -> new Failure(404,"CONTEXT_NOT_FOUND"));
+        var finding = input.finding().map(ref -> reports.get(ref.report())
+                .filter(report -> report.evaluation().graph().equals(graphId)
+                        && report.evaluation().context().equals(partition.identity()))
+                .orElseThrow(() -> new Failure(404,"REPORT_NOT_FOUND")).evaluation().findings().stream()
+                .filter(row -> row.identity().equals(ref.identity())).findFirst()
+                .filter(row -> row.bundle().identity().equals(ref.bundle())
+                        && row.bundle().snapshot().equals(partition.snapshot())
+                        && row.bundle().analysis().equals(partition.analysis()))
+                .orElseThrow(() -> new Failure(409,"DIAGNOSIS_SCOPE_MISMATCH")));
+        if (offTopic) {
+            return ArchitectureChat.Result.offTopic(ArchitectureChat.pin(input,partition,graphId),
+                    input.question(),Optional.empty());
+        }
+        var context = ArchitectureChat.retrieve(input,partition,factory.apply(graph,guard),finding);
+        if (guard.get() != StopReason.NONE) throw new Failure(503,"CHAT_RESOURCE_LIMIT");
+        if (model == null || input.evidenceOnly()) return ArchitectureChat.Result.local(context,model != null);
+        try {
+            var completion = model.complete(input,context,graph,guard);
+            if ("OUT_OF_SCOPE".equals(completion.status()))
+                return ArchitectureChat.Result.offTopic(context.pin(),input.question(),Optional.of(completion.receipt()));
+            return ArchitectureChat.Result.advice(context,completion);
+        } catch (ArchitectureChatModel.Rejected rejected) {
+            int status = switch (rejected.reason) {
+                case CHAT_INVALID_MODEL_OUTPUT, CHAT_PROVIDER_UNAVAILABLE -> 502;
+                case CHAT_BUSY, CHAT_RESOURCE_LIMIT -> 503;
+            };
+            throw new Failure(status,rejected.reason.name());
+        }
+    }
+
     private KnowledgeGraph load(ContentDigest identity) { return store.load(identity).orElseThrow(() -> new Failure(404,"GRAPH_NOT_FOUND")); }
     private Object query(String op,ArchitectureQueryService q,Request r,Page p,Map<String,Object> a,boolean hasPage) {
         boolean paged=Set.of("entities","edges","dependencies","relationships","explain","gaps","spring","configurations","artifacts","metric-catalog","children","realizations").contains(op);

@@ -22,9 +22,15 @@ import java.util.*;
  * Markdown report — strictly from canonical ArchitectureQueryService projections.
  */
 public final class ArchitectureInsightsAdvisor {
-    public static final VersionedIdentifier VERSION = new VersionedIdentifier("architecture.insights", "m9-advisor-v1");
+    public static final VersionedIdentifier VERSION = new VersionedIdentifier("architecture.insights", "m9-advisor-v2");
     private static final int MAX_SCC_EXACT_CUT_NODES = 120;
-    private static final int MAX_EXACT_BLAST_COMPONENTS = 8_192;
+    private static final int REACHABILITY_BATCH_SIZE = 1_024;
+    private static final BigDecimal INSTABILITY_THRESHOLD = new BigDecimal("0.6500");
+    private static final Comparator<Hotspot> HOTSPOT_ORDER =
+            Comparator.comparingInt(Hotspot::hotspotScore).reversed()
+                    .thenComparing(Comparator.comparingInt(Hotspot::transitiveDependents).reversed())
+                    .thenComparing(Comparator.comparingInt((Hotspot h) -> h.fanIn() + h.fanOut()).reversed())
+                    .thenComparing(Hotspot::identity);
 
     private ArchitectureInsightsAdvisor() {}
 
@@ -37,6 +43,7 @@ public final class ArchitectureInsightsAdvisor {
             Classification classification,
             int supportCount,
             List<ContentDigest> evidence,
+            boolean simulated,
             boolean breaksEntireTangle,
             int remainingLargestComponentSize,
             int splitComponentCount,
@@ -157,14 +164,14 @@ public final class ArchitectureInsightsAdvisor {
                 baseRequest.limits());
 
         Result<MetricProjection> projected = service.metricProjection(projRequest);
+        Runnable checkpoint = () -> {
+            var stop = service.assessmentStopReason();
+            if (stop != StopReason.NONE) throw new CalculationInterrupted(stop);
+        };
+        checkpoint.run();
         MetricProjection mp = projected.items().isEmpty()
                 ? new MetricProjection(List.of(), List.of(), List.of(), List.of())
                 : projected.items().getFirst();
-
-        Map<String, EntityView> allEntities = new LinkedHashMap<>();
-        for (EntityView ev : mp.entities()) {
-            allEntities.put(ev.identity(), ev);
-        }
 
         // Partition internal project entities vs external JDK/DEPENDENCY targets
         Map<String, EntityView> projectEntities = new TreeMap<>();
@@ -172,9 +179,6 @@ public final class ArchitectureInsightsAdvisor {
             if (isProjectEntity(ev)) {
                 projectEntities.put(ev.identity(), ev);
             }
-        }
-        if (projectEntities.isEmpty() && !allEntities.isEmpty()) {
-            projectEntities.putAll(allEntities);
         }
 
         int n = projectEntities.size();
@@ -261,6 +265,7 @@ public final class ArchitectureInsightsAdvisor {
 
         List<Tangle> tangles = new ArrayList<>();
         for (int idx = 0; idx < Math.min(topN, cyclicComps.size()); idx++) {
+            checkpoint.run();
             int[] members = cyclicComps.get(idx);
             int compId = scc.compOf[members[0]];
             List<EdgeView> cEdges = edgesByComp.getOrDefault(compId, List.of());
@@ -282,7 +287,7 @@ public final class ArchitectureInsightsAdvisor {
         }
 
         // 2. Exact Condensation-DAG Transitive Incoming Blast Radius
-        int[] transitiveDependents = computeBlastRadius(n, outAdj, scc);
+        int[] transitiveDependents = computeBlastRadius(n, outAdj, scc, checkpoint);
 
         // 3. Policy Violation Concentration per Entity
         Map<String, Integer> violationsByEntity = new HashMap<>();
@@ -309,9 +314,10 @@ public final class ArchitectureInsightsAdvisor {
         BigDecimal instabilitySum = BigDecimal.ZERO;
         int maxBlast = 0;
         int sdpViolations = 0;
-        List<Hotspot> allHotspots = new ArrayList<>(n);
+        var ranked = new PriorityQueue<>(topN, HOTSPOT_ORDER.reversed());
 
         for (int i = 0; i < n; i++) {
+            if ((i & 1023) == 0) checkpoint.run();
             String id = nodeIds.get(i);
             EntityView ev = projectEntities.get(id);
             int ca = fanIn[i];
@@ -324,14 +330,14 @@ public final class ArchitectureInsightsAdvisor {
                     : BigDecimal.valueOf(ce).divide(BigDecimal.valueOf(ca + ce), 4, RoundingMode.HALF_UP);
             instabilitySum = instabilitySum.add(inst);
 
-            boolean sdp = ca >= 3 && ce >= 2 && inst.compareTo(new BigDecimal("0.6500")) > 0;
+            boolean sdp = ca >= 3 && ce >= 2 && inst.compareTo(INSTABILITY_THRESHOLD) > 0;
             if (sdp) sdpViolations++;
             int pViolations = violationsByEntity.getOrDefault(id, 0);
             boolean cyclic = inCycle[i];
 
             String archetype = classifyArchetype(ca, ce, blast, cyclic, sdp, pViolations, n);
             int score = computeHotspotScore(ca, ce, blast, cyclic, sdp, pViolations, n);
-            allHotspots.add(new Hotspot(
+            var hotspot = new Hotspot(
                     id,
                     shortLabel(ev, baseRequest.scope()),
                     ev.kind(),
@@ -345,22 +351,20 @@ public final class ArchitectureInsightsAdvisor {
                     blast,
                     cyclic,
                     pViolations,
-                    sdp));
+                    sdp);
+            if (ranked.size() < topN) {
+                ranked.add(hotspot);
+            } else if (HOTSPOT_ORDER.compare(hotspot, ranked.element()) < 0) {
+                ranked.remove();
+                ranked.add(hotspot);
+            }
         }
 
-        allHotspots.sort((a, b) -> {
-            int cmp = Integer.compare(b.hotspotScore(), a.hotspotScore());
-            if (cmp != 0) return cmp;
-            cmp = Integer.compare(b.transitiveDependents(), a.transitiveDependents());
-            if (cmp != 0) return cmp;
-            cmp = Integer.compare(b.fanIn() + b.fanOut(), a.fanIn() + a.fanOut());
-            if (cmp != 0) return cmp;
-            return a.identity().compareTo(b.identity());
-        });
-        List<Hotspot> topHotspots = allHotspots.subList(0, Math.min(topN, allHotspots.size()));
+        List<Hotspot> topHotspots = ranked.stream().sorted(HOTSPOT_ORDER).toList();
 
         // 6. Cross-Module / Package Layer Coupling Matrix (DSM)
         CouplingMatrix dsm = buildCouplingMatrix(nodeIds, groupByNode, internalEdges);
+        checkpoint.run();
 
         BigDecimal tangledRatio = n == 0
                 ? BigDecimal.ZERO.setScale(4, RoundingMode.HALF_UP)
@@ -512,17 +516,16 @@ public final class ArchitectureInsightsAdvisor {
             int gv = globalIdx.get(candidate.target());
             int largestRemaining = m;
             int splitCount = 1;
-            if (m == 1 && gu == gv) {
-                largestRemaining = 1;
-                splitCount = 1;
-            } else if (exactCutAnalysis) {
+            boolean remainingSelfLoop = false;
+            if (exactCutAnalysis) {
                 List<List<Integer>> subAdj = new ArrayList<>(m);
                 for (int i = 0; i < m; i++) subAdj.add(new ArrayList<>());
                 for (EdgeView e : compEdges) {
                     if (e.identity().equals(candidate.identity())) continue;
                     int lu = localIdx.get(globalIdx.get(e.source()));
                     int lv = localIdx.get(globalIdx.get(e.target()));
-                    if (lu != lv) subAdj.get(lu).add(lv);
+                    if (lu == lv) remainingSelfLoop = true;
+                    else subAdj.get(lu).add(lv);
                 }
                 SccResult afterCut = tarjanScc(m, subAdj);
                 splitCount = afterCut.components.size();
@@ -531,18 +534,18 @@ public final class ArchitectureInsightsAdvisor {
                     if (subComp.length > largestRemaining) largestRemaining = subComp.length;
                 }
             }
-            boolean breaksAll = m > 1 && largestRemaining == 1;
+            boolean breaksAll = exactCutAnalysis && largestRemaining == 1 && !remainingSelfLoop;
             EntityView srcEv = entities.get(candidate.source());
             EntityView dstEv = entities.get(candidate.target());
             String srcLabel = shortLabel(srcEv, scope);
             String dstLabel = shortLabel(dstEv, scope);
             String strategy = recommendDecouplingStrategy(scope, m, fanIn[gu], fanOut[gu], fanIn[gv], fanOut[gv], candidate);
             int supports = Math.max(1, candidate.supportCount());
-            String rationale = breaksAll
-                    ? "Single-cut cycle breaker: severing or inverting this edge (" + supports + " support ref" + (supports == 1 ? "" : "s") + ") decomposes all " + m + " components into a DAG."
-                    : (largestRemaining < m
-                            ? "Reduces largest cyclic cluster from " + m + " to " + largestRemaining + " (" + splitCount + " sub-components) with only " + supports + " support ref" + (supports == 1 ? "" : "s") + "."
-                            : "Lowest-friction internal link (" + supports + " support ref" + (supports == 1 ? "" : "s") + "); combine with secondary cut to untangle this dense cluster.");
+            String rationale;
+            if (!exactCutAnalysis) rationale = "Low-support edge to investigate. This cluster exceeded the cut simulation budget.";
+            else if (breaksAll) rationale = "Removing this edge eliminates cycles within this cluster in the selected structural projection.";
+            else if (largestRemaining < m) rationale = "Removing this edge splits the cluster. Cycles remain in the selected projection.";
+            else rationale = "Removing this edge leaves the cluster cyclic in the selected projection.";
             evaluated.add(new CycleBreakCandidate(
                     candidate.identity(),
                     candidate.source(),
@@ -552,6 +555,7 @@ public final class ArchitectureInsightsAdvisor {
                     candidate.classification(),
                     supports,
                     candidate.evidence(),
+                    exactCutAnalysis,
                     breaksAll,
                     largestRemaining,
                     splitCount,
@@ -587,73 +591,85 @@ public final class ArchitectureInsightsAdvisor {
         return "INTRODUCE_PORT_INTERFACE_AT_BOUNDARY";
     }
 
-    /** Exact condensation-DAG BitSet reachability for incoming blast radius (excluding self). */
-    private static int[] computeBlastRadius(int n, List<List<Integer>> outAdj, SccResult scc) {
-        int[] result = new int[n];
-        if (n == 0) return result;
-        int cCount = scc.components.size();
-        if (cCount > MAX_EXACT_BLAST_COMPONENTS) {
-            // Bounded reverse BFS fallback for massive 10k+ component graphs
-            List<List<Integer>> revAdj = new ArrayList<>(n);
-            for (int i = 0; i < n; i++) revAdj.add(new ArrayList<>());
-            for (int u = 0; u < n; u++) {
-                for (int v : outAdj.get(u)) revAdj.get(v).add(u);
+    static final class CalculationInterrupted extends RuntimeException {
+        final StopReason reason;
+
+        CalculationInterrupted(StopReason reason) {
+            super("Architecture insights interrupted: " + reason);
+            this.reason = reason;
+        }
+    }
+
+    /** Exact incoming reachability over the SCC condensation, excluding the subject. */
+    private static int[] computeBlastRadius(int n, List<List<Integer>> outAdj, SccResult scc, Runnable checkpoint) {
+        int components = scc.components.size();
+        var dependents = new int[components];
+        var callers = new int[components];
+        var lastSource = new int[components];
+        var edges = new ArrayList<List<Integer>>(components);
+        boolean singleCaller = true;
+        for (int c = 0; c < components; c++) {
+            var targets = new ArrayList<Integer>();
+            for (int u : scc.components.get(c)) {
+                for (int v : outAdj.get(u)) {
+                    int target = scc.compOf[v];
+                    if (target == c || lastSource[target] == c + 1) continue;
+                    lastSource[target] = c + 1;
+                    targets.add(target);
+                    if (++callers[target] > 1) singleCaller = false;
+                }
             }
-            int[] visitedStamp = new int[n];
-            int[] queue = new int[Math.min(n, 2048)];
-            int stamp = 1;
-            for (int start = 0; start < n; start++, stamp++) {
-                int head = 0, tail = 0;
-                visitedStamp[start] = stamp;
-                queue[tail++] = start;
-                int count = 0;
-                while (head < tail && tail < queue.length) {
-                    int curr = queue[head++];
-                    for (int dep : revAdj.get(curr)) {
-                        if (visitedStamp[dep] != stamp) {
-                            visitedStamp[dep] = stamp;
-                            count++;
-                            if (tail < queue.length) queue[tail++] = dep;
+            edges.add(targets);
+        }
+
+        // Tarjan assigns the dependency a lower component index than its caller.
+        if (singleCaller) {
+            for (int c = components - 1; c >= 0; c--) {
+                dependents[c] += scc.components.get(c).length;
+                for (int target : edges.get(c)) dependents[target] = dependents[c];
+            }
+        } else {
+            // Propagate one batch of caller identities at a time. Joins count a caller once,
+            // and the working set grows linearly with the number of components.
+            var reachedBy = new BitSet[components];
+            for (int low = 0; low < components; low += REACHABILITY_BATCH_SIZE) {
+                checkpoint.run();
+                int high = Math.min(components, low + REACHABILITY_BATCH_SIZE);
+                var weighted = new ArrayList<Integer>();
+                for (int c = low; c < high; c++) {
+                    if (scc.components.get(c).length > 1) weighted.add(c);
+                }
+                for (int c = high - 1; c >= 0; c--) {
+                    if ((c & 1023) == 0) checkpoint.run();
+                    BitSet set = reachedBy[c];
+                    reachedBy[c] = null;
+                    if (c >= low) {
+                        set = set == null ? new BitSet() : (BitSet) set.clone();
+                        set.set(c - low);
+                    }
+                    if (set == null) continue;
+                    int count = set.cardinality();
+                    for (int caller : weighted) {
+                        if (set.get(caller - low)) count += scc.components.get(caller).length - 1;
+                    }
+                    dependents[c] += count;
+                    for (int target : edges.get(c)) {
+                        BitSet previous = reachedBy[target];
+                        if (previous == null) {
+                            // Sharing is safe when the target clones before it mutates its set.
+                            reachedBy[target] = set;
+                        } else if (previous != set) {
+                            var union = (BitSet) previous.clone();
+                            union.or(set);
+                            reachedBy[target] = union;
                         }
                     }
                 }
-                result[start] = count;
             }
-            return result;
         }
 
-        // Tarjan emits components in reverse topological order:
-        // If u -> v in DAG, compOf[v] < compOf[u].
-        // We want incoming dependents of v: all u that can reach v!
-        // Since compOf[u] > compOf[v], iterating c from cCount - 1 down to 0 processes upstream callers first!
-        BitSet[] callersOfComp = new BitSet[cCount];
-        for (int c = 0; c < cCount; c++) {
-            BitSet bs = new BitSet(cCount);
-            bs.set(c);
-            callersOfComp[c] = bs;
-        }
-        for (int c = cCount - 1; c >= 0; c--) {
-            BitSet callers = callersOfComp[c];
-            for (int u : scc.components.get(c)) {
-                for (int v : outAdj.get(u)) {
-                    int cv = scc.compOf[v];
-                    if (cv != c) {
-                        callersOfComp[cv].or(callers);
-                    }
-                }
-            }
-        }
-        for (int c = 0; c < cCount; c++) {
-            int totalNodes = 0;
-            BitSet bs = callersOfComp[c];
-            for (int bit = bs.nextSetBit(0); bit >= 0; bit = bs.nextSetBit(bit + 1)) {
-                totalNodes += scc.components.get(bit).length;
-            }
-            int dependentsExcludingSelf = Math.max(0, totalNodes - 1);
-            for (int u : scc.components.get(c)) {
-                result[u] = dependentsExcludingSelf;
-            }
-        }
+        int[] result = new int[n];
+        for (int u = 0; u < n; u++) result[u] = dependents[scc.compOf[u]] - 1;
         return result;
     }
 
@@ -847,7 +863,8 @@ public final class ArchitectureInsightsAdvisor {
         md.append("| Stable Dependencies Principle (SDP) Warnings | ").append(s.sdpViolationCount()).append(" |\n");
         md.append("| Active Policy Violations | ").append(s.policyFindingCount()).append(" |\n\n");
 
-        md.append("## 2. Cycle & Tangle Detector (Tarjan SCC + Minimal Cycle-Breakers)\n\n");
+        md.append("## 2. Structural Dependency Cycles and Candidate Edges\n\n");
+        md.append("Cycles are computed on the selected projection. A union can include edges from different configurations.\n\n");
         if (tangles.isEmpty()) {
             md.append("No structural dependency cycles detected in this scope (`0` non-trivial SCCs).\n\n");
         } else {
@@ -862,7 +879,9 @@ public final class ArchitectureInsightsAdvisor {
                 for (CycleBreakCandidate c : t.breakCandidates()) {
                     md.append("- **Recommended Cut:** `").append(c.sourceLabel()).append(" -> ").append(c.targetLabel())
                       .append("` (`").append(c.recommendedStrategy()).append("`, supports=").append(c.supportCount())
-                      .append(", breaksAll=").append(c.breaksEntireTangle()).append(") — ").append(c.rationale()).append("\n");
+                      .append(", simulated=").append(c.simulated());
+                    if (c.simulated()) md.append(", breaksAll=").append(c.breaksEntireTangle());
+                    md.append(") — ").append(c.rationale()).append("\n");
                 }
                 md.append("\n");
             }

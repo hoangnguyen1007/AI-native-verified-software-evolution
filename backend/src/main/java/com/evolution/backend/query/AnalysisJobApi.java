@@ -3,6 +3,7 @@ package com.evolution.backend.query;
 import com.evolution.analysis.contract.common.ContentDigest;
 import com.evolution.analysis.graph.GraphJson;
 import com.evolution.analysis.query.ArchitectureQuery;
+import com.evolution.analysis.query.ArchitectureQueryService;
 import com.evolution.backend.analysis.AnalysisJobs;
 import com.evolution.backend.analysis.AnalysisMode;
 import com.evolution.backend.analysis.RepositoryConnections;
@@ -66,6 +67,15 @@ final class AnalysisJobApi {
                 var id = uuid(parts[5]);
                 if (parts.length == 6) { method(method,"GET"); empty(body); data = jobs.get(id); }
                 else if (parts[6].equals("telemetry")) { method(method,"GET"); empty(body); data = jobs.telemetry(id); }
+                else if (parts[6].equals("repository-score")) {
+                    Map<String, String> paths;
+                    if (method.equals("GET")) { empty(body); paths = Map.of(); }
+                    else {
+                        method(method,"POST");
+                        paths = RepositoryScore.customPaths(decode(body,contentType,"paths").get("paths"));
+                    }
+                    data = score(id,paths,cancelled);
+                }
                 else if (parts[6].equals("cancel")) { method(method,"POST"); decode(body,contentType); var view = jobs.cancel(id); data = view; status = AnalysisJobs.terminal(view.state()) ? 200 : 202; }
                 else if (parts[6].equals("gaps")) { method(method,"POST"); var page = QueryJson.page(decode(body,contentType,"size","cursor")); data = jobs.gaps(id,page.size(),page.cursor()); }
                 else if (parts[6].equals("input-diagnostics")) { method(method,"POST"); var page = QueryJson.page(decode(body,contentType,"size","cursor")); data = jobs.inputProblems(id,page.size(),page.cursor()); }
@@ -81,6 +91,22 @@ final class AnalysisJobApi {
         catch (GraphJson.LimitExceededException large) { return error(413,"JSON_LIMIT_EXCEEDED"); }
         catch (IllegalArgumentException invalid) { return error(400,"INVALID_REQUEST"); }
         catch (RuntimeException failure) { return error(500,"INTERNAL_ERROR"); }
+    }
+    private RepositoryScore.Result score(UUID id, Map<String, String> paths, BooleanSupplier cancelled) {
+        if (connections == null) throw new Failure(404,"SCORE_INVENTORY_UNAVAILABLE");
+        var result = jobs.get(id).result();
+        var guard = ArchitectureQueryService.operationalGuard(cancelled,
+                System.nanoTime() + limits.queryTimeoutMillis() * 1_000_000, 8_000_000);
+        try {
+            return connections.readPublishedInventory(reader -> RepositoryScore.assessInventory(reader, id.toString(),
+                    result.flatMap(AnalysisJobs.Result::graph), result.flatMap(AnalysisJobs.Result::snapshot), paths, () -> {
+                        var stop = guard.get();
+                        if (stop == ArchitectureQuery.StopReason.CANCELLED) throw new Failure(409,"REQUEST_CANCELLED");
+                        if (stop != ArchitectureQuery.StopReason.NONE) throw new Failure(503,"SCORING_RESOURCE_LIMIT");
+                    })).orElseThrow(() -> new Failure(404,"SCORE_INVENTORY_UNAVAILABLE"));
+        } catch (java.io.IOException unavailable) {
+            throw new Failure(503,"SCORE_INVENTORY_UNAVAILABLE");
+        }
     }
     private Map<String,Object> decode(byte[] body, String media, String... allowed) {
         if (!ArchitectureQueryApi.jsonMediaType(media)) throw new Failure(415,"UNSUPPORTED_MEDIA_TYPE");

@@ -40,28 +40,36 @@ async function main([java, classpath, browser, output, graph, policy, candidateG
         await page.send('Input.dispatchKeyEvent', {type:'keyUp',key:'Enter',code:'Enter',windowsVirtualKeyCode:13,nativeVirtualKeyCode:13});
       }
     };
-    const data = async title => JSON.parse(await until(title, () => evalJs(`
-      document.querySelector('#inspector-title')?.textContent === ${JSON.stringify(title)}
-      && document.querySelector('#inspector-body > details > pre')?.textContent`)));
+    let evidenceSequence = 0;
+    const data = async title => {
+      await until(title, () => evalJs(`(() => {
+        const download = document.querySelector('#download-details');
+        if (document.querySelector('#inspector-title')?.textContent !== ${JSON.stringify(title)} || download.disabled) return false;
+        download.click();
+        return true;
+      })()`));
+      const downloaded = path.join(output,'evo-evidence.json');
+      const contents = await until('Downloaded ' + title, () => fs.readFile(downloaded,'utf8').catch(error => {
+        if (error.code === 'ENOENT' || error.code === 'EBUSY') return null;
+        throw error;
+      }));
+      await fs.rename(downloaded,path.join(output,`evidence-${++evidenceSequence}.json`));
+      return JSON.parse(contents);
+    };
     await button('#analyze', 'Run analysis');
     const contexts = await until('Published analysis contexts', () => evalJs(`(() => {
       const options = [...(document.querySelector('#context')?.options || [])].map(option => option.value).filter(Boolean);
       return options.length > 0 && options;
     })()`));
-    let spring = false;
-    for (const context of contexts) {
-      await evalJs(`(() => {
-        const select = document.querySelector('#context');
-        select.value = ${JSON.stringify(context)};
-        select.dispatchEvent(new Event('change', {bubbles: true}));
-      })()`);
-      spring = await until('Selected context provenance', () => evalJs(`
-        document.querySelector('#panel-overview').getAttribute('aria-busy') === 'false'
-        && {spring: document.querySelector('#context').selectedOptions[0].textContent.includes('Spring')}`));
-      if (spring.spring) break;
-    }
-    assert.equal(spring.spring, true, 'No Spring context was published for the pinned fixture');
-    await button('#tab-policy', '');
+    await page.send('Page.setDownloadBehavior', {behavior:'allow',downloadPath:output});
+    const spring = contexts.find(context => context.startsWith('spring-context:'));
+    assert.ok(spring, 'No Spring context was published for the pinned fixture');
+    await evalJs(`(() => {
+      const select = document.querySelector('#context');
+      select.value = ${JSON.stringify(spring)};
+      select.dispatchEvent(new Event('change', {bubbles: true}));
+    })()`);
+    await button('#tab-policy', 'Review');
     await button('#panel-policy button.entity-row', 'client.no-store');
     await button('#inspector-body button', 'Diagnose finding', true);
     const diagnosis = await data('Finding diagnosis');
@@ -100,9 +108,9 @@ async function main([java, classpath, browser, output, graph, policy, candidateG
     assert.equal(candidate.plan.expectedFindingChange, 'REMOVED');
     assert.equal(candidate.engine.id, 'openrewrite.java');
     assert.equal(candidate.patchDigest, digest(candidate.patch));
-    assert.equal(await evalJs("document.querySelector('.repair-patch').textContent"), candidate.patch);
+    assert.equal(await evalJs("document.querySelector('.repair-patch').getAttribute('aria-label')"),
+      'Unified patch for ' + candidate.edit.path);
     assert.match(await evalJs("document.querySelector('#inspector-body').innerText"), /Unverified repair proposal/);
-    await page.send('Page.setDownloadBehavior', {behavior:'allow',downloadPath:output});
     await button('#inspector-body button', 'Download patch', true);
     const patchPath = path.join(output,'repair.patch');
     const downloaded = await until('Downloaded patch', async () => fs.readFile(patchPath).catch(error => {

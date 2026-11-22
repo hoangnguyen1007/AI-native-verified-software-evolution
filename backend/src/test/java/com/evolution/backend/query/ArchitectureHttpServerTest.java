@@ -1,12 +1,17 @@
 package com.evolution.backend.query;
 
 import com.evolution.analysis.contract.serialization.CanonicalJson;
+import com.evolution.analysis.contract.common.ContentDigest;
+import com.evolution.analysis.graph.GraphManifest;
+import com.evolution.analysis.graph.GraphStore;
+import com.evolution.analysis.graph.KnowledgeGraph;
 import com.evolution.analysis.graph.GraphJson;
 import java.net.*;
 import java.net.http.*;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.*;
+import java.util.function.BooleanSupplier;
 import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 import static com.evolution.backend.query.ArchitectureQueryApiTest.*;
@@ -20,7 +25,15 @@ class ArchitectureHttpServerTest {
         return client.send(request.method(method,HttpRequest.BodyPublishers.ofString(body)).build(),HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
     }
     @Test void actualHttpPreservesCanonicalResponseAndDiscoveryAndSecurityHeaders() throws Exception {
-        var f=new QueryFixture().node("a").node("b").edge("a","b"); var api=new ArchitectureQueryApi(f.store()); var r=f.request();
+        var f=new QueryFixture().node("a").node("b").edge("a","b"); var r=f.request();
+        var verifiedGraphs = f.store();
+        var api = new ArchitectureQueryApi(new GraphStore() {
+            public void save(KnowledgeGraph graph, BooleanSupplier cancelled) { verifiedGraphs.save(graph, cancelled); }
+            public Optional<KnowledgeGraph> load(ContentDigest id) { return verifiedGraphs.load(id); }
+            public Optional<GraphManifest> manifest(ContentDigest id) {
+                throw new IllegalStateException("Graph discovery does not need a semantic replay digest");
+            }
+        });
         try(var server=new ArchitectureHttpServer(api,0)) {
             server.start();
             String input=CanonicalJson.write(Map.of("request",r));
@@ -33,6 +46,7 @@ class ArchitectureHttpServerTest {
             assertTrue(result.headers().firstValue("Access-Control-Allow-Origin").isEmpty());
             assertEquals(200,send(server,"GET","/api/v1",null,"").statusCode());
             var graph=send(server,"GET","/api/v1/graphs/"+r.graph().value(),null,"");
+            assertEquals(200, graph.statusCode());
             var data=GraphJson.object(GraphJson.object(GraphJson.read(graph.body(),GraphJson.Limits.defaults())).get("data"));
             assertEquals(r.graph().value(),data.get("graph")); assertEquals(1,GraphJson.array(data.get("contexts")).size());
             assertEquals(200,send(server,"GET","/api/v1",null,"","Origin",server.uri().toString()).statusCode());
@@ -102,7 +116,10 @@ class ArchitectureHttpServerTest {
             var csp=index.headers().firstValue("Content-Security-Policy").orElseThrow();
             assertTrue(csp.contains("script-src 'self'")); assertTrue(csp.contains("connect-src 'self'"));
             assertFalse(csp.contains("https:")); assertFalse(index.body().contains("onclick="));
-            for (var asset : List.of("/styles.css","/app.js","/model.js","/vendor/cytoscape-3.30.2.min.js")) {
+            assertFalse(index.body().contains("fonts.googleapis.com"));
+            assertFalse(index.body().contains("cytoscape-3.30.2.min.js"));
+            for (var asset : List.of("/styles.css","/app.js","/model.js","/architecture-chat.js","/architecture-chat.css",
+                    "/vendor/cytoscape-3.30.2.min.js")) {
                 assertEquals(200,send(server,"GET",asset,null,"").statusCode(),asset);
                 var head=send(server,"HEAD",asset,null,""); assertEquals(200,head.statusCode()); assertTrue(head.body().isEmpty());
             }
@@ -110,6 +127,14 @@ class ArchitectureHttpServerTest {
             var logo=send(server,"GET","/logo.svg",null,"");
             assertEquals(200,logo.statusCode());
             assertEquals("image/svg+xml",logo.headers().firstValue("Content-Type").orElseThrow());
+
+            for (var family : List.of("newsreader", "source-sans-3")) {
+                for (var subset : List.of("latin", "vietnamese")) {
+                    var font = send(server, "HEAD", "/fonts/" + family + "-" + subset + ".woff2", null, "");
+                    assertEquals(200, font.statusCode());
+                    assertEquals("font/woff2", font.headers().firstValue("Content-Type").orElseThrow());
+                }
+            }
 
             var missing=send(server,"GET","/non-existent-file.xyz",null,"");
             assertEquals(404,missing.statusCode());

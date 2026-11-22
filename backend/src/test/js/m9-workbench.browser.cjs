@@ -36,7 +36,9 @@ async function clickText(page, selector, exact) {
       target.scrollIntoView({block: 'center', inline: 'nearest'});
       const bounds = target.getBoundingClientRect();
       const x = Math.round(bounds.left + bounds.width / 2), y = Math.round(bounds.top + bounds.height / 2);
-      return target.contains(document.elementFromPoint(x, y)) ? {x, y} : null;
+      // On mobile, a focused input can shift the visual viewport relative to the layout viewport.
+      return target.contains(document.elementFromPoint(x, y))
+        ? {x: x - visualViewport.offsetLeft, y: y - visualViewport.offsetTop} : null;
     }).toString() + ')(' + JSON.stringify(selector) + ',' + JSON.stringify(exact ?? null) + ')'
   ));
   for (const type of ['mousePressed', 'mouseReleased']) {
@@ -65,7 +67,12 @@ async function open(page, origin) {
 }
 
 async function tab(page, name) {
-  await click(page, '#tab-' + name);
+  if (await visible(page, '#tab-' + name)) await click(page, '#tab-' + name);
+  else {
+    const group = await query(page, '#panel-' + name, "node.closest('[data-view-group]').dataset.viewGroup");
+    if (!await visible(page, '#view-' + name)) await click(page, '#tab-' + group);
+    await click(page, '[data-open-tab="' + name + '"]');
+  }
   await until(name + ' view ready', () => query(page, '#panel-' + name,
     "!node.hidden && node.getAttribute('aria-busy') === 'false'"));
 }
@@ -96,6 +103,10 @@ async function waitForResult(page) {
   return choose(page, '#context');
 }
 
+async function waitForJobState(page, pattern) {
+  await until('Expected analysis state', async () => pattern.test(await page.evaluate('window.EvoApp.state.job?.state')));
+}
+
 async function lifecycle(page, profile, source) {
   await sidebar(page, profile, true);
   await click(page, '.sidebar [data-action=connect]');
@@ -104,21 +115,20 @@ async function lifecycle(page, profile, source) {
   await setValue(page, '#repository-policy', RULES);
   await click(page, '#connect-submit');
   await hasText(page, '#repository-title', /authored-source/);
-  await click(page, '#analyze');
-  await hasText(page, '#job-state', /^(QUEUED|RUNNING)$/);
+  await waitForJobState(page, /^(QUEUED|RUNNING)$/);
   await click(page, '#cancel-job');
-  await hasText(page, '#job-state', /^CANCELLED$/);
-  assert.equal(await visible(page, '#analysis-workspace #context'), false);
+  await waitForJobState(page, /^CANCELLED$/);
+  assert.equal(await visible(page, '#analysis-workspace #context'), false, 'A newly cancelled run has no result');
   await click(page, '#analyze');
   await waitForResult(page);
-  await hasText(page, '#job-state', /^(SUCCEEDED|PARTIAL)$/);
+  await waitForJobState(page, /^(SUCCEEDED|PARTIAL)$/);
   await sidebar(page, profile, true);
   const cancelled = await until('Cancelled history entry', () => page.evaluate(
-    "[...document.querySelectorAll('#history button')].findIndex(node => node.textContent.includes('CANCELLED')) + 1"
+    "[...document.querySelectorAll('#history button')].findIndex(node => node.textContent.includes('Cancelled')) + 1"
   ));
   await click(page, '#history button:nth-of-type(' + cancelled + ')');
-  await hasText(page, '#job-state', /^CANCELLED$/);
-  assert.equal(await visible(page, '#analysis-workspace #context'), false);
+  await waitForJobState(page, /^CANCELLED$/);
+  assert.equal(await visible(page, '#analysis-workspace #context'), false, 'A reopened cancelled run has no result');
   await click(page, '#history button:first-of-type');
   await waitForResult(page);
   await sidebar(page, profile, false);
@@ -127,18 +137,12 @@ async function lifecycle(page, profile, source) {
 async function overview(page) {
   await tab(page, 'overview');
   await hasText(page, '#panel-overview', /Architecture assessment/);
-  await until('Evidence tier availability', () => visible(page, '#job-evidence-tier'));
-  await click(page, '#job-receipt');
-  await inspector(page, /Analysis receipt/);
-  const raw = await text(page, '#inspector-body pre');
-  const receipt = JSON.parse(raw);
+  await until('Analysis result availability', () => visible(page, '#job-description'));
+  const receipt = await page.evaluate('window.EvoApp.state.resultJob');
   assert.ok(receipt.result.graph.startsWith('sha256:'));
   assert.ok(receipt.result.gapCount >= Math.max(receipt.result.graphGapCount, receipt.result.jobGapCount));
   assert.ok(receipt.result.gapCount <= receipt.result.graphGapCount + receipt.result.jobGapCount);
-  await inspectClose(page);
-  assert.equal(await page.evaluate('document.activeElement.id'), 'job-receipt');
-  await tab(page, 'gaps');
-  await hasText(page, '#panel-gaps', /limitations|gap/i);
+  assert.equal(await page.evaluate("Boolean(document.querySelector('#tab-gaps, #job-gaps, #job-receipt'))"), false);
 }
 
 async function evidence(page, downloads) {
@@ -149,12 +153,12 @@ async function evidence(page, downloads) {
   await inspector(page, /fixture.boundary/);
   await clickText(page, '#inspector-body button', 'Finding path');
   await inspector(page, /Finding path/);
-  assert.equal(JSON.parse(await text(page, '#inspector-body pre')).items[0].vertices.length, 2);
+  assert.equal((await page.evaluate('window.EvoApp.state.details')).items[0].vertices.length, 2);
   await inspectClose(page);
   await clickText(page, '#panel-policy button.entity-row strong', 'fixture.boundary');
   await clickText(page, '#inspector-body button', 'Exact source evidence');
   await inspector(page, /Finding sources/);
-  const source = JSON.parse(await text(page, '#inspector-body pre')).items[0];
+  const source = (await page.evaluate('window.EvoApp.state.details')).items[0];
   assert.equal(source.span.startLine, 1);
   assert.equal(source.span.startColumn, 33);
   assert.equal(source.span.endColumn, 38);
@@ -164,21 +168,21 @@ async function evidence(page, downloads) {
     (await fs.readdir(downloads)).find(name => /^evo-evidence.*\.json$/.test(name)));
   assert.deepEqual(JSON.parse(await fs.readFile(path.join(downloads, exported), 'utf8')).items[0], source);
   await inspectClose(page);
-  await click(page, '#provenance');
-  await inspector(page, /Analysis provenance/);
-  assert.ok(JSON.parse(await text(page, '#inspector-body pre')).items.length);
-  await inspectClose(page);
+
 }
 
 async function keyboardAndProjection(page, width) {
   await tab(page, 'overview');
   await page.evaluate("document.querySelector('#tab-overview').focus()");
   await key(page, 'ArrowRight', 39);
-  assert.equal(await page.evaluate('document.activeElement.id'), 'tab-structure');
+  assert.equal(await page.evaluate('document.activeElement.id'), 'tab-graph');
+  await key(page, 'End', 35);
+  assert.equal(await page.evaluate('document.activeElement.id'), 'tab-architecture-chat');
   assert.ok(await page.evaluate("document.activeElement.matches(':focus-visible')"));
   await key(page, 'Enter', 13, '\r');
-  await until('Keyboard activates Structure', () => query(page, '#tab-structure', "node.getAttribute('aria-selected') === 'true'"));
+  await until('Keyboard activates Architecture chat', () => query(page, '#tab-architecture-chat', "node.getAttribute('aria-selected') === 'true'"));
   await key(page, '/', 191, '/');
+  await until('Shortcut opens Structure', () => query(page, '#view-structure', "node.getAttribute('aria-current') === 'page'"));
   assert.equal(await page.evaluate('document.activeElement.id'), 'search');
   await setValue(page, '#search', 'Client');
   await key(page, 'Enter', 13, '\r');
@@ -190,6 +194,8 @@ async function keyboardAndProjection(page, width) {
     return options?.some(name => name.includes('Client')) && options.some(name => name.includes('Store')) && options;
   });
   assert.ok(nodes.length <= 1500);
+  const client = await query(page, '[aria-label="Graph node"]', "[...node.options].find(option => option.textContent === 'example.Client').value");
+  await setValue(page, '[aria-label="Graph node"]', client);
   await clickText(page, '#panel-graph button', 'Focus & expand');
   await until('Neighborhood depth control', () => visible(page, '[aria-label="Neighborhood depth"]'));
   await tab(page, 'impact');
@@ -201,10 +207,15 @@ async function keyboardAndProjection(page, width) {
   const overflow = await page.evaluate('document.documentElement.scrollWidth - document.documentElement.clientWidth');
   assert.ok(overflow <= 1, 'Horizontal document overflow at ' + width + 'px: ' + overflow + 'px');
   const accessibility = await page.send('Accessibility.getFullAXTree');
-  assert.ok(accessibility.nodes.some(node => node.role?.value === 'tab' && node.name?.value === 'Change impact'));
-  for (const name of ['Architecture Workbench', 'Polyglot Bridges']) {
-    assert.ok(accessibility.nodes.some(node => node.role?.value === 'link' && node.name?.value === name));
+  assert.ok(accessibility.nodes.some(node => node.role?.value === 'button' && node.name?.value === 'Change impact'));
+  await click(page, '#workspace-tools summary');
+  const tools = await page.send('Accessibility.getFullAXTree');
+  const enabled = await page.evaluate('window.EvoApp.state.capabilities');
+  for (const [name, available] of [['Compare snapshots', enabled.evolutionEnabled],
+    ['Captured connections', enabled.bridgesEnabled]]) {
+    assert.equal(tools.nodes.some(node => node.role?.value === 'link' && node.name?.value === name), available, name);
   }
+  await click(page, '#workspace-tools summary');
   for (const theme of ['dark', 'light']) {
     await until(theme + ' theme', () => page.evaluate('document.documentElement.dataset.theme === ' + JSON.stringify(theme)));
     await page.evaluate("Promise.allSettled(document.querySelector('#analyze').getAnimations().map(animation => animation.finished))");
@@ -221,7 +232,7 @@ async function keyboardAndProjection(page, width) {
         const under = background(node.parentElement);
         return color.slice(0, 3).map((component, index) => component * alpha + under[index] * (1 - alpha));
       }
-      return ['#analyze', '#job-state', '#job-description'].map(selector => {
+      return ['#analyze', '#job-description'].map(selector => {
         const node = document.querySelector(selector);
         const foreground = luminance(rgba(getComputedStyle(node).color));
         const surface = luminance(background(node));
@@ -235,11 +246,8 @@ async function keyboardAndProjection(page, width) {
 
 async function degradedAndStale(page, profile) {
   // Keep the final real report response pending across a refresh of the same job.
-  await click(page, '#job-receipt');
-  await inspector(page, /Analysis receipt/);
-  const reports = JSON.parse(await text(page, '#inspector-body pre')).result.reports;
+  const reports = await page.evaluate('window.EvoApp.state.resultJob.result.reports');
   assert.ok(reports.length);
-  await inspectClose(page);
   const suffix = '/reports/' + reports.at(-1);
   await page.evaluate('(' + (suffix => {
     const original = window.fetch;
@@ -315,7 +323,7 @@ async function configuration(page, origin) {
   await click(page, '#panel-policy button.entity-row');
   await clickText(page, '#inspector-body button', 'Replay finding witness');
   await inspector(page, /Replay finding witness/);
-  const replay = JSON.parse(await text(page, '#inspector-body pre')).items[0];
+  const replay = (await page.evaluate('window.EvoApp.state.details')).items[0];
   assert.equal(replay.matched, true);
   assert.equal(replay.formulaReplayed, true);
   assert.equal(replay.semanticReplayed, false);

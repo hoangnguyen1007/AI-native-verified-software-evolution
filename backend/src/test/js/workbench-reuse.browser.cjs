@@ -33,8 +33,9 @@ async function main([java, classpath, executable]) {
     await page.evaluate("(() => { const send = window.fetch.bind(window); window.previewRequests = 0; window.fetch = async (input, init) => { const url = String(input); if (url.endsWith('/overview')) window.previewRequests++; const response = await send(input, init); if (!window.previewRequests && url.includes('/analysis/jobs/')) { const envelope = await response.clone().json(); if (['SUCCEEDED','PARTIAL'].includes(envelope.data?.state)) { envelope.data = {...envelope.data, state: 'RUNNING', stage: 'ANALYSIS', result: null}; return new Response(JSON.stringify(envelope), {status: 200, headers: {'Content-Type': 'application/json'}}); } } return response; }; })()");
     const firstStart = performance.now();
     await page.evaluate("document.querySelector('#analyze').click()");
-    await until('Published build structure is shown with its qualification', () => page.evaluate(
-      "!document.querySelector('#readiness-overview').hidden && document.querySelector('#readiness-overview').textContent.includes('candidate modules')"));
+    await page.evaluate("document.getElementById('run-details').open = true");
+    await until('Published build structure appears in the activity', () => page.evaluate(
+      "document.querySelector('#job-events [data-stage=PLATFORM] .step-observation')?.textContent.includes('build modules recorded')"));
     await until('Graph ready', () => page.evaluate("!document.querySelector('#analysis-workspace').hidden"));
     await page.evaluate(`(() => {
       const contexts = document.querySelector('#context');
@@ -75,7 +76,7 @@ async function main([java, classpath, executable]) {
     await page.evaluate('window.releaseAnalysis()');
     await until('Verified reuse in the Workbench', () => page.evaluate(`
       document.querySelector('#result-status').textContent.includes('Matching inputs verified')
-        && [...document.querySelectorAll('#job-events li')].some(node => node.textContent === 'reused')
+        && Boolean(document.querySelector('#job-events [data-stage=REUSED]'))
         && !document.querySelector('#analysis-workspace').hidden
     `));
     const repeatMs = performance.now() - repeatStart;
@@ -83,12 +84,13 @@ async function main([java, classpath, executable]) {
     assert.ok(await page.evaluate('document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1'));
 
     await ready('#analyze-force');
+    await page.evaluate("document.querySelector('#run-options summary').click()");
     await page.evaluate("document.querySelector('#analyze-force').focus()");
     assert.equal(await page.evaluate('document.activeElement.id'), 'analyze-force');
     await key(page, 'Enter', 13, '\r');
     await until('Full recomputation through the keyboard action', () => page.evaluate(`
-      [...document.querySelectorAll('#job-events li')].map(node => node.textContent).includes('analysis')
-        && [...document.querySelectorAll('#job-events li')].at(-1)?.textContent === 'finished'
+      Boolean(document.querySelector('#job-events [data-stage=ANALYSIS]'))
+        && Boolean(document.querySelector('#job-events li:last-child [data-stage=FINISHED]'))
         && !document.querySelector('#result-status').textContent.includes('Matching inputs verified')
     `));
     console.log('PASS: 320px build preview, previous-result view, verified reuse with no graph discovery, and keyboard recompute.');

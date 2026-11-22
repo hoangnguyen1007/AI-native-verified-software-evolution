@@ -55,7 +55,8 @@ async function main([java, jar, executable, root, requestPath, checkHistory]) {
       `document.querySelector('#comparison-result-id')?.textContent === '${positive.result}' && !document.querySelector('#comparison-result').hidden`));
     assert.deepEqual(await browser.evaluate("Array.from(document.querySelectorAll('#comparison-pins article code'),x=>x.textContent)"),
       [input.comparison.left,input.comparison.right]);
-    assert.equal(await browser.evaluate("document.querySelector('#comparison-outcome').textContent"),positive.status);
+    assert.equal(await browser.evaluate("document.querySelector('#comparison-outcome').hidden"), true);
+    assert.equal(await browser.evaluate("Boolean(document.querySelector('#comparison-section [value=GAPS]'))"), false);
     assert.ok(await browser.evaluate('document.documentElement.scrollWidth <= innerWidth + 1'));
     if (checkHistory === '--check-history') {
       const parityPage = async section => {

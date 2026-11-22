@@ -3,20 +3,34 @@ package com.evolution.analysis.filesystem;
 import com.evolution.analysis.acquisition.streaming.ContentHandle;
 import com.evolution.analysis.contract.common.ContentDigest;
 import java.io.*;
+import java.nio.ByteBuffer;
 import java.nio.channels.*;
 import java.nio.file.*;
 import java.security.MessageDigest;
 import java.util.*;
 
-/** Immutable recovery authority for batched small CAS objects. Loose objects are a read cache.
- * No database/index is required to recover a missing cache entry. Legacy loose blobs stay valid. */
+/** Immutable small-object storage. The bounded address cache can be rebuilt from the pack headers. */
 final class SmallBlobPacks {
     static final int MAX_BLOB = 65536, MAX_ROWS = 256;
     private static final int MAGIC = 0x45565031; // EVP1
     private static final long MAX_PACK = 8L + MAX_ROWS * (36L + MAX_BLOB);
+    private static final int CACHED_ADDRESSES = 131_072;
+    private record Slice(Path pack, long offset, long packSize) {}
     private final Path root;
+    private final Path directory;
     private final long reserve;
-    SmallBlobPacks(Path root, long reserve) { this.root = root; this.reserve = reserve; }
+    private final Map<ContentHandle, Slice> addresses = new LinkedHashMap<>(16, 0.75f, true) {
+        @Override protected boolean removeEldestEntry(Map.Entry<ContentHandle, Slice> eldest) {
+            return size() > CACHED_ADDRESSES;
+        }
+    };
+    private boolean indexed;
+
+    SmallBlobPacks(Path root, long reserve) {
+        this.root = root;
+        this.directory = root.resolve("packs");
+        this.reserve = reserve;
+    }
 
     void put(Collection<byte[]> values, StreamingContentStore store) throws IOException {
         if (values.size() > MAX_ROWS) throw new IllegalArgumentException("Small CAS batch too large");
@@ -42,24 +56,20 @@ final class SmallBlobPacks {
             var handle = item.getKey();
             byte[] bytes = item.getValue();
             if (bytes.length > MAX_BLOB) throw new IllegalArgumentException("Small CAS object too large");
-            Path loose = store.path(handle);
-            if (Files.exists(loose, LinkOption.NOFOLLOW_LINKS)) {
-                if (verifiedInRun == null || !verifiedInRun.contains(handle)) {
-                    if (!store.verify(handle)) throw new IOException("CAS_CORRUPT");
-                    if (verifiedInRun != null) verifiedInRun.add(handle);
-                }
+            if (verifiedInRun != null && verifiedInRun.contains(handle)) continue;
+            if (store.hasLoose(handle) || contains(handle)) {
+                if (!store.verify(handle)) throw new IOException("CAS_CORRUPT");
+                if (verifiedInRun != null) verifiedInRun.add(handle);
             } else {
                 rows.put(handle.digest(), bytes);
             }
         }
         if (rows.isEmpty()) return;
         long size = 8L + rows.values().stream().mapToLong(b -> 36L + b.length).sum();
-        // Include pack and derived cache bytes in the reservation.
-        if (Files.getFileStore(root).getUsableSpace() - size * 2 < reserve) throw new IOException("WAITING_FOR_DISK");
-        Path packs = root.resolve("packs");
-        StreamingContentStore.safeWithin(root, packs);
-        Files.createDirectories(packs);
-        if (!Files.isDirectory(packs, LinkOption.NOFOLLOW_LINKS)) throw new IOException("UNSAFE_STORAGE");
+        if (Files.getFileStore(root).getUsableSpace() - size < reserve) throw new IOException("WAITING_FOR_DISK");
+        StreamingContentStore.safeWithin(root, directory);
+        Files.createDirectories(directory);
+        if (!Files.isDirectory(directory, LinkOption.NOFOLLOW_LINKS)) throw new IOException("UNSAFE_STORAGE");
         Path pending = Files.createTempFile(root.resolve("staging"), "pack-", ".part");
         MessageDigest hash = StreamingContentStore.borrowSha256();
         try {
@@ -72,12 +82,18 @@ final class SmallBlobPacks {
                 }
                 output.flush(); store.force(channel);
             }
-            Path target = packs.resolve(HexFormat.of().formatHex(hash.digest()) + ".pack");
+            Path target = directory.resolve(HexFormat.of().formatHex(hash.digest()) + ".pack");
             try { Files.createLink(target, pending); }
             catch (FileAlreadyExistsException existing) { validate(root, target); }
-            // The pack is durable before a loose object is made visible or a handle is acknowledged.
-            for (var row : rows.entrySet()) {
-                store.cacheSmall(new ContentHandle(row.getKey(), row.getValue().length), row.getValue(), verifiedInRun);
+            // The forced pack is visible before a handle can reach the inventory journal.
+            synchronized (this) {
+                long offset = 8;
+                for (var row : rows.entrySet()) {
+                    var handle = new ContentHandle(row.getKey(), row.getValue().length);
+                    addresses.put(handle, new Slice(target, offset + 36, size));
+                    offset += 36 + handle.size();
+                    if (verifiedInRun != null) verifiedInRun.add(handle);
+                }
             }
         } finally {
             StreamingContentStore.releaseSha256(hash);
@@ -85,50 +101,86 @@ final class SmallBlobPacks {
         }
     }
 
-    void recover(ContentHandle requested, StreamingContentStore store) throws IOException {
-        if (requested.size() > MAX_BLOB) return;
-        Path packs = root.resolve("packs"); StreamingContentStore.safeWithin(root, packs);
-        if (!Files.exists(packs, LinkOption.NOFOLLOW_LINKS)) return;
-        byte[] requestedDigestBytes = HexFormat.of().parseHex(requested.digest().value().substring(7));
-        try (var paths = Files.newDirectoryStream(packs, "*.pack")) {
-            for (Path pack : paths) {
-                StreamingContentStore.safeWithin(root, pack);
-                // Scan bounded headers first; do not hash every healthy pack on every miss.
-                boolean found = false;
-                try (var input = new DataInputStream(new BufferedInputStream(Files.newInputStream(pack, LinkOption.NOFOLLOW_LINKS), 65536))) {
-                    int count = header(input, pack);
-                    for (int i = 0; i < count; i++) {
-                        byte[] digest = input.readNBytes(32); int length = input.readInt(); checkRow(digest, length);
-                        if (requested.size() == length && Arrays.equals(requestedDigestBytes, digest)) found = true;
-                        input.skipNBytes(length);
-                    }
-                    if (input.read() != -1) throw new IOException("CAS_PACK_CORRUPT");
-                }
-                if (!found) continue;
-                validate(root, pack);
-                // Rebuild the whole bounded pack in one pass, avoiding one population scan per lost row.
-                try (var input = new DataInputStream(new BufferedInputStream(Files.newInputStream(pack, LinkOption.NOFOLLOW_LINKS), 65536))) {
-                    int count = header(input, pack);
-                    for (int i = 0; i < count; i++) {
-                        byte[] digest = input.readNBytes(32); int length = input.readInt(); checkRow(digest, length);
-                        byte[] bytes = input.readNBytes(length);
-                        var handle = new ContentHandle(new ContentDigest("sha256:" + HexFormat.of().formatHex(digest)), length);
-                        if (bytes.length != length || !ContentDigest.sha256(bytes).equals(handle.digest())) throw new IOException("CAS_PACK_CORRUPT");
-                        store.cacheSmall(handle, bytes);
-                    }
-                }
-                return;
+    synchronized boolean contains(ContentHandle handle) throws IOException {
+        if (handle.size() > MAX_BLOB) return false;
+        return indexed ? addresses.containsKey(handle) : index(handle, false) != null;
+    }
+
+    InputStream open(ContentHandle handle) throws IOException {
+        if (handle.size() > MAX_BLOB) return null;
+        Slice slice;
+        synchronized (this) {
+            slice = addresses.get(handle);
+            if (slice == null) slice = index(handle, true);
+        }
+        if (slice == null) return null;
+
+        // An address is only a lookup hint. Authenticate the exact member on every read.
+        StreamingContentStore.safeWithin(root, slice.pack());
+        byte[] bytes = new byte[Math.toIntExact(handle.size())];
+        try (var file = FileChannel.open(slice.pack(), StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS)) {
+            if (file.size() != slice.packSize()) throw new IOException("CAS_PACK_CORRUPT");
+            var destination = ByteBuffer.wrap(bytes);
+            while (destination.hasRemaining()) {
+                if (file.read(destination, slice.offset() + destination.position()) == -1)
+                    throw new IOException("CAS_PACK_CORRUPT");
             }
         }
+        if (!handle.digest().equals(ContentDigest.sha256(bytes))) throw new IOException("CAS_PACK_CORRUPT");
+        return new ByteArrayInputStream(bytes);
     }
 
-    private static int header(DataInputStream input, Path pack) throws IOException {
-        if (!Files.isRegularFile(pack, LinkOption.NOFOLLOW_LINKS) || Files.size(pack) > MAX_PACK || input.readInt() != MAGIC) throw new IOException("CAS_PACK_CORRUPT");
-        int rows = input.readInt(); if (rows < 1 || rows > MAX_ROWS) throw new IOException("CAS_PACK_CORRUPT"); return rows;
+    /** A miss scans pack headers again so another store's publications and older
+     * members evicted from the cache remain discoverable. */
+    private Slice index(ContentHandle requested, boolean reading) throws IOException {
+        StreamingContentStore.safeWithin(root, directory);
+        indexed = true;
+        if (!Files.exists(directory, LinkOption.NOFOLLOW_LINKS)) return null;
+        IOException malformed = null;
+        Slice found = null;
+        try (var paths = Files.newDirectoryStream(directory, "*.pack")) {
+            for (Path pack : paths) {
+                try {
+                    var members = readAddresses(pack);
+                    members.forEach(addresses::putIfAbsent);
+                    if (found == null) found = members.get(requested);
+                } catch (IOException unavailable) {
+                    if (malformed == null) malformed = unavailable;
+                }
+            }
+        }
+        if (found != null) addresses.put(requested, found);
+        else if (reading && malformed != null) throw malformed;
+        return found;
     }
 
-    private static void checkRow(byte[] digest, int length) throws IOException {
-        if (digest.length != 32 || length < 0 || length > MAX_BLOB) throw new IOException("CAS_PACK_CORRUPT");
+    private Map<ContentHandle, Slice> readAddresses(Path pack) throws IOException {
+        StreamingContentStore.safeWithin(root, pack);
+        if (!Files.isRegularFile(pack, LinkOption.NOFOLLOW_LINKS)) throw new IOException("CAS_PACK_CORRUPT");
+        long size = Files.size(pack);
+        if (size > MAX_PACK) throw new IOException("CAS_PACK_CORRUPT");
+        var addresses = new HashMap<ContentHandle, Slice>();
+        try (var input = new DataInputStream(new BufferedInputStream(Files.newInputStream(pack, LinkOption.NOFOLLOW_LINKS), 65536))) {
+            if (input.readInt() != MAGIC) throw new IOException("CAS_PACK_CORRUPT");
+            int count = input.readInt();
+            if (count < 1 || count > MAX_ROWS) throw new IOException("CAS_PACK_CORRUPT");
+            long offset = 8;
+            for (int i = 0; i < count; i++) {
+                byte[] digest = input.readNBytes(32);
+                int length = input.readInt();
+                if (digest.length != 32 || length < 0 || length > MAX_BLOB || offset + 36 + length > size)
+                    throw new IOException("CAS_PACK_CORRUPT");
+                var handle = new ContentHandle(new ContentDigest("sha256:" + HexFormat.of().formatHex(digest)), length);
+                if (addresses.put(handle, new Slice(pack, offset + 36, size)) != null)
+                    throw new IOException("CAS_PACK_CORRUPT");
+                input.skipNBytes(length);
+                offset += 36 + length;
+            }
+            if (offset != size || input.read() != -1) throw new IOException("CAS_PACK_CORRUPT");
+        } catch (EOFException truncated) {
+            throw new IOException("CAS_PACK_CORRUPT", truncated);
+        }
+        return addresses;
     }
 
     private static void validate(Path root, Path pack) throws IOException {

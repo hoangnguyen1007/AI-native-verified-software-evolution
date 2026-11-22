@@ -7,6 +7,13 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 class BoundedTasksTest {
+    @Test void workerBudgetHonorsExplicitLimitMachineCapacityAndHeapHeadroom() {
+        assertEquals(4,BoundedTasks.workerBudget(4,16,6L<<30,3L<<30));
+        assertEquals(8,BoundedTasks.workerBudget(16,16,6L<<30,3L<<30));
+        assertEquals(2,BoundedTasks.workerBudget(8,2,6L<<30,3L<<30));
+        assertEquals(2,BoundedTasks.workerBudget(8,16,6L<<30,64L<<20));
+        assertEquals(1,BoundedTasks.workerBudget(8,16,64L<<20,64L<<20));
+    }
     @Test void boundedJobsOverlapRetainInputOrderAndRefuseUnboundedAdmission() {
         var gate=new CountDownLatch(2);
         try(var work=new BoundedTasks(2,2,"fixture-workers",()->false)) {

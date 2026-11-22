@@ -65,8 +65,14 @@ public final class PolyglotScan {
     public Result run(String revision,RepositoryIntake intake,ReadinessPlan readiness,EvidenceContext context,
             Optional<Published> published,Path scratch,BooleanSupplier cancelled,
             Map<ContentDigest,byte[]> verifiedBytes,boolean fastArchitecture)throws IOException {
+        return run(revision,intake,readiness,context,published,scratch,cancelled,verifiedBytes::get,fastArchitecture,path->false);
+    }
+    Result run(String revision,RepositoryIntake intake,ReadinessPlan readiness,EvidenceContext context,
+            Optional<Published> published,Path scratch,BooleanSupplier cancelled,
+            java.util.function.Function<ContentDigest,byte[]> verifiedBytes,boolean fastArchitecture,
+            java.util.function.Predicate<String> installedDependency)throws IOException {
         var tables=new SemanticTables(intake.content(),65536);
-        var inventory=new PolyglotInventory().scan(revision,intake.inventory(),intake.content(),tables,cancelled);
+        var inventory=new PolyglotInventory().scan(revision,intake.inventory(),intake.content(),tables,cancelled,installedDependency);
         var languages=new TreeMap<String,Long>();var uncovered=new TreeMap<String,Long>();long[] counts={0,0,0};
         var profiles=LanguageProfile.baseline().stream().map(LanguageProfile::language).collect(java.util.stream.Collectors.toSet());
         profiles.add("protobuf");
@@ -160,7 +166,12 @@ public final class PolyglotScan {
         new StaticPolyglotScan().project(result.syntax(),result.tables(),store,context,cancelled);
         writer.evidence("polyglot.snapshot-binding",Map.of("graphSnapshot",graphSnapshot,"sourceSnapshot",result.context().snapshotIdentity(),"inventory",result.inventory().inventory(),"scope","CAPTURED_BASE_INVENTORY"));
         for(var gap:result.gaps())writer.node(gap.gapIdentity().value(),context,"CAPABILITY_GAP",writer.evidence("evidence.gap",gap));
+        long deferred=0;
         try(var rows=result.tables().open(result.inventory().entries(),cancelled)){SemanticTables.Row row;while((row=rows.next())!=null) {
+            if(PolyglotInventory.INSTALLED_DEPENDENCY_DEFERRED.equals(row.fields().get("reason"))){
+                deferred++;
+                continue;
+            }
             var support=writer.evidence("polyglot.inventory-entry",row);String identity=KnowledgeGraph.derivedIdentity("inventory-document",List.of(result.inventory().inventory(),row.key()));
             writer.node(identity,context,"INVENTORY_ENTRY",support);
             var path=new LogicalPath(GraphJson.string(row.fields().get("rawPath"))).utf8();
@@ -177,6 +188,12 @@ public final class PolyglotScan {
                 }
             }
         }}
+        if(deferred>0){
+            var support=writer.evidence("polyglot.dependency-inventory",Map.of("inventory",result.inventory().inventory(),
+                    "entries",result.inventory().entries(),"files",deferred,"disposition",PolyglotInventory.INSTALLED_DEPENDENCY_DEFERRED));
+            writer.node(KnowledgeGraph.derivedIdentity("dependency-inventory",List.of(result.inventory().inventory(),support)),
+                    context,"DEPENDENCY_INVENTORY",support);
+        }
         if(result.published().isPresent()) {
             var nativeInput=result.published().orElseThrow();writer.evidence("polyglot.publication",read(nativeInput.content(),nativeInput.publication().document()));
             writer.evidence("polyglot.root-report",nativeInput.report());

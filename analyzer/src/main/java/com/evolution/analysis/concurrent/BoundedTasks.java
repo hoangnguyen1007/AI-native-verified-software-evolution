@@ -23,7 +23,12 @@ public final class BoundedTasks implements AutoCloseable {
     }
     public static int automaticWorkers() {
         var runtime=Runtime.getRuntime();long headroom=runtime.maxMemory()-runtime.totalMemory()+runtime.freeMemory();
-        return (int)Math.max(1,Math.min(Math.min(4,runtime.availableProcessors()),Math.min(runtime.maxMemory()/(128L<<20),headroom/(32L<<20))));
+        return workerBudget(Integer.getInteger("evo.analysis.maxWorkers",4),runtime.availableProcessors(),runtime.maxMemory(),headroom);
+    }
+    static int workerBudget(int configured,int processors,long maxHeap,long headroom) {
+        int limit=Math.clamp(configured,1,8);
+        long heapLimit=Math.min(maxHeap/(128L<<20),headroom/(32L<<20));
+        return (int)Math.max(1,Math.min(Math.min(limit,processors),heapLimit));
     }
     private void check() {if(closed)throw new IllegalStateException("WORKERS_CLOSED");if(cancelled.getAsBoolean()||Thread.currentThread().isInterrupted())throw new CancellationException();}
     public <T> Task<T> submit(Callable<T> job) {

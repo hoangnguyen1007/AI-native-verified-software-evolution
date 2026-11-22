@@ -109,10 +109,12 @@ public final class AnalysisJobs implements AutoCloseable {
     public record View(String id, String setup, State state, Stage stage, long revision, Instant submittedAt,
                        Optional<Instant> startedAt, Optional<Instant> finishedAt, long elapsedMillis,
                        Optional<Stop> stop, Optional<String> error, List<Event> events, Optional<Result> result,
-                       boolean force, Optional<Reuse> reuse, Optional<ReuseDecision> reuseDecision) {
+                       boolean force, Optional<Reuse> reuse, Optional<ReuseDecision> reuseDecision,
+                       Optional<AnalysisMode> mode) {
         public View {
             Objects.requireNonNull(reuse);
             Objects.requireNonNull(reuseDecision);
+            Objects.requireNonNull(mode);
             if (reuse.isPresent() && (force || stage != Stage.FINISHED || result.isEmpty()
                     || reuse.orElseThrow().sourceJob().equals(id)
                     || (state != State.SUCCEEDED && state != State.PARTIAL)
@@ -123,13 +125,20 @@ public final class AnalysisJobs implements AutoCloseable {
                     Optional<Instant> startedAt, Optional<Instant> finishedAt, long elapsedMillis,
                     Optional<Stop> stop, Optional<String> error, List<Event> events, Optional<Result> result) {
             this(id, setup, state, stage, revision, submittedAt, startedAt, finishedAt, elapsedMillis, stop, error,
-                    events, result, false, Optional.empty(), Optional.empty());
+                    events, result, false, Optional.empty(), Optional.empty(), Optional.empty());
+        }
+        public View(String id, String setup, State state, Stage stage, long revision, Instant submittedAt,
+                    Optional<Instant> startedAt, Optional<Instant> finishedAt, long elapsedMillis,
+                    Optional<Stop> stop, Optional<String> error, List<Event> events, Optional<Result> result,
+                    boolean force, Optional<Reuse> reuse, Optional<ReuseDecision> reuseDecision) {
+            this(id, setup, state, stage, revision, submittedAt, startedAt, finishedAt, elapsedMillis, stop, error,
+                    events, result, force, reuse, reuseDecision, Optional.empty());
         }
     }
     public record Page<T>(List<T> items, int total, Optional<String> continuation) {}
     public record Submission(View job, boolean created) {}
     public record StageTiming(Stage stage, long durationMillis, Instant startedAt, Optional<Instant> endedAt) {}
-    public record Telemetry(String jobId, String setup, AnalysisMode mode, State state, Stage currentStage,
+    public record Telemetry(String jobId, String setup, Optional<AnalysisMode> mode, State state, Stage currentStage,
                             boolean reused, Optional<ReuseDecision> reuseDecision, long totalElapsedMillis,
                             Map<String, Long> stageMillis, List<StageTiming> stages) {
         public Telemetry {
@@ -219,7 +228,8 @@ public final class AnalysisJobs implements AutoCloseable {
         Job(Registration registration, int sequence) { this(registration,sequence,null); }
         Job(Registration registration,int sequence,AnalysisJobDiskStore.Saved previous){
             this.registration=registration;this.sequence=sequence;this.id=previous==null?UUID.randomUUID():UUID.fromString(previous.view().id());this.submitted=previous==null?Instant.now():previous.view().submittedAt();
-            if(previous!=null){this.revision=previous.view().revision()+1;this.force=previous.view().force();}
+            if(previous!=null){this.revision=previous.view().revision()+1;this.force=previous.view().force();
+                this.mode=previous.view().mode().orElse(AnalysisMode.FULL);}
             stageStartNanos.put(stage, submittedNanos);
             events.add(new Event(stage,Instant.now()));
         }
@@ -291,7 +301,9 @@ public final class AnalysisJobs implements AutoCloseable {
         AnalysisJobDiskStore.Saved previous=null;
         if(disk!=null)try{
             previous=disk.retry(idempotencyKey).orElse(null);
-            if(previous!=null){if(!previous.view().setup().equals(setup)||previous.view().force()!=force||!disk.intent(UUID.fromString(previous.view().id())).equals(registration.setup()))throw new Rejected("IDEMPOTENCY_CONFLICT");if(terminal(previous.view().state()))return new Submission(previous.view(),false);}
+            if(previous!=null){if(!previous.view().setup().equals(setup)||previous.view().force()!=force
+                    || previous.view().mode().orElse(AnalysisMode.FULL)!=mode
+                    ||!disk.intent(UUID.fromString(previous.view().id())).equals(registration.setup()))throw new Rejected("IDEMPOTENCY_CONFLICT");if(terminal(previous.view().state()))return new Submission(previous.view(),false);}
         }catch(IOException failure){throw new Rejected("JOB_STORAGE_UNAVAILABLE");}
         if (disk==null&&jobs.size() >= limits.history()) throw new Rejected("JOB_HISTORY_FULL");
         var job = new Job(registration, jobs.size() + 1,previous);job.force=force;job.mode=mode;job.retry=idempotencyKey; job.task = () -> execute(job);
@@ -335,7 +347,7 @@ public final class AnalysisJobs implements AutoCloseable {
                     ended.map(end -> Math.max(0L, end.toEpochMilli() - ev.at().toEpochMilli())).orElse(0L));
             stages.add(new StageTiming(ev.stage(), dur, ev.at(), ended));
         }
-        return new Telemetry(job.id.toString(), job.registration.setup().id(), job.mode, job.state, job.stage,
+        return new Telemetry(job.id.toString(), job.registration.setup().id(), Optional.of(job.mode), job.state, job.stage,
                 job.reuse != null, Optional.ofNullable(job.reuseDecision), totalMs, stageMs, stages);
     }
     private static Telemetry buildHistoricalTelemetry(View view) {
@@ -350,7 +362,7 @@ public final class AnalysisJobs implements AutoCloseable {
             stageMs.merge(ev.stage().name(), dur, Long::sum);
             stages.add(new StageTiming(ev.stage(), dur, ev.at(), ended));
         }
-        return new Telemetry(view.id(), view.setup(), AnalysisMode.FULL, view.state(), view.stage(),
+        return new Telemetry(view.id(), view.setup(), view.mode(), view.state(), view.stage(),
                 view.reuse().isPresent(), view.reuseDecision(), view.elapsedMillis(), stageMs, stages);
     }
     public synchronized View get(UUID id) { var active=jobs.get(id);return active!=null?view(active):saved(id).view(); }
@@ -367,7 +379,7 @@ public final class AnalysisJobs implements AutoCloseable {
         jobs.put(id,job);retries.put(job.retry,job);return view(job);
     }
     public synchronized View cancel(UUID id) { var job=jobs.get(id);if(job==null){var previous=saved(id);var v=previous.view();if(terminal(v.state()))return v;
-        var next=new View(v.id(),v.setup(),State.CANCELLED,Stage.FINISHED,v.revision()+1,v.submittedAt(),v.startedAt(),Optional.of(Instant.now()),v.elapsedMillis(),Optional.of(Stop.USER_CANCELLED),Optional.empty(),v.events(),v.result(),v.force(),Optional.empty(),v.reuseDecision());
+        var next=new View(v.id(),v.setup(),State.CANCELLED,Stage.FINISHED,v.revision()+1,v.submittedAt(),v.startedAt(),Optional.of(Instant.now()),v.elapsedMillis(),Optional.of(Stop.USER_CANCELLED),Optional.empty(),v.events(),v.result(),v.force(),Optional.empty(),v.reuseDecision(),v.mode());
         try{disk.save(previous.retry(),disk.intent(id),next,previous.gaps(),previous.inputProblems());}catch(IOException failure){throw new Rejected("JOB_STORAGE_UNAVAILABLE");}return next;}
         stop(job, Stop.USER_CANCELLED); return view(job); }
     private AnalysisJobDiskStore.Saved saved(UUID id){if(disk==null)throw new Rejected("JOB_NOT_FOUND");try{return disk.get(id).orElseThrow(()->new Rejected("JOB_NOT_FOUND"));}catch(IOException failure){throw new Rejected("JOB_STORAGE_UNAVAILABLE");}}
@@ -381,7 +393,7 @@ public final class AnalysisJobs implements AutoCloseable {
             AnalysisJobDiskStore.Saved candidate=null;
             for(var setup:setups.keySet())for(var saved:disk.queued(setup))if(!jobs.containsKey(UUID.fromString(saved.view().id()))){if(candidate==null||saved.view().submittedAt().isBefore(candidate.view().submittedAt()))candidate=saved;break;}
             if(candidate==null)return;var selected=candidate;var registration=setups.get(selected.view().setup());var intended=disk.intent(UUID.fromString(selected.view().id()));
-            if(!intended.equals(registration.setup())){var v=selected.view();var rejected=new View(v.id(),v.setup(),State.FAILED,Stage.FINISHED,v.revision()+1,v.submittedAt(),v.startedAt(),Optional.of(Instant.now()),v.elapsedMillis(),Optional.empty(),Optional.of("SETUP_CONFIGURATION_CHANGED"),v.events(),v.result(),v.force(),Optional.empty(),Optional.empty());disk.save(selected.retry(),intended,rejected,selected.gaps(),selected.inputProblems());continue;}
+            if(!intended.equals(registration.setup())){var v=selected.view();var rejected=new View(v.id(),v.setup(),State.FAILED,Stage.FINISHED,v.revision()+1,v.submittedAt(),v.startedAt(),Optional.of(Instant.now()),v.elapsedMillis(),Optional.empty(),Optional.of("SETUP_CONFIGURATION_CHANGED"),v.events(),v.result(),v.force(),Optional.empty(),Optional.empty(),v.mode());disk.save(selected.retry(),intended,rejected,selected.gaps(),selected.inputProblems());continue;}
             var job=new Job(registration,jobs.size()+1,selected);job.retry=selected.retry();job.task=()->execute(job);
             try{executor.execute(job.task);}catch(RejectedExecutionException full){return;}jobs.put(job.id,job);retries.put(job.retry,job);
         }}catch(IOException unavailable){throw new Rejected("JOB_STORAGE_UNAVAILABLE");}
@@ -481,7 +493,7 @@ public final class AnalysisJobs implements AutoCloseable {
         return new View(job.id.toString(), job.registration.setup().id(), job.state, job.stage, job.revision, job.submitted,
                 Optional.ofNullable(job.started), Optional.ofNullable(job.finished), Math.max(0, elapsed), Optional.ofNullable(job.stop),
                 Optional.ofNullable(job.error), List.copyOf(job.events), Optional.ofNullable(job.result),
-                job.force, Optional.ofNullable(job.reuse), Optional.ofNullable(job.reuseDecision));
+                job.force, Optional.ofNullable(job.reuse), Optional.ofNullable(job.reuseDecision), Optional.of(job.mode));
     }
     /** A high-water mark freezes membership. Live state/revisions remain explicitly operational. */
     public synchronized Page<View> history(int size, Optional<String> cursor) {

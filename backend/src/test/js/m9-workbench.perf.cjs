@@ -124,7 +124,11 @@ async function uiTrials(operation, rounds) {
     }
   };
   async function tab(name) {
-    press('#tab-' + name);
+    if (!get('#tab-' + name)) {
+      const group = get('#panel-' + name).closest('[data-view-group]');
+      if (group.hidden) press('#tab-' + group.dataset.viewGroup);
+      press('[data-open-tab="' + name + '"]');
+    } else press('#tab-' + name);
     await ready(() => get('#panel-' + name).getAttribute('aria-busy') === 'false' && !get('#panel-' + name).hidden);
   }
   async function inspect() {
@@ -133,6 +137,7 @@ async function uiTrials(operation, rounds) {
   }
   const actions = {
     search: async () => {
+      await tab('structure');
       get('#search').value = 'Client';
       press('#search-form button');
       await ready(() => get('#panel-structure .entity-row')?.textContent.includes('example.Client'));

@@ -422,12 +422,46 @@ paths:
       responses:
         '200': {$ref: '#/components/responses/Success'}
         default: {$ref: '#/components/responses/Error'}
+  /api/v1/graphs/{graph}/repository-score:
+    parameters: [{$ref: '#/components/parameters/Graph'}]
+    get:
+      operationId: repositoryScore
+      description: Versioned repository practices rubric, grounded in captured file paths. Partial inventories return bounds and an absent point score.
+      responses:
+        '200': {description: Repository score, applicable weights, observed paths and evidence identities}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      operationId: customGraphRepositoryScore
+      description: Computes the rubric with optional exact-path overrides on a published graph.
+      requestBody: {$ref: '#/components/requestBodies/RepositoryScorePaths'}
+      responses:
+        '200': {description: Repository score with the selected overrides}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/graphs/{graph}/policy-assessment:
+    parameters: [{$ref: '#/components/parameters/Graph'}]
+    post:
+      operationId: evaluateSnapshotPolicy
+      description: Evaluates the built-in cycle rule or supplied YAML against one published Java or Spring context. Returns a report identity when compilation succeeds.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [context]
+              properties:
+                context: {type: string}
+                policy: {type: string}
+      responses:
+        '200': {description: Resolved policy, assessment and report identity or compiler diagnostics}
+        default: {$ref: '#/components/responses/Error'}
   /api/v1/graphs/{graph}/architecture-insights:
     parameters:
       - {$ref: '#/components/parameters/Graph'}
     post:
       operationId: architectureInsights
-      description: Deterministic Tarjan SCC cycle/tangle detector, minimal cycle-breaking edge candidates backed by canonical edge evidence, Martin Instability and blast-radius hotspot ranking, cross-layer coupling matrix (DSM), and executive Markdown report.
+      description: Structural cycles, single-edge removal suggestions, exact transitive dependent counts within the available projection, coupling, and Markdown export. Suggestions whose removal was modeled in the projection carry simulated=true. Conditional edges in a union do not prove a cycle can occur in one configuration.
       requestBody:
         required: true
         content:
@@ -446,6 +480,112 @@ paths:
                     topN: {type: integer, minimum: 1, maximum: 50, default: 15}
       responses:
         '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/graphs/{graph}/architecture-chat:
+    parameters:
+      - {$ref: '#/components/parameters/Graph'}
+    post:
+      operationId: architectureChat
+      description: Retrieve architecture evidence for one immutable graph and context. A configured provider can use the offered metadata, submitted messages and optional captured code from a pinned finding. Remote requests require per-turn consent. Evidence-only requests make no model call.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [context, mode, messages]
+              properties:
+                context: {type: string, minLength: 1, maxLength: 8192}
+                mode: { type: string, enum: [EXPLORE, DESIGN, REPAIR] }
+                focus: {type: string, minLength: 1, maxLength: 256}
+                finding:
+                  type: object
+                  additionalProperties: false
+                  required: [report, identity, bundle]
+                  properties:
+                    report: {$ref: '#/components/schemas/Digest'}
+                    identity: {$ref: '#/components/schemas/Digest'}
+                    bundle: {$ref: '#/components/schemas/Digest'}
+                evidenceOnly: {type: boolean, default: false}
+                allowRemote: {type: boolean, default: false}
+                includeSource:
+                  type: boolean
+                  default: false
+                  description: Add captured source for validated citations on the attached finding when the model is used.
+                messages:
+                  type: array
+                  minItems: 1
+                  maxItems: 7
+                  description: Alternating user and assistant messages starting and ending with a user question. User messages are limited to 2400 characters and assistant messages to 4000.
+                  items:
+                    type: object
+                    additionalProperties: false
+                    required: [role, content]
+                    properties:
+                      role: {type: string, enum: [user, assistant]}
+                      content: {type: string, minLength: 1, maxLength: 4000}
+      responses:
+        '200':
+          description: Evidence packet, model advice, request for more evidence, or architecture scope redirect. Evidence and model exchanges have content digests.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - {$ref: '#/components/schemas/Envelope'}
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [version, status, pin, evidenceIdentity, citations, evidence, limitations]
+                        properties:
+                          version: {type: string, const: 'architecture.chat:v1'}
+                          status: {type: string, enum: [EVIDENCE_ONLY, ADVICE, UNVERIFIED_ADVICE, NEEDS_EVIDENCE, OUT_OF_SCOPE]}
+                          pin:
+                            type: object
+                            required: [graph, snapshot, context]
+                            properties:
+                              graph: {$ref: '#/components/schemas/Digest'}
+                              snapshot: {type: string}
+                              context: {type: string}
+                              finding:
+                                type: [object, 'null']
+                                properties:
+                                  report: {$ref: '#/components/schemas/Digest'}
+                                  identity: {$ref: '#/components/schemas/Digest'}
+                                  bundle: {$ref: '#/components/schemas/Digest'}
+                          evidenceIdentity: {$ref: '#/components/schemas/Digest'}
+                          answer: {type: [string, 'null']}
+                          citations: {type: array, items: {type: string}}
+                          evidence:
+                            type: array
+                            items:
+                              type: object
+                              required: [id, kind, label, identity, data]
+                              properties:
+                                id: {type: string}
+                                kind: {type: string, enum: [SUMMARY, STRUCTURE, SYMBOLS, DEPENDENCIES, FINDING, SOURCE]}
+                                label: {type: string}
+                                identity: {type: string}
+                                data: {type: object}
+                          limitations: {type: array, items: {type: string}}
+                          model:
+                            type: [object, 'null']
+                            properties:
+                              configuredModel: {type: string}
+                              returnedModel: {type: string}
+                              prompt: {$ref: '#/components/schemas/Digest'}
+                              request: {$ref: '#/components/schemas/Digest'}
+                              response: {$ref: '#/components/schemas/Digest'}
+                              sources:
+                                type: array
+                                items:
+                                  type: object
+                                  required: [path, digest, completeFile]
+                                  properties:
+                                    path: {type: string}
+                                    digest: {$ref: '#/components/schemas/Digest'}
+                                    completeFile: {type: boolean}
         default: {$ref: '#/components/responses/Error'}
   /api/v1/graph-pages/{graph}/{operation}:
     parameters:
@@ -644,11 +784,26 @@ paths:
       responses:
         '200': {$ref: '#/components/responses/JobDetail'}
         default: {$ref: '#/components/responses/Error'}
+  /api/v1/analysis/jobs/{job}/repository-score:
+    parameters: [{$ref: '#/components/parameters/Job'}]
+    get:
+      operationId: publishedRepositoryScore
+      description: Applies the repository rubric as soon as the analysis job has sealed its acquisition inventory. The graph field is null before semantic publication.
+      responses:
+        '200': {description: Score and evidence from the captured repository inventory}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      operationId: customPublishedRepositoryScore
+      description: Computes the rubric with exact path overrides on the job's sealed inventory.
+      requestBody: {$ref: '#/components/requestBodies/RepositoryScorePaths'}
+      responses:
+        '200': {description: Repository score with the selected overrides}
+        default: {$ref: '#/components/responses/Error'}
   /api/v1/analysis/jobs/{job}/telemetry:
     parameters: [{$ref: '#/components/parameters/Job'}]
     get:
       operationId: analysisJobTelemetry
-      description: Operational per-stage millisecond execution telemetry and mode/reuse status. Operational timing never enters canonical graph or report digests.
+      description: Operational per-stage millisecond execution telemetry and mode/reuse status. Mode is null when an older receipt did not record it. Operational timing never enters canonical graph or report digests.
       responses:
         '200': {$ref: '#/components/responses/JobSuccess'}
         default: {$ref: '#/components/responses/Error'}
@@ -687,6 +842,23 @@ paths:
 components:
   # The semantic adapter has its own version and does not add queryVersion.
   requestBodies:
+    RepositoryScorePaths:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required: [paths]
+            properties:
+              paths:
+                type: object
+                additionalProperties: false
+                properties:
+                  documentation: {type: string, maxLength: 1024}
+                  tests: {type: string, maxLength: 1024}
+                  automation: {type: string, maxLength: 1024}
+                  build: {type: string, maxLength: 1024}
     EvolutionEmpty:
       required: true
       content:
@@ -1039,6 +1211,7 @@ components:
         finishedAt: {type: [string, 'null'], format: date-time}
         elapsedMillis: {type: integer, minimum: 0}
         force: {type: boolean, default: false}
+        mode: {type: [string, 'null'], enum: [FULL, FAST_ARCHITECTURE, null]}
         reuseDecision: {type: [string, 'null'], enum: [INPUTS_UNVERIFIED, NO_MATCH, RESULT_UNAVAILABLE, BYPASSED, REUSED, null]}
         reuse:
           description: Present when this job verified its inputs and reused an earlier published result.
@@ -1090,7 +1263,7 @@ components:
       required: [id, version]
       properties:
         id: {const: architecture.query}
-        version: {const: m7.2-v2}
+        version: {const: m8.3-v1}
     Envelope:
       type: object
       required: [apiVersion, queryVersion, resultIdentity, data]

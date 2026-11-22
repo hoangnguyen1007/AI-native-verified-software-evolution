@@ -127,6 +127,20 @@ class LocalAnalysisRunnerTest {
             var expected = com.evolution.analysis.contract.common.ContentDigest.sha256Utf8("package api; public class Controller { private data.Repository repository;  }\n");
             assertTrue(citations.stream().map(GraphJson::object).anyMatch(c -> expected.value().equals(c.get("sourceDigest"))
                     && "src/main/java/api/Controller.java".equals(c.get("path"))));
+            var chatRef = Map.of("report",reportId.value(),"identity",finding.identity().value(),"bundle",bundle.identity().value());
+            var chat = new TreeMap<String,Object>(Map.of("context",bundle.context(),"mode","REPAIR","finding",chatRef,
+                    "messages",List.of(Map.of("role","user","content","Explain this dependency and propose a repair."))));
+            var chatPath = "/api/v1/graphs/" + graph.value() + "/architecture-chat";
+            var read = AnalysisJobApiTest.call(api,"POST",chatPath,CanonicalJson.write(chat));
+            assertEquals(200,read.status());
+            var chatEvidence = GraphJson.array(AnalysisJobApiTest.data(read).get("evidence")).stream().map(GraphJson::object).toList();
+            assertTrue(chatEvidence.stream().anyMatch(row -> "FINDING".equals(row.get("kind"))
+                    && bundle.region().jointRegion().value().equals(GraphJson.object(row.get("data")).get("region"))));
+            assertTrue(chatEvidence.stream().anyMatch(row -> "SOURCE".equals(row.get("kind"))
+                    && expected.value().equals(GraphJson.object(row.get("data")).get("sourceDigest"))));
+            assertFalse(new String(read.body(),StandardCharsets.UTF_8).contains("public class Controller"));
+            chat.put("finding",Map.of("report",reportId.value(),"identity",finding.identity().value(),"bundle",reportId.value()));
+            assertEquals(409,AnalysisJobApiTest.call(api,"POST",chatPath,CanonicalJson.write(chat)).status());
             for (var value:citations) {
                 var citation=GraphJson.object(value);
                 var evidenceRequest=CanonicalJson.write(Map.of("request",Map.of("context",citation.get("context"),"scope","ENTITY",
@@ -143,7 +157,8 @@ class LocalAnalysisRunnerTest {
             var options = AnalysisJobApiTest.call(api,"POST",base+"/repair-options",CanonicalJson.write(Map.of("arguments",proposalArgs)));
             assertEquals(200,options.status(),"A real captured repository can discover repair strategies");
             checkCapturedRepair(api,base,proposalArgs);
-            checkCapturedAi(api,base,proposalArgs);
+            chat.put("finding",chatRef);
+            checkCapturedAi(api,base,proposalArgs,chatPath,chat);
             var proposal = AnalysisJobApiTest.call(api,"POST",base+"/repair-proposal",CanonicalJson.write(Map.of("arguments",proposalArgs)));
             assertEquals(200,proposal.status());
             assertEquals("WITHHELD",AnalysisJobApiTest.data(proposal).get("status"),"A valid diagnosis outside the approved repair fixture cannot produce a patch");
@@ -211,7 +226,8 @@ class LocalAnalysisRunnerTest {
     private static byte[] readGitOutput(Process git) {
         try { return git.getInputStream().readAllBytes(); } catch (java.io.IOException failure) { throw new java.io.UncheckedIOException(failure); }
     }
-    private static void checkCapturedAi(ArchitectureQueryApi api,String base,Map<String,String> pinned) throws Exception {
+    private static void checkCapturedAi(ArchitectureQueryApi api,String base,Map<String,String> pinned,
+                                        String chatPath,Map<String,Object> chat) throws Exception {
         var model=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0);
         var requests=new AtomicInteger();
         var reply=new AtomicReference<String>();
@@ -229,8 +245,9 @@ class LocalAnalysisRunnerTest {
         });
         model.start();
         try {
+            var endpoint=URI.create("http://127.0.0.1:"+model.getAddress().getPort()+"/v1");
             var configured=ArchitectureQueryApi.withRepairModel(api,new RepairChatModel(
-                    URI.create("http://127.0.0.1:"+model.getAddress().getPort()+"/v1/chat/completions"),"captured-repair-test",null,false));
+                    endpoint,"captured-repair-test",null,false));
             var catalog=AnalysisJobApiTest.data(AnalysisJobApiTest.call(configured,"POST",base+"/repair-options",
                     CanonicalJson.write(Map.of("arguments",pinned))));
             assertEquals(0,requests.get(),"Discovery never transmits source");
@@ -271,7 +288,10 @@ class LocalAnalysisRunnerTest {
             assertEquals("INVALID_MODEL_OUTPUT",foreign.get("reason"));
             assertNull(foreign.get("proposal"));
 
-            reply.set(CanonicalJson.write(Map.of("edits",List.of(Map.of("file",controller,"before",before,"oldText",old,"newText","")))));
+            String original="package api; public class Controller { private data.Repository repository;  }\n";
+            String replacement="package api; public class Controller { }\n";
+            reply.set("```json\n"+CanonicalJson.write(Map.of("edits",List.of(Map.of("file",controller,"before",before,
+                    "startLine",1,"oldText","  "+original.replace("\n","\r\n"),"newText","  "+replacement))))+"\n```");
             var proposed=AnalysisJobApiTest.data(AnalysisJobApiTest.call(configured,"POST",base+"/repair-proposal",body));
             assertEquals("PROPOSED",proposed.get("status"),() -> CanonicalJson.write(proposed));
             var patch=GraphJson.object(GraphJson.object(proposed.get("proposal")).get("candidate"));
@@ -279,8 +299,34 @@ class LocalAnalysisRunnerTest {
             assertEquals("AI",patch.get("strategy"));
             assertEquals(ContentDigest.sha256Utf8(reply.get()).value(),patch.get("modelResponse"));
             assertEquals(ContentDigest.sha256Utf8(GraphJson.string(patch.get("patch"))).value(),patch.get("patchDigest"));
+            var edits=GraphJson.array(patch.get("edits"));
+            assertEquals(ContentDigest.sha256Utf8(replacement).value(),GraphJson.object(edits.getFirst()).get("after"));
             assertEquals(3,requests.get());
+
+            var chatApi=ArchitectureQueryApi.withArchitectureChat(configured,new ArchitectureChatModel(
+                    endpoint,"captured-repair-test",null,false));
+            reply.set("**Review** the controller's dependency.");
+            var metadata=AnalysisJobApiTest.call(chatApi,"POST",chatPath,CanonicalJson.write(chat));
+            assertEquals(200,metadata.status());
+            assertEquals(List.of(),GraphJson.array(modelInput(requestBody.get()).get("capturedSources")));
+            var withSource=new TreeMap<>(chat);
+            withSource.put("includeSource",true);
+            var response=AnalysisJobApiTest.call(chatApi,"POST",chatPath,CanonicalJson.write(withSource));
+            assertEquals(200,response.status());
+            var sent=GraphJson.array(modelInput(requestBody.get()).get("capturedSources"));
+            assertTrue(sent.stream().map(GraphJson::object).anyMatch(file -> original.equals(file.get("source"))));
+            var receipt=GraphJson.object(AnalysisJobApiTest.data(response).get("model"));
+            assertEquals(ContentDigest.sha256Utf8(requestBody.get()).value(),receipt.get("request"));
+            assertTrue(GraphJson.array(receipt.get("sources")).stream().map(GraphJson::object)
+                    .anyMatch(file -> ContentDigest.sha256Utf8(original).value().equals(file.get("digest"))));
+            assertFalse(new String(response.body(),StandardCharsets.UTF_8).contains("public class Controller"));
         } finally { model.stop(0); }
+    }
+
+    private static Map<String,Object> modelInput(String wire) {
+        var payload=GraphJson.object(GraphJson.read(wire,GraphJson.Limits.defaults()));
+        var message=GraphJson.object(GraphJson.array(payload.get("messages")).getLast());
+        return GraphJson.object(GraphJson.read(GraphJson.string(message.get("content")),GraphJson.Limits.defaults()));
     }
     private static void checkLiveDiagnosis(ArchitectureQueryApi api,String route,String request,String input,List<Object> citations) throws Exception {
         var server=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0);

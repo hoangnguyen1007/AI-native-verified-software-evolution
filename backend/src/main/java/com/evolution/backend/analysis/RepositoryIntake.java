@@ -14,6 +14,7 @@ import java.net.URI;
 import java.nio.file.*;
 import java.util.*;
 import java.util.function.BooleanSupplier;
+import java.util.function.Predicate;
 
 /** Product composition for the durable acquisition journey; no compiler, SQL or target execution in this boundary. */
 public final class RepositoryIntake implements AutoCloseable {
@@ -47,9 +48,13 @@ public final class RepositoryIntake implements AutoCloseable {
     public RepositoryContentStore content(){return content;}
     public JobJournal journal(){return inventory;}
     public ReadinessPlan readiness(String revision,ReadinessPlanner.Policy policy,BooleanSupplier cancelled)throws IOException{
+        return readiness(revision,policy,cancelled,false);
+    }
+    ReadinessPlan readiness(String revision,ReadinessPlanner.Policy policy,BooleanSupplier cancelled,boolean fast)throws IOException{
         if(cancelled.getAsBoolean()||Thread.currentThread().isInterrupted())throw new IOException("READINESS_CANCELLED");
         var manifest=inventory.manifest(revision).orElseThrow(()->new IOException("SEALED_INVENTORY_REQUIRED"));
-        var request=IngestionEvidence.digest(List.of(ReadinessPlan.PROVIDER,manifest,policy));
+        var request=IngestionEvidence.digest(fast?List.of(ReadinessPlan.PROVIDER,manifest,policy,"installed-node-dependency-scope:v1"):
+                List.of(ReadinessPlan.PROVIDER,manifest,policy));
         if(Files.isRegularFile(root.resolve("readiness/index.sqlite"),LinkOption.NOFOLLOW_LINKS)){
             try(var reports=new ReadinessReports(root.resolve("readiness"),content,true)){
                 var saved=reports.get(request,cancelled);if(saved.isPresent())return saved.orElseThrow();
@@ -58,7 +63,11 @@ public final class RepositoryIntake implements AutoCloseable {
         if(readOnly)throw new IOException("READINESS_PLAN_NOT_PUBLISHED");
         try(var reports=new ReadinessReports(root.resolve("readiness"),content)){
             var saved=reports.get(request,cancelled);if(saved.isPresent())return saved.orElseThrow();
-            var plan=new ReadinessPlanner(List.of(new PassiveReadinessDiscovery(),new MavenReadinessDiscovery())).plan(revision,inventory,content,policy,cancelled);
+            ReadinessPlan plan;
+            try {
+                plan=new ReadinessPlanner(List.of(new PassiveReadinessDiscovery(),new MavenReadinessDiscovery()))
+                        .plan(revision,inventory,content,policy,cancelled,fast?installedNodeDependencies(revision):path->false);
+            }catch(UncheckedIOException unavailable){throw unavailable.getCause();}
             reports.save(request,plan,cancelled);return plan;
         }
     }
@@ -81,7 +90,12 @@ public final class RepositoryIntake implements AutoCloseable {
     }
     public Map<String,Object> publishedOverview(String revision)throws IOException{
         if(!readOnly)throw new IllegalStateException("Overview must use published readiness");
-        var plan=readiness(revision,ReadinessPlanner.Policy.comprehensive(),()->Thread.currentThread().isInterrupted());
+        ReadinessPlan plan;
+        try {plan=readiness(revision,ReadinessPlanner.Policy.comprehensive(),()->Thread.currentThread().isInterrupted());}
+        catch(IOException unavailable){
+            if(!"READINESS_PLAN_NOT_PUBLISHED".equals(unavailable.getMessage()))throw unavailable;
+            plan=readiness(revision,ReadinessPlanner.Policy.comprehensive(),()->Thread.currentThread().isInterrupted(),true);
+        }
         int size=24;
         var roots=plan.roots().stream().limit(size).map(root->Map.of("id",root.id(),"directory",root.directory(),
                 "family",root.family(),"relatedRootCount",root.relatedRoots().size())).toList();
@@ -92,7 +106,8 @@ public final class RepositoryIntake implements AutoCloseable {
         return Map.of("schema","repository.readiness-overview:v1","plan",plan.identity(),"inventory",plan.inventory().inventory(),
                 "roots",roots,"rootCount",plan.roots().size(),"modules",modules,"moduleCount",plan.modules().size(),
                 "coverage",Map.of("discovered",selection.discovered().size(),"selected",selection.selected().size(),
-                        "unknownDimensions",selection.unknown().size(),"pending",plan.requirements().stream()
+                        "unknownDimensions",selection.unknown().size(),"dependencyInputs",plan.ownership().counts().getOrDefault("DEPENDENCY_INPUT",0L),
+                        "pending",plan.requirements().stream()
                                 .filter(requirement->requirement.state()==ReadinessPlan.State.PENDING).count()),
                 "semanticCoverage","NOT_EVALUATED");
     }
@@ -134,6 +149,18 @@ public final class RepositoryIntake implements AutoCloseable {
             parent=prefix+segment;
         }
         return false;
+    }
+    Predicate<String> installedNodeDependencies(String revision){
+        var existsCache=new HashMap<String,Boolean>();
+        return path->{
+            for(int start=0;(start=path.indexOf("node_modules/",start))>=0;start+="node_modules/".length()){
+                if(start!=0&&path.charAt(start-1)!='/')continue;
+                String owner=path.substring(0,start);
+                if(cachedExists(revision,owner+"package.json",existsCache)
+                        ||cachedExists(revision,owner+"pnpm-workspace.yaml",existsCache))return true;
+            }
+            return false;
+        };
     }
     private boolean cachedExists(String revision,String path,Map<String,Boolean> existsCache){
         var cached=existsCache.get(path);

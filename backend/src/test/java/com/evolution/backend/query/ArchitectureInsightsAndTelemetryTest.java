@@ -74,6 +74,44 @@ class ArchitectureInsightsAndTelemetryTest {
     }
 
     @Test
+    void cutSuggestionsAccountForSelfLoops() {
+        var f = new QueryFixture().node("A").node("B").edge("A", "B").edge("B", "A").edge("A", "A");
+        var data = insights(f);
+        var tangle = GraphJson.object(GraphJson.array(data.get("tangles")).getFirst());
+        for (var cut : GraphJson.array(tangle.get("breakCandidates"))) {
+            assertEquals(Boolean.FALSE, GraphJson.object(cut).get("breaksEntireTangle"));
+        }
+
+        var selfLoop = insights(new QueryFixture().node("A").edge("A", "A"));
+        var single = GraphJson.object(GraphJson.array(selfLoop.get("tangles")).getFirst());
+        assertEquals(Boolean.TRUE,
+                GraphJson.object(GraphJson.array(single.get("breakCandidates")).getFirst()).get("breaksEntireTangle"));
+    }
+
+    @Test
+    void largeProjectionCountsAllTransitiveDependentsAndDeduplicatesJoins() {
+        var fixture = new QueryFixture().node("entry").node("left").node("right").node("first")
+                .edge("entry", "left").edge("entry", "right").edge("left", "first").edge("right", "first");
+        String previous = "first";
+        for (int i = 0; i < 8_193; i++) {
+            String next = "chain" + i;
+            fixture.node(next).edge(previous, next);
+            previous = next;
+        }
+        var data = insights(fixture);
+        assertEquals(8_197, ((Number) GraphJson.object(data.get("summary")).get("analyzedEntities")).intValue());
+        assertEquals(8_196, ((Number) GraphJson.object(data.get("summary")).get("maxBlastRadius")).intValue());
+    }
+
+    private static Map<String, Object> insights(QueryFixture fixture) {
+        var result = postJson(new ArchitectureQueryApi(fixture.store()),
+                "/api/v1/graphs/" + fixture.graph().identity().value() + "/architecture-insights",
+                Map.of("request", fixture.request()));
+        assertEquals(200, result.status());
+        return GraphJson.object(body(result).get("data"));
+    }
+
+    @Test
     void fastArchitectureModeAndPerStageTelemetryStayIsolatedFromFullReuse(@TempDir Path temp) throws Exception {
         Path repo = Files.createDirectory(temp.resolve("repo"));
         Path cache = Files.createDirectory(temp.resolve("cache"));

@@ -2,6 +2,8 @@
 
 Open `client.no-store` in Workbench, choose **Diagnose finding**, then **Review repair proposal**. Workbench shows the affected modeled dependency, the plan and a downloadable unified patch. The proposal removes `Store store` from the empty `Client` constructor. It preserves `@Profile("dev")`, the `Store` bean and every other source byte. [Diagnosis contract](demo-finding-diagnosis.md) · [ADR-011](../decisions/ADR-011-full-pipeline-demo.md)
 
+This is the pinned compatibility path. For recipes and optional model edits on other analyzed snapshots see the [repository repair API](captured-repository-repair.md).
+
 ## Inputs and outputs
 
 `POST /api/v1/graphs/{graph}/reports/{report}/repair-proposal` accepts the same `identity`, `bundle` and `context` in `arguments` as `/diagnosis`, plus the exact `diagnosisInput` digest from that response. The backend regenerates and checks the diagnosis from the published artifacts. A mismatched digest returns `409 DIAGNOSIS_INPUT_MISMATCH`. Existing graph, report and finding checks still apply. Withheld diagnosis, unregistered fixture, missing source proof or an unavailable transformation returns `WITHHELD` with a reason and no patch.

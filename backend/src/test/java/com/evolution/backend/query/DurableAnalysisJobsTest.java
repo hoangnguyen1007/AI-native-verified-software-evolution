@@ -27,7 +27,7 @@ class DurableAnalysisJobsTest {
                 3, now, Optional.of(now), Optional.of(now), 0, Optional.empty(), Optional.of("ANALYSIS_FAILED"),
                 List.of(new AnalysisJobs.Event(AnalysisJobs.Stage.FINISHED, now)), Optional.empty());
         var oldView = new TreeMap<>(GraphJson.object(GraphJson.read(CanonicalJson.write(expected), GraphJson.Limits.defaults())));
-        oldView.keySet().removeAll(List.of("force", "reuse", "reuseDecision"));
+        oldView.keySet().removeAll(List.of("force", "reuse", "reuseDecision", "mode"));
         var content = new StreamingContentStore(root.resolve("content"));
         var gaps = content.put(new ByteArrayInputStream("{\"gaps\":[]}".getBytes(StandardCharsets.UTF_8)), () -> false);
         var inputs = content.put(new ByteArrayInputStream("{\"inputProblems\":[]}".getBytes(StandardCharsets.UTF_8)), () -> false);

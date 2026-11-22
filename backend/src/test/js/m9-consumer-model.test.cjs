@@ -5,8 +5,8 @@ const model = require('../../main/resources/web/model.js');
 
 test('overview counts lead to the matching context population', () => {
   const cards = model.summaryCards({status: 'PARTIAL', items: [{nodeCounts: {TYPE: 2, MODULE: 1, SOURCE_DOCUMENT: 2, CAPABILITY_GAP: 1}}]});
-  assert.deepEqual(cards.map(({kind, count}) => [kind, count]), [['TYPE', 2], ['MODULE', 1], ['SOURCE_DOCUMENT', 2], ['CAPABILITY_GAP', 1]]);
-  assert.deepEqual(cards.map(({tab}) => tab), ['structure', 'structure', 'structure', 'gaps']);
+  assert.deepEqual(cards.map(({kind, count}) => [kind, count]), [['TYPE', 2], ['MODULE', 1], ['SOURCE_DOCUMENT', 2]]);
+  assert.deepEqual(cards.map(({tab}) => tab), ['structure', 'structure', 'structure']);
   assert.equal(cards.every(card => card.observed), true);
 });
 
@@ -21,7 +21,7 @@ test('penalty evidence uses the exact structural operand or matching canonical f
 
 if (process.argv[2]) test('workbench model consumes the same loopback HTTP payloads as CLI and export', () => {
   const {summary, assessment, findings, bundle, bundleId, replay, metric, gaps, withheld} = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
-  assert.deepEqual(model.summaryCards(summary).map(card => card.count), [2, 1, 2, 0]);
+  assert.deepEqual(model.summaryCards(summary).map(card => card.count), [2, 1, 2]);
   assert.equal(model.assessment(assessment), '67.5 / 100');
   assert.equal(model.assessment(withheld), 'Unavailable');
   assert.equal(assessment.confidence.sufficient, true);
@@ -37,5 +37,5 @@ if (process.argv[2]) test('workbench model consumes the same loopback HTTP paylo
   assert.deepEqual([source.span.startLine, source.span.startColumn, source.span.endLine, source.span.endColumn], [1, 28, 1, 29]);
   const coupling = assessment.dimensions.find(dimension => dimension.id === 'health.coupling');
   assert.deepEqual(model.scoreEvidence(assessment, coupling, findings.items).metric.ratio, metric.items[0].ratio);
-  assert.match(model.pageInfo(gaps), /1 shown.*Incomplete evidence/);
+  assert.equal(model.pageInfo(gaps), '1 shown');
 });

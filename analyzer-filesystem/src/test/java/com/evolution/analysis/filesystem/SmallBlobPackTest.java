@@ -13,7 +13,7 @@ import static org.junit.jupiter.api.Assertions.*;
 class SmallBlobPackTest {
     @TempDir Path temp;
 
-    @Test void acquisitionGroupsSmallFilesAndColdReadsRecoverFromDurablePack() throws Exception {
+    @Test void acquisitionGroupsSmallFilesAndColdReadsUseDurablePackWithoutLooseFiles() throws Exception {
         Path source=Files.createDirectory(temp.resolve("source")), root=temp.resolve("cas");
         for(int i=0;i<40;i++) Files.writeString(source.resolve("source-"+i+".java"),"class C"+i+" {}\n");
         var content=new StreamingContentStore(root);
@@ -27,14 +27,11 @@ class SmallBlobPackTest {
         }
         assertTrue(Files.isDirectory(root.resolve("packs")),"Small source files must share a forced durable pack");
         try(var paths=Files.list(root.resolve("packs"))) { assertEquals(1,paths.filter(p->p.toString().endsWith(".pack")).count()); }
-        // Loose files are a derived read cache. Losing them must not lose acknowledged bytes.
-        for(var handle:handles) {
-            String hex=handle.digest().value().substring(7);
-            Files.delete(root.resolve("sha256").resolve(hex.substring(0,2)).resolve(hex.substring(2)));
-        }
+        for(var handle:handles) assertFalse(Files.exists(content.path(handle)), "A packed blob must not require a loose copy");
         var cold=new StreamingContentStore(root);
         for(var handle:handles) assertTrue(cold.verify(handle));
         try(var inventory=new SqliteInventoryStore(temp.resolve("metadata"),cold)) { assertTrue(inventory.verifySeal("capture",()->false)); }
+        for(var handle:handles) assertFalse(Files.exists(cold.path(handle)), "Reading a sealed blob must not write a loose copy");
     }
 
     @Test void repeatedBytesReusePackAndCorruptRecoveryNeverReplacesAcknowledgedContent()throws Exception {
@@ -45,11 +42,29 @@ class SmallBlobPackTest {
         Path pack;try(var paths=Files.list(root.resolve("packs"))){var files=paths.toList();assertEquals(1,files.size());pack=files.getFirst();}
         assertEquals(handle,content.put(new ByteArrayInputStream(bytes),()->false));
         String hex=handle.digest().value().substring(7);Path loose=root.resolve("sha256").resolve(hex.substring(0,2)).resolve(hex.substring(2));
+        // Import a loose copy as stored by the previous layout.
+        Files.createDirectories(loose.getParent());
+        Files.write(loose,bytes);
         byte[] corrupt=Files.readAllBytes(pack);corrupt[corrupt.length-1]^=1;Files.write(pack,corrupt);
         assertTrue(content.verify(handle),"A damaged unrelated recovery copy does not invalidate intact loose evidence");
         Files.delete(loose);
         assertEquals("CAS_PACK_CORRUPT",assertThrows(IOException.class,()->new StreamingContentStore(root).open(handle)).getMessage());
         assertFalse(Files.exists(loose),"Never cache unauthenticated pack bytes");
+    }
+
+    @Test void anOpenStoreFindsNewPacksFromAnotherWriter() throws Exception {
+        Path root=temp.resolve("cas");
+        var writer=new StreamingContentStore(root);
+        var reader=new StreamingContentStore(root);
+        byte[] first={1,2}, second={3,4};
+        writer.putSmallBatch(List.of(first));
+        assertTrue(reader.verify(new ContentHandle(ContentDigest.sha256(first),first.length)));
+        writer.putSmallBatch(List.of(second));
+        var secondHandle=new ContentHandle(ContentDigest.sha256(second),second.length);
+        try(var input=reader.range(secondHandle,1,1)) {
+            assertArrayEquals(new byte[]{4},input.readAllBytes());
+        }
+        assertFalse(Files.exists(reader.path(secondHandle)));
     }
 
     @Test void diskPressureAndInvalidBatchCannotPublishHandles()throws Exception {

@@ -10,7 +10,6 @@ import java.io.InputStream;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
 import org.apache.maven.model.Model;
 import org.apache.maven.model.Parent;
 import org.apache.maven.model.Repository;
@@ -27,45 +26,18 @@ final class MavenArtifactModelReader {
     private final LocalArtifactCache cache;
     private final BuildModelPolicy policy;
     private final Map<MavenCoordinate, DescriptorOutcome> descriptors = new HashMap<>();
+    private final Set<ArtifactRecord> validatedPoms = new HashSet<>();
 
-    // ---------------------------------------------------------------------------
-    // JVM-wide BOM model cache: caches DefaultModelBuilder's internal parsed/merged
-    // model objects by (groupId, artifactId, version, tag) so that
-    // spring-boot-dependencies and spring-cloud-dependencies are built ONCE per JVM
-    // across all MavenArtifactModelReader instances, not once per coordinate.
-    // ---------------------------------------------------------------------------
-    private static final ConcurrentHashMap<BomModelKey, Object> JVM_BOM_CACHE =
-            new ConcurrentHashMap<>(256);
-
-    private record BomModelKey(String groupId, String artifactId, String version, String tag) {}
-
-    /** Adapts our JVM-wide map to Maven's ModelCache interface. */
-    private static final ModelCache BOM_MODEL_CACHE = new ModelCache() {
-        @Override public void put(String groupId, String artifactId, String version, String tag, Object data) {
-            if (data != null) JVM_BOM_CACHE.putIfAbsent(new BomModelKey(groupId, artifactId, version, tag), data);
-        }
-        @Override public Object get(String groupId, String artifactId, String version, String tag) {
-            return JVM_BOM_CACHE.get(new BomModelKey(groupId, artifactId, version, tag));
-        }
-    };
-
-    // ---------------------------------------------------------------------------
-    // JVM-wide DescriptorOutcome cache: keyed by (policyKey + contentDigest of the
-    // root POM). Stores the final DescriptorOutcome only when no reads.exceeded and
-    // no ModelRejected/ModelBuildingException occurred — so only clean successful
-    // outcomes are cached. The key includes a canonicalized policy string so that
-    // different active-profile sets yield different cache entries.
-    // ---------------------------------------------------------------------------
     private static final int DESCRIPTOR_CACHE_MAX = 4096;
-    private static final ConcurrentHashMap<DescriptorCacheKey, DescriptorOutcome> DESCRIPTOR_CACHE =
-            new ConcurrentHashMap<>(512);
+    private static final Map<DescriptorCacheKey, CachedDescriptor> DESCRIPTOR_CACHE =
+            Collections.synchronizedMap(new LinkedHashMap<>(512, 0.75f, true) {
+                @Override protected boolean removeEldestEntry(Map.Entry<DescriptorCacheKey, CachedDescriptor> eldest) {
+                    return size() > DESCRIPTOR_CACHE_MAX;
+                }
+            });
 
-    private record DescriptorCacheKey(String policyKey, ContentDigest pomDigest) {}
-
-    private String policyKey() {
-        // Cheap stable string capturing policy fields that affect effective model output.
-        return policy.activeProfiles() + "|" + policy.inactiveProfiles() + "|" + policy.userProperties();
-    }
+    private record DescriptorCacheKey(MavenCoordinate coordinate, BuildModelPolicy policy, ContentDigest rootDigest) {}
+    private record CachedDescriptor(DescriptorOutcome outcome, List<ArtifactRecord> inputs) {}
 
     MavenArtifactModelReader(LocalArtifactCache cache, BuildModelPolicy policy) {
         this.cache = Objects.requireNonNull(cache);
@@ -82,29 +54,16 @@ final class MavenArtifactModelReader {
         var tolerantInBuild = new HashSet<MavenCoordinate>();
         Counter reads = new Counter();
         try {
-            Source source = source(expected, issues, used, reads, tolerantInBuild);
-            // Fast path: return a previously cached successful DescriptorOutcome for this
-            // exact POM content + policy combination, skipping all XML/BOM parsing.
-            // Only safe when validate() succeeded (no ModelRejected thrown) and reads were
-            // within budget (reads.exceeded == false) — both guaranteed by cache population below.
-            if (!reads.exceeded && !tolerantInBuild.contains(expected)) {
-                ContentDigest pomDigest = source.material.record().contentDigest();
-                DescriptorCacheKey cacheKey = new DescriptorCacheKey(policyKey(), pomDigest);
-                DescriptorOutcome cached = DESCRIPTOR_CACHE.get(cacheKey);
-                if (cached != null) {
-                    // Record the used artifact into cache tracking (provenance preservation).
-                    // The artifact evidence is already captured via source()'s cache.pom() call above.
-                    return cached;
-                }
-            }
+            var root = acquire(expected);
+            var key = new DescriptorCacheKey(expected, policy, root.record().contentDigest());
+            var cached = DESCRIPTOR_CACHE.get(key);
+            if (cached != null && currentInputs(root.record(), cached.inputs())) return cached.outcome();
+            Source source = source(expected, root, issues, used, reads, tolerantInBuild);
 
             var properties = new Properties();
             properties.putAll(policy.userProperties());
             var request = new DefaultModelBuildingRequest()
                     .setModelSource(source)
-                    // Attach JVM-wide BOM model cache so spring-boot-dependencies and
-                    // spring-cloud-dependencies are built ONCE per JVM, not once per coordinate.
-                    .setModelCache(BOM_MODEL_CACHE)
                     // Use Maven's tolerant mode only for a securely parsed descriptor whose
                     // duplicate dependency rows were proven semantically equivalent below.
                     .setValidationLevel(tolerantInBuild.contains(expected)
@@ -163,14 +122,8 @@ final class MavenArtifactModelReader {
             String packaging = Objects.toString(model.getPackaging(), "jar");
             var outcome = new DescriptorOutcome(
                     Optional.of(new Descriptor(packaging, dependencies, managed, List.copyOf(used.values()))), issues);
-            // Populate JVM-level descriptor cache for successful, non-reads-exceeded, non-tolerant builds.
-            // The cached outcome is returned verbatim on warm runs — the used Evidence is embedded in
-            // Descriptor.evidence() and was captured from cache.pom() artifacts() records above, so
-            // provenance (artifacts(), attempts()) stays correct on replay via the outer LocalArtifactCache.
-            if (!reads.exceeded && !tolerantInBuild.contains(expected)
-                    && DESCRIPTOR_CACHE.size() < DESCRIPTOR_CACHE_MAX) {
-                ContentDigest pomDigest = source.material.record().contentDigest();
-                DESCRIPTOR_CACHE.putIfAbsent(new DescriptorCacheKey(policyKey(), pomDigest), outcome);
+            if (!reads.exceeded && issues.isEmpty() && tolerantInBuild.isEmpty()) {
+                DESCRIPTOR_CACHE.put(key, new CachedDescriptor(outcome, List.copyOf(reads.inputs.values())));
             }
             return outcome;
         } catch (ModelRejected rejected) {
@@ -186,21 +139,41 @@ final class MavenArtifactModelReader {
         return new DescriptorOutcome(Optional.empty(), issues);
     }
 
-    private Source source(
-            MavenCoordinate coordinate,
-            List<Issue> issues,
-            Map<String, Evidence> used,
-            Counter reads,
-            Set<MavenCoordinate> tolerantInBuild) throws ModelRejected {
+    private LocalArtifactCache.Material acquire(MavenCoordinate coordinate) throws ModelRejected {
         try {
-            LocalArtifactCache.Material material = cache.pom(coordinate);
-            if (validate(material, coordinate, issues, used)) {
-                tolerantInBuild.add(coordinate);
-            }
-            return new Source(coordinate, material, reads);
+            return cache.pom(coordinate);
         } catch (LocalArtifactCache.Failure failure) {
             throw new ModelRejected(new Issue(failure.reason, failure.subject, failure.requirement, failure.evidence));
         }
+    }
+
+    private boolean currentInputs(ArtifactRecord root, List<ArtifactRecord> inputs) {
+        if (!root.equals(inputs.getFirst())) return false;
+        // Replay the resolver's acquisition order. Current bytes, provenance and budgets must all match.
+        for (int i = 1; i < inputs.size(); i++) {
+            var expected = inputs.get(i);
+            try {
+                if (!expected.equals(cache.pom(expected.coordinate().gav()).record())) return false;
+            } catch (LocalArtifactCache.Failure unavailable) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private Source source(MavenCoordinate coordinate, LocalArtifactCache.Material material,
+            List<Issue> issues, Map<String, Evidence> used, Counter reads,
+            Set<MavenCoordinate> tolerantInBuild) throws ModelRejected {
+        var record = material.record();
+        var evidence = record.evidence();
+        used.put(evidence.logicalId(), evidence);
+        if (!validatedPoms.contains(record)) {
+            int before = issues.size();
+            if (validate(material, coordinate, issues, used)) tolerantInBuild.add(coordinate);
+            else if (issues.size() == before) validatedPoms.add(record);
+        }
+        reads.inputs.putIfAbsent(coordinate, record);
+        return new Source(coordinate, material, reads);
     }
 
     private boolean validate(
@@ -208,7 +181,6 @@ final class MavenArtifactModelReader {
             MavenCoordinate coordinate,
             List<Issue> issues,
             Map<String, Evidence> used) throws ModelRejected {
-        used.put(material.record().evidence().logicalId(), material.record().evidence());
         Model raw;
         try {
             raw = SecurePomReader.read(material.bytes());
@@ -361,7 +333,7 @@ final class MavenArtifactModelReader {
             MavenCoordinate coordinate;
             try {
                 coordinate = new MavenCoordinate(group, artifact, version);
-                return source(coordinate, issues, used, reads, tolerantInBuild);
+                return source(coordinate, acquire(coordinate), issues, used, reads, tolerantInBuild);
             } catch (IllegalArgumentException exception) {
                 issues.add(issue(Reason.NON_EXACT_VERSION,
                         Objects.toString(group, "unknown") + ":" + Objects.toString(artifact, "unknown"),
@@ -409,7 +381,7 @@ final class MavenArtifactModelReader {
 
     private final class Source implements ModelSource2 {
         private final MavenCoordinate coordinate;
-        final LocalArtifactCache.Material material; // package-visible for descriptor-cache key
+        private final LocalArtifactCache.Material material;
         private final Counter reads;
 
         private Source(MavenCoordinate coordinate, LocalArtifactCache.Material material, Counter reads) {
@@ -501,6 +473,7 @@ final class MavenArtifactModelReader {
     }
 
     private static final class Counter {
+        final Map<MavenCoordinate, ArtifactRecord> inputs = new LinkedHashMap<>();
         private int value;
         private boolean exceeded;
     }
