@@ -423,4 +423,39 @@ class ResolutionInputsTest {
         assertTrue(structuralObs.stream().allMatch(o -> o.attribution() == SemanticStatus.UNRESOLVED));
         assertTrue(structuralObs.stream().allMatch(o -> o.span().isPresent() && !o.diagnostics().isEmpty()));
     }
+
+    @Test void explicitImportSolverRecoversCommonEnterpriseWildcardPackages() {
+        String source = """
+                package demo;
+                import com.fasterxml.jackson.annotation.*;
+                import org.mapstruct.*;
+                import org.springframework.http.*;
+                import reactor.core.publisher.*;
+                import jakarta.annotation.*;
+                @Mapper
+                class Demo {
+                    @JsonProperty("id")
+                    private String id;
+                    private other.MissingType missing;
+                    @PostConstruct
+                    public void init() {}
+                    public Mono<ResponseEntity<String>> fetch() { return null; }
+                }
+                """;
+        var base = TestInputs.request(Map.of("src/main/java/demo/Demo.java", source), List.of());
+        var env = new ResolutionEnvironment(base);
+        var unit = com.github.javaparser.StaticJavaParser.parse(source);
+        env.explicitImports.observeUnit(unit);
+        env.explicitImports.materialize(Set.of("demo.Demo"), env, false);
+        for (String fqn : List.of(
+                "org.mapstruct.Mapper",
+                "com.fasterxml.jackson.annotation.JsonProperty",
+                "jakarta.annotation.PostConstruct",
+                "reactor.core.publisher.Mono",
+                "org.springframework.http.ResponseEntity")) {
+            assertTrue(env.explicitImports.tryToSolveType(fqn).isSolved(),
+                    "Expected wildcard recovery for " + fqn);
+        }
+        assertFalse(env.explicitImports.tryToSolveType("other.MissingType").isSolved());
+    }
 }

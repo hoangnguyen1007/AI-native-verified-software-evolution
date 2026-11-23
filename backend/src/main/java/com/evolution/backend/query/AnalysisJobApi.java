@@ -20,6 +20,10 @@ final class AnalysisJobApi {
     AnalysisJobApi(AnalysisJobs jobs, ApiLimits limits, RepositoryConnections connections) { this.jobs = jobs; this.limits = limits; this.connections=connections; }
     AnalysisJobs.Limits limits() { return jobs.limits(); }
     boolean resultReuseEnabled() { return jobs.resultReuseEnabled(); }
+    AnalysisJobs.View view(String id) { return jobs.get(uuid(id)); }
+    AnalysisJobs.Page<com.evolution.analysis.evidence.CapabilityGapRecord> gaps(String id) {
+        return jobs.chatGaps(uuid(id));
+    }
     private static final class Failure extends RuntimeException {
         final int status; final String code;
         Failure(int status, String code) { this.status = status; this.code = code; }
@@ -67,6 +71,7 @@ final class AnalysisJobApi {
                 var id = uuid(parts[5]);
                 if (parts.length == 6) { method(method,"GET"); empty(body); data = jobs.get(id); }
                 else if (parts[6].equals("telemetry")) { method(method,"GET"); empty(body); data = jobs.telemetry(id); }
+                else if (parts[6].equals("coverage")) { method(method,"GET"); empty(body); data = coverage(id); }
                 else if (parts[6].equals("repository-score")) {
                     Map<String, String> paths;
                     if (method.equals("GET")) { empty(body); paths = Map.of(); }
@@ -91,6 +96,18 @@ final class AnalysisJobApi {
         catch (GraphJson.LimitExceededException large) { return error(413,"JSON_LIMIT_EXCEEDED"); }
         catch (IllegalArgumentException invalid) { return error(400,"INVALID_REQUEST"); }
         catch (RuntimeException failure) { return error(500,"INTERNAL_ERROR"); }
+    }
+    private Map<String,Object> coverage(UUID id) {
+        var result = jobs.get(id).result().orElseThrow(() -> new Failure(409,"JOB_NOT_FINISHED"));
+        var page = jobs.chatGaps(id);
+        var counts = new HashMap<String,Long>();
+        page.items().forEach(gap -> counts.merge(gap.reasonCode(),1L,Long::sum));
+        var top = counts.entrySet().stream().sorted(Map.Entry.<String,Long>comparingByValue().reversed()
+                .thenComparing(Map.Entry.comparingByKey())).limit(8)
+                .map(row -> Map.of("reason",row.getKey(),"count",row.getValue())).toList();
+        var obligations = com.evolution.backend.analysis.GapObligations.classify(counts);
+        return Map.of("completion",result.completion(),"totalGaps",result.gapCount(),"ledgerTotal",page.total(),
+                "counted",page.items().size(),"topReasons",top,"obligations",obligations);
     }
     private RepositoryScore.Result score(UUID id, Map<String, String> paths, BooleanSupplier cancelled) {
         if (connections == null) throw new Failure(404,"SCORE_INVENTORY_UNAVAILABLE");

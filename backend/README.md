@@ -10,7 +10,9 @@ Build the standalone runtime using the trusted-module commands in the [CLI build
 java -Xmx2g -cp cli/target/evo.jar com.evolution.backend.analysis.WorkbenchApiMain C:/sources/application https://example.org/team/application.git "C:/Program Files/Java/jdk-21" 21 C:/Users/me/.m2/repository C:/analysis/graphs 8080 C:/policies/architecture.yaml
 ```
 
-The final policy argument is optional (supply the port before it). A missing cache yields explicit dependency gaps. The output directory must exist and differ from the source root; a nested output directory is excluded from source capture. VCS is not inspected and the launcher records conservative caller-dirty provenance. The server binds only `127.0.0.1` and registers one setup named `local`. Ctrl+C closes server/job resources. Embeddings can register up to 32 named setups, exact Spring configuration evidence and alternative trusted runners.
+The final policy argument is optional (supply the port before it). The output directory must exist and differ from the source root. A nested output directory is excluded from source capture. For a local directory, the launcher records conservative caller-dirty provenance. The server binds only `127.0.0.1` and registers one setup named `local`. Ctrl+C closes server/job resources. Embeddings can register up to 32 named setups, exact Spring configuration evidence and alternative trusted runners.
+
+Workbench uses Maven Central on cache misses by default. Operators can replace the repository list before `-cp`, for example with `'-Devo.workbench.artifactRepositories=https://repo.maven.apache.org/maven2/ https://dl.google.com/dl/android/maven2/'`. Multiple space-separated HTTPS bases must be passed in one JVM argument. This setting applies to all connections managed by that Workbench process. HTTPS requests carry exact artifact coordinates. Choose an operator-controlled mirror when those coordinates require confidential handling. [Artifact policy and durable job behavior](../docs/architecture/m8-analysis-jobs.md#registered-inputs)
 
 ```powershell
 $base = 'http://127.0.0.1:8080/api/v1'

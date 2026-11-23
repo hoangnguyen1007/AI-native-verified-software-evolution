@@ -61,9 +61,31 @@ final class ExplicitImportTypeSolver implements TypeSolver {
             "Digits", "Pattern", "Email", "Positive", "PositiveOrZero", "Negative", "NegativeOrZero",
             "Past", "PastOrPresent", "Future", "FutureOrPresent", "AssertTrue", "AssertFalse");
 
+    private static final Set<String> JAVAX_COMMON_ANNOTATIONS = Set.of(
+            "PostConstruct", "PreDestroy", "Resource", "Resources", "Nullable", "Nonnull", "Generated", "Priority");
+
+    private static final Set<String> INJECT_TYPES = Set.of(
+            "Inject", "Named", "Qualifier", "Scope", "Singleton", "Provider");
+
+    private static final Set<String> SERVLET_HTTP_TYPES = Set.of(
+            "HttpServlet", "HttpServletRequest", "HttpServletResponse", "HttpSession", "Cookie", "Part");
+
+    private static final Set<String> JAXRS_TYPES = Set.of(
+            "GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "Path", "Produces", "Consumes",
+            "PathParam", "QueryParam", "HeaderParam", "CookieParam", "FormParam", "BeanParam",
+            "DefaultValue", "ApplicationPath", "WebApplicationException");
+
     private static final Map<String, Set<String>> WELL_KNOWN_WILDCARD_TYPES = Map.ofEntries(
             Map.entry("jakarta.persistence", JPA_TYPES),
             Map.entry("javax.persistence", JPA_TYPES),
+            Map.entry("jakarta.annotation", JAVAX_COMMON_ANNOTATIONS),
+            Map.entry("javax.annotation", JAVAX_COMMON_ANNOTATIONS),
+            Map.entry("jakarta.inject", INJECT_TYPES),
+            Map.entry("javax.inject", INJECT_TYPES),
+            Map.entry("jakarta.servlet.http", SERVLET_HTTP_TYPES),
+            Map.entry("javax.servlet.http", SERVLET_HTTP_TYPES),
+            Map.entry("jakarta.ws.rs", JAXRS_TYPES),
+            Map.entry("javax.ws.rs", JAXRS_TYPES),
             Map.entry("org.springframework.web.bind.annotation", Set.of(
                     "RestController", "ControllerAdvice", "RestControllerAdvice", "RequestMapping",
                     "GetMapping", "PostMapping", "PutMapping", "DeleteMapping", "PatchMapping",
@@ -71,6 +93,19 @@ final class ExplicitImportTypeSolver implements TypeSolver {
                     "CookieValue", "ModelAttribute", "SessionAttribute", "SessionAttributes",
                     "RequestAttribute", "RequestPart", "MatrixVariable", "ExceptionHandler",
                     "InitBinder", "ResponseStatus", "CrossOrigin", "RequestMethod", "ValueConstants", "BindParam")),
+            Map.entry("org.springframework.http", Set.of(
+                    "ResponseEntity", "HttpStatus", "HttpStatusCode", "HttpHeaders", "HttpMethod",
+                    "HttpEntity", "MediaType", "RequestEntity", "ProblemDetail", "CacheControl")),
+            Map.entry("org.springframework.web.client", Set.of(
+                    "RestTemplate", "RestClient", "HttpClientErrorException", "HttpServerErrorException", "RestClientException")),
+            Map.entry("org.springframework.web.reactive.function.client", Set.of(
+                    "WebClient", "ClientResponse", "WebClientResponseException", "ExchangeFilterFunction")),
+            Map.entry("org.springframework.cloud.openfeign", Set.of(
+                    "FeignClient", "EnableFeignClients")),
+            Map.entry("org.springframework.kafka.annotation", Set.of(
+                    "KafkaListener", "KafkaHandler", "EnableKafka", "TopicPartition", "PartitionOffset")),
+            Map.entry("org.springframework.amqp.rabbit.annotation", Set.of(
+                    "RabbitListener", "RabbitHandler", "EnableRabbit", "QueueBinding", "Queue", "Exchange")),
             Map.entry("org.springframework.stereotype", Set.of(
                     "Component", "Service", "Repository", "Controller", "Indexed")),
             Map.entry("org.springframework.beans.factory.annotation", Set.of(
@@ -79,6 +114,10 @@ final class ExplicitImportTypeSolver implements TypeSolver {
                     "Configuration", "Bean", "Import", "Profile", "Scope", "Lazy", "Primary", "DependsOn",
                     "ComponentScan", "PropertySource", "PropertySources", "Conditional", "Role",
                     "Description", "ImportResource", "ScopedProxyMode", "FilterType")),
+            Map.entry("org.springframework.context.event", Set.of(
+                    "EventListener", "ApplicationContextEvent", "ContextRefreshedEvent")),
+            Map.entry("org.springframework.core.annotation", Set.of(
+                    "Order", "AliasFor", "AnnotationUtils", "MergedAnnotations")),
             Map.entry("org.springframework.boot.autoconfigure", Set.of(
                     "SpringBootApplication", "EnableAutoConfiguration", "AutoConfiguration",
                     "AutoConfigureAfter", "AutoConfigureBefore", "AutoConfigureOrder", "SpringBootConfiguration")),
@@ -91,6 +130,8 @@ final class ExplicitImportTypeSolver implements TypeSolver {
             Map.entry("org.springframework.data.annotation", Set.of(
                     "Id", "Transient", "Version", "CreatedBy", "CreatedDate", "LastModifiedBy",
                     "LastModifiedDate", "PersistenceCreator", "Immutable", "ReadOnlyProperty", "Reference", "TypeAlias")),
+            Map.entry("org.springframework.data.domain", Set.of(
+                    "Page", "Pageable", "PageRequest", "PageImpl", "Sort", "Slice", "SliceImpl", "Example", "ExampleMatcher")),
             Map.entry("org.springframework.data.jpa.repository", Set.of(
                     "JpaRepository", "JpaSpecificationExecutor", "Query", "Modifying", "EntityGraph",
                     "Lock", "QueryHints", "Temporal", "Meta")),
@@ -107,6 +148,46 @@ final class ExplicitImportTypeSolver implements TypeSolver {
             Map.entry("javax.validation", VALIDATION_TYPES),
             Map.entry("jakarta.validation.constraints", VALIDATION_CONSTRAINT_TYPES),
             Map.entry("javax.validation.constraints", VALIDATION_CONSTRAINT_TYPES),
+            Map.entry("com.fasterxml.jackson.annotation", Set.of(
+                    "JsonProperty", "JsonIgnore", "JsonIgnoreProperties", "JsonInclude", "JsonCreator", "JsonValue",
+                    "JsonFormat", "JsonTypeInfo", "JsonSubTypes", "JsonAlias", "JsonAnyGetter", "JsonAnySetter",
+                    "JsonBackReference", "JsonManagedReference", "JsonIdentityInfo", "JsonNaming",
+                    "JsonPropertyOrder", "JsonRawValue", "JsonRootName", "JsonUnwrapped", "JsonView")),
+            Map.entry("com.fasterxml.jackson.databind", Set.of(
+                    "ObjectMapper", "JsonNode", "ObjectNode", "ArrayNode", "JavaType", "JsonSerializer",
+                    "JsonDeserializer", "SerializerProvider", "DeserializationContext", "SerializationFeature",
+                    "DeserializationFeature", "MapperFeature", "PropertyNamingStrategies", "Module")),
+            Map.entry("com.fasterxml.jackson.core.type", Set.of("TypeReference")),
+            Map.entry("org.slf4j", Set.of("Logger", "LoggerFactory", "MDC", "Marker", "MarkerFactory")),
+            Map.entry("org.mapstruct", Set.of(
+                    "Mapper", "Mapping", "Mappings", "MappingTarget", "AfterMapping", "BeforeMapping",
+                    "BeanMapping", "InheritInverseConfiguration", "InheritConfiguration", "Named", "Qualifier",
+                    "ValueMapping", "Condition", "Context", "NullValuePropertyMappingStrategy",
+                    "NullValueCheckStrategy", "NullValueMappingStrategy", "ReportingPolicy",
+                    "InjectionStrategy", "MappingConstants", "SubclassMapping", "ObjectFactory")),
+            Map.entry("io.swagger.v3.oas.annotations", Set.of(
+                    "Operation", "Parameter", "Parameters", "Hidden", "ExternalDocumentation", "Server", "Servers")),
+            Map.entry("io.swagger.v3.oas.annotations.media", Set.of(
+                    "Schema", "Content", "ArraySchema", "ExampleObject")),
+            Map.entry("io.swagger.v3.oas.annotations.responses", Set.of("ApiResponse", "ApiResponses")),
+            Map.entry("io.swagger.v3.oas.annotations.tags", Set.of("Tag", "Tags")),
+            Map.entry("io.swagger.v3.oas.annotations.security", Set.of("SecurityRequirement", "SecurityScheme")),
+            Map.entry("reactor.core.publisher", Set.of("Mono", "Flux", "Sinks", "Signal", "Hooks")),
+            Map.entry("com.google.common.collect", Set.of(
+                    "ImmutableList", "ImmutableMap", "ImmutableSet", "Lists", "Maps", "Sets",
+                    "Multimap", "BiMap", "Table", "Range")),
+            Map.entry("com.google.common.base", Set.of(
+                    "Preconditions", "Strings", "MoreObjects", "Objects", "Stopwatch", "Splitter",
+                    "Joiner", "Suppliers", "CaseFormat")),
+            Map.entry("org.assertj.core.api", Set.of(
+                    "Assertions", "SoftAssertions", "AbstractAssert", "Condition", "Tuple")),
+            Map.entry("androidx.annotation", Set.of(
+                    "NonNull", "Nullable", "VisibleForTesting", "UiThread", "MainThread", "WorkerThread",
+                    "StringRes", "DrawableRes", "IdRes", "ColorInt", "RequiresApi", "Keep", "RestrictTo")),
+            Map.entry("androidx.lifecycle", Set.of(
+                    "LiveData", "MutableLiveData", "ViewModel", "AndroidViewModel",
+                    "Lifecycle", "LifecycleOwner", "LifecycleObserver", "Observer")),
+            Map.entry("io.micrometer.core.annotation", Set.of("Timed", "Counted")),
             Map.entry("io.grpc", Set.of(
                     "Server", "ServerBuilder", "ServerServiceDefinition", "ServerInterceptor",
                     "ServerInterceptors", "ServerCall", "ServerCallHandler", "ManagedChannel",

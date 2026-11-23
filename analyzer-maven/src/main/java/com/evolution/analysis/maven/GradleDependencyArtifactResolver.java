@@ -14,7 +14,7 @@ import java.util.*;
 /** Passive recovery from exact Gradle declarations and verified Maven metadata.
  * Neither POM mediation nor this evidence order claims Gradle variant resolution. */
 public final class GradleDependencyArtifactResolver {
-    public static final VersionedIdentifier PROVIDER=new VersionedIdentifier("dependency.gradle-recovery","m8.4-compile-variants-v2");
+    public static final VersionedIdentifier PROVIDER=new VersionedIdentifier("dependency.gradle-recovery","m8.4-compile-variants-v3");
     public record Problem(String reason,String subject) implements Comparable<Problem> {
         public int compareTo(Problem other){int c=reason.compareTo(other.reason);return c==0?subject.compareTo(other.subject):c;}
     }
@@ -41,6 +41,7 @@ public final class GradleDependencyArtifactResolver {
         final List<DependencyAcquisitionResult> acquisitions=new ArrayList<>();
         final Set<ArtifactCoordinate> attempted=new HashSet<>();
         final Map<ArtifactCoordinate,DependencyAcquisitionResult.Artifact> artifacts=new HashMap<>();
+        final Map<ArtifactCoordinate,Optional<List<BinaryInput>>> androidInputs=new HashMap<>();
         final Map<MavenCoordinate,MavenArtifactModelReader.DescriptorOutcome> descriptors=new HashMap<>();
         final Set<Problem> acquisitionProblems=new TreeSet<>();
         long bytes;int requested;
@@ -73,41 +74,39 @@ public final class GradleDependencyArtifactResolver {
                 dependency.evidence().forEach(e->metadata.put(e.logicalId(),e));
                 var selected=coordinate(dependency,management,problems);selected.ifPresent(c->queue.add(new Pending(new ArtifactCoordinate(c,"jar",""),Set.copyOf(dependency.exclusions()),0)));
             }
-            var versions=new TreeMap<String,Set<MavenCoordinate>>();var binaries=new LinkedHashMap<ArtifactCoordinate,BinaryInput>();
+            var versions=new TreeMap<String,Set<MavenCoordinate>>();var binaries=new LinkedHashMap<ArtifactCoordinate,List<BinaryInput>>();
+            var aarDigests=new TreeMap<String,ContentDigest>();
             var visited=new HashSet<Pending>();int expanded=0;
             while(!queue.isEmpty()) {
                 check();var pending=queue.removeFirst();if(!visited.add(new Pending(pending.coordinate(),pending.exclusions(),0)))continue;var artifact=pending.coordinate();
                 if(pending.depth()>Math.min(64,policy.maxPasses())||++expanded>policy.maxCoordinates()){problems.add(new Problem("GRADLE_DEPENDENCY_WORKER_REQUIRED",artifact.notation()));continue;}
-                String key=artifact.gav().groupId()+":"+artifact.gav().artifactId();if(excluded(pending.exclusions(),key))continue;
-                MavenArtifactModelReader.DescriptorOutcome preOutcome=null;
-                if(artifact.extension().equals("jar")&&!java.nio.file.Files.exists(directory.resolve(artifact.repositoryPath()))) {
-                    preOutcome=descriptor(artifact.gav());
-                    if(preOutcome.descriptor().isPresent()&&preOutcome.descriptor().orElseThrow().packaging().equalsIgnoreCase("aar")) {
-                        artifact=new ArtifactCoordinate(artifact.gav(),"aar",artifact.classifier());
-                    }
-                }
+                var outcome=descriptor(artifact.gav());
+                outcome.issues().forEach(i->problems.add(new Problem(i.reason().name(),i.subject())));
+                if(outcome.issues().stream().anyMatch(i->i.reason()==ExactClasspathResult.Reason.RELOCATION_UNSUPPORTED))continue;
+                if(artifact.extension().equals("jar")&&outcome.descriptor().filter(d->d.packaging().equalsIgnoreCase("aar")).isPresent())
+                    artifact=new ArtifactCoordinate(artifact.gav(),"aar",artifact.classifier());
                 versions.computeIfAbsent(artifact.conflictKey(),ignored->new HashSet<>()).add(artifact.gav());
                 acquire(artifact);var verified=artifacts.get(artifact);
                 if(verified!=null) {
                     if(artifact.extension().equals("aar")) {
-                        var extracted=extractAarClassesJar(artifact);
-                        if(extracted.isPresent())binaries.putIfAbsent(artifact,extracted.orElseThrow());
+                        aarDigests.put(artifact.notation(),verified.contentDigest());
+                        var recovered=androidInputs.computeIfAbsent(artifact,key->recoverAndroidInputs(verified));
+                        if(recovered.isPresent())binaries.putIfAbsent(artifact,recovered.orElseThrow());
                         else problems.add(new Problem("GRADLE_BINARY_UNAVAILABLE",artifact.notation()));
                     } else {
-                        binaries.putIfAbsent(artifact,new BinaryInput(artifact.classpathEntry(verified.contentDigest()),directory.resolve(artifact.repositoryPath())));
+                        binaries.putIfAbsent(artifact,List.of(new BinaryInput(artifact.classpathEntry(verified.contentDigest()),directory.resolve(artifact.repositoryPath()))));
                     }
                 } else problems.add(new Problem("GRADLE_BINARY_UNAVAILABLE",artifact.notation()));
-                var outcome=preOutcome!=null?preOutcome:descriptor(artifact.gav());
-                outcome.issues().forEach(i->problems.add(new Problem(i.reason().name(),i.subject())));
                 if(outcome.descriptor().isEmpty())continue;
                 var descriptor=outcome.descriptor().orElseThrow();descriptor.evidence().forEach(e->metadata.put(e.logicalId(),new BuildModelResult.PomEvidence(e.logicalId(),e.digest())));
                 for(var child:descriptor.dependencies()) {
                     // POM-backed API variants expose compile-scoped dependencies.
                     // Runtime implementation details cannot poison a compile context.
                     if(child.optional()||!child.scope().equals("compile"))continue;
+                    String childKey=child.groupId()+":"+child.artifactId();
+                    if(excluded(pending.exclusions(),childKey))continue;
                     String childType=child.type().equals("bundle")?"jar":child.type();
                     if(!Set.of("jar","aar").contains(childType)){problems.add(new Problem("GRADLE_TRANSITIVE_VARIANT_REQUIRED",child.groupId()+":"+child.artifactId()));continue;}
-                    String childKey=child.groupId()+":"+child.artifactId();
                     if(!fixed(child.version())){problems.add(new Problem("GRADLE_VERSION_SELECTION_REQUIRED",childKey));continue;}
                     var exclusions=new TreeSet<>(pending.exclusions());exclusions.addAll(child.exclusions());
                     MavenCoordinate c;ArtifactCoordinate childArtifact;
@@ -123,8 +122,13 @@ public final class GradleDependencyArtifactResolver {
             // always has an effective-context obligation, even with a warm complete cache.
             problems.add(new Problem("GRADLE_EFFECTIVE_CONTEXT_REQUIRED",module.descriptor().path()+"#"+set.name()));
             var sourceSet=new UniversalSourceIngestion.SourceSet(set.module(),set.kind(),set.name());
-            var values=List.copyOf(binaries.values());var proof=CanonicalJson.sha256(List.of(PROVIDER,model.identity(),sourceSet,values.stream().map(BinaryInput::entry).toList(),projects,List.copyOf(problems),metadata));
+            var values=binaries.values().stream().flatMap(List::stream).toList();
+            var proof=CanonicalJson.sha256(List.of(PROVIDER,model.identity(),sourceSet,values.stream().map(BinaryInput::entry).toList(),projects,List.copyOf(problems),metadata,aarDigests));
             return new Context(sourceSet,values,List.copyOf(projects),List.copyOf(problems),List.copyOf(metadata.values()),proof);
+        }
+        Optional<List<BinaryInput>> recoverAndroidInputs(DependencyAcquisitionResult.Artifact receipt) {
+            try{return Optional.of(GradleAarInputs.recover(directory,receipt,policy.maxArtifactBytes(),policy.maxTotalBytes()));}
+            catch(java.io.IOException unavailable){return Optional.empty();}
         }
         void constraints(UniversalBuildModel.Module module,SourcePlanModel.Kind kind,boolean exported,Map<String,Set<MavenCoordinate>> result,
                          Map<String,BuildModelResult.PomEvidence> metadata,Set<Problem> problems,Set<ModuleIdentity> visiting) {
@@ -144,33 +148,6 @@ public final class GradleDependencyArtifactResolver {
                         outcome.descriptor().ifPresent(d->{d.evidence().forEach(e->metadata.put(e.logicalId(),new BuildModelResult.PomEvidence(e.logicalId(),e.digest())));for(var entry:d.managedDependencies())if(Set.of("jar","aar","bundle").contains(entry.type())&&entry.classifier().isEmpty()&&fixed(entry.version()))manage(result,new MavenCoordinate(entry.groupId(),entry.artifactId(),entry.version()));});
                     } else problems.add(new Problem("GRADLE_PLATFORM_VALUE_REQUIRED",dependency.notation()));
                 }
-            }
-        }
-        Optional<BinaryInput> extractAarClassesJar(ArtifactCoordinate artifact) {
-            Path aarPath=directory.resolve(artifact.repositoryPath());
-            Path extractedJar=directory.resolve(artifact.repositoryPath()+"-classes.jar");
-            try {
-                byte[] classesBytes=null;
-                try(var zis=new java.util.zip.ZipInputStream(java.nio.file.Files.newInputStream(aarPath))) {
-                    for(var entry=zis.getNextEntry();entry!=null;entry=zis.getNextEntry()) {
-                        if(!entry.isDirectory()&&entry.getName().equals("classes.jar")) {
-                            classesBytes=zis.readNBytes(Math.toIntExact(Math.min(policy.maxArtifactBytes(),100_000_000L)));
-                            break;
-                        }
-                    }
-                }
-                if(classesBytes==null) {
-                    var empty=new java.io.ByteArrayOutputStream();
-                    try(var jar=new java.util.jar.JarOutputStream(empty)) {}
-                    classesBytes=empty.toByteArray();
-                }
-                var digest=ContentDigest.sha256(classesBytes);
-                if(!java.nio.file.Files.exists(extractedJar)||!ContentDigest.sha256(java.nio.file.Files.readAllBytes(extractedJar)).equals(digest)) {
-                    java.nio.file.Files.write(extractedJar,classesBytes);
-                }
-                return Optional.of(new BinaryInput(artifact.classpathEntry(digest),extractedJar));
-            } catch(java.io.IOException|RuntimeException failure) {
-                return Optional.empty();
             }
         }
         boolean bootBom(UniversalBuildModel.Module module,UniversalBuildModel.Dependency dependency,Map<String,BuildModelResult.PomEvidence> metadata,Set<Problem> problems) {

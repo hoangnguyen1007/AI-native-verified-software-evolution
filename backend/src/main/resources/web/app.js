@@ -193,6 +193,7 @@
     $('analysis-mode-field').hidden = !state.capabilities?.analysisModes?.includes('FAST_ARCHITECTURE');
     $('analysis-mode').disabled = unavailable;
     $('analysis-mode-note').hidden = $('analysis-mode-field').hidden || $('analysis-mode').value !== 'FAST_ARCHITECTURE';
+    $('artifact-recovery-note').hidden = !state.setups.find(setup => setup.id === state.setup)?.artifactPolicy;
     $('analyze').disabled = unavailable;
     $('analyze').textContent = state.retry && !state.submitting ? 'Retry submission' : 'Run analysis';
     $('analyze-force').hidden = !state.capabilities?.analysisResultReuseEnabled ||
@@ -805,6 +806,155 @@
       contextFamily: state.contextKinds?.get(context), springContext: state.contextKinds?.get(context) === 'spring.context',
       query: (op, args = {}, page, overrides = {}) => api('/graphs/' + graph + '/queries/' + op, {request: {...request, ...overrides}, arguments: args, ...(page ? {page} : {})}, signal),
       report: (id, op, args = {}, page) => api('/graphs/' + graph + '/reports/' + id + '/' + op, {arguments: args, ...(page ? {page} : {})}, signal)};
+  }
+
+  function scoreRingSvg(rawScore, label) {
+    const num = Number(rawScore);
+    const pct = Number.isFinite(num) ? Math.max(0, Math.min(100, num)) : 0;
+    const r = 23, c = 2 * Math.PI * r;
+    const ns = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(ns, 'svg');
+    svg.setAttribute('viewBox', '0 0 60 60');
+    svg.setAttribute('class', 'score-ring');
+    svg.setAttribute('aria-hidden', 'true');
+    const track = document.createElementNS(ns, 'circle');
+    track.setAttribute('cx', '30'); track.setAttribute('cy', '30'); track.setAttribute('r', String(r));
+    track.setAttribute('class', 'score-ring-track');
+    const val = document.createElementNS(ns, 'circle');
+    val.setAttribute('cx', '30'); val.setAttribute('cy', '30'); val.setAttribute('r', String(r));
+    val.setAttribute('class', 'score-ring-value');
+    val.setAttribute('stroke-dasharray', String(c));
+    val.setAttribute('stroke-dashoffset', String(c * (1 - pct / 100)));
+    const text = document.createElementNS(ns, 'text');
+    text.setAttribute('x', '30'); text.setAttribute('y', '34');
+    text.setAttribute('text-anchor', 'middle');
+    text.setAttribute('class', 'score-ring-label');
+    text.textContent = label ?? (Number.isFinite(num) ? String(Math.round(pct)) : '—');
+    svg.append(track, val, text);
+    return svg;
+  }
+
+  async function streamArchitectureChat(graphId, payload, signal, handlers) {
+    const response = await fetch('/api/v1/graphs/' + graphId + '/architecture-chat/stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+      body: JSON.stringify(payload),
+      signal
+    });
+    if (!response.ok || !response.body) {
+      let msg = 'Architecture chat request failed.';
+      try { const err = await response.json(); msg = err?.error?.message || msg; } catch (_) {}
+      const e = new Error(msg);
+      e.status = response.status;
+      throw e;
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let finalResult = null;
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true }).replace(/\r\n?/g, '\n');
+      let sep;
+      while ((sep = buffer.indexOf('\n\n')) >= 0) {
+        const block = buffer.slice(0, sep);
+        buffer = buffer.slice(sep + 2);
+        let eventName = 'message';
+        const dataLines = [];
+        for (const line of block.split('\n')) {
+          if (line.startsWith('event:')) eventName = line.slice(6).trim();
+          else if (line.startsWith('data:')) dataLines.push(line.slice(5).trimStart());
+        }
+        if (!dataLines.length) continue;
+        const parsed = JSON.parse(dataLines.join('\n'));
+        if (eventName === 'stage') handlers?.onStage?.(parsed.message || '');
+        else if (eventName === 'tool') {
+          if (parsed.status === 'running') handlers?.onToolStart?.(parsed);
+          else handlers?.onToolComplete?.(parsed);
+        } else if (eventName === 'delta') handlers?.onDelta?.(parsed.text || '');
+        else if (eventName === 'complete') finalResult = parsed.data ?? parsed;
+        else if (eventName === 'error') throw new Error(parsed.error?.message || parsed.message || 'Architecture chat failed.');
+      }
+    }
+    if (!finalResult) throw new Error('Architecture chat stream ended without a final response.');
+    return finalResult;
+  }
+
+  function coverageCard(env, result) {
+    const section = card('Analysis coverage');
+    section.classList.add('job-coverage');
+    section.append(el('p', '', result.completion + ' · ' + result.gapCount.toLocaleString() + ' recorded gaps across the run'));
+    if (!result.gapCount) return section;
+    const body = el('div');
+    const details = append(el('details','inventory-details'),el('summary','','Gap reasons'),body);
+    const status = el('p','muted small');
+    status.setAttribute('role','status');
+    section.append(details);
+    let requested = false;
+    async function read() {
+      requested = true;
+      body.replaceChildren(status);
+      status.textContent = 'Reading the job gap ledger…';
+      try {
+        const value = await api('/analysis/jobs/' + env.jobId + '/coverage',undefined,env.signal,'GET');
+        if (env.signal.aborted) return;
+        status.textContent = value.ledgerTotal
+          ? 'Top reasons from ' + value.counted.toLocaleString() + ' of ' + value.ledgerTotal.toLocaleString() + ' job ledger records.'
+          : 'The job ledger has no records. This run reports gaps in the graph.';
+        if (value.obligations && value.counted > 0) {
+          const ob = value.obligations;
+          const total = Math.max(1, (ob.environment || 0) + (ob.authority || 0) + (ob.boundary || 0) + (ob.source || 0));
+          const barWrap = el('div', 'obligation-bar-wrap');
+          const bar = el('div', 'obligation-bar');
+          const legend = el('div', 'obligation-legend');
+          const items = [
+            ['environment', 'Environment', 'is-env'],
+            ['authority', 'Authority / policy', 'is-auth'],
+            ['boundary', 'Analyzer boundary', 'is-boundary'],
+            ['source', 'Source / dynamic', 'is-source']
+          ];
+          for (const [key, lbl, cls] of items) {
+            const count = ob[key] || 0;
+            if (!count) continue;
+            const seg = el('span', 'obligation-seg ' + cls);
+            seg.style.width = ((count / total) * 100).toFixed(1) + '%';
+            seg.title = `${lbl}: ${count}`;
+            bar.append(seg);
+            const dot = el('span', 'obligation-dot ' + cls);
+            legend.append(append(el('span', 'obligation-legend-item'), dot, el('span', '', `${lbl}: ${count.toLocaleString()}`)));
+          }
+          if (bar.childElementCount) {
+            barWrap.append(bar, legend);
+            body.append(barWrap);
+          }
+        }
+        if (!value.topReasons.length) return;
+        const reasons = el('dl','summary-table');
+        for (const row of value.topReasons) {
+          const label = row.reason.toLowerCase().replaceAll('_',' ').replace(/^./,c => c.toUpperCase());
+          const term = el('dt','',label);
+          term.title = row.reason;
+          const count = el('dd','',row.count.toLocaleString());
+          reasons.append(append(el('div','summary-row'),term,count));
+        }
+        body.append(reasons);
+        if (state.capabilities?.architectureChatEnabled) {
+          const topList = value.topReasons.slice(0, 5).map(r => `${r.reason} (${r.count})`).join(', ');
+          body.append(btn('Ask AI how to reduce these gaps', () => {
+            state.chatSeedPrompt = 'Explain the top analysis gap reasons in this run (' + topList + ') and recommend prioritized actions to improve coverage.';
+            return loadTab('architecture-chat');
+          }, 'button subtle'));
+        }
+      } catch (error) {
+        if (!env.signal.aborted) {
+          status.textContent = 'Gap reasons are unavailable.';
+          body.append(btn('Retry gap reasons',read));
+        }
+      }
+    }
+    details.addEventListener('toggle',() => { if (details.open && !requested) read(); });
+    return section;
   }
   async function loadTab(tab) {
     const panel = $('panel-' + tab);
@@ -1458,7 +1608,8 @@
       for (const file of options.ai.files || []) files.append(el('li','',file.path));
       const aiBtn = btn(`Propose with AI (${options.ai.provider?.model || 'configured'})`, () => executeProposalChoice(item, reportId, env, diagnosis, options, {
         strategy: 'AI',
-        modelInput: options.ai.input
+        modelInput: options.ai.input,
+        ...(state.capabilities?.architectureAgentEnabled ? { maxRepairAttempts: 3 } : {})
       }, propBody), 'btn primary btn-sm');
       aiBtn.disabled = true;
       approval.addEventListener('change',() => { aiBtn.disabled = !approval.checked; });
@@ -1472,11 +1623,21 @@
       const cand = proposal.proposal?.candidate || {};
       const patch = cand.patch || '';
       const targetList = cand.edits?.length ? cand.edits.map(e => e.path).join(', ') : (cand.edit?.path || 'source');
+      const attempts = Number(proposal.attempts ?? cand.attempts ?? 1);
+      const patchLines = patch.split('\n');
+      let addCount = 0, delCount = 0;
+      for (const l of patchLines) {
+        if (l.startsWith('+') && !l.startsWith('+++')) addCount++;
+        else if (l.startsWith('-') && !l.startsWith('---')) delCount++;
+      }
 
       const infoRow = el('div', 'remedy-patch-header');
       append(infoRow,
         el('span', 'badge good', 'Compiler Syntax PASSED'),
+        attempts > 1 ? el('span', 'badge good', `AI Self-Healed · ${attempts} attempts`) : null,
         el('span', 'badge warn', 'Unverified candidate'),
+        el('span', 'diff-stat-pill is-add', `+${addCount}`),
+        el('span', 'diff-stat-pill is-del', `-${delCount}`),
         el('span', 'small muted', `Target: ${targetList} · Strategy: ${cand.strategy || cand.engine?.version || 'RECIPE'}`)
       );
       propBody.append(infoRow);
@@ -1487,12 +1648,28 @@
 
       const diffBox = el('div', 'diff-viewer');
       const diffPre = el('pre', 'diff-code');
-      patch.split('\n').forEach(line => {
+      let oldLine = 0, newLine = 0;
+      patchLines.forEach(line => {
         const lineEl = el('div', 'diff-line');
-        if (line.startsWith('+') && !line.startsWith('+++')) lineEl.className += ' diff-add';
-        else if (line.startsWith('-') && !line.startsWith('---')) lineEl.className += ' diff-del';
-        else if (line.startsWith('@@')) lineEl.className += ' diff-chunk';
-        lineEl.textContent = line;
+        const hunk = line.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+        if (hunk) {
+          oldLine = Number(hunk[1]);
+          newLine = Number(hunk[2]);
+          lineEl.className += ' diff-chunk';
+          lineEl.textContent = line;
+        } else if (line.startsWith('+++') || line.startsWith('---')) {
+          lineEl.textContent = line;
+        } else if (line.startsWith('+')) {
+          lineEl.className += ' diff-add';
+          lineEl.append(el('span', 'diff-line-num', String(newLine++)), document.createTextNode(line));
+        } else if (line.startsWith('-')) {
+          lineEl.className += ' diff-del';
+          lineEl.append(el('span', 'diff-line-num', String(oldLine++)), document.createTextNode(line));
+        } else {
+          if (oldLine || newLine) lineEl.append(el('span', 'diff-line-num', String(newLine++ || oldLine++)));
+          lineEl.append(document.createTextNode(line));
+          if (oldLine) oldLine++;
+        }
         diffPre.append(lineEl);
       });
       diffBox.append(diffPre);
@@ -1809,7 +1986,10 @@
         const value = score.score == null
           ? score.status === 'WITHHELD' || score.lower == null || score.upper == null ? 'Unavailable' : (score.lower === score.upper ? score.lower : score.lower + '–' + score.upper) + ' / 100'
           : score.score + ' / 100';
-        result.replaceChildren(append(el('div', 'score-heading'), el('strong', 'score', value)));
+        const numericRing = score.score ?? (score.lower != null && score.upper != null ? (score.lower + score.upper) / 2 : null);
+        result.replaceChildren(append(el('div', 'score-heading'),
+          scoreRingSvg(numericRing, numericRing == null ? '—' : String(Math.round(numericRing))),
+          el('strong', 'score', value)));
         const rows = el('dl', 'score-checks');
         for (const check of score.checks) {
           const label = fields.find(([id]) => id === check.name)?.[1] ?? check.name;
@@ -1845,7 +2025,10 @@
     node.append(detail);
     let version = 0;
     function render(id, value, label) {
-      detail.replaceChildren(append(el('div', 'score-heading'), el('strong', 'score', M.assessment(value))));
+      const ringNum = value.score ?? value.overall ?? (value.lower != null && value.upper != null ? (value.lower + value.upper) / 2 : null);
+      detail.replaceChildren(append(el('div', 'score-heading'),
+        ringNum != null ? scoreRingSvg(ringNum, String(Math.round(ringNum))) : null,
+        el('strong', 'score', M.assessment(value))));
       if (label) detail.append(el('p', 'small muted', label));
       for (const dimension of value.dimensions ?? []) {
         detail.append(append(el('div', 'dimension'), btn(dimension.id.replace(/^health[.:]/, '').replaceAll('-', ' '),
@@ -1889,8 +2072,30 @@
     editorStatus.setAttribute('role', 'status');
     apply = btn('Apply rules', () => run(input.value.trim(), true), 'button primary');
     defaults = btn('Use default rules', () => run(null, true));
+    const autoDetect = state.capabilities?.suggestedPolicyEnabled
+      ? btn('Auto-detect rules', async () => {
+          autoDetect.disabled = true;
+          editorStatus.textContent = 'Detecting package layers from graph…';
+          try {
+            const suggested = await api('/graphs/' + env.graph + '/suggested-policy', { context: env.context }, env.signal);
+            if (suggested?.yaml) {
+              input.value = suggested.yaml;
+              editor.open = true;
+              const layers = (suggested.detectedLayers || []).join(' -> ');
+              editorStatus.textContent = layers
+                ? `Synthesized rules for layers: ${layers}. Click Apply rules to evaluate.`
+                : 'Synthesized starter policy from snapshot structure.';
+              input.focus();
+            }
+          } catch (err) {
+            if (!env.signal.aborted) editorStatus.textContent = err.message;
+          } finally {
+            autoDetect.disabled = false;
+          }
+        }, 'button auto-policy-button')
+      : null;
     editor.append(el('summary', '', 'Customize rules'), field('Template', preset), field('Policy YAML', input),
-      append(el('div', 'toolbar'), apply, defaults), editorStatus);
+      append(el('div', 'toolbar'), apply, autoDetect, defaults), editorStatus);
     node.append(editor);
     if (saved || !available.length) run(saved || null, false);
     return node;
@@ -1972,15 +2177,29 @@
     const selected = state.chatFinding;
     const finding = selected?.graph === env.graph && selected.context === env.context ? selected : null;
     const findingRef = finding && {report: finding.report, identity: finding.item.identity, bundle: finding.item.bundleIdentity};
+    const seedPrompt = state.chatSeedPrompt || '';
+    state.chatSeedPrompt = '';
     return window.mountEvoArchitectureChat({
       graph: env.graph, snapshot: env.snapshot, context: env.context, signal: env.signal,
+      job: state.resultJob?.result?.graph === env.graph ? state.resultJob.id : undefined,
       contextLabel: $('context').selectedOptions[0]?.textContent || env.context,
       provider: state.capabilities.architectureChatProvider, finding: findingRef,
       findingLabel: finding?.item.result?.rule?.id || finding?.item.result?.kind,
-      send: (input, signal) => api('/graphs/' + env.graph + '/architecture-chat',input,signal,'POST',90000),
+      agentEnabled: Boolean(state.capabilities?.architectureAgentEnabled),
+      seedPrompt,
+      send: (input, signal) => api('/graphs/' + env.graph + '/architecture-chat',input,signal,'POST',135000),
+      stream: state.capabilities?.architectureChatStreamEnabled
+        ? (input, signal, handlers) => streamArchitectureChat(env.graph, input, signal, handlers)
+        : undefined,
       clearFinding: () => { state.chatFinding = null; return loadTab('architecture-chat'); },
       openFinding: finding && (() => inspectFinding(finding.item,finding.report,env)),
-      openRepair: finding && (() => inspectDiagnosis(finding.item,finding.report,env)),
+      openRepair: finding && (async () => {
+        const args = {identity:finding.item.identity,bundle:finding.item.bundleIdentity,context:env.context};
+        const diagnosis = await api('/graphs/'+env.graph+'/reports/'+finding.report+'/diagnosis',{arguments:args},env.signal);
+        if (diagnosis.status !== 'CITATIONS_VALIDATED') return inspectDiagnosis(finding.item,finding.report,env,diagnosis);
+        return inspectCapturedRepair(finding.item,finding.report,env,diagnosis);
+      }),
+      chooseFinding: () => loadTab('policy'),
       openSource: row => inspect('Cited source evidence','SOURCE EVIDENCE',async signal => {
         const result = await api('/graphs/' + env.graph + '/queries/evidence',{
           request: {...M.request(row.context), scope:'ENTITY'}, arguments: {reference:row.reference}
@@ -2005,6 +2224,8 @@
         routes.append(btn('Open architecture chat',() => loadTab('architecture-chat'),'button primary'));
       next.append(routes);
       const grid = el('div', 'overview-layout'); node.append(next,grid);
+      const result = state.resultJob?.result;
+      if (env.jobId && result && state.capabilities?.analysisCoverageEnabled) grid.append(coverageCard(env,result));
       if (state.capabilities?.repositoryScoringEnabled) grid.append(repositoryScoreCard(env));
       const health = card('Architecture assessment');
       health.classList.add('overview-context');
@@ -2419,11 +2640,29 @@
           return load();
         });
         const inspectButton = btn('Node details', () => inspectNode(byId.get(selected.value)));
-        spotlight.disabled = inspectButton.disabled = true;
+        const blastButton = btn('Blast radius', async () => {
+          const id = selected.value;
+          if (!id) return;
+          const impact = await env.query('impact', { subject: id }, { size: 50 }, request);
+          if (!active()) return;
+          resetHighlight();
+          const affected = new Set([id, ...(impact.items || []).map(x => x.target || x.identity)]);
+          cy.elements().not(':parent').addClass('dimmed');
+          cy.nodes().filter(n => affected.has(n.id())).removeClass('dimmed').addClass('path-highlight');
+          cy.edges().filter(e => affected.has(e.source().id()) && affected.has(e.target().id())).removeClass('dimmed').addClass('path-highlight');
+          readout.replaceChildren(el('strong', '', fullLabel(byId.get(id))),
+            el('span', '', (impact.items?.length || 0) + ' transitive impacted items highlighted'));
+        });
+        const askAiNode = btn('Ask AI', () => {
+          const item = byId.get(selected.value);
+          state.chatSeedPrompt = 'Explain the responsibilities, incoming/outgoing dependencies, and refactoring risk of `' + (item ? fullLabel(item) : selected.value) + '`.';
+          return loadTab('architecture-chat');
+        });
+        spotlight.disabled = inspectButton.disabled = blastButton.disabled = askAiNode.disabled = true;
         const hubs = append(el('div','graph-node-list'), ...ranked.filter(item => degree.has(item.id)).slice(0, 4).map(item =>
           btn(fullLabel(item), () => selectNode(item.id), 'graph-node-link')));
         const rail = append(el('aside','graph-rail'), field('Node', selected), readout,
-          append(el('div','graph-node-actions'), inspectButton, spotlight),
+          append(el('div','graph-node-actions'), inspectButton, spotlight, blastButton, askAiNode),
           hubs.children.length ? append(el('div','graph-hubs'),el('h3','','Most connected'),hubs) : null);
         const zoomBy = scale => cy.zoom({level:cy.zoom() * scale, renderedPosition:{x:cy.width() / 2,y:cy.height() / 2}});
         const zoom = append(el('div','graph-zoom'),
@@ -2432,6 +2671,25 @@
         zoom.children[0].setAttribute('aria-label','Zoom out');
         zoom.children[1].setAttribute('aria-label','Zoom in');
         zoom.children[2].setAttribute('aria-label','Fit graph');
+        const filterChips = el('div', 'graph-filter-chips');
+        const activeFilter = { kind: 'ALL' };
+        const applyChipFilter = kind => {
+          activeFilter.kind = kind;
+          for (const ch of filterChips.children) ch.classList.toggle('is-active', ch.dataset.filter === kind);
+          if (!cy) return;
+          resetHighlight();
+          if (kind === 'ALL') return;
+          let matched;
+          if (kind === 'EXTERNAL') matched = cy.nodes().filter(n => n.data('external'));
+          else matched = cy.edges().filter(e => e.data('classification') === kind).connectedNodes().union(cy.edges().filter(e => e.data('classification') === kind));
+          cy.elements().not(':parent').not(matched).addClass('dimmed');
+          matched.addClass('map-active');
+        };
+        for (const [fk, fl] of [['ALL', 'All'], ['MUST', 'Required'], ['MAY', 'Conditional'], ['UNKNOWN', 'Uncertain'], ['EXTERNAL', 'External']]) {
+          const ch = btn(fl, () => applyChipFilter(fk), 'graph-chip' + (fk === 'ALL' ? ' is-active' : ''));
+          ch.dataset.filter = fk;
+          filterChips.append(ch);
+        }
         const dialog = el('dialog','map-fullscreen');
         dialog.setAttribute('aria-label', 'Expanded dependency map');
         const expand = btn('Expand map', () => {
@@ -2443,7 +2701,7 @@
         }, 'button graph-fullscreen-button');
         expand.title = 'Expand map (F)';
         zoom.append(expand);
-        const stage = append(el('div','graph-stage'), append(el('div','graph-stage-controls'),filter,zoom), canvas,
+        const stage = append(el('div','graph-stage'), filterChips, append(el('div','graph-stage-controls'),filter,zoom), canvas,
           append(el('div','map-legend'),
             el('span','legend-must','Required'), el('span','legend-may','Conditional'), el('span','legend-unknown','Uncertain'),
             visible.some(item => item.origin && item.origin !== 'PROJECT') ? el('span','legend-external','External') : null));
@@ -2454,7 +2712,7 @@
         const graphStyle = () => [
             {selector:'node', style:{label:'data(label)', 'font-size':12, 'font-weight':600, color:color('--map-label'),
               shape:'round-rectangle', 'background-color':color('--map-node'), 'border-color':color('--map-node-border'), 'border-width':1.2,
-              width:92, height:34, 'text-valign':'center', 'text-halign':'center', 'text-wrap':'ellipsis','text-max-width':83}},
+              width:'data(nodeWidth)', height:34, 'text-valign':'center', 'text-halign':'center', 'text-wrap':'ellipsis','text-max-width':115}},
             {selector:':parent',style:{'background-color':color('--map-group'), 'background-opacity':.22, 'border-width':1,
               'border-color':color('--map-node-border'), padding:20, 'text-valign':'top','text-halign':'center','text-max-width':165}},
             {selector:'node[?external]',style:{'background-color':color('--map-external'),'border-color':color('--map-edge')}},
@@ -2470,9 +2728,13 @@
           ];
         try {
           cy = window.cytoscape({container: canvas, elements: [
-            ...graph.nodes.filter(item => included.has(item.id)).map(item => ({data: {...item, label: label(item), fullLabel: fullLabel(item),
-              parent: included.has(item.parent) ? item.parent : undefined, activationStatus: item.properties?.activationStatus,
-              external: Boolean(item.origin && item.origin !== 'PROJECT')}})),
+            ...graph.nodes.filter(item => included.has(item.id)).map(item => {
+              const deg = degree.get(item.id) || 0;
+              return {data: {...item, label: label(item), fullLabel: fullLabel(item),
+                nodeWidth: Math.min(152, 88 + deg * 4),
+                parent: included.has(item.parent) ? item.parent : undefined, activationStatus: item.properties?.activationStatus,
+                external: Boolean(item.origin && item.origin !== 'PROJECT')}};
+            }),
             ...edges.map(item => ({data:item}))
           ], layout: layoutConfig(layout.value), minZoom: .06, maxZoom: 3, wheelSensitivity: .17, style:graphStyle()});
         } catch (error) {
@@ -2499,7 +2761,7 @@
           const item = byId.get(id), picked = cy.getElementById(id);
           if (!item || compound(item) || !picked.length) return;
           selected.value = id;
-          spotlight.disabled = inspectButton.disabled = false;
+          spotlight.disabled = inspectButton.disabled = blastButton.disabled = askAiNode.disabled = false;
           filter.value = '';
           resetHighlight();
           const neighborhood = picked.closedNeighborhood();
@@ -2511,7 +2773,7 @@
         selected.addEventListener('change', () => {
           if (selected.value) { selectNode(selected.value); return; }
           resetHighlight();
-          spotlight.disabled = inspectButton.disabled = true;
+          spotlight.disabled = inspectButton.disabled = blastButton.disabled = askAiNode.disabled = true;
           readout.textContent = 'Select a node to see where its arrows lead.';
         });
         filter.addEventListener('input', () => {
@@ -2601,7 +2863,9 @@
       const kinds = {
         CALLS_SERVICE: 'Service connection',
         INVOKES_RPC: 'RPC connection',
+        PUBLISHES_EVENT: 'Event flow',
         'polyglot.service-call.candidate': 'HTTP route candidate',
+        'polyglot.event-flow.candidate': 'Event topic candidate',
         'polyglot.grpc-service-call.candidate': 'gRPC route candidate',
         'polyglot.grpc-contract.candidate': 'gRPC contract candidate',
         'polyglot.grpc-implements.candidate': 'gRPC implementation candidate'
@@ -2686,7 +2950,12 @@
             const item = append(el('details', 'insights-cycle'),
               el('summary', '', tangle.memberCount + ' entities · ' + tangle.internalEdgeCount + ' internal dependencies'),
               el('p', 'small', tangle.memberLabels.slice(0, 10).join(', ') + (tangle.memberLabels.length > 10 ? ' …' : '')),
-              btn('Explore group in graph', () => openGraph(tangle.members[0], sc)));
+              append(el('div', 'toolbar'),
+                btn('Explore group in graph', () => openGraph(tangle.members[0], sc)),
+                state.capabilities?.architectureChatEnabled ? btn('Ask AI to decouple', () => {
+                  state.chatSeedPrompt = 'How should we safely decouple the dependency cycle among ' + tangle.memberLabels.slice(0, 8).join(', ') + '?';
+                  return loadTab('architecture-chat');
+                }, 'button subtle') : null));
             for (const cut of tangle.breakCandidates) {
               item.append(append(el('div', 'insights-cut'), el('strong', '', cut.sourceLabel + ' → ' + cut.targetLabel),
                 el('p', 'small muted', cut.rationale),
@@ -2699,15 +2968,54 @@
 
           const hotspots = card('Highest-impact entities', 'Prioritized using observed coupling, cycle membership and available policy findings.');
           if (data.hotspots.length) {
-            hotspots.append(table(['Entity', 'Risk score', 'Dependents', 'Direct in / out'], data.hotspots.map(h => append(el('tr'),
-              append(el('td'), btn(h.label, () => openGraph(h.identity, sc), 'text-button')),
-              el('td', '', h.hotspotScore), el('td', '', h.transitiveDependents), el('td', '', h.fanIn + ' / ' + h.fanOut)))));
+            const maxRisk = Math.max(1, ...data.hotspots.map(h => h.hotspotScore || 0));
+            hotspots.append(table(['Entity', 'Archetype', 'Risk score', 'Dependents', 'Direct in / out'], data.hotspots.map(h => {
+              const fill = el('div', 'hotspot-risk-fill');
+              fill.style.width = Math.min(100, Math.round(((h.hotspotScore || 0) / maxRisk) * 100)) + '%';
+              const riskCell = append(el('div', 'hotspot-risk-wrap'), el('span', '', h.hotspotScore), append(el('div', 'hotspot-risk-bar'), fill));
+              return append(el('tr'),
+                append(el('td'), btn(h.label, () => openGraph(h.identity, sc), 'text-button')),
+                el('td', '', h.archetype || '—'),
+                append(el('td'), riskCell),
+                el('td', '', h.transitiveDependents),
+                el('td', '', h.fanIn + ' / ' + h.fanOut));
+            })));
           } else hotspots.append(el('p', 'small muted', 'No project entities in this projection.'));
           body.append(hotspots);
 
           const cells = data.couplingMatrix.cells;
+          const orderedGroups = data.couplingMatrix.orderedGroups || [];
           if (cells.length) {
             const coupling = card('Cross-group coupling', 'Showing ' + Math.min(cells.length, 20) + ' of ' + cells.length + ' group pairs by evidence weight.');
+            if (orderedGroups.length >= 2 && orderedGroups.length <= 16) {
+              const cellMap = new Map(cells.map(c => [`${c.fromGroup}\0${c.toGroup}`, c]));
+              const maxWeight = Math.max(1, ...cells.map(c => c.edgeCount || 0));
+              const dsm = el('table', 'dsm-matrix');
+              const headRow = el('tr');
+              headRow.append(el('th', '', 'From \\ To'));
+              orderedGroups.forEach((g, idx) => { const th = el('th', '', String(idx + 1)); th.title = g; headRow.append(th); });
+              const dsmBody = el('tbody');
+              orderedGroups.forEach((fromG, r) => {
+                const tr = el('tr');
+                const rowHead = el('th', '', `${r + 1}. ${fromG.split('.').at(-1)}`);
+                rowHead.title = fromG;
+                tr.append(rowHead);
+                orderedGroups.forEach((toG, c) => {
+                  if (r === c) { tr.append(el('td', 'dsm-cell is-self', '·')); return; }
+                  const hit = cellMap.get(`${fromG}\0${toG}`);
+                  const td = el('td', 'dsm-cell' + (hit?.backEdge ? ' is-backedge' : ''), hit ? String(hit.edgeCount) : '');
+                  if (hit) {
+                    const alpha = (0.14 + 0.56 * Math.min(1, hit.edgeCount / maxWeight)).toFixed(2);
+                    td.style.background = `color-mix(in srgb, var(--wb-accent) ${Math.round(alpha * 100)}%, transparent)`;
+                    td.title = `${fromG} → ${toG}: ${hit.edgeCount} deps (weight ${hit.supportWeight})`;
+                  }
+                  tr.append(td);
+                });
+                dsmBody.append(tr);
+              });
+              dsm.append(append(el('thead'), headRow), dsmBody);
+              coupling.append(append(el('div', 'dsm-matrix-scroll'), dsm));
+            }
             coupling.append(table(['From', 'To', 'Dependencies', 'Evidence weight'], cells.slice(0, 20).map(cell => append(el('tr'),
               el('td', '', cell.fromGroup), el('td', '', cell.toGroup), el('td', '', cell.edgeCount), el('td', '', cell.supportWeight)))));
             body.append(coupling);
@@ -2774,7 +3082,14 @@
     if ($('repository-workspace').hidden) return;
     const tag = document.activeElement?.tagName;
     const inInput = ['INPUT', 'TEXTAREA', 'SELECT'].includes(tag) || document.activeElement?.isContentEditable;
-    if ((event.key === '/' && !inInput && !event.ctrlKey && !event.metaKey) || ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k')) {
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+      if (!$('connect-dialog').open && !$('inspector').open) {
+        event.preventDefault();
+        window.EvoCommandPalette?.open?.();
+      }
+      return;
+    }
+    if (event.key === '/' && !inInput && !event.ctrlKey && !event.metaKey) {
       if (!$('analysis-workspace').hidden && !$('connect-dialog').open && !$('inspector').open) {
         event.preventDefault();
         if (state.tab !== 'structure') safe(() => loadTab('structure'));
@@ -2840,6 +3155,26 @@
   }
   window.addEventListener('resize', () => { state.cy?.resize(); syncSidebarState(); });
   syncSidebarState();
+  window.EvoWorkbench = {
+    async searchSymbols(query) {
+      if (!state.graph || !state.context) return [];
+      const res = await api('/graphs/' + state.graph + '/queries/symbols', {
+        request: { ...M.request(state.context), scope: 'TYPE' },
+        arguments: { query },
+        page: { size: 8 }
+      });
+      return res?.items || [];
+    },
+    focusSymbol(sym) {
+      if (!sym?.identity) return;
+      state.graphFocus = { seed: sym.identity, scope: 'TYPE', context: state.context, relationshipKinds: relationshipKinds('TYPE') };
+      return loadTab('graph');
+    },
+    askAiPrompt(prompt) {
+      state.chatSeedPrompt = prompt || '';
+      return loadTab('architecture-chat');
+    }
+  };
   window.EvoApp = { state, api, loadTab, selectRepo, selectJob, configureRules, inspectFinding, inspectDiagnosis, inspectRepairProposal, inspectRepairVerification, selectRemediationFinding };
   $('disconnect-dialog').addEventListener('close', () => $('run-options').querySelector('summary').focus());
   window.addEventListener('hashchange', updateWorkspaceTool);

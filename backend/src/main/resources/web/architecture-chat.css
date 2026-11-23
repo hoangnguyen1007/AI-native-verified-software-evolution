@@ -1,5 +1,6 @@
 .architecture-chat {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 14px;
   min-width: 0;
   max-width: 1240px;
@@ -19,6 +20,19 @@
 .architecture-chat-header {
   justify-content: space-between;
   align-items: start;
+  flex-wrap: wrap;
+}
+
+.architecture-chat-history {
+  flex: 1 1 160px;
+  max-width: min(100%, 280px);
+  min-width: 0;
+  color: var(--wb-ink);
+  background: var(--wb-paper);
+  border: 1px solid var(--wb-rule);
+  border-radius: var(--r);
+  padding: 8px;
+  font: inherit;
 }
 
 .architecture-chat-header h2,
@@ -169,11 +183,52 @@
   line-height: 1.55;
 }
 
+.architecture-chat-markdown {
+  max-width: 72ch;
+  font-size: 1rem;
+  line-height: 1.65;
+}
+
+.architecture-chat-markdown p,
+.architecture-chat-markdown ul,
+.architecture-chat-markdown ol,
+.architecture-chat-markdown pre {
+  margin: 0.7em 0;
+}
+
+.architecture-chat-markdown :is(ul, ol) { padding-inline-start: 1.5em; }
+.architecture-chat-markdown li + li { margin-top: 0.35em; }
+.architecture-chat-markdown :is(h3, h4, h5, h6) { margin: 1.15em 0 0.35em; font-size: 1.05em; }
+.architecture-chat-markdown code { font: 0.88em var(--font-mono); background: var(--surface-2); padding: 0.12em 0.3em; border-radius: 4px; }
+.architecture-chat-markdown pre { overflow-x: auto; max-width: 100%; padding: 14px; background: var(--surface-2); border: 1px solid var(--wb-rule); border-radius: 10px; }
+.architecture-chat-markdown pre code { padding: 0; background: transparent; white-space: pre; }
+.architecture-chat-markdown a { color: var(--wb-accent); text-decoration: underline; }
+.architecture-chat-markdown hr { border: 0; border-top: 1px solid var(--wb-rule); margin: 1em 0; }
+.architecture-chat-table-scroll { max-width: 100%; overflow-x: auto; margin: 0.7em 0; }
+.architecture-chat-table-scroll table { width: 100%; border-collapse: collapse; font-size: 0.92em; }
+.architecture-chat-table-scroll :is(th, td) {
+  border: 1px solid var(--wb-rule);
+  padding: 0.4em 0.65em;
+  overflow-wrap: anywhere;
+  vertical-align: top;
+}
+.architecture-chat-table-scroll th { background: var(--surface-2); }
+
 .architecture-chat-limitations {
   margin: 10px 0 0;
   padding-inline-start: 20px;
   color: var(--wb-muted);
 }
+
+.architecture-chat-review {
+  margin-top: 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--wb-rule);
+  border-radius: 9px;
+  background: var(--wb-paper);
+}
+
+.architecture-chat-review summary { cursor: pointer; font-weight: 650; }
 
 .architecture-chat-status {
   min-height: 0;
@@ -353,4 +408,205 @@
   .architecture-chat-shortcut {
     display: none;
   }
+}
+
+.architecture-chat-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.architecture-chat-agent-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border: 1px solid var(--wb-rule);
+  border-radius: var(--r-pill, 999px);
+  font-size: 0.8rem;
+  color: var(--wb-muted);
+  cursor: pointer;
+}
+
+.architecture-chat-agent-toggle input {
+  accent-color: var(--wb-accent);
+}
+
+.architecture-chat-message-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.architecture-chat-copy-msg,
+.architecture-chat-copy-code {
+  padding: 2px 8px;
+  border-radius: var(--r-sm, 6px);
+  border: 1px solid var(--wb-rule);
+  background: transparent;
+  color: var(--wb-muted);
+  font-size: 0.74rem;
+  cursor: pointer;
+}
+
+.architecture-chat-copy-msg:hover,
+.architecture-chat-copy-code:hover {
+  color: var(--wb-ink);
+  border-color: var(--wb-accent);
+}
+
+.architecture-chat-inline-cite {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 5px;
+  margin-inline: 1px;
+  border-radius: 4px;
+  border: 1px solid color-mix(in srgb, var(--wb-accent) 45%, transparent);
+  background: color-mix(in srgb, var(--wb-accent) 12%, transparent);
+  color: var(--wb-accent);
+  font: 600 0.72rem/1.45 var(--font-mono);
+  cursor: pointer;
+  vertical-align: baseline;
+}
+
+.architecture-chat-inline-cite:hover {
+  background: color-mix(in srgb, var(--wb-accent) 24%, transparent);
+}
+
+.architecture-chat-code-shell {
+  margin: 10px 0;
+  border: 1px solid var(--wb-rule);
+  border-radius: var(--r-md, 10px);
+  overflow: hidden;
+  background: var(--surface-2, #10171d);
+}
+
+.architecture-chat-code-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--wb-rule);
+  background: color-mix(in srgb, var(--surface-2, #10171d) 70%, var(--wb-paper, #161d24));
+}
+
+.architecture-chat-code-lang {
+  font: 600 0.72rem var(--font-mono);
+  color: var(--wb-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.architecture-chat-code-shell pre {
+  margin: 0;
+  padding: 10px 12px;
+  overflow-x: auto;
+  font: 0.78rem/1.5 var(--font-mono);
+}
+
+.architecture-chat-code-shell .diff-line {
+  display: block;
+  padding-inline: 4px;
+}
+
+.architecture-chat-code-shell .diff-line.is-add {
+  background: rgba(34, 197, 94, 0.14);
+  color: #4ade80;
+}
+
+.architecture-chat-code-shell .diff-line.is-del {
+  background: rgba(239, 68, 68, 0.14);
+  color: #f87171;
+}
+
+.architecture-chat-code-shell .diff-line.is-hunk {
+  color: var(--wb-accent);
+}
+
+.architecture-chat-mermaid-shell {
+  margin: 10px 0;
+  padding: 10px;
+  border: 1px solid var(--wb-rule);
+  border-radius: var(--r-md, 10px);
+  background: var(--surface-2, #10171d);
+  overflow-x: auto;
+}
+
+.architecture-chat-mermaid-svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+.mermaid-node-rect {
+  fill: var(--wb-paper, #161e26);
+  stroke: var(--wb-accent, #38bdf8);
+  stroke-width: 1.4;
+}
+
+.mermaid-node-label {
+  fill: var(--wb-ink, #e2e8f0);
+  font: 500 11.5px var(--font-mono);
+}
+
+.mermaid-edge-path {
+  fill: none;
+  stroke: var(--wb-muted, #94a3b8);
+  stroke-width: 1.4;
+}
+
+.mermaid-edge-label {
+  fill: var(--wb-muted, #94a3b8);
+  font: 10px var(--font-sans);
+}
+
+.mermaid-arrow-head {
+  fill: var(--wb-muted, #94a3b8);
+}
+
+.architecture-chat-trace,
+.architecture-chat-stream-timeline {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--wb-rule);
+  border-radius: var(--r-sm, 8px);
+  background: color-mix(in srgb, var(--wb-accent) 5%, transparent);
+  font-size: 0.82rem;
+}
+
+.architecture-chat-trace summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--wb-accent);
+}
+
+.architecture-chat-trace-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.architecture-chat-trace-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  background: var(--surface-2, rgba(255, 255, 255, 0.03));
+}
+
+.architecture-chat-trace-tool {
+  font: 600 0.74rem var(--font-mono);
+  color: var(--wb-accent);
+}
+
+.architecture-chat-trace-ms {
+  margin-inline-start: auto;
+  font: 0.72rem var(--font-mono);
+  color: var(--wb-muted);
 }

@@ -3,11 +3,14 @@ package com.evolution.backend.analysis;
 import com.evolution.analysis.contract.identity.RepositoryIdentity;
 import com.evolution.analysis.contract.common.ContentDigest;
 import com.evolution.analysis.evolution.EvolutionSnapshot;
+import com.evolution.analysis.dependency.DependencyAcquisitionPolicy;
 import com.evolution.analysis.filesystem.FileGraphStore;
+import com.evolution.analysis.filesystem.GitHostPolicy;
 import com.evolution.analysis.filesystem.PartitionedGraphStore;
 import com.evolution.analysis.graph.*;
 import com.evolution.analysis.query.ArchitectureQuery.Scope;
 import com.evolution.backend.query.*;
+import java.net.URI;
 import java.nio.file.*;
 import java.util.*;
 import java.util.concurrent.*;
@@ -35,8 +38,9 @@ public final class WorkbenchApiMain {
                 if (!Files.isRegularFile(path,LinkOption.NOFOLLOW_LINKS)) throw new IllegalArgumentException("Policy unavailable");
                 try (var stream = Files.newInputStream(path,LinkOption.NOFOLLOW_LINKS)) { policy = Optional.of(new LocalAnalysisRunner.PolicyInput(stream.readNBytes(262_145),Scope.TYPE)); }
             }
+            var artifactPolicy = artifactPolicy(System.getProperty("evo.workbench.artifactRepositories", ""));
             var runner = new LocalAnalysisRunner(new LocalAnalysisRunner.Input(source,RepositoryIdentity.fromCanonicalCoordinate(args[1]),jdk,Integer.parseInt(args[3]),cache,
-                    Optional.empty(),true,false,exclusions,policy,LocalAnalysisRunner.SpringInput.absent()),directory.resolve("acquisition"));
+                    Optional.empty(),true,false,exclusions,policy,LocalAnalysisRunner.SpringInput.absent()),directory.resolve("acquisition"),artifactPolicy);
             // The streamed reader is bounded by the actual file and its token limits.
             // Current free space is checked separately for new writes.
             long bytes=Long.MAX_VALUE-1;
@@ -85,7 +89,7 @@ public final class WorkbenchApiMain {
             var reports=new PublishedReports(reportDisk);
             try(var jobs = new AnalysisJobs(List.of(runner.registration("local")),store,reports,AnalysisJobs.Limits.defaults(),disk)) {
                 var repositoryId = RepositoryIdentity.fromCanonicalCoordinate(args[1]);
-                var connections=new RepositoryConnections(jobs,jdk,Integer.parseInt(args[3]),cache,directory,policy);
+                var connections=new RepositoryConnections(jobs,jdk,Integer.parseInt(args[3]),cache,directory,policy,"git",new GitHostPolicy(),artifactPolicy);
                 connections.describeLocal("local",source.getFileName().toString(),repositoryId,source,policy);
                 try (var pageIndex = new LazyGraphPages(directory, pages, store::cached);
                      var evolution = new EvolutionJobs(directory.resolve("evolution"), pages, reports, pageIndex::evolution)) {
@@ -236,5 +240,14 @@ public final class WorkbenchApiMain {
             };
         }
     }
+    static final URI GOOGLE_MAVEN = URI.create("https://dl.google.com/dl/android/maven2/");
+    static final URI GRADLE_PLUGIN_PORTAL = URI.create("https://plugins.gradle.org/m2/");
+    static Optional<DependencyAcquisitionPolicy> artifactPolicy(String configured) {
+        var repositories = configured.isBlank()
+                ? List.of(DependencyAcquisitionPolicy.MAVEN_CENTRAL, GOOGLE_MAVEN, GRADLE_PLUGIN_PORTAL)
+                : Arrays.stream(configured.strip().split("\\s+")).map(URI::create).toList();
+        return Optional.of(new DependencyAcquisitionPolicy(4096, 64_000_000, 512_000_000L, 64, repositories, 5000, 15000, 1, 8));
+    }
+
     private WorkbenchApiMain() {}
 }

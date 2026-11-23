@@ -15,11 +15,23 @@ import com.evolution.analysis.policy.PolicyCompiler;
 import com.evolution.analysis.policy.PolicyEvaluation;
 import com.evolution.analysis.policy.PolicyEvaluator;
 import com.evolution.analysis.policy.PolicyGraphMapper;
+import com.evolution.analysis.query.ArchitectureQuery.Page;
+import com.evolution.analysis.query.ArchitectureQuery.Population;
+import com.evolution.analysis.query.ArchitectureQuery.Projection;
+import com.evolution.analysis.query.ArchitectureQuery.Request;
+import com.evolution.analysis.query.ArchitectureQuery.Direction;
+import com.evolution.analysis.query.ArchitectureQuery.Limits;
 import com.evolution.analysis.query.ArchitectureQuery.Scope;
 import com.evolution.analysis.query.ArchitectureQueryService;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
+import java.util.Set;
+import java.util.TreeSet;
+import java.util.regex.Pattern;
 
 /** Evaluates built-in or owner-authored policy against one already-published context. */
 final class WorkbenchPolicyAssessment {
@@ -29,6 +41,12 @@ final class WorkbenchPolicyAssessment {
                   AssessmentStatus status, Optional<ContentDigest> report,
                   Optional<ArchitectureAssessment.Result> assessment,
                   List<PolicyCompiler.Problem> problems, List<CapabilityGapRecord> gaps) {}
+
+    record SuggestedPolicy(String yaml, String summary, List<String> detectedLayers, Scope scope) {}
+
+    private static final Pattern WEB_PKG = Pattern.compile("^(?:web|controller|controllers|rest|api|endpoint|endpoints|resource|resources|http|graphql|grpc)$");
+    private static final Pattern DOMAIN_PKG = Pattern.compile("^(?:domain|core|model|models|entity|entities|application|usecase|usecases|business)$");
+    private static final Pattern DATA_PKG = Pattern.compile("^(?:repository|repositories|repo|dao|persistence|data|db|store|storage|infra|infrastructure|adapter|adapters)$");
 
     static Scope scope(KnowledgeGraph graph, KnowledgeGraph.Context context) {
         return graph.evidence(context.evidence()).filter(evidence -> evidence.family().equals("spring.context"))
@@ -56,6 +74,94 @@ final class WorkbenchPolicyAssessment {
         var report = reports.publish(new PublishedReports.Report(evaluation, Optional.of(metrics), Optional.of(score)));
         return new Result(kind, text, compilation.source(), scope, score.status(),
                 Optional.of(report), Optional.of(score), List.of(), score.gaps());
+    }
+
+    static SuggestedPolicy suggestPolicy(ArchitectureQueryService queries, KnowledgeGraph.Context context, Scope scope, Runnable checkpoint) {
+        checkpoint.run();
+        var webPkgs = new TreeSet<String>();
+        var domainPkgs = new TreeSet<String>();
+        var dataPkgs = new TreeSet<String>();
+        var allProjectPkgs = new TreeSet<String>();
+        Optional<String> cursor = Optional.empty();
+        for (int pageIndex = 0; pageIndex < 4; pageIndex++) {
+            checkpoint.run();
+            var pkgReq = new Request(queries.graph().identity(), context.identity(), Scope.PACKAGE, Projection.BOUNDED_UNION,
+                    Direction.OUTGOING, Set.of("graph.depends-on"), new Population(Set.of(), Set.of(), Set.of("PROJECT"), Set.of()),
+                    false, Optional.empty(), Limits.defaults());
+            var pkgs = queries.entities(pkgReq, "", new Page(50, cursor));
+            for (var entity : pkgs.items()) {
+                String name = entity.qualifiedName().or(entity::canonicalName).orElse("").trim();
+                if (name.isEmpty()) continue;
+                allProjectPkgs.add(name);
+                String[] segments = name.toLowerCase(Locale.ROOT).split("\\.");
+                String leaf = segments[segments.length - 1];
+                if (WEB_PKG.matcher(leaf).matches()) webPkgs.add(name + ".**");
+                else if (DOMAIN_PKG.matcher(leaf).matches()) domainPkgs.add(name + ".**");
+                else if (DATA_PKG.matcher(leaf).matches()) dataPkgs.add(name + ".**");
+            }
+            if (pkgs.continuation().isEmpty()) break;
+            cursor = pkgs.continuation();
+        }
+        var layers = new ArrayList<String>();
+        if (!webPkgs.isEmpty()) layers.add("Web / API (" + webPkgs.size() + ")");
+        if (!domainPkgs.isEmpty()) layers.add("Domain / Core (" + domainPkgs.size() + ")");
+        if (!dataPkgs.isEmpty()) layers.add("Data / Persistence (" + dataPkgs.size() + ")");
+
+        var yaml = new StringBuilder();
+        yaml.append("schema: architecture-policy:v1\n");
+        yaml.append("id: workbench.auto-detected\n");
+        yaml.append("version: \"1\"\n");
+        yaml.append("rules:\n");
+        yaml.append("  - id: auto.no-type-cycles\n");
+        yaml.append("    version: \"1\"\n");
+        yaml.append("    kind: ACYCLIC\n");
+        yaml.append("    severity: ERROR\n");
+        yaml.append("    scope: ").append(scope).append("\n");
+        yaml.append("    relationships: [").append(scope == Scope.SPRING_COMPONENT ? "spring.selected-binding" : "graph.depends-on").append("]\n");
+        yaml.append("    within: {origins: [PROJECT]}\n");
+        if (scope != Scope.SPRING_COMPONENT && allProjectPkgs.size() >= 2) {
+            yaml.append("  - id: auto.no-package-cycles\n");
+            yaml.append("    version: \"1\"\n");
+            yaml.append("    kind: ACYCLIC\n");
+            yaml.append("    severity: WARNING\n");
+            yaml.append("    scope: PACKAGE\n");
+            yaml.append("    relationships: [graph.depends-on]\n");
+            yaml.append("    within: {origins: [PROJECT]}\n");
+        }
+        if (!webPkgs.isEmpty() && !dataPkgs.isEmpty()) {
+            yaml.append("  - id: auto.web-no-direct-persistence\n");
+            yaml.append("    version: \"1\"\n");
+            yaml.append("    kind: FORBIDDEN_DEPENDENCY\n");
+            yaml.append("    severity: WARNING\n");
+            yaml.append("    scope: TYPE\n");
+            yaml.append("    relationships: [graph.depends-on]\n");
+            yaml.append("    from: {packages: [").append(yamlList(webPkgs, 24)).append("], origins: [PROJECT]}\n");
+            yaml.append("    to: {packages: [").append(yamlList(dataPkgs, 24)).append("], origins: [PROJECT]}\n");
+        }
+        if (!domainPkgs.isEmpty() && !webPkgs.isEmpty()) {
+            yaml.append("  - id: auto.domain-no-web-leakage\n");
+            yaml.append("    version: \"1\"\n");
+            yaml.append("    kind: FORBIDDEN_DEPENDENCY\n");
+            yaml.append("    severity: ERROR\n");
+            yaml.append("    scope: TYPE\n");
+            yaml.append("    relationships: [graph.depends-on]\n");
+            yaml.append("    from: {packages: [").append(yamlList(domainPkgs, 24)).append("], origins: [PROJECT]}\n");
+            yaml.append("    to: {packages: [").append(yamlList(webPkgs, 24)).append("], origins: [PROJECT]}\n");
+        }
+        String candidate = yaml.toString();
+        var check = new PolicyCompiler().compile(candidate.getBytes(StandardCharsets.UTF_8),
+                EvidenceContext.forSnapshot(context.snapshot()), PolicyCompiler.Limits.defaults());
+        if (check.policy().isEmpty()) {
+            return new SuggestedPolicy(defaultPolicy(scope), "Default dependency cycle policy.", List.copyOf(layers), scope);
+        }
+        String summary = layers.isEmpty()
+                ? "Generated cycle checks across " + allProjectPkgs.size() + " project packages."
+                : "Detected architectural layers: " + String.join(", ", layers) + ".";
+        return new SuggestedPolicy(candidate, summary, List.copyOf(layers), scope);
+    }
+
+    private static String yamlList(Set<String> items, int limit) {
+        return items.stream().limit(limit).map(item -> "\"" + item.replace("\"", "") + "\"").collect(java.util.stream.Collectors.joining(", "));
     }
 
     private static String defaultPolicy(Scope scope) {

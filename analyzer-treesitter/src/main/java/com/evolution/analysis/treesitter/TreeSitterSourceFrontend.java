@@ -25,7 +25,7 @@ public final class TreeSitterSourceFrontend {
     private static Map.Entry<String,Grammar> entry(String language,String library,String binding,String version){return Map.entry(language,new Grammar("tree-sitter-"+library,"org.treesitter.TreeSitter"+binding,version));}
     public static Set<String> languages(){var languages=new TreeSet<>(GRAMMARS.keySet());languages.add("protobuf");return Collections.unmodifiableSet(languages);}
     private static final Set<String> CALLS=Set.of("call_expression","invocation_expression","function_call_expression","call","method_invocation","object_creation_expression","method_call_expression","macro_invocation","constructor_invocation","new_expression");
-    private static final Set<String> ROUTES=Set.of("get","post","put","patch","delete","options","head","route","all","HandleFunc","Handle","GET","POST","PUT","DELETE","MapGet","MapPost","MapPut","MapDelete","MapMethods","HttpGet","HttpPost","HttpPut","HttpDelete","Route");
+    private static final Set<String> ROUTES=Set.of("get","post","put","patch","delete","options","head","route","all","HandleFunc","Handle","GET","POST","PUT","PATCH","DELETE","Get","Post","Put","Patch","Delete","Head","Options","All","MapGet","MapPost","MapPut","MapDelete","MapMethods","HttpGet","HttpPost","HttpPut","HttpDelete","Route","RequestMapping","GetMapping","PostMapping","PutMapping","PatchMapping","DeleteMapping","api_route","add_api_route","websocket","MethodFunc","path","re_path");
     private record Frame(TSNode node,String owner) {}
     public record Fact(String category,String nodeKind,String name,String written,SourceCoordinates.Range span,String owner,boolean recovered,Map<String,String> attributes) {
         public Fact {attributes=Map.copyOf(attributes);}
@@ -64,11 +64,17 @@ public final class TreeSitterSourceFrontend {
     }
     @FunctionalInterface public interface Sink {void accept(Fact fact)throws IOException;}
     private static final Map<String, java.lang.reflect.Constructor<?>> GRAMMAR_CTORS = new java.util.concurrent.ConcurrentHashMap<>();
-    private static final java.util.regex.Pattern PYTHON_HTTP_CLIENT = java.util.regex.Pattern.compile("(?:requests|httpx)\\.(?:get|post|put|patch|delete|head|options)");
+    private static final java.util.regex.Pattern PYTHON_HTTP_CLIENT = java.util.regex.Pattern.compile("(?:requests|httpx|session|client|aiohttp)\\.(?:get|post|put|patch|delete|head|options)");
+    private static final java.util.regex.Pattern GO_HTTP_CLIENT = java.util.regex.Pattern.compile("(?:[A-Za-z_][A-Za-z0-9_]*(?:http|Http|client|Client)[A-Za-z0-9_]*)\\.(?:Get|Post|Head)");
     private static final java.util.regex.Pattern CSHARP_HTTP_CLIENT = java.util.regex.Pattern.compile("[A-Za-z_][A-Za-z0-9_.]*\\.(?:GetAsync|PostAsync|PutAsync|PatchAsync|DeleteAsync|GetStringAsync|GetByteArrayAsync)");
-    private static final java.util.regex.Pattern JS_HTTP_CLIENT = java.util.regex.Pattern.compile("(?:axios|http|this\\.http)\\.(?:get|post|put|patch|delete|head|options)");
+    private static final java.util.regex.Pattern JS_HTTP_CLIENT = java.util.regex.Pattern.compile("(?:axios|http|this\\.http|httpClient|this\\.httpClient|api|apiClient|client|ky|got|superagent)\\.(?:get|post|put|patch|delete|head|options)");
+    private static final java.util.regex.Pattern RUST_HTTP_CLIENT = java.util.regex.Pattern.compile("(?:reqwest|client|http_client|httpClient)\\.(?:get|post|put|patch|delete)");
+    private static final java.util.regex.Pattern DART_HTTP_CLIENT = java.util.regex.Pattern.compile("(?:dio|http|client)\\.(?:get|post|put|patch|delete|head)");
+    private static final java.util.regex.Pattern EVENT_PRODUCER_CALL = java.util.regex.Pattern.compile("(?i)(?:[A-Za-z_][A-Za-z0-9_.]*)?(?:kafka|kafkaTemplate|producer|eventBus|emitter|broker|nats|nc|amqp|channel|rabbitTemplate|sqs|sns|pubsub|redis)\\.(?:send|produce|publish|basic_publish|emit|convertAndSend|Publish)");
+    private static final java.util.regex.Pattern EVENT_CONSUMER_CALL = java.util.regex.Pattern.compile("(?i)(?:[A-Za-z_][A-Za-z0-9_.]*)?(?:kafka|consumer|eventBus|emitter|broker|nats|nc|amqp|channel|pubsub|redis)\\.(?:subscribe|consume|basic_consume|on|Subscribe|QueueSubscribe)");
+    private static final Set<String> EVENT_CONSUMER_ANNOTATIONS = Set.of("KafkaListener","RabbitListener","EventPattern","MessagePattern","SqsListener");
     private static final java.util.regex.Pattern HTTP_METHOD_PREFIX = java.util.regex.Pattern.compile("^(?:Map|Http)");
-    private static final java.util.regex.Pattern HTTP_METHOD_SUFFIX = java.util.regex.Pattern.compile("Async$");
+    private static final java.util.regex.Pattern HTTP_METHOD_SUFFIX = java.util.regex.Pattern.compile("(?:Async|Mapping)$");
 
     public Summary analyze(String language,byte[] bytes,Sink sink,BooleanSupplier cancelled)throws IOException {
         return parse(language,bytes,sink,cancelled,false);
@@ -115,7 +121,7 @@ public final class TreeSitterSourceFrontend {
                         }
                         sink.accept(new Fact(category,kind,name,excerpt(written),span,owner,recovered));facts++;
                         if(category.equals("DECLARATION"))owner=span.start()+":"+span.end();
-                        if(category.equals("CALL")||kind.equals("attribute")) {
+                        if(category.equals("CALL")||kind.equals("attribute")||kind.equals("annotation")) {
                             String tail=written.substring(Math.max(written.lastIndexOf('.'),written.lastIndexOf(':'))+1).trim();
                             String literal=ROUTES.contains(tail)&&!httpClient(language,written)?routeLiteral(node,utf8):null;
                             if(literal!=null&&literal.length()<=4096) {sink.accept(new Fact("ROUTE_CANDIDATE",kind,literal,excerpt(written),span,frame.owner(),recovered,Map.of("method",httpMethod(tail))));facts++;}
@@ -123,6 +129,7 @@ public final class TreeSitterSourceFrontend {
                                 String path=firstLiteral(node,utf8);
                                 if(path!=null&&path.length()<=4096){sink.accept(new Fact("HTTP_CALL_CANDIDATE",kind,path,excerpt(written),span,frame.owner(),recovered,Map.of("method",clientMethod(node,written,utf8))));facts++;}
                             }
+                            facts+=emitEventCandidate(category,kind,node,written,tail,utf8,span,frame.owner(),recovered,sink);
                         }
                     }
                     for(int i=node.getNamedChildCount()-1;i>=0;i--)pending.push(new Frame(node.getNamedChild(i),owner));
@@ -135,10 +142,12 @@ public final class TreeSitterSourceFrontend {
     }
     private static boolean httpClient(String language,String written) {
         if(language.equals("python"))return PYTHON_HTTP_CLIENT.matcher(written).matches();
-        if(language.equals("go"))return Set.of("http.Get","http.Post","http.Head").contains(written);
+        if(language.equals("go"))return Set.of("http.Get","http.Post","http.Head","http.NewRequest","http.NewRequestWithContext").contains(written)||GO_HTTP_CLIENT.matcher(written).matches();
         if(language.equals("csharp"))return CSHARP_HTTP_CLIENT.matcher(written).matches();
+        if(language.equals("rust"))return written.equals("reqwest::get")||RUST_HTTP_CLIENT.matcher(written).matches();
+        if(language.equals("dart"))return DART_HTTP_CLIENT.matcher(written).matches();
         if(!Set.of("javascript","typescript","tsx").contains(language))return false;
-        return Set.of("fetch","window.fetch","globalThis.fetch").contains(written)
+        return Set.of("fetch","window.fetch","globalThis.fetch","$fetch","useFetch","useSWR").contains(written)
                 ||JS_HTTP_CLIENT.matcher(written).matches();
     }
     private static String httpMethod(String tail) {
@@ -147,13 +156,36 @@ public final class TreeSitterSourceFrontend {
         return Set.of("GET","POST","PUT","PATCH","DELETE","HEAD","OPTIONS","TRACE").contains(method)?method:"UNKNOWN";
     }
     private static String firstLiteral(TSNode call,byte[] bytes) {
-        var args=field(call,"arguments");if(args==null||args.getNamedChildCount()==0)return null;
+        String raw=firstStringToken(call,bytes);
+        return raw!=null&&raw.indexOf('/')>=0?raw:null;
+    }
+    private static String firstStringToken(TSNode call,byte[] bytes) {
+        var args=argumentsNode(call);if(args==null||args.getNamedChildCount()==0)return null;
         var first=args.getNamedChild(0);
-        if(first.getType().equals("argument")&&first.getNamedChildCount()==1)first=first.getNamedChild(0);
+        if(Set.of("argument","value_argument").contains(first.getType())&&first.getNamedChildCount()>=1)first=first.getNamedChild(first.getNamedChildCount()-1);
         String raw=text(first,bytes);
         // Escapes, interpolation and computed expressions need a language-native decoder.
-        if(!Set.of("string","string_literal","interpreted_string_literal").contains(first.getType())||interpolated(first)||raw.indexOf('\\')>=0||raw.length()<2)return null;
-        return (raw.charAt(0)=='\''||raw.charAt(0)=='"')&&raw.charAt(raw.length()-1)==raw.charAt(0)&&raw.indexOf('/')>=0?raw:null;
+        if(!Set.of("string","string_literal","interpreted_string_literal","template_string").contains(first.getType())||interpolated(first)||raw.indexOf('\\')>=0||raw.length()<3)return null;
+        char q=raw.charAt(0);
+        return (q=='\''||q=='"'||q=='`')&&raw.charAt(raw.length()-1)==q?raw:null;
+    }
+    private static TSNode argumentsNode(TSNode node) {
+        var args=field(node,"arguments");if(args!=null)return args;
+        for(int i=0;i<node.getNamedChildCount();i++){var c=node.getNamedChild(i);if(Set.of("arguments","value_arguments","argument_list").contains(c.getType()))return c;}
+        return null;
+    }
+    private static int emitEventCandidate(String category,String kind,TSNode node,String written,String tail,byte[] utf8,
+                                          SourceCoordinates.Range span,String owner,boolean recovered,Sink sink) throws IOException {
+        boolean producer=category.equals("CALL")&&EVENT_PRODUCER_CALL.matcher(written).matches();
+        boolean consumer=(category.equals("CALL")&&EVENT_CONSUMER_CALL.matcher(written).matches())
+                ||EVENT_CONSUMER_ANNOTATIONS.contains(tail);
+        if(!producer&&!consumer)return 0;
+        String topic=firstStringToken(node,utf8);
+        if(topic==null||topic.length()>258)return 0;
+        String lower=written.toLowerCase(Locale.ROOT);
+        String protocol=lower.contains("kafka")?"KAFKA":(lower.contains("rabbit")||lower.contains("amqp"))?"AMQP":lower.contains("nats")||lower.contains("nc.")?"NATS":lower.contains("sqs")||lower.contains("sns")?"AWS_MESSAGING":lower.contains("redis")?"REDIS_PUBSUB":"EVENT_BUS";
+        sink.accept(new Fact(producer?"EVENT_PRODUCER_CANDIDATE":"EVENT_CONSUMER_CANDIDATE",kind,topic,excerpt(written),span,owner,recovered,Map.of("role",producer?"PRODUCER":"CONSUMER","protocol",protocol)));
+        return 1;
     }
     private static String clientMethod(TSNode call,String written,byte[] bytes) {
         if(!written.endsWith("fetch"))return httpMethod(written.substring(written.lastIndexOf('.')+1));
@@ -188,7 +220,7 @@ public final class TreeSitterSourceFrontend {
     private static String text(TSNode node,byte[] bytes){return node==null?"":new String(bytes,node.getStartByte(),node.getEndByte()-node.getStartByte(),StandardCharsets.UTF_8);}
     private static String excerpt(String value){if(value.length()<=4096)return value;return value.substring(0,Character.isHighSurrogate(value.charAt(4095))?4095:4096);}
     private static String routeLiteral(TSNode call,byte[] bytes){
-        var arguments=field(call,"arguments");if(arguments==null)return null;
+        var arguments=argumentsNode(call);if(arguments==null)return null;
         if(arguments.getNamedChildCount()==0)return null;
         var pending=new ArrayDeque<TSNode>();pending.add(arguments.getNamedChild(0));
         while(!pending.isEmpty()){var node=pending.removeFirst();String kind=node.getType();

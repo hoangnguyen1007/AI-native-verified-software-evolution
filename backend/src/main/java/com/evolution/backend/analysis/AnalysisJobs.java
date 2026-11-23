@@ -32,9 +32,14 @@ public final class AnalysisJobs implements AutoCloseable {
     }
     /** Public setup metadata contains identities and explicit policies, never host paths or source/configuration values. */
     public record Setup(String id, RepositoryIdentity repository, int release, boolean includeTests,
-                        Optional<ContentDigest> policy, Optional<String> configurationSpace) {
+                        Optional<ContentDigest> policy, Optional<String> configurationSpace, Optional<ContentDigest> artifactPolicy) {
+        public Setup(String id, RepositoryIdentity repository, int release, boolean includeTests,
+                     Optional<ContentDigest> policy, Optional<String> configurationSpace) {
+            this(id,repository,release,includeTests,policy,configurationSpace,Optional.empty());
+        }
         public Setup {
             identifier(id); Objects.requireNonNull(repository); Objects.requireNonNull(policy); Objects.requireNonNull(configurationSpace);
+            Objects.requireNonNull(artifactPolicy);
             if (release < 8 || release > 26) throw new IllegalArgumentException("Invalid target release");
             configurationSpace.ifPresent(v -> { if (v.length() > 256 || v.isBlank()) throw new IllegalArgumentException("Invalid space"); });
         }
@@ -532,6 +537,25 @@ public final class AnalysisJobs implements AutoCloseable {
             int next=offset+page.items().size();
             return new Page<>(page.items(),page.total(),next<page.total()?Optional.of(cursor(id.toString(),size,page.total(),next)):Optional.empty());
         }catch(IOException unavailable){throw new Rejected("JOB_STORAGE_UNAVAILABLE");}
+    }
+
+    /** Read a bounded prefix for the chat census. A durable job reads its ledger only once. */
+    public Page<CapabilityGapRecord> chatGaps(UUID id) {
+        int limit = 2_000;
+        synchronized (this) {
+            var job = jobs.get(id);
+            if (job != null || disk == null) {
+                if (job == null) job = find(id);
+                if (!terminal(job.state)) throw new Rejected("JOB_NOT_FINISHED");
+                return new Page<>(job.gaps.subList(0,Math.min(limit,job.gaps.size())),job.gaps.size(),Optional.empty());
+            }
+        }
+        try {
+            var page = disk.gaps(id,0,limit,OptionalInt.empty());
+            return new Page<>(page.items(),page.total(),Optional.empty());
+        } catch (IOException unavailable) {
+            throw new Rejected("JOB_STORAGE_UNAVAILABLE");
+        }
     }
     public Page<InputProblem> inputProblems(UUID id, int size, Optional<String> cursor) {
         synchronized(this){

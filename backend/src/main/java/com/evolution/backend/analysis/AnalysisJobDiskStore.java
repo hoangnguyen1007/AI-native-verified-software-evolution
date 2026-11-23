@@ -225,8 +225,9 @@ public final class AnalysisJobDiskStore implements AutoCloseable {
         try {
             var row = GraphJson.object(readJson(handle));
             var view = new TreeMap<>(GraphJson.object(row.get("view")));
+            var setup = new TreeMap<>(GraphJson.object(row.get("setup")));
             boolean legacy = LEGACY_SCHEMA.equals(row.get("schema"));
-            if (!legacy && view.containsKey("mode")) return checked(row, handle, Envelope.class);
+            if (!legacy && view.containsKey("mode") && setup.containsKey("artifactPolicy")) return checked(row, handle, Envelope.class);
             // Authenticate the old preimage before adding defaults. Existing history is never rewritten for migration.
             if (!CanonicalJson.sha256(row).equals(handle.digest())) throw new IOException("JOB_RECEIPT_NONCANONICAL");
             var upgraded = new TreeMap<>(row);
@@ -238,8 +239,10 @@ public final class AnalysisJobDiskStore implements AutoCloseable {
                 view.put("reuseDecision", null);
                 upgraded.put("schema", PREVIOUS_SCHEMA);
             }
-            view.put("mode", null);
+            view.putIfAbsent("mode", null);
+            setup.putIfAbsent("artifactPolicy", null);
             upgraded.put("view", view);
+            upgraded.put("setup", setup);
             return CanonicalRecordReader.read(upgraded, Envelope.class);
         } catch (IllegalArgumentException invalid) { throw new IOException("JOB_RECEIPT_CORRUPT", invalid); }
     }

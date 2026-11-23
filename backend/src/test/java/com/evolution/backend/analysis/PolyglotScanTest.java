@@ -229,4 +229,31 @@ class PolyglotScanTest {
             assertTrue(graph.evidence().stream().filter(e->e.family().equals("polyglot.static-symbol-link")).allMatch(e->e.canonicalJson().contains("\"trust\":\"STATIC_SYNTAX_DERIVED\"")&&e.canonicalJson().contains("\"runtimeObserved\":false")));
         }
     }
+    @Test void eventProducersAndConsumersLinkAndRelativeImportsDisambiguateDuplicateSymbols() throws Exception {
+        Path source = Files.createDirectory(directory.resolve("event-and-import-source"));
+        Files.createDirectories(source.resolve("web/a"));
+        Files.createDirectories(source.resolve("web/b"));
+        Files.writeString(source.resolve("web/a/helper.ts"), "export function compute() { return 1; }\n");
+        Files.writeString(source.resolve("web/b/helper.ts"), "export function compute() { return 2; }\n");
+        Files.writeString(source.resolve("web/a/consumer.ts"), "import { compute } from './helper';\nexport function run() { eventBus.publish('order.paid', compute()); }\n");
+        Files.writeString(source.resolve("worker.py"), "def start():\n    eventBus.subscribe('order.paid', handle)\n");
+        var repo = RepositoryIdentity.fromCanonicalCoordinate("urn:test:event-and-imports");
+        try (var intake = new RepositoryIntake(directory.resolve("event-intake"))) {
+            intake.localComplete(source, "events", new StreamingAcquisitionRequest(repo, Optional.empty(), false, List.of()), () -> false);
+            var readiness = intake.readiness("events", ReadinessPlanner.Policy.comprehensive(), () -> false);
+            var snapshot = RepositorySnapshot.create(repo, Optional.empty(), false, List.of(), List.of());
+            var scan = new PolyglotScan();
+            var result = scan.run("events", intake, readiness, EvidenceContext.forSnapshot(snapshot.identity()), Optional.empty(), directory.resolve("event-work"), () -> false);
+            var input = new CanonicalGraphInput(new RepositoryInputs(snapshot, Map.of()), Optional.empty(), Optional.empty(), List.of(), List.of(), result.gaps());
+            var snapshots = directory.resolve("event-snapshots");
+            var published = new PartitionedGraphStore(directory.resolve("event-pages")).build(input, snapshots, () -> false, store -> scan.project(result, store, () -> false));
+            var graph = FileGraphStore.readSnapshot(snapshots.resolve(published.graph().value().substring(7) + ".graph.json"), 64_000_000, new GraphJson.StreamLimits(64_000_000, 128, 64_000_000));
+            assertEquals(1, graph.edges().stream().filter(e -> e.kind().equals("PUBLISHES_EVENT")).count());
+            assertEquals(1, graph.edges().stream().filter(e -> e.kind().equals("polyglot.event-flow.candidate")).count());
+            assertTrue(graph.edges().stream()
+                    .filter(e -> e.kind().equals("syntax.imports-declaration"))
+                    .anyMatch(e -> e.target().state() == KnowledgeGraph.TargetState.RESOLVED
+                            && e.target().identities().size() == 1));
+        }
+    }
 }

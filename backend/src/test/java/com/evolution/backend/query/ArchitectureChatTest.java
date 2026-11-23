@@ -1,7 +1,9 @@
 package com.evolution.backend.query;
 
 import com.evolution.analysis.graph.GraphJson;
+import com.evolution.analysis.graph.InMemoryGraphStore;
 import com.evolution.analysis.graph.KnowledgeGraph;
+import com.evolution.analysis.contract.identity.AnalysisIdentity;
 import com.evolution.analysis.contract.serialization.CanonicalJson;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.Test;
@@ -20,6 +22,61 @@ import static com.evolution.backend.query.ArchitectureQueryApiTest.bytes;
 import static org.junit.jupiter.api.Assertions.*;
 
 class ArchitectureChatTest {
+    @Test void answersProjectContextFromTheSnapshotEvenWithRemoteProviderAndNoConsent() {
+        var fixture = new QueryFixture().node("controller").node("repository");
+        var remote = new ArchitectureChatModel(URI.create("https://example.invalid/v1"),"model",null,true);
+        var api = ArchitectureQueryApi.withArchitectureChat(new ArchitectureQueryApi(fixture.store()),remote);
+        for (String question : List.of("Bạn cho tôi biết context hiện tại của dự án này.","What is the current project context?")) {
+            var input = Map.of("context",fixture.context,"mode","EXPLORE","reviewer",true,
+                    "messages",List.of(Map.of("role","user","content",question)));
+            var response = send(api,fixture,input);
+            assertEquals(200,response.status(),() -> body(response).toString());
+            var data = GraphJson.object(body(response).get("data"));
+            assertEquals("EVIDENCE_ONLY",data.get("status"));
+            assertNull(data.get("model"));
+            assertTrue(GraphJson.string(data.get("answer")).contains("[E1]"));
+            assertTrue(GraphJson.string(data.get("answer")).matches("(?s).*2 (kiểu|types).*"));
+        }
+        var design = Map.of("context",fixture.context,"mode","DESIGN","messages",List.of(
+                Map.of("role","user","content","What is the current project context and what should I improve?")));
+        assertEquals(403,send(api,fixture,design).status());
+    }
+
+    @Test void evidenceIncludesTheAvailableTypeInventoryWithItsBoundaries() {
+        var fixture = new QueryFixture();
+        for (int i=0;i<8;i++) fixture.node("type"+i);
+        var response=send(new ArchitectureQueryApi(fixture.store()),fixture,question(fixture.context));
+        assertEquals(200,response.status());
+        var evidence=GraphJson.array(GraphJson.object(body(response).get("data")).get("evidence"));
+        var inventory=evidence.stream().map(GraphJson::object).filter(row -> "Captured types".equals(row.get("label")))
+                .findFirst().orElseThrow();
+        var data=GraphJson.object(inventory.get("data"));
+        assertEquals(8,GraphJson.array(data.get("matches")).size());
+        assertEquals(false,data.get("truncated"));
+    }
+
+    @Test void snapshotOverviewShowsAnalysisContextCountsWithoutMergingThem() {
+        var fixture = new QueryFixture().node("snapshot-type").node("other-snapshot-type");
+        var selected = fixture.graph().contexts().getFirst();
+        var analysis = AnalysisIdentity.fromCanonicalManifestInputs("analysis fixture");
+        var semantic = new KnowledgeGraph.Context(analysis.value(),fixture.snapshot,Optional.of(analysis),fixture.base.identity());
+        var nodes = new java.util.ArrayList<>(fixture.nodes);
+        for (String name : List.of("type-a","type-b","type-c")) nodes.add(new KnowledgeGraph.Node(QueryFixture.id(name),semantic.identity(),
+                "TYPE",List.of(fixture.base.identity())));
+        var graph = new KnowledgeGraph(fixture.snapshot,List.of(selected,semantic),nodes,fixture.edges,fixture.evidence);
+        var store = new InMemoryGraphStore();
+        store.save(graph);
+        var response = new ArchitectureQueryApi(store).handle("POST","/api/v1/graphs/" + graph.identity().value() + "/architecture-chat",
+                "application/json",bytes(Map.of("context",selected.identity(),"mode","EXPLORE","messages",
+                        List.of(Map.of("role","user","content","What is the current project context?")))),() -> false);
+        assertEquals(200,response.status());
+        var data = GraphJson.object(body(response).get("data"));
+        var answer = GraphJson.string(data.get("answer"));
+        assertTrue(answer.contains("2 types"),answer);
+        assertTrue(answer.contains("3 types"),answer);
+        assertFalse(answer.contains("5 types"),answer);
+        assertEquals(selected.identity(),GraphJson.object(data.get("pin")).get("context"));
+    }
     @Test void offlineReadIsPinnedAndRepeatableAndRejectsForeignContext() {
         var fixture = new QueryFixture().node("controller").node("repository").edge("controller", "repository");
         var api = new ArchitectureQueryApi(fixture.store());
@@ -91,26 +148,32 @@ class ArchitectureChatTest {
             assertFalse(offer.containsKey("tools"));
             var messages = GraphJson.array(offer.get("messages"));
             assertEquals("system",GraphJson.object(messages.getFirst()).get("role"));
+            String instructions = GraphJson.string(GraphJson.object(messages.getFirst()).get("content"));
+            assertTrue(instructions.contains("Do not wrap the answer in JSON"));
+            assertTrue(instructions.contains("bounded samples"));
+            assertTrue(instructions.contains("different readiness plan"));
             var user = GraphJson.object(messages.getLast());
             var offered = GraphJson.object(GraphJson.read((String)user.get("content"),GraphJson.Limits.defaults()));
             var rows = GraphJson.array(GraphJson.object(offered.get("evidenceContext")).get("evidence"));
-            assertEquals(List.of("SUMMARY","SYMBOLS","DEPENDENCIES"),
+            assertEquals(List.of("SUMMARY","SYMBOLS","DEPENDENCIES","SYMBOLS"),
                     rows.stream().map(row -> GraphJson.object(row).get("kind")).toList());
-            assertTrue(rows.getLast().toString().contains(QueryFixture.id("repository")));
+            assertTrue(rows.get(2).toString().contains(QueryFixture.id("repository")));
 
             citations.set(List.of("E999"));
             var ungrounded = GraphJson.object(body(send(api,fixture,input)).get("data"));
             assertEquals("UNVERIFIED_ADVICE",ungrounded.get("status"));
             assertEquals(List.of(),ungrounded.get("citations"));
             assertEquals("Consider moving the dependency.",ungrounded.get("answer"));
-            plain.set("**Suggestion**\n\nMove the boundary to the adapter.");
+            plain.set("<conversation_title>Adapter boundary review</conversation_title>\n**Suggestion**\n\nMove the boundary to the adapter.");
             var markdown = GraphJson.object(body(send(api,fixture,input)).get("data"));
             assertEquals("UNVERIFIED_ADVICE",markdown.get("status"));
-            assertEquals(plain.get(),markdown.get("answer"));
-            plain.set("```json\n" + CanonicalJson.write(Map.of("status","ADVICE","answer","Review this dependency.",
+            assertEquals("Adapter boundary review",markdown.get("conversationTitle"));
+            assertEquals("**Suggestion**\n\nMove the boundary to the adapter.",markdown.get("answer"));
+            plain.set("```json\n" + CanonicalJson.write(Map.of("status","ADVICE","answer","Review this dependency.","conversationTitle","Dependency review",
                     "citations",List.of("E2","E999","E2"),"limitations",List.of())) + "\n```");
             var fenced = GraphJson.object(body(send(api,fixture,input)).get("data"));
             assertEquals("ADVICE",fenced.get("status"));
+            assertEquals("Dependency review",fenced.get("conversationTitle"));
             assertEquals(List.of("E2"),fenced.get("citations"));
             var evidenceOnly = new java.util.HashMap<String,Object>(input);
             evidenceOnly.put("evidenceOnly",true);
@@ -133,6 +196,14 @@ class ArchitectureChatTest {
             var lastInput = GraphJson.object(GraphJson.array(lastRequest.get("messages")).getLast());
             var turn = GraphJson.object(GraphJson.read(GraphJson.string(lastInput.get("content")),GraphJson.Limits.defaults()));
             assertEquals(3,GraphJson.array(turn.get("conversation")).size());
+            disposition.set("ADVICE");
+            citations.set(List.of("E2"));
+            var reviewer = new java.util.HashMap<String,Object>(input);
+            reviewer.put("reviewer",true);
+            assertEquals(200,send(api,fixture,reviewer).status());
+            var reviewPayload=GraphJson.object(GraphJson.read(payload.get(),GraphJson.Limits.defaults()));
+            var reviewSystem=GraphJson.object(GraphJson.array(reviewPayload.get("messages")).getFirst());
+            assertTrue(GraphJson.string(reviewSystem.get("content")).contains("architecture reviewer independently"));
         } finally {
             mock.stop(0);
         }

@@ -58,6 +58,10 @@
 
     <span class="workbench-title">Repository analysis</span>
     <div class="topbar-actions">
+      <button id="command-palette-trigger" class="command-trigger" type="button" aria-label="Open command palette" title="Command palette (Ctrl+K)">
+        <span class="command-trigger-label">Command</span>
+        <kbd>Ctrl+K</kbd>
+      </button>
       <details class="workbench-menu" id="workspace-tools" hidden>
         <summary>Tools</summary>
         <div class="workbench-menu-items">
@@ -92,6 +96,7 @@
               </select>
             </label>
             <p id="analysis-mode-note" class="small muted" hidden>Quick analysis inventories the repository, prioritizes project code, and defers supported installed dependency trees and some Java details.</p>
+            <p id="artifact-recovery-note" class="small muted" hidden>Online recovery checks the dependency cache and fetches missing artifacts from approved repositories.</p>
             <button id="analyze-force" class="button subtle" hidden disabled>Recompute</button>
             <button id="disconnect-repo" class="button subtle" type="button" hidden>Disconnect repository…</button>
           </div>
@@ -208,6 +213,17 @@
 </div><!-- .workspace -->
 </div><!-- .app-shell -->
 
+<!-- Command palette -->
+<dialog class="command-palette" id="command-palette" aria-label="Command palette">
+  <div class="command-palette-surface">
+    <div class="command-palette-header">
+      <input id="command-palette-input" type="search" autocomplete="off" placeholder="Jump to tab, action, or symbol in current snapshot..." aria-label="Command palette search">
+      <button id="command-palette-close" class="command-palette-close" type="button" aria-label="Close command palette">Esc</button>
+    </div>
+    <div class="command-palette-list" id="command-palette-list" role="listbox" aria-label="Matching commands"></div>
+  </div>
+</dialog>
+
 <!-- Keyboard shortcut overlay -->
 <div class="shortcut-overlay" id="shortcut-overlay" hidden role="dialog" aria-modal="true" aria-label="Keyboard shortcuts">
   <div class="shortcut-panel">
@@ -217,7 +233,7 @@
     </div>
     <div class="shortcut-list">
       <kbd>/</kbd><span>Focus search</span>
-      <kbd>⌃K</kbd><span>Focus search</span>
+      <kbd>⌃K</kbd><span>Command palette</span>
       <kbd>O</kbd><span>Overview tab</span>
       <kbd>G</kbd><span>Graph tab</span>
       <kbd>R</kbd><span>Findings tab</span>

@@ -217,6 +217,7 @@ public final class PolyglotScan {
         HttpServiceCallProjection.project(store,context,cancelled);
         GrpcServiceCallProjection.project(store,context,cancelled);
         ServiceArchitectureProjection.project(store,context,cancelled);
+        EventFlowProjection.project(store,context,cancelled);
     }
     /** Join the native census to native targets. Syntax names never supply a callee.
      * Producer assertions use a separate edge vocabulary from validated observations. */

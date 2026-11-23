@@ -6,6 +6,7 @@ import com.evolution.analysis.assessment.*;
 import com.evolution.analysis.buildmodel.UniversalBuildIngestion;
 import com.evolution.analysis.contract.common.ContentDigest;
 import com.evolution.analysis.contract.identity.RepositoryIdentity;
+import com.evolution.analysis.dependency.DependencyAcquisitionPolicy;
 import com.evolution.analysis.evidence.*;
 import com.evolution.analysis.filesystem.*;
 import com.evolution.analysis.frontend.*;
@@ -29,8 +30,10 @@ import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BooleanSupplier;
 
-/** Passive filesystem/local-cache composition over the same providers as evo scan. No target execution or network. */
+/** Passive composition over the same providers as evo scan. The runner never executes target lifecycles. */
 public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
+    private static final DependencyAcquisitionPolicy CACHE_ONLY =
+            new DependencyAcquisitionPolicy(1024,64_000_000,256_000_000,64,List.of(),5000,15000,0);
     private static final ExecutorService POLYGLOT_WORKERS = Executors.newFixedThreadPool(
             Math.max(1, Math.min(4, Runtime.getRuntime().availableProcessors() / 2)),
             runnable -> {
@@ -90,11 +93,18 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
     }
     private final Input input;
     private final Path intakeDirectory;
+    private final Optional<DependencyAcquisitionPolicy> artifactPolicy;
     public LocalAnalysisRunner(Input input) { this(input,input.source().resolve(".evo/acquisition")); }
-    public LocalAnalysisRunner(Input input,Path intakeDirectory) { this.input = Objects.requireNonNull(input); this.intakeDirectory=intakeDirectory.toAbsolutePath().normalize(); }
+    public LocalAnalysisRunner(Input input,Path intakeDirectory) { this(input,intakeDirectory,Optional.empty()); }
+    LocalAnalysisRunner(Input input,Path intakeDirectory,Optional<DependencyAcquisitionPolicy> artifactPolicy) {
+        this.input = Objects.requireNonNull(input);
+        this.intakeDirectory = intakeDirectory.toAbsolutePath().normalize();
+        this.artifactPolicy = Objects.requireNonNull(artifactPolicy);
+    }
     public AnalysisJobs.Registration registration(String id) {
         return new AnalysisJobs.Registration(new AnalysisJobs.Setup(id,input.repository(),input.release(),input.includeTests(),
-                input.policy().map(p -> ContentDigest.sha256(p.bytes())),input.spring().space().map(s -> s.identity().value())),this);
+                input.policy().map(p -> ContentDigest.sha256(p.bytes())),input.spring().space().map(s -> s.identity().value()),
+                artifactPolicy.map(DependencyAcquisitionPolicy::identity)),this);
     }
     @Override public AnalysisJobs.RunResult run(AnalysisJobs.Control control) throws Exception {
         var adapter = new Progress() {
@@ -203,7 +213,8 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
         boolean fast = control.mode().isFastArchitecture();
         var platform = acquirePlatform(safe(input.jdk()), input.release());
         control.checkpoint();
-        var models = MavenScan.models(acquisition,cache,List.of());
+        var depPolicy = artifactPolicy.orElse(CACHE_ONLY);
+        var models = MavenScan.models(acquisition,cache,depPolicy.remoteRepositories());
         var defaults = UniversalBuildIngestion.Policy.defaults();
         var buildPolicy=new UniversalBuildIngestion.Policy(Optional.of(input.release()),Optional.of(input.release()),Optional.of("UTF-8"),32_768,defaults.maxCharacters(),defaults.maxTokens(),128);
         var decoded=new RepositoryInputDecoder.Prepared(acquisition,new RepositoryInputDecoder.Policy("UTF-8",500_000,100_000_000,fast));
@@ -218,7 +229,6 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
         var availablePlatforms=new TreeMap<Integer,com.evolution.analysis.frontend.PlatformInput>();platformViews.forEach((target,view)->view.platform().ifPresent(value->availablePlatforms.put(target,value)));
         var platformLedgers=additionalPlatforms.isEmpty()?List.<EvidenceAcquisitionLedger>of():List.of(CapabilityGapNormalizer.normalize(
                 EvidenceContext.forSnapshot(acquisition.snapshot().orElseThrow().identity()),EvidenceNormalizationInput.builder().platformResults(additionalPlatforms).build()));
-        var depPolicy=new com.evolution.analysis.dependency.DependencyAcquisitionPolicy(1024,64_000_000,256_000_000,64,List.of(),5000,15000,0);
         var mavenBase=MavenScan.inputs(acquisition,models,cache,platform.platform(),depPolicy,availablePlatforms);
         var dependencies=GradleScan.augment(mavenBase,acquisition,gradleModel,cache,platform.platform(),depPolicy,availablePlatforms);
         var frontend = new JavaParserFrontend();

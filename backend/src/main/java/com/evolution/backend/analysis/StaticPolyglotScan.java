@@ -149,7 +149,8 @@ public final class StaticPolyglotScan {
                 }
                 if(category.equals("RPC_METHOD"))protoMethods.put(id,Map.of("document",document,"attributes",attrs,"proof",artifact.identity().value()));
             } else if(!language.equals("protobuf")&&!Boolean.TRUE.equals(fact.get("recovered"))) {
-                String rawPath=fields.get("path")==null?"":GraphJson.string(fields.get("path")).replace('\\','/');
+                String rawField=fields.get("path")==null?"":GraphJson.string(fields.get("path"));
+                String rawPath=decodePath(rawField).replace('\\','/');
                 int slash=rawPath.lastIndexOf('/');String dir=slash<0?"":rawPath.substring(0,slash);
                 String base=slash<0?rawPath:rawPath.substring(slash+1);int dot=base.lastIndexOf('.');String stem=dot<0?base:base.substring(0,dot);
                 if((stem.equals("index")||stem.equals("__init__"))&&!dir.isEmpty()){int pSlash=dir.lastIndexOf('/');stem=pSlash<0?dir:dir.substring(pSlash+1);}
@@ -217,6 +218,7 @@ public final class StaticPolyglotScan {
             if(cancelled.getAsBoolean()||Thread.currentThread().isInterrupted())throw new IOException("SYNTAX_CANCELLED");
             var matchedIds=new TreeSet<String>();
             if(site.category().equals("IMPORT")) {
+                String modulePrefix = resolveImportModulePrefix(site);
                 var siteTokens=tokens(site.name()+" "+site.written());
                 for(String tok:siteTokens) {
                     if(KEYWORDS.contains(tok))continue;
@@ -224,8 +226,14 @@ public final class StaticPolyglotScan {
                     var external=candidates.stream().filter(d->!d.document().equals(site.document())).toList();
                     if(external.size()==1)matchedIds.add(external.getFirst().id());
                     else if(external.size()>1) {
-                        var pathFiltered=external.stream().filter(d->!d.fileStem().isEmpty()&&siteTokens.contains(d.fileStem())).toList();
-                        for(var d:(pathFiltered.isEmpty()?external:pathFiltered))matchedIds.add(d.id());
+                        var moduleMatched = modulePrefix.isEmpty() ? List.<DeclEntry>of()
+                                : external.stream().filter(d -> matchesModulePrefix(d.normPath(), modulePrefix)).toList();
+                        if(!moduleMatched.isEmpty()) {
+                            for(var d:moduleMatched)matchedIds.add(d.id());
+                        } else {
+                            var pathFiltered=external.stream().filter(d->!d.fileStem().isEmpty()&&siteTokens.contains(d.fileStem())).toList();
+                            for(var d:(pathFiltered.isEmpty()?external:pathFiltered))matchedIds.add(d.id());
+                        }
                     }
                 }
             } else if(site.category().equals("CALL")) {
@@ -279,6 +287,55 @@ public final class StaticPolyglotScan {
                 edges.putIfAbsent(context+"|"+edgeId,new KnowledgeGraph.Edge(edgeId,context,edgeKind,site.siteId(),new KnowledgeGraph.Target(targetState,targets,Optional.empty()),List.of(proof.identity()),Optional.empty()));
             }
         }
+    }
+    private static String resolveImportModulePrefix(SiteEntry site) {
+        String written = site.written();
+        if (written == null || written.isEmpty()) return "";
+        int q1 = Math.max(written.indexOf('\''), written.indexOf('"'));
+        if (q1 >= 0) {
+            char quote = written.charAt(q1);
+            int q2 = written.indexOf(quote, q1 + 1);
+            if (q2 > q1 + 1) {
+                String spec = written.substring(q1 + 1, q2).trim();
+                if (spec.startsWith("./") || spec.startsWith("../")) {
+                    return normalizeRelativePath(site.dirPath(), spec);
+                }
+                if (spec.startsWith("@/") || spec.startsWith("~/")) {
+                    return spec.substring(2);
+                }
+            }
+        }
+        if ("python".equals(site.langGroup())) {
+            var m = java.util.regex.Pattern.compile("^from\\s+([A-Za-z_][A-Za-z0-9_.]*)\\s+import\\b").matcher(written.trim());
+            if (m.find()) {
+                return m.group(1).replace('.', '/');
+            }
+        }
+        return "";
+    }
+    private static String normalizeRelativePath(String baseDir, String relative) {
+        var parts = new ArrayDeque<String>();
+        if (baseDir != null && !baseDir.isEmpty()) {
+            for (String p : baseDir.split("/")) if (!p.isEmpty() && !p.equals(".")) parts.addLast(p);
+        }
+        for (String seg : relative.split("/")) {
+            if (seg.isEmpty() || seg.equals(".")) continue;
+            if (seg.equals("..")) { if (!parts.isEmpty()) parts.removeLast(); }
+            else parts.addLast(seg);
+        }
+        return String.join("/", parts);
+    }
+    private static boolean matchesModulePrefix(String normPath, String prefix) {
+        if (normPath == null || normPath.isEmpty() || prefix.isEmpty()) return false;
+        String clean = normPath.replaceFirst("\\.[^./]+$", "");
+        return clean.equals(prefix) || clean.endsWith("/" + prefix)
+                || clean.equals(prefix + "/index") || clean.endsWith("/" + prefix + "/index")
+                || clean.equals(prefix + "/__init__") || clean.endsWith("/" + prefix + "/__init__");
+    }
+    private static String decodePath(String raw) {
+        if (raw == null || raw.isEmpty()) return "";
+        try { return new LogicalPath(raw).utf8().orElse(raw); }
+        catch (IllegalArgumentException plain) { return raw; }
     }
     private static String langGroup(String language){return Set.of("javascript","typescript","tsx").contains(language)?"js-ts":language;}
     private static String declSymbol(String name,String written) {

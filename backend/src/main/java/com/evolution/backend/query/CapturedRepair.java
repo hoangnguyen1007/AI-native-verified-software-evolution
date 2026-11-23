@@ -62,13 +62,18 @@ public final class CapturedRepair {
 
     public record Outcome(String version, String status, Optional<Reason> reason, List<Source> sources,
             List<CapabilityGapRecord> gaps,
-            List<Syntax> syntax, Optional<Proposal> proposal) {
+            List<Syntax> syntax, Optional<Proposal> proposal, int attempts) {
+        public Outcome(String version, String status, Optional<Reason> reason, List<Source> sources,
+                List<CapabilityGapRecord> gaps, List<Syntax> syntax, Optional<Proposal> proposal) {
+            this(version, status, reason, sources, gaps, syntax, proposal, 1);
+        }
     }
 
     private record Inputs(List<RepairSource.File> files, List<Source> sources, List<CapabilityGapRecord> gaps) {
     }
 
-    private record Request(Optional<Offer> offer, byte[] bytes, List<ModelSources.Selection> files, Optional<Reason> reason) {
+    private record Request(Optional<Offer> offer, byte[] bytes, String userPrompt, List<ContentDigest> offered,
+            List<ModelSources.Selection> files, Optional<Reason> reason) {
     }
 
     private record Replacement(JavaRepairRecipes.Range range, String text) {
@@ -90,94 +95,167 @@ public final class CapturedRepair {
 
     Outcome propose(FindingDiagnosis.Outcome diagnosis, KnowledgeGraph graph, Strategy strategy,
             Optional<JavaRepairRecipes.Recipe> recipe, Optional<ContentDigest> modelInput, Supplier<StopReason> stop) {
+        return propose(diagnosis, graph, strategy, recipe, modelInput, 1, stop);
+    }
+
+    Outcome propose(FindingDiagnosis.Outcome diagnosis, KnowledgeGraph graph, Strategy strategy,
+            Optional<JavaRepairRecipes.Recipe> recipe, Optional<ContentDigest> modelInput, int maxRepairAttempts,
+            Supplier<StopReason> stop) {
+        int maxAttempts = strategy == Strategy.AI ? Math.max(1, Math.min(3, maxRepairAttempts)) : 1;
         var inputs = collect(diagnosis, graph, stop);
         var checks = new ArrayList<Syntax>();
         if (stop.get() != StopReason.NONE)
-            return withheld(Reason.QUERY_LIMIT, inputs, checks);
+            return withheld(Reason.QUERY_LIMIT, inputs, checks, 1);
         if (diagnosis.status() != FindingDiagnosis.Status.CITATIONS_VALIDATED)
-            return withheld(Reason.DIAGNOSIS_WITHHELD, inputs, checks);
+            return withheld(Reason.DIAGNOSIS_WITHHELD, inputs, checks, 1);
         if (inputs.files().isEmpty())
-            return withheld(Reason.SOURCE_UNAVAILABLE, inputs, checks);
+            return withheld(Reason.SOURCE_UNAVAILABLE, inputs, checks, 1);
         var profile = JavaRepairSyntax.profile(graph, diagnosis.pin());
         var changes = new ArrayList<Changed>();
         Optional<Offer> modelOffer = Optional.empty();
         Optional<ContentDigest> modelResponse = Optional.empty();
+        int usedAttempts = 1;
         if (strategy == Strategy.RECIPE) {
             for (var file : inputs.files()) {
                 if (stop.get() != StopReason.NONE)
-                    return withheld(Reason.QUERY_LIMIT, inputs, checks);
+                    return withheld(Reason.QUERY_LIMIT, inputs, checks, 1);
                 var parsed = JavaRepairSyntax.parse(file.text(), profile.forFile(file));
                 checks.add(new Syntax(file.path(), file.digest(), "BASELINE", parsed.check()));
                 try {
                     for (var nextText : JavaRepairRecipes.candidates(recipe.orElseThrow(), file, parsed))
                         changes.add(new Changed(file, nextText));
                 } catch (StackOverflowError depth) {
-                    return withheld(Reason.CANDIDATE_LIMIT, inputs, checks);
+                    return withheld(Reason.CANDIDATE_LIMIT, inputs, checks, 1);
                 }
             }
             if (changes.size() > 1)
-                return withheld(Reason.AMBIGUOUS_RECIPE_TARGET, inputs, checks);
+                return withheld(Reason.AMBIGUOUS_RECIPE_TARGET, inputs, checks, 1);
             if (changes.isEmpty()) {
                 var reason = checks.stream().anyMatch(c -> c.result().status() == JavaRepairSyntax.Status.UNAVAILABLE)
                         ? Reason.COMPILER_UNAVAILABLE
                         : checks.stream().anyMatch(c -> c.result().status() == JavaRepairSyntax.Status.REJECTED)
                                 ? Reason.BASELINE_SYNTAX_REJECTED
                                 : Reason.RECIPE_NOT_APPLICABLE;
-                return withheld(reason, inputs, checks);
+                return withheld(reason, inputs, checks, 1);
             }
         } else {
             var request = offer(diagnosis, graph, inputs, stop);
             if (request.reason().isPresent())
-                return withheld(request.reason().orElseThrow(), inputs, checks);
+                return withheld(request.reason().orElseThrow(), inputs, checks, 1);
             modelOffer = request.offer();
             if (!modelOffer.map(Offer::input).equals(modelInput))
-                return withheld(Reason.MODEL_INPUT_MISMATCH, inputs, checks);
-            try {
-                var reply = model.propose(request.bytes(), stop);
+                return withheld(Reason.MODEL_INPUT_MISMATCH, inputs, checks, 1);
+            var conversation = new ArrayList<Map<String, Object>>();
+            conversation.add(Map.of("role", "system", "content", RepairChatModel.PROMPT));
+            conversation.add(Map.of("role", "user", "content", request.userPrompt()));
+            for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+                usedAttempts = attempt;
+                checks.clear();
+                changes.clear();
+                RepairChatModel.Completion reply;
+                try {
+                    reply = attempt == 1
+                            ? model.propose(request.bytes(), stop)
+                            : model.proposeConversation(conversation, request.offered(), stop);
+                } catch (RepairChatModel.Rejected rejected) {
+                    return withheld(Reason.valueOf(rejected.reason.name()), inputs, checks, usedAttempts);
+                }
                 if (reply.edits().isEmpty())
-                    return withheld(Reason.NO_EDIT, inputs, checks);
-                changes.addAll(apply(reply.edits(), request.files()));
-                modelResponse = Optional.of(reply.contentDigest());
-            } catch (RepairChatModel.Rejected rejected) {
-                return withheld(Reason.valueOf(rejected.reason.name()), inputs, checks);
-            } catch (IllegalArgumentException invalid) {
-                return withheld(Reason.INVALID_MODEL_OUTPUT, inputs, checks);
+                    return withheld(Reason.NO_EDIT, inputs, checks, usedAttempts);
+                String feedback = null;
+                try {
+                    changes.addAll(apply(reply.edits(), request.files()));
+                    modelResponse = Optional.of(reply.contentDigest());
+                } catch (IllegalArgumentException invalid) {
+                    if (attempt >= maxAttempts || stop.get() != StopReason.NONE) {
+                        return withheld(Reason.INVALID_MODEL_OUTPUT, inputs, checks, usedAttempts);
+                    }
+                    feedback = "Previous edits failed anchor or span validation (ensure oldText matches the offered file uniquely, "
+                            + "stays inside offered lines, does not overlap, and at least one edit overlaps a cited span). "
+                            + "Propose corrected JSON edits.";
+                }
+                if (feedback == null) {
+                    var syntaxFailures = new ArrayList<String>();
+                    for (var change : changes) {
+                        var file = change.source();
+                        String next = change.text();
+                        var encoding = file.ascii() ? StandardCharsets.US_ASCII : StandardCharsets.UTF_8;
+                        if (next.isBlank() || next.indexOf(0) >= 0 || !encoding.newEncoder().canEncode(next)) {
+                            return withheld(Reason.INVALID_MODEL_OUTPUT, inputs, checks, usedAttempts);
+                        }
+                        byte[] bytes = next.getBytes(encoding);
+                        if (bytes.length > RepairSource.MAX_FILE_BYTES) {
+                            return withheld(Reason.CANDIDATE_LIMIT, inputs, checks, usedAttempts);
+                        }
+                        var digest = ContentDigest.sha256(bytes);
+                        if (digest.equals(file.digest())) {
+                            return withheld(Reason.NO_EDIT, inputs, checks, usedAttempts);
+                        }
+                        var checked = JavaRepairSyntax.parse(next, profile.forFile(file)).check();
+                        checks.add(new Syntax(file.path(), digest, "CANDIDATE", checked));
+                        if (checked.status() == JavaRepairSyntax.Status.REJECTED) {
+                            for (var err : checked.diagnostics()) {
+                                syntaxFailures.add(file.path() + " line " + err.line() + " col " + err.column() + ": " + err.code());
+                            }
+                        } else if (checked.status() == JavaRepairSyntax.Status.UNAVAILABLE) {
+                            return withheld(Reason.COMPILER_UNAVAILABLE, inputs, checks, usedAttempts);
+                        }
+                    }
+                    if (syntaxFailures.isEmpty()) break;
+                    if (attempt >= maxAttempts || stop.get() != StopReason.NONE) {
+                        return withheld(Reason.CANDIDATE_SYNTAX_REJECTED, inputs, checks, usedAttempts);
+                    }
+                    feedback = "Java compiler syntax check rejected the previous candidate with diagnostics: "
+                            + String.join("; ", syntaxFailures)
+                            + ". Fix these syntax errors against the original offered file coordinates and return valid JSON edits.";
+                }
+                conversation.add(Map.of("role", "assistant", "content", reply.rawContent()));
+                conversation.add(Map.of("role", "user", "content", feedback));
             }
         }
 
         var edits = new ArrayList<Edit>();
         Reason failed = null;
-        for (var change : changes) {
-            if (stop.get() != StopReason.NONE)
-                return withheld(Reason.QUERY_LIMIT, inputs, checks);
-            var file = change.source();
-            String next = change.text();
-            var encoding = file.ascii() ? StandardCharsets.US_ASCII : StandardCharsets.UTF_8;
-            if (next.isBlank() || next.indexOf(0) >= 0 || !encoding.newEncoder().canEncode(next))
-                return withheld(strategy == Strategy.AI ? Reason.INVALID_MODEL_OUTPUT : Reason.NO_EDIT, inputs, checks);
-            byte[] bytes = next.getBytes(encoding);
-            if (bytes.length > RepairSource.MAX_FILE_BYTES)
-                return withheld(Reason.CANDIDATE_LIMIT, inputs, checks);
-            var digest = ContentDigest.sha256(bytes);
-            if (digest.equals(file.digest()))
-                return withheld(Reason.NO_EDIT, inputs, checks);
-            var checked = JavaRepairSyntax.parse(next, profile.forFile(file)).check();
-            checks.add(new Syntax(file.path(), digest, "CANDIDATE", checked));
-            if (checked.status() == JavaRepairSyntax.Status.REJECTED)
-                failed = Reason.CANDIDATE_SYNTAX_REJECTED;
-            else if (checked.status() == JavaRepairSyntax.Status.UNAVAILABLE && failed == null)
-                failed = Reason.COMPILER_UNAVAILABLE;
-            edits.add(new Edit(file.path(), file.digest(), digest, file.byteEvidence(), citationIds(file.citations())));
+        if (strategy == Strategy.RECIPE) {
+            for (var change : changes) {
+                if (stop.get() != StopReason.NONE)
+                    return withheld(Reason.QUERY_LIMIT, inputs, checks, usedAttempts);
+                var file = change.source();
+                String next = change.text();
+                var encoding = file.ascii() ? StandardCharsets.US_ASCII : StandardCharsets.UTF_8;
+                if (next.isBlank() || next.indexOf(0) >= 0 || !encoding.newEncoder().canEncode(next))
+                    return withheld(Reason.NO_EDIT, inputs, checks, usedAttempts);
+                byte[] bytes = next.getBytes(encoding);
+                if (bytes.length > RepairSource.MAX_FILE_BYTES)
+                    return withheld(Reason.CANDIDATE_LIMIT, inputs, checks, usedAttempts);
+                var digest = ContentDigest.sha256(bytes);
+                if (digest.equals(file.digest()))
+                    return withheld(Reason.NO_EDIT, inputs, checks, usedAttempts);
+                var checked = JavaRepairSyntax.parse(next, profile.forFile(file)).check();
+                checks.add(new Syntax(file.path(), digest, "CANDIDATE", checked));
+                if (checked.status() == JavaRepairSyntax.Status.REJECTED)
+                    failed = Reason.CANDIDATE_SYNTAX_REJECTED;
+                else if (checked.status() == JavaRepairSyntax.Status.UNAVAILABLE && failed == null)
+                    failed = Reason.COMPILER_UNAVAILABLE;
+                edits.add(new Edit(file.path(), file.digest(), digest, file.byteEvidence(), citationIds(file.citations())));
+            }
+            if (failed != null)
+                return withheld(failed, inputs, checks, usedAttempts);
+        } else {
+            for (var change : changes) {
+                var file = change.source();
+                var encoding = file.ascii() ? StandardCharsets.US_ASCII : StandardCharsets.UTF_8;
+                var digest = ContentDigest.sha256(change.text().getBytes(encoding));
+                edits.add(new Edit(file.path(), file.digest(), digest, file.byteEvidence(), citationIds(file.citations())));
+            }
         }
-        if (failed != null)
-            return withheld(failed, inputs, checks);
         if (stop.get() != StopReason.NONE)
-            return withheld(Reason.QUERY_LIMIT, inputs, checks);
+            return withheld(Reason.QUERY_LIMIT, inputs, checks, usedAttempts);
         var patch = new StringBuilder();
         for (var change : changes) {
             patch.append(RepairPatch.file(change.source().path(), change.source().text(), change.text()));
             if (patch.length() > RepairProposalStore.MAX_FILE_BYTES)
-                return withheld(Reason.CANDIDATE_LIMIT, inputs, checks);
+                return withheld(Reason.CANDIDATE_LIMIT, inputs, checks, usedAttempts);
         }
         String diff = patch.toString();
         var candidate = new Candidate(diagnosis.pin(), diagnosis.input().orElseThrow(), diagnosis.proof().orElseThrow(),
@@ -187,9 +265,9 @@ public final class CapturedRepair {
                 ContentDigest.sha256Utf8(diff), diff, "UNVERIFIED");
         var proposal = new Proposal(CanonicalJson.sha256(List.of(VERSION, candidate)), candidate);
         try { BoundedJson.encode(proposal, RepairProposalStore.MAX_FILE_BYTES); }
-        catch (BoundedJson.TooLarge limit) { return withheld(Reason.CANDIDATE_LIMIT, inputs, checks); }
+        catch (BoundedJson.TooLarge limit) { return withheld(Reason.CANDIDATE_LIMIT, inputs, checks, usedAttempts); }
         return new Outcome(VERSION, "PROPOSED", Optional.empty(), inputs.sources(), inputs.gaps(), List.of(),
-                Optional.of(proposal));
+                Optional.of(proposal), usedAttempts);
     }
 
     private static Inputs collect(FindingDiagnosis.Outcome diagnosis, KnowledgeGraph graph, Supplier<StopReason> stop) {
@@ -230,6 +308,8 @@ public final class CapturedRepair {
         String sourceName = entityLabel(graph, ctx, diagnosis.pin().context(), proof.source()),
                 targetName = entityLabel(graph, ctx, diagnosis.pin().context(), proof.target());
         ModelSources.Packet packet;
+        var lastPrompt = new String[1];
+        var lastOffered = new List[1];
         try {
             var metadata = Map.<String,Object>of("rule", proof.rule(), "scope", proof.scope(), "classification", proof.classification(),
                     "relationships", proof.relationships(), "sourceEntity", proof.source(), "sourceName", sourceName,
@@ -244,7 +324,13 @@ public final class CapturedRepair {
                 }
                 var request = new HashMap<>(metadata);
                 request.put("files",files);
-                return model.request(request,offered.stream().map(selected -> selected.file().digest()).toList());
+                var digests = offered.stream().map(selected -> selected.file().digest()).toList();
+                byte[] encoded = model.request(request, digests);
+                var reqObj = GraphJson.object(GraphJson.read(new String(encoded, StandardCharsets.UTF_8), GraphJson.Limits.defaults()));
+                var msgs = GraphJson.array(reqObj.get("messages"));
+                lastPrompt[0] = GraphJson.string(GraphJson.object(msgs.getLast()).get("content"));
+                lastOffered[0] = digests;
+                return encoded;
             });
         } catch (BoundedJson.TooLarge limit) {
             return unavailable(Reason.MODEL_INPUT_LIMIT);
@@ -256,7 +342,9 @@ public final class CapturedRepair {
                 .map(file -> new Source(file.path(),file.digest(),citationIds(file.citations()),Optional.empty())).toList();
         var id = CanonicalJson.sha256(List.of(VERSION, model.provider(), diagnosis.pin(),
                 diagnosis.input().orElseThrow(), ContentDigest.sha256(packet.bytes())));
-        return new Request(Optional.of(new Offer(model.provider(),id,files)),packet.bytes(),packet.files(),Optional.empty());
+        @SuppressWarnings("unchecked")
+        List<ContentDigest> digests = (List<ContentDigest>) lastOffered[0];
+        return new Request(Optional.of(new Offer(model.provider(),id,files)),packet.bytes(),lastPrompt[0],digests,packet.files(),Optional.empty());
     }
 
     static boolean authentic(Proposal proposal) {
@@ -366,11 +454,11 @@ public final class CapturedRepair {
     }
 
     private static Request unavailable(Reason reason) {
-        return new Request(Optional.empty(), new byte[0], List.of(), Optional.of(reason));
+        return new Request(Optional.empty(), new byte[0], "", List.of(), List.of(), Optional.of(reason));
     }
 
-    private static Outcome withheld(Reason reason, Inputs inputs, List<Syntax> checks) {
+    private static Outcome withheld(Reason reason, Inputs inputs, List<Syntax> checks, int attempts) {
         return new Outcome(VERSION, "WITHHELD", Optional.of(reason), inputs.sources(), inputs.gaps(),
-                List.copyOf(checks), Optional.empty());
+                List.copyOf(checks), Optional.empty(), attempts);
     }
 }

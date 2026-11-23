@@ -373,7 +373,9 @@ public final class ArchitectureQueryApi {
         if (path.equals("/api/v1/analysis/jobs/history") || path.startsWith("/api/v1/analysis/jobs/") && (path.endsWith("/cancel") || path.endsWith("/gaps") || path.endsWith("/input-diagnostics"))) return "POST";
         if (path.startsWith("/api/v1/graphs/") && path.endsWith("/architecture-insights")) return "POST";
         if (path.startsWith("/api/v1/graphs/") && path.endsWith("/architecture-chat")) return "POST";
+        if (path.startsWith("/api/v1/graphs/") && path.endsWith("/architecture-chat/stream")) return "POST";
         if (path.startsWith("/api/v1/graphs/") && path.endsWith("/policy-assessment")) return "POST";
+        if (path.startsWith("/api/v1/graphs/") && path.endsWith("/suggested-policy")) return "POST";
         if (path.endsWith("/repository-score")) return "GET, POST";
         return path.contains("/queries/") || path.split("/",-1).length == 8 ? "POST" : "GET";
     }
@@ -416,6 +418,7 @@ public final class ArchitectureQueryApi {
             capabilities.putAll(Map.of("operations",OPERATIONS,"reportOperations",REPORT_OPERATIONS,"transportLimits",limits,
                     "queryLimits",Limits.defaults(),"graphSchema",KnowledgeGraph.SCHEMA));
             capabilities.put("jobVersion",AnalysisJobs.VERSION); capabilities.put("analysisJobsEnabled",jobs != null);
+            capabilities.put("analysisCoverageEnabled",jobs != null);
             capabilities.put("analysisResultReuseEnabled", jobs != null && jobs.resultReuseEnabled());
             capabilities.put("repositoryConnectionsEnabled",connections != null);
             capabilities.put("partitionedGraphsEnabled",partitionReaders != null);
@@ -428,8 +431,11 @@ public final class ArchitectureQueryApi {
             capabilities.put("analysisModes",List.of("FULL","FAST_ARCHITECTURE"));
             capabilities.put("architectureInsightsEnabled",true);
             capabilities.put("architectureChatEnabled",true);
+            capabilities.put("architectureChatStreamEnabled",true);
+            capabilities.put("architectureAgentEnabled",true);
             if (architectureChat != null) capabilities.put("architectureChatProvider",architectureChat.provider());
             capabilities.put("repositoryScoringEnabled",true);
+            capabilities.put("suggestedPolicyEnabled",true);
             capabilities.put("repairReanalysisEnabled",repairReanalysis != null);
             capabilities.put("repairModelConfigured",repairModel != null);
             return capabilities;
@@ -471,6 +477,23 @@ public final class ArchitectureQueryApi {
             if (!queries.supportsArchitectureScope(context,scope)) throw new Failure(422,"POLICY_SCOPE_UNAVAILABLE");
             return WorkbenchPolicyAssessment.evaluate(queries,context,scope,QueryJson.optionalText(input,"policy"),
                     reports,() -> scoringCheckpoint(guard));
+        }
+        if (parts.length==6 && parts[5].equals("suggested-policy")) {
+            requireMethod(method,"POST");
+            var input = QueryJson.object(decode(body,contentType),"context","scope");
+            var guard = ArchitectureQueryService.operationalGuard(cancelled,
+                    System.nanoTime() + limits.queryTimeoutMillis() * 1_000_000, 8_000_000);
+            scoringCheckpoint(guard);
+            var graph = load(graphId);
+            String contextId = QueryJson.text(input,"context");
+            var context = graph.contexts().stream().filter(candidate -> candidate.identity().equals(contextId)).findFirst()
+                    .orElseThrow(() -> new Failure(404,"CONTEXT_NOT_FOUND"));
+            var scope = input.containsKey("scope")
+                    ? ArchitectureQuery.Scope.valueOf(QueryJson.text(input,"scope"))
+                    : WorkbenchPolicyAssessment.scope(graph,context);
+            var queries = factory.apply(graph,guard);
+            if (!queries.supportsArchitectureScope(context,scope)) throw new Failure(422,"POLICY_SCOPE_UNAVAILABLE");
+            return WorkbenchPolicyAssessment.suggestPolicy(queries,context,scope,() -> scoringCheckpoint(guard));
         }
         if (parts.length==6 && parts[5].equals("architecture-chat")) {
             requireMethod(method,"POST");
@@ -557,11 +580,61 @@ public final class ArchitectureQueryApi {
         if (stop != StopReason.NONE) throw new Failure(503,"SCORING_RESOURCE_LIMIT");
     }
 
+    interface SseEmitter {
+        void stage(String message);
+        void tool(Map<String,Object> payload);
+        void delta(String text);
+        void complete(byte[] envelopeJson);
+        void error(int status, String code, String message);
+    }
+
+    void streamArchitectureChat(ContentDigest graphId, byte[] body, String contentType,
+                                BooleanSupplier cancelled, SseEmitter emitter) {
+        try {
+            if (body.length > limits.requestBytes()) throw new Failure(413,"REQUEST_TOO_LARGE");
+            var input = ArchitectureChat.Input.read(decode(body, contentType));
+            var result = runArchitectureChat(graphId, input, cancelled, new ArchitectureAgent.ProgressListener() {
+                @Override public void onStage(String message) { emitter.stage(message); }
+                @Override public void onToolStart(int step, String tool, Map<String, Object> arguments) {
+                    emitter.tool(Map.of("phase","start","step",step,"tool",tool,"arguments",arguments));
+                }
+                @Override public void onToolComplete(ArchitectureChat.AgentStep step) {
+                    emitter.tool(Map.of("phase","complete","step",step.step(),"tool",step.tool(),
+                            "summary",step.summary(),"evidenceIds",step.evidenceIds(),"durationMs",step.durationMs()));
+                }
+                @Override public void onDelta(String textChunk) { emitter.delta(textChunk); }
+            });
+            byte[] canonicalData = BoundedJson.encode(result, limits.responseBytes());
+            byte[] envelope = BoundedJson.encode(Map.of("apiVersion",VERSION,"queryVersion",ArchitectureQuery.VERSION,
+                    "resultIdentity",ContentDigest.sha256(canonicalData),"data",result), limits.responseBytes());
+            emitter.complete(envelope);
+        } catch (Failure failure) {
+            emitter.error(failure.status, failure.code, message(failure.code));
+        } catch (BoundedJson.TooLarge large) {
+            emitter.error(422, "RESPONSE_TOO_LARGE", message("RESPONSE_TOO_LARGE"));
+        } catch (GraphJson.LimitExceededException large) {
+            emitter.error(413, "JSON_LIMIT_EXCEEDED", message("JSON_LIMIT_EXCEEDED"));
+        } catch (GraphStoreException unavailable) {
+            emitter.error(503, "GRAPH_STORE_UNAVAILABLE", message("GRAPH_STORE_UNAVAILABLE"));
+        } catch (IllegalArgumentException invalid) {
+            emitter.error(400, "INVALID_REQUEST", message("INVALID_REQUEST"));
+        } catch (RuntimeException failed) {
+            emitter.error(500, "INTERNAL_ERROR", message("INTERNAL_ERROR"));
+        }
+    }
+
     private ArchitectureChat.Result architectureChat(ContentDigest graphId, ArchitectureChat.Input input,
                                                       BooleanSupplier cancelled) {
+        return runArchitectureChat(graphId, input, cancelled, null);
+    }
+
+    private ArchitectureChat.Result runArchitectureChat(ContentDigest graphId, ArchitectureChat.Input input,
+                                                         BooleanSupplier cancelled,
+                                                         ArchitectureAgent.ProgressListener listener) {
         var model = architectureChat;
         boolean offTopic = ArchitectureChat.directlyOutOfScope(input);
-        if (!offTopic && !input.evidenceOnly() && model != null && model.provider().remote() && !input.allowRemote())
+        boolean overviewQuestion = ArchitectureChatOverview.matches(input.question());
+        if (!offTopic && !overviewQuestion && !input.evidenceOnly() && model != null && model.provider().remote() && !input.allowRemote())
             throw new Failure(403,"CHAT_CONSENT_REQUIRED");
         var guard = ArchitectureQueryService.operationalGuard(cancelled,
                 System.nanoTime() + limits.queryTimeoutMillis() * 1_000_000,8_000_000);
@@ -581,11 +654,36 @@ public final class ArchitectureQueryApi {
             return ArchitectureChat.Result.offTopic(ArchitectureChat.pin(input,partition,graphId),
                     input.question(),Optional.empty());
         }
-        var context = ArchitectureChat.retrieve(input,partition,factory.apply(graph,guard),finding);
+        if (listener != null) listener.onStage("Retrieving snapshot evidence…");
+        var queries = factory.apply(graph,guard);
+        var context = ArchitectureChat.retrieve(input,partition,queries,finding);
+        if (input.job().isPresent() && jobs != null) {
+            var job = jobs.view(input.job().orElseThrow());
+            var result = job.result().orElseThrow(() -> new IllegalArgumentException("Job has no result"));
+            if (!result.graph().equals(Optional.of(graphId)) || !result.snapshot().equals(Optional.of(partition.snapshot())))
+                throw new Failure(409,"CHAT_JOB_SCOPE_MISMATCH");
+            context = context.withJob(job,result);
+            try { context = context.withGaps(jobs.gaps(job.id()),job.id()); }
+            catch (AnalysisJobs.Rejected unavailable) {
+                if (!"JOB_STORAGE_UNAVAILABLE".equals(unavailable.code())) throw unavailable;
+            }
+            if (connections != null) {
+                try { context = context.withReadiness(connections.publishedOverview(job.id(),job.mode()),job.id()); }
+                catch (java.io.IOException unavailable) { /* Keep using the pinned graph and job. */ }
+            }
+        }
         if (guard.get() != StopReason.NONE) throw new Failure(503,"CHAT_RESOURCE_LIMIT");
+        if (overviewQuestion) return ArchitectureChat.Result.overview(context,ArchitectureChatOverview.render(input.question(),context));
         if (model == null || input.evidenceOnly()) return ArchitectureChat.Result.local(context,model != null);
         try {
-            var completion = model.complete(input,context,graph,guard);
+            if (input.agentic() && !input.reviewer() && !model.settings().jsonMode()) {
+                var agentResult = ArchitectureAgent.run(model, input, context, queries, reports, Optional.ofNullable(jobs), guard, listener);
+                if ("OUT_OF_SCOPE".equals(agentResult.status()))
+                    return ArchitectureChat.Result.offTopic(context.pin(), input.question(), agentResult.model());
+                return agentResult;
+            }
+            if (listener != null) listener.onStage("Generating architecture response…");
+            var completion = model.complete(input,context,graph,guard, listener == null ? null : listener::onDelta);
             if ("OUT_OF_SCOPE".equals(completion.status()))
                 return ArchitectureChat.Result.offTopic(context.pin(),input.question(),Optional.of(completion.receipt()));
             return ArchitectureChat.Result.advice(context,completion);
@@ -661,7 +759,7 @@ public final class ArchitectureQueryApi {
         } else if (op.equals("repair-reanalysis")) {
             QueryJson.object(args,"identity","bundle","context","diagnosisInput","proposal","includeControl");
         } else if (op.equals("repair-proposal")) {
-            QueryJson.object(args,"identity","bundle","context","diagnosisInput","strategy","recipe","modelInput");
+            QueryJson.object(args,"identity","bundle","context","diagnosisInput","strategy","recipe","modelInput","maxRepairAttempts");
         } else if (op.equals("repair-options")) {
             QueryJson.object(args,"identity","bundle","context","diagnosisInput");
         } else if (op.equals("diagnosis")) {
@@ -718,7 +816,16 @@ public final class ArchitectureQueryApi {
                         if (args.containsKey("recipe")) throw new IllegalArgumentException("Recipe is only valid for RECIPE");
                         modelInput=Optional.of(new ContentDigest(QueryJson.text(args,"modelInput")));
                     }
-                    var outcome = captured.propose(replay,service.graph(),strategy,recipe,modelInput,service::assessmentStopReason);
+                    int maxRepairAttempts = 1;
+                    if (args.containsKey("maxRepairAttempts")) {
+                        if (!(args.get("maxRepairAttempts") instanceof java.math.BigDecimal bd))
+                            throw new IllegalArgumentException("Invalid maxRepairAttempts");
+                        try { maxRepairAttempts = bd.intValueExact(); }
+                        catch (ArithmeticException invalid) { throw new IllegalArgumentException("Invalid maxRepairAttempts"); }
+                        if (maxRepairAttempts < 1 || maxRepairAttempts > 3)
+                            throw new IllegalArgumentException("maxRepairAttempts must be between 1 and 3");
+                    }
+                    var outcome = captured.propose(replay,service.graph(),strategy,recipe,modelInput,maxRepairAttempts,service::assessmentStopReason);
                     if ("PROPOSED".equals(outcome.status()) && outcome.proposal().isPresent()) {
                         repairStore.put(outcome.proposal().orElseThrow());
                     }

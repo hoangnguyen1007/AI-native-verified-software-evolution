@@ -108,7 +108,8 @@ class LocalAnalysisRunnerTest {
     @Test void diagnosisRoundTripsToCapturedSourceAndRejectsAnotherBundle() throws Exception {
         var store = new InMemoryGraphStore(); var reports = new PublishedReports();
         try (var jobs = new AnalysisJobs(List.of(runner(false,false,POLICY).registration("local")),store,reports,new AnalysisJobs.Limits(1,1,4,90_000,100))) {
-            var result = finishedReal(jobs,jobs.submit("local","diagnosis").job().id()).result().orElseThrow();
+            var job = finishedReal(jobs,jobs.submit("local","diagnosis").job().id());
+            var result = job.result().orElseThrow();
             var graph = result.graph().orElseThrow(); var reportId = result.reports().getFirst();
             var finding = reports.get(reportId).orElseThrow().evaluation().findings().getFirst();
             var bundle = finding.bundle(); var api = new ArchitectureQueryApi(store,reports,ApiLimits.defaults(),jobs);
@@ -129,7 +130,7 @@ class LocalAnalysisRunnerTest {
                     && "src/main/java/api/Controller.java".equals(c.get("path"))));
             var chatRef = Map.of("report",reportId.value(),"identity",finding.identity().value(),"bundle",bundle.identity().value());
             var chat = new TreeMap<String,Object>(Map.of("context",bundle.context(),"mode","REPAIR","finding",chatRef,
-                    "messages",List.of(Map.of("role","user","content","Explain this dependency and propose a repair."))));
+                    "job",job.id(),"messages",List.of(Map.of("role","user","content","Explain this dependency and propose a repair."))));
             var chatPath = "/api/v1/graphs/" + graph.value() + "/architecture-chat";
             var read = AnalysisJobApiTest.call(api,"POST",chatPath,CanonicalJson.write(chat));
             assertEquals(200,read.status());
@@ -138,6 +139,10 @@ class LocalAnalysisRunnerTest {
                     && bundle.region().jointRegion().value().equals(GraphJson.object(row.get("data")).get("region"))));
             assertTrue(chatEvidence.stream().anyMatch(row -> "SOURCE".equals(row.get("kind"))
                     && expected.value().equals(GraphJson.object(row.get("data")).get("sourceDigest"))));
+            var gapData=chatEvidence.stream().filter(row -> "Analysis capability gaps".equals(row.get("label")))
+                    .map(row -> GraphJson.object(row.get("data"))).findFirst().orElseThrow();
+            assertEquals(job.id(),gapData.get("job"));
+            assertEquals(job.result().orElseThrow().jobGapCount(),((Number)gapData.get("counted")).intValue());
             assertFalse(new String(read.body(),StandardCharsets.UTF_8).contains("public class Controller"));
             chat.put("finding",Map.of("report",reportId.value(),"identity",finding.identity().value(),"bundle",reportId.value()));
             assertEquals(409,AnalysisJobApiTest.call(api,"POST",chatPath,CanonicalJson.write(chat)).status());
@@ -251,7 +256,7 @@ class LocalAnalysisRunnerTest {
             var catalog=AnalysisJobApiTest.data(AnalysisJobApiTest.call(configured,"POST",base+"/repair-options",
                     CanonicalJson.write(Map.of("arguments",pinned))));
             assertEquals(0,requests.get(),"Discovery never transmits source");
-            assertEquals(5,GraphJson.array(catalog.get("recipes")).size());
+            assertEquals(7,GraphJson.array(catalog.get("recipes")).size());
             var ai=GraphJson.object(catalog.get("ai"));
             var files=GraphJson.array(ai.get("files"));
             int controller=0; String before="";
@@ -302,6 +307,45 @@ class LocalAnalysisRunnerTest {
             var edits=GraphJson.array(patch.get("edits"));
             assertEquals(ContentDigest.sha256Utf8(replacement).value(),GraphJson.object(edits.getFirst()).get("after"));
             assertEquals(3,requests.get());
+
+            // Self-healing compiler feedback loop: attempt 1 returns syntax error, attempt 2 repairs it cleanly.
+            var selfHealAttempt = new java.util.concurrent.atomic.AtomicInteger();
+            var selfHealArgs = new TreeMap<String, Object>(args);
+            selfHealArgs.put("maxRepairAttempts", 3);
+            var selfHealBody = CanonicalJson.write(Map.of("arguments", selfHealArgs));
+            String brokenReply = CanonicalJson.write(Map.of("edits", List.of(Map.of("file", controller, "before", before,
+                    "oldText", old, "newText", "private void broken( {"))));
+            String validReply = CanonicalJson.write(Map.of("edits", List.of(Map.of("file", controller, "before", before,
+                    "oldText", old, "newText", ""))));
+            var healMock = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+            var healSecondRequest = new AtomicReference<String>();
+            healMock.createContext("/v1/chat/completions", exchange -> {
+                try (exchange) {
+                    String req = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+                    int n = selfHealAttempt.incrementAndGet();
+                    if (n == 2) healSecondRequest.set(req);
+                    byte[] resp = CanonicalJson.write(Map.of("model", "captured-repair-test", "choices", List.of(
+                            Map.of("finish_reason", "stop", "message", Map.of("role", "assistant", "content", n == 1 ? brokenReply : validReply)))))
+                            .getBytes(StandardCharsets.UTF_8);
+                    exchange.sendResponseHeaders(200, resp.length);
+                    exchange.getResponseBody().write(resp);
+                }
+            });
+            healMock.start();
+            try {
+                var healApi = ArchitectureQueryApi.withRepairModel(api, new RepairChatModel(
+                        URI.create("http://127.0.0.1:" + healMock.getAddress().getPort() + "/v1"), "captured-repair-test", null, false));
+                var healOpts = AnalysisJobApiTest.data(AnalysisJobApiTest.call(healApi, "POST", base + "/repair-options",
+                        CanonicalJson.write(Map.of("arguments", pinned))));
+                selfHealArgs.put("modelInput", GraphJson.string(GraphJson.object(healOpts.get("ai")).get("input")));
+                var selfHealUpdatedBody = CanonicalJson.write(Map.of("arguments", selfHealArgs));
+                var healed = AnalysisJobApiTest.data(AnalysisJobApiTest.call(healApi, "POST", base + "/repair-proposal", selfHealUpdatedBody));
+                assertEquals("PROPOSED", healed.get("status"), () -> CanonicalJson.write(healed));
+                assertEquals(2, ((Number) healed.get("attempts")).intValue());
+                assertTrue(healSecondRequest.get().contains("compiler.err"), "Feedback turn must carry javac diagnostic codes");
+            } finally {
+                healMock.stop(0);
+            }
 
             var chatApi=ArchitectureQueryApi.withArchitectureChat(configured,new ArchitectureChatModel(
                     endpoint,"captured-repair-test",null,false));

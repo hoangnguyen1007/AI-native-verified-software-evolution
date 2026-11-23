@@ -28,22 +28,46 @@ class DurableAnalysisJobsTest {
                 List.of(new AnalysisJobs.Event(AnalysisJobs.Stage.FINISHED, now)), Optional.empty());
         var oldView = new TreeMap<>(GraphJson.object(GraphJson.read(CanonicalJson.write(expected), GraphJson.Limits.defaults())));
         oldView.keySet().removeAll(List.of("force", "reuse", "reuseDecision", "mode"));
+        var oldSetup = new TreeMap<>(GraphJson.object(GraphJson.read(CanonicalJson.write(registration.setup()),GraphJson.Limits.defaults())));
+        oldSetup.remove("artifactPolicy");
         var content = new StreamingContentStore(root.resolve("content"));
         var gaps = content.put(new ByteArrayInputStream("{\"gaps\":[]}".getBytes(StandardCharsets.UTF_8)), () -> false);
         var inputs = content.put(new ByteArrayInputStream("{\"inputProblems\":[]}".getBytes(StandardCharsets.UTF_8)), () -> false);
         var original = CanonicalJson.write(Map.of("schema", "analysis-job-storage:m8.4-v2", "retry", "legacy",
-                "setup", registration.setup(), "view", oldView, "gaps", gaps, "inputProblems", inputs));
+                "setup", oldSetup, "view", oldView, "gaps", gaps, "inputProblems", inputs));
         var handle = content.put(new ByteArrayInputStream(original.getBytes(StandardCharsets.UTF_8)), () -> false);
         try (var journal = new SqliteInventoryStore(root.resolve("metadata"), content)) {
             journal.create(id.toString(), ContentDigest.sha256Utf8("legacy"), Optional.of(handle));
         }
         try (var disk = new AnalysisJobDiskStore(root)) {
             assertEquals(expected, disk.get(id, true).orElseThrow().view());
+            assertEquals(registration.setup(),disk.intent(id));
             assertEquals(expected, disk.retry("legacy").orElseThrow().view());
             assertEquals(expected, disk.history(0, 10).items().getFirst().view());
         }
         try (var journal = new SqliteInventoryStore(root.resolve("metadata"), content, true)) {
             assertEquals(Optional.of(handle), journal.get(id.toString()).orElseThrow().payload());
+        }
+    }
+
+    @Test void queuedJobCannotRestartWithADifferentArtifactPolicy() throws Exception {
+        var original = AnalysisJobsTest.registration("local",control -> { throw new AssertionError("Queued job ran with another policy"); });
+        var old = original.setup();
+        var changed = new AnalysisJobs.Setup(old.id(),old.repository(),old.release(),old.includeTests(),old.policy(),old.configurationSpace(),
+                Optional.of(ContentDigest.sha256Utf8("new-operator-policy")));
+        var registration = new AnalysisJobs.Registration(changed,original.runner());
+        var id = UUID.randomUUID();
+        var now = Instant.parse("2026-11-23T00:00:00Z");
+        var queued = new AnalysisJobs.View(id.toString(),old.id(),AnalysisJobs.State.QUEUED,AnalysisJobs.Stage.QUEUED,
+                1,now,Optional.empty(),Optional.empty(),0,Optional.empty(),Optional.empty(),
+                List.of(new AnalysisJobs.Event(AnalysisJobs.Stage.QUEUED,now)),Optional.empty());
+        try (var disk = new AnalysisJobDiskStore(root)) { disk.save("queued",old,queued,List.of(),List.of()); }
+        try (var disk = new AnalysisJobDiskStore(root);
+             var jobs = new AnalysisJobs(List.of(registration),new InMemoryGraphStore(),new PublishedReports(),AnalysisJobs.Limits.defaults(),disk)) {
+            var rejected = AnalysisJobsTest.finished(jobs,id.toString());
+            assertEquals(AnalysisJobs.State.FAILED,rejected.state());
+            assertEquals(Optional.of("SETUP_CONFIGURATION_CHANGED"),rejected.error());
+            assertEquals(old,disk.intent(id));
         }
     }
     @Test void acceptedJobsExceedLegacyHistoryAndQueueWithoutEvictionAndSurviveRestart()throws Exception{

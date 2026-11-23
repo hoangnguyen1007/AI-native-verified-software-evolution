@@ -14,7 +14,9 @@ final class JavaRepairRecipes {
         CONSTRUCTOR_PARAMETER("java.remove-empty-constructor-parameter","Remove an unannotated sole parameter from an empty constructor; review callers and reflection."),
         IMPORT("java.remove-unused-import","Remove a single named import with no other mention in this compilation unit."),
         INJECTED_FIELD("java.remove-unused-injected-field","Remove an unreferenced private @Autowired/@Inject/@Resource field and prune newly unused single imports."),
-        CONSTRUCTOR_DEPENDENCY("java.remove-unused-constructor-dependency","Remove an unreferenced private field assigned from a constructor parameter, the parameter, and newly unused imports.");
+        CONSTRUCTOR_DEPENDENCY("java.remove-unused-constructor-dependency","Remove an unreferenced private field assigned from a constructor parameter, the parameter, and newly unused imports."),
+        CONVERT_FIELD_INJECTION("java.convert-field-injection-to-constructor","Convert a cited private @Autowired/@Inject field into a private final constructor-injected dependency."),
+        LAZY_CYCLE_BREAKER("java.break-cycle-with-lazy-injection","Add Spring @Lazy to a cited @Autowired field or constructor parameter to break a circular bean dependency.");
         final String id, summary;
         Recipe(String id,String summary) { this.id=id; this.summary=summary; }
         Spec spec() { return new Spec(id,"1",summary); }
@@ -47,6 +49,8 @@ final class JavaRepairRecipes {
                 if (owner.getKind()==Tree.Kind.CLASS) {
                     if (recipe==Recipe.INJECTED_FIELD) collectInjectedField(owner,unit,parsed,text,targets,results);
                     else if (recipe==Recipe.CONSTRUCTOR_DEPENDENCY) collectConstructorDep(owner,unit,parsed,text,targets,results);
+                    else if (recipe==Recipe.CONVERT_FIELD_INJECTION) collectConvertFieldInjection(owner,unit,parsed,text,targets,results);
+                    else if (recipe==Recipe.LAZY_CYCLE_BREAKER) collectLazyCycleBreaker(owner,unit,parsed,text,targets,results);
                 }
                 return super.visitClass(owner,unused);
             }
@@ -194,6 +198,203 @@ final class JavaRepairRecipes {
                 out.add(removeAndPruneImports(unit,parsed,text,removals));
             }
         }
+    }
+
+    private record TextPatch(int start, int end, String replacement) {}
+
+    private static String applyPatches(String text, List<TextPatch> patches) {
+        var sorted = new ArrayList<>(patches);
+        sorted.sort(Comparator.comparingInt(TextPatch::start).thenComparingInt(TextPatch::end));
+        for (int i = 1; i < sorted.size(); i++) {
+            if (sorted.get(i).start() < sorted.get(i - 1).end()) throw new IllegalArgumentException("Overlapping patches");
+        }
+        var out = new StringBuilder();
+        int cursor = 0;
+        for (var p : sorted) {
+            out.append(text, cursor, p.start()).append(p.replacement());
+            cursor = p.end();
+        }
+        return out.append(text, cursor, text.length()).toString();
+    }
+
+    private static void collectConvertFieldInjection(ClassTree owner, CompilationUnitTree unit, JavaRepairSyntax.Parsed parsed,
+                                                     String text, List<Range> targets, Set<String> out) {
+        boolean hasLombokCtor = owner.getModifiers().getAnnotations().stream().anyMatch(ann -> {
+            String n = ann.getAnnotationType().toString();
+            return n.endsWith("RequiredArgsConstructor") || n.endsWith("AllArgsConstructor") || n.endsWith("NoArgsConstructor");
+        });
+        if (hasLombokCtor) return;
+        var constructors = new ArrayList<MethodTree>();
+        for (var member : owner.getMembers()) {
+            if (member instanceof MethodTree m && m.getReturnType() == null && m.getReceiverParameter() == null && m.getBody() != null) {
+                constructors.add(m);
+            }
+        }
+        if (constructors.size() > 1) return;
+        String nl = text.contains("\r\n") ? "\r\n" : "\n";
+        for (var member : owner.getMembers()) {
+            if (!(member instanceof VariableTree field)
+                    || !field.getModifiers().getFlags().equals(Set.of(Modifier.PRIVATE))
+                    || field.getModifiers().getAnnotations().isEmpty()
+                    || field.getInitializer() != null) continue;
+            var optRange = range(parsed, field, text.length());
+            if (optRange.isEmpty()) continue;
+            var fr = optRange.orElseThrow();
+            if (text.charAt(fr.end() - 1) != ';' || !removableText(text, fr) || !citedOverlapping(fr, targets)) continue;
+            boolean multiDecl = owner.getMembers().stream().anyMatch(other -> other != field && other instanceof VariableTree
+                    && range(parsed, other, text.length()).filter(or -> overlaps(fr, or)).isPresent());
+            if (multiDecl) continue;
+            boolean hasInject = false;
+            boolean onlyDi = true;
+            String qualifier = "";
+            for (var ann : field.getModifiers().getAnnotations()) {
+                String annName = ann.getAnnotationType().toString();
+                if (!DI_ANNOTATION_NAMES.contains(annName)) { onlyDi = false; break; }
+                if (annName.endsWith("Autowired") || annName.endsWith("Inject")) hasInject = true;
+                if (annName.endsWith("Qualifier")) {
+                    var qRange = range(parsed, ann, text.length());
+                    if (qRange.isPresent()) qualifier = text.substring(qRange.orElseThrow().start(), qRange.orElseThrow().end()) + " ";
+                }
+            }
+            if (!onlyDi || !hasInject) continue;
+            var typeRange = range(parsed, field.getType(), text.length());
+            if (typeRange.isEmpty()) continue;
+            String typeText = text.substring(typeRange.orElseThrow().start(), typeRange.orElseThrow().end()).trim();
+            String fieldName = field.getName().toString();
+            String indent = lineIndentAt(text, fr.start());
+            String newField = "private final " + typeText + " " + fieldName + ";";
+            var patches = new ArrayList<TextPatch>();
+            if (constructors.isEmpty()) {
+                String ctorBlock = nl + nl + indent + owner.getSimpleName() + "(" + qualifier + typeText + " " + fieldName + ") {"
+                        + nl + indent + "    this." + fieldName + " = " + fieldName + ";"
+                        + nl + indent + "}";
+                patches.add(new TextPatch(fr.start(), fr.end(), newField + ctorBlock));
+            } else {
+                var ctor = constructors.getFirst();
+                if (ctor.getParameters().stream().anyMatch(p -> p.getName().contentEquals(fieldName))) continue;
+                var ctorRange = range(parsed, ctor, text.length());
+                var bodyRange = range(parsed, ctor.getBody(), text.length());
+                if (ctorRange.isEmpty() || bodyRange.isEmpty()) continue;
+                patches.add(new TextPatch(fr.start(), fr.end(), newField));
+                String paramDecl = qualifier + typeText + " " + fieldName;
+                if (ctor.getParameters().isEmpty()) {
+                    int openParen = text.indexOf('(', ctorRange.orElseThrow().start());
+                    int closeParen = openParen < 0 ? -1 : text.indexOf(')', openParen);
+                    if (openParen < 0 || closeParen < 0 || closeParen >= bodyRange.orElseThrow().start()) continue;
+                    patches.add(new TextPatch(openParen + 1, closeParen, paramDecl));
+                } else {
+                    var lastParam = ctor.getParameters().getLast();
+                    var lpRange = range(parsed, lastParam, text.length());
+                    if (lpRange.isEmpty()) continue;
+                    patches.add(new TextPatch(lpRange.orElseThrow().end(), lpRange.orElseThrow().end(), ", " + paramDecl));
+                }
+                int closeBrace = bodyRange.orElseThrow().end() - 1;
+                if (closeBrace <= bodyRange.orElseThrow().start() || text.charAt(closeBrace) != '}') continue;
+                String ctorIndent = lineIndentAt(text, ctorRange.orElseThrow().start());
+                String stmt = nl + ctorIndent + "    this." + fieldName + " = " + fieldName + ";" + nl + ctorIndent;
+                int insertPos = closeBrace;
+                while (insertPos > bodyRange.orElseThrow().start() + 1 && (text.charAt(insertPos - 1) == ' ' || text.charAt(insertPos - 1) == '\t')) {
+                    insertPos--;
+                }
+                if (text.charAt(insertPos - 1) == '\n' || text.charAt(insertPos - 1) == '\r') {
+                    patches.add(new TextPatch(insertPos, closeBrace, ctorIndent + "    this." + fieldName + " = " + fieldName + ";" + nl + ctorIndent));
+                } else {
+                    patches.add(new TextPatch(insertPos, closeBrace, stmt));
+                }
+            }
+            String updated = applyPatches(text, patches);
+            out.add(pruneUnusedDiImports(updated));
+        }
+    }
+
+    private static void collectLazyCycleBreaker(ClassTree owner, CompilationUnitTree unit, JavaRepairSyntax.Parsed parsed,
+                                                String text, List<Range> targets, Set<String> out) {
+        boolean hasLazyImport = unit.getImports().stream().anyMatch(imp -> {
+            String q = imp.getQualifiedIdentifier().toString();
+            return q.equals("org.springframework.context.annotation.Lazy") || q.equals("org.springframework.context.annotation.*");
+        });
+        String nl = text.contains("\r\n") ? "\r\n" : "\n";
+        for (var member : owner.getMembers()) {
+            if (member instanceof VariableTree field && !field.getModifiers().getAnnotations().isEmpty()) {
+                boolean isDi = field.getModifiers().getAnnotations().stream()
+                        .anyMatch(ann -> DI_ANNOTATION_NAMES.contains(ann.getAnnotationType().toString()));
+                boolean alreadyLazy = field.getModifiers().getAnnotations().stream()
+                        .anyMatch(ann -> ann.getAnnotationType().toString().equals("Lazy")
+                                || ann.getAnnotationType().toString().equals("org.springframework.context.annotation.Lazy"));
+                var fr = range(parsed, field, text.length());
+                if (!isDi || alreadyLazy || fr.isEmpty() || !citedOverlapping(fr.orElseThrow(), targets)) continue;
+                String indent = lineIndentAt(text, fr.orElseThrow().start());
+                var patches = new ArrayList<TextPatch>();
+                if (!hasLazyImport) addImportPatch(unit, parsed, text, "org.springframework.context.annotation.Lazy", nl, patches);
+                patches.add(new TextPatch(fr.orElseThrow().start(), fr.orElseThrow().start(), "@Lazy" + nl + indent));
+                out.add(applyPatches(text, patches));
+            } else if (member instanceof MethodTree ctor && ctor.getReturnType() == null && ctor.getReceiverParameter() == null) {
+                for (var param : ctor.getParameters()) {
+                    boolean alreadyLazy = param.getModifiers().getAnnotations().stream()
+                            .anyMatch(ann -> ann.getAnnotationType().toString().equals("Lazy")
+                                    || ann.getAnnotationType().toString().equals("org.springframework.context.annotation.Lazy"));
+                    var pr = range(parsed, param, text.length());
+                    if (alreadyLazy || pr.isEmpty() || !citedOverlapping(pr.orElseThrow(), targets)) continue;
+                    var patches = new ArrayList<TextPatch>();
+                    if (!hasLazyImport) addImportPatch(unit, parsed, text, "org.springframework.context.annotation.Lazy", nl, patches);
+                    patches.add(new TextPatch(pr.orElseThrow().start(), pr.orElseThrow().start(), "@Lazy "));
+                    out.add(applyPatches(text, patches));
+                }
+            }
+        }
+    }
+
+    private static void addImportPatch(CompilationUnitTree unit, JavaRepairSyntax.Parsed parsed, String text,
+                                       String fqn, String nl, List<TextPatch> patches) {
+        int pos = 0;
+        if (!unit.getImports().isEmpty()) {
+            var last = range(parsed, unit.getImports().getLast(), text.length());
+            if (last.isPresent()) {
+                pos = last.orElseThrow().end();
+                patches.add(new TextPatch(pos, pos, nl + "import " + fqn + ";"));
+                return;
+            }
+        }
+        if (unit.getPackage() != null) {
+            var pkg = range(parsed, unit.getPackage(), text.length());
+            if (pkg.isPresent()) {
+                pos = pkg.orElseThrow().end();
+                patches.add(new TextPatch(pos, pos, nl + nl + "import " + fqn + ";"));
+                return;
+            }
+        }
+        patches.add(new TextPatch(0, 0, "import " + fqn + ";" + nl));
+    }
+
+    private static String lineIndentAt(String text, int offset) {
+        int start = offset;
+        while (start > 0 && text.charAt(start - 1) != '\n' && text.charAt(start - 1) != '\r') start--;
+        int end = start;
+        while (end < text.length() && (text.charAt(end) == ' ' || text.charAt(end) == '\t')) end++;
+        return text.substring(start, end);
+    }
+
+    private static String pruneUnusedDiImports(String source) {
+        String updated = source;
+        for (String lineImport : List.of(
+                "org.springframework.beans.factory.annotation.Autowired",
+                "jakarta.inject.Inject",
+                "javax.inject.Inject")) {
+            String simple = lineImport.substring(lineImport.lastIndexOf('.') + 1);
+            String stmt = "import " + lineImport + ";";
+            int idx = updated.indexOf(stmt);
+            if (idx < 0) continue;
+            String without = updated.replace(stmt, "");
+            if (!mentions(without, simple)) {
+                int lineStart = idx;
+                while (lineStart > 0 && (updated.charAt(lineStart - 1) == ' ' || updated.charAt(lineStart - 1) == '\t')) lineStart--;
+                int lineEnd = idx + stmt.length();
+                if (lineEnd < updated.length() && updated.charAt(lineEnd) == '\r') lineEnd++;
+                if (lineEnd < updated.length() && updated.charAt(lineEnd) == '\n') lineEnd++;
+                updated = updated.substring(0, lineStart) + updated.substring(lineEnd);
+            }
+        }
+        return updated;
     }
 
     private record AssignmentMatch(String fieldName) {}

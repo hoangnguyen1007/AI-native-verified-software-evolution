@@ -74,6 +74,11 @@ class AnalysisJobApiTest {
             assertEquals(409,call(api,"POST","/api/v1/analysis/jobs","{\"setup\":\"local\",\"idempotencyKey\":\"once\",\"force\":true}").status());
             ArchitectureQueryApiTest.parity(api,f.request(),"summary",Map.of(),new com.evolution.analysis.query.ArchitectureQueryService(f.graph()).summary(f.request()));
             assertEquals(200,call(api,"POST","/api/v1/analysis/jobs/"+id+"/gaps","{}").status());
+            var coverage = call(api,"GET","/api/v1/analysis/jobs/"+id+"/coverage", "");
+            assertEquals(200,coverage.status());
+            assertEquals("COMPLETE",data(coverage).get("completion"));
+            assertEquals(0,((Number)data(coverage).get("totalGaps")).intValue());
+            assertEquals(List.of(),data(coverage).get("topReasons"));
             assertEquals(200,call(api,"POST","/api/v1/analysis/jobs/"+id+"/cancel","{}").status());
             assertEquals("SUCCEEDED",jobs.get(UUID.fromString(id)).state().name());
             assertThrows(IllegalArgumentException.class,() -> new ArchitectureQueryApi(new InMemoryGraphStore(),reports,ApiLimits.defaults(),jobs));

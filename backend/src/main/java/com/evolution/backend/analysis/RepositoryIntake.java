@@ -89,27 +89,55 @@ public final class RepositoryIntake implements AutoCloseable {
                 "ownership",plan.ownership(),"section",section,"rows",rows.subList(offset,end),"total",rows.size(),"continuation",end<rows.size()?Optional.of(plan.identity().value().substring(7)+":"+section+":"+end):Optional.empty(),"semanticCoverage","NOT_EVALUATED");
     }
     public Map<String,Object> publishedOverview(String revision)throws IOException{
+        return publishedOverview(revision,Optional.empty());
+    }
+    public Map<String,Object> publishedOverview(String revision,Optional<AnalysisMode> mode)throws IOException{
         if(!readOnly)throw new IllegalStateException("Overview must use published readiness");
+        boolean fast=mode.map(AnalysisMode::isFastArchitecture).orElse(false);
         ReadinessPlan plan;
-        try {plan=readiness(revision,ReadinessPlanner.Policy.comprehensive(),()->Thread.currentThread().isInterrupted());}
+        try {plan=readiness(revision,ReadinessPlanner.Policy.comprehensive(),()->Thread.currentThread().isInterrupted(),fast);}
         catch(IOException unavailable){
             if(!"READINESS_PLAN_NOT_PUBLISHED".equals(unavailable.getMessage()))throw unavailable;
-            plan=readiness(revision,ReadinessPlanner.Policy.comprehensive(),()->Thread.currentThread().isInterrupted(),true);
+            fast=!fast;
+            plan=readiness(revision,ReadinessPlanner.Policy.comprehensive(),()->Thread.currentThread().isInterrupted(),fast);
         }
         int size=24;
-        var roots=plan.roots().stream().limit(size).map(root->Map.of("id",root.id(),"directory",root.directory(),
+        var installed=installedNodeDependencies(revision);
+        var installedRoots=new HashSet<String>();
+        var installedModules=new HashSet<String>();
+        try {
+            for(var root:plan.roots())if(installed.test(root.directory()+"/"))installedRoots.add(root.id());
+            for(var module:plan.modules())if(installed.test(module.directory()+"/"))installedModules.add(module.id());
+        } catch(UncheckedIOException unavailable) { throw unavailable.getCause(); }
+        var roots=plan.roots().stream().filter(root->!installedRoots.contains(root.id()))
+                .sorted(Comparator.comparingInt((ReadinessPlan.Root root)->pathDepth(root.directory()))
+                .thenComparing(ReadinessPlan.Root::directory).thenComparing(ReadinessPlan.Root::id)).limit(size).map(root->Map.of("id",root.id(),"directory",root.directory(),
                 "family",root.family(),"relatedRootCount",root.relatedRoots().size())).toList();
-        var modules=plan.modules().stream().limit(size).map(module->Map.of("id",module.id(),"root",module.root(),
+        var families=new HashMap<String,ReadinessPlan.Family>();
+        plan.roots().forEach(root->families.put(root.id(),root.family()));
+        var modules=plan.modules().stream().filter(module->!installedModules.contains(module.id()))
+                .sorted(Comparator.comparingInt((ReadinessPlan.Module module)->pathDepth(module.directory()))
+                .thenComparing(ReadinessPlan.Module::directory).thenComparing(ReadinessPlan.Module::id)).limit(size).map(module->Map.of("id",module.id(),"root",module.root(),
                 "directory",module.directory(),"target",module.target(),"languages",module.languages(),
-                "declaredDependencyCount",module.dependencies().size())).toList();
+                "family",families.get(module.root()),"declaredDependencyCount",module.dependencies().size())).toList();
         var selection=plan.selection();
-        return Map.of("schema","repository.readiness-overview:v1","plan",plan.identity(),"inventory",plan.inventory().inventory(),
-                "roots",roots,"rootCount",plan.roots().size(),"modules",modules,"moduleCount",plan.modules().size(),
-                "coverage",Map.of("discovered",selection.discovered().size(),"selected",selection.selected().size(),
+        var pendingReasons=new TreeMap<String,Long>();
+        plan.requirements().stream().filter(requirement->requirement.state()==ReadinessPlan.State.PENDING)
+                .forEach(requirement->pendingReasons.merge(requirement.reason(),1L,Long::sum));
+        return Map.ofEntries(Map.entry("schema","repository.readiness-overview:v1"),Map.entry("plan",plan.identity()),
+                Map.entry("inventory",plan.inventory().inventory()),Map.entry("profile",fast?AnalysisMode.FAST_ARCHITECTURE:AnalysisMode.FULL),
+                Map.entry("roots",roots),Map.entry("rootCount",plan.roots().size()),Map.entry("modules",modules),Map.entry("moduleCount",plan.modules().size()),
+                Map.entry("installedDependencyRoots",installedRoots.size()),Map.entry("installedDependencyModules",installedModules.size()),
+                Map.entry("coverage",Map.of("discovered",selection.discovered().size(),"selected",selection.selected().size(),
                         "unknownDimensions",selection.unknown().size(),"dependencyInputs",plan.ownership().counts().getOrDefault("DEPENDENCY_INPUT",0L),
-                        "pending",plan.requirements().stream()
-                                .filter(requirement->requirement.state()==ReadinessPlan.State.PENDING).count()),
-                "semanticCoverage","NOT_EVALUATED");
+                        "pending",pendingReasons.values().stream().mapToLong(Long::longValue).sum())),
+                Map.entry("pendingReasons",pendingReasons.entrySet().stream().sorted(Map.Entry.<String,Long>comparingByValue().reversed()
+                        .thenComparing(Map.Entry.comparingByKey())).limit(12)
+                        .map(entry->Map.of("reason",entry.getKey(),"count",entry.getValue())).toList()),
+                Map.entry("semanticCoverage","NOT_EVALUATED"));
+    }
+    private static int pathDepth(String path) {
+        return path.equals(".") ? 0 : (int)path.chars().filter(character -> character=='/').count()+1;
     }
     public Optional<String> pinnedCommit(String revision)throws IOException{
         var job=inventory.get(revision);if(job.isEmpty()||job.orElseThrow().payload().isEmpty())return Optional.empty();
@@ -132,26 +160,28 @@ public final class RepositoryIntake implements AutoCloseable {
     public RepositoryAcquisitionResult compatibility(String revision,RepositoryIdentity repository,Optional<String> sourceRevision,boolean dirty,boolean includeTests,boolean allFiles,List<String> exclusions)throws IOException{
         RepositoryAcquisitionRequest request;try{request=new RepositoryAcquisitionRequest(repository,sourceRevision,dirty,"pom.xml",new RepositoryAcquisitionPolicy(500_000,500_000,10_000_000L,8_000_000_000L,256,exclusions));}catch(IllegalArgumentException unsupported){throw new IOException("V1_SELECTION_UNREPRESENTABLE");}
         var existsCache=new HashMap<String,Boolean>();
+        var installed=installedNodeDependencies(revision,existsCache);
         try{return new StreamingRepositoryAcquirer(content,inventory).compatibility(revision,request,e->{
             if(e.kind()==InventoryEntry.Kind.DIRECTORY||!ScanSelection.semanticInput(e,includeTests,allFiles))return false;
             String path=e.path().utf8().orElse("");if(exclusions.stream().anyMatch(p->path.equals(p)||path.startsWith(p+"/")))return false;
-            return allFiles||!declaredOutput(revision,path,existsCache);
+            return allFiles||!installed.test(path)&&!declaredOutput(revision,path,existsCache);
         },com.evolution.analysis.contract.serialization.CanonicalJson.write(Map.of("selector","java.compatibility:m8.4-v2","includeTests",includeTests,"allFiles",allFiles,"exclusions",exclusions)));}catch(UncheckedIOException unavailable){throw unavailable.getCause();}
     }
     private boolean declaredOutput(String revision,String path,Map<String,Boolean> existsCache){
-        if(!path.contains("target/")&&!path.contains("build/")&&!path.contains(".gradle/")&&!path.contains("node_modules/"))return false;
+        if(!path.contains("target/")&&!path.contains("build/")&&!path.contains(".gradle/"))return false;
         String[] parts=path.split("/");String parent="";
         for(int i=0;i<parts.length-1;i++){
             String segment=parts[i];String prefix=parent.isEmpty()?"":parent+"/";
             if(segment.equals("target")&&cachedExists(revision,prefix+"pom.xml",existsCache)
-                    ||(segment.equals("build")||segment.equals(".gradle"))&&(cachedExists(revision,prefix+"build.gradle",existsCache)||cachedExists(revision,prefix+"build.gradle.kts",existsCache))
-                    ||segment.equals("node_modules")&&cachedExists(revision,prefix+"package.json",existsCache))return true;
+                    ||(segment.equals("build")||segment.equals(".gradle"))&&(cachedExists(revision,prefix+"build.gradle",existsCache)||cachedExists(revision,prefix+"build.gradle.kts",existsCache)))return true;
             parent=prefix+segment;
         }
         return false;
     }
     Predicate<String> installedNodeDependencies(String revision){
-        var existsCache=new HashMap<String,Boolean>();
+        return installedNodeDependencies(revision,new HashMap<>());
+    }
+    private Predicate<String> installedNodeDependencies(String revision,Map<String,Boolean> existsCache){
         return path->{
             for(int start=0;(start=path.indexOf("node_modules/",start))>=0;start+="node_modules/".length()){
                 if(start!=0&&path.charAt(start-1)!='/')continue;

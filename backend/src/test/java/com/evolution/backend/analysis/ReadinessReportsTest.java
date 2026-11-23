@@ -14,6 +14,26 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class ReadinessReportsTest {
     @TempDir Path root;
+    @Test void overviewKeepsTopLevelModulesVisibleWhenDependencyRootsDominate() throws Exception {
+        Path source=Files.createDirectory(root.resolve("preview"));
+        Files.createDirectories(source.resolve("backend"));
+        Files.writeString(source.resolve("backend/pom.xml"),pom("backend"));
+        for (int i=0;i<30;i++) {
+            Path module=source.resolve("mobile/node_modules/pkg"+i);
+            Files.createDirectories(module);
+            Files.writeString(module.resolve("CMakeLists.txt"),"cmake_minimum_required(VERSION 3.10)\nproject(pkg"+i+")\n");
+        }
+        try (var intake=new RepositoryIntake(root.resolve("state"))) {
+            intake.local(source,"preview",new StreamingAcquisitionRequest(RepositoryIdentity.fromCanonicalCoordinate("urn:test:overview"),Optional.empty(),true,List.of()),()->false);
+            intake.readiness("preview",ReadinessPlanner.Policy.comprehensive(),()->false);
+            try (var reader=new RepositoryIntake(root.resolve("state"),true)) {
+                var overview=reader.publishedOverview("preview");
+                var roots=(List<?>)overview.get("roots");
+                assertTrue(((Number)overview.get("rootCount")).intValue()>24);
+                assertTrue(roots.stream().map(row -> (Map<?,?>)row).anyMatch(row -> row.get("directory").equals("backend")));
+            }
+        }
+    }
     @Test void allRootsContextsAndOwnershipSurviveReopenAndSelection()throws Exception{
         Path source=Files.createDirectory(root.resolve("source"));
         var files=Map.of("pom.xml",pom("outer"),"nested/pom.xml",pom("nested"),"src/main/java/A.java","class A {}", "nested/src/main/java/B.java","class B {}", "nested/src/test/java/T.java","class T {}", "nested/src/integration/java/I.java","class I {}", "worker/pyproject.toml","[project]\nname='worker'", "worker/main.py","pass", "assets/data.unrecognized","retained");
@@ -89,6 +109,15 @@ class ReadinessReportsTest {
             assertEquals(deep.ownership().entries(),quick.ownership().entries());
             assertFalse(deep.ownership().counts().containsKey(Disposition.DEPENDENCY_INPUT.name()));
             assertEquals(deep.modules().size()-1,quick.modules().size());
+            try(var reader=new RepositoryIntake(state,true)){
+                var fastOverview=reader.publishedOverview("workspace",Optional.of(AnalysisMode.FAST_ARCHITECTURE));
+                assertEquals(quick.identity(),fastOverview.get("plan"));
+                var deepOverview=reader.publishedOverview("workspace",Optional.of(AnalysisMode.FULL));
+                assertEquals(deep.identity(),deepOverview.get("plan"));
+                assertEquals(deep.modules().size(),deepOverview.get("moduleCount"));
+                assertEquals(1,deepOverview.get("installedDependencyModules"));
+                assertFalse(deepOverview.get("modules").toString().contains("node_modules/helper"));
+            }
             assertEquals(quick.identity(),intake.readiness("workspace",policy,()->false,true).identity());
             var snapshot=RepositorySnapshot.create(request.repository(),Optional.empty(),true,List.of(),List.of());
             var scan=new PolyglotScan().run("workspace",intake,quick,
@@ -96,6 +125,24 @@ class ReadinessReportsTest {
                     digest->null,true,intake.installedNodeDependencies("workspace"));
             assertEquals(4L,scan.languages().get("javascript"));
             assertEquals(3,scan.syntax().parsed());
+        }
+    }
+    @Test void compatibilityDoesNotMistakePnpmInstalledJavaPackagesForWorkspaceModules()throws Exception{
+        Path source=Files.createDirectory(root.resolve("pnpm"));
+        Files.writeString(source.resolve("pnpm-workspace.yaml"),"packages: ['apps/*']\n");
+        Path installed=Files.createDirectories(source.resolve("node_modules/helper"));
+        Path firstParty=Files.createDirectories(source.resolve("apps/backend"));
+        Files.writeString(installed.resolve("pom.xml"),pom("installed"));
+        Files.writeString(firstParty.resolve("pom.xml"),pom("service"));
+        var repository=RepositoryIdentity.fromCanonicalCoordinate("urn:test:pnpm-readiness");
+        try(var intake=new RepositoryIntake(root.resolve("state"))){
+            intake.localComplete(source,"capture",new StreamingAcquisitionRequest(repository,Optional.empty(),true,List.of()),()->false);
+            var plan=intake.readiness("capture",ReadinessPlanner.Policy.comprehensive(),()->false,true);
+            assertEquals(1L,plan.ownership().counts().get(Disposition.DEPENDENCY_INPUT.name()));
+            var selected=intake.compatibility("capture",repository,Optional.empty(),true,false,false,List.of());
+            assertEquals(Set.of("apps/backend/pom.xml"),selected.workspacePoms().keySet());
+            var all=intake.compatibility("capture",repository,Optional.empty(),true,false,true,List.of());
+            assertTrue(all.workspacePoms().containsKey("node_modules/helper/pom.xml"));
         }
     }
     private static String pom(String artifact){return "<project><modelVersion>4.0.0</modelVersion><groupId>t</groupId><artifactId>"+artifact+"</artifactId><version>1</version><properties><maven.compiler.release>21</maven.compiler.release><project.build.sourceEncoding>UTF-8</project.build.sourceEncoding></properties></project>";}

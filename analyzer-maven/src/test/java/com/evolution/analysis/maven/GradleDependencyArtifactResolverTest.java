@@ -74,7 +74,7 @@ class GradleDependencyArtifactResolverTest {
         if(!pomOnly)try(var jar=new JarOutputStream(Files.newOutputStream(root.resolve(artifact+"-"+version+".jar")))){jar.putNextEntry(new JarEntry("fixture.txt"));jar.write(artifact.getBytes(StandardCharsets.UTF_8));jar.closeEntry();}
     }
     @Test void runtimePomDependenciesCannotContaminateCompileContextsOrCreateFalseConflicts()throws Exception {
-        assertEquals("m8.4-compile-variants-v2",GradleDependencyArtifactResolver.PROVIDER.version());
+        assertEquals("m8.4-compile-variants-v3",GradleDependencyArtifactResolver.PROVIDER.version());
         var model=model(Map.of("build.gradle","dependencies { implementation 'g:library:1'\n implementation 'g:types:2'\n testImplementation 'g:test:1' }\n"));
         put("library","1",false,"<dependencies><dependency><groupId>g</groupId><artifactId>types</artifactId><version>1</version><scope>runtime</scope></dependency><dependency><groupId>g</groupId><artifactId>api</artifactId><version>3</version></dependency></dependencies>");
         put("types","1",false,"");put("types","2",false,"");put("api","3",false,"");put("test","1",false,"");
@@ -107,14 +107,55 @@ class GradleDependencyArtifactResolverTest {
         byte[] extractedBytes=Files.readAllBytes(aarBinary.path());
         assertEquals(aarBinary.entry().contentDigest(),ContentDigest.sha256(extractedBytes));
     }
+    @Test void transitiveExclusionCannotRemoveItsOwningDependency()throws Exception {
+        var model=model(Map.of("build.gradle","dependencies { implementation('g:library:1') { exclude group: 'g' } }\n"));
+        put("library","1",false,"<dependencies><dependency><groupId>g</groupId><artifactId>excluded</artifactId><version>1</version></dependency></dependencies>");
+        var result=new GradleDependencyArtifactResolver(temp).resolve(model,offline);
+        assertEquals(List.of("g:library:1@jar"),result.contexts().getFirst().binaries().stream().map(b->b.entry().logicalName()).toList());
+        assertTrue(result.acquisitions().stream().flatMap(a->a.outcomes().stream())
+                .noneMatch(a->a.requirement().coordinate().gav().artifactId().equals("excluded")));
+    }
+    @Test void androidArchivesRecoverBundledJarsWithoutInventingAClassesJar()throws Exception {
+        var model=model(Map.of("build.gradle","dependencies { implementation 'g:resources:1'\n implementation 'g:bundled:1' }\n"));
+        putAar("resources","1","<packaging>aar</packaging>",Map.of());
+        byte[] embedded=jarEntry("fixture.txt");
+        putAar("bundled","1","<packaging>aar</packaging>",Map.of("libs/dependency.jar",embedded));
+        var main=new GradleDependencyArtifactResolver(temp).resolve(model,offline).contexts().getFirst();
+        assertEquals(List.of("g:bundled:1@aar!/libs/dependency.jar"),main.binaries().stream().map(b->b.entry().logicalName()).toList());
+        assertArrayEquals(embedded,Files.readAllBytes(main.binaries().getFirst().path()));
+        assertEquals(List.of("GRADLE_EFFECTIVE_CONTEXT_REQUIRED"),main.problems().stream().map(GradleDependencyArtifactResolver.Problem::reason).toList());
+    }
+    @Test void androidArchiveWithInvalidEmbeddedJarDoesNotSupplyABinary()throws Exception {
+        var model=model(Map.of("build.gradle","dependencies { implementation 'g:bundled:1' }\n"));
+        putAar("bundled","1","<packaging>aar</packaging>",Map.of("libs/corrupt.jar",new byte[]{1,2,3}));
+        var main=new GradleDependencyArtifactResolver(temp).resolve(model,offline).contexts().getFirst();
+        assertTrue(main.binaries().isEmpty());
+        assertTrue(main.problems().stream().anyMatch(p->p.reason().equals("GRADLE_BINARY_UNAVAILABLE")));
+    }
+    @Test void conflictingAndroidArchivesDoNotInventAnEmbeddedJarSearchOrder()throws Exception {
+        var model=model(Map.of("build.gradle","dependencies { implementation 'g:bundled:1' }\n"));
+        putAar("bundled","1","<packaging>aar</packaging>",Map.of("classes.jar",jarEntry("g/Type.class"),
+                "libs/conflict.jar",jarEntry("META-INF/versions/17/g/Type.class")));
+        var main=new GradleDependencyArtifactResolver(temp).resolve(model,offline).contexts().getFirst();
+        assertTrue(main.binaries().isEmpty());
+        assertTrue(main.problems().stream().anyMatch(p->p.reason().equals("GRADLE_BINARY_UNAVAILABLE")));
+    }
     private void putAar(String artifact,String version,String body)throws Exception {
+        putAar(artifact,version,body,Map.of("classes.jar",jarEntry("fixture.txt")));
+    }
+    private static byte[] jarEntry(String name)throws IOException {
+        var bytes=new ByteArrayOutputStream();
+        try(var jar=new JarOutputStream(bytes)){jar.putNextEntry(new JarEntry(name));jar.write("fixture".getBytes(StandardCharsets.UTF_8));jar.closeEntry();}
+        return bytes.toByteArray();
+    }
+    private void putAar(String artifact,String version,String body,Map<String,byte[]> entries)throws Exception {
         Path root=Files.createDirectories(temp.resolve("g/"+artifact+"/"+version));
         Files.writeString(root.resolve(artifact+"-"+version+".pom"),"<project><modelVersion>4.0.0</modelVersion><groupId>g</groupId><artifactId>"+artifact+"</artifactId><version>"+version+"</version>"+body+"</project>");
-        var innerJar=new ByteArrayOutputStream();
-        try(var jar=new JarOutputStream(innerJar)){jar.putNextEntry(new JarEntry("fixture.txt"));jar.write(artifact.getBytes(StandardCharsets.UTF_8));jar.closeEntry();}
         try(var aar=new JarOutputStream(Files.newOutputStream(root.resolve(artifact+"-"+version+".aar")))){
             aar.putNextEntry(new JarEntry("AndroidManifest.xml"));aar.write("<manifest/>".getBytes(StandardCharsets.UTF_8));aar.closeEntry();
-            aar.putNextEntry(new JarEntry("classes.jar"));aar.write(innerJar.toByteArray());aar.closeEntry();
+            for(var entry:new TreeMap<>(entries).entrySet()) {
+                aar.putNextEntry(new JarEntry(entry.getKey()));aar.write(entry.getValue());aar.closeEntry();
+            }
         }
     }
     private static UniversalBuildModel model(Map<String,String> text) {

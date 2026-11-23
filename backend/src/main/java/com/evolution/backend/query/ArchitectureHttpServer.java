@@ -1,8 +1,12 @@
 package com.evolution.backend.query;
 
+import com.evolution.analysis.contract.common.ContentDigest;
+import com.evolution.analysis.contract.serialization.CanonicalJson;
 import com.sun.net.httpserver.*;
 import java.io.IOException;
+import java.io.OutputStream;
 import java.net.*;
+import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -51,7 +55,9 @@ public final class ArchitectureHttpServer implements AutoCloseable {
                 sendJsonResponse(exchange, api.error(503,"BUSY"));
                 return;
             }
-            if (rawPath.startsWith("/api/") || rawPath.equals("/api/v1")) {
+            if (rawPath.startsWith("/api/v1/graphs/") && rawPath.endsWith("/architecture-chat/stream")) {
+                handleArchitectureChatStream(exchange, rawPath, () -> closed.get() || expired.get() || Thread.currentThread().isInterrupted());
+            } else if (rawPath.startsWith("/api/") || rawPath.equals("/api/v1")) {
                 ArchitectureQueryApi.Response response;
                 if (exchange.getRequestURI().getRawQuery()!=null) response=api.error(400,"INVALID_REQUEST");
                 else if (!acceptable(exchange.getRequestHeaders().containsKey("Accept") ? String.join(",",exchange.getRequestHeaders().get("Accept")) : null)) response=api.error(406,"NOT_ACCEPTABLE");
@@ -68,6 +74,72 @@ public final class ArchitectureHttpServer implements AutoCloseable {
             }
         } finally { if (deadline!=null) deadline.cancel(false); if (acquired) slots.release(); }
     }
+    private void handleArchitectureChatStream(HttpExchange exchange, String rawPath, java.util.function.BooleanSupplier cancelled) throws IOException {
+        if (!"POST".equals(exchange.getRequestMethod())) {
+            sendJsonResponse(exchange, api.error(405, "METHOD_NOT_ALLOWED"));
+            return;
+        }
+        String[] parts = rawPath.split("/", -1);
+        if (parts.length != 7 || !"graphs".equals(parts[3]) || !"architecture-chat".equals(parts[5]) || !"stream".equals(parts[6])) {
+            sendJsonResponse(exchange, api.error(404, "NOT_FOUND"));
+            return;
+        }
+        ContentDigest graphId;
+        try { graphId = new ContentDigest(parts[4]); }
+        catch (IllegalArgumentException invalid) {
+            sendJsonResponse(exchange, api.error(400, "INVALID_REQUEST"));
+            return;
+        }
+        if (exchange.getRequestURI().getRawQuery() != null) {
+            sendJsonResponse(exchange, api.error(400, "INVALID_REQUEST"));
+            return;
+        }
+        if (exchange.getRequestHeaders().containsKey("Content-Encoding")
+                || exchange.getRequestHeaders().getOrDefault("Content-Type", List.of()).size() > 1) {
+            sendJsonResponse(exchange, api.error(415, "UNSUPPORTED_MEDIA_TYPE"));
+            return;
+        }
+        byte[] body = exchange.getRequestBody().readNBytes(api.limits().requestBytes() + 1);
+        String contentType = exchange.getRequestHeaders().getFirst("Content-Type");
+        var started = new AtomicBoolean(false);
+        var streamOut = new OutputStream[1];
+        Runnable ensureStarted = () -> {
+            if (started.compareAndSet(false, true)) {
+                try {
+                    var headers = exchange.getResponseHeaders();
+                    headers.set("Content-Type", "text/event-stream; charset=utf-8");
+                    headers.set("Cache-Control", "no-store");
+                    headers.set("X-Content-Type-Options", "nosniff");
+                    headers.set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'");
+                    exchange.sendResponseHeaders(200, 0);
+                    streamOut[0] = exchange.getResponseBody();
+                } catch (IOException ignored) {}
+            }
+        };
+        api.streamArchitectureChat(graphId, body, contentType, cancelled, new ArchitectureQueryApi.SseEmitter() {
+            private synchronized void writeEvent(String event, String json) {
+                ensureStarted.run();
+                if (streamOut[0] == null) return;
+                try {
+                    byte[] bytes = ("event: " + event + "\ndata: " + json + "\n\n").getBytes(StandardCharsets.UTF_8);
+                    streamOut[0].write(bytes);
+                    streamOut[0].flush();
+                } catch (IOException ignored) {}
+            }
+            @Override public void stage(String message) { writeEvent("stage", CanonicalJson.write(Map.of("message", message))); }
+            @Override public void tool(Map<String, Object> payload) { writeEvent("tool", CanonicalJson.write(payload)); }
+            @Override public void delta(String text) { writeEvent("delta", CanonicalJson.write(Map.of("text", text))); }
+            @Override public void complete(byte[] envelopeJson) { writeEvent("complete", new String(envelopeJson, StandardCharsets.UTF_8)); }
+            @Override public void error(int status, String code, String message) {
+                if (!started.get()) {
+                    try { sendJsonResponse(exchange, api.error(status, code)); } catch (IOException ignored) {}
+                    return;
+                }
+                writeEvent("error", CanonicalJson.write(Map.of("code", code, "message", message)));
+            }
+        });
+    }
+
     private void sendJsonResponse(HttpExchange exchange, ArchitectureQueryApi.Response response) throws IOException {
         var headers=exchange.getResponseHeaders();
         headers.set("Content-Type","application/json; charset=utf-8");

@@ -201,4 +201,44 @@ class CapturedRepairTest {
         assertEquals(aAfter, updated.get("m1/A.java"));
         assertEquals(bAfter, updated.get("m2/B.java"));
     }
+
+    @Test void convertsFieldInjectionToConstructorAndBreaksCyclesWithLazy() {
+        String fieldSrc = """
+                package demo;
+                import org.springframework.beans.factory.annotation.Autowired;
+                import org.springframework.beans.factory.annotation.Qualifier;
+                class OrderService {
+                    @Autowired
+                    @Qualifier("primary")
+                    private PaymentClient paymentClient;
+                    void run() { paymentClient.charge(); }
+                }
+                """;
+        var doc1 = new com.evolution.analysis.contract.identity.SourceDocumentIdentity("source:sha256:" + "c".repeat(64));
+        var cite1 = new FindingDiagnosis.Citation(new ContentDigest("sha256:" + "7".repeat(64)),
+                "analysis:1", new ContentDigest("sha256:" + "8".repeat(64)), "java.occurrence",
+                "src/main/java/demo/OrderService.java",
+                new com.evolution.analysis.contract.source.SourceSpan(doc1, 5, 1, 7, 40),
+                ContentDigest.sha256Utf8(fieldSrc));
+        var file1 = new RepairSource.File("src/main/java/demo/OrderService.java",
+                ContentDigest.sha256Utf8(fieldSrc), new ContentDigest("sha256:" + "9".repeat(64)),
+                fieldSrc, true, "demo", com.evolution.analysis.contract.source.SourceClassification.MAIN, List.of(cite1));
+        var converted = JavaRepairRecipes.candidates(JavaRepairRecipes.Recipe.CONVERT_FIELD_INJECTION, file1,
+                JavaRepairSyntax.parse(fieldSrc, JAVA_21));
+        assertEquals(1, converted.size());
+        String afterConvert = converted.getFirst();
+        assertTrue(afterConvert.contains("private final PaymentClient paymentClient;"));
+        assertTrue(afterConvert.contains("OrderService(@Qualifier(\"primary\") PaymentClient paymentClient)"));
+        assertTrue(afterConvert.contains("this.paymentClient = paymentClient;"));
+        assertFalse(afterConvert.contains("import org.springframework.beans.factory.annotation.Autowired;"));
+        assertEquals(JavaRepairSyntax.Status.PASSED, JavaRepairSyntax.parse(afterConvert, JAVA_21).check().status());
+
+        var lazyField = JavaRepairRecipes.candidates(JavaRepairRecipes.Recipe.LAZY_CYCLE_BREAKER, file1,
+                JavaRepairSyntax.parse(fieldSrc, JAVA_21));
+        assertEquals(1, lazyField.size());
+        String afterLazy = lazyField.getFirst();
+        assertTrue(afterLazy.contains("import org.springframework.context.annotation.Lazy;"));
+        assertTrue(afterLazy.contains("@Lazy"));
+        assertEquals(JavaRepairSyntax.Status.PASSED, JavaRepairSyntax.parse(afterLazy, JAVA_21).check().status());
+    }
 }

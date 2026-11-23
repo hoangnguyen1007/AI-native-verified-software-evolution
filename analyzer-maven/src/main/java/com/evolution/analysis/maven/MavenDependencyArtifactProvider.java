@@ -316,6 +316,47 @@ public final class MavenDependencyArtifactProvider implements DependencyArtifact
             throws AcquisitionFailure {
         String relative = coordinate.repositoryPath();
         Path target = resolve(root, relative);
+        writeVerifiedCacheFile(root, target, bytes, digest);
+        return new Artifact(coordinate, Origin.REMOTE_REPOSITORY, relative, digest, bytes.length);
+    }
+
+    static byte[] readVerifiedArtifact(Path selectedRoot, Artifact artifact, long maximum) throws IOException {
+        try {
+            Path root = validateRoot(selectedRoot);
+            Path path = resolve(root, artifact.repositoryPath());
+            validateRoot(path.getParent());
+            if (!Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) throw new IOException("Captured artifact is not a regular file");
+            byte[] bytes = readBounded(path, Math.min(maximum, artifact.size()));
+            if (bytes.length != artifact.size() || !artifact.contentDigest().equals(ContentDigest.sha256(bytes)))
+                throw new IOException("Captured artifact changed");
+            return bytes;
+        } catch (AcquisitionFailure | ReadLimitExceeded unavailable) {
+            throw new IOException("Captured artifact unavailable", unavailable);
+        }
+    }
+
+    static Path materializeEmbeddedJar(Path selectedRoot, byte[] bytes, ContentDigest digest) throws IOException {
+        try {
+            Path root = validateRoot(selectedRoot);
+            Path target = root.resolve(".evo-aar-views").resolve(digest.value().substring(7) + ".jar");
+            ensureParent(root, target.getParent());
+            if (!Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
+                try { writeVerifiedCacheFile(root, target, bytes, digest); }
+                catch (AcquisitionFailure unavailable) {
+                    if (!Files.isRegularFile(target, LinkOption.NOFOLLOW_LINKS)) throw unavailable;
+                }
+            }
+            if (!Files.isRegularFile(target, LinkOption.NOFOLLOW_LINKS)
+                    || !digest.equals(ContentDigest.sha256(readBounded(target, bytes.length))))
+                throw new IOException("Invalid embedded JAR cache entry");
+            return target;
+        } catch (AcquisitionFailure | ReadLimitExceeded unavailable) {
+            throw new IOException("Embedded JAR cache unavailable", unavailable);
+        }
+    }
+
+    private static void writeVerifiedCacheFile(Path root, Path target, byte[] bytes, ContentDigest digest)
+            throws AcquisitionFailure {
         Path parent = ensureParent(root, target.getParent());
         Path temporary = null;
         try {
@@ -330,11 +371,9 @@ public final class MavenDependencyArtifactProvider implements DependencyArtifact
             }
             byte[] written = readBounded(temporary, bytes.length);
             if (!digest.equals(ContentDigest.sha256(written))) throw failure(FailureReason.CACHE_WRITE_FAILED);
-            validate(coordinate, written, FailureReason.CORRUPTED_DOWNLOAD);
             ensureParent(root, target.getParent());
             Files.move(temporary, target, StandardCopyOption.ATOMIC_MOVE);
             temporary = null;
-            return new Artifact(coordinate, Origin.REMOTE_REPOSITORY, relative, digest, bytes.length);
         } catch (FileAlreadyExistsException exception) {
             throw failure(FailureReason.CACHE_CHANGED_DURING_READ);
         } catch (AtomicMoveNotSupportedException exception) {

@@ -190,4 +190,17 @@ class TreeSitterSourceFrontendTest {
                 fullFacts.stream().filter(f -> !f.category().equals("TYPE_SYNTAX")).toList(),
                 fastFacts);
     }
+    @Test void capturesExpandedHttpClientsTemplateLiteralsAnnotationsAndAsyncEvents() throws Exception {
+        String tsSource = "import { Get } from '@nestjs/common';\n@Get('/users/:id')\nexport class UserController {\n  async load() { await apiClient.patch(`/users/1`); await kafkaProducer.publish('order.created', {}); }\n}\n";
+        var tsFacts = new ArrayList<TreeSitterSourceFrontend.Fact>();
+        new TreeSitterSourceFrontend().parse("typescript", tsSource.getBytes(StandardCharsets.UTF_8), tsFacts::add, () -> false);
+        assertTrue(tsFacts.stream().anyMatch(f -> f.category().equals("ROUTE_CANDIDATE") && f.name().equals("'/users/:id'") && "GET".equals(f.attributes().get("method"))));
+        assertTrue(tsFacts.stream().anyMatch(f -> f.category().equals("HTTP_CALL_CANDIDATE") && f.name().equals("`/users/1`") && "PATCH".equals(f.attributes().get("method"))));
+        assertTrue(tsFacts.stream().anyMatch(f -> f.category().equals("EVENT_PRODUCER_CANDIDATE") && f.name().equals("'order.created'") && "KAFKA".equals(f.attributes().get("protocol"))));
+
+        String pySource = "@kafka.subscribe('order.created')\ndef handle_order(msg):\n    pass\n";
+        var pyFacts = new ArrayList<TreeSitterSourceFrontend.Fact>();
+        new TreeSitterSourceFrontend().parse("python", pySource.getBytes(StandardCharsets.UTF_8), pyFacts::add, () -> false);
+        assertTrue(pyFacts.stream().anyMatch(f -> f.category().equals("EVENT_CONSUMER_CANDIDATE") && f.name().equals("'order.created'")));
+    }
 }

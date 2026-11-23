@@ -6,6 +6,7 @@ import com.evolution.analysis.filesystem.GitHostPolicy;
 import com.evolution.analysis.contract.common.*;
 import com.evolution.analysis.contract.identity.RepositoryIdentity;
 import com.evolution.analysis.contract.serialization.CanonicalJson;
+import com.evolution.analysis.dependency.DependencyAcquisitionPolicy;
 import com.evolution.analysis.query.ArchitectureQuery.Scope;
 import java.io.*;
 import java.net.URI;
@@ -23,6 +24,7 @@ public final class RepositoryConnections {
     private final int release;
     private final String gitExecutable;
     private final Optional<LocalAnalysisRunner.PolicyInput> defaultPolicy;
+    private final Optional<DependencyAcquisitionPolicy> artifactPolicy;
     private final GitHostPolicy hostPolicy;
     private final Map<String,Connection> connections = new LinkedHashMap<>();
     private final Map<ContentDigest,LocalAnalysisRunner.PolicyInput> policies = new LinkedHashMap<>();
@@ -35,8 +37,13 @@ public final class RepositoryConnections {
         this(jobs,jdk,release,cache,directory,policy,gitExecutable,new GitHostPolicy());
     }
     public RepositoryConnections(AnalysisJobs jobs,Path jdk,int release,Path cache,Path directory,Optional<LocalAnalysisRunner.PolicyInput> policy,String gitExecutable,GitHostPolicy hostPolicy){
+        this(jobs,jdk,release,cache,directory,policy,gitExecutable,hostPolicy,Optional.empty());
+    }
+    RepositoryConnections(AnalysisJobs jobs,Path jdk,int release,Path cache,Path directory,Optional<LocalAnalysisRunner.PolicyInput> policy,
+                          String gitExecutable,GitHostPolicy hostPolicy,Optional<DependencyAcquisitionPolicy> artifactPolicy){
         this.jobs=jobs; this.jdk=jdk; this.release=release; this.cache=cache; this.directory=directory; this.defaultPolicy=policy; this.gitExecutable=gitExecutable;
         this.hostPolicy=Objects.requireNonNull(hostPolicy);
+        this.artifactPolicy=Objects.requireNonNull(artifactPolicy);
         policy.ifPresent(p -> policies.put(ContentDigest.sha256(p.bytes()),p));
         try(var catalog=new ConnectionCatalog(directory.resolve("connections"))){for(var saved:catalog.load())connect(saved.source(),saved.policy(),false);}
         catch(IOException unavailable){throw new IllegalStateException("Connection catalog unavailable",unavailable);}
@@ -91,9 +98,11 @@ public final class RepositoryConnections {
         String id="repo-"+ContentDigest.sha256Utf8(CanonicalJson.write(List.of(coordinate,policy.map(p -> ContentDigest.sha256(p.bytes()).value()).orElse("none")))).value().substring(7,31);
         if (connections.containsKey(id)) return connections.get(id);
         var repository=RepositoryIdentity.fromCanonicalCoordinate(coordinate);
-        var setup=new AnalysisJobs.Setup(id,repository,release,false,policy.map(p -> ContentDigest.sha256(p.bytes())),Optional.empty());
+        var setup=new AnalysisJobs.Setup(id,repository,release,false,policy.map(p -> ContentDigest.sha256(p.bytes())),Optional.empty(),
+                artifactPolicy.map(DependencyAcquisitionPolicy::identity));
         var sourcePath=local;
-        AnalysisJobs.Runner runner=remote ? control -> cloneAndRun(coordinate,repository,policy,control) : new LocalAnalysisRunner(input(sourcePath,repository,Optional.empty(),true,policy),directory.resolve("acquisition"));
+        AnalysisJobs.Runner runner=remote ? control -> cloneAndRun(coordinate,repository,policy,control)
+                : new LocalAnalysisRunner(input(sourcePath,repository,Optional.empty(),true,policy),directory.resolve("acquisition"),artifactPolicy);
         jobs.register(new AnalysisJobs.Registration(setup,runner));
         if(persist)try(var catalog=new ConnectionCatalog(directory.resolve("connections"))){catalog.save(id,source,policyText);}catch(IOException unavailable){throw new IllegalStateException("Connection catalog unavailable",unavailable);}
         var connection=new Connection(id,label,remote ? URI.create(coordinate).getScheme().equals("ssh")?"GIT_SSH":"GIT_HTTPS" : "LOCAL",repository);
@@ -139,10 +148,13 @@ public final class RepositoryConnections {
         if(!revision.matches("[A-Za-z0-9._-]{1,256}"))throw new IllegalArgumentException("Invalid acquisition revision");
         try(var intake=new RepositoryIntake(directory.resolve("acquisition"))){return intake.readinessPage(revision,section,size,cursor);}
     }
-    public Object publishedOverview(String revision)throws IOException{
+    public Map<String,Object> publishedOverview(String revision)throws IOException{
+        return publishedOverview(revision,Optional.empty());
+    }
+    public Map<String,Object> publishedOverview(String revision,Optional<AnalysisMode> mode)throws IOException{
         if(!revision.matches("[A-Za-z0-9._-]{1,256}"))throw new IllegalArgumentException("Invalid acquisition revision");
         try(var intake=new RepositoryIntake(directory.resolve("acquisition"),true)){
-            return intake.publishedOverview(revision);
+            return intake.publishedOverview(revision,mode);
         }
     }
     private LocalAnalysisRunner.Input input(Path source,RepositoryIdentity repository,Optional<String> revision,boolean dirty,Optional<LocalAnalysisRunner.PolicyInput> policy) {
@@ -163,7 +175,7 @@ public final class RepositoryConnections {
             }
             code=receipt.reason();
         } catch(IOException unavailable) { code="REMOTE_FETCH_FAILED"; }
-        if(acquisition!=null)return new LocalAnalysisRunner(input(directory,repository,pin,false,policy),directory.resolve("acquisition")).runCaptured(acquisition,control);
+        if(acquisition!=null)return new LocalAnalysisRunner(input(directory,repository,pin,false,policy),directory.resolve("acquisition"),artifactPolicy).runCaptured(acquisition,control);
         var digest=ContentDigest.sha256Utf8(CanonicalJson.write(List.of(PROVIDER,repository,code)));
         var problem=new RepositoryAcquisitionResult.Problem(RepositoryAcquisitionResult.Reason.ROOT_READ_FAILED,code,RepositoryAcquisitionResult.Requirement.REPOSITORY_SELECTION);
         return new AnalysisJobs.Outcome(AnalysisJobs.Completion.FAILED,Optional.empty(),List.of(),List.of(),Optional.of(digest),Optional.empty(),List.of(new AnalysisJobs.InputProblem(PROVIDER,digest,problem)));

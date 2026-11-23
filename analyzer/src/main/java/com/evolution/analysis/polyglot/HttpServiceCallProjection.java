@@ -115,7 +115,7 @@ public final class HttpServiceCallProjection {
             if(proof.family().equals("polyglot.source-syntax")) {
                 var fields=GraphJson.object(GraphJson.object(GraphJson.read(proof.canonicalJson(),GraphJson.Limits.defaults())).get("fields"));
                 var fact=GraphJson.object(fields.get("fact"));String raw=GraphJson.string(fact.get("name"));
-                if(raw.length()<2||raw.indexOf('\\')>=0||raw.charAt(raw.length()-1)!=raw.charAt(0)||raw.charAt(0)!='\''&&raw.charAt(0)!='"')continue;
+                if(raw.length()<2||raw.indexOf('\\')>=0||raw.charAt(raw.length()-1)!=raw.charAt(0)||raw.charAt(0)!='\''&&raw.charAt(0)!='"'&&raw.charAt(0)!='`')continue;
                 String method="UNKNOWN";if(fact.get("attributes") instanceof Map<?,?> attrs&&attrs.get("method") instanceof String text)method=text;
                 return Optional.of(new Endpoint(node,raw.substring(1,raw.length()-1),method.equals("UNKNOWN")?Set.of():Set.of(method),support,Boolean.TRUE.equals(fact.get("recovered")),false));
             }
