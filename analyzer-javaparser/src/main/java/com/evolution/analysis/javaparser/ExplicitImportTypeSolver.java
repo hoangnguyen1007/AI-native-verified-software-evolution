@@ -217,7 +217,93 @@ final class ExplicitImportTypeSolver implements TypeSolver {
                     "JvmStatic", "JvmField", "JvmOverloads", "JvmName", "JvmSynthetic",
                     "JvmWildcard", "JvmSuppressWildcards", "Throws", "Synchronized", "Volatile",
                     "Transient", "Strictfp", "JvmMultifileClass", "JvmInline", "JvmRecord",
-                    "JvmDefault", "JvmDefaultWithoutCompatibility", "JvmDefaultWithCompatibility")));
+                    "JvmDefault", "JvmDefaultWithoutCompatibility", "JvmDefaultWithCompatibility")),
+            Map.entry("android.app", Set.of(
+                    "Activity", "AlertDialog", "Application", "Dialog", "Notification",
+                    "NotificationChannel", "NotificationManager", "PendingIntent", "ProgressDialog", "Service")),
+            Map.entry("android.content", Set.of(
+                    "BroadcastReceiver", "ClipData", "ClipboardManager", "ComponentName", "ContentResolver",
+                    "ContentUris", "ContentValues", "Context", "ContextWrapper", "DialogInterface",
+                    "Intent", "IntentFilter", "ServiceConnection", "SharedPreferences", "UriPermission")),
+            Map.entry("android.content.pm", Set.of(
+                    "ActivityInfo", "ApplicationInfo", "PackageInfo", "PackageManager",
+                    "ProviderInfo", "ResolveInfo", "ServiceInfo", "Signature")),
+            Map.entry("android.content.res", Set.of(
+                    "AssetManager", "ColorStateList", "Configuration", "Resources", "TypedArray")),
+            Map.entry("android.graphics", Set.of(
+                    "Bitmap", "BitmapFactory", "Canvas", "Color", "Matrix",
+                    "Paint", "Path", "Point", "PointF", "Rect", "RectF", "Typeface")),
+            Map.entry("android.graphics.drawable", Set.of(
+                    "BitmapDrawable", "ColorDrawable", "Drawable", "GradientDrawable", "StateListDrawable")),
+            Map.entry("android.net", Set.of(
+                    "ConnectivityManager", "Network", "NetworkCapabilities", "NetworkInfo", "Uri")),
+            Map.entry("android.os", Set.of(
+                    "AsyncTask", "Binder", "Build", "Bundle", "CountDownTimer", "Environment",
+                    "Handler", "HandlerThread", "IBinder", "Looper", "Message",
+                    "Parcel", "ParcelFileDescriptor", "Parcelable", "PersistableBundle", "Process", "ResultReceiver", "SystemClock")),
+            Map.entry("android.provider", Set.of(
+                    "DocumentsContract", "MediaStore", "OpenableColumns", "Settings")),
+            Map.entry("android.text", Set.of(
+                    "Editable", "Html", "Spannable", "SpannableString", "SpannableStringBuilder", "TextUtils", "TextWatcher")),
+            Map.entry("android.util", Set.of(
+                    "ArrayMap", "ArraySet", "Base64", "DisplayMetrics", "Log",
+                    "LruCache", "Pair", "SparseArray", "SparseBooleanArray", "TypedValue", "Xml")),
+            Map.entry("android.view", Set.of(
+                    "Gravity", "KeyEvent", "LayoutInflater", "Menu", "MenuInflater", "MenuItem",
+                    "MotionEvent", "Surface", "View", "ViewGroup", "Window", "WindowInsets", "WindowManager")),
+            Map.entry("android.webkit", Set.of(
+                    "CookieManager", "MimeTypeMap", "WebChromeClient", "WebResourceRequest",
+                    "WebSettings", "WebView", "WebViewClient")),
+            Map.entry("android.widget", Set.of(
+                    "AdapterView", "ArrayAdapter", "Button", "CheckBox", "CompoundButton", "EditText",
+                    "FrameLayout", "ImageButton", "ImageView", "LinearLayout", "ListView", "ProgressBar",
+                    "RadioButton", "RadioGroup", "RelativeLayout", "ScrollView", "SearchView", "SeekBar",
+                    "Spinner", "Switch", "TextView", "Toast")),
+            Map.entry("androidx.appcompat.app", Set.of(
+                    "ActionBar", "AlertDialog", "AppCompatActivity", "AppCompatDelegate")),
+            Map.entry("androidx.core.app", Set.of(
+                    "ActivityCompat", "NotificationCompat", "NotificationManagerCompat", "ShareCompat", "TaskStackBuilder")),
+            Map.entry("androidx.core.content", Set.of("ContextCompat", "FileProvider")),
+            Map.entry("androidx.fragment.app", Set.of(
+                    "DialogFragment", "Fragment", "FragmentActivity", "FragmentManager", "FragmentTransaction")),
+            Map.entry("androidx.recyclerview.widget", Set.of(
+                    "DividerItemDecoration", "GridLayoutManager", "LinearLayoutManager", "RecyclerView")),
+            Map.entry("androidx.preference", Set.of(
+                    "CheckBoxPreference", "EditTextPreference", "ListPreference", "Preference",
+                    "PreferenceCategory", "PreferenceFragmentCompat", "PreferenceManager", "SwitchPreferenceCompat")),
+            Map.entry("androidx.room", Set.of(
+                    "ColumnInfo", "Dao", "Database", "Delete", "Embedded", "Entity", "ForeignKey", "Ignore",
+                    "Index", "Insert", "PrimaryKey", "Query", "Relation", "Room", "RoomDatabase",
+                    "Transaction", "TypeConverter", "TypeConverters", "Update")),
+            Map.entry("androidx.work", Set.of(
+                    "Constraints", "CoroutineWorker", "Data", "ExistingPeriodicWorkPolicy", "ExistingWorkPolicy",
+                    "ListenableWorker", "OneTimeWorkRequest", "PeriodicWorkRequest", "WorkInfo",
+                    "WorkManager", "WorkRequest", "Worker", "WorkerParameters")),
+            Map.entry("com.google.android.material.dialog", Set.of("MaterialAlertDialogBuilder")),
+            Map.entry("com.google.android.material.snackbar", Set.of("Snackbar")),
+            Map.entry("com.google.android.material.tabs", Set.of("TabLayout")),
+            Map.entry("com.google.android.material.textfield", Set.of("TextInputEditText", "TextInputLayout")),
+            Map.entry("okhttp3", Set.of(
+                    "Cache", "Call", "Callback", "ConnectionSpec", "Cookie", "CookieJar", "FormBody", "Headers",
+                    "HttpUrl", "Interceptor", "MediaType", "MultipartBody", "OkHttpClient",
+                    "Request", "RequestBody", "Response", "ResponseBody", "WebSocket", "WebSocketListener")),
+            Map.entry("retrofit2", Set.of("Call", "Callback", "Converter", "Response", "Retrofit")),
+            Map.entry("retrofit2.http", Set.of(
+                    "Body", "DELETE", "Field", "FieldMap", "FormUrlEncoded", "GET", "HEAD", "Header", "HeaderMap",
+                    "Headers", "HTTP", "Multipart", "PATCH", "POST", "PUT", "Part", "PartMap", "Path", "Query",
+                    "QueryMap", "Streaming", "Url")),
+            Map.entry("com.google.gson", Set.of(
+                    "Gson", "GsonBuilder", "JsonArray", "JsonElement", "JsonObject", "JsonParser", "JsonPrimitive", "TypeAdapter")),
+            Map.entry("com.google.gson.annotations", Set.of("Expose", "SerializedName", "Since", "Until")),
+            Map.entry("org.jetbrains.annotations", Set.of("NotNull", "Nullable", "NonNls", "Contract", "Unmodifiable")),
+            Map.entry("org.apache.commons.lang3", Set.of(
+                    "StringUtils", "ArrayUtils", "Validate", "ObjectUtils", "BooleanUtils", "RandomStringUtils")),
+            Map.entry("org.apache.commons.io", Set.of("FileUtils", "IOUtils", "FilenameUtils")),
+            Map.entry("kotlinx.coroutines", Set.of(
+                    "CoroutineDispatcher", "CoroutineScope", "CoroutineStart", "Deferred", "Dispatchers",
+                    "GlobalScope", "Job", "MainScope", "SupervisorJob", "WithContext")),
+            Map.entry("io.reactivex.rxjava3.core", Set.of(
+                    "Completable", "Flowable", "Maybe", "Observable", "Scheduler", "Single")));
 
     private static final Set<String> KOTLIN_IMPLICIT_JVM_ANNOTATIONS =
             WELL_KNOWN_WILDCARD_TYPES.getOrDefault("kotlin.jvm", Set.of());

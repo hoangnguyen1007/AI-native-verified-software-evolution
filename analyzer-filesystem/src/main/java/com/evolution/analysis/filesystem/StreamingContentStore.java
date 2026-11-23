@@ -129,15 +129,67 @@ public final class StreamingContentStore implements RepositoryContentStore {
         }
     }
 
+    static void ensureSubdirectory(Path root, Path dir) throws IOException {
+        safeWithin(root, dir);
+        if (!Files.isDirectory(dir, LinkOption.NOFOLLOW_LINKS)) {
+            Files.createDirectories(dir);
+            if (!Files.isDirectory(dir, LinkOption.NOFOLLOW_LINKS)) throw new IOException("UNSAFE_STORAGE");
+        }
+    }
+
+    void ensureStaging() throws IOException {
+        ensureSubdirectory(root, staging);
+    }
+
+    static void createLinkWithRetry(Path target, Path source) throws IOException {
+        IOException last = null;
+        for (int attempt = 0; attempt < 3; attempt++) {
+            try {
+                Files.createLink(target, source);
+                return;
+            } catch (FileAlreadyExistsException | NoSuchFileException | UnsupportedOperationException exact) {
+                throw exact;
+            } catch (FileSystemException transientLock) {
+                last = transientLock;
+            }
+            if (attempt < 2) {
+                try {
+                    Thread.sleep(25L << attempt);
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw last;
+                }
+            }
+        }
+        throw last;
+    }
+
+    static void deleteIfExistsQuietly(Path path) throws IOException {
+        for (int attempt = 0; attempt < 3; attempt++) {
+            try {
+                Files.deleteIfExists(path);
+                return;
+            } catch (NoSuchFileException missing) {
+                return;
+            } catch (FileSystemException transientLock) {
+                if (attempt == 2) throw transientLock;
+            }
+            try {
+                Thread.sleep(25L << attempt);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+        }
+    }
+
     private void ensureShard(String hexPrefix, Path shard) throws IOException {
         int index = Integer.parseInt(hexPrefix, 16);
         if (createdShards.get(index) == 1 && Files.isDirectory(shard, LinkOption.NOFOLLOW_LINKS)) {
             safeWithin(root, shard);
             return;
         }
-        safeWithin(root, shard);
-        Files.createDirectories(shard);
-        if (!Files.isDirectory(shard, LinkOption.NOFOLLOW_LINKS)) throw new IOException("UNSAFE_STORAGE");
+        ensureSubdirectory(root, shard);
         createdShards.set(index, 1);
         loosePresence = 2;
     }
@@ -220,6 +272,7 @@ public final class StreamingContentStore implements RepositoryContentStore {
     private ContentHandle writeInternal(ContentWriter writer, BooleanSupplier cancelled) throws IOException {
         Objects.requireNonNull(writer); Objects.requireNonNull(cancelled);
         if (cancelled.getAsBoolean() || Thread.currentThread().isInterrupted()) throw new CancellationException();
+        ensureStaging();
         Path temp = Files.createTempFile(staging, "blob-", ".part");
         MessageDigest hash = borrowSha256();
         long[] size = {0};
@@ -258,14 +311,14 @@ public final class StreamingContentStore implements RepositoryContentStore {
             }
             Path target = path(handle);
             ensureShard(handle.digest().value().substring(7, 9), target.getParent());
-            try { Files.createLink(target, temp); loosePresence = 2; }
+            try { createLinkWithRetry(target, temp); loosePresence = 2; }
             catch (FileAlreadyExistsException exists) { if (!verify(handle, cancelled)) throw new IOException("CAS_CORRUPT"); }
             catch (UnsupportedOperationException unavailable) { throw new IOException("ATOMIC_PUBLICATION_UNAVAILABLE"); }
             return handle;
         } catch (ArithmeticException overflow) { throw new IOException("CONTENT_SIZE_OVERFLOW"); }
         finally {
             releaseSha256(hash);
-            Files.deleteIfExists(temp);
+            deleteIfExistsQuietly(temp);
         }
     }
 

@@ -165,7 +165,7 @@ public final class GradleDependencyArtifactResolver {
         }
         void declarations(UniversalBuildModel.Module module,SourcePlanModel.Kind kind,boolean exported,List<UniversalBuildModel.Dependency> result,Set<ModuleIdentity> projects,Set<Problem> problems,Set<ModuleIdentity> visited) {
             if(!visited.add(module.descriptor().identity()))return;
-            for(var dependency:module.dependencies())if(visible(dependency.configuration(),kind,exported)&&!platform(dependency.configuration())&&!dependency.configuration().endsWith(".constraint")) {
+            for(var dependency:module.dependencies())if(visible(dependency.configuration(),kind,exported)&&!platform(dependency.configuration())&&!dependency.configuration().endsWith(".constraint")&&!dependency.configuration().endsWith(".local-file")) {
                 if(dependency.projectPath().isPresent())project(module,dependency.projectPath().orElseThrow(),problems).ifPresent(p->{projects.add(p.descriptor().identity());declarations(p,SourcePlanModel.Kind.MAIN,true,result,projects,problems,visited);});
                 else result.add(dependency);
             }
@@ -200,7 +200,7 @@ public final class GradleDependencyArtifactResolver {
     }
     private static void manage(Map<String,Set<MavenCoordinate>> values,MavenCoordinate coordinate){values.computeIfAbsent(coordinate.groupId()+":"+coordinate.artifactId(),ignored->new HashSet<>()).add(coordinate);}
     private static boolean platform(String configuration){return configuration.endsWith(".platform")||configuration.endsWith(".enforced-platform");}
-    private static boolean visible(String configuration,SourcePlanModel.Kind kind,boolean exported) {
+    public static boolean visible(String configuration,SourcePlanModel.Kind kind,boolean exported) {
         String base=configuration.split("\\.",2)[0];
         boolean isTest=base.startsWith("test")||base.startsWith("androidTest")||base.matches("[a-z][A-Za-z0-9_]*Test(?:Implementation|Api|CompileOnly|CompileOnlyApi|Compile)");
         if(exported)return !isTest&&(Set.of("api","compile","compileOnlyApi").contains(base)||base.matches("[a-z][A-Za-z0-9_]*(?:Api|CompileOnlyApi)"));

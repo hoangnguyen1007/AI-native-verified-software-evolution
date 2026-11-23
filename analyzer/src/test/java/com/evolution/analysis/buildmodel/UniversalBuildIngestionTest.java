@@ -447,4 +447,94 @@ class UniversalBuildIngestionTest {
         var dualGradle = load(Map.of("build.gradle", "plugins { id 'java' }\n", "build.gradle.kts", "plugins { java }\n"));
         assertTrue(dualGradle.issues().stream().anyMatch(i -> i.reason() == IngestionEvidence.Reason.AMBIGUOUS_INPUT));
     }
+
+    @Test void resilientScriptParsingPropertiesRootExtMultilineTomlAndLocalJarsGeneralize() {
+        var r = load(Map.ofEntries(
+                Map.entry("gradle.properties", "libVer=2.4.1\ncompileSdk=35\n"),
+                Map.entry("nested/settings.gradle", "include ':app'\n"),
+                Map.entry("nested/build.gradle", "buildscript { ext { kotlin_version = '2.0.21' } }\n"
+                        + "ext {\n    commonDep = 'com.example:common:1.0.0'\n}\n"
+                        + "allprojects {\n"
+                        + "    tasks.register('checkRegex', { doLast { def p = \"\\\\d+\\.jar\\s+\\w+/\\\"\" } })\n"
+                        + "}\n"),
+                Map.entry("nested/gradle/libs.versions.toml", "[versions]\n"
+                        + "strictVer = { strictly = \"3.1.4\" }\n"
+                        + "[libraries]\n"
+                        + "alpha = { module = \"g:alpha\", version.ref = \"strictVer\" }\n"
+                        + "beta = { module = \"g:beta\", version = { require = \"4.0.0\" } }\n"
+                        + "[bundles]\n"
+                        + "core = [\n"
+                        + "  \"alpha\",\n"
+                        + "  \"beta\",\n"
+                        + "]\n"),
+                Map.entry("nested/app/build.gradle", "plugins { id 'io.gitlab.arturbosch.detekt'\n id 'com.gradleup.shadow' }\n"
+                        + "dependencies\n{\n"
+                        + "    implementation \"org.jetbrains.kotlin:kotlin-stdlib:${rootProject.ext.kotlin_version}\"\n"
+                        + "    implementation \"g:prop:${libVer}\"\n"
+                        + "    implementation libs.bundles.core\n"
+                        + "    implementation fileTree(dir: 'libs', include: ['*.jar'])\n"
+                        + "    api files('extra/custom.jar')\n"
+                        + "}\n"),
+                Map.entry("nested/app/libs/vendored.jar", "PK-stub"),
+                Map.entry("nested/app/extra/custom.jar", "PK-stub")));
+
+        assertTrue(r.issues().stream().noneMatch(i -> i.reason() == IngestionEvidence.Reason.MALFORMED_INPUT),
+                () -> "Unexpected MALFORMED_INPUT: " + r.issues());
+        assertTrue(r.issues().stream().noneMatch(i -> i.reason() == IngestionEvidence.Reason.DYNAMIC_BUILD_LOGIC),
+                () -> "Unexpected DYNAMIC_BUILD_LOGIC: " + r.issues());
+        var app = r.modules().stream().filter(m -> m.descriptor().path().equals("nested/app")).findFirst().orElseThrow();
+        var coords = app.dependencies().stream().flatMap(d -> d.coordinate().stream())
+                .map(MavenCoordinate::notation).toList();
+        assertEquals(List.of("org.jetbrains.kotlin:kotlin-stdlib:2.0.21", "g:prop:2.4.1", "g:alpha:3.1.4", "g:beta:4.0.0"), coords);
+        var localJars = app.dependencies().stream().filter(d -> d.configuration().endsWith(".local-file"))
+                .map(UniversalBuildModel.Dependency::notation).toList();
+        assertEquals(List.of("nested/app/libs/vendored.jar", "nested/app/extra/custom.jar"), localJars);
+
+        var unsafeLocal = load(Map.of("sub/build.gradle", "dependencies { implementation files('../../outside.jar') }\n"));
+        assertTrue(unsafeLocal.issues().stream().anyMatch(i -> i.reason() == IngestionEvidence.Reason.UNSAFE_PATH));
+    }
+
+    @Test void multiCatalogsBuildSrcConstantsAndJava8KotlinCompilerLevelsResolveCleanly() {
+        var r = load(Map.ofEntries(
+                Map.entry("settings.gradle.kts", "include(\":app\")\n"),
+                Map.entry("gradle/androidx.versions.toml", "[versions]\ncore = \"1.13.1\"\n"
+                        + "[libraries]\ncore-ktx = { module = \"androidx.core:core-ktx\", version = { ref = \"core\" } }\n"),
+                Map.entry("buildSrc/src/main/kotlin/Deps.kt", "object Deps {\n"
+                        + "    const val okhttpVer = \"4.12.0\"\n"
+                        + "    const val okhttp = \"com.squareup.okhttp3:okhttp:$okhttpVer\"\n"
+                        + "    const val dup = \"g:first:1\"\n"
+                        + "}\n"
+                        + "object Other {\n"
+                        + "    const val marker = \"g:marker:2\"\n"
+                        + "}\n"),
+                Map.entry("buildSrc/src/main/java/ExtraDeps.java", "public class Deps {\n"
+                        + "    public static final String dup = \"g:second:2\";\n"
+                        + "}\n"),
+                Map.entry("app/build.gradle.kts", "plugins {\n    kotlin(\"android\")\n    id(\"org.jetbrains.dokka\")\n}\n"
+                        + "android {\n"
+                        + "    compileOptions {\n"
+                        + "        sourceCompatibility = JavaVersion.VERSION_1_8\n"
+                        + "        targetCompatibility = JavaVersion.VERSION_1_8\n"
+                        + "    }\n"
+                        + "    kotlinOptions {\n"
+                        + "        jvmTarget = \"17\"\n"
+                        + "    }\n"
+                        + "}\n"
+                        + "dependencies {\n"
+                        + "    implementation(androidx.core.ktx)\n"
+                        + "    implementation(Deps.okhttp)\n"
+                        + "    implementation(Other.marker)\n"
+                        + "    implementation(Deps.dup)\n"
+                        + "}\n")));
+        assertTrue(r.issues().stream().noneMatch(i -> i.reason() == IngestionEvidence.Reason.MALFORMED_INPUT));
+        var app = r.modules().stream().filter(m -> m.descriptor().path().equals("app")).findFirst().orElseThrow();
+        var set = app.sourcePlan().sourceSets().getFirst();
+        assertEquals("8", set.syntaxLevel().value().orElseThrow());
+        assertEquals("17", set.bytecodeTarget().value().orElseThrow());
+        var coords = app.dependencies().stream().flatMap(d -> d.coordinate().stream())
+                .map(MavenCoordinate::notation).toList();
+        assertEquals(List.of("androidx.core:core-ktx:1.13.1", "com.squareup.okhttp3:okhttp:4.12.0", "g:marker:2"), coords);
+        // Ambiguous Deps.dup (g:first:1 vs g:second:2) stays unresolved instead of guessing.
+        assertEquals(3, coords.size());
+    }
 }

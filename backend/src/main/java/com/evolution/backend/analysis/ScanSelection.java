@@ -41,6 +41,7 @@ public final class ScanSelection {
     private static boolean input(String path){
         String name=path.substring(path.lastIndexOf('/')+1).toLowerCase(Locale.ROOT);
         if(Set.of(".gitignore",".gitattributes",".classpath",".project","spring.factories","dockerfile","package.json").contains(name))return true;
+        if(name.endsWith(".jar"))return !path.contains("/gradle/wrapper/")&&!path.startsWith("gradle/wrapper/")&&!path.contains("/.mvn/wrapper/")&&!path.startsWith(".mvn/wrapper/");
         if(name.endsWith(".json"))return path.contains("/resources/")||name.startsWith("application")||name.startsWith("bootstrap");
         return List.of(".java",".xml",".properties",".yml",".yaml",".toml",".imports",".gradle",".kts",".kt",".scala",".groovy",".js",".ts",".cs",".c",".cpp",".h").stream().anyMatch(name::endsWith);
     }

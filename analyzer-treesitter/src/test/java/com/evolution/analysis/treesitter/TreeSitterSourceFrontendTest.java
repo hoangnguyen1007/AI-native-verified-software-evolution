@@ -202,5 +202,11 @@ class TreeSitterSourceFrontendTest {
         var pyFacts = new ArrayList<TreeSitterSourceFrontend.Fact>();
         new TreeSitterSourceFrontend().parse("python", pySource.getBytes(StandardCharsets.UTF_8), pyFacts::add, () -> false);
         assertTrue(pyFacts.stream().anyMatch(f -> f.category().equals("EVENT_CONSUMER_CANDIDATE") && f.name().equals("'order.created'")));
+
+        String ktSource = "fun fetchUser() {\n  httpClient.get(\"/api/users\")\n  applicationEventPublisher.publishEvent(\"user.created\")\n}\n";
+        var ktFacts = new ArrayList<TreeSitterSourceFrontend.Fact>();
+        new TreeSitterSourceFrontend().parse("kotlin", ktSource.getBytes(StandardCharsets.UTF_8), ktFacts::add, () -> false);
+        assertTrue(ktFacts.stream().anyMatch(f -> f.category().equals("HTTP_CALL_CANDIDATE") && f.name().equals("\"/api/users\"") && "GET".equals(f.attributes().get("method"))));
+        assertTrue(ktFacts.stream().anyMatch(f -> f.category().equals("EVENT_PRODUCER_CANDIDATE") && f.name().equals("\"user.created\"")));
     }
 }

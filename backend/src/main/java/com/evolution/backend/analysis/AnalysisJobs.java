@@ -17,6 +17,7 @@ import java.io.IOException;
 /** Bounded local job orchestration. Operational IDs/times never enter canonical analysis identities. */
 public final class AnalysisJobs implements AutoCloseable {
     public static final String VERSION = "architecture.jobs:m8.1-v1";
+    private static final System.Logger LOG = System.getLogger(AnalysisJobs.class.getName());
     public enum State { QUEUED, RUNNING, CANCELLING, SUCCEEDED, PARTIAL, EMPTY, FAILED, CANCELLED, TIMED_OUT }
     public enum Stage { QUEUED, ACQUISITION, PLATFORM, ANALYSIS, GRAPH, POLICY, PUBLICATION, REUSED, FINISHED }
     public enum Completion { COMPLETE, PARTIAL, EMPTY, FAILED }
@@ -207,7 +208,17 @@ public final class AnalysisJobs implements AutoCloseable {
                 job.stage = stage;
                 job.stageStartNanos.put(stage, nowNanos);
                 job.events.add(new Event(stage, Instant.now())); job.revision++;
-                persist(job);
+                if (stage == Stage.PUBLICATION) {
+                    persist(job);
+                } else {
+                    try {
+                        persist(job);
+                    } catch (Rejected unavailable) {
+                        LOG.log(System.Logger.Level.WARNING,
+                                "Non-terminal stage checkpoint skipped for {0} at {1}",
+                                job.id, stage);
+                    }
+                }
             }
         }
     }
@@ -391,7 +402,11 @@ public final class AnalysisJobs implements AutoCloseable {
     private void persist(Job job){if(disk!=null){boolean interrupted=Thread.interrupted();try{
         var reusableKey = job.state == State.SUCCEEDED || job.state == State.PARTIAL ? Optional.ofNullable(job.inputKey) : Optional.<ContentDigest>empty();
         disk.save(job.retry,job.registration.setup(),view(job),job.gaps,job.inputProblems,job.reusedPublication,reusableKey,job.preparedLedgers);
-    }catch(IOException failure){throw new Rejected("JOB_STORAGE_UNAVAILABLE");}finally{if(interrupted)Thread.currentThread().interrupt();}}}
+    }catch(IOException failure){
+        LOG.log(System.Logger.Level.WARNING, "Analysis job persistence failed for {0} ({1}: {2})",
+                job.id, failure.getClass().getSimpleName(), failure.getMessage());
+        throw new Rejected("JOB_STORAGE_UNAVAILABLE");
+    }finally{if(interrupted)Thread.currentThread().interrupt();}}}
     private synchronized void dispatchPending(){
         if(disk==null||closed)return;
         try{while(jobs.size()<limits.workers()+limits.queued()){
@@ -468,6 +483,8 @@ public final class AnalysisJobs implements AutoCloseable {
                 finish(job, switch (completion) { case COMPLETE -> State.SUCCEEDED; case PARTIAL -> State.PARTIAL; case EMPTY -> State.EMPTY; case FAILED -> State.FAILED; });
             }
         } catch (Exception | LinkageError | AssertionError | OutOfMemoryError failure) {
+            LOG.log(System.Logger.Level.WARNING, "Analysis execution failed for {0} at stage {1} ({2}: {3})",
+                    job.id, job.stage, failure.getClass().getSimpleName(), failure.getMessage());
             synchronized (this) {
                 if (job.stop == null && (failure instanceof InterruptedException || failure instanceof CancellationException)) job.stop = Stop.PROVIDER_INTERRUPTED;
                 if (job.stop != null) finish(job, job.stop == Stop.DEADLINE_EXCEEDED ? State.TIMED_OUT : State.CANCELLED);
@@ -483,7 +500,8 @@ public final class AnalysisJobs implements AutoCloseable {
         job.closeActiveStage(endNanos);
         job.state = state; job.stage = Stage.FINISHED; job.finished = Instant.now(); job.finishedNanos = endNanos; job.events.add(new Event(Stage.FINISHED, job.finished)); job.revision++;
         try{persist(job);}catch(Rejected unavailable){
-            job.state=State.FAILED;job.error="JOB_STORAGE_UNAVAILABLE";job.result=null;
+            LOG.log(System.Logger.Level.WARNING, "Terminal job persistence failed for {0}; marking FAILED", job.id);
+            job.state=State.FAILED;if(job.error==null)job.error="JOB_STORAGE_UNAVAILABLE";job.result=null;
             if (job.reuse != null) job.reuseDecision = ReuseDecision.RESULT_UNAVAILABLE;
             job.reuse=null;
             completedTelemetry.put(job.id, buildLiveTelemetry(job));

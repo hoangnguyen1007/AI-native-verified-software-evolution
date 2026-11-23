@@ -267,20 +267,21 @@ public final class SqliteInventoryStore implements InventoryReader, JobJournal, 
         ContentHandle handle = content.put(new ByteArrayInputStream(operation), () -> false);
         long next = Math.addExact(sequence, 1);
         Path opsDir = root.resolve("operations");
+        StreamingContentStore.ensureSubdirectory(root, opsDir);
         Path target = opsDir.resolve(String.format(Locale.ROOT, "%020d.commit", next));
         Path temp = Files.createTempFile(opsDir, "op-", ".part");
         try {
             try (var file = FileChannel.open(temp, StandardOpenOption.WRITE); var out = new DataOutputStream(new BufferedOutputStream(Channels.newOutputStream(file), 512))) {
                 out.writeLong(next); InventoryCodec.text(out, head.value()); InventoryCodec.handle(out, Optional.of(handle)); out.flush(); file.force(true);
             }
-            Files.createLink(target, temp);
+            StreamingContentStore.createLinkWithRetry(target, temp);
             afterLogPublication.run();
             ContentDigest nextHead = CanonicalJson.sha256(List.of(head, handle));
             try { apply(new ByteArrayInputStream(operation), next, nextHead); }
             catch (SQLException | IOException failure) { recoveryRequired = true; throw new IOException("JOURNAL_INDEX_RECOVERY_REQUIRED", failure); }
             sequence = next;
             head = nextHead;
-        } finally { Files.deleteIfExists(temp); }
+        } finally { StreamingContentStore.deleteIfExistsQuietly(temp); }
     }
 
     private void apply(InputStream payload, long seq, ContentDigest nextHead) throws IOException, SQLException {

@@ -242,9 +242,10 @@ public final class WorkbenchApiMain {
     }
     static final URI GOOGLE_MAVEN = URI.create("https://dl.google.com/dl/android/maven2/");
     static final URI GRADLE_PLUGIN_PORTAL = URI.create("https://plugins.gradle.org/m2/");
+    static final URI JITPACK = URI.create("https://jitpack.io/");
     static Optional<DependencyAcquisitionPolicy> artifactPolicy(String configured) {
         var repositories = configured.isBlank()
-                ? List.of(DependencyAcquisitionPolicy.MAVEN_CENTRAL, GOOGLE_MAVEN, GRADLE_PLUGIN_PORTAL)
+                ? List.of(DependencyAcquisitionPolicy.MAVEN_CENTRAL, GOOGLE_MAVEN, GRADLE_PLUGIN_PORTAL, JITPACK)
                 : Arrays.stream(configured.strip().split("\\s+")).map(URI::create).toList();
         return Optional.of(new DependencyAcquisitionPolicy(4096, 64_000_000, 512_000_000L, 64, repositories, 5000, 15000, 1, 8));
     }

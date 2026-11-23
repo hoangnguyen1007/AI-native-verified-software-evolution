@@ -280,4 +280,46 @@ class SourceRecoveryAttributionTest {
         assertEquals(1, unresolvedCalls.size());
         assertEquals("String.valueOf(payload)", unresolvedCalls.getFirst().reference());
     }
+
+    @Test void androidWildcardImportsResolveInExplicitImportSolverAndPreserveLocalCallsInSourceRecovery() {
+        String source = """
+                package com.example.app;
+                import android.content.*;
+                import android.os.*;
+                import androidx.room.*;
+                import okhttp3.*;
+                import retrofit2.http.*;
+                @Entity
+                public class SampleHelper {
+                    private Bundle state;
+                    void helper(String tag) {}
+                    @GET("/ping")
+                    public void run() {
+                        helper("ok");
+                        OkHttpClient client = new OkHttpClient();
+                        Intent intent = new Intent();
+                    }
+                }
+                """;
+        var request = LombokIngestionTest.recovery(TestInputs.request(source));
+        var unit = com.github.javaparser.StaticJavaParser.parse(source);
+        var solver = new ExplicitImportTypeSolver();
+        solver.observeUnit(unit);
+        solver.materialize(Set.of("com.example.app.SampleHelper"), new ResolutionEnvironment(request), false);
+        assertTrue(solver.tryToSolveType("android.content.Intent").isSolved());
+        assertTrue(solver.tryToSolveType("android.os.Bundle").isSolved());
+        assertTrue(solver.tryToSolveType("androidx.room.Entity").isSolved());
+        assertTrue(solver.tryToSolveType("okhttp3.OkHttpClient").isSolved());
+        assertTrue(solver.tryToSolveType("retrofit2.http.GET").isSolved());
+
+        var result = new JavaParserFrontend().analyze(request);
+        var resolvedCalls = result.observations().stream()
+                .filter(o -> o.category().value().equals("java.calls") && o.attribution() == SemanticStatus.RESOLVED)
+                .toList();
+        assertEquals(1, resolvedCalls.size());
+        assertEquals("helper(\"ok\")", resolvedCalls.getFirst().reference());
+        assertTrue(result.declarations().stream().noneMatch(d ->
+                d.entity().origin() == EntityOrigin.DEPENDENCY
+                && d.derivation().method().id().equals("java.explicit-import-recovery")));
+    }
 }

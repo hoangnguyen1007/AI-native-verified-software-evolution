@@ -70,7 +70,8 @@ public final class TreeSitterSourceFrontend {
     private static final java.util.regex.Pattern JS_HTTP_CLIENT = java.util.regex.Pattern.compile("(?:axios|http|this\\.http|httpClient|this\\.httpClient|api|apiClient|client|ky|got|superagent)\\.(?:get|post|put|patch|delete|head|options)");
     private static final java.util.regex.Pattern RUST_HTTP_CLIENT = java.util.regex.Pattern.compile("(?:reqwest|client|http_client|httpClient)\\.(?:get|post|put|patch|delete)");
     private static final java.util.regex.Pattern DART_HTTP_CLIENT = java.util.regex.Pattern.compile("(?:dio|http|client)\\.(?:get|post|put|patch|delete|head)");
-    private static final java.util.regex.Pattern EVENT_PRODUCER_CALL = java.util.regex.Pattern.compile("(?i)(?:[A-Za-z_][A-Za-z0-9_.]*)?(?:kafka|kafkaTemplate|producer|eventBus|emitter|broker|nats|nc|amqp|channel|rabbitTemplate|sqs|sns|pubsub|redis)\\.(?:send|produce|publish|basic_publish|emit|convertAndSend|Publish)");
+    private static final java.util.regex.Pattern KOTLIN_HTTP_CLIENT = java.util.regex.Pattern.compile("(?:[A-Za-z_][A-Za-z0-9_.]*)?(?:httpClient|ktor|client|okhttp)\\.(?:get|post|put|patch|delete|head)");
+    private static final java.util.regex.Pattern EVENT_PRODUCER_CALL = java.util.regex.Pattern.compile("(?i)(?:[A-Za-z_][A-Za-z0-9_.]*)?(?:kafka|kafkaTemplate|producer|eventBus|eventPublisher|applicationEventPublisher|emitter|broker|nats|nc|amqp|channel|rabbitTemplate|sqs|sns|pubsub|redis)\\.(?:send|produce|publish|publishEvent|basic_publish|emit|post|convertAndSend|Publish)");
     private static final java.util.regex.Pattern EVENT_CONSUMER_CALL = java.util.regex.Pattern.compile("(?i)(?:[A-Za-z_][A-Za-z0-9_.]*)?(?:kafka|consumer|eventBus|emitter|broker|nats|nc|amqp|channel|pubsub|redis)\\.(?:subscribe|consume|basic_consume|on|Subscribe|QueueSubscribe)");
     private static final Set<String> EVENT_CONSUMER_ANNOTATIONS = Set.of("KafkaListener","RabbitListener","EventPattern","MessagePattern","SqsListener");
     private static final java.util.regex.Pattern HTTP_METHOD_PREFIX = java.util.regex.Pattern.compile("^(?:Map|Http)");
@@ -146,6 +147,7 @@ public final class TreeSitterSourceFrontend {
         if(language.equals("csharp"))return CSHARP_HTTP_CLIENT.matcher(written).matches();
         if(language.equals("rust"))return written.equals("reqwest::get")||RUST_HTTP_CLIENT.matcher(written).matches();
         if(language.equals("dart"))return DART_HTTP_CLIENT.matcher(written).matches();
+        if(Set.of("kotlin","scala").contains(language))return KOTLIN_HTTP_CLIENT.matcher(written).matches();
         if(!Set.of("javascript","typescript","tsx").contains(language))return false;
         return Set.of("fetch","window.fetch","globalThis.fetch","$fetch","useFetch","useSWR").contains(written)
                 ||JS_HTTP_CLIENT.matcher(written).matches();
@@ -165,13 +167,22 @@ public final class TreeSitterSourceFrontend {
         if(Set.of("argument","value_argument").contains(first.getType())&&first.getNamedChildCount()>=1)first=first.getNamedChild(first.getNamedChildCount()-1);
         String raw=text(first,bytes);
         // Escapes, interpolation and computed expressions need a language-native decoder.
-        if(!Set.of("string","string_literal","interpreted_string_literal","template_string").contains(first.getType())||interpolated(first)||raw.indexOf('\\')>=0||raw.length()<3)return null;
+        if(!Set.of("string","string_literal","line_string_literal","multi_line_string_literal","interpreted_string_literal","template_string").contains(first.getType())||interpolated(first)||raw.indexOf('\\')>=0||raw.length()<3)return null;
         char q=raw.charAt(0);
         return (q=='\''||q=='"'||q=='`')&&raw.charAt(raw.length()-1)==q?raw:null;
     }
     private static TSNode argumentsNode(TSNode node) {
         var args=field(node,"arguments");if(args!=null)return args;
-        for(int i=0;i<node.getNamedChildCount();i++){var c=node.getNamedChild(i);if(Set.of("arguments","value_arguments","argument_list").contains(c.getType()))return c;}
+        for(int i=0;i<node.getNamedChildCount();i++){
+            var c=node.getNamedChild(i);
+            if(Set.of("arguments","value_arguments","argument_list").contains(c.getType()))return c;
+            if(c.getType().equals("call_suffix")){
+                for(int j=0;j<c.getNamedChildCount();j++){
+                    var nested=c.getNamedChild(j);
+                    if(Set.of("arguments","value_arguments","argument_list").contains(nested.getType()))return nested;
+                }
+            }
+        }
         return null;
     }
     private static int emitEventCandidate(String category,String kind,TSNode node,String written,String tail,byte[] utf8,

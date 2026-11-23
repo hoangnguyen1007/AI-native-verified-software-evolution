@@ -5,7 +5,9 @@ import com.evolution.analysis.acquisition.streaming.*;
 import com.evolution.analysis.assessment.*;
 import com.evolution.analysis.buildmodel.UniversalBuildIngestion;
 import com.evolution.analysis.contract.common.ContentDigest;
-import com.evolution.analysis.contract.identity.RepositoryIdentity;
+import com.evolution.analysis.contract.common.VersionedIdentifier;
+import com.evolution.analysis.contract.identity.*;
+import com.evolution.analysis.contract.serialization.CanonicalJson;
 import com.evolution.analysis.dependency.DependencyAcquisitionPolicy;
 import com.evolution.analysis.evidence.*;
 import com.evolution.analysis.filesystem.*;
@@ -32,6 +34,9 @@ import java.util.function.BooleanSupplier;
 
 /** Passive composition over the same providers as evo scan. The runner never executes target lifecycles. */
 public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
+    private static final System.Logger LOG = System.getLogger(LocalAnalysisRunner.class.getName());
+    private static final VersionedIdentifier POLICY_EVALUATION_PROVIDER =
+            new VersionedIdentifier("policy.evaluation", "local-runner-v1");
     private static final DependencyAcquisitionPolicy CACHE_ONLY =
             new DependencyAcquisitionPolicy(1024,64_000_000,256_000_000,64,List.of(),5000,15000,0);
     private static final ExecutorService POLYGLOT_WORKERS = Executors.newFixedThreadPool(
@@ -319,21 +324,41 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
         var reports = new ArrayList<PublishedReports.Report>();
         if (input.policy().isPresent()) {
             control.stage(AnalysisJobs.Stage.POLICY); var selected = input.policy().orElseThrow();
-            var compiled = new PolicyCompiler().compile(selected.bytes(),EvidenceContext.forSnapshot(graph.snapshot()),PolicyCompiler.Limits.defaults());
-            gaps.addAll(compiled.gaps());
-            var guard = ArchitectureQueryService.operationalGuard(control,0,8_000_000);
-            var queries = new ArchitectureMetricsService(graph,ArchitectureMetric.Limits.defaults(),guard,Optional.empty(),List.of()).queries();
-            for (var context : graph.contexts()) {
-                if (context.analysis().isEmpty()) continue;
-                control.checkpoint();
-                var plan = new PolicyGraphMapper().bind(compiled,queries,context.identity(),PolicyGraphMapper.Limits.defaults());
-                var evaluation = new PolicyEvaluator().evaluate(compiled,plan,queries,PolicyEvaluation.Limits.defaults());
-                var metrics = new PolicyMetricsService().compute(compiled,plan,evaluation,queries,PolicyMetrics.Limits.defaults());
-                var score = new ArchitectureAssessmentService().assess(metrics,evaluation,queries,
-                        Optional.of(ArchitectureScoreModel.candidate(selected.scoreScope())),plan.limits().query(),
-                        ArchitectureMetric.Limits.defaults(),ArchitectureAssessment.Limits.defaults());
-                reports.add(new PublishedReports.Report(evaluation,Optional.of(metrics),Optional.of(score)));
-                gaps.addAll(plan.gaps()); gaps.addAll(evaluation.gaps()); gaps.addAll(metrics.gaps()); gaps.addAll(score.gaps());
+            try {
+                var compiled = new PolicyCompiler().compile(selected.bytes(),EvidenceContext.forSnapshot(graph.snapshot()),PolicyCompiler.Limits.defaults());
+                gaps.addAll(compiled.gaps());
+                var guard = ArchitectureQueryService.operationalGuard(control,0,8_000_000);
+                var queries = new ArchitectureMetricsService(graph,ArchitectureMetric.Limits.defaults(),guard,Optional.empty(),List.of()).queries();
+                for (var context : graph.contexts()) {
+                    if (context.analysis().isEmpty()) continue;
+                    control.checkpoint();
+                    try {
+                        var plan = new PolicyGraphMapper().bind(compiled,queries,context.identity(),PolicyGraphMapper.Limits.defaults());
+                        var evaluation = new PolicyEvaluator().evaluate(compiled,plan,queries,PolicyEvaluation.Limits.defaults());
+                        var metrics = new PolicyMetricsService().compute(compiled,plan,evaluation,queries,PolicyMetrics.Limits.defaults());
+                        var score = new ArchitectureAssessmentService().assess(metrics,evaluation,queries,
+                                Optional.of(ArchitectureScoreModel.candidate(selected.scoreScope())),plan.limits().query(),
+                                ArchitectureMetric.Limits.defaults(),ArchitectureAssessment.Limits.defaults());
+                        reports.add(new PublishedReports.Report(evaluation,Optional.of(metrics),Optional.of(score)));
+                        gaps.addAll(plan.gaps()); gaps.addAll(evaluation.gaps()); gaps.addAll(metrics.gaps()); gaps.addAll(score.gaps());
+                    } catch (CancellationException cancelled) {
+                        throw cancelled;
+                    } catch (RuntimeException failure) {
+                        LOG.log(System.Logger.Level.WARNING, "Policy evaluation degraded for context {0} ({1}: {2})",
+                                context.identity(), failure.getClass().getSimpleName(), failure.getMessage());
+                        gaps.add(policyDegradedGap(graph,
+                                new EvidenceSubject(EvidenceSubject.Kind.CONFIGURATION, context.identity()),
+                                selected.scoreScope().name(), failure));
+                    }
+                }
+            } catch (CancellationException cancelled) {
+                throw cancelled;
+            } catch (RuntimeException failure) {
+                LOG.log(System.Logger.Level.WARNING, "Policy compilation/setup degraded ({0}: {1})",
+                        failure.getClass().getSimpleName(), failure.getMessage());
+                gaps.add(policyDegradedGap(graph,
+                        new EvidenceSubject(EvidenceSubject.Kind.REPOSITORY, input.repository().value()),
+                        selected.scoreScope().name(), failure));
             }
         }
         control.checkpoint();
@@ -347,6 +372,22 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
                 || !WorkbenchReuseInputs.stillCurrent(allPlatforms, dependencies, control))) control.withholdReuse();
         return new AnalysisJobs.Outcome(completion,Optional.of(graph),reports,List.copyOf(gaps),Optional.of(acquisition.identity()),Optional.of(detailed.report().identity()),inputProblems(acquisition));
     }
+    private static CapabilityGapRecord policyDegradedGap(KnowledgeGraph graph, EvidenceSubject subject,
+                                                           String scope, RuntimeException failure) {
+        var proof = CanonicalJson.sha256(List.of(subject, scope, failure.getClass().getName()));
+        var requirement = new EvidenceRequirement(EvidenceRequirement.Kind.CONFIGURATION, "policy.evaluation",
+                List.of(subject), EvidenceRequirement.AuthorizationClass.PASSIVE,
+                List.of("Provide a repository-compatible architecture policy YAML or inspect the policy evaluation diagnostic; the canonical knowledge graph remains published."));
+        return CapabilityGapRecord.create(EvidenceContext.forSnapshot(graph.snapshot()), POLICY_EVALUATION_PROVIDER,
+                "policy.evaluation", "POLICY_EVALUATION_DEGRADED", subject, List.of(),
+                List.of(ProviderObservationReference.create(POLICY_EVALUATION_PROVIDER, "policy.evaluation", graph.identity(), proof)),
+                List.of(requirement), List.of(),
+                List.of(new AffectedOutput(AffectedOutput.Kind.POLICY, "policy.evaluation"),
+                        new AffectedOutput(AffectedOutput.Kind.ASSESSMENT, "policy.evaluation")),
+                List.of(), List.of(),
+                List.of("Policy evaluation degraded (" + failure.getClass().getSimpleName() + "); canonical graph and source intelligence remain preserved."));
+    }
+
     private static List<AnalysisJobs.InputProblem> inputProblems(RepositoryAcquisitionResult acquisition) {
         return acquisition.problems().stream().map(p -> new AnalysisJobs.InputProblem(acquisition.provider(),acquisition.identity(),p)).toList();
     }

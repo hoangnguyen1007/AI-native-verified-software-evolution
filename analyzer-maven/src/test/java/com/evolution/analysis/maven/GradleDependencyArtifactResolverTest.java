@@ -140,6 +140,18 @@ class GradleDependencyArtifactResolverTest {
         assertTrue(main.binaries().isEmpty());
         assertTrue(main.problems().stream().anyMatch(p->p.reason().equals("GRADLE_BINARY_UNAVAILABLE")));
     }
+    @Test void localJarDependenciesDoNotTriggerVersionSelectionGapAndValidateBytes()throws Exception {
+        byte[] validJar=jarEntry("com/example/Vendored.class");
+        var model=model(Map.of("build.gradle","dependencies { implementation files('libs/vendored.jar') }\n",
+                "libs/vendored.jar","placeholder"));
+        var main=new GradleDependencyArtifactResolver(temp).resolve(model,offline).contexts().getFirst();
+        assertEquals(List.of("GRADLE_EFFECTIVE_CONTEXT_REQUIRED"),main.problems().stream().map(GradleDependencyArtifactResolver.Problem::reason).toList());
+        var recovered=GradleLocalJarInputs.recover(temp,"libs/vendored.jar",validJar,ContentDigest.sha256(validJar),1_000_000,1_000_000);
+        assertEquals("local-jar:libs/vendored.jar",recovered.entry().logicalName());
+        assertArrayEquals(validJar,Files.readAllBytes(recovered.path()));
+        assertThrows(IOException.class,()->GradleLocalJarInputs.recover(temp,"libs/corrupt.jar",new byte[]{1,2,3},ContentDigest.sha256(new byte[]{1,2,3}),1_000_000,1_000_000));
+        assertThrows(IOException.class,()->GradleLocalJarInputs.recover(temp,"libs/mismatch.jar",validJar,ContentDigest.sha256Utf8("wrong"),1_000_000,1_000_000));
+    }
     private void putAar(String artifact,String version,String body)throws Exception {
         putAar(artifact,version,body,Map.of("classes.jar",jarEntry("fixture.txt")));
     }

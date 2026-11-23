@@ -79,12 +79,12 @@ public final class FileGraphStore implements GraphStore {
             // Never replace an already published snapshot, including from another store instance.
             if (Files.exists(destination, NOFOLLOW_LINKS)) { verifyExisting(graph.identity(), cancelled); return; }
             // Atomic create-if-absent publication: unlike ATOMIC_MOVE, cannot replace a racing destination.
-            try { Files.createLink(destination, pending); }
+            try { StreamingContentStore.createLinkWithRetry(destination, pending); }
             catch (FileAlreadyExistsException raced) { verifyExisting(graph.identity(), cancelled); }
         } catch (GraphStoreException failure) { throw failure; }
         catch (GraphJson.LimitExceededException | StorageLimit limit) { var failure = new GraphStoreException(LIMIT_EXCEEDED); failure.initCause(limit); throw failure; }
         catch (IOException failure) { throw new GraphStoreException(IO_FAILURE); }
-        finally { if (pending != null) try { Files.deleteIfExists(pending); } catch (IOException ignored) { /* Not published; existing snapshots remain intact. */ } }
+        finally { if (pending != null) try { StreamingContentStore.deleteIfExistsQuietly(pending); } catch (IOException ignored) { /* Not published; existing snapshots remain intact. */ } }
     }
 
     private void verifyExisting(ContentDigest id, BooleanSupplier cancelled) throws IOException {

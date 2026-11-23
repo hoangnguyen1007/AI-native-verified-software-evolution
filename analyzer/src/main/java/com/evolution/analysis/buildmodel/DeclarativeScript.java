@@ -40,7 +40,7 @@ final class DeclarativeScript {
                             if(i+4>source.length())throw new IllegalArgumentException();
                             try{c=(char)Integer.parseInt(source.substring(i,i+4),16);i+=4;}
                             catch(NumberFormatException invalid){throw new IllegalArgumentException();}
-                        } else c=switch(c){case 'n'->'\n';case 'r'->'\r';case 't'->'\t';case 'b'->'\b';case 'f'->'\f';case '$','\\','\'','"'->c;default->throw new IllegalArgumentException();};
+                        } else c=switch(c){case 'n'->'\n';case 'r'->'\r';case 't'->'\t';case 'b'->'\b';case 'f'->'\f';case '$','\\','\'','"'->c;default->{value.append('\\');yield c;}};
                     }
                     value.append(c);
                 }
@@ -60,7 +60,20 @@ final class DeclarativeScript {
             if(!t.literal()) {
                 if(v.equals("("))parens++;if(v.equals(")"))parens--;if(v.equals("["))brackets++;if(v.equals("]"))brackets--;
                 if(parens<0||brackets<0)throw new IllegalArgumentException();
-                if(v.equals("{")) {if(head.isEmpty())throw new IllegalArgumentException();result.add(new Statement(List.copyOf(head),block(depth+1,true),head.getFirst().offset()));head.clear();continue;}
+                if(v.equals("{")) {
+                    if(parens>0||brackets>0){block(depth+1,true);head.add(new Token("{}",false,t.offset()));continue;}
+                    if(head.isEmpty()) {
+                        var body=block(depth+1,true);
+                        if(!result.isEmpty()&&result.getLast().body().isEmpty()&&result.getLast().head().stream().noneMatch(tok->tok.value().equals("="))) {
+                            var prev=result.removeLast();
+                            result.add(new Statement(prev.head(),body,prev.offset()));
+                        } else {
+                            result.add(new Statement(List.of(t),body,t.offset()));
+                        }
+                        continue;
+                    }
+                    result.add(new Statement(List.copyOf(head),block(depth+1,true),head.getFirst().offset()));head.clear();continue;
+                }
                 if(v.equals("}")){if(!nested||parens!=0||brackets!=0)throw new IllegalArgumentException();if(!head.isEmpty())result.add(new Statement(List.copyOf(head),List.of(),head.getFirst().offset()));return result;}
                 if((v.equals("\n")||v.equals(";"))&&parens==0&&brackets==0){if(!head.isEmpty())result.add(new Statement(List.copyOf(head),List.of(),head.getFirst().offset()));head.clear();continue;}
                 if(v.equals("\n"))continue;

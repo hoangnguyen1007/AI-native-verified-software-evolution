@@ -407,6 +407,7 @@ public final class EvolutionResultStore {
     }
 
     private static void link(Path target, byte[] bytes) throws IOException {
+        StreamingContentStore.directory(target.getParent());
         var file = Files.createTempFile(target.getParent(), "result-", ".pending");
         try {
             try (var channel = java.nio.channels.FileChannel.open(file, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS)) {
@@ -415,13 +416,13 @@ public final class EvolutionResultStore {
                 channel.force(true);
             }
             try {
-                Files.createLink(target, file);
+                StreamingContentStore.createLinkWithRetry(target, file);
             } catch (FileAlreadyExistsException exists) {
                 if (!Arrays.equals(bytes, CanonicalJson.write(pointer(target)).getBytes(StandardCharsets.UTF_8)))
                     throw new IOException("EVOLUTION_PUBLICATION_CONFLICT");
             }
         } finally {
-            Files.deleteIfExists(file);
+            StreamingContentStore.deleteIfExistsQuietly(file);
         }
     }
 

@@ -454,6 +454,7 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
             BooleanSupplier cancelled, Contribution contribution) throws IOException {
         check(cancelled);
         snapshots = StreamingContentStore.directory(snapshots);
+        StreamingContentStore.directory(directory);
         Path scratch = Files.createTempFile(directory, "graph-projection-", ".sqlite");
         try (var cleanup = new TemporaryFiles(scratch)) {
             Path pending = cleanup.add(Files.createTempFile(snapshots, "graph-snapshot-", ".part"));
@@ -523,7 +524,7 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
                     StreamingContentStore.safe(target);
                     check(cancelled);
                     try {
-                        Files.createLink(target, pending);
+                        StreamingContentStore.createLinkWithRetry(target, pending);
                     } catch (FileAlreadyExistsException existing) {
                         if (!Files.isRegularFile(target, LinkOption.NOFOLLOW_LINKS)
                                 || Files.size(target) != Files.size(pending) || !hash(target).equals(hash(pending)))
@@ -648,6 +649,7 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
             root(expected, cancelled);
             return;
         }
+        StreamingContentStore.directory(directory);
         Path scratch = Files.createTempFile(directory, "graph-import-", ".sqlite");
         try (var cleanup = new TemporaryFiles(scratch);
                 Connection database = DriverManager.getConnection("jdbc:sqlite:" + scratch)) {
@@ -785,6 +787,7 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
 
     private void publishRoot(Root root, BooleanSupplier cancelled) throws IOException {
         check(cancelled);
+        StreamingContentStore.directory(directory);
         byte[] bytes = CanonicalJson.write(Map.of("format", FORMAT, "graph", root.graph(), "document", root.document()))
                 .getBytes(StandardCharsets.UTF_8);
         Path pending = Files.createTempFile(directory, "graph-root-", ".part");
@@ -799,7 +802,7 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
             Path pointer = pointer(root.graph());
             check(cancelled);
             try {
-                Files.createLink(pointer, pending);
+                StreamingContentStore.createLinkWithRetry(pointer, pending);
             } catch (FileAlreadyExistsException raced) {
                 root(root.graph(), cancelled);
                 return;
@@ -1160,6 +1163,7 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
         Audit(Root root, BooleanSupplier cancelled) throws IOException {
             this.root = root;
             this.cancelled = cancelled;
+            StreamingContentStore.directory(directory);
             file = Files.createTempFile(directory, "graph-audit-", ".sqlite");
             Connection opened = null;
             PreparedStatement prepared = null;

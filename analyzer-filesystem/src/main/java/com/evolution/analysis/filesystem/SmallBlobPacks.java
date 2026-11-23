@@ -67,9 +67,8 @@ final class SmallBlobPacks {
         if (rows.isEmpty()) return;
         long size = 8L + rows.values().stream().mapToLong(b -> 36L + b.length).sum();
         if (Files.getFileStore(root).getUsableSpace() - size < reserve) throw new IOException("WAITING_FOR_DISK");
-        StreamingContentStore.safeWithin(root, directory);
-        Files.createDirectories(directory);
-        if (!Files.isDirectory(directory, LinkOption.NOFOLLOW_LINKS)) throw new IOException("UNSAFE_STORAGE");
+        StreamingContentStore.ensureSubdirectory(root, directory);
+        store.ensureStaging();
         Path pending = Files.createTempFile(root.resolve("staging"), "pack-", ".part");
         MessageDigest hash = StreamingContentStore.borrowSha256();
         try {
@@ -83,7 +82,7 @@ final class SmallBlobPacks {
                 output.flush(); store.force(channel);
             }
             Path target = directory.resolve(HexFormat.of().formatHex(hash.digest()) + ".pack");
-            try { Files.createLink(target, pending); }
+            try { StreamingContentStore.createLinkWithRetry(target, pending); }
             catch (FileAlreadyExistsException existing) { validate(root, target); }
             // The forced pack is visible before a handle can reach the inventory journal.
             synchronized (this) {
@@ -97,7 +96,7 @@ final class SmallBlobPacks {
             }
         } finally {
             StreamingContentStore.releaseSha256(hash);
-            Files.deleteIfExists(pending);
+            StreamingContentStore.deleteIfExistsQuietly(pending);
         }
     }
 

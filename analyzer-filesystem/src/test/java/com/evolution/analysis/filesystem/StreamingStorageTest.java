@@ -132,4 +132,31 @@ class StreamingStorageTest {
             assertEquals(firstManifest,store.manifest("rev-1").orElseThrow());
         }
     }
+    @Test void recoversCleanlyWhenOSDeletesEmptyStagingOrOperationsSubdirectoriesMidRun()throws Exception{
+        var cas=new StreamingContentStore(temp.resolve("heal-cas"));
+        var metadata=temp.resolve("heal-metadata");
+        try(var store=new SqliteInventoryStore(metadata,cas)){
+            store.create("heal-job",ContentDigest.sha256Utf8("req"),Optional.empty());
+            Files.deleteIfExists(temp.resolve("heal-cas/staging"));
+            Files.deleteIfExists(temp.resolve("heal-cas/packs"));
+            try(var ops=Files.list(metadata.resolve("operations"))){
+                // Delete operations directory recursively to simulate OS cleanup of empty/transient dir.
+            }
+            for(var path:Files.walk(metadata.resolve("operations")).sorted(Comparator.reverseOrder()).toList()){
+                Files.deleteIfExists(path);
+            }
+            byte[] payload="self-healed-content".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            var h=cas.put(new ByteArrayInputStream(payload),()->false);
+            assertTrue(cas.verify(h));
+            var hSmall=new ContentHandle(ContentDigest.sha256Utf8("0123456789"),10);
+            cas.putSmallBatch(Map.of(hSmall,"0123456789".getBytes(java.nio.charset.StandardCharsets.UTF_8)),new HashSet<>());
+            assertTrue(cas.verify(hSmall));
+            store.transition("heal-job",0,JobJournal.State.RUNNING,"healed",Optional.of(h));
+            assertEquals(JobJournal.State.RUNNING,store.get("heal-job").orElseThrow().state());
+        }
+        var evDir=Files.createDirectories(temp.resolve("heal-ev"));
+        new EvolutionResultStore(evDir,cas);
+        new FileGraphStore(Files.createDirectories(temp.resolve("heal-graph")));
+        assertTrue(Files.isDirectory(evDir));
+    }
 }

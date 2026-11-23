@@ -23,7 +23,8 @@ class WorkbenchArtifactPolicyTest {
         assertEquals(List.of(
                 com.evolution.analysis.dependency.DependencyAcquisitionPolicy.MAVEN_CENTRAL,
                 WorkbenchApiMain.GOOGLE_MAVEN,
-                WorkbenchApiMain.GRADLE_PLUGIN_PORTAL), defaultPolicy.remoteRepositories());
+                WorkbenchApiMain.GRADLE_PLUGIN_PORTAL,
+                WorkbenchApiMain.JITPACK), defaultPolicy.remoteRepositories());
         assertEquals(4096, defaultPolicy.maxCoordinates());
         assertEquals(8, defaultPolicy.maxConcurrentDownloads());
         for (String endpoint : List.of("http://repo.example.test/", "https://user@repo.example.test/",

@@ -175,4 +175,24 @@ class DurableAnalysisJobsTest {
             assertEquals(AnalysisJobs.State.SUCCEEDED,AnalysisJobsTest.finished(jobs,id).state());assertEquals(id,jobs.submit("local","retry").job().id());
         }
     }
+    @Test void jobCompletesWhenTempCleanupDeletesEmptyJobStagingDirectoryMidRun()throws Exception{
+        var graph=new QueryFixture().graph();
+        var registration=AnalysisJobsTest.registration("local",control->{
+            control.stage(AnalysisJobs.Stage.ANALYSIS);
+            Files.deleteIfExists(root.resolve("jobs/content/staging"));
+            control.stage(AnalysisJobs.Stage.POLICY);
+            return AnalysisJobsTest.output(graph);
+        });
+        String id;
+        try(var disk=new AnalysisJobDiskStore(root);var jobs=new AnalysisJobs(List.of(registration),new InMemoryGraphStore(),new PublishedReports(),AnalysisJobs.Limits.defaults(),disk)){
+            id=jobs.submit("local","self-heal-staging").job().id();
+            var completed=AnalysisJobsTest.finished(jobs,id);
+            assertEquals(AnalysisJobs.State.SUCCEEDED,completed.state());
+            assertTrue(completed.error().isEmpty());
+            assertEquals(graph.identity(),completed.result().orElseThrow().graph().orElseThrow());
+        }
+        try(var disk=new AnalysisJobDiskStore(root)){
+            assertEquals(AnalysisJobs.State.SUCCEEDED,disk.get(UUID.fromString(id)).orElseThrow().view().state());
+        }
+    }
 }

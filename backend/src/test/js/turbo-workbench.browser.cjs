@@ -21,7 +21,7 @@ async function main([browser, output]) {
     events: [...queued.events, {stage: 'ANALYSIS', at: new Date(800).toISOString()}]};
   const job = {...running, state: 'PARTIAL', stage: 'FINISHED', revision: 4,
     elapsedMillis: 31, submittedAt: date, finishedAt: date, events: [{stage: 'ANALYSIS', at: date}],
-    result: {graph, snapshot: 'snapshot:sample', contexts: ['snapshot:sample', 'analysis:sample'], gapCount: 1, reports: []}};
+    result: {graph, snapshot: 'snapshot:sample', contexts: ['snapshot:sample', 'analysis:sample', 'analysis:second'], gapCount: 1, reports: []}};
   let live = queued, polls = 0, blockRenderer = true;
   let releaseType;
   const typeResponse = new Promise(resolve => { releaseType = resolve; });
@@ -70,9 +70,11 @@ async function main([browser, output]) {
       }
       else if (route.endsWith(graph)) {
         data = {snapshot: 'snapshot:sample', contexts: [{identity: 'analysis:sample', analysis: true},
+          {identity: 'analysis:second', analysis: true},
           {identity: 'snapshot:sample', analysis: null}]};
       }
-      else if (route.endsWith('/provenance')) data = {items: [{family: 'analysis.manifest', metadata: {modulePath: 'sample'}}]};
+      else if (route.endsWith('/provenance')) data = {items: [{family: 'analysis.manifest',
+        metadata: input.request.context === 'analysis:second' ? {modulePath: 'worker', sourceSet: 'MAIN'} : {modulePath: 'sample'}}]};
       else if (route.endsWith('/summary')) data = {status: 'PARTIAL', items: [{nodeCounts: {TYPE: 2, CAPABILITY_GAP: 1}}]};
       else if (route.endsWith('/visual-graph')) {
         data = input.request.context === 'snapshot:sample'
@@ -175,6 +177,11 @@ async function main([browser, output]) {
     await until('Default whole-repository view opens the captured dependency map', () =>
       evaluate("window.EvoApp.state.cy?.edges().length === 1 && document.querySelector('#context').value === 'snapshot:sample'"));
     assert.equal(await evaluate("document.querySelector('[aria-label=\"Graph context\"]').value"), 'analysis:sample');
+    await until('All Graph context options load labels without selection', () => evaluate(`(() => {
+      const select = document.querySelector('[aria-label="Graph context"]');
+      const second = [...select.options].find(o => o.value === 'analysis:second');
+      return second && second.textContent === 'worker / main';
+    })()`));
     await evaluate("document.querySelector('.graph-fullscreen-button').click()");
     await until('Expanded view contains the live renderer', () =>
       evaluate("Boolean(document.querySelector('dialog.map-fullscreen[open] .graph-canvas canvas'))"));

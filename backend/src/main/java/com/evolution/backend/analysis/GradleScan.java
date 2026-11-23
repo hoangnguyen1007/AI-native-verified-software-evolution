@@ -5,9 +5,12 @@ import com.evolution.analysis.buildmodel.*;
 import com.evolution.analysis.contract.common.*;
 import com.evolution.analysis.dependency.DependencyAcquisitionPolicy;
 import com.evolution.analysis.evidence.*;
+import com.evolution.analysis.frontend.BinaryInput;
 import com.evolution.analysis.frontend.PlatformInput;
 import com.evolution.analysis.ingestion.*;
 import com.evolution.analysis.maven.*;
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
 
@@ -36,8 +39,41 @@ public final class GradleScan {
         var context=EvidenceContext.forSnapshot(acquisition.snapshot().orElseThrow().identity());
         var ledger=CapabilityGapNormalizer.normalize(context,EvidenceNormalizationInput.builder().dependencyAcquisitions(result.acquisitions()).build());ledgers.add(ledger);gaps.addAll(ledger.gaps());
         var reasons=new TreeMap<String,Long>();long recovered=0;
+        var localJars=new HashMap<String,com.evolution.analysis.acquisition.AcquiredFile>();
+        for(var file:acquisition.files())if(file.path().endsWith(".jar"))localJars.put(file.path(),file);
+        long remainingLocalBudget=policy.maxTotalBytes();
+        var allBinaries=new ArrayList<BinaryInput>();
         for(var row:result.contexts()) {
-            recovered+=row.binaries().size();
+            var contextBinaries=new ArrayList<>(row.binaries());
+            var localAdded=new ArrayList<BinaryInput>();
+            var localPaths=new LinkedHashSet<String>();
+            build.modules().stream().filter(m->m.descriptor().identity().equals(row.sourceSet().module())).findFirst()
+                    .ifPresent(m->collectLocalJars(m,row.sourceSet().kind(),false,localPaths));
+            for(var peerId:row.projects()) {
+                build.modules().stream().filter(m->m.descriptor().identity().equals(peerId)).findFirst()
+                        .ifPresent(m->collectLocalJars(m,SourcePlanModel.Kind.MAIN,true,localPaths));
+            }
+            for(String jarPath:localPaths) {
+                var capturedJar=localJars.get(jarPath);
+                if(capturedJar==null) {
+                    var problem=new GradleDependencyArtifactResolver.Problem("GRADLE_BINARY_UNAVAILABLE","local-jar:"+jarPath);
+                    reasons.merge(problem.reason(),1L,Long::sum);gaps.add(gap(context,build,row.identity(),problem));
+                    continue;
+                }
+                try {
+                    var binary=GradleLocalJarInputs.recover(cache,jarPath,capturedJar.bytes(),capturedJar.contentDigest(),
+                            policy.maxArtifactBytes(),Math.max(0L,remainingLocalBudget));
+                    remainingLocalBudget=Math.max(0L,remainingLocalBudget-Files.size(binary.path()));
+                    contextBinaries.add(binary);localAdded.add(binary);
+                }catch(IOException unavailable) {
+                    var problem=new GradleDependencyArtifactResolver.Problem("GRADLE_BINARY_UNAVAILABLE","local-jar:"+jarPath);
+                    reasons.merge(problem.reason(),1L,Long::sum);gaps.add(gap(context,build,row.identity(),problem));
+                }
+            }
+            recovered+=contextBinaries.size();
+            allBinaries.addAll(contextBinaries);
+            var effectiveIdentity=localAdded.isEmpty()?row.identity():com.evolution.analysis.contract.serialization.CanonicalJson.sha256(
+                    List.of(row.identity(),localAdded.stream().map(BinaryInput::entry).toList()));
             var set=build.modules().stream().flatMap(m->m.sourcePlan().sourceSets().stream()).filter(s->s.module().equals(row.sourceSet().module())&&s.kind()==row.sourceSet().kind()&&s.name().equals(row.sourceSet().name())).findFirst().orElseThrow();
             var platform=set.platformRelease().value().flatMap(v->{try{return Optional.ofNullable(platforms.get(Integer.parseInt(v)));}catch(NumberFormatException invalid){return Optional.empty();}}).or(()->fallback);
             if(platform.isPresent()) {
@@ -46,7 +82,7 @@ public final class GradleScan {
                 for(var project:row.projects())peers.add(new UniversalSourceIngestion.SourceSet(project,SourcePlanModel.Kind.MAIN));
                 var slots=new ArrayList<UniversalSourceIngestion.ReactorSlot>();
                 for(var peer:peers)slots.add(new UniversalSourceIngestion.ReactorSlot(peer,slots.size()));
-                var resolution=new UniversalSourceIngestion.Resolution(platform.orElseThrow(),row.binaries(),row.identity(),Optional.empty(),false,slots);
+                var resolution=new UniversalSourceIngestion.Resolution(platform.orElseThrow(),contextBinaries,effectiveIdentity,Optional.empty(),false,slots);
                 boolean gradleSelected=build.modules().stream().anyMatch(m->m.descriptor().identity().equals(row.sourceSet().module())
                         &&(m.tool()==UniversalBuildModel.Tool.GRADLE_GROOVY||m.tool()==UniversalBuildModel.Tool.GRADLE_KOTLIN));
                 if(gradleSelected)resolutions.put(row.sourceSet(),resolution);
@@ -58,11 +94,17 @@ public final class GradleScan {
             for(var problem:row.problems()){reasons.merge(problem.reason(),1L,Long::sum);gaps.add(gap(context,build,row.identity(),problem));}
         }
         for(var problem:result.problems()){reasons.merge(problem.reason(),1L,Long::sum);gaps.add(gap(context,build,build.identity(),problem));}
-        long unique=result.contexts().stream().flatMap(c->c.binaries().stream()).map(com.evolution.analysis.frontend.BinaryInput::entry).distinct().count();
+        long unique=allBinaries.stream().map(BinaryInput::entry).distinct().count();
         var summary=new TreeMap<>(prior.summary());summary.put("gradle",Map.of("provider",GradleDependencyArtifactResolver.PROVIDER,"model",build.identity(),"contexts",result.contexts().size(),"binaryInputs",recovered,"uniqueBinaryArtifacts",unique,"problemsByReason",reasons,
                 "trust","PASSIVE_RECOVERY","effectiveGradleContext",false,"acquisitionReceipts",result.acquisitions().stream().map(a->a.identity()).toList()));
         if(prior.resolutions().isEmpty())summary.put("mode",policy.remoteRepositories().isEmpty()?"PASSIVE_CACHE_THEN_ISOLATED_REQUIREMENT":"EXPLICIT_ARTIFACT_ACQUISITION");
         return new MavenScan.Inputs(Map.copyOf(resolutions),prior.externalPoms(),List.copyOf(gaps),Map.copyOf(summary),List.copyOf(ledgers));
+    }
+    private static void collectLocalJars(UniversalBuildModel.Module module,SourcePlanModel.Kind kind,boolean exported,Set<String> target) {
+        for(var dep:module.dependencies())if(dep.configuration().endsWith(".local-file")) {
+            String baseConfig=dep.configuration().substring(0,dep.configuration().length()-".local-file".length());
+            if(GradleDependencyArtifactResolver.visible(baseConfig,kind,exported))target.add(dep.notation());
+        }
     }
     private static CapabilityGapRecord gap(EvidenceContext context,UniversalBuildModel model,ContentDigest proof,GradleDependencyArtifactResolver.Problem problem) {
         var subject=new EvidenceSubject(EvidenceSubject.Kind.SOURCE_SET,problem.subject());
