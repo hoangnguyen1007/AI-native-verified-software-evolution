@@ -784,8 +784,8 @@
     if (!publication || state.contextOptionsLoading === publication) return;
     state.contextOptionsLoading = publication;
     const contexts = state.contexts.filter(context => context.identity !== state.snapshot && !state.contextKinds.has(context.identity));
-    for (let i = 0; i < contexts.length && !publication.signal.aborted; i += 8) {
-      await Promise.all(contexts.slice(i, i + 8).map(context => labelContext(context.identity)));
+    for (let i = 0; i < contexts.length && !publication.signal.aborted; i += 2) {
+      await Promise.all(contexts.slice(i, i + 2).map(context => labelContext(context.identity)));
     }
     if (state.contextOptionsLoading === publication) state.contextOptionsLoading = null;
   }
@@ -1006,8 +1006,8 @@
     try {
       const reports = ['policy', 'metrics'].includes(tab) ? loadReports() : null;
       if (tab !== 'overview') {
-        void labelContextOptions();
         await labelContext(state.context);
+        void labelContextOptions();
       }
       await reports;
       if (epoch !== state.epoch) return;
@@ -2513,7 +2513,6 @@
         [option.value, option.value === env.snapshot ? 'Repository source evidence' : (state.contextLabels?.get(option.value) || option.textContent)]), initialContext);
       context.addEventListener('focus', labelContextOptions);
       context.addEventListener('pointerenter', labelContextOptions);
-      void labelContextOptions();
       const contextField = field('Graph context', context);
       contextField.hidden = env.context !== env.snapshot && initialContext === env.context;
       const scope = selectControl('Graph scope', [
@@ -2553,6 +2552,7 @@
       async function setScope() {
         const selected = context.value;
         if (selected !== env.snapshot) await labelContext(selected);
+        void labelContextOptions();
         if (env.signal.aborted || context.value !== selected) return;
         const spring = state.contextKinds.get(selected) === 'spring.context';
         for (const option of scope.options) {

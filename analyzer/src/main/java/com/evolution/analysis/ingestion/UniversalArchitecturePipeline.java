@@ -526,16 +526,46 @@ public final class UniversalArchitecturePipeline {
                 }
             }
         }
-        // Check Maven declared dependencies against available binary resolutions
-        // In the captured lane, the validated manifest already closes this named
-        // context.
-        // Passive declarations can belong to an inactive source set or variant.
+        var analyzerComp = new ManifestComponent(new VersionedIdentifier("architecture.analyzer", "1"),
+                ContentDigest.sha256Utf8("analyzer-component"));
+        var rulesComp = new ManifestComponent(new VersionedIdentifier("architecture.rules", "1"),
+                ContentDigest.sha256Utf8("rules-component"));
+        var schemaComp = com.evolution.analysis.graph.KnowledgeGraph.schemaComponent();
+        var sourceIngestion = new UniversalSourceIngestion();
+        var inputOptions = new TreeMap<String, String>();
+        if (!policy.analysisOptions().isEmpty()) {
+            inputOptions.putAll(policy.analysisOptions());
+        }
+        policy.readinessPlan().ifPresent(identity -> inputOptions.put("readiness.plan", identity.value()));
+        prepared.ifPresent(value -> inputOptions.putAll(value.options()));
+        compiler.ifPresent(bundle -> inputOptions.putAll(bundle.options(prepared.orElseThrow().policy())));
+        var assembledSources = sourceIngestion.assemble(inputs, buildModel, resolutions, analyzerComp, rulesComp,
+                schemaComp,
+                inputOptions, policy.defaultPlatform());
+        allIssues.addAll(assembledSources.issues());
+        allGaps.addAll(assembledSources.gaps());
+
+        // Check Maven/Gradle declared dependencies against available binary and reactor resolutions
+        // In the captured lane, the validated manifest already closes this named context.
+        // Passive declarations can belong to an inactive/empty source set, BOM/platform, or variant.
         if (prepared.isEmpty()) {
             var resolvedBinaryLogicalNames = new ArrayList<String>();
             for (var r : resolutions.values()) {
                 for (var b : r.binaries()) {
                     resolvedBinaryLogicalNames.add(b.entry().logicalName());
                 }
+            }
+            var modulesWithAnalyzedTest = new HashSet<ModuleIdentity>();
+            for (var outcome : assembledSources.outcomes()) {
+                if (outcome.sourceSet().kind() == SourcePlanModel.Kind.TEST && outcome.request().isPresent()) {
+                    modulesWithAnalyzedTest.add(outcome.sourceSet().module());
+                }
+            }
+            var buildModuleNames = new HashSet<String>();
+            var buildModulePaths = new HashSet<String>();
+            for (var m : buildModel.modules()) {
+                buildModulePaths.add(m.descriptor().path());
+                buildModuleNames.add(m.descriptor().displayName());
             }
             var inputIdentity = inputs.identity();
             for (var mavenResult : buildModel.mavenModels()) {
@@ -564,43 +594,37 @@ public final class UniversalArchitecturePipeline {
             }
             for (var module : buildModel.modules()) {
                 if (!module.dependencies().isEmpty()) {
+                    boolean hasAnalyzedTest = modulesWithAnalyzedTest.contains(module.descriptor().identity());
                     for (var dep : module.dependencies()) {
-                        boolean hasBinary = false;
-                        String notation = dep.notation();
-                        for (String logicalName : resolvedBinaryLogicalNames) {
-                            if (logicalName.contains(notation)) {
-                                hasBinary = true;
-                                break;
+                        String cfg = dep.configuration();
+                        if (isNonClasspathConfiguration(cfg)) {
+                            continue;
+                        }
+                        if (isTestConfiguration(cfg) && !hasAnalyzedTest) {
+                            continue;
+                        }
+                        if (dep.projectPath().isPresent()) {
+                            String targetRel = dep.projectPath().orElseThrow().replaceFirst("^:", "").replace(':', '/');
+                            boolean projectKnown = targetRel.isEmpty()
+                                    ? buildModulePaths.contains(".")
+                                    : (buildModulePaths.contains(targetRel)
+                                            || buildModulePaths.stream().anyMatch(p -> p.equals(targetRel) || p.endsWith("/" + targetRel))
+                                            || buildModuleNames.contains(targetRel));
+                            if (projectKnown) {
+                                continue;
                             }
                         }
+                        boolean hasBinary = matchesResolvedBinary(dep, resolvedBinaryLogicalNames);
                         if (!hasBinary) {
                             allIssues.add(new IngestionEvidence.Issue(
                                     IngestionEvidence.Reason.CLASSPATH_RESOLUTION_REQUIRED,
-                                    module.descriptor().displayName() + "#" + notation,
+                                    module.descriptor().displayName() + "#" + dep.notation(),
                                     List.of(inputIdentity)));
                         }
                     }
                 }
             }
         }
-        var analyzerComp = new ManifestComponent(new VersionedIdentifier("architecture.analyzer", "1"),
-                ContentDigest.sha256Utf8("analyzer-component"));
-        var rulesComp = new ManifestComponent(new VersionedIdentifier("architecture.rules", "1"),
-                ContentDigest.sha256Utf8("rules-component"));
-        var schemaComp = com.evolution.analysis.graph.KnowledgeGraph.schemaComponent();
-        var sourceIngestion = new UniversalSourceIngestion();
-        var inputOptions = new TreeMap<String, String>();
-        if (!policy.analysisOptions().isEmpty()) {
-            inputOptions.putAll(policy.analysisOptions());
-        }
-        policy.readinessPlan().ifPresent(identity -> inputOptions.put("readiness.plan", identity.value()));
-        prepared.ifPresent(value -> inputOptions.putAll(value.options()));
-        compiler.ifPresent(bundle -> inputOptions.putAll(bundle.options(prepared.orElseThrow().policy())));
-        var assembledSources = sourceIngestion.assemble(inputs, buildModel, resolutions, analyzerComp, rulesComp,
-                schemaComp,
-                inputOptions, policy.defaultPlatform());
-        allIssues.addAll(assembledSources.issues());
-        allGaps.addAll(assembledSources.gaps());
 
         // 3. Semantic Frontend Pipeline
         var pipeline = new UniversalIngestionPipeline(workspace);
@@ -1815,6 +1839,52 @@ public final class UniversalArchitecturePipeline {
                 // invariant
             }
         }
+    }
+
+    private static boolean isNonClasspathConfiguration(String cfg) {
+        if (cfg == null) return false;
+        return cfg.equals("gradlePlugin")
+                || cfg.equals("coreLibraryDesugaring")
+                || cfg.equals("annotationProcessor")
+                || cfg.endsWith(".platform")
+                || cfg.endsWith(".enforced-platform")
+                || cfg.endsWith(".constraint")
+                || cfg.startsWith("ksp")
+                || cfg.startsWith("kapt")
+                || cfg.contains("AnnotationProcessor");
+    }
+
+    private static boolean isTestConfiguration(String cfg) {
+        if (cfg == null) return false;
+        return cfg.startsWith("test")
+                || cfg.startsWith("androidTest")
+                || cfg.startsWith("unitTest");
+    }
+
+    private static boolean matchesResolvedBinary(UniversalBuildModel.Dependency dep, List<String> resolvedBinaryLogicalNames) {
+        String notation = dep.notation();
+        Optional<String> coordPrefix = dep.coordinate()
+                .map(c -> c.groupId() + ":" + c.artifactId() + ":" + c.version());
+        Optional<String> groupArtifact = dep.coordinate()
+                .map(c -> c.groupId() + ":" + c.artifactId() + ":");
+        Optional<String> artifactVersion = dep.coordinate()
+                .map(c -> c.artifactId() + "-" + c.version());
+        boolean isLocal = dep.configuration().endsWith(".local-file");
+        for (String logicalName : resolvedBinaryLogicalNames) {
+            if (logicalName.contains(notation)) return true;
+            if (coordPrefix.isPresent()) {
+                if (logicalName.contains(coordPrefix.get())
+                        || logicalName.startsWith(groupArtifact.get())
+                        || logicalName.contains(artifactVersion.get())) {
+                    return true;
+                }
+            }
+            if (isLocal && (logicalName.equals("local-jar:" + notation)
+                    || logicalName.startsWith("local-aar:" + notation))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static boolean containsIgnoreCaseAscii(String haystack, String lowerNeedle) {

@@ -797,6 +797,7 @@ public final class EvoApp {
         @Parameters(arity="0..1",defaultValue=".",paramLabel="DIR") Path source;
         @Option(names="--repo",paramLabel="COORDINATE",description="Stable repository coordinate / Định danh repository") String repository;
         @Option(names="--jdk",paramLabel="DIR",description="Analyzed JDK; default captured host JDK / JDK phân tích") Path jdk=Path.of(System.getProperty("java.home"));
+        @Option(names="--android-sdk",paramLabel="DIR",description="Android SDK root with platforms/android-N/android.jar / Thư mục Android SDK") Path androidSdk;
         @Option(names="--release",paramLabel="N",description="Explicit target release; default 21 / Java đích") int release=21;
         @Option(names="--revision",paramLabel="LABEL",description="Caller-supplied revision label / Nhãn revision do người gọi cung cấp") String revision;
         @Option(names="--dirty",description="Caller-supplied dirty flag; no VCS inspection / Cờ dirty do người gọi cung cấp") boolean dirty;
@@ -945,7 +946,8 @@ public final class EvoApp {
                     EvidenceContext.forSnapshot(acquisition.snapshot().orElseThrow().identity()),com.evolution.analysis.evidence.EvidenceNormalizationInput.builder().platformResults(additionalPlatforms).build()));
             var depPolicy=new com.evolution.analysis.dependency.DependencyAcquisitionPolicy(1024,64_000_000,256_000_000,64,repositories,5000,15000,1);
             var mavenBase=MavenScan.inputs(acquisition,models,cachePath,platform.platform(),depPolicy,availablePlatforms);
-            var mavenInputs=com.evolution.backend.analysis.GradleScan.augment(mavenBase,acquisition,gradleModel,cachePath,platform.platform(),depPolicy,availablePlatforms);
+            Optional<Path> resolvedAndroidSdk=androidSdk!=null?Optional.of(Workspace.safe(resolve(androidSdk))):com.evolution.backend.analysis.GradleScan.discoverAndroidSdk();
+            var mavenInputs=com.evolution.backend.analysis.GradleScan.augment(mavenBase,acquisition,gradleModel,cachePath,platform.platform(),depPolicy,availablePlatforms,resolvedAndroidSdk);
             long tAfterPlatformDeps=System.nanoTime();
             r.stage="analysis";
             // Supply fallback evidence without Builder.defaultPlatform's Maven user-property overrides.

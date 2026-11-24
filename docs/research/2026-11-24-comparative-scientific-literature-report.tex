@@ -1,0 +1,177 @@
+\documentclass[10pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T5]{fontenc}
+\usepackage[vietnamese,english]{babel}
+\usepackage{geometry}
+\geometry{margin=1.8cm}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{amsmath,amssymb}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{microtype}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    urlcolor=blue!60!black,
+    citecolor=blue!60!black,
+    pdftitle={Scientific Comparative Evaluation of evo vs. State-of-the-Art (2020-2026)},
+    pdfauthor={AI-Native Verified Software Evolution Platform Research}
+}
+
+\title{\textbf{Nghiên Cứu Khảo Sát Tài Liệu Khoa Học và Đánh Giá Đối Chuẩn Định Lượng Nền Tảng \texttt{evo} với Các Công Trình Phân Tích Tĩnh, Tái Tạo Kiến Trúc, GraphRAG và Sửa Lỗi Tự Động (2020--2026)}}
+\author{Nhóm Nghiên Cứu Nền Tảng AI-Native Verified Software Evolution (\texttt{evo})}
+\date{Ngày 24 tháng 11 năm 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Báo cáo này thực hiện khảo sát đối chiếu một cách hệ thống, khách quan và không thiên vị giữa nền tảng \textbf{\texttt{evo}} (AI-Native Verified Software Evolution Platform) với các công trình khoa học tiêu biểu giai đoạn 2013--2026 trên bốn hướng nghiên cứu: (1) Phân tích tĩnh Java/Spring Framework (\textbf{Jasmine} [ASE '22], \textbf{JackEE} [PLDI '20], \textbf{Micans} [ISSTA '25], \textbf{ArchUnit}, \textbf{Spring Modulith}); (2) Tái tạo kiến trúc vi dịch vụ (\textbf{Schneider et al.} [EMSE '25]: \textbf{Code2DFD}, \textbf{MicroDepGraph}, \textbf{RAD}, \textbf{Prophet}; \textbf{SSAR} [ICSE '26]); (3) Đồ thị tri thức mã nguồn quy mô kho chứa và GraphRAG (\textbf{DKB vs.\ LLM-KB} [arXiv:2601.08773, 2026], \textbf{CodexGraph} [NAACL '25], \textbf{RepoProbe} [ASE '26]); và (4) Tiến hóa phần mềm cùng sửa lỗi tự động (\textbf{CausalRepair} [ISSTA '26], \textbf{AutoCodeRover} [ISSTA '24], \textbf{ArchFix} [SPE '13], \textbf{OpenRewrite}). Mọi thông số thực nghiệm của \textbf{\texttt{evo}} được trích xuất từ các biên nhận mật mã SHA-256 thực tế và được \textbf{in đậm} trong toàn bộ các bảng so sánh, đồng thời giữ nguyên mọi giới hạn thực nghiệm (\texttt{PARTIAL}, \texttt{WITHHELD}, \texttt{MEMORY\_LIMIT} và các ca \texttt{NOT\_RUN}).
+\end{abstract}
+
+\section{Giới Thiệu và Khảo Sát Bốn Hướng Nghiên Cứu Liên Quan}
+
+Trong kỹ nghệ phần mềm hiện đại, phân tích kiến trúc các hệ thống doanh nghiệp (như Spring Boot, Spring Cloud, hệ thống đa ngôn ngữ microservices và monorepo Android/IoT) thường bị phân tách thành các công cụ chuyên biệt rời rạc:
+\begin{itemize}
+    \item \textbf{Hướng nghiên cứu 1 (Phân tích tĩnh hướng khung ứng dụng):} Các bộ phân tích con trỏ và đồ thị lời gọi như \textbf{Jasmine} (Chen et al., ASE 2022) \cite{chen2022jasmine}, \textbf{JackEE} (Antoniadis et al., PLDI 2020) \cite{antoniadis2020jackee} và \textbf{Micans} (Zhang et al., ISSTA 2025) \cite{zhang2025micans} mở rộng Soot, Doop và Tai-e để giải quyết Inversion of Control (IoC) và AOP. Tuy nhiên, các hệ thống này đòi hỏi mã bytecode đã biên dịch, phân tích trên một cấu hình đơn lẻ (\emph{single-world}) và chưa mô hình hóa ngữ nghĩa không đơn điệu phụ thuộc pha và thứ tự của \texttt{@ConditionalOnBean}/\texttt{@ConditionalOnMissingBean}.
+    \item \textbf{Hướng nghiên cứu 2 (Tái tạo kiến trúc vi dịch vụ):} Nghiên cứu thực nghiệm đối chuẩn của Schneider et al.\ (EMSE 2025) \cite{schneider2025comparison} cho thấy công cụ đơn lẻ tốt nhất (\textbf{Code2DFD}) đạt $F_1 = 0.86$ (tối đa $0.91$ khi kết hợp 4 công cụ), song chỉ trích xuất sơ đồ dịch vụ cấp cao, thiếu phân giải kiểu tĩnh ở mức biểu thức và không có cơ chế kiểm toán tính toàn vẹn dữ liệu.
+    \item \textbf{Hướng nghiên cứu 3 (Code Knowledge Graph \& GraphRAG):} Nghiên cứu tháng 01/2026 của Chinthareddy \cite{chinthareddy2026reliable} trên \emph{Shopizer}, \emph{ThingsBoard} và \emph{OpenMRS Core} chứng minh đồ thị suy diễn tất định từ AST (\textbf{DKB}) vượt trội đồ thị sinh bởi LLM (\textbf{LLM-KB}), vốn bỏ sót 377 tệp trên Shopizer và tiêu tốn 883.74\,s trên ThingsBoard. Dù vậy, DKB chỉ dừng ở tầng cú pháp Tree-sitter nông (13.77\,s trên ThingsBoard) mà chưa giải quyết hệ thống build đa mô-đun hay kiểu dữ liệu Java.
+    \item \textbf{Hướng nghiên cứu 4 (Tiến hóa \& Sửa lỗi Tự động):} \textbf{CausalRepair} (ISSTA 2026) \cite{causalrepair2026} và \textbf{AutoCodeRover} (ISSTA 2024) \cite{zhang2024autocoderover} tối ưu hóa khả năng vá lỗi chức năng dựa trên bộ kiểm thử đơn vị, nhưng chưa liên kết phát hiện kiến trúc có điều kiện với bằng chứng chuyển trạng thái (\texttt{RESOLVED} so với đối chứng âm \texttt{PERSISTED}) trong môi trường thực thi cô lập.
+\end{itemize}
+
+\section{So Sánh Tổng Quan Kiến Trúc và Năng Lực (Bảng 1)}
+
+\begin{table*}[htbp]
+\centering
+\caption{Ma trận so sánh năng lực cốt lõi giữa \textbf{\texttt{evo}} và các công trình khoa học gần nhất (2020--2026).}
+\label{tab:overview}
+\scriptsize
+\renewcommand{\arraystretch}{1.25}
+\begin{tabularx}{\textwidth}{>{\raggedright\arraybackslash}p{2.3cm} >{\raggedright\arraybackslash}X >{\raggedright\arraybackslash}X >{\raggedright\arraybackslash}X >{\raggedright\arraybackslash}X >{\raggedright\arraybackslash}X >{\raggedright\arraybackslash}p{4.1cm}}
+\toprule
+\textbf{Tiêu chí} & \textbf{Jasmine} (ASE '22) & \textbf{JackEE} (PLDI '20) & \textbf{Micans} (ISSTA '25) & \textbf{Code2DFD} (EMSE '25) & \textbf{DKB RAG} (arXiv '26) & \textbf{\texttt{evo} (Hệ thống của chúng tôi)} \\
+\midrule
+Điều kiện đầu vào & Bytecode (\texttt{.class}/\texttt{.jar}) & Bytecode + Datalog & Bytecode microservices & Mã nguồn + cấu hình & Mã nguồn (Tree-sitter) & \textbf{Lũy tiến: Mã nguồn thụ động PPA 3 tầng + $O(1)$ JMOD/\texttt{.aar} $\rightarrow$ Sandbox cô lập} \\
+Mô hình Spring Core & IoC + AOP (Soot/Doop) & Entry points + DI & DI + REST/RPC/MQ & Điểm cuối dịch vụ & Không & \textbf{29 họ cơ chế đóng (Spring 1.x XML $\rightarrow$ Boot 3.4.x)} \\
+Suy luận \texttt{@Conditional} & Không (single-world) & Không (single-world) & Không (single-world) & Không & Không & \textbf{Pha/thứ tự bean + 4 giá trị \texttt{MUST}/\texttt{MAY}/\texttt{NEVER}/\texttt{UNKNOWN} (SAT + oracle)} \\
+Đa ngôn ngữ (Polyglot) & Java & Java & Java & Đa ngôn ngữ (DFD) & Tree-sitter & \textbf{Java 21 + hạ cấp Kotlin + 18 adapter Tree-sitter v5 + HTTP/gRPC/Event} \\
+Toàn vẹn tri thức & Bỏ qua ngầm khi thiếu JAR & Không có gap ledger & Đóng thế giới theo JAR & Best-effort & Không có gap ledger & \textbf{Mô hình 3 trục; bảo toàn 100\% \texttt{CapabilityGapRecord} SHA-256} \\
+Mở rộng Lưu trữ & Trong RAM & Trong RAM & Trong RAM & DFD nhỏ & Vector + đồ thị & \textbf{CAS SHA-256 + \texttt{PartitionedGraphStore} (\texttt{1.51\,GB} trong \texttt{-Xmx256m})} \\
+Sửa lỗi \& Xác minh & Không & Không & Không & Không & Chỉ hỏi đáp & \textbf{GraphRAG 10 công cụ + 7 công thức + \texttt{javac} + VM QEMU không mạng} \\
+\bottomrule
+\end{tabularx}
+\end{table*}
+
+\section{Phân Tích Tĩnh Java, Spring Framework và Ngữ Nghĩa Có Điều Kiện (Bảng 2)}
+
+\begin{table*}[htbp]
+\centering
+\caption{Đối chiếu các công trình phân tích tĩnh Java/Spring và kết quả đo kiểm của \textbf{\texttt{evo}}.}
+\label{tab:spring}
+\scriptsize
+\renewcommand{\arraystretch}{1.25}
+\begin{tabularx}{\textwidth}{>{\raggedright\arraybackslash}p{2.7cm} >{\raggedright\arraybackslash}p{2.4cm} >{\raggedright\arraybackslash}p{3.0cm} >{\raggedright\arraybackslash}X >{\raggedright\arraybackslash}p{3.5cm}}
+\toprule
+\textbf{Công trình / Công cụ} & \textbf{Động cơ phân tích} & \textbf{Tập kiểm chứng} & \textbf{Chỉ số định lượng} & \textbf{Giới hạn ghi nhận} \\
+\midrule
+\textbf{Jasmine} (ASE '22) \cite{chen2022jasmine} & Soot + Doop + FlowDroid & \emph{Spring-micro-benchmarks} (8 nhóm ID-1..8) + 18 app thực tế & Tìm được 12 đường rò rỉ thông tin nhạy cảm mà FlowDroid gốc bỏ sót & Không tính được Precision/Recall tổng thể trên 18 app; cần bytecode; không có \texttt{@Conditional} \\
+\textbf{JackEE} (PLDI '20) \cite{antoniadis2020jackee} & Doop Datalog + Sound-modulo & Các app Java EE/Spring lớn (Alfresco, pybbs, v.v.) & Reachability trung bình 58.04\% (tối thiểu 43.48\% trên Alfresco vs.\ 14.48\% Doop gốc); tăng tốc $\sim$5.9--6.0$\times$ & Cần bytecode đầy đủ; không mô hình hóa không gian cấu hình \\
+\textbf{Micans} (ISSTA '25) \cite{zhang2025micans} & Tai-e pointer analysis & Microservices Java (TrainTicket, v.v.) & Xây dựng luồng giá trị và call graph qua REST/RPC/MQ & Đơn cấu hình; chỉ xử lý Java bytecode \\
+\textbf{OpenRewrite} (v8.87.7 comparator) & LST (Lossless Semantic Tree) & PetClinic (\texttt{818c4136}, 220 lời gọi) & Config A: 124/220 (56.36\%); B: 220/220 (100\%); C: 215/220 (97.73\%) & 57 / 89 / 87 lỗi tái tạo span nguồn chính xác \\
+\textbf{\texttt{evo} -- M2 Frontend} & \textbf{JavaParser 3.28.2 + \texttt{javac} 21 Oracle} & \textbf{Microfixture Java 21 + PetClinic (220 calls) + M9 \texttt{J01}} & \textbf{Config A: 116/220 (52.73\%); B: 220/220 (100.0\%); C: 215/220 (97.73\%); 0 lỗi span (100\% provenance); 34/34 (100\%) M2 oracle; 41/41 (100\%) \texttt{J01}} & \textbf{Config B microfixture ban đầu chưa phân giải 1 lời gọi chuỗi generic (\texttt{6/7} vs.\ \texttt{7/7} OpenRewrite)} \\
+\textbf{\texttt{evo} -- M4-R0 \& M9 Spring} & \textbf{29-family IR + DPLL/SAT + Oracle} & \textbf{26 JAR (15,594 classfiles, 402 annotations) + Spring 5.3/6.1/6.2} & \textbf{79/79 (100.0\%) runtime Spring; 70/70 (100.0\%) formal cases; 64/64 (100.0\%) SAT/DPLL; 4/4 (100\%) thứ tự \texttt{@ConditionalOnMissingBean} (baseline phẳng sai 2/4 = 50\%); 12/12 policy (\texttt{5 TP, 7 TN, 0 FP, 0 FN}, $F_1 = \mathbf{1.00}$); 6/6 witness} & \textbf{13 nhóm phiên bản cũ giữ nhãn \texttt{VERSION\_FRAGMENT\_NOT\_VALIDATED}; chưa mô hình SpEL/registrar động tùy ý} \\
+\bottomrule
+\end{tabularx}
+\end{table*}
+
+\section{Tái Tạo Kiến Trúc Microservices & Thực Nghiệm 10 Kho Mã Nguồn (Bảng 3 & Bảng 4)}
+
+Trong nghiên cứu đối chuẩn 9 công cụ tái tạo kiến trúc microservices của Schneider et al.\ (EMSE 2025) \cite{schneider2025comparison}, \textbf{Code2DFD} đạt Precision $0.93$, Recall $0.80$, $F_1 = 0.86$ (lên tới $0.98$ trên thành phần); \textbf{MicroDepGraph} đạt Precision $0.99$, Recall $0.59$, $F_1 = 0.74$; \textbf{RAD} đạt Precision $0.94$, Recall $0.23$, $F_1 = 0.37$; \textbf{Prophet} đạt Precision $0.57$, Recall $0.04$, $F_1 = 0.08$; tổ hợp 4 công cụ đạt $F_1 = 0.91$. Bảng~\ref{tab:m9} trình bày dữ liệu thực đo đầy đủ của \textbf{\texttt{evo}} ở chế độ thụ động hoàn toàn cô lập (\texttt{--offline --build off --all-files --json}) trên 10 kho mã nguồn thực tế thuộc M9 Baseline (ngày 2026-11-11).
+
+\begin{table*}[htbp]
+\centering
+\caption{Kết quả thực nghiệm M9 Baseline của \textbf{\texttt{evo}} trên 10 kho mã nguồn thực tế (\texttt{--offline --build off}). Toàn bộ số liệu của \textbf{\texttt{evo}} được in đậm.}
+\label{tab:m9}
+\scriptsize
+\renewcommand{\arraystretch}{1.22}
+\begin{tabularx}{\textwidth}{r >{\raggedright\arraybackslash}p{3.0cm} r r >{\raggedright\arraybackslash}p{2.3cm} >{\raggedright\arraybackslash}p{2.2cm} r r >{\raggedright\arraybackslash}p{2.5cm}}
+\toprule
+\textbf{\#} & \textbf{Repository} & \textbf{Files / Java} & \textbf{Types} & \textbf{Cấu trúc (\texttt{structure})} & \textbf{Thân hàm (\texttt{usage})} & \textbf{Gaps (Iso/Pas)} & \textbf{Time (s)} & \textbf{Status (Exit)} \\
+\midrule
+1 & \texttt{golang-gin-realworld} & \textbf{41 / 0} & \textbf{0} & \textbf{Thuần Go (Tree-sitter v5)} & \textbf{Thuần Go} & \textbf{9 (7/2)} & \textbf{12.33} & \textbf{\texttt{COMPLETE} (0)} \\
+2 & \texttt{spring-petclinic-kotlin} & \textbf{89 / 24*} & \textbf{26} & \textbf{363/365 (99.45\%)} & \textbf{406/445 (91.24\%)} & \textbf{220 (15/205)} & \textbf{16.69} & \textbf{\texttt{PARTIAL} (3)} \\
+3 & \texttt{full-stack-fastapi} & \textbf{252 / 0} & \textbf{0} & \textbf{23 Py + 23 TS routes} & \textbf{Thuần Py/TS} & \textbf{49 (47/2)} & \textbf{21.66} & \textbf{\texttt{COMPLETE} (0)} \\
+4 & \texttt{android/sunflower} & \textbf{143 / 49*} & \textbf{72} & \textbf{935/960 (97.40\%)} & \textbf{1,830/2,452 (74.63\%)} & \textbf{1,050 (40/1,010)} & \textbf{29.43} & \textbf{\texttt{PARTIAL} (3)} \\
+5 & \texttt{spring-boot-realworld} & \textbf{119 / 93} & \textbf{100} & \textbf{1,499/1,519 (98.68\%)} & \textbf{3,494/3,930 (88.91\%)} & \textbf{762 (11/751)} & \textbf{29.82} & \textbf{\texttt{COMPLETE} (0)} \\
+6 & \texttt{mapstruct-examples} & \textbf{250 / 149} & \textbf{124} & \textbf{1,284/1,284 (100.0\%)} & \textbf{2,231/2,266 (98.46\%)} & \textbf{1,692 (564/1,128)} & \textbf{54.05} & \textbf{\texttt{COMPLETE} (0)} \\
+7 & \texttt{microservices-demo} & \textbf{364 / 2} & \textbf{3} & \textbf{56/56 (100.0\%) + 30 RPC} & \textbf{241/294 (81.97\%)} & \textbf{277 (113/164)} & \textbf{81.85} & \textbf{\texttt{COMPLETE} (0)} \\
+8 & \texttt{petclinic-microservices} & \textbf{190 / 53} & \textbf{65} & \textbf{655/655 (100.0\%) + 3 HTTP} & \textbf{1,227/1,254 (97.85\%)} & \textbf{1,516 (58/1,458)} & \textbf{214.31} & \textbf{\texttt{COMPLETE} (0)} \\
+9 & \texttt{sqshq/piggymetrics} & \textbf{168 / 72} & \textbf{74} & \textbf{903/903 (100.0\%)} & \textbf{1,759/1,764 (99.72\%)} & \textbf{1,566 (67/1,499)} & \textbf{185.76} & \textbf{\texttt{COMPLETE} (0)} \\
+10 & \texttt{TeamNewPipe/NewPipe} & \textbf{4,450 / 555*} & \textbf{845} & \textbf{16,427/16,809 (97.73\%)} & \textbf{63,491/76,605 (82.88\%)} & \textbf{15,032 (88/14,944)} & \textbf{528.43} & \textbf{\texttt{COMPLETE} (0)} \\
+\bottomrule
+\end{tabularx}
+\end{table*}
+
+Ngoài bộ 10 kho mã nguồn trên, khi kích hoạt chính sách cache artifact trực tuyến từ Maven Central ở chế độ \texttt{FAST\_ARCHITECTURE} (ngày 2026-11-23), tổng số khoảng trống trên \texttt{spring-petclinic} giảm \textbf{741 $\rightarrow$ 179} (\texttt{SEMANTIC\_UNRESOLVED}: \textbf{602 $\rightarrow$ 0}), trên \texttt{mapstruct-field-mapping} giảm \textbf{75 $\rightarrow$ 46} (\textbf{12 $\rightarrow$ 0}), và trên \texttt{dorm-trading-platform} (32,809 tệp) giảm \textbf{1,393 $\rightarrow$ 425} (\textbf{1,194 $\rightarrow$ 0}).
+
+\section{Đồ Thị Tri Thức Quy Mô Lớn, Lưu Trữ Phân Vùng & GraphRAG (Bảng 5)}
+
+Trên kho mã nguồn \texttt{thingsboard/thingsboard} (1,945,681 LOC; 13,920 tệp; 169.55\,MB; 6,931 tệp Java; 540 POMs):
+\begin{itemize}
+    \item \textbf{LLM-KB} (Chinthareddy, 2026) \cite{chinthareddy2026reliable} mất 883.74\,s để trích xuất đồ thị bằng LLM (trên Shopizer bỏ sót 377 tệp, tỷ lệ thành công tệp 68.8\%, độ phủ chunk 64.1\%, 842 đỉnh).
+    \item \textbf{DKB (Tree-sitter)} (Chinthareddy, 2026) \cite{chinthareddy2026reliable} lập chỉ mục cú pháp nông trong 13.77\,s trên ThingsBoard (2.81\,s và 90.2\% độ phủ trên Shopizer, 1,158 đỉnh), nhưng không giải kiểu Java, không phân giải 540 POM và không có sổ cái khoảng trống.
+    \item \textbf{\texttt{evo}} hoàn tất thu nạp \textbf{100.0\%} không bỏ sót tệp nào (\textbf{20,566 đối tượng CAS SHA-256 = 193.06\,MB}; \textbf{16,785 bản ghi SQLite = 36.97\,MB}), phân tích AST toàn bộ \textbf{6,931 tệp Java và 540 POMs} ($>1.2\times 10^6$ đỉnh ước tính) và kích hoạt giới hạn an toàn \textbf{\texttt{[MEMORY\_LIMIT]}} tại \textbf{1,467\,s} (\texttt{-Xmx8g}) trong bước dựng đồ thị nguyên khối trong RAM.
+\end{itemize}
+
+\begin{table*}[htbp]
+\centering
+\caption{Hiệu năng lưu trữ phân vùng \texttt{PartitionedGraphStore}, nén DEFLATE và truy vấn đồ thị quy mô Gigabyte của \textbf{\texttt{evo}}.}
+\label{tab:storage}
+\scriptsize
+\renewcommand{\arraystretch}{1.22}
+\begin{tabularx}{\textwidth}{>{\raggedright\arraybackslash}p{2.6cm} >{\raggedright\arraybackslash}p{3.4cm} >{\raggedright\arraybackslash}X >{\raggedright\arraybackslash}X}
+\toprule
+\textbf{Kho dữ liệu} & \textbf{Quy mô Đồ thị Chuẩn tắc} & \textbf{Tối ưu Lưu trữ / Xuất bản (\textbf{\texttt{evo}})} & \textbf{Độ trễ Truy vấn \& Mức RAM} \\
+\midrule
+\textbf{\texttt{halo-dev/halo}} (402,600 LOC) \cite{m84step6} & \textbf{852,845 đỉnh; 53,153 cạnh; 631,754 chứng tích; 1.51\,GB JSON} & \textbf{\texttt{graph-pages:m8.4-v2}; xác thực lạnh 195.73\,s} & \textbf{Heap \texttt{-Xmx256m} (Peak RSS $\sim$347\,MB); 1 đỉnh 40.30\,ms; 6 cạnh ra 100.50\,ms; 1 cạnh vào 26.73\,ms} \\
+\textbf{\texttt{aleixrodriala/newtube}} (20 contexts) \cite{newtube2026} & \textbf{1,054,591 đỉnh; 423,916 cạnh; 1,075,690 chứng tích; 1.97\,GB JSON; 13,153 leaf} & \textbf{Ghi 1 lượt: 592.35\,s $\rightarrow$ 18.47\,s (-96.9\%); DEFLATE ledger: 357.39\,MB $\rightarrow$ 39.52\,MB (-88.9\%)} & \textbf{Tổng thời gian job: 1,435.14\,s $\rightarrow$ 600.97\,s (2.39$\times$); đọc trang gap 71\,ms / 16\,ms} \\
+\textbf{\texttt{MP-Manager}} (16 contexts) \cite{currentstate2026} & \textbf{4.01\,GB \texttt{.graph.json} (4,014,549,238\,B)} & \textbf{Băm 1 lượt + single-flight \texttt{CompletableFuture} + slice compaction ($>1,024$ ký tự)} & \textbf{Nạp lạnh 110.25\,s (HTTP UI không nghẽn 38--251\,ms); warm manifest 104\,ms; đồ thị \texttt{PACKAGE} 898\,ms} \\
+\bottomrule
+\end{tabularx}
+\end{table*}
+
+\section{Tiến Hóa Lịch Sử, Sửa Lỗi Tự Động và Xác Minh Cô Lập}
+
+Trong khối đánh giá tiến hóa tương thích M11 và sửa lỗi có xác minh:
+\begin{itemize}
+    \item \textbf{CausalRepair} (ISSTA 2026) \cite{causalrepair2026} sửa 313 lỗi Defects4J và 101/199 (50.75\%) lỗi GitBug-Java ở mức \$0.029/lỗi thông qua bộ kiểm thử đơn vị chức năng.
+    \item \textbf{\texttt{evo}} chứng minh tiến hóa kiến trúc tương thích trên \textbf{42 ca kiểm soát M11 (\texttt{E01}--\texttt{E18})}, \textbf{5 phiên bản Git (1,004 blob SHA-256)} và bộ đối chuẩn \textbf{33,000 types} (so sánh lạnh trung vị \textbf{142.82\,s}, mở trang ấm \textbf{0.530\,s}, working set \textbf{475--488\,MB} trong 2\,GiB heap). Chuỗi sửa lỗi gồm \textbf{7 công thức OpenRewrite/Java} + vòng phản hồi kiểm tra cú pháp trình biên dịch \texttt{javac} (tối đa 3 lần), tái phân tích vi sai trong \textbf{287\,ms (uncached) / 12\,ms (cached)}, và vượt qua \textbf{9/9 (100\%)} phép kiểm build và Spring profile (\texttt{baseline}, \texttt{candidate}, \texttt{negative control} $\times$ \{\texttt{build}, \texttt{dev=off}, \texttt{dev=on}\}) trong máy ảo \textbf{QEMU Linux không mạng (1 vCPU, 1\,GiB RAM)} với trạng thái \textbf{\texttt{VERIFIED\_DEMO} (exit 0)}.
+\end{itemize}
+
+\section{Các Mối Đe Dọa Đến Độ Giá Trị (Threats to Validity)}
+
+Để bảo toàn tính chính trực khoa học, các giới hạn thực nghiệm sau được ghi nhận nguyên trạng:
+\begin{enumerate}
+    \item Tỷ lệ phân giải trên 10 kho mã nguồn (\texttt{structure}/\texttt{usage}) là tỷ lệ trên mẫu số quan hệ thử phân tích ở chế độ thụ động, không đồng nghĩa với độ chính xác tuyệt đối trên tập dữ liệu chưa gán nhãn lớn; các tập có chuẩn tham chiếu compiler/runtime độc lập được tách riêng (\textbf{34/34} M2, \textbf{41/41} \texttt{J01}, \textbf{79/79} Spring runtime, \textbf{70/70} đặc tả hình thức, \textbf{12/12} policy \texttt{P01}).
+    \item Trong M9.5 (17 claim đối soát M11.1), hai claim \textbf{\texttt{B01}} và \textbf{\texttt{D01}} ở trạng thái \textbf{\texttt{NOT\_RUN\_CAPTURE\_UNAVAILABLE}}; hai claim \textbf{\texttt{F01}} và \textbf{\texttt{U01}} đạt \textbf{\texttt{SCOPED\_PASS\_WITH\_RESERVATIONS}}. M8.4 Step 3 và Step 5.1 được nghiệm thu ở phạm vi \textbf{Core MVP}. Cổng M11/G7 đóng theo quyết định quản trị dự án (\texttt{CLOSED BY HUMAN DECISION / NOT CERTIFIED PASSED}).
+    \item Quá trình dựng đồ thị lần đầu trong bộ nhớ trên monorepo $\sim$2 triệu LOC (\emph{ThingsBoard}) chạm ngưỡng \textbf{\texttt{[MEMORY\_LIMIT]}} ở \texttt{-Xmx8g}, đòi hỏi chuyển đổi khâu dựng đồ thị sang streaming trực tiếp ra đĩa.
+\end{enumerate}
+
+\begin{thebibliography}{99}
+\bibitem{chen2022jasmine} M. Chen, T. Tu, H. Zhang, Q. Wen, and W. Wang, ``Jasmine: A Static Analysis Framework for Spring Core Technologies,'' in \emph{Proc.\ ASE '22}, 2022, DOI: \texttt{10.1145/3551349.3556910}.
+\bibitem{antoniadis2020jackee} A. Antoniadis et al., ``Static Analysis of Java Enterprise Applications: Frameworks and Caches, the Elephants in the Room'' (JackEE), in \emph{Proc.\ PLDI '20}, 2020, DOI: \texttt{10.1145/3385412.3386026}.
+\bibitem{zhang2025micans} T. Zhang et al., ``Bridge the Islands: Pointer Analysis for Microservice Systems'' (Micans), in \emph{Proc.\ ISSTA '25}, 2025.
+\bibitem{schneider2025comparison} S. Schneider et al., ``Comparison of Static Analysis Architecture Recovery Tools for Microservice Applications,'' \emph{Empirical Software Engineering}, vol. 30, art. 128, 2025 (arXiv:2412.08352).
+\bibitem{chinthareddy2026reliable} M. R. Chinthareddy, ``Reliable Graph-RAG for Codebases: AST-Derived Graphs vs LLM-Extracted Knowledge Graphs,'' \emph{arXiv:2601.08773}, Jan. 2026.
+\bibitem{causalrepair2026} ``CausalRepair: Bridging the Causality Gap in Large Language Model-based Automated Program Repair via Dual-Slicing,'' in \emph{Proc.\ ISSTA '26}, 2026.
+\bibitem{zhang2024autocoderover} Y. Zhang et al., ``AutoCodeRover: Autonomous Program Improvement,'' in \emph{Proc.\ ISSTA '24}, 2024.
+\bibitem{m84step6} \texttt{evo} Research Team, \emph{M8.4 Step 6 Real Repository Scale Evaluation Report}, Internal Technical Report, Nov. 2026.
+\bibitem{newtube2026} \texttt{evo} Research Team, \emph{NewTube Architecture Analysis Performance Investigation}, Internal Technical Report, Nov. 2026.
+\bibitem{currentstate2026} \texttt{evo} Research Team, \emph{Current State Operational Record (Reconciled 2026-11-24)}, Internal Dossier, Nov. 2026.
+\end{thebibliography}
+
+\end{document}

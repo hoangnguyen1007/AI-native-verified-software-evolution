@@ -1,0 +1,2398 @@
+/* Evo Workbench · Quiet interface layer
+   Loaded after styles.css. Principles: one accent, no cards-in-cards, text over icons,
+   hairlines instead of boxes, status by words and weight rather than colour. */
+
+/* ─── Tokens ─────────────────────────────────────────────────────────────── */
+:root,
+:root[data-theme="dark"] {
+  --sidebar-w: 256px;
+  --bg: #1d1c1a;
+  --sidebar: #171614;
+  --surface: transparent;
+  --surface-2: #272624;
+  --surface-3: #302e2b;
+  --surface-4: #3a3834;
+  --text: #ece9e3;
+  --text-2: #b0aa9f;
+  --text-3: #8a8479;
+  --text-4: #5f5a52;
+  --line: rgba(255, 245, 230, 0.08);
+  --line-mid: rgba(255, 245, 230, 0.14);
+  --line-strong: rgba(255, 245, 230, 0.22);
+  --border: var(--line-mid);
+  --subtle: var(--text-3);
+  --accent: #d9825b;
+  --accent-hover: #e39674;
+  --accent-muted: #b9673f;
+  --accent-s: rgba(217, 130, 91, 0.10);
+  --accent-line: rgba(217, 130, 91, 0.30);
+  --accent-text: #1d1c1a;
+  --ai: var(--text-2);
+  --ai-hover: var(--text);
+  --ai-s: var(--surface-2);
+  --ai-line: var(--line-mid);
+  --warn: #cfa25a;
+  --warn-s: transparent;
+  --warn-line: var(--line-mid);
+  --danger: #e0896f;
+  --danger-s: rgba(224, 137, 111, 0.08);
+  --danger-line: rgba(224, 137, 111, 0.35);
+  --cyan: var(--text-2);
+  --cyan-s: var(--surface-2);
+  --gold: var(--warn);
+  --red: var(--danger);
+  --purple: var(--text-2);
+  --ink: #ece9e3;
+  --ink-text: #1d1c1a;
+  --shadow: 0 18px 50px -12px rgba(0, 0, 0, 0.55);
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.25);
+  --shadow-xs: none;
+  --font-display: var(--font-sans);
+  --r-xs: 4px;
+  --r-sm: 6px;
+  --r: 8px;
+  --r-md: 10px;
+  --r-lg: 12px;
+  --r-xl: 16px;
+  color-scheme: dark;
+}
+
+:root[data-theme="light"] {
+  --bg: #faf9f6;
+  --sidebar: #f3f0ea;
+  --surface: transparent;
+  --surface-2: #f1eee8;
+  --surface-3: #e9e5dd;
+  --surface-4: #dfdad0;
+  --text: #211f1c;
+  --text-2: #5e5951;
+  --text-3: #8b857a;
+  --text-4: #b9b3a8;
+  --line: rgba(33, 31, 28, 0.09);
+  --line-mid: rgba(33, 31, 28, 0.15);
+  --line-strong: rgba(33, 31, 28, 0.25);
+  --accent: #b5532c;
+  --accent-hover: #9c4522;
+  --accent-muted: #b5532c;
+  --accent-s: rgba(181, 83, 44, 0.08);
+  --accent-line: rgba(181, 83, 44, 0.28);
+  --accent-text: #ffffff;
+  --warn: #8f6420;
+  --danger: #a23b24;
+  --danger-s: rgba(162, 59, 36, 0.06);
+  --danger-line: rgba(162, 59, 36, 0.30);
+  --ink: #211f1c;
+  --ink-text: #faf9f6;
+  --shadow: 0 18px 50px -14px rgba(60, 40, 20, 0.22);
+  --shadow-sm: 0 2px 8px rgba(60, 40, 20, 0.08);
+  color-scheme: light;
+}
+
+/* ─── Base ───────────────────────────────────────────────────────────────── */
+html {
+  font-size: 15px;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  font-family: var(--font-sans);
+  color: var(--text);
+  letter-spacing: -0.012em;
+}
+
+h1 {
+  font-size: 1.75rem;
+  font-weight: 600;
+  line-height: 1.2;
+  margin: 0;
+}
+
+h2 {
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+
+h3 {
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+p {
+  color: var(--text-2);
+}
+
+a {
+  color: var(--text);
+  text-decoration-color: var(--line-strong);
+  text-underline-offset: 3px;
+}
+
+a:hover {
+  text-decoration-color: var(--text);
+}
+
+::selection {
+  background: var(--accent-s);
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.muted {
+  color: var(--text-3) !important;
+}
+
+.small {
+  font-size: 0.85rem;
+}
+
+.eyebrow {
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 0.8rem;
+  color: var(--text-3);
+  font-weight: 500;
+}
+
+kbd {
+  font-family: var(--font-sans);
+  font-size: 0.72rem;
+  color: var(--text-3);
+  background: transparent;
+  border: 1px solid var(--line-mid);
+  border-radius: 4px;
+  padding: 0 5px;
+}
+
+code,
+pre,
+.mono {
+  font-family: var(--font-mono);
+}
+
+hr {
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--surface-4) transparent;
+}
+
+/* ─── Shell ──────────────────────────────────────────────────────────────── */
+.app-shell {
+  grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
+}
+
+.sidebar {
+  background: var(--sidebar);
+  border-right: 0;
+  padding: 18px 10px 14px;
+}
+
+.brand {
+  padding: 4px 10px 18px;
+  font-size: 1.05rem;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.brand:hover {
+  background: transparent;
+}
+
+.brand-name {
+  color: var(--text);
+}
+
+.sidebar-inner {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+  min-height: 0;
+}
+
+.btn-connect-repo {
+  width: 100%;
+  height: 36px;
+  margin: 0 0 14px;
+  padding: 0 12px;
+  border: 1px solid var(--line-mid);
+  border-radius: var(--r);
+  background: transparent;
+  color: var(--text);
+  font-size: 0.9rem;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  transition: background .12s;
+}
+
+.btn-connect-repo:hover {
+  background: var(--surface-2);
+}
+
+.sidebar-section {
+  padding: 10px 0 6px;
+  border: 0 !important;
+}
+
+.sidebar-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 10px;
+  margin-bottom: 4px;
+}
+
+.sidebar-section-header h2 {
+  margin: 0;
+  font-size: 0.78rem;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text-3);
+}
+
+.sidebar-section-header .text-button {
+  font-size: 0.78rem;
+  color: var(--text-3);
+  text-decoration: none;
+  min-height: 0;
+  padding: 0;
+}
+
+.sidebar-section-header .text-button:hover {
+  color: var(--text);
+}
+
+.sidebar-list {
+  gap: 1px;
+}
+
+.sidebar-item {
+  padding: 7px 10px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  gap: 0;
+}
+
+.sidebar-item:hover {
+  background: var(--surface-2);
+}
+
+.sidebar-item.active {
+  background: var(--surface-3);
+  border: 0;
+}
+
+.sidebar-item strong {
+  font-size: 0.92rem;
+  font-weight: 500;
+  color: var(--text-2);
+}
+
+.sidebar-item:hover strong,
+.sidebar-item.active strong {
+  color: var(--text);
+}
+
+.sidebar-item-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.sidebar-item .repo-meta,
+.repo-icon {
+  display: none;
+}
+
+.run-state {
+  font-size: 0.75rem;
+  color: var(--warn);
+}
+
+.sidebar-empty,
+.sidebar-list>p {
+  padding: 4px 10px;
+  margin: 0;
+  color: var(--text-3);
+}
+
+#history-more {
+  margin: 4px 10px 0;
+  font-size: 0.8rem;
+  color: var(--text-3);
+  text-decoration: none;
+}
+
+.sidebar-bottom {
+  border: 0;
+  margin-top: auto;
+  padding: 10px 10px 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.8rem;
+  color: var(--text-3);
+}
+
+.sidebar-bottom #theme-toggle {
+  margin-left: 0;
+  white-space: nowrap;
+  color: var(--text-3);
+  text-decoration: none;
+  font-size: 0.8rem;
+  min-height: 0;
+  padding: 4px 0;
+}
+
+.sidebar-bottom #theme-toggle:hover {
+  color: var(--text);
+}
+
+/* Connection is only mentioned when something is wrong. */
+.connection-dot.online,
+.connection-dot.online+#connection-status {
+  display: none;
+}
+
+.connection-dot {
+  background: var(--danger);
+}
+
+.topbar {
+  height: 52px;
+  padding: 0 28px;
+  border: 0;
+  background: transparent;
+  gap: 14px;
+}
+
+.topbar .sidebar-toggle {
+  color: var(--text-3);
+  text-decoration: none;
+  font-size: 0.85rem;
+  padding: 4px 0;
+}
+
+.topbar .sidebar-toggle:hover {
+  color: var(--text);
+}
+
+.topbar-actions {
+  gap: 6px;
+}
+
+.command-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  height: 32px;
+  padding: 0 10px 0 12px;
+  background: transparent;
+  border: 1px solid var(--line-mid);
+  border-radius: var(--r);
+  color: var(--text-3);
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.command-trigger:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+main {
+  max-width: 1060px;
+  padding: 4px 40px 72px;
+}
+
+.page-heading {
+  border: 0;
+  padding: 0;
+  margin: 12px 0 28px;
+  align-items: center;
+}
+
+.page-heading .heading-copy {
+  min-width: 0;
+}
+
+#repository-title {
+  font-size: 1.75rem;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.page-meta,
+#repository-description {
+  margin: 4px 0 0 !important;
+  font-size: 0.88rem !important;
+  color: var(--text-3) !important;
+}
+
+#result-status {
+  margin: 4px 0 0;
+  font-size: 0.85rem;
+  color: var(--text-3);
+}
+
+#result-status:empty {
+  display: none;
+}
+
+.heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ─── Buttons & controls ─────────────────────────────────────────────────── */
+.button {
+  height: 34px;
+  padding: 0 14px;
+  border: 1px solid var(--line-mid);
+  border-radius: var(--r);
+  background: transparent;
+  color: var(--text);
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+
+.button:hover:not(:disabled) {
+  background: var(--surface-2);
+  border-color: var(--line-strong);
+  color: var(--text);
+}
+
+.button.primary {
+  background: var(--ink);
+  color: var(--ink-text);
+  border-color: var(--ink);
+}
+
+.button.primary:hover:not(:disabled) {
+  background: var(--ink);
+  border-color: var(--ink);
+  opacity: .86;
+  color: var(--ink-text);
+}
+
+.button.subtle {
+  border-color: var(--line);
+  color: var(--text-2);
+}
+
+.button.ai-action {
+  background: transparent;
+  color: var(--text);
+  border-color: var(--line-mid);
+}
+
+.button.ai-action:hover:not(:disabled) {
+  background: var(--surface-2);
+  color: var(--text);
+  border-color: var(--line-strong);
+}
+
+.button.danger {
+  color: var(--danger);
+  border-color: var(--danger-line);
+}
+
+.button:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+}
+
+.icon-button {
+  border-radius: var(--r-sm);
+  border-color: var(--line);
+  color: var(--text-3);
+}
+
+.text-button {
+  color: var(--text-2);
+  font-size: 0.88rem;
+  text-decoration-color: var(--line-strong);
+}
+
+.text-button:hover {
+  color: var(--text);
+}
+
+input,
+select,
+textarea {
+  font-family: var(--font-sans);
+  font-size: 0.92rem;
+  color: var(--text);
+  background: transparent;
+  border: 1px solid var(--line-mid);
+  border-radius: var(--r);
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  border-color: var(--text-3);
+  outline: none;
+  box-shadow: 0 0 0 3px var(--accent-s);
+}
+
+select {
+  background-color: var(--bg);
+}
+
+select option {
+  background: var(--bg);
+  color: var(--text);
+}
+
+::placeholder {
+  color: var(--text-3);
+}
+
+.control-field>span {
+  font-size: 0.8rem;
+  color: var(--text-3);
+}
+
+.workbench-menu {
+  position: relative;
+}
+
+.workbench-menu>summary {
+  list-style: none;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--line-mid);
+  border-radius: var(--r);
+  background: transparent;
+  color: var(--text-2);
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+
+.workbench-menu>summary::-webkit-details-marker,
+.workbench-menu>summary::marker {
+  display: none;
+  content: '';
+}
+
+.workbench-menu>summary:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.topbar .workbench-menu>summary {
+  border: 0;
+  height: 32px;
+  color: var(--text-3);
+  padding: 0 8px;
+}
+
+.topbar .workbench-menu>summary:hover {
+  color: var(--text);
+  background: var(--surface-2);
+}
+
+.workbench-menu-items {
+  background: var(--bg);
+  border: 1px solid var(--line-mid);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow);
+  padding: 6px;
+}
+
+.workbench-menu-items a,
+.workbench-menu-items .button {
+  border-radius: var(--r-sm);
+  text-decoration: none;
+}
+
+.workbench-menu-items a:hover {
+  background: var(--surface-2);
+}
+
+/* ─── Badges and notices: words, not colour blocks ───────────────────────── */
+.badge {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--text-3);
+  text-transform: capitalize;
+}
+
+.badge::before {
+  display: none;
+}
+
+.badge.warn {
+  color: var(--warn);
+  background: transparent;
+  border: 0;
+}
+
+.badge.bad {
+  color: var(--danger);
+  background: transparent;
+  border: 0;
+  font-weight: 650;
+}
+
+.badge.good {
+  color: var(--text-2);
+  background: transparent;
+  border: 0;
+}
+
+.notice {
+  border: 0;
+  border-left: 2px solid var(--line-strong);
+  border-radius: 0;
+  background: transparent;
+  padding: 2px 0 2px 14px;
+  margin: 0 0 20px;
+  color: var(--text-2);
+  font-size: 0.92rem;
+}
+
+.notice.error {
+  border-left-color: var(--danger);
+  color: var(--danger);
+  background: transparent;
+}
+
+/* ─── Run status ─────────────────────────────────────────────────────────── */
+.job-panel {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+  margin: 0 0 20px;
+}
+
+.run-summary {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.run-activity {
+  flex: 1;
+  min-width: 0;
+}
+
+.run-activity>details>summary {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  color: var(--text-2);
+  font-size: 0.92rem;
+}
+
+.run-activity>details>summary::-webkit-details-marker {
+  display: none;
+}
+
+#job-description {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.run-elapsed {
+  color: var(--text-3);
+  background: transparent;
+  border: 0;
+  padding: 0;
+  font-size: 0.85rem;
+}
+
+.run-activity-label {
+  margin-left: auto;
+  color: var(--text-3);
+  font-size: 0.85rem;
+  text-decoration: underline;
+  text-decoration-color: var(--line-strong);
+  text-underline-offset: 3px;
+}
+
+.run-details-body {
+  padding: 12px 0 4px;
+}
+
+.job-events {
+  margin: 6px 0;
+}
+
+.job-events li {
+  font-family: var(--font-sans);
+  font-size: 0.88rem;
+  color: var(--text-2);
+  padding-left: 16px;
+}
+
+.job-events li::before {
+  width: 5px;
+  height: 5px;
+  background: var(--text-4);
+}
+
+.job-events li:last-child::before {
+  background: var(--text);
+}
+
+#job-failure {
+  color: var(--danger);
+}
+
+/* A finished run is a quiet line; the log stays one click away. */
+.job-panel[data-state="SUCCEEDED"] {
+  margin-bottom: 8px;
+}
+
+.job-panel[data-state="SUCCEEDED"] #job-description {
+  display: none;
+}
+
+.job-panel[data-state="SUCCEEDED"] .run-elapsed {
+  display: none;
+}
+
+.job-panel[data-state="SUCCEEDED"] .run-activity-label {
+  margin-left: 0;
+}
+
+.job-panel[data-state="SUCCEEDED"] .run-activity>details:not([open])>summary {
+  justify-content: flex-start;
+}
+
+#job-score-preview {
+  display: none !important;
+}
+
+/* ─── Views and navigation ───────────────────────────────────────────────── */
+.analysis-toolbar {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+  border-bottom: 1px solid var(--line);
+  margin: 0 0 32px;
+}
+
+.context-bar {
+  order: 2;
+  padding-bottom: 8px;
+}
+
+.context-bar-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.context-label {
+  font-size: 0.82rem;
+  color: var(--text-3);
+}
+
+.context-bar select {
+  height: 30px;
+  max-width: 260px;
+  padding: 0 26px 0 8px;
+  border: 0;
+  background-color: transparent;
+  color: var(--text-2);
+  font-size: 0.88rem;
+  cursor: pointer;
+}
+
+.context-bar select:hover {
+  color: var(--text);
+  background-color: var(--surface-2);
+}
+
+.tabs {
+  order: 1;
+  display: flex;
+  gap: 24px;
+  border: 0;
+  margin: 0;
+  padding: 0;
+}
+
+.tabs [role="tab"],
+.tabs button {
+  position: relative;
+  padding: 10px 0 12px;
+  margin: 0 0 -1px;
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  color: var(--text-3);
+  font-size: 0.95rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.tabs [role="tab"]:hover {
+  color: var(--text);
+  background: transparent;
+}
+
+.tabs [role="tab"][aria-selected="true"] {
+  color: var(--text);
+  border-bottom-color: var(--text);
+  background: transparent;
+}
+
+.view-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 20px;
+  margin: 0 0 24px;
+  padding: 0;
+  border: 0;
+}
+
+.view-links button {
+  padding: 2px 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-3);
+  font-size: 0.9rem;
+  font-weight: 500;
+  cursor: pointer;
+  border-bottom: 1px solid transparent;
+}
+
+.view-links button:hover {
+  color: var(--text);
+  background: transparent;
+}
+
+.view-links button[aria-current="page"] {
+  color: var(--text);
+  border-bottom-color: var(--text-3);
+  background: transparent;
+}
+
+.search-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 20px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+}
+
+.search-bar input {
+  flex: 1;
+  height: 38px;
+  padding: 0 12px;
+}
+
+.search-bar .kbd-hint {
+  display: none;
+}
+
+/* ─── Content: sections, not boxes ───────────────────────────────────────── */
+.surface-section,
+.surface,
+.card {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  box-shadow: none;
+}
+
+.surface-section+.surface-section,
+.card+.card {
+  margin-top: 36px;
+}
+
+.surface .surface,
+.surface-section .surface-section,
+.surface-section .card {
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.card-heading {
+  margin-bottom: 14px;
+}
+
+.card-heading h2 {
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+
+.card-heading p {
+  font-size: 0.9rem;
+  color: var(--text-3);
+  margin-top: 2px;
+  max-width: 640px;
+}
+
+.overview {
+  display: grid;
+  gap: 44px;
+}
+
+.overview-lead {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 36px 56px;
+}
+
+.overview-score .score-heading,
+.score-heading {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.score-heading svg {
+  display: none;
+}
+
+.score-heading .score {
+  font-family: var(--font-sans);
+  font-size: 2.6rem;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  color: var(--text);
+}
+
+.coverage-line {
+  margin: 0;
+  font-size: 1rem;
+  color: var(--text);
+}
+
+.job-coverage .coverage-line {
+  margin-top: -2px;
+}
+
+.score-checks {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 2px 20px;
+  margin: 14px 0 0;
+}
+
+.score-checks dt {
+  font-weight: 500;
+  color: var(--text);
+  margin-top: 10px;
+}
+
+.score-checks dd {
+  margin: 0;
+}
+
+.score-checks .score-points {
+  color: var(--text-2);
+  margin-top: 10px;
+  text-align: right;
+}
+
+.score-checks dd.small {
+  grid-column: 1 / -1;
+}
+
+.score-checks a,
+.score-checks .text-button {
+  color: var(--text-2);
+}
+
+.next-steps h2 {
+  margin: 0 0 6px;
+}
+
+.next-step {
+  display: grid;
+  grid-template-columns: minmax(180px, 280px) 1fr;
+  align-items: baseline;
+  gap: 4px 24px;
+  width: 100%;
+  padding: 14px 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  color: var(--text);
+}
+
+.next-step:last-child {
+  border-bottom: 1px solid var(--line);
+}
+
+.next-step strong {
+  font-weight: 550;
+}
+
+.next-step span {
+  color: var(--text-3);
+  font-size: 0.92rem;
+}
+
+.next-step:hover strong {
+  text-decoration: underline;
+  text-decoration-color: var(--line-strong);
+  text-underline-offset: 3px;
+}
+
+details>summary {
+  cursor: pointer;
+  color: var(--text-2);
+  font-size: 0.92rem;
+}
+
+details>summary:hover {
+  color: var(--text);
+}
+
+.inventory-details {
+  margin-top: 12px;
+}
+
+.inventory-details>summary {
+  padding: 4px 0;
+}
+
+.summary-table {
+  display: grid;
+  gap: 0;
+  margin-top: 8px;
+}
+
+.summary-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  width: 100%;
+  padding: 9px 0;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  text-align: left;
+}
+
+.summary-row strong {
+  color: var(--text);
+  font-weight: 550;
+}
+
+button.summary-row {
+  cursor: pointer;
+}
+
+button.summary-row:hover {
+  color: var(--text);
+}
+
+.obligation-bar {
+  background: var(--surface-3);
+  border-radius: 0;
+  height: 4px;
+}
+
+.obligation-seg.is-env {
+  background: var(--text);
+}
+
+.obligation-seg.is-auth {
+  background: var(--text-2);
+}
+
+.obligation-seg.is-boundary {
+  background: var(--text-3);
+}
+
+.obligation-seg.is-source {
+  background: var(--text-4);
+}
+
+.obligation-dot.is-env {
+  background: var(--text);
+}
+
+.obligation-dot.is-auth {
+  background: var(--text-2);
+}
+
+.obligation-dot.is-boundary {
+  background: var(--text-3);
+}
+
+.obligation-dot.is-source {
+  background: var(--text-4);
+}
+
+.welcome {
+  max-width: 560px;
+  padding: 14vh 0 0;
+  margin: 0;
+  align-items: stretch;
+  text-align: left;
+  gap: 10px;
+}
+
+.welcome h2 {
+  font-size: 1.9rem;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.welcome>p {
+  max-width: none;
+  font-size: 1rem;
+  color: var(--text-3);
+}
+
+.welcome-form {
+  display: flex;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.welcome-form input {
+  flex: 1;
+  height: 44px;
+  padding: 0 14px;
+  font-size: 1rem;
+  border-radius: var(--r-md);
+}
+
+.welcome-form .button {
+  height: 44px;
+  padding: 0 20px;
+  border-radius: var(--r-md);
+}
+
+.welcome .text-button {
+  align-self: flex-start;
+  color: var(--text-3);
+}
+
+/* ─── Lists ──────────────────────────────────────────────────────────────── */
+.list {
+  display: block;
+  gap: 0;
+  border-top: 1px solid var(--line);
+}
+
+.entity-row,
+.explorer-row .entity-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  width: 100%;
+  padding: 12px 6px;
+  margin: 0;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  text-align: left;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.entity-row:hover {
+  background: var(--surface-2);
+}
+
+.entity-row strong {
+  font-weight: 550;
+  overflow-wrap: anywhere;
+}
+
+.entity-row p {
+  margin: 1px 0 0;
+  font-size: 0.85rem;
+  color: var(--text-3);
+}
+
+.explorer-row {
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+}
+
+.explorer-row .entity-row {
+  border-bottom: 0;
+  flex: 1;
+  min-width: 0;
+}
+
+.explorer-row>.button {
+  border: 0;
+  color: var(--text-3);
+}
+
+.empty {
+  border: 0;
+  background: transparent;
+  padding: 40px 0;
+  text-align: left;
+}
+
+.empty h3 {
+  margin: 0 0 4px;
+}
+
+.empty p {
+  margin: 0;
+  color: var(--text-3);
+}
+
+.page-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 0;
+  color: var(--text-3);
+  font-size: 0.85rem;
+}
+
+.chip-bar,
+.preset-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 18px;
+  margin: 0 0 14px;
+}
+
+.chip {
+  padding: 2px 0;
+  border: 0;
+  border-bottom: 1px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-3);
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.chip:hover {
+  color: var(--text);
+  background: transparent;
+}
+
+.chip.active {
+  color: var(--text);
+  border-bottom-color: var(--text-3);
+  background: transparent;
+  border-color: transparent;
+  border-bottom-color: var(--text-3);
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px 16px;
+  margin: 0 0 16px;
+}
+
+.breadcrumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin: 4px 0 12px;
+  font-size: 0.9rem;
+  color: var(--text-3);
+}
+
+.breadcrumbs .text-button {
+  color: var(--text-2);
+}
+
+.selection-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 0 12px;
+}
+
+/* ─── Dialogs, inspector, command palette ────────────────────────────────── */
+dialog {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--line-mid);
+  border-radius: var(--r-xl);
+  box-shadow: var(--shadow);
+  padding: 24px;
+}
+
+dialog::backdrop {
+  background: rgba(20, 18, 15, 0.45);
+  backdrop-filter: none;
+}
+
+.dialog-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.dialog-heading h2 {
+  font-size: 1.25rem;
+  margin: 0;
+}
+
+.dialog-heading .eyebrow {
+  display: none;
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 20px;
+}
+
+dialog label {
+  font-size: 0.85rem;
+  color: var(--text-2);
+}
+
+.form-error {
+  color: var(--danger);
+  font-size: 0.9rem;
+}
+
+.command-palette {
+  padding: 0;
+}
+
+.command-palette-surface {
+  background: transparent;
+  border: 0;
+}
+
+.command-palette-header {
+  border-bottom: 1px solid var(--line);
+}
+
+.command-palette-header input {
+  border: 0;
+  box-shadow: none;
+}
+
+.command-palette-close {
+  color: var(--text-3);
+  background: transparent;
+  border: 0;
+}
+
+.inspector .dialog-heading h2 {
+  font-size: 1.2rem;
+}
+
+.shortcut-panel {
+  background: var(--bg);
+  border: 1px solid var(--line-mid);
+  border-radius: var(--r-xl);
+  box-shadow: var(--shadow);
+}
+
+@media (max-width: 860px) {
+  main {
+    padding: 0 20px 56px;
+  }
+
+  .topbar {
+    padding: 0 16px;
+  }
+
+  .analysis-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0;
+  }
+
+  .context-bar {
+    order: 1;
+    padding: 8px 0 0;
+  }
+
+  .tabs {
+    order: 2;
+    gap: 18px;
+    overflow-x: auto;
+  }
+
+  .next-step {
+    grid-template-columns: 1fr;
+  }
+
+  .welcome {
+    padding-top: 8vh;
+  }
+
+  .welcome-form {
+    flex-direction: column;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+    animation: none !important;
+  }
+}
+
+/* ─── Bridge to the legacy `.workbench-page` layer ───────────────────────── */
+.workbench-page,
+:root[data-theme="light"] .workbench-page {
+  --font-display: var(--font-sans);
+  --wb-paper: var(--bg);
+  --wb-ink: var(--text);
+  --wb-muted: var(--text-2);
+  --wb-rule: var(--line-mid);
+  --wb-accent: var(--accent);
+  --wb-accent-hover: var(--accent-hover);
+  --wb-on-accent: var(--accent-text);
+}
+
+.dependency-map,
+:root[data-theme="dark"] .dependency-map {
+  --map-paper: #191816;
+  --map-grid: #2a2825;
+  --map-label: #e8e4dc;
+  --map-node: #2d2b28;
+  --map-node-border: #756d61;
+  --map-group: #38342f;
+  --map-edge: #9d9588;
+  --map-may: #cfa25a;
+  --map-unknown: #d9825b;
+  --map-focus: #4b3b2f;
+  --map-external: #242220;
+}
+
+:root[data-theme="light"] .dependency-map {
+  --map-paper: #f5f2eb;
+  --map-grid: #dcd6c9;
+  --map-label: #2a2723;
+  --map-node: #ebe6db;
+  --map-node-border: #9d9484;
+  --map-group: #ddd5c6;
+  --map-edge: #7a7266;
+  --map-may: #8f6420;
+  --map-unknown: #b5532c;
+  --map-focus: #ecd9cb;
+  --map-external: #e8e3d8;
+}
+
+.workbench-page .button.primary {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--ink-text);
+  font-weight: 550;
+}
+
+.workbench-page .button.primary:hover:not(:disabled) {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--ink-text);
+  opacity: .86;
+}
+
+.workbench-page .page-heading h1 {
+  font: 600 1.75rem/1.2 var(--font-sans);
+  letter-spacing: -0.015em;
+}
+
+.workbench-page .sidebar>.brand {
+  min-height: 0;
+  padding: 4px 10px 18px;
+  margin: 0;
+}
+
+.workbench-page .brand-name {
+  font-size: 1.05rem;
+  font-weight: 650;
+}
+
+.workbench-page #tabs {
+  flex: 0 1 auto;
+  flex-wrap: nowrap;
+  overflow: visible;
+}
+
+.workbench-page #tabs>button {
+  min-height: 0;
+  padding: 10px 0 12px;
+}
+
+.workbench-page .heading-actions {
+  flex-wrap: nowrap;
+  align-items: center;
+}
+
+.workbench-page .workbench-menu>summary {
+  border: 1px solid var(--line-mid);
+  border-radius: var(--r);
+  padding: 0 12px;
+  color: var(--text-2);
+}
+
+.workbench-page .topbar .workbench-menu>summary {
+  border: 0;
+  padding: 0 8px;
+  color: var(--text-3);
+}
+
+.workbench-page .workbench-menu-items {
+  background: var(--bg);
+  border-color: var(--line-mid);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow);
+}
+
+.workbench-page .workbench-menu-items :is(button, a):is(:hover, :focus-visible, [aria-current]) {
+  background: var(--surface-2);
+}
+
+.workbench-page .view-links {
+  gap: 4px 20px;
+  margin: 0 0 24px;
+  align-items: baseline;
+}
+
+.workbench-page .view-links button {
+  padding: 2px 0;
+  min-height: 0;
+  border: 0;
+  border-bottom: 1px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-3);
+  font-size: .9rem;
+}
+
+.workbench-page .view-links button:hover {
+  background: transparent;
+  color: var(--text);
+}
+
+.workbench-page .view-links button[aria-current] {
+  background: transparent;
+  border-color: transparent;
+  border-bottom-color: var(--text-3);
+  color: var(--text);
+  font-weight: 550;
+}
+
+.workbench-page #search-form {
+  width: 100%;
+  max-width: 36rem;
+}
+
+.workbench-page .run-summary {
+  padding: 0;
+  flex-wrap: nowrap;
+}
+
+.workbench-page .run-activity {
+  flex: 1 1 auto;
+}
+
+.workbench-page #run-details>summary {
+  font-size: .95rem;
+  padding: 2px 0;
+  flex-wrap: nowrap;
+  align-items: baseline;
+}
+
+.workbench-page #run-details>summary::before {
+  content: none;
+}
+
+.workbench-page :is(.run-elapsed, .step-duration) {
+  background: transparent;
+  color: var(--text-3);
+  padding: 0;
+  font-weight: 500;
+}
+
+.workbench-page .run-activity-label {
+  color: var(--text-3);
+}
+
+.workbench-page #job-events {
+  padding-left: 0;
+  list-style: none;
+}
+
+/* Sidebar items carry !important in the legacy layer; match it deliberately. */
+.sidebar .sidebar-item {
+  display: block !important;
+  padding: 7px 10px !important;
+  margin: 0 !important;
+  border: 0 !important;
+  border-radius: var(--r-sm) !important;
+  background: transparent !important;
+  color: var(--text-2) !important;
+}
+
+.sidebar .sidebar-item:hover {
+  background: var(--surface-2) !important;
+}
+
+.sidebar .sidebar-item.active {
+  background: var(--surface-3) !important;
+  border: 0 !important;
+}
+
+.sidebar .sidebar-item strong,
+.sidebar .sidebar-item .repo-name {
+  font-size: .92rem !important;
+  font-weight: 500 !important;
+  color: var(--text-2) !important;
+  white-space: normal !important;
+  overflow-wrap: anywhere;
+}
+
+.sidebar .sidebar-item:hover strong,
+.sidebar .sidebar-item.active strong {
+  color: var(--text) !important;
+}
+
+.sidebar .sidebar-item small,
+.sidebar .sidebar-item .repo-meta {
+  display: none !important;
+}
+
+.sidebar .sidebar-item-head {
+  display: flex !important;
+  justify-content: space-between;
+  align-items: baseline !important;
+}
+
+/* Legacy gradients and palette leftovers */
+.hotspot-risk-fill {
+  background: linear-gradient(90deg, var(--text-4), var(--text-2));
+}
+
+.diff-stat-pill.is-add {
+  color: var(--text);
+}
+
+.diff-stat-pill.is-del {
+  color: var(--danger);
+}
+
+.dsm-cell.is-backedge {
+  outline-color: var(--warn);
+}
+
+.score-ring-value {
+  stroke: var(--text);
+}
+
+.graph-chip {
+  border-radius: 0;
+  border: 0;
+  border-bottom: 1px solid transparent;
+  padding: 2px 0;
+  margin-right: 14px;
+}
+
+.graph-chip.is-active {
+  background: transparent;
+  border-bottom-color: var(--text-3);
+  color: var(--text);
+}
+
+.graph-board {
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: transparent;
+}
+
+.dependency-map .card-heading h2 {
+  font-family: var(--font-sans);
+  font-size: 1.05rem;
+}
+
+.command-palette-cat {
+  background: transparent;
+  color: var(--text-3);
+  font-family: var(--font-sans);
+  text-transform: none;
+  font-size: .78rem;
+}
+
+.command-palette-item.is-selected,
+.command-palette-item:hover {
+  background: var(--surface-2);
+}
+
+/* ─── Chat: one calm column ──────────────────────────────────────────────── */
+.workbench-page .architecture-chat {
+  max-width: 760px;
+  margin: 0;
+  gap: 0;
+}
+
+.workbench-page .architecture-chat-header {
+  justify-content: flex-end;
+  margin: -12px 0 12px;
+}
+
+.workbench-page .architecture-chat-header>div:first-child {
+  display: none;
+}
+
+.workbench-page .architecture-chat-header-actions {
+  gap: 4px 16px;
+}
+
+.workbench-page .architecture-chat-history {
+  max-width: 220px;
+  padding: 4px 22px 4px 8px;
+  border: 0;
+  background-color: transparent;
+  color: var(--text-3);
+  font-size: .88rem;
+}
+
+.workbench-page .architecture-chat-history:hover {
+  color: var(--text);
+  background-color: var(--surface-2);
+}
+
+.workbench-page .architecture-chat-pins {
+  border: 0;
+  padding: 0 0 8px;
+  gap: 4px 16px;
+  min-height: 0;
+}
+
+.workbench-page .architecture-chat-pins:empty {
+  display: none;
+}
+
+.workbench-page .architecture-chat-model-state {
+  margin: 0;
+  font-size: .82rem;
+  color: var(--text-3);
+}
+
+.workbench-page .architecture-chat-model-state::before {
+  display: none;
+}
+
+.workbench-page .architecture-chat-layout {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 28px;
+}
+
+.workbench-page .architecture-chat-conversation,
+.workbench-page .architecture-chat-evidence {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+}
+
+.workbench-page .architecture-chat-log {
+  max-height: none;
+  min-height: 0;
+  overflow: visible;
+  padding: 0 0 24px;
+  gap: 28px;
+}
+
+.workbench-page .architecture-chat-welcome {
+  margin: 6vh 0 0;
+}
+
+.workbench-page .architecture-chat-welcome h3 {
+  font: 600 1.7rem/1.2 var(--font-sans);
+  letter-spacing: -0.015em;
+}
+
+.workbench-page .architecture-chat-welcome p {
+  color: var(--text-3);
+}
+
+.workbench-page .architecture-chat-starters {
+  gap: 8px;
+  margin-top: 20px;
+}
+
+.workbench-page .architecture-chat .architecture-chat-starters .button {
+  background: transparent;
+  border-color: var(--line-mid);
+  color: var(--text-2);
+  border-radius: 999px;
+}
+
+.workbench-page .architecture-chat .architecture-chat-starters .button:hover {
+  color: var(--text);
+  background: var(--surface-2);
+}
+
+.workbench-page .architecture-chat-message {
+  padding: 0;
+  border-radius: 0;
+}
+
+.workbench-page .architecture-chat-user {
+  align-self: flex-end;
+  max-width: 82%;
+  padding: 10px 16px;
+  background: var(--surface-2);
+  border-radius: 18px;
+  color: var(--text);
+}
+
+.workbench-page .architecture-chat-user h3 {
+  display: none;
+}
+
+.workbench-page .architecture-chat-user .architecture-chat-copy {
+  margin: 0;
+}
+
+.workbench-page .architecture-chat-assistant {
+  border: 0;
+}
+
+.workbench-page .architecture-chat-message-head h3 {
+  font-size: .8rem;
+  font-weight: 500;
+  color: var(--text-3);
+}
+
+.workbench-page .architecture-chat-copy-msg,
+.workbench-page .architecture-chat-copy-code {
+  border: 0;
+  color: var(--text-3);
+  background: transparent;
+  font-size: .8rem;
+}
+
+.workbench-page .architecture-chat-markdown a {
+  color: var(--text);
+  text-decoration-color: var(--line-strong);
+}
+
+.workbench-page .architecture-chat-markdown pre,
+.workbench-page .architecture-chat-code-shell {
+  background: var(--surface-2);
+  border: 0;
+  border-radius: var(--r-md);
+}
+
+.workbench-page .architecture-chat-code-bar {
+  background: transparent;
+  border-bottom: 1px solid var(--line);
+}
+
+.workbench-page .architecture-chat-inline-cite {
+  border: 0;
+  background: var(--surface-3);
+  color: var(--text-2);
+  border-radius: 4px;
+  font-weight: 500;
+}
+
+.workbench-page .architecture-chat-inline-cite:hover {
+  background: var(--surface-4);
+  color: var(--text);
+}
+
+.workbench-page .architecture-chat-code-shell .diff-line.is-add {
+  background: transparent;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.workbench-page .architecture-chat-code-shell .diff-line.is-del {
+  background: transparent;
+  color: var(--danger);
+  text-decoration: line-through;
+  text-decoration-color: var(--line-strong);
+}
+
+.workbench-page .architecture-chat-trace,
+.workbench-page .architecture-chat-stream-timeline {
+  background: transparent;
+  border: 0;
+  border-left: 2px solid var(--line);
+  border-radius: 0;
+  padding: 2px 0 2px 12px;
+}
+
+.workbench-page .architecture-chat-trace summary {
+  color: var(--text-3);
+  font-weight: 500;
+}
+
+.workbench-page .architecture-chat-trace-item {
+  background: transparent;
+  padding: 3px 0;
+}
+
+.workbench-page .architecture-chat-trace-tool {
+  color: var(--text-2);
+  font-family: var(--font-mono);
+}
+
+.workbench-page .architecture-chat-review {
+  background: transparent;
+  border: 0;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
+  padding: 12px 0 0;
+}
+
+.workbench-page .architecture-chat-limitations {
+  color: var(--text-3);
+  font-size: .9rem;
+}
+
+.workbench-page .architecture-chat-links {
+  gap: 4px 16px;
+  margin-top: 10px;
+}
+
+.workbench-page .architecture-chat-links .button {
+  border: 0;
+  height: auto;
+  padding: 0;
+  color: var(--text-3);
+  text-decoration: underline;
+  text-decoration-color: var(--line-strong);
+  text-underline-offset: 3px;
+}
+
+.workbench-page .architecture-chat-links .button:hover {
+  background: transparent;
+  color: var(--text);
+}
+
+/* Composer: pinned to the bottom of the viewport, ChatGPT-style */
+.workbench-page .architecture-chat-form {
+  position: sticky;
+  bottom: 16px;
+  z-index: 3;
+  padding: 12px 14px 10px;
+  gap: 6px;
+  background: var(--bg);
+  border: 1px solid var(--line-mid);
+  border-radius: 20px;
+  box-shadow: var(--shadow-sm);
+}
+
+.workbench-page .architecture-chat-field>span {
+  display: none;
+}
+
+.workbench-page .architecture-chat-field textarea {
+  min-height: 44px;
+  border: 0;
+  padding: 4px 2px;
+  background: transparent;
+  resize: none;
+  box-shadow: none;
+  font-size: 1rem;
+}
+
+.workbench-page .architecture-chat-field textarea:focus {
+  box-shadow: none;
+}
+
+.workbench-page .architecture-chat-context-options>summary {
+  font-size: .82rem;
+  color: var(--text-3);
+}
+
+.workbench-page .architecture-chat-controls {
+  align-items: center;
+  gap: 10px;
+}
+
+.workbench-page .architecture-chat-agent-toggle {
+  border: 0;
+  padding: 0;
+  margin-right: auto;
+  font-size: .82rem;
+  color: var(--text-3);
+}
+
+.workbench-page .architecture-chat-agent-toggle input {
+  accent-color: var(--text);
+}
+
+.workbench-page .architecture-chat-shortcut {
+  display: none;
+}
+
+.workbench-page .architecture-chat-consent {
+  font-size: .85rem;
+  color: var(--text-3);
+}
+
+.workbench-page .architecture-chat-consent input {
+  accent-color: var(--text);
+}
+
+.workbench-page .architecture-chat-status {
+  padding: 0 4px 8px;
+  color: var(--text-3);
+}
+
+/* Evidence appears below the answer only when a reply cites something */
+.workbench-page .architecture-chat-evidence {
+  padding: 0;
+  border-top: 1px solid var(--line);
+  padding-top: 20px;
+}
+
+.workbench-page .architecture-chat-evidence h3 {
+  font: 600 1rem var(--font-sans);
+}
+
+.workbench-page .architecture-chat-digest {
+  display: none;
+}
+
+.workbench-page .architecture-chat-record {
+  border-top: 1px solid var(--line);
+}
+
+.workbench-page .architecture-chat-ref {
+  color: var(--text-3);
+}
+
+.workbench-page .architecture-chat-record pre {
+  background: var(--surface-2);
+}
+
+.mermaid-node-rect {
+  stroke: var(--text-3);
+}
+
+.mermaid-edge-path {
+  stroke: var(--text-3);
+}
+
+/* ─── Graph, inspector and misc surfaces ─────────────────────────────────── */
+.workbench-page .graph-board {
+  border-radius: var(--r-md);
+}
+
+.workbench-page .graph-rail {
+  border-inline-start: 1px solid var(--line);
+}
+
+.workbench-page .graph-stage-controls {
+  border-bottom: 1px solid var(--line);
+}
+
+.workbench-page .graph-hubs {
+  border-top: 1px solid var(--line);
+}
+
+.workbench-page .graph-node-link {
+  color: var(--text-2);
+}
+
+.workbench-page .graph-node-link:hover {
+  color: var(--text);
+}
+
+.workbench-page .dependency-map .map-legend {
+  border-top: 1px solid var(--line);
+}
+
+.workbench-page .graph-counts,
+.workbench-page .graph-message {
+  color: var(--text-3);
+}
+
+.workbench-page .graph-options {
+  color: var(--text-3);
+}
+
+.inspector {
+  width: min(760px, calc(100vw - 32px));
+  max-height: calc(100dvh - 48px);
+}
+
+.inspector h2 {
+  overflow-wrap: anywhere;
+}
+
+.inspector pre {
+  background: var(--surface-2);
+  border: 0;
+  border-radius: var(--r);
+  font-size: .82rem;
+}
+
+.digest-chip {
+  border: 0;
+  background: transparent;
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: .8rem;
+  text-decoration: underline;
+  text-decoration-color: var(--line-strong);
+}
+
+.detail-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+table {
+  border-collapse: collapse;
+}
+
+th,
+td {
+  border-color: var(--line) !important;
+}
+
+th {
+  color: var(--text-3);
+  font-weight: 500;
+  font-size: .85rem;
+}
+
+/* ─── Polish pass ────────────────────────────────────────────────────────── */
+/* A finished run is one quiet line; the log stays reachable. */
+.job-panel:is([data-state="SUCCEEDED"], [data-state="PARTIAL"], [data-state="EMPTY"]) {
+  margin: -10px 0 4px;
+}
+
+.job-panel:is([data-state="SUCCEEDED"], [data-state="PARTIAL"], [data-state="EMPTY"]) #job-description,
+.job-panel:is([data-state="SUCCEEDED"], [data-state="PARTIAL"], [data-state="EMPTY"]) .run-elapsed {
+  display: none;
+}
+
+.job-panel:is([data-state="SUCCEEDED"], [data-state="PARTIAL"], [data-state="EMPTY"]) .run-activity-label {
+  margin-left: 0;
+  font-size: .82rem;
+}
+
+.job-panel:is([data-state="SUCCEEDED"], [data-state="PARTIAL"], [data-state="EMPTY"]) .run-activity>details:not([open])>summary {
+  justify-content: flex-start;
+}
+
+.context-label {
+  text-transform: none !important;
+  letter-spacing: 0 !important;
+  font-size: .82rem !important;
+  font-weight: 400 !important;
+}
+
+.overview-lead>* {
+  margin-top: 0 !important;
+}
+
+.analysis-toolbar {
+  margin-bottom: 28px;
+}
+
+/* Disclosure markers become plain text links. */
+details>summary {
+  list-style: none;
+}
+
+details>summary::-webkit-details-marker {
+  display: none;
+}
+
+details>summary::marker {
+  content: '';
+}
+
+main details:not(.workbench-menu)>summary {
+  display: inline-block;
+  text-decoration: underline;
+  text-decoration-color: var(--line-strong);
+  text-underline-offset: 3px;
+}
+
+main details:not(.workbench-menu)>summary:hover {
+  text-decoration-color: var(--text);
+}
+
+main details:not(.workbench-menu)[open]>summary {
+  margin-bottom: 8px;
+}
+
+.run-activity>details>summary {
+  display: flex !important;
+  text-decoration: none !important;
+}
+
+/* Rows: no leftover fills */
+.workbench-page .entity-row {
+  background: transparent;
+  box-shadow: none;
+}
+
+.workbench-page .entity-row:hover {
+  background: var(--surface-2);
+}
+
+.workbench-page .entity-row .badge {
+  flex-shrink: 0;
+}
+
+/* The level chips already choose what to browse; the duplicate dropdown is hidden. */
+.toolbar .control-field:has(> select[aria-label="Browse level"]) {
+  display: none;
+}
+
+/* Chat header stays on one line */
+.workbench-page .architecture-chat-header-actions {
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+  width: 100%;
+}
+
+.workbench-page .architecture-chat-history {
+  flex: 0 1 220px;
+  margin-right: auto;
+}
+
+/* Selects */
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 28px;
+  cursor: pointer;
+  background-image: linear-gradient(45deg, transparent 50%, var(--text-3) 50%), linear-gradient(135deg, var(--text-3) 50%, transparent 50%);
+  background-position: calc(100% - 15px) 52%, calc(100% - 10px) 52%;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+}
+
+.context-bar select {
+  background-color: transparent;
+}
+
+select {
+  height: 36px;
+  padding-left: 10px;
+}
+
+/* Legacy accent underline on tabs and small summaries */
+.tabs button[aria-selected="true"],
+.tabs button.tab-ai-highlight[aria-selected="true"] {
+  box-shadow: none !important;
+  color: var(--text) !important;
+  font-weight: 500;
+}
+
+.tabs button.tab-ai-highlight {
+  color: var(--text-3) !important;
+}
+
+summary {
+  font-size: .9rem;
+  line-height: 1.5;
+}
+
+main summary {
+  text-decoration-color: var(--line-strong) !important;
+}
+
+/* Mobile: the sidebar is an overlay, so the workspace owns the whole row */
+@media (max-width: 760px) {
+  .app-shell {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .page-heading {
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .page-heading .heading-copy {
+    flex: 1 1 100%;
+  }
+
+  .workbench-page .heading-actions {
+    flex-wrap: wrap;
+  }
+
+  .overview-lead {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .workbench-page .architecture-chat-form {
+    bottom: 8px;
+  }
+
+  .workbench-page .architecture-chat-header-actions {
+    flex-wrap: wrap;
+  }
+}
+
+/* Rows never keep a legacy fill; only hover/focus tints them. */
+.workbench-page .entity-row,
+.workbench-page .explorer-row .entity-row {
+  background: transparent !important;
+}
+
+.workbench-page .entity-row:hover,
+.workbench-page .entity-row:focus-visible {
+  background: var(--surface-2) !important;
+}

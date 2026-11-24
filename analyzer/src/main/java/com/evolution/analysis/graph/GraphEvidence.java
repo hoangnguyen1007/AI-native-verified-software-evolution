@@ -50,7 +50,11 @@ public record GraphEvidence(ContentDigest identity, String family, String canoni
     public ContentDigest semanticIdentity() {
         // Construction has already checked both the canonical preimage and the digest.
         if (!SEMANTIC_PROVENANCE.contains(family)) return identity;
-        var copy=new TreeMap<>(GraphJson.object(GraphJson.read(canonicalJson,GraphJson.Limits.defaults())));
+        var semanticLimits = new GraphJson.Limits(
+                Math.max(GraphJson.Limits.defaults().maxCharacters(), canonicalJson.length()),
+                GraphJson.Limits.defaults().maxDepth(),
+                Integer.MAX_VALUE - 8);
+        var copy=new TreeMap<>(GraphJson.object(GraphJson.read(canonicalJson,semanticLimits)));
         switch(family) {
             case "repository.snapshot" -> removeSnapshotLabels(copy);
             case "analysis.manifest","repository.acquisition" -> snapshotMember(copy);

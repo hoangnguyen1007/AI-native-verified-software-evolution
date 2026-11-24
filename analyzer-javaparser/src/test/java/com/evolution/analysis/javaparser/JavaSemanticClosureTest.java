@@ -38,4 +38,30 @@ class JavaSemanticClosureTest {
         assertTrue(parameters.stream().allMatch(d -> d.entity().declaration().isPresent()));
         assertFalse(result.diagnostics().stream().anyMatch(d -> d.code().equals("java.parameter-owner")));
     }
+    @Test void largeDeclarationsCompactBodySlicesToHeaderWhileSmallDeclarationsRemainExact() {
+        StringBuilder body = new StringBuilder();
+        for (int i = 0; i < 120; i++) {
+            body.append("int v").append(i).append(" = ").append(i).append(";\n");
+        }
+        String src = """
+                class CompactSample {
+                    int small() { return 1; }
+                    void largeMethod() {
+                """ + body + """
+                    }
+                }
+                """;
+        var result = new JavaParserFrontend().analyze(TestInputs.request(src));
+        var smallDecl = result.declarations().stream()
+                .filter(d -> d.entity().kind() == EntityKind.METHOD && d.spelling().contains("small()"))
+                .findFirst().orElseThrow();
+        var largeDecl = result.declarations().stream()
+                .filter(d -> d.entity().kind() == EntityKind.METHOD && d.spelling().contains("largeMethod()"))
+                .findFirst().orElseThrow();
+        assertTrue(smallDecl.spelling().contains("return 1;"));
+        assertFalse(smallDecl.spelling().contains("/* ... */ }"));
+        assertTrue(largeDecl.spelling().contains("void largeMethod()"));
+        assertTrue(largeDecl.spelling().endsWith("/* ... */ }"));
+        assertTrue(largeDecl.spelling().length() < 1024, () -> "Expected compacted slice, got length " + largeDecl.spelling().length());
+    }
 }

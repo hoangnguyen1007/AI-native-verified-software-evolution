@@ -5,11 +5,8 @@ final class CanonicalEvidenceJson {
     private static final GraphJson.Limits LIMITS = GraphJson.Limits.defaults();
     private final String text;
     private int offset;
-    private int values;
 
     static boolean isCanonical(String text) {
-        if (text.length() > LIMITS.maxCharacters())
-            throw new GraphJson.LimitExceededException("Graph JSON character limit");
         var check = new CanonicalEvidenceJson(text);
         try {
             check.value(0);
@@ -22,7 +19,7 @@ final class CanonicalEvidenceJson {
     private CanonicalEvidenceJson(String text) { this.text = text; }
 
     private void value(int depth) {
-        if (depth > LIMITS.maxDepth() || ++values > LIMITS.maxValues())
+        if (depth > LIMITS.maxDepth())
             throw new GraphJson.LimitExceededException("Graph JSON structural limit");
         switch (peek()) {
             case '{' -> object(depth);

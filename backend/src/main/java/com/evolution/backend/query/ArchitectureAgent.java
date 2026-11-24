@@ -179,27 +179,44 @@ final class ArchitectureAgent {
                     Scope scope = parseScope(stringArg(args, "scope", "TYPE"));
                     String origin = stringArg(args, "origin", "");
                     var pop = origin.isBlank() ? Population.all() : new Population(Set.of(), Set.of(), Set.of(origin), Set.of());
-                    var req = new Request(pin.graph(), pin.context(), scope, Projection.BOUNDED_UNION, Direction.OUTGOING,
-                            Set.of("graph.depends-on"), pop, false, Optional.empty(), Limits.defaults());
-                    var res = queries.entities(req, query, new Page(25, Optional.empty()));
-                    var items = res.items().stream().map(e -> Map.of(
-                            "identity", e.identity(),
-                            "kind", e.kind(),
-                            "name", e.qualifiedName().or(e::canonicalName).or(e::spelling).orElse(e.identity()),
-                            "origin", e.origin())).toList();
+                    var contexts = searchContexts(queries.graph(), pin);
+                    var items = new ArrayList<Map<String, Object>>();
+                    var seenIds = new HashSet<String>();
+                    long totalMatches = 0;
+                    String lastQueryId = pin.context();
+                    for (String ctx : contexts) {
+                        if (items.size() >= 30) break;
+                        var req = new Request(pin.graph(), ctx, scope, Projection.BOUNDED_UNION, Direction.OUTGOING,
+                                Set.of("graph.depends-on"), pop, false, Optional.empty(), Limits.defaults());
+                        var res = queries.entities(req, query, new Page(25, Optional.empty()));
+                        lastQueryId = res.query().value();
+                        totalMatches += res.exactTotal().orElse((long) res.items().size());
+                        for (var e : res.items()) {
+                            if (items.size() >= 30) break;
+                            if (seenIds.add(e.identity())) {
+                                items.add(Map.of(
+                                        "identity", e.identity(),
+                                        "context", ctx,
+                                        "kind", e.kind(),
+                                        "name", e.qualifiedName().or(e::canonicalName).or(e::spelling).orElse(e.identity()),
+                                        "origin", e.origin()));
+                            }
+                        }
+                    }
                     String eid = ArchitectureChat.addEvidence(evidence, ArchitectureChat.Kind.SYMBOLS,
-                            "Symbol search: " + (query.isBlank() ? scope.name() : query), res.query().value(),
-                            Map.of("matches", items, "total", res.exactTotal().orElse((long) items.size())));
+                            "Symbol search: " + (query.isBlank() ? scope.name() : query), lastQueryId,
+                            Map.of("matches", items, "total", Math.max(totalMatches, items.size())));
                     createdIds.add(eid);
                     yield Map.of("evidenceId", eid, "count", items.size(), "matches", items);
                 }
                 case "inspect_symbol" -> {
                     String id = stringArg(args, "identity", "");
                     if (id.isBlank()) yield Map.of("error", "identity is required");
+                    String effectiveCtx = resolveSymbolContext(queries.graph(), queries, pin, id);
                     var rels = Set.of("graph.depends-on", "java.calls", "java.extends", "java.implements", "java.type-uses");
-                    var outReq = new Request(pin.graph(), pin.context(), Scope.ENTITY, Projection.BOUNDED_UNION,
+                    var outReq = new Request(pin.graph(), effectiveCtx, Scope.ENTITY, Projection.BOUNDED_UNION,
                             Direction.OUTGOING, rels, Population.all(), false, Optional.empty(), Limits.defaults());
-                    var inReq = new Request(pin.graph(), pin.context(), Scope.ENTITY, Projection.BOUNDED_UNION,
+                    var inReq = new Request(pin.graph(), effectiveCtx, Scope.ENTITY, Projection.BOUNDED_UNION,
                             Direction.INCOMING, rels, Population.all(), false, Optional.empty(), Limits.defaults());
                     var entity = queries.entity(outReq, id);
                     var out = queries.expand(outReq, id);
@@ -209,9 +226,9 @@ final class ArchitectureAgent {
                     String symLabel = entity.items().isEmpty() ? id : entity.items().getFirst().qualifiedName().orElse(id);
                     String eid = ArchitectureChat.addEvidence(evidence, ArchitectureChat.Kind.DEPENDENCIES,
                             "Symbol inspection: " + symLabel, id,
-                            Map.of("entity", entity.items(), "outgoing", outList, "incoming", inList));
+                            Map.of("context", effectiveCtx, "entity", entity.items(), "outgoing", outList, "incoming", inList));
                     createdIds.add(eid);
-                    yield Map.of("evidenceId", eid, "symbol", symLabel, "outgoingCount", outList.size(),
+                    yield Map.of("evidenceId", eid, "context", effectiveCtx, "symbol", symLabel, "outgoingCount", outList.size(),
                             "incomingCount", inList.size(), "outgoing", outList, "incoming", inList);
                 }
                 case "trace_path" -> {
@@ -219,37 +236,44 @@ final class ArchitectureAgent {
                     String dst = stringArg(args, "target", "");
                     if (src.isBlank() || dst.isBlank()) yield Map.of("error", "source and target are required");
                     Scope scope = parseScope(stringArg(args, "scope", "TYPE"));
-                    var req = new Request(pin.graph(), pin.context(), scope, Projection.BOUNDED_UNION,
+                    String effectiveCtx = resolvePathContext(queries.graph(), queries, pin, src, dst);
+                    var req = new Request(pin.graph(), effectiveCtx, scope, Projection.BOUNDED_UNION,
                             Direction.OUTGOING, Set.of("graph.depends-on"), Population.all(), false, Optional.empty(), Limits.defaults());
                     var res = queries.shortestPath(req, src, dst);
                     String eid = ArchitectureChat.addEvidence(evidence, ArchitectureChat.Kind.DEPENDENCIES,
-                            "Shortest path trace", res.query().value(), Map.of("paths", res.items(), "status", res.status()));
+                            "Shortest path trace", res.query().value(), Map.of("context", effectiveCtx, "paths", res.items(), "status", res.status()));
                     createdIds.add(eid);
-                    yield Map.of("evidenceId", eid, "found", !res.items().isEmpty(), "paths", res.items());
+                    yield Map.of("evidenceId", eid, "context", effectiveCtx, "found", !res.items().isEmpty(), "paths", res.items());
                 }
                 case "analyze_impact" -> {
                     String id = stringArg(args, "identity", "");
                     if (id.isBlank()) yield Map.of("error", "identity is required");
                     Scope scope = parseScope(stringArg(args, "scope", "TYPE"));
-                    var req = new Request(pin.graph(), pin.context(), scope, Projection.BOUNDED_UNION,
+                    String effectiveCtx = resolveSymbolContext(queries.graph(), queries, pin, id);
+                    var req = new Request(pin.graph(), effectiveCtx, scope, Projection.BOUNDED_UNION,
                             Direction.INCOMING, Set.of("graph.depends-on"), Population.all(), false, Optional.empty(), Limits.defaults());
                     var res = queries.impact(req, id);
                     String eid = ArchitectureChat.addEvidence(evidence, ArchitectureChat.Kind.DEPENDENCIES,
-                            "Change blast radius", id, Map.of("impact", res.items(), "status", res.status()));
+                            "Change blast radius", id, Map.of("context", effectiveCtx, "impact", res.items(), "status", res.status()));
                     createdIds.add(eid);
-                    yield Map.of("evidenceId", eid, "items", res.items(), "status", res.status());
+                    yield Map.of("evidenceId", eid, "context", effectiveCtx, "items", res.items(), "status", res.status());
                 }
                 case "get_architecture_insights" -> {
                     Scope scope = parseScope(stringArg(args, "scope", "TYPE"));
                     int topN = Math.max(1, Math.min(15, intArg(args, "topN", 8)));
-                    var req = new Request(pin.graph(), pin.context(), scope, Projection.BOUNDED_UNION,
+                    var primaryReq = new Request(pin.graph(), pin.context(), scope, Projection.BOUNDED_UNION,
                             Direction.OUTGOING, Set.of("graph.depends-on"), Population.all(), false, Optional.empty(), Limits.defaults());
-                    var report = ArchitectureInsightsAdvisor.analyze(queries, req, Optional.empty(), topN);
-                    var data = Map.of(
-                            "summary", report.summary(),
-                            "tangles", report.tangles().stream().limit(5).toList(),
-                            "hotspots", report.hotspots().stream().limit(topN).toList(),
-                            "coupling", report.couplingMatrix().cells().stream().limit(15).toList());
+                    var report = ArchitectureInsightsAdvisor.analyze(queries, primaryReq, Optional.empty(), topN);
+                    Map<String, Object> data;
+                    if (report.summary().analyzedEntities() == 0 && pin.context().equals(pin.snapshot())) {
+                        data = aggregateInsightsAcrossSnapshot(queries, pin, scope, topN);
+                    } else {
+                        data = Map.of(
+                                "summary", report.summary(),
+                                "tangles", report.tangles().stream().limit(5).toList(),
+                                "hotspots", report.hotspots().stream().limit(topN).toList(),
+                                "coupling", report.couplingMatrix().cells().stream().limit(15).toList());
+                    }
                     String eid = ArchitectureChat.addEvidence(evidence, ArchitectureChat.Kind.STRUCTURE,
                             "Architecture insights (" + scope + ")", pin.context(), data);
                     createdIds.add(eid);
@@ -257,16 +281,18 @@ final class ArchitectureAgent {
                 }
                 case "list_findings" -> {
                     var reportIds = reports.forGraph(pin.graph());
+                    boolean wholeSnapshot = pin.context().equals(pin.snapshot());
                     var findingsOut = new ArrayList<Map<String, Object>>();
                     for (var rid : reportIds) {
                         var opt = reports.get(rid);
                         if (opt.isEmpty()) continue;
                         var eval = opt.orElseThrow().evaluation();
-                        if (!eval.context().equals(pin.context())) continue;
+                        if (!wholeSnapshot && !eval.context().equals(pin.context())) continue;
                         for (var f : eval.findings()) {
-                            if (findingsOut.size() >= 20) break;
+                            if (findingsOut.size() >= 25) break;
                             findingsOut.add(Map.of(
                                     "report", rid.value(),
+                                    "context", eval.context(),
                                     "identity", f.identity().value(),
                                     "rule", f.rule().id(),
                                     "kind", f.kind(),
@@ -280,17 +306,31 @@ final class ArchitectureAgent {
                     yield Map.of("evidenceId", eid, "count", findingsOut.size(), "findings", findingsOut);
                 }
                 case "inspect_spring_wiring" -> {
-                    var req = new Request(pin.graph(), pin.context(), Scope.SPRING_COMPONENT, Projection.BOUNDED_UNION,
-                            Direction.OUTGOING, Set.of("spring.selected-binding", "spring.injection-candidate"),
-                            Population.all(), false, Optional.empty(), Limits.defaults());
-                    var spring = queries.spring(req, Set.of("BEAN_PRODUCER", "INJECTION_POINT", "ENDPOINT"), new Page(30, Optional.empty()));
-                    var configs = queries.configurations(req, new Page(15, Optional.empty()));
+                    var contexts = searchContexts(queries.graph(), pin);
+                    var components = new ArrayList<Object>();
+                    var configs = new ArrayList<Object>();
+                    for (String ctx : contexts) {
+                        if (components.size() >= 30 && configs.size() >= 15) break;
+                        var req = new Request(pin.graph(), ctx, Scope.SPRING_COMPONENT, Projection.BOUNDED_UNION,
+                                Direction.OUTGOING, Set.of("spring.selected-binding", "spring.injection-candidate"),
+                                Population.all(), false, Optional.empty(), Limits.defaults());
+                        var spring = queries.spring(req, Set.of("BEAN_PRODUCER", "INJECTION_POINT", "ENDPOINT"), new Page(30, Optional.empty()));
+                        var cfg = queries.configurations(req, new Page(15, Optional.empty()));
+                        for (var item : spring.items()) {
+                            if (components.size() >= 30) break;
+                            components.add(item);
+                        }
+                        for (var item : cfg.items()) {
+                            if (configs.size() >= 15) break;
+                            configs.add(item);
+                        }
+                    }
                     String eid = ArchitectureChat.addEvidence(evidence, ArchitectureChat.Kind.STRUCTURE,
                             "Spring components & configurations", pin.context(),
-                            Map.of("components", spring.items(), "configurations", configs.items()));
+                            Map.of("components", components, "configurations", configs));
                     createdIds.add(eid);
-                    yield Map.of("evidenceId", eid, "components", spring.items().size(), "configurations", configs.items().size(),
-                            "items", spring.items(), "configs", configs.items());
+                    yield Map.of("evidenceId", eid, "components", components.size(), "configurations", configs.size(),
+                            "items", components, "configs", configs);
                 }
                 case "inspect_connections" -> {
                     var req = new Request(pin.graph(), pin.snapshot(), Scope.ENTITY, Projection.BOUNDED_UNION,
@@ -350,21 +390,49 @@ final class ArchitectureAgent {
                     if (!input.includeSource()) {
                         yield Map.of("withheld", true, "reason", "Source disclosure is disabled by the user for this turn. Rely on structural metadata.");
                     }
-                    String targetPath = stringArg(args, "path", "");
+                    String targetPath = stringArg(args, "path", "").replace('\\', '/').replaceFirst("^\\./+", "");
+                    if (targetPath.isBlank()) {
+                        yield Map.of("error", "path is required");
+                    }
                     int startLine = Math.max(1, intArg(args, "startLine", 1));
                     int endLine = Math.max(startLine, Math.min(startLine + 120, intArg(args, "endLine", startLine + 80)));
                     var graph = queries.graph();
-                    String foundContent = null;
-                    ContentDigest foundDigest = null;
+                    String matchedPath = null;
+                    Map<String, Object> matchedRow = null;
+                    ContentDigest matchedDigest = null;
+                    ContentDigest matchedEvidenceId = null;
+                    var suffixMatches = new ArrayList<String>();
                     for (var ev : graph.evidence()) {
                         if (!"source.bytes".equals(ev.family())) continue;
                         var obj = GraphJson.object(GraphJson.read(ev.canonicalJson(), GraphJson.Limits.defaults()));
-                        if (obj.get("document") instanceof Map<?, ?> doc && targetPath.equals(doc.get("path"))) {
-                            if (obj.get("base64") instanceof String b64) {
-                                foundContent = new String(Base64.getDecoder().decode(b64), StandardCharsets.UTF_8);
-                                foundDigest = ev.identity();
-                                break;
+                        if (!(obj.get("document") instanceof Map<?, ?> doc)) continue;
+                        if (!(doc.get("path") instanceof String docPath)) continue;
+                        if (targetPath.equals(docPath)) {
+                            matchedPath = docPath;
+                            matchedRow = obj;
+                            matchedDigest = doc.get("contentDigest") instanceof String d ? new ContentDigest(d) : null;
+                            matchedEvidenceId = ev.identity();
+                            break;
+                        }
+                        if (docPath.endsWith("/" + targetPath)) {
+                            suffixMatches.add(docPath);
+                            if (matchedRow == null) {
+                                matchedPath = docPath;
+                                matchedRow = obj;
+                                matchedDigest = doc.get("contentDigest") instanceof String d ? new ContentDigest(d) : null;
+                                matchedEvidenceId = ev.identity();
                             }
+                        }
+                    }
+                    if (suffixMatches.size() > 1 && !targetPath.equals(matchedPath)) {
+                        yield Map.of("found", false, "ambiguous", true, "path", targetPath,
+                                "candidates", suffixMatches.stream().limit(10).toList());
+                    }
+                    String foundContent = null;
+                    if (matchedRow != null) {
+                        var rawBytes = RepairSource.resolveSourceBytes(graph, matchedRow, Optional.ofNullable(matchedDigest));
+                        if (rawBytes.isPresent()) {
+                            foundContent = new String(rawBytes.orElseThrow(), StandardCharsets.UTF_8);
                         }
                     }
                     if (foundContent == null) {
@@ -377,11 +445,13 @@ final class ArchitectureAgent {
                     for (int i = s; i <= e; i++) {
                         numbered.append(i).append(": ").append(allLines[i - 1]).append('\n');
                     }
+                    String finalPath = matchedPath != null ? matchedPath : targetPath;
                     String eid = ArchitectureChat.addEvidence(evidence, ArchitectureChat.Kind.SOURCE,
-                            targetPath + " · L" + s + "-" + e, foundDigest.value(),
-                            Map.of("path", targetPath, "startLine", s, "endLine", e, "excerpt", numbered.toString()));
+                            finalPath + " · L" + s + "-" + e, matchedEvidenceId.value(),
+                            Map.of("path", finalPath, "startLine", s, "endLine", e, "excerpt", numbered.toString()));
                     createdIds.add(eid);
-                    yield Map.of("evidenceId", eid, "path", targetPath, "startLine", s, "endLine", e, "source", numbered.toString());
+                    yield Map.of("evidenceId", eid, "found", true, "path", finalPath, "startLine", s, "endLine", e,
+                            "totalLines", allLines.length, "source", numbered.toString());
                 }
                 default -> Map.of("error", "Unknown read-only tool: " + name);
             };
@@ -392,6 +462,110 @@ final class ArchitectureAgent {
             return new ToolOutcome("Tool unavailable (" + name + ")", List.of(),
                     CanonicalJson.write(Map.of("error", "Tool query failed or reached bounds.")));
         }
+    }
+
+    private static List<String> searchContexts(KnowledgeGraph graph, ArchitectureChat.Pin pin) {
+        var contexts = new ArrayList<String>();
+        contexts.add(pin.context());
+        if (pin.context().equals(pin.snapshot())) {
+            graph.contexts().stream()
+                    .filter(c -> c.snapshot().value().equals(pin.snapshot())
+                            && c.analysis().isPresent()
+                            && !c.identity().equals(pin.context()))
+                    .map(KnowledgeGraph.Context::identity)
+                    .forEach(contexts::add);
+        }
+        return contexts;
+    }
+
+    private static String resolveSymbolContext(KnowledgeGraph graph, ArchitectureQueryService queries,
+                                               ArchitectureChat.Pin pin, String symbolId) {
+        var contexts = searchContexts(graph, pin);
+        if (contexts.size() == 1) return pin.context();
+        for (String ctx : contexts) {
+            var req = new Request(pin.graph(), ctx, Scope.ENTITY, Projection.BOUNDED_UNION,
+                    Direction.OUTGOING, Set.of("graph.depends-on"), Population.all(), false, Optional.empty(), Limits.defaults());
+            if (!queries.entity(req, symbolId).items().isEmpty()) {
+                return ctx;
+            }
+        }
+        return pin.context();
+    }
+
+    private static String resolvePathContext(KnowledgeGraph graph, ArchitectureQueryService queries,
+                                             ArchitectureChat.Pin pin, String src, String dst) {
+        var contexts = searchContexts(graph, pin);
+        if (contexts.size() == 1) return pin.context();
+        String fallbackCtx = null;
+        for (String ctx : contexts) {
+            var req = new Request(pin.graph(), ctx, Scope.ENTITY, Projection.BOUNDED_UNION,
+                    Direction.OUTGOING, Set.of("graph.depends-on"), Population.all(), false, Optional.empty(), Limits.defaults());
+            boolean hasSrc = !queries.entity(req, src).items().isEmpty();
+            boolean hasDst = !queries.entity(req, dst).items().isEmpty();
+            if (hasSrc && hasDst) return ctx;
+            if (fallbackCtx == null && (hasSrc || hasDst)) fallbackCtx = ctx;
+        }
+        return fallbackCtx != null ? fallbackCtx : pin.context();
+    }
+
+    private static Map<String, Object> aggregateInsightsAcrossSnapshot(ArchitectureQueryService queries,
+                                                                     ArchitectureChat.Pin pin,
+                                                                     Scope scope,
+                                                                     int topN) {
+        var contexts = searchContexts(queries.graph(), pin).stream()
+                .filter(ctx -> !ctx.equals(pin.snapshot()))
+                .limit(12)
+                .toList();
+        int totalEntities = 0, totalInternal = 0, totalExternal = 0, totalTangles = 0;
+        int totalTangledEntities = 0, maxBlastRadius = 0, totalSdp = 0, totalFindings = 0;
+        java.math.BigDecimal weightedInstability = java.math.BigDecimal.ZERO;
+        var allTangles = new ArrayList<ArchitectureInsightsAdvisor.Tangle>();
+        var allHotspots = new ArrayList<ArchitectureInsightsAdvisor.Hotspot>();
+        var allCoupling = new ArrayList<ArchitectureInsightsAdvisor.CouplingCell>();
+        for (String ctx : contexts) {
+            var req = new Request(pin.graph(), ctx, scope, Projection.BOUNDED_UNION,
+                    Direction.OUTGOING, Set.of("graph.depends-on"), Population.all(), false, Optional.empty(), Limits.defaults());
+            var r = ArchitectureInsightsAdvisor.analyze(queries, req, Optional.empty(), topN);
+            var s = r.summary();
+            if (s.analyzedEntities() == 0) continue;
+            totalEntities += s.analyzedEntities();
+            totalInternal += s.internalDependencies();
+            totalExternal += s.externalDependencies();
+            totalTangles += s.tangleCount();
+            totalTangledEntities += s.tangledEntityCount();
+            maxBlastRadius = Math.max(maxBlastRadius, s.maxBlastRadius());
+            totalSdp += s.sdpViolationCount();
+            totalFindings += s.policyFindingCount();
+            weightedInstability = weightedInstability.add(
+                    s.averageInstability().multiply(java.math.BigDecimal.valueOf(s.analyzedEntities())));
+            allTangles.addAll(r.tangles());
+            allHotspots.addAll(r.hotspots());
+            allCoupling.addAll(r.couplingMatrix().cells());
+        }
+        var avgInstability = totalEntities == 0 ? java.math.BigDecimal.ZERO
+                : weightedInstability.divide(java.math.BigDecimal.valueOf(totalEntities), 4, java.math.RoundingMode.HALF_UP);
+        var tangledRatio = totalEntities == 0 ? java.math.BigDecimal.ZERO
+                : java.math.BigDecimal.valueOf(totalTangledEntities)
+                        .divide(java.math.BigDecimal.valueOf(totalEntities), 4, java.math.RoundingMode.HALF_UP);
+        var mergedSummary = new ArchitectureInsightsAdvisor.SummaryMetrics(
+                totalEntities, totalInternal, totalExternal, totalTangles, totalTangledEntities,
+                tangledRatio, avgInstability, maxBlastRadius, totalSdp, totalFindings);
+        var sortedTangles = allTangles.stream()
+                .sorted(Comparator.comparingInt(ArchitectureInsightsAdvisor.Tangle::memberCount).reversed())
+                .limit(5).toList();
+        var sortedHotspots = allHotspots.stream()
+                .sorted(Comparator.comparingInt(ArchitectureInsightsAdvisor.Hotspot::hotspotScore).reversed()
+                        .thenComparing(Comparator.comparingInt(ArchitectureInsightsAdvisor.Hotspot::transitiveDependents).reversed()))
+                .limit(topN).toList();
+        var sortedCoupling = allCoupling.stream()
+                .sorted(Comparator.comparingInt(ArchitectureInsightsAdvisor.CouplingCell::edgeCount).reversed())
+                .limit(15).toList();
+        return Map.of(
+                "aggregatedContexts", contexts.size(),
+                "summary", mergedSummary,
+                "tangles", sortedTangles,
+                "hotspots", sortedHotspots,
+                "coupling", sortedCoupling);
     }
 
     private static List<Map<String, Object>> summarizeNeighborhood(Result<Neighborhood> deps) {

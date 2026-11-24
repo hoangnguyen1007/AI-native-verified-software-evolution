@@ -1016,13 +1016,74 @@ final class Extraction {
     JavaSymbolName typeOwnerName(Node node) {
         return node instanceof EnumConstantDeclaration ? JavaSymbolName.localType(name(node),unit(node).input.document().identity(),source(node).start(node),"",true) : name(node);
     }
+    private static final int COMPACT_SLICE_THRESHOLD = 1024;
+
+    static String compactSourceSlice(Node node, String raw) {
+        if (raw == null || raw.length() <= COMPACT_SLICE_THRESHOLD) {
+            return raw;
+        }
+        if (node instanceof TypeDeclaration<?>
+                || node instanceof CallableDeclaration<?>
+                || node instanceof CompactConstructorDeclaration
+                || node instanceof InitializerDeclaration
+                || node instanceof EnumConstantDeclaration
+                || node instanceof ObjectCreationExpr) {
+            int braceIdx = findTopLevelOpeningBrace(raw, COMPACT_SLICE_THRESHOLD);
+            if (braceIdx >= 0) {
+                return raw.substring(0, braceIdx + 1) + " /* ... */ }";
+            }
+        }
+        return raw.substring(0, 768) + " /* ... */ " + raw.substring(raw.length() - 192);
+    }
+
+    private static int findTopLevelOpeningBrace(String raw, int maxSearch) {
+        int limit = Math.min(raw.length(), maxSearch);
+        int parens = 0;
+        for (int i = 0; i < limit; i++) {
+            char c = raw.charAt(i);
+            if (c == '/' && i + 1 < raw.length()) {
+                char next = raw.charAt(i + 1);
+                if (next == '/') {
+                    int nl = raw.indexOf('\n', i + 2);
+                    if (nl < 0) return -1;
+                    i = nl;
+                    continue;
+                }
+                if (next == '*') {
+                    int end = raw.indexOf("*/", i + 2);
+                    if (end < 0) return -1;
+                    i = end + 1;
+                    continue;
+                }
+            }
+            if (c == '"' || c == '\'') {
+                char quote = c;
+                i++;
+                while (i < raw.length()) {
+                    char q = raw.charAt(i);
+                    if (q == '\\') {
+                        i += 2;
+                        continue;
+                    }
+                    if (q == quote) break;
+                    i++;
+                }
+                continue;
+            }
+            if (c == '(') parens++;
+            else if (c == ')' && parens > 0) parens--;
+            else if (c == '{' && parens == 0) return i;
+        }
+        return -1;
+    }
+
     Entity enumBody(EnumConstantDeclaration constant) {
-        return register(typeOwnerName(constant),EntityKind.TYPE,Optional.of(source(constant).span(constant)),source(constant).slice(source(constant).span(constant)),DIRECT);
+        return register(typeOwnerName(constant),EntityKind.TYPE,Optional.of(source(constant).span(constant)),compactSourceSlice(constant, source(constant).slice(source(constant).span(constant))),DIRECT);
     }
     private Entity fieldInitializer(VariableDeclarator variable) {
         var initializer = variable.getInitializer().orElseThrow();
         return register(fieldInitializerName(variable), EntityKind.INITIALIZER,
-                Optional.of(unit(variable).source.span(initializer)), unit(variable).source.slice(unit(variable).source.span(initializer)), DIRECT);
+                Optional.of(unit(variable).source.span(initializer)), compactSourceSlice(initializer, unit(variable).source.slice(unit(variable).source.span(initializer))), DIRECT);
     }
     Entity enumInitializer(EnumConstantDeclaration constant) {
         return register(executionName("initializer", constant, "enum-constant", name(constant)), EntityKind.INITIALIZER,
@@ -1047,7 +1108,7 @@ final class Extraction {
         if(!(node instanceof CompilationUnit)&&overlay!=null&&Set.of(SourceClassification.GENERATED_MAIN,SourceClassification.GENERATED_TEST).contains(document.classification()))
             derivation=new Derivation(DerivationKind.DERIVED,new VersionedIdentifier("java.generated-source-import","m8.4-v1"),List.of(overlay,document.contentDigest().value()));
         ModuleIdentity module = sourceNodes.contains(node) ? request.module() : unit(node).input.document().module();
-        var entity = register(symbol, kind, span, span.map(s -> unit(node).source.slice(s)).orElse(""), derivation, module);
+        var entity = register(symbol, kind, span, span.map(s -> compactSourceSlice(node, unit(node).source.slice(s))).orElse(""), derivation, module);
         checkDeclarationTypes(node, entity);
         nodes.put(node, entity); return entity;
     }
@@ -1760,7 +1821,7 @@ final class Extraction {
         }
         if (span.isEmpty()) local.add(missingSpanDiagnostic(node, spanFailure));
         Optional<OccurrenceIdentity> mapped = Optional.empty();
-        String reference = span.map(unit.source::slice).orElse("");
+        String reference = span.map(s -> compactSourceSlice(node, unit.source.slice(s))).orElse("");
         if (source != null && span.isPresent() && status != SemanticStatus.AMBIGUOUS && (target != null || !category.equals("declares"))) {
             RelationshipTarget targetState = target == null ? new RelationshipTarget.Unresolved("java:source:" + unit.input.document().identity().value() + ":" + unit.source.start(node)) : new RelationshipTarget.Resolved(target.identity());
             var relation = SemanticRelationship.create(source.identity(), new RelationshipKind("java." + category), targetState);

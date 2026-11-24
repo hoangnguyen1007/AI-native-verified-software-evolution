@@ -319,10 +319,14 @@ public final class CapabilityGapNormalizer {
         }
         for (SourceOutcome source : result.sources()) {
             if (source.state() != SourceOutcome.State.PROCESSED) {
-                addGap(context, result.frontend(), resultIdentity, "java.source-outcome", source,
+                var boundedDiagnostics = source.diagnostics().size() <= 32
+                        ? source.diagnostics() : source.diagnostics().subList(0, 32);
+                var boundedSource = source.diagnostics().size() <= 32
+                        ? source : new SourceOutcome(source.document(), source.state(), boundedDiagnostics);
+                addGap(context, result.frontend(), resultIdentity, "java.source-outcome", boundedSource,
                         CapabilityGapCatalog.entryFor(source.state()),
                         subject(EvidenceSubject.Kind.DOCUMENT, source.document().value()), List.of(),
-                        source.diagnostics(), attempts, gaps);
+                        boundedDiagnostics, attempts, gaps);
             }
         }
         for (CategoryCoverage coverage : result.coverage()) {

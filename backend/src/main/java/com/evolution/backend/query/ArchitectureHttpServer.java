@@ -18,16 +18,19 @@ public final class ArchitectureHttpServer implements AutoCloseable {
     private final ExecutorService executor;
     private final ScheduledThreadPoolExecutor deadlines;
     private final Semaphore slots;
+    private final Semaphore graphSlots;
     private final AtomicBoolean closed = new AtomicBoolean();
     public ArchitectureHttpServer(ArchitectureQueryApi api,int port) throws IOException {
         this.api=Objects.requireNonNull(api);
         if (port<0 || port>65535) throw new IllegalArgumentException("Invalid port");
         server=HttpServer.create(new InetSocketAddress(InetAddress.getByName("127.0.0.1"),port),16);
         int workers=api.limits().concurrentRequests();
+        int graphWorkers=workers >= 4 ? workers - 2 : workers;
         slots=new Semaphore(workers);
+        graphSlots=new Semaphore(graphWorkers);
         deadlines=new ScheduledThreadPoolExecutor(1,runnable -> { var thread=new Thread(runnable,"architecture-http-deadlines"); thread.setDaemon(true); return thread; });
         deadlines.setRemoveOnCancelPolicy(true);
-        executor=new ThreadPoolExecutor(workers,workers,0,TimeUnit.MILLISECONDS,new ArrayBlockingQueue<>(workers),
+        executor=new ThreadPoolExecutor(workers + 4,workers + 4,0,TimeUnit.MILLISECONDS,new ArrayBlockingQueue<>(workers + 8),
                 runnable -> { var thread=new Thread(runnable,"architecture-http"); thread.setDaemon(true); return thread; },
                 new ThreadPoolExecutor.CallerRunsPolicy());
         server.setExecutor(executor);
@@ -37,16 +40,32 @@ public final class ArchitectureHttpServer implements AutoCloseable {
     public URI uri() { return URI.create("http://127.0.0.1:"+server.getAddress().getPort()); }
     private void handle(HttpExchange exchange) throws IOException {
         boolean acquired=false;
+        boolean acquiredGraph=false;
         var expired=new AtomicBoolean();
-        ScheduledFuture<?> deadline=deadlines.schedule(() -> { expired.set(true); exchange.close(); },api.limits().queryTimeoutMillis(),TimeUnit.MILLISECONDS);
+        var handlerThread=new java.util.concurrent.atomic.AtomicReference<>(Thread.currentThread());
+        ScheduledFuture<?> deadline=deadlines.schedule(() -> {
+            expired.set(true);
+            var worker=handlerThread.get();
+            if (worker!=null) worker.interrupt();
+            exchange.close();
+        },api.limits().queryTimeoutMillis(),TimeUnit.MILLISECONDS);
         try (exchange) {
             String rawPath = exchange.getRequestURI().getRawPath();
             if (!localOrigin(exchange)) {
                 sendJsonResponse(exchange, api.error(403,"FORBIDDEN_ORIGIN"));
                 return;
             }
+            if (!rawPath.startsWith("/api/") && !rawPath.equals("/api/v1")) {
+                serveStatic(exchange, rawPath);
+                return;
+            }
             try {
                 if (!(acquired=slots.tryAcquire(Math.min(api.limits().queryTimeoutMillis(), 30_000L), TimeUnit.MILLISECONDS))) {
+                    sendJsonResponse(exchange, api.error(503,"BUSY"));
+                    return;
+                }
+                if (rawPath.startsWith("/api/v1/graphs/") &&
+                        !(acquiredGraph=graphSlots.tryAcquire(Math.min(api.limits().queryTimeoutMillis(), 30_000L), TimeUnit.MILLISECONDS))) {
                     sendJsonResponse(exchange, api.error(503,"BUSY"));
                     return;
                 }
@@ -57,7 +76,7 @@ public final class ArchitectureHttpServer implements AutoCloseable {
             }
             if (rawPath.startsWith("/api/v1/graphs/") && rawPath.endsWith("/architecture-chat/stream")) {
                 handleArchitectureChatStream(exchange, rawPath, () -> closed.get() || expired.get() || Thread.currentThread().isInterrupted());
-            } else if (rawPath.startsWith("/api/") || rawPath.equals("/api/v1")) {
+            } else {
                 ArchitectureQueryApi.Response response;
                 if (exchange.getRequestURI().getRawQuery()!=null) response=api.error(400,"INVALID_REQUEST");
                 else if (!acceptable(exchange.getRequestHeaders().containsKey("Accept") ? String.join(",",exchange.getRequestHeaders().get("Accept")) : null)) response=api.error(406,"NOT_ACCEPTABLE");
@@ -69,10 +88,13 @@ public final class ArchitectureHttpServer implements AutoCloseable {
                             exchange.getRequestHeaders().getFirst("Content-Type"),body,() -> closed.get() || expired.get() || Thread.currentThread().isInterrupted());
                 }
                 sendJsonResponse(exchange, response);
-            } else {
-                serveStatic(exchange, rawPath);
             }
-        } finally { if (deadline!=null) deadline.cancel(false); if (acquired) slots.release(); }
+        } finally {
+            if (deadline!=null) deadline.cancel(false);
+            if (acquiredGraph) graphSlots.release();
+            if (acquired) slots.release();
+            Thread.interrupted();
+        }
     }
     private void handleArchitectureChatStream(HttpExchange exchange, String rawPath, java.util.function.BooleanSupplier cancelled) throws IOException {
         if (!"POST".equals(exchange.getRequestMethod())) {

@@ -46,7 +46,7 @@
         <!-- Testing -->
         <dependency><groupId>org.springframework</groupId><artifactId>spring-web</artifactId><version>6.2.0</version><scope>test</scope></dependency>
         <dependency><groupId>org.springframework</groupId><artifactId>spring-context</artifactId><version>6.2.0</version><scope>test</scope></dependency>
-        <dependency><groupId>com.evolution</groupId><artifactId>analyzer-execution</artifactId><version>${project.version}</version><scope>test</scope></dependency>
+        <dependency><groupId>com.evolution</groupId><artifactId>analyzer-execution</artifactId><version>${project.version}</version></dependency>
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>

@@ -52,6 +52,10 @@ public final class KnowledgeGraph {
     private volatile ContentDigest semanticIdentity;
     private volatile GraphManifest manifest;
     public KnowledgeGraph(SnapshotIdentity snapshot,List<Context> contexts,List<Node> nodes,List<Edge> edges,List<GraphEvidence> evidence) {
+        this(snapshot,contexts,nodes,edges,evidence,null,null);
+    }
+    KnowledgeGraph(SnapshotIdentity snapshot,List<Context> contexts,List<Node> nodes,List<Edge> edges,List<GraphEvidence> evidence,
+                   ContentDigest expectedIdentity,ContentDigest expectedEnvelopeDigest) {
         this.snapshot=Objects.requireNonNull(snapshot);this.contexts=sorted(contexts,Context::identity);
         this.nodes=sorted(nodes,n->key(n.context(),n.identity()));this.edges=sorted(edges,e->key(e.context(),e.identity()));
         this.evidence=sorted(evidence,e->e.identity().value());
@@ -73,7 +77,76 @@ public final class KnowledgeGraph {
             checkEvidence(payloads,e.evidence());out.computeIfAbsent(key(e.context(),e.source()),k->new ArrayList<>()).add(e);
             e.target().identities().forEach(t->in.computeIfAbsent(key(e.context(),t),k->new ArrayList<>()).add(e));
         });
-        this.outgoing=freeze(out);this.incoming=freeze(in);this.identity=CanonicalJson.sha256(canonicalForm());
+        this.outgoing=freeze(out);this.incoming=freeze(in);
+        this.identity = expectedIdentity == null
+                ? CanonicalJson.sha256(canonicalForm())
+                : verifySnapshotDigests(canonicalForm(), expectedIdentity, Objects.requireNonNull(expectedEnvelopeDigest));
+    }
+    private static ContentDigest verifySnapshotDigests(Object form, ContentDigest expectedIdentity, ContentDigest expectedEnvelopeDigest) {
+        try {
+            var graphDigest = java.security.MessageDigest.getInstance("SHA-256");
+            var envelopeDigest = java.security.MessageDigest.getInstance("SHA-256");
+            byte[] prefix = ("{\"format\":\"" + GraphSnapshotCodec.FORMAT + "\",\"graph\":").getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            envelopeDigest.update(prefix);
+            try (var writer = new DualUtf8DigestWriter(graphDigest, envelopeDigest)) {
+                CanonicalJson.writeTo(form, writer);
+            }
+            var computedId = new ContentDigest("sha256:" + HexFormat.of().formatHex(graphDigest.digest()));
+            if (!computedId.equals(expectedIdentity)) throw new IllegalArgumentException("Graph snapshot digest mismatch");
+            byte[] suffix = (",\"identity\":\"" + computedId.value() + "\"}").getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            envelopeDigest.update(suffix);
+            var computedEnvelope = new ContentDigest("sha256:" + HexFormat.of().formatHex(envelopeDigest.digest()));
+            if (!computedEnvelope.equals(expectedEnvelopeDigest)) throw new IllegalArgumentException("Noncanonical graph snapshot data");
+            return computedId;
+        } catch (java.security.NoSuchAlgorithmException | java.io.IOException impossible) {
+            throw new IllegalStateException("Canonical digest unavailable", impossible);
+        }
+    }
+    private static final class DualUtf8DigestWriter extends java.io.Writer {
+        private final java.security.MessageDigest primary, secondary;
+        private final byte[] buf = new byte[8192];
+        private int pos;
+        private char highSurrogate;
+        DualUtf8DigestWriter(java.security.MessageDigest primary, java.security.MessageDigest secondary) {
+            this.primary = primary; this.secondary = secondary;
+        }
+        private void flushBuf() {
+            if (pos > 0) { primary.update(buf, 0, pos); secondary.update(buf, 0, pos); pos = 0; }
+        }
+        private void putByte(int b) { if (pos == buf.length) flushBuf(); buf[pos++] = (byte) b; }
+        private void putChar(char c) {
+            if (highSurrogate != 0) {
+                char hi = highSurrogate; highSurrogate = 0;
+                if (Character.isLowSurrogate(c)) {
+                    int cp = Character.toCodePoint(hi, c);
+                    if (pos + 4 > buf.length) flushBuf();
+                    buf[pos++] = (byte) (0xF0 | (cp >>> 18));
+                    buf[pos++] = (byte) (0x80 | ((cp >>> 12) & 0x3F));
+                    buf[pos++] = (byte) (0x80 | ((cp >>> 6) & 0x3F));
+                    buf[pos++] = (byte) (0x80 | (cp & 0x3F));
+                    return;
+                }
+                putByte('?');
+            }
+            if (c < 0x80) { if (pos == buf.length) flushBuf(); buf[pos++] = (byte) c; }
+            else if (c < 0x800) { if (pos + 2 > buf.length) flushBuf(); buf[pos++] = (byte) (0xC0 | (c >>> 6)); buf[pos++] = (byte) (0x80 | (c & 0x3F)); }
+            else if (Character.isHighSurrogate(c)) { highSurrogate = c; }
+            else if (Character.isLowSurrogate(c)) { putByte('?'); }
+            else {
+                if (pos + 3 > buf.length) flushBuf();
+                buf[pos++] = (byte) (0xE0 | (c >>> 12));
+                buf[pos++] = (byte) (0x80 | ((c >>> 6) & 0x3F));
+                buf[pos++] = (byte) (0x80 | (c & 0x3F));
+            }
+        }
+        @Override public void write(int c) { putChar((char) c); }
+        @Override public void write(char[] cbuf, int off, int len) { int end = off + len; for (int i = off; i < end; i++) putChar(cbuf[i]); }
+        @Override public void write(String str, int off, int len) { int end = off + len; for (int i = off; i < end; i++) putChar(str.charAt(i)); }
+        @Override public java.io.Writer append(CharSequence csq) { String s = csq == null ? "null" : csq.toString(); write(s, 0, s.length()); return this; }
+        @Override public java.io.Writer append(CharSequence csq, int start, int end) { CharSequence cs = csq == null ? "null" : csq; for (int i = start; i < end; i++) putChar(cs.charAt(i)); return this; }
+        @Override public java.io.Writer append(char c) { putChar(c); return this; }
+        @Override public void flush() { flushBuf(); }
+        @Override public void close() { if (highSurrogate != 0) { highSurrogate = 0; putByte('?'); } flushBuf(); }
     }
     public SnapshotIdentity snapshot() {return snapshot;}
     public List<Context> contexts() {return contexts;}

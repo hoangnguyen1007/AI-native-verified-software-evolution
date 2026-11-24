@@ -14,6 +14,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static com.evolution.backend.query.ArchitectureQueryApiTest.body;
@@ -232,6 +233,114 @@ class ArchitectureAgentTest {
                 assertFalse(GraphJson.string(policyData.get("yaml")).isBlank());
             }
         } finally {
+            mock.stop(0);
+        }
+    }
+
+    @Test void wholeSnapshotToolsAndReadCapturedSourceResolveContentEvidenceAndFastFallback() throws Exception {
+        byte[] sourceBytes = "package demo;\nclass OrderService {\n    void place() {}\n}\n".getBytes(StandardCharsets.UTF_8);
+        var sourceDigest = com.evolution.analysis.contract.common.ContentDigest.sha256(sourceBytes);
+        var fixture = new QueryFixture();
+        var analysisIdentity = com.evolution.analysis.contract.identity.AnalysisIdentity.fromCanonicalManifestInputs("module-app");
+        var analysisCtx = new com.evolution.analysis.graph.KnowledgeGraph.Context(
+                analysisIdentity.value(), fixture.snapshot, Optional.of(analysisIdentity), fixture.base.identity());
+
+        var fastContentEv = com.evolution.analysis.graph.GraphEvidence.capture(
+                "source.content", Map.of(
+                        "contentDigest", sourceDigest.value(),
+                        "size", sourceBytes.length));
+        var docIdentity = com.evolution.analysis.contract.identity.SourceDocumentIdentity.from(
+                com.evolution.analysis.contract.identity.RepositoryIdentity.fromCanonicalCoordinate("https://example.test/http.git"),
+                "app/src/main/java/demo/OrderService.java");
+        var sourceBytesEv = com.evolution.analysis.graph.GraphEvidence.capture(
+                "source.bytes", Map.of(
+                        "document", Map.of(
+                                "identity", docIdentity.value(),
+                                "path", "app/src/main/java/demo/OrderService.java",
+                                "contentDigest", sourceDigest.value()),
+                        "decoding", Map.of("charset", "UTF-8", "bom", "NONE"),
+                        "contentDigest", sourceDigest.value(),
+                        "contentEvidence", fastContentEv.identity().value()));
+        var typeId = QueryFixture.id("OrderService");
+        var typeNode = new com.evolution.analysis.graph.KnowledgeGraph.Node(
+                typeId, analysisCtx.identity(), "TYPE",
+                List.of(fixture.base.identity()));
+        var graph = new com.evolution.analysis.graph.KnowledgeGraph(
+                fixture.snapshot,
+                List.of(new com.evolution.analysis.graph.KnowledgeGraph.Context(
+                        fixture.context, fixture.snapshot, Optional.empty(), fixture.base.identity()), analysisCtx),
+                List.of(typeNode), List.of(), List.of(fixture.base, fastContentEv, sourceBytesEv));
+        var store = new com.evolution.analysis.graph.InMemoryGraphStore();
+        store.save(graph);
+
+        RepairSource.registerContentFallback((digest, size) ->
+                digest.equals(sourceDigest) ? Optional.of(sourceBytes) : Optional.empty());
+        var calls = new AtomicInteger();
+        var mock = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        try {
+            mock.createContext("/v1/chat/completions", exchange -> {
+                byte[] requestBody = exchange.getRequestBody().readAllBytes();
+                var req = GraphJson.object(GraphJson.read(new String(requestBody, StandardCharsets.UTF_8), GraphJson.Limits.defaults()));
+                int call = calls.incrementAndGet();
+                String replyJson;
+                if (call == 1) {
+                    replyJson = CanonicalJson.write(Map.of(
+                            "model", "agent-model",
+                            "choices", List.of(Map.of("finish_reason", "tool_calls", "message", Map.of(
+                                    "role", "assistant",
+                                    "content", "",
+                                    "tool_calls", List.of(
+                                            Map.of("id", "c1", "type", "function", "function", Map.of(
+                                                    "name", "search_symbols",
+                                                    "arguments", "{\"query\":\"\",\"scope\":\"TYPE\"}")),
+                                            Map.of("id", "c2", "type", "function", "function", Map.of(
+                                                    "name", "read_captured_source",
+                                                    "arguments", "{\"path\":\"OrderService.java\",\"startLine\":1,\"endLine\":10}"))))))));
+                } else {
+                    var msgs = GraphJson.array(req.get("messages"));
+                    String tool1Json = GraphJson.string(GraphJson.object(msgs.get(msgs.size() - 2)).get("content"));
+                    String tool2Json = GraphJson.string(GraphJson.object(msgs.get(msgs.size() - 1)).get("content"));
+                    assertTrue(tool1Json.contains(typeId), () -> "tool1=" + tool1Json);
+                    assertTrue(tool1Json.contains(analysisCtx.identity()), () -> "tool1=" + tool1Json);
+                    assertTrue(tool2Json.contains("void place() {}"), () -> "tool2=" + tool2Json);
+                    String content = CanonicalJson.write(Map.of(
+                            "status", "ADVICE",
+                            "conversationTitle", "OrderService analysis",
+                            "answer", "Found `OrderService` [E3] with `place()` [E4].",
+                            "citations", List.of("E3", "E4"),
+                            "limitations", List.of()));
+                    replyJson = CanonicalJson.write(Map.of(
+                            "model", "agent-model",
+                            "choices", List.of(Map.of("finish_reason", "stop", "message", Map.of(
+                                    "role", "assistant",
+                                    "content", content)))));
+                }
+                byte[] out = replyJson.getBytes(StandardCharsets.UTF_8);
+                exchange.getResponseHeaders().set("Content-Type", "application/json");
+                exchange.sendResponseHeaders(200, out.length);
+                exchange.getResponseBody().write(out);
+                exchange.close();
+            });
+            mock.start();
+            var endpoint = URI.create("http://127.0.0.1:" + mock.getAddress().getPort() + "/v1/chat/completions");
+            var model = new ArchitectureChatModel(endpoint, "agent-model", null, false);
+            var api = ArchitectureQueryApi.withArchitectureChat(new ArchitectureQueryApi(store), model);
+            var response = api.handle("POST",
+                    "/api/v1/graphs/" + graph.identity().value() + "/architecture-chat",
+                    "application/json",
+                    bytes(Map.of(
+                            "context", fixture.context,
+                            "mode", "EXPLORE",
+                            "agentic", true,
+                            "includeSource", true,
+                            "messages", List.of(Map.of("role", "user", "content", "Inspect OrderService.")))),
+                    () -> false);
+            assertEquals(200, response.status(), () -> body(response).toString());
+            var data = GraphJson.object(body(response).get("data"));
+            assertEquals("ADVICE", data.get("status"));
+            assertEquals(2, GraphJson.array(data.get("agentTrace")).size());
+        } finally {
+            RepairSource.registerContentFallback(null);
             mock.stop(0);
         }
     }

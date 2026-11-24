@@ -537,4 +537,111 @@ class UniversalBuildIngestionTest {
         // Ambiguous Deps.dup (g:first:1 vs g:second:2) stays unresolved instead of guessing.
         assertEquals(3, coords.size());
     }
+
+    @Test void settingsListsDirectoryScansLocalAarsInertTasksAndTrivialSubprojectSettingsResolveCleanly() {
+        var r = load(Map.ofEntries(
+                Map.entry("settings.gradle", "def explicitModules = [\n ':app',\n ':plugin-sdk'\n]\n"
+                        + "for (path in explicitModules) { include path }\n"
+                        + "File pluginsRoot = new File(rootDir, 'plugins')\n"
+                        + "if (pluginsRoot.isDirectory()) {\n"
+                        + "    pluginsRoot.listFiles().each { include ':plugins:' + it.name }\n"
+                        + "}\n"
+                        + "def externalPluginBuilds = providers.gradleProperty('mpPluginBuilds').orElse('').get()\n"
+                        + "if (!externalPluginBuilds.trim().isEmpty()) { includeBuild(externalPluginBuilds) }\n"),
+                Map.entry("build.gradle", "task clean(type: Delete) { delete rootProject.buildDir }\n"),
+                Map.entry("plugin-sdk/settings.gradle", "rootProject.name = 'demo-plugin-sdk'\n"),
+                Map.entry("plugin-sdk/build.gradle", "plugins { id 'java-library' }\n"
+                        + "afterEvaluate { publishing { publications { mavenJava(MavenPublication) {} } } }\n"),
+                Map.entry("plugins/sample/build.gradle", "plugins { id 'java-library' }\n"),
+                Map.entry("app/build.gradle", "plugins { id 'java' }\n"
+                        + "dependencies {\n"
+                        + "    implementation project(':plugin-sdk')\n"
+                        + "    implementation files('libs/editor-debug.aar')\n"
+                        + "    implementation fileTree(dir: 'vendored', include: ['*.aar'])\n"
+                        + "}\n"),
+                Map.entry("app/libs/editor-debug.aar", "PK-stub"),
+                Map.entry("app/vendored/extra.aar", "PK-stub")));
+
+        assertTrue(r.issues().stream().noneMatch(i -> i.reason() == IngestionEvidence.Reason.DYNAMIC_BUILD_LOGIC),
+                () -> "Unexpected DYNAMIC_BUILD_LOGIC: " + r.issues());
+        assertEquals(Set.of(".", "plugin-sdk", "plugins/sample", "app"),
+                r.modules().stream().map(m -> m.descriptor().path()).collect(java.util.stream.Collectors.toSet()));
+        var app = r.modules().stream().filter(m -> m.descriptor().path().equals("app")).findFirst().orElseThrow();
+        var localFiles = app.dependencies().stream()
+                .filter(d -> d.configuration().endsWith(".local-file"))
+                .map(UniversalBuildModel.Dependency::notation)
+                .toList();
+        assertEquals(List.of("app/libs/editor-debug.aar", "app/vendored/extra.aar"), localFiles);
+    }
+
+    @Test void androidCompileSdkAndGeneratedSourceRootsAreCaptured() {
+        var gradle = load(Map.of(
+                "settings.gradle", "include ':app'\n",
+                "app/build.gradle", """
+                        plugins { id 'com.android.application' }
+                        android {
+                            compileSdk = 36
+                            defaultConfig {
+                                minSdk = 26
+                                targetSdk = 36
+                            }
+                        }
+                        """,
+                "app/src/main/java/Main.java", "class Main {}",
+                "app/build/generated/sources/annotationProcessor/java/main/Gen.java", "class Gen {}",
+                "app/build/generated/ksp/main/kotlin/KspGen.kt", "class KspGen"));
+        var app = gradle.modules().stream().filter(m -> m.descriptor().path().equals("app")).findFirst().orElseThrow();
+        var appMain = app.sourcePlan().sourceSets().stream().filter(s -> s.kind() == SourcePlanModel.Kind.MAIN).findFirst().orElseThrow();
+        assertEquals(Optional.of("36"), appMain.compilerSettings().get("android.compileSdk").value());
+        var appRoots = appMain.sourceRoots().stream().flatMap(s -> s.value().stream()).toList();
+        assertTrue(appRoots.contains("app/build/generated/sources/annotationProcessor/java/main"), () -> "Roots: " + appRoots);
+        assertTrue(appRoots.contains("app/build/generated/ksp/main/kotlin"), () -> "Roots: " + appRoots);
+
+        var mavenInputs = IngestionFixtures.inputs(Map.of(
+                "pom.xml", "<project><modelVersion>4.0.0</modelVersion><groupId>g</groupId><artifactId>a</artifactId><version>1</version></project>",
+                "src/main/java/App.java", "class App {}",
+                "src/test/java/AppTest.java", "class AppTest {}",
+                "target/generated-sources/annotations/Gen.java", "class Gen {}",
+                "target/generated-test-sources/test-annotations/GenTest.java", "class GenTest {}"));
+        BuildModelProvider stubMaven = req -> {
+            var desc = com.evolution.analysis.contract.source.ModuleDescriptor.create(req.snapshot().repository(), ".", "a");
+            var ev = List.of(new BuildModelResult.PomEvidence("pom.xml", req.workspacePoms().get("pom.xml").digest()));
+            var mainSet = new SourcePlanModel.SourceSetPlan(desc.identity(), SourcePlanModel.Kind.MAIN,
+                    List.of(new SourcePlanModel.Setting("sourceRoot", Optional.of("src/main/java"), Optional.of("src/main/java"), SourcePlanModel.Status.DEFAULT, SourcePlanModel.Origin.MAVEN_CONVENTION, ev)),
+                    List.of(),
+                    new SourcePlanModel.Setting("output", Optional.of("target/classes"), Optional.of("target/classes"), SourcePlanModel.Status.DEFAULT, SourcePlanModel.Origin.MAVEN_CONVENTION, ev),
+                    Map.of(),
+                    new SourcePlanModel.Setting("source", Optional.of("21"), Optional.of("21"), SourcePlanModel.Status.DECLARED, SourcePlanModel.Origin.EFFECTIVE_MODEL, ev),
+                    new SourcePlanModel.Setting("target", Optional.of("21"), Optional.of("21"), SourcePlanModel.Status.DECLARED, SourcePlanModel.Origin.EFFECTIVE_MODEL, ev),
+                    new SourcePlanModel.Setting("release", Optional.of("21"), Optional.of("21"), SourcePlanModel.Status.DECLARED, SourcePlanModel.Origin.EFFECTIVE_MODEL, ev),
+                    new SourcePlanModel.Setting("encoding", Optional.of("UTF-8"), Optional.of("UTF-8"), SourcePlanModel.Status.DECLARED, SourcePlanModel.Origin.EFFECTIVE_MODEL, ev),
+                    List.of(), List.of());
+            var testSet = new SourcePlanModel.SourceSetPlan(desc.identity(), SourcePlanModel.Kind.TEST,
+                    List.of(new SourcePlanModel.Setting("sourceRoot", Optional.of("src/test/java"), Optional.of("src/test/java"), SourcePlanModel.Status.DEFAULT, SourcePlanModel.Origin.MAVEN_CONVENTION, ev)),
+                    List.of(),
+                    new SourcePlanModel.Setting("output", Optional.of("target/test-classes"), Optional.of("target/test-classes"), SourcePlanModel.Status.DEFAULT, SourcePlanModel.Origin.MAVEN_CONVENTION, ev),
+                    Map.of(), mainSet.syntaxLevel(), mainSet.bytecodeTarget(), mainSet.platformRelease(), mainSet.encoding(), List.of(), List.of());
+            return new BuildModelResult(BuildModelResult.SCHEMA, req.identity(),
+                    new com.evolution.analysis.contract.common.VersionedIdentifier("test.maven", "1"),
+                    List.of(new BuildModelResult.ModuleModel(desc, "pom.xml", Optional.empty(),
+                            Optional.of(new BuildModelResult.EffectivePom(new MavenCoordinate("g", "a", "1"), "jar",
+                                    List.of(), List.of(), List.of(), Map.of(), List.of(), ev,
+                                    new SourcePlanModel(List.of(mainSet, testSet), List.of()))))),
+                    List.of(), List.of(), BuildModelResult.DECLARATIVE_LIMITATIONS);
+        };
+        var maven = new UniversalBuildIngestion().ingest(mavenInputs,
+                new UniversalBuildIngestion.Policy(Optional.of(21), Optional.of(21), Optional.of("UTF-8"), 2048, 1_000_000, 200_000, 64),
+                Optional.of(stubMaven), Map.of(), new BuildModelPolicy(List.of(), List.of(), Map.of(), 1_000_000, 100, 64));
+        var rootModule = maven.modules().getFirst();
+        var mavenMainRoots = rootModule.sourcePlan().sourceSets().stream()
+                .filter(s -> s.kind() == SourcePlanModel.Kind.MAIN)
+                .flatMap(s -> s.sourceRoots().stream())
+                .flatMap(s -> s.value().stream()).toList();
+        var mavenTestRoots = rootModule.sourcePlan().sourceSets().stream()
+                .filter(s -> s.kind() == SourcePlanModel.Kind.TEST)
+                .flatMap(s -> s.sourceRoots().stream())
+                .flatMap(s -> s.value().stream()).toList();
+        assertTrue(mavenMainRoots.contains("target/generated-sources/annotations"), () -> "Main roots: " + mavenMainRoots);
+        assertTrue(mavenTestRoots.contains("target/generated-test-sources/test-annotations"), () -> "Test roots: " + mavenTestRoots);
+    }
 }

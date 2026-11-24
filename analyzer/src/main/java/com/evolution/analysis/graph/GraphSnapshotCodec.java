@@ -65,10 +65,7 @@ public final class GraphSnapshotCodec {
             fields(header,"format","identity");
             if(!FORMAT.equals(string(header.get("format")))||!KnowledgeGraph.SCHEMA.equals(string(body.get("schema")))
                     ||!members.equals(Set.of("schema","snapshot","contexts","nodes","edges","evidence")))throw new IllegalArgumentException("Incomplete or unsupported graph snapshot");
-            var graph=new KnowledgeGraph(new SnapshotIdentity(string(body.get("snapshot"))),contexts,nodes,edges,evidence);
-            if(!graph.identity().equals(digest(header.get("identity"))))throw new IllegalArgumentException("Graph snapshot digest mismatch");
-            if(!CanonicalJson.sha256(Map.of("format",FORMAT,"identity",graph.identity(),"graph",graph.canonicalForm())).equals(rawDigest))throw new IllegalArgumentException("Noncanonical graph snapshot data");
-            return graph;
+            return new KnowledgeGraph(new SnapshotIdentity(string(body.get("snapshot"))),contexts,nodes,edges,evidence,digest(header.get("identity")),rawDigest);
         }
     }
     private static ContentDigest digest(Object value) {return new ContentDigest(string(value));}

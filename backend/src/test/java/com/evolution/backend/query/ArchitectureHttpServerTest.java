@@ -144,4 +144,38 @@ class ArchitectureHttpServerTest {
             assertEquals("GET, HEAD",postRoot.headers().firstValue("Allow").orElseThrow());
         }
     }
+    @Test void staticAssetsAndControlRoutesStayResponsiveWhileGraphSlotsAreOccupied() throws Exception {
+        var f = new QueryFixture().node("a");
+        var slowStore = new GraphStore() {
+            final java.util.concurrent.CountDownLatch entered = new java.util.concurrent.CountDownLatch(2);
+            final java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+            public void save(KnowledgeGraph graph, BooleanSupplier cancelled) { f.store().save(graph, cancelled); }
+            public Optional<KnowledgeGraph> load(ContentDigest id) {
+                entered.countDown();
+                try { release.await(5, java.util.concurrent.TimeUnit.SECONDS); }
+                catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
+                return f.store().load(id);
+            }
+        };
+        var api = new ArchitectureQueryApi(slowStore, new PublishedReports(), new ApiLimits(65_536, 16_777_216, 32, 100_000, 4, 10_000));
+        try (var server = new ArchitectureHttpServer(api, 0)) {
+            server.start();
+            var r = f.request();
+            String input = CanonicalJson.write(Map.of("request", r));
+            var pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+            try {
+                var f1 = pool.submit(() -> send(server, "POST", route(r, "summary"), "application/json", input));
+                var f2 = pool.submit(() -> send(server, "POST", route(r, "summary"), "application/json", input));
+                assertTrue(slowStore.entered.await(2, java.util.concurrent.TimeUnit.SECONDS));
+                assertEquals(200, send(server, "GET", "/app.js", null, "").statusCode());
+                assertEquals(200, send(server, "GET", "/api/v1", null, "").statusCode());
+                slowStore.release.countDown();
+                assertEquals(200, f1.get(5, java.util.concurrent.TimeUnit.SECONDS).statusCode());
+                assertEquals(200, f2.get(5, java.util.concurrent.TimeUnit.SECONDS).statusCode());
+            } finally {
+                slowStore.release.countDown();
+                pool.shutdownNow();
+            }
+        }
+    }
 }

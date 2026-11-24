@@ -81,15 +81,53 @@ final class StreamingGraphJson {
     }
     private void digits(StringBuilder value)throws IOException {int start=value.length();while(peek()>='0'&&peek()<='9')value.append((char)next());if(value.length()==start)throw new IllegalArgumentException("Graph JSON digits required");}
     private String text()throws IOException {
-        require('"');var result=new StringBuilder();
-        while(peek()>=0){if(result.length()>limits.maxStringCharacters())throw new GraphJson.LimitExceededException("Graph JSON token limit");int c=next();if(c=='"'){
-                for(int i=0;i<result.length();i++){char unit=result.charAt(i);if(Character.isHighSurrogate(unit)){if(i+1>=result.length()||!Character.isLowSurrogate(result.charAt(++i)))throw new IllegalArgumentException("Unpaired JSON surrogate");}else if(Character.isLowSurrogate(unit))throw new IllegalArgumentException("Unpaired JSON surrogate");}
-                return result.toString();}
-            if(c<32)throw new IllegalArgumentException("Unescaped graph JSON control");if(c!='\\'){result.append((char)c);continue;}
+        require('"');
+        var result=new StringBuilder();
+        boolean hasNonAscii=false;
+        int maxString=limits.maxStringCharacters();
+        while(true){
+            if(source!=null){
+                int start=position;
+                int limit=Math.min(length,start+(maxString-result.length()));
+                while(position<limit){
+                    char c=source.charAt(position);
+                    if(c=='"'||c=='\\'||c<0x20||c>=0x80)break;
+                    position++;
+                }
+                int run=position-start;
+                if(run>0){
+                    if((characters+=run)>limits.maxCharacters())throw new GraphJson.LimitExceededException("Graph JSON character limit");
+                    result.append(source,start,position);
+                }
+            }else if(position<length){
+                int start=position;
+                int limit=Math.min(length,start+(maxString-result.length()));
+                while(position<limit){
+                    char c=buffer[position];
+                    if(c=='"'||c=='\\'||c<0x20||c>=0x80)break;
+                    position++;
+                }
+                int run=position-start;
+                if(run>0){
+                    if((characters+=run)>limits.maxCharacters())throw new GraphJson.LimitExceededException("Graph JSON character limit");
+                    result.append(buffer,start,run);
+                }
+            }
+            if(peek()<0)throw new IllegalArgumentException("Unterminated graph JSON string");
+            if(result.length()>maxString)throw new GraphJson.LimitExceededException("Graph JSON token limit");
+            int c=next();
+            if(c=='"'){
+                if(hasNonAscii){
+                    for(int i=0;i<result.length();i++){char unit=result.charAt(i);if(Character.isHighSurrogate(unit)){if(i+1>=result.length()||!Character.isLowSurrogate(result.charAt(++i)))throw new IllegalArgumentException("Unpaired JSON surrogate");}else if(Character.isLowSurrogate(unit))throw new IllegalArgumentException("Unpaired JSON surrogate");}
+                }
+                return result.toString();
+            }
+            if(c<32)throw new IllegalArgumentException("Unescaped graph JSON control");
+            if(c!='\\'){if(c>=0x80)hasNonAscii=true;result.append((char)c);continue;}
             int escaped=next();switch(escaped){
                 case '"','\\','/'->result.append((char)escaped);case 'b'->result.append('\b');case 'f'->result.append('\f');case 'n'->result.append('\n');case 'r'->result.append('\r');case 't'->result.append('\t');
-                case 'u'->{int code=0;for(int i=0;i<4;i++){int digit=Character.digit(next(),16);if(digit<0)throw new IllegalArgumentException("Invalid Unicode escape");code=(code<<4)|digit;}result.append((char)code);}
+                case 'u'->{int code=0;for(int i=0;i<4;i++){int digit=Character.digit(next(),16);if(digit<0)throw new IllegalArgumentException("Invalid Unicode escape");code=(code<<4)|digit;}if(code>=0x80)hasNonAscii=true;result.append((char)code);}
                 default->throw new IllegalArgumentException("Invalid graph JSON escape");}
-        }throw new IllegalArgumentException("Unterminated graph JSON string");
+        }
     }
 }

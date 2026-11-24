@@ -11,12 +11,69 @@ import java.nio.ByteBuffer;
 import java.nio.charset.CharacterCodingException;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
+import java.util.function.BiFunction;
 
 /** Opens captured file bytes using only the validated finding and its graph partition. */
 public final class RepairSource {
     static final int MAX_FILE_BYTES = 1024 * 1024;
     private static final int MAX_ENCODED_BYTES = ((MAX_FILE_BYTES + 2) / 3) * 4;
     private static final GraphJson.Limits SOURCE_JSON = new GraphJson.Limits(MAX_ENCODED_BYTES + 8192,20,1024);
+    private static volatile BiFunction<ContentDigest, OptionalLong, Optional<byte[]>> contentStoreFallback =
+            (digest, size) -> Optional.empty();
+
+    public static void registerContentFallback(BiFunction<ContentDigest, OptionalLong, Optional<byte[]>> fallback) {
+        contentStoreFallback = fallback == null ? (digest, size) -> Optional.empty() : fallback;
+    }
+
+    static Optional<byte[]> resolveSourceBytes(KnowledgeGraph graph, Map<String, Object> sourceBytesRow,
+                                               Optional<ContentDigest> expectedDigest) {
+        return resolveSourceBytes(graph, sourceBytesRow, expectedDigest, contentStoreFallback);
+    }
+
+    static Optional<byte[]> resolveSourceBytes(KnowledgeGraph graph, Map<String, Object> sourceBytesRow,
+                                               Optional<ContentDigest> expectedDigest,
+                                               BiFunction<ContentDigest, OptionalLong, Optional<byte[]>> fallback) {
+        if (sourceBytesRow.get("bytesBase64") instanceof String inline && sourceBytesRow.get("contentEvidence") == null) {
+            return verifyEncoded(inline, expectedDigest);
+        }
+        if (sourceBytesRow.get("base64") instanceof String legacy && sourceBytesRow.get("contentEvidence") == null) {
+            return verifyEncoded(legacy, expectedDigest);
+        }
+        if (sourceBytesRow.get("contentEvidence") instanceof String refId) {
+            var contentEvidence = graph.evidence(new ContentDigest(refId))
+                    .filter(e -> "source.content".equals(e.family()));
+            if (contentEvidence.isEmpty()) return Optional.empty();
+            var content = payload(contentEvidence.orElseThrow());
+            if (!(content.get("contentDigest") instanceof String contentDigestStr)) return Optional.empty();
+            var contentDigest = new ContentDigest(contentDigestStr);
+            if (expectedDigest.isPresent() && !expectedDigest.orElseThrow().equals(contentDigest)) {
+                return Optional.empty();
+            }
+            if (content.get("bytesBase64") instanceof String encoded) {
+                return verifyEncoded(encoded, Optional.of(contentDigest));
+            }
+            OptionalLong expectedSize = content.get("size") instanceof Number n
+                    ? OptionalLong.of(n.longValue()) : OptionalLong.empty();
+            var rawOpt = (fallback != null ? fallback : contentStoreFallback).apply(contentDigest, expectedSize);
+            if (rawOpt.isPresent()) {
+                byte[] bytes = rawOpt.orElseThrow();
+                if (bytes.length <= MAX_FILE_BYTES && ContentDigest.sha256(bytes).equals(contentDigest)) {
+                    return Optional.of(bytes);
+                }
+            }
+        }
+        return Optional.empty();
+    }
+
+    private static Optional<byte[]> verifyEncoded(String encoded, Optional<ContentDigest> expectedDigest) {
+        if (encoded.length() > MAX_ENCODED_BYTES) return Optional.empty();
+        byte[] bytes = Base64.getDecoder().decode(encoded);
+        if (bytes.length > MAX_FILE_BYTES) return Optional.empty();
+        if (expectedDigest.isPresent() && !ContentDigest.sha256(bytes).equals(expectedDigest.orElseThrow())) {
+            return Optional.empty();
+        }
+        return Optional.of(bytes);
+    }
 
     public enum Issue { SOURCE_BYTES_UNAVAILABLE, SOURCE_INTEGRITY_MISMATCH, SOURCE_NOT_EDITABLE,
         SOURCE_ENCODING_UNSUPPORTED, SOURCE_LIMIT, COMPILER_UNSUPPORTED, QUERY_LIMIT }
@@ -61,20 +118,32 @@ public final class RepairSource {
             var decoding=GraphJson.object(row.get("decoding"));
             if (!Set.of("UTF-8","US-ASCII").contains(QueryJson.text(decoding,"charset")) || !"NONE".equals(decoding.get("bom")))
                 throw new Unavailable(Issue.SOURCE_ENCODING_UNSUPPORTED);
-            String encoded;
-            if (row.get("bytesBase64") instanceof String inline && row.get("contentEvidence")==null) encoded=inline;
-            else {
+            byte[] bytes;
+            if (row.get("bytesBase64") instanceof String inline && row.get("contentEvidence")==null) {
+                if (inline.length()>MAX_ENCODED_BYTES) throw new Unavailable(Issue.SOURCE_LIMIT);
+                bytes=Base64.getDecoder().decode(inline);
+                if (bytes.length>MAX_FILE_BYTES) throw new Unavailable(Issue.SOURCE_LIMIT);
+                if (!ContentDigest.sha256(bytes).equals(citation.sourceDigest())) throw new Unavailable(Issue.SOURCE_INTEGRITY_MISMATCH);
+            } else {
                 if (!digest.equals(row.get("contentDigest"))) throw new Unavailable(Issue.SOURCE_INTEGRITY_MISMATCH);
                 var ref=new ContentDigest(QueryJson.text(row,"contentEvidence"));
                 var content=payload(graph.evidence(ref).filter(e -> e.family().equals("source.content"))
                         .orElseThrow(() -> new Unavailable(Issue.SOURCE_BYTES_UNAVAILABLE)));
                 if (!digest.equals(content.get("contentDigest"))) throw new Unavailable(Issue.SOURCE_INTEGRITY_MISMATCH);
-                encoded=GraphJson.string(content.get("bytesBase64"));
+                if (content.get("bytesBase64") instanceof String encoded) {
+                    if (encoded.length()>MAX_ENCODED_BYTES) throw new Unavailable(Issue.SOURCE_LIMIT);
+                    bytes=Base64.getDecoder().decode(encoded);
+                    if (bytes.length>MAX_FILE_BYTES) throw new Unavailable(Issue.SOURCE_LIMIT);
+                    if (!ContentDigest.sha256(bytes).equals(citation.sourceDigest())) throw new Unavailable(Issue.SOURCE_INTEGRITY_MISMATCH);
+                } else {
+                    OptionalLong expectedSize = content.get("size") instanceof Number n
+                            ? OptionalLong.of(n.longValue()) : OptionalLong.empty();
+                    bytes = contentStoreFallback.apply(citation.sourceDigest(), expectedSize)
+                            .orElseThrow(() -> new Unavailable(Issue.SOURCE_BYTES_UNAVAILABLE));
+                    if (bytes.length>MAX_FILE_BYTES) throw new Unavailable(Issue.SOURCE_LIMIT);
+                    if (!ContentDigest.sha256(bytes).equals(citation.sourceDigest())) throw new Unavailable(Issue.SOURCE_INTEGRITY_MISMATCH);
+                }
             }
-            if (encoded.length()>MAX_ENCODED_BYTES) throw new Unavailable(Issue.SOURCE_LIMIT);
-            byte[] bytes=Base64.getDecoder().decode(encoded);
-            if (bytes.length>MAX_FILE_BYTES) throw new Unavailable(Issue.SOURCE_LIMIT);
-            if (!ContentDigest.sha256(bytes).equals(citation.sourceDigest())) throw new Unavailable(Issue.SOURCE_INTEGRITY_MISMATCH);
             var charset="US-ASCII".equals(decoding.get("charset")) ? StandardCharsets.US_ASCII : StandardCharsets.UTF_8;
             String text=charset.newDecoder().decode(ByteBuffer.wrap(bytes)).toString();
             if (text.indexOf(0)>=0 || text.startsWith("\uFEFF")) throw new Unavailable(Issue.SOURCE_ENCODING_UNSUPPORTED);

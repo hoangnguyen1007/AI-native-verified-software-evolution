@@ -26,6 +26,10 @@ final class GradleAarInputs {
 
     static List<BinaryInput> recover(Path cache, Artifact artifact, long memberBudget, long expandedBudget) throws IOException {
         var bytes = MavenDependencyArtifactProvider.readVerifiedArtifact(cache,artifact,memberBudget);
+        return recoverBytes(cache,artifact.coordinate().notation(),bytes,memberBudget,expandedBudget);
+    }
+
+    static List<BinaryInput> recoverBytes(Path cache, String logicalBase, byte[] bytes, long memberBudget, long expandedBudget) throws IOException {
         var members = new TreeMap<String,byte[]>();
         long remaining = memberBudget;
         try (var zip = new ZipInputStream(new ByteArrayInputStream(bytes))) {
@@ -75,7 +79,7 @@ final class GradleAarInputs {
             }
             if (jarClasses.stream().anyMatch(classes::contains)) throw new IOException("Conflicting classes in Android archive");
             classes.addAll(jarClasses);
-            String logical = artifact.coordinate().notation();
+            String logical = logicalBase;
             if (!member.getKey().equals("classes.jar")) logical += "!/" + member.getKey();
             result.add(new BinaryInput(new ClasspathEntry(ClasspathEntryKind.DEPENDENCY,logical,digest),path));
         }

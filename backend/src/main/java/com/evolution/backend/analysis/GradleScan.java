@@ -11,12 +11,48 @@ import com.evolution.analysis.ingestion.*;
 import com.evolution.analysis.maven.*;
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.util.*;
 
 /** Product composition for passive Gradle recovery. Target settings/plugins remain data. */
 public final class GradleScan {
     private GradleScan() {}
+    public static Optional<Path> discoverAndroidSdk() {
+        var candidates = new LinkedHashSet<String>();
+        addSdkCandidate(candidates, System.getProperty("evo.android.sdk"));
+        addSdkCandidate(candidates, System.getenv("ANDROID_SDK_ROOT"));
+        addSdkCandidate(candidates, System.getenv("ANDROID_HOME"));
+        String localAppData = System.getenv("LOCALAPPDATA");
+        if (localAppData != null && !localAppData.isBlank()) {
+            candidates.add(Path.of(localAppData, "Android", "Sdk").toString());
+        }
+        String userHome = System.getProperty("user.home");
+        if (userHome != null && !userHome.isBlank()) {
+            candidates.add(Path.of(userHome, "AppData", "Local", "Android", "Sdk").toString());
+            candidates.add(Path.of(userHome, "Android", "Sdk").toString());
+            candidates.add(Path.of(userHome, "Library", "Android", "sdk").toString());
+        }
+        for (String raw : candidates) {
+            Path path = Path.of(raw).toAbsolutePath().normalize();
+            if (!isSafeDirectory(path)) continue;
+            Path platforms = path.resolve("platforms");
+            if (Files.isDirectory(platforms, LinkOption.NOFOLLOW_LINKS) && !Files.isSymbolicLink(platforms)) {
+                return Optional.of(path);
+            }
+        }
+        return Optional.empty();
+    }
+    private static void addSdkCandidate(Set<String> target, String value) {
+        if (value != null && !value.isBlank()) target.add(value.strip());
+    }
+    private static boolean isSafeDirectory(Path candidate) {
+        if (!Files.isDirectory(candidate, LinkOption.NOFOLLOW_LINKS)) return false;
+        for (Path p = candidate; p != null; p = p.getParent()) {
+            if (Files.isSymbolicLink(p)) return false;
+        }
+        return true;
+    }
     public static Optional<UniversalBuildModel> model(RepositoryAcquisitionResult acquisition,UniversalBuildIngestion.Policy policy,
                                                     RepositoryInputDecoder.Policy decoding,Map<MavenCoordinate,PomInput> poms) {
         return model(new RepositoryInputDecoder.Prepared(acquisition,decoding),policy,poms);
@@ -32,6 +68,11 @@ public final class GradleScan {
     }
     public static MavenScan.Inputs augment(MavenScan.Inputs prior,RepositoryAcquisitionResult acquisition,Optional<UniversalBuildModel> model,Path cache,
                                           Optional<PlatformInput> fallback,DependencyAcquisitionPolicy policy,Map<Integer,PlatformInput> platforms) {
+        return augment(prior,acquisition,model,cache,fallback,policy,platforms,discoverAndroidSdk());
+    }
+    public static MavenScan.Inputs augment(MavenScan.Inputs prior,RepositoryAcquisitionResult acquisition,Optional<UniversalBuildModel> model,Path cache,
+                                          Optional<PlatformInput> fallback,DependencyAcquisitionPolicy policy,Map<Integer,PlatformInput> platforms,
+                                          Optional<Path> androidSdk) {
         if(model.isEmpty())return prior;
         MavenScan.prepareCache(cache,policy.remoteRepositories());
         var build=model.orElseThrow();var result=new GradleDependencyArtifactResolver(cache).resolve(build,policy);
@@ -40,11 +81,13 @@ public final class GradleScan {
         var ledger=CapabilityGapNormalizer.normalize(context,EvidenceNormalizationInput.builder().dependencyAcquisitions(result.acquisitions()).build());ledgers.add(ledger);gaps.addAll(ledger.gaps());
         var reasons=new TreeMap<String,Long>();long recovered=0;
         var localJars=new HashMap<String,com.evolution.analysis.acquisition.AcquiredFile>();
-        for(var file:acquisition.files())if(file.path().endsWith(".jar"))localJars.put(file.path(),file);
+        for(var file:acquisition.files())if(file.path().endsWith(".jar")||file.path().endsWith(".aar"))localJars.put(file.path(),file);
         long remainingLocalBudget=policy.maxTotalBytes();
         var allBinaries=new ArrayList<BinaryInput>();
         for(var row:result.contexts()) {
             var contextBinaries=new ArrayList<>(row.binaries());
+            var existingDigests=new HashSet<ContentDigest>();
+            contextBinaries.forEach(b->existingDigests.add(b.entry().contentDigest()));
             var localAdded=new ArrayList<BinaryInput>();
             var localPaths=new LinkedHashSet<String>();
             build.modules().stream().filter(m->m.descriptor().identity().equals(row.sourceSet().module())).findFirst()
@@ -61,20 +104,49 @@ public final class GradleScan {
                     continue;
                 }
                 try {
-                    var binary=GradleLocalJarInputs.recover(cache,jarPath,capturedJar.bytes(),capturedJar.contentDigest(),
+                    var recoveredLocals=GradleLocalJarInputs.recoverAll(cache,jarPath,capturedJar.bytes(),capturedJar.contentDigest(),
                             policy.maxArtifactBytes(),Math.max(0L,remainingLocalBudget));
-                    remainingLocalBudget=Math.max(0L,remainingLocalBudget-Files.size(binary.path()));
-                    contextBinaries.add(binary);localAdded.add(binary);
+                    for(var binary:recoveredLocals) {
+                        remainingLocalBudget=Math.max(0L,remainingLocalBudget-Files.size(binary.path()));
+                        if(existingDigests.add(binary.entry().contentDigest())) {
+                            contextBinaries.add(binary);
+                            localAdded.add(binary);
+                        }
+                    }
                 }catch(IOException unavailable) {
                     var problem=new GradleDependencyArtifactResolver.Problem("GRADLE_BINARY_UNAVAILABLE","local-jar:"+jarPath);
                     reasons.merge(problem.reason(),1L,Long::sum);gaps.add(gap(context,build,row.identity(),problem));
+                }
+            }
+            var set=build.modules().stream().flatMap(m->m.sourcePlan().sourceSets().stream()).filter(s->s.module().equals(row.sourceSet().module())&&s.kind()==row.sourceSet().kind()&&s.name().equals(row.sourceSet().name())).findFirst().orElseThrow();
+            OptionalInt compileSdk = findAndroidCompileSdk(build, set, row.projects());
+            if ((compileSdk.isPresent() || isAndroidModule(build, set, row.projects())) && androidSdk.isPresent()) {
+                try {
+                    var androidJar = GradleLocalJarInputs.recoverAndroidPlatformJar(
+                            cache, androidSdk.orElseThrow(), compileSdk,
+                            policy.maxArtifactBytes(), Math.max(0L, remainingLocalBudget));
+                    if (androidJar.isPresent()) {
+                        var binary = androidJar.orElseThrow();
+                        remainingLocalBudget = Math.max(0L, remainingLocalBudget - Files.size(binary.path()));
+                        if (existingDigests.add(binary.entry().contentDigest())) {
+                            contextBinaries.add(binary);
+                            localAdded.add(binary);
+                        }
+                    } else {
+                        var problem = new GradleDependencyArtifactResolver.Problem("GRADLE_BINARY_UNAVAILABLE", "android-sdk:android.jar");
+                        reasons.merge(problem.reason(), 1L, Long::sum);
+                        gaps.add(gap(context, build, row.identity(), problem));
+                    }
+                } catch (IOException unavailable) {
+                    var problem = new GradleDependencyArtifactResolver.Problem("GRADLE_BINARY_UNAVAILABLE", "android-sdk:android.jar");
+                    reasons.merge(problem.reason(), 1L, Long::sum);
+                    gaps.add(gap(context, build, row.identity(), problem));
                 }
             }
             recovered+=contextBinaries.size();
             allBinaries.addAll(contextBinaries);
             var effectiveIdentity=localAdded.isEmpty()?row.identity():com.evolution.analysis.contract.serialization.CanonicalJson.sha256(
                     List.of(row.identity(),localAdded.stream().map(BinaryInput::entry).toList()));
-            var set=build.modules().stream().flatMap(m->m.sourcePlan().sourceSets().stream()).filter(s->s.module().equals(row.sourceSet().module())&&s.kind()==row.sourceSet().kind()&&s.name().equals(row.sourceSet().name())).findFirst().orElseThrow();
             var platform=set.platformRelease().value().flatMap(v->{try{return Optional.ofNullable(platforms.get(Integer.parseInt(v)));}catch(NumberFormatException invalid){return Optional.empty();}}).or(()->fallback);
             if(platform.isPresent()) {
                 var peers=new LinkedHashSet<UniversalSourceIngestion.SourceSet>();
@@ -99,6 +171,45 @@ public final class GradleScan {
                 "trust","PASSIVE_RECOVERY","effectiveGradleContext",false,"acquisitionReceipts",result.acquisitions().stream().map(a->a.identity()).toList()));
         if(prior.resolutions().isEmpty())summary.put("mode",policy.remoteRepositories().isEmpty()?"PASSIVE_CACHE_THEN_ISOLATED_REQUIREMENT":"EXPLICIT_ARTIFACT_ACQUISITION");
         return new MavenScan.Inputs(Map.copyOf(resolutions),prior.externalPoms(),List.copyOf(gaps),Map.copyOf(summary),List.copyOf(ledgers));
+    }
+    private static OptionalInt findAndroidCompileSdk(
+            UniversalBuildModel build,
+            SourcePlanModel.SourceSetPlan set,
+            List<com.evolution.analysis.contract.identity.ModuleIdentity> projects) {
+        var own = set.compilerSettings().get("android.compileSdk");
+        if (own != null && own.value().isPresent()) {
+            try { return OptionalInt.of(Integer.parseInt(own.value().orElseThrow())); }
+            catch (NumberFormatException ignored) { /* Preserve fallback to sibling/plugin check. */ }
+        }
+        for (var peerId : projects) {
+            for (var module : build.modules()) {
+                if (!module.descriptor().identity().equals(peerId)) continue;
+                for (var peerSet : module.sourcePlan().sourceSets()) {
+                    if (peerSet.kind() != SourcePlanModel.Kind.MAIN) continue;
+                    var peerSdk = peerSet.compilerSettings().get("android.compileSdk");
+                    if (peerSdk != null && peerSdk.value().isPresent()) {
+                        try { return OptionalInt.of(Integer.parseInt(peerSdk.value().orElseThrow())); }
+                        catch (NumberFormatException ignored) { /* Continue scanning peers. */ }
+                    }
+                }
+            }
+        }
+        return OptionalInt.empty();
+    }
+    private static boolean isAndroidModule(
+            UniversalBuildModel build,
+            SourcePlanModel.SourceSetPlan set,
+            List<com.evolution.analysis.contract.identity.ModuleIdentity> projects) {
+        var relevant = new HashSet<com.evolution.analysis.contract.identity.ModuleIdentity>(projects);
+        relevant.add(set.module());
+        for (var module : build.modules()) {
+            if (!relevant.contains(module.descriptor().identity())) continue;
+            for (var plugin : module.sourcePlan().plugins()) {
+                String id = plugin.coordinate();
+                if (id.startsWith("com.android.") || id.equals("org.jetbrains.kotlin.android")) return true;
+            }
+        }
+        return false;
     }
     private static void collectLocalJars(UniversalBuildModel.Module module,SourcePlanModel.Kind kind,boolean exported,Set<String> target) {
         for(var dep:module.dependencies())if(dep.configuration().endsWith(".local-file")) {
