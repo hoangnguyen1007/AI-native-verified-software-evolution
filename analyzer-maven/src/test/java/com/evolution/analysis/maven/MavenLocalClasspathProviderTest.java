@@ -477,6 +477,91 @@ class MavenLocalClasspathProviderTest {
                 .anyMatch(problem -> problem.reason() == Reason.CACHE_ROOT_NOT_FOUND));
     }
 
+    @Test
+    void skipsTestAndCustomManifestsWhenIncludeTestsIsFalseAndMapsOsgiBundleType() throws Exception {
+        var fixture = build(Map.of("pom.xml", pom("app", "<dependencies>"
+                + "<dependency><groupId>ext</groupId><artifactId>osgi-lib</artifactId><version>1</version><type>bundle</type></dependency>"
+                + dependency("ext", "test-only", "1", "test", false, "")
+                + "</dependencies>")));
+        artifact("ext", "osgi-lib", "1", "<packaging>bundle</packaging>", true);
+        // Intentionally omit ext:test-only from cache: MAIN-only resolution must never attempt to fetch it!
+
+        var mainOnly = new MavenLocalClasspathProvider(cacheRoot(), false).resolve(
+                new ClasspathResolutionRequest(fixture.request(), fixture.model(), POLICY));
+        assertEquals(List.of(SourcePlanModel.Kind.MAIN),
+                mainOnly.manifests().stream().map(Manifest::sourceSet).toList());
+        var main = manifest(mainOnly, ".", SourcePlanModel.Kind.MAIN);
+        assertEquals(List.of("ext:osgi-lib:1@jar"), names(main));
+        assertEquals(Status.COMPLETE, main.status(), () -> main.problems().toString());
+        assertTrue(mainOnly.attempts().stream().noneMatch(a -> a.coordinate().gav().artifactId().equals("test-only")),
+                "Test-only dependencies must not be attempted when includeTests=false");
+    }
+
+    @Test
+    void deterministicJdkProfilesActivateWithoutHostLeakageAndRelocationChainsResolveOrRejectCycles() throws Exception {
+        assertTrue(MavenArtifactModelReader.matchesJdkActivation("17", "17"));
+        assertTrue(MavenArtifactModelReader.matchesJdkActivation("17.0.9", "17"));
+        assertTrue(MavenArtifactModelReader.matchesJdkActivation("21", "[11,)"));
+        assertFalse(MavenArtifactModelReader.matchesJdkActivation("1.8", "[11,)"));
+        assertTrue(MavenArtifactModelReader.matchesJdkActivation("17", "!1.8"));
+        assertFalse(MavenArtifactModelReader.matchesJdkActivation("1.8.0_392", "!1.8"));
+
+        var jdk17Policy = new BuildModelPolicy(List.of(), List.of(), Map.of("java.version", "17"), 100_000, 100, 32);
+        var fixture = build(Map.of("pom.xml", pom("app", "<dependencies>"
+                + dependency("ext", "jdk-aware", "1", "compile", false, "")
+                + dependency("ext", "legacy", "1", "compile", false, "")
+                + dependency("ext", "cycle-a", "1", "compile", false, "")
+                + "</dependencies>")), Set.of(BuildModelResult.Reason.MODEL_WARNING), jdk17Policy);
+
+        artifact("ext", "jdk-aware", "1", """
+                <profiles>
+                  <profile><id>java17</id><activation><jdk>[11,)</jdk></activation>
+                    <dependencies><dependency><groupId>ext</groupId><artifactId>modern-dep</artifactId><version>1</version></dependency></dependencies>
+                  </profile>
+                  <profile><id>java8-only</id><activation><jdk>1.8</jdk></activation>
+                    <dependencies><dependency><groupId>ext</groupId><artifactId>legacy-jdk8-dep</artifactId><version>1</version></dependency></dependencies>
+                  </profile>
+                </profiles>
+                """, true);
+        artifact("ext", "modern-dep", "1", "", true);
+        artifact("ext", "legacy-jdk8-dep", "1", "", true);
+
+        // 2-hop relocation chain: legacy:1 -> middle:1 -> target:2 -> target-leaf:1
+        artifact("ext", "legacy", "1", "<distributionManagement><relocation><groupId>ext</groupId>"
+                + "<artifactId>middle</artifactId><version>1</version></relocation></distributionManagement>", true);
+        artifact("ext", "middle", "1", "<distributionManagement><relocation><groupId>ext</groupId>"
+                + "<artifactId>target</artifactId><version>2</version></relocation></distributionManagement>", true);
+        artifact("ext", "target", "2", "<dependencies>"
+                + dependency("ext", "target-leaf", "1", "compile", false, "") + "</dependencies>", true);
+        artifact("ext", "target-leaf", "1", "", true);
+
+        // Cyclic relocation: cycle-a:1 -> cycle-b:1 -> cycle-a:1
+        artifact("ext", "cycle-a", "1", "<distributionManagement><relocation><groupId>ext</groupId>"
+                + "<artifactId>cycle-b</artifactId><version>1</version></relocation></distributionManagement>", false);
+        artifact("ext", "cycle-b", "1", "<distributionManagement><relocation><groupId>ext</groupId>"
+                + "<artifactId>cycle-a</artifactId><version>1</version></relocation></distributionManagement>", false);
+
+        var result = resolve(fixture, POLICY, cacheRoot());
+        var main = manifest(result, ".", SourcePlanModel.Kind.MAIN);
+
+        assertTrue(names(main).contains("ext:jdk-aware:1@jar"));
+        assertTrue(names(main).contains("ext:modern-dep:1@jar"));
+        assertFalse(names(main).contains("ext:legacy-jdk8-dep:1@jar"));
+        assertFalse(main.problems().stream().anyMatch(p -> p.reason() == Reason.UNSUPPORTED_PROFILE_ACTIVATION),
+                "Explicitly configured java.version must evaluate <jdk> profiles deterministically");
+
+        assertTrue(names(main).contains("ext:target:2@jar"));
+        assertTrue(names(main).contains("ext:target-leaf:1@jar"));
+        assertFalse(names(main).contains("ext:legacy:1@jar"));
+        assertFalse(names(main).contains("ext:middle:1@jar"));
+        assertTrue(entry(main, "ext:target:2@jar").evidence().stream()
+                .anyMatch(e -> e.logicalId().contains("legacy-1.pom")),
+                "Relocated entry must retain provenance of the relocation POM chain");
+
+        assertTrue(main.problems().stream().anyMatch(p -> p.reason() == Reason.RELOCATION_UNSUPPORTED
+                && p.subject().equals("ext:cycle-a:1")));
+    }
+
     private void assertProblem(Fixture fixture, ClasspathResolutionPolicy policy, Reason reason) {
         var result = resolve(fixture, policy, cacheRoot());
         assertTrue(manifest(result, ".", SourcePlanModel.Kind.MAIN).problems().stream()

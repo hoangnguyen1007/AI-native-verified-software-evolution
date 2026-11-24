@@ -8,6 +8,8 @@ import com.evolution.analysis.contract.serialization.CanonicalJson;
 import com.evolution.analysis.dependency.*;
 import com.evolution.analysis.frontend.BinaryInput;
 import com.evolution.analysis.ingestion.UniversalSourceIngestion;
+import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.util.*;
 
@@ -45,23 +47,62 @@ public final class GradleDependencyArtifactResolver {
         final Map<MavenCoordinate,MavenArtifactModelReader.DescriptorOutcome> descriptors=new HashMap<>();
         final Set<Problem> acquisitionProblems=new TreeSet<>();
         long bytes;int requested;
+        private LocalArtifactCache sharedCache;
+        private MavenArtifactModelReader sharedReader;
+        private LocalArtifactCache.RootFailure cacheFailure;
         Session(UniversalBuildModel model,DependencyAcquisitionPolicy policy){this.model=model;this.policy=policy;}
         void acquire(ArtifactCoordinate coordinate) {
-            check();if(!attempted.add(coordinate))return;
-            if(requested>=policy.maxCoordinates()||bytes>=policy.maxTotalBytes()){acquisitionProblems.add(new Problem("GRADLE_ACQUISITION_WORKER_REQUIRED",coordinate.notation()));return;}
-            var result=provider.acquire(DependencyAcquisitionRequest.of(List.of(coordinate),policy.withLimits(1,policy.maxTotalBytes()-bytes)));
-            acquisitions.add(result);requested++;bytes+=result.bytesConsumed();
-            result.outcomes().forEach(row->row.artifact().ifPresent(value->artifacts.put(coordinate,value)));
-            for(var row:result.outcomes())row.failureReason().ifPresent(reason->acquisitionProblems.add(new Problem(reason.name(),coordinate.notation())));
+            acquireBatch(List.of(coordinate));
         }
-        LocalArtifactCache cache()throws LocalArtifactCache.RootFailure {
-            return new LocalArtifactCache(directory,Map.of(),new ClasspathResolutionPolicy(policy.maxCoordinates(),Math.max(policy.maxCoordinates(),1),4_000_000,policy.maxArtifactBytes(),policy.maxTotalBytes(),64),this::acquire);
+        void acquireBatch(Collection<ArtifactCoordinate> coordinates) {
+            check();
+            if(coordinates.isEmpty())return;
+            var unique=new TreeSet<ArtifactCoordinate>();
+            for(var coordinate:coordinates)if(!attempted.contains(coordinate))unique.add(coordinate);
+            if(unique.isEmpty())return;
+            int remainingCoords=policy.maxCoordinates()-requested;
+            long remainingBytes=policy.maxTotalBytes()-bytes;
+            if(remainingCoords<=0||remainingBytes<=0) {
+                for(var coordinate:unique){attempted.add(coordinate);acquisitionProblems.add(new Problem("GRADLE_ACQUISITION_WORKER_REQUIRED",coordinate.notation()));}
+                return;
+            }
+            var sorted=new ArrayList<>(unique);
+            var admitted=sorted.size()<=remainingCoords?sorted:sorted.subList(0,remainingCoords);
+            for(int i=admitted.size();i<sorted.size();i++) {
+                var overflow=sorted.get(i);attempted.add(overflow);
+                acquisitionProblems.add(new Problem("GRADLE_ACQUISITION_WORKER_REQUIRED",overflow.notation()));
+            }
+            attempted.addAll(admitted);
+            var result=provider.acquire(DependencyAcquisitionRequest.of(admitted,policy.withLimits(admitted.size(),remainingBytes)));
+            acquisitions.add(result);requested+=admitted.size();bytes+=result.bytesConsumed();
+            for(var row:result.outcomes()) {
+                var coord=row.requirement().coordinate();
+                row.artifact().ifPresent(value->artifacts.put(coord,value));
+                row.failureReason().ifPresent(reason->acquisitionProblems.add(new Problem(reason.name(),coord.notation())));
+            }
+        }
+        private MavenArtifactModelReader reader()throws LocalArtifactCache.RootFailure {
+            if(cacheFailure!=null)throw cacheFailure;
+            if(sharedReader==null) {
+                try {
+                    int maxFiles=Math.min(200_000,Math.max(policy.maxCoordinates()*4,16));
+                    sharedCache=new LocalArtifactCache(directory,Map.of(),new ClasspathResolutionPolicy(policy.maxCoordinates(),maxFiles,4_000_000,policy.maxArtifactBytes(),policy.maxTotalBytes(),64),this::acquire);
+                    sharedReader=new MavenArtifactModelReader(sharedCache,new BuildModelPolicy(List.of(),List.of(),Map.of(),4_000_000,Math.max(1,policy.maxCoordinates()),64));
+                } catch(LocalArtifactCache.RootFailure failure) {
+                    cacheFailure=failure;throw failure;
+                }
+            }
+            return sharedReader;
         }
         MavenArtifactModelReader.DescriptorOutcome descriptor(MavenCoordinate coordinate) {
             return descriptors.computeIfAbsent(coordinate,key->{
-                try{return new MavenArtifactModelReader(cache(),new BuildModelPolicy(List.of(),List.of(),Map.of(),4_000_000,Math.max(1,policy.maxCoordinates()),64)).descriptor(key);}
+                try{return reader().descriptor(key);}
                 catch(LocalArtifactCache.RootFailure failure){return new MavenArtifactModelReader.DescriptorOutcome(Optional.empty(),List.of(new MavenArtifactModelReader.Issue(failure.reason,key.notation(),ExactClasspathResult.Requirement.ARTIFACT_POM,List.of())));}
             });
+        }
+        private boolean pomMissingOnDisk(MavenCoordinate gav) {
+            Path path=directory.resolve(new ArtifactCoordinate(gav,"pom","").repositoryPath().replace('/',java.io.File.separatorChar)).normalize();
+            return !path.startsWith(directory)||!Files.exists(path,LinkOption.NOFOLLOW_LINKS);
         }
         Context context(UniversalBuildModel.Module module,SourcePlanModel.SourceSetPlan set) {
             var problems=new TreeSet<Problem>();var metadata=new TreeMap<String,BuildModelResult.PomEvidence>();
@@ -77,44 +118,87 @@ public final class GradleDependencyArtifactResolver {
             var versions=new TreeMap<String,Set<MavenCoordinate>>();var binaries=new LinkedHashMap<ArtifactCoordinate,List<BinaryInput>>();
             var aarDigests=new TreeMap<String,ContentDigest>();
             var visited=new HashSet<Pending>();int expanded=0;
+            int maxDepth=Math.min(64,policy.maxPasses());
             while(!queue.isEmpty()) {
-                check();var pending=queue.removeFirst();if(!visited.add(new Pending(pending.coordinate(),pending.exclusions(),0)))continue;var artifact=pending.coordinate();
-                if(pending.depth()>Math.min(64,policy.maxPasses())||++expanded>policy.maxCoordinates()){problems.add(new Problem("GRADLE_DEPENDENCY_WORKER_REQUIRED",artifact.notation()));continue;}
-                var outcome=descriptor(artifact.gav());
-                outcome.issues().forEach(i->problems.add(new Problem(i.reason().name(),i.subject())));
-                if(outcome.issues().stream().anyMatch(i->i.reason()==ExactClasspathResult.Reason.RELOCATION_UNSUPPORTED))continue;
-                if(artifact.extension().equals("jar")&&outcome.descriptor().filter(d->d.packaging().equalsIgnoreCase("aar")).isPresent())
-                    artifact=new ArtifactCoordinate(artifact.gav(),"aar",artifact.classifier());
-                versions.computeIfAbsent(artifact.conflictKey(),ignored->new HashSet<>()).add(artifact.gav());
-                acquire(artifact);var verified=artifacts.get(artifact);
-                if(verified!=null) {
-                    if(artifact.extension().equals("aar")) {
-                        aarDigests.put(artifact.notation(),verified.contentDigest());
-                        var recovered=androidInputs.computeIfAbsent(artifact,key->recoverAndroidInputs(verified));
-                        if(recovered.isPresent())binaries.putIfAbsent(artifact,recovered.orElseThrow());
-                        else problems.add(new Problem("GRADLE_BINARY_UNAVAILABLE",artifact.notation()));
-                    } else {
-                        binaries.putIfAbsent(artifact,List.of(new BinaryInput(artifact.classpathEntry(verified.contentDigest()),directory.resolve(artifact.repositoryPath()))));
+                check();
+                int frontierSize=queue.size();
+                var admittedLevel=new ArrayList<Pending>(frontierSize);
+                for(int i=0;i<frontierSize;i++) {
+                    check();
+                    var pending=queue.removeFirst();
+                    if(!visited.add(new Pending(pending.coordinate(),pending.exclusions(),0)))continue;
+                    if(pending.depth()>maxDepth||++expanded>policy.maxCoordinates()){problems.add(new Problem("GRADLE_DEPENDENCY_WORKER_REQUIRED",pending.coordinate().notation()));continue;}
+                    admittedLevel.add(pending);
+                }
+                if(admittedLevel.isEmpty())continue;
+                // Step 1: Parallel batch prefetch of missing POMs for this BFS frontier.
+                var missingPoms=new ArrayList<ArtifactCoordinate>();
+                for(var pending:admittedLevel) {
+                    var gav=pending.coordinate().gav();
+                    if(!descriptors.containsKey(gav)&&pomMissingOnDisk(gav)) {
+                        var pomCoord=new ArtifactCoordinate(gav,"pom","");
+                        if(!attempted.contains(pomCoord))missingPoms.add(pomCoord);
                     }
-                } else problems.add(new Problem("GRADLE_BINARY_UNAVAILABLE",artifact.notation()));
-                if(outcome.descriptor().isEmpty())continue;
-                var descriptor=outcome.descriptor().orElseThrow();descriptor.evidence().forEach(e->metadata.put(e.logicalId(),new BuildModelResult.PomEvidence(e.logicalId(),e.digest())));
-                for(var child:descriptor.dependencies()) {
-                    // POM-backed API variants expose compile-scoped dependencies.
-                    // Runtime implementation details cannot poison a compile context.
-                    if(child.optional()||!child.scope().equals("compile"))continue;
-                    String childKey=child.groupId()+":"+child.artifactId();
-                    if(excluded(pending.exclusions(),childKey))continue;
-                    String childType=child.type().equals("bundle")?"jar":child.type();
-                    if(!Set.of("jar","aar").contains(childType)){problems.add(new Problem("GRADLE_TRANSITIVE_VARIANT_REQUIRED",child.groupId()+":"+child.artifactId()));continue;}
-                    if(!fixed(child.version())){problems.add(new Problem("GRADLE_VERSION_SELECTION_REQUIRED",childKey));continue;}
-                    var exclusions=new TreeSet<>(pending.exclusions());exclusions.addAll(child.exclusions());
-                    MavenCoordinate c;ArtifactCoordinate childArtifact;
-                    try{c=new MavenCoordinate(child.groupId(),child.artifactId(),child.version());childArtifact=new ArtifactCoordinate(c,childType,child.classifier());}
-                    catch(IllegalArgumentException invalid){problems.add(new Problem("GRADLE_TRANSITIVE_VARIANT_REQUIRED",childKey));continue;}
-                    var constraint=management.get(childKey);
-                    if(constraint!=null&&(constraint.size()!=1||!constraint.contains(c))){problems.add(new Problem("GRADLE_VERSION_CONFLICT",childKey));versions.computeIfAbsent(childKey+":"+child.classifier()+"@"+childType,ignored->new HashSet<>()).addAll(constraint);}
-                    queue.addLast(new Pending(childArtifact,Set.copyOf(exclusions),pending.depth()+1));
+                }
+                if(!missingPoms.isEmpty())acquireBatch(missingPoms);
+                // Step 2: Resolve descriptors in deterministic frontier order and prepare binary prefetch batch.
+                record ResolvedStep(Pending pending,ArtifactCoordinate artifact,MavenArtifactModelReader.DescriptorOutcome outcome,boolean withheld) {}
+                var steps=new ArrayList<ResolvedStep>(admittedLevel.size());
+                var missingBinaries=new ArrayList<ArtifactCoordinate>();
+                for(var pending:admittedLevel) {
+                    check();
+                    var artifact=pending.coordinate();
+                    var outcome=descriptor(artifact.gav());
+                    outcome.issues().forEach(i->problems.add(new Problem(i.reason().name(),i.subject())));
+                    if(outcome.issues().stream().anyMatch(i->i.reason()==ExactClasspathResult.Reason.RELOCATION_UNSUPPORTED)) {
+                        steps.add(new ResolvedStep(pending,artifact,outcome,true));
+                        continue;
+                    }
+                    if(outcome.descriptor().isPresent()&&outcome.descriptor().orElseThrow().relocatedTo().isPresent()) {
+                        artifact=new ArtifactCoordinate(outcome.descriptor().orElseThrow().relocatedTo().orElseThrow(),artifact.extension(),artifact.classifier());
+                    }
+                    if(artifact.extension().equals("jar")&&outcome.descriptor().filter(d->d.packaging().equalsIgnoreCase("aar")).isPresent())
+                        artifact=new ArtifactCoordinate(artifact.gav(),"aar",artifact.classifier());
+                    steps.add(new ResolvedStep(pending,artifact,outcome,false));
+                    if(!attempted.contains(artifact))missingBinaries.add(artifact);
+                }
+                // Step 3: Parallel batch prefetch of binary JAR/AAR artifacts for this BFS frontier.
+                if(!missingBinaries.isEmpty())acquireBatch(missingBinaries);
+                // Step 4: Deterministic merge and child enqueue in exact frontier order.
+                for(var step:steps) {
+                    if(step.withheld())continue;
+                    var pending=step.pending();var artifact=step.artifact();var outcome=step.outcome();
+                    versions.computeIfAbsent(artifact.conflictKey(),ignored->new HashSet<>()).add(artifact.gav());
+                    var verified=artifacts.get(artifact);
+                    if(verified!=null) {
+                        if(artifact.extension().equals("aar")) {
+                            aarDigests.put(artifact.notation(),verified.contentDigest());
+                            var recovered=androidInputs.computeIfAbsent(artifact,key->recoverAndroidInputs(verified));
+                            if(recovered.isPresent())binaries.putIfAbsent(artifact,recovered.orElseThrow());
+                            else problems.add(new Problem("GRADLE_BINARY_UNAVAILABLE",artifact.notation()));
+                        } else {
+                            binaries.putIfAbsent(artifact,List.of(new BinaryInput(artifact.classpathEntry(verified.contentDigest()),directory.resolve(artifact.repositoryPath()))));
+                        }
+                    } else problems.add(new Problem("GRADLE_BINARY_UNAVAILABLE",artifact.notation()));
+                    if(outcome.descriptor().isEmpty())continue;
+                    var descriptor=outcome.descriptor().orElseThrow();descriptor.evidence().forEach(e->metadata.put(e.logicalId(),new BuildModelResult.PomEvidence(e.logicalId(),e.digest())));
+                    for(var child:descriptor.dependencies()) {
+                        // POM-backed API variants expose compile-scoped dependencies.
+                        // Runtime implementation details cannot poison a compile context.
+                        if(child.optional()||!child.scope().equals("compile"))continue;
+                        String childKey=child.groupId()+":"+child.artifactId();
+                        if(excluded(pending.exclusions(),childKey))continue;
+                        String childType=child.type().equalsIgnoreCase("bundle")?"jar":child.type();
+                        if(!Set.of("jar","aar").contains(childType)){problems.add(new Problem("GRADLE_TRANSITIVE_VARIANT_REQUIRED",child.groupId()+":"+child.artifactId()));continue;}
+                        if(!fixed(child.version())){problems.add(new Problem("GRADLE_VERSION_SELECTION_REQUIRED",childKey));continue;}
+                        var exclusions=new TreeSet<>(pending.exclusions());exclusions.addAll(child.exclusions());
+                        MavenCoordinate c;ArtifactCoordinate childArtifact;
+                        try{c=new MavenCoordinate(child.groupId(),child.artifactId(),child.version());childArtifact=new ArtifactCoordinate(c,childType,child.classifier());}
+                        catch(IllegalArgumentException invalid){problems.add(new Problem("GRADLE_TRANSITIVE_VARIANT_REQUIRED",childKey));continue;}
+                        var constraint=management.get(childKey);
+                        if(constraint!=null&&(constraint.size()!=1||!constraint.contains(c))){problems.add(new Problem("GRADLE_VERSION_CONFLICT",childKey));versions.computeIfAbsent(childKey+":"+child.classifier()+"@"+childType,ignored->new HashSet<>()).addAll(constraint);}
+                        queue.addLast(new Pending(childArtifact,Set.copyOf(exclusions),pending.depth()+1));
+                    }
                 }
             }
             binaries.entrySet().removeIf(row->{if(versions.getOrDefault(row.getKey().conflictKey(),Set.of()).size()<=1)return false;problems.add(new Problem("GRADLE_VERSION_CONFLICT",row.getKey().conflictKey()));return true;});

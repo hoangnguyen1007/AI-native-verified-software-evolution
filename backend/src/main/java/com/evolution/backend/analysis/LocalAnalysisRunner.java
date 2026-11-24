@@ -43,8 +43,8 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
     private static final System.Logger LOG = System.getLogger(LocalAnalysisRunner.class.getName());
     private static final VersionedIdentifier POLICY_EVALUATION_PROVIDER = new VersionedIdentifier("policy.evaluation",
             "local-runner-v1");
-    private static final DependencyAcquisitionPolicy CACHE_ONLY = new DependencyAcquisitionPolicy(1024, 64_000_000,
-            256_000_000, 64, List.of(), 5000, 15000, 0);
+    static final DependencyAcquisitionPolicy CACHE_ONLY = new DependencyAcquisitionPolicy(4096, 64_000_000,
+            MavenScan.DEFAULT_DEPENDENCY_TOTAL_BYTES, 64, List.of(), 5000, 15000, 0, 8);
     private static final ExecutorService POLYGLOT_WORKERS = Executors.newFixedThreadPool(
             Math.max(1, Math.min(4, Runtime.getRuntime().availableProcessors() / 2)),
             runnable -> {
@@ -69,18 +69,47 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
         Optional<AnalysisJobs.Reused> reuse(ContentDigest key);
 
         void withholdReuse();
+
+        default void recordCacheMetrics(Map<String, Long> metrics) {
+        }
     }
 
     public record PolicyInput(byte[] bytes, Scope scoreScope) {
-        public PolicyInput{bytes=bytes.clone();Objects.requireNonNull(scoreScope);if(bytes.length>262_144)throw new IllegalArgumentException("Policy limit");}@Override public byte[] bytes() {
+        public PolicyInput {
+            bytes = bytes.clone();
+            Objects.requireNonNull(scoreScope);
+            if (bytes.length > 262_144)
+                throw new IllegalArgumentException("Policy limit");
+        }
+
+        @Override
+        public byte[] bytes() {
             return bytes.clone();
         }
     }
 
     public record SpringInput(Map<UniversalSourceIngestion.SourceSet, SourceToSpringPlan.Scope> scopes,
-            Optional<ConfigurationSpace> space, Optional<ConfigurationAssignment> baseline) {
-        public SpringInput{scopes=Map.copyOf(scopes);Objects.requireNonNull(space);Objects.requireNonNull(baseline);if(space.isPresent()!=baseline.isPresent())throw new IllegalArgumentException("Space requires exact baseline");}public static SpringInput absent() {
-            return new SpringInput(Map.of(), Optional.empty(), Optional.empty());
+            Optional<ConfigurationSpace> space, Optional<ConfigurationAssignment> baseline,
+            boolean autoMultiConfigEnabled) {
+        public SpringInput(Map<UniversalSourceIngestion.SourceSet, SourceToSpringPlan.Scope> scopes,
+                Optional<ConfigurationSpace> space, Optional<ConfigurationAssignment> baseline) {
+            this(scopes, space, baseline, false);
+        }
+
+        public SpringInput {
+            scopes = Map.copyOf(scopes);
+            Objects.requireNonNull(space);
+            Objects.requireNonNull(baseline);
+            if (space.isPresent() != baseline.isPresent())
+                throw new IllegalArgumentException("Space requires exact baseline");
+        }
+
+        public static SpringInput absent() {
+            return new SpringInput(Map.of(), Optional.empty(), Optional.empty(), false);
+        }
+
+        public static SpringInput autoMultiConfig() {
+            return new SpringInput(Map.of(), Optional.empty(), Optional.empty(), true);
         }
     }
 
@@ -91,14 +120,31 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
     public record Input(Path source, RepositoryIdentity repository, Path jdk, int release, Path mavenCache,
             Optional<String> revision, boolean dirty, boolean includeTests, List<String> exclusions,
             Optional<PolicyInput> policy, SpringInput spring) {
-        public Input{source=Objects.requireNonNull(source).toAbsolutePath().normalize();jdk=Objects.requireNonNull(jdk).toAbsolutePath().normalize();mavenCache=Objects.requireNonNull(mavenCache).toAbsolutePath().normalize();Objects.requireNonNull(repository);Objects.requireNonNull(revision);exclusions=List.copyOf(exclusions);Objects.requireNonNull(policy);Objects.requireNonNull(spring);if(release<8||release>26)throw new IllegalArgumentException("Invalid target release");}
+        public Input {
+            source = Objects.requireNonNull(source).toAbsolutePath().normalize();
+            jdk = Objects.requireNonNull(jdk).toAbsolutePath().normalize();
+            mavenCache = Objects.requireNonNull(mavenCache).toAbsolutePath().normalize();
+            Objects.requireNonNull(repository);
+            Objects.requireNonNull(revision);
+            exclusions = List.copyOf(exclusions);
+            Objects.requireNonNull(policy);
+            Objects.requireNonNull(spring);
+            if (release < 8 || release > 26)
+                throw new IllegalArgumentException("Invalid target release");
+        }
     }
 
     private record PlatformCacheKey(Path jdk, int release) {
     }
 
     private static final int PLATFORM_CACHE_CAPACITY = 6;
-    private static final Map<PlatformCacheKey, PlatformSymbolResult> PLATFORM_CACHE=Collections.synchronizedMap(new LinkedHashMap<>(8,0.75f,true){@Override protected boolean removeEldestEntry(Map.Entry<PlatformCacheKey,PlatformSymbolResult>eldest){return size()>PLATFORM_CACHE_CAPACITY;}});
+    private static final Map<PlatformCacheKey, PlatformSymbolResult> PLATFORM_CACHE = Collections
+            .synchronizedMap(new LinkedHashMap<>(8, 0.75f, true) {
+                @Override
+                protected boolean removeEldestEntry(Map.Entry<PlatformCacheKey, PlatformSymbolResult> eldest) {
+                    return size() > PLATFORM_CACHE_CAPACITY;
+                }
+            });
 
     public static PlatformSymbolResult acquireCachedPlatform(Path jdk, int release) {
         return acquirePlatform(jdk, release);
@@ -116,6 +162,7 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
             PLATFORM_CACHE.put(key, acquired);
         return acquired;
     }
+
     public record NativeExecutionConfig(
             String buildMode,
             String buildProfile,
@@ -143,9 +190,11 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
                 throw new IllegalArgumentException("Incomplete semantic capture configuration");
             }
         }
+
         public static NativeExecutionConfig fromEnvironment() {
             String mode = System.getProperty("evo.workbench.buildMode", "auto");
-            if (!Set.of("auto", "required", "off").contains(mode)) mode = "auto";
+            if (!Set.of("auto", "required", "off").contains(mode))
+                mode = "auto";
             String profile = System.getProperty("evo.workbench.buildProfile", "default");
             Optional<Path> javaCapture = optionalPathProperty("evo.workbench.javaCapture");
             Optional<Path> semanticStore = optionalPathProperty("evo.workbench.semanticStore");
@@ -160,12 +209,15 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
                 semanticPolicy = Optional.empty();
                 semanticAuthority = Optional.empty();
             }
-            return new NativeExecutionConfig(mode, profile, javaCapture, semanticStore, semanticPlan, semanticPolicy, semanticAuthority, androidSdk);
+            return new NativeExecutionConfig(mode, profile, javaCapture, semanticStore, semanticPlan, semanticPolicy,
+                    semanticAuthority, androidSdk);
         }
+
         private static Optional<Path> optionalPathProperty(String name) {
             String value = System.getProperty(name);
             return value == null || value.isBlank() ? Optional.empty() : Optional.of(Path.of(value.strip()));
         }
+
         private static Optional<ContentDigest> optionalDigestProperty(String name) {
             String value = System.getProperty(name);
             return value == null || value.isBlank() ? Optional.empty() : Optional.of(new ContentDigest(value.strip()));
@@ -176,6 +228,7 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
     private final Path intakeDirectory;
     private final Optional<DependencyAcquisitionPolicy> artifactPolicy;
     private final NativeExecutionConfig nativeConfig;
+    private final Optional<Path> graphStoreDirectory;
 
     public LocalAnalysisRunner(Input input) {
         this(input, input.source().resolve(".evo/acquisition"));
@@ -186,13 +239,21 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
     }
 
     LocalAnalysisRunner(Input input, Path intakeDirectory, Optional<DependencyAcquisitionPolicy> artifactPolicy) {
-        this(input,intakeDirectory,artifactPolicy,NativeExecutionConfig.fromEnvironment());
+        this(input, intakeDirectory, artifactPolicy, NativeExecutionConfig.fromEnvironment(), Optional.empty());
     }
-    public LocalAnalysisRunner(Input input,Path intakeDirectory,Optional<DependencyAcquisitionPolicy> artifactPolicy,NativeExecutionConfig nativeConfig) {
+
+    public LocalAnalysisRunner(Input input, Path intakeDirectory, Optional<DependencyAcquisitionPolicy> artifactPolicy,
+            NativeExecutionConfig nativeConfig) {
+        this(input, intakeDirectory, artifactPolicy, nativeConfig, Optional.empty());
+    }
+
+    public LocalAnalysisRunner(Input input, Path intakeDirectory, Optional<DependencyAcquisitionPolicy> artifactPolicy,
+            NativeExecutionConfig nativeConfig, Optional<Path> graphStoreDirectory) {
         this.input = Objects.requireNonNull(input);
         this.intakeDirectory = intakeDirectory.toAbsolutePath().normalize();
         this.artifactPolicy = Objects.requireNonNull(artifactPolicy);
         this.nativeConfig = Objects.requireNonNull(nativeConfig);
+        this.graphStoreDirectory = Objects.requireNonNull(graphStoreDirectory).map(p -> p.toAbsolutePath().normalize());
     }
 
     public AnalysisJobs.Registration registration(String id) {
@@ -245,6 +306,11 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
             @Override
             public void withholdReuse() {
                 control.withholdReuse();
+            }
+
+            @Override
+            public void recordCacheMetrics(Map<String, Long> metrics) {
+                control.recordCacheMetrics(metrics);
             }
         };
         adapter.stage(AnalysisJobs.Stage.ACQUISITION);
@@ -344,12 +410,15 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
             if (receipt.manifest().isEmpty())
                 throw new IOException(receipt.reason());
             control.stage(AnalysisJobs.Stage.PLATFORM);
-            readiness = intake.readiness(control.id(),ReadinessPlanner.Policy.comprehensive(),control,control.mode().isFastArchitecture());
+            readiness = intake.readiness(control.id(), ReadinessPlanner.Policy.comprehensive(), control,
+                    control.mode().isFastArchitecture());
             if (nativeConfig.javaCapture().isEmpty() && !"off".equals(nativeConfig.buildMode())) {
-                var nativeBuild = runNativeBuild(nativeConfig.buildProfile(), source, readiness, control.id(), intake, control);
+                var nativeBuild = runNativeBuild(nativeConfig.buildProfile(), source, readiness, control.id(), intake,
+                        control);
                 if ("required".equals(nativeConfig.buildMode())
                         && !Set.of("BUILT", "NOT_APPLICABLE").contains(nativeBuild.status())) {
-                    var snapshot = SnapshotIdentity.from(input.repository(), receipt.manifest().orElseThrow().inventory());
+                    var snapshot = SnapshotIdentity.from(input.repository(),
+                            receipt.manifest().orElseThrow().inventory());
                     return new AnalysisJobs.Outcome(AnalysisJobs.Completion.FAILED, Optional.empty(), List.of(),
                             List.of(nativeBuildRequiredGap(EvidenceContext.forSnapshot(snapshot), nativeBuild)),
                             Optional.empty(), Optional.empty(), List.of());
@@ -388,12 +457,16 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
                             control.id(), roIntake, readiness,
                             EvidenceContext.forSnapshot(acquisition.snapshot().orElseThrow().identity()),
                             languageEvidence, intakeDirectory.resolve("semantic-work"), control,
-                            digest -> { var f = polyglotBytes.get(digest); return f == null ? null : f.bytes(); },
+                            digest -> {
+                                var f = polyglotBytes.get(digest);
+                                return f == null ? null : f.bytes();
+                            },
                             control.mode().isFastArchitecture(), path -> false);
                     var combinedGaps = new TreeSet<>(outcome.gaps());
                     combinedGaps.addAll(polyglot.gaps());
                     return new AnalysisJobs.Outcome(outcome.completion(), outcome.graph(), outcome.reports(),
-                            List.copyOf(combinedGaps), outcome.acquisition(), outcome.sourceReport(), outcome.inputProblems());
+                            List.copyOf(combinedGaps), outcome.acquisition(), outcome.sourceReport(),
+                            outcome.inputProblems());
                 }
             }
             return outcome;
@@ -443,6 +516,11 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
             public void withholdReuse() {
                 control.withholdReuse();
             }
+
+            @Override
+            public void recordCacheMetrics(Map<String, Long> metrics) {
+                control.recordCacheMetrics(metrics);
+            }
         });
     }
 
@@ -468,64 +546,105 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
             ReadinessPlan readiness,
             boolean verifiedInventory,
             Progress control) throws Exception {
-        var cache=safe(input.mavenCache());
+        var cache = safe(input.mavenCache());
         boolean fast = control.mode().isFastArchitecture();
         var platform = acquirePlatform(safe(input.jdk()), input.release());
         control.checkpoint();
-        var depPolicy = artifactPolicy.orElse(CACHE_ONLY);
-        var models = MavenScan.models(acquisition,cache,depPolicy.remoteRepositories());
+        boolean preferCacheOnly = Boolean.getBoolean("evo.workbench.offline")
+                || (fast && Boolean.getBoolean("evo.workbench.fastCacheOnly"));
+        var depPolicy = preferCacheOnly ? CACHE_ONLY : artifactPolicy.orElse(CACHE_ONLY);
+        var models = MavenScan.models(acquisition, cache, depPolicy.remoteRepositories());
         var defaults = UniversalBuildIngestion.Policy.defaults();
-        var buildPolicy=new UniversalBuildIngestion.Policy(Optional.of(input.release()),Optional.of(input.release()),Optional.of("UTF-8"),32_768,defaults.maxCharacters(),defaults.maxTokens(),128);
-        var decoded=new RepositoryInputDecoder.Prepared(acquisition,new RepositoryInputDecoder.Policy("UTF-8",500_000,100_000_000,fast));
-        var gradleModel=GradleScan.model(decoded,buildPolicy,Map.of());
-        var requiredReleases=new TreeSet<>(MavenScan.platformReleases(models));requiredReleases.addAll(GradleScan.platformReleases(gradleModel));
-        var platformViews=new TreeMap<Integer,PlatformSymbolResult>();platformViews.put(input.release(),platform);
-        var additionalPlatforms=new ArrayList<PlatformSymbolResult>();
-        for(int target:requiredReleases)if(!platformViews.containsKey(target)) {
-            var view=acquirePlatform(safe(input.jdk()), target);
-            platformViews.put(target,view);additionalPlatforms.add(view);
-        }
-        var availablePlatforms=new TreeMap<Integer,com.evolution.analysis.frontend.PlatformInput>();platformViews.forEach((target,view)->view.platform().ifPresent(value->availablePlatforms.put(target,value)));
-        var platformLedgers=additionalPlatforms.isEmpty()?List.<EvidenceAcquisitionLedger>of():List.of(CapabilityGapNormalizer.normalize(
-                EvidenceContext.forSnapshot(acquisition.snapshot().orElseThrow().identity()),EvidenceNormalizationInput.builder().platformResults(additionalPlatforms).build()));
-        var mavenBase=MavenScan.inputs(acquisition,models,cache,platform.platform(),depPolicy,availablePlatforms);
+        var buildPolicy = new UniversalBuildIngestion.Policy(Optional.of(input.release()), Optional.of(input.release()),
+                Optional.of("UTF-8"), 32_768, defaults.maxCharacters(), defaults.maxTokens(), 128);
+        var decoded = new RepositoryInputDecoder.Prepared(acquisition,
+                new RepositoryInputDecoder.Policy("UTF-8", 500_000, 100_000_000, fast));
+        var gradleModel = GradleScan.model(decoded, buildPolicy, Map.of());
+        var requiredReleases = new TreeSet<>(MavenScan.platformReleases(models));
+        requiredReleases.addAll(GradleScan.platformReleases(gradleModel));
+        var platformViews = new TreeMap<Integer, PlatformSymbolResult>();
+        platformViews.put(input.release(), platform);
+        var additionalPlatforms = new ArrayList<PlatformSymbolResult>();
+        for (int target : requiredReleases)
+            if (!platformViews.containsKey(target)) {
+                var view = acquirePlatform(safe(input.jdk()), target);
+                platformViews.put(target, view);
+                additionalPlatforms.add(view);
+            }
+        var availablePlatforms = new TreeMap<Integer, com.evolution.analysis.frontend.PlatformInput>();
+        platformViews
+                .forEach((target, view) -> view.platform().ifPresent(value -> availablePlatforms.put(target, value)));
+        var platformLedgers = additionalPlatforms.isEmpty() ? List.<EvidenceAcquisitionLedger>of()
+                : List.of(CapabilityGapNormalizer.normalize(
+                        EvidenceContext.forSnapshot(acquisition.snapshot().orElseThrow().identity()),
+                        EvidenceNormalizationInput.builder().platformResults(additionalPlatforms).build()));
+        var mavenBase = MavenScan.inputs(acquisition, models, cache, platform.platform(), depPolicy,
+                availablePlatforms);
         Optional<Path> resolvedAndroidSdk = Optional.empty();
         if (nativeConfig.androidSdk().isPresent()) {
             resolvedAndroidSdk = Optional.of(safe(nativeConfig.androidSdk().orElseThrow()));
         }
-        var dependencies=GradleScan.augment(mavenBase,acquisition,gradleModel,cache,platform.platform(),depPolicy,availablePlatforms,resolvedAndroidSdk);
+        var dependencies = GradleScan.augment(mavenBase, acquisition, gradleModel, cache, platform.platform(),
+                depPolicy, availablePlatforms, resolvedAndroidSdk);
         var frontend = new JavaParserFrontend();
+        var javaIncrementalCache = new IncrementalJavaFrontendCache(intakeDirectory.resolve("incremental-cache"));
+        var javaCacheHits = new java.util.concurrent.atomic.AtomicLong();
+        var javaCacheMisses = new java.util.concurrent.atomic.AtomicLong();
         var guarded = new com.evolution.analysis.frontend.ConcurrentSemanticFrontend() {
-            @Override public long estimatedWorkingBytes(com.evolution.analysis.frontend.FrontendRequest request) {
+            @Override
+            public long estimatedWorkingBytes(com.evolution.analysis.frontend.FrontendRequest request) {
                 return frontend.estimatedWorkingBytes(request);
             }
-            @Override public void releaseCompletedContexts() { frontend.releaseCompletedContexts(); }
-            @Override public com.evolution.analysis.frontend.FrontendResult analyze(com.evolution.analysis.frontend.FrontendRequest request) {
+
+            @Override
+            public void releaseCompletedContexts() {
+                frontend.releaseCompletedContexts();
+            }
+
+            @Override
+            public com.evolution.analysis.frontend.FrontendResult analyze(
+                    com.evolution.analysis.frontend.FrontendRequest request) {
                 control.checkpoint();
-                var result=frontend.analyze(request);
+                var cached = javaIncrementalCache.get(request, JavaParserFrontend.PROVIDER);
+                if (cached.isPresent()) {
+                    javaCacheHits.incrementAndGet();
+                    control.checkpoint();
+                    return cached.orElseThrow();
+                }
+                javaCacheMisses.incrementAndGet();
+                var result = frontend.analyze(request);
                 control.checkpoint();
+                javaIncrementalCache.put(request, result);
                 return result;
             }
         };
         var policy = new UniversalArchitecturePipeline.Policy(
-                buildPolicy,decoded.policy(),guarded,JavaParserFrontend.PROVIDER,
-                dependencies.resolutions(),platform.platform(),Optional.of(new MavenBuildModelProvider()),dependencies.externalPoms(),MavenScan.POLICY,
-                100_000,1_000,UniversalArchitecturePipeline.TruthEvaluationMode.AUTO,input.spring().scopes(),input.spring().space(),input.spring().baseline(),
+                buildPolicy, decoded.policy(), guarded, JavaParserFrontend.PROVIDER,
+                dependencies.resolutions(), platform.platform(), Optional.of(new MavenBuildModelProvider()),
+                dependencies.externalPoms(), MavenScan.POLICY,
+                100_000, 1_000, UniversalArchitecturePipeline.TruthEvaluationMode.AUTO, input.spring().scopes(),
+                input.spring().space(), input.spring().baseline(),
                 com.evolution.analysis.spring.truth.TruthRegionEvaluation.Limits.conservative())
                 .withReadiness(readiness.identity())
                 .withPrecomputedBuild(dependencies.externalPoms().isEmpty() ? gradleModel.orElse(null) : null);
         if (fast) {
             policy = policy.withAnalysisOptions(Map.of("analysis.profile", "FAST_ARCHITECTURE"));
         }
+        if (input.spring().autoMultiConfigEnabled()) {
+            policy = policy.withSpringSatMode(UniversalArchitecturePipeline.SpringSatMode.AUTO_MULTI_CONFIG_SAT);
+        }
         var languageEvidence = loadSemanticPublication(safe(input.source()), control);
-        var allPlatforms=new ArrayList<PlatformSymbolResult>();allPlatforms.add(platform);allPlatforms.addAll(additionalPlatforms);
+        var allPlatforms = new ArrayList<PlatformSymbolResult>();
+        allPlatforms.add(platform);
+        allPlatforms.addAll(additionalPlatforms);
         boolean allowReuse = verifiedInventory && languageEvidence.isEmpty();
         var reuseKey = allowReuse ? WorkbenchReuseInputs.key(acquisition, readiness, allPlatforms,
                 models.stream().map(model -> model.identity()).toList(), gradleModel.map(model -> model.identity()),
                 dependencies, policy, input.policy(), control) : Optional.<ContentDigest>empty();
         if (reuseKey.isPresent()) {
             var reusable = control.reuse(reuseKey.orElseThrow());
-            if (reusable.isPresent()) return reusable.orElseThrow();
+            if (reusable.isPresent())
+                return reusable.orElseThrow();
         }
         control.stage(AnalysisJobs.Stage.ANALYSIS);
         var verifiedPolyglotBytes = extractPolyglotBytes(acquisition);
@@ -533,116 +652,254 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
         BooleanSupplier subCancelled = () -> failedFlag.get() || control.getAsBoolean();
         var snapshotId = acquisition.snapshot().orElseThrow().identity();
         var finalPolicy = policy;
+        var incrementalRoot = Optional.of(intakeDirectory.resolve("incremental-cache"));
         CompletableFuture<PolyglotScan.Result> polyglotFuture = CompletableFuture.supplyAsync(() -> {
             try (var intake = new RepositoryIntake(intakeDirectory, true)) {
                 return new PolyglotScan().run(
                         control.id(), intake, readiness, EvidenceContext.forSnapshot(snapshotId),
                         languageEvidence, intakeDirectory.resolve("semantic-work"), subCancelled,
-                        digest->{var file=verifiedPolyglotBytes.get(digest);return file==null?null:file.bytes();},
-                        fast,fast?intake.installedNodeDependencies(control.id()):path->false);
+                        digest -> {
+                            var file = verifiedPolyglotBytes.get(digest);
+                            return file == null ? null : file.bytes();
+                        },
+                        fast, fast ? intake.installedNodeDependencies(control.id()) : path -> false, incrementalRoot);
             } catch (Exception failure) {
                 failedFlag.set(true);
                 throw new CompletionException(failure);
             }
         }, POLYGLOT_WORKERS);
 
+        long acquiredBytesTotal = acquisition.files().stream()
+                .mapToLong(com.evolution.analysis.acquisition.AcquiredFile::size).sum();
+        long spilledThreshold = Long.getLong("evo.workbench.spilledGraphThresholdBytes", 32L * 1024 * 1024);
+        boolean useDiskSpill = acquiredBytesTotal >= spilledThreshold;
+
         UniversalArchitecturePipeline.DetailedResult detailed;
         PolyglotScan.Result polyglot;
-        try {
-            detailed = new UniversalArchitecturePipeline().runWithEvidence(decoded, finalPolicy);
-            control.checkpoint();
-            polyglot = polyglotFuture.join();
-        } catch (CompletionException asyncFailure) {
-            failedFlag.set(true);
-            Throwable cause = asyncFailure.getCause();
-            if (cause instanceof Exception ex) throw ex;
-            if (cause instanceof Error err) throw err;
-            throw asyncFailure;
-        } catch (Throwable primaryFailure) {
-            failedFlag.set(true);
-            polyglotFuture.cancel(true);
-            throw primaryFailure;
-        }
-        control.checkpoint();
-        var gaps = new TreeSet<>(detailed.report().gaps()); gaps.addAll(dependencies.gaps());
-        gaps.addAll(readiness.gaps(acquisition.snapshot().orElseThrow().identity()));
-        gaps.addAll(polyglot.gaps());
-        platformLedgers.forEach(ledger->gaps.addAll(ledger.gaps()));
-        gaps.addAll(CapabilityGapNormalizer.normalize(EvidenceContext.forSnapshot(acquisition.snapshot().orElseThrow().identity()),
-                EvidenceNormalizationInput.builder().repositoryAcquisitions(List.of(acquisition)).platformResults(allPlatforms).build()).gaps());
-        if (detailed.graphInput().isEmpty()) return new AnalysisJobs.Outcome(AnalysisJobs.Completion.FAILED,Optional.empty(),List.of(),List.copyOf(gaps),Optional.of(acquisition.identity()),Optional.of(detailed.report().identity()),inputProblems(acquisition));
-        control.stage(AnalysisJobs.Stage.GRAPH);
-        var captured = detailed.graphInput().orElseThrow(); gaps.addAll(captured.gaps());
-        var graphLedgers=new ArrayList<>(dependencies.ledgers());graphLedgers.addAll(platformLedgers);
-        var finalPolyglot = polyglot;
-        var graph = new CanonicalGraphBuilder().build(
-                new CanonicalGraphInput(captured.repository(),captured.build(),captured.ingestion(),captured.spring(),captured.issues(),List.copyOf(gaps),captured.acquisition(),captured.javaEvidence()),
-                graphLedgers,
-                store->new PolyglotScan().project(finalPolyglot,store,control),
-                fast);
-        control.checkpoint();
-        var reports = new ArrayList<PublishedReports.Report>();
-        if (input.policy().isPresent()) {
-            control.stage(AnalysisJobs.Stage.POLICY); var selected = input.policy().orElseThrow();
+        try (FileAnalysisWorkspace diskWorkspace = useDiskSpill
+                ? new FileAnalysisWorkspace(intakeDirectory.resolve("analysis-work-" + control.id()))
+                : null) {
+            AnalysisWorkspace analysisWorkspace = diskWorkspace != null ? diskWorkspace : AnalysisWorkspace.MEMORY;
             try {
-                var compiled = new PolicyCompiler().compile(selected.bytes(),EvidenceContext.forSnapshot(graph.snapshot()),PolicyCompiler.Limits.defaults());
-                gaps.addAll(compiled.gaps());
-                var guard = ArchitectureQueryService.operationalGuard(control,0,8_000_000);
-                var queries = new ArchitectureMetricsService(graph,ArchitectureMetric.Limits.defaults(),guard,Optional.empty(),List.of()).queries();
-                for (var context : graph.contexts()) {
-                    if (context.analysis().isEmpty()) continue;
-                    control.checkpoint();
+                detailed = new UniversalArchitecturePipeline(analysisWorkspace).runWithEvidence(decoded, finalPolicy);
+                control.checkpoint();
+                polyglot = polyglotFuture.join();
+            } catch (CompletionException asyncFailure) {
+                failedFlag.set(true);
+                Throwable cause = asyncFailure.getCause();
+                if (cause instanceof Exception ex)
+                    throw ex;
+                if (cause instanceof Error err)
+                    throw err;
+                throw asyncFailure;
+            } catch (Throwable primaryFailure) {
+                failedFlag.set(true);
+                polyglotFuture.cancel(true);
+                throw primaryFailure;
+            }
+            control.checkpoint();
+            long jHits = javaCacheHits.get();
+            long jMisses = javaCacheMisses.get();
+            long pHits = polyglot.syntax().cacheHits();
+            long pMisses = polyglot.syntax().cacheMisses();
+            control.recordCacheMetrics(Map.of(
+                    "javaCacheHits", jHits,
+                    "javaCacheMisses", jMisses,
+                    "polyglotCacheHits", pHits,
+                    "polyglotCacheMisses", pMisses,
+                    "totalCacheHits", jHits + pHits,
+                    "totalCacheMisses", jMisses + pMisses));
+            var gaps = new TreeSet<>(detailed.report().gaps());
+            gaps.addAll(dependencies.gaps());
+            gaps.addAll(filterSatisfiedReadinessGaps(
+                    readiness, acquisition.snapshot().orElseThrow().identity(),
+                    dependencies, availablePlatforms, allPlatforms, input.includeTests(), detailed, polyglot));
+            gaps.addAll(polyglot.gaps());
+            platformLedgers.forEach(ledger -> gaps.addAll(ledger.gaps()));
+            gaps.addAll(CapabilityGapNormalizer
+                    .normalize(EvidenceContext.forSnapshot(acquisition.snapshot().orElseThrow().identity()),
+                            EvidenceNormalizationInput.builder().repositoryAcquisitions(List.of(acquisition))
+                                    .platformResults(allPlatforms).build())
+                    .gaps());
+            if (detailed.graphInput().isEmpty())
+                return new AnalysisJobs.Outcome(AnalysisJobs.Completion.FAILED, Optional.empty(), List.of(),
+                        List.copyOf(gaps), Optional.of(acquisition.identity()),
+                        Optional.of(detailed.report().identity()), inputProblems(acquisition));
+            control.stage(AnalysisJobs.Stage.GRAPH);
+            var captured = detailed.graphInput().orElseThrow();
+            gaps.addAll(captured.gaps());
+            var graphLedgers = new ArrayList<>(dependencies.ledgers());
+            graphLedgers.addAll(platformLedgers);
+            var finalPolyglot = polyglot;
+            var canonicalInput = new CanonicalGraphInput(
+                    captured.repository(), captured.build(), captured.ingestion(), captured.spring(),
+                    captured.issues(), List.copyOf(gaps), captured.acquisition(), captured.javaEvidence());
+
+            if (useDiskSpill && graphStoreDirectory.isPresent()) {
+                var storeDir = graphStoreDirectory.orElseThrow();
+                var pagesStore = new PartitionedGraphStore(storeDir.resolve("graph-pages"));
+                var publication = pagesStore.build(canonicalInput, storeDir, control, graphLedgers,
+                        store -> new PolyglotScan().project(finalPolyglot, store, control), fast);
+                control.checkpoint();
+                var reports = new ArrayList<PublishedReports.Report>();
+                if (input.policy().isPresent()) {
+                    control.stage(AnalysisJobs.Stage.POLICY);
+                    var selected = input.policy().orElseThrow();
                     try {
-                        var plan = new PolicyGraphMapper().bind(compiled,queries,context.identity(),PolicyGraphMapper.Limits.defaults());
-                        var evaluation = new PolicyEvaluator().evaluate(compiled,plan,queries,PolicyEvaluation.Limits.defaults());
-                        var metrics = new PolicyMetricsService().compute(compiled,plan,evaluation,queries,PolicyMetrics.Limits.defaults());
-                        var score = new ArchitectureAssessmentService().assess(metrics,evaluation,queries,
-                                Optional.of(ArchitectureScoreModel.candidate(selected.scoreScope())),plan.limits().query(),
-                                ArchitectureMetric.Limits.defaults(),ArchitectureAssessment.Limits.defaults());
-                        reports.add(new PublishedReports.Report(evaluation,Optional.of(metrics),Optional.of(score)));
-                        gaps.addAll(plan.gaps()); gaps.addAll(evaluation.gaps()); gaps.addAll(metrics.gaps()); gaps.addAll(score.gaps());
+                        var compiled = new PolicyCompiler().compile(selected.bytes(),
+                                EvidenceContext.forSnapshot(publication.snapshot()), PolicyCompiler.Limits.defaults());
+                        gaps.addAll(compiled.gaps());
+                        var guard = ArchitectureQueryService.operationalGuard(control, 0, 8_000_000);
+                        for (var context : publication.contexts()) {
+                            if (context.analysis().isEmpty())
+                                continue;
+                            control.checkpoint();
+                            try {
+                                var contextSubgraph = pagesStore
+                                        .contextGraph(publication.graph(), context.identity(), control)
+                                        .orElseThrow(() -> new IOException("GRAPH_PARTITION_CONTEXT_MISSING"));
+                                var queries = ArchitectureQueryService.replayPartition(contextSubgraph,
+                                        publication.graph(), control);
+                                var plan = new PolicyGraphMapper().bind(compiled, queries, context.identity(),
+                                        PolicyGraphMapper.Limits.defaults());
+                                var evaluation = new PolicyEvaluator().evaluate(compiled, plan, queries,
+                                        PolicyEvaluation.Limits.defaults());
+                                var metrics = new PolicyMetricsService().compute(compiled, plan, evaluation, queries,
+                                        PolicyMetrics.Limits.defaults());
+                                var score = new ArchitectureAssessmentService().assess(metrics, evaluation, queries,
+                                        Optional.of(ArchitectureScoreModel.candidate(selected.scoreScope())),
+                                        plan.limits().query(),
+                                        ArchitectureMetric.Limits.defaults(), ArchitectureAssessment.Limits.defaults());
+                                reports.add(new PublishedReports.Report(evaluation, Optional.of(metrics),
+                                        Optional.of(score)));
+                                gaps.addAll(plan.gaps());
+                                gaps.addAll(evaluation.gaps());
+                                gaps.addAll(metrics.gaps());
+                                gaps.addAll(score.gaps());
+                            } catch (CancellationException cancelled) {
+                                throw cancelled;
+                            } catch (RuntimeException failure) {
+                                LOG.log(System.Logger.Level.WARNING,
+                                        "Policy evaluation degraded for context {0} ({1}: {2})",
+                                        context.identity(), failure.getClass().getSimpleName(), failure.getMessage());
+                                gaps.add(policyDegradedGap(publication.graph(), publication.snapshot(),
+                                        new EvidenceSubject(EvidenceSubject.Kind.CONFIGURATION, context.identity()),
+                                        selected.scoreScope().name(), failure));
+                            }
+                        }
                     } catch (CancellationException cancelled) {
                         throw cancelled;
                     } catch (RuntimeException failure) {
-                        LOG.log(System.Logger.Level.WARNING, "Policy evaluation degraded for context {0} ({1}: {2})",
-                                context.identity(), failure.getClass().getSimpleName(), failure.getMessage());
-                        gaps.add(policyDegradedGap(graph,
-                                new EvidenceSubject(EvidenceSubject.Kind.CONFIGURATION, context.identity()),
+                        LOG.log(System.Logger.Level.WARNING, "Policy compilation/setup degraded ({0}: {1})",
+                                failure.getClass().getSimpleName(), failure.getMessage());
+                        gaps.add(policyDegradedGap(publication.graph(), publication.snapshot(),
+                                new EvidenceSubject(EvidenceSubject.Kind.REPOSITORY, input.repository().value()),
                                 selected.scoreScope().name(), failure));
                     }
                 }
-            } catch (CancellationException cancelled) {
-                throw cancelled;
-            } catch (RuntimeException failure) {
-                LOG.log(System.Logger.Level.WARNING, "Policy compilation/setup degraded ({0}: {1})",
-                        failure.getClass().getSimpleName(), failure.getMessage());
-                gaps.add(policyDegradedGap(graph,
-                        new EvidenceSubject(EvidenceSubject.Kind.REPOSITORY, input.repository().value()),
-                        selected.scoreScope().name(), failure));
+                control.checkpoint();
+                var completion = switch (detailed.report().status()) {
+                    case COMPLETE ->
+                        gaps.isEmpty() ? AnalysisJobs.Completion.COMPLETE : AnalysisJobs.Completion.PARTIAL;
+                    case EMPTY_OR_NON_JAVA -> AnalysisJobs.Completion.EMPTY;
+                    case TERMINAL_FAILURE, CANCELLED -> AnalysisJobs.Completion.FAILED;
+                    case PARTIAL -> AnalysisJobs.Completion.PARTIAL;
+                };
+                if (reuseKey.isPresent() && (!WorkbenchReuseInputs.stableGaps(publication, gaps, polyglot.syntax())
+                        || !WorkbenchReuseInputs.stillCurrent(allPlatforms, dependencies, control))) {
+                    control.withholdReuse();
+                }
+                return new AnalysisJobs.Outcome(completion, Optional.empty(), reports, List.copyOf(gaps),
+                        Optional.of(acquisition.identity()), Optional.of(detailed.report().identity()),
+                        inputProblems(acquisition), Optional.of(publication.graph()),
+                        (int) Math.min(Integer.MAX_VALUE, publication.gapNodes()));
             }
+
+            var graph = new CanonicalGraphBuilder().build(
+                    canonicalInput,
+                    graphLedgers,
+                    store -> new PolyglotScan().project(finalPolyglot, store, control),
+                    fast);
+            control.checkpoint();
+            var reports = new ArrayList<PublishedReports.Report>();
+            if (input.policy().isPresent()) {
+                control.stage(AnalysisJobs.Stage.POLICY);
+                var selected = input.policy().orElseThrow();
+                try {
+                    var compiled = new PolicyCompiler().compile(selected.bytes(),
+                            EvidenceContext.forSnapshot(graph.snapshot()), PolicyCompiler.Limits.defaults());
+                    gaps.addAll(compiled.gaps());
+                    var guard = ArchitectureQueryService.operationalGuard(control, 0, 8_000_000);
+                    var queries = new ArchitectureMetricsService(graph, ArchitectureMetric.Limits.defaults(), guard,
+                            Optional.empty(), List.of()).queries();
+                    for (var context : graph.contexts()) {
+                        if (context.analysis().isEmpty())
+                            continue;
+                        control.checkpoint();
+                        try {
+                            var plan = new PolicyGraphMapper().bind(compiled, queries, context.identity(),
+                                    PolicyGraphMapper.Limits.defaults());
+                            var evaluation = new PolicyEvaluator().evaluate(compiled, plan, queries,
+                                    PolicyEvaluation.Limits.defaults());
+                            var metrics = new PolicyMetricsService().compute(compiled, plan, evaluation, queries,
+                                    PolicyMetrics.Limits.defaults());
+                            var score = new ArchitectureAssessmentService().assess(metrics, evaluation, queries,
+                                    Optional.of(ArchitectureScoreModel.candidate(selected.scoreScope())),
+                                    plan.limits().query(),
+                                    ArchitectureMetric.Limits.defaults(), ArchitectureAssessment.Limits.defaults());
+                            reports.add(
+                                    new PublishedReports.Report(evaluation, Optional.of(metrics), Optional.of(score)));
+                            gaps.addAll(plan.gaps());
+                            gaps.addAll(evaluation.gaps());
+                            gaps.addAll(metrics.gaps());
+                            gaps.addAll(score.gaps());
+                        } catch (CancellationException cancelled) {
+                            throw cancelled;
+                        } catch (RuntimeException failure) {
+                            LOG.log(System.Logger.Level.WARNING,
+                                    "Policy evaluation degraded for context {0} ({1}: {2})",
+                                    context.identity(), failure.getClass().getSimpleName(), failure.getMessage());
+                            gaps.add(policyDegradedGap(graph.identity(), graph.snapshot(),
+                                    new EvidenceSubject(EvidenceSubject.Kind.CONFIGURATION, context.identity()),
+                                    selected.scoreScope().name(), failure));
+                        }
+                    }
+                } catch (CancellationException cancelled) {
+                    throw cancelled;
+                } catch (RuntimeException failure) {
+                    LOG.log(System.Logger.Level.WARNING, "Policy compilation/setup degraded ({0}: {1})",
+                            failure.getClass().getSimpleName(), failure.getMessage());
+                    gaps.add(policyDegradedGap(graph.identity(), graph.snapshot(),
+                            new EvidenceSubject(EvidenceSubject.Kind.REPOSITORY, input.repository().value()),
+                            selected.scoreScope().name(), failure));
+                }
+            }
+            control.checkpoint();
+            var completion = switch (detailed.report().status()) {
+                case COMPLETE -> gaps.isEmpty() ? AnalysisJobs.Completion.COMPLETE : AnalysisJobs.Completion.PARTIAL;
+                case EMPTY_OR_NON_JAVA -> AnalysisJobs.Completion.EMPTY;
+                case TERMINAL_FAILURE, CANCELLED -> AnalysisJobs.Completion.FAILED;
+                case PARTIAL -> AnalysisJobs.Completion.PARTIAL;
+            };
+            if (reuseKey.isPresent() && (!WorkbenchReuseInputs.stableGaps(graph, gaps, polyglot.syntax())
+                    || !WorkbenchReuseInputs.stillCurrent(allPlatforms, dependencies, control)))
+                control.withholdReuse();
+            return new AnalysisJobs.Outcome(completion, Optional.of(graph), reports, List.copyOf(gaps),
+                    Optional.of(acquisition.identity()), Optional.of(detailed.report().identity()),
+                    inputProblems(acquisition));
         }
-        control.checkpoint();
-        var completion = switch (detailed.report().status()) {
-            case COMPLETE -> gaps.isEmpty() ? AnalysisJobs.Completion.COMPLETE : AnalysisJobs.Completion.PARTIAL;
-            case EMPTY_OR_NON_JAVA -> AnalysisJobs.Completion.EMPTY;
-            case TERMINAL_FAILURE, CANCELLED -> AnalysisJobs.Completion.FAILED;
-            case PARTIAL -> AnalysisJobs.Completion.PARTIAL;
-        };
-        if (reuseKey.isPresent() && (!WorkbenchReuseInputs.stableGaps(graph, gaps, polyglot.syntax())
-                || !WorkbenchReuseInputs.stillCurrent(allPlatforms, dependencies, control))) control.withholdReuse();
-        return new AnalysisJobs.Outcome(completion,Optional.of(graph),reports,List.copyOf(gaps),Optional.of(acquisition.identity()),Optional.of(detailed.report().identity()),inputProblems(acquisition));
     }
 
-    private static CapabilityGapRecord policyDegradedGap(KnowledgeGraph graph, EvidenceSubject subject,
-            String scope, RuntimeException failure) {
+    private static CapabilityGapRecord policyDegradedGap(ContentDigest graphId, SnapshotIdentity snapshot,
+            EvidenceSubject subject, String scope, RuntimeException failure) {
         var proof = CanonicalJson.sha256(List.of(subject, scope, failure.getClass().getName()));
         var requirement = new EvidenceRequirement(EvidenceRequirement.Kind.CONFIGURATION, "policy.evaluation",
                 List.of(subject), EvidenceRequirement.AuthorizationClass.PASSIVE,
                 List.of("Provide a repository-compatible architecture policy YAML or inspect the policy evaluation diagnostic; the canonical knowledge graph remains published."));
-        return CapabilityGapRecord.create(EvidenceContext.forSnapshot(graph.snapshot()), POLICY_EVALUATION_PROVIDER,
+        return CapabilityGapRecord.create(EvidenceContext.forSnapshot(snapshot), POLICY_EVALUATION_PROVIDER,
                 "policy.evaluation", "POLICY_EVALUATION_DEGRADED", subject, List.of(),
                 List.of(ProviderObservationReference.create(POLICY_EVALUATION_PROVIDER, "policy.evaluation",
-                        graph.identity(), proof)),
+                        graphId, proof)),
                 List.of(requirement), List.of(),
                 List.of(new AffectedOutput(AffectedOutput.Kind.POLICY, "policy.evaluation"),
                         new AffectedOutput(AffectedOutput.Kind.ASSESSMENT, "policy.evaluation")),
@@ -667,6 +924,7 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
         }
         return map;
     }
+
     private NativeBuildCoordinator.Result runNativeBuild(
             String profileName,
             Path source,
@@ -691,14 +949,19 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
                     .run(plan, revision, intake.inventory(), intake.content(), source, cancelled);
         } catch (IOException unavailable) {
             String code = unavailable.getMessage();
-            if ("NATIVE_TERMINATION_UNCONFIRMED".equals(code)) throw unavailable;
+            if ("NATIVE_TERMINATION_UNCONFIRMED".equals(code))
+                throw unavailable;
             return NativeBuildCoordinator.unavailable(plan,
                     code != null && code.matches("(?:NATIVE|REGISTERED|CURRENT_SANDBOX)_[A-Z0-9_]{1,80}")
-                            ? code : "NATIVE_BUILD_UNAVAILABLE");
+                            ? code
+                            : "NATIVE_BUILD_UNAVAILABLE");
         }
     }
-    private Optional<PolyglotScan.Published> loadSemanticPublication(Path source, BooleanSupplier cancelled) throws IOException {
-        if (nativeConfig.semanticStore().isEmpty()) return Optional.empty();
+
+    private Optional<PolyglotScan.Published> loadSemanticPublication(Path source, BooleanSupplier cancelled)
+            throws IOException {
+        if (nativeConfig.semanticStore().isEmpty())
+            return Optional.empty();
         var store = safe(nativeConfig.semanticStore().orElseThrow());
         Optional<Path> authority = nativeConfig.semanticAuthority().isPresent()
                 ? Optional.of(safe(nativeConfig.semanticAuthority().orElseThrow()))
@@ -712,18 +975,137 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
         return Optional.of(PolyglotScan.load(
                 store, nativeConfig.semanticPlan().orElseThrow(), trust, authority, cancelled));
     }
-    private static CapabilityGapRecord nativeBuildRequiredGap(EvidenceContext context, NativeBuildCoordinator.Result result) {
-        var proof = CanonicalJson.sha256(List.of(result.readiness(), result.status(), result.requested(), result.succeeded()));
+
+    private static CapabilityGapRecord nativeBuildRequiredGap(EvidenceContext context,
+            NativeBuildCoordinator.Result result) {
+        var proof = CanonicalJson
+                .sha256(List.of(result.readiness(), result.status(), result.requested(), result.succeeded()));
         var subject = new EvidenceSubject(EvidenceSubject.Kind.REPOSITORY, result.readiness().value());
-        var requirement = new EvidenceRequirement(EvidenceRequirement.Kind.ISOLATED_BUILD_OUTPUT, "native.build.required",
+        var requirement = new EvidenceRequirement(EvidenceRequirement.Kind.ISOLATED_BUILD_OUTPUT,
+                "native.build.required",
                 List.of(subject), EvidenceRequirement.AuthorizationClass.ISOLATED_EXECUTION,
                 List.of("Register an operator Hyper-V worker profile outside the target workspace and execute --build=required cleanly."));
         return CapabilityGapRecord.create(context, NativeBuildCoordinator.PROVIDER, "native.isolated-build",
                 "NATIVE_BUILD_REQUIRED_FAILED:" + result.status(), subject, List.of(),
-                List.of(ProviderObservationReference.create(NativeBuildCoordinator.PROVIDER, "native.isolated-build", result.readiness(), proof)),
+                List.of(ProviderObservationReference.create(NativeBuildCoordinator.PROVIDER, "native.isolated-build",
+                        result.readiness(), proof)),
                 List.of(requirement), List.of(),
                 List.of(new AffectedOutput(AffectedOutput.Kind.ANALYSIS_COVERAGE, "native.isolated-build")),
-                List.of(), List.of(), List.of("Isolated native build did not complete cleanly; host fallback is disabled."));
+                List.of(), List.of(),
+                List.of("Isolated native build did not complete cleanly; host fallback is disabled."));
+    }
+
+    /**
+     * Suppresses only readiness gaps whose exact capability has already been established
+     * by verified captured evidence in this run (e.g. a verified Android SDK android.jar,
+     * a COMPLETE JDK platform attached to an analyzed Java Maven/Gradle context, or a
+     * complete VALIDATED_OBSERVATION native semantic publication). Native build, model,
+     * toolchain, dependency-closure and generator obligations remain explicit and truthful.
+     */
+    public static List<CapabilityGapRecord> filterSatisfiedReadinessGaps(
+            ReadinessPlan readiness,
+            SnapshotIdentity snapshot,
+            MavenScan.Inputs dependencies,
+            Map<Integer, com.evolution.analysis.frontend.PlatformInput> availablePlatforms,
+            List<PlatformSymbolResult> allPlatforms,
+            boolean includeTests,
+            UniversalArchitecturePipeline.DetailedResult detailed,
+            PolyglotScan.Result polyglot) {
+        var raw = readiness.gaps(snapshot);
+        if (raw.isEmpty())
+            return raw;
+        boolean androidSdkVerified = dependencies != null
+                && dependencies.resolutions().values().stream()
+                        .flatMap(r -> r.binaries().stream())
+                        .anyMatch(b -> b.entry().logicalName().startsWith("android-sdk:platforms/android-")
+                                && b.entry().logicalName().endsWith("/android.jar"))
+                && dependencies.gaps().stream()
+                        .noneMatch(g -> g.subject().identity().contains("android-sdk:"));
+        boolean allAcquiredPlatformsComplete = availablePlatforms != null && !availablePlatforms.isEmpty()
+                && allPlatforms != null && !allPlatforms.isEmpty()
+                && allPlatforms.stream().allMatch(p -> p.status() == PlatformSymbolResult.Status.COMPLETE);
+        var analyzedModuleSourceSets = new HashSet<String>();
+        if (detailed != null && detailed.graphInput().isPresent()) {
+            var graphInput = detailed.graphInput().orElseThrow();
+            var moduleDirById = new HashMap<ModuleIdentity, String>();
+            graphInput.build().ifPresent(build -> {
+                for (var m : build.modules()) {
+                    if (m.tool() == com.evolution.analysis.buildmodel.UniversalBuildModel.Tool.MAVEN
+                            || m.tool() == com.evolution.analysis.buildmodel.UniversalBuildModel.Tool.GRADLE_GROOVY
+                            || m.tool() == com.evolution.analysis.buildmodel.UniversalBuildModel.Tool.GRADLE_KOTLIN) {
+                        moduleDirById.put(m.descriptor().identity(), normalizeModuleDir(m.descriptor().path()));
+                    }
+                }
+            });
+            graphInput.ingestion().ifPresent(ing -> {
+                for (var unit : ing.units()) {
+                    if (unit.status() == UniversalIngestionPipeline.Status.ANALYZED && unit.frontend().isPresent()) {
+                        String dir = moduleDirById.get(unit.sourceSet().module());
+                        if (dir != null) {
+                            analyzedModuleSourceSets.add(dir + "|" + unit.sourceSet().kind().name().toLowerCase(Locale.ROOT));
+                        }
+                    }
+                }
+            });
+        }
+        boolean strongerNativePolyglotComplete = polyglot != null
+                && polyglot.uncovered().isEmpty()
+                && polyglot.published()
+                        .filter(p -> "VALIDATED_OBSERVATION".equals(p.trust())
+                                && Boolean.TRUE.equals(p.report().get("complete")))
+                        .isPresent();
+
+        var rootFamilyById = new HashMap<String, ReadinessPlan.Family>();
+        for (var root : readiness.roots())
+            rootFamilyById.put(root.id(), root.family());
+        var moduleById = new HashMap<String, ReadinessPlan.Module>();
+        for (var module : readiness.modules())
+            moduleById.put(module.id(), module);
+        var contextById = new HashMap<String, ReadinessPlan.Context>();
+        for (var ctx : readiness.contexts())
+            contextById.put(ctx.id(), ctx);
+
+        var filtered = new ArrayList<CapabilityGapRecord>(raw.size());
+        for (var gap : raw) {
+            String reason = gap.reasonCode();
+            if ("ANDROID_SDK_REQUIRED".equals(reason) && androidSdkVerified) {
+                continue;
+            }
+            if ("NATIVE_SEMANTIC_VALIDATION_REQUIRED".equals(reason) && strongerNativePolyglotComplete) {
+                continue;
+            }
+            if ("ANALYZED_PLATFORM_REQUIRED".equals(reason) && allAcquiredPlatformsComplete
+                    && !analyzedModuleSourceSets.isEmpty()) {
+                var ctx = contextById.get(gap.subject().identity());
+                if (ctx != null) {
+                    var family = rootFamilyById.get(ctx.root());
+                    var mod = moduleById.get(ctx.module());
+                    boolean jvmRoot = family == ReadinessPlan.Family.MAVEN || family == ReadinessPlan.Family.GRADLE;
+                    boolean javaOnlyModule = mod != null
+                            && (mod.languages().isEmpty() || mod.languages().equals(List.of("java")));
+                    boolean analyzedSourceSet = "main".equals(ctx.sourceSet())
+                            || (includeTests && "test".equals(ctx.sourceSet()));
+                    if (jvmRoot && javaOnlyModule && analyzedSourceSet
+                            && analyzedModuleSourceSets.contains(
+                                    normalizeModuleDir(mod.directory()) + "|" + ctx.sourceSet())) {
+                        continue;
+                    }
+                }
+            }
+            filtered.add(gap);
+        }
+        return List.copyOf(filtered);
+    }
+
+    private static String normalizeModuleDir(String path) {
+        if (path == null || path.isEmpty() || path.equals("."))
+            return ".";
+        String norm = path.replace('\\', '/');
+        while (norm.startsWith("./"))
+            norm = norm.substring(2);
+        while (norm.endsWith("/") && norm.length() > 1)
+            norm = norm.substring(0, norm.length() - 1);
+        return norm.isEmpty() ? "." : norm;
     }
 
     static Path safe(Path input) throws IOException {

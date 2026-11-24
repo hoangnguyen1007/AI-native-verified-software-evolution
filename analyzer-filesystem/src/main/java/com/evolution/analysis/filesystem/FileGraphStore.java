@@ -31,8 +31,11 @@ public final class FileGraphStore implements GraphStore {
         Objects.requireNonNull(directory); Objects.requireNonNull(jsonLimits);
         if (maxBytes < 1 || maxBytes == Long.MAX_VALUE) throw new IllegalArgumentException("Finite positive graph store byte budget required");
         this.directory = directory.toAbsolutePath().normalize(); this.maxBytes = maxBytes; this.jsonLimits = jsonLimits;
+        this.binaryCache = new GraphBinaryCache(this.directory);
         checkDirectory();
     }
+
+    private final GraphBinaryCache binaryCache;
 
     private void checkDirectory() {
         for (Path part = directory; part != null; part = part.getParent()) if (Files.isSymbolicLink(part)) throw new GraphStoreException(UNSAFE_PATH);
@@ -80,7 +83,8 @@ public final class FileGraphStore implements GraphStore {
             if (Files.exists(destination, NOFOLLOW_LINKS)) { verifyExisting(graph.identity(), cancelled); return; }
             // Atomic create-if-absent publication: unlike ATOMIC_MOVE, cannot replace a racing destination.
             try { StreamingContentStore.createLinkWithRetry(destination, pending); }
-            catch (FileAlreadyExistsException raced) { verifyExisting(graph.identity(), cancelled); }
+            catch (FileAlreadyExistsException raced) { verifyExisting(graph.identity(), cancelled); binaryCache.write(graph, destination); return; }
+            binaryCache.write(graph, destination);
         } catch (GraphStoreException failure) { throw failure; }
         catch (GraphJson.LimitExceededException | StorageLimit limit) { var failure = new GraphStoreException(LIMIT_EXCEEDED); failure.initCause(limit); throw failure; }
         catch (IOException failure) { throw new GraphStoreException(IO_FAILURE); }
@@ -226,11 +230,32 @@ public final class FileGraphStore implements GraphStore {
         }
     }
 
+    /** Returns the canonical {@code .graph.json} file path for {@code identity}. */
+    public Path jsonPath(ContentDigest identity) {
+        return path(identity);
+    }
+
+    /** Reads only the cached binary manifest if {@code .graph.json} and {@code .graph.bin} match. */
+    public Optional<GraphManifest> readManifest(ContentDigest identity) {
+        Path source = path(identity);
+        if (!Files.isRegularFile(source, NOFOLLOW_LINKS)) return Optional.empty();
+        return binaryCache.readManifest(identity, source);
+    }
+
+    @Override public Optional<GraphManifest> manifest(ContentDigest identity) {
+        var cachedManifest = readManifest(identity);
+        if (cachedManifest.isPresent()) return cachedManifest;
+        return load(identity).map(KnowledgeGraph::manifest);
+    }
+
     @Override public Optional<KnowledgeGraph> load(ContentDigest identity) {
         var source = path(identity);
         if (!Files.exists(source, NOFOLLOW_LINKS)) return Optional.empty();
+        var cached = binaryCache.read(identity, source);
+        if (cached.isPresent()) return cached;
         var graph = readPath(source);
         if (!graph.identity().equals(identity)) throw new GraphStoreException(CORRUPT_SNAPSHOT);
+        binaryCache.write(graph, source);
         return Optional.of(graph);
     }
 

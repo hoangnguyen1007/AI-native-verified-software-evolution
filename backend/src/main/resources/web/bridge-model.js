@@ -85,10 +85,21 @@
   }
   function categoryGroup(code) {
     const key = String(code || '').toUpperCase();
-    if (key.startsWith('F')) return {prefix: 'F', layer: 'Frontend & UI', description: 'Components, routes, state, client API calls and source maps', label: categories[key] || key};
-    if (key.startsWith('B')) return {prefix: 'B', layer: 'Contracts & Bridges', description: 'OpenAPI, gRPC/Protobuf, GraphQL, messaging, SQL and worker bridges', label: categories[key] || key};
-    if (key.startsWith('A')) return {prefix: 'A', layer: 'Backend & Native', description: 'Declarations, types, call graphs, hierarchy and data access', label: categories[key] || key};
-    return {prefix: '', layer: 'All layers', description: 'All captured architecture categories', label: categories[key] || 'All categories'};
+    if (key.startsWith('F')) return {prefix: 'F', group: 'frontend', layer: 'Frontend & UI', description: 'Components, routes, state, client API calls and source maps', label: categories[key] || key};
+    if (key.startsWith('B')) return {prefix: 'B', group: 'bridge', layer: 'Contracts & Bridges', description: 'OpenAPI, gRPC/Protobuf, GraphQL, messaging, SQL and worker bridges', label: categories[key] || key};
+    if (key.startsWith('A')) return {prefix: 'A', group: 'backend', layer: 'Backend & Native', description: 'Declarations, types, call graphs, hierarchy and data access', label: categories[key] || key};
+    return {prefix: '', group: 'all', layer: 'All layers', description: 'All captured architecture categories', label: categories[key] || 'All categories'};
+  }
+  function protocolKind(code, kind = '') {
+    const key = String(code || '').toUpperCase();
+    const k = String(kind || '').toUpperCase();
+    if (key === 'B02' || key === 'F05' || /API_OPERATION|CLIENT_API|NETWORK_REQUEST|HTTP/.test(k)) return {id: 'http', label: 'HTTP'};
+    if (key === 'B03' || /GRPC|RPC|PROTO/.test(k)) return {id: 'grpc', label: 'gRPC / Schema'};
+    if (key === 'B04' || /PUBLISH|SUBSCRIBE|EVENT|TOPIC|QUEUE/.test(k)) return {id: 'event', label: 'Event / Queue'};
+    if (key === 'B05' || /READS|WRITES|DATA_ACCESS|SQL/.test(k)) return {id: 'data', label: 'Data / SQL'};
+    if (key === 'B06' || key === 'B07' || /WORKER|ABI|IPC/.test(k)) return {id: 'ipc', label: 'IPC / Worker'};
+    if (key === 'B01') return {id: 'jvm', label: 'JVM Interop'};
+    return null;
   }
   function outcomeBreakdown(summary) {
     if (!summary) return {matched: 0, pending: 0, extra: 0, extraLabel: 'Untracked'};
@@ -98,5 +109,5 @@
     const extra = Number(summary.accounting ? summary.accounting.evidenceObligations || 0 : summary.missingCensus || 0);
     return {matched, pending, extra, extraLabel: summary.accounting ? 'Coverage checks' : 'Untracked'};
   }
-  return {request,describe,formatCount,moduleName,moduleContext,sourceName,reason,stats,error,native,categories,readable,opaque,structure,evidenceLabel,impactReference,categoryGroup,outcomeBreakdown};
+  return {request,describe,formatCount,moduleName,moduleContext,sourceName,reason,stats,error,native,categories,readable,opaque,structure,evidenceLabel,impactReference,categoryGroup,protocolKind,outcomeBreakdown};
 });

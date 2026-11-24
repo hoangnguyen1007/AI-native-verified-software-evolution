@@ -8,10 +8,15 @@ import com.evolution.analysis.frontend.BinaryInput;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.TreeMap;
 import java.util.concurrent.CancellationException;
 import java.util.jar.JarFile;
@@ -23,10 +28,44 @@ import java.util.zip.ZipInputStream;
 final class GradleAarInputs {
     private static final Pattern LIBRARY = Pattern.compile("libs/[^/\\\\\\p{Cntrl}]+\\.jar");
     private static final Pattern VERSIONED = Pattern.compile("^META-INF/versions/\\d+/");
+    private static final int AAR_CACHE_MAX = 512;
+    private record AarCacheKey(
+            Path cacheRoot, ContentDigest digest, String logicalBase, long memberBudget, long expandedBudget) {}
+    private static final Map<AarCacheKey, List<BinaryInput>> AAR_CACHE =
+            Collections.synchronizedMap(new LinkedHashMap<>(64, 0.75f, true) {
+                @Override protected boolean removeEldestEntry(Map.Entry<AarCacheKey, List<BinaryInput>> eldest) {
+                    return size() > AAR_CACHE_MAX;
+                }
+            });
+    static final java.util.concurrent.atomic.AtomicLong AAR_CACHE_HITS = new java.util.concurrent.atomic.AtomicLong();
 
     static List<BinaryInput> recover(Path cache, Artifact artifact, long memberBudget, long expandedBudget) throws IOException {
-        var bytes = MavenDependencyArtifactProvider.readVerifiedArtifact(cache,artifact,memberBudget);
-        return recoverBytes(cache,artifact.coordinate().notation(),bytes,memberBudget,expandedBudget);
+        Path root = cache.toAbsolutePath().normalize().toRealPath();
+        // Always cryptographically verify the AAR bytes on disk before trusting any cached extraction.
+        var bytes = MavenDependencyArtifactProvider.readVerifiedArtifact(cache, artifact, memberBudget);
+        var cacheKey = new AarCacheKey(
+                root, artifact.contentDigest(), artifact.coordinate().notation(), memberBudget, expandedBudget);
+        List<BinaryInput> cached = AAR_CACHE.get(cacheKey);
+        if (cached != null && allMaterializedVerified(cached)) {
+            AAR_CACHE_HITS.incrementAndGet();
+            return cached;
+        }
+        List<BinaryInput> recovered = recoverBytes(cache, artifact.coordinate().notation(), bytes, memberBudget, expandedBudget);
+        AAR_CACHE.put(cacheKey, recovered);
+        return recovered;
+    }
+
+    private static boolean allMaterializedVerified(List<BinaryInput> inputs) {
+        for (var input : inputs) {
+            try {
+                Path path = input.path();
+                if (!Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) return false;
+                if (!input.entry().contentDigest().equals(ContentDigest.sha256(Files.readAllBytes(path)))) return false;
+            } catch (IOException | SecurityException unavailable) {
+                return false;
+            }
+        }
+        return true;
     }
 
     static List<BinaryInput> recoverBytes(Path cache, String logicalBase, byte[] bytes, long memberBudget, long expandedBudget) throws IOException {

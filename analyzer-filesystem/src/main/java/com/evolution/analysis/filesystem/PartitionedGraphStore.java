@@ -29,8 +29,53 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
     private static final String FORMAT = "graph.partition-store:m8.4-v1", LEAF = "graph.page-leaf:m8.4-v1",
             BRANCH = "graph.page-branch:m8.4-v1";
     private static final int FANOUT = 128, PAGE_ROWS = 256, PAGE_CHARACTERS = 1_048_576;
+    private static final int LOCAL_PAGE_CACHE_MAX_ENTRIES = 128;
+    private static final long LOCAL_PAGE_CACHE_MAX_BYTES = 64L * 1024 * 1024;
     private static final ThreadLocal<Boolean> DEFER_LEAF_FORCE = ThreadLocal.withInitial(() -> Boolean.FALSE);
-    private static final ThreadLocal<Map<ContentHandle, Object>> LOCAL_PAGE_CACHE = new ThreadLocal<>();
+    private static final ThreadLocal<BoundedPageCache> LOCAL_PAGE_CACHE = new ThreadLocal<>();
+    static final java.util.concurrent.atomic.AtomicLong LOCAL_PAGE_CACHE_HITS = new java.util.concurrent.atomic.AtomicLong();
+
+    @FunctionalInterface
+    private interface PageCacheScope extends AutoCloseable {
+        @Override void close();
+    }
+
+    private static final class BoundedPageCache {
+        private final LinkedHashMap<ContentHandle, Object> entries = new LinkedHashMap<>(64, 0.75f, true);
+        private long totalBytes;
+
+        Object get(ContentHandle handle) {
+            return entries.get(handle);
+        }
+
+        void put(ContentHandle handle, Object parsed) {
+            long size = handle.size();
+            if (size <= 0L || size > 1_048_576L || size > LOCAL_PAGE_CACHE_MAX_BYTES) return;
+            if (entries.containsKey(handle)) {
+                entries.put(handle, parsed);
+                return;
+            }
+            entries.put(handle, parsed);
+            totalBytes += size;
+            var it = entries.entrySet().iterator();
+            while ((entries.size() > LOCAL_PAGE_CACHE_MAX_ENTRIES || totalBytes > LOCAL_PAGE_CACHE_MAX_BYTES) && it.hasNext()) {
+                totalBytes -= it.next().getKey().size();
+                it.remove();
+            }
+        }
+    }
+
+    private static PageCacheScope openLocalPageCache() {
+        if (LOCAL_PAGE_CACHE.get() != null) {
+            return () -> {};
+        }
+        LOCAL_PAGE_CACHE.set(new BoundedPageCache());
+        return LOCAL_PAGE_CACHE::remove;
+    }
+
+    static boolean isLocalPageCacheActive() {
+        return LOCAL_PAGE_CACHE.get() != null;
+    }
     private final Path directory;
     private final StreamingContentStore content;
     private final int rowBytes;
@@ -220,7 +265,7 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
             }
             private <T> Page<T> rows(String tree,String from,String until,int size,Optional<String> cursor,
                                      EvolutionDecoder<T> decode)throws IOException {
-                try {
+                try (var ignored = openLocalPageCache()) {
                     var result=page(pinned.trees().get(tree),from,until,
                             query(graph,"evolution-"+tree,size,List.of(pinned.document(),from,until)),size,cursor,cancelled);
                     var values=new ArrayList<T>();
@@ -233,22 +278,24 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
 
     /** Compact captured revision metadata for the exact repository context, after closure revalidation by the caller. */
     public Optional<Map<String,Object>> evolutionRevision(EvolutionSnapshot snapshot, BooleanSupplier cancelled) throws IOException {
-        var graph = snapshot.header().graph();
-        var id = snapshot.header().snapshot().value();
-        var rows = new ArrayList<Entry>(1);
-        visit(root(graph,cancelled).trees().get("contexts"),id,id+"\0",null,rows::add,cancelled,0);
-        if (rows.size()!=1) return Optional.empty();
-        var context = GraphSnapshotCodec.context(rows.getFirst().row());
-        var evidence = snapshot.evidence(context.evidence());
-        if (evidence.isEmpty() || !evidence.orElseThrow().family().equals("repository.snapshot")) return Optional.empty();
-        var canonical = evidence.orElseThrow().canonicalJson();
-        var provenance = new TreeMap<String,Object>();
-        GraphJson.streamObject(new StringReader(canonical),
-                new GraphJson.StreamLimits(canonical.length(),128,Long.MAX_VALUE),(field,member) -> {
-                    if (Set.of("revision","dirty","repository").contains(field)) provenance.put(field,member.read());
-                    else member.skip();
-                });
-        return Optional.of(provenance);
+        try (var ignored = openLocalPageCache()) {
+            var graph = snapshot.header().graph();
+            var id = snapshot.header().snapshot().value();
+            var rows = new ArrayList<Entry>(1);
+            visit(root(graph,cancelled).trees().get("contexts"),id,id+"\0",null,rows::add,cancelled,0);
+            if (rows.size()!=1) return Optional.empty();
+            var context = GraphSnapshotCodec.context(rows.getFirst().row());
+            var evidence = snapshot.evidence(context.evidence());
+            if (evidence.isEmpty() || !evidence.orElseThrow().family().equals("repository.snapshot")) return Optional.empty();
+            var canonical = evidence.orElseThrow().canonicalJson();
+            var provenance = new TreeMap<String,Object>();
+            GraphJson.streamObject(new StringReader(canonical),
+                    new GraphJson.StreamLimits(canonical.length(),128,Long.MAX_VALUE),(field,member) -> {
+                        if (Set.of("revision","dirty","repository").contains(field)) provenance.put(field,member.read());
+                        else member.skip();
+                    });
+            return Optional.of(provenance);
+        }
     }
 
     @FunctionalInterface private interface EvolutionDecoder<T>{T decode(Object row)throws IOException;}
@@ -330,47 +377,108 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
     }
 
     public Optional<Partition> partition(ContentDigest graph, String context) throws IOException {
-        var root = root(graph, () -> false);
-        var found = new ArrayList<Entry>();
-        visit(root.trees().get("partitions"), context, context + "\0", null, found::add, () -> false, 0);
-        return found.isEmpty() ? Optional.empty() : Optional.of(partition(found.getFirst().row()));
+        try (var ignored = openLocalPageCache()) {
+            var root = root(graph, () -> false);
+            var found = new ArrayList<Entry>();
+            visit(root.trees().get("partitions"), context, context + "\0", null, found::add, () -> false, 0);
+            return found.isEmpty() ? Optional.empty() : Optional.of(partition(found.getFirst().row()));
+        }
+    }
+
+    /** Read one authenticated node by context and identity without materializing the graph. */
+    public Optional<KnowledgeGraph.Node> node(ContentDigest graph, String contextId, String nodeId) throws IOException {
+        Objects.requireNonNull(graph);
+        Objects.requireNonNull(contextId);
+        Objects.requireNonNull(nodeId);
+        BooleanSupplier cancelled = () -> Thread.currentThread().isInterrupted();
+        try (var ignored = openLocalPageCache()) {
+            var root = root(graph, cancelled);
+            String targetKey = key(contextId, nodeId);
+            var found = new ArrayList<Entry>(1);
+            visit(root.trees().get("nodes"), targetKey, targetKey + "\0", null, found::add, cancelled, 0);
+            if (found.size() > 1)
+                throw new IOException("GRAPH_PARTITION_DUPLICATE_NODE");
+            return found.isEmpty() ? Optional.empty() : Optional.of(GraphSnapshotCodec.node(found.getFirst().row()));
+        }
+    }
+
+    /** Reconstitutes one single context subgraph for bounded partition replay (e.g. policy evaluation). */
+    public Optional<KnowledgeGraph> contextGraph(ContentDigest graph, String contextId, BooleanSupplier cancelled)
+            throws IOException {
+        Objects.requireNonNull(graph);
+        Objects.requireNonNull(contextId);
+        Objects.requireNonNull(cancelled);
+        if (!Files.isRegularFile(pointer(graph), LinkOption.NOFOLLOW_LINKS)) return Optional.empty();
+        try (var ignored = openLocalPageCache()) {
+            var root = root(graph, cancelled);
+            var ctxRows = new ArrayList<KnowledgeGraph.Context>();
+            visit(root.trees().get("contexts"), contextId, contextId + "\0", null,
+                    entry -> ctxRows.add(GraphSnapshotCodec.context(entry.row())), cancelled, 0);
+            if (ctxRows.size() != 1) return Optional.empty();
+            var ctx = ctxRows.getFirst();
+            String prefix = contextId + "|";
+            String end = upper(prefix);
+            var nodes = new ArrayList<KnowledgeGraph.Node>();
+            var neededEvidence = new TreeSet<ContentDigest>();
+            neededEvidence.add(ctx.evidence());
+            visit(root.trees().get("nodes"), prefix, end, null, entry -> {
+                var n = GraphSnapshotCodec.node(entry.row());
+                nodes.add(n);
+                neededEvidence.addAll(n.evidence());
+            }, cancelled, 0);
+            var edges = new ArrayList<KnowledgeGraph.Edge>();
+            visit(root.trees().get("edges"), prefix, end, null, entry -> {
+                var e = GraphSnapshotCodec.edge(entry.row());
+                edges.add(e);
+                neededEvidence.addAll(e.evidence());
+            }, cancelled, 0);
+            var evidenceList = new ArrayList<GraphEvidence>(neededEvidence.size());
+            var evTree = root.trees().get("evidence");
+            for (var evId : neededEvidence) {
+                visit(evTree, evId.value(), evId.value() + "\0", null,
+                        entry -> evidenceList.add(GraphSnapshotCodec.evidence(entry.row())), cancelled, 0);
+            }
+            return Optional.of(new KnowledgeGraph(ctx.snapshot(), List.of(ctx), nodes, edges, evidenceList));
+        }
     }
 
     public Optional<GraphManifest> manifest(ContentDigest graph) throws IOException {
         var pointer = pointer(graph);
         if (!Files.isRegularFile(pointer, LinkOption.NOFOLLOW_LINKS)) return Optional.empty();
-        Map<String, Object> reference;
-        try (var input = Files.newInputStream(pointer, LinkOption.NOFOLLOW_LINKS)) {
-            byte[] bytes = input.readNBytes(16385);
-            if (bytes.length > 16384) throw new IOException("GRAPH_PARTITION_ROOT_INVALID");
-            reference = object(parse(utf8(bytes)));
+        try (var ignored = openLocalPageCache()) {
+            Map<String, Object> reference;
+            try (var input = Files.newInputStream(pointer, LinkOption.NOFOLLOW_LINKS)) {
+                byte[] bytes = input.readNBytes(16385);
+                if (bytes.length > 16384) throw new IOException("GRAPH_PARTITION_ROOT_INVALID");
+                reference = object(parse(utf8(bytes)));
+            }
+            fields(reference, "format", "graph", "document");
+            if (!FORMAT.equals(reference.get("format")) || !graph.value().equals(reference.get("graph")))
+                throw new IOException("GRAPH_PARTITION_ROOT_SCOPE");
+            var document = handle(reference.get("document"));
+            var cached = verified.get(graph);
+            Root root;
+            if (cached != null && cached.document().equals(document)) {
+                root = cached;
+            } else {
+                var value = object(read(document, () -> false));
+                fields(value, "format", "graph", "snapshot", "trees");
+                var trees = new TreeMap<String, Tree>();
+                object(value.get("trees")).forEach((name, tree) -> trees.put(name, tree(tree)));
+                root = new Root(document, graph, text(value.get("snapshot")), Map.copyOf(trees));
+            }
+            var contexts = new ArrayList<KnowledgeGraph.Context>();
+            visit(root.trees().get("contexts"), "", "\uffff", null,
+                    entry -> contexts.add(GraphSnapshotCodec.context(entry.row())), () -> false, 0);
+            long nodes = root.trees().get("nodes").rows();
+            long edges = root.trees().get("edges").rows();
+            long evidence = root.trees().get("evidence").rows();
+            return Optional.of(new GraphManifest(KnowledgeGraph.SCHEMA, graph, graph,
+                    new com.evolution.analysis.contract.identity.SnapshotIdentity(root.snapshot()), contexts,
+                    (int) Math.min(nodes, Integer.MAX_VALUE),
+                    (int) Math.min(edges, Integer.MAX_VALUE),
+                    (int) Math.min(evidence, Integer.MAX_VALUE)));
         }
-        fields(reference, "format", "graph", "document");
-        if (!FORMAT.equals(reference.get("format")) || !graph.value().equals(reference.get("graph")))
-            throw new IOException("GRAPH_PARTITION_ROOT_SCOPE");
-        var document = handle(reference.get("document"));
-        var cached = verified.get(graph);
-        Root root;
-        if (cached != null && cached.document().equals(document)) {
-            root = cached;
-        } else {
-            var value = object(read(document, () -> false));
-            fields(value, "format", "graph", "snapshot", "trees");
-            var trees = new TreeMap<String, Tree>();
-            object(value.get("trees")).forEach((name, tree) -> trees.put(name, tree(tree)));
-            root = new Root(document, graph, text(value.get("snapshot")), Map.copyOf(trees));
-        }
-        var contexts = new ArrayList<KnowledgeGraph.Context>();
-        visit(root.trees().get("contexts"), "", "\uffff", null,
-                entry -> contexts.add(GraphSnapshotCodec.context(entry.row())), () -> false, 0);
-        long nodes = root.trees().get("nodes").rows();
-        long edges = root.trees().get("edges").rows();
-        long evidence = root.trees().get("evidence").rows();
-        return Optional.of(new GraphManifest(KnowledgeGraph.SCHEMA, graph, graph,
-                new com.evolution.analysis.contract.identity.SnapshotIdentity(root.snapshot()), contexts,
-                (int) Math.min(nodes, Integer.MAX_VALUE),
-                (int) Math.min(edges, Integer.MAX_VALUE),
-                (int) Math.min(evidence, Integer.MAX_VALUE)));
     }
 
     /**
@@ -378,12 +486,14 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
      */
     public Optional<GraphEvidence> evidence(ContentDigest graph, ContentDigest identity) throws IOException {
         BooleanSupplier cancelled = () -> Thread.currentThread().isInterrupted();
-        var root = root(graph, cancelled);
-        var found = new ArrayList<Entry>();
-        visit(root.trees().get("evidence"), identity.value(), identity.value() + "\0", null, found::add, cancelled, 0);
-        if (found.size() > 1)
-            throw new IOException("GRAPH_PARTITION_DUPLICATE_EVIDENCE");
-        return found.isEmpty() ? Optional.empty() : Optional.of(GraphSnapshotCodec.evidence(found.getFirst().row()));
+        try (var ignored = openLocalPageCache()) {
+            var root = root(graph, cancelled);
+            var found = new ArrayList<Entry>();
+            visit(root.trees().get("evidence"), identity.value(), identity.value() + "\0", null, found::add, cancelled, 0);
+            if (found.size() > 1)
+                throw new IOException("GRAPH_PARTITION_DUPLICATE_EVIDENCE");
+            return found.isEmpty() ? Optional.empty() : Optional.of(GraphSnapshotCodec.evidence(found.getFirst().row()));
+        }
     }
 
     /**
@@ -421,8 +531,15 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
     public Publication build(CanonicalGraphInput input, Path snapshots, BooleanSupplier cancelled,
             Collection<com.evolution.analysis.evidence.EvidenceAcquisitionLedger> ledgers, Contribution contribution)
             throws IOException {
+        return build(input, snapshots, cancelled, ledgers, contribution, false);
+    }
+
+    public Publication build(CanonicalGraphInput input, Path snapshots, BooleanSupplier cancelled,
+            Collection<com.evolution.analysis.evidence.EvidenceAcquisitionLedger> ledgers, Contribution contribution,
+            boolean fastArchitecture)
+            throws IOException {
         return assemble(input.repository().snapshot().identity(), snapshots, cancelled, workspace -> {
-            new CanonicalGraphBuilder().project(input, workspace, ledgers);
+            new CanonicalGraphBuilder().project(input, workspace, ledgers, fastArchitecture);
             contribution.project(workspace);
         });
     }
@@ -1367,40 +1484,40 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
 
     private Page<Partition> partitionPage(ContentDigest graph, int size, Optional<String> cursor,
             BooleanSupplier cancelled) throws IOException {
-        var root = root(graph, cancelled);
-        String query = query(graph, "partitions", size, root.document());
-        var page = page(root.trees().get("partitions"), "", "\uffff", query, size, cursor, cancelled);
-        var values = new ArrayList<Partition>();
-        for (var entry : page.items())
-            values.add(partition(entry.row()));
-        return new Page<>(values, page.continuation());
+        try (var ignored = openLocalPageCache()) {
+            var root = root(graph, cancelled);
+            String query = query(graph, "partitions", size, root.document());
+            var page = page(root.trees().get("partitions"), "", "\uffff", query, size, cursor, cancelled);
+            var values = new ArrayList<Partition>();
+            for (var entry : page.items())
+                values.add(partition(entry.row()));
+            return new Page<>(values, page.continuation());
+        }
     }
 
     private Page<KnowledgeGraph.Node> nodePage(Partition partition, int size, Optional<String> cursor,
             BooleanSupplier cancelled) throws IOException {
-        var root = partitionRoot(partition, cancelled);
-        String prefix = partition.context() + "|";
-        var page = page(root.trees().get("nodes"), prefix, upper(prefix),
-                query(partition.graph(), "nodes", size, partition), size, cursor, cancelled);
-        var values = new ArrayList<KnowledgeGraph.Node>();
-        for (var entry : page.items()) {
-            var node = GraphSnapshotCodec.node(entry.row());
-            if (!node.context().equals(partition.context()))
-                throw new IOException("GRAPH_PARTITION_NODE_SCOPE");
-            values.add(node);
+        try (var ignored = openLocalPageCache()) {
+            var root = partitionRoot(partition, cancelled);
+            String prefix = partition.context() + "|";
+            var page = page(root.trees().get("nodes"), prefix, upper(prefix),
+                    query(partition.graph(), "nodes", size, partition), size, cursor, cancelled);
+            var values = new ArrayList<KnowledgeGraph.Node>();
+            for (var entry : page.items()) {
+                var node = GraphSnapshotCodec.node(entry.row());
+                if (!node.context().equals(partition.context()))
+                    throw new IOException("GRAPH_PARTITION_NODE_SCOPE");
+                values.add(node);
+            }
+            return new Page<>(values, page.continuation());
         }
-        return new Page<>(values, page.continuation());
     }
 
     private Page<KnowledgeGraph.Edge> adjacencyPage(Partition partition, String node, boolean incoming, int size,
             Optional<String> cursor, BooleanSupplier cancelled) throws IOException {
         if (node == null || !node.matches("(?:[a-z][a-z0-9.-]*:)?sha256:[0-9a-f]{64}"))
             throw new IllegalArgumentException("GRAPH_PARTITION_NODE_ID");
-        boolean ownedCache = LOCAL_PAGE_CACHE.get() == null;
-        if (ownedCache) LOCAL_PAGE_CACHE.set(new LinkedHashMap<>(32, 0.75f, true) {
-            @Override protected boolean removeEldestEntry(Map.Entry<ContentHandle, Object> eldest) { return size() > 32; }
-        });
-        try {
+        try (var ignored = openLocalPageCache()) {
             var root = partitionRoot(partition, cancelled);
             String space = incoming ? "incoming" : "outgoing", prefix = key(partition.context(), node) + "|";
             var page = page(root.trees().get(space), prefix, upper(prefix),
@@ -1419,8 +1536,6 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
                 values.add(edge);
             }
             return new Page<>(values, page.continuation());
-        } finally {
-            if (ownedCache) LOCAL_PAGE_CACHE.remove();
         }
     }
 
@@ -1554,14 +1669,17 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
         var localCache = LOCAL_PAGE_CACHE.get();
         if (localCache != null) {
             Object hit = localCache.get(handle);
-            if (hit != null) return hit;
+            if (hit != null) {
+                LOCAL_PAGE_CACHE_HITS.incrementAndGet();
+                return hit;
+            }
         }
         try (var input = content.open(handle)) {
             byte[] bytes = input.readNBytes(Math.addExact(rowBytes, 1));
             if (bytes.length != handle.size() || !ContentDigest.sha256(bytes).equals(handle.digest()))
                 throw new IOException("GRAPH_PARTITION_CONTENT_CORRUPT");
             Object parsed = parse(utf8(bytes));
-            if (localCache != null && handle.size() <= 1_048_576) {
+            if (localCache != null) {
                 localCache.put(handle, parsed);
             }
             return parsed;

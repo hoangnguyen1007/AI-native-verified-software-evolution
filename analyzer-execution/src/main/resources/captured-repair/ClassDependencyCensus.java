@@ -42,7 +42,9 @@ public final class ClassDependencyCensus {
                     return FileVisitResult.SKIP_SUBTREE;
                 }
                 if (unix.equals("target/surefire-reports") || unix.endsWith("/target/surefire-reports")
-                        || unix.equals("target/failsafe-reports") || unix.endsWith("/target/failsafe-reports")) {
+                        || unix.equals("target/failsafe-reports") || unix.endsWith("/target/failsafe-reports")
+                        || unix.equals("build/test-results/test") || unix.endsWith("/build/test-results/test")
+                        || unix.equals("build/test-results/integrationTest") || unix.endsWith("/build/test-results/integrationTest")) {
                     surefireDirs.add(dir);
                     return FileVisitResult.SKIP_SUBTREE;
                 }

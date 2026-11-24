@@ -390,7 +390,7 @@ class LocalAnalysisRunnerTest {
             var catalog = AnalysisJobApiTest.data(AnalysisJobApiTest.call(configured, "POST", base + "/repair-options",
                     CanonicalJson.write(Map.of("arguments", pinned))));
             assertEquals(0, requests.get(), "Discovery never transmits source");
-            assertEquals(7, GraphJson.array(catalog.get("recipes")).size());
+            assertEquals(14, GraphJson.array(catalog.get("recipes")).size());
             var ai = GraphJson.object(catalog.get("ai"));
             var files = GraphJson.array(ai.get("files"));
             int controller = 0;

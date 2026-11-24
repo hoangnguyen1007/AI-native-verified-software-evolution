@@ -27,15 +27,50 @@
 .compare-actions label { min-width: min(100%, 11rem); }
 .evolution-page details { margin-block: .5rem; }
 .evolution-page summary { cursor: pointer; padding-block: .4rem; }
-.comparison-record { border-top: 1px solid var(--line); }
-.comparison-record > summary { font-weight: 600; }
-.evolution-page pre { white-space: pre-wrap; overflow-wrap: anywhere; margin: .4rem 0; font-size: .78rem; }
-.evolution-page code { display: inline-block; max-width: 100%; overflow-wrap: anywhere; }
-.comparison-pin, .comparison-graph-side {
-  min-width: 0; padding: .7rem;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
+.comparison-record {
+  border: 1px solid var(--line-mid);
+  border-radius: var(--r);
+  background: var(--surface-2);
+  padding: 8px 12px;
+  margin-block: 6px;
+  transition: border-color 0.14s ease;
 }
+.comparison-record:hover { border-color: var(--line-strong); }
+.comparison-record > summary {
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.comparison-record[data-delta-tone="good"] { border-inline-start: 3px solid var(--accent); }
+.comparison-record[data-delta-tone="warn"] { border-inline-start: 3px solid var(--warn); }
+.comparison-record[data-delta-tone="bad"] { border-inline-start: 3px solid var(--danger); }
+.evolution-page pre { white-space: pre-wrap; overflow-wrap: anywhere; margin: .4rem 0; font-size: .78rem; background: var(--code-bg); padding: 10px; border-radius: var(--r-sm); border: 1px solid var(--line); }
+.evolution-page code { display: inline-block; max-width: 100%; overflow-wrap: anywhere; font-family: var(--font-mono); font-size: 0.8rem; }
+.comparison-pin, .comparison-graph-side {
+  min-width: 0;
+  padding: 14px 16px;
+  border: 1px solid var(--line-mid);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+  display: grid;
+  gap: 6px;
+}
+.comparison-pin.is-baseline { border-top: 3px solid var(--cyan); }
+.comparison-pin.is-target { border-top: 3px solid var(--accent); }
+.comparison-pin-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.comparison-pin-head h3 { margin: 0; font-family: var(--font-display); font-size: 1.15rem; font-weight: 500; }
+.comparison-pin-meta { margin: 0; font-size: 12px; color: var(--text-2); }
+.evolution-side-badge {
+  font: 700 10px var(--font-mono);
+  letter-spacing: 0.06em;
+  padding: 2px 7px;
+  border-radius: 999px;
+}
+.evolution-side-badge.is-baseline { background: var(--cyan-s); color: var(--cyan); border: 1px solid color-mix(in srgb, var(--cyan) 35%, transparent); }
+.evolution-side-badge.is-target { background: var(--accent-s); color: var(--accent); border: 1px solid var(--accent-line); }
 .comparison-graph-side li { margin-block: .3rem; }
 .evolution-page dialog { max-width: min(46rem, calc(100vw - 1.5rem)); max-height: 85vh; overflow: auto; }
 .evolution-page [hidden] { display: none !important; }

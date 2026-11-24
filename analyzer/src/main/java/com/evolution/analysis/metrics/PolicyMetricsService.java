@@ -19,8 +19,8 @@ public final class PolicyMetricsService {
         Objects.requireNonNull(limits);
         var graph = queries.graph();
         if (!compilation.identity().equals(plan.compilation()) || !compilation.identity().equals(evaluation.compilation())
-                || !plan.identity().equals(evaluation.mapping()) || !plan.graph().equals(graph.identity())
-                || !evaluation.graph().equals(graph.identity()) || !plan.context().equals(evaluation.context()))
+                || !plan.identity().equals(evaluation.mapping()) || !plan.graph().equals(queries.graphIdentity())
+                || !evaluation.graph().equals(queries.graphIdentity()) || !plan.context().equals(evaluation.context()))
             throw new IllegalArgumentException("Foreign policy metric inputs");
         var expected = compilation.policy().stream().flatMap(p -> p.rules().stream()).toList();
         if (!expected.equals(plan.rules().stream().map(PolicyGraphMapper.RulePlan::rule).toList())

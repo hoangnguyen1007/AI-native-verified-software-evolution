@@ -46,30 +46,61 @@ function mountBridges(root) {
       control.append(el('span', label), el('strong', m.formatCount(value)));
       stats.append(control);
     }
-    node.replaceChildren(stats);
+    const children = [stats];
+    if (m.outcomeBreakdown) {
+      const bd = m.outcomeBreakdown(summary);
+      const sum = bd.matched + bd.pending + bd.extra;
+      if (sum > 0) {
+        const barWrap = el('div', undefined, 'bridge-breakdown');
+        const bar = el('div', undefined, 'bridge-breakdown-bar');
+        const legend = el('div', undefined, 'bridge-breakdown-legend');
+        const segs = [
+          ['matched', 'Matched', bd.matched, 'is-matched'],
+          ['pending', summary.accounting ? 'Pending bindings' : 'Unresolved', bd.pending, 'is-pending'],
+          ['extra', bd.extraLabel, bd.extra, 'is-extra']
+        ];
+        for (const [, lbl, count, cls] of segs) {
+          if (!count) continue;
+          const seg = el('span', undefined, 'bridge-breakdown-seg ' + cls);
+          seg.style.flex = String(count);
+          seg.title = lbl + ': ' + count.toLocaleString();
+          bar.append(seg);
+          const item = el('span', undefined, 'bridge-breakdown-item');
+          item.append(el('i', undefined, 'bridge-breakdown-dot ' + cls), el('span', lbl + ': ' + count.toLocaleString()));
+          legend.append(item);
+        }
+        barWrap.append(bar, legend);
+        children.push(barWrap);
+      }
+    }
+    node.replaceChildren(...children);
     node.hidden = !stats.childElementCount;
   }
   function breadcrumbs(){const nav=$('bridge-breadcrumbs');nav.replaceChildren(button(chosenName(),()=>chooseSection('PARTITIONS',''),'text-button'));if($('bridge-partition').value){nav.append(el('span','›'),button(partName($('bridge-partition').value),()=>chooseSection('FACTS',$('bridge-partition').value),'text-button'));}if($('bridge-document').value)nav.append(el('span','›'),el('span',$('bridge-document').value));}
   function pill(view) {
     const node = el('span', view.statusLabel, 'bridge-pill');
-    node.hidden = ['COMPLETE', 'CAPTURED', 'PARTIAL', 'MISSING_PROVIDER'].includes(view.state);
+    node.hidden = ['CAPTURED'].includes(view.state) && view.kind === 'Record';
     node.dataset.tone = view.tone;
     return node;
   }
   function render(data){syncTabs();renderSummary(data.summary);breadcrumbs();const heading=selection.section==='PARTITIONS'?'Contexts':$('bridge-section').selectedOptions[0].textContent;$('bridge-results-heading').textContent=heading;const rows=$('bridge-rows');rows.replaceChildren();rows.dataset.layout=selection.section==='PARTITIONS'?'modules':'evidence';for(const row of data.items)rows.append(renderRow(row));if(!data.items.length)rows.append(el('p',cursor?'No matches in this scan. Continue to the next page or narrow the search.':'No matches. Clear filters or select another context.','empty'));$('bridge-count').textContent='Page '+pageNumber+' · '+m.formatCount(String(data.items.length))+' items'+(cursor?' · more available':' · end');}
   function renderRow(row){const f=row.fields,v=m.describe(row),item=el('article',undefined,'bridge-item'),top=el('div',undefined,'bridge-item-top');
-    if(v.category){
+    const proto=m.protocolKind?m.protocolKind(f.category||f.profile,f.kind||f.relation):null;
+    if(v.category||proto){
       const kindRow=el('div',undefined,'bridge-kind-row');
-      kindRow.append(el('div',v.category,'bridge-kind'));
-      if(m.categoryGroup&&f.category){
-        const grp=m.categoryGroup(f.category);
-        kindRow.append(el('span',grp.label,'bridge-layer-badge '+grp.group));
+      if(v.category)kindRow.append(el('div',v.category,'bridge-kind'));
+      const badgeGroup=el('div',undefined,'bridge-badge-group');
+      if(proto)badgeGroup.append(el('span',proto.label,'protocol-badge is-'+proto.id));
+      if(m.categoryGroup&&(f.category||f.profile)){
+        const grp=m.categoryGroup(f.category||f.profile);
+        badgeGroup.append(el('span',grp.layer,'bridge-layer-badge '+grp.group));
       }
+      if(badgeGroup.childElementCount)kindRow.append(badgeGroup);
       item.append(kindRow);
     }
     const heading=el('h3');heading.append(button(v.title,()=>inspect(row),'text-button bridge-title'));top.append(heading,pill(v));item.append(top);const actions=el('div',undefined,'bridge-actions');
     if(f.language){item.append(el('p',m.moduleContext(row)||'Context metadata unavailable'));if(f.child)item.append(el('div',m.formatCount(f.child.facts.rows)+' facts · '+m.formatCount(f.child.artifacts.rows)+' artifacts','bridge-module-meta'));actions.append(button('Open',()=>chooseSection('FACTS',row.key),'button subtle'));actions.append(iconButton('link','Relations',()=>chooseSection('RELATIONS',row.key)));}
-    else {if(v.location)item.append(el('p',v.location));if(v.partition)item.append(el('p',partName(v.partition)));if(f.from){const flow=el('div',undefined,'bridge-flow'),from=el('div'),to=el('div');from.append(el('small',partName(f.from.partition)),el('span',m.sourceName(f.from.source&&f.from.source.path)));to.append(el('small',f.state==='BOUND'?'Target':'Candidate target'),el('span',f.targets&&f.targets.length?f.targets.map(ref=>m.sourceName(ref.source&&ref.source.path)).join(', '):'Unresolved'));const arrow=el('span','→','bridge-arrow');arrow.setAttribute('aria-hidden','true');flow.append(from,arrow,to);item.append(flow);}
+    else {if(v.location)item.append(el('p',v.location));if(v.partition)item.append(el('p',partName(v.partition)));if(f.from){const flow=el('div',undefined,'bridge-flow'),from=el('div',undefined,'bridge-flow-node'),to=el('div',undefined,'bridge-flow-node is-target');from.append(el('small',partName(f.from.partition)),el('span',m.sourceName(f.from.source&&f.from.source.path)));to.append(el('small',f.state==='BOUND'?'Matched target':'Candidate target'),el('span',f.targets&&f.targets.length?f.targets.map(ref=>m.sourceName(ref.source&&ref.source.path)).join(', '):'Unresolved'));const connector=el('div',undefined,'bridge-connector');if(proto)connector.append(el('span',proto.label,'bridge-connector-proto'));const arrow=el('span','→','bridge-arrow');arrow.setAttribute('aria-hidden','true');connector.append(arrow);flow.append(from,connector,to);item.append(flow);}
       actions.append(iconButton('info','Inspect evidence',()=>inspect(row)));if(selection.section==='FACTS'&&f.status==='RESOLVED'&&['COMPONENT_USE','SFC_MODULE_REFERENCE','RESOURCE_REFERENCE'].includes(f.kind)&&!m.opaque(f.target))actions.append(iconButton('source','Open '+f.target,()=>chooseSection('FACTS',selection.partition,f.target)));else if(selection.section==='FACTS'&&v.source)actions.append(iconButton('source','Filter to this file',()=>chooseSection('FACTS',selection.partition,v.source)));const ref=m.impactReference(row);if(ref)actions.append(iconButton('impact','Potential impact',()=>impact(ref)));}
     item.append(actions);return item;}
   function field(list,label,value){const block=el('div',undefined,'data-field');block.append(el('dt',label),el('dd',value));list.append(block);}

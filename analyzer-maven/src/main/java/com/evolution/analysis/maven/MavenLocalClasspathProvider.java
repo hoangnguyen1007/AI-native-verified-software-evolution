@@ -20,22 +20,31 @@ public final class MavenLocalClasspathProvider implements ClasspathProvider {
             new VersionedIdentifier("classpath.maven-local", "3.9.16-m3.7");
 
     private final Path selectedCacheRoot;
+    private final boolean includeTests;
 
     public MavenLocalClasspathProvider(Path selectedCacheRoot) {
+        this(selectedCacheRoot, true);
+    }
+
+    public MavenLocalClasspathProvider(Path selectedCacheRoot, boolean includeTests) {
         this.selectedCacheRoot = Objects.requireNonNull(selectedCacheRoot);
+        this.includeTests = includeTests;
     }
 
     @Override
     public ExactClasspathResult resolve(ClasspathResolutionRequest request) {
         Objects.requireNonNull(request);
         var reactor = ReactorIndex.create(request.buildModel());
+        List<SourcePlanModel.Kind> sourceSetKinds = includeTests
+                ? List.of(SourcePlanModel.Kind.MAIN, SourcePlanModel.Kind.TEST)
+                : List.of(SourcePlanModel.Kind.MAIN);
         List<Manifest> manifests = new ArrayList<>();
         LocalArtifactCache cache;
         try {
             cache = new LocalArtifactCache(selectedCacheRoot, request.buildRequest(), request.policy());
         } catch (LocalArtifactCache.RootFailure failure) {
             for (ModuleModel module : request.buildModel().modules()) {
-                for (SourcePlanModel.Kind kind : SourcePlanModel.Kind.values()) {
+                for (SourcePlanModel.Kind kind : sourceSetKinds) {
                     manifests.add(Manifest.create(
                             module.module().identity(),
                             kind,
@@ -55,7 +64,7 @@ public final class MavenLocalClasspathProvider implements ClasspathProvider {
 
         var modelReader = new MavenArtifactModelReader(cache, request.buildRequest().policy());
         for (ModuleModel module : request.buildModel().modules()) {
-            for (SourcePlanModel.Kind kind : SourcePlanModel.Kind.values()) {
+            for (SourcePlanModel.Kind kind : sourceSetKinds) {
                 if (module.effectivePom().isEmpty()) {
                     manifests.add(Manifest.create(
                             module.module().identity(),
@@ -233,9 +242,33 @@ public final class MavenLocalClasspathProvider implements ClasspathProvider {
                 }
                 if (outcome.descriptor().isPresent()) {
                     var descriptor = outcome.descriptor().orElseThrow();
-                    children = descriptor.dependencies();
                     descriptorEvidence = descriptor.evidence();
                     node.evidence = merge(node.evidence, descriptorEvidence);
+                    if (descriptor.relocatedTo().isPresent()) {
+                        node.withheld = true;
+                        MavenCoordinate target = descriptor.relocatedTo().orElseThrow();
+                        Dependency relocated = new Dependency(
+                                target.groupId(),
+                                target.artifactId(),
+                                target.version(),
+                                dependency.type(),
+                                dependency.classifier(),
+                                dependency.scope(),
+                                dependency.optional(),
+                                dependency.exclusions());
+                        Set<String> childPath = new HashSet<>(next.path);
+                        childPath.add(coordinate.notation());
+                        pending.addFirst(new Pending(
+                                relocated,
+                                next.parent,
+                                next.depth,
+                                next.parentScope,
+                                next.inheritedExclusions,
+                                Set.copyOf(childPath),
+                                node.evidence));
+                        return;
+                    }
+                    children = descriptor.dependencies();
                 }
             }
 
@@ -438,10 +471,10 @@ public final class MavenLocalClasspathProvider implements ClasspathProvider {
             }
             MavenCoordinate gav = new MavenCoordinate(
                     dependency.groupId(), dependency.artifactId(), dependency.version());
-            String type = dependency.type().isEmpty() ? "jar" : dependency.type();
+            String type = dependency.type().isEmpty() ? "jar" : dependency.type().toLowerCase(Locale.ROOT);
             String classifier = dependency.classifier();
             return switch (type) {
-                case "jar", "bundle", "maven-plugin", "ejb" -> new ArtifactCoordinate(gav, "jar", classifier);
+                case "jar", "bundle", "maven-plugin", "ejb", "eclipse-plugin", "hk2-jar" -> new ArtifactCoordinate(gav, "jar", classifier);
                 case "test-jar" -> new ArtifactCoordinate(gav, "jar", classifier.isEmpty() ? "tests" : classifier);
                 case "ejb-client" -> new ArtifactCoordinate(gav, "jar", classifier.isEmpty() ? "client" : classifier);
                 case "pom" -> new ArtifactCoordinate(gav, "pom", classifier);

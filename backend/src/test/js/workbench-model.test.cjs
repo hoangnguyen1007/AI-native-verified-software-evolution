@@ -67,3 +67,37 @@ test('policyTemplates provide valid architecture-policy:v1 presets', () => {
     assert.ok(preset.id && preset.label && preset.description);
   }
 });
+test('parseCitations expands single, grouped and ranged inline evidence markers deterministically', () => {
+  const segs = model.parseCitations('See [E1] and [E2, E3] plus [E4-E6] for details.');
+  const cited = segs.filter(s => s.type === 'citations').map(s => s.ids);
+  assert.deepEqual(cited, [['E1'], ['E2', 'E3'], ['E4', 'E5', 'E6']]);
+});
+test('classifySseToolEvent handles backend phase start/complete and legacy running status', () => {
+  assert.equal(model.classifySseToolEvent({phase: 'start', tool: 'get_repo_map'}), 'start');
+  assert.equal(model.classifySseToolEvent({phase: 'complete', tool: 'get_repo_map'}), 'complete');
+  assert.equal(model.classifySseToolEvent({status: 'running', tool: 'get_repo_map'}), 'start');
+  assert.equal(model.classifySseToolEvent({status: 'done'}), 'complete');
+});
+test('buildImpactQuery enforces INCOMING direction, identity arg and omits page', () => {
+  const q = model.buildImpactQuery('analysis:main', 'sym:1', {scope: 'PACKAGE'});
+  assert.equal(q.request.direction, 'INCOMING');
+  assert.equal(q.request.scope, 'PACKAGE');
+  assert.deepEqual(q.arguments, {identity: 'sym:1'});
+  assert.equal('page' in q, false);
+});
+test('rankApplicableRecipes promotes applicable recipes first and preserves summary fallback', () => {
+  const ranked = model.rankApplicableRecipes([
+    {id: 'java.remove-unused-import', summary: 'Remove unused import'},
+    {id: 'java.break-cycle-with-lazy-injection', summary: 'Break cycle with @Lazy'}
+  ], ['java.break-cycle-with-lazy-injection']);
+  assert.equal(ranked[0].id, 'java.break-cycle-with-lazy-injection');
+  assert.equal(ranked[0].applicable, true);
+  assert.equal(ranked[0].displaySummary, 'Break cycle with @Lazy');
+  assert.equal(ranked[1].applicable, false);
+});
+test('findPreferredSpringContext selects spring context when available without inventing one', () => {
+  const contexts = [{identity: 'snapshot:1'}, {identity: 'spring-context:main'}];
+  assert.equal(model.selectDefaultContext(contexts, 'snapshot:1', ''), 'snapshot:1');
+  assert.equal(model.findPreferredSpringContext(contexts, 'snapshot:1'), 'spring-context:main');
+  assert.equal(model.findPreferredSpringContext([{identity: 'snapshot:1'}], 'snapshot:1'), 'snapshot:1');
+});

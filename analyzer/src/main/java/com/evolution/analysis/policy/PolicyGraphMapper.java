@@ -43,11 +43,11 @@ public final class PolicyGraphMapper {
         var gaps=new ArrayList<CapabilityGapRecord>();var rules=new ArrayList<RulePlan>();
         if(compilation.policy().isEmpty()) {
             gaps.addAll(compilation.gaps());gaps.add(PolicyGaps.create(evidenceContext,VERSION,compilation.identity(),"COMPILATION_WITHHELD",context));
-            return new Plan(compilation.identity(),service.graph().identity(),context,limits,AssessmentStatus.WITHHELD,rules,gaps);
+            return new Plan(compilation.identity(),service.graphIdentity(),context,limits,AssessmentStatus.WITHHELD,rules,gaps);
         }
         int remaining=limits.maxBindings();boolean cancelled=false;
         for(var rule:compilation.policy().orElseThrow().rules()) {
-            var header=rule.header();var request=new Request(service.graph().identity(),context,header.scope(),Projection.BOUNDED_UNION,Direction.OUTGOING,
+            var header=rule.header();var request=new Request(service.graphIdentity(),context,header.scope(),Projection.BOUNDED_UNION,Direction.OUTGOING,
                     header.relationships(),Population.all(),false,Optional.empty(),limits.query());
             var local=new ArrayList<CapabilityGapRecord>();var selections=new TreeMap<String,Map<String,Match>>();var candidates=new ArrayList<Candidate>();
             Optional<ContentDigest> projection=Optional.empty();boolean withheld=remaining<=0||cancelled;
@@ -85,7 +85,7 @@ public final class PolicyGraphMapper {
             rules.add(new RulePlan(rule,request,withheld?AssessmentStatus.WITHHELD:local.isEmpty()?AssessmentStatus.COMPLETE:AssessmentStatus.PARTIAL,projection,selections,candidates,local));gaps.addAll(local);
         }
         var status=rules.stream().allMatch(r->r.status()==AssessmentStatus.WITHHELD)?AssessmentStatus.WITHHELD:gaps.isEmpty()?AssessmentStatus.COMPLETE:AssessmentStatus.PARTIAL;
-        return new Plan(compilation.identity(),service.graph().identity(),context,limits,status,
+        return new Plan(compilation.identity(),service.graphIdentity(),context,limits,status,
                 rules,gaps.stream().distinct().sorted().toList());
     }
     private static Map<String,Selector> selectors(Rule rule) {

@@ -20,17 +20,30 @@ final class CapturedRepairExecution {
     private static final GraphJson.Limits LIMITS = new GraphJson.Limits(MAX_BYTES, 32, 2_000_000);
 
     record ClassCensus(String buildTool, List<String> modules, int testsRun, int testsFailed, int testsErrors,
-                       int classCount, Map<String, ContentDigest> classes, Map<String, Set<String>> dependencies) {
-        boolean testsPassed() { return testsFailed == 0 && testsErrors == 0 && classCount > 0; }
+                       int classCount, Map<String, ContentDigest> classes, Map<String, Set<String>> dependencies,
+                       boolean testsSkipped) {
+        ClassCensus(String buildTool, List<String> modules, int testsRun, int testsFailed, int testsErrors,
+                    int classCount, Map<String, ContentDigest> classes, Map<String, Set<String>> dependencies) {
+            this(buildTool, modules, testsRun, testsFailed, testsErrors, classCount, classes, dependencies, false);
+        }
+        boolean testsPassed() { return !testsSkipped && testsFailed == 0 && testsErrors == 0 && classCount > 0; }
     }
     record Proof(ContentDigest capture, ContentDigest image, ContentDigest inputs, String buildTool, List<String> modules,
                  int compileExit, int testExit, int testsRun, int testsFailed, int testsErrors,
-                 ContentDigest classCensusDigest, ClassCensus classCensus, List<String> checks) {}
+                 ContentDigest classCensusDigest, ClassCensus classCensus, List<String> checks, boolean testsSkipped) {
+        Proof(ContentDigest capture, ContentDigest image, ContentDigest inputs, String buildTool, List<String> modules,
+              int compileExit, int testExit, int testsRun, int testsFailed, int testsErrors,
+              ContentDigest classCensusDigest, ClassCensus classCensus, List<String> checks) {
+            this(capture, image, inputs, buildTool, modules, compileExit, testExit, testsRun, testsFailed,
+                    testsErrors, classCensusDigest, classCensus, checks, classCensus.testsSkipped());
+        }
+    }
 
     private record Loaded(ContentDigest captureDigest, ContentDigest proposal, ContentDigest plan, ContentDigest image,
                           ContentDigest inputs, String buildTool, List<String> modules, int compileExit, int testExit,
                           int testsRun, int testsFailed, int testsErrors, ContentDigest classCensusDigest,
-                          ClassCensus classCensus, Map<String, ContentDigest> manifestFiles, List<String> checks) {}
+                          ClassCensus classCensus, Map<String, ContentDigest> manifestFiles, List<String> checks,
+                          boolean testsSkipped) {}
 
     private final Path singleCapture;
     private final ContentDigest singlePin;
@@ -58,7 +71,7 @@ final class CapturedRepairExecution {
         if (!candidateTreeMatches(loaded.manifestFiles(), expectedCandidateFiles, plan.edits())) return Optional.empty();
         return Optional.of(new Proof(loaded.captureDigest(), loaded.image(), loaded.inputs(), loaded.buildTool(),
                 loaded.modules(), loaded.compileExit(), loaded.testExit(), loaded.testsRun(), loaded.testsFailed(),
-                loaded.testsErrors(), loaded.classCensusDigest(), loaded.classCensus(), loaded.checks()));
+                loaded.testsErrors(), loaded.classCensusDigest(), loaded.classCensus(), loaded.checks(), loaded.testsSkipped()));
     }
 
     private Loaded locate(CapturedRepairVerification.Plan plan) throws IOException {
@@ -127,10 +140,14 @@ final class CapturedRepairExecution {
         if (expected.isPresent() && !actualDigest.equals(expected.orElseThrow()))
             throw new IOException("CAPTURED_REPAIR_PIN_MISMATCH");
         var json = GraphJson.object(GraphJson.read(new String(bytes, StandardCharsets.UTF_8), LIMITS));
+        var requiredKeys = Set.of("version", "proposal", "plan", "inputs", "controls", "base", "image",
+                "container", "buildTool", "modules", "compileExit", "testExit", "testsRun", "testsFailed",
+                "testsErrors", "classCensusDigest", "classCensus", "observed", "checks", "serial");
+        var allowedKeys = new HashSet<>(requiredKeys);
+        allowedKeys.add("testsSkipped");
         if (!Arrays.equals(bytes, CanonicalJson.write(json).getBytes(StandardCharsets.UTF_8))
-                || !json.keySet().equals(Set.of("version", "proposal", "plan", "inputs", "controls", "base", "image",
-                        "container", "buildTool", "modules", "compileExit", "testExit", "testsRun", "testsFailed",
-                        "testsErrors", "classCensusDigest", "classCensus", "observed", "checks", "serial"))
+                || !json.keySet().containsAll(requiredKeys)
+                || !allowedKeys.containsAll(json.keySet())
                 || !VERSION.equals(json.get("version"))
                 || !(json.get("base") instanceof String base) || !base.startsWith(BASE_PREFIX)
                 || !base.substring(BASE_PREFIX.length()).matches("[0-9a-f]{64}")
@@ -193,19 +210,22 @@ final class CapturedRepairExecution {
                 || !observed.contains("EVO_VM_COMPLETE")) {
             throw new IOException("CAPTURED_REPAIR_TRANSCRIPT_INCOMPLETE");
         }
+        boolean testsSkipped = Boolean.TRUE.equals(json.get("testsSkipped"))
+                || observed.contains("EVO_TESTS_SKIPPED true");
         if (compileExit == 0 && !observed.contains("EVO_CHECK candidate.compile"))
             throw new IOException("CAPTURED_REPAIR_TRANSCRIPT_INCOMPLETE");
-        if (compileExit == 0 && testExit == 0 && testsFailed == 0 && testsErrors == 0 && !observed.contains("EVO_CHECK candidate.test"))
+        if (!testsSkipped && compileExit == 0 && testExit == 0 && testsFailed == 0 && testsErrors == 0
+                && !observed.contains("EVO_CHECK candidate.test"))
             throw new IOException("CAPTURED_REPAIR_TRANSCRIPT_INCOMPLETE");
 
-        var classCensus = decodeCensus(buildTool, modules, testsRun, testsFailed, testsErrors, rawCensus);
+        var classCensus = decodeCensus(buildTool, modules, testsRun, testsFailed, testsErrors, testsSkipped, rawCensus);
         var checks = GraphJson.array(json.get("checks")).stream().map(GraphJson::string).toList();
         return new Loaded(actualDigest, proposal, plan, image, inputs, buildTool, modules, compileExit, testExit,
-                testsRun, testsFailed, testsErrors, censusDigest, classCensus, Map.copyOf(inventory), checks);
+                testsRun, testsFailed, testsErrors, censusDigest, classCensus, Map.copyOf(inventory), checks, testsSkipped);
     }
 
     private static ClassCensus decodeCensus(String buildTool, List<String> modules, int testsRun, int testsFailed,
-                                            int testsErrors, Map<String, Object> raw) throws IOException {
+                                            int testsErrors, boolean testsSkipped, Map<String, Object> raw) throws IOException {
         int classCount = exactInt(raw.get("classCount"));
         var classes = new TreeMap<String, ContentDigest>();
         for (var entry : GraphJson.object(raw.get("classes")).entrySet())
@@ -218,7 +238,7 @@ final class CapturedRepairExecution {
             deps.put(entry.getKey(), Set.copyOf(targets));
         }
         return new ClassCensus(buildTool, List.copyOf(modules), testsRun, testsFailed, testsErrors, classCount,
-                Collections.unmodifiableMap(classes), Collections.unmodifiableMap(deps));
+                Collections.unmodifiableMap(classes), Collections.unmodifiableMap(deps), testsSkipped);
     }
 
     private static int exactInt(Object value) throws IOException {

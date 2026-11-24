@@ -1,8 +1,8 @@
 ARG BASE
 FROM ${BASE}
 
-# Prepare miniature Alpine/Linux QEMU guest with JDK 21, Maven, and ClassDependencyCensus.
-RUN set -eu; mkdir -p /guest/bin /guest/usr/lib /guest/etc /guest/proc /guest/sys /guest/dev /guest/tmp /guest/work /guest/census /guest/maven; \
+# Prepare miniature Alpine/Linux QEMU guest with JDK 21, Maven/Gradle, and ClassDependencyCensus.
+RUN set -eu; mkdir -p /guest/bin /guest/usr/lib /guest/etc /guest/proc /guest/sys /guest/dev /guest/tmp /guest/work /guest/census /guest/maven /guest/gradle; \
     cp -a /lib /guest/lib; cp -a /usr/lib/. /guest/usr/lib/; cp /bin/busybox /guest/bin/; \
     for tool in $(/bin/busybox --list); do [ "$tool" = busybox ] || ln -sf busybox "/guest/bin/$tool"; done; \
     cp /etc/passwd /etc/group /guest/etc/; \
@@ -13,10 +13,17 @@ RUN set -eu; mkdir -p /guest/bin /guest/usr/lib /guest/etc /guest/proc /guest/sy
 RUN apk add --no-cache linux-virt qemu-system-x86_64 cpio unzip && \
     test -f /boot/vmlinuz-virt && command -v qemu-system-x86_64
 
-COPY apache-maven-bin.zip /tmp/apache-maven-bin.zip
-RUN set -eu; unzip -q /tmp/apache-maven-bin.zip -d /tmp/maven-dist && \
-    cp -a /tmp/maven-dist/apache-maven-*/* /guest/maven/ && \
-    rm -rf /tmp/apache-maven-bin.zip /tmp/maven-dist
+COPY tool-dist/ /tmp/tool-dist/
+RUN set -eu; \
+    if [ -f /tmp/tool-dist/maven.zip ]; then \
+        unzip -q /tmp/tool-dist/maven.zip -d /tmp/maven-dist && \
+        cp -a /tmp/maven-dist/apache-maven-*/* /guest/maven/; \
+    fi; \
+    if [ -f /tmp/tool-dist/gradle.zip ]; then \
+        unzip -q /tmp/tool-dist/gradle.zip -d /tmp/gradle-dist && \
+        cp -a /tmp/gradle-dist/gradle-*/* /guest/gradle/; \
+    fi; \
+    rm -rf /tmp/tool-dist /tmp/maven-dist /tmp/gradle-dist
 
 COPY inputs/ClassDependencyCensus.java /tmp/ClassDependencyCensus.java
 RUN "$JAVA_HOME/bin/javac" -d /guest/census /tmp/ClassDependencyCensus.java && rm -f /tmp/ClassDependencyCensus.java

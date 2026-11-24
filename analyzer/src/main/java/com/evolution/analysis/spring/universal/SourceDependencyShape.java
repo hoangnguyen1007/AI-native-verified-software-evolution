@@ -32,11 +32,13 @@ final class SourceDependencyShape {
         };
         if(shape==Shape.SINGLE)return new Descriptor(shape,type,Optional.empty(),scalar(type));
         var declaration=source.declarations().get(target);
+        boolean compat=source.validationMode()==com.evolution.analysis.spring.SpringFrameworkEvidence.ValidationMode.COMPATIBLE_FAMILY_OR_SOURCE_SCOPED;
         boolean identity=declaration!=null&&(name.startsWith("java.")?declaration.entity().origin()==EntityOrigin.JDK:
-                source.artifact(target).filter(a -> name.startsWith("org.springframework.")?
-                        a.coordinate().equals("org.springframework:spring-beans:6.2.0")&&source.framework().verifiedArtifact(a):
-                        a.coordinate().equals("jakarta.inject:jakarta.inject-api:2.0.1")&&a.contentDigest().value()
-                                .equals("sha256:f7dc98062fccf14126abb751b64fab12c312566e8cbdc8483598bffcea93af7c")).isPresent());
+                (compat&&source.framework().artifacts().isEmpty())
+                        ||source.artifact(target).filter(a -> name.startsWith("org.springframework.")?
+                        (compat?source.framework().allows(false,source.validationMode()):a.coordinate().equals("org.springframework:spring-beans:6.2.0")&&source.framework().verifiedArtifact(a)):
+                        compat||(a.coordinate().equals("jakarta.inject:jakarta.inject-api:2.0.1")&&a.contentDigest().value()
+                                .equals("sha256:f7dc98062fccf14126abb751b64fab12c312566e8cbdc8483598bffcea93af7c"))).isPresent());
         int count=shape==Shape.STRING_MAP?2:1;
         if(!identity||type.components().size()!=count)return new Descriptor(shape,type,Optional.empty(),false);
         var element=type.components().getLast();boolean complete=scalar(element);

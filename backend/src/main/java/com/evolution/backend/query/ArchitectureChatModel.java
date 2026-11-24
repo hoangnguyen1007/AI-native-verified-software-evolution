@@ -27,7 +27,10 @@ import java.util.regex.Pattern;
 /** Fixed Chat Completions destination. Model output has no authority to read, edit, or execute anything. */
 final class ArchitectureChatModel {
     private static final int ANSWER_CHARACTERS = 32_000;
-    private static final Pattern INLINE_CITATION = Pattern.compile("\\[(E\\d{1,4})\\]");
+    private static final Pattern BRACKET_GROUP = Pattern.compile("\\[([^\\[\\]]{2,120})\\]");
+    private static final Pattern CITATION_TOKEN = Pattern.compile("^E(\\d{1,4})(?:\\s*[-–]\\s*E?(\\d{1,4}))?$");
+    private static final Pattern TITLE_TAG = Pattern.compile("<conversation_title>([^\\r\\n<]*)</conversation_title>", Pattern.CASE_INSENSITIVE);
+    private static final Pattern OPEN_TITLE_TAG = Pattern.compile("(?im)^\\s*<conversation_title>[^\\r\\n]*\\r?\\n?");
     private static final GraphJson.Limits JSON = new GraphJson.Limits(ChatCompletions.RESPONSE_BYTES,24,16_384);
     private static final HttpClient HTTP = HttpClient.newBuilder().proxy(HttpClient.Builder.NO_PROXY)
             .followRedirects(HttpClient.Redirect.NEVER).connectTimeout(Duration.ofSeconds(5)).build();
@@ -78,9 +81,11 @@ final class ArchitectureChatModel {
             architecture question, are in scope. For unrelated requests give a short redirect to software architecture.
             """;
     private static final String AGENT_INSTRUCTIONS = """
-            You also have read-only graph investigation tools pinned to this exact snapshot.
+            You also have read-only graph & captured-source investigation tools pinned to this exact snapshot.
             When the initial evidence sample does not directly answer the question, call targeted tools first
-            (e.g., `search_symbols` -> `inspect_symbol` / `analyze_impact` / `trace_path` / `get_architecture_insights` / `list_findings` / `inspect_gaps`)
+            (e.g., `get_repo_map`, `list_captured_files`, `search_symbols`, `inspect_symbol_details`, `inspect_symbol`,
+            `analyze_impact`, `trace_path`, `get_architecture_insights`, `list_findings`, `inspect_spring_wiring`,
+            `inspect_spring_conditions`, `inspect_connections`, `inspect_gaps`, `search_captured_source`, `read_captured_source`)
             before writing your final answer. Every tool call appends new numbered evidence IDs (e.g. [E7], [E8]) that you MUST cite inline.
             Stop calling tools once you have sufficient verified evidence and synthesize a crisp, authoritative answer.
             """;
@@ -174,42 +179,60 @@ final class ArchitectureChatModel {
 
     Completion decodeDirectResponse(ArchitectureChat.Context context, ModelSources.Packet packet, Map<String,Object> result,
                                     List<String> limitations, boolean reviewer, boolean agentic, Consumer<String> onDelta) {
-        String returned = QueryJson.text(result,"model");
-        var choices = GraphJson.array(result.get("choices"));
-        if (returned.length() > 200 || returned.codePoints().anyMatch(Character::isISOControl) || choices.size() != 1)
-            throw new IllegalArgumentException("Invalid completion model or choices");
-        var choice = GraphJson.object(choices.getFirst());
-        var message = GraphJson.object(choice.get("message"));
-        String finishReason = choice.get("finish_reason") instanceof String s ? s : "";
-        if (!(finishReason.isEmpty() || finishReason.equals("length") || finishReason.equals("stop"))
-                || !"assistant".equals(message.get("role")))
-            throw new IllegalArgumentException("Unexpected completion");
-        String content = GraphJson.string(message.get("content"));
-        var completion = finishDecode(context, packet, returned, finishReason, content,
-                CanonicalJson.write(result).getBytes(StandardCharsets.UTF_8), new ArrayList<>(limitations), reviewer, agentic);
-        if (onDelta != null && !completion.answer().isEmpty()) onDelta.accept(completion.answer());
-        return completion;
+        return decodeDirectResponse(context, packet, result, limitations, reviewer, agentic, List.of(), onDelta);
+    }
+
+    Completion decodeDirectResponse(ArchitectureChat.Context context, ModelSources.Packet packet, Map<String,Object> result,
+                                    List<String> limitations, boolean reviewer, boolean agentic,
+                                    List<SourceUse> extraSources, Consumer<String> onDelta) {
+        try {
+            String returned = QueryJson.text(result,"model");
+            var choices = GraphJson.array(result.get("choices"));
+            if (returned.length() > 200 || returned.codePoints().anyMatch(Character::isISOControl) || choices.size() != 1)
+                throw new IllegalArgumentException("Invalid completion model or choices");
+            var choice = GraphJson.object(choices.getFirst());
+            var message = GraphJson.object(choice.get("message"));
+            String finishReason = choice.get("finish_reason") instanceof String s ? s : "";
+            if (!(finishReason.isEmpty() || finishReason.equals("length") || finishReason.equals("stop"))
+                    || !"assistant".equals(message.get("role")))
+                throw new IllegalArgumentException("Unexpected completion");
+            String content = GraphJson.string(message.get("content"));
+            var completion = finishDecode(context, packet, returned, finishReason, content,
+                    CanonicalJson.write(result).getBytes(StandardCharsets.UTF_8), new ArrayList<>(limitations),
+                    reviewer, agentic, extraSources);
+            if (onDelta != null && !completion.answer().isEmpty()) onDelta.accept(completion.answer());
+            return completion;
+        } catch (IllegalArgumentException invalid) {
+            throw new Rejected(Failure.CHAT_INVALID_MODEL_OUTPUT);
+        }
     }
 
     Completion completeMessages(ArchitectureChat.Context context, List<Map<String,Object>> messages,
                                 List<RepairSource.File> files, List<String> limitations, boolean reviewer,
                                 boolean agentic, Supplier<StopReason> stop, Consumer<String> onDelta) {
+        return completeMessages(context, messages, files, limitations, reviewer, agentic, List.of(), stop, onDelta);
+    }
+
+    Completion completeMessages(ArchitectureChat.Context context, List<Map<String,Object>> messages,
+                                List<RepairSource.File> files, List<String> limitations, boolean reviewer,
+                                boolean agentic, List<SourceUse> extraSources, Supplier<StopReason> stop, Consumer<String> onDelta) {
         if (!slots.tryAcquire()) throw new Rejected(Failure.CHAT_BUSY);
         try {
             if (stop.get() != StopReason.NONE) throw new Rejected(Failure.CHAT_RESOURCE_LIMIT);
-            var payload = new HashMap<String,Object>(Map.of("model",provider.model(),"stream",onDelta != null && !settings.jsonMode(),"messages",messages));
+            boolean useStream = onDelta != null && !settings.jsonMode();
+            var payload = new HashMap<String,Object>(Map.of("model",provider.model(),"stream",useStream,"messages",messages));
             settings.addOutputSettings(payload,Map.of("type","json_object"));
             byte[] reqBytes = BoundedJson.encode(payload, settings.requestBytes());
             var selection = files.stream()
                     .map(f -> new ModelSources.Selection(f, List.of(new ModelSources.Slice(1, 0, f.text().length()))))
                     .toList();
             var packet = new ModelSources.Packet(selection, reqBytes);
-            if (onDelta != null && !settings.jsonMode()) {
+            if (useStream) {
                 var streamed = sendStream(reqBytes, stop, onDelta);
-                return decodeStreamed(context, packet, streamed, new ArrayList<>(limitations), reviewer, agentic);
+                return decodeStreamed(context, packet, streamed, new ArrayList<>(limitations), reviewer, agentic, extraSources);
             }
             byte[] response = send(reqBytes, stop);
-            return decode(context, packet, response, new ArrayList<>(limitations), reviewer, agentic);
+            return decode(context, packet, response, new ArrayList<>(limitations), reviewer, agentic, extraSources);
         } catch (BoundedJson.TooLarge large) {
             throw new Rejected(Failure.CHAT_RESOURCE_LIMIT);
         } finally {
@@ -235,7 +258,7 @@ final class ArchitectureChatModel {
             return GraphJson.object(GraphJson.read(wire, JSON));
         } catch (BoundedJson.TooLarge large) {
             throw new Rejected(Failure.CHAT_RESOURCE_LIMIT);
-        } catch (CharacterCodingException invalid) {
+        } catch (IllegalArgumentException | CharacterCodingException invalid) {
             throw new Rejected(Failure.CHAT_INVALID_MODEL_OUTPUT);
         } finally {
             slots.release();
@@ -303,7 +326,7 @@ final class ArchitectureChatModel {
             var accumulated = new StringBuilder();
             String returnedModel = provider.model();
             String finishReason = "stop";
-            boolean titleStripped = false;
+            boolean titleResolved = false;
             var pendingTitle = new StringBuilder();
             try (var reader = new BufferedReader(new InputStreamReader(response.body(), StandardCharsets.UTF_8))) {
                 String line;
@@ -323,16 +346,31 @@ final class ArchitectureChatModel {
                         Object deltaText = deltaMap.get("content");
                         if (deltaText instanceof String s && !s.isEmpty()) {
                             accumulated.append(s);
-                            if (!titleStripped) {
+                            if (!titleResolved) {
                                 pendingTitle.append(s);
                                 String buf = pendingTitle.toString();
-                                int closeIdx = buf.indexOf("</conversation_title>");
-                                if (closeIdx >= 0) {
-                                    titleStripped = true;
-                                    String after = buf.substring(closeIdx + "</conversation_title>".length()).replaceFirst("^\\s+", "");
-                                    if (!after.isEmpty()) onDelta.accept(after);
-                                } else if (buf.length() > 160 && !buf.trim().startsWith("<")) {
-                                    titleStripped = true;
+                                String trimmed = buf.stripLeading();
+                                String trimmedLower = trimmed.toLowerCase(Locale.ROOT);
+                                if (trimmed.isEmpty()) continue;
+                                if (trimmedLower.startsWith("<conversation_title>")) {
+                                    int closeIdx = buf.toLowerCase(Locale.ROOT).indexOf("</conversation_title>");
+                                    if (closeIdx >= 0) {
+                                        titleResolved = true;
+                                        String after = buf.substring(closeIdx + "</conversation_title>".length())
+                                                .replaceFirst("^[\\r\\n\\s]+", "");
+                                        if (!after.isEmpty()) onDelta.accept(after);
+                                    } else {
+                                        int nl = buf.indexOf('\n');
+                                        if (nl >= 0 || buf.length() > 300) {
+                                            titleResolved = true;
+                                            String cleaned = stripTitleTags(buf).replaceFirst("^[\\r\\n\\s]+", "");
+                                            if (!cleaned.isEmpty()) onDelta.accept(cleaned);
+                                        }
+                                    }
+                                } else if ("<conversation_title>".startsWith(trimmedLower)) {
+                                    // Partial opening tag split across SSE chunks; wait for next chunk.
+                                } else {
+                                    titleResolved = true;
                                     onDelta.accept(buf);
                                 }
                             } else {
@@ -342,10 +380,13 @@ final class ArchitectureChatModel {
                     }
                 }
             }
-            if (!titleStripped && !pendingTitle.isEmpty()) {
-                onDelta.accept(pendingTitle.toString());
+            if (!titleResolved && !pendingTitle.isEmpty()) {
+                String cleaned = stripTitleTags(pendingTitle.toString()).replaceFirst("^[\\r\\n\\s]+", "");
+                if (!cleaned.isEmpty()) onDelta.accept(cleaned);
             }
             return new StreamedReply(returnedModel, finishReason, accumulated.toString(), rawCapture.toByteArray());
+        } catch (IllegalArgumentException invalid) {
+            throw new Rejected(Failure.CHAT_INVALID_MODEL_OUTPUT);
         } catch (IOException unavailable) {
             throw new Rejected(stop.get() == StopReason.NONE ? Failure.CHAT_PROVIDER_UNAVAILABLE : Failure.CHAT_RESOURCE_LIMIT);
         } catch (InterruptedException interrupted) {
@@ -356,11 +397,16 @@ final class ArchitectureChatModel {
 
     private Completion decodeStreamed(ArchitectureChat.Context context, ModelSources.Packet packet, StreamedReply streamed,
                                       List<String> limitations, boolean reviewer, boolean agentic) {
+        return decodeStreamed(context, packet, streamed, limitations, reviewer, agentic, List.of());
+    }
+
+    private Completion decodeStreamed(ArchitectureChat.Context context, ModelSources.Packet packet, StreamedReply streamed,
+                                      List<String> limitations, boolean reviewer, boolean agentic, List<SourceUse> extraSources) {
         if (streamed.content() == null) {
-            return decode(context, packet, streamed.rawBytes(), limitations, reviewer, agentic);
+            return decode(context, packet, streamed.rawBytes(), limitations, reviewer, agentic, extraSources);
         }
         return finishDecode(context, packet, streamed.returnedModel(), streamed.finishReason(), streamed.content(),
-                streamed.rawBytes(), limitations, reviewer, agentic);
+                streamed.rawBytes(), limitations, reviewer, agentic, extraSources);
     }
 
     private byte[] send(byte[] request, Supplier<StopReason> stop) {
@@ -395,6 +441,11 @@ final class ArchitectureChatModel {
 
     private Completion decode(ArchitectureChat.Context context, ModelSources.Packet packet, byte[] response,
                               List<String> limitations, boolean reviewer, boolean agentic) {
+        return decode(context, packet, response, limitations, reviewer, agentic, List.of());
+    }
+
+    private Completion decode(ArchitectureChat.Context context, ModelSources.Packet packet, byte[] response,
+                              List<String> limitations, boolean reviewer, boolean agentic, List<SourceUse> extraSources) {
         try {
             var wire = StandardCharsets.UTF_8.newDecoder().decode(ByteBuffer.wrap(response)).toString();
             var result = GraphJson.object(GraphJson.read(wire,JSON));
@@ -409,7 +460,7 @@ final class ArchitectureChatModel {
                     || message.get("tool_calls") != null || message.get("function_call") != null || message.get("refusal") != null)
                 throw new IllegalArgumentException("Unexpected completion");
             String content = GraphJson.string(message.get("content"));
-            return finishDecode(context, packet, returned, finishReason, content, response, limitations, reviewer, agentic);
+            return finishDecode(context, packet, returned, finishReason, content, response, limitations, reviewer, agentic, extraSources);
         } catch (IllegalArgumentException | CharacterCodingException invalid) {
             throw new Rejected(Failure.CHAT_INVALID_MODEL_OUTPUT);
         }
@@ -417,7 +468,7 @@ final class ArchitectureChatModel {
 
     private Completion finishDecode(ArchitectureChat.Context context, ModelSources.Packet packet, String returned,
                                     String finishReason, String content, byte[] response, List<String> limitations,
-                                    boolean reviewer, boolean agentic) {
+                                    boolean reviewer, boolean agentic, List<SourceUse> extraSources) {
         try {
             if (content == null || content.isBlank()) throw new IllegalArgumentException("Empty completion");
             boolean partial = "length".equals(finishReason);
@@ -425,10 +476,12 @@ final class ArchitectureChatModel {
             String structuredAnswer = output.get("answer") instanceof String value && !value.isBlank() ? value : null;
             String answer = structuredAnswer == null ? content : structuredAnswer;
             String title = output.get("conversationTitle") instanceof String value ? value : null;
-            var titleLine = java.util.regex.Pattern.compile("^\\s*<conversation_title>([^\\r\\n<]*)</conversation_title>\\s*",java.util.regex.Pattern.CASE_INSENSITIVE).matcher(answer);
-            if (titleLine.find()) {
-                title = titleLine.group(1);
-                answer = answer.substring(titleLine.end());
+            var titleMatcher = TITLE_TAG.matcher(answer);
+            if (titleMatcher.find()) {
+                if (title == null) title = titleMatcher.group(1);
+                answer = stripTitleTags(answer).replaceFirst("^[\\r\\n\\s]+", "");
+            } else if (OPEN_TITLE_TAG.matcher(answer).find()) {
+                answer = stripTitleTags(answer).replaceFirst("^[\\r\\n\\s]+", "");
             }
             if (answer.isBlank()) throw new IllegalArgumentException("Empty completion answer");
             if (title != null) {
@@ -439,9 +492,7 @@ final class ArchitectureChatModel {
             var claimed = new ArrayList<>(strings(output.get("citations"),8));
             boolean inlineCited = false;
             if (structuredAnswer == null && claimed.isEmpty()) {
-                var matcher = INLINE_CITATION.matcher(answer);
-                while (matcher.find()) {
-                    String id = matcher.group(1);
+                for (String id : extractInlineCitations(answer)) {
                     if (offered.contains(id) && !claimed.contains(id)) {
                         claimed.add(id);
                         inlineCited = true;
@@ -465,13 +516,65 @@ final class ArchitectureChatModel {
             else if (("ADVICE".equals(output.get("status")) && structuredAnswer != null && !citations.isEmpty())
                     || (inlineCited && !citations.isEmpty())) status = "ADVICE";
             if ("UNVERIFIED_ADVICE".equals(status)) limitations.add("This model suggestion has no validated grounding for the full answer.");
+            var mergedSources = new LinkedHashMap<String, SourceUse>();
+            for (var file : packet.files()) {
+                var use = new SourceUse(file.file().path(), file.file().digest(), file.full());
+                mergedSources.put(use.path() + "|" + use.digest().value(), use);
+            }
+            for (var extra : extraSources) {
+                String k = extra.path() + "|" + extra.digest().value();
+                mergedSources.merge(k, extra, (a, b) -> new SourceUse(a.path(), a.digest(), a.completeFile() || b.completeFile()));
+            }
             var receipt = new Receipt(provider.model(),returned,ContentDigest.sha256Utf8(instructions(reviewer, agentic)),
-                    ContentDigest.sha256(packet.bytes()),ContentDigest.sha256(response),packet.files().stream()
-                    .map(file -> new SourceUse(file.file().path(),file.file().digest(),file.full())).toList());
+                    ContentDigest.sha256(packet.bytes()),ContentDigest.sha256(response),List.copyOf(mergedSources.values()));
             return new Completion(status,answer,Optional.ofNullable(title),citations,List.copyOf(limitations),receipt);
         } catch (IllegalArgumentException invalid) {
             throw new Rejected(Failure.CHAT_INVALID_MODEL_OUTPUT);
         }
+    }
+
+    static List<String> extractInlineCitations(String text) {
+        var found = new ArrayList<String>();
+        var matcher = BRACKET_GROUP.matcher(text);
+        while (matcher.find()) {
+            String inner = matcher.group(1).strip();
+            String[] parts = inner.split("\\s*[,;]\\s*");
+            var groupIds = new ArrayList<String>();
+            boolean validGroup = parts.length > 0;
+            for (String part : parts) {
+                var tok = CITATION_TOKEN.matcher(part.strip());
+                if (!tok.matches()) {
+                    validGroup = false;
+                    break;
+                }
+                int start = Integer.parseInt(tok.group(1));
+                String endStr = tok.group(2);
+                if (endStr == null) {
+                    groupIds.add("E" + start);
+                } else {
+                    int end = Integer.parseInt(endStr);
+                    if (end < start || end - start > 50) {
+                        validGroup = false;
+                        break;
+                    }
+                    for (int n = start; n <= end; n++) {
+                        groupIds.add("E" + n);
+                    }
+                }
+            }
+            if (validGroup) {
+                for (String id : groupIds) {
+                    if (!found.contains(id)) found.add(id);
+                }
+            }
+        }
+        return found;
+    }
+
+    static String stripTitleTags(String text) {
+        String cleaned = TITLE_TAG.matcher(text).replaceAll("");
+        cleaned = OPEN_TITLE_TAG.matcher(cleaned).replaceAll("");
+        return cleaned.replaceAll("(?i)</?conversation_title>", "");
     }
 
     private static Map<String,Object> optionalEnvelope(String content) {

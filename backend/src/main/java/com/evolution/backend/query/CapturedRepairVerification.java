@@ -72,6 +72,10 @@ public final class CapturedRepairVerification {
         this.knownGraphs = Map.copyOf(knownGraphs);
     }
 
+    static Optional<RepositoryIdentity> repository(KnowledgeGraph baseline) {
+        return readBaselineTree(baseline).map(BaselineTree::repository);
+    }
+
     Result verify(CapturedRepair.Proposal proposal, KnowledgeGraph baseline, PublishedReports.Report report,
                   Optional<ContentDigest> candidateReport, Optional<ContentDigest> controlReport,
                   GraphStore graphs, PublishedReports reports, BooleanSupplier cancelled) {
@@ -144,6 +148,9 @@ public final class CapturedRepairVerification {
         if (vmTampered != null) return check("isolated-build-and-test", Status.FAILED, "ISOLATED_CAPTURE_INVALID", null);
         if (vmProof.isPresent()) {
             var p = vmProof.orElseThrow();
+            if (p.compileExit() == 0 && p.testsSkipped()) {
+                return check("isolated-build-and-test", Status.NOT_RUN, "ISOLATED_BUILD_PASSED_TESTS_SKIPPED", p.capture());
+            }
             boolean passed = p.compileExit() == 0 && p.testExit() == 0 && p.classCensus().testsPassed();
             return check("isolated-build-and-test", passed ? Status.PASSED : Status.FAILED,
                     passed ? "ISOLATED_VM_BUILD_AND_TESTS_PASSED" : "ISOLATED_BUILD_OR_TESTS_FAILED", p.capture());

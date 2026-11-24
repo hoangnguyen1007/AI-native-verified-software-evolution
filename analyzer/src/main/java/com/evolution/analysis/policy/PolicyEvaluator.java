@@ -15,7 +15,7 @@ public final class PolicyEvaluator {
     public PolicyEvaluation.Result evaluate(PolicyCompiler.Result compilation,PolicyGraphMapper.Plan plan,
                                             ArchitectureQueryService service,PolicyEvaluation.Limits limits){
         Objects.requireNonNull(compilation);Objects.requireNonNull(plan);Objects.requireNonNull(service);Objects.requireNonNull(limits);
-        if(!compilation.identity().equals(plan.compilation())||!service.graph().identity().equals(plan.graph()))
+        if(!compilation.identity().equals(plan.compilation())||!service.graphIdentity().equals(plan.graph()))
             throw new IllegalArgumentException("Foreign policy compilation or graph");
         var context=service.graph().contexts().stream().filter(c->c.identity().equals(plan.context())).findFirst()
                 .orElseThrow(()->new IllegalArgumentException("Foreign policy context"));

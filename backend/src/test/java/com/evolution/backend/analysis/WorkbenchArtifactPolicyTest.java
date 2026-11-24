@@ -26,7 +26,12 @@ class WorkbenchArtifactPolicyTest {
                 WorkbenchApiMain.GRADLE_PLUGIN_PORTAL,
                 WorkbenchApiMain.JITPACK), defaultPolicy.remoteRepositories());
         assertEquals(4096, defaultPolicy.maxCoordinates());
+        assertEquals(2_147_483_648L, defaultPolicy.maxTotalBytes());
         assertEquals(8, defaultPolicy.maxConcurrentDownloads());
+        assertTrue(WorkbenchApiMain.artifactPolicy("offline").isEmpty());
+        assertTrue(WorkbenchApiMain.artifactPolicy("none").isEmpty());
+        assertEquals(2_147_483_648L, LocalAnalysisRunner.CACHE_ONLY.maxTotalBytes());
+        assertTrue(LocalAnalysisRunner.CACHE_ONLY.remoteRepositories().isEmpty());
         for (String endpoint : List.of("http://repo.example.test/", "https://user@repo.example.test/",
                 "https://repo.example.test/?value=1", "https://repo.example.test/missing-slash")) {
             assertThrows(IllegalArgumentException.class, () -> WorkbenchApiMain.artifactPolicy(endpoint));

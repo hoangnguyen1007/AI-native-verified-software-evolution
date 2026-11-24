@@ -145,5 +145,79 @@ class ReadinessReportsTest {
             assertTrue(all.workspacePoms().containsKey("node_modules/helper/pom.xml"));
         }
     }
+    @Test void satisfiedReadinessFilterDropsOnlyVerifiedCapabilitiesAndPreservesNativeObligations() throws Exception {
+        Path source = Files.createDirectory(root.resolve("android-readiness"));
+        Files.createDirectories(source.resolve("app/src/main/java/demo"));
+        Files.writeString(source.resolve("settings.gradle"), "include ':app'\n");
+        Files.writeString(source.resolve("app/build.gradle"), "plugins { id 'com.android.application' }\n");
+        Files.writeString(source.resolve("app/src/main/AndroidManifest.xml"), "<manifest package=\"demo\"/>\n");
+        Files.writeString(source.resolve("app/src/main/java/demo/App.java"), "package demo; public class App {}\n");
+        var repo = RepositoryIdentity.fromCanonicalCoordinate("urn:test:readiness-filter");
+        try (var intake = new RepositoryIntake(root.resolve("filter-state"))) {
+            var captured = intake.localComplete(source, "rev",
+                    new StreamingAcquisitionRequest(repo, Optional.empty(), true, List.of()), () -> false);
+            var plan = intake.readiness("rev", ReadinessPlanner.Policy.comprehensive(), () -> false);
+            var snapshot = com.evolution.analysis.contract.identity.SnapshotIdentity.from(repo,
+                    captured.manifest().orElseThrow().inventory());
+
+            var unfiltered = plan.gaps(snapshot);
+            assertTrue(unfiltered.stream().anyMatch(g -> g.reasonCode().equals("ANDROID_SDK_REQUIRED")));
+            assertTrue(unfiltered.stream().anyMatch(g -> g.reasonCode().equals("NATIVE_BUILD_VALIDATION_REQUIRED")));
+
+            // Without verified android.jar or platforms, nothing is suppressed.
+            var withoutEvidence = LocalAnalysisRunner.filterSatisfiedReadinessGaps(
+                    plan, snapshot, new MavenScan.Inputs(Map.of(), Map.of(), List.of(), Map.of()),
+                    Map.of(), List.of(), false, null, null);
+            assertEquals(unfiltered.size(), withoutEvidence.size());
+
+            // With a verified android-sdk platform JAR attached, only ANDROID_SDK_REQUIRED is satisfied;
+            // native build/model/toolchain obligations stay truthful and explicit.
+            var platform = com.evolution.analysis.frontend.PlatformInput.create(21, "21", "test",
+                    List.of(new com.evolution.analysis.frontend.PlatformInput.Artifact(
+                            "java.base.jmod",
+                            com.evolution.analysis.contract.common.ContentDigest.sha256Utf8("base"),
+                            root.resolve("java.base.jmod"),
+                            com.evolution.analysis.frontend.PlatformInput.Format.JMOD)));
+            var androidJar = new com.evolution.analysis.frontend.BinaryInput(
+                    new com.evolution.analysis.contract.analysis.ClasspathEntry(
+                            com.evolution.analysis.contract.analysis.ClasspathEntryKind.DEPENDENCY,
+                            "android-sdk:platforms/android-36/android.jar",
+                            com.evolution.analysis.contract.common.ContentDigest.sha256Utf8("android-36")),
+                    root.resolve("android.jar"));
+            var resolution = new com.evolution.analysis.ingestion.UniversalSourceIngestion.Resolution(
+                    platform, List.of(androidJar),
+                    com.evolution.analysis.contract.common.ContentDigest.sha256Utf8("cp"),
+                    Optional.empty(), false, List.of());
+            var depsWithAndroid = new MavenScan.Inputs(
+                    Map.of(new com.evolution.analysis.ingestion.UniversalSourceIngestion.SourceSet(
+                            com.evolution.analysis.contract.identity.ModuleIdentity.from(repo, "app"),
+                            com.evolution.analysis.buildmodel.SourcePlanModel.Kind.MAIN), resolution),
+                    Map.of(), List.of(), Map.of());
+            var withAndroid = LocalAnalysisRunner.filterSatisfiedReadinessGaps(
+                    plan, snapshot, depsWithAndroid, Map.of(), List.of(), false, null, null);
+            assertTrue(withAndroid.stream().noneMatch(g -> g.reasonCode().equals("ANDROID_SDK_REQUIRED")));
+            assertTrue(withAndroid.stream().anyMatch(g -> g.reasonCode().equals("NATIVE_BUILD_VALIDATION_REQUIRED")));
+            assertTrue(withAndroid.stream().anyMatch(g -> g.reasonCode().equals("NATIVE_MODEL_REQUIRED")));
+        }
+
+        // Per-module scoping: when mod-a analyzes cleanly and mod-b has a broken POM (no analyzed Java unit),
+        // mod-b's ANALYZED_PLATFORM_REQUIRED gap must NOT be suppressed.
+        Path multi = Files.createDirectory(root.resolve("multi-mod-filter"));
+        Files.createDirectories(multi.resolve("mod-a/src/main/java/a"));
+        Files.createDirectories(multi.resolve("mod-b/src/main/java/b"));
+        Files.writeString(multi.resolve("mod-a/pom.xml"), pom("mod-a"));
+        Files.writeString(multi.resolve("mod-a/src/main/java/a/Good.java"), "package a; public class Good {}");
+        Files.writeString(multi.resolve("mod-b/pom.xml"), "<project>");
+        Files.writeString(multi.resolve("mod-b/src/main/java/b/Broken.java"), "package b; public class Broken {}");
+        Path cache = Files.createDirectory(root.resolve("multi-mod-cache"));
+        var multiRepo = RepositoryIdentity.fromCanonicalCoordinate("urn:test:multi-mod-readiness-scope");
+        var runner = new LocalAnalysisRunner(new LocalAnalysisRunner.Input(multi, multiRepo,
+                Path.of(System.getProperty("java.home")), 21, cache, Optional.empty(), true, false,
+                List.of(), Optional.empty(), LocalAnalysisRunner.SpringInput.absent()),
+                root.resolve("multi-mod-intake"));
+        var outcome = runner.analyzeDirect("multi-scope", () -> false);
+        assertTrue(outcome.gaps().stream().anyMatch(g -> g.reasonCode().equals("ANALYZED_PLATFORM_REQUIRED")),
+                "Unanalyzed broken module must retain its ANALYZED_PLATFORM_REQUIRED gap");
+    }
     private static String pom(String artifact){return "<project><modelVersion>4.0.0</modelVersion><groupId>t</groupId><artifactId>"+artifact+"</artifactId><version>1</version><properties><maven.compiler.release>21</maven.compiler.release><project.build.sourceEncoding>UTF-8</project.build.sourceEncoding></properties></project>";}
 }

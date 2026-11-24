@@ -145,7 +145,78 @@
       yaml: 'schema: architecture-policy:v1\nid: spring.cycles\nversion: "1"\nrules:\n  - id: spring.no-bean-cycles\n    version: "1"\n    kind: ACYCLIC\n    severity: ERROR\n    scope: SPRING_COMPONENT\n    relationships: [spring.selected-binding]\n    within: {origins: [PROJECT]}\n'
     }
   ];
-  const model = {terminal, label, pageInfo, request, assessment, summaryCards, scoreEvidence, apiError, realizationRequest, compareEdges, completePage, shortDigest, humanReason, summarizeGaps, policyTemplates};
+  const parseCitations = text => {
+    const input = String(text ?? '');
+    const pattern = /\[(E\d+(?:\s*(?:,|–|-)\s*E?\d+)*)\]/g;
+    const segments = [];
+    let cursor = 0;
+    for (const match of input.matchAll(pattern)) {
+      if (match.index > cursor) segments.push({type: 'text', value: input.slice(cursor, match.index)});
+      const ids = [];
+      for (const part of match[1].split(',')) {
+        const trimmed = part.trim();
+        const range = trimmed.match(/^E(\d+)\s*[–-]\s*E?(\d+)$/i);
+        if (range) {
+          const start = Number(range[1]), end = Number(range[2]);
+          if (start <= end && end - start <= 25) {
+            for (let n = start; n <= end; n++) ids.push('E' + n);
+          } else {
+            ids.push('E' + start, 'E' + end);
+          }
+        } else {
+          const single = trimmed.match(/^E?(\d+)$/i);
+          if (single) ids.push('E' + Number(single[1]));
+        }
+      }
+      if (ids.length) segments.push({type: 'citations', raw: match[0], ids: [...new Set(ids)]});
+      else segments.push({type: 'text', value: match[0]});
+      cursor = match.index + match[0].length;
+    }
+    if (cursor < input.length) segments.push({type: 'text', value: input.slice(cursor)});
+    return segments;
+  };
+  const classifySseToolEvent = parsed => {
+    if (!parsed || typeof parsed !== 'object') return 'complete';
+    const phase = String(parsed.phase || '').toLowerCase();
+    if (phase === 'start' || phase === 'started' || phase === 'running') return 'start';
+    if (phase === 'complete' || phase === 'completed' || phase === 'done' || phase === 'error') return 'complete';
+    return String(parsed.status || '').toLowerCase() === 'running' ? 'start' : 'complete';
+  };
+  const buildImpactQuery = (context, identity, overrides = {}) => ({
+    request: {...request(context), ...overrides, direction: 'INCOMING'},
+    arguments: {identity}
+  });
+  const rankApplicableRecipes = (recipes = [], applicableRecipes = []) => {
+    const applicable = new Set(Array.isArray(applicableRecipes) ? applicableRecipes : []);
+    return [...(recipes || [])]
+      .map(recipe => ({
+        ...recipe,
+        applicable: applicable.has(recipe.id),
+        displaySummary: recipe.summary || recipe.title || recipe.id
+      }))
+      .sort((a, b) => Number(b.applicable) - Number(a.applicable) || String(a.id).localeCompare(String(b.id)));
+  };
+  const classifyGapObligation = code => {
+    const raw = String(code || '').toUpperCase();
+    if (/^(MISSING_POM|MISSING_PARENT_POM|MISSING_IMPORT_BOM|ARTIFACT_NOT_FOUND|GRADLE_BINARY|GRADLE_EFFECTIVE|GRADLE_ACQUISITION|GRADLE_DEPENDENCY|GRADLE_PLUGIN|NATIVE_CONTEXT|PROTOBUF_GENERATOR|GENERATED_SOURCES|JAVA_COMPATIBILITY)/.test(raw))
+      return {bucket: 'environment', label: 'Environment & Build'};
+    if (/^(AUTHORITY|POLICY|DISCLOSURE|PERMISSION|REMOTE_|AUTH)/.test(raw))
+      return {bucket: 'authority', label: 'Authority & Policy'};
+    if (/^(SYNTAX_ERROR|DYNAMIC_|OPAQUE_|UNSUPPORTED_|HTTP_URI|HTTP_ROUTING|GRPC_ROUTING|POTENTIAL_CONDITION|PROTOBUF_SCHEMA)/.test(raw))
+      return {bucket: 'source', label: 'Source & Dynamic'};
+    return {bucket: 'boundary', label: 'Analyzer Boundary'};
+  };
+  const selectDefaultContext = (contexts = [], snapshot = '', current = '') => {
+    if (current && contexts.some(c => c.identity === current)) return current;
+    if (snapshot && contexts.some(c => c.identity === snapshot)) return snapshot;
+    return contexts[0]?.identity ?? '';
+  };
+  const findPreferredSpringContext = (contexts = [], current = '', kinds = null) => {
+    const isSpring = id => id && (id.startsWith('spring-context:') || kinds?.get?.(id) === 'spring.context');
+    if (isSpring(current)) return current;
+    return contexts.find(c => isSpring(c.identity))?.identity ?? current;
+  };
+  const model = {terminal, label, pageInfo, request, assessment, summaryCards, scoreEvidence, apiError, realizationRequest, compareEdges, completePage, shortDigest, humanReason, summarizeGaps, policyTemplates, parseCitations, classifySseToolEvent, buildImpactQuery, rankApplicableRecipes, classifyGapObligation, selectDefaultContext, findPreferredSpringContext};
   if (typeof module !== 'undefined') module.exports = model;
   else root.EvoModel = model;
 })(globalThis);

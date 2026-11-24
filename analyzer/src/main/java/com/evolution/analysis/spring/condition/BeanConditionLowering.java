@@ -50,6 +50,12 @@ public final class BeanConditionLowering {
             }
             if (context && observation != null && observation.spelling().length() <= maxMetadataCharacters) {
                 String annotation = ConditionEvidenceLowering.exactAnnotationType(observation, inventory.frameworkEvidence());
+                if (annotation == null
+                        && original.validationMode() == com.evolution.analysis.spring.SpringFrameworkEvidence.ValidationMode.COMPATIBLE_FAMILY_OR_SOURCE_SCOPED
+                        && inventory.frameworkEvidence().artifacts().isEmpty()) {
+                    var candidates = ConditionEvidenceLowering.sourceCandidateTypes(observation);
+                    if (candidates.size() == 1) annotation = candidates.getFirst();
+                }
                 var predicate = predicate(annotation);
                 if (predicate != null) try {
                     var attributes = LiteralConditionAnnotation.parse(observation.spelling());
@@ -93,6 +99,15 @@ public final class BeanConditionLowering {
         var row = original.rows().stream().filter(r -> r.occurrence().filter(o -> o.identity().equals(occurrence)).isPresent()).findFirst();
         if (row.isEmpty()) return Optional.empty();
         return inventory.rawObservations().stream().filter(r -> r.identity().equals(row.orElseThrow().rawObservation())).findFirst()
-                .map(r -> ConditionEvidenceLowering.exactAnnotationType(r, inventory.frameworkEvidence())).map(BeanConditionLowering::predicate);
+                .map(r -> {
+                    String exact = ConditionEvidenceLowering.exactAnnotationType(r, inventory.frameworkEvidence());
+                    if (exact != null) return exact;
+                    if (original.validationMode() == com.evolution.analysis.spring.SpringFrameworkEvidence.ValidationMode.COMPATIBLE_FAMILY_OR_SOURCE_SCOPED
+                            && inventory.frameworkEvidence().artifacts().isEmpty()) {
+                        var candidates = ConditionEvidenceLowering.sourceCandidateTypes(r);
+                        if (candidates.size() == 1) return candidates.getFirst();
+                    }
+                    return null;
+                }).map(BeanConditionLowering::predicate);
     }
 }

@@ -71,7 +71,8 @@ public final class WorkbenchApiMain {
                             cas = created;
                         }
                     }
-                    try (var in = cas.open(new com.evolution.analysis.acquisition.streaming.ContentHandle(digest, expectedSize.getAsLong()))) {
+                    try (var in = cas.open(new com.evolution.analysis.acquisition.streaming.ContentHandle(digest,
+                            expectedSize.getAsLong()))) {
                         return Optional.of(in.readAllBytes());
                     }
                 } catch (IOException | IllegalArgumentException unavailable) {
@@ -80,8 +81,10 @@ public final class WorkbenchApiMain {
             });
             var runner = new LocalAnalysisRunner(new LocalAnalysisRunner.Input(source,
                     RepositoryIdentity.fromCanonicalCoordinate(args[1]), jdk, Integer.parseInt(args[3]), cache,
-                    Optional.empty(), true, false, exclusions, policy, LocalAnalysisRunner.SpringInput.absent()),
-                    directory.resolve("acquisition"), artifactPolicy);
+                    Optional.empty(), true, false, exclusions, policy, LocalAnalysisRunner.SpringInput.autoMultiConfig()),
+                    directory.resolve("acquisition"), artifactPolicy,
+                    LocalAnalysisRunner.NativeExecutionConfig.fromEnvironment(),
+                    Optional.of(directory));
             // The streamed reader is bounded by the actual file and its token limits.
             // Current free space is checked separately for new writes.
             long bytes = Long.MAX_VALUE - 1;
@@ -230,9 +233,21 @@ public final class WorkbenchApiMain {
 
                 @Override
                 public Optional<GraphManifest> manifest(ContentDigest id) {
+                    if (!Files.isRegularFile(snapshotFile(id), LinkOption.NOFOLLOW_LINKS))
+                        return Optional.empty();
                     var g = cache.get(id);
                     if (g != null)
                         return Optional.of(g.manifest());
+                    try {
+                        var pagedManifest = pages.manifest(id);
+                        if (pagedManifest.isPresent())
+                            return pagedManifest;
+                    } catch (IOException | RuntimeException ignored) {
+                        /* Fall back to binary cache header or canonical JSON snapshot. */
+                    }
+                    var cachedManifest = legacy.readManifest(id);
+                    if (cachedManifest.isPresent())
+                        return cachedManifest;
                     return load(id).map(KnowledgeGraph::manifest);
                 }
 
@@ -268,11 +283,12 @@ public final class WorkbenchApiMain {
                                 pageIndex::reader);
                         var evolvedApi = ArchitectureQueryApi.withEvolution(api, evolution,
                                 new EvolutionQueries(evolution.results(), pages));
-                        var capturedApi = ArchitectureQueryApi.withConfiguredCapturedRepairCapture(
-                                ArchitectureQueryApi.withConfiguredDemoRepairCapture(
-                                        ArchitectureQueryApi.withRepairReanalysis(
-                                                ArchitectureQueryApi.withRepairStore(evolvedApi, repairStore),
-                                                repairReanalysis)));
+                        var capturedApi = ArchitectureQueryApi.withConfiguredCapturedRepairRunner(
+                                ArchitectureQueryApi.withConfiguredCapturedRepairCapture(
+                                        ArchitectureQueryApi.withConfiguredDemoRepairCapture(
+                                                ArchitectureQueryApi.withRepairReanalysis(
+                                                        ArchitectureQueryApi.withRepairStore(evolvedApi, repairStore),
+                                                        repairReanalysis))));
                         var configuredApi = ArchitectureQueryApi.withConfiguredLiveDiagnosis(
                                 ArchitectureQueryApi.withConfiguredRepairModel(
                                         ArchitectureQueryApi.withConfiguredDemoDiagnosis(capturedApi)));
@@ -460,11 +476,18 @@ public final class WorkbenchApiMain {
     static final URI JITPACK = URI.create("https://jitpack.io/");
 
     static Optional<DependencyAcquisitionPolicy> artifactPolicy(String configured) {
-        var repositories = configured.isBlank()
+        String trimmed = configured == null ? "" : configured.strip();
+        if (Boolean.getBoolean("evo.workbench.offline")
+                || trimmed.equalsIgnoreCase("offline")
+                || trimmed.equalsIgnoreCase("none")) {
+            return Optional.empty();
+        }
+        var repositories = trimmed.isEmpty()
                 ? List.of(DependencyAcquisitionPolicy.MAVEN_CENTRAL, GOOGLE_MAVEN, GRADLE_PLUGIN_PORTAL, JITPACK)
-                : Arrays.stream(configured.strip().split("\\s+")).map(URI::create).toList();
+                : Arrays.stream(trimmed.split("\\s+")).map(URI::create).toList();
         return Optional.of(
-                new DependencyAcquisitionPolicy(4096, 64_000_000, 512_000_000L, 64, repositories, 5000, 15000, 1, 8));
+                new DependencyAcquisitionPolicy(4096, 64_000_000, MavenScan.DEFAULT_DEPENDENCY_TOTAL_BYTES, 64,
+                        repositories, 5000, 15000, 1, 8));
     }
 
     private WorkbenchApiMain() {

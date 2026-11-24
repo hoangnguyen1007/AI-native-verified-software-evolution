@@ -213,8 +213,11 @@ public final class BeanRegistrationTransitions {
                     || source.inventory().obligations().stream().anyMatch(o -> o.primaryMechanism().startsWith("spring.boot.")
                             || o.primaryMechanism().equals("spring.condition.bean-state")
                             || o.primaryMechanism().equals("spring.condition.property"));
-            boolean version = framework.acceptedConditionFragment(bootRequired)
-                    && framework.artifacts().stream().anyMatch(a -> a.coordinate().equals("org.springframework:spring-beans:6.2.0"));
+            var validationMode = source.lowering().validationMode();
+            boolean version = validationMode == com.evolution.analysis.spring.SpringFrameworkEvidence.ValidationMode.STRICT_R0_PINNED
+                    ? framework.acceptedConditionFragment(bootRequired)
+                            && framework.artifacts().stream().anyMatch(a -> a.coordinate().equals("org.springframework:spring-beans:6.2.0"))
+                    : framework.allows(bootRequired, validationMode);
             if (!version) stop(VERSION_FRAGMENT_NOT_VALIDATED, "registration-fragment", null);
             if (discovery.exogenousEvaluation().assignmentFeasibility() != TRUE) stop(INVALID_CONFIGURATION, "assignment", null);
             if (discovery.rows().stream().anyMatch(r -> r.outcome() == DiscoveryTransitions.Outcome.ERROR)) {

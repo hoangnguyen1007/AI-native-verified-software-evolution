@@ -4,8 +4,14 @@ import com.evolution.analysis.frontend.*;
 
 public final class JavaParserFrontend implements ConcurrentSemanticFrontend {
     private static final java.util.concurrent.locks.ReentrantReadWriteLock RESOLVERS=new java.util.concurrent.locks.ReentrantReadWriteLock(true);
+    private static final java.util.concurrent.atomic.AtomicInteger LAST_REEXTRACTED_UNITS = new java.util.concurrent.atomic.AtomicInteger(-1);
     public static final com.evolution.analysis.contract.common.VersionedIdentifier PROVIDER =
             new com.evolution.analysis.contract.common.VersionedIdentifier("frontend.javaparser", "3.28.2-m9.2-evidenced-recovery-v13");
+
+    /** Returns how many primary units were body-extracted on the most recent analyze() call (diagnostic/test hook). */
+    public static int lastReextractedUnitCount() {
+        return LAST_REEXTRACTED_UNITS.get();
+    }
     @Override public long estimatedWorkingBytes(FrontendRequest request) {
         var paths=new java.util.HashSet<java.nio.file.Path>();request.platform().artifacts().forEach(a->paths.add(a.path().toAbsolutePath().normalize()));request.dependencies().forEach(b->paths.add(b.path().toAbsolutePath().normalize()));
         long symbols=0;
@@ -18,7 +24,12 @@ public final class JavaParserFrontend implements ConcurrentSemanticFrontend {
     @Override public FrontendResult analyze(FrontendRequest request) {
         if(Thread.currentThread().isInterrupted())throw new java.util.concurrent.CancellationException();
         try{RESOLVERS.readLock().lockInterruptibly();}catch(InterruptedException interrupted){Thread.currentThread().interrupt();throw new java.util.concurrent.CancellationException();}
-        try{return new Extraction(request).run().validateFor(request);}
+        try{
+            var extraction = new Extraction(request);
+            var result = extraction.run().validateFor(request);
+            LAST_REEXTRACTED_UNITS.set(extraction.reextractedUnitCount());
+            return result;
+        }
         finally {
             RESOLVERS.readLock().unlock();
             // JavaParser's process cache retains facades/solvers beyond analyze().

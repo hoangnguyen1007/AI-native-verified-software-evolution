@@ -88,8 +88,12 @@ final class BindingResolution {
     private void validateEnvironment() {
         var source = plan.registrationPlan().discoveryPlan();
         var framework = source.inventory().frameworkEvidence();
-        if (!framework.acceptedConditionFragment(false) || framework.artifacts().stream()
-                .noneMatch(a -> a.coordinate().equals("org.springframework:spring-beans:6.2.0"))) barrier(VERSION_FRAGMENT_NOT_VALIDATED);
+        var validationMode = source.lowering().validationMode();
+        boolean frameworkOk = validationMode == com.evolution.analysis.spring.SpringFrameworkEvidence.ValidationMode.STRICT_R0_PINNED
+                ? framework.acceptedConditionFragment(false) && framework.artifacts().stream()
+                        .anyMatch(a -> a.coordinate().equals("org.springframework:spring-beans:6.2.0"))
+                : framework.allows(false, validationMode);
+        if (!frameworkOk) barrier(VERSION_FRAGMENT_NOT_VALIDATED);
         if (!registration.registrationClosed()) barrier(REGISTRATION_INCOMPLETE);
         if (plan.registrationPlan().noParentContainer() != COMPLETE) barrier(HIERARCHY_UNSUPPORTED);
         if (plan.environment().noResolvableDependencies() != COMPLETE) barrier(RESOLVABLE_DEPENDENCIES_UNMODELED);

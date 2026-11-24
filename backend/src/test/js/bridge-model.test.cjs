@@ -66,10 +66,16 @@ test('impact actions require a scoped bridge reference rather than a native targ
  assert.equal(model.impactReference({fields:{targets:[scope]}}),null);
  const ref={identity:scope,source:{path:'api/users.proto'}};assert.equal(model.impactReference({fields:{targets:[ref]}}),ref);
 });
-test('categoryGroup maps F, B and A codes to intuitive architectural layers',()=>{
+test('categoryGroup maps F, B and A codes to intuitive architectural layers and CSS groups',()=>{
  assert.equal(model.categoryGroup('F03').layer,'Frontend & UI');
+ assert.equal(model.categoryGroup('F03').group,'frontend');
  assert.equal(model.categoryGroup('B02').layer,'Contracts & Bridges');
+ assert.equal(model.categoryGroup('B02').group,'bridge');
  assert.equal(model.categoryGroup('A06').layer,'Backend & Native');
+ assert.equal(model.categoryGroup('A06').group,'backend');
+ assert.equal(model.protocolKind('B02').label,'HTTP');
+ assert.equal(model.protocolKind('B03').label,'gRPC / Schema');
+ assert.equal(model.protocolKind('B04').label,'Event / Queue');
 });
 test('outcomeBreakdown extracts visual segments from bridge summary without inventing percentages',()=>{
  const breakdown=model.outcomeBreakdown({partitions:'4',requirements:'20',endpoints:'10',missingCensus:'3',outcomes:{BOUND:'12',UNRESOLVED:'8'}});

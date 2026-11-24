@@ -372,6 +372,59 @@ class MavenDependencyArtifactProviderTest {
         assertFalse(Files.exists(path(cache, JAR)));
     }
 
+    @Test
+    void concurrentDownloadsDoNotSerializeWhenRetryRepoMultiplierEqualsMaxTotalBytes() throws Exception {
+        assertEquals(2_147_483_648L, MavenDependencyArtifactProvider.DEFAULT_MAX_TOTAL_BYTES);
+        assertEquals(2_147_483_648L, MavenDependencyArtifactProvider.defaultPolicy(List.of(REPOSITORY)).maxTotalBytes());
+        byte[] bytes = jar("example/C.class", new byte[] {1, 2, 3});
+        URI mirror = URI.create("https://mirror.example.test/maven2/");
+        var coordinates = java.util.stream.IntStream.range(0, 4)
+                .mapToObj(i -> new ArtifactCoordinate(new MavenCoordinate("example", "overlap" + i, "1.0"), "jar", ""))
+                .toList();
+        // Exact 64MB * (1+1) * 2 = 256MB configuration that previously serialized concurrency to 1 task!
+        var policy = new DependencyAcquisitionPolicy(
+                1024, 64_000_000L, 256_000_000L, 64, List.of(REPOSITORY, mirror), 1_000, 2_000, 1, 4);
+        var entered = new java.util.concurrent.CountDownLatch(4);
+        var provider = provider(cache(), (uri, max, connect, read) -> {
+            entered.countDown();
+            if (!entered.await(3, java.util.concurrent.TimeUnit.SECONDS)) {
+                throw new IOException("Downloads were serialized by perTask reservation");
+            }
+            return new MavenDependencyArtifactProvider.RemoteResponse(200, bytes);
+        });
+        var result = provider.acquire(DependencyAcquisitionRequest.of(coordinates, policy));
+        assertFalse(result.hasFailures());
+        assertEquals(4L * bytes.length, result.bytesConsumed());
+    }
+
+    @Test
+    void contentAddressedValidationCacheAcceleratesRepeatedReadsAndRejectsSameSizeAndMtimeMutation() throws Exception {
+        Path cache = cache();
+        byte[] bytes = jar("example/Cached.class", new byte[] {9, 8, 7});
+        write(cache, JAR, bytes);
+        var provider = provider(cache, (uri, max, connect, read) -> {
+            throw new AssertionError("Cached jar must not hit network");
+        });
+        var req = request(JAR, Optional.of(ContentDigest.sha256(bytes)), policy(0));
+        assertEquals(DependencyAcquisitionResult.Status.CACHED, provider.acquire(req).outcomes().getFirst().status());
+        long hitsBefore = MavenDependencyArtifactProvider.VALIDATED_CONTENT_CACHE_HITS.get();
+        var second = provider.acquire(req);
+        assertEquals(DependencyAcquisitionResult.Status.CACHED, second.outcomes().getFirst().status());
+        assertTrue(MavenDependencyArtifactProvider.VALIDATED_CONTENT_CACHE_HITS.get() > hitsBefore,
+                "Second read of identical content digest must hit content-addressed validation cache");
+
+        // Same-size + same-mtime mutation must NEVER bypass SHA-256 verification.
+        Path file = path(cache, JAR);
+        var mtime = Files.getLastModifiedTime(file);
+        byte[] mutated = bytes.clone();
+        mutated[0] = 'X';
+        Files.write(file, mutated);
+        Files.setLastModifiedTime(file, mtime);
+        var corrupted = provider.acquire(request(JAR, Optional.empty(), policy(0)));
+        assertEquals(DependencyAcquisitionResult.FailureReason.CORRUPTED_CACHE,
+                corrupted.outcomes().getFirst().failureReason().orElseThrow());
+    }
+
     private Path cache() throws IOException {
         Path cache = temporary.resolve("cache-" + java.util.UUID.randomUUID());
         return Files.createDirectory(cache).toRealPath();

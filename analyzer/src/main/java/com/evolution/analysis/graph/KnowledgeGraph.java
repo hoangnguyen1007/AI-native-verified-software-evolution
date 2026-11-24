@@ -56,20 +56,36 @@ public final class KnowledgeGraph {
     }
     KnowledgeGraph(SnapshotIdentity snapshot,List<Context> contexts,List<Node> nodes,List<Edge> edges,List<GraphEvidence> evidence,
                    ContentDigest expectedIdentity,ContentDigest expectedEnvelopeDigest) {
+        this(snapshot, contexts, nodes, edges, evidence, expectedIdentity, expectedEnvelopeDigest, false);
+    }
+    /**
+     * Reconstitutes a graph from an authenticated binary acceleration cache whose
+     * full-file integrity checksum and canonical JSON binding were already verified.
+     * Structural graph invariants and reference integrity are always re-checked.
+     */
+    public static KnowledgeGraph fromAuthenticatedCache(SnapshotIdentity snapshot, List<Context> contexts,
+            List<Node> nodes, List<Edge> edges, List<GraphEvidence> evidence, ContentDigest authenticatedIdentity) {
+        return new KnowledgeGraph(snapshot, contexts, nodes, edges, evidence,
+                Objects.requireNonNull(authenticatedIdentity), null, true);
+    }
+    private KnowledgeGraph(SnapshotIdentity snapshot,List<Context> contexts,List<Node> nodes,List<Edge> edges,List<GraphEvidence> evidence,
+                   ContentDigest expectedIdentity,ContentDigest expectedEnvelopeDigest,boolean trustAuthenticatedDigest) {
         this.snapshot=Objects.requireNonNull(snapshot);this.contexts=sorted(contexts,Context::identity);
         this.nodes=sorted(nodes,n->key(n.context(),n.identity()));this.edges=sorted(edges,e->key(e.context(),e.identity()));
         this.evidence=sorted(evidence,e->e.identity().value());
-        var indexedEvidence=new HashMap<ContentDigest,GraphEvidence>();this.evidence.forEach(e->indexedEvidence.put(e.identity(),e));
-        this.evidenceIndex=Map.copyOf(indexedEvidence);var payloads=evidenceIndex.keySet();
-        var contextIds=new HashSet<String>();this.contexts.forEach(c->{
+        var indexedEvidence=new HashMap<ContentDigest,GraphEvidence>(hashCapacity(this.evidence.size()));
+        this.evidence.forEach(e->indexedEvidence.put(e.identity(),e));
+        this.evidenceIndex=Collections.unmodifiableMap(indexedEvidence);var payloads=evidenceIndex.keySet();
+        var contextIds=new HashSet<String>(hashCapacity(this.contexts.size()));this.contexts.forEach(c->{
             if(!c.snapshot().equals(snapshot))throw new IllegalArgumentException("Foreign graph snapshot");
             contextIds.add(c.identity());checkEvidence(payloads,List.of(c.evidence()));
         });
-        var nodeIds=new HashSet<String>();this.nodes.forEach(n->{
+        var nodeIds=new HashSet<String>(hashCapacity(this.nodes.size()));this.nodes.forEach(n->{
             if(!contextIds.contains(n.context()))throw new IllegalArgumentException("Foreign graph node context");
             nodeIds.add(key(n.context(),n.identity()));checkEvidence(payloads,n.evidence());
         });
-        var out=new TreeMap<String,List<Edge>>();var in=new TreeMap<String,List<Edge>>();
+        var out=new HashMap<String,List<Edge>>(hashCapacity(this.nodes.size()));
+        var in=new HashMap<String,List<Edge>>(hashCapacity(this.nodes.size()));
         this.edges.forEach(e->{
             if(!contextIds.contains(e.context()) || !nodeIds.contains(key(e.context(),e.source())))throw new IllegalArgumentException("Dangling graph source/context");
             for(String target:e.target().identities())if(!nodeIds.contains(key(e.context(),target)))throw new IllegalArgumentException("Dangling graph target");
@@ -78,9 +94,16 @@ public final class KnowledgeGraph {
             e.target().identities().forEach(t->in.computeIfAbsent(key(e.context(),t),k->new ArrayList<>()).add(e));
         });
         this.outgoing=freeze(out);this.incoming=freeze(in);
-        this.identity = expectedIdentity == null
-                ? CanonicalJson.sha256(canonicalForm())
-                : verifySnapshotDigests(canonicalForm(), expectedIdentity, Objects.requireNonNull(expectedEnvelopeDigest));
+        if (expectedIdentity == null) {
+            this.identity = CanonicalJson.sha256(canonicalForm());
+        } else if (trustAuthenticatedDigest) {
+            this.identity = expectedIdentity;
+        } else {
+            this.identity = verifySnapshotDigests(canonicalForm(), expectedIdentity, Objects.requireNonNull(expectedEnvelopeDigest));
+        }
+    }
+    private static int hashCapacity(int elements) {
+        return Math.max(16, (int) Math.min(Integer.MAX_VALUE / 2, (elements / 0.75f) + 1));
     }
     private static ContentDigest verifySnapshotDigests(Object form, ContentDigest expectedIdentity, ContentDigest expectedEnvelopeDigest) {
         try {
@@ -254,6 +277,18 @@ public final class KnowledgeGraph {
             Objects.requireNonNull(key.apply(single));
             return List.of(single);
         }
+        boolean strictlyAscending = true;
+        String prev = null;
+        for (T value : values) {
+            Objects.requireNonNull(value);
+            String id = Objects.requireNonNull(key.apply(value));
+            if (prev != null && prev.compareTo(id) >= 0) {
+                strictlyAscending = false;
+                break;
+            }
+            prev = id;
+        }
+        if (strictlyAscending) return List.copyOf(values);
         var sorted=new TreeMap<String,T>();
         for(T value:values) {Objects.requireNonNull(value);String id=key.apply(value);var previous=sorted.putIfAbsent(id,value);
             if(previous!=null&&!previous.equals(value))throw new IllegalArgumentException("Conflicting graph identity");}

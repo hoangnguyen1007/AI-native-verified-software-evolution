@@ -5,6 +5,7 @@ import com.evolution.analysis.contract.common.ContentDigest;
 import com.evolution.analysis.contract.common.VersionedIdentifier;
 import com.evolution.analysis.contract.serialization.CanonicalJson;
 import com.evolution.analysis.evidence.CapabilityGapRecord;
+import com.evolution.analysis.graph.GraphJson;
 import com.evolution.analysis.policy.PolicyEvaluation;
 import com.evolution.analysis.query.ArchitectureQuery;
 import com.evolution.analysis.query.ArchitectureQuery.*;
@@ -17,15 +18,21 @@ import java.util.*;
 /**
  * Deterministic, zero-hallucination Architecture Insights & Refactoring Advisor.
  * Computes exact Tarjan Strongly Connected Components (cycles & tangles), minimal cycle-breaking
- * edge candidates backed by canonical edge evidence, Robert C. Martin Instability & SDP violations,
- * condensation-DAG transitive blast radius, cross-layer coupling matrix (DSM), and an executive
- * Markdown report — strictly from canonical ArchitectureQueryService projections.
+ * edge candidates backed by canonical edge evidence, Robert C. Martin Instability, Abstractness,
+ * Distance-from-Main-Sequence, edge-level SDP violations, condensation-DAG transitive blast radius,
+ * cross-layer coupling matrix (DSM), and an executive Markdown report — strictly from canonical
+ * ArchitectureQueryService projections.
  */
 public final class ArchitectureInsightsAdvisor {
     public static final VersionedIdentifier VERSION = new VersionedIdentifier("architecture.insights", "m9-advisor-v2");
     private static final int MAX_SCC_EXACT_CUT_NODES = 120;
     private static final int REACHABILITY_BATCH_SIZE = 1_024;
     private static final BigDecimal INSTABILITY_THRESHOLD = new BigDecimal("0.6500");
+    private static final BigDecimal SDP_EDGE_MARGIN = new BigDecimal("0.2000");
+    private static final BigDecimal ZERO_4 = BigDecimal.ZERO.setScale(4, RoundingMode.HALF_UP);
+    private static final BigDecimal MAIN_SEQ_BAND = new BigDecimal("0.2500");
+    private static final BigDecimal PAIN_THRESHOLD = new BigDecimal("0.3000");
+    private static final BigDecimal USELESS_THRESHOLD = new BigDecimal("0.7000");
     private static final Comparator<Hotspot> HOTSPOT_ORDER =
             Comparator.comparingInt(Hotspot::hotspotScore).reversed()
                     .thenComparing(Comparator.comparingInt(Hotspot::transitiveDependents).reversed())
@@ -107,6 +114,27 @@ public final class ArchitectureInsightsAdvisor {
         }
     }
 
+    public record SdpEdgeViolation(
+            String edgeIdentity,
+            String source,
+            String sourceLabel,
+            BigDecimal sourceInstability,
+            String target,
+            String targetLabel,
+            BigDecimal targetInstability,
+            BigDecimal delta) {}
+
+    public record PackageMetric(
+            String group,
+            int entityCount,
+            int abstractCount,
+            BigDecimal abstractness,
+            int fanIn,
+            int fanOut,
+            BigDecimal instability,
+            BigDecimal distance,
+            String zone) {}
+
     public record SummaryMetrics(
             int analyzedEntities,
             int internalDependencies,
@@ -117,7 +145,26 @@ public final class ArchitectureInsightsAdvisor {
             BigDecimal averageInstability,
             int maxBlastRadius,
             int sdpViolationCount,
-            int policyFindingCount) {}
+            int policyFindingCount,
+            BigDecimal abstractness,
+            BigDecimal distanceFromMainSequence,
+            int edgeSdpViolationCount) {
+        public SummaryMetrics(
+                int analyzedEntities,
+                int internalDependencies,
+                int externalDependencies,
+                int tangleCount,
+                int tangledEntityCount,
+                BigDecimal tangledEntityRatio,
+                BigDecimal averageInstability,
+                int maxBlastRadius,
+                int sdpViolationCount,
+                int policyFindingCount) {
+            this(analyzedEntities, internalDependencies, externalDependencies, tangleCount, tangledEntityCount,
+                    tangledEntityRatio, averageInstability, maxBlastRadius, sdpViolationCount, policyFindingCount,
+                    ZERO_4, ZERO_4, 0);
+        }
+    }
 
     public record InsightsReport(
             VersionedIdentifier schemaVersion,
@@ -133,11 +180,33 @@ public final class ArchitectureInsightsAdvisor {
             List<Tangle> tangles,
             List<Hotspot> hotspots,
             CouplingMatrix couplingMatrix,
-            String markdownReport) {
+            String markdownReport,
+            List<SdpEdgeViolation> sdpViolations,
+            List<PackageMetric> packageMetrics) {
+        public InsightsReport(
+                VersionedIdentifier schemaVersion,
+                ContentDigest graph,
+                String context,
+                Scope scope,
+                Projection projection,
+                AssessmentStatus status,
+                Operation operation,
+                List<CapabilityGapRecord> gaps,
+                Bounds bounds,
+                SummaryMetrics summary,
+                List<Tangle> tangles,
+                List<Hotspot> hotspots,
+                CouplingMatrix couplingMatrix,
+                String markdownReport) {
+            this(schemaVersion, graph, context, scope, projection, status, operation, gaps, bounds, summary,
+                    tangles, hotspots, couplingMatrix, markdownReport, List.of(), List.of());
+        }
         public InsightsReport {
             gaps = List.copyOf(gaps);
             tangles = List.copyOf(tangles);
             hotspots = List.copyOf(hotspots);
+            sdpViolations = List.copyOf(sdpViolations);
+            packageMetrics = List.copyOf(packageMetrics);
         }
     }
 
@@ -310,8 +379,51 @@ public final class ArchitectureInsightsAdvisor {
             groupByNode.put(id, groupName(projectEntities.get(id), baseRequest.scope(), commonPkgPrefix));
         }
 
-        // 5. Hotspots, Instability & SDP Violations
+        // 5. Instability, Edge-Level SDP Violations, Abstractness & Distance-from-Main-Sequence
+        BigDecimal[] instabilityByNode = new BigDecimal[n];
         BigDecimal instabilitySum = BigDecimal.ZERO;
+        for (int i = 0; i < n; i++) {
+            int ca = fanIn[i];
+            int ce = fanOut[i];
+            BigDecimal inst = (ca + ce == 0)
+                    ? ZERO_4
+                    : BigDecimal.valueOf(ce).divide(BigDecimal.valueOf(ca + ce), 4, RoundingMode.HALF_UP);
+            instabilityByNode[i] = inst;
+            instabilitySum = instabilitySum.add(inst);
+        }
+
+        boolean[] hasEdgeSdpViolation = new boolean[n];
+        List<SdpEdgeViolation> allSdpEdges = new ArrayList<>();
+        for (EdgeView edge : internalEdges) {
+            int u = nodeIndex.get(edge.source());
+            int v = nodeIndex.get(edge.target());
+            if (u == v || fanIn[u] < 1 || fanOut[v] < 1) continue;
+            BigDecimal delta = instabilityByNode[v].subtract(instabilityByNode[u]);
+            if (delta.compareTo(SDP_EDGE_MARGIN) > 0) {
+                hasEdgeSdpViolation[u] = true;
+                allSdpEdges.add(new SdpEdgeViolation(
+                        edge.identity(),
+                        edge.source(),
+                        shortLabel(projectEntities.get(edge.source()), baseRequest.scope()),
+                        instabilityByNode[u],
+                        edge.target(),
+                        shortLabel(projectEntities.get(edge.target()), baseRequest.scope()),
+                        instabilityByNode[v],
+                        delta));
+            }
+        }
+        allSdpEdges.sort(Comparator.comparing(SdpEdgeViolation::delta).reversed()
+                .thenComparing(SdpEdgeViolation::edgeIdentity));
+        List<SdpEdgeViolation> topSdpEdges = allSdpEdges.size() > topN
+                ? List.copyOf(allSdpEdges.subList(0, topN))
+                : List.copyOf(allSdpEdges);
+
+        Set<String> abstractEntityIds = collectAbstractEntityIds(service);
+        int abstractCountTotal = 0;
+        for (String id : nodeIds) {
+            if (abstractEntityIds.contains(id)) abstractCountTotal++;
+        }
+
         int maxBlast = 0;
         int sdpViolations = 0;
         var ranked = new PriorityQueue<>(topN, HOTSPOT_ORDER.reversed());
@@ -325,12 +437,9 @@ public final class ArchitectureInsightsAdvisor {
             int ext = extDeps[i];
             int blast = transitiveDependents[i];
             if (blast > maxBlast) maxBlast = blast;
-            BigDecimal inst = (ca + ce == 0)
-                    ? BigDecimal.ZERO.setScale(4, RoundingMode.HALF_UP)
-                    : BigDecimal.valueOf(ce).divide(BigDecimal.valueOf(ca + ce), 4, RoundingMode.HALF_UP);
-            instabilitySum = instabilitySum.add(inst);
+            BigDecimal inst = instabilityByNode[i];
 
-            boolean sdp = ca >= 3 && ce >= 2 && inst.compareTo(INSTABILITY_THRESHOLD) > 0;
+            boolean sdp = (ca >= 3 && ce >= 2 && inst.compareTo(INSTABILITY_THRESHOLD) > 0) || hasEdgeSdpViolation[i];
             if (sdp) sdpViolations++;
             int pViolations = violationsByEntity.getOrDefault(id, 0);
             boolean cyclic = inCycle[i];
@@ -362,16 +471,23 @@ public final class ArchitectureInsightsAdvisor {
 
         List<Hotspot> topHotspots = ranked.stream().sorted(HOTSPOT_ORDER).toList();
 
-        // 6. Cross-Module / Package Layer Coupling Matrix (DSM)
+        // 6. Cross-Module / Package Layer Coupling Matrix (DSM) & Martin Package Main-Sequence Metrics
         CouplingMatrix dsm = buildCouplingMatrix(nodeIds, groupByNode, internalEdges);
+        List<PackageMetric> packageMetrics = computePackageMetrics(nodeIds, groupByNode, abstractEntityIds, internalEdges);
         checkpoint.run();
 
         BigDecimal tangledRatio = n == 0
-                ? BigDecimal.ZERO.setScale(4, RoundingMode.HALF_UP)
+                ? ZERO_4
                 : BigDecimal.valueOf(tangledEntityCount).divide(BigDecimal.valueOf(n), 4, RoundingMode.HALF_UP);
         BigDecimal avgInstability = n == 0
-                ? BigDecimal.ZERO.setScale(4, RoundingMode.HALF_UP)
+                ? ZERO_4
                 : instabilitySum.divide(BigDecimal.valueOf(n), 4, RoundingMode.HALF_UP);
+        BigDecimal abstractness = n == 0
+                ? ZERO_4
+                : BigDecimal.valueOf(abstractCountTotal).divide(BigDecimal.valueOf(n), 4, RoundingMode.HALF_UP);
+        BigDecimal distance = n == 0
+                ? ZERO_4
+                : abstractness.add(avgInstability).subtract(BigDecimal.ONE).abs().setScale(4, RoundingMode.HALF_UP);
 
         SummaryMetrics summary = new SummaryMetrics(
                 n,
@@ -383,10 +499,13 @@ public final class ArchitectureInsightsAdvisor {
                 avgInstability,
                 maxBlast,
                 sdpViolations,
-                totalPolicyFindings);
+                totalPolicyFindings,
+                abstractness,
+                distance,
+                allSdpEdges.size());
 
         String markdown = renderMarkdown(
-                baseRequest, projected.status(), projected.gaps(), summary, tangles, topHotspots, dsm);
+                baseRequest, projected.status(), projected.gaps(), summary, tangles, topHotspots, dsm, topSdpEdges, packageMetrics);
 
         return new InsightsReport(
                 VERSION,
@@ -402,7 +521,70 @@ public final class ArchitectureInsightsAdvisor {
                 tangles,
                 topHotspots,
                 dsm,
-                markdown);
+                markdown,
+                topSdpEdges,
+                packageMetrics);
+    }
+
+    private static Set<String> collectAbstractEntityIds(ArchitectureQueryService service) {
+        var ids = new HashSet<String>();
+        for (var ev : service.graph().evidence()) {
+            if (!"java.type-shape".equals(ev.family())) continue;
+            try {
+                var obj = GraphJson.object(GraphJson.read(ev.canonicalJson(), new GraphJson.Limits(65_536, 16, 1024)));
+                if ((Boolean.TRUE.equals(obj.get("abstractType")) || "INTERFACE".equals(obj.get("kind")))
+                        && obj.get("type") instanceof String typeId) {
+                    ids.add(typeId);
+                }
+            } catch (RuntimeException ignored) {}
+        }
+        return ids;
+    }
+
+    private static List<PackageMetric> computePackageMetrics(
+            List<String> nodeIds,
+            Map<String, String> groupByNode,
+            Set<String> abstractEntityIds,
+            List<EdgeView> internalEdges) {
+        Map<String, Integer> counts = new TreeMap<>();
+        Map<String, Integer> abstracts = new HashMap<>();
+        for (String id : nodeIds) {
+            String g = groupByNode.get(id);
+            counts.merge(g, 1, Integer::sum);
+            if (abstractEntityIds.contains(id)) abstracts.merge(g, 1, Integer::sum);
+        }
+        Map<String, Integer> gFanIn = new HashMap<>();
+        Map<String, Integer> gFanOut = new HashMap<>();
+        for (EdgeView edge : internalEdges) {
+            String from = groupByNode.get(edge.source());
+            String to = groupByNode.get(edge.target());
+            if (from == null || to == null || from.equals(to)) continue;
+            gFanOut.merge(from, 1, Integer::sum);
+            gFanIn.merge(to, 1, Integer::sum);
+        }
+        var metrics = new ArrayList<PackageMetric>(counts.size());
+        for (var entry : counts.entrySet()) {
+            String g = entry.getKey();
+            int total = entry.getValue();
+            int abs = abstracts.getOrDefault(g, 0);
+            int ca = gFanIn.getOrDefault(g, 0);
+            int ce = gFanOut.getOrDefault(g, 0);
+            BigDecimal a = total == 0 ? ZERO_4
+                    : BigDecimal.valueOf(abs).divide(BigDecimal.valueOf(total), 4, RoundingMode.HALF_UP);
+            BigDecimal inst = (ca + ce == 0) ? ZERO_4
+                    : BigDecimal.valueOf(ce).divide(BigDecimal.valueOf(ca + ce), 4, RoundingMode.HALF_UP);
+            BigDecimal dist = a.add(inst).subtract(BigDecimal.ONE).abs().setScale(4, RoundingMode.HALF_UP);
+            String zone;
+            if (dist.compareTo(MAIN_SEQ_BAND) <= 0) zone = "MAIN_SEQUENCE";
+            else if (a.compareTo(PAIN_THRESHOLD) < 0 && inst.compareTo(PAIN_THRESHOLD) < 0) zone = "ZONE_OF_PAIN";
+            else if (a.compareTo(USELESS_THRESHOLD) > 0 && inst.compareTo(USELESS_THRESHOLD) > 0) zone = "ZONE_OF_USELESSNESS";
+            else zone = "BALANCED";
+            metrics.add(new PackageMetric(g, total, abs, a, ca, ce, inst, dist, zone));
+        }
+        metrics.sort(Comparator.comparing(PackageMetric::distance).reversed()
+                .thenComparing(Comparator.comparingInt(PackageMetric::entityCount).reversed())
+                .thenComparing(PackageMetric::group));
+        return List.copyOf(metrics);
     }
 
     private static boolean isProjectEntity(EntityView ev) {
@@ -837,7 +1019,9 @@ public final class ArchitectureInsightsAdvisor {
             SummaryMetrics s,
             List<Tangle> tangles,
             List<Hotspot> hotspots,
-            CouplingMatrix dsm) {
+            CouplingMatrix dsm,
+            List<SdpEdgeViolation> sdpEdges,
+            List<PackageMetric> packageMetrics) {
         var md = new StringBuilder(4096);
         md.append("# Architecture Intelligence & Refactoring Executive Report\n\n");
         md.append("- **Graph Digest:** `").append(req.graph().value()).append("`\n");
@@ -859,8 +1043,10 @@ public final class ArchitectureInsightsAdvisor {
           .append(" (").append(s.tangledEntityCount()).append(" entities, ")
           .append(s.tangledEntityRatio().multiply(BigDecimal.valueOf(100)).setScale(1, RoundingMode.HALF_UP)).append("%) |\n");
         md.append("| Average Martin Instability ($I$) | ").append(s.averageInstability()).append(" |\n");
+        md.append("| Abstractness ($A$) / Distance ($D$) | ").append(s.abstractness()).append(" / ").append(s.distanceFromMainSequence()).append(" |\n");
         md.append("| Max Incoming Blast Radius | ").append(s.maxBlastRadius()).append(" dependents |\n");
-        md.append("| Stable Dependencies Principle (SDP) Warnings | ").append(s.sdpViolationCount()).append(" |\n");
+        md.append("| Stable Dependencies Principle (SDP) Warnings | ").append(s.sdpViolationCount())
+          .append(" components / ").append(s.edgeSdpViolationCount()).append(" edges |\n");
         md.append("| Active Policy Violations | ").append(s.policyFindingCount()).append(" |\n\n");
 
         md.append("## 2. Structural Dependency Cycles and Candidate Edges\n\n");
@@ -926,6 +1112,30 @@ public final class ArchitectureInsightsAdvisor {
                 md.append("| `").append(c.fromGroup()).append("` | `").append(c.toGroup()).append("` | ")
                   .append(c.edgeCount()).append(" | ").append(c.supportWeight()).append(" | ")
                   .append(flags.isEmpty() ? "OK" : String.join(", ", flags)).append(" |\n");
+            }
+        }
+        if (!sdpEdges.isEmpty()) {
+            md.append("\n## 5. Edge-Level Stable Dependencies Principle (SDP) Violations\n\n");
+            md.append("| Stable Source | $I(\\text{src})$ | Less Stable Target | $I(\\text{dst})$ | $\\Delta I$ |\n");
+            md.append("|---|---|---|---|---|\n");
+            for (int i = 0; i < Math.min(10, sdpEdges.size()); i++) {
+                SdpEdgeViolation v = sdpEdges.get(i);
+                md.append("| `").append(v.sourceLabel()).append("` | ").append(v.sourceInstability())
+                  .append(" | `").append(v.targetLabel()).append("` | ").append(v.targetInstability())
+                  .append(" | +").append(v.delta()).append(" |\n");
+            }
+        }
+        if (!packageMetrics.isEmpty()) {
+            md.append("\n## 6. Package Abstractness & Distance from Main Sequence\n\n");
+            md.append("| Group | Entities | Abstractness ($A$) | Instability ($I$) | Distance ($D$) | Zone |\n");
+            md.append("|---|---|---|---|---|---|\n");
+            for (int i = 0; i < Math.min(12, packageMetrics.size()); i++) {
+                PackageMetric pm = packageMetrics.get(i);
+                md.append("| `").append(pm.group()).append("` | ").append(pm.entityCount())
+                  .append(" | ").append(pm.abstractness())
+                  .append(" | ").append(pm.instability())
+                  .append(" | ").append(pm.distance())
+                  .append(" | `").append(pm.zone()).append("` |\n");
             }
         }
         return md.toString();

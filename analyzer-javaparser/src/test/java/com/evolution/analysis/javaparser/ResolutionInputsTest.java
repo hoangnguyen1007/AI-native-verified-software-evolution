@@ -458,4 +458,69 @@ class ResolutionInputsTest {
         }
         assertFalse(env.explicitImports.tryToSolveType("other.MissingType").isSolved());
     }
+
+    @Test void explicitImportSolverKeepsUnitScopedSimpleNamesAndResolvesExpandedJdkAndEcosystemWildcards() {
+        String unitASource = """
+                package demo;
+                import com.alpha.sdk.Client;
+                import java.util.*;
+                import java.time.*;
+                import org.springframework.jdbc.core.*;
+                class A {
+                    Client client;
+                    List<Instant> times;
+                    JdbcTemplate jdbc;
+                }
+                """;
+        String unitBSource = """
+                package demo;
+                import com.beta.sdk.Client;
+                import com.google.protobuf.*;
+                import io.netty.channel.*;
+                class B {
+                    Client client;
+                    ByteString payload;
+                    ChannelHandlerContext ctx;
+                }
+                """;
+        var base = TestInputs.request(Map.of(
+                "src/main/java/demo/A.java", unitASource,
+                "src/main/java/demo/B.java", unitBSource), List.of());
+        var env = new ResolutionEnvironment(base);
+        var unitA = com.github.javaparser.StaticJavaParser.parse(unitASource);
+        var unitB = com.github.javaparser.StaticJavaParser.parse(unitBSource);
+        env.explicitImports.observeUnit(unitA);
+        env.explicitImports.observeUnit(unitB);
+        env.explicitImports.materialize(Set.of("demo.A", "demo.B"), env, false);
+
+        assertEquals(Optional.of("com.alpha.sdk.Client"), env.explicitImports.resolveSimpleNameInUnit(unitA, "Client"));
+        assertEquals(Optional.of("com.beta.sdk.Client"), env.explicitImports.resolveSimpleNameInUnit(unitB, "Client"));
+        assertEquals(Optional.of("java.util.List"), env.explicitImports.resolveSimpleNameInUnit(unitA, "List"));
+        assertEquals(Optional.of("java.time.Instant"), env.explicitImports.resolveSimpleNameInUnit(unitA, "Instant"));
+        assertTrue(env.explicitImports.tryToSolveType("com.alpha.sdk.Client").isSolved());
+        assertTrue(env.explicitImports.tryToSolveType("com.beta.sdk.Client").isSolved());
+        assertTrue(env.explicitImports.tryToSolveType("org.springframework.jdbc.core.JdbcTemplate").isSolved());
+        assertTrue(env.explicitImports.tryToSolveType("com.google.protobuf.ByteString").isSolved());
+        assertTrue(env.explicitImports.tryToSolveType("io.netty.channel.ChannelHandlerContext").isSolved());
+    }
+
+    @Test void cachedArchiveReusesParsedViewWhileRejectingSameSizeAndMtimeMutation() throws Exception {
+        var dep = jar("stat-cached", "package dep; public class Library { public static int one(){ return 1; } }");
+        var req = TestInputs.request(Map.of("fixture/C.java", "class C { int run(){ return dep.Library.one(); } }"),
+                List.of(dep));
+        new JavaParserFrontend().analyze(req); // warms JAR_CACHE
+        long buildsAfterWarm = ResolutionEnvironment.cachedArchiveBuilds();
+        var res = new JavaParserFrontend().analyze(req);
+        assertEquals(1, calls(res).stream().filter(c -> c.status() == SemanticStatus.RESOLVED).count());
+        assertEquals(buildsAfterWarm, ResolutionEnvironment.cachedArchiveBuilds(),
+                "Warm JAR verification must reuse content-addressed parsed archive");
+        // Mutating bytes while preserving exact length and mtime must NEVER bypass SHA-256 verification.
+        byte[] original = Files.readAllBytes(dep.path());
+        var mtime = Files.getLastModifiedTime(dep.path());
+        original[original.length - 1] ^= 0x01;
+        Files.write(dep.path(), original);
+        Files.setLastModifiedTime(dep.path(), mtime);
+        assertEquals("frontend.artifact-digest", assertThrows(FrontendInputException.class,
+                () -> new JavaParserFrontend().analyze(req)).diagnostic().code());
+    }
 }

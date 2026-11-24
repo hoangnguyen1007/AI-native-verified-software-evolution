@@ -27,7 +27,7 @@ public final class ArchitectureAssessmentService {
                                                 ArchitectureQuery.Limits queryLimits, ArchitectureMetric.Limits metricLimits,
                                                 ArchitectureAssessment.Limits limits) {
         var inputs = new ArrayList<ArchitectureMetric.Result>();
-        var engine = new ArchitectureMetricsService(queries.graph(), metricLimits, queries::assessmentStopReason, Optional.empty(), List.of());
+        var engine = new ArchitectureMetricsService(queries.graph(), queries.graphIdentity(), metricLimits, queries::assessmentStopReason, Optional.empty(), List.of());
         var requested = new TreeMap<String, ArchitectureScoreModel.MetricInput>();
         model.ifPresent(m -> m.dimensions().forEach(d -> d.metric().ifPresent(spec -> requested.putIfAbsent(spec.metric().id(), spec))));
         requested.values().forEach(spec -> inputs.add(engine.compute(request(metrics.context(), spec.scope(), queryLimits), spec.metric().id(), metrics.context().partition())));
@@ -38,7 +38,7 @@ public final class ArchitectureAssessmentService {
                                                   ArchitectureAssessment.Limits limits) {
         Objects.requireNonNull(model); Objects.requireNonNull(structuralInputs); Objects.requireNonNull(limits);
         var context = metrics.context();
-        if (!context.evaluation().equals(evaluation.identity()) || !context.graph().equals(queries.graph().identity())
+        if (!context.evaluation().equals(evaluation.identity()) || !context.graph().equals(queries.graphIdentity())
                 || !context.graph().equals(evaluation.graph()) || !context.partition().equals(evaluation.context())
                 || !context.compilation().equals(evaluation.compilation()) || !context.mapping().equals(evaluation.mapping()))
             throw new IllegalArgumentException("Foreign assessment inputs");

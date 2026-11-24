@@ -67,6 +67,11 @@ final class ExplicitImportTypeSolver implements TypeSolver {
     private static final Set<String> INJECT_TYPES = Set.of(
             "Inject", "Named", "Qualifier", "Scope", "Singleton", "Provider");
 
+    private static final Set<String> SERVLET_TYPES = Set.of(
+            "Servlet", "ServletRequest", "ServletResponse", "ServletConfig", "ServletContext",
+            "ServletException", "Filter", "FilterChain", "FilterConfig", "RequestDispatcher",
+            "AsyncContext", "ServletInputStream", "ServletOutputStream");
+
     private static final Set<String> SERVLET_HTTP_TYPES = Set.of(
             "HttpServlet", "HttpServletRequest", "HttpServletResponse", "HttpSession", "Cookie", "Part");
 
@@ -82,8 +87,71 @@ final class ExplicitImportTypeSolver implements TypeSolver {
             Map.entry("javax.annotation", JAVAX_COMMON_ANNOTATIONS),
             Map.entry("jakarta.inject", INJECT_TYPES),
             Map.entry("javax.inject", INJECT_TYPES),
+            Map.entry("jakarta.servlet", SERVLET_TYPES),
+            Map.entry("javax.servlet", SERVLET_TYPES),
             Map.entry("jakarta.servlet.http", SERVLET_HTTP_TYPES),
             Map.entry("javax.servlet.http", SERVLET_HTTP_TYPES),
+            Map.entry("java.util", Set.of(
+                    "List", "ArrayList", "LinkedList", "Map", "HashMap", "LinkedHashMap", "TreeMap", "IdentityHashMap",
+                    "EnumMap", "Set", "HashSet", "LinkedHashSet", "TreeSet", "EnumSet", "Collection", "Collections",
+                    "Queue", "Deque", "ArrayDeque", "PriorityQueue", "Optional", "OptionalInt", "OptionalLong",
+                    "OptionalDouble", "Objects", "Arrays", "Comparator", "Iterator", "ListIterator", "Spliterator",
+                    "UUID", "Date", "Calendar", "Locale", "TimeZone", "Properties", "Random", "Scanner",
+                    "StringJoiner", "StringTokenizer", "HexFormat", "Base64", "BitSet", "Currency", "Enum",
+                    "NoSuchElementException", "ConcurrentModificationException", "ServiceLoader", "StreamSupport")),
+            Map.entry("java.util.concurrent", Set.of(
+                    "CompletableFuture", "CompletionStage", "Future", "Callable", "Executor", "ExecutorService",
+                    "ScheduledExecutorService", "Executors", "ThreadPoolExecutor", "ForkJoinPool", "TimeUnit",
+                    "ConcurrentHashMap", "ConcurrentMap", "ConcurrentLinkedQueue", "ConcurrentSkipListMap",
+                    "ConcurrentSkipListSet", "CopyOnWriteArrayList", "CopyOnWriteArraySet", "BlockingQueue",
+                    "LinkedBlockingQueue", "ArrayBlockingQueue", "CountDownLatch", "CyclicBarrier", "Semaphore",
+                    "Phaser", "Flow", "TimeoutException", "ExecutionException", "CancellationException",
+                    "RejectedExecutionException", "ThreadLocalRandom")),
+            Map.entry("java.util.concurrent.atomic", Set.of(
+                    "AtomicBoolean", "AtomicInteger", "AtomicLong", "AtomicReference", "AtomicStampedReference",
+                    "LongAdder", "LongAccumulator", "DoubleAdder")),
+            Map.entry("java.util.function", Set.of(
+                    "Function", "BiFunction", "Consumer", "BiConsumer", "Supplier", "Predicate", "BiPredicate",
+                    "UnaryOperator", "BinaryOperator", "IntFunction", "LongFunction", "DoubleFunction",
+                    "ToIntFunction", "ToLongFunction", "ToDoubleFunction", "IntConsumer", "LongConsumer",
+                    "BooleanSupplier", "IntSupplier", "LongSupplier", "IntPredicate")),
+            Map.entry("java.util.stream", Set.of(
+                    "Stream", "IntStream", "LongStream", "DoubleStream", "Collectors", "Collector", "StreamSupport")),
+            Map.entry("java.io", Set.of(
+                    "File", "InputStream", "OutputStream", "Reader", "Writer", "BufferedReader", "BufferedWriter",
+                    "BufferedInputStream", "BufferedOutputStream", "ByteArrayInputStream", "ByteArrayOutputStream",
+                    "InputStreamReader", "OutputStreamWriter", "StringReader", "StringWriter", "PrintWriter",
+                    "PrintStream", "FileInputStream", "FileOutputStream", "DataInputStream", "DataOutputStream",
+                    "ObjectInputStream", "ObjectOutputStream", "Serializable", "Closeable", "Flushable",
+                    "IOException", "UncheckedIOException", "FileNotFoundException", "EOFException")),
+            Map.entry("java.nio.file", Set.of(
+                    "Path", "Paths", "Files", "FileSystem", "FileSystems", "StandardOpenOption",
+                    "StandardCopyOption", "LinkOption", "FileVisitResult", "SimpleFileVisitor",
+                    "DirectoryStream", "WatchService", "NoSuchFileException", "FileAlreadyExistsException",
+                    "AccessDeniedException")),
+            Map.entry("java.nio.charset", Set.of(
+                    "Charset", "StandardCharsets", "CharacterCodingException", "CodingErrorAction")),
+            Map.entry("java.time", Set.of(
+                    "Instant", "LocalDate", "LocalTime", "LocalDateTime", "ZonedDateTime", "OffsetDateTime",
+                    "OffsetTime", "Duration", "Period", "ZoneId", "ZoneOffset", "Clock", "Year", "YearMonth",
+                    "Month", "DayOfWeek")),
+            Map.entry("java.time.format", Set.of("DateTimeFormatter", "DateTimeParseException")),
+            Map.entry("java.math", Set.of("BigDecimal", "BigInteger", "MathContext", "RoundingMode")),
+            Map.entry("java.net", Set.of(
+                    "URI", "URL", "InetAddress", "InetSocketAddress", "Socket", "ServerSocket",
+                    "HttpURLConnection", "URLConnection", "URLEncoder", "URLDecoder",
+                    "URISyntaxException", "MalformedURLException", "ConnectException", "SocketTimeoutException")),
+            Map.entry("java.net.http", Set.of(
+                    "HttpClient", "HttpRequest", "HttpResponse", "HttpHeaders", "HttpTimeoutException", "WebSocket")),
+            Map.entry("java.sql", Set.of(
+                    "Connection", "DriverManager", "Statement", "PreparedStatement", "CallableStatement",
+                    "ResultSet", "ResultSetMetaData", "DatabaseMetaData", "SQLException", "Timestamp", "Time", "Date",
+                    "Types", "Blob", "Clob")),
+            Map.entry("java.security", Set.of(
+                    "MessageDigest", "SecureRandom", "Principal", "KeyPair", "PublicKey", "PrivateKey",
+                    "KeyStore", "Signature", "DigestInputStream", "DigestOutputStream",
+                    "NoSuchAlgorithmException", "GeneralSecurityException")),
+            Map.entry("java.util.regex", Set.of("Pattern", "Matcher", "MatchResult")),
             Map.entry("jakarta.ws.rs", JAXRS_TYPES),
             Map.entry("javax.ws.rs", JAXRS_TYPES),
             Map.entry("org.springframework.web.bind.annotation", Set.of(
@@ -303,7 +371,36 @@ final class ExplicitImportTypeSolver implements TypeSolver {
                     "CoroutineDispatcher", "CoroutineScope", "CoroutineStart", "Deferred", "Dispatchers",
                     "GlobalScope", "Job", "MainScope", "SupervisorJob", "WithContext")),
             Map.entry("io.reactivex.rxjava3.core", Set.of(
-                    "Completable", "Flowable", "Maybe", "Observable", "Scheduler", "Single")));
+                    "Completable", "Flowable", "Maybe", "Observable", "Scheduler", "Single")),
+            Map.entry("org.springframework.web.server", Set.of(
+                    "ResponseStatusException", "ServerWebExchange", "WebFilter", "WebFilterChain")),
+            Map.entry("org.springframework.security.core", Set.of(
+                    "Authentication", "GrantedAuthority", "SecurityContext", "SpringSecurityCoreVersion")),
+            Map.entry("org.springframework.security.core.userdetails", Set.of(
+                    "User", "UserDetails", "UserDetailsService", "UsernameNotFoundException")),
+            Map.entry("org.springframework.jdbc.core", Set.of(
+                    "JdbcTemplate", "JdbcOperations", "RowMapper", "ResultSetExtractor", "PreparedStatementSetter")),
+            Map.entry("org.springframework.kafka.core", Set.of(
+                    "KafkaTemplate", "ProducerFactory", "ConsumerFactory", "DefaultKafkaProducerFactory",
+                    "DefaultKafkaConsumerFactory")),
+            Map.entry("org.springframework.amqp.rabbit.core", Set.of("RabbitTemplate", "RabbitAdmin")),
+            Map.entry("org.springframework.data.redis.core", Set.of(
+                    "RedisTemplate", "StringRedisTemplate", "ValueOperations", "HashOperations", "ListOperations")),
+            Map.entry("org.springframework.boot", Set.of(
+                    "SpringApplication", "ApplicationRunner", "CommandLineRunner", "ApplicationArguments")),
+            Map.entry("org.springframework.boot.test.context", Set.of("SpringBootTest", "TestConfiguration")),
+            Map.entry("org.springframework.test.context", Set.of("ActiveProfiles", "TestPropertySource", "ContextConfiguration")),
+            Map.entry("org.apache.logging.log4j", Set.of("LogManager", "Logger", "Level", "Marker", "ThreadContext")),
+            Map.entry("com.google.protobuf", Set.of(
+                    "Message", "MessageLite", "ByteString", "Timestamp", "Duration", "Any", "Struct",
+                    "Empty", "InvalidProtocolBufferException")),
+            Map.entry("io.netty.channel", Set.of(
+                    "Channel", "ChannelHandlerContext", "ChannelFuture", "ChannelInboundHandlerAdapter",
+                    "ChannelOutboundHandlerAdapter", "ChannelInitializer", "ChannelPipeline", "EventLoopGroup")),
+            Map.entry("io.netty.buffer", Set.of("ByteBuf", "Unpooled", "ByteBufAllocator")),
+            Map.entry("org.hibernate.annotations", Set.of(
+                    "CreationTimestamp", "UpdateTimestamp", "SQLDelete", "Where", "GenericGenerator",
+                    "Type", "BatchSize", "Fetch", "FetchMode", "DynamicUpdate", "Immutable")));
 
     private static final Set<String> KOTLIN_IMPLICIT_JVM_ANNOTATIONS =
             WELL_KNOWN_WILDCARD_TYPES.getOrDefault("kotlin.jvm", Set.of());
@@ -311,6 +408,7 @@ final class ExplicitImportTypeSolver implements TypeSolver {
     private static final Set<String> SYNTHETIC_MISSING_PACKAGES = Set.of("other", "missing", "unavailable");
 
     private record PendingWildcardCandidate(
+            CompilationUnit unit,
             String unitPackage,
             String simpleName,
             Set<String> wildcardPackages,
@@ -321,10 +419,17 @@ final class ExplicitImportTypeSolver implements TypeSolver {
     private final Map<String, Integer> observedMaxTypeArgs = new HashMap<>();
     private final Set<String> observedInterfaceHints = new HashSet<>();
     private final Set<String> observedAnnotationHints = new HashSet<>();
-    private final Map<String, String> observedSimpleToFqn = new LinkedHashMap<>();
+    private final Map<CompilationUnit, Map<String, String>> unitSimpleToFqn = new IdentityHashMap<>();
+    private final Set<String> observedExplicitFqns = new LinkedHashSet<>();
     private final Set<String> observedQualifiedTypes = new LinkedHashSet<>();
     private final List<PendingWildcardCandidate> pendingWildcardCandidates = new ArrayList<>();
     private final Set<String> explicitlyImportedFqns = new HashSet<>();
+
+    Optional<String> resolveSimpleNameInUnit(CompilationUnit unit, String simpleName) {
+        if (unit == null || simpleName == null || simpleName.isEmpty()) return Optional.empty();
+        Map<String, String> local = unitSimpleToFqn.get(unit);
+        return local == null ? Optional.empty() : Optional.ofNullable(local.get(simpleName));
+    }
 
     @Override
     public TypeSolver getParent() {
@@ -401,11 +506,11 @@ final class ExplicitImportTypeSolver implements TypeSolver {
                 if (ownerDot <= 0) continue;
                 String simple = ownerType.substring(ownerDot + 1);
                 localSimpleToFqn.put(simple, ownerType);
-                observedSimpleToFqn.put(simple, ownerType);
+                observedExplicitFqns.add(ownerType);
             } else {
                 String simple = fqn.substring(dot + 1);
                 localSimpleToFqn.put(simple, fqn);
-                observedSimpleToFqn.put(simple, fqn);
+                observedExplicitFqns.add(fqn);
             }
         }
         for (ClassOrInterfaceType type : unit.findAll(ClassOrInterfaceType.class)) {
@@ -417,13 +522,13 @@ final class ExplicitImportTypeSolver implements TypeSolver {
                     if (knownWildcard.isPresent()) {
                         String wFqn = knownWildcard.orElseThrow();
                         localSimpleToFqn.put(simple, wFqn);
-                        observedSimpleToFqn.put(simple, wFqn);
+                        observedExplicitFqns.add(wFqn);
                     } else if (!wildcardPackages.isEmpty()
                             && simple.length() > 1
                             && Character.isUpperCase(simple.codePointAt(0))
                             && !unitLocalNames.contains(simple)) {
                         pendingWildcardCandidates.add(new PendingWildcardCandidate(
-                                unitPkg, simple, Set.copyOf(wildcardPackages), false));
+                                unit, unitPkg, simple, Set.copyOf(wildcardPackages), false));
                     }
                 }
             } else {
@@ -435,7 +540,9 @@ final class ExplicitImportTypeSolver implements TypeSolver {
             if (type.getTypeArguments().isPresent()) {
                 int count = type.getTypeArguments().orElseThrow().size();
                 observedMaxTypeArgs.merge(fqn, count, Math::max);
-                observedMaxTypeArgs.merge(simple, count, Math::max);
+                if (!fqn.contains(".")) {
+                    observedMaxTypeArgs.merge(simple, count, Math::max);
+                }
             }
         }
         for (ClassOrInterfaceDeclaration decl : unit.findAll(ClassOrInterfaceDeclaration.class)) {
@@ -445,7 +552,9 @@ final class ExplicitImportTypeSolver implements TypeSolver {
                         ? resolveScopedFqn(scoped, localSimpleToFqn)
                         : localSimpleToFqn.getOrDefault(impl.getNameAsString(), scoped);
                 observedInterfaceHints.add(fqn);
-                observedInterfaceHints.add(impl.getNameAsString());
+                if (!fqn.contains(".")) {
+                    observedInterfaceHints.add(impl.getNameAsString());
+                }
             }
         }
         for (AnnotationExpr ann : unit.findAll(AnnotationExpr.class)) {
@@ -460,24 +569,27 @@ final class ExplicitImportTypeSolver implements TypeSolver {
                     if (knownWildcard.isPresent()) {
                         String wFqn = knownWildcard.orElseThrow();
                         localSimpleToFqn.put(rawName, wFqn);
-                        observedSimpleToFqn.put(rawName, wFqn);
+                        observedExplicitFqns.add(wFqn);
                     } else if (KOTLIN_IMPLICIT_JVM_ANNOTATIONS.contains(rawName)) {
                         String ktFqn = "kotlin.jvm." + rawName;
                         localSimpleToFqn.put(rawName, ktFqn);
-                        observedSimpleToFqn.put(rawName, ktFqn);
+                        observedExplicitFqns.add(ktFqn);
                     } else if (!wildcardPackages.isEmpty()
                             && rawName.length() > 1
                             && Character.isUpperCase(rawName.codePointAt(0))
                             && !unitLocalNames.contains(rawName)) {
                         pendingWildcardCandidates.add(new PendingWildcardCandidate(
-                                unitPkg, rawName, Set.copyOf(wildcardPackages), true));
+                                unit, unitPkg, rawName, Set.copyOf(wildcardPackages), true));
                     }
                 }
                 String fqn = localSimpleToFqn.getOrDefault(rawName, rawName);
                 observedAnnotationHints.add(fqn);
-                observedAnnotationHints.add(rawName);
+                if (!fqn.contains(".")) {
+                    observedAnnotationHints.add(rawName);
+                }
             }
         }
+        unitSimpleToFqn.put(unit, new HashMap<>(localSimpleToFqn));
     }
 
     private static Optional<String> resolveWildcardSimple(String simple, Set<String> wildcardPackages) {
@@ -542,7 +654,8 @@ final class ExplicitImportTypeSolver implements TypeSolver {
         }
         for (PendingWildcardCandidate cand : pendingWildcardCandidates) {
             String simple = cand.simpleName();
-            if (observedSimpleToFqn.containsKey(simple)) continue;
+            Map<String, String> unitMap = unitSimpleToFqn.get(cand.unit());
+            if (unitMap != null && unitMap.containsKey(simple)) continue;
             if (environment.isKnownInPrimarySolvers("java.lang." + simple)) continue;
             if (!cand.unitPackage().isEmpty()) {
                 String samePkgFqn = cand.unitPackage() + "." + simple;
@@ -590,7 +703,8 @@ final class ExplicitImportTypeSolver implements TypeSolver {
             }
             if (selectedPkg != null) {
                 String fqn = selectedPkg + "." + simple;
-                observedSimpleToFqn.put(simple, fqn);
+                observedExplicitFqns.add(fqn);
+                if (unitMap != null) unitMap.putIfAbsent(simple, fqn);
                 if (cand.isAnnotation() || observedAnnotationHints.contains(simple)) {
                     observedAnnotationHints.add(fqn);
                 }
@@ -599,12 +713,12 @@ final class ExplicitImportTypeSolver implements TypeSolver {
                 }
             }
         }
-        for (Map.Entry<String, String> entry : observedSimpleToFqn.entrySet()) {
-            String simple = entry.getKey();
-            String fqn = entry.getValue();
+        for (String fqn : observedExplicitFqns) {
             if (sourceTypeNames.contains(fqn) || environment.isKnownInPrimarySolvers(fqn)) {
                 continue;
             }
+            int dot = fqn.lastIndexOf('.');
+            String simple = dot > 0 ? fqn.substring(dot + 1) : fqn;
             explicitlyImportedFqns.add(fqn);
             int typeParamCount = Math.max(
                     observedMaxTypeArgs.getOrDefault(fqn, 0),

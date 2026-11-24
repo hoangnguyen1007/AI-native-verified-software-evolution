@@ -134,6 +134,11 @@ public record FrontendResult(AnalysisIdentity analysis, VersionedIdentifier fron
         }
     }
 
+    /** Memoized streaming canonical SHA-256 digest of this immutable FrontendResult. */
+    public ContentDigest canonicalDigest() {
+        return contentDigest();
+    }
+
     /** Memoized canonical SHA-256 digest of this immutable FrontendResult. */
     public ContentDigest contentDigest() {
         var lookup = new IdentityKey(this, null);
@@ -210,6 +215,15 @@ public record FrontendResult(AnalysisIdentity analysis, VersionedIdentifier fron
                 || !sources.stream().map(SourceOutcome::document).collect(Collectors.toSet()).equals(expected))
             throw new IllegalArgumentException("result does not cover the requested analysis");
         return this;
+    }
+
+    /** Rebinds this cached source-set result to an identical-inputs analysis identity. */
+    public FrontendResult withAnalysis(AnalysisIdentity newAnalysis) {
+        Objects.requireNonNull(newAnalysis);
+        if (analysis.equals(newAnalysis)) return this;
+        return new FrontendResult(newAnalysis, frontend, state, declarations, occurrences, observations, sources,
+                coverage, diagnostics, types, annotations, derivedRelationships, typeDeclarations,
+                memberDeclarations, constructorCandidates, httpClientCalls);
     }
     private static <T extends Comparable<? super T>> List<T> sorted(List<T> values, String name) { return ContractChecks.sortedDistinct(values, Comparator.naturalOrder(), name); }
 }

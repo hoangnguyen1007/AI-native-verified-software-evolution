@@ -32,9 +32,25 @@ import java.util.zip.ZipInputStream;
 public final class MavenDependencyArtifactProvider implements DependencyArtifactProvider {
     public static final VersionedIdentifier VERSION =
             new VersionedIdentifier("dependency.artifact-cache", "m3.9-parallel");
+    public static final long DEFAULT_MAX_TOTAL_BYTES = 2_147_483_648L;
     private static final JdkRemoteArtifactTransport SHARED_TRANSPORT = new JdkRemoteArtifactTransport();
     private static final int MAX_ARCHIVE_ENTRIES = 1_000_000;
     private static final long MAX_EXPANDED_ARCHIVE_BYTES = 1_000_000_000L;
+    private static final int VALIDATED_CONTENT_CACHE_MAX = 8192;
+    private static final Map<ValidatedContentKey, Boolean> VALIDATED_CONTENT_CACHE =
+            Collections.synchronizedMap(new LinkedHashMap<>(512, 0.75f, true) {
+                @Override protected boolean removeEldestEntry(Map.Entry<ValidatedContentKey, Boolean> eldest) {
+                    return size() > VALIDATED_CONTENT_CACHE_MAX;
+                }
+            });
+    static final java.util.concurrent.atomic.AtomicLong VALIDATED_CONTENT_CACHE_HITS = new java.util.concurrent.atomic.AtomicLong();
+
+    private record ValidatedContentKey(ContentDigest digest, String extension) {}
+
+    public static DependencyAcquisitionPolicy defaultPolicy(List<URI> remoteRepositories) {
+        return new DependencyAcquisitionPolicy(4096, 64_000_000L, DEFAULT_MAX_TOTAL_BYTES, 64,
+                remoteRepositories, 5_000, 15_000, 1, 8);
+    }
 
     private final Path selectedCacheRoot;
     private final RemoteArtifactTransport remoteTransport;
@@ -81,10 +97,11 @@ public final class MavenDependencyArtifactProvider implements DependencyArtifact
             }
             return DependencyAcquisitionResult.create(request,VERSION,outcomes,attempts,consumed);
         }
-        // Reserve each task's worst-case transfer before dispatch. Commit in input order, not
+        // Reserve each task's byte allowance before dispatch. Commit in input order, not
         // completion order: timing cannot change byte admission, failures or ledger ordinals.
-        long perTask = request.policy().maxArtifactBytes() * (request.policy().maxRetries()+1L)
-                * Math.max(1,request.policy().remoteRepositories().size());
+        // Avoid serializing concurrent downloads when maxArtifactBytes * (retries+1) * repos >= maxTotalBytes
+        // while keeping explicit small-budget limits strictly bounded.
+        long perTask = taskAllowance(request.policy());
         long consumed=0,reserved=0;int next=0;boolean interrupted=Thread.interrupted();
         var pending=new ArrayDeque<Pending>();var activeCoordinates=new HashSet<ArtifactCoordinate>();
         var executor=Executors.newFixedThreadPool(request.policy().maxConcurrentDownloads());
@@ -114,6 +131,23 @@ public final class MavenDependencyArtifactProvider implements DependencyArtifact
             executor.shutdownNow();if(interrupted)Thread.currentThread().interrupt();
         }
         return DependencyAcquisitionResult.create(request, VERSION, outcomes, attempts, consumed);
+    }
+
+    private static long taskAllowance(DependencyAcquisitionPolicy policy) {
+        long maxTotal = policy.maxTotalBytes();
+        long maxArtifact = policy.maxArtifactBytes();
+        int maxConcurrent = policy.maxConcurrentDownloads();
+        long multiplier = (policy.maxRetries() + 1L) * Math.max(1, policy.remoteRepositories().size());
+        long worstCase = maxArtifact > Long.MAX_VALUE / multiplier ? Long.MAX_VALUE : maxArtifact * multiplier;
+        if (worstCase <= maxTotal / Math.max(1, maxConcurrent)) {
+            return worstCase;
+        }
+        if (maxArtifact <= maxTotal / 2L) {
+            long slots = Math.min(maxConcurrent, Math.max(2L, maxTotal / maxArtifact));
+            long fairShare = maxTotal / slots;
+            return Math.min(worstCase, Math.max(maxArtifact, fairShare));
+        }
+        return Math.min(worstCase, maxTotal);
     }
 
     private static void appendAttempts(List<Attempt> destination,AttemptCounter counter,List<Attempt> source) {
@@ -176,7 +210,7 @@ public final class MavenDependencyArtifactProvider implements DependencyArtifact
                     && !requirement.expectedDigest().orElseThrow().equals(digest)) {
                 throw failure(FailureReason.DIGEST_MISMATCH);
             }
-            validate(coordinate, bytes, FailureReason.CORRUPTED_CACHE);
+            validateCachedOrFull(coordinate, digest, bytes, FailureReason.CORRUPTED_CACHE);
             Artifact artifact = new Artifact(coordinate, Origin.LOCAL_CACHE, relative, digest, bytes.length);
             attempts.add(attempt(counter, coordinate, Origin.LOCAL_CACHE, relative,
                     AttemptOutcome.SUCCEEDED, Optional.of(digest)));
@@ -256,7 +290,7 @@ public final class MavenDependencyArtifactProvider implements DependencyArtifact
                         break;
                     }
                     try {
-                        validate(coordinate, bytes, FailureReason.CORRUPTED_DOWNLOAD);
+                        validateCachedOrFull(coordinate, digest, bytes, FailureReason.CORRUPTED_DOWNLOAD);
                     } catch (AcquisitionFailure failure) {
                         attempts.add(attempt(counter, coordinate, Origin.REMOTE_REPOSITORY,
                                 uri.toASCIIString(), AttemptOutcome.FAILED, Optional.empty()));
@@ -423,6 +457,18 @@ public final class MavenDependencyArtifactProvider implements DependencyArtifact
             }
         }
         return current;
+    }
+
+    private static void validateCachedOrFull(
+            ArtifactCoordinate coordinate, ContentDigest digest, byte[] bytes, FailureReason corruptReason)
+            throws AcquisitionFailure {
+        var key = new ValidatedContentKey(digest, coordinate.extension());
+        if (Boolean.TRUE.equals(VALIDATED_CONTENT_CACHE.get(key))) {
+            VALIDATED_CONTENT_CACHE_HITS.incrementAndGet();
+            return;
+        }
+        validate(coordinate, bytes, corruptReason);
+        VALIDATED_CONTENT_CACHE.put(key, Boolean.TRUE);
     }
 
     private static void validate(

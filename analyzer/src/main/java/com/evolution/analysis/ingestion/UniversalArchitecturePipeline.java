@@ -65,6 +65,18 @@ public final class UniversalArchitecturePipeline {
         NONE
     }
 
+    public enum SpringSatMode {
+        STRICT_PINNED,
+        AUTO_MULTI_CONFIG_SAT
+    }
+
+    public static final String OPTION_SPRING_SAT_MODE = "spring.sat.mode";
+    private static final int MAX_SPRING_PLAN_LIMIT = 50_000;
+    private static final int DEFAULT_SAT_MAX_SIGNATURES = 256;
+
+    private record IndexedPath(int index, String path) {
+    }
+
     public record Policy(
             UniversalBuildIngestion.Policy buildPolicy,
             RepositoryInputDecoder.Policy decodePolicy,
@@ -96,7 +108,8 @@ public final class UniversalArchitecturePipeline {
                 Optional<ConfigurationAssignment> baselineConfiguration, TruthRegionEvaluation.Limits truthLimits) {
             this(buildPolicy, decodePolicy, frontend, frontendProvider, resolutions, defaultPlatform, mavenProvider,
                     externalPoms, mavenPolicy, maxTypes, maxParameters, truthEvaluationMode, springScopes,
-                    configurationSpace, baselineConfiguration, truthLimits, Optional.empty(), Optional.empty(), Map.of());
+                    configurationSpace, baselineConfiguration, truthLimits, Optional.empty(), Optional.empty(),
+                    Map.of());
         }
 
         public Policy(UniversalBuildIngestion.Policy buildPolicy, RepositoryInputDecoder.Policy decodePolicy,
@@ -133,6 +146,21 @@ public final class UniversalArchitecturePipeline {
                     mavenProvider, externalPoms, mavenPolicy, maxTypes, maxParameters, truthEvaluationMode,
                     springScopes, configurationSpace, baselineConfiguration, truthLimits, readinessPlan,
                     precomputedBuild, options == null ? Map.of() : options);
+        }
+
+        public SpringSatMode springSatMode() {
+            String raw = analysisOptions.get(OPTION_SPRING_SAT_MODE);
+            if (raw == null || raw.isBlank()) {
+                return SpringSatMode.STRICT_PINNED;
+            }
+            return SpringSatMode.valueOf(raw);
+        }
+
+        public Policy withSpringSatMode(SpringSatMode mode) {
+            Objects.requireNonNull(mode);
+            var copy = new TreeMap<>(analysisOptions);
+            copy.put(OPTION_SPRING_SAT_MODE, mode.name());
+            return withAnalysisOptions(copy);
         }
 
         public Policy {
@@ -285,6 +313,11 @@ public final class UniversalArchitecturePipeline {
 
             public Builder analysisOptions(Map<String, String> analysisOptions) {
                 this.analysisOptions = analysisOptions == null ? new TreeMap<>() : new TreeMap<>(analysisOptions);
+                return this;
+            }
+
+            public Builder springSatMode(SpringSatMode mode) {
+                this.analysisOptions.put(OPTION_SPRING_SAT_MODE, Objects.requireNonNull(mode).name());
                 return this;
             }
 
@@ -545,14 +578,22 @@ public final class UniversalArchitecturePipeline {
         allIssues.addAll(assembledSources.issues());
         allGaps.addAll(assembledSources.gaps());
 
-        // Check Maven/Gradle declared dependencies against available binary and reactor resolutions
-        // In the captured lane, the validated manifest already closes this named context.
-        // Passive declarations can belong to an inactive/empty source set, BOM/platform, or variant.
+        // Check Maven/Gradle declared dependencies against available binary and reactor
+        // resolutions
+        // In the captured lane, the validated manifest already closes this named
+        // context.
+        // Passive declarations can belong to an inactive/empty source set,
+        // BOM/platform, or variant.
         if (prepared.isEmpty()) {
-            var resolvedBinaryLogicalNames = new ArrayList<String>();
+            var resolvedBinaryLogicalNames = new LinkedHashSet<String>();
+            var resolvedGroupArtifacts = new HashSet<String>();
+            var resolvedArtifactIds = new HashSet<String>();
             for (var r : resolutions.values()) {
                 for (var b : r.binaries()) {
-                    resolvedBinaryLogicalNames.add(b.entry().logicalName());
+                    String logicalName = b.entry().logicalName();
+                    if (resolvedBinaryLogicalNames.add(logicalName)) {
+                        indexBinaryLogicalName(logicalName, resolvedGroupArtifacts, resolvedArtifactIds);
+                    }
                 }
             }
             var modulesWithAnalyzedTest = new HashSet<ModuleIdentity>();
@@ -563,23 +604,42 @@ public final class UniversalArchitecturePipeline {
             }
             var buildModuleNames = new HashSet<String>();
             var buildModulePaths = new HashSet<String>();
+            var reactorGroupArtifacts = new HashSet<String>();
             for (var m : buildModel.modules()) {
                 buildModulePaths.add(m.descriptor().path());
                 buildModuleNames.add(m.descriptor().displayName());
+                m.coordinate().ifPresent(c -> reactorGroupArtifacts.add(c.groupId() + ":" + c.artifactId()));
+            }
+            for (var mavenResult : buildModel.mavenModels()) {
+                for (var mod : mavenResult.modules()) {
+                    mod.effectivePom().ifPresent(eff -> reactorGroupArtifacts
+                            .add(eff.coordinate().groupId() + ":" + eff.coordinate().artifactId()));
+                }
             }
             var inputIdentity = inputs.identity();
             for (var mavenResult : buildModel.mavenModels()) {
                 for (var mod : mavenResult.modules()) {
                     if (mod.effectivePom().isPresent()) {
                         var effective = mod.effectivePom().get();
+                        boolean hasAnalyzedTest = modulesWithAnalyzedTest.contains(mod.module().identity());
                         for (var dep : effective.dependencies()) {
+                            if ("pom".equalsIgnoreCase(dep.type())
+                                    || dep.optional()
+                                    || "import".equalsIgnoreCase(dep.scope())
+                                    || ("test".equalsIgnoreCase(dep.scope()) && !hasAnalyzedTest)
+                                    || reactorGroupArtifacts.contains(dep.groupId() + ":" + dep.artifactId())) {
+                                continue;
+                            }
                             String notation = dep.groupId() + ":" + dep.artifactId() + ":" + dep.version();
-                            boolean hasBinary = false;
                             String artifactId = dep.artifactId();
-                            for (String logicalName : resolvedBinaryLogicalNames) {
-                                if (logicalName.contains(artifactId)) {
-                                    hasBinary = true;
-                                    break;
+                            boolean hasBinary = resolvedGroupArtifacts.contains(dep.groupId() + ":" + artifactId)
+                                    || resolvedArtifactIds.contains(artifactId);
+                            if (!hasBinary) {
+                                for (String logicalName : resolvedBinaryLogicalNames) {
+                                    if (logicalName.contains(artifactId)) {
+                                        hasBinary = true;
+                                        break;
+                                    }
                                 }
                             }
                             if (!hasBinary) {
@@ -608,13 +668,15 @@ public final class UniversalArchitecturePipeline {
                             boolean projectKnown = targetRel.isEmpty()
                                     ? buildModulePaths.contains(".")
                                     : (buildModulePaths.contains(targetRel)
-                                            || buildModulePaths.stream().anyMatch(p -> p.equals(targetRel) || p.endsWith("/" + targetRel))
+                                            || buildModulePaths.stream()
+                                                    .anyMatch(p -> p.equals(targetRel) || p.endsWith("/" + targetRel))
                                             || buildModuleNames.contains(targetRel));
                             if (projectKnown) {
                                 continue;
                             }
                         }
-                        boolean hasBinary = matchesResolvedBinary(dep, resolvedBinaryLogicalNames);
+                        boolean hasBinary = matchesResolvedBinary(dep, resolvedBinaryLogicalNames,
+                                resolvedGroupArtifacts);
                         if (!hasBinary) {
                             allIssues.add(new IngestionEvidence.Issue(
                                     IngestionEvidence.Reason.CLASSPATH_RESOLUTION_REQUIRED,
@@ -661,8 +723,11 @@ public final class UniversalArchitecturePipeline {
                 }
             };
         }
+        var validationMode = policy.springSatMode() == SpringSatMode.AUTO_MULTI_CONFIG_SAT
+                ? com.evolution.analysis.spring.SpringFrameworkEvidence.ValidationMode.COMPATIBLE_FAMILY_OR_SOURCE_SCOPED
+                : com.evolution.analysis.spring.SpringFrameworkEvidence.ValidationMode.STRICT_R0_PINNED;
         var pipelineResult = pipeline.run(assembledSources, executionFrontend, executionProvider, policy.maxTypes(),
-                policy.maxParameters());
+                policy.maxParameters(), validationMode);
         allIssues.addAll(pipelineResult.issues());
         allGaps.addAll(pipelineResult.gaps());
         // Keep the repository denominator once. A Spring context inherits global and
@@ -750,6 +815,13 @@ public final class UniversalArchitecturePipeline {
         }
 
         // Process units
+        var firstTypeFqnByPath = new HashMap<String, String>();
+        var firstPathByFqn = new HashMap<String, IndexedPath>();
+        var firstPathByDotSuffix = new HashMap<String, IndexedPath>();
+        var firstTypeFqnByName = new HashMap<String, String>();
+        var firstTypeFqnByLowerName = new HashMap<String, String>();
+        String firstObservedTypeFqn = null;
+        int observedTypeIndex = 0;
         int analyzedUnitsCount = 0;
         long failedUnitsCount = 0;
         boolean completedFrontends = true;
@@ -779,6 +851,26 @@ public final class UniversalArchitecturePipeline {
                     types.add(new UniversalArchitectureReport.TypeRecord(
                             unit.sourceSet().module(), fqn, typeDecl.kind().name(), path, span, isPublic,
                             typeDecl.abstractType() ? List.of("ABSTRACT") : List.of()));
+                    int typeIdx = observedTypeIndex++;
+                    if (firstObservedTypeFqn == null) {
+                        firstObservedTypeFqn = fqn;
+                    }
+                    firstTypeFqnByName.putIfAbsent(fqn, fqn);
+                    firstTypeFqnByLowerName.putIfAbsent(fqn.toLowerCase(Locale.ROOT), fqn);
+                    int dotIdx = fqn.indexOf('.');
+                    while (dotIdx >= 0 && dotIdx + 1 < fqn.length()) {
+                        String suffix = fqn.substring(dotIdx + 1);
+                        firstTypeFqnByName.putIfAbsent(suffix, fqn);
+                        firstTypeFqnByLowerName.putIfAbsent(suffix.toLowerCase(Locale.ROOT), fqn);
+                        if (!path.isBlank()) {
+                            firstPathByDotSuffix.putIfAbsent(suffix, new IndexedPath(typeIdx, path));
+                        }
+                        dotIdx = fqn.indexOf('.', dotIdx + 1);
+                    }
+                    if (!path.isBlank()) {
+                        firstTypeFqnByPath.putIfAbsent(path, fqn);
+                        firstPathByFqn.putIfAbsent(fqn, new IndexedPath(typeIdx, path));
+                    }
                 }
 
                 // Dependencies from frontend occurrences
@@ -838,11 +930,14 @@ public final class UniversalArchitecturePipeline {
                         String fqn = declOpt.map(d -> d.entity().canonicalName())
                                 .orElseGet(() -> typeIdentityToFqn.getOrDefault(ann.owner(), ann.owner().value()))
                                 .strip();
-                        if (fqn.isEmpty()) fqn = "Application";
+                        if (fqn.isEmpty())
+                            fqn = "Application";
                         String path = pathMap.getOrDefault(ann.span().document(), "declared").strip();
-                        if (path.isEmpty()) path = "declared";
+                        if (path.isEmpty())
+                            path = "declared";
                         String detail = ann.spelling().strip();
-                        if (detail.isEmpty()) detail = "@SpringBootApplication";
+                        if (detail.isEmpty())
+                            detail = "@SpringBootApplication";
                         entryPoints.add(new UniversalArchitectureReport.EntryPointRecord(
                                 fqn, UniversalArchitectureReport.EntryPointKind.BOOT_APPLICATION,
                                 detail, path));
@@ -851,11 +946,14 @@ public final class UniversalArchitecturePipeline {
                         String fqn = declOpt.map(d -> d.entity().canonicalName())
                                 .orElseGet(() -> typeIdentityToFqn.getOrDefault(ann.owner(), ann.owner().value()))
                                 .strip();
-                        if (fqn.isEmpty()) fqn = "Application";
+                        if (fqn.isEmpty())
+                            fqn = "Application";
                         String path = pathMap.getOrDefault(ann.span().document(), "declared").strip();
-                        if (path.isEmpty()) path = "declared";
+                        if (path.isEmpty())
+                            path = "declared";
                         String detail = ann.spelling().strip();
-                        if (detail.isEmpty()) detail = "@ComponentScan";
+                        if (detail.isEmpty())
+                            detail = "@ComponentScan";
                         entryPoints.add(new UniversalArchitectureReport.EntryPointRecord(
                                 fqn, UniversalArchitectureReport.EntryPointKind.COMPONENT_SCAN_ROOT,
                                 detail, path));
@@ -867,13 +965,15 @@ public final class UniversalArchitecturePipeline {
                     for (var row : unit.components().get().rows()) {
                         if (row.status() == ComponentScanIngestion.Status.INCLUDED) {
                             String fqn = typeIdentityToFqn.getOrDefault(row.type(), row.type().value()).strip();
-                            if (fqn.isEmpty()) fqn = "Component";
+                            if (fqn.isEmpty())
+                                fqn = "Component";
                             String simpleName = fqn.contains(".") ? fqn.substring(fqn.lastIndexOf('.') + 1) : fqn;
                             String defaultBeanName = simpleName.isEmpty() ? fqn
                                     : (Character.toLowerCase(simpleName.charAt(0))
                                             + (simpleName.length() > 1 ? simpleName.substring(1) : ""));
                             String beanName = row.beanName().filter(b -> !b.isBlank()).orElse(defaultBeanName).strip();
-                            if (beanName.isEmpty()) beanName = fqn;
+                            if (beanName.isEmpty())
+                                beanName = fqn;
                             components.add(new UniversalArchitectureReport.ComponentRecord(
                                     "component:" + fqn, beanName, fqn,
                                     "COMPONENT", "default", List.of(), false));
@@ -885,10 +985,12 @@ public final class UniversalArchitecturePipeline {
                 if (unit.constructors().isPresent()) {
                     for (var row : unit.constructors().get().rows()) {
                         String ownerFqn = typeIdentityToFqn.getOrDefault(row.type(), row.type().value()).strip();
-                        if (ownerFqn.isEmpty()) ownerFqn = "Owner";
+                        if (ownerFqn.isEmpty())
+                            ownerFqn = "Owner";
                         for (var param : row.parameters()) {
                             String paramSpelling = param.type().spelling().strip();
-                            if (paramSpelling.isEmpty()) paramSpelling = "Object";
+                            if (paramSpelling.isEmpty())
+                                paramSpelling = "Object";
                             injectionSites.add(new UniversalArchitectureReport.InjectionSiteRecord(
                                     ownerFqn, "constructor", paramSpelling,
                                     "CONSTRUCTOR", List.of(), true));
@@ -909,12 +1011,15 @@ public final class UniversalArchitecturePipeline {
                         String fqn = declOpt.map(d -> d.entity().canonicalName())
                                 .orElseGet(() -> typeIdentityToFqn.getOrDefault(ann.owner(), ann.owner().value()))
                                 .strip();
-                        if (fqn.isEmpty()) fqn = "Component";
+                        if (fqn.isEmpty())
+                            fqn = "Component";
                         String simpleName = (fqn.contains(".") ? fqn.substring(fqn.lastIndexOf('.') + 1) : fqn).strip();
                         String beanName = (simpleName.isEmpty() ? fqn
                                 : (Character.toLowerCase(simpleName.charAt(0))
-                                        + (simpleName.length() > 1 ? simpleName.substring(1) : ""))).strip();
-                        if (beanName.isEmpty()) beanName = fqn;
+                                        + (simpleName.length() > 1 ? simpleName.substring(1) : "")))
+                                .strip();
+                        if (beanName.isEmpty())
+                            beanName = fqn;
                         String kind = spelling.contains("Service") ? "SERVICE"
                                 : spelling.contains("Repository") ? "REPOSITORY"
                                         : spelling.contains("Controller") ? "CONTROLLER"
@@ -922,10 +1027,12 @@ public final class UniversalArchitecturePipeline {
                         components.add(new UniversalArchitectureReport.ComponentRecord(
                                 "component:" + fqn, beanName, fqn,
                                 kind, "source-annotation", List.of(), false));
-                    } else if (spelling.contains("Bean") || spelling.contains("Autowired") || spelling.contains("Inject")) {
+                    } else if (spelling.contains("Bean") || spelling.contains("Autowired")
+                            || spelling.contains("Inject")) {
                         if (memberNameById == null) {
                             memberNameById = new HashMap<>(Math.max(16, frontend.memberDeclarations().size() * 2));
-                            for (var m : frontend.memberDeclarations()) memberNameById.putIfAbsent(m.member(), m.name());
+                            for (var m : frontend.memberDeclarations())
+                                memberNameById.putIfAbsent(m.member(), m.name());
                             declaringTypeByMember = new HashMap<>();
                             for (var o : frontend.occurrences()) {
                                 if (o.relationship().kind().value().contains("declares")
@@ -941,106 +1048,108 @@ public final class UniversalArchitecturePipeline {
                             }
                         }
                         if (spelling.contains("Bean")) {
-                        var declOpt = Optional.ofNullable(declarationsByIdentity.get(ann.owner()));
-                        if (declOpt.isPresent()) {
-                            var decl = declOpt.get();
-                            String methodName = Optional.ofNullable(memberNameById.get(ann.owner()))
-                                    .orElseGet(() -> {
-                                        String c = decl.entity().canonicalName();
-                                        if (c.contains("#"))
-                                            return c.substring(c.indexOf('#') + 1);
-                                        if (c.contains("\"")) {
-                                            int lastQuote = c.lastIndexOf('\"');
-                                            int prevQuote = c.lastIndexOf('\"', lastQuote - 1);
-                                            if (prevQuote >= 0)
-                                                return c.substring(prevQuote + 1, lastQuote);
-                                        }
-                                        return decl.spelling();
-                                    });
-                            if (methodName.isBlank()) {
-                                methodName = "bean";
-                            }
-
-                            Optional<EntityIdentity> ownerTypeOpt = Optional.ofNullable(declaringTypeByMember.get(ann.owner()));
-
-                            String factoryType = ownerTypeOpt
-                                    .map(id -> typeIdentityToFqn.getOrDefault(id, id.value()))
-                                    .orElseGet(() -> {
-                                        String path = pathMap.getOrDefault(ann.span().document(), "");
-                                        return types.stream()
-                                                .filter(t -> !path.isBlank() && t.sourcePath().equals(path))
-                                                .map(UniversalArchitectureReport.TypeRecord::qualifiedName)
-                                                .findFirst()
-                                                .orElseGet(() -> types.isEmpty() ? "Factory"
-                                                        : types.getFirst().qualifiedName());
-                                    });
-                            if (factoryType.isBlank()) {
-                                factoryType = "Factory";
-                            }
-                            factoryType = factoryType.strip();
-                            methodName = methodName.strip();
-
-                            var returnTypeOpt = typesByOwner.getOrDefault(ann.owner(), List.of()).stream()
-                                    .filter(t -> t.role().value().contains("returns")
-                                            || t.role().value().equals("java.return-type"))
-                                    .map(t -> t.type().spelling().strip())
-                                    .filter(s -> !s.isBlank())
-                                    .findFirst();
-                            String productType = returnTypeOpt.orElse("Object").strip();
-                            if (productType.isBlank()) {
-                                productType = "Object";
-                            }
-                            producers.add(new UniversalArchitectureReport.ProducerRecord(
-                                    factoryType, methodName, productType, methodName, List.of()));
-                        }
-                        } else {
-                        var declOpt = Optional.ofNullable(declarationsByIdentity.get(ann.owner()));
-                        if (declOpt.isPresent()) {
-                            var decl = declOpt.get();
-                            Optional<EntityIdentity> ownerTypeOpt = Optional.ofNullable(declaringTypeByMember.get(ann.owner()));
-
-                            String ownerClass = ownerTypeOpt
-                                    .map(id -> typeIdentityToFqn.getOrDefault(id, id.value()))
-                                    .orElseGet(() -> {
-                                        String path = pathMap.getOrDefault(ann.span().document(), "");
-                                        return types.stream()
-                                                .filter(t -> !path.isBlank() && t.sourcePath().equals(path))
-                                                .map(UniversalArchitectureReport.TypeRecord::qualifiedName)
-                                                .findFirst()
-                                                .orElseGet(() -> types.isEmpty() ? "Owner"
-                                                        : types.getFirst().qualifiedName());
-                                    });
-                            if (ownerClass.isBlank()) {
-                                ownerClass = "Owner";
-                            }
-                            ownerClass = ownerClass.strip();
-
-                            String rawMemberName = Optional.ofNullable(memberNameById.get(ann.owner()))
-                                    .orElse(decl.spelling());
-                            final String memberName = (rawMemberName.isBlank() ? "injected" : rawMemberName).strip();
-
-                            String siteKind = decl.entity().kind().name().strip();
-
-                            var paramTypes = typesByOwner.getOrDefault(ann.owner(), List.of()).stream()
-                                    .map(t -> t.type().spelling().strip())
-                                    .filter(s -> !s.isBlank())
-                                    .toList();
-                            if (!paramTypes.isEmpty()) {
-                                for (String pType : paramTypes) {
-                                    injectionSites.add(new UniversalArchitectureReport.InjectionSiteRecord(
-                                            ownerClass, memberName, pType.strip(), siteKind, List.of(), true));
+                            var declOpt = Optional.ofNullable(declarationsByIdentity.get(ann.owner()));
+                            if (declOpt.isPresent()) {
+                                var decl = declOpt.get();
+                                String methodName = Optional.ofNullable(memberNameById.get(ann.owner()))
+                                        .orElseGet(() -> {
+                                            String c = decl.entity().canonicalName();
+                                            if (c.contains("#"))
+                                                return c.substring(c.indexOf('#') + 1);
+                                            if (c.contains("\"")) {
+                                                int lastQuote = c.lastIndexOf('\"');
+                                                int prevQuote = c.lastIndexOf('\"', lastQuote - 1);
+                                                if (prevQuote >= 0)
+                                                    return c.substring(prevQuote + 1, lastQuote);
+                                            }
+                                            return decl.spelling();
+                                        });
+                                if (methodName.isBlank()) {
+                                    methodName = "bean";
                                 }
-                            } else {
-                                String targetType = types.stream()
-                                        .filter(t -> t.qualifiedName().endsWith(memberName)
-                                                || memberName.toLowerCase().contains(t.qualifiedName().toLowerCase()))
-                                        .map(UniversalArchitectureReport.TypeRecord::qualifiedName)
-                                        .findFirst()
-                                        .orElse("Object");
-                                injectionSites.add(new UniversalArchitectureReport.InjectionSiteRecord(
-                                        ownerClass, memberName, targetType.strip(), siteKind, List.of(), true));
+
+                                Optional<EntityIdentity> ownerTypeOpt = Optional
+                                        .ofNullable(declaringTypeByMember.get(ann.owner()));
+
+                                final String fallbackFirstType = firstObservedTypeFqn;
+                                String factoryType = ownerTypeOpt
+                                        .map(id -> typeIdentityToFqn.getOrDefault(id, id.value()))
+                                        .orElseGet(() -> {
+                                            String path = pathMap.getOrDefault(ann.span().document(), "");
+                                            String byPath = path.isBlank() ? null : firstTypeFqnByPath.get(path);
+                                            if (byPath != null)
+                                                return byPath;
+                                            return fallbackFirstType != null ? fallbackFirstType : "Factory";
+                                        });
+                                if (factoryType.isBlank()) {
+                                    factoryType = "Factory";
+                                }
+                                factoryType = factoryType.strip();
+                                methodName = methodName.strip();
+
+                                var returnTypeOpt = typesByOwner.getOrDefault(ann.owner(), List.of()).stream()
+                                        .filter(t -> t.role().value().contains("returns")
+                                                || t.role().value().equals("java.return-type"))
+                                        .map(t -> t.type().spelling().strip())
+                                        .filter(s -> !s.isBlank())
+                                        .findFirst();
+                                String productType = returnTypeOpt.orElse("Object").strip();
+                                if (productType.isBlank()) {
+                                    productType = "Object";
+                                }
+                                producers.add(new UniversalArchitectureReport.ProducerRecord(
+                                        factoryType, methodName, productType, methodName, List.of()));
                             }
-                        }
+                        } else {
+                            var declOpt = Optional.ofNullable(declarationsByIdentity.get(ann.owner()));
+                            if (declOpt.isPresent()) {
+                                var decl = declOpt.get();
+                                Optional<EntityIdentity> ownerTypeOpt = Optional
+                                        .ofNullable(declaringTypeByMember.get(ann.owner()));
+
+                                final String fallbackFirstType = firstObservedTypeFqn;
+                                String ownerClass = ownerTypeOpt
+                                        .map(id -> typeIdentityToFqn.getOrDefault(id, id.value()))
+                                        .orElseGet(() -> {
+                                            String path = pathMap.getOrDefault(ann.span().document(), "");
+                                            String byPath = path.isBlank() ? null : firstTypeFqnByPath.get(path);
+                                            if (byPath != null)
+                                                return byPath;
+                                            return fallbackFirstType != null ? fallbackFirstType : "Owner";
+                                        });
+                                if (ownerClass.isBlank()) {
+                                    ownerClass = "Owner";
+                                }
+                                ownerClass = ownerClass.strip();
+
+                                String rawMemberName = Optional.ofNullable(memberNameById.get(ann.owner()))
+                                        .orElse(decl.spelling());
+                                final String memberName = (rawMemberName.isBlank() ? "injected" : rawMemberName)
+                                        .strip();
+
+                                String siteKind = decl.entity().kind().name().strip();
+
+                                var paramTypes = typesByOwner.getOrDefault(ann.owner(), List.of()).stream()
+                                        .map(t -> t.type().spelling().strip())
+                                        .filter(s -> !s.isBlank())
+                                        .toList();
+                                if (!paramTypes.isEmpty()) {
+                                    for (String pType : paramTypes) {
+                                        injectionSites.add(new UniversalArchitectureReport.InjectionSiteRecord(
+                                                ownerClass, memberName, pType.strip(), siteKind, List.of(), true));
+                                    }
+                                } else {
+                                    String targetType = firstTypeFqnByName.get(memberName);
+                                    if (targetType == null) {
+                                        targetType = firstTypeFqnByLowerName.get(memberName.toLowerCase(Locale.ROOT));
+                                    }
+                                    if (targetType == null) {
+                                        targetType = "Object";
+                                    }
+                                    injectionSites.add(new UniversalArchitectureReport.InjectionSiteRecord(
+                                            ownerClass, memberName, targetType.strip(), siteKind, List.of(), true));
+                                }
+                            }
                         }
                     }
                 }
@@ -1055,16 +1164,11 @@ public final class UniversalArchitecturePipeline {
                         String detail = (methods.isEmpty()
                                 ? (routePath.isEmpty() ? "ANY /" : "ANY " + routePath)
                                 : (routePath.isEmpty() ? methods : methods + " " + routePath)).strip();
-                        String ctrlPath = types.stream()
-                                .filter(t -> t.qualifiedName().equals(route.controller().value())
-                                        || t.qualifiedName().endsWith("." + route.controller().value()))
-                                .map(UniversalArchitectureReport.TypeRecord::sourcePath)
-                                .filter(p -> !p.isBlank())
-                                .findFirst()
-                                .orElse("declared")
-                                .strip();
+                        String ctrlPath = lookupTypeSourcePath(route.controller().value(), firstPathByFqn,
+                                firstPathByDotSuffix);
                         String ctrlDeclaring = route.controller().value().strip();
-                        if (ctrlDeclaring.isEmpty()) ctrlDeclaring = "Controller";
+                        if (ctrlDeclaring.isEmpty())
+                            ctrlDeclaring = "Controller";
                         entryPoints.add(new UniversalArchitectureReport.EntryPointRecord(
                                 ctrlDeclaring,
                                 UniversalArchitectureReport.EntryPointKind.CONTROLLER_ENDPOINT,
@@ -1072,16 +1176,11 @@ public final class UniversalArchitecturePipeline {
                                 ctrlPath));
                     }
                     for (var repo : spring.repositories().rows()) {
-                        String repoPath = types.stream()
-                                .filter(t -> t.qualifiedName().equals(repo.repository().value())
-                                        || t.qualifiedName().endsWith("." + repo.repository().value()))
-                                .map(UniversalArchitectureReport.TypeRecord::sourcePath)
-                                .filter(p -> !p.isBlank())
-                                .findFirst()
-                                .orElse("declared")
-                                .strip();
+                        String repoPath = lookupTypeSourcePath(repo.repository().value(), firstPathByFqn,
+                                firstPathByDotSuffix);
                         String repoDeclaring = repo.repository().value().strip();
-                        if (repoDeclaring.isEmpty()) repoDeclaring = "Repository";
+                        if (repoDeclaring.isEmpty())
+                            repoDeclaring = "Repository";
                         entryPoints.add(new UniversalArchitectureReport.EntryPointRecord(
                                 repoDeclaring,
                                 UniversalArchitectureReport.EntryPointKind.REPOSITORY_INTERFACE,
@@ -1138,17 +1237,42 @@ public final class UniversalArchitecturePipeline {
                 if (hasIncludedSpringComponents || hasExplicitSpringScope || hasConfigurationSpace
                         || hasObservedSpring) {
                     try {
-                        var scope = resolveScope(policy, unit, assembledSources, frontend);
-                        if (scope.isPresent()) {
-                            var related = workspace.gaps(contextGaps.getOrDefault(Optional.empty(), List.of()));
-                            related.addAll(contextGaps.getOrDefault(Optional.of(frontend.analysis()), List.of()));
-                            var relatedRows = workspace.<CapabilityGapRecord>list();
-                            relatedRows.addAll(related);
-                            var scopedPipeline = new UniversalIngestionPipeline.Result(pipelineResult.inputIdentity(),
-                                    pipelineResult.sourceIngestion(), List.of(unit), List.of(),
-                                    workspace.freeze(relatedRows));
-                            var plan = pipeline.prepareSpring(scopedPipeline, unit.sourceSet(), scope.get(),
-                                    policy.maxTypes());
+                        boolean autoSat = policy.springSatMode() == SpringSatMode.AUTO_MULTI_CONFIG_SAT;
+                        Optional<SourceToSpringPlan.Result> planOpt = Optional.empty();
+                        if (hasExplicitSpringScope || !autoSat) {
+                            var scope = resolveScope(policy, unit, assembledSources, frontend);
+                            if (scope.isPresent()) {
+                                var related = workspace.gaps(contextGaps.getOrDefault(Optional.empty(), List.of()));
+                                related.addAll(contextGaps.getOrDefault(Optional.of(frontend.analysis()), List.of()));
+                                var relatedRows = workspace.<CapabilityGapRecord>list();
+                                relatedRows.addAll(related);
+                                var scopedPipeline = new UniversalIngestionPipeline.Result(
+                                        pipelineResult.inputIdentity(),
+                                        pipelineResult.sourceIngestion(), List.of(unit), List.of(),
+                                        workspace.freeze(relatedRows));
+                                int springLimit = Math.min(MAX_SPRING_PLAN_LIMIT, Math.max(1, policy.maxTypes()));
+                                planOpt = Optional
+                                        .of(pipeline.prepareSpring(scopedPipeline, unit.sourceSet(), scope.get(),
+                                                springLimit, validationMode));
+                            }
+                        } else {
+                            var evidenceOpt = autoScopeEvidence(assembledSources, unit.sourceSet(), frontend);
+                            if (evidenceOpt.isPresent()) {
+                                var related = workspace.gaps(contextGaps.getOrDefault(Optional.empty(), List.of()));
+                                related.addAll(contextGaps.getOrDefault(Optional.of(frontend.analysis()), List.of()));
+                                var relatedRows = workspace.<CapabilityGapRecord>list();
+                                relatedRows.addAll(related);
+                                var scopedPipeline = new UniversalIngestionPipeline.Result(
+                                        pipelineResult.inputIdentity(),
+                                        pipelineResult.sourceIngestion(), List.of(unit), List.of(),
+                                        workspace.freeze(relatedRows));
+                                int springLimit = Math.min(MAX_SPRING_PLAN_LIMIT, Math.max(1, policy.maxTypes()));
+                                planOpt = Optional.of(pipeline.prepareSpringAutoScoped(scopedPipeline, unit.sourceSet(),
+                                        "architecture-scope", evidenceOpt.get(), springLimit, validationMode));
+                            }
+                        }
+                        if (planOpt.isPresent()) {
+                            var plan = planOpt.get();
                             allGaps.addAll(plan.gaps());
                             int artifactIndex = springArtifacts.size();
                             springArtifacts.add(new com.evolution.analysis.graph.CanonicalGraphInput.SpringSlice(
@@ -1156,15 +1280,20 @@ public final class UniversalArchitecturePipeline {
                                     Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty()));
 
                             for (var cand : plan.binding().registrationPlan().discoveryPlan().initialDefinitions()) {
-                                String beanName = cand.declaredNameKey().primary().orElse(cand.definitionSlot()).strip();
+                                String beanName = cand.declaredNameKey().primary().orElse(cand.definitionSlot())
+                                        .strip();
                                 String type = (cand.exposedTypes().isEmpty() ? ""
                                         : typeIdentityToFqn.getOrDefault(cand.exposedTypes().getFirst(),
-                                                cand.exposedTypes().getFirst().value())).strip();
+                                                cand.exposedTypes().getFirst().value()))
+                                        .strip();
                                 String fqn = (type.isEmpty() ? cand.identity().value() : type).strip();
-                                if (fqn.isEmpty()) fqn = "Component";
-                                if (beanName.isEmpty()) beanName = fqn;
+                                if (fqn.isEmpty())
+                                    fqn = "Component";
+                                if (beanName.isEmpty())
+                                    beanName = fqn;
                                 String containerKey = cand.producer().containerKey().strip();
-                                if (containerKey.isEmpty()) containerKey = "default";
+                                if (containerKey.isEmpty())
+                                    containerKey = "default";
                                 components.add(new UniversalArchitectureReport.ComponentRecord(
                                         "component:" + fqn, beanName, fqn,
                                         cand.producer().producerKind().name(), containerKey,
@@ -1172,7 +1301,8 @@ public final class UniversalArchitecturePipeline {
                                 if (cand.producer().producerKind() == BeanProducer.Kind.BEAN_METHOD) {
                                     String factoryType = containerKey;
                                     String methodName = cand.producer().declarationSlot().strip();
-                                    if (methodName.isEmpty()) methodName = "bean";
+                                    if (methodName.isEmpty())
+                                        methodName = "bean";
                                     String productType = type.isEmpty() ? "Object" : type;
                                     producers.add(new UniversalArchitectureReport.ProducerRecord(
                                             factoryType, methodName, productType, beanName, List.of()));
@@ -1180,18 +1310,24 @@ public final class UniversalArchitecturePipeline {
                             }
 
                             for (var dep : plan.binding().dependencies()) {
-                                String owner = dep.owner().map(BeanDefinitionCandidate.Identity::value).orElse("external").strip();
-                                if (owner.isEmpty()) owner = "external";
-                                String memberName = (dep.point().ownerDeclarationKey() + "#" + dep.point().siteSlot()).strip();
-                                if (memberName.isEmpty()) memberName = "<init>";
+                                String owner = dep.owner().map(BeanDefinitionCandidate.Identity::value)
+                                        .orElse("external").strip();
+                                if (owner.isEmpty())
+                                    owner = "external";
+                                String memberName = (dep.point().ownerDeclarationKey() + "#" + dep.point().siteSlot())
+                                        .strip();
+                                if (memberName.isEmpty())
+                                    memberName = "<init>";
                                 String reqType = dep.requestedType().spelling().strip();
-                                if (reqType.isEmpty()) reqType = "Object";
+                                if (reqType.isEmpty())
+                                    reqType = "Object";
                                 injectionSites.add(new UniversalArchitectureReport.InjectionSiteRecord(
                                         owner,
                                         memberName,
                                         reqType,
                                         dep.point().siteKind().name(),
-                                        dep.dependencyName().value().map(String::strip).filter(s -> !s.isEmpty()).map(List::of).orElse(List.of()),
+                                        dep.dependencyName().value().map(String::strip).filter(s -> !s.isEmpty())
+                                                .map(List::of).orElse(List.of()),
                                         dep.required() == InjectionBindingPlan.Required.REQUIRED));
                             }
 
@@ -1199,15 +1335,25 @@ public final class UniversalArchitecturePipeline {
                             if (policy.truthEvaluationMode() != TruthEvaluationMode.NONE) {
                                 var spaceOpt = policy.configurationSpace();
                                 var baselineOpt = policy.baselineConfiguration();
-                                if (spaceOpt.isEmpty() && policy.truthEvaluationMode() == TruthEvaluationMode.AUTO) {
+                                if (spaceOpt.isEmpty() && (policy.truthEvaluationMode() == TruthEvaluationMode.AUTO
+                                        || policy.truthEvaluationMode() == TruthEvaluationMode.SYMBOLIC && autoSat)) {
                                     var configuration = assembledSources.outcomes().stream()
                                             .filter(o -> o.sourceSet().equals(unit.sourceSet())).findFirst()
                                             .orElseThrow().configuration();
-                                    var selected = RepositoryBaselineConfiguration.select(
-                                            plan.binding().registrationPlan().discoveryPlan().buildContext(),
-                                            configuration, plan.conditions().occurrences());
-                                    spaceOpt = Optional.of(selected.space());
-                                    baselineOpt = Optional.of(selected.baseline());
+                                    if (autoSat) {
+                                        var built = RepositoryConfigurationSpaceBuilder.build(
+                                                plan.binding().registrationPlan().discoveryPlan().buildContext(),
+                                                configuration, plan.conditions().occurrences());
+                                        spaceOpt = Optional.of(built.space());
+                                        baselineOpt = Optional.of(built.baseline());
+                                        allGaps.addAll(built.gaps());
+                                    } else {
+                                        var selected = RepositoryBaselineConfiguration.select(
+                                                plan.binding().registrationPlan().discoveryPlan().buildContext(),
+                                                configuration, plan.conditions().occurrences());
+                                        spaceOpt = Optional.of(selected.space());
+                                        baselineOpt = Optional.of(selected.baseline());
+                                    }
                                 }
                                 if (spaceOpt.isPresent()) {
                                     var rawSpace = spaceOpt.get();
@@ -1223,9 +1369,12 @@ public final class UniversalArchitecturePipeline {
                                             new ConditionEvidence.Derived(
                                                     List.of(IngestionEvidence.digest(space.identity())), PROVIDER,
                                                     "unspecified-baseline")));
-                                    if (policy.truthEvaluationMode() == TruthEvaluationMode.SYMBOLIC) {
+                                    boolean runSymbolic = policy.truthEvaluationMode() == TruthEvaluationMode.SYMBOLIC
+                                            || (autoSat && policy.truthEvaluationMode() == TruthEvaluationMode.AUTO);
+                                    if (runSymbolic) {
                                         var symbolic = plan.evaluateSymbolic(space, baseline, policy.truthLimits(),
-                                                ContentDigest.sha256Utf8("symbolic-truth-evaluator"), 64,
+                                                ContentDigest.sha256Utf8("symbolic-truth-evaluator"),
+                                                DEFAULT_SAT_MAX_SIGNATURES,
                                                 SymbolicConfiguration.Limits.defaults());
                                         allGaps.addAll(symbolic.truth().gaps()); // plan gaps already retained above
                                         springArtifacts.set(artifactIndex,
@@ -1239,15 +1388,18 @@ public final class UniversalArchitecturePipeline {
                                                                         SatConfigurationReasoner.INSTANCE.policy(),
                                                                         ContentDigest
                                                                                 .sha256Utf8("symbolic-truth-evaluator"),
-                                                                        64, Optional.of(SymbolicConfiguration.Limits
+                                                                        DEFAULT_SAT_MAX_SIGNATURES,
+                                                                        Optional.of(SymbolicConfiguration.Limits
                                                                                 .defaults())))));
+                                        boolean hasWitness = !symbolic.truth().traces().isEmpty();
+                                        int traceCount = symbolic.truth().traces().size();
                                         for (var region : symbolic.truth().regions()) {
                                             truthRegions.add(new UniversalArchitectureReport.TruthRegionSummary(
                                                     region.fact().identity().value(),
                                                     region.fact().kind().name(),
                                                     region.classification(),
-                                                    0,
-                                                    false));
+                                                    traceCount,
+                                                    hasWitness));
                                         }
                                     } else {
                                         var evaluated = plan.evaluate(space, baseline, policy.truthLimits(),
@@ -1280,6 +1432,9 @@ public final class UniversalArchitecturePipeline {
                             }
                         }
                     } catch (RuntimeException failure) {
+                        System.getLogger(UniversalArchitecturePipeline.class.getName()).log(
+                                System.Logger.Level.WARNING,
+                                "Spring SAT planning/evaluation failed for " + unit.sourceSet(), failure);
                         allIssues.add(new IngestionEvidence.Issue(
                                 IngestionEvidence.Reason.SEMANTIC_PROVIDER_FAILED,
                                 unit.sourceSet() + "#spring-plan-failure",
@@ -1449,6 +1604,22 @@ public final class UniversalArchitecturePipeline {
                 evidence,
                 Optional.empty());
         return Optional.of(scope);
+    }
+
+    private Optional<ConditionEvidence> autoScopeEvidence(
+            UniversalSourceIngestion.Result assembledSources,
+            UniversalSourceIngestion.SourceSet sourceSet,
+            FrontendResult frontend) {
+        var outcomeOpt = assembledSources.outcomes().stream()
+                .filter(o -> o.sourceSet().equals(sourceSet)).findFirst();
+        if (outcomeOpt.isEmpty() || outcomeOpt.get().request().isEmpty())
+            return Optional.empty();
+        var req = outcomeOpt.get().request().get();
+        if (req.sources().isEmpty())
+            return Optional.empty();
+        return Optional.of(new ConditionEvidence.Derived(
+                List.of(IngestionEvidence.digest(req.manifest().identity()), IngestionEvidence.digest(frontend)),
+                PROVIDER, "auto-source-scoped-multi-config-sat"));
     }
 
     private static SpringFrameworkEvidence extractSpringFramework(FrontendRequest request) {
@@ -1722,7 +1893,8 @@ public final class UniversalArchitecturePipeline {
             if (!path.endsWith(".xml") || path.equals("pom.xml") || path.endsWith("/pom.xml"))
                 continue;
             String xmlText = entry.getValue().text();
-            if (xmlText.isEmpty() || (!containsIgnoreCaseAscii(xmlText, "<bean") && !containsIgnoreCaseAscii(xmlText, "<servlet")))
+            if (xmlText.isEmpty()
+                    || (!containsIgnoreCaseAscii(xmlText, "<bean") && !containsIgnoreCaseAscii(xmlText, "<servlet")))
                 continue;
             byte[] bytes = entry.getValue().bytes();
             if (bytes.length == 0)
@@ -1842,7 +2014,8 @@ public final class UniversalArchitecturePipeline {
     }
 
     private static boolean isNonClasspathConfiguration(String cfg) {
-        if (cfg == null) return false;
+        if (cfg == null)
+            return false;
         return cfg.equals("gradlePlugin")
                 || cfg.equals("coreLibraryDesugaring")
                 || cfg.equals("annotationProcessor")
@@ -1855,23 +2028,61 @@ public final class UniversalArchitecturePipeline {
     }
 
     private static boolean isTestConfiguration(String cfg) {
-        if (cfg == null) return false;
+        if (cfg == null)
+            return false;
         return cfg.startsWith("test")
                 || cfg.startsWith("androidTest")
                 || cfg.startsWith("unitTest");
     }
 
-    private static boolean matchesResolvedBinary(UniversalBuildModel.Dependency dep, List<String> resolvedBinaryLogicalNames) {
+    private static String lookupTypeSourcePath(String key,
+            Map<String, IndexedPath> firstPathByFqn,
+            Map<String, IndexedPath> firstPathByDotSuffix) {
+        IndexedPath exact = firstPathByFqn.get(key);
+        IndexedPath suffix = firstPathByDotSuffix.get(key);
+        IndexedPath chosen;
+        if (exact != null && suffix != null) {
+            chosen = exact.index() <= suffix.index() ? exact : suffix;
+        } else {
+            chosen = exact != null ? exact : suffix;
+        }
+        return chosen != null && !chosen.path().isBlank() ? chosen.path().strip() : "declared";
+    }
+
+    private static void indexBinaryLogicalName(String logicalName,
+            Set<String> resolvedGroupArtifacts, Set<String> resolvedArtifactIds) {
+        int firstColon = logicalName.indexOf(':');
+        if (firstColon > 0) {
+            int secondColon = logicalName.indexOf(':', firstColon + 1);
+            if (secondColon > firstColon + 1) {
+                resolvedGroupArtifacts.add(logicalName.substring(0, secondColon));
+                resolvedArtifactIds.add(logicalName.substring(firstColon + 1, secondColon));
+            }
+        }
+    }
+
+    private static boolean matchesResolvedBinary(UniversalBuildModel.Dependency dep,
+            Set<String> resolvedBinaryLogicalNames, Set<String> resolvedGroupArtifacts) {
         String notation = dep.notation();
+        if (dep.coordinate().isPresent()) {
+            var c = dep.coordinate().get();
+            if (resolvedGroupArtifacts.contains(c.groupId() + ":" + c.artifactId())) {
+                return true;
+            }
+        }
+        boolean isLocal = dep.configuration().endsWith(".local-file");
+        if (isLocal && resolvedBinaryLogicalNames.contains("local-jar:" + notation)) {
+            return true;
+        }
         Optional<String> coordPrefix = dep.coordinate()
                 .map(c -> c.groupId() + ":" + c.artifactId() + ":" + c.version());
         Optional<String> groupArtifact = dep.coordinate()
                 .map(c -> c.groupId() + ":" + c.artifactId() + ":");
         Optional<String> artifactVersion = dep.coordinate()
                 .map(c -> c.artifactId() + "-" + c.version());
-        boolean isLocal = dep.configuration().endsWith(".local-file");
         for (String logicalName : resolvedBinaryLogicalNames) {
-            if (logicalName.contains(notation)) return true;
+            if (logicalName.contains(notation))
+                return true;
             if (coordPrefix.isPresent()) {
                 if (logicalName.contains(coordPrefix.get())
                         || logicalName.startsWith(groupArtifact.get())
@@ -1890,12 +2101,13 @@ public final class UniversalArchitecturePipeline {
     private static boolean containsIgnoreCaseAscii(String haystack, String lowerNeedle) {
         int n = lowerNeedle.length();
         int limit = haystack.length() - n;
-        outer:
-        for (int i = 0; i <= limit; i++) {
+        outer: for (int i = 0; i <= limit; i++) {
             for (int j = 0; j < n; j++) {
                 char c = haystack.charAt(i + j);
-                if (c >= 'A' && c <= 'Z') c = (char) (c + 32);
-                if (c != lowerNeedle.charAt(j)) continue outer;
+                if (c >= 'A' && c <= 'Z')
+                    c = (char) (c + 32);
+                if (c != lowerNeedle.charAt(j))
+                    continue outer;
             }
             return true;
         }

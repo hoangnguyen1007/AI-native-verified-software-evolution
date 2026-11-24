@@ -106,4 +106,51 @@ class RepositoryConnectionsTest {
             assertEquals(com.evolution.analysis.contract.identity.RepositoryIdentity.fromCanonicalCoordinate(source),connections.connect(source,Optional.empty()).repository());
         }
     }
+
+    @Test void disconnectRejectsRunningJobWithoutRemovingConnection() throws Exception {
+        var entered = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        var repo = com.evolution.analysis.contract.identity.RepositoryIdentity.fromCanonicalCoordinate("urn:test:active-disconnect");
+        var reg = new AnalysisJobs.Registration(
+                new AnalysisJobs.Setup("active", repo, 21, false, Optional.empty(), Optional.empty()),
+                control -> {
+                    entered.countDown();
+                    release.await(30, java.util.concurrent.TimeUnit.SECONDS);
+                    return new AnalysisJobs.Outcome(AnalysisJobs.Completion.EMPTY, Optional.empty(), List.of(), List.of(),
+                            Optional.empty(), Optional.empty());
+                });
+        try (var jobs = new AnalysisJobs(List.of(reg), new InMemoryGraphStore(), new PublishedReports(),
+                AnalysisJobs.Limits.defaults())) {
+            var connections = new RepositoryConnections(jobs, Path.of(System.getProperty("java.home")), 21, root, root,
+                    Optional.empty());
+            connections.describe("active", "active", "LOCAL", repo);
+            var job = jobs.submit("active", "run-1").job();
+            assertTrue(entered.await(5, java.util.concurrent.TimeUnit.SECONDS));
+
+            var rejected = assertThrows(AnalysisJobs.Rejected.class, () -> connections.disconnect("active"));
+            assertEquals("JOB_RUNNING", rejected.code());
+            assertTrue(connections.has("active"), "Connection must remain intact when unregister rejects a running job");
+            assertEquals(1, jobs.setups().size());
+
+            release.countDown();
+            long deadline = System.nanoTime() + 10_000_000_000L;
+            while (!AnalysisJobs.terminal(jobs.get(UUID.fromString(job.id())).state()) && System.nanoTime() < deadline) {
+                Thread.sleep(10);
+            }
+            connections.disconnect("active");
+            assertFalse(connections.has("active"));
+            assertEquals(0, jobs.setups().size());
+        } finally {
+            release.countDown();
+        }
+    }
+
+    @Test void sanitizeRemoteCodePreservesTypedAndHttpCodesWithoutLeakingPathsOrSecrets() {
+        assertEquals("GIT_NOT_FOUND", RepositoryConnections.sanitizeRemoteCode("GIT_NOT_FOUND"));
+        assertEquals("GIT_ACCESS_REQUIRED", RepositoryConnections.sanitizeRemoteCode("GIT_ACCESS_REQUIRED"));
+        assertEquals("REMOTE_HTTP_404", RepositoryConnections.sanitizeRemoteCode("remote returned HTTP 404 for https://user:secret@host/repo"));
+        assertEquals("REMOTE_HTTP_503", RepositoryConnections.sanitizeRemoteCode("Upstream HTTP 503 Service Unavailable"));
+        assertEquals("REMOTE_FETCH_FAILED", RepositoryConnections.sanitizeRemoteCode("C:/private/secret/path failed"));
+        assertEquals("REMOTE_FETCH_FAILED", RepositoryConnections.sanitizeRemoteCode(""));
+    }
 }

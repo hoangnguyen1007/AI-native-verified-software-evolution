@@ -115,6 +115,50 @@ public record SpringFrameworkEvidence(boolean completeClasspath,
         return true;
     }
 
+    /**
+     * Compatible Spring Framework / Boot version-family check without pinning exact SHA-256
+     * artifact bytes. Used only by explicitly opted-in multi-config repository analysis.
+     */
+    public boolean compatibleVersionFamily(boolean bootRequired) {
+        if (artifacts.isEmpty()) return false;
+        Set<String> framework = new TreeSet<>(), boot = new TreeSet<>();
+        for (var artifact : artifacts) {
+            if ("org.springframework".equals(artifact.groupId())) framework.add(artifact.version());
+            if ("org.springframework.boot".equals(artifact.groupId())) boot.add(artifact.version());
+        }
+        if (framework.size() != 1 || boot.size() > 1 || (bootRequired && boot.isEmpty())) return false;
+        String fwVer = framework.iterator().next();
+        boolean fwCore = artifacts.stream().filter(a -> "org.springframework".equals(a.groupId()))
+                .map(Artifact::artifactId).collect(java.util.stream.Collectors.toSet())
+                .containsAll(List.of("spring-core", "spring-beans", "spring-context"));
+        if (!fwCore) return false;
+        if (!boot.isEmpty()) {
+            String bootVer = boot.iterator().next();
+            boolean compatible = (fwVer.startsWith("5.3.") && bootVer.startsWith("2.7."))
+                    || (fwVer.startsWith("6.0.") && (bootVer.startsWith("3.0.") || bootVer.startsWith("3.1.")))
+                    || (fwVer.startsWith("6.1.") && (bootVer.startsWith("3.2.") || bootVer.startsWith("3.3.")))
+                    || (fwVer.startsWith("6.2.") && (bootVer.startsWith("3.4.") || bootVer.startsWith("3.5.")));
+            if (!compatible) return false;
+            return artifacts.stream().filter(a -> "org.springframework.boot".equals(a.groupId()))
+                    .map(Artifact::artifactId).collect(java.util.stream.Collectors.toSet())
+                    .containsAll(List.of("spring-boot", "spring-boot-autoconfigure"));
+        }
+        return fwVer.startsWith("5.3.") || fwVer.startsWith("6.0.")
+                || fwVer.startsWith("6.1.") || fwVer.startsWith("6.2.");
+    }
+
+    public enum ValidationMode {
+        STRICT_R0_PINNED,
+        COMPATIBLE_FAMILY_OR_SOURCE_SCOPED
+    }
+
+    public boolean allows(boolean bootRequired, ValidationMode mode) {
+        if (mode == null || mode == ValidationMode.STRICT_R0_PINNED) {
+            return acceptedConditionFragment(bootRequired);
+        }
+        return acceptedConditionFragment(bootRequired) || compatibleVersionFamily(bootRequired) || artifacts.isEmpty();
+    }
+
     public record Artifact(String coordinate, String classpathLogicalName, ContentDigest contentDigest)
             implements Comparable<Artifact> {
         public Artifact(String coordinate, ContentDigest contentDigest) {

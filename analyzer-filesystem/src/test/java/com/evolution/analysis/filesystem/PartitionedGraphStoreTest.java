@@ -247,6 +247,80 @@ class PartitionedGraphStoreTest {
         assertEquals(2,partitions.size());
         assertEquals(graph.nodes().size(),partitions.stream().mapToLong(PartitionedGraphReader.Partition::nodes).sum());
     }
+
+    @Test void localPageCacheAcceleratesHotReadPathsWithoutLeakingThreadLocalState() throws Exception {
+        var base = fixture();
+        var extraEvidence = new ArrayList<>(base.evidence());
+        for (int i = 0; i < 8; i++) {
+            extraEvidence.add(GraphEvidence.capture("fixture.page-cache", Map.of("index", i)));
+        }
+        String ctx0 = base.contexts().getFirst().identity();
+        var enrichedNodes = new ArrayList<>(base.nodes());
+        var enrichedEdges = new ArrayList<>(base.edges());
+        String hubId = KnowledgeGraph.derivedIdentity("page-cache-hub", 0);
+        enrichedNodes.add(new KnowledgeGraph.Node(hubId, ctx0, "TYPE",
+                extraEvidence.stream().map(GraphEvidence::identity).toList()));
+        for (int i = 1; i <= 5; i++) {
+            String leafId = KnowledgeGraph.derivedIdentity("page-cache-leaf", i);
+            enrichedNodes.add(new KnowledgeGraph.Node(leafId, ctx0, "TYPE", List.of(extraEvidence.get(i).identity())));
+            enrichedEdges.add(new KnowledgeGraph.Edge(
+                    KnowledgeGraph.derivedIdentity("page-cache-edge", i), ctx0, "graph.depends-on", hubId,
+                    new KnowledgeGraph.Target(KnowledgeGraph.TargetState.RESOLVED, List.of(leafId), Optional.empty()),
+                    List.of(extraEvidence.get(i).identity()), Optional.empty()));
+        }
+        var graph = new KnowledgeGraph(base.snapshot(), base.contexts(), enrichedNodes, enrichedEdges, extraEvidence);
+        Path target = directory.resolve("page-cache-test");
+        var store = new PartitionedGraphStore(target);
+        store.save(graph, () -> false);
+
+        var cold = new PartitionedGraphStore(target);
+        var partitions = cold.partitions(graph.identity(), 10, Optional.empty()).items();
+        assertFalse(PartitionedGraphStore.isLocalPageCacheActive());
+        var firstPartition = partitions.stream().filter(p -> p.context().equals(ctx0)).findFirst().orElseThrow();
+
+        long hitsBefore = PartitionedGraphStore.LOCAL_PAGE_CACHE_HITS.get();
+        var ctxGraph = cold.contextGraph(graph.identity(), firstPartition.context(), () -> false).orElseThrow();
+        assertFalse(PartitionedGraphStore.isLocalPageCacheActive(), "contextGraph must release ThreadLocal page cache");
+        assertEquals(firstPartition.nodes(), ctxGraph.nodes().size());
+        assertEquals(firstPartition.edges(), ctxGraph.edges().size());
+        assertTrue(PartitionedGraphStore.LOCAL_PAGE_CACHE_HITS.get() > hitsBefore,
+                "contextGraph must get page cache hits across repeated evidence-tree lookups");
+
+        var expectedNode = ctxGraph.nodes().getFirst();
+        assertEquals(Optional.of(expectedNode), cold.node(graph.identity(), expectedNode.context(), expectedNode.identity()));
+        assertEquals(Optional.empty(), cold.node(graph.identity(), expectedNode.context(), KnowledgeGraph.derivedIdentity("missing", 0)));
+        assertFalse(PartitionedGraphStore.isLocalPageCacheActive(), "node() must release ThreadLocal page cache");
+
+        var nodesPage = cold.nodes(firstPartition, 64, Optional.empty());
+        assertEquals(64, nodesPage.items().size());
+        assertFalse(PartitionedGraphStore.isLocalPageCacheActive(), "nodes() must release ThreadLocal page cache");
+
+        long adjHitsBefore = PartitionedGraphStore.LOCAL_PAGE_CACHE_HITS.get();
+        var adjPage = cold.adjacency(firstPartition, hubId, false, 32, Optional.empty());
+        assertEquals(5, adjPage.items().size());
+        assertTrue(PartitionedGraphStore.LOCAL_PAGE_CACHE_HITS.get() > adjHitsBefore,
+                "adjacency() must get page cache hits when resolving multiple edges on shared pages");
+        assertFalse(PartitionedGraphStore.isLocalPageCacheActive(), "adjacency() must release ThreadLocal page cache");
+
+        var ev = extraEvidence.getFirst();
+        assertEquals(Optional.of(ev), cold.evidence(graph.identity(), ev.identity()));
+        assertFalse(PartitionedGraphStore.isLocalPageCacheActive(), "evidence() must release ThreadLocal page cache");
+
+        var evolution = cold.openEvolution(graph.identity(), () -> false);
+        long evoHitsBefore = PartitionedGraphStore.LOCAL_PAGE_CACHE_HITS.get();
+        assertEquals(2, evolution.contexts(10, Optional.empty()).items().size());
+        assertTrue(PartitionedGraphStore.LOCAL_PAGE_CACHE_HITS.get() > evoHitsBefore,
+                "openEvolution.contexts() must get page cache hits on partitions tree");
+        assertFalse(evolution.nodes(firstPartition.context(), 32, Optional.empty()).items().isEmpty());
+        assertFalse(evolution.edges(firstPartition.context(), 32, Optional.empty()).items().isEmpty());
+        assertFalse(evolution.evidence(10, Optional.empty()).items().isEmpty());
+        assertFalse(PartitionedGraphStore.isLocalPageCacheActive(), "evolution reads must release ThreadLocal page cache");
+
+        // Error path must also clean up ThreadLocal cleanly
+        assertThrows(IllegalArgumentException.class,
+                () -> cold.adjacency(firstPartition, "not-a-valid-node-id", false, 10, Optional.empty()));
+        assertFalse(PartitionedGraphStore.isLocalPageCacheActive(), "Exception path must never leak ThreadLocal page cache");
+    }
     static KnowledgeGraph fixture(){
         var base=FileGraphStoreTest.graph();var evidence=base.evidence().getFirst();var contexts=new ArrayList<>(base.contexts());
         String other=KnowledgeGraph.derivedIdentity("partition-context",List.of("other"));contexts.add(new KnowledgeGraph.Context(other,base.snapshot(),Optional.empty(),evidence.identity()));

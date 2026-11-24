@@ -19,6 +19,7 @@ class ApiSpecificationTest {
             for(String operation:List.of("summary","contexts","gaps","root-gaps","answers"))assertTrue(paths.containsKey("/api/v1/semantic/"+operation));
             for(String path:List.of("/api/v2/acquisitions/{revision}","/api/v2/acquisitions/history","/api/v2/acquisitions/{revision}/readiness","/api/v2/analysis/jobs/{job}/resume"))assertTrue(paths.containsKey(path));
             assertTrue(paths.containsKey("/api/v1/analysis/connections"));
+            for (var path : List.of("/api/v1/graphs/{graph}/captured-files","/api/v1/graphs/{graph}/captured-source","/api/v1/graphs/{graph}/repo-map")) assertTrue(paths.containsKey(path));
             for (var path : List.of("/api/v1/analysis/setups","/api/v1/analysis/jobs","/api/v1/analysis/jobs/history","/api/v1/analysis/jobs/{job}","/api/v1/analysis/jobs/{job}/cancel","/api/v1/analysis/jobs/{job}/gaps","/api/v1/analysis/jobs/{job}/input-diagnostics")) assertTrue(paths.containsKey(path));
             assertOperations(paths,"/api/v1/graphs/{graph}/queries/{operation}",ArchitectureQueryApi.OPERATIONS);
             assertOperations(paths,"/api/v1/graphs/{graph}/reports/{report}/{operation}",ArchitectureQueryApi.REPORT_OPERATIONS);

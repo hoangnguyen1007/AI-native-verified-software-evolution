@@ -17,8 +17,13 @@ public interface GraphProjectionStore {
     }
 
     static GraphProjectionStore memory() {
+        var spaces = new HashMap<String, Map<String, ?>>();
         return new GraphProjectionStore() {
-            public <T> Map<String,T> records(String space,Function<Object,T> decode) {return new TreeMap<>();}
+            @Override
+            @SuppressWarnings("unchecked")
+            public <T> Map<String,T> records(String space,Function<Object,T> decode) {
+                return (Map<String,T>) spaces.computeIfAbsent(space, k -> new TreeMap<>());
+            }
         };
     }
 }

@@ -58,10 +58,17 @@
 
     <span class="workbench-title">Repository analysis</span>
     <div class="topbar-actions">
-      <button id="command-palette-trigger" class="command-trigger" type="button" aria-label="Open command palette" title="Command palette (Ctrl+K)">
-        <span class="command-trigger-label">Command</span>
-        <kbd>Ctrl+K</kbd>
-      </button>
+      <!-- Lucian UX/UI Prompt #471 · MIT License (c) 2026 Seokwoooo · https://lucianlabs.dev/uxui-prompt/#471 -->
+      <div class="ux u471-inline" id="command-k-wrap">
+        <button id="command-palette-trigger" class="u471-b" type="button" aria-label="Open command palette" title="Command palette (Ctrl+K)">
+          <svg class="u471-ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 4.5 4.5"/></svg>
+          <span class="u471-l">Command</span>
+          <span class="u471-ks" aria-hidden="true">
+            <kbd class="u471-k"><span class="u471-t">Ctrl</span></kbd>
+            <kbd class="u471-k"><span class="u471-t">K</span></kbd>
+          </span>
+        </button>
+      </div>
       <details class="workbench-menu" id="workspace-tools" hidden>
         <summary>Tools</summary>
         <div class="workbench-menu-items">
@@ -69,8 +76,11 @@
           <a id="open-bridge-captures" href="#bridge-evidence" hidden>Captured connections</a>
         </div>
       </details>
+      <button id="shortcuts-trigger" class="icon-button" type="button" aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.2a2.6 2.6 0 0 1 5 .9c0 1.8-2.5 2.1-2.5 3.7"/><circle cx="12" cy="17.2" r=".7" fill="currentColor" stroke="none"/></svg>
+      </button>
       <button id="theme-toggle" class="icon-button" aria-label="Switch theme" data-tooltip>
-        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/></svg>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/></svg>
       </button>
     </div>
   </header>
@@ -155,6 +165,7 @@
         </div>
 
         <nav id="tabs" class="tabs" aria-label="Analysis views" role="tablist">
+          <span class="u039-pill" id="tabs-pill" aria-hidden="true"></span>
           <button role="tab" id="tab-overview" aria-controls="panel-overview" aria-selected="true" data-tab="overview">Overview</button>
           <button role="tab" id="tab-graph" aria-controls="architecture-views" aria-selected="false" tabindex="-1" data-tab="graph">Architecture</button>
           <button role="tab" id="tab-policy" aria-controls="review-views" aria-selected="false" tabindex="-1" data-tab="policy">Review</button>
@@ -170,6 +181,7 @@
           <nav class="view-links" aria-label="Architecture views">
             <button type="button" id="view-graph" data-open-tab="graph">Dependency map</button>
             <button type="button" id="view-structure" data-open-tab="structure">Structure</button>
+            <button type="button" id="view-repomap" data-open-tab="repomap">RepoMap &amp; Source</button>
             <button type="button" id="view-connections" data-open-tab="connections">Connections</button>
             <button type="button" id="view-spring" data-open-tab="spring" data-spring-view hidden>Spring wiring</button>
             <button type="button" id="view-configurations" data-open-tab="configurations" data-spring-view hidden>Configurations</button>
@@ -182,6 +194,7 @@
           </form>
           <section id="panel-graph" aria-labelledby="view-graph" data-group-panel hidden></section>
           <section id="panel-structure" aria-labelledby="view-structure" data-group-panel hidden></section>
+          <section id="panel-repomap" aria-labelledby="view-repomap" data-group-panel hidden></section>
           <section id="panel-connections" aria-labelledby="view-connections" data-group-panel hidden></section>
           <section id="panel-spring" aria-labelledby="view-spring" data-group-panel hidden></section>
           <section id="panel-configurations" aria-labelledby="view-configurations" data-group-panel hidden></section>
@@ -189,11 +202,13 @@
         <section role="tabpanel" id="review-views" aria-labelledby="tab-policy" data-view-group="policy" tabindex="0" hidden>
           <nav class="view-links" aria-label="Review views">
             <button type="button" id="view-policy" data-open-tab="policy">Findings</button>
+            <button type="button" id="view-coverage" data-open-tab="coverage">Gaps &amp; Coverage</button>
             <button type="button" id="view-metrics" data-open-tab="metrics">Score &amp; metrics</button>
             <button type="button" id="view-impact" data-open-tab="impact">Change impact</button>
             <button type="button" id="view-insights" data-open-tab="insights" hidden>Insights</button>
           </nav>
           <section id="panel-policy" aria-labelledby="view-policy" data-group-panel hidden></section>
+          <section id="panel-coverage" aria-labelledby="view-coverage" data-group-panel hidden></section>
           <section id="panel-metrics" aria-labelledby="view-metrics" data-group-panel hidden></section>
           <section id="panel-insights" aria-labelledby="view-insights" data-group-panel hidden></section>
           <section id="panel-impact" aria-labelledby="view-impact" data-group-panel hidden></section>
@@ -233,12 +248,15 @@
     </div>
     <div class="shortcut-list">
       <kbd>/</kbd><span>Focus search</span>
-      <kbd>⌃K</kbd><span>Command palette</span>
+      <kbd>Ctrl+K</kbd><span>Command palette</span>
       <kbd>O</kbd><span>Overview tab</span>
-      <kbd>G</kbd><span>Graph tab</span>
-      <kbd>R</kbd><span>Findings tab</span>
-      <kbd>M</kbd><span>Metrics tab</span>
-      <kbd>S</kbd><span>Structure tab</span>
+      <kbd>G</kbd><span>Dependency graph</span>
+      <kbd>S</kbd><span>Structure explorer</span>
+      <kbd>P</kbd><span>RepoMap &amp; captured source</span>
+      <kbd>R</kbd><span>Findings &amp; repair</span>
+      <kbd>V</kbd><span>Gaps &amp; coverage inspector</span>
+      <kbd>M</kbd><span>Score &amp; metrics</span>
+      <kbd>A</kbd><span>AI architecture chat</span>
       <kbd>C</kbd><span>Focus context selector</span>
       <kbd>F</kbd><span>Fullscreen graph</span>
       <kbd>?</kbd><span>Toggle this overlay</span>
@@ -248,7 +266,12 @@
   </div>
 </div>
 
-<!-- Toast container -->
+<!-- Lucian UX/UI Prompt #070 · MIT License (c) 2026 Seokwoooo · https://lucianlabs.dev/uxui-prompt/#070 -->
+<div class="ux u070-host" id="toast-host" aria-label="Notifications">
+  <div class="u070-zone" id="toast-zone" role="region" aria-label="Notifications" tabindex="-1">
+    <div class="u070-live" id="toast-live" aria-live="polite"></div>
+  </div>
+</div>
 
 <!-- Connect Repository Dialog -->
 <dialog id="connect-dialog" aria-labelledby="connect-title">

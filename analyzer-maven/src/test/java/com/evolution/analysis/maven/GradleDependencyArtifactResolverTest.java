@@ -152,6 +152,38 @@ class GradleDependencyArtifactResolverTest {
         assertThrows(IOException.class,()->GradleLocalJarInputs.recover(temp,"libs/corrupt.jar",new byte[]{1,2,3},ContentDigest.sha256(new byte[]{1,2,3}),1_000_000,1_000_000));
         assertThrows(IOException.class,()->GradleLocalJarInputs.recover(temp,"libs/mismatch.jar",validJar,ContentDigest.sha256Utf8("wrong"),1_000_000,1_000_000));
     }
+    @Test void parallelFrontierBatchPrefetchReusesSessionReaderAndPreservesDeterministicOrderAndConflictRefusal()throws Exception {
+        var model=model(Map.of("build.gradle",
+                "dependencies {\n implementation 'g:alpha:1'\n implementation 'g:beta:1'\n implementation 'g:gamma:1'\n implementation 'g:clash:1'\n implementation 'g:clash:2'\n}\n"));
+        put("alpha","1",false,"<dependencies><dependency><groupId>g</groupId><artifactId>shared</artifactId><version>1</version></dependency></dependencies>");
+        put("beta","1",false,"<dependencies><dependency><groupId>g</groupId><artifactId>shared</artifactId><version>1</version></dependency></dependencies>");
+        put("gamma","1",false,"");
+        put("shared","1",false,"");
+        put("clash","1",false,"");
+        put("clash","2",false,"");
+        var batchSizes=new ArrayList<Integer>();
+        var underlying=new MavenDependencyArtifactProvider(temp);
+        DependencyArtifactProvider spy=req->{batchSizes.add(req.requirements().size());return underlying.acquire(req);};
+        var resolver=new GradleDependencyArtifactResolver(temp,spy);
+        var first=resolver.resolve(model,offline);
+        var main=first.contexts().getFirst();
+        assertEquals(List.of("g:alpha:1@jar","g:beta:1@jar","g:gamma:1@jar","g:shared:1@jar"),
+                main.binaries().stream().map(b->b.entry().logicalName()).toList());
+        assertTrue(batchSizes.stream().anyMatch(size->size>=3),"BFS frontier must batch-acquire multiple artifacts together: "+batchSizes);
+        assertTrue(main.problems().stream().anyMatch(p->p.reason().equals("GRADLE_VERSION_CONFLICT")));
+        assertTrue(main.binaries().stream().noneMatch(b->b.entry().logicalName().contains("g:clash:")));
+        assertEquals(first.contexts(),new GradleDependencyArtifactResolver(temp).resolve(model,offline).contexts());
+    }
+    @Test void aarStatCacheHitsOnRepeatedRecoveryWithoutReextracting()throws Exception {
+        var model=model(Map.of("build.gradle","dependencies { implementation 'g:cached-aar:1' }\n"));
+        putAar("cached-aar","1","<packaging>aar</packaging>");
+        var first=new GradleDependencyArtifactResolver(temp).resolve(model,offline).contexts().getFirst();
+        assertEquals(1,first.binaries().size());
+        long hitsBefore=GradleAarInputs.AAR_CACHE_HITS.get();
+        var second=new GradleDependencyArtifactResolver(temp).resolve(model,offline).contexts().getFirst();
+        assertEquals(first.binaries(),second.binaries());
+        assertTrue(GradleAarInputs.AAR_CACHE_HITS.get()>hitsBefore,"Repeated AAR recovery must hit stat-keyed cache");
+    }
     private void putAar(String artifact,String version,String body)throws Exception {
         putAar(artifact,version,body,Map.of("classes.jar",jarEntry("fixture.txt")));
     }

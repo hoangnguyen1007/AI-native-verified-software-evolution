@@ -25,21 +25,69 @@
     return node;
   };
 
+  const toolMeta = {
+    get_repo_map: { label: 'RepoMap (PPR)', tone: 'is-map' },
+    list_captured_files: { label: 'Captured Files', tone: 'is-source' },
+    read_captured_source: { label: 'Read Source', tone: 'is-source' },
+    search_captured_source: { label: 'Search Source', tone: 'is-source' },
+    inspect_spring_conditions: { label: 'Spring Conditions', tone: 'is-spring' },
+    inspect_symbol_details: { label: 'Symbol Details', tone: 'is-graph' },
+    inspect_connections: { label: 'Connections', tone: 'is-graph' },
+    impact_analysis: { label: 'Blast Radius', tone: 'is-graph' }
+  };
+  function formatToolName(raw) {
+    return toolMeta[raw]?.label || String(raw || 'tool').replaceAll('_', ' ');
+  }
+  function toolTone(raw) {
+    return toolMeta[raw]?.tone || 'is-graph';
+  }
+
+  function appendCitationIds(parent, raw, onCite) {
+    const segs = window.EvoModel?.parseCitations
+      ? window.EvoModel.parseCitations(raw)
+      : (() => {
+          const inner = raw.slice(1, -1);
+          const ids = [];
+          for (const part of inner.split(',')) {
+            const t = part.trim();
+            const r = t.match(/^E(\d+)\s*[–-]\s*E?(\d+)$/i);
+            if (r) {
+              const a = Number(r[1]), b = Number(r[2]);
+              for (let n = a; n <= b && n - a <= 25; n++) ids.push('E' + n);
+            } else {
+              const m = t.match(/^E?(\d+)$/i);
+              if (m) ids.push('E' + Number(m[1]));
+            }
+          }
+          return ids.length ? [{ type: 'citations', ids: [...new Set(ids)] }] : [{ type: 'text', value: raw }];
+        })();
+    for (const seg of segs) {
+      if (seg.type !== 'citations') {
+        parent.append(document.createTextNode(seg.value));
+        continue;
+      }
+      if (typeof onCite !== 'function') {
+        parent.append(document.createTextNode(raw));
+        continue;
+      }
+      const group = seg.ids.length > 1 ? make('span', 'architecture-chat-cite-group') : parent;
+      for (const citeId of seg.ids) {
+        const pill = button('[' + citeId + ']', () => onCite(citeId), 'architecture-chat-inline-cite');
+        pill.title = 'Open evidence ' + citeId;
+        group.append(pill);
+      }
+      if (group !== parent) parent.append(group);
+    }
+  }
+
   function inlineMarkdown(parent, text, onCite) {
-    const pattern = /(`[^`\n]+`|\*\*[^*\n]+\*\*|\*[^*\n]+\*|\[[^\]\n]+\]\(https?:\/\/[^\s)]+\)|\[E\d+\])/g;
+    const pattern = /(`[^`\n]+`|\*\*[^*\n]+\*\*|\*[^*\n]+\*|\[[^\]\n]+\]\(https?:\/\/[^\s)]+\)|\[E\d+(?:\s*(?:,|–|-)\s*E?\d+)*\])/g;
     let cursor = 0;
     for (const match of text.matchAll(pattern)) {
       parent.append(document.createTextNode(text.slice(cursor,match.index)));
       const value = match[0];
-      if (/^\[E\d+\]$/.test(value)) {
-        const citeId = value.slice(1, -1);
-        if (typeof onCite === 'function') {
-          const pill = button(value, () => onCite(citeId), 'architecture-chat-inline-cite');
-          pill.title = 'Open evidence ' + citeId;
-          parent.append(pill);
-        } else {
-          parent.append(document.createTextNode(value));
-        }
+      if (/^\[E\d+(?:\s*(?:,|–|-)\s*E?\d+)*\]$/.test(value)) {
+        appendCitationIds(parent, value, onCite);
       } else if (value.startsWith('[')) {
         const parts = value.match(/^\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)$/);
         const link = make('a','',parts[1]);
@@ -332,7 +380,11 @@
     const key = JSON.stringify([scope.graph,scope.context,scope.finding]);
     const prefix = 'evo.chat.v1.' + encodeURIComponent(key) + '.';
     const activeKey = prefix + 'active';
-    const defaults = () => ({turns:[],mode:scope.finding ? 'REPAIR' : 'EXPLORE',focus:'',draft:'',agentic:Boolean(scope.agentEnabled)});
+    const defaults = () => ({
+      turns:[],mode:scope.finding ? 'REPAIR' : 'EXPLORE',focus:'',draft:'',
+      agentic:Boolean(scope.agentEnabled),reviewerAgentic:false,
+      includeSource:Boolean(scope.provider && (scope.finding || !scope.provider.remote))
+    });
     const newId = () => crypto.randomUUID();
     let active;
     try { active = sessionStorage.getItem(activeKey); } catch (_) { /* Use the in-memory session. */ }
@@ -418,9 +470,14 @@
     const source = make('input');
     source.type = 'checkbox';
     source.name = 'includeSource';
-    source.checked = Boolean(scope.finding && scope.provider);
+    source.checked = session.includeSource !== undefined
+      ? Boolean(session.includeSource)
+      : Boolean(scope.provider && (scope.finding || !scope.provider.remote));
+    source.addEventListener('change', () => { session.includeSource = source.checked; save(); });
     const sourceOption = make('label','architecture-chat-consent');
-    sourceOption.append(source,make('span','','Include captured source code for this finding'));
+    sourceOption.append(source,make('span','', scope.finding
+      ? 'Include captured source code for this finding'
+      : 'Include captured source files in AI context & tools'));
     if (scope.provider?.remote) modelState.title = 'Questions, chat history and selected evidence are sent to ' + scope.provider.endpoint;
     const controls = make('div','architecture-chat-controls');
     const agentToggleInput = make('input');
@@ -429,18 +486,26 @@
     agentToggleInput.checked = session.agentic !== false && Boolean(scope.agentEnabled);
     agentToggleInput.addEventListener('change', () => { session.agentic = agentToggleInput.checked; save(); });
     const agentToggleLabel = make('label','architecture-chat-agent-toggle');
-    agentToggleLabel.title = 'Allow the AI assistant to inspect symbols, paths, impact, and insights via read-only graph tools.';
+    agentToggleLabel.title = 'Allow the AI assistant to inspect RepoMap, symbols, source files, Spring conditions, impact, and insights via read-only graph tools.';
     agentToggleLabel.append(agentToggleInput, make('span','','Agent · Graph tools'));
+    const reviewerAgenticInput = make('input');
+    reviewerAgenticInput.type = 'checkbox';
+    reviewerAgenticInput.name = 'reviewerAgentic';
+    reviewerAgenticInput.checked = Boolean(session.reviewerAgentic && scope.agentEnabled);
+    reviewerAgenticInput.addEventListener('change', () => { session.reviewerAgentic = reviewerAgenticInput.checked; save(); });
+    const reviewerAgenticLabel = make('label','architecture-chat-agent-toggle');
+    reviewerAgenticLabel.title = 'Opt-in: allow the second-pass architecture reviewer to run independent graph and source tools before critiquing the answer.';
+    reviewerAgenticLabel.append(reviewerAgenticInput, make('span','','Reviewer · Agentic tools'));
     const stop = button('Stop waiting',() => pending?.abort(),'button subtle');
     stop.hidden = true;
     const submit = make('button','button primary',scope.provider ? 'Send question' : 'Read evidence');
     submit.type = 'submit';
-    if (scope.agentEnabled && scope.provider) controls.append(agentToggleLabel);
+    if (scope.agentEnabled && scope.provider) controls.append(agentToggleLabel, reviewerAgenticLabel);
     controls.append(stop,submit);
     const contextOptions = make('details','architecture-chat-context-options');
     contextOptions.append(make('summary','','Task and symbol focus'),settings);
     form.append(label('Question',input),contextOptions);
-    if (scope.finding && scope.provider) form.append(sourceOption);
+    if (scope.provider) form.append(sourceOption);
     form.append(controls);
     const evidence = make('aside','architecture-chat-evidence');
     evidence.setAttribute('aria-label','Captured architecture evidence');
@@ -598,11 +663,14 @@
         const list = make('ol','architecture-chat-trace-list');
         for (const step of result.agentTrace) {
           const item = make('li','architecture-chat-trace-item');
-          item.append(make('span','architecture-chat-trace-tool',step.tool || 'tool'));
+          const toolPill = make('span','architecture-chat-trace-tool ' + toolTone(step.tool), formatToolName(step.tool));
+          toolPill.title = step.tool + (step.arguments ? ' ' + JSON.stringify(step.arguments) : '');
+          item.append(toolPill);
           item.append(make('span','',step.summary || ''));
           if (Array.isArray(step.evidenceIds) && step.evidenceIds.length) {
             for (const eid of step.evidenceIds) {
-              const eBtn = button(eid, () => onCite(eid), 'architecture-chat-inline-cite');
+              const eBtn = button('[' + eid + ']', () => onCite(eid), 'architecture-chat-inline-cite');
+              eBtn.title = 'Open evidence ' + eid;
               item.append(eBtn);
             }
           }
@@ -624,8 +692,28 @@
       if (references.childElementCount) reply.append(references);
       if (turn.review) {
         const review=make('details','architecture-chat-review');
-        review.append(make('summary','','Architecture reviewer · second model call'),
-          renderMarkdown(turn.review.answer || 'The reviewer returned no answer.'));
+        const reviewOnCite = id => {
+          if ((turn.review.evidence || []).some(item => item.id === id)) renderEvidence({result:turn.review}, id);
+        };
+        review.append(make('summary','',turn.review.agentTrace?.length
+          ? 'Architecture reviewer · agentic second pass (' + turn.review.agentTrace.length + ' tools)'
+          : 'Architecture reviewer · second model call'),
+          renderMarkdown(turn.review.answer || 'The reviewer returned no answer.', reviewOnCite));
+        if (Array.isArray(turn.review.agentTrace) && turn.review.agentTrace.length) {
+          const rTrace = make('details','architecture-chat-trace');
+          rTrace.append(make('summary','','Reviewer tool steps (' + turn.review.agentTrace.length + ')'));
+          const rList = make('ol','architecture-chat-trace-list');
+          for (const step of turn.review.agentTrace) {
+            const item = make('li','architecture-chat-trace-item');
+            const toolPill = make('span','architecture-chat-trace-tool ' + toolTone(step.tool), formatToolName(step.tool));
+            toolPill.title = step.tool || '';
+            item.append(toolPill, make('span','',step.summary || ''));
+            if (typeof step.durationMs === 'number') item.append(make('span','architecture-chat-trace-ms',step.durationMs + ' ms'));
+            rList.append(item);
+          }
+          rTrace.append(rList);
+          review.append(rTrace);
+        }
         const links=make('div','architecture-chat-links');
         for (const id of turn.review.citations || []) {
           const row=(turn.review.evidence || []).find(item => item.id === id);
@@ -724,8 +812,9 @@
       session.updated = Date.now();
       mode.value = session.mode;
       input.value = focus.value = '';
-      source.checked = Boolean(scope.finding && scope.provider);
+      source.checked = Boolean(scope.provider && (scope.finding || !scope.provider.remote));
       agentToggleInput.checked = Boolean(scope.agentEnabled);
+      reviewerAgenticInput.checked = false;
       save();
       status.textContent = 'New conversation started.';
       renderConversation();
@@ -743,12 +832,13 @@
       for (const turn of prior.reverse()) {
         const pair = [{role:'user',content:turn.question},{role:'assistant',content:shortHistory(turn.result.answer)}];
         const pairBytes = new TextEncoder().encode(JSON.stringify(pair)).length;
-        if (historyBytes + pairBytes > 48_000) break;
+        if (historyBytes + pairBytes > 96_000) break;
         messages.unshift(...pair);
         historyBytes += pairBytes;
       }
       messages.push({role:'user',content:question});
       const useAgent = Boolean(!evidenceOnly && scope.agentEnabled && agentToggleInput.checked);
+      const useReviewerAgent = Boolean(!evidenceOnly && scope.agentEnabled && reviewerAgenticInput.checked);
       const query = {context:scope.context,mode:mode.value,messages,
         ...(scope.job ? {job:scope.job} : {}),
         ...(focus.value.trim() ? {focus:focus.value.trim()} : {}),
@@ -763,6 +853,7 @@
       history.disabled = true;
       source.disabled = true;
       agentToggleInput.disabled = true;
+      reviewerAgenticInput.disabled = true;
       input.readOnly = true;
       stop.hidden = false;
       status.textContent = evidenceOnly ? 'Reading snapshot evidence…' : 'Reading snapshot evidence and waiting for the model…';
@@ -798,21 +889,23 @@
                 liveTimeline.hidden = false;
                 const row = make('div','architecture-chat-trace-item');
                 row.dataset.step = String(info.step || '');
-                row.append(make('span','architecture-chat-trace-tool',info.tool || 'tool'),
-                  make('span','muted','Running…'));
+                const pill = make('span','architecture-chat-trace-tool is-running ' + toolTone(info.tool), formatToolName(info.tool));
+                pill.title = info.tool || '';
+                row.append(pill, make('span','muted','Running…'));
                 liveTimeline.append(row);
                 log.scrollTop = log.scrollHeight;
               },
               onToolComplete(step) {
                 ensureLiveBox();
                 liveTimeline.hidden = false;
-                const row = liveTimeline.querySelector(`[data-step="${step.step}"]`);
-                if (row) {
-                  row.replaceChildren(
-                    make('span','architecture-chat-trace-tool',step.tool || 'tool'),
-                    make('span','',step.summary || ''),
-                    make('span','architecture-chat-trace-ms',(step.durationMs || 0) + ' ms'));
-                }
+                const row = liveTimeline.querySelector(`[data-step="${step.step}"]`) || make('div','architecture-chat-trace-item');
+                if (!row.parentNode) liveTimeline.append(row);
+                const pill = make('span','architecture-chat-trace-tool ' + toolTone(step.tool), formatToolName(step.tool));
+                pill.title = step.tool || '';
+                row.replaceChildren(
+                  pill,
+                  make('span','',step.summary || ''),
+                  make('span','architecture-chat-trace-ms',(step.durationMs || 0) + ' ms'));
               },
               onDelta(chunk) {
                 if (!chunk) return;
@@ -853,7 +946,8 @@
           : evidenceOnly ? 'Captured evidence loaded.' : 'Reply received.';
         if (!evidenceOnly && result.status !== 'EVIDENCE_ONLY' && result.status !== 'OUT_OF_SCOPE') {
           const reviewQuery = {...query,reviewer:true};
-          delete reviewQuery.agentic;
+          if (useReviewerAgent) reviewQuery.agentic = true;
+          else delete reviewQuery.agentic;
           const review = await scope.send(reviewQuery,signal).then(value => ({value}),error => ({error}));
           if (signal.aborted) return;
           const candidate = review.value;
@@ -876,6 +970,7 @@
           submit.disabled = fresh.disabled = mode.disabled = focus.disabled = input.readOnly = false;
           source.disabled = false;
           agentToggleInput.disabled = false;
+          reviewerAgenticInput.disabled = false;
           history.disabled = false;
           const restore = document.activeElement === stop;
           stop.hidden = true;
@@ -885,8 +980,8 @@
     });
 
     function shortHistory(answer) {
-      if (answer.length <= 4000) return answer;
-      return answer.slice(0,3980).replace(/[\uD800-\uDBFF]$/,'') + '\n[Reply excerpt]';
+      if (answer.length <= 32000) return answer;
+      return answer.slice(0,31980).replace(/[\uD800-\uDBFF]$/,'') + '\n[Reply excerpt]';
     }
     input.addEventListener('keydown',event => {
       if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && event.keyCode !== 229) {

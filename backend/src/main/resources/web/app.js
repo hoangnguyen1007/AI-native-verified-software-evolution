@@ -729,10 +729,12 @@
       option.title = context.identity;
       $('context').append(option);
     }
-    if (!state.contexts.some(context => context.identity === state.context)) {
-      state.context = state.contexts.find(context => context.identity === state.snapshot)?.identity ?? state.contexts[0]?.identity ?? '';
-    }
+    state.context = M.selectDefaultContext ? M.selectDefaultContext(state.contexts, state.snapshot, state.context)
+      : (state.contexts.some(context => context.identity === state.context)
+          ? state.context
+          : (state.contexts.find(context => context.identity === state.snapshot)?.identity ?? state.contexts[0]?.identity ?? ''));
     $('context').value = state.context;
+    void labelContextOptions();
     if (openChatOnFirstResult && state.capabilities?.architectureChatEnabled) {
       openChatOnFirstResult = false;
       await loadTab('architecture-chat');
@@ -761,6 +763,9 @@
         const evidence = value.items?.[0], metadata = evidence?.metadata, build = metadata?.build?.moduleSourceSet;
         if (metadata?.module && metadata.modulePath) state.moduleLabels.set(metadata.module, metadata.modulePath);
         state.contextKinds.set(identity, evidence?.family);
+        if (evidence?.family === 'spring.context') {
+          document.querySelectorAll('[data-spring-view]').forEach(control => control.hidden = false);
+        }
         let label = '';
         if (build) {
           const path = metadata.modulePath || state.moduleLabels.get(build.module) || (build.module?.includes('sha256:') ? null : build.module);
@@ -820,10 +825,82 @@
     const graph = state.graph, context = state.context, snapshot = state.snapshot, request = M.request(context), reportIds = state.reports.filter(r => r.context === context);
     return {
       graph, context, snapshot, request, reportIds, signal, setup: state.resultJob?.setup, jobId: state.resultJob?.id,
-      contextFamily: state.contextKinds?.get(context), springContext: state.contextKinds?.get(context) === 'spring.context',
+      contextFamily: state.contextKinds?.get(context), springContext: state.contextKinds?.get(context) === 'spring.context' || context.startsWith('spring-context:'),
       query: (op, args = {}, page, overrides = {}) => api('/graphs/' + graph + '/queries/' + op, { request: { ...request, ...overrides }, arguments: args, ...(page ? { page } : {}) }, signal),
       report: (id, op, args = {}, page) => api('/graphs/' + graph + '/reports/' + id + '/' + op, { arguments: args, ...(page ? { page } : {}) }, signal)
     };
+  }
+  function skeleton(rows = 3) {
+    const wrap = el('div', 'evo-skeleton-stack');
+    wrap.setAttribute('aria-hidden', 'true');
+    wrap.append(el('i', 'evo-skeleton-bone is-title'));
+    for (let i = 0; i < rows; i++) wrap.append(el('i', 'evo-skeleton-bone ' + (i === rows - 1 ? 'is-mid' : 'is-wide')));
+    return wrap;
+  }
+  function renderSourceCodeBlock(data, highlightLine, onPage) {
+    const shell = el('div', 'source-viewer-shell');
+    const bar = el('div', 'source-viewer-bar');
+    const meta = append(el('div'),
+      el('div', 'source-viewer-path', data.path || 'Captured file'),
+      el('div', 'small muted', [
+        data.language || 'text',
+        data.startLine && data.endLine ? `Lines ${data.startLine}–${data.endLine} of ${data.totalLines || data.endLine}` : null,
+        data.digest ? M.shortDigest(data.digest) : null
+      ].filter(Boolean).join(' · '))
+    );
+    const barActions = el('div', 'remedy-patch-actions');
+    const copyBtn = btn('Copy code', async () => {
+      try {
+        await navigator.clipboard?.writeText(data.content || '');
+        copyBtn.textContent = 'Copied';
+        window.EvoToast?.push({ kind: 'ok', title: 'Source copied', detail: data.path });
+        setTimeout(() => { copyBtn.textContent = 'Copy code'; }, 1400);
+      } catch (_) {}
+    }, 'button subtle');
+    barActions.append(copyBtn);
+    if (onPage && data.startLine > 1) {
+      barActions.append(btn('← Prev 200', () => onPage(Math.max(1, data.startLine - 200), data.startLine - 1), 'button subtle'));
+    }
+    if (onPage && data.totalLines && data.endLine < data.totalLines) {
+      barActions.append(btn('Next 200 →', () => onPage(data.endLine + 1, Math.min(data.totalLines, data.endLine + 200)), 'button subtle'));
+    }
+    if (state.capabilities?.architectureChatEnabled && data.path) {
+      barActions.append(btn('Ask AI about file', () => {
+        closeInspector();
+        state.chatSeedPrompt = `Inspect \`${data.path}\` (lines ${data.startLine || 1}–${data.endLine || ''}) and explain its architectural role, dependencies, and any refactoring risks.`;
+        return loadTab('architecture-chat');
+      }, 'button subtle'));
+    }
+    bar.append(meta, barActions);
+    const pre = el('pre', 'source-viewer-code');
+    const lines = String(data.content ?? '').split('\n');
+    const start = Number(data.startLine || 1);
+    lines.forEach((text, idx) => {
+      const ln = start + idx;
+      const lineRow = el('div', 'source-line' + (highlightLine && ln === Number(highlightLine) ? ' is-highlight' : ''));
+      lineRow.append(el('span', 'source-line-num', String(ln)), el('span', 'source-line-text', text || ' '));
+      pre.append(lineRow);
+    });
+    shell.append(bar, pre);
+    return shell;
+  }
+  function openCapturedSourceModal(graphId, path, startLine = 1, endLine = null, highlightLine = null) {
+    const loadRange = (s, e) => inspect(path, 'CAPTURED SOURCE', signal => api('/graphs/' + graphId + '/captured-source', {
+      path, startLine: s, ...(e ? { endLine: e } : {})
+    }, signal), [], [], undefined, (body, data) => {
+      if (!data?.found) {
+        body.append(empty(data?.ambiguous ? 'Multiple matching files' : 'Captured source unavailable',
+          data?.ambiguous ? 'Choose one of the captured paths below:' : 'This path was not captured as readable source text in the snapshot.'));
+        if (Array.isArray(data?.candidates) && data.candidates.length) {
+          const list = el('div', 'list');
+          data.candidates.forEach(c => list.append(btn(c, () => openCapturedSourceModal(graphId, c, 1, 200), 'entity-row')));
+          body.append(list);
+        }
+        return;
+      }
+      body.append(renderSourceCodeBlock(data, highlightLine, (ns, ne) => loadRange(ns, ne)));
+    });
+    return loadRange(startLine, endLine || (startLine + 199));
   }
 
   function scoreRingSvg(rawScore, label) {
@@ -888,7 +965,9 @@
         const parsed = JSON.parse(dataLines.join('\n'));
         if (eventName === 'stage') handlers?.onStage?.(parsed.message || '');
         else if (eventName === 'tool') {
-          if (parsed.status === 'running') handlers?.onToolStart?.(parsed);
+          const kind = M.classifySseToolEvent ? M.classifySseToolEvent(parsed)
+            : (parsed.phase === 'start' || parsed.status === 'running' ? 'start' : 'complete');
+          if (kind === 'start') handlers?.onToolStart?.(parsed);
           else handlers?.onToolComplete?.(parsed);
         } else if (eventName === 'delta') handlers?.onDelta?.(parsed.text || '');
         else if (eventName === 'complete') finalResult = parsed.data ?? parsed;
@@ -950,20 +1029,24 @@
         if (!value.topReasons.length) return;
         const reasons = el('dl', 'summary-table');
         for (const row of value.topReasons) {
+          const info = M.humanReason(row.reason);
           const label = row.reason.toLowerCase().replaceAll('_', ' ').replace(/^./, c => c.toUpperCase());
           const term = el('dt', '', label);
-          term.title = row.reason;
+          term.title = `${row.reason} — ${info.explanation}`;
           const count = el('dd', '', row.count.toLocaleString());
           reasons.append(append(el('div', 'summary-row'), term, count));
         }
         body.append(reasons);
+        const actions = el('div', 'remedy-patch-actions');
+        actions.append(btn('Open Gaps & Coverage Inspector →', () => loadTab('coverage'), 'button subtle'));
         if (state.capabilities?.architectureChatEnabled) {
           const topList = value.topReasons.slice(0, 5).map(r => `${r.reason} (${r.count})`).join(', ');
-          body.append(btn('Ask AI how to reduce these gaps', () => {
+          actions.append(btn('Ask AI how to reduce these gaps', () => {
             state.chatSeedPrompt = 'Explain the top analysis gap reasons in this run (' + topList + ') and recommend prioritized actions to improve coverage.';
             return loadTab('architecture-chat');
           }, 'button subtle'));
         }
+        body.append(actions);
       } catch (error) {
         if (!env.signal.aborted) {
           status.textContent = 'Gap reasons are unavailable.';
@@ -991,7 +1074,8 @@
       else option.removeAttribute('aria-current');
     }
     const updateSpringViews = () => {
-      const spring = state.contextKinds?.get(state.context) === 'spring.context' || ['spring', 'configurations'].includes(tab);
+      const hasSpringContext = state.contexts.some(c => c.identity.startsWith('spring-context:') || state.contextKinds?.get(c.identity) === 'spring.context');
+      const spring = hasSpringContext || state.contextKinds?.get(state.context) === 'spring.context' || ['spring', 'configurations'].includes(tab);
       document.querySelectorAll('[data-spring-view]').forEach(control => control.hidden = !spring);
     };
     updateSpringViews();
@@ -1128,6 +1212,10 @@
       { label: 'Open in graph', run: async () => { state.graphFocus = { seed: item.identity, scope, context: env.context }; closeInspector(); await loadTab('graph'); } },
       { label: 'Metric details', run: async () => { state.metricSubject = item; closeInspector(); await loadTab('metrics'); } }
     ] : [];
+    const sourcePath = item.path || item.properties?.path || (item.kind === 'SOURCE_DOCUMENT' ? (item.qualifiedName || item.spelling) : '');
+    if (sourcePath && !String(sourcePath).startsWith('sha256:')) {
+      actions.unshift({ label: 'View captured source', run: () => openCapturedSourceModal(env.graph, sourcePath) });
+    }
     return inspect(M.label(item), item.kind || 'ENTITY', (signal, cursor) => query('explain', { identity: item.identity }, signal, {}, cursor), actions);
   }
   function downloadBlob(blob, name) { const url = URL.createObjectURL(blob), link = el('a'); link.href = url; link.download = name; document.body.append(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 10000); }
@@ -1609,23 +1697,67 @@
   function renderProposalResult(item, reportId, env, diagnosis, options, proposal, propBody) {
     propBody.replaceChildren();
 
+    const rankedRecipes = M.rankApplicableRecipes
+      ? M.rankApplicableRecipes(options.recipes || [], options.applicableRecipes || [])
+      : (options.recipes || []).map(r => ({
+          ...r,
+          applicable: (options.applicableRecipes || []).includes(r.id),
+          displaySummary: r.summary || r.title || r.id
+        }));
+
     const controls = el('div', 'remedy-patch-actions');
     const recipeSelect = document.createElement('select');
     recipeSelect.className = 'input';
     recipeSelect.setAttribute('aria-label', 'Repair recipe');
-    (options.recipes || []).forEach(r => {
+    rankedRecipes.forEach(r => {
       const opt = document.createElement('option');
       opt.value = r.id;
-      opt.textContent = r.title || r.id;
+      opt.textContent = (r.applicable ? '★ [Applicable] ' : '') + (r.title || r.id);
+      opt.title = r.displaySummary;
       recipeSelect.append(opt);
     });
+    const firstApplicable = rankedRecipes.find(r => r.applicable);
+    if (firstApplicable) recipeSelect.value = firstApplicable.id;
+
+    const recipeSummaryNote = el('p', 'small muted', '');
+    const syncRecipeSummary = () => {
+      const chosen = rankedRecipes.find(r => r.id === recipeSelect.value);
+      recipeSummaryNote.textContent = chosen
+        ? (chosen.applicable ? 'AST pre-check matched cited files · ' : '') + chosen.displaySummary
+        : 'No registered recipes available.';
+    };
+    recipeSelect.addEventListener('change', syncRecipeSummary);
+    syncRecipeSummary();
+
     const runRecipeBtn = btn('Run Recipe', () => executeProposalChoice(item, reportId, env, diagnosis, options, {
       strategy: 'RECIPE',
       recipe: recipeSelect.value
-    }, propBody), 'btn ghost btn-sm');
-    runRecipeBtn.disabled = !(options.recipes && options.recipes.length);
+    }, propBody), 'button primary');
+    runRecipeBtn.disabled = !rankedRecipes.length;
     controls.append(recipeSelect, runRecipeBtn);
-    propBody.append(controls);
+    propBody.append(controls, recipeSummaryNote);
+
+    const applicableList = rankedRecipes.filter(r => r.applicable);
+    if (applicableList.length) {
+      const recipeGrid = el('div', 'repair-recipe-grid');
+      for (const r of applicableList) {
+        const cardNode = el('div', 'repair-recipe-card is-applicable');
+        const info = append(el('div'),
+          append(el('div', 'remedy-patch-header'),
+            el('strong', '', r.title || r.id),
+            el('span', 'badge good', 'Applicable AST match')),
+          el('p', 'repair-recipe-summary', r.displaySummary));
+        const applyBtn = btn('Apply', () => {
+          recipeSelect.value = r.id;
+          syncRecipeSummary();
+          return executeProposalChoice(item, reportId, env, diagnosis, options, { strategy: 'RECIPE', recipe: r.id }, propBody);
+        }, 'button subtle');
+        cardNode.append(info, applyBtn);
+        recipeGrid.append(cardNode);
+      }
+      propBody.append(recipeGrid);
+    }
+
     if (options.ai?.input) {
       const disclosure = el('div', 'notice');
       const provider = options.ai.provider;
@@ -1637,11 +1769,11 @@
         strategy: 'AI',
         modelInput: options.ai.input,
         ...(state.capabilities?.architectureAgentEnabled ? { maxRepairAttempts: 3 } : {})
-      }, propBody), 'btn primary btn-sm');
+      }, propBody), 'button primary');
       aiBtn.disabled = true;
       approval.addEventListener('change', () => { aiBtn.disabled = !approval.checked; });
       append(disclosure, el('p', '', 'This proposal sends the captured source of the listed files to ' + provider.endpoint + '.'),
-        files, append(el('label'), approval, el('span', '', ' Allow this source disclosure')), aiBtn);
+        files, append(el('label', 'remedy-verify-toggle'), approval, el('span', '', 'Allow this source disclosure')), aiBtn);
       propBody.append(disclosure);
     }
 
@@ -1669,8 +1801,8 @@
       );
       propBody.append(infoRow);
 
-      if (cand.recipe?.title || cand.plan?.summary) {
-        propBody.append(el('p', 'small', cand.recipe?.title || cand.plan.summary));
+      if (cand.recipe?.summary || cand.recipe?.title || cand.plan?.summary) {
+        propBody.append(el('p', 'small', cand.recipe?.summary || cand.recipe?.title || cand.plan.summary));
       }
 
       const diffBox = el('div', 'diff-viewer');
@@ -1707,26 +1839,163 @@
         try {
           await navigator.clipboard.writeText(patch);
           copyBtn.textContent = 'Copied!';
+          window.EvoToast?.push({ kind: 'ok', title: 'Patch copied', detail: targetList });
           setTimeout(() => { copyBtn.textContent = 'Copy Patch'; }, 1500);
         } catch (_) { }
-      }, 'btn ghost btn-sm');
+      }, 'button subtle');
 
       const dlBtn = btn('Download .patch', () => {
         downloadBlob(new Blob([patch], { type: 'text/x-diff' }), 'evolution-repair.patch');
-      }, 'btn ghost btn-sm');
+      }, 'button subtle');
 
       const dlProposalBtn = btn('Download proposal.json', () => {
         downloadBlob(new Blob([JSON.stringify(proposal, null, 2)], { type: 'application/json' }), 'repair-proposal.json');
-      }, 'btn ghost btn-sm');
+      }, 'button subtle');
 
       append(actionRow, copyBtn, dlBtn, dlProposalBtn);
       propBody.append(actionRow);
 
-      const topDlBtn = $('remedy-download-btn');
-      if (topDlBtn) {
-        topDlBtn.onclick = () => downloadBlob(new Blob([patch], { type: 'text/x-diff' }), 'evolution-repair.patch');
+      // Inline Verification Workbench (never depends on missing global DOM IDs!)
+      const propId = proposal?.proposal?.identity;
+      if (propId) {
+        const verifyPanel = el('section', 'remedy-verify-panel');
+        const verifyHead = append(el('div', 'remedy-patch-header'),
+          el('strong', '', 'Candidate Verification & Reanalysis'));
+        const verdictBadge = el('span', 'badge warn', 'Not verified yet');
+        verifyHead.append(verdictBadge);
+
+        const isolatedConfigured = Boolean(options.isolatedRunnerConfigured || state.capabilities?.isolatedRepairRunnerEnabled);
+        const isolatedToggle = el('input');
+        isolatedToggle.type = 'checkbox';
+        isolatedToggle.name = 'runIsolated';
+        isolatedToggle.disabled = !isolatedConfigured;
+        const isolatedLabel = append(el('label', 'remedy-verify-toggle'), isolatedToggle,
+          el('span', '', isolatedConfigured
+            ? 'Run isolated QEMU/Docker build & test verification (runIsolated)'
+            : 'Isolated build runner not configured on this server'));
+
+        const verifyOut = el('div');
+        let currentOperands = {};
+
+        async function runInlineVerification(extraOperands = {}) {
+          currentOperands = { ...currentOperands, ...extraOperands };
+          verifyBtn.disabled = true;
+          if (reanalyzeBtn) reanalyzeBtn.disabled = true;
+          verifyOut.replaceChildren(skeleton(2), el('p', 'small muted', isolatedToggle.checked
+            ? 'Running server verification + isolated build worker…'
+            : 'Checking baseline pins, reanalysis comparisons, and isolated proof…'));
+          try {
+            const verifyArgs = {
+              identity: item.identity,
+              bundle: item.bundleIdentity,
+              context: env.context,
+              diagnosisInput: diagnosis.input,
+              proposal: propId,
+              ...(currentOperands.candidateReport ? { candidateReport: currentOperands.candidateReport } : {}),
+              ...(currentOperands.controlReport ? { controlReport: currentOperands.controlReport } : {}),
+              ...(isolatedToggle.checked ? { runIsolated: true } : {})
+            };
+            const outcome = await api('/graphs/' + env.graph + '/reports/' + reportId + '/repair-verification', { arguments: verifyArgs }, env.signal);
+            const verified = outcome.verdict === 'VERIFIED' || outcome.verdict === 'VERIFIED_DEMO';
+            const rejected = outcome.verdict === 'REJECTED';
+            verdictBadge.textContent = outcome.verdict || 'UNVERIFIED';
+            verdictBadge.className = 'badge ' + (verified ? 'good' : (rejected ? 'bad' : 'warn'));
+            verifyOut.replaceChildren();
+
+            const checkCard = el('div', 'remedy-verif-card');
+            checkCard.append(el('strong', '', 'Verification Checks'));
+            const list = el('ul', 'remedy-check-list');
+            for (const c of outcome.checks || []) {
+              const passed = c.status === 'PASSED', failed = c.status === 'FAILED';
+              const li = el('li', 'check-item ' + (passed ? 'is-pass' : failed ? 'is-fail' : 'is-warn'));
+              append(li,
+                el('span', 'check-icon', passed ? '✔' : failed ? '✘' : '•'),
+                append(el('div'),
+                  el('strong', '', `${c.id || c.name} (${c.status})`),
+                  el('p', 'small muted', (c.reason || '') + (c.evidence ? ` · ${M.shortDigest(c.evidence)}` : ''))));
+              list.append(li);
+            }
+            checkCard.append(list);
+            verifyOut.append(checkCard);
+
+            if (outcome.candidateComparison) {
+              const cc = outcome.candidateComparison;
+              const cmpCard = el('div', 'remedy-verif-card');
+              append(cmpCard,
+                el('strong', '', 'Candidate Snapshot Comparison'),
+                el('p', 'small', `Status: ${cc.status} · Transitions: ${(cc.transitions || []).join(', ') || 'none'} · Regression: ${cc.regressionDetected ? 'YES' : 'NO'}`),
+                el('p', 'small muted', `Reasons: ${(cc.reasons || []).join(', ') || 'none'}`));
+              verifyOut.append(cmpCard);
+            }
+            if (outcome.isolatedProof) {
+              const vm = outcome.isolatedProof;
+              const vmCard = el('div', 'remedy-verif-card');
+              append(vmCard,
+                el('strong', '', 'Isolated Worker Build & Test Proof'),
+                el('p', 'small', `Tool: ${vm.buildTool} · Modules: ${(vm.modules || []).join(', ')} · Compile exit: ${vm.compileExit} · Test exit: ${vm.testExit}`),
+                el('p', 'small', `Tests run: ${vm.testsRun}, failed: ${vm.testsFailed}, errors: ${vm.testsErrors} · Bytecode classes: ${vm.classCount}`),
+                el('p', 'small mono muted', `Capture: ${M.shortDigest(vm.capture)} · Census: ${M.shortDigest(vm.classCensusDigest)}`));
+              verifyOut.append(vmCard);
+            }
+            const receipt = el('div', 'remedy-pr-box' + (verified ? '' : rejected ? ' is-rejected' : ' is-unverified'));
+            append(receipt,
+              el('strong', '', verified ? 'Verified Patch Receipt' : rejected ? 'Verification Rejected' : 'Verification Incomplete'),
+              el('p', 'small mono', `Plan: ${M.shortDigest(outcome.planIdentity)} · Proposal: ${M.shortDigest(propId)}`),
+              el('p', 'small', verified
+                ? 'Server-verified: all required checks passed and original policy finding is resolved.'
+                : rejected
+                  ? 'One or more verification checks failed. Inspect failed checks above before using this patch.'
+                  : 'Run candidate reanalysis and/or isolated build verification to establish a complete proof.'));
+            verifyOut.append(receipt);
+            window.EvoToast?.push({
+              kind: verified ? 'ok' : rejected ? 'err' : 'warn',
+              title: 'Verification: ' + (outcome.verdict || 'UNVERIFIED'),
+              detail: targetList
+            });
+          } catch (err) {
+            if (err.name !== 'AbortError') {
+              verdictBadge.textContent = 'UNVERIFIED';
+              verdictBadge.className = 'badge warn';
+              verifyOut.replaceChildren(empty('Verification unavailable', err.message));
+            }
+          } finally {
+            verifyBtn.disabled = false;
+            if (reanalyzeBtn) reanalyzeBtn.disabled = false;
+          }
+        }
+
+        const verifyBtn = btn('Verify Candidate →', () => runInlineVerification(), 'button primary');
+        const reanalyzeBtn = state.capabilities?.repairReanalysisEnabled
+          ? btn('Run Candidate Reanalysis + Control', async () => {
+              reanalyzeBtn.disabled = true;
+              verifyBtn.disabled = true;
+              verifyOut.replaceChildren(skeleton(2), el('p', 'small muted', 'Reanalyzing candidate + negative control in parallel…'));
+              try {
+                const reResult = await api('/graphs/' + env.graph + '/reports/' + reportId + '/repair-reanalysis', {
+                  arguments: {
+                    identity: item.identity, bundle: item.bundleIdentity, context: env.context,
+                    diagnosisInput: diagnosis.input, proposal: propId, includeControl: true
+                  }
+                }, env.signal);
+                await runInlineVerification({
+                  candidateReport: reResult.candidateReport || currentOperands.candidateReport,
+                  controlReport: reResult.controlReport || currentOperands.controlReport
+                });
+              } catch (err) {
+                if (err.name !== 'AbortError') verifyOut.replaceChildren(empty('Reanalysis error', err.message));
+                reanalyzeBtn.disabled = false;
+                verifyBtn.disabled = false;
+              }
+            }, 'button subtle')
+          : null;
+
+        const verifyActions = append(el('div', 'remedy-patch-actions'), verifyBtn, reanalyzeBtn);
+        verifyPanel.append(verifyHead, isolatedLabel, verifyActions, verifyOut);
+        propBody.append(verifyPanel);
       }
 
+      const topDlBtn = $('remedy-download-btn');
+      if (topDlBtn) topDlBtn.onclick = () => downloadBlob(new Blob([patch], { type: 'text/x-diff' }), 'evolution-repair.patch');
       const verifBtn = $('remedy-verify-btn');
       if (verifBtn) {
         verifBtn.hidden = false;
@@ -1738,8 +2007,9 @@
       const msg = el('div', 'notice');
       append(msg,
         el('strong', '', 'Repair Proposal Withheld'),
-        el('p', 'small', repairReasons[proposal.reason] || proposal.reason || 'Select a recipe above or configure an AI repair model for this finding.'),
-        el('p', 'small muted', 'Available registered recipes: ' + (options.recipes?.map(r => r.id).join(', ') || 'none'))
+        el('p', 'small', repairReasons[proposal.reason] || proposal.reason || 'Select an applicable recipe above or configure an AI repair model for this finding.'),
+        el('p', 'small muted', 'Applicable recipes: ' + (applicableList.map(r => r.id).join(', ') || 'none')
+          + ' · Registered total: ' + rankedRecipes.length)
       );
       propBody.append(msg);
 
@@ -2241,17 +2511,60 @@
     'architecture-chat': architectureChatView,
     overview(env) {
       const node = el('div'), stats = el('div', 'summary-table');
+      const result = state.resultJob?.result;
+
+      // Executive Health & Coverage Hero Strip (truthful trust & coverage denominator)
+      const hero = el('section', 'evo-hero-strip');
+      hero.setAttribute('aria-label', 'Snapshot trust and coverage overview');
+      const completionVal = result?.completion || (state.resultJob?.state || 'CAPTURED');
+      const trustTile = el('div', 'evo-hero-metric');
+      trustTile.append(
+        el('span', 'evo-hero-metric-label', 'Capture Trust Status'),
+        append(el('div', 'evo-hero-metric-value'), badge(completionVal)),
+        el('span', 'evo-hero-metric-sub', state.resultJob?.mode === 'FAST_ARCHITECTURE' ? 'Quick architecture pass' : 'Deterministic verified capture')
+      );
+      hero.append(trustTile);
+
+      const gapTotal = result?.gapCount;
+      const gapTile = btn('', () => loadTab('coverage'), 'evo-hero-metric is-interactive');
+      gapTile.append(
+        el('span', 'evo-hero-metric-label', 'Recorded Coverage Gaps'),
+        append(el('div', 'evo-hero-metric-value'),
+          el('span', '', gapTotal != null ? gapTotal.toLocaleString() : 'Inspect'),
+          gapTotal === 0 ? badge('COMPLETE') : gapTotal > 0 ? badge('PARTIAL') : null),
+        el('span', 'evo-hero-metric-sub', 'Closed reporting denominator · inspect reasons →')
+      );
+      hero.append(gapTile);
+
+      const springCount = state.contexts.filter(c => c.identity.startsWith('spring-context:') || state.contextKinds?.get(c.identity) === 'spring.context').length;
+      const ctxTile = btn('', () => loadTab(springCount ? 'spring' : 'structure'), 'evo-hero-metric is-interactive');
+      ctxTile.append(
+        el('span', 'evo-hero-metric-label', 'Analyzed Contexts'),
+        el('div', 'evo-hero-metric-value', String(state.contexts.length)),
+        el('span', 'evo-hero-metric-sub', springCount ? `${springCount} Spring context${springCount > 1 ? 's' : ''} detected →` : 'Browse modules & symbols →')
+      );
+      hero.append(ctxTile);
+
+      const repoMapTile = btn('', () => loadTab('repomap'), 'evo-hero-metric is-interactive');
+      repoMapTile.append(
+        el('span', 'evo-hero-metric-label', 'RepoMap & Source'),
+        el('div', 'evo-hero-metric-value', 'PPR'),
+        el('span', 'evo-hero-metric-sub', 'Ranked files & captured source viewer →')
+      );
+      hero.append(repoMapTile);
+
       const next = append(el('section', 'workbench-next'),
         append(el('div'), el('h2', '', 'Explore this snapshot'),
-          el('p', '', 'Open the repository structure, review a finding, or ask about a design decision.')));
+          el('p', '', 'Open the repository structure, inspect coverage gaps, review a finding, or ask about a design decision.')));
       const routes = append(el('div', 'workbench-next-actions'),
         btn('Browse structure', () => loadTab('structure'), 'button subtle'),
+        btn('RepoMap & Source', () => loadTab('repomap'), 'button subtle'),
+        btn('Gaps & Coverage', () => loadTab('coverage'), 'button subtle'),
         btn('Review findings', () => loadTab('policy'), 'button subtle'));
       if (state.capabilities?.architectureChatEnabled)
         routes.append(btn('Open architecture chat', () => loadTab('architecture-chat'), 'button primary'));
       next.append(routes);
-      const grid = el('div', 'overview-layout'); node.append(next, grid);
-      const result = state.resultJob?.result;
+      const grid = el('div', 'overview-layout'); node.append(hero, next, grid);
       if (env.jobId && result && state.capabilities?.analysisCoverageEnabled) grid.append(coverageCard(env, result));
       if (state.capabilities?.repositoryScoringEnabled) grid.append(repositoryScoreCard(env));
       const health = card('Architecture assessment');
@@ -2260,7 +2573,7 @@
       let requested = false;
       async function readCounts() {
         requested = true;
-        stats.textContent = 'Reading structure counts…';
+        stats.replaceChildren(skeleton(2));
         try {
           const summary = await env.query('summary');
           if (env.signal.aborted) return;
@@ -2284,6 +2597,350 @@
       health.append(inventory);
       health.append(append(el('div', 'toolbar'), btn('Review score and rules', () => configureRules(false))));
       grid.append(health);
+      return node;
+    },
+    async coverage(env) {
+      const node = card('Gaps & Coverage Inspector', 'Every unresolved symbol, missing dependency, opaque condition, and analyzer boundary stays explicitly recorded so partial evidence is never mistaken for absence.');
+      const viewSel = selectControl('Gap view', [['CURRENT', 'Current unresolved gaps'], ['HISTORY', 'Historical resolved/superseded'], ['ALL', 'All gap records']], 'CURRENT');
+      const filterInput = el('input');
+      filterInput.type = 'search';
+      filterInput.placeholder = 'Filter by reason code, path or symbol…';
+      filterInput.setAttribute('aria-label', 'Filter capability gaps');
+      const toolbar = append(el('div', 'toolbar'), field('Graph gap view', viewSel), field('Filter', filterInput));
+      if (state.capabilities?.architectureChatEnabled) {
+        toolbar.append(btn('Ask AI to prioritize remediation', () => {
+          state.chatSeedPrompt = 'Inspect the recorded capability gaps in this snapshot and provide a concrete, prioritized remediation plan to improve semantic coverage.';
+          return loadTab('architecture-chat');
+        }, 'button primary'));
+      }
+      const coverageSummaryBox = el('div');
+      const groupBox = el('div');
+      const recordsBox = el('div');
+      node.append(toolbar, coverageSummaryBox, groupBox, recordsBox);
+
+      let selectedReason = '';
+      let cachedJobGaps = [];
+      let graphGapItems = [];
+      let version = 0;
+
+      function extractGapCode(item) {
+        return item.reasonCode || item.properties?.reasonCode || item.properties?.reason || item.reason || (item.kind && item.kind !== 'CAPABILITY_GAP' ? item.kind : 'CAPABILITY_GAP');
+      }
+
+      function renderGroupCards(reasonPairs, headingText) {
+        if (!reasonPairs.length) return;
+        const grid = el('div', 'gaps-summary-grid');
+        for (const { code, count } of reasonPairs) {
+          const info = M.humanReason(code);
+          const bucket = M.classifyGapObligation ? M.classifyGapObligation(code) : { label: 'Boundary' };
+          const gCard = btn('', () => {
+            selectedReason = selectedReason === code ? '' : code;
+            filterInput.value = selectedReason;
+            renderFiltered();
+            for (const c of grid.children) c.classList.toggle('is-selected', c.dataset.code === selectedReason);
+          }, 'gap-group-card' + (selectedReason === code ? ' is-selected' : ''));
+          gCard.dataset.code = code;
+          append(gCard,
+            append(el('div', 'gap-group-head'), el('strong', '', info.title), el('span', 'gap-group-count', count.toLocaleString())),
+            el('span', 'gap-code-chip', `${code} · ${bucket.label}`),
+            el('p', 'small muted', info.explanation),
+            el('p', 'gap-remediation-tip', 'Action: ' + info.action)
+          );
+          grid.append(gCard);
+        }
+        groupBox.replaceChildren(el('h3', '', headingText), grid);
+      }
+
+      // Load job coverage obligations summary when jobId is available (always clears skeleton in finally!)
+      if (env.jobId && state.capabilities?.analysisCoverageEnabled) {
+        coverageSummaryBox.replaceChildren(skeleton(2));
+        api('/analysis/jobs/' + env.jobId + '/coverage', undefined, env.signal, 'GET').then(cov => {
+          if (env.signal.aborted) return;
+          coverageSummaryBox.replaceChildren();
+          const ob = cov.obligations || {};
+          const obSum = (ob.environment || 0) + (ob.authority || 0) + (ob.boundary || 0) + (ob.source || 0);
+          coverageSummaryBox.append(el('p', 'small muted', `Completion: ${cov.completion || 'PARTIAL'} · ${Number(cov.totalGaps || 0).toLocaleString()} total gaps (${Number(cov.counted || 0).toLocaleString()} ledger records classified)`));
+          if (obSum > 0) {
+            const barWrap = el('div', 'obligation-bar-wrap');
+            const bar = el('div', 'obligation-bar');
+            const legend = el('div', 'obligation-legend');
+            for (const [k, lbl, cls] of [['environment', 'Environment & Build', 'is-env'], ['authority', 'Authority / Policy', 'is-auth'], ['boundary', 'Analyzer Boundary', 'is-boundary'], ['source', 'Source / Dynamic', 'is-source']]) {
+              const count = ob[k] || 0;
+              if (!count) continue;
+              const seg = el('span', 'obligation-seg ' + cls);
+              seg.style.width = ((count / obSum) * 100).toFixed(1) + '%';
+              seg.title = `${lbl}: ${count}`;
+              bar.append(seg);
+              legend.append(append(el('span', 'obligation-legend-item'), el('span', 'obligation-dot ' + cls), el('span', '', `${lbl}: ${count.toLocaleString()}`)));
+            }
+            if (bar.childElementCount) {
+              barWrap.append(bar, legend);
+              coverageSummaryBox.append(barWrap);
+            }
+          }
+          if (Array.isArray(cov.topReasons) && cov.topReasons.length) {
+            renderGroupCards(cov.topReasons.map(r => ({ code: r.reason, count: r.count })), 'Gap Reasons & Remediation Guide');
+          }
+        }).catch(() => {
+          if (!env.signal.aborted) coverageSummaryBox.replaceChildren();
+        }).finally(() => {
+          if (!env.signal.aborted && coverageSummaryBox.querySelector('.evo-skeleton-stack')) {
+            coverageSummaryBox.replaceChildren();
+          }
+        });
+      }
+
+      function renderFiltered() {
+        const term = filterInput.value.trim().toLowerCase();
+        // Prioritize structured job CapabilityGapRecords (with real reasonCode/subject/mechanism) before generic graph CAPABILITY_GAP nodes
+        const seen = new Set(cachedJobGaps.map(g => g.identity).filter(Boolean));
+        const extraGraphGaps = graphGapItems.filter(gg => {
+          if (gg.identity && seen.has(gg.identity)) return false;
+          const code = extractGapCode(gg);
+          // When structured job gaps are present, avoid drowning them in bare uncoded CAPABILITY_GAP placeholders
+          if (cachedJobGaps.length && code === 'CAPABILITY_GAP' && !gg.qualifiedName && !gg.path) return false;
+          return true;
+        });
+        const combined = [...cachedJobGaps, ...extraGraphGaps];
+        const visible = combined.filter(item => {
+          if (!term) return true;
+          return JSON.stringify(item).toLowerCase().includes(term);
+        });
+        const list = el('div', 'list');
+        if (!visible.length) {
+          recordsBox.replaceChildren(empty(term ? 'No matching gap records' : 'No recorded capability gaps',
+            term ? 'Clear or loosen the filter to inspect all recorded gaps.' : 'No gaps were recorded for the selected context and view.'));
+          return;
+        }
+        visible.slice(0, 80).forEach(item => {
+          const code = extractGapCode(item);
+          const info = M.humanReason(code);
+          const bucket = M.classifyGapObligation ? M.classifyGapObligation(code) : null;
+          const subjectText = item.subject || item.path || item.qualifiedName || item.spelling || item.properties?.subject || '';
+          const cleanSubject = /^sha256:[0-9a-f]{16,}$/i.test(subjectText) ? M.shortDigest(subjectText) : subjectText;
+          const titleText = info.title + (cleanSubject && !info.title.includes(cleanSubject) ? ' — ' + cleanSubject : '');
+          const subtitle = [bucket?.label, item.mechanismCategory || item.properties?.mechanismCategory, code].filter(Boolean).join(' · ');
+          list.append(row({
+            identity: item.identity,
+            label: titleText,
+            kind: code
+          }, () => inspect(info.title, 'CAPABILITY GAP', { humanExplanation: info, obligation: bucket?.label, record: item },
+            item.path ? [{ label: 'Open captured source', run: () => openCapturedSourceModal(env.graph, item.path) }] : []), subtitle));
+        });
+        recordsBox.replaceChildren(el('h3', '', `Recorded Gaps (${visible.length}${visible.length > 80 ? ' · showing first 80' : ''})`), list);
+      }
+
+      async function loadGraphGaps() {
+        const current = ++version;
+        recordsBox.replaceChildren(skeleton(3));
+        try {
+          const [graphRes, jobRes] = await Promise.all([
+            env.query('gaps', { view: viewSel.value }, { size: 50 }).catch(() => ({ items: [] })),
+            env.jobId && !cachedJobGaps.length
+              ? api('/analysis/jobs/' + env.jobId + '/gaps', { size: 50 }, env.signal, 'POST').catch(() => ({ items: [] }))
+              : Promise.resolve(null)
+          ]);
+          if (env.signal.aborted || current !== version) return;
+          graphGapItems = graphRes?.items || [];
+          if (jobRes && Array.isArray(jobRes.items)) {
+            cachedJobGaps = jobRes.items;
+            if (!groupBox.childElementCount && cachedJobGaps.length) {
+              const groups = M.summarizeGaps(cachedJobGaps);
+              renderGroupCards(groups.map(g => ({ code: g.code, count: g.count })), 'Observed Gap Categories');
+            }
+          }
+          renderFiltered();
+        } catch (err) {
+          if (!env.signal.aborted && current === version) {
+            recordsBox.replaceChildren(empty('Graph gap query unavailable', err.message), btn('Retry', loadGraphGaps));
+          }
+        }
+      }
+      viewSel.addEventListener('change', () => safe(loadGraphGaps));
+      filterInput.addEventListener('input', renderFiltered);
+      await loadGraphGaps();
+      return node;
+    },
+    async repomap(env) {
+      const node = card('RepoMap (PPR) & Captured Source', 'Personalized PageRank architectural ranking across captured dependency edges paired with an interactive captured-source inspector.');
+      const modeBar = el('div', 'chip-bar');
+      const mapTabBtn = btn('PPR Ranked RepoMap', () => setMode('map'), 'chip active');
+      const filesTabBtn = btn('All Captured Files', () => setMode('files'), 'chip');
+      modeBar.append(mapTabBtn, filesTabBtn);
+
+      const seedInput = el('input');
+      seedInput.type = 'search';
+      seedInput.placeholder = 'Optional PPR seeds (comma-separated paths or class names)…';
+      seedInput.setAttribute('aria-label', 'RepoMap PPR seeds');
+      const maxFilesSel = selectControl('Max ranked files', [['15', 'Top 15 files'], ['25', 'Top 25 files'], ['50', 'Top 50 files'], ['100', 'Top 100 files']], '25');
+      const refreshBtn = btn('Rank map', () => loadMap(), 'button primary');
+      const mapToolbar = append(el('div', 'toolbar'), field('Focus seeds', seedInput), field('Depth', maxFilesSel), refreshBtn);
+
+      const fileSearch = el('input');
+      fileSearch.type = 'search';
+      fileSearch.placeholder = 'Filter captured files by path…';
+      fileSearch.setAttribute('aria-label', 'Search captured files');
+      const langSel = selectControl('Language filter', [['', 'All languages']], '');
+      const filesToolbar = append(el('div', 'toolbar'), field('Path filter', fileSearch), field('Language', langSel), btn('Search files', () => loadFiles(0), 'button primary'));
+      filesToolbar.hidden = true;
+
+      const metaBar = el('p', 'small muted');
+      const layout = el('div', 'repomap-layout');
+      const leftPane = el('div');
+      const rightPane = el('div');
+      rightPane.append(empty('Select a file to inspect source', 'Choose any ranked RepoMap file or captured file on the left to read its captured source with line numbers.'));
+      layout.append(leftPane, rightPane);
+      node.append(modeBar, mapToolbar, filesToolbar, metaBar, layout);
+
+      let activeMode = 'map', activePath = '', mapVersion = 0, fileVersion = 0, sourceVersion = 0;
+
+      function setMode(next) {
+        activeMode = next;
+        mapTabBtn.classList.toggle('active', next === 'map');
+        filesTabBtn.classList.toggle('active', next === 'files');
+        mapToolbar.hidden = next !== 'map';
+        filesToolbar.hidden = next !== 'files';
+        if (next === 'map') safe(loadMap);
+        else safe(() => loadFiles(0));
+      }
+
+      async function loadSource(path, startLine = 1, endLine = 200) {
+        activePath = path;
+        const current = ++sourceVersion;
+        for (const c of leftPane.querySelectorAll('.repomap-file-card')) {
+          c.classList.toggle('is-selected', c.dataset.path === path);
+        }
+        rightPane.replaceChildren(skeleton(5));
+        try {
+          const data = await api('/graphs/' + env.graph + '/captured-source', { path, startLine, endLine }, env.signal);
+          if (env.signal.aborted || current !== sourceVersion) return;
+          if (!data?.found) {
+            rightPane.replaceChildren(empty(data?.ambiguous ? 'Ambiguous file path' : 'Source not readable',
+              data?.ambiguous ? 'Select one of the matching captured paths.' : 'Binary or uncaptured file bytes.'));
+            return;
+          }
+          rightPane.replaceChildren(renderSourceCodeBlock(data, null, (ns, ne) => loadSource(path, ns, ne)));
+        } catch (err) {
+          if (!env.signal.aborted && current === sourceVersion) {
+            rightPane.replaceChildren(empty('Could not read captured source', err.message));
+          }
+        }
+      }
+
+      async function loadMap() {
+        const current = ++mapVersion;
+        leftPane.replaceChildren(skeleton(4));
+        metaBar.textContent = 'Computing deterministic Personalized PageRank RepoMap…';
+        try {
+          const seeds = seedInput.value.split(',').map(s => s.trim()).filter(Boolean);
+          const data = await api('/graphs/' + env.graph + '/repo-map', {
+            context: defaultDependencyContext(env),
+            ...(seeds.length ? { seeds } : {}),
+            maxFiles: Number(maxFilesSel.value) || 25,
+            maxTokens: 6000
+          }, env.signal);
+          if (env.signal.aborted || current !== mapVersion) return;
+          metaBar.textContent = `${data.algorithm || 'personalized-pagerank-v1'} · ${data.totalFiles ?? data.files?.length ?? 0} files · ${data.totalNodes ?? 0} nodes · ${data.totalEdges ?? 0} edges · ~${data.estimatedTokens ?? 0} tokens${data.truncated ? ' (bounded)' : ''}`;
+          const files = data.files || [];
+          if (!files.length) {
+            leftPane.replaceChildren(empty('No ranked files in this context', 'Switch to All Captured Files or select another analysis context.'));
+            return;
+          }
+          const maxScore = Math.max(0.0001, ...files.map(f => Number(f.score) || 0));
+          const list = el('div', 'repomap-file-list');
+          files.forEach((f, idx) => {
+            const cardBtn = btn('', () => loadSource(f.path, 1, 200), 'repomap-file-card' + (activePath === f.path ? ' is-selected' : ''));
+            cardBtn.dataset.path = f.path;
+            const head = append(el('div', 'repomap-file-head'),
+              el('span', 'repomap-rank', '#' + (f.rank ?? (idx + 1))),
+              el('span', 'repomap-path', f.path),
+              f.language ? el('span', 'badge', f.language) : null,
+              f.gapCount ? el('span', 'badge warn', f.gapCount + ' gap' + (f.gapCount === 1 ? '' : 's')) : null
+            );
+            const bar = el('div', 'repomap-score-track');
+            const fill = el('div', 'repomap-score-fill');
+            fill.style.width = Math.max(4, Math.round(((Number(f.score) || 0) / maxScore) * 100)) + '%';
+            bar.append(fill);
+            const meta = el('div', 'repomap-meta-row', `Score ${(Number(f.score) || 0).toFixed(4)} · In ${f.inDegree ?? 0} · Out ${f.outDegree ?? 0}` + (f.endpoints?.length ? ` · ${f.endpoints.length} endpoints` : ''));
+            cardBtn.append(head, bar, meta);
+            if (Array.isArray(f.declarations) && f.declarations.length) {
+              const decls = el('div', 'repomap-decl-chips');
+              f.declarations.slice(0, 6).forEach(d => decls.append(el('span', 'repomap-decl-chip', d.name || d.kind)));
+              cardBtn.append(decls);
+            }
+            list.append(cardBtn);
+          });
+          leftPane.replaceChildren(list);
+          if (data.renderedMap) {
+            const rawDetails = append(el('details', 'inventory-details'), el('summary', '', 'Rendered text RepoMap (LLM prompt format)'),
+              append(el('div', 'remedy-patch-actions'), btn('Copy rendered map', async () => {
+                try { await navigator.clipboard?.writeText(data.renderedMap); window.EvoToast?.push({ kind: 'ok', title: 'RepoMap copied' }); } catch (_) {}
+              }, 'button subtle')),
+              el('pre', 'repomap-rendered-pre', data.renderedMap));
+            leftPane.append(rawDetails);
+          }
+          if (!activePath && files[0]?.path) loadSource(files[0].path, 1, 200);
+        } catch (err) {
+          if (!env.signal.aborted && current === mapVersion) {
+            metaBar.textContent = '';
+            leftPane.replaceChildren(empty('RepoMap unavailable', err.message), btn('Browse All Captured Files', () => setMode('files'), 'button subtle'));
+          }
+        }
+      }
+
+      async function loadFiles(offset = 0) {
+        const current = ++fileVersion;
+        leftPane.replaceChildren(skeleton(4));
+        metaBar.textContent = 'Reading captured snapshot inventory…';
+        try {
+          const data = await api('/graphs/' + env.graph + '/captured-files', {
+            ...(fileSearch.value.trim() ? { query: fileSearch.value.trim() } : {}),
+            ...(langSel.value ? { language: langSel.value } : {}),
+            limit: 60,
+            offset
+          }, env.signal);
+          if (env.signal.aborted || current !== fileVersion) return;
+          if (data.languages && langSel.options.length <= 1) {
+            for (const [lang, count] of Object.entries(data.languages).sort((a, b) => b[1] - a[1])) {
+              langSel.append(new Option(`${lang} (${count})`, lang));
+            }
+          }
+          metaBar.textContent = `${data.matchedFiles ?? 0} matching files of ${data.totalFiles ?? 0} captured files`;
+          const files = data.files || [];
+          if (!files.length) {
+            leftPane.replaceChildren(empty('No captured files matched', 'Try clearing the path or language filter.'));
+            return;
+          }
+          const list = el('div', 'repomap-file-list');
+          files.forEach(f => {
+            const cardBtn = btn('', () => f.readable === false
+              ? window.EvoToast?.push({ kind: 'warn', title: 'Binary or unreadable file', detail: f.path })
+              : loadSource(f.path, 1, 200), 'repomap-file-card' + (activePath === f.path ? ' is-selected' : ''));
+            cardBtn.dataset.path = f.path;
+            const head = append(el('div', 'repomap-file-head'),
+              el('span', 'repomap-path', f.path),
+              f.language ? el('span', 'badge', f.language) : null,
+              f.readable === false ? el('span', 'badge warn', 'Binary') : null
+            );
+            const kb = f.size != null ? (f.size < 1024 ? f.size + ' B' : (f.size / 1024).toFixed(1) + ' KB') : '';
+            cardBtn.append(head, el('div', 'repomap-meta-row', [kb, f.sourceKind, f.digest ? M.shortDigest(f.digest) : null].filter(Boolean).join(' · ')));
+            list.append(cardBtn);
+          });
+          const pager = el('div', 'remedy-patch-actions');
+          if (offset > 0) pager.append(btn('← Previous', () => loadFiles(Math.max(0, offset - 60)), 'button subtle'));
+          if (offset + files.length < (data.matchedFiles || 0)) pager.append(btn('Next →', () => loadFiles(offset + 60), 'button subtle'));
+          leftPane.replaceChildren(list, pager);
+        } catch (err) {
+          if (!env.signal.aborted && current === fileVersion) {
+            metaBar.textContent = '';
+            leftPane.replaceChildren(empty('Captured files unavailable', err.message));
+          }
+        }
+      }
+
+      maxFilesSel.addEventListener('change', () => safe(loadMap));
+      langSel.addEventListener('change', () => safe(() => loadFiles(0)));
+      await loadMap();
       return node;
     },
     async structure(env) {
@@ -2368,19 +3025,58 @@
       reports.addEventListener('change', () => safe(load)); kinds.addEventListener('change', () => safe(load)); await load(); return node;
     },
     async spring(env) {
-      const node = card('Spring components & configuration', 'Explore detected components, injection points and HTTP endpoints for the selected context.');
-      const select = el('select'); select.setAttribute('aria-label', 'Spring evidence category');
-      for (const [value, title] of [['components', 'Components and injection'], ['endpoints', 'HTTP endpoints'], ['registration', 'Registration decisions'], ['configurations', 'Conditions, regions & witnesses']]) { const option = el('option', '', title); option.value = value; select.append(option); }
-      node.append(btn('Compare configurations →', () => loadTab('configurations'), 'text-button'));
-      node.append(append(el('div', 'toolbar'), select)); const results = el('div'); node.append(results); let version = 0;
+      const node = card('Spring Architecture & Configuration Space', 'Inspect detected Spring beans, injection points, HTTP endpoints, registration decisions, and symbolic configuration conditions.');
+      const springContexts = state.contexts.filter(c => c.identity.startsWith('spring-context:') || state.contextKinds?.get(c.identity) === 'spring.context');
+      const initialCtx = M.findPreferredSpringContext
+        ? M.findPreferredSpringContext(state.contexts, env.context, state.contextKinds)
+        : (springContexts[0]?.identity || env.context);
+      let activeCtx = initialCtx;
+      const ctxSelect = springContexts.length > 1
+        ? selectControl('Spring context', springContexts.map(c => [c.identity, state.contextLabels?.get(c.identity) || c.identity]), activeCtx)
+        : null;
+      const categories = [
+        ['components', 'Beans & Injection'],
+        ['endpoints', 'HTTP Endpoints'],
+        ['registration', 'Registration Decisions'],
+        ['configurations', 'Conditions & Config Space']
+      ];
+      const select = selectControl('Spring evidence category', categories, 'components');
+      const pills = el('div', 'chip-bar');
+      const syncPills = () => { [...pills.children].forEach(c => c.classList.toggle('active', c.dataset.cat === select.value)); };
+      for (const [value, title] of categories) {
+        const chip = btn(title, () => { select.value = value; syncPills(); return load(); }, 'chip' + (value === 'components' ? ' active' : ''));
+        chip.dataset.cat = value;
+        pills.append(chip);
+      }
+      const toolbar = append(el('div', 'toolbar'),
+        ctxSelect ? field('Spring context', ctxSelect) : null,
+        field('View', select),
+        btn('Compare configurations (MUST / MAY) →', () => loadTab('configurations'), 'button subtle'));
+      node.append(pills, toolbar);
+      const results = el('div'); node.append(results); let version = 0;
       async function load() {
+        syncPills();
         const current = ++version, category = select.value, target = el('div');
-        results.replaceChildren(empty('Loading…', 'Reading the selected Spring evidence.'));
+        results.replaceChildren(skeleton(3));
         try {
-          await pagedList(target, env, cursor => env.query(category === 'configurations' ? 'configurations' : 'spring', category === 'configurations' ? {} : { kinds: category === 'endpoints' ? ['ENDPOINT'] : category === 'registration' ? ['REGISTRATION_EVENT', 'REGISTRATION_TRANSITION'] : ['BEAN_PRODUCER', 'BEAN_DEFINITION_CANDIDATE', 'INJECTION_POINT', 'INJECTION_USE'] }, { size: 50, ...(cursor ? { cursor } : {}) }), item => row(item, () => inspectEntity(item, env)), 'No evidence available in this context', 'Try another context.');
+          const queryCtx = ctxSelect ? ctxSelect.value : activeCtx;
+          await pagedList(target, env, cursor => env.query(
+            category === 'configurations' ? 'configurations' : 'spring',
+            category === 'configurations' ? {} : {
+              kinds: category === 'endpoints'
+                ? ['ENDPOINT']
+                : category === 'registration'
+                  ? ['REGISTRATION_EVENT', 'REGISTRATION_TRANSITION']
+                  : ['BEAN_PRODUCER', 'BEAN_DEFINITION_CANDIDATE', 'INJECTION_POINT', 'INJECTION_USE']
+            },
+            { size: 50, ...(cursor ? { cursor } : {}) },
+            { context: queryCtx }
+          ), item => row(item, () => inspectEntity(item, { ...env, context: queryCtx, request: M.request(queryCtx) })),
+            'No Spring evidence available in this context', 'Select a Spring module context or inspect captured configurations.');
           if (!env.signal.aborted && current === version) results.replaceChildren(target);
         } catch (error) { if (!env.signal.aborted && current === version) results.replaceChildren(empty('Spring evidence unavailable', error.message), btn('Retry', load)); }
       }
+      if (ctxSelect) ctxSelect.addEventListener('change', () => { activeCtx = ctxSelect.value; safe(load); });
       select.addEventListener('change', () => safe(load)); await load(); return node;
     },
     async configurations(env) {
@@ -2690,15 +3386,23 @@
         const blastButton = btn('Blast radius', async () => {
           const id = selected.value;
           if (!id) return;
-          const impact = await env.query('impact', { subject: id }, { size: 50 }, request);
+          const payload = M.buildImpactQuery
+            ? M.buildImpactQuery(graphEnv.context, id, request)
+            : { request: { ...env.request, ...request, direction: 'INCOMING' }, arguments: { identity: id } };
+          const impact = await api('/graphs/' + env.graph + '/queries/impact', payload, env.signal);
           if (!active()) return;
           resetHighlight();
-          const affected = new Set([id, ...(impact.items || []).map(x => x.target || x.identity)]);
+          const affected = new Set([id]);
+          for (const entry of impact.items || []) {
+            if (Array.isArray(entry.vertices)) entry.vertices.forEach(v => affected.add(v));
+            else if (entry.target || entry.identity) affected.add(entry.target || entry.identity);
+          }
           cy.elements().not(':parent').addClass('dimmed');
           cy.nodes().filter(n => affected.has(n.id())).removeClass('dimmed').addClass('path-highlight');
           cy.edges().filter(e => affected.has(e.source().id()) && affected.has(e.target().id())).removeClass('dimmed').addClass('path-highlight');
+          const impactedCount = Math.max(0, affected.size - 1);
           readout.replaceChildren(el('strong', '', fullLabel(byId.get(id))),
-            el('span', '', (impact.items?.length || 0) + ' transitive impacted items highlighted'));
+            el('span', '', `${impactedCount} upstream impacted node${impactedCount === 1 ? '' : 's'} across ${impact.items?.length || 0} path${(impact.items?.length || 0) === 1 ? '' : 's'}`));
         });
         const askAiNode = btn('Ask AI', () => {
           const item = byId.get(selected.value);
@@ -3005,11 +3709,41 @@
           }));
           const summary = data.summary;
           const stats = el('div', 'stats');
-          for (const [label, value] of [
+          const statRows = [
             ['Entities', summary.analyzedEntities], ['Dependencies', summary.internalDependencies],
             ['Cyclic groups', summary.tangleCount], ['Max. transitive dependents', summary.maxBlastRadius]
-          ]) stats.append(append(el('div', 'stat'), el('span', '', label), el('strong', '', value)));
+          ];
+          if (summary.abstractness != null) statRows.push(['Abstractness (A)', Number(summary.abstractness).toFixed(2)]);
+          if (summary.distanceFromMainSequence != null) statRows.push(['Main-Sequence Dist. (D)', Number(summary.distanceFromMainSequence).toFixed(2)]);
+          if (summary.edgeSdpViolationCount != null) statRows.push(['SDP Violations', summary.edgeSdpViolationCount]);
+          for (const [label, value] of statRows) stats.append(append(el('div', 'stat'), el('span', '', label), el('strong', '', value)));
           body.append(stats);
+
+          if (Array.isArray(data.sdpViolations) && data.sdpViolations.length) {
+            const sdpCard = card('Stable Dependencies Principle (SDP) Violations', 'Edges pointing from a more stable package/component toward a less stable one (Δ instability > 0).');
+            sdpCard.append(table(['Stable Source (I)', 'Less Stable Target (I)', 'Delta (ΔI)', 'Inspect'], data.sdpViolations.slice(0, 25).map(v => append(el('tr'),
+              el('td', '', `${v.sourceLabel || v.source} (${Number(v.sourceInstability ?? 0).toFixed(2)})`),
+              el('td', '', `${v.targetLabel || v.target} (${Number(v.targetInstability ?? 0).toFixed(2)})`),
+              el('td', '', '+' + Number(v.delta ?? 0).toFixed(2)),
+              append(el('td'), btn('Open in graph', () => openGraph(v.source, sc), 'text-button'))))));
+            body.append(sdpCard);
+          }
+
+          if (Array.isArray(data.packageMetrics) && data.packageMetrics.length) {
+            const pkgCard = card('Package Stability & Main-Sequence Distance', 'Robert C. Martin metrics: Abstractness (A), Instability (I = Ce / (Ca + Ce)), and Distance from Main Sequence (D = |A + I - 1|).');
+            pkgCard.append(table(['Package / Group', 'Entities', 'A', 'I', 'D', 'Zone'], data.packageMetrics.slice(0, 30).map(pm => {
+              const zoneRaw = String(pm.zone || 'BALANCED');
+              const zoneCls = /PAIN/i.test(zoneRaw) ? 'is-pain' : /USELESS/i.test(zoneRaw) ? 'is-useless' : 'is-main';
+              return append(el('tr'),
+                el('td', '', pm.group),
+                el('td', '', `${pm.entityCount ?? 0} (${pm.abstractCount ?? 0} abs)`),
+                el('td', '', Number(pm.abstractness ?? 0).toFixed(2)),
+                el('td', '', Number(pm.instability ?? 0).toFixed(2)),
+                el('td', '', Number(pm.distance ?? 0).toFixed(2)),
+                append(el('td'), el('span', 'zone-badge ' + zoneCls, zoneRaw.replaceAll('_', ' '))));
+            })));
+            body.append(pkgCard);
+          }
 
           const cycles = card('Dependency cycles', 'Cycles in the observed graph can include dependencies from different configurations.');
           if (!data.tangles.length) cycles.append(el('p', 'small muted', 'No cycles observed in this projection.'));
@@ -3226,17 +3960,25 @@
   window.EvoWorkbench = {
     async searchSymbols(query) {
       if (!state.graph || !state.context) return [];
-      const res = await api('/graphs/' + state.graph + '/queries/symbols', {
+      const res = await api('/graphs/' + state.graph + '/queries/entities', {
         request: { ...M.request(state.context), scope: 'TYPE' },
-        arguments: { query },
+        arguments: { search: query },
         page: { size: 8 }
       });
-      return res?.items || [];
+      return (res?.items || []).map(item => ({
+        ...item,
+        label: M.label(item),
+        group: item.module && !String(item.module).includes('sha256:') ? item.module : (item.origin || 'Symbol')
+      }));
     },
     focusSymbol(sym) {
       if (!sym?.identity) return;
       state.graphFocus = { seed: sym.identity, scope: 'TYPE', context: state.context, relationshipKinds: relationshipKinds('TYPE') };
       return loadTab('graph');
+    },
+    openCapturedSource(path, startLine = 1, endLine = 200, highlightLine = null) {
+      if (!state.graph || !path) return;
+      return openCapturedSourceModal(state.graph, path, startLine, endLine, highlightLine);
     },
     askAiPrompt(prompt) {
       state.chatSeedPrompt = prompt || '';

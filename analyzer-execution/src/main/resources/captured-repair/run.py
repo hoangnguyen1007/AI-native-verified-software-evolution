@@ -406,23 +406,75 @@ def run_isolated_container(docker_bin: list[str], image: str) -> tuple[str, str]
         subprocess.run([*docker_bin, "rm", "--force", container], capture_output=True)
 
 
+def stage_gradle_home(gradle_home: Path, dst_home: Path, max_bytes: int = 512 * 1024 * 1024) -> None:
+    if not gradle_home.is_dir() or gradle_home.is_symlink():
+        raise FileNotFoundError(f"Gradle home cache missing or symlinked: {gradle_home}")
+    caches = gradle_home / "caches"
+    if caches.is_dir() and not caches.is_symlink():
+        dst_caches = dst_home / "caches"
+        copied = 0
+        for sub in ("modules-2", "jars-9"):
+            src_sub = caches / sub
+            if not src_sub.is_dir() or src_sub.is_symlink():
+                continue
+            for root, dirs, files in os.walk(src_sub, followlinks=False):
+                dirs[:] = [d for d in sorted(dirs) if not (Path(root) / d).is_symlink()]
+                rel = Path(root).relative_to(src_sub)
+                target_dir = dst_caches / sub / rel
+                target_dir.mkdir(parents=True, exist_ok=True)
+                for fname in sorted(files):
+                    sf = Path(root) / fname
+                    if sf.is_symlink() or not sf.is_file():
+                        continue
+                    copied += sf.stat().st_size
+                    if copied > max_bytes:
+                        raise ValueError(f"GRADLE_CACHE_STAGE_LIMIT_EXCEEDED: {copied} > {max_bytes}")
+                    shutil.copy2(sf, target_dir / fname)
+
+
+def detect_build_tool(repo_dir: Path, requested: str) -> str:
+    if requested != "auto":
+        return requested
+    has_pom = (repo_dir / "pom.xml").is_file()
+    has_gradle = (repo_dir / "build.gradle").is_file() or (repo_dir / "build.gradle.kts").is_file() or (repo_dir / "settings.gradle").is_file() or (repo_dir / "settings.gradle.kts").is_file()
+    if has_gradle and not has_pom:
+        return "gradle"
+    if has_pom:
+        return "maven"
+    if has_gradle:
+        return "gradle"
+    raise FileNotFoundError(f"No pom.xml or Gradle build script found in {repo_dir}")
+
+
 def main():
+    default_docker_ctx = "desktop-linux" if os.name == "nt" else ""
     parser = argparse.ArgumentParser(description="Isolated QEMU-in-Docker repair verifier")
     parser.add_argument("--repo", required=True, type=Path, help="Local repository checkout directory")
     parser.add_argument("--proposal", required=True, type=Path, help="Captured repair proposal or outcome JSON")
     parser.add_argument("--verification", required=True, type=Path, help="Verification result/plan JSON")
-    parser.add_argument("--m2", required=True, type=Path, help="Local Maven repository (~/.m2/repository)")
-    parser.add_argument("--maven-zip", required=True, type=Path, help="Pinned apache-maven-*-bin.zip")
+    parser.add_argument("--build-tool", default="auto", choices=["auto", "maven", "gradle"], help="Build tool (auto|maven|gradle)")
+    parser.add_argument("--m2", type=Path, help="Local Maven repository (~/.m2/repository)")
+    parser.add_argument("--maven-zip", type=Path, help="Pinned apache-maven-*-bin.zip")
+    parser.add_argument("--gradle-zip", type=Path, help="Pinned gradle-*-bin.zip")
+    parser.add_argument("--gradle-home", type=Path, help="Local Gradle user home (~/.gradle)")
+    parser.add_argument("--skip-tests", action="store_true", help="Skip test execution after test-compile/testClasses passes")
     parser.add_argument("--out", required=True, type=Path, help="Output capture directory")
     parser.add_argument("--base", default=DEFAULT_BASE_IMAGE, help="Pinned eclipse-temurin digest")
-    parser.add_argument("--docker-context", default="desktop-linux", help="Docker CLI context (empty for default)")
+    parser.add_argument("--docker-context", default=default_docker_ctx, help="Docker CLI context (empty for default)")
     args = parser.parse_args()
 
     if not re.fullmatch(r"(docker\.io/library/)?eclipse-temurin@sha256:[a-f0-9]{64}", args.base):
         raise ValueError("UNPINNED_BASE_IMAGE")
 
+    repo_src = args.repo.resolve()
+    build_tool = detect_build_tool(repo_src, args.build_tool)
+    if build_tool == "maven" and (args.m2 is None or args.maven_zip is None):
+        raise ValueError("MAVEN_TOOL_INPUTS_REQUIRED: --m2 and --maven-zip are required for Maven builds")
+    if build_tool == "gradle" and (args.gradle_zip is None or args.gradle_home is None):
+        raise ValueError("GRADLE_TOOL_INPUTS_REQUIRED: --gradle-zip and --gradle-home are required for Gradle builds")
+
     docker_bin = ["docker", "--context", args.docker_context] if args.docker_context else ["docker"]
-    if args.docker_context == "desktop-linux":
+    if os.name == "nt" and args.docker_context == "desktop-linux":
         endpoint = json.loads(docker_cmd(docker_bin, "context", "inspect", "desktop-linux"))[0]["Endpoints"]["docker"]["Host"]
         if endpoint != "npipe:////./pipe/dockerDesktopLinuxEngine":
             raise RuntimeError(f"LOCAL_DOCKER_DESKTOP_REQUIRED: {endpoint}")
@@ -439,10 +491,11 @@ def main():
     inputs_dir = ctx_dir / "inputs"
     cand_dir = inputs_dir / "candidate"
     m2_stage = inputs_dir / "m2"
+    gradle_stage = inputs_dir / "gradle-home"
     cand_dir.mkdir(parents=True, exist_ok=True)
     m2_stage.mkdir(parents=True, exist_ok=True)
+    gradle_stage.mkdir(parents=True, exist_ok=True)
 
-    repo_src = args.repo.resolve()
     for root, dirs, files in os.walk(repo_src):
         rel_root = Path(root).relative_to(repo_src)
         dirs[:] = [d for d in sorted(dirs) if d not in SKIP_TREE_DIRS and "/".join((*rel_root.parts, d)) not in SKIP_TREE_DIRS]
@@ -475,24 +528,36 @@ def main():
                 raise ValueError(f"Patched file digest mismatch for {rel_path}")
         target_file.write_bytes(updated_bytes)
 
-    stage_m2_subset(cand_dir, args.m2.resolve(), m2_stage)
+    mvn_pl_list = []
+    if build_tool == "maven":
+        stage_m2_subset(cand_dir, args.m2.resolve(), m2_stage)
+        mvn_pl_list = [
+            m for m in affected_modules
+            if m and m != "." and not m.startswith("module:") and (cand_dir / Path(*m.split("/")) / "pom.xml").is_file()
+        ]
+        if not mvn_pl_list:
+            seen_mods = set()
+            for edit in candidate["edits"]:
+                rel_parts = Path(*edit["path"].split("/")).parts
+                for end in range(len(rel_parts) - 1, 0, -1):
+                    candidate_mod = posixpath.join(*rel_parts[:end])
+                    if (cand_dir / Path(*rel_parts[:end]) / "pom.xml").is_file():
+                        seen_mods.add(candidate_mod)
+                        break
+            mvn_pl_list = sorted(seen_mods)
+    else:
+        stage_gradle_home(args.gradle_home.resolve(), gradle_stage)
 
     shutil.copy2(script_dir / "ClassDependencyCensus.java", inputs_dir / "ClassDependencyCensus.java")
-    mvn_pl_list = [
-        m for m in affected_modules
-        if m and m != "." and not m.startswith("module:") and (cand_dir / Path(*m.split("/")) / "pom.xml").is_file()
-    ]
-    if not mvn_pl_list:
-        seen_mods = set()
-        for edit in candidate["edits"]:
-            rel_parts = Path(*edit["path"].split("/")).parts
-            for end in range(len(rel_parts) - 1, 0, -1):
-                candidate_mod = posixpath.join(*rel_parts[:end])
-                if (cand_dir / Path(*rel_parts[:end]) / "pom.xml").is_file():
-                    seen_mods.add(candidate_mod)
-                    break
-        mvn_pl_list = sorted(seen_mods)
-    build_spec = f"EVO_BUILD_TOOL=maven\nEVO_MVN_PL={','.join(mvn_pl_list)}\n"
+    for mod in mvn_pl_list:
+        if not re.fullmatch(r"[A-Za-z0-9._/-]+", mod) or mod.startswith("-") or ".." in mod.split("/"):
+            raise ValueError(f"UNSAFE_MVN_MODULE_PATH: {mod}")
+    import shlex
+    build_spec = (
+        f"EVO_BUILD_TOOL={shlex.quote(build_tool)}\n"
+        f"EVO_MVN_PL={shlex.quote(','.join(mvn_pl_list))}\n"
+        f"EVO_SKIP_TESTS={shlex.quote('true' if args.skip_tests else 'false')}\n"
+    )
     (inputs_dir / "build-spec.env").write_text(build_spec, encoding="utf-8", newline="\n")
 
     manifest_entries = []
@@ -508,7 +573,12 @@ def main():
     for fname in ("Dockerfile", "guest-init.sh"):
         raw = (script_dir / fname).read_text(encoding="utf-8")
         (ctx_dir / fname).write_bytes(normalize_eol(raw))
-    shutil.copy2(args.maven_zip.resolve(), ctx_dir / "apache-maven-bin.zip")
+    tool_dist = ctx_dir / "tool-dist"
+    tool_dist.mkdir(parents=True, exist_ok=True)
+    if args.maven_zip is not None:
+        shutil.copy2(args.maven_zip.resolve(), tool_dist / "maven.zip")
+    if args.gradle_zip is not None:
+        shutil.copy2(args.gradle_zip.resolve(), tool_dist / "gradle.zip")
 
     iid_file = out_dir / "image-id"
     subprocess.run(
@@ -517,7 +587,7 @@ def main():
         check=True,
         timeout=900,
     )
-    (ctx_dir / "apache-maven-bin.zip").unlink(missing_ok=True)
+    shutil.rmtree(tool_dist, ignore_errors=True)
     image_id = iid_file.read_text(encoding="utf-8").strip()
     if not re.fullmatch(r"sha256:[a-f0-9]{64}", image_id):
         raise RuntimeError(f"IMAGE_ID_UNAVAILABLE: {image_id}")
@@ -566,16 +636,17 @@ def main():
         raise ValueError(f"Census digest mismatch: {census_canonical_digest} vs {census_digest_line}")
 
     (out_dir / "class-census.json").write_bytes(census_raw)
+    normalized_base = args.base[len("docker.io/library/"):] if args.base.startswith("docker.io/library/") else args.base
     capture_doc = {
         "version": VERSION,
         "proposal": proposal_id,
         "plan": plan_id,
         "inputs": inputs_digest,
         "controls": controls,
-        "base": args.base if args.base.startswith("eclipse-temurin@") else DEFAULT_BASE_IMAGE,
+        "base": normalized_base if normalized_base.startswith("eclipse-temurin@") else DEFAULT_BASE_IMAGE,
         "image": image_id,
         "container": container_id,
-        "buildTool": "maven",
+        "buildTool": build_tool,
         "modules": affected_modules if affected_modules else ["."],
         "compileExit": compile_exit,
         "testExit": test_exit,
@@ -588,6 +659,8 @@ def main():
         "checks": checks,
         "serial": sha256_bytes(serial_text.encode("utf-8")),
     }
+    if args.skip_tests:
+        capture_doc["testsSkipped"] = True
     capture_bytes = canonical_json(capture_doc).encode("utf-8")
     (out_dir / "capture.json").write_bytes(capture_bytes)
     capture_digest = sha256_bytes(capture_bytes)

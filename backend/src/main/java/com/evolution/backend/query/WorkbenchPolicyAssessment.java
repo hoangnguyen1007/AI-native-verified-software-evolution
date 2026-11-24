@@ -44,9 +44,13 @@ final class WorkbenchPolicyAssessment {
 
     record SuggestedPolicy(String yaml, String summary, List<String> detectedLayers, Scope scope) {}
 
-    private static final Pattern WEB_PKG = Pattern.compile("^(?:web|controller|controllers|rest|api|endpoint|endpoints|resource|resources|http|graphql|grpc)$");
-    private static final Pattern DOMAIN_PKG = Pattern.compile("^(?:domain|core|model|models|entity|entities|application|usecase|usecases|business)$");
-    private static final Pattern DATA_PKG = Pattern.compile("^(?:repository|repositories|repo|dao|persistence|data|db|store|storage|infra|infrastructure|adapter|adapters)$");
+    private static final int MAX_PACKAGE_PAGES = 20; // 20 * 50 = 1,000 packages
+    private static final Pattern WEB_PKG = Pattern.compile("^(?:web|controller|controllers|rest|api|endpoint|endpoints|resource|resources|http|graphql|grpc|presenter|presenters|inbound|driving)$");
+    private static final Pattern APP_PKG = Pattern.compile("^(?:application|usecase|usecases|interactor|interactors|service|services|business)$");
+    private static final Pattern DOMAIN_PKG = Pattern.compile("^(?:domain|core|model|models|entity|entities|aggregate|aggregates)$");
+    private static final Pattern PORT_PKG = Pattern.compile("^(?:port|ports|spi)$");
+    private static final Pattern ADAPTER_PKG = Pattern.compile("^(?:adapter|adapters|outbound|driven|client|clients)$");
+    private static final Pattern DATA_PKG = Pattern.compile("^(?:repository|repositories|repo|dao|persistence|data|db|store|storage|infra|infrastructure|framework|frameworks)$");
 
     static Scope scope(KnowledgeGraph graph, KnowledgeGraph.Context context) {
         return graph.evidence(context.evidence()).filter(evidence -> evidence.family().equals("spring.context"))
@@ -79,11 +83,14 @@ final class WorkbenchPolicyAssessment {
     static SuggestedPolicy suggestPolicy(ArchitectureQueryService queries, KnowledgeGraph.Context context, Scope scope, Runnable checkpoint) {
         checkpoint.run();
         var webPkgs = new TreeSet<String>();
+        var appPkgs = new TreeSet<String>();
         var domainPkgs = new TreeSet<String>();
+        var portPkgs = new TreeSet<String>();
+        var adapterPkgs = new TreeSet<String>();
         var dataPkgs = new TreeSet<String>();
         var allProjectPkgs = new TreeSet<String>();
         Optional<String> cursor = Optional.empty();
-        for (int pageIndex = 0; pageIndex < 4; pageIndex++) {
+        for (int pageIndex = 0; pageIndex < MAX_PACKAGE_PAGES; pageIndex++) {
             checkpoint.run();
             var pkgReq = new Request(queries.graph().identity(), context.identity(), Scope.PACKAGE, Projection.BOUNDED_UNION,
                     Direction.OUTGOING, Set.of("graph.depends-on"), new Population(Set.of(), Set.of(), Set.of("PROJECT"), Set.of()),
@@ -93,19 +100,22 @@ final class WorkbenchPolicyAssessment {
                 String name = entity.qualifiedName().or(entity::canonicalName).orElse("").trim();
                 if (name.isEmpty()) continue;
                 allProjectPkgs.add(name);
-                String[] segments = name.toLowerCase(Locale.ROOT).split("\\.");
-                String leaf = segments[segments.length - 1];
-                if (WEB_PKG.matcher(leaf).matches()) webPkgs.add(name + ".**");
-                else if (DOMAIN_PKG.matcher(leaf).matches()) domainPkgs.add(name + ".**");
-                else if (DATA_PKG.matcher(leaf).matches()) dataPkgs.add(name + ".**");
+                classifyPackage(name, webPkgs, appPkgs, domainPkgs, portPkgs, adapterPkgs, dataPkgs);
             }
             if (pkgs.continuation().isEmpty()) break;
             cursor = pkgs.continuation();
         }
+        String style = detectArchitectureStyle(webPkgs, appPkgs, domainPkgs, portPkgs, adapterPkgs, dataPkgs);
         var layers = new ArrayList<String>();
         if (!webPkgs.isEmpty()) layers.add("Web / API (" + webPkgs.size() + ")");
+        if (!appPkgs.isEmpty()) layers.add("Application / Use-Case (" + appPkgs.size() + ")");
         if (!domainPkgs.isEmpty()) layers.add("Domain / Core (" + domainPkgs.size() + ")");
-        if (!dataPkgs.isEmpty()) layers.add("Data / Persistence (" + dataPkgs.size() + ")");
+        if (!portPkgs.isEmpty()) layers.add("Ports / SPI (" + portPkgs.size() + ")");
+        if (!adapterPkgs.isEmpty()) layers.add("Adapters (" + adapterPkgs.size() + ")");
+        if (!dataPkgs.isEmpty()) layers.add("Data / Infrastructure (" + dataPkgs.size() + ")");
+
+        var infraPkgs = new TreeSet<String>(dataPkgs);
+        infraPkgs.addAll(adapterPkgs);
 
         var yaml = new StringBuilder();
         yaml.append("schema: architecture-policy:v1\n");
@@ -129,24 +139,22 @@ final class WorkbenchPolicyAssessment {
             yaml.append("    within: {origins: [PROJECT]}\n");
         }
         if (!webPkgs.isEmpty() && !dataPkgs.isEmpty()) {
-            yaml.append("  - id: auto.web-no-direct-persistence\n");
-            yaml.append("    version: \"1\"\n");
-            yaml.append("    kind: FORBIDDEN_DEPENDENCY\n");
-            yaml.append("    severity: WARNING\n");
-            yaml.append("    scope: TYPE\n");
-            yaml.append("    relationships: [graph.depends-on]\n");
-            yaml.append("    from: {packages: [").append(yamlList(webPkgs, 24)).append("], origins: [PROJECT]}\n");
-            yaml.append("    to: {packages: [").append(yamlList(dataPkgs, 24)).append("], origins: [PROJECT]}\n");
+            appendForbidden(yaml, "auto.web-no-direct-persistence", "WARNING", webPkgs, dataPkgs);
         }
         if (!domainPkgs.isEmpty() && !webPkgs.isEmpty()) {
-            yaml.append("  - id: auto.domain-no-web-leakage\n");
-            yaml.append("    version: \"1\"\n");
-            yaml.append("    kind: FORBIDDEN_DEPENDENCY\n");
-            yaml.append("    severity: ERROR\n");
-            yaml.append("    scope: TYPE\n");
-            yaml.append("    relationships: [graph.depends-on]\n");
-            yaml.append("    from: {packages: [").append(yamlList(domainPkgs, 24)).append("], origins: [PROJECT]}\n");
-            yaml.append("    to: {packages: [").append(yamlList(webPkgs, 24)).append("], origins: [PROJECT]}\n");
+            appendForbidden(yaml, "auto.domain-no-web-leakage", "ERROR", domainPkgs, webPkgs);
+        }
+        if (!domainPkgs.isEmpty() && !infraPkgs.isEmpty()) {
+            appendForbidden(yaml, "auto.domain-no-infrastructure-leakage", "ERROR", domainPkgs, infraPkgs);
+        }
+        if (!domainPkgs.isEmpty() && !appPkgs.isEmpty()) {
+            appendForbidden(yaml, "auto.domain-no-application-leakage", "WARNING", domainPkgs, appPkgs);
+        }
+        if (!appPkgs.isEmpty() && !webPkgs.isEmpty()) {
+            appendForbidden(yaml, "auto.application-no-web-leakage", "WARNING", appPkgs, webPkgs);
+        }
+        if (!portPkgs.isEmpty() && !adapterPkgs.isEmpty()) {
+            appendForbidden(yaml, "auto.ports-no-adapter-leakage", "ERROR", portPkgs, adapterPkgs);
         }
         String candidate = yaml.toString();
         var check = new PolicyCompiler().compile(candidate.getBytes(StandardCharsets.UTF_8),
@@ -156,8 +164,48 @@ final class WorkbenchPolicyAssessment {
         }
         String summary = layers.isEmpty()
                 ? "Generated cycle checks across " + allProjectPkgs.size() + " project packages."
-                : "Detected architectural layers: " + String.join(", ", layers) + ".";
+                : "Detected " + style + " (" + allProjectPkgs.size() + " packages): " + String.join(", ", layers) + ".";
         return new SuggestedPolicy(candidate, summary, List.copyOf(layers), scope);
+    }
+
+    private static void classifyPackage(String pkg, Set<String> webPkgs, Set<String> appPkgs, Set<String> domainPkgs,
+                                        Set<String> portPkgs, Set<String> adapterPkgs, Set<String> dataPkgs) {
+        String[] segments = pkg.toLowerCase(Locale.ROOT).split("\\.");
+        // First recognize explicit Hexagonal port/adapter boundaries before sub-layer names (e.g. adapter.persistence).
+        for (int i = segments.length - 1; i >= 0; i--) {
+            String seg = segments[i];
+            if (PORT_PKG.matcher(seg).matches()) { portPkgs.add(pkg + ".**"); return; }
+            if (ADAPTER_PKG.matcher(seg).matches()) { adapterPkgs.add(pkg + ".**"); return; }
+        }
+        // Walk from most specific (leaf) back toward root for Clean/Layered packages.
+        for (int i = segments.length - 1; i >= 0; i--) {
+            String seg = segments[i];
+            if (WEB_PKG.matcher(seg).matches()) { webPkgs.add(pkg + ".**"); return; }
+            if (DATA_PKG.matcher(seg).matches()) { dataPkgs.add(pkg + ".**"); return; }
+            if (APP_PKG.matcher(seg).matches()) { appPkgs.add(pkg + ".**"); return; }
+            if (DOMAIN_PKG.matcher(seg).matches()) { domainPkgs.add(pkg + ".**"); return; }
+        }
+    }
+
+    private static String detectArchitectureStyle(Set<String> webPkgs, Set<String> appPkgs, Set<String> domainPkgs,
+                                                  Set<String> portPkgs, Set<String> adapterPkgs, Set<String> dataPkgs) {
+        if (!portPkgs.isEmpty() && !adapterPkgs.isEmpty()) return "Hexagonal Architecture";
+        if (!domainPkgs.isEmpty() && !appPkgs.isEmpty() && (!webPkgs.isEmpty() || !dataPkgs.isEmpty() || !adapterPkgs.isEmpty()))
+            return "Clean Architecture";
+        if ((!webPkgs.isEmpty() && !dataPkgs.isEmpty()) || (!domainPkgs.isEmpty() && (!webPkgs.isEmpty() || !dataPkgs.isEmpty())))
+            return "Layered Architecture";
+        return "Modular Architecture";
+    }
+
+    private static void appendForbidden(StringBuilder yaml, String id, String severity, Set<String> from, Set<String> to) {
+        yaml.append("  - id: ").append(id).append("\n");
+        yaml.append("    version: \"1\"\n");
+        yaml.append("    kind: FORBIDDEN_DEPENDENCY\n");
+        yaml.append("    severity: ").append(severity).append("\n");
+        yaml.append("    scope: TYPE\n");
+        yaml.append("    relationships: [graph.depends-on]\n");
+        yaml.append("    from: {packages: [").append(yamlList(from, 24)).append("], origins: [PROJECT]}\n");
+        yaml.append("    to: {packages: [").append(yamlList(to, 24)).append("], origins: [PROJECT]}\n");
     }
 
     private static String yamlList(Set<String> items, int limit) {

@@ -14,12 +14,15 @@ import java.util.*;
 
 /** Passive metadata/artifact acquisition; target lifecycles and target-declared repositories stay inert. */
 public final class MavenScan {
+    public static final long DEFAULT_DEPENDENCY_TOTAL_BYTES = 2_147_483_648L;
     public static final List<java.net.URI> DEFAULT_REPOSITORIES=List.of(
             java.net.URI.create("https://repo.maven.apache.org/maven2/"),
-            java.net.URI.create("https://dl.google.com/dl/android/maven2/"));
+            java.net.URI.create("https://dl.google.com/dl/android/maven2/"),
+            java.net.URI.create("https://plugins.gradle.org/m2/"),
+            java.net.URI.create("https://jitpack.io/"));
     public static final BuildModelPolicy POLICY=new BuildModelPolicy(List.of(),List.of(),Map.of(),10_000_000,1000,128);
     public static MavenPomResolutionPolicy pomPolicy(List<java.net.URI> repositories){
-        return new MavenPomResolutionPolicy(1000,4_000_000,64_000_000,64,repositories,5000,15000);
+        return new MavenPomResolutionPolicy(4096,4_000_000,256_000_000L,64,repositories,5000,15000);
     }
     public static Optional<MavenBuildModelResolution> model(RepositoryAcquisitionResult acquisition,Path cache){
         prepareCache(cache,DEFAULT_REPOSITORIES);
@@ -50,7 +53,7 @@ public final class MavenScan {
         public Inputs{ledgers=List.copyOf(ledgers);}
     }
     public static Inputs inputs(RepositoryAcquisitionResult acquisition,Optional<MavenBuildModelResolution> build,Path cache,Optional<PlatformInput> platform){
-        return inputs(acquisition,models(acquisition,cache),cache,platform,new DependencyAcquisitionPolicy(1024,64_000_000,256_000_000,64,DEFAULT_REPOSITORIES,5000,15000,1));
+        return inputs(acquisition,models(acquisition,cache),cache,platform,new DependencyAcquisitionPolicy(4096,64_000_000,DEFAULT_DEPENDENCY_TOTAL_BYTES,64,DEFAULT_REPOSITORIES,5000,15000,1,8));
     }
     public static Inputs inputs(RepositoryAcquisitionResult acquisition,List<MavenBuildModelResolution> builds,Path cache,Optional<PlatformInput> platform,DependencyAcquisitionPolicy acquisitionPolicy){
         return inputs(acquisition,builds,cache,platform,acquisitionPolicy,Map.of());
@@ -76,7 +79,7 @@ public final class MavenScan {
         var conflicts=new ArrayList<com.evolution.analysis.ingestion.IngestionEvidence.Issue>();
         var conflictedSets=new HashSet<UniversalSourceIngestion.SourceSet>();var conflictedPoms=new HashSet<MavenCoordinate>();
         for(var resolved:builds){
-        var request=new ClasspathResolutionRequest(resolved.request(),resolved.model(),new ClasspathResolutionPolicy(1024,2048,4_000_000,64_000_000,256_000_000,64));
+        var request=new ClasspathResolutionRequest(resolved.request(),resolved.model(),new ClasspathResolutionPolicy(4096,8192,4_000_000,64_000_000,Math.max(DEFAULT_DEPENDENCY_TOTAL_BYTES,acquisitionPolicy.maxTotalBytes()),64));
         var acquired=new MavenDependencyArtifactResolver(cache).resolve(request,acquisitionPolicy);var classpath=acquired.classpath();
         for(var manifest:classpath.manifests())if(manifest.sourceSet()!=SourcePlanModel.Kind.CUSTOM){
             var requested=resolved.model().modules().stream().filter(m->m.module().identity().equals(manifest.module())).flatMap(m->m.effectivePom().stream())

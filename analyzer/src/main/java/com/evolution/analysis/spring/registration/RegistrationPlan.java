@@ -74,7 +74,9 @@ public final class RegistrationPlan {
                 && lowering.inventoryIdentity().equals(inventory.identity())
                 && lowering.issues().stream().noneMatch(i -> i.reason() == ConditionProcessing.Reason.BUILD_CONTEXT_MISMATCH);
         if (!contextMatches) issue(problems, BUILD_CONTEXT_MISMATCH, "plan-inputs", null, container.bootstrapEvidence());
-        if (!inventory.frameworkEvidence().acceptedConditionFragment(this.events.stream().anyMatch(e -> e.kind() == RegistrationEvent.Kind.AUTO_CONFIGURATION)))
+        var validationMode = lowering.validationMode();
+        boolean bootEvents = this.events.stream().anyMatch(e -> e.kind() == RegistrationEvent.Kind.AUTO_CONFIGURATION);
+        if (!inventory.frameworkEvidence().allows(bootEvents, validationMode))
             issue(problems, VERSION_FRAGMENT_NOT_VALIDATED, "framework", null, container.bootstrapEvidence());
         checkEvidence(problems, container.bootstrapEvidence(), null);
         Map<BeanDefinitionCandidate.Identity, BeanDefinitionCandidate> candidateTable = new HashMap<>();
@@ -94,7 +96,15 @@ public final class RegistrationPlan {
             switch (obligation.primaryMechanism()) {
                 case "spring.condition.profile", "spring.condition.property" -> knownPhases.put(occurrence.identity(), RegistrationEvent.RequiredPhase.ORDINARY);
                 case "spring.condition.bean-state" -> knownPhases.put(occurrence.identity(), RegistrationEvent.RequiredPhase.REGISTER_BEAN);
-                default -> { }
+                default -> {
+                    if (validationMode == SpringFrameworkEvidence.ValidationMode.COMPATIBLE_FAMILY_OR_SOURCE_SCOPED
+                            && obligation.classification() == SpringMechanismInventory.Classification.UNCLASSIFIED) {
+                        var beanPred = BeanConditionLowering.predicate(inventory, lowering, occurrence.identity());
+                        knownPhases.put(occurrence.identity(), beanPred.isPresent()
+                                ? RegistrationEvent.RequiredPhase.REGISTER_BEAN
+                                : RegistrationEvent.RequiredPhase.ORDINARY);
+                    }
+                }
             }
         });
         var eventReferences = new HashMap<ContentDigest, List<RegistrationEvent.Identity>>();
@@ -153,7 +163,9 @@ public final class RegistrationPlan {
             var condition = Optional.ofNullable(loweringRows.get(obligation.identity())).flatMap(ConditionEvidenceLowering.Row::occurrence);
             ObligationStatus status;
             if (!references.isEmpty()) status = ObligationStatus.PLANNED;
-            else if (condition.isPresent() && obligation.primaryMechanism().startsWith("spring.condition.")) {
+            else if (condition.isPresent() && (obligation.primaryMechanism().startsWith("spring.condition.")
+                    || validationMode == SpringFrameworkEvidence.ValidationMode.COMPATIBLE_FAMILY_OR_SOURCE_SCOPED
+                    && attachedConditions.contains(condition.orElseThrow().identity()))) {
                 status = attachedConditions.contains(condition.orElseThrow().identity()) ? ObligationStatus.CONDITION_RETAINED : ObligationStatus.GAP;
                 if (status == ObligationStatus.GAP) issue(problems, CONDITION_ATTACHMENT_REQUIRED, obligation.identity().value(), null, condition.orElseThrow().declarationEvidenceKey());
             }

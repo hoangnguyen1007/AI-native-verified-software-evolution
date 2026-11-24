@@ -188,13 +188,13 @@ final class CapturedRepairVerificationTest {
                         "diagnosisInput", diagInput));
                 assertEquals("WITHHELD", legacyProp.get("status"));
 
-                // 3. repair-options returns 5 AST recipes + enriched AI offer.
+                // 3. repair-options returns 14 AST recipes + enriched AI offer.
                 var opts = postApi(baseApi, baselineGraphId, baselineReportId, "repair-options", Map.of(
                         "identity", fController.identity().value(),
                         "bundle", fController.bundle().identity().value(),
                         "context", baselineReport.evaluation().context(),
                         "diagnosisInput", diagInput));
-                assertEquals(5, GraphJson.array(opts.get("recipes")).size());
+                assertEquals(14, GraphJson.array(opts.get("recipes")).size());
 
                 // 4. RECIPE: java.remove-unused-injected-field
                 var propInjected = postApi(baseApi, baselineGraphId, baselineReportId, "repair-proposal", Map.of(

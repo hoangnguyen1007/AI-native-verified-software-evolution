@@ -16,6 +16,8 @@ public final class ConditionEvidenceLowering {
     private static final java.util.regex.Pattern WRITTEN_ANNOTATION=java.util.regex.Pattern.compile("^\\s*@\\s*([\\p{javaJavaIdentifierPart}.]+)");
     private static final List<String> CONDITION_TYPES=SpringMechanismCatalog.entries().stream().filter(e->e.id().startsWith("spring.condition."))
             .flatMap(e->e.annotationTypes().stream()).distinct().sorted().toList();
+    private static final List<String> NON_CONDITION_SPRING_TYPES=SpringMechanismCatalog.entries().stream().filter(e->!e.id().startsWith("spring.condition."))
+            .flatMap(e->e.annotationTypes().stream()).distinct().sorted().toList();
     public record Limits(int maxLoweredRows, int maxMetadataCharacters, int maxProfileDepth) {
         public Limits { if (maxLoweredRows < 1 || maxMetadataCharacters < 1 || maxProfileDepth < 1) throw new IllegalArgumentException("Positive lowering limits required"); }
         public static Limits conservative() { return new Limits(10000, 16384, 256); }
@@ -53,6 +55,7 @@ public final class ConditionEvidenceLowering {
     public static final class Result {
         private final ContentDigest input, inventory;
         private final ConditionExpression.Semantics semantics;
+        private final SpringFrameworkEvidence.ValidationMode validationMode;
         private final List<Row> rows;
         private final List<ConditionOccurrence> occurrences;
         private final List<ConditionProcessing.Issue> issues;
@@ -60,12 +63,24 @@ public final class ConditionEvidenceLowering {
         private final List<SourceCandidate> sourceCandidates;
         Result(ContentDigest input, SpringMechanismInventory inventory, SpringBuildContext build,
                List<Row> rows, List<ConditionOccurrence> occurrences, Collection<ConditionProcessing.Issue> issues) {
+            this(input, inventory, build, rows, occurrences, issues, SpringFrameworkEvidence.ValidationMode.STRICT_R0_PINNED);
+        }
+        Result(ContentDigest input, SpringMechanismInventory inventory, SpringBuildContext build,
+               List<Row> rows, List<ConditionOccurrence> occurrences, Collection<ConditionProcessing.Issue> issues,
+               SpringFrameworkEvidence.ValidationMode validationMode) {
             this.input = input; this.inventory = inventory.identity(); semantics = ConditionEvidenceLowering.semantics(inventory.frameworkEvidence());
+            this.validationMode = Objects.requireNonNull(validationMode);
             this.rows = List.copyOf(rows); this.occurrences = List.copyOf(occurrences);
             this.issues = issues.stream().distinct().sorted(Comparator.comparing(ConditionProcessing.Issue::identity)).toList();
-            gaps = ConditionProcessing.gaps(PROVIDER, input, build, this.issues);
+            var combinedGaps = new TreeSet<>(ConditionProcessing.gaps(PROVIDER, input, build, this.issues));
+            if (validationMode == SpringFrameworkEvidence.ValidationMode.COMPATIBLE_FAMILY_OR_SOURCE_SCOPED
+                    && !inventory.frameworkEvidence().acceptedConditionFragment(true)) {
+                combinedGaps.add(compatGap(build, input, inventory.frameworkEvidence()));
+            }
+            gaps = List.copyOf(combinedGaps);
             var candidates=new ArrayList<SourceCandidate>();
-            for(var raw:inventory.rawObservations())if(raw.kind()==RawKind.ANNOTATION_USE&&raw.resolvedTarget().isEmpty()) {
+            for(var raw:inventory.rawObservations())if(raw.kind()==RawKind.ANNOTATION_USE&&raw.resolvedTarget().isEmpty()
+                    && (validationMode == SpringFrameworkEvidence.ValidationMode.STRICT_R0_PINNED || !inventory.frameworkEvidence().artifacts().isEmpty())) {
                 var types=sourceCandidateTypes(raw);
                 if(!types.isEmpty())build.sourceDigest(raw.document()).ifPresent(digest->candidates.add(new SourceCandidate(raw.identity(),types,"NOT_ESTABLISHED",false,
                         new ConditionEvidence.Source(raw.document(),digest,raw.span(),raw.ordinal()))));
@@ -75,6 +90,7 @@ public final class ConditionEvidenceLowering {
         public ContentDigest inputIdentity() { return input; }
         public ContentDigest inventoryIdentity() { return inventory; }
         public ConditionExpression.Semantics semantics() { return semantics; }
+        public SpringFrameworkEvidence.ValidationMode validationMode() { return validationMode; }
         public List<Row> rows() { return rows; }
         public List<ConditionOccurrence> occurrences() { return occurrences; }
         public List<ConditionProcessing.Issue> issues() { return issues; }
@@ -96,9 +112,22 @@ public final class ConditionEvidenceLowering {
                     if (expressions.putIfAbsent(node.identity(), node.view()) == null && !node.children().isEmpty()) pending.push(node.children().iterator());
                 }
             }
-            return Map.ofEntries(Map.entry("schema", "spring-condition-lowering-v1"), Map.entry("provider", PROVIDER), Map.entry("inputIdentity", input),
-                    Map.entry("inventoryIdentity", inventory), Map.entry("semantics", semantics), Map.entry("rows", rows), Map.entry("expressions", List.copyOf(expressions.values())),
-                    Map.entry("issues", issues), Map.entry("capabilityGaps", gaps), Map.entry("coverage", coverage()), Map.entry("sourceCandidates",sourceCandidates));
+            var entries = new LinkedHashMap<String, Object>();
+            entries.put("schema", "spring-condition-lowering-v1");
+            entries.put("provider", PROVIDER);
+            entries.put("inputIdentity", input);
+            entries.put("inventoryIdentity", inventory);
+            entries.put("semantics", semantics);
+            if (validationMode != SpringFrameworkEvidence.ValidationMode.STRICT_R0_PINNED) {
+                entries.put("validationMode", validationMode.name());
+            }
+            entries.put("rows", rows);
+            entries.put("expressions", List.copyOf(expressions.values()));
+            entries.put("issues", issues);
+            entries.put("capabilityGaps", gaps);
+            entries.put("coverage", coverage());
+            entries.put("sourceCandidates", sourceCandidates);
+            return Collections.unmodifiableMap(entries);
         }
     }
     private ConditionEvidenceLowering() {}
@@ -107,10 +136,24 @@ public final class ConditionEvidenceLowering {
     }
     public static Result lower(SpringBuildContext build, SpringMechanismInventory inventory,
                                List<BuildObservation> observations, Limits limits) {
+        return lower(build, inventory, observations, limits, SpringFrameworkEvidence.ValidationMode.STRICT_R0_PINNED);
+    }
+    public static Result lower(SpringBuildContext build, SpringMechanismInventory inventory,
+                               List<BuildObservation> observations, Limits limits,
+                               SpringFrameworkEvidence.ValidationMode validationMode) {
         Objects.requireNonNull(build); Objects.requireNonNull(inventory); Objects.requireNonNull(limits);
+        Objects.requireNonNull(validationMode);
         observations = ContractChecks.sortedDistinct(observations, Comparator.comparing(BuildObservation::identity), "build condition observations");
-        var input = ConditionIdentitySupport.digest(Map.of("provider", PROVIDER, "build", build.identity(),
-                "inventory", inventory.identity(), "observations", observations, "limits", limits));
+        var inputMap = new LinkedHashMap<String, Object>();
+        inputMap.put("provider", PROVIDER);
+        inputMap.put("build", build.identity());
+        inputMap.put("inventory", inventory.identity());
+        inputMap.put("observations", observations);
+        inputMap.put("limits", limits);
+        if (validationMode != SpringFrameworkEvidence.ValidationMode.STRICT_R0_PINNED) {
+            inputMap.put("validationMode", validationMode.name());
+        }
+        var input = ConditionIdentitySupport.digest(inputMap);
         var semantics = semantics(inventory.frameworkEvidence());
         boolean matchingBuild = inventory.analysis().equals(build.analysisIdentity()) && build.containsFrameworkEvidence(inventory.frameworkEvidence());
         Map<ContentDigest, RawObservation> raw = new HashMap<>(); inventory.rawObservations().forEach(r -> raw.put(r.identity(), r));
@@ -126,21 +169,47 @@ public final class ConditionEvidenceLowering {
                 rows.add(new Row(obligation.identity(), obligation.rawObservationIdentity(), Outcome.NOT_A_CONDITION, Optional.empty())); continue;
             }
             var observation = raw.get(obligation.rawObservationIdentity());
+            boolean compatSourceScoped = validationMode == SpringFrameworkEvidence.ValidationMode.COMPATIBLE_FAMILY_OR_SOURCE_SCOPED
+                    && inventory.frameworkEvidence().artifacts().isEmpty();
+            boolean sourceSpanValid = observation.kind() == RawKind.ANNOTATION_USE
+                    && observation.span().isPresent()
+                    && build.sourceDigest(observation.document()).isPresent()
+                    && (observation.evidenceState() == EvidenceState.VERIFIED
+                        || (compatSourceScoped && observation.evidenceState() == EvidenceState.UNRESOLVED));
+            if (compatSourceScoped
+                    && !condition && unclassified
+                    && sourceSpanValid
+                    && sourceCandidateTypes(observation).isEmpty()
+                    && isKnownNonConditionSpringAnnotation(observation)) {
+                rows.add(new Row(obligation.identity(), observation.identity(), Outcome.NOT_A_CONDITION, Optional.empty())); continue;
+            }
             ConditionEvidence evidence = build.sourceDigest(observation.document())
                     .<ConditionEvidence>map(digest -> new ConditionEvidence.Source(observation.document(), digest, observation.span(), observation.ordinal()))
                     .orElseGet(() -> new ConditionEvidence.Derived(List.of(inventory.identity(), observation.identity()), PROVIDER, "unavailable-source"));
             ConditionProcessing.Reason reason = null;
             ConditionExpression expression = null;
-            String type = exactAnnotationType(observation, inventory.frameworkEvidence());
+            String rawType = exactAnnotationType(observation, inventory.frameworkEvidence());
+            boolean sourceScoped = false;
+            if (compatSourceScoped
+                    && sourceSpanValid
+                    && (rawType == null || unclassified)) {
+                var candidates = sourceCandidateTypes(observation);
+                if (candidates.size() == 1) {
+                    rawType = candidates.getFirst();
+                    sourceScoped = true;
+                }
+            }
+            final String type = rawType;
+            boolean effectiveUnclassified = unclassified && !sourceScoped;
             if (!matchingBuild) reason = BUILD_CONTEXT_MISMATCH;
             else if (build.sourceDigest(observation.document()).isEmpty()) reason = SOURCE_EVIDENCE_MISMATCH;
             else if (observation.span().isEmpty()) reason = MISSING_SOURCE_SPAN;
-            else if (unclassified) reason = !sourceCandidateTypes(observation).isEmpty()&&observation.resolvedTarget().isEmpty()
+            else if (effectiveUnclassified) reason = !sourceCandidateTypes(observation).isEmpty()&&observation.resolvedTarget().isEmpty()
                     ? ANNOTATION_TYPE_EVIDENCE_MISSING : POTENTIAL_CONDITION_UNCLASSIFIED;
             else if (++attempted > limits.maxLoweredRows() || observation.spelling().length() > limits.maxMetadataCharacters()) reason = LOWERING_LIMIT;
             else if (obligation.secondaryTags().contains("spring.annotation.composed")) reason = ANNOTATION_COMPOSITION_UNSUPPORTED;
-            else if (type == null || observation.kind() != RawKind.ANNOTATION_USE || observation.evidenceState() != EvidenceState.VERIFIED) reason = ANNOTATION_METADATA_UNSUPPORTED;
-            else if (!inventory.frameworkEvidence().acceptedConditionFragment(type.startsWith("org.springframework.boot."))) reason = VERSION_FRAGMENT_NOT_VALIDATED;
+            else if (type == null || observation.kind() != RawKind.ANNOTATION_USE || (!sourceScoped && observation.evidenceState() != EvidenceState.VERIFIED)) reason = ANNOTATION_METADATA_UNSUPPORTED;
+            else if (!inventory.frameworkEvidence().allows(type.startsWith("org.springframework.boot."), validationMode)) reason = VERSION_FRAGMENT_NOT_VALIDATED;
             else {
                 try {
                     if (type.equals("org.springframework.context.annotation.Profile")) {
@@ -180,7 +249,10 @@ public final class ConditionEvidenceLowering {
                             else expression = ConditionExpression.atom(semantics, new ConditionExpression.Build(buildPredicate(type).orElseThrow(),
                                     observation.identity().value(), build.identity(), supplied.getFirst().value(), proof));
                         }
-                    } else if (obligation.primaryMechanism().equals("spring.condition.bean-state")) reason = BEAN_STATE_REQUIRED;
+                    } else if (obligation.primaryMechanism().equals("spring.condition.bean-state")
+                            || type.equals("org.springframework.boot.autoconfigure.condition.ConditionalOnBean")
+                            || type.equals("org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean")
+                            || type.equals("org.springframework.boot.autoconfigure.condition.ConditionalOnSingleCandidate")) reason = BEAN_STATE_REQUIRED;
                     else reason = OPAQUE_CONDITION;
                 } catch (IllegalArgumentException exception) {
                     // Only the bounded decoder/IR construction runs here. Never expose target text in diagnostics.
@@ -201,12 +273,36 @@ public final class ConditionEvidenceLowering {
         for (var observation : observations) if (!raw.containsKey(observation.rawObservationIdentity())) {
             issues.add(new ConditionProcessing.Issue(BUILD_EVIDENCE_CONFLICT, observation.identity().value(), Optional.empty(), List.of(observation.evidence())));
         }
-        return new Result(input, inventory, build, rows, occurrences, issues);
+        return new Result(input, inventory, build, rows, occurrences, issues, validationMode);
     }
-    private static List<String> sourceCandidateTypes(RawObservation observation) {
+    private static CapabilityGapRecord compatGap(SpringBuildContext build, ContentDigest input, SpringFrameworkEvidence framework) {
+        String code = framework.artifacts().isEmpty() ? "FRAMEWORK_JARS_UNRESOLVED_SOURCE_SCOPED" : "VERSION_FAMILY_COMPATIBLE_UNPINNED";
+        var observation = com.evolution.analysis.evidence.ProviderObservationReference.create(PROVIDER, "spring.condition.compatibility", input, ContentDigest.sha256Utf8(code));
+        var subject = com.evolution.analysis.evidence.EvidenceSubject.observation(observation.identity());
+        var req = new com.evolution.analysis.evidence.EvidenceRequirement(
+                com.evolution.analysis.evidence.EvidenceRequirement.Kind.DEPENDENCY_ARTIFACT,
+                "spring.condition." + code.toLowerCase(Locale.ROOT).replace('_', '-'),
+                List.of(subject),
+                com.evolution.analysis.evidence.EvidenceRequirement.AuthorizationClass.PASSIVE,
+                List.of("Framework JAR bytes are not pinned to the R0 tuple; condition lowering ran in compatible/source-scoped mode."));
+        return CapabilityGapRecord.create(ConditionProcessing.GAP_CATALOG,
+                com.evolution.analysis.evidence.EvidenceContext.forSnapshot(build.snapshotIdentity()),
+                PROVIDER, "spring.condition-processing", code, subject, List.of(),
+                List.of(observation), List.of(req), List.of(),
+                List.of(new com.evolution.analysis.evidence.AffectedOutput(
+                        com.evolution.analysis.evidence.AffectedOutput.Kind.ANALYSIS_COVERAGE, "spring.condition-processing")),
+                List.of(), List.of(),
+                List.of("Compatible Spring version family or source-scoped analysis is not a substitute for pinned R0 artifact hashes."));
+    }
+    static List<String> sourceCandidateTypes(RawObservation observation) {
         var name=WRITTEN_ANNOTATION.matcher(observation.spelling());
         if(!name.find())return List.of();String written=name.group(1);
         return CONDITION_TYPES.stream().filter(type->written.equals(type)||written.indexOf('.')<0&&type.endsWith("."+written)).toList();
+    }
+    private static boolean isKnownNonConditionSpringAnnotation(RawObservation observation) {
+        var name=WRITTEN_ANNOTATION.matcher(observation.spelling());
+        if(!name.find())return false;String written=name.group(1);
+        return NON_CONDITION_SPRING_TYPES.stream().anyMatch(type->written.equals(type)||written.indexOf('.')<0&&type.endsWith("."+written));
     }
     private static Optional<ConditionExpression.BuildPredicate> buildPredicate(String type) {
         return switch (type) {

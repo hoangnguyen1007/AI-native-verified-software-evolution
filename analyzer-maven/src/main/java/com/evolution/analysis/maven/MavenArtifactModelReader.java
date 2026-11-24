@@ -12,19 +12,25 @@ import java.net.URISyntaxException;
 import java.util.*;
 import org.apache.maven.model.Model;
 import org.apache.maven.model.Parent;
+import org.apache.maven.model.Profile;
+import org.apache.maven.model.Relocation;
 import org.apache.maven.model.Repository;
 import org.apache.maven.model.building.*;
 import org.apache.maven.model.profile.DefaultProfileActivationContext;
 import org.apache.maven.model.profile.DefaultProfileSelector;
+import org.apache.maven.model.profile.ProfileActivationContext;
 import org.apache.maven.model.profile.ProfileSelector;
+import org.apache.maven.model.profile.activation.ProfileActivator;
 import org.apache.maven.model.profile.activation.PropertyProfileActivator;
 import org.apache.maven.model.resolution.ModelResolver;
 import org.apache.maven.model.resolution.UnresolvableModelException;
 
 /** Effective external artifact descriptors over already bounded cache/supplied POM bytes. */
 final class MavenArtifactModelReader {
+    private static final int MAX_RELOCATION_HOPS = 8;
     private final LocalArtifactCache cache;
     private final BuildModelPolicy policy;
+    private final Optional<String> configuredJdk;
     private final Map<MavenCoordinate, DescriptorOutcome> descriptors = new HashMap<>();
     private final Set<ArtifactRecord> validatedPoms = new HashSet<>();
 
@@ -42,22 +48,25 @@ final class MavenArtifactModelReader {
     MavenArtifactModelReader(LocalArtifactCache cache, BuildModelPolicy policy) {
         this.cache = Objects.requireNonNull(cache);
         this.policy = Objects.requireNonNull(policy);
+        this.configuredJdk = configuredJdkVersion(policy);
     }
 
     DescriptorOutcome descriptor(MavenCoordinate coordinate) {
-        return descriptors.computeIfAbsent(coordinate, this::build);
+        return descriptors.computeIfAbsent(coordinate, key -> build(key, Set.of(), new Counter()));
     }
 
-    private DescriptorOutcome build(MavenCoordinate expected) {
+    private DescriptorOutcome build(MavenCoordinate expected, Set<MavenCoordinate> relocationChain, Counter reads) {
         var issues = new ArrayList<Issue>();
         var used = new TreeMap<String, Evidence>();
         var tolerantInBuild = new HashSet<MavenCoordinate>();
-        Counter reads = new Counter();
         try {
             var root = acquire(expected);
-            var key = new DescriptorCacheKey(expected, policy, root.record().contentDigest());
-            var cached = DESCRIPTOR_CACHE.get(key);
-            if (cached != null && currentInputs(root.record(), cached.inputs())) return cached.outcome();
+            DescriptorCacheKey key = null;
+            if (relocationChain.isEmpty()) {
+                key = new DescriptorCacheKey(expected, policy, root.record().contentDigest());
+                var cached = DESCRIPTOR_CACHE.get(key);
+                if (cached != null && currentInputs(root.record(), cached.inputs())) return cached.outcome();
+            }
             Source source = source(expected, root, issues, used, reads, tolerantInBuild);
 
             var properties = new Properties();
@@ -105,8 +114,14 @@ final class MavenArtifactModelReader {
             }
             if (model.getDistributionManagement() != null
                     && model.getDistributionManagement().getRelocation() != null) {
-                issues.add(issue(Reason.RELOCATION_UNSUPPORTED, expected.notation(), Requirement.ARTIFACT_POM, used));
-                return new DescriptorOutcome(Optional.empty(), issues);
+                var relocated = resolveRelocation(
+                        expected, model.getDistributionManagement().getRelocation(),
+                        relocationChain, reads, issues, used);
+                if (relocationChain.isEmpty() && key != null && relocated.descriptor().isPresent()
+                        && !reads.exceeded && relocated.issues().isEmpty() && tolerantInBuild.isEmpty()) {
+                    DESCRIPTOR_CACHE.put(key, new CachedDescriptor(relocated, List.copyOf(reads.inputs.values())));
+                }
+                return relocated;
             }
             if (!result.getProblems().isEmpty()) {
                 issues.add(issue(Reason.POM_MODEL_WARNING, expected.notation(), Requirement.ARTIFACT_POM, used));
@@ -121,8 +136,9 @@ final class MavenArtifactModelReader {
                             .toList();
             String packaging = Objects.toString(model.getPackaging(), "jar");
             var outcome = new DescriptorOutcome(
-                    Optional.of(new Descriptor(packaging, dependencies, managed, List.copyOf(used.values()))), issues);
-            if (!reads.exceeded && issues.isEmpty() && tolerantInBuild.isEmpty()) {
+                    Optional.of(new Descriptor(packaging, dependencies, managed, List.copyOf(used.values()), Optional.empty())),
+                    issues);
+            if (relocationChain.isEmpty() && key != null && !reads.exceeded && issues.isEmpty() && tolerantInBuild.isEmpty()) {
                 DESCRIPTOR_CACHE.put(key, new CachedDescriptor(outcome, List.copyOf(reads.inputs.values())));
             }
             return outcome;
@@ -137,6 +153,55 @@ final class MavenArtifactModelReader {
             }
         }
         return new DescriptorOutcome(Optional.empty(), issues);
+    }
+
+    private DescriptorOutcome resolveRelocation(
+            MavenCoordinate expected,
+            Relocation relocation,
+            Set<MavenCoordinate> relocationChain,
+            Counter reads,
+            List<Issue> issues,
+            Map<String, Evidence> used) {
+        String group = blank(relocation.getGroupId()) ? expected.groupId() : relocation.getGroupId().trim();
+        String artifact = blank(relocation.getArtifactId()) ? expected.artifactId() : relocation.getArtifactId().trim();
+        String version = blank(relocation.getVersion()) ? expected.version() : relocation.getVersion().trim();
+        MavenCoordinate target;
+        try {
+            target = new MavenCoordinate(group, artifact, version);
+        } catch (IllegalArgumentException invalid) {
+            issues.add(issue(Reason.RELOCATION_UNSUPPORTED, expected.notation(), Requirement.ARTIFACT_POM, used));
+            return new DescriptorOutcome(Optional.empty(), issues);
+        }
+        var nextChain = new HashSet<MavenCoordinate>(relocationChain);
+        nextChain.add(expected);
+        if (nextChain.contains(target) || nextChain.size() > MAX_RELOCATION_HOPS) {
+            issues.add(issue(Reason.RELOCATION_UNSUPPORTED, expected.notation(), Requirement.ARTIFACT_POM, used));
+            return new DescriptorOutcome(Optional.empty(), issues);
+        }
+        DescriptorOutcome targetOutcome = build(target, nextChain, reads);
+        if (targetOutcome.descriptor().isEmpty()) {
+            issues.add(issue(Reason.RELOCATION_UNSUPPORTED, expected.notation(), Requirement.ARTIFACT_POM, used));
+            return new DescriptorOutcome(Optional.empty(), issues);
+        }
+        var td = targetOutcome.descriptor().orElseThrow();
+        var mergedEvidence = new TreeMap<String, Evidence>(used);
+        for (var ev : td.evidence()) {
+            mergedEvidence.putIfAbsent(ev.logicalId(), ev);
+        }
+        var mergedIssues = new ArrayList<Issue>(issues);
+        mergedIssues.addAll(targetOutcome.issues());
+        MavenCoordinate finalTarget = td.relocatedTo().orElse(target);
+        var descriptor = new Descriptor(
+                td.packaging(),
+                td.dependencies(),
+                td.managedDependencies(),
+                List.copyOf(mergedEvidence.values()),
+                Optional.of(finalTarget));
+        return new DescriptorOutcome(Optional.of(descriptor), mergedIssues);
+    }
+
+    private static boolean blank(String value) {
+        return value == null || value.isBlank();
     }
 
     private LocalArtifactCache.Material acquire(MavenCoordinate coordinate) throws ModelRejected {
@@ -194,13 +259,16 @@ final class MavenArtifactModelReader {
             var activation = profile.getActivation();
             boolean explicit = policy.activeProfiles().contains(profile.getId())
                     || policy.inactiveProfiles().contains(profile.getId());
-            if (!explicit && activation != null
-                    && (activation.getJdk() != null || activation.getOs() != null || activation.getFile() != null)) {
-                issues.add(issue(
-                        Reason.UNSUPPORTED_PROFILE_ACTIVATION,
-                        coordinate.notation(),
-                        Requirement.ANALYSIS_CONFIGURATION,
-                        used));
+            if (!explicit && activation != null) {
+                boolean unsupportedJdk = activation.getJdk() != null
+                        && (configuredJdk.isEmpty() || !isValidJdkActivationSpec(activation.getJdk()));
+                if (unsupportedJdk || activation.getOs() != null || activation.getFile() != null) {
+                    issues.add(issue(
+                            Reason.UNSUPPORTED_PROFILE_ACTIVATION,
+                            coordinate.notation(),
+                            Requirement.ANALYSIS_CONFIGURATION,
+                            used));
+                }
             }
         }
         boolean tolerant = validateDuplicateDependencies(raw.getDependencies(), coordinate, issues, used);
@@ -297,7 +365,9 @@ final class MavenArtifactModelReader {
         cachedBuilder = new DefaultModelBuilderFactory() {
             @Override
             protected ProfileSelector newProfileSelector() {
-                var selector = new DefaultProfileSelector().addProfileActivator(new PropertyProfileActivator());
+                var selector = new DefaultProfileSelector()
+                        .addProfileActivator(new PropertyProfileActivator())
+                        .addProfileActivator(new DeterministicJdkProfileActivator(configuredJdk));
                 return (profiles, activationContext, collector) -> {
                     var isolated = new DefaultProfileActivationContext()
                             .setActiveProfileIds(policy.activeProfiles())
@@ -312,6 +382,179 @@ final class MavenArtifactModelReader {
             }
         }.newInstance();
         return cachedBuilder;
+    }
+
+    private static Optional<String> configuredJdkVersion(BuildModelPolicy policy) {
+        var props = policy.userProperties();
+        for (String key : List.of("java.version", "jdk.version", "maven.compiler.release", "maven.compiler.target")) {
+            String value = props.get(key);
+            if (value != null && !value.isBlank() && parseJavaVersion(value) != null) {
+                return Optional.of(value.trim());
+            }
+        }
+        return Optional.empty();
+    }
+
+    static boolean isValidJdkActivationSpec(String rawSpec) {
+        if (rawSpec == null || rawSpec.isBlank()) return false;
+        String spec = rawSpec.trim();
+        if (spec.startsWith("!")) spec = spec.substring(1).trim();
+        if (spec.isEmpty()) return false;
+        if (spec.indexOf('[') >= 0 || spec.indexOf(']') >= 0 || spec.indexOf('(') >= 0 || spec.indexOf(')') >= 0) {
+            return parseRanges(spec) != null;
+        }
+        return parseJavaVersion(spec) != null;
+    }
+
+    static boolean matchesJdkActivation(String configuredJdk, String rawSpec) {
+        if (configuredJdk == null || configuredJdk.isBlank() || rawSpec == null || rawSpec.isBlank()) return false;
+        int[] actual = parseJavaVersion(configuredJdk.trim());
+        if (actual == null) return false;
+        String spec = rawSpec.trim();
+        boolean negated = spec.startsWith("!");
+        if (negated) spec = spec.substring(1).trim();
+        if (spec.isEmpty()) return false;
+        boolean matched;
+        if (spec.indexOf('[') >= 0 || spec.indexOf(']') >= 0 || spec.indexOf('(') >= 0 || spec.indexOf(')') >= 0) {
+            var ranges = parseRanges(spec);
+            if (ranges == null) return false;
+            matched = false;
+            for (var range : ranges) {
+                if (range.contains(actual)) {
+                    matched = true;
+                    break;
+                }
+            }
+        } else {
+            int[] expected = parseJavaVersion(spec);
+            if (expected == null) return false;
+            // Prefix/major match: "17" matches "17", "17.0.9"; "1.8" matches "1.8.0_392" and "8".
+            matched = true;
+            for (int i = 0; i < expected.length; i++) {
+                int a = i < actual.length ? actual[i] : 0;
+                if (a != expected[i]) {
+                    matched = false;
+                    break;
+                }
+            }
+        }
+        return negated ? !matched : matched;
+    }
+
+    private record VersionRange(int[] lower, boolean lowerInclusive, int[] upper, boolean upperInclusive) {
+        boolean contains(int[] version) {
+            if (lower != null) {
+                int cmp = compareVersions(version, lower);
+                if (lowerInclusive ? cmp < 0 : cmp <= 0) return false;
+            }
+            if (upper != null) {
+                int cmp = compareVersions(version, upper);
+                if (upperInclusive ? cmp > 0 : cmp >= 0) return false;
+            }
+            return true;
+        }
+    }
+
+    private static List<VersionRange> parseRanges(String spec) {
+        var ranges = new ArrayList<VersionRange>();
+        int pos = 0;
+        int n = spec.length();
+        while (pos < n) {
+            while (pos < n && (spec.charAt(pos) == ' ' || spec.charAt(pos) == ',')) pos++;
+            if (pos >= n) break;
+            char open = spec.charAt(pos);
+            if (open != '[' && open != '(') return null;
+            int closeIdx = -1;
+            for (int i = pos + 1; i < n; i++) {
+                char c = spec.charAt(i);
+                if (c == ']' || c == ')') {
+                    closeIdx = i;
+                    break;
+                }
+            }
+            if (closeIdx < 0) return null;
+            char close = spec.charAt(closeIdx);
+            String body = spec.substring(pos + 1, closeIdx).trim();
+            int comma = body.indexOf(',');
+            if (comma < 0) {
+                if (open != '[' || close != ']' || body.isEmpty()) return null;
+                int[] exact = parseJavaVersion(body);
+                if (exact == null) return null;
+                ranges.add(new VersionRange(exact, true, exact, true));
+            } else {
+                String loStr = body.substring(0, comma).trim();
+                String hiStr = body.substring(comma + 1).trim();
+                int[] lo = loStr.isEmpty() ? null : parseJavaVersion(loStr);
+                int[] hi = hiStr.isEmpty() ? null : parseJavaVersion(hiStr);
+                if ((!loStr.isEmpty() && lo == null) || (!hiStr.isEmpty() && hi == null)) return null;
+                if (lo == null && hi == null) return null;
+                ranges.add(new VersionRange(lo, open == '[', hi, close == ']'));
+            }
+            pos = closeIdx + 1;
+        }
+        return ranges.isEmpty() ? null : ranges;
+    }
+
+    private static int[] parseJavaVersion(String raw) {
+        if (raw == null || raw.isBlank()) return null;
+        String clean = raw.trim();
+        int dash = clean.indexOf('-');
+        if (dash > 0) clean = clean.substring(0, dash);
+        int plus = clean.indexOf('+');
+        if (plus > 0) clean = clean.substring(0, plus);
+        String[] rawParts = clean.split("[._]");
+        if (rawParts.length == 0 || rawParts.length > 6) return null;
+        int[] parsed = new int[rawParts.length];
+        for (int i = 0; i < rawParts.length; i++) {
+            if (rawParts[i].isEmpty()) return null;
+            try {
+                int val = Integer.parseInt(rawParts[i]);
+                if (val < 0) return null;
+                parsed[i] = val;
+            } catch (NumberFormatException invalid) {
+                return null;
+            }
+        }
+        // Normalize legacy 1.5..1.8 -> 5..8 so range comparisons like [11,) vs 1.8 work accurately.
+        if (parsed.length >= 2 && parsed[0] == 1 && parsed[1] >= 1) {
+            int[] normalized = new int[parsed.length - 1];
+            System.arraycopy(parsed, 1, normalized, 0, normalized.length);
+            return normalized;
+        }
+        return parsed;
+    }
+
+    private static int compareVersions(int[] left, int[] right) {
+        int max = Math.max(left.length, right.length);
+        for (int i = 0; i < max; i++) {
+            int l = i < left.length ? left[i] : 0;
+            int r = i < right.length ? right[i] : 0;
+            if (l != r) return Integer.compare(l, r);
+        }
+        return 0;
+    }
+
+    private static final class DeterministicJdkProfileActivator implements ProfileActivator {
+        private final Optional<String> configuredJdk;
+
+        private DeterministicJdkProfileActivator(Optional<String> configuredJdk) {
+            this.configuredJdk = configuredJdk;
+        }
+
+        @Override
+        public boolean isActive(Profile profile, ProfileActivationContext context, ModelProblemCollector problems) {
+            if (!presentInConfig(profile, context, problems) || configuredJdk.isEmpty()) {
+                return false;
+            }
+            return matchesJdkActivation(configuredJdk.orElseThrow(), profile.getActivation().getJdk());
+        }
+
+        @Override
+        public boolean presentInConfig(Profile profile, ProfileActivationContext context, ModelProblemCollector problems) {
+            return profile != null && profile.getActivation() != null
+                    && profile.getActivation().getJdk() != null
+                    && !profile.getActivation().getJdk().isBlank();
+        }
     }
 
     private final class CacheResolver implements ModelResolver {
@@ -443,15 +686,20 @@ final class MavenArtifactModelReader {
             String packaging,
             List<Dependency> dependencies,
             List<Dependency> managedDependencies,
-            List<Evidence> evidence) {
+            List<Evidence> evidence,
+            Optional<MavenCoordinate> relocatedTo) {
         Descriptor(List<Dependency> dependencies, List<Dependency> managedDependencies, List<Evidence> evidence) {
-            this("jar", dependencies, managedDependencies, evidence);
+            this("jar", dependencies, managedDependencies, evidence, Optional.empty());
+        }
+        Descriptor(String packaging, List<Dependency> dependencies, List<Dependency> managedDependencies, List<Evidence> evidence) {
+            this(packaging, dependencies, managedDependencies, evidence, Optional.empty());
         }
         Descriptor {
             packaging = packaging == null || packaging.isBlank() ? "jar" : packaging;
             dependencies = List.copyOf(dependencies);
             managedDependencies = List.copyOf(managedDependencies);
             evidence = List.copyOf(evidence);
+            relocatedTo = Objects.requireNonNull(relocatedTo);
         }
     }
 

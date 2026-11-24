@@ -376,6 +376,7 @@ public final class EvoApp {
         @Option(names="--control-report") String controlReport;
         @Option(names="--reanalyze",description="Run passive candidate reanalysis before verifying") boolean reanalyze;
         @Option(names="--with-control",description="Include mutation control reanalysis when --reanalyze is set") boolean withControl;
+        @Option(names="--run-isolated",description="Execute configured isolated QEMU-in-Docker runner on miss") boolean runIsolated;
 
         @Override public Integer call() throws Exception {
             if (port<1 || port>65535) throw new IllegalArgumentException("INVALID_PORT");
@@ -394,10 +395,11 @@ public final class EvoApp {
                     if (resolvedControl==null && reData.get("controlReport") instanceof String ctr) resolvedControl=new ContentDigest(ctr).value();
                 }
             }
-            var arguments=new TreeMap<String,String>(Map.of("identity",parsed.finding(),"bundle",parsed.bundle(),
+            var arguments=new TreeMap<String,Object>(Map.of("identity",parsed.finding(),"bundle",parsed.bundle(),
                     "context",parsed.context(),"diagnosisInput",parsed.diagnosisInput(),"proposal",parsed.identity()));
             if (resolvedCandidate!=null) arguments.put("candidateReport",resolvedCandidate);
             if (resolvedControl!=null) arguments.put("controlReport",resolvedControl);
+            if (runIsolated) arguments.put("runIsolated",Boolean.TRUE);
             var result=loopbackPost(port,"/api/v1/graphs/"+parsed.graph()+"/reports/"+parsed.report()+"/repair-verification",
                     Map.of("arguments",arguments),1_048_576,root);
             if (result.containsKey("_httpStatus")) {
@@ -815,13 +817,18 @@ public final class EvoApp {
         @Option(names="--build",defaultValue="auto",paramLabel="auto|required|off",description="Automatically build Maven/Gradle roots through the registered Hyper-V executor")String buildMode;
         @Option(names="--build-profile",defaultValue="default",paramLabel="NAME",description="Operator-registered Hyper-V build profile")String buildProfile;
         @Option(names="--mode",defaultValue="full",paramLabel="full|fast",description="Analysis profile: full deep evidence or fast architecture / Chế độ phân tích")String mode="full";
-        @Option(names="--telemetry",description="Print per-stage millisecond telemetry to stderr / Ghi thời gian từng giai đoạn")boolean telemetry;
+        @Option(names="--fast",description="Fast architecture profile (shorthand for --mode fast) / Chế độ kiến trúc nhanh")boolean fastFlag;
+        @Option(names="--spring-sat",description="Enable automatic multi-config Spring SAT evaluation / Bật đánh giá SAT đa cấu hình Spring")boolean springSat;
+        @Option(names="--force",description="Bypass incremental Java/polyglot syntax caches / Bỏ qua cache phân tích tăng dần")boolean force;
+        @Option(names="--telemetry",description="Print per-stage millisecond and cache telemetry to stderr / Ghi thời gian và cache từng giai đoạn")boolean telemetry;
         @Option(names="--artifact-repository",paramLabel="HTTPS_URI",description="Explicit credential-free dependency repository; repeatable") List<java.net.URI> artifactRepositories=new ArrayList<>();
         public Integer call()throws Exception{
             long tScanStart=System.nanoTime();
             r.validate();if(matched(r,"--graph","--context","--request","--args","--other","--policy","--view","--scope","--world","--assignment","--incoming","--kinds","--limit","--depth","--cursor"))throw new InputFailure("QUERY_FLAGS_NOT_APPLICABLE");
             com.evolution.backend.analysis.AnalysisMode analysisMode;
             try{analysisMode=com.evolution.backend.analysis.AnalysisMode.parse(mode);}catch(IllegalArgumentException invalid){throw new InputFailure("INVALID_ANALYSIS_MODE");}
+            if(fastFlag&&matched(r,"--mode")&&!analysisMode.isFastArchitecture())throw new InputFailure("ANALYSIS_MODE_CONFLICT");
+            if(fastFlag)analysisMode=com.evolution.backend.analysis.AnalysisMode.FAST_ARCHITECTURE;
             boolean fast=analysisMode.isFastArchitecture();
             if(offline&&!artifactRepositories.isEmpty())throw new InputFailure("OFFLINE_REPOSITORY_CONFLICT");
             if(prepareDependencies&&(javaCapture!=null||semanticStore!=null||buildMode.equals("required")))throw new InputFailure("DEPENDENCY_PREPARATION_MODE_CONFLICT");
@@ -918,7 +925,7 @@ public final class EvoApp {
             var finalLanguageEvidence=languageEvidence;
             var polyglotFuture=java.util.concurrent.CompletableFuture.supplyAsync(()->{
                 try(var roIntake=new RepositoryIntake(r.storage().root.resolve("acquisition"),true)){
-                    return new PolyglotScan().run(intakeRevision,roIntake,readiness,polyglotContext,finalLanguageEvidence,r.storage().root.resolve("semantic-work"),polyglotCancel,verifiedPolyglotBytes,fast);
+                    return new PolyglotScan().run(intakeRevision,roIntake,readiness,polyglotContext,finalLanguageEvidence,r.storage().root.resolve("semantic-work"),polyglotCancel,verifiedPolyglotBytes::get,fast,path->false,force?Optional.empty():Optional.of(r.storage().root.resolve("incremental-cache")));
                 }catch(Exception failure){
                     asyncFailed.set(true);
                     throw new java.util.concurrent.CompletionException(failure);
@@ -944,7 +951,7 @@ public final class EvoApp {
             var availablePlatforms=new TreeMap<Integer,com.evolution.analysis.frontend.PlatformInput>();platformViews.forEach((target,view)->view.platform().ifPresent(value->availablePlatforms.put(target,value)));
             var platformLedgers=additionalPlatforms.isEmpty()?List.<com.evolution.analysis.evidence.EvidenceAcquisitionLedger>of():List.of(com.evolution.analysis.evidence.CapabilityGapNormalizer.normalize(
                     EvidenceContext.forSnapshot(acquisition.snapshot().orElseThrow().identity()),com.evolution.analysis.evidence.EvidenceNormalizationInput.builder().platformResults(additionalPlatforms).build()));
-            var depPolicy=new com.evolution.analysis.dependency.DependencyAcquisitionPolicy(1024,64_000_000,256_000_000,64,repositories,5000,15000,1);
+            var depPolicy=new com.evolution.analysis.dependency.DependencyAcquisitionPolicy(4096,64_000_000,MavenScan.DEFAULT_DEPENDENCY_TOTAL_BYTES,64,repositories,5000,15000,offline?0:1,8);
             var mavenBase=MavenScan.inputs(acquisition,models,cachePath,platform.platform(),depPolicy,availablePlatforms);
             Optional<Path> resolvedAndroidSdk=androidSdk!=null?Optional.of(Workspace.safe(resolve(androidSdk))):com.evolution.backend.analysis.GradleScan.discoverAndroidSdk();
             var mavenInputs=com.evolution.backend.analysis.GradleScan.augment(mavenBase,acquisition,gradleModel,cachePath,platform.platform(),depPolicy,availablePlatforms,resolvedAndroidSdk);
@@ -952,13 +959,15 @@ public final class EvoApp {
             r.stage="analysis";
             // Supply fallback evidence without Builder.defaultPlatform's Maven user-property overrides.
             // Declared Maven release/encoding must keep their authority over CLI defaults.
+            var javaCacheStats=new java.util.concurrent.atomic.AtomicLong[]{new java.util.concurrent.atomic.AtomicLong(),new java.util.concurrent.atomic.AtomicLong()};
             var policy=new UniversalArchitecturePipeline.Policy(
-                    buildPolicy,decodePolicy,frontend(r),JavaParserFrontend.PROVIDER,
+                    buildPolicy,decodePolicy,frontend(r,force,javaCacheStats),JavaParserFrontend.PROVIDER,
                     mavenInputs.resolutions(),platform.platform(),Optional.of(new MavenBuildModelProvider()),mavenInputs.externalPoms(),MavenScan.POLICY,
                     100_000,1_000,UniversalArchitecturePipeline.TruthEvaluationMode.AUTO,Map.of(),Optional.empty(),Optional.empty(),com.evolution.analysis.spring.truth.TruthRegionEvaluation.Limits.conservative())
                     .withReadiness(readiness.identity())
                     .withPrecomputedBuild(mavenInputs.externalPoms().isEmpty()?gradleModel.orElse(null):null);
             if(fast)policy=policy.withAnalysisOptions(Map.of("analysis.profile","FAST_ARCHITECTURE"));
+            if(springSat)policy=policy.withSpringSatMode(UniversalArchitecturePipeline.SpringSatMode.AUTO_MULTI_CONFIG_SAT);
             progress(r,"[3/4] Analyzing source contexts / Spring and captured native language evidence…","[3/4] Phân tích context nguồn / Spring và bằng chứng native đa ngôn ngữ…");
             com.evolution.analysis.filesystem.FileAnalysisWorkspace diskWorkspace=acquiredBytesTotal<=32_000_000L?null:new com.evolution.analysis.filesystem.FileAnalysisWorkspace(r.storage().root.resolve("analysis-work"));
             AnalysisWorkspace analysisWorkspace=diskWorkspace!=null?diskWorkspace:AnalysisWorkspace.MEMORY;
@@ -980,13 +989,15 @@ public final class EvoApp {
             long tAfterAnalysis=System.nanoTime();
             var data=new TreeMap<String,Object>();data.put("status",detailed.report().status());data.put("reportIdentity",detailed.report().identity());data.put("gaps",detailed.report().gaps());
             if(fast)data.put("analysisMode","FAST_ARCHITECTURE");
+            if(springSat)data.put("springSatMode","AUTO_MULTI_CONFIG_SAT");
             data.put("acquisition",acquisitionInfo);data.put("selection",selection);data.put("metrics",detailed.report().metrics());
             data.put("dependencies",mavenInputs.summary());
             data.put("polyglot",polyglot.summary());
             data.put("execution",nativeBuild!=null&&nativeBuild.requested()>0?Map.of("mode","ISOLATED_BUILD_ATTEMPT_WITH_SOURCE_ANALYSIS","isolatedBuildExecuted",nativeBuild.executed()>0,"launchDisposition",nativeBuild.executed()==nativeBuild.requested()?"PROTECTED_GUEST_LAUNCHER_RETURNED":"UNKNOWN"):Map.of("mode","PASSIVE","isolatedBuildExecuted",false));
             if(nativeBuild!=null)data.put("nativeBuild",nativeBuild);
             data.put("readiness",Map.of("identity",readiness.identity(),"selection",readiness.selection().identity(),"roots",readiness.roots().size(),"contexts",readiness.contexts().size(),"requirements",readiness.requirements().size(),"ownership",readiness.ownership()));
-            var scanGaps=analysisWorkspace.gaps(detailed.report().gaps());scanGaps.addAll(mavenInputs.gaps());scanGaps.addAll(readiness.gaps(acquisition.snapshot().orElseThrow().identity()));scanGaps.addAll(polyglot.gaps());
+            var allPlatformResults=new ArrayList<PlatformSymbolResult>();allPlatformResults.add(platform);allPlatformResults.addAll(additionalPlatforms);
+            var scanGaps=analysisWorkspace.gaps(detailed.report().gaps());scanGaps.addAll(mavenInputs.gaps());scanGaps.addAll(com.evolution.backend.analysis.LocalAnalysisRunner.filterSatisfiedReadinessGaps(readiness,acquisition.snapshot().orElseThrow().identity(),mavenInputs,availablePlatforms,allPlatformResults,includeTests,detailed,polyglot));scanGaps.addAll(polyglot.gaps());
             var scanGapRows=analysisWorkspace.<com.evolution.analysis.evidence.CapabilityGapRecord>list();
             platformLedgers.forEach(ledger->scanGaps.addAll(ledger.gaps()));scanGapRows.addAll(scanGaps);var frozenScanGaps=analysisWorkspace.freeze(scanGapRows);data.put("gaps",frozenScanGaps);
             if(!scanGaps.isEmpty()&&Set.of(UniversalArchitectureReport.Status.COMPLETE,UniversalArchitectureReport.Status.EMPTY_OR_NON_JAVA).contains(detailed.report().status()))data.put("status","PARTIAL");
@@ -1031,6 +1042,7 @@ public final class EvoApp {
                 long graphMs=java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(tScanEnd-tAfterAnalysis);
                 long totalMs=java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(tScanEnd-tScanStart);
                 err.println("[evo] Telemetry ("+analysisMode.name()+"): total="+totalMs+"ms | intake="+intakeMs+"ms | platform+deps="+platMs+"ms | jvm+polyglot="+anaMs+"ms | graph+publish="+graphMs+"ms");
+                err.println("[evo] Cache: javaHits="+javaCacheStats[0].get()+" javaMisses="+javaCacheStats[1].get()+" | polyglotHits="+polyglot.syntax().cacheHits()+" polyglotMisses="+polyglot.syntax().cacheMisses());
                 err.flush();
             }
             r.stage="receipt";
@@ -1046,7 +1058,7 @@ public final class EvoApp {
             var cache=Workspace.safe(resolve(mavenCache));var defaults=UniversalBuildIngestion.Policy.defaults();
             var buildPolicy=new UniversalBuildIngestion.Policy(Optional.of(release),Optional.of(release),Optional.of("UTF-8"),32_768,defaults.maxCharacters(),defaults.maxTokens(),128);
             var model=com.evolution.backend.analysis.GradleScan.model(acquisition,buildPolicy,new RepositoryInputDecoder.Policy("UTF-8",500_000,100_000_000),Map.of());
-            var policy=new com.evolution.analysis.dependency.DependencyAcquisitionPolicy(1024,64_000_000,256_000_000,64,repositories,5000,15000,1);
+            var policy=new com.evolution.analysis.dependency.DependencyAcquisitionPolicy(4096,64_000_000,MavenScan.DEFAULT_DEPENDENCY_TOTAL_BYTES,64,repositories,5000,15000,offline?0:1,8);
             var base=MavenScan.inputs(acquisition,MavenScan.models(acquisition,cache,repositories),cache,Optional.empty(),policy);
             var inputs=com.evolution.backend.analysis.GradleScan.augment(base,acquisition,model,cache,Optional.empty(),policy,Map.of());
             var problems=reasonCounts(inputs.gaps(),com.evolution.analysis.evidence.CapabilityGapRecord::reasonCode);
@@ -1114,12 +1126,33 @@ public final class EvoApp {
         }
     }
     private void progress(Root r,String en,String vi){if(terminal&&!r.json){err.println("[evo] "+(r.lang.equals("vi")?vi:en));err.flush();}}
-    private com.evolution.analysis.frontend.SemanticFrontend frontend(Root r){
-        var frontend=new JavaParserFrontend();if(!r.debug)return frontend;
+    private com.evolution.analysis.frontend.SemanticFrontend frontend(Root r,boolean bypassCache,java.util.concurrent.atomic.AtomicLong[] cacheStats){
+        var base = new JavaParserFrontend();
+        var javaCache = new com.evolution.analysis.filesystem.IncrementalJavaFrontendCache(r.storage().root.resolve("incremental-cache"));
         return new com.evolution.analysis.frontend.ConcurrentSemanticFrontend(){
-            public long estimatedWorkingBytes(com.evolution.analysis.frontend.FrontendRequest request){return frontend.estimatedWorkingBytes(request);}
-            public void releaseCompletedContexts(){frontend.releaseCompletedContexts();}
-            public com.evolution.analysis.frontend.FrontendResult analyze(com.evolution.analysis.frontend.FrontendRequest request){try{return frontend.analyze(request);}catch(RuntimeException failure){err.println("[DEBUG] frontend="+failure.getClass().getName());for(var frame:failure.getStackTrace())if(frame.getClassName().startsWith("com.evolution."))err.println("  "+frame.getClassName()+"."+frame.getMethodName()+":"+frame.getLineNumber());throw failure;}}
+            public long estimatedWorkingBytes(com.evolution.analysis.frontend.FrontendRequest request){return base.estimatedWorkingBytes(request);}
+            public void releaseCompletedContexts(){base.releaseCompletedContexts();}
+            public com.evolution.analysis.frontend.FrontendResult analyze(com.evolution.analysis.frontend.FrontendRequest request){
+                if (!bypassCache) {
+                    var cached = javaCache.get(request, JavaParserFrontend.PROVIDER);
+                    if (cached.isPresent()) {
+                        cacheStats[0].incrementAndGet();
+                        return cached.orElseThrow();
+                    }
+                }
+                cacheStats[1].incrementAndGet();
+                try{
+                    var result = base.analyze(request);
+                    if (!bypassCache) javaCache.put(request, result);
+                    return result;
+                }catch(RuntimeException failure){
+                    if (r.debug) {
+                        err.println("[DEBUG] frontend="+failure.getClass().getName());
+                        for(var frame:failure.getStackTrace())if(frame.getClassName().startsWith("com.evolution."))err.println("  "+frame.getClassName()+"."+frame.getMethodName()+":"+frame.getLineNumber());
+                    }
+                    throw failure;
+                }
+            }
         };
     }
     private static Map<String,Object> graphGapSummary(PartitionedGraphStore.Publication graph,long inputTotal){return Map.of("total",graph.gaps(),"byReason",graph.gapReasons(),"byObligation",com.evolution.backend.analysis.GapObligations.classify(graph.gapReasons()),"contextReferences",graph.gapNodes(),"inputTotal",inputTotal,"population","ALL_GRAPH_CAPABILITY_GAP_IDENTITIES","records","raw canonical graph","context",graph.snapshot(),"inspect","evo gaps --context <partition-context> --json");}

@@ -34,6 +34,7 @@ final class BeanMethodIngestion {
     static Map<EntityIdentity,Method> acquire(SpringBuildContext build,SpringSourceEvidence source,String container,
             Map<EntityIdentity,BeanDefinitionCandidate> components,List<UniversalSpringEvidence.Issue> issues) {
         var result=new TreeMap<EntityIdentity,Method>();
+        boolean compat = source.validationMode() == com.evolution.analysis.spring.SpringFrameworkEvidence.ValidationMode.COMPATIBLE_FAMILY_OR_SOURCE_SCOPED;
         for(var declaration:source.declarations().values()) {
             var id=declaration.entity().identity();
             if(declaration.entity().origin()!=EntityOrigin.PROJECT||declaration.entity().kind()!=EntityKind.METHOD)continue;
@@ -47,7 +48,10 @@ final class BeanMethodIngestion {
                     .map(TypeUseRecord::type).toList();
             boolean complete=beans.size()==1&&declaration.status()==SemanticStatus.RESOLVED
                     &&source.declarationParsed(id)
-                    &&source.annotations(id).stream().allMatch(a -> a.name().filter(n -> METADATA.contains(n)||CONDITIONS.contains(n)).isPresent());
+                    &&source.annotations(id).stream().allMatch(a -> a.name().filter(n -> METADATA.contains(n)||CONDITIONS.contains(n)
+                            || (compat && (n.equals("org.springframework.core.annotation.Order")
+                            || n.equals("org.springframework.context.annotation.Lazy")
+                            || n.equals("org.springframework.boot.autoconfigure.condition.ConditionalOnExpression")))).isPresent());
             String header=declaration.spelling();
             for(var annotation:source.annotations(id))header=header.replace(annotation.use().spelling()," ");
             header=header.replaceAll("(?s)/\\*.*?\\*/|//[^\\r\\n]*"," ").stripLeading();

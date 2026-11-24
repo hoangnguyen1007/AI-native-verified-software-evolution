@@ -69,8 +69,8 @@ final class ArchitectureChat {
             for (Object item : messages) {
                 var turn = QueryJson.object(item, "role", "content");
                 var role = history.size() % 2 == 0 ? "user" : "assistant";
-                var content = QueryJson.text(turn, "content").strip();
-                if (!role.equals(turn.get("role")) || content.length() > (role.equals("user") ? 2400 : 4000))
+                var content = GraphJson.string(turn.get("content")).strip();
+                if (!role.equals(turn.get("role")) || content.isEmpty() || content.length() > (role.equals("user") ? 2400 : 32_000))
                     throw new IllegalArgumentException("Invalid chat turn");
                 history.add(new Message(role, content));
             }
@@ -268,7 +268,7 @@ final class ArchitectureChat {
                     .filter(candidate -> candidate.snapshot().equals(partition.snapshot())
                             && candidate.analysis().isPresent() && !candidate.identity().equals(pin.context()))
                     .toList();
-            for (var candidate : related.stream().limit(4).toList()) {
+            for (var candidate : related.stream().limit(8).toList()) {
                 var semantic = queries.summary(Request.dependencies(pin.graph(),candidate.identity()));
                 var mods = queries.entities(new Request(pin.graph(),candidate.identity(),Scope.MODULE,request.projection(),
                         request.direction(),request.relationshipKinds(),request.population(),false,Optional.empty(),request.limits()),"",new Page(8, Optional.empty()));
@@ -282,8 +282,8 @@ final class ArchitectureChat {
                 add(evidence,Kind.SUMMARY,"Captured analysis context",semantic.query().value(),withStatus(semantic,
                         Collections.unmodifiableMap(ctxPayload)));
             }
-            if (related.size() > 4)
-                limitations.add("Only four analysis contexts from this snapshot are included.");
+            if (related.size() > 8)
+                limitations.add("Only eight analysis contexts from this snapshot are included.");
         }
         if (input.mode() == Mode.REPAIR && finding.isEmpty())
             limitations.add("Attach a published finding to use the captured-source repair workflow.");
@@ -307,36 +307,70 @@ final class ArchitectureChat {
         return new Context(pin, List.copyOf(evidence), List.copyOf(limitations), sources);
     }
 
-    private static final Pattern BACKTICK_SYMBOL = Pattern.compile("`([A-Za-z_][A-Za-z0-9_.$]{2,120})`");
-    private static final Pattern CAMEL_SYMBOL = Pattern.compile("\\b([A-Z][a-z0-9]+[A-Z][A-Za-z0-9_]{1,80})\\b");
+    private static final Pattern BACKTICK_SYMBOL = Pattern.compile("`([A-Za-z0-9_./$-]{2,140})`");
+    private static final Pattern CAMEL_SYMBOL = Pattern.compile("\\b([A-Z][a-z0-9]+[A-Z][A-Za-z0-9_]{1,80}|[a-z]+[A-Z][A-Za-z0-9_]{1,80})\\b");
+    private static final Pattern SNAKE_SYMBOL = Pattern.compile("\\b([a-z][a-z0-9]*(?:_[a-z0-9]+)+)\\b");
+    private static final Pattern PATH_SYMBOL = Pattern.compile("\\b(?:[A-Za-z0-9_.-]+/)*([A-Za-z0-9_-]{2,80})\\.(?:java|kt|py|ts|tsx|js|jsx|go|rs|cs|php|rb|proto|ya?ml|json)\\b", Pattern.CASE_INSENSITIVE);
 
     private static void enrichQuestionMentions(String question, Pin pin, ArchitectureQueryService queries, List<Evidence> evidence) {
         enrichQuestionMentionsAcross(question, pin, List.of(pin.context()), queries, evidence);
     }
 
-    private static void enrichQuestionMentionsAcross(String question, Pin pin, List<String> contexts,
-                                                     ArchitectureQueryService queries, List<Evidence> evidence) {
-        if (question == null || question.isBlank()) return;
+    static List<String> extractMentionCandidates(String question) {
+        if (question == null || question.isBlank()) return List.of();
         var candidates = new LinkedHashSet<String>();
         var bt = BACKTICK_SYMBOL.matcher(question);
-        while (bt.find() && candidates.size() < 4)
-            candidates.add(bt.group(1));
+        while (bt.find() && candidates.size() < 6) {
+            String raw = bt.group(1).strip();
+            candidates.add(raw);
+            String stem = pathStem(raw);
+            if (!stem.isEmpty() && !stem.equals(raw) && candidates.size() < 6) candidates.add(stem);
+        }
+        var ps = PATH_SYMBOL.matcher(question);
+        while (ps.find() && candidates.size() < 6) {
+            candidates.add(ps.group(1));
+        }
         var cc = CAMEL_SYMBOL.matcher(question);
-        while (cc.find() && candidates.size() < 4)
+        while (cc.find() && candidates.size() < 6) {
             candidates.add(cc.group(1));
+        }
+        var sn = SNAKE_SYMBOL.matcher(question);
+        while (sn.find() && candidates.size() < 6) {
+            candidates.add(sn.group(1));
+        }
+        return List.copyOf(candidates);
+    }
+
+    private static String pathStem(String value) {
+        String norm = value.replace('\\', '/');
+        int slash = norm.lastIndexOf('/');
+        String name = slash >= 0 ? norm.substring(slash + 1) : norm;
+        int dot = name.lastIndexOf('.');
+        return dot > 0 ? name.substring(0, dot) : name;
+    }
+
+    private static void enrichQuestionMentionsAcross(String question, Pin pin, List<String> contexts,
+                                                     ArchitectureQueryService queries, List<Evidence> evidence) {
+        var candidates = extractMentionCandidates(question);
         if (candidates.isEmpty())
             return;
         int added = 0;
+        var seenSymbols = new HashSet<String>();
         var baseLimits = new Limits(1, 100_000, 6, 100_000, 500_000, 1_000_000, 100_000, 200_000);
         var relKinds = Set.of("graph.depends-on", "java.calls", "java.extends", "java.implements", "java.type-uses");
         for (String term : candidates) {
-            if (added >= 2) break;
+            if (added >= 3) break;
+            String termLower = term.toLowerCase(Locale.ROOT);
             for (String ctx : contexts) {
                 var outReq = new Request(pin.graph(),ctx,Scope.ENTITY,Projection.BOUNDED_UNION,Direction.OUTGOING,
                         relKinds,Population.all(),false,Optional.empty(),baseLimits);
-                var matches = queries.entities(outReq, term, new Page(5, Optional.empty()));
-                if (matches.items().size() != 1) continue;
-                var symbol = matches.items().getFirst();
+                var matches = queries.entities(outReq, term, new Page(10, Optional.empty()));
+                EntityView symbol = pickBestMentionMatch(matches.items(), termLower);
+                if (symbol == null && matches.items().isEmpty()) {
+                    var sample = queries.entities(outReq, "", new Page(50, Optional.empty()));
+                    symbol = pickBestMentionMatch(sample.items(), termLower);
+                }
+                if (symbol == null || !seenSymbols.add(symbol.identity())) continue;
                 var outDeps = collectEdges(queries.expand(outReq, symbol.identity()));
                 var inReq = new Request(pin.graph(),ctx,Scope.ENTITY,Projection.BOUNDED_UNION,Direction.INCOMING,
                         relKinds,Population.all(),false,Optional.empty(),baseLimits);
@@ -347,6 +381,26 @@ final class ArchitectureChat {
                 break;
             }
         }
+    }
+
+    private static EntityView pickBestMentionMatch(List<EntityView> items, String termLower) {
+        if (items.isEmpty()) return null;
+        var exact = new ArrayList<EntityView>();
+        var partial = new ArrayList<EntityView>();
+        for (var e : items) {
+            String lbl = label(e).toLowerCase(Locale.ROOT);
+            String simple = lbl.contains(".") ? lbl.substring(lbl.lastIndexOf('.') + 1) : lbl;
+            String stem = pathStem(lbl).toLowerCase(Locale.ROOT);
+            if (e.identity().toLowerCase(Locale.ROOT).equals(termLower)
+                    || lbl.equals(termLower) || simple.equals(termLower) || stem.equals(termLower)) {
+                exact.add(e);
+            } else if (lbl.contains(termLower) || simple.contains(termLower) || stem.contains(termLower)) {
+                partial.add(e);
+            }
+        }
+        if (exact.size() == 1) return exact.getFirst();
+        if (exact.isEmpty() && partial.size() == 1) return partial.getFirst();
+        return null;
     }
 
     private static void enrichInsightsSummaryAcross(Pin pin, List<String> contexts, ArchitectureQueryService queries, List<Evidence> evidence) {

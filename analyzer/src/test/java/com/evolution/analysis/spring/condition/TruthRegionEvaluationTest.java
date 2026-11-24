@@ -73,6 +73,15 @@ class TruthRegionEvaluationTest {
         assertTrue(symbolic.signaturesComplete(),symbolic.issues().toString());assertEquals(2,symbolic.traces().size());
         assertTrue(symbolic.traces().stream().allMatch(SymbolicTruthRegions.Trace::replayed));
         assertEquals(3,symbolic.regions().size());assertTrue(symbolic.regions().stream().allMatch(r->r.classification()==TruthRegionEvaluation.Classification.MAY));
+        // Complete signature partition classifies facts directly without 3*Facts redundant SAT solves,
+        // while still registering every region formula in symbolic.formulas().
+        assertTrue(symbolic.queries().size() <= 4, "Expected O(traces) SAT queries when complete, got: " + symbolic.queries().size());
+        var formulaIds = symbolic.formulas().stream().map(SymbolicConfiguration.Node::identity).collect(java.util.stream.Collectors.toSet());
+        for (var r : symbolic.regions()) {
+            assertTrue(formulaIds.contains(r.trueRegion()), "Missing trueRegion formula");
+            assertTrue(formulaIds.contains(r.falseRegion()), "Missing falseRegion formula");
+            assertTrue(formulaIds.contains(r.unknownRegion()), "Missing unknownRegion formula");
+        }
         assertTrue(symbolic.gaps().stream().noneMatch(g->g.reasonCode().equals("ENUMERATION_INCOMPLETE")));
         assertEquals(symbolic.identity(),TruthRegionEvaluation.evaluateSymbolic(request,4,SymbolicConfiguration.Limits.defaults()).identity());
         var bounded=TruthRegionEvaluation.evaluateSymbolic(request,1,SymbolicConfiguration.Limits.defaults());

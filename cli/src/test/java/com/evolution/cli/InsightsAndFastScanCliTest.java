@@ -99,10 +99,87 @@ class InsightsAndFastScanCliTest {
                 "--mode", "fast", "--telemetry", "--json");
         assertTrue(exit == 0 || exit == 3, () -> "exit=" + exit + " err=" + err);
         assertTrue(err.toString().contains("[evo] Telemetry (FAST_ARCHITECTURE):"), () -> "stderr=" + err);
+        assertTrue(err.toString().contains("[evo] Cache: javaHits="), () -> "stderr=" + err);
 
         var envelope = GraphJson.object(GraphJson.read(out.toString(), GraphJson.Limits.defaults()));
         var data = GraphJson.object(envelope.get("data"));
         assertEquals("FAST_ARCHITECTURE", data.get("analysisMode"));
         assertEquals(Boolean.TRUE, data.get("snapshotSelected"));
+    }
+
+    @Test
+    void scanFastFlagSpringSatFlagAndCacheHitsWorkEndToEnd(@TempDir Path temp) throws Exception {
+        Path repo = Files.createDirectory(temp.resolve("spring-cli-repo"));
+        Path ws = Files.createDirectory(temp.resolve("spring-cli-ws"));
+        Path cache = Files.createDirectory(temp.resolve("spring-cli-m2"));
+        Files.writeString(repo.resolve("pom.xml"), """
+                <project>
+                  <modelVersion>4.0.0</modelVersion>
+                  <groupId>demo</groupId>
+                  <artifactId>cli-sat</artifactId>
+                  <version>1.0.0</version>
+                  <properties>
+                    <maven.compiler.release>21</maven.compiler.release>
+                    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+                  </properties>
+                </project>
+                """);
+        Files.createDirectories(repo.resolve("src/main/java/demo"));
+        Files.createDirectories(repo.resolve("src/main/resources"));
+        Files.writeString(repo.resolve("src/main/resources/application.yml"),
+                "spring:\n  profiles:\n    active: dev\n");
+        Files.writeString(repo.resolve("src/main/java/demo/App.java"), """
+                package demo;
+                import org.springframework.boot.autoconfigure.SpringBootApplication;
+                @SpringBootApplication
+                public class App {}
+                """);
+        Files.writeString(repo.resolve("src/main/java/demo/DevBean.java"), """
+                package demo;
+                import org.springframework.context.annotation.Profile;
+                import org.springframework.stereotype.Service;
+                @Service
+                @Profile("dev")
+                public class DevBean {}
+                """);
+        Files.writeString(repo.resolve("src/main/java/demo/ProdBean.java"), """
+                package demo;
+                import org.springframework.context.annotation.Profile;
+                import org.springframework.stereotype.Service;
+                @Service
+                @Profile("prod")
+                public class ProdBean {}
+                """);
+
+        // Conflicting --fast and --mode full is rejected with usage/input exit code 2
+        var badOut = new StringWriter();
+        var badErr = new StringWriter();
+        int badExit = new EvoApp(ws, new StringReader(""), new PrintWriter(badOut), new PrintWriter(badErr), false, Map.of())
+                .execute("scan", repo.toString(), "-w", ws.toString(), "--fast", "--mode", "full", "--offline", "--json");
+        assertEquals(2, badExit);
+
+        // Cold run with --fast --spring-sat --telemetry
+        var out1 = new StringWriter();
+        var err1 = new StringWriter();
+        int exit1 = new EvoApp(ws, new StringReader(""), new PrintWriter(out1), new PrintWriter(err1), false, Map.of())
+                .execute("scan", repo.toString(), "-w", ws.toString(), "--maven-cache", cache.toString(),
+                        "--offline", "--build", "off", "--fast", "--spring-sat", "--telemetry", "--json");
+        assertTrue(exit1 == 0 || exit1 == 3, () -> "exit=" + exit1 + " err=" + err1 + " out=" + out1);
+        assertTrue(err1.toString().contains("[evo] Cache: javaHits=0 javaMisses=1"), () -> "err1=" + err1);
+        var data1 = GraphJson.object(GraphJson.object(GraphJson.read(out1.toString(), GraphJson.Limits.defaults())).get("data"));
+        assertEquals("FAST_ARCHITECTURE", data1.get("analysisMode"));
+        assertEquals("AUTO_MULTI_CONFIG_SAT", data1.get("springSatMode"));
+        var graph = new Workspace(ws).selectedGraph();
+        assertTrue(graph.nodes().stream().anyMatch(n -> "TRUTH_REGION".equals(n.kind())),
+                "Expected --spring-sat to emit TRUTH_REGION nodes");
+
+        // Warm run hits Java incremental cache
+        var out2 = new StringWriter();
+        var err2 = new StringWriter();
+        int exit2 = new EvoApp(ws, new StringReader(""), new PrintWriter(out2), new PrintWriter(err2), false, Map.of())
+                .execute("scan", repo.toString(), "-w", ws.toString(), "--maven-cache", cache.toString(),
+                        "--offline", "--build", "off", "--fast", "--spring-sat", "--telemetry", "--json");
+        assertEquals(exit1, exit2);
+        assertTrue(err2.toString().contains("[evo] Cache: javaHits=1 javaMisses=0"), () -> "err2=" + err2);
     }
 }

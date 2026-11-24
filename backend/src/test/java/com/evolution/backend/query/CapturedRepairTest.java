@@ -241,4 +241,146 @@ class CapturedRepairTest {
         assertTrue(afterLazy.contains("@Lazy"));
         assertEquals(JavaRepairSyntax.Status.PASSED, JavaRepairSyntax.parse(afterLazy, JAVA_21).check().status());
     }
+
+    @Test void supportsSevenExtendedAstRecipesAndDryRunApplicableCatalog() {
+        assertEquals(14, JavaRepairRecipes.catalog().size());
+        var docId = new com.evolution.analysis.contract.identity.SourceDocumentIdentity("source:sha256:" + "d".repeat(64));
+
+        // 8. REMOVE_UNUSED_PRIVATE_METHOD
+        String unusedMethodSrc = """
+                package demo;
+                class Helper {
+                    private void deadHelper() {}
+                    int live() { return 1; }
+                }
+                """;
+        var fUnusedMethod = citedFile("src/main/java/demo/Helper.java", unusedMethodSrc, docId, 3, 5, 3, 33);
+        var unusedMethodCands = JavaRepairRecipes.candidates(JavaRepairRecipes.Recipe.REMOVE_UNUSED_PRIVATE_METHOD,
+                fUnusedMethod, JavaRepairSyntax.parse(unusedMethodSrc, JAVA_21));
+        assertEquals(1, unusedMethodCands.size());
+        assertFalse(unusedMethodCands.getFirst().contains("deadHelper"));
+        assertEquals(JavaRepairSyntax.Status.PASSED, JavaRepairSyntax.parse(unusedMethodCands.getFirst(), JAVA_21).check().status());
+
+        // 9. CONVERT_SETTER_INJECTION
+        String setterSrc = """
+                package demo;
+                import org.springframework.beans.factory.annotation.Autowired;
+                class OrderController {
+                    private OrderRepo orderRepo;
+                    @Autowired
+                    public void setOrderRepo(OrderRepo orderRepo) { this.orderRepo = orderRepo; }
+                    void handle() { orderRepo.find(); }
+                }
+                """;
+        var fSetter = citedFile("src/main/java/demo/OrderController.java", setterSrc, docId, 5, 1, 6, 75);
+        var setterCands = JavaRepairRecipes.candidates(JavaRepairRecipes.Recipe.CONVERT_SETTER_INJECTION,
+                fSetter, JavaRepairSyntax.parse(setterSrc, JAVA_21));
+        assertEquals(1, setterCands.size());
+        assertTrue(setterCands.getFirst().contains("private final OrderRepo orderRepo;"));
+        assertTrue(setterCands.getFirst().contains("OrderController(OrderRepo orderRepo)"));
+        assertFalse(setterCands.getFirst().contains("setOrderRepo"));
+        assertEquals(JavaRepairSyntax.Status.PASSED, JavaRepairSyntax.parse(setterCands.getFirst(), JAVA_21).check().status());
+
+        // 10. CONVERT_ALL_FIELD_INJECTIONS
+        String multiFieldSrc = """
+                package demo;
+                import org.springframework.beans.factory.annotation.Autowired;
+                class Facade {
+                    @Autowired
+                    private RepoA repoA;
+                    @Autowired
+                    private RepoB repoB;
+                    void go() { repoA.a(); repoB.b(); }
+                }
+                """;
+        var fMulti = citedFile("src/main/java/demo/Facade.java", multiFieldSrc, docId, 4, 1, 5, 25);
+        var multiCands = JavaRepairRecipes.candidates(JavaRepairRecipes.Recipe.CONVERT_ALL_FIELD_INJECTIONS,
+                fMulti, JavaRepairSyntax.parse(multiFieldSrc, JAVA_21));
+        assertEquals(1, multiCands.size());
+        String afterMulti = multiCands.getFirst();
+        assertTrue(afterMulti.contains("private final RepoA repoA;"));
+        assertTrue(afterMulti.contains("private final RepoB repoB;"));
+        assertTrue(afterMulti.contains("Facade(RepoA repoA, RepoB repoB)"));
+        assertEquals(JavaRepairSyntax.Status.PASSED, JavaRepairSyntax.parse(afterMulti, JAVA_21).check().status());
+
+        // 11. MAKE_DEPENDENCY_OPTIONAL
+        String optCtorSrc = """
+                package demo;
+                class MetricsClient {
+                    private final Tracer tracer;
+                    MetricsClient(Tracer tracer) {
+                        this.tracer = tracer;
+                    }
+                    void mark() { if (tracer != null) tracer.tag(); }
+                }
+                """;
+        var fOpt = citedFile("src/main/java/demo/MetricsClient.java", optCtorSrc, docId, 4, 19, 4, 32);
+        var optCands = JavaRepairRecipes.candidates(JavaRepairRecipes.Recipe.MAKE_DEPENDENCY_OPTIONAL,
+                fOpt, JavaRepairSyntax.parse(optCtorSrc, JAVA_21));
+        assertEquals(1, optCands.size());
+        assertTrue(optCands.getFirst().contains("Optional<Tracer> tracer"));
+        assertTrue(optCands.getFirst().contains("tracer.orElse(null)"));
+        assertEquals(JavaRepairSyntax.Status.PASSED, JavaRepairSyntax.parse(optCands.getFirst(), JAVA_21).check().status());
+
+        // 12. OBJECT_PROVIDER_CYCLE_BREAKER
+        String cycleSrc = """
+                package demo;
+                class ServiceA {
+                    private final ServiceB serviceB;
+                    ServiceA(ServiceB serviceB) {
+                        this.serviceB = serviceB;
+                    }
+                    String call() { return serviceB.ping(); }
+                }
+                """;
+        var fCycle = citedFile("src/main/java/demo/ServiceA.java", cycleSrc, docId, 4, 14, 4, 31);
+        var cycleCands = JavaRepairRecipes.candidates(JavaRepairRecipes.Recipe.OBJECT_PROVIDER_CYCLE_BREAKER,
+                fCycle, JavaRepairSyntax.parse(cycleSrc, JAVA_21));
+        assertEquals(1, cycleCands.size());
+        assertTrue(cycleCands.getFirst().contains("import org.springframework.beans.factory.ObjectProvider;"));
+        assertTrue(cycleCands.getFirst().contains("ObjectProvider<ServiceB>"));
+        assertTrue(cycleCands.getFirst().contains("serviceB.getObject().ping()"));
+        assertEquals(JavaRepairSyntax.Status.PASSED, JavaRepairSyntax.parse(cycleCands.getFirst(), JAVA_21).check().status());
+
+        // 13. REPLACE_NEW_WITH_CONSTRUCTOR_INJECTION
+        String newSrc = """
+                package demo;
+                class BillingService {
+                    private Gateway gateway = new Gateway();
+                    void charge() { gateway.pay(); }
+                }
+                """;
+        var fNew = citedFile("src/main/java/demo/BillingService.java", newSrc, docId, 3, 5, 3, 45);
+        var newCands = JavaRepairRecipes.candidates(JavaRepairRecipes.Recipe.REPLACE_NEW_WITH_CONSTRUCTOR_INJECTION,
+                fNew, JavaRepairSyntax.parse(newSrc, JAVA_21));
+        assertEquals(1, newCands.size());
+        assertTrue(newCands.getFirst().contains("private final Gateway gateway;"));
+        assertTrue(newCands.getFirst().contains("BillingService(Gateway gateway)"));
+        assertFalse(newCands.getFirst().contains("new Gateway()"));
+        assertEquals(JavaRepairSyntax.Status.PASSED, JavaRepairSyntax.parse(newCands.getFirst(), JAVA_21).check().status());
+
+        // 14. REMOVE_UNUSED_STATIC_IMPORT
+        String staticImpSrc = """
+                package demo;
+                import static java.util.Collections.emptyList;
+                class Pure {}
+                """;
+        var fStaticImp = citedFile("src/main/java/demo/Pure.java", staticImpSrc, docId, 2, 1, 2, 46);
+        var staticImpCands = JavaRepairRecipes.candidates(JavaRepairRecipes.Recipe.REMOVE_UNUSED_STATIC_IMPORT,
+                fStaticImp, JavaRepairSyntax.parse(staticImpSrc, JAVA_21));
+        assertEquals(1, staticImpCands.size());
+        assertFalse(staticImpCands.getFirst().contains("emptyList"));
+        assertEquals(JavaRepairSyntax.Status.PASSED, JavaRepairSyntax.parse(staticImpCands.getFirst(), JAVA_21).check().status());
+    }
+
+    private static RepairSource.File citedFile(String path, String text,
+                                             com.evolution.analysis.contract.identity.SourceDocumentIdentity docId,
+                                             int startLine, int startCol, int endLine, int endCol) {
+        var digest = ContentDigest.sha256Utf8(text);
+        var cite = new FindingDiagnosis.Citation(new ContentDigest("sha256:" + "a".repeat(64)),
+                "analysis:1", new ContentDigest("sha256:" + "b".repeat(64)), "java.occurrence",
+                path, new com.evolution.analysis.contract.source.SourceSpan(docId, startLine, startCol, endLine, endCol), digest);
+        return new RepairSource.File(path, digest, new ContentDigest("sha256:" + "c".repeat(64)),
+                text, true, "demo", com.evolution.analysis.contract.source.SourceClassification.MAIN, List.of(cite));
+    }
 }

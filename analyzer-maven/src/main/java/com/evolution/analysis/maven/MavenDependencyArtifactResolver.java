@@ -16,21 +16,32 @@ public final class MavenDependencyArtifactResolver {
 
     private final Path selectedCacheRoot;
     private final DependencyArtifactProvider artifactProvider;
+    private final boolean includeTests;
 
     public MavenDependencyArtifactResolver(Path selectedCacheRoot) {
-        this(selectedCacheRoot, new MavenDependencyArtifactProvider(selectedCacheRoot));
+        this(selectedCacheRoot, new MavenDependencyArtifactProvider(selectedCacheRoot), true);
+    }
+
+    public MavenDependencyArtifactResolver(Path selectedCacheRoot, boolean includeTests) {
+        this(selectedCacheRoot, new MavenDependencyArtifactProvider(selectedCacheRoot), includeTests);
     }
 
     MavenDependencyArtifactResolver(Path selectedCacheRoot, DependencyArtifactProvider artifactProvider) {
+        this(selectedCacheRoot, artifactProvider, true);
+    }
+
+    MavenDependencyArtifactResolver(
+            Path selectedCacheRoot, DependencyArtifactProvider artifactProvider, boolean includeTests) {
         this.selectedCacheRoot = Objects.requireNonNull(selectedCacheRoot).toAbsolutePath().normalize();
         this.artifactProvider = Objects.requireNonNull(artifactProvider);
+        this.includeTests = includeTests;
     }
 
     public MavenDependencyArtifactResolution resolve(
             ClasspathResolutionRequest request, DependencyAcquisitionPolicy policy) {
         Objects.requireNonNull(request);
         Objects.requireNonNull(policy);
-        MavenLocalClasspathProvider classpathProvider = new MavenLocalClasspathProvider(selectedCacheRoot);
+        MavenLocalClasspathProvider classpathProvider = new MavenLocalClasspathProvider(selectedCacheRoot, includeTests);
         ExactClasspathResult classpath = classpathProvider.resolve(request);
         int classpathPasses = 1;
         int acquisitionPasses = 0;

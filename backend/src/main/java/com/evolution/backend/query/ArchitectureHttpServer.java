@@ -124,8 +124,11 @@ public final class ArchitectureHttpServer implements AutoCloseable {
         byte[] body = exchange.getRequestBody().readNBytes(api.limits().requestBytes() + 1);
         String contentType = exchange.getRequestHeaders().getFirst("Content-Type");
         var started = new AtomicBoolean(false);
+        var clientDisconnected = new AtomicBoolean(false);
         var streamOut = new OutputStream[1];
+        java.util.function.BooleanSupplier streamCancelled = () -> cancelled.getAsBoolean() || clientDisconnected.get();
         Runnable ensureStarted = () -> {
+            if (clientDisconnected.get()) return;
             if (started.compareAndSet(false, true)) {
                 try {
                     var headers = exchange.getResponseHeaders();
@@ -135,26 +138,37 @@ public final class ArchitectureHttpServer implements AutoCloseable {
                     headers.set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'");
                     exchange.sendResponseHeaders(200, 0);
                     streamOut[0] = exchange.getResponseBody();
-                } catch (IOException ignored) {}
+                } catch (IOException disconnected) {
+                    clientDisconnected.set(true);
+                    streamOut[0] = null;
+                    exchange.close();
+                }
             }
         };
-        api.streamArchitectureChat(graphId, body, contentType, cancelled, new ArchitectureQueryApi.SseEmitter() {
+        api.streamArchitectureChat(graphId, body, contentType, streamCancelled, new ArchitectureQueryApi.SseEmitter() {
             private synchronized void writeEvent(String event, String json) {
+                if (clientDisconnected.get()) return;
                 ensureStarted.run();
-                if (streamOut[0] == null) return;
+                if (streamOut[0] == null || clientDisconnected.get()) return;
                 try {
                     byte[] bytes = ("event: " + event + "\ndata: " + json + "\n\n").getBytes(StandardCharsets.UTF_8);
                     streamOut[0].write(bytes);
                     streamOut[0].flush();
-                } catch (IOException ignored) {}
+                } catch (IOException disconnected) {
+                    clientDisconnected.set(true);
+                    streamOut[0] = null;
+                    exchange.close();
+                }
             }
             @Override public void stage(String message) { writeEvent("stage", CanonicalJson.write(Map.of("message", message))); }
             @Override public void tool(Map<String, Object> payload) { writeEvent("tool", CanonicalJson.write(payload)); }
             @Override public void delta(String text) { writeEvent("delta", CanonicalJson.write(Map.of("text", text))); }
             @Override public void complete(byte[] envelopeJson) { writeEvent("complete", new String(envelopeJson, StandardCharsets.UTF_8)); }
             @Override public void error(int status, String code, String message) {
+                if (clientDisconnected.get()) return;
                 if (!started.get()) {
-                    try { sendJsonResponse(exchange, api.error(status, code)); } catch (IOException ignored) {}
+                    try { sendJsonResponse(exchange, api.error(status, code)); }
+                    catch (IOException disconnected) { clientDisconnected.set(true); exchange.close(); }
                     return;
                 }
                 writeEvent("error", CanonicalJson.write(Map.of("code", code, "message", message)));

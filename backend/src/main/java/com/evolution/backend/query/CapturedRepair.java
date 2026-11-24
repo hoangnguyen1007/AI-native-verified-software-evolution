@@ -40,7 +40,18 @@ public final class CapturedRepair {
     }
 
     public record Options(String version, List<JavaRepairRecipes.Spec> recipes, List<Source> sources,
-            List<CapabilityGapRecord> gaps, Optional<Offer> ai, Optional<Reason> aiUnavailable) {
+            List<CapabilityGapRecord> gaps, Optional<Offer> ai, Optional<Reason> aiUnavailable,
+            List<String> applicableRecipes, boolean isolatedRunnerConfigured) {
+        public Options(String version, List<JavaRepairRecipes.Spec> recipes, List<Source> sources,
+                List<CapabilityGapRecord> gaps, Optional<Offer> ai, Optional<Reason> aiUnavailable) {
+            this(version, recipes, sources, gaps, ai, aiUnavailable, List.of(), false);
+        }
+        public Options {
+            recipes = List.copyOf(recipes);
+            sources = List.copyOf(sources);
+            gaps = List.copyOf(gaps);
+            applicableRecipes = List.copyOf(applicableRecipes);
+        }
     }
 
     public record Syntax(String path, ContentDigest source, String phase, JavaRepairSyntax.Check result) {
@@ -87,20 +98,62 @@ public final class CapturedRepair {
     }
 
     Options options(FindingDiagnosis.Outcome diagnosis, KnowledgeGraph graph, Supplier<StopReason> stop) {
+        return options(diagnosis, graph, stop, false, List.of());
+    }
+
+    Options options(FindingDiagnosis.Outcome diagnosis, KnowledgeGraph graph, Supplier<StopReason> stop,
+            boolean isolatedRunnerConfigured) {
+        return options(diagnosis, graph, stop, isolatedRunnerConfigured, List.of());
+    }
+
+    Options options(FindingDiagnosis.Outcome diagnosis, KnowledgeGraph graph, Supplier<StopReason> stop,
+            boolean isolatedRunnerConfigured, List<String> bundlePath) {
         var inputs = collect(diagnosis, graph, stop);
-        var request = offer(diagnosis, graph, inputs, stop);
+        var request = offer(diagnosis, graph, inputs, bundlePath, stop);
+        var applicable = computeApplicableRecipes(diagnosis, graph, inputs, stop);
         return new Options(VERSION, JavaRepairRecipes.catalog(), inputs.sources(), inputs.gaps(), request.offer(),
-                request.reason());
+                request.reason(), applicable, isolatedRunnerConfigured);
+    }
+
+    private static List<String> computeApplicableRecipes(FindingDiagnosis.Outcome diagnosis, KnowledgeGraph graph,
+            Inputs inputs, Supplier<StopReason> stop) {
+        if (stop.get() != StopReason.NONE
+                || diagnosis.status() != FindingDiagnosis.Status.CITATIONS_VALIDATED
+                || inputs.files().isEmpty()) {
+            return List.of();
+        }
+        var profile = JavaRepairSyntax.profile(graph, diagnosis.pin());
+        var parsedByPath = new LinkedHashMap<String, JavaRepairSyntax.Parsed>();
+        for (var file : inputs.files()) {
+            if (stop.get() != StopReason.NONE) return List.of();
+            parsedByPath.put(file.path(), JavaRepairSyntax.parse(file.text(), profile.forFile(file)));
+        }
+        var applicable = new ArrayList<String>();
+        for (var recipe : JavaRepairRecipes.Recipe.values()) {
+            if (stop.get() != StopReason.NONE) break;
+            boolean matches = inputs.files().stream().anyMatch(
+                    file -> !JavaRepairRecipes.candidates(recipe, file, parsedByPath.get(file.path())).isEmpty());
+            if (matches) {
+                applicable.add(recipe.id);
+            }
+        }
+        return List.copyOf(applicable);
     }
 
     Outcome propose(FindingDiagnosis.Outcome diagnosis, KnowledgeGraph graph, Strategy strategy,
             Optional<JavaRepairRecipes.Recipe> recipe, Optional<ContentDigest> modelInput, Supplier<StopReason> stop) {
-        return propose(diagnosis, graph, strategy, recipe, modelInput, 1, stop);
+        return propose(diagnosis, graph, strategy, recipe, modelInput, 1, List.of(), stop);
     }
 
     Outcome propose(FindingDiagnosis.Outcome diagnosis, KnowledgeGraph graph, Strategy strategy,
             Optional<JavaRepairRecipes.Recipe> recipe, Optional<ContentDigest> modelInput, int maxRepairAttempts,
             Supplier<StopReason> stop) {
+        return propose(diagnosis, graph, strategy, recipe, modelInput, maxRepairAttempts, List.of(), stop);
+    }
+
+    Outcome propose(FindingDiagnosis.Outcome diagnosis, KnowledgeGraph graph, Strategy strategy,
+            Optional<JavaRepairRecipes.Recipe> recipe, Optional<ContentDigest> modelInput, int maxRepairAttempts,
+            List<String> bundlePath, Supplier<StopReason> stop) {
         int maxAttempts = strategy == Strategy.AI ? Math.max(1, Math.min(3, maxRepairAttempts)) : 1;
         var inputs = collect(diagnosis, graph, stop);
         var checks = new ArrayList<Syntax>();
@@ -139,7 +192,7 @@ public final class CapturedRepair {
                 return withheld(reason, inputs, checks, 1);
             }
         } else {
-            var request = offer(diagnosis, graph, inputs, stop);
+            var request = offer(diagnosis, graph, inputs, bundlePath, stop);
             if (request.reason().isPresent())
                 return withheld(request.reason().orElseThrow(), inputs, checks, 1);
             modelOffer = request.offer();
@@ -294,7 +347,7 @@ public final class CapturedRepair {
     }
 
     private Request offer(FindingDiagnosis.Outcome diagnosis, KnowledgeGraph graph, Inputs inputs,
-            Supplier<StopReason> stop) {
+            List<String> bundlePath, Supplier<StopReason> stop) {
         if (stop.get() != StopReason.NONE)
             return unavailable(Reason.QUERY_LIMIT);
         if (diagnosis.status() != FindingDiagnosis.Status.CITATIONS_VALIDATED)
@@ -305,15 +358,36 @@ public final class CapturedRepair {
             return unavailable(Reason.SOURCE_UNAVAILABLE);
         var proof = diagnosis.proof().orElseThrow();
         String ctx = diagnosis.pin().analysis().map(a -> a.value()).orElse(diagnosis.pin().context());
-        String sourceName = entityLabel(graph, ctx, diagnosis.pin().context(), proof.source()),
-                targetName = entityLabel(graph, ctx, diagnosis.pin().context(), proof.target());
+        String pinCtx = diagnosis.pin().context();
+        String sourceName = entityLabel(graph, ctx, pinCtx, proof.source());
+        String targetName = entityLabel(graph, ctx, pinCtx, proof.target());
+        var rawPath = (bundlePath != null && !bundlePath.isEmpty())
+                ? bundlePath
+                : (proof.source().equals(proof.target()) ? List.of(proof.source()) : List.of(proof.source(), proof.target()));
+        var pathSteps = rawPath.stream().limit(16)
+                .map(id -> Map.<String, Object>of("identity", id, "label", entityLabel(graph, ctx, pinCtx, id)))
+                .toList();
+        var callers = collectNeighbors(graph, ctx, pinCtx, proof.source(), true, 10);
+        var dependents = collectNeighbors(graph, ctx, pinCtx, proof.target(), true, 10);
+        var springSummary = collectSpringSummary(graph, pinCtx, rawPath);
         ModelSources.Packet packet;
         var lastPrompt = new String[1];
         var lastOffered = new List[1];
         try {
-            var metadata = Map.<String,Object>of("rule", proof.rule(), "scope", proof.scope(), "classification", proof.classification(),
-                    "relationships", proof.relationships(), "sourceEntity", proof.source(), "sourceName", sourceName,
-                    "targetEntity", proof.target(), "targetName", targetName);
+            var metadata = new LinkedHashMap<String, Object>();
+            metadata.put("rule", proof.rule());
+            metadata.put("scope", proof.scope());
+            metadata.put("classification", proof.classification());
+            metadata.put("relationships", proof.relationships());
+            metadata.put("sourceEntity", proof.source());
+            metadata.put("sourceName", sourceName);
+            metadata.put("entityLabel", sourceName);
+            metadata.put("targetEntity", proof.target());
+            metadata.put("targetName", targetName);
+            metadata.put("path", pathSteps);
+            if (!callers.isEmpty()) metadata.put("callers", callers);
+            if (!dependents.isEmpty()) metadata.put("dependents", dependents);
+            if (!springSummary.isEmpty()) metadata.put("springSummary", springSummary);
             packet = ModelSources.fit(inputs.files(), offered -> {
                 if (stop.get() != StopReason.NONE) throw new RepairChatModel.Rejected(RepairChatModel.Failure.QUERY_LIMIT);
                 var files = new ArrayList<Map<String,Object>>();
@@ -347,6 +421,88 @@ public final class CapturedRepair {
         return new Request(Optional.of(new Offer(model.provider(),id,files)),packet.bytes(),lastPrompt[0],digests,packet.files(),Optional.empty());
     }
 
+    private static List<Map<String, Object>> collectNeighbors(KnowledgeGraph graph, String primaryContext,
+            String secondaryContext, String entityId, boolean incoming, int limit) {
+        var contexts = primaryContext.equals(secondaryContext) ? List.of(primaryContext)
+                : List.of(primaryContext, secondaryContext);
+        var out = new ArrayList<Map<String, Object>>();
+        var seen = new HashSet<String>();
+        for (var context : contexts) {
+            for (var edge : graph.edges(context)) {
+                if (out.size() >= limit) break;
+                if (edge.kind().equals("graph.contains") || edge.kind().equals("graph.declares")
+                        || edge.kind().equals("graph.owns-source")) continue;
+                if (incoming) {
+                    if (edge.target().identities().contains(entityId) && !edge.source().equals(entityId)
+                            && seen.add(edge.source() + "|" + edge.kind())) {
+                        out.add(Map.of("identity", edge.source(),
+                                "label", entityLabel(graph, primaryContext, secondaryContext, edge.source()),
+                                "kind", edge.kind()));
+                    }
+                } else if (edge.source().equals(entityId)) {
+                    for (var target : edge.target().identities()) {
+                        if (out.size() >= limit) break;
+                        if (!target.equals(entityId) && seen.add(target + "|" + edge.kind())) {
+                            out.add(Map.of("identity", target,
+                                    "label", entityLabel(graph, primaryContext, secondaryContext, target),
+                                    "kind", edge.kind()));
+                        }
+                    }
+                }
+            }
+        }
+        return out;
+    }
+
+    private static List<Map<String, Object>> collectSpringSummary(KnowledgeGraph graph, String pinContext,
+            List<String> pathEntities) {
+        var pathSet = new HashSet<>(pathEntities);
+        var springContexts = new LinkedHashSet<String>();
+        springContexts.add(pinContext);
+        for (var c : graph.contexts()) {
+            var ev = graph.evidence(c.evidence()).orElse(null);
+            if (ev != null && "spring.context".equals(ev.family())) {
+                springContexts.add(c.identity());
+            }
+        }
+        var summary = new ArrayList<Map<String, Object>>();
+        for (String ctx : springContexts) {
+            for (var node : graph.nodes(ctx)) {
+                if (summary.size() >= 10) break;
+                if (!pathSet.contains(node.identity())
+                        && !Set.of("BEAN_DEFINITION_CANDIDATE", "BEAN_PRODUCER", "ENDPOINT", "CONFIGURATION_CONDITION", "TRUTH_REGION")
+                        .contains(node.kind())) {
+                    continue;
+                }
+                if (!pathSet.contains(node.identity()) && !ctx.equals(pinContext)) continue;
+                var row = new LinkedHashMap<String, Object>();
+                row.put("identity", node.identity());
+                row.put("kind", node.kind());
+                row.put("label", entityLabel(graph, ctx, pinContext, node.identity()));
+                for (var ref : node.evidence()) {
+                    var ev = graph.evidence(ref).orElse(null);
+                    if (ev == null) continue;
+                    if (Set.of("spring.candidate", "spring.condition", "spring.explicit-region", "spring.symbolic-region")
+                            .contains(ev.family())) {
+                        row.put("evidenceFamily", ev.family());
+                        try {
+                            var obj = GraphJson.object(GraphJson.read(ev.canonicalJson(), GraphJson.Limits.defaults()));
+                            if (obj.get("classification") instanceof String cls) row.put("classification", cls);
+                            if (obj.get("region") instanceof Map<?, ?> reg && reg.get("classification") instanceof String cls)
+                                row.put("classification", cls);
+                            if (obj.get("kind") instanceof String k) row.put("conditionKind", k);
+                        } catch (RuntimeException ignored) {}
+                        break;
+                    }
+                }
+                if (row.containsKey("evidenceFamily") || pathSet.contains(node.identity()) && !node.kind().equals("TYPE")) {
+                    summary.add(row);
+                }
+            }
+        }
+        return summary;
+    }
+
     static boolean authentic(Proposal proposal) {
         if (proposal == null || proposal.candidate() == null)
             return false;
@@ -356,7 +512,7 @@ public final class CapturedRepair {
                 && !candidate.edits().isEmpty();
     }
 
-    private static String entityLabel(KnowledgeGraph graph, String primaryContext, String secondaryContext,
+    static String entityLabel(KnowledgeGraph graph, String primaryContext, String secondaryContext,
             String entityId) {
         var contexts = primaryContext.equals(secondaryContext) ? List.of(primaryContext)
                 : List.of(primaryContext, secondaryContext);
@@ -366,15 +522,39 @@ public final class CapturedRepair {
                     continue;
                 for (var ref : node.evidence()) {
                     var ev = graph.evidence(ref).orElse(null);
-                    if (ev == null || !ev.family().equals("java.declaration"))
+                    if (ev == null)
                         continue;
                     try {
-                        var entity = GraphJson.object(GraphJson
-                                .object(GraphJson.read(ev.canonicalJson(), GraphJson.Limits.defaults())).get("entity"));
-                        if (entity.get("qualifiedName") instanceof String q && !q.isBlank())
-                            return q;
-                        if (entity.get("canonicalName") instanceof String c && !c.isBlank())
-                            return c;
+                        var obj = GraphJson.object(GraphJson.read(ev.canonicalJson(), GraphJson.Limits.defaults()));
+                        if ("java.declaration".equals(ev.family()) && obj.get("entity") instanceof Map<?, ?> ent) {
+                            if (ent.get("qualifiedName") instanceof String q && !q.isBlank())
+                                return q;
+                            if (ent.get("canonicalName") instanceof String c && !c.isBlank())
+                                return RepoMapBuilder.readableCanonicalName(c);
+                        } else if ("spring.candidate".equals(ev.family())
+                                && obj.get("declaredNameKey") instanceof Map<?, ?> names
+                                && names.get("primary") instanceof String p && !p.isBlank()) {
+                            return p;
+                        } else if ("spring.endpoint-declaration".equals(ev.family())
+                                && obj.get("route") instanceof Map<?, ?> route) {
+                            String methods = route.get("methods") instanceof List<?> list
+                                    ? String.join(",", list.stream().map(Object::toString).toList()) : "";
+                            String routePath = route.get("path") instanceof String rp ? rp : "";
+                            String label = (methods + " " + routePath).trim();
+                            if (!label.isBlank()) return label;
+                        } else if ("polyglot.source-syntax".equals(ev.family())) {
+                            Map<?, ?> fields = obj.get("fields") instanceof Map<?, ?> f ? f : obj;
+                            if (fields.get("name") instanceof String n && !n.isBlank()) return n;
+                            if (fields.get("symbol") instanceof String s && !s.isBlank()) return s;
+                            if (fields.get("path") instanceof String p && !p.isBlank()) return p;
+                        } else if ("source.document".equals(ev.family())
+                                && obj.get("path") instanceof String p && !p.isBlank()) {
+                            return p;
+                        } else if ("source.bytes".equals(ev.family())
+                                && obj.get("document") instanceof Map<?, ?> doc
+                                && doc.get("path") instanceof String p && !p.isBlank()) {
+                            return p;
+                        }
                     } catch (RuntimeException ignored) {
                     }
                 }

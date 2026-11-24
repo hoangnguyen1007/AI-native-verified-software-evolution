@@ -11,7 +11,10 @@ class ComprehensiveSelectionTest {
     @Test void metadataPolicyUsesCentralByDefaultAndOfflineDoesNotCreateCache() throws Exception {
         assertEquals(List.of(
                 java.net.URI.create("https://repo.maven.apache.org/maven2/"),
-                java.net.URI.create("https://dl.google.com/dl/android/maven2/")),MavenScan.DEFAULT_REPOSITORIES);
+                java.net.URI.create("https://dl.google.com/dl/android/maven2/"),
+                java.net.URI.create("https://plugins.gradle.org/m2/"),
+                java.net.URI.create("https://jitpack.io/")),MavenScan.DEFAULT_REPOSITORIES);
+        assertEquals(2_147_483_648L, MavenScan.DEFAULT_DEPENDENCY_TOTAL_BYTES);
         Path source=Files.createDirectory(root.resolve("source"));
         Files.writeString(source.resolve("pom.xml"),"<project><modelVersion>4.0.0</modelVersion><groupId>test</groupId><artifactId>app</artifactId><version>1</version></project>");
         var repo=com.evolution.analysis.contract.identity.RepositoryIdentity.fromCanonicalCoordinate("urn:test:metadata");

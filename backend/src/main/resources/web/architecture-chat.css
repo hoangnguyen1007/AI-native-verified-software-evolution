@@ -477,19 +477,19 @@
 
 .architecture-chat-code-shell {
   margin: 10px 0;
-  border: 1px solid var(--wb-rule);
+  border: 1px solid var(--code-border, var(--wb-rule));
   border-radius: var(--r-md, 10px);
   overflow: hidden;
-  background: var(--surface-2, #10171d);
+  background: var(--code-bg, var(--surface-2));
 }
 
 .architecture-chat-code-bar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 5px 10px;
-  border-bottom: 1px solid var(--wb-rule);
-  background: color-mix(in srgb, var(--surface-2, #10171d) 70%, var(--wb-paper, #161d24));
+  padding: 6px 11px;
+  border-bottom: 1px solid var(--code-border, var(--wb-rule));
+  background: var(--surface-2);
 }
 
 .architecture-chat-code-lang {
@@ -501,9 +501,12 @@
 
 .architecture-chat-code-shell pre {
   margin: 0;
-  padding: 10px 12px;
+  padding: 11px 13px;
   overflow-x: auto;
-  font: 0.78rem/1.5 var(--font-mono);
+  font: 0.79rem/1.55 var(--font-mono);
+  background: transparent;
+  border: 0;
+  border-radius: 0;
 }
 
 .architecture-chat-code-shell .diff-line {
@@ -512,17 +515,25 @@
 }
 
 .architecture-chat-code-shell .diff-line.is-add {
-  background: rgba(34, 197, 94, 0.14);
-  color: #4ade80;
+  background: var(--diff-add);
+  color: var(--diff-add-ink);
 }
 
 .architecture-chat-code-shell .diff-line.is-del {
-  background: rgba(239, 68, 68, 0.14);
-  color: #f87171;
+  background: var(--diff-rem);
+  color: var(--diff-rem-ink);
 }
 
 .architecture-chat-code-shell .diff-line.is-hunk {
-  color: var(--wb-accent);
+  background: var(--diff-hunk);
+  color: var(--diff-hunk-ink);
+}
+
+.architecture-chat-cite-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  vertical-align: baseline;
 }
 
 .architecture-chat-mermaid-shell {
@@ -530,7 +541,7 @@
   padding: 10px;
   border: 1px solid var(--wb-rule);
   border-radius: var(--r-md, 10px);
-  background: var(--surface-2, #10171d);
+  background: var(--code-bg, var(--surface-2));
   overflow-x: auto;
 }
 
@@ -541,44 +552,44 @@
 }
 
 .mermaid-node-rect {
-  fill: var(--wb-paper, #161e26);
-  stroke: var(--wb-accent, #38bdf8);
+  fill: var(--wb-paper);
+  stroke: var(--wb-accent);
   stroke-width: 1.4;
 }
 
 .mermaid-node-label {
-  fill: var(--wb-ink, #e2e8f0);
+  fill: var(--wb-ink);
   font: 500 11.5px var(--font-mono);
 }
 
 .mermaid-edge-path {
   fill: none;
-  stroke: var(--wb-muted, #94a3b8);
+  stroke: var(--wb-muted);
   stroke-width: 1.4;
 }
 
 .mermaid-edge-label {
-  fill: var(--wb-muted, #94a3b8);
+  fill: var(--wb-muted);
   font: 10px var(--font-sans);
 }
 
 .mermaid-arrow-head {
-  fill: var(--wb-muted, #94a3b8);
+  fill: var(--wb-muted);
 }
 
 .architecture-chat-trace,
 .architecture-chat-stream-timeline {
   margin-top: 10px;
-  padding: 8px 10px;
+  padding: 9px 11px;
   border: 1px solid var(--wb-rule);
-  border-radius: var(--r-sm, 8px);
-  background: color-mix(in srgb, var(--wb-accent) 5%, transparent);
+  border-radius: var(--r-md, 10px);
+  background: color-mix(in srgb, var(--wb-accent) 6%, var(--surface-2));
   font-size: 0.82rem;
 }
 
 .architecture-chat-trace summary {
   cursor: pointer;
-  font-weight: 600;
+  font-weight: 650;
   color: var(--wb-accent);
 }
 
@@ -594,19 +605,50 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
-  padding: 5px 8px;
-  border-radius: 6px;
-  background: var(--surface-2, rgba(255, 255, 255, 0.03));
+  gap: 6px 8px;
+  padding: 6px 9px;
+  border-radius: 7px;
+  border: 1px solid var(--line);
+  background: var(--surface);
 }
 
 .architecture-chat-trace-tool {
-  font: 600 0.74rem var(--font-mono);
-  color: var(--wb-accent);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font: 650 0.72rem var(--font-mono);
+  background: var(--accent-s);
+  border: 1px solid var(--accent-line);
+  color: var(--accent);
+}
+.architecture-chat-trace-tool.is-map {
+  background: var(--cyan-s);
+  border-color: color-mix(in srgb, var(--cyan) 35%, transparent);
+  color: var(--cyan);
+}
+.architecture-chat-trace-tool.is-source {
+  background: var(--ai-s);
+  border-color: var(--ai-line);
+  color: var(--ai);
+}
+.architecture-chat-trace-tool.is-spring {
+  background: var(--warn-s);
+  border-color: var(--warn-line);
+  color: var(--warn);
+}
+.architecture-chat-trace-tool.is-running {
+  animation: evo-tool-pulse 1.2s ease-in-out infinite;
+}
+@keyframes evo-tool-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
 }
 
 .architecture-chat-trace-ms {
   margin-inline-start: auto;
   font: 0.72rem var(--font-mono);
+  font-variant-numeric: tabular-nums;
   color: var(--wb-muted);
 }

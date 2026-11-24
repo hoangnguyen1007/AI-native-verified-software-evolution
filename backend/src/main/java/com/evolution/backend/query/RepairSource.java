@@ -25,6 +25,33 @@ public final class RepairSource {
         contentStoreFallback = fallback == null ? (digest, size) -> Optional.empty() : fallback;
     }
 
+    static Optional<byte[]> resolveContentFromStore(ContentDigest digest, OptionalLong expectedSize) {
+        var rawOpt = contentStoreFallback.apply(digest, expectedSize);
+        if (rawOpt.isEmpty()) return Optional.empty();
+        byte[] bytes = rawOpt.orElseThrow();
+        if (bytes.length > MAX_FILE_BYTES || !ContentDigest.sha256(bytes).equals(digest)) {
+            return Optional.empty();
+        }
+        return Optional.of(bytes);
+    }
+
+    record ContextFile(String path, String language, Optional<ContentDigest> digest, ContentDigest evidenceId, String text) {}
+
+    /**
+     * Read-only context helper for non-Java and Java captured files (covering {@code source.bytes}
+     * and {@code polyglot.inventory-entry}). Never relaxes {@link #open}'s Java compiler boundaries.
+     */
+    static Optional<ContextFile> readContextFile(KnowledgeGraph graph, String path) {
+        if (!safePath(path)) return Optional.empty();
+        var index = CapturedFileIndex.forGraph(graph);
+        var entryOpt = index.findExact(path);
+        if (entryOpt.isEmpty()) return Optional.empty();
+        var entry = entryOpt.orElseThrow();
+        var textOpt = index.readText(graph, entry);
+        if (textOpt.isEmpty()) return Optional.empty();
+        return Optional.of(new ContextFile(entry.path(), entry.language(), entry.digest(), entry.evidenceId(), textOpt.orElseThrow()));
+    }
+
     static Optional<byte[]> resolveSourceBytes(KnowledgeGraph graph, Map<String, Object> sourceBytesRow,
                                                Optional<ContentDigest> expectedDigest) {
         return resolveSourceBytes(graph, sourceBytesRow, expectedDigest, contentStoreFallback);
@@ -100,10 +127,20 @@ public final class RepairSource {
         var rows=graph.nodes(graph.snapshot().value());
         int index=Collections.binarySearch(rows,new KnowledgeGraph.Node(id,graph.snapshot().value(),
                 "SOURCE_DOCUMENT",List.of(citation.evidence())),Comparator.comparing(KnowledgeGraph.Node::identity));
-        if (index<0 || !rows.get(index).kind().equals("SOURCE_DOCUMENT")) throw new Unavailable(Issue.SOURCE_BYTES_UNAVAILABLE);
+        if (index<0 || !rows.get(index).kind().equals("SOURCE_DOCUMENT")) {
+            if (!editable) {
+                return readNonJavaContextFallback(graph, path, citation.sourceDigest(), citations);
+            }
+            throw new Unavailable(Issue.SOURCE_BYTES_UNAVAILABLE);
+        }
         var evidence=rows.get(index).evidence().stream().flatMap(ref -> graph.evidence(ref).stream())
                 .filter(e -> e.family().equals("source.bytes")).toList();
-        if (evidence.isEmpty()) throw new Unavailable(Issue.SOURCE_BYTES_UNAVAILABLE);
+        if (evidence.isEmpty()) {
+            if (!editable) {
+                return readNonJavaContextFallback(graph, path, citation.sourceDigest(), citations);
+            }
+            throw new Unavailable(Issue.SOURCE_BYTES_UNAVAILABLE);
+        }
         if (evidence.size()!=1) throw new Unavailable(Issue.SOURCE_INTEGRITY_MISMATCH);
         try {
             var blob=evidence.getFirst();
@@ -153,6 +190,26 @@ public final class RepairSource {
             throw new Unavailable(Issue.SOURCE_ENCODING_UNSUPPORTED);
         } catch (IllegalArgumentException invalid) {
             throw new Unavailable(Issue.SOURCE_INTEGRITY_MISMATCH);
+        }
+    }
+
+    private static File readNonJavaContextFallback(KnowledgeGraph graph, String path, ContentDigest expectedDigest,
+                                                   List<FindingDiagnosis.Citation> citations) {
+        var fileIndex = CapturedFileIndex.forGraph(graph);
+        var entry = fileIndex.findExact(path).orElseThrow(() -> new Unavailable(Issue.SOURCE_BYTES_UNAVAILABLE));
+        if (entry.digest().isPresent() && !entry.digest().orElseThrow().equals(expectedDigest)) {
+            throw new Unavailable(Issue.SOURCE_INTEGRITY_MISMATCH);
+        }
+        byte[] bytes = fileIndex.readBytes(graph, entry).orElseThrow(() -> new Unavailable(Issue.SOURCE_BYTES_UNAVAILABLE));
+        if (bytes.length > MAX_FILE_BYTES) throw new Unavailable(Issue.SOURCE_LIMIT);
+        if (!ContentDigest.sha256(bytes).equals(expectedDigest)) throw new Unavailable(Issue.SOURCE_INTEGRITY_MISMATCH);
+        try {
+            String text = StandardCharsets.UTF_8.newDecoder().decode(ByteBuffer.wrap(bytes)).toString();
+            if (text.indexOf(0) >= 0 || text.startsWith("\uFEFF")) throw new Unavailable(Issue.SOURCE_ENCODING_UNSUPPORTED);
+            return new File(entry.path(), expectedDigest, entry.evidenceId(), text, false, "",
+                    SourceClassification.MAIN, List.copyOf(citations));
+        } catch (CharacterCodingException invalid) {
+            throw new Unavailable(Issue.SOURCE_ENCODING_UNSUPPORTED);
         }
     }
 

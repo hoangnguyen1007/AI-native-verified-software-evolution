@@ -34,8 +34,9 @@ final class Extraction {
     private static final Set<String> SPRING_CONFIG_ANNOTATIONS = Set.of(
             "Configuration", "SpringBootConfiguration", "SpringBootApplication", "AutoConfiguration", "Bean");
     private static final SkeletonLruCache REACTOR_SKELETON_CACHE = new SkeletonLruCache(96L << 20);
+    static final java.util.concurrent.atomic.AtomicLong KOTLIN_SKELETON_CACHE_HITS = new java.util.concurrent.atomic.AtomicLong();
 
-    private record SkeletonCacheKey(int syntaxLevel, com.evolution.analysis.contract.common.ContentDigest digest) {}
+    private record SkeletonCacheKey(int syntaxLevel, com.evolution.analysis.contract.common.ContentDigest digest, String kotlinFileName) {}
     private record CachedReactorSkeleton(UnicodeSource translated, CompilationUnit template, long weightBytes) {}
 
     private static final class SkeletonLruCache {
@@ -77,7 +78,25 @@ final class Extraction {
     private final Set<Node> sourceNodes = Collections.newSetFromMap(new IdentityHashMap<>());
     private final Set<Node> reactorNodes = Collections.newSetFromMap(new IdentityHashMap<>());
     private final Set<DerivedRelationshipRecord> derived = new TreeSet<>();
-    private final Map<EntityIdentity, DeclarationRecord> declarations = new TreeMap<>();
+    private Set<EntityIdentity> activeUnitDecls;
+    private final Map<EntityIdentity, DeclarationRecord> declarations = new TreeMap<>() {
+        @Override public DeclarationRecord get(Object key) {
+            var val = super.get(key);
+            if (val != null && activeUnitDecls != null && key instanceof EntityIdentity id) activeUnitDecls.add(id);
+            return val;
+        }
+        @Override public DeclarationRecord put(EntityIdentity key, DeclarationRecord value) {
+            if (activeUnitDecls != null && key != null) activeUnitDecls.add(key);
+            return super.put(key, value);
+        }
+        @Override public DeclarationRecord putIfAbsent(EntityIdentity key, DeclarationRecord value) {
+            if (activeUnitDecls != null && key != null) activeUnitDecls.add(key);
+            return super.putIfAbsent(key, value);
+        }
+    };
+    private List<RelationshipOccurrence> activeUnitOccurrences;
+    private List<DerivedRelationshipRecord> activeUnitDerived;
+    private int reextractedUnitCount;
     private final Map<String, List<EntityIdentity>> projectIdsByCanonical = new HashMap<>();
     private final Map<EntityIdentity, List<TypeUseRecord>> directTypesByOwner = new HashMap<>();
     private final Map<SourceDocumentIdentity, Map<SourceSpan, RelationshipOccurrence>> resolvedCallsByDoc = new HashMap<>();
@@ -153,7 +172,41 @@ final class Extraction {
         for (var unit : orderedUnits) implicit.declarations(unit.ast);
         var shapes=new ArrayList<TypeDeclarationRecord>();var members=new ArrayList<MemberDeclarationRecord>();
         var constructorCandidates=new ArrayList<LombokConstructorCandidate>();
+        var baseDeclarations = List.copyOf(declarations.values());
+        var moduleContextKey = ModuleIncrementalCache.moduleContextKey(request, VERSION, fastArchitecture);
+        var currentDocs = orderedUnits.stream().map(u -> u.input.document()).toList();
+        var currentHeaders = new LinkedHashMap<SourceDocumentIdentity, ModuleIncrementalCache.HeaderFacts>();
         for (var header : orderedUnits) {
+            currentHeaders.put(header.input.document().identity(), ModuleIncrementalCache.summarizeHeader(header.ast));
+        }
+        var incrementalPlan = ModuleIncrementalCache.get(moduleContextKey)
+                .flatMap(prev -> ModuleIncrementalCache.planIncremental(
+                        prev, currentDocs, currentHeaders, duplicateDeclarations, !rejected.isEmpty()));
+        var nextUnitEntries = new LinkedHashMap<SourceDocumentIdentity, ModuleIncrementalCache.UnitEntry>();
+        for (var header : orderedUnits) {
+            var docId = header.input.document().identity();
+            if (incrementalPlan.isPresent() && !incrementalPlan.get().dirtyDocuments.contains(docId)) {
+                var cached = incrementalPlan.get().previous.units().get(docId);
+                if (cached != null) {
+                    retainedFullUnits.remove(header);
+                    for (var d : cached.declarations()) declarations.putIfAbsent(d.entity().identity(), d);
+                    for (var o : cached.occurrences()) occurrences.putIfAbsent(o.identity(), o);
+                    observations.addAll(cached.observations());
+                    types.addAll(cached.types());
+                    recordDirectTypes(cached.types());
+                    annotations.addAll(cached.annotations());
+                    derived.addAll(cached.derived());
+                    shapes.addAll(cached.shapes());
+                    members.addAll(cached.members());
+                    constructorCandidates.addAll(cached.constructorCandidates());
+                    httpClientCalls.addAll(cached.httpClientCalls());
+                    header.diagnostics.addAll(cached.unitDiagnostics());
+                    diagnostics.addAll(cached.unitDiagnostics());
+                    nextUnitEntries.put(docId, cached);
+                    continue;
+                }
+            }
+            reextractedUnitCount++;
             // Only declaration skeletons live across files. Method/initializer bodies and
             // expression resolver caches belong to one active source document at a time.
             Unit unit;
@@ -170,6 +223,16 @@ final class Extraction {
             }
             unitValueCache.clear();
             unitTypeNameCache.clear();
+            int obsStart = observations.size();
+            int typesStart = types.size();
+            int annsStart = annotations.size();
+            int shapesStart = shapes.size();
+            int membersStart = members.size();
+            int candStart = constructorCandidates.size();
+            int httpStart = httpClientCalls.size();
+            activeUnitDecls = new LinkedHashSet<>();
+            activeUnitOccurrences = new ArrayList<>();
+            activeUnitDerived = new ArrayList<>();
             if (!fastArchitecture) {
                 RecordPatternInference.prepare(unit.ast);
                 SwitchAndPatternInference.prepare(unit.ast);
@@ -229,10 +292,69 @@ final class Extraction {
             lombok.relationships(unit.ast);
             shapes.addAll(typeDeclarations(unit));members.addAll(memberDeclarations(unit));
             constructorCandidates.addAll(LombokCandidates.extract(this,List.of(unit.ast),unitTypes,sourceTypeNames));
-            header.diagnostics.addAll(unit.diagnostics);
+            if (compactBodies) header.diagnostics.addAll(unit.diagnostics);
+            var hFacts = currentHeaders.get(docId);
+            var unitDeclsList = new ArrayList<DeclarationRecord>();
+            for (var refId : activeUnitDecls) {
+                var rec = declarations.get(refId);
+                if (rec != null) unitDeclsList.add(rec);
+            }
+            for (var occ : activeUnitOccurrences) {
+                collectDeclarationIfPresent(unitDeclsList, activeUnitDecls, occ.relationship().source());
+                if (occ.relationship().target() instanceof RelationshipTarget.Resolved r) {
+                    collectDeclarationIfPresent(unitDeclsList, activeUnitDecls, r.target());
+                } else if (occ.relationship().target() instanceof RelationshipTarget.Candidates c) {
+                    c.candidates().forEach(cid -> collectDeclarationIfPresent(unitDeclsList, activeUnitDecls, cid));
+                }
+            }
+            for (var t : types.subList(typesStart, types.size())) {
+                t.owner().ifPresent(oid -> collectDeclarationIfPresent(unitDeclsList, activeUnitDecls, oid));
+                t.type().referencedEntities().forEach(eid -> collectDeclarationIfPresent(unitDeclsList, activeUnitDecls, eid));
+            }
+            for (var a : annotations.subList(annsStart, annotations.size())) {
+                collectDeclarationIfPresent(unitDeclsList, activeUnitDecls, a.owner());
+            }
+            for (var d : activeUnitDerived) {
+                collectDeclarationIfPresent(unitDeclsList, activeUnitDecls, d.relationship().source());
+                if (d.relationship().target() instanceof RelationshipTarget.Resolved r) {
+                    collectDeclarationIfPresent(unitDeclsList, activeUnitDecls, r.target());
+                }
+            }
+            for (var hc : httpClientCalls.subList(httpStart, httpClientCalls.size())) {
+                collectDeclarationIfPresent(unitDeclsList, activeUnitDecls, hc.caller());
+                collectDeclarationIfPresent(unitDeclsList, activeUnitDecls, hc.clientMethod());
+            }
+            for (var lc : constructorCandidates.subList(candStart, constructorCandidates.size())) {
+                collectDeclarationIfPresent(unitDeclsList, activeUnitDecls, lc.owner());
+                collectDeclarationIfPresent(unitDeclsList, activeUnitDecls, lc.field());
+                lc.type().referencedEntities().forEach(eid -> collectDeclarationIfPresent(unitDeclsList, activeUnitDecls, eid));
+            }
+            var refs = ModuleIncrementalCache.collectReferencedSimpleNames(unit.ast);
+            boolean unresolvedOrErr = ModuleIncrementalCache.hasUnresolvedOrErrors(activeUnitOccurrences, unit.diagnostics);
+            nextUnitEntries.put(docId, new ModuleIncrementalCache.UnitEntry(
+                    docId, header.input.document().contentDigest(), hFacts.apiSignatureDigest(),
+                    hFacts.packageName(), hFacts.declaredSimpleNames(), refs,
+                    hFacts.hasWildcardImport(), hFacts.hasLombokClassAnnotation(), unresolvedOrErr,
+                    List.copyOf(unitDeclsList), List.copyOf(activeUnitOccurrences),
+                    List.copyOf(observations.subList(obsStart, observations.size())),
+                    List.copyOf(types.subList(typesStart, types.size())),
+                    List.copyOf(annotations.subList(annsStart, annotations.size())),
+                    List.copyOf(activeUnitDerived),
+                    List.copyOf(shapes.subList(shapesStart, shapes.size())),
+                    List.copyOf(members.subList(membersStart, members.size())),
+                    List.copyOf(constructorCandidates.subList(candStart, constructorCandidates.size())),
+                    List.copyOf(httpClientCalls.subList(httpStart, httpClientCalls.size())),
+                    List.copyOf(unit.diagnostics)));
+            activeUnitDecls = null;
+            activeUnitOccurrences = null;
+            activeUnitDerived = null;
             unitValueCache.clear();
             unitTypeNameCache.clear();
             if(compactBodies)releaseBody(unit);
+        }
+        if (rejected.isEmpty() && duplicateDeclarations.isEmpty()) {
+            ModuleIncrementalCache.put(new ModuleIncrementalCache.ModuleEntry(
+                    moduleContextKey, baseDeclarations, Set.copyOf(duplicateDeclarations), Map.copyOf(nextUnitEntries)));
         }
         var outcomesByDoc = new LinkedHashMap<SourceDocumentIdentity, SourceOutcome>();
         for (var outcome : rejected) {
@@ -549,19 +671,70 @@ final class Extraction {
         return cloned;
     }
 
+    static long primaryBodyRetentionCharBudget(long maxHeapBytes, long usedHeapBytes) {
+        long effectiveMax = maxHeapBytes == Long.MAX_VALUE || maxHeapBytes <= 0L
+                ? 1024L << 20
+                : maxHeapBytes;
+        long headroom = Math.max(0L, effectiveMax - Math.max(0L, usedHeapBytes));
+        if (headroom < (96L << 20)) return 0L;
+        long maxAstBytes = Math.min(64L << 20, Math.min(effectiveMax / 20L, (headroom * 3L) / 20L));
+        return maxAstBytes / 16L;
+    }
+
+    static int primaryBodyRetentionFileLimit(long charBudget) {
+        if (charBudget <= 0L) return 0;
+        return (int) Math.min(500L, Math.max(32L, charBudget / 8192L));
+    }
+
+    private static String kotlinCacheFileName(String path) {
+        if (path == null || !path.endsWith(".kt")) return "";
+        int slash = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
+        return slash >= 0 ? path.substring(slash + 1) : path;
+    }
+
     private void parse() {
         var parser = parser();
+        var runtime = Runtime.getRuntime();
+        long charBudget = primaryBodyRetentionCharBudget(
+                runtime.maxMemory(), runtime.totalMemory() - runtime.freeMemory());
+        int fileLimit = primaryBodyRetentionFileLimit(charBudget);
         boolean retainPrimaryBodies = compactBodies
-                && request.sources().size() <= 250
-                && totalPrimaryChars(request.sources()) <= 4_000_000L;
+                && charBudget > 0L
+                && request.sources().size() <= fileLimit
+                && totalPrimaryChars(request.sources()) <= charBudget;
         for (var input : request.sources()) {
             if(Thread.currentThread().isInterrupted())throw new java.util.concurrent.CancellationException();
+            String ktName = kotlinCacheFileName(input.document().path());
+            if (compactBodies && !retainPrimaryBodies && !ktName.isEmpty()) {
+                var ktKey = new SkeletonCacheKey(0, input.document().contentDigest(), ktName);
+                var cached = REACTOR_SKELETON_CACHE.get(ktKey);
+                if (cached != null) {
+                    KOTLIN_SKELETON_CACHE_HITS.incrementAndGet();
+                    CompilationUnit cloned = cloneWithRangesAndSolver(
+                            cached.template(), new JavaSymbolSolver(environment.solver));
+                    var unit = new Unit(input, cloned, cached.translated());
+                    units.put(cloned, unit);
+                    android.observeUnit(unit.ast);
+                    if (request.sourceRecovery()) environment.explicitImports.observeUnit(unit.ast);
+                    orderedUnits.add(unit);
+                    unit.ast.stream().filter(this::membershipNode).forEach(sourceNodes::add);
+                    continue;
+                }
+            }
             parse(parser, input, Optional.empty()).ifPresent(unit -> {
                 android.observeUnit(unit.ast);
                 if(request.sourceRecovery())environment.explicitImports.observeUnit(unit.ast);
                 if (retainPrimaryBodies) {
                     CompilationUnit headerAst = extractSkeletonClone(
                             unit.ast, new JavaSymbolSolver(environment.solver));
+                    if (!ktName.isEmpty()) {
+                        var ktKey = new SkeletonCacheKey(0, input.document().contentDigest(), ktName);
+                        if (REACTOR_SKELETON_CACHE.get(ktKey) == null) {
+                            CompilationUnit template = cloneWithRangesAndSolver(headerAst, null);
+                            long weight = (long) unit.translated.text.length() * 4 + 1024L;
+                            REACTOR_SKELETON_CACHE.put(ktKey, new CachedReactorSkeleton(unit.translated, template, weight));
+                        }
+                    }
                     units.remove(unit.ast);
                     var headerUnit = new Unit(input, headerAst, unit.translated);
                     units.put(headerAst, headerUnit);
@@ -569,7 +742,15 @@ final class Extraction {
                     orderedUnits.add(headerUnit);
                     headerAst.stream().filter(this::membershipNode).forEach(sourceNodes::add);
                 } else {
-                    if(compactBodies)skeleton(unit.ast);
+                    if(compactBodies) {
+                        skeleton(unit.ast);
+                        if (!ktName.isEmpty()) {
+                            var ktKey = new SkeletonCacheKey(0, input.document().contentDigest(), ktName);
+                            CompilationUnit template = cloneWithRangesAndSolver(unit.ast, null);
+                            long weight = (long) unit.translated.text.length() * 4 + 1024L;
+                            REACTOR_SKELETON_CACHE.put(ktKey, new CachedReactorSkeleton(unit.translated, template, weight));
+                        }
+                    }
                     orderedUnits.add(unit);
                     unit.ast.stream().filter(this::membershipNode).forEach(sourceNodes::add);
                 }
@@ -578,10 +759,15 @@ final class Extraction {
         int syntaxKey = request.plan().syntaxLevel().orElse(21);
         for (ReactorSourceInput reactor : request.reactorSources()) {
             for (SourceInput input : reactor.sources()) {
-                if (compactBodies && !input.document().path().endsWith(".kt")) {
-                    var cacheKey = new SkeletonCacheKey(syntaxKey, input.document().contentDigest());
+                if (compactBodies) {
+                    String ktName = kotlinCacheFileName(input.document().path());
+                    var cacheKey = new SkeletonCacheKey(
+                            ktName.isEmpty() ? syntaxKey : 0,
+                            input.document().contentDigest(),
+                            ktName);
                     var cached = REACTOR_SKELETON_CACHE.get(cacheKey);
                     if (cached != null) {
+                        if (!ktName.isEmpty()) KOTLIN_SKELETON_CACHE_HITS.incrementAndGet();
                         CompilationUnit cloned = cloneWithRangesAndSolver(
                                 cached.template(), new JavaSymbolSolver(environment.solver));
                         var unit = new Unit(input, cloned, cached.translated());
@@ -601,7 +787,6 @@ final class Extraction {
                     });
                 } else {
                     parse(parser, input, Optional.of(reactor)).ifPresent(unit -> {
-                        if(compactBodies)skeleton(unit.ast);
                         reactorUnits.add(new ReactorUnit(reactor, unit));
                         unit.ast.stream().filter(this::membershipNode).forEach(reactorNodes::add);
                     });
@@ -1645,8 +1830,10 @@ final class Extraction {
     void derive(Entity owner, Entity target, String category, Node input, String rule) {
         var evidence=entity(input);
         var derivation=new Derivation(DerivationKind.DERIVED,new VersionedIdentifier(rule,"1"),List.of(evidence.identity().value()));
-        derived.add(new DerivedRelationshipRecord(SemanticRelationship.create(owner.identity(),new RelationshipKind("java."+category),new RelationshipTarget.Resolved(target.identity())),
-                SemanticStatus.RESOLVED,derivation,List.of(source(input).span(input)),List.of(),List.of()));
+        var rec = new DerivedRelationshipRecord(SemanticRelationship.create(owner.identity(),new RelationshipKind("java."+category),new RelationshipTarget.Resolved(target.identity())),
+                SemanticStatus.RESOLVED,derivation,List.of(source(input).span(input)),List.of(),List.of());
+        derived.add(rec);
+        if (activeUnitDerived != null) activeUnitDerived.add(rec);
     }
     void implicitFailure(Node node, RuntimeException failure) {
         var problem=diagnostic("java.implicit-member-incomplete",failureStatus(failure),Optional.of(source(node).span(node)));
@@ -1829,6 +2016,7 @@ final class Extraction {
             var occurrence = RelationshipOccurrence.create(relation, span.orElseThrow(), 0, status, DIRECT, uncertainty, local);
             if (occurrences.putIfAbsent(occurrence.identity(), occurrence) == null) {
                 mapped = Optional.of(occurrence.identity());
+                if (activeUnitOccurrences != null) activeUnitOccurrences.add(occurrence);
                 if (category.equals("calls") && status == SemanticStatus.RESOLVED) {
                     resolvedCallsByDoc
                             .computeIfAbsent(unit.input.document().identity(), k -> new HashMap<>())
@@ -1845,6 +2033,16 @@ final class Extraction {
                 mapped, reference, local));
     }
 
+    int reextractedUnitCount() {
+        return reextractedUnitCount;
+    }
+    private void collectDeclarationIfPresent(
+            List<DeclarationRecord> list, Set<EntityIdentity> seen, EntityIdentity id) {
+        if (id != null && seen.add(id)) {
+            var rec = declarations.get(id);
+            if (rec != null) list.add(rec);
+        }
+    }
     private Entity observableDeclaration(Entity entity) {
         if (entity != null && duplicateDeclarations.contains(entity.identity()))
             throw new MappingFailure(SemanticStatus.ERROR, "java.duplicate-declaration");

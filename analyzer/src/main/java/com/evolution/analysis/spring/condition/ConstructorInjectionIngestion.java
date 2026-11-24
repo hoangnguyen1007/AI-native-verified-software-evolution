@@ -37,12 +37,18 @@ public final class ConstructorInjectionIngestion {
         }
     }
     public Result ingest(FrontendResult frontend,ComponentScanIngestion.Result discovery,SpringFrameworkEvidence framework,int maxParameters) {
+        return ingest(frontend,discovery,framework,maxParameters,SpringFrameworkEvidence.ValidationMode.STRICT_R0_PINNED);
+    }
+    public Result ingest(FrontendResult frontend,ComponentScanIngestion.Result discovery,SpringFrameworkEvidence framework,int maxParameters,SpringFrameworkEvidence.ValidationMode mode) {
+        Objects.requireNonNull(mode);
         if(maxParameters<1)throw new IllegalArgumentException("Positive parameter limit required");
         if(!frontend.analysis().equals(discovery.analysis()) || !IngestionEvidence.digest(frontend).equals(discovery.frontendEvidence())||!framework.identity().equals(discovery.frameworkEvidence()))
             throw new IllegalArgumentException("Constructor and component evidence differ");
         boolean currentJavaContract = JAVA_V13.equals(frontend.frontend());
         var provider = currentJavaContract ? V13_PROVIDER : PROVIDER;
-        var identity=IngestionEvidence.digest(List.of(provider,discovery.frontendEvidence(),discovery.identity(),framework.identity(),maxParameters));
+        var identity=mode==SpringFrameworkEvidence.ValidationMode.STRICT_R0_PINNED
+                ?IngestionEvidence.digest(List.of(provider,discovery.frontendEvidence(),discovery.identity(),framework.identity(),maxParameters))
+                :IngestionEvidence.digest(List.of(provider,discovery.frontendEvidence(),discovery.identity(),framework.identity(),maxParameters,mode.name()));
         Map<EntityIdentity,DeclarationRecord> declarations=new HashMap<>();frontend.declarations().forEach(d->declarations.put(d.entity().identity(),d));
         var unrelatedCallDiagnostics=new HashSet<Diagnostic>();
         for(var occurrence:frontend.occurrences()){
@@ -61,7 +67,9 @@ public final class ConstructorInjectionIngestion {
         var parameterTypes=new HashMap<EntityIdentity,List<TypeUseRecord>>();
         for(var type:frontend.types())if(type.owner().isPresent()&&type.role().value().equals("java.parameter-type"))parameterTypes.computeIfAbsent(type.owner().orElseThrow(),key->new ArrayList<>()).add(type);
         var supportedShapes=new HashSet<EntityIdentity>();frontend.typeDeclarations().stream().filter(t->Set.of(TypeDeclarationRecord.Kind.CLASS,TypeDeclarationRecord.Kind.RECORD).contains(t.kind())).forEach(t->supportedShapes.add(t.type()));
-        boolean frameworkKnown=framework.declarationFragmentKnown()&&framework.artifacts().stream().anyMatch(a->a.artifactId().equals("spring-beans")&&framework.verifiedArtifact(a));
+        boolean frameworkKnown=mode==SpringFrameworkEvidence.ValidationMode.STRICT_R0_PINNED
+                ?(framework.declarationFragmentKnown()&&framework.artifacts().stream().anyMatch(a->a.artifactId().equals("spring-beans")&&framework.verifiedArtifact(a)))
+                :framework.allows(false,mode);
         boolean providerKnown=currentJavaContract || Set.of(new VersionedIdentifier("frontend.javaparser","3.28.2-m4u.1"),
                 new VersionedIdentifier("frontend.javaparser","3.28.2-m4uv2.2"),
                 new VersionedIdentifier("frontend.javaparser","3.28.2-m4uv2.2-injection-v1"),

@@ -128,10 +128,21 @@ function mountEvolution(root) {
     $('comparison-outcome').textContent = result.status === 'WITHHELD' ? 'Comparison unavailable' : '';
     const pins = result.inputs.map(input => {
       const card = strong('article');
-      card.className = 'comparison-pin';
-      card.append(strong('h3', label(input.side)),
-        strong('p','Revision ' + (typeof input.revision === 'string' ? input.revision : 'unavailable')),
-        strong('code',input.graph),strong('p','Snapshot ' + (input.snapshot || 'unavailable')));
+      card.className = 'comparison-pin is-' + (input.side === 'LEFT' ? 'baseline' : 'target');
+      const head = strong('div');
+      head.className = 'comparison-pin-head';
+      const sideBadge = strong('span', input.side === 'LEFT' ? 'BASELINE' : 'TARGET');
+      sideBadge.className = 'evolution-side-badge is-' + (input.side === 'LEFT' ? 'baseline' : 'target');
+      const statusBadge = strong('span', input.status || 'AVAILABLE');
+      statusBadge.className = 'badge' + (input.status === 'AVAILABLE' ? ' good' : ' warn');
+      head.append(strong('h3', label(input.side)), sideBadge, statusBadge);
+      const rev = strong('p', 'Revision ' + (typeof input.revision === 'string' ? input.revision : 'unavailable'));
+      rev.className = 'comparison-pin-meta';
+      const code = strong('code', input.graph);
+      code.title = input.graph;
+      const snap = strong('p', 'Snapshot ' + (input.snapshot || 'unavailable'));
+      snap.className = 'comparison-pin-meta';
+      card.append(head, rev, code, snap);
       return card;
     });
     $('comparison-pins').replaceChildren(...pins);
@@ -216,10 +227,25 @@ function mountEvolution(root) {
       row.side ? label(row.side) : null].filter(Boolean);
     return info.join(' · ') || short(row.identity || row.subject) || 'Comparison row';
   }
+  function deltaTone(row) {
+    const token = String(row.transition || row.verdict || row.disposition || row.status || '').toUpperCase();
+    if (/RESOLVED|COMPATIBLE|CLEAN|PASSED|IMPROVED/.test(token)) return 'good';
+    if (/REGRESSED|INCOMPATIBLE|WITHHELD|FAILED|REMOVED|VIOLATION|BROKEN/.test(token)) return 'bad';
+    if (/PERSISTED|CHANGED|PARTIAL|CONDITIONAL|AMBIGUOUS|ADDED|UNKNOWN|CANDIDATE/.test(token)) return 'warn';
+    return 'neutral';
+  }
   function record(row, token) {
     const detail = strong('details');
     detail.className = 'comparison-record';
+    detail.dataset.deltaTone = deltaTone(row);
     const heading = strong('summary',describe(row));
+    const toneVal = row.transition || row.verdict || row.disposition || row.status;
+    if (toneVal) {
+      const tag = strong('span', String(toneVal));
+      const dt = deltaTone(row);
+      tag.className = 'badge' + (dt === 'good' ? ' good' : dt === 'bad' ? ' bad' : dt === 'warn' ? ' warn' : '');
+      heading.append(tag);
+    }
     detail.append(heading);
     detail.addEventListener('toggle',() => {
       if (!detail.open || detail.childNodes.length > 1) return;
@@ -312,8 +338,8 @@ function mountEvolution(root) {
           }));
           return li;
         });
-        if (append) list.replaceChildren(...rows);
-        else list.append(...rows);
+        if (append) list.append(...rows);
+        else list.replaceChildren(...rows);
         cursor = page.continuation;
         more.hidden = !cursor;
         const projection = page.projection === 'RAW_CONTEXT_OUTGOING' ? 'Outgoing edges' :
@@ -405,10 +431,17 @@ function mountEvolution(root) {
       setTimeout(() => URL.revokeObjectURL(url),0);
     } catch (error) { if (!token.signal.aborted) status(error.message); }
   });
-  $('compare-theme')?.addEventListener('click',() => {
-    const theme = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+  function syncTheme(theme) {
     document.documentElement.dataset.theme = theme;
-    $('compare-theme').textContent = theme === 'dark' ? 'Light theme' : 'Dark theme';
+    if ($('compare-theme')) $('compare-theme').textContent = theme === 'dark' ? 'Light theme' : 'Dark theme';
+    try { localStorage.setItem('evo_theme', theme); } catch (_) {}
+  }
+  try {
+    const savedTheme = localStorage.getItem('evo_theme');
+    if (savedTheme === 'light' || savedTheme === 'dark') syncTheme(savedTheme);
+  } catch (_) {}
+  $('compare-theme')?.addEventListener('click',() => {
+    syncTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
   });
   catalog();
   const saved = new URLSearchParams(window.location.search).get('result');

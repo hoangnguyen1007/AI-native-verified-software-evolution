@@ -121,7 +121,82 @@
 .bridge-more-menu > div button:hover, .bridge-more-menu > div button:focus-visible { background: var(--surface-2); }
 
 .bridge-layer-bar { margin: 2px 0 10px; }
-.bridge-kind-row { display: flex; align-items: center; justify-content: space-between; gap: 7px; flex-wrap: wrap; margin-bottom: 5px; }
+.bridge-kind-row { display: flex; align-items: center; justify-content: space-between; gap: 7px; flex-wrap: wrap; margin-bottom: 6px; }
+.bridge-badge-group { display: inline-flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+
+/* Protocol chips (HTTP / gRPC / Event / Data / IPC / JVM) */
+.protocol-badge {
+  font: 650 10px var(--font-mono);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: var(--r-pill, 999px);
+  border: 1px solid var(--line-mid);
+  background: var(--surface-2);
+  color: var(--text-2);
+}
+.protocol-badge.is-http { color: var(--cyan); border-color: color-mix(in srgb, var(--cyan) 35%, transparent); background: var(--cyan-s); }
+.protocol-badge.is-grpc { color: var(--ai); border-color: var(--ai-line); background: var(--ai-s); }
+.protocol-badge.is-event { color: var(--warn); border-color: var(--warn-line); background: var(--warn-s); }
+.protocol-badge.is-data { color: var(--accent); border-color: var(--accent-line); background: var(--accent-s); }
+.protocol-badge.is-ipc { color: var(--danger); border-color: var(--danger-line); background: var(--danger-s); }
+
+/* Outcome breakdown bar (separate exact denominators, no synthetic percentages) */
+.bridge-breakdown {
+  padding: 12px 14px;
+  border-radius: var(--r-md, 10px);
+  border: 1px solid var(--line-mid);
+  background: var(--surface);
+  margin-bottom: 16px;
+}
+.bridge-breakdown-bar {
+  display: flex;
+  height: 9px;
+  border-radius: 999px;
+  overflow: hidden;
+  gap: 2px;
+  background: var(--surface-2);
+}
+.bridge-breakdown-seg { height: 100%; min-width: 6px; transition: opacity 0.2s ease; }
+.bridge-breakdown-seg.is-matched, .bridge-breakdown-dot.is-matched { background: var(--accent); }
+.bridge-breakdown-seg.is-pending, .bridge-breakdown-dot.is-pending { background: var(--warn); }
+.bridge-breakdown-seg.is-extra, .bridge-breakdown-dot.is-extra { background: var(--cyan); }
+.bridge-breakdown-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+.bridge-breakdown-item { display: inline-flex; align-items: center; gap: 6px; }
+.bridge-breakdown-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+
+/* Elevated cross-service flow diagram */
+.bridge-flow { grid-template-columns: minmax(0,1fr) auto minmax(0,1fr); gap: 10px; }
+.bridge-flow-node {
+  border: 1px solid var(--line-mid);
+  background: var(--surface-2);
+  border-radius: var(--r, 8px);
+  padding: 9px 12px;
+  min-width: 0;
+}
+.bridge-flow-node.is-target { border-color: var(--accent-line); }
+.bridge-connector {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-width: 36px;
+}
+.bridge-connector-proto {
+  font: 700 9.5px var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-3);
+}
 
 @media (max-width: 1050px) { .bridge-results[data-layout=modules] { grid-template-columns: repeat(2, minmax(0,1fr)); } }
 @media (max-width: 640px) {
@@ -129,6 +204,7 @@
   .bridge-results[data-layout=modules] { grid-template-columns: 1fr; }
   .bridge-filters .control-field { flex: 1 1 130px; }
   .bridge-filters .search-field { order: -1; flex-basis: 100%; }
-  .bridge-flow { grid-template-columns: 1fr; gap: 5px; }
+  .bridge-flow { grid-template-columns: 1fr; gap: 6px; }
+  .bridge-connector { flex-direction: row; gap: 6px; }
   .bridge-arrow { transform: rotate(90deg); }
 }
