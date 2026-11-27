@@ -698,3 +698,104 @@ test('Moonshot #3 WebGL layout/grid, GraphCanvas auto engine selection, and DSM 
   assert.equal(dsmSum.violationCount, 1);
   assert.equal(dsmSum.truncated, true);
 });
+
+test('Moonshot #4 EvoVerticalTrace groups 8 canonical lanes, normalizes canonical vs advisory counts, and builds slice highlight metadata', () => {
+  const VTrace = require('../../main/resources/web/vertical-trace.js');
+
+  assert.deepEqual(
+    VTrace.CANONICAL_LAYERS.map(l => l.id),
+    ['FRONTEND', 'API_ROUTE', 'SPRING_CONTROLLER', 'SPRING_DI', 'SERVICE', 'JPA_ENTITY', 'SQL_TABLE', 'TERRAFORM_RESOURCE']
+  );
+
+  const trace = VTrace.normalizeTrace({
+    graphDigest: 'sha256:abc123',
+    context: 'analysis:main',
+    seed: 'com.acme.OrderController',
+    truncated: false,
+    hops: [
+      { index: 3, layer: 'SERVICE', nodeId: 'svc:1', label: 'OrderService', kind: 'TYPE', trustTier: 'COMPILER', sourcePath: 'src/main/java/com/acme/OrderService.java', startLine: 24, endLine: 68 },
+      { index: 0, layer: 'FRONTEND', nodeId: 'fe:1', label: 'CheckoutForm.tsx', kind: 'FILE', trustTier: 'SOURCE_SYNTAX', sourcePath: 'web/CheckoutForm.tsx', startLine: 12 },
+      { index: 1, layer: 'SPRING_CONTROLLER', nodeId: 'ctrl:1', label: 'OrderController', kind: 'TYPE', trustTier: 'COMPILER', sourcePath: 'src/main/java/com/acme/OrderController.java', startLine: 18 },
+      { index: 2, layer: 'SPRING_DI', nodeId: 'bean:1', label: 'orderServiceBean', kind: 'SPRING_BEAN', trustTier: 'SPRING_SAT', classification: 'MAY', witnessId: 'wit-prod-1' },
+      { index: 4, layer: 'SQL_TABLE', nodeId: 'sql:orders', label: 'orders', kind: 'SQL_TABLE', trustTier: 'COMPILER', sourcePath: 'db/V1__init.sql', startLine: 5, gapReason: 'Heuristic table link' },
+      { index: 5, layer: 'TERRAFORM_RESOURCE', nodeId: 'tf:rds', label: 'aws_db_instance.orders', kind: 'TERRAFORM_RESOURCE', sourcePath: 'infra/rds.tf', startLine: 1 }
+    ],
+    gaps: [
+      { code: 'MISSING_API_BRIDGE', layer: 'API_ROUTE', reason: 'No OpenAPI bridge captured' },
+      {
+        gapId: 'gap:1',
+        mechanismCategory: 'SPRING',
+        reasonCode: 'OPAQUE_CONDITION',
+        affectedNodeIds: ['bean:1', 'svc:1'],
+        sourcePaths: ['src/main/java/com/acme/OrderConfig.java'],
+        limitations: ['Custom @Conditional predicate could not be evaluated statically']
+      }
+    ]
+  });
+
+  // Promotion guard: SQL_TABLE & TERRAFORM_RESOURCE always remain ADVISORY_UNVERIFIED even if raw trustTier claims COMPILER
+  assert.equal(trace.totalHops, 6);
+  assert.equal(trace.canonicalHopCount, 4);
+  assert.equal(trace.advisoryHopCount, 2);
+  assert.equal(trace.hops[0].layer, 'FRONTEND');
+  assert.equal(trace.hops[2].classification, 'MAY');
+  assert.equal(trace.hops[2].witnessId, 'wit-prod-1');
+  assert.equal(trace.hops[4].trustTier, 'ADVISORY_UNVERIFIED');
+  assert.equal(trace.hops[4].isAdvisory, true);
+  assert.equal(trace.hops[5].trustTier, 'ADVISORY_UNVERIFIED');
+  assert.equal(trace.allGaps.length, 3);
+  assert.equal(trace.gaps[1].code, 'OPAQUE_CONDITION');
+  assert.equal(trace.gaps[1].mechanismCategory, 'SPRING');
+  assert.deepEqual(trace.gaps[1].affectedNodeIds, ['bean:1', 'svc:1']);
+  assert.deepEqual(trace.gaps[1].sourcePaths, ['src/main/java/com/acme/OrderConfig.java']);
+  assert.match(trace.gaps[1].reason, /SPRING/);
+  assert.match(trace.gaps[1].reason, /Custom @Conditional predicate/);
+  assert.match(trace.gaps[1].reason, /OrderConfig\.java/);
+  assert.match(trace.gaps[1].reason, /2 affected nodes/);
+
+  const lanes = VTrace.groupHopsByLane(trace);
+  assert.equal(lanes.length, 8);
+  assert.equal(lanes[0].id, 'FRONTEND');
+  assert.equal(lanes[0].count, 1);
+  assert.equal(lanes[1].id, 'API_ROUTE');
+  assert.equal(lanes[1].count, 0);
+  assert.equal(lanes[1].hasGap, true);
+  assert.equal(lanes[6].id, 'SQL_TABLE');
+  assert.equal(lanes[6].advisoryCount, 1);
+  assert.equal(lanes[6].hasGap, true);
+  assert.equal(lanes[7].id, 'TERRAFORM_RESOURCE');
+  assert.equal(lanes[7].advisoryCount, 1);
+
+  const slice = VTrace.normalizeSlice({
+    path: 'src/main/java/com/acme/OrderService.java',
+    methodSignature: 'createOrder(OrderRequest)',
+    seedLine: 42,
+    direction: 'BACKWARD',
+    trustTier: 'COMPILER',
+    truncated: false,
+    totalMethodStatements: 14,
+    statements: [
+      { line: 42, endLine: 42, kind: 'RETURN', code: 'return repo.save(entity);', dependsOnLines: [38, 30], dependencyKind: 'SEED' },
+      { line: 30, endLine: 31, kind: 'IF', code: 'if (req.total() <= 0) throw new IllegalArgumentException();', dependsOnLines: [], dependencyKind: 'CONTROL' },
+      { line: 38, endLine: 38, kind: 'ASSIGN', code: 'OrderEntity entity = mapper.toEntity(req);', dependsOnLines: [30], dependencyKind: 'DATA' },
+      { line: 40, endLine: 40, kind: 'CALL', code: 'entity.setStatus(Status.NEW);', dependsOnLines: [38, 30], dependencyKind: 'BOTH' }
+    ],
+    sliceLines: [42, 30, 38, 40],
+    limitations: ['Intra-procedural only']
+  });
+
+  assert.equal(slice.direction, 'BACKWARD');
+  assert.equal(slice.trustTier, 'COMPILER');
+  assert.deepEqual(slice.sliceLines, [30, 38, 40, 42]);
+  assert.equal(slice.statements[0].line, 30);
+  assert.equal(slice.statements[3].isSeed, true);
+  assert.deepEqual(slice.statements[3].dependsOnLines, [30, 38]);
+  assert.equal(slice.highlightMeta.seedLine, 42);
+  assert.equal(slice.highlightMeta.minLine, 30);
+  assert.equal(slice.highlightMeta.maxLine, 42);
+  assert.equal(slice.highlightMeta.lineCount, 4);
+  assert.deepEqual(slice.highlightMeta.byKind, { SEED: 1, DATA: 1, CONTROL: 1, BOTH: 1 });
+  assert.equal(slice.highlightMeta.lineMeta[30].dependencyKind, 'CONTROL');
+  assert.equal(slice.highlightMeta.lineMeta[40].dependencyKind, 'BOTH');
+  assert.deepEqual(slice.limitations, ['Intra-procedural only']);
+});

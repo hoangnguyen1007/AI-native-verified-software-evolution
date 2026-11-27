@@ -15,7 +15,8 @@
 <link rel="stylesheet" href="/code-search.css">
 <link rel="stylesheet" href="/graph-canvas.css">
 <link rel="stylesheet" href="/dsm-matrix.css">
-<script defer src="/model.js"></script><script defer src="/evo-bus.js"></script><script defer src="/trust-badges.js"></script><script defer src="/lucian-components.js"></script><script defer src="/github-auth.js"></script><script defer src="/github-enterprise.js"></script><script defer src="/sandbox-setup.js"></script><script defer src="/repair-studio.js"></script><script defer src="/github-hub.js"></script><script defer src="/community-advisory.js"></script><script defer src="/code-search.js"></script><script defer src="/webgl-graph-engine.js"></script><script defer src="/graph-canvas.js"></script><script defer src="/dsm-matrix.js"></script><script defer src="/app.js"></script><script defer src="/ux.js"></script><script defer src="/sidebar-ux.js"></script>
+<link rel="stylesheet" href="/vertical-trace.css">
+<script defer src="/model.js"></script><script defer src="/evo-bus.js"></script><script defer src="/trust-badges.js"></script><script defer src="/lucian-components.js"></script><script defer src="/github-auth.js"></script><script defer src="/github-enterprise.js"></script><script defer src="/sandbox-setup.js"></script><script defer src="/repair-studio.js"></script><script defer src="/github-hub.js"></script><script defer src="/community-advisory.js"></script><script defer src="/code-search.js"></script><script defer src="/webgl-graph-engine.js"></script><script defer src="/graph-canvas.js"></script><script defer src="/dsm-matrix.js"></script><script defer src="/vertical-trace.js"></script><script defer src="/app.js"></script><script defer src="/ux.js"></script><script defer src="/sidebar-ux.js"></script>
 </head>
 <body class="workbench-page">
 <a class="skip-link" href="#main">Skip to content</a>
@@ -279,6 +280,7 @@
           <nav class="view-links" aria-label="Architecture views">
             <button type="button" id="view-graph" data-open-tab="graph">Dependency map</button>
             <button type="button" id="view-dsm" data-open-tab="dsm">DSM Matrix</button>
+            <button type="button" id="view-vertical-trace" data-open-tab="vertical-trace">Vertical Trace</button>
             <button type="button" id="view-structure" data-open-tab="structure">Structure</button>
             <button type="button" id="view-repomap" data-open-tab="repomap">RepoMap &amp; Source</button>
             <button type="button" id="view-connections" data-open-tab="connections">Connections</button>
@@ -301,6 +303,7 @@
           </form>
           <section id="panel-graph" aria-labelledby="view-graph" data-group-panel hidden></section>
           <section id="panel-dsm" aria-labelledby="view-dsm" data-group-panel hidden></section>
+          <section id="panel-vertical-trace" aria-labelledby="view-vertical-trace" data-group-panel hidden></section>
           <section id="panel-structure" aria-labelledby="view-structure" data-group-panel hidden></section>
           <section id="panel-repomap" aria-labelledby="view-repomap" data-group-panel hidden></section>
           <section id="panel-connections" aria-labelledby="view-connections" data-group-panel hidden></section>

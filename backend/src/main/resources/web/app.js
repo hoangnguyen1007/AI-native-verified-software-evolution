@@ -4334,6 +4334,12 @@
       }
       return empty('DSM Matrix unavailable', 'The DSM matrix module could not be loaded.');
     },
+    'vertical-trace'(env) {
+      if (window.EvoVerticalTrace?.render) {
+        return window.EvoVerticalTrace.render(env, { M, state, api, safe, btn, card, empty, defaultDependencyContext, download });
+      }
+      return empty('Vertical Trace unavailable', 'The vertical trace module could not be loaded.');
+    },
     async connections(env) {
       const node = card('Cross-language connections', 'Trace links between code and contracts. Candidate links still need evidence to confirm their targets.');
       const kinds = {
@@ -4791,6 +4797,11 @@
       if (!state.graph || !payload) return;
       state.pendingRepairSeed = payload;
       if (state.tab !== 'policy') void safe(() => loadTab('policy'));
+    });
+    window.EvoBus.on('evo:trace-open', payload => {
+      if (!state.graph || !payload) return;
+      state.pendingTraceSeed = payload;
+      if (state.tab !== 'vertical-trace') void safe(() => loadTab('vertical-trace'));
     });
   }
   window.EvoGitHubAuth?.onChange?.(info => {

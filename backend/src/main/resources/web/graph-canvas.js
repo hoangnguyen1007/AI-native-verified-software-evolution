@@ -741,12 +741,21 @@
           return loadTab('architecture-chat');
         }
       });
-      spotlight.disabled = inspectButton.disabled = blastButton.disabled = askAiNode.disabled = true;
+      const traceNode = btn('Vertical Trace', () => {
+        const item = byId.get(selected.value);
+        if (!item) return;
+        window.EvoBus?.emit('evo:trace-open', {
+          seedId: item.id,
+          seedKind: item.kind,
+          includeAdvisory: true
+        });
+      });
+      spotlight.disabled = inspectButton.disabled = blastButton.disabled = askAiNode.disabled = traceNode.disabled = true;
 
       const hubs = append(el('div', 'graph-node-list'), ...ranked.filter(item => degree.has(item.id)).slice(0, 4).map(item =>
         btn(fullLabel(item), () => selectNode(item.id), 'graph-node-link')));
       const rail = append(el('aside', 'graph-rail'), field('Node', selected), railTrustHost, readout,
-        append(el('div', 'graph-node-actions'), inspectButton, spotlight, blastButton, askAiNode),
+        append(el('div', 'graph-node-actions'), inspectButton, spotlight, blastButton, traceNode, askAiNode),
         hubs.children.length ? append(el('div', 'graph-hubs'), el('h3', '', 'Most connected'), hubs) : null);
 
       let cy = null;
@@ -1037,7 +1046,7 @@
         const superItem = isSuperNode(item);
         spotlight.disabled = superItem && !isExpandableSuperNode(item);
         inspectButton.disabled = askAiNode.disabled = false;
-        blastButton.disabled = superItem;
+        blastButton.disabled = traceNode.disabled = superItem;
         filter.value = '';
         if (webgl) {
           let inD = 0, outD = 0;
@@ -1098,7 +1107,7 @@
           },
           onBackgroundClick: () => {
             selected.value = '';
-            spotlight.disabled = inspectButton.disabled = blastButton.disabled = askAiNode.disabled = true;
+            spotlight.disabled = inspectButton.disabled = blastButton.disabled = askAiNode.disabled = traceNode.disabled = true;
             railTrustHost.replaceChildren();
             resetHighlight();
           }
@@ -1310,7 +1319,7 @@
         if (selected.value) { selectNode(selected.value, { pulse: true }); return; }
         resetHighlight();
         railTrustHost.replaceChildren();
-        spotlight.disabled = inspectButton.disabled = blastButton.disabled = askAiNode.disabled = true;
+        spotlight.disabled = inspectButton.disabled = blastButton.disabled = askAiNode.disabled = traceNode.disabled = true;
         readout.textContent = 'Select a node to see where its arrows lead.';
       });
 
