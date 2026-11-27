@@ -1,13 +1,16 @@
 package com.evolution.backend.query;
 
 import com.evolution.analysis.contract.common.ContentDigest;
+import com.evolution.analysis.contract.source.SourceSpan;
 import com.evolution.analysis.contract.assessment.AssessmentStatus;
+import com.evolution.analysis.contract.semantic.TrustTier;
 import com.evolution.analysis.contract.serialization.CanonicalJson;
 import com.evolution.analysis.graph.GraphJson;
 import com.evolution.analysis.graph.KnowledgeGraph;
 import com.evolution.analysis.policy.PolicyEvaluation;
 import com.evolution.analysis.query.ArchitectureQuery;
 import com.evolution.analysis.query.ArchitectureQueryService;
+import com.evolution.backend.query.chat.ChatConversationStore;
 
 import java.util.*;
 import java.util.regex.Pattern;
@@ -54,14 +57,25 @@ final class ArchitectureChat {
     record Input(String context, Mode mode, List<Message> messages, Optional<String> focus,
             Optional<FindingRef> finding, boolean allowRemote, boolean evidenceOnly, boolean includeSource,
             Optional<String> job,
-            boolean reviewer, boolean agentic) {
+            boolean reviewer, boolean agentic, Optional<String> conversationId) {
+        Input(String context, Mode mode, List<Message> messages, Optional<String> focus,
+                Optional<FindingRef> finding, boolean allowRemote, boolean evidenceOnly, boolean includeSource,
+                Optional<String> job, boolean reviewer, boolean agentic) {
+            this(context, mode, messages, focus, finding, allowRemote, evidenceOnly, includeSource, job, reviewer,
+                    agentic, Optional.empty());
+        }
+
+        Input {
+            conversationId = conversationId == null ? Optional.empty() : conversationId;
+        }
+
         String question() {
             return messages.getLast().content();
         }
 
         static Input read(Object value) {
             var row = QueryJson.object(value, "context", "mode", "messages", "focus", "finding", "allowRemote",
-                    "evidenceOnly", "includeSource", "job", "reviewer", "agentic");
+                    "evidenceOnly", "includeSource", "job", "reviewer", "agentic", "conversationId");
             var messages = GraphJson.array(row.get("messages"));
             if (messages.isEmpty() || messages.size() > 15 || messages.size() % 2 == 0)
                 throw new IllegalArgumentException("Expected at most seven previous turns and one question");
@@ -77,6 +91,10 @@ final class ArchitectureChat {
             var focus = QueryJson.optionalText(row, "focus");
             if (focus.filter(s -> s.length() > 256).isPresent())
                 throw new IllegalArgumentException("Focus exceeds the limit");
+            var conversationId = QueryJson.optionalText(row, "conversationId");
+            if (conversationId.isPresent() && !ChatConversationStore.isValidConversationId(conversationId.orElseThrow())) {
+                throw new IllegalArgumentException("Invalid conversationId format");
+            }
             var finding = Optional.ofNullable(row.get("finding")).map(ref -> {
                 var pins = QueryJson.object(ref, "report", "identity", "bundle");
                 return new FindingRef(digest(pins, "report"), digest(pins, "identity"), digest(pins, "bundle"));
@@ -84,7 +102,7 @@ final class ArchitectureChat {
             return new Input(QueryJson.text(row, "context"), Mode.valueOf(QueryJson.text(row, "mode")),
                     List.copyOf(history), focus, finding, flag(row, "allowRemote"), flag(row, "evidenceOnly"),
                     flag(row, "includeSource"), QueryJson.optionalText(row, "job"), flag(row, "reviewer"),
-                    flag(row, "agentic"));
+                    flag(row, "agentic"), conversationId);
         }
 
         private static boolean flag(Map<String, Object> row, String field) {
@@ -118,6 +136,288 @@ final class ArchitectureChat {
     }
 
     record Evidence(String id, Kind kind, String label, String identity, Map<String, ?> data) {
+    }
+
+    public record ResolvedCitation(
+            String id,
+            String kind,
+            String label,
+            List<String> nodeIds,
+            Optional<String> path,
+            OptionalInt startLine,
+            OptionalInt endLine,
+            String trustTier) implements CanonicalJson.CanonicalValue {
+        public ResolvedCitation {
+            id = Objects.requireNonNull(id, "id");
+            kind = Objects.requireNonNull(kind, "kind");
+            label = label == null ? "" : label;
+            nodeIds = nodeIds == null ? List.of() : List.copyOf(nodeIds);
+            path = path == null ? Optional.empty() : path.map(String::strip).filter(s -> !s.isEmpty());
+            startLine = startLine == null ? OptionalInt.empty() : startLine;
+            endLine = endLine == null ? OptionalInt.empty() : endLine;
+            trustTier = (trustTier == null || trustTier.isBlank()) ? TrustTier.COMPILER.name() : trustTier;
+        }
+
+        public Map<String, Object> toView() {
+            var map = new LinkedHashMap<String, Object>();
+            map.put("id", id);
+            map.put("kind", kind);
+            map.put("label", label);
+            map.put("nodeIds", nodeIds);
+            map.put("path", path.orElse(null));
+            map.put("startLine", startLine.isPresent() ? startLine.getAsInt() : null);
+            map.put("endLine", endLine.isPresent() ? endLine.getAsInt() : null);
+            map.put("trustTier", trustTier);
+            return Collections.unmodifiableMap(map);
+        }
+
+        @Override
+        public Object canonicalValue() {
+            return toView();
+        }
+    }
+
+    private static final int MAX_CITATION_NODE_IDS = 64;
+    private static final Set<String> VALID_TRUST_TIERS = Set.of(
+            TrustTier.COMPILER.name(),
+            TrustTier.SPRING_SAT.name(),
+            TrustTier.SOURCE_SYNTAX.name(),
+            TrustTier.ADVISORY_UNVERIFIED.name());
+
+    static List<ResolvedCitation> resolveCitations(List<Evidence> evidence) {
+        if (evidence == null || evidence.isEmpty()) {
+            return List.of();
+        }
+        var resolved = new ArrayList<ResolvedCitation>(evidence.size());
+        for (var ev : evidence) {
+            if (ev == null) continue;
+            resolved.add(resolveCitation(ev));
+        }
+        return List.copyOf(resolved);
+    }
+
+    private static ResolvedCitation resolveCitation(Evidence ev) {
+        Map<String, ?> data = ev.data() == null ? Map.of() : ev.data();
+        var nodeIds = new LinkedHashSet<String>();
+        if ((ev.kind() == Kind.DEPENDENCIES || ev.kind() == Kind.SYMBOLS) && looksLikeGraphNodeId(ev.identity())) {
+            addNodeId(nodeIds, ev.identity());
+        }
+        extractNodeIdsFromMap(data, nodeIds, 0);
+
+        String path = extractPath(data);
+        OptionalInt startLine = extractLine(data, "startLine");
+        OptionalInt endLine = extractLine(data, "endLine");
+        if (startLine.isEmpty() || endLine.isEmpty()) {
+            Object span = data.get("span");
+            if (span instanceof SourceSpan sp) {
+                if (startLine.isEmpty() && sp.startLine() > 0) startLine = OptionalInt.of(sp.startLine());
+                if (endLine.isEmpty() && sp.endLine() > 0) endLine = OptionalInt.of(sp.endLine());
+            } else if (span instanceof Map<?, ?> sm) {
+                if (startLine.isEmpty()) startLine = extractLine(sm, "startLine");
+                if (endLine.isEmpty()) endLine = extractLine(sm, "endLine");
+            }
+        }
+        if (path == null) {
+            var nestedLoc = extractNestedLocation(data);
+            if (nestedLoc != null) {
+                path = nestedLoc.path();
+                if (startLine.isEmpty()) startLine = nestedLoc.startLine();
+                if (endLine.isEmpty()) endLine = nestedLoc.endLine();
+            }
+        }
+        if (startLine.isPresent() && endLine.isEmpty()) {
+            endLine = startLine;
+        }
+        String trustTier = determineTrustTier(ev, data, path);
+        return new ResolvedCitation(
+                ev.id(),
+                ev.kind().name(),
+                ev.label(),
+                List.copyOf(nodeIds),
+                Optional.ofNullable(path),
+                startLine,
+                endLine,
+                trustTier);
+    }
+
+    private record LocationRef(String path, OptionalInt startLine, OptionalInt endLine) {}
+
+    private static LocationRef extractNestedLocation(Map<?, ?> data) {
+        for (String key : List.of("links", "hubs", "matches", "items")) {
+            Object val = data.get(key);
+            if (val instanceof List<?> list) {
+                for (Object item : list) {
+                    if (item instanceof Map<?, ?> m) {
+                        String p = extractPath(m);
+                        if (p != null) {
+                            OptionalInt s = extractLine(m, "startLine");
+                            OptionalInt e = extractLine(m, "endLine");
+                            return new LocationRef(p, s, e.isPresent() ? e : s);
+                        }
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    private static String extractPath(Map<?, ?> data) {
+        for (String key : List.of("path", "sourcePath", "file", "filePath")) {
+            Object v = data.get(key);
+            if (v instanceof String s) {
+                String trimmed = s.strip();
+                if (!trimmed.isEmpty() && !trimmed.startsWith("sha256:")) {
+                    return trimmed;
+                }
+            }
+        }
+        return null;
+    }
+
+    private static OptionalInt extractLine(Map<?, ?> data, String key) {
+        Object v = data.get(key);
+        if (v instanceof Integer i && i > 0) return OptionalInt.of(i);
+        if (v instanceof Long l && l > 0 && l <= Integer.MAX_VALUE) return OptionalInt.of(l.intValue());
+        if (v instanceof java.math.BigDecimal bd) {
+            try {
+                int i = bd.intValueExact();
+                return i > 0 ? OptionalInt.of(i) : OptionalInt.empty();
+            } catch (ArithmeticException ignored) {
+                return OptionalInt.empty();
+            }
+        }
+        return OptionalInt.empty();
+    }
+
+    private static String determineTrustTier(Evidence ev, Map<String, ?> data, String path) {
+        for (String key : List.of("trustTier", "trust")) {
+            if (data.get(key) instanceof String s && VALID_TRUST_TIERS.contains(s.strip())) {
+                return s.strip();
+            }
+        }
+        String labelLower = ev.label() == null ? "" : ev.label().toLowerCase(Locale.ROOT);
+        if (labelLower.contains("advisory")
+                || (data.get("schema") instanceof String schema && schema.startsWith("advisory."))) {
+            return TrustTier.ADVISORY_UNVERIFIED.name();
+        }
+        if (labelLower.contains("spring")
+                || (ev.identity() != null && ev.identity().startsWith("spring:"))
+                || data.containsKey("components")
+                || data.containsKey("configurations")
+                || data.containsKey("truthRegion")
+                || data.containsKey("springConditions")) {
+            return TrustTier.SPRING_SAT.name();
+        }
+        if (path != null) {
+            String lower = path.toLowerCase(Locale.ROOT);
+            if (lower.endsWith(".sql") || lower.endsWith(".tf") || lower.endsWith(".tfvars")
+                    || lower.endsWith(".md") || lower.endsWith(".markdown") || lower.endsWith(".mcp.json")) {
+                return TrustTier.ADVISORY_UNVERIFIED.name();
+            }
+            if (lower.endsWith(".ts") || lower.endsWith(".tsx") || lower.endsWith(".js") || lower.endsWith(".jsx")
+                    || lower.endsWith(".mjs") || lower.endsWith(".cjs") || lower.endsWith(".py")
+                    || lower.endsWith(".go") || lower.endsWith(".rs") || lower.endsWith(".cs")
+                    || lower.endsWith(".php") || lower.endsWith(".rb") || lower.endsWith(".vue")
+                    || lower.endsWith(".svelte") || lower.endsWith(".kt") || lower.endsWith(".kts")) {
+                return TrustTier.SOURCE_SYNTAX.name();
+            }
+            if (lower.endsWith(".java") || data.containsKey("reference")) {
+                return TrustTier.COMPILER.name();
+            }
+            if (ev.kind() == Kind.SOURCE) {
+                return TrustTier.SOURCE_SYNTAX.name();
+            }
+        }
+        if (ev.identity() != null && (ev.identity().startsWith("polyglot:") || ev.identity().startsWith("file:"))) {
+            return TrustTier.SOURCE_SYNTAX.name();
+        }
+        return TrustTier.COMPILER.name();
+    }
+
+    private static void extractNodeIdsFromMap(Map<?, ?> map, Set<String> out, int depth) {
+        if (map == null || out.size() >= MAX_CITATION_NODE_IDS || depth > 4) return;
+        boolean isEdgeRow = map.containsKey("source") && map.containsKey("target");
+        List<String> directKeys = isEdgeRow
+                ? List.of("source", "target")
+                : List.of("nodeId", "identity", "source", "target", "sourceId", "targetId");
+        for (String key : directKeys) {
+            Object v = map.get(key);
+            if (v instanceof String s && looksLikeGraphNodeId(s)) {
+                addNodeId(out, s);
+            }
+        }
+        if (map.get("nodeIds") instanceof List<?> ids) {
+            for (Object id : ids) {
+                if (id instanceof String s && looksLikeGraphNodeId(s)) addNodeId(out, s);
+            }
+        }
+        if (map.get("path") instanceof List<?> pathNodes) {
+            for (Object item : pathNodes) {
+                if (item instanceof String s && looksLikeGraphNodeId(s)) addNodeId(out, s);
+            }
+        }
+        for (String nestedMapKey : List.of("symbol", "entity")) {
+            Object v = map.get(nestedMapKey);
+            if (v instanceof Map<?, ?> m) {
+                extractNodeIdsFromMap(m, out, depth + 1);
+            } else if (v instanceof EntityView ev) {
+                addNodeId(out, ev.identity());
+            } else if (v instanceof List<?> list) {
+                extractNodeIdsFromList(list, out, depth + 1);
+            }
+        }
+        for (String listKey : List.of("matches", "modules", "edges", "outgoingEdges", "incomingEdges",
+                "outgoing", "incoming", "connections", "components", "impact", "nodes", "steps",
+                "tangles", "hotspots")) {
+            Object v = map.get(listKey);
+            if (v instanceof List<?> list) {
+                extractNodeIdsFromList(list, out, depth + 1);
+            }
+        }
+    }
+
+    private static void extractNodeIdsFromList(List<?> list, Set<String> out, int depth) {
+        if (list == null || out.size() >= MAX_CITATION_NODE_IDS || depth > 4) return;
+        for (Object item : list) {
+            if (out.size() >= MAX_CITATION_NODE_IDS) break;
+            if (item instanceof EntityView ev) {
+                addNodeId(out, ev.identity());
+            } else if (item instanceof EdgeView edge) {
+                addNodeId(out, edge.source());
+                addNodeId(out, edge.target());
+            } else if (item instanceof ArchitectureQuery.Path path) {
+                for (String v : path.vertices()) addNodeId(out, v);
+            } else if (item instanceof Neighborhood nb) {
+                for (var e : nb.entities()) addNodeId(out, e.identity());
+            } else if (item instanceof Map<?, ?> m) {
+                extractNodeIdsFromMap(m, out, depth + 1);
+            } else if (item instanceof String s && looksLikeGraphNodeId(s)) {
+                addNodeId(out, s);
+            }
+        }
+    }
+
+    private static void addNodeId(Set<String> out, String id) {
+        if (id != null && !id.isBlank() && out.size() < MAX_CITATION_NODE_IDS) {
+            out.add(id.strip());
+        }
+    }
+
+    private static boolean looksLikeGraphNodeId(String candidate) {
+        if (candidate == null || candidate.isBlank() || candidate.length() > 512) return false;
+        String s = candidate.strip();
+        if (s.startsWith("sha256:") || s.startsWith("snapshot:") || s.startsWith("analysis:")
+                || s.startsWith("context:") || s.startsWith("http://") || s.startsWith("https://")) {
+            return false;
+        }
+        // Reject bare UUIDs (job IDs)
+        if (s.length() == 36 && s.charAt(8) == '-' && s.charAt(13) == '-' && s.charAt(18) == '-' && s.charAt(23) == '-') {
+            return false;
+        }
+        return s.startsWith("java:") || s.startsWith("spring:") || s.startsWith("polyglot:")
+                || s.startsWith("type:") || s.startsWith("module:") || s.startsWith("package:")
+                || s.startsWith("entity:") || s.startsWith("node:") || s.startsWith("community:")
+                || s.startsWith("fixture:") || s.contains("://") == false && s.contains(":");
     }
 
     record Context(Pin pin, List<Evidence> evidence, List<String> limitations,
@@ -211,13 +511,42 @@ final class ArchitectureChat {
     record Result(String version, String status, Pin pin, ContentDigest evidenceIdentity, Optional<String> answer,
             Optional<String> conversationTitle,
             List<String> citations, List<Evidence> evidence, List<String> limitations,
-            Optional<ArchitectureChatModel.Receipt> model, List<AgentStep> agentTrace) {
+            Optional<ArchitectureChatModel.Receipt> model, List<AgentStep> agentTrace,
+            List<ResolvedCitation> resolvedCitations,
+            Optional<String> conversationId,
+            Optional<String> turnId) {
         Result(String version, String status, Pin pin, ContentDigest evidenceIdentity, Optional<String> answer,
                 Optional<String> conversationTitle,
                 List<String> citations, List<Evidence> evidence, List<String> limitations,
                 Optional<ArchitectureChatModel.Receipt> model) {
             this(version, status, pin, evidenceIdentity, answer, conversationTitle, citations, evidence, limitations,
-                    model, List.of());
+                    model, List.of(), resolveCitations(evidence), Optional.empty(), Optional.empty());
+        }
+
+        Result(String version, String status, Pin pin, ContentDigest evidenceIdentity, Optional<String> answer,
+                Optional<String> conversationTitle,
+                List<String> citations, List<Evidence> evidence, List<String> limitations,
+                Optional<ArchitectureChatModel.Receipt> model, List<AgentStep> agentTrace) {
+            this(version, status, pin, evidenceIdentity, answer, conversationTitle, citations, evidence, limitations,
+                    model, agentTrace, resolveCitations(evidence), Optional.empty(), Optional.empty());
+        }
+
+        Result {
+            citations = citations == null ? List.of() : List.copyOf(citations);
+            evidence = evidence == null ? List.of() : List.copyOf(evidence);
+            limitations = limitations == null ? List.of() : List.copyOf(limitations);
+            agentTrace = agentTrace == null ? List.of() : List.copyOf(agentTrace);
+            resolvedCitations = (resolvedCitations == null || (resolvedCitations.isEmpty() && !evidence.isEmpty()))
+                    ? resolveCitations(evidence)
+                    : List.copyOf(resolvedCitations);
+            conversationId = conversationId == null ? Optional.empty() : conversationId;
+            turnId = turnId == null ? Optional.empty() : turnId;
+        }
+
+        Result withPersistence(String convId, String assistantTurnId) {
+            return new Result(version, status, pin, evidenceIdentity, answer, conversationTitle, citations, evidence,
+                    limitations, model, agentTrace, resolvedCitations,
+                    Optional.ofNullable(convId), Optional.ofNullable(assistantTurnId));
         }
 
         static Result local(Context context, boolean configured) {

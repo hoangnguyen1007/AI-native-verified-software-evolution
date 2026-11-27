@@ -428,6 +428,8 @@ public final class WorkbenchApiMain {
                             accountStore;
                             var searchIndex = com.evolution.backend.query.search.CapturedSearchIndex.openReadWrite(
                                     directory.resolve("search").resolve("fts5.db"));
+                            var chatStore = new com.evolution.backend.query.chat.ChatConversationStore(
+                                    directory.resolve("chat").resolve("conversations.db"));
                             var repairJobStore = new com.evolution.backend.query.repair.RepairJobStore(
                                     directory.resolve("repairs").resolve("jobs.db"));
                             var repairJobs = new com.evolution.backend.query.repair.RepairVerificationJobs(2, repairJobStore);
@@ -470,24 +472,26 @@ public final class WorkbenchApiMain {
                         var sandboxSetup = new com.evolution.backend.query.repair.SandboxSetupService(
                                 directory.resolve("repairs").resolve("sandbox-work"), repairJobStore, initialRunner,
                                 directory, authApi.isMultiUserMode());
-                        var evolvedApi = ArchitectureQueryApi.withSearchIndex(
-                                ArchitectureQueryApi.withSandboxSetup(
-                                        ArchitectureQueryApi.withStoreDirectory(
-                                                ArchitectureQueryApi.withAuth(
-                                                        ArchitectureQueryApi.withAcquisitionContentDir(
-                                                                ArchitectureQueryApi.withSafePatchApplier(
-                                                                        ArchitectureQueryApi.withRepairVerificationJobs(
-                                                                                ArchitectureQueryApi.withGitHub(
-                                                                                        ArchitectureQueryApi.withEvolution(api, evolution,
-                                                                                                new EvolutionQueries(evolution.results(), pages)),
-                                                                                        githubApi),
-                                                                                repairJobs),
-                                                                        safePatchApplier),
-                                                                acquisitionDir.resolve("content")),
-                                                        authApi),
-                                                directory),
-                                        sandboxSetup),
-                                searchIndex);
+                        var evolvedApi = ArchitectureQueryApi.withChatStore(
+                                ArchitectureQueryApi.withSearchIndex(
+                                        ArchitectureQueryApi.withSandboxSetup(
+                                                ArchitectureQueryApi.withStoreDirectory(
+                                                        ArchitectureQueryApi.withAuth(
+                                                                ArchitectureQueryApi.withAcquisitionContentDir(
+                                                                        ArchitectureQueryApi.withSafePatchApplier(
+                                                                                ArchitectureQueryApi.withRepairVerificationJobs(
+                                                                                        ArchitectureQueryApi.withGitHub(
+                                                                                                ArchitectureQueryApi.withEvolution(api, evolution,
+                                                                                                        new EvolutionQueries(evolution.results(), pages)),
+                                                                                                githubApi),
+                                                                                        repairJobs),
+                                                                                safePatchApplier),
+                                                                        acquisitionDir.resolve("content")),
+                                                                authApi),
+                                                        directory),
+                                                sandboxSetup),
+                                        searchIndex),
+                                chatStore);
                         var capturedApi = ArchitectureQueryApi.withConfiguredCapturedRepairCapture(
                                 ArchitectureQueryApi.withConfiguredDemoRepairCapture(
                                         ArchitectureQueryApi.withRepairReanalysis(
@@ -504,6 +508,7 @@ public final class WorkbenchApiMain {
                                 server.close();
                                 repairJobs.close();
                                 repairJobStore.close();
+                                chatStore.close();
                                 searchIndex.close();
                                 store.close();
                                 try {

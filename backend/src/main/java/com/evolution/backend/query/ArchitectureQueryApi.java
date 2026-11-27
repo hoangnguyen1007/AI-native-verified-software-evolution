@@ -15,12 +15,15 @@ import com.evolution.analysis.policy.PolicyEvaluator;
 import com.evolution.analysis.policy.PolicyGraphMapper;
 import com.evolution.analysis.policy.PolicyImpactService;
 import com.evolution.analysis.query.*;
+import com.evolution.analysis.query.projection.DsmMatrixBuilder;
 import com.evolution.analysis.query.projection.GraphProjectionService;
+import com.evolution.analysis.query.projection.TarjanSccAnalyzer;
 import com.evolution.backend.analysis.AnalysisJobs;
 import com.evolution.backend.analysis.AnalysisMode;
 import com.evolution.backend.analysis.RepositoryConnections;
 import com.evolution.backend.analysis.WorkbenchPreviewStore;
 import com.evolution.backend.github.GitHubHttpApi;
+import com.evolution.backend.query.chat.ChatConversationStore;
 import com.evolution.backend.query.llm.LlmConfigRegistry;
 import com.evolution.backend.query.repair.BehavioralDiffService;
 import com.evolution.backend.query.repair.GitWorktreeManager;
@@ -140,6 +143,7 @@ public final class ArchitectureQueryApi {
     private java.nio.file.Path acquisitionContentDir;
     private java.nio.file.Path storeDirectory;
     private CapturedSearchIndex searchIndex;
+    private ChatConversationStore chatStore;
     private java.util.Map<com.evolution.analysis.contract.identity.SnapshotIdentity, ContentDigest> reanalyzedGraphs = java.util.Collections
             .synchronizedMap(new java.util.LinkedHashMap<>(32, 0.75f, true) {
                 @Override
@@ -308,6 +312,7 @@ public final class ArchitectureQueryApi {
         acquisitionContentDir = existing.acquisitionContentDir;
         storeDirectory = existing.storeDirectory;
         searchIndex = existing.searchIndex;
+        chatStore = existing.chatStore;
         reanalyzedGraphs = existing.reanalyzedGraphs;
         discoveryContextCache = existing.discoveryContextCache;
     }
@@ -632,6 +637,15 @@ public final class ArchitectureQueryApi {
         return api;
     }
 
+    /** Attach a single-owner SQLite persistent chat conversation store ({@code <store>/chat/conversations.db}). */
+    public static ArchitectureQueryApi withChatStore(ArchitectureQueryApi existing,
+            ChatConversationStore chatStore) {
+        Objects.requireNonNull(existing);
+        var api = new ArchitectureQueryApi(existing);
+        api.chatStore = Objects.requireNonNull(chatStore);
+        return api;
+    }
+
     RepairVerificationJobs repairVerificationJobs() {
         return repairVerificationJobs;
     }
@@ -695,6 +709,12 @@ public final class ArchitectureQueryApi {
             }
             if (rawPath.startsWith("/api/v1/graphs/") && rawPath.endsWith("/wiki-dossier")) {
                 return handleGraphWikiDossier(method, rawPath, rawQuery, body, cancelled);
+            }
+            if (rawPath.startsWith("/api/v1/graphs/") && rawPath.endsWith("/conversations")) {
+                return handleGraphConversations(method, rawPath, rawQuery, contentType, body);
+            }
+            if (rawPath.startsWith("/api/v1/conversations/")) {
+                return handleConversationById(method, rawPath, body);
             }
             if (rawPath.equals("/api/v1/mcp/setup")) {
                 return handleMcpSetup(method, rawQuery, serverOrigin, body);
@@ -1206,11 +1226,12 @@ public final class ArchitectureQueryApi {
     }
 
     private static final Set<String> MCP_GET_GRAPH_SUFFIXES = Set.of(
-            "codeowners", "advisory-links", "wiki-dossier", "captured-files", "repo-map", "repository-score");
+            "codeowners", "advisory-links", "wiki-dossier", "captured-files", "repo-map", "repository-score",
+            "conversations");
     private static final Set<String> MCP_POST_GRAPH_SUFFIXES = Set.of(
             "architecture-insights", "architecture-score", "captured-files", "captured-source",
             "search-captured-source", "markdown-section", "repo-map", "suggested-policy",
-            "community-evolution", "repository-score");
+            "community-evolution", "repository-score", "visual-graph");
     private static final Set<String> MCP_POST_REPORT_READ_OPS = Set.of(
             "rules", "findings", "finding", "bundle", "assessment", "policy-metrics", "policy-impact",
             "visual-graph", "replay", "repair-options");
@@ -1273,6 +1294,10 @@ public final class ArchitectureQueryApi {
                 }
                 return parts.length == 8 && !parts[4].isEmpty() && "reports".equals(parts[5])
                         && !parts[6].isEmpty() && "sarif".equals(parts[7]);
+            }
+            if (path.startsWith("/api/v1/conversations/")) {
+                String[] parts = path.split("/", -1);
+                return parts.length == 5 && !parts[4].isEmpty();
             }
             return false;
         }
@@ -1392,6 +1417,12 @@ public final class ArchitectureQueryApi {
                 || path.endsWith("/advisory-links") || path.endsWith("/wiki-dossier"))) {
             return "GET";
         }
+        if (path.startsWith("/api/v1/graphs/") && path.endsWith("/conversations")) {
+            return "GET, POST";
+        }
+        if (path.startsWith("/api/v1/conversations/")) {
+            return "GET, DELETE";
+        }
         if (path.equals("/api/v1/ai/providers"))
             return "GET";
         if (path.equals("/api/v1/ai/providers/probe"))
@@ -1445,7 +1476,8 @@ public final class ArchitectureQueryApi {
                 || path.endsWith("/policy-assessment") || path.endsWith("/suggested-policy")
                 || path.endsWith("/architecture-score") || path.endsWith("/captured-source")
                 || path.endsWith("/search-captured-source")
-                || path.endsWith("/markdown-section") || path.endsWith("/community-evolution")))
+                || path.endsWith("/markdown-section") || path.endsWith("/community-evolution")
+                || path.endsWith("/visual-graph")))
             return "POST";
         if (path.startsWith("/api/v1/graphs/") && (path.endsWith("/captured-files") || path.endsWith("/repo-map")))
             return "GET, POST";
@@ -1534,6 +1566,11 @@ public final class ArchitectureQueryApi {
                 "Isolated sandbox configuration failed validation; pinned official container digests and safe paths are required.";
             case "INSUFFICIENT_TOKEN_SCOPE" ->
                 "This personal access token does not include the required scope for this operation.";
+            case "CONVERSATION_NOT_FOUND" -> "The requested chat conversation was not found.";
+            case "CONVERSATION_STORE_UNAVAILABLE" ->
+                "Persistent chat conversation storage is not configured on this server.";
+            case "CONVERSATION_GRAPH_MISMATCH" ->
+                "The requested conversation belongs to a different graph snapshot.";
             case "LOCAL_CHECKOUT_DISABLED_IN_MULTI_USER" ->
                 "Host local filesystem checkouts are disabled for OAuth users in multi-user mode.";
             default -> "The request could not be completed.";
@@ -1569,6 +1606,10 @@ public final class ArchitectureQueryApi {
             capabilities.put("architectureChatEnabled", true);
             capabilities.put("architectureChatStreamEnabled", true);
             capabilities.put("architectureAgentEnabled", true);
+            capabilities.put("chatConversationsEnabled", chatStore != null);
+            capabilities.put("resolvedCitationsEnabled", true);
+            capabilities.put("multiScaleVisualGraphEnabled", true);
+            capabilities.put("dsmMatrixEnabled", true);
             if (architectureChat != null)
                 capabilities.put("architectureChatProvider", architectureChat.provider());
             capabilities.put("repositoryScoringEnabled", true);
@@ -1950,6 +1991,86 @@ public final class ArchitectureQueryApi {
             var proposalId = new ContentDigest(QueryJson.text(merged, "proposal"));
             return submitRepairVerificationJob(proposalId, merged, cancelled);
         }
+        if (parts.length == 6 && parts[5].equals("visual-graph")) {
+            requireMethod(method, "POST");
+            Map<String, Object> input = body.length == 0
+                    ? Map.of()
+                    : QueryJson.object(decode(body, contentType),
+                            "context", "level", "expandCommunities", "focusNodes", "cycleMode",
+                            "maxNodes", "maxEdges", "groupBy", "seed", "depth", "report");
+            var graph = load(graphId);
+            String contextId = resolveVisualOrDsmContext(graph, QueryJson.optionalText(input, "context"));
+            Optional<PolicyEvaluation.Result> policyOpt = Optional.empty();
+            if (input.containsKey("report") && input.get("report") != null) {
+                var reportId = new ContentDigest(QueryJson.text(input, "report"));
+                var published = reports.get(reportId)
+                        .filter(r -> r.evaluation().graph().equals(graphId)
+                                && r.evaluation().context().equals(contextId))
+                        .orElseThrow(() -> new Failure(404, "REPORT_NOT_FOUND"));
+                policyOpt = Optional.of(published.evaluation());
+            }
+            long deadline = System.nanoTime() + limits.queryTimeoutMillis() * 1_000_000;
+            var guard = ArchitectureQueryService.operationalGuard(cancelled, deadline, 8_000_000);
+            var service = factory.apply(graph, guard);
+            var projection = new GraphProjectionService(service);
+            boolean hasMultiScale = input.containsKey("level") || input.containsKey("expandCommunities")
+                    || input.containsKey("focusNodes") || input.containsKey("cycleMode")
+                    || input.containsKey("maxNodes") || input.containsKey("maxEdges");
+            boolean legacyOnly = !hasMultiScale
+                    && (input.containsKey("groupBy") || input.containsKey("seed") || input.containsKey("depth"));
+            if (legacyOnly) {
+                var req = new Request(graphId, contextId, Scope.TYPE, Projection.BOUNDED_UNION,
+                        Direction.OUTGOING, Set.of("graph.depends-on"), Population.all(), false, Optional.empty(),
+                        Limits.defaults());
+                int depth = visualDepth(input);
+                var groupBy = GraphProjectionService.GroupBy.parse(
+                        QueryJson.optionalText(input, "groupBy").orElse("PACKAGE"));
+                if (input.containsKey("seed")) {
+                    return projection.focusedSubgraph(req, QueryJson.text(input, "seed"), depth, policyOpt, groupBy);
+                }
+                return projection.project(req, policyOpt, groupBy);
+            }
+            var msReq = buildMultiScaleRequest(contextId, input, policyOpt);
+            return projection.projectMultiScale(graph, msReq);
+        }
+        if (parts.length == 7 && parts[5].equals("queries") && parts[6].equals("dsm")) {
+            requireMethod(method, "POST");
+            Map<String, Object> input = body.length == 0
+                    ? Map.of()
+                    : QueryJson.object(decode(body, contentType),
+                            "context", "granularity", "communityId", "maxItems", "report");
+            var graph = load(graphId);
+            String contextId = resolveVisualOrDsmContext(graph, QueryJson.optionalText(input, "context"));
+            var granularity = DsmMatrixBuilder.Granularity.parse(
+                    QueryJson.optionalText(input, "granularity").orElse("PACKAGE"));
+            Optional<String> communityId = QueryJson.optionalText(input, "communityId");
+            if (communityId.filter(s -> s.length() > 256).isPresent()) {
+                throw new IllegalArgumentException("communityId exceeds 256 characters");
+            }
+            int maxItems = optionalInt(input, "maxItems",
+                    DsmMatrixBuilder.DEFAULT_MAX_ITEMS,
+                    DsmMatrixBuilder.MIN_MAX_ITEMS,
+                    DsmMatrixBuilder.MAX_MAX_ITEMS);
+            Set<String> violatedEdges = Set.of();
+            if (input.containsKey("report") && input.get("report") != null) {
+                var reportId = new ContentDigest(QueryJson.text(input, "report"));
+                var published = reports.get(reportId)
+                        .filter(r -> r.evaluation().graph().equals(graphId)
+                                && r.evaluation().context().equals(contextId))
+                        .orElseThrow(() -> new Failure(404, "REPORT_NOT_FOUND"));
+                violatedEdges = extractViolatedEdgeKeys(published.evaluation());
+            }
+            long deadline = System.nanoTime() + limits.queryTimeoutMillis() * 1_000_000;
+            var guard = ArchitectureQueryService.operationalGuard(cancelled, deadline, 8_000_000);
+            Runnable checkpoint = () -> {
+                var stop = guard.get();
+                if (stop != StopReason.NONE) {
+                    throw new GraphProjectionService.ProjectionInterrupted(stop);
+                }
+            };
+            var dsmReq = new DsmMatrixBuilder.DsmRequest(contextId, granularity, communityId, maxItems, violatedEdges);
+            return DsmMatrixBuilder.build(graph, dsmReq, checkpoint).toView();
+        }
         if (parts.length == 7 && parts[5].equals("queries") && parts[6].equals("code-search")) {
             requireMethod(method, "POST");
             var input = QueryJson.object(decode(body, contentType),
@@ -2139,12 +2260,185 @@ public final class ArchitectureQueryApi {
         return runArchitectureChat(graphId, input, cancelled, null);
     }
 
+    private Response handleGraphConversations(String method, String rawPath, String rawQuery, String contentType, byte[] body) {
+        if (chatStore == null) {
+            throw new Failure(503, "CONVERSATION_STORE_UNAVAILABLE");
+        }
+        String[] parts = rawPath.split("/", -1);
+        if (parts.length != 6 || !"graphs".equals(parts[3]) || !"conversations".equals(parts[5])) {
+            throw new Failure(404, "NOT_FOUND");
+        }
+        ContentDigest graphId = new ContentDigest(parts[4]);
+        String owner = com.evolution.backend.auth.RequestContext.currentUserId();
+        if ("GET".equals(method)) {
+            requireEmpty(body);
+            // Ensure graph exists cleanly (404 GRAPH_NOT_FOUND if unknown).
+            manifest(graphId);
+            int limit = ChatConversationStore.DEFAULT_LIST_LIMIT;
+            var rawLimit = extractQueryParam(rawQuery, "limit");
+            if (rawLimit.isPresent()) {
+                try {
+                    limit = Integer.parseInt(rawLimit.orElseThrow());
+                } catch (NumberFormatException invalid) {
+                    throw new IllegalArgumentException("Invalid limit");
+                }
+                if (limit < 1 || limit > ChatConversationStore.MAX_LIST_LIMIT) {
+                    throw new IllegalArgumentException("Limit out of range");
+                }
+            }
+            var items = chatStore.listConversations(owner, graphId.value(), limit).stream()
+                    .map(ChatConversationStore.ConversationSummary::toView)
+                    .toList();
+            var out = new LinkedHashMap<String, Object>();
+            out.put("graph", graphId);
+            out.put("conversations", items);
+            return okEnvelope(200, Collections.unmodifiableMap(out));
+        }
+        if ("POST".equals(method)) {
+            if (body.length > limits.requestBytes()) {
+                throw new Failure(413, "REQUEST_TOO_LARGE");
+            }
+            Map<String, Object> input = body.length == 0
+                    ? Map.of()
+                    : QueryJson.object(decode(body, contentType),
+                            "context", "contextId", "snapshotDigest", "mode", "title", "findingId");
+            var graph = load(graphId);
+            Optional<String> requestedContext = QueryJson.optionalText(input, "context")
+                    .or(() -> QueryJson.optionalText(input, "contextId"));
+            String contextId;
+            if (requestedContext.isPresent()) {
+                String reqCtx = requestedContext.orElseThrow();
+                var partition = graph.contexts().stream()
+                        .filter(c -> c.identity().equals(reqCtx))
+                        .findFirst()
+                        .orElseThrow(() -> new Failure(404, "CONTEXT_NOT_FOUND"));
+                contextId = partition.identity();
+            } else {
+                contextId = defaultAnalysisContext(graph);
+            }
+            QueryJson.optionalText(input, "snapshotDigest"); // validate string if present; authoritative snapshot comes from graph
+            String mode = QueryJson.optionalText(input, "mode").orElse("EXPLORE");
+            String title = QueryJson.optionalText(input, "title").orElse(ChatConversationStore.DEFAULT_TITLE);
+            Optional<String> findingId = QueryJson.optionalText(input, "findingId");
+            var created = chatStore.createConversation(
+                    owner, graphId.value(), graph.snapshot().value(), contextId, mode, title, findingId);
+            return okEnvelope(201, Map.of("conversation", created.toView()));
+        }
+        throw new Failure(405, "METHOD_NOT_ALLOWED");
+    }
+
+    private Response handleConversationById(String method, String rawPath, byte[] body) {
+        if (chatStore == null) {
+            throw new Failure(503, "CONVERSATION_STORE_UNAVAILABLE");
+        }
+        String[] parts = rawPath.split("/", -1);
+        if (parts.length != 5 || !"conversations".equals(parts[3]) || parts[4].isEmpty()) {
+            throw new Failure(404, "NOT_FOUND");
+        }
+        String conversationId = parts[4];
+        if (!ChatConversationStore.isValidConversationId(conversationId)) {
+            throw new IllegalArgumentException("Invalid conversationId");
+        }
+        String owner = com.evolution.backend.auth.RequestContext.currentUserId();
+        if ("GET".equals(method)) {
+            requireEmpty(body);
+            try {
+                var detail = chatStore.getConversation(owner, conversationId);
+                return okEnvelope(200, detail.toView());
+            } catch (ChatConversationStore.NotFoundException missing) {
+                throw new Failure(404, "CONVERSATION_NOT_FOUND");
+            } catch (ChatConversationStore.AccessDeniedException denied) {
+                throw new Failure(403, "ACCESS_DENIED");
+            }
+        }
+        if ("DELETE".equals(method)) {
+            requireEmpty(body);
+            try {
+                boolean deleted = chatStore.deleteConversation(owner, conversationId);
+                return okEnvelope(200, Map.of("deleted", deleted, "conversationId", conversationId));
+            } catch (ChatConversationStore.NotFoundException missing) {
+                throw new Failure(404, "CONVERSATION_NOT_FOUND");
+            } catch (ChatConversationStore.AccessDeniedException denied) {
+                throw new Failure(403, "ACCESS_DENIED");
+            }
+        }
+        throw new Failure(405, "METHOD_NOT_ALLOWED");
+    }
+
     private ArchitectureChat.Result runArchitectureChat(ContentDigest graphId, ArchitectureChat.Input input,
             BooleanSupplier cancelled,
             ArchitectureAgent.ProgressListener listener) {
         if (input.mode() == ArchitectureChat.Mode.REPAIR) {
             requireAuthoritativeGraph(graphId);
         }
+        String ownerUserId = com.evolution.backend.auth.RequestContext.currentUserId();
+        if (input.conversationId().isPresent()) {
+            if (chatStore == null) {
+                throw new Failure(503, "CONVERSATION_STORE_UNAVAILABLE");
+            }
+            try {
+                chatStore.verifyAccess(ownerUserId, input.conversationId().orElseThrow(), graphId.value());
+            } catch (ChatConversationStore.NotFoundException missing) {
+                throw new Failure(404, "CONVERSATION_NOT_FOUND");
+            } catch (ChatConversationStore.AccessDeniedException denied) {
+                throw new Failure(403, "ACCESS_DENIED");
+            } catch (IllegalArgumentException mismatch) {
+                if ("CONVERSATION_GRAPH_MISMATCH".equals(mismatch.getMessage())) {
+                    throw new Failure(400, "CONVERSATION_GRAPH_MISMATCH");
+                }
+                throw mismatch;
+            }
+        }
+        var result = computeArchitectureChatResult(graphId, input, cancelled, listener);
+        if (input.conversationId().isPresent() && chatStore != null && !input.reviewer()) {
+            String convId = input.conversationId().orElseThrow();
+            String assistantContent = result.answer()
+                    .filter(s -> !s.isBlank())
+                    .orElseGet(() -> "Evidence retrieved (" + result.evidence().size() + " items).");
+            Map<String, Object> promptCacheMetrics = result.model()
+                    .map(ArchitectureChatModel.Receipt::usage)
+                    .filter(u -> u != null && u.hasData())
+                    .map(u -> {
+                        var m = new LinkedHashMap<String, Object>(u.toView());
+                        if (architectureChat != null && architectureChat.adapter() != null) {
+                            m.put("provider", architectureChat.adapter().descriptor().kind().name());
+                        }
+                        return (Map<String, Object>) Collections.unmodifiableMap(m);
+                    })
+                    .orElse(Map.of());
+            Optional<String> modelId = result.model().map(ArchitectureChatModel.Receipt::returnedModel);
+            try {
+                var appended = chatStore.appendTurnPair(
+                        ownerUserId,
+                        convId,
+                        graphId.value(),
+                        input.question(),
+                        assistantContent,
+                        result.evidence(),
+                        result.agentTrace(),
+                        result.resolvedCitations(),
+                        promptCacheMetrics,
+                        Optional.of(result.evidenceIdentity().value()),
+                        modelId,
+                        result.conversationTitle());
+                return result.withPersistence(convId, appended.assistantTurnId());
+            } catch (ChatConversationStore.NotFoundException missing) {
+                throw new Failure(404, "CONVERSATION_NOT_FOUND");
+            } catch (ChatConversationStore.AccessDeniedException denied) {
+                throw new Failure(403, "ACCESS_DENIED");
+            } catch (IllegalArgumentException mismatch) {
+                if ("CONVERSATION_GRAPH_MISMATCH".equals(mismatch.getMessage())) {
+                    throw new Failure(400, "CONVERSATION_GRAPH_MISMATCH");
+                }
+                throw mismatch;
+            }
+        }
+        return result;
+    }
+
+    private ArchitectureChat.Result computeArchitectureChatResult(ContentDigest graphId, ArchitectureChat.Input input,
+            BooleanSupplier cancelled,
+            ArchitectureAgent.ProgressListener listener) {
         var model = architectureChat;
         boolean offTopic = ArchitectureChat.directlyOutOfScope(input);
         boolean hasConsentedModel = model != null && (!model.provider().remote() || input.allowRemote());
@@ -2763,7 +3057,8 @@ public final class ArchitectureQueryApi {
             case "metric" -> QueryJson.object(a, "metric", "subject");
             case "metric-definition" -> QueryJson.object(a, "metric");
             case "comparison-preparation" -> QueryJson.object(a, "graph", "context");
-            case "visual-graph" -> QueryJson.object(a, "seed", "depth", "groupBy");
+            case "visual-graph" -> QueryJson.object(a, "seed", "depth", "groupBy",
+                    "level", "expandCommunities", "focusNodes", "cycleMode", "maxNodes", "maxEdges");
             default -> QueryJson.object(a);
         }
         return switch (op) {
@@ -2796,6 +3091,13 @@ public final class ArchitectureQueryApi {
                     load(new ContentDigest(QueryJson.text(a, "graph"))), QueryJson.text(a, "context"));
             case "visual-graph" -> {
                 var projection = new GraphProjectionService(q);
+                boolean hasMultiScale = a.containsKey("level") || a.containsKey("expandCommunities")
+                        || a.containsKey("focusNodes") || a.containsKey("cycleMode")
+                        || a.containsKey("maxNodes") || a.containsKey("maxEdges");
+                if (hasMultiScale) {
+                    var msReq = buildMultiScaleRequest(r.context(), a, Optional.empty());
+                    yield projection.projectMultiScale(msReq);
+                }
                 int depth = visualDepth(a);
                 var groupBy = GraphProjectionService.GroupBy.parse(QueryJson.optionalText(a, "groupBy").orElse("PACKAGE"));
                 if (a.containsKey("seed")) {
@@ -3039,6 +3341,83 @@ public final class ArchitectureQueryApi {
             }
             default -> throw new Failure(404, "NOT_FOUND");
         };
+    }
+
+    private static String resolveVisualOrDsmContext(KnowledgeGraph graph, Optional<String> requestedContext) {
+        if (requestedContext.isPresent()) {
+            String ctx = requestedContext.orElseThrow();
+            boolean exists = graph.contexts().stream().anyMatch(c -> c.identity().equals(ctx));
+            if (!exists) {
+                throw new Failure(404, "CONTEXT_NOT_FOUND");
+            }
+            return ctx;
+        }
+        return defaultAnalysisContext(graph);
+    }
+
+    private static GraphProjectionService.MultiScaleRequest buildMultiScaleRequest(
+            String contextId,
+            Map<String, Object> input,
+            Optional<PolicyEvaluation.Result> policyOpt) {
+        var level = GraphProjectionService.ProjectionLevel.parse(
+                QueryJson.optionalText(input, "level").orElse("AUTO"));
+        var cycleMode = GraphProjectionService.CycleMode.parse(
+                QueryJson.optionalText(input, "cycleMode").orElse("SCC"));
+        List<String> expandCommunities = optionalStringList(input, "expandCommunities", 200, 512);
+        List<String> focusNodes = optionalStringList(input, "focusNodes", 200, 512);
+        int maxNodes = optionalInt(input, "maxNodes",
+                GraphProjectionService.DEFAULT_MAX_NODES, 1, GraphProjectionService.MAX_ALLOWED_NODES);
+        int maxEdges = optionalInt(input, "maxEdges",
+                GraphProjectionService.DEFAULT_MAX_EDGES, 1, GraphProjectionService.MAX_ALLOWED_EDGES);
+        Set<String> violatedEdges = policyOpt.map(ArchitectureQueryApi::extractViolatedEdgeKeys).orElse(Set.of());
+        Map<String, Integer> nodeViolations = policyOpt.map(ArchitectureQueryApi::extractNodeViolationCounts).orElse(Map.of());
+        return new GraphProjectionService.MultiScaleRequest(
+                contextId, level, expandCommunities, focusNodes, cycleMode,
+                maxNodes, maxEdges, violatedEdges, nodeViolations);
+    }
+
+    private static List<String> optionalStringList(Map<String, Object> input, String key, int maxItems, int maxLen) {
+        if (!input.containsKey(key) || input.get(key) == null) {
+            return List.of();
+        }
+        var arr = GraphJson.array(input.get(key));
+        if (arr.size() > maxItems) {
+            throw new IllegalArgumentException(key + " exceeds " + maxItems + " items");
+        }
+        var result = new ArrayList<String>(arr.size());
+        for (Object item : arr) {
+            String s = GraphJson.string(item).strip();
+            if (s.isEmpty() || s.length() > maxLen) {
+                throw new IllegalArgumentException("Invalid item in " + key);
+            }
+            result.add(s);
+        }
+        return List.copyOf(result);
+    }
+
+    private static Set<String> extractViolatedEdgeKeys(PolicyEvaluation.Result evaluation) {
+        var keys = new TreeSet<String>();
+        for (var finding : evaluation.findings()) {
+            for (var rel : finding.bundle().relationships()) {
+                keys.add(rel.identity());
+                keys.add(TarjanSccAnalyzer.edgeKey(rel.source(), rel.target()));
+            }
+        }
+        return Collections.unmodifiableSet(keys);
+    }
+
+    private static Map<String, Integer> extractNodeViolationCounts(PolicyEvaluation.Result evaluation) {
+        var counts = new TreeMap<String, Integer>();
+        for (var finding : evaluation.findings()) {
+            for (var v : finding.bundle().path()) {
+                counts.merge(v, 1, Integer::sum);
+            }
+            for (var rel : finding.bundle().relationships()) {
+                counts.merge(rel.source(), 1, Integer::sum);
+                counts.merge(rel.target(), 1, Integer::sum);
+            }
+        }
+        return Collections.unmodifiableMap(counts);
     }
 
     private static int visualDepth(Map<String, Object> args) {

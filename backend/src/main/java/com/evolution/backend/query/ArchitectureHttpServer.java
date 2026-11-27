@@ -337,7 +337,8 @@ public final class ArchitectureHttpServer implements AutoCloseable {
                         && (rawPath.endsWith("/codeowners")
                                 || rawPath.endsWith("/sarif")
                                 || rawPath.endsWith("/advisory-links")
-                                || rawPath.endsWith("/wiki-dossier")));
+                                || rawPath.endsWith("/wiki-dossier")
+                                || rawPath.endsWith("/conversations")));
     }
 
     private static boolean isMutatingMethod(String method) {
