@@ -80,10 +80,24 @@ public record VisualGraph(
             data.put("violationCount", node.violationCount());
             node.worstSeverity().ifPresent(w -> data.put("worstSeverity", w));
             data.put("isCycle", node.isCycleParticipant());
+            Object trustTier = node.properties().get("trustTier");
+            if (trustTier != null) {
+                data.put("trustTier", trustTier);
+            }
             if (!node.properties().isEmpty()) {
                 data.put("properties", node.properties());
             }
-            cyNodes.add(Map.of("data", data));
+            if (node.properties().containsKey("x") && node.properties().containsKey("y")) {
+                var pos = new TreeMap<String, Object>();
+                pos.put("x", node.properties().get("x"));
+                pos.put("y", node.properties().get("y"));
+                var entry = new TreeMap<String, Object>();
+                entry.put("data", data);
+                entry.put("position", pos);
+                cyNodes.add(entry);
+            } else {
+                cyNodes.add(Map.of("data", data));
+            }
         }
 
         var cyEdges = new ArrayList<Map<String, Object>>();
@@ -98,6 +112,10 @@ public record VisualGraph(
             data.put("isCycle", edge.isCycle());
             data.put("supportCount", edge.supportCount());
             data.put("supportsTruncated", edge.supportsTruncated());
+            Object trustTier = edge.properties().get("trustTier");
+            if (trustTier != null) {
+                data.put("trustTier", trustTier);
+            }
             if (!edge.properties().isEmpty()) {
                 data.put("properties", edge.properties());
             }
