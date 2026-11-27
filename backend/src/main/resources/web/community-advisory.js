@@ -935,6 +935,9 @@
    * 1-click Scoped PAT helper (in multi-user/authenticated mode), and all 6 live MCP Resources.
    */
   async function openMcpSetupModal(api) {
+    if (typeof window.EvoMcpScipHub?.openMcpStudio === 'function') {
+      return window.EvoMcpScipHub.openMcpStudio(api);
+    }
     const dialog = document.getElementById('mcp-setup-dialog');
     const body = document.getElementById('mcp-setup-body');
     if (!dialog || !body) return;

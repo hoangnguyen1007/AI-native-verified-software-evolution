@@ -16,7 +16,9 @@
 <link rel="stylesheet" href="/graph-canvas.css">
 <link rel="stylesheet" href="/dsm-matrix.css">
 <link rel="stylesheet" href="/vertical-trace.css">
-<script defer src="/model.js"></script><script defer src="/evo-bus.js"></script><script defer src="/trust-badges.js"></script><script defer src="/lucian-components.js"></script><script defer src="/github-auth.js"></script><script defer src="/github-enterprise.js"></script><script defer src="/sandbox-setup.js"></script><script defer src="/repair-studio.js"></script><script defer src="/github-hub.js"></script><script defer src="/community-advisory.js"></script><script defer src="/code-search.js"></script><script defer src="/webgl-graph-engine.js"></script><script defer src="/graph-canvas.js"></script><script defer src="/dsm-matrix.js"></script><script defer src="/vertical-trace.js"></script><script defer src="/app.js"></script><script defer src="/ux.js"></script><script defer src="/sidebar-ux.js"></script>
+<link rel="stylesheet" href="/mcp-scip-hub.css">
+<link rel="stylesheet" href="/workbench-craft.css">
+<script defer src="/model.js"></script><script defer src="/evo-bus.js"></script><script defer src="/trust-badges.js"></script><script defer src="/lucian-components.js"></script><script defer src="/github-auth.js"></script><script defer src="/github-enterprise.js"></script><script defer src="/sandbox-setup.js"></script><script defer src="/repair-studio.js"></script><script defer src="/github-hub.js"></script><script defer src="/mcp-scip-hub.js"></script><script defer src="/community-advisory.js"></script><script defer src="/code-search.js"></script><script defer src="/webgl-graph-engine.js"></script><script defer src="/graph-canvas.js"></script><script defer src="/dsm-matrix.js"></script><script defer src="/vertical-trace.js"></script><script defer src="/app.js"></script><script defer src="/ux.js"></script><script defer src="/sidebar-ux.js"></script>
 </head>
 <body class="workbench-page">
 <a class="skip-link" href="#main">Skip to content</a>
@@ -97,6 +99,7 @@
           <a id="open-bridge-captures" href="#bridge-evidence" hidden>Captured connections</a>
           <button type="button" id="open-wiki-dossier" class="text-button">Architecture Wiki / Dossier</button>
           <button type="button" id="open-mcp-setup" class="text-button">Connect IDE (MCP)</button>
+          <button type="button" id="open-scip-upgrade" class="text-button">Upgrade Polyglot (SCIP)</button>
         </div>
       </details>
       <button id="shortcuts-trigger" class="icon-button" type="button" aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)">
@@ -516,8 +519,8 @@
   </div>
 </dialog>
 
-<!-- IDE / MCP Quick-Connect Dialog -->
-<dialog id="mcp-setup-dialog" class="evo-wide-dialog" aria-labelledby="mcp-setup-title">
+<!-- IDE / MCP Quick-Connect Studio Dialog -->
+<dialog id="mcp-setup-dialog" class="evo-wide-dialog evo-hub-dialog" aria-labelledby="mcp-setup-title">
   <div class="evo-dialog-inner">
     <div class="dialog-heading">
       <div>
@@ -527,6 +530,20 @@
       <button type="button" class="icon-button" data-close="mcp-setup-dialog" aria-label="Close MCP Setup">×</button>
     </div>
     <div id="mcp-setup-body"></div>
+  </div>
+</dialog>
+
+<!-- SCIP Polyglot Semantic Upgrade Drawer -->
+<dialog id="scip-upgrade-dialog" class="evo-wide-dialog evo-hub-dialog" aria-labelledby="scip-upgrade-title">
+  <div class="evo-dialog-inner">
+    <div class="dialog-heading">
+      <div>
+        <p class="eyebrow evo-dialog-eyebrow">Polyglot Compiler-Tier Precision</p>
+        <h2 id="scip-upgrade-title">Upgrade Polyglot (SCIP)</h2>
+      </div>
+      <button type="button" class="icon-button" data-close="scip-upgrade-dialog" aria-label="Close SCIP Upgrade Drawer">×</button>
+    </div>
+    <div id="scip-upgrade-body"></div>
   </div>
 </dialog>
 

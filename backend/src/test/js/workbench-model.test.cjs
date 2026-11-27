@@ -799,3 +799,88 @@ test('Moonshot #4 EvoVerticalTrace groups 8 canonical lanes, normalizes canonica
   assert.equal(slice.highlightMeta.lineMeta[40].dependencyKind, 'BOTH');
   assert.deepEqual(slice.limitations, ['Intra-procedural only']);
 });
+
+test('Moonshot #5 EvoMcpScipHub normalizes MCP setup, builds client tabs, encodes SCIP Base64, and summarizes SCIP upgrades', () => {
+  const Hub = require('../../main/resources/web/mcp-scip-hub.js');
+
+  // 1. Setup normalization with both new & fallback shapes
+  const setup = Hub.normalizeMcpSetup({
+    evoJarPath: 'C:/evo/evo.jar',
+    storeDir: 'C:/evo/.evo',
+    defaultGraph: 'sha256:abc123',
+    streamableHttpUrl: 'http://127.0.0.1:8080/mcp',
+    protocolVersion: '2025-11-25',
+    toolCount: 21,
+    resourceCount: 6,
+    patRequired: true,
+    resources: [{ uri: 'evo://snapshot/current', description: 'Current snapshot' }]
+  });
+  assert.equal(setup.streamableHttpUrl, 'http://127.0.0.1:8080/mcp');
+  assert.equal(setup.toolCount, 21);
+  assert.equal(setup.resourceCount, 6);
+  assert.equal(setup.patRequired, true);
+
+  const legacySetup = Hub.normalizeMcpSetup({
+    workbenchPort: 9090,
+    streamableHttp: { url: 'http://127.0.0.1:9090/mcp' },
+    offlineStore: { mcpServers: { 'evo-offline': { command: 'java', args: ['-jar', 'evo.jar'] } } }
+  });
+  assert.equal(legacySetup.streamableHttpUrl, 'http://127.0.0.1:9090/mcp');
+  assert.ok(legacySetup.clients.offlineStore);
+
+  // 2. Client config tabs (5 tabs: Antigravity, Cursor, Claude Code, VS Code, CLI Offline)
+  const tabs = Hub.buildMcpClientTabs(setup);
+  assert.deepEqual(tabs.map(t => t.id), ['antigravity', 'cursor', 'claude', 'vscode', 'stdio']);
+  assert.match(tabs[0].snippet, /http:\/\/127\.0\.0\.1:8080\/mcp/);
+  assert.match(tabs[0].snippet, /Bearer/);
+  assert.match(tabs[3].snippet, /"servers"/);
+  assert.match(tabs[4].snippet, /evo\.jar/);
+
+  // 3. Base64 SCIP helper & upload validation
+  const bytes = new Uint8Array([0x0a, 0x10, 0x53, 0x43, 0x49, 0x50]);
+  const b64 = Hub.arrayBufferToBase64(bytes);
+  assert.equal(Buffer.from(b64, 'base64').equals(Buffer.from(bytes)), true);
+  assert.equal(Hub.validateScipUpload({ name: 'index.scip', size: 0 }).ok, false);
+  assert.equal(Hub.validateScipUpload({ name: 'index.scip', size: 16 * 1024 * 1024 + 1 }).ok, false);
+  assert.equal(Hub.validateScipUpload({ name: 'index.scip', size: 16 * 1024 * 1024 }).ok, true);
+  assert.equal(Hub.validateScipUpload({ name: 'index.scip', size: 128 }, 'bad-sha').ok, false);
+  const valid = Hub.validateScipUpload({ name: 'index.scip', size: 128 }, 'sha256:' + 'a'.repeat(64));
+  assert.equal(valid.ok, true);
+  assert.equal(valid.expectedSha256, 'a'.repeat(64));
+
+  // 4. Upgrade summary formatting & MCP tool grouping
+  const summary = Hub.summarizeScipIngest({
+    artifactSha256: 'sha256:' + 'b'.repeat(64),
+    toolName: 'scip-typescript',
+    toolVersion: '0.3.22',
+    documentCount: 42,
+    symbolCount: 310,
+    upgradedToCompilerCount: 198,
+    occurrenceCount: 1420,
+    ambiguousDefinitionCount: 2,
+    coverageGaps: [{ reasonCode: 'DYNAMIC_IMPORT', symbolOrPath: 'src/lazy.ts', detail: 'Dynamic module path' }],
+    samples: [{
+      symbol: 'scip-typescript npm pkg 1.0 OrderService#',
+      displayName: 'OrderService',
+      language: 'typescript',
+      relativePath: 'src/order-service.ts',
+      startLine: 14,
+      endLine: 48,
+      previousTier: 'SOURCE_SYNTAX',
+      trustTier: 'COMPILER',
+      referenceCount: 9
+    }],
+    trustTier: 'COMPILER'
+  });
+  assert.equal(summary.trustTier, 'COMPILER');
+  assert.equal(summary.upgradedToCompilerCount, 198);
+  assert.equal(summary.gapCount, 1);
+  assert.equal(summary.samples[0].relativePath, 'src/order-service.ts');
+
+  const grouped = Hub.groupMcpTools([
+    { name: 'get_graph_summary', description: 'Graph summary' },
+    { name: 'list_policy_violations', description: 'Policy findings' },
+    { name: 'vertical_trace', description: 'Trace hops' }
+  ]);
+  assert.equal(grouped.length, 3);
+});

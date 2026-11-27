@@ -4733,7 +4733,11 @@
   });
   $('open-mcp-setup')?.addEventListener('click', () => {
     $('workspace-tools').open = false;
-    void window.EvoCommunityAdvisory?.openMcpSetupModal?.(api);
+    void (window.EvoMcpScipHub?.openMcpStudio || window.EvoCommunityAdvisory?.openMcpSetupModal)?.(api);
+  });
+  $('open-scip-upgrade')?.addEventListener('click', () => {
+    $('workspace-tools').open = false;
+    void window.EvoMcpScipHub?.openScipDrawer?.(api, { graphId: state.graph, contextId: state.context });
   });
   window.EvoWorkbench = {
     async searchSymbols(query) {
@@ -4766,7 +4770,10 @@
       return window.EvoCommunityAdvisory?.openWikiDossierModal?.(api, state.graph, state.context);
     },
     openMcpSetup() {
-      return window.EvoCommunityAdvisory?.openMcpSetupModal?.(api);
+      return (window.EvoMcpScipHub?.openMcpStudio || window.EvoCommunityAdvisory?.openMcpSetupModal)?.(api);
+    },
+    openScipUpgrade() {
+      return window.EvoMcpScipHub?.openScipDrawer?.(api, { graphId: state.graph, contextId: state.context });
     }
   };
   window.EvoApp = { state, api, inspect, loadTab, selectRepo, selectJob, configureRules, inspectFinding, inspectDiagnosis, inspectRepairProposal, inspectRepairVerification, downloadBlob, connectAndAnalyze, submit };
