@@ -1054,6 +1054,72 @@ paths:
                             isAdvisory: {type: boolean}
                             redactedCount: {type: integer, minimum: 0}
         default: {$ref: '#/components/responses/Error'}
+  /api/v1/graphs/{graph}/queries/vertical-trace:
+    parameters:
+      - {$ref: '#/components/parameters/Graph'}
+    post:
+      operationId: queryVerticalTrace
+      description: Full-stack bidirectional vertical trace over the immutable KnowledgeGraph across Frontend, API Route, Spring Controller, Spring DI, Service, and JPA Entity layers, optionally stitching quarantined ADVISORY_UNVERIFIED SQL DDL and Terraform/HCL hops without mutating canonical digests.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [seed]
+              properties:
+                context: {type: string, maxLength: 8192, description: Optional context identity; defaults to snapshot or primary context.}
+                seed: {type: string, minLength: 1, maxLength: 2048, description: Node identity, symbol name, HTTP route path, source path, or SQL/Terraform advisory seed.}
+                seedKind: {type: string, maxLength: 64}
+                world: {type: string, maxLength: 512, description: Optional Spring configuration world filter.}
+                maxDepth: {type: integer, minimum: 1, maximum: 16, default: 8}
+                maxHops: {type: integer, minimum: 1, maximum: 200, default: 60}
+                includeAdvisory: {type: boolean, default: true, description: Include quarantined ADVISORY_UNVERIFIED SQL_TABLE and TERRAFORM_RESOURCE hops.}
+      responses:
+        '200':
+          description: Deterministic full-stack vertical trace result with separate canonical and quarantined advisory hop counts.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - {$ref: '#/components/schemas/Envelope'}
+                  - type: object
+                    properties:
+                      data: {$ref: '#/components/schemas/VerticalTraceResult'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/graphs/{graph}/queries/code-slice:
+    parameters:
+      - {$ref: '#/components/parameters/Graph'}
+    post:
+      operationId: queryCodeSlice
+      description: Lazy, read-only intra-method CFG/DFG/CDG program slice over pre-redacted captured Java source (SOURCE_SYNTAX) with exact 1-based line numbers and zero raw secret exposure.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [path, line]
+              properties:
+                path: {type: string, minLength: 1, maxLength: 1024, description: Repository-relative captured source file path.}
+                methodSignature: {type: string, maxLength: 512, description: Optional method signature or name disambiguator.}
+                line: {type: integer, minimum: 1, maximum: 1000000, description: 1-based seed line number inside the target method.}
+                direction: {$ref: '#/components/schemas/SliceDirection'}
+                maxStatements: {type: integer, minimum: 1, maximum: 500, default: 80}
+      responses:
+        '200':
+          description: Bounded intra-method slice with pre-redacted statement code, dependency lines, and explicit passive limitations.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - {$ref: '#/components/schemas/Envelope'}
+                  - type: object
+                    properties:
+                      data: {$ref: '#/components/schemas/MethodSliceResult'}
+        default: {$ref: '#/components/responses/Error'}
   /api/v1/graphs/{graph}/queries/{operation}:
     parameters:
       - {$ref: '#/components/parameters/Graph'}
@@ -3183,3 +3249,80 @@ components:
         bounds: {type: object, description: 'Original canonical Bounds: stop reason, counters, frontier and separate work/output flags.'}
         continuation: {type: [string, 'null']}
         exactTotal: {type: [integer, 'null'], minimum: 0}
+    VerticalLayer:
+      type: string
+      enum: [FRONTEND, API_ROUTE, SPRING_CONTROLLER, SPRING_DI, SERVICE, JPA_ENTITY, SQL_TABLE, TERRAFORM_RESOURCE]
+    TraceHop:
+      type: object
+      required: [index, layer, nodeId, label, kind, trustTier]
+      properties:
+        index: {type: integer, minimum: 0}
+        layer: {$ref: '#/components/schemas/VerticalLayer'}
+        nodeId: {type: string}
+        label: {type: string}
+        kind: {type: string}
+        trustTier: {$ref: '#/components/schemas/SemanticTrustTier'}
+        classification: {type: string, enum: [MUST, MAY, NEVER, UNKNOWN]}
+        witnessId: {type: string}
+        sourcePath: {type: string}
+        startLine: {type: integer, minimum: 1}
+        endLine: {type: integer, minimum: 1}
+        contentSha256: {type: string}
+        edgeKind: {type: string}
+        gapReason: {type: string}
+    VerticalTraceResult:
+      type: object
+      required: [graphDigest, context, seed, totalHops, canonicalHopCount, advisoryHopCount, truncated, layers, hops, gaps]
+      properties:
+        graphDigest: {$ref: '#/components/schemas/Digest'}
+        context: {type: string}
+        seed: {type: string}
+        totalHops: {type: integer, minimum: 0}
+        canonicalHopCount: {type: integer, minimum: 0}
+        advisoryHopCount: {type: integer, minimum: 0}
+        truncated: {type: boolean}
+        layers:
+          type: array
+          items: {$ref: '#/components/schemas/VerticalLayer'}
+        hops:
+          type: array
+          items: {$ref: '#/components/schemas/TraceHop'}
+        gaps:
+          type: array
+          items: {type: object}
+    SliceDirection:
+      type: string
+      enum: [BACKWARD, FORWARD, BOTH]
+      default: BACKWARD
+    SliceStatement:
+      type: object
+      required: [line, endLine, kind, code, dependsOnLines, dependencyKind]
+      properties:
+        line: {type: integer, minimum: 1}
+        endLine: {type: integer, minimum: 1}
+        kind: {type: string}
+        code: {type: string}
+        dependsOnLines:
+          type: array
+          items: {type: integer, minimum: 1}
+        dependencyKind: {type: string, enum: [SEED, DATA, CONTROL, BOTH]}
+    MethodSliceResult:
+      type: object
+      required: [path, methodSignature, seedLine, direction, trustTier, truncated, totalMethodStatements, statements, sliceLines, limitations]
+      properties:
+        path: {type: string}
+        methodSignature: {type: string}
+        seedLine: {type: integer, minimum: 1}
+        direction: {$ref: '#/components/schemas/SliceDirection'}
+        trustTier: {$ref: '#/components/schemas/SemanticTrustTier'}
+        truncated: {type: boolean}
+        totalMethodStatements: {type: integer, minimum: 0}
+        statements:
+          type: array
+          items: {$ref: '#/components/schemas/SliceStatement'}
+        sliceLines:
+          type: array
+          items: {type: integer, minimum: 1}
+        limitations:
+          type: array
+          items: {type: string}

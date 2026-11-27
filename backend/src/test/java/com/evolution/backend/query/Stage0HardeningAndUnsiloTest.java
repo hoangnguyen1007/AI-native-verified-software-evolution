@@ -677,9 +677,9 @@ final class Stage0HardeningAndUnsiloTest {
             var responses = out.toString().lines().map(Stage0HardeningAndUnsiloTest::parseJsonObj).toList();
             assertEquals(7, responses.size());
 
-            // 19 tools including search_captured_source & inspect_codeowners
+            // 21 tools including search_captured_source, inspect_codeowners, vertical_trace & trace_slice
             var tools = GraphJson.array(GraphJson.object(responses.get(1).get("result")).get("tools"));
-            assertEquals(19, tools.size());
+            assertEquals(21, tools.size());
 
             // jobs_list returns our persisted job (NOT 503 JOBS_UNAVAILABLE!)
             var jobsRes = GraphJson.object(responses.get(2).get("result"));
@@ -1837,7 +1837,7 @@ final class Stage0HardeningAndUnsiloTest {
                         new PrintWriter(out, true));
                 var responses = out.toString().lines().map(Stage0HardeningAndUnsiloTest::parseJsonObj).toList();
                 assertEquals(7, responses.size());
-                assertEquals(19, GraphJson.array(GraphJson.object(responses.get(1).get("result")).get("tools")).size());
+                assertEquals(21, GraphJson.array(GraphJson.object(responses.get(1).get("result")).get("tools")).size());
                 for (int idx : List.of(2, 3, 4, 5)) {
                     assertEquals(false, GraphJson.object(responses.get(idx).get("result")).get("isError"),
                             "Live PAT MCP tool idx " + idx + " failed: " + responses.get(idx));

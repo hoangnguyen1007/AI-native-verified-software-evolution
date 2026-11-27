@@ -55,9 +55,9 @@ class WorkbenchMcpTest {
             assertEquals(10,responses.size());
             assertEquals("2025-11-25",GraphJson.object(responses.get(0).get("result")).get("protocolVersion"));
             var toolList = GraphJson.array(GraphJson.object(responses.get(1).get("result")).get("tools"));
-            assertEquals(19,toolList.size());
+            assertEquals(21,toolList.size());
             var toolNames = toolList.stream().map(t -> GraphJson.string(GraphJson.object(t).get("name"))).collect(java.util.stream.Collectors.toSet());
-            assertTrue(toolNames.containsAll(Set.of("get_architecture_score","architecture_brief","read_markdown_section","inspect_advisory_links","list_captured_files","read_captured_source","search_captured_source","inspect_codeowners","repo_map","suggest_policy","repair_options","connections")));
+            assertTrue(toolNames.containsAll(Set.of("get_architecture_score","architecture_brief","read_markdown_section","inspect_advisory_links","list_captured_files","read_captured_source","search_captured_source","inspect_codeowners","repo_map","suggest_policy","repair_options","connections","vertical_trace","trace_slice")));
             var scoreTool = toolList.stream().map(GraphJson::object)
                     .filter(t -> "get_architecture_score".equals(t.get("name"))).findFirst().orElseThrow();
             assertEquals(true, GraphJson.object(scoreTool.get("annotations")).get("readOnlyHint"));

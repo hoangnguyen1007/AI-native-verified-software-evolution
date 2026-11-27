@@ -8,12 +8,16 @@ import com.evolution.analysis.contract.serialization.CanonicalJson;
 import com.evolution.analysis.graph.GraphEvidence;
 import com.evolution.analysis.graph.GraphJson;
 import com.evolution.analysis.graph.KnowledgeGraph;
+import com.evolution.analysis.javaparser.slice.JavaMethodSlicer;
 import com.evolution.analysis.policy.PolicyEvaluation;
 import com.evolution.analysis.query.ArchitectureQuery.*;
 import com.evolution.analysis.query.ArchitectureQueryService;
+import com.evolution.analysis.query.trace.MethodSliceResult;
+import com.evolution.analysis.query.trace.VerticalTraceEngine;
 import com.evolution.backend.query.advisory.AdvisoryOverlayService;
 import com.evolution.backend.query.llm.LlmTransport;
 import com.evolution.backend.query.search.CapturedSearchIndex;
+import com.evolution.backend.query.trace.FullStackVerticalTraceService;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -782,6 +786,8 @@ final class ArchitectureAgent {
                 case "architecture_brief" -> executeArchitectureBrief(pin, queries, reports, evidence, createdIds);
                 case "inspect_advisory_links" -> executeInspectAdvisoryLinks(args, pin, queries, evidence, createdIds);
                 case "inspect_codeowners" -> executeInspectCodeowners(args, pin, queries, evidence, createdIds, index);
+                case "vertical_trace" -> executeVerticalTrace(args, pin, queries, evidence, createdIds);
+                case "trace_slice" -> executeTraceSlice(args, input, pin, queries, evidence, createdIds, toolSources);
                 default -> Map.of("error", "Unknown read-only tool: " + name);
             };
             String json = boundedJson(payload);
@@ -1610,6 +1616,12 @@ final class ArchitectureAgent {
             case "architecture_brief" -> "Compiled 1-call architecture brief (Score v2, communities, hotspots & gaps)";
             case "inspect_advisory_links" -> "Inspected " + payload.getOrDefault("linkCount", 0)
                     + " quarantined advisory links (ADVISORY_UNVERIFIED)";
+            case "vertical_trace" -> "Vertical trace: " + payload.getOrDefault("canonicalHopCount", 0)
+                    + " canonical + " + payload.getOrDefault("advisoryHopCount", 0) + " advisory hops";
+            case "trace_slice" -> Boolean.TRUE.equals(payload.get("withheld"))
+                    ? "Code slice withheld (metadata-only mode)"
+                    : "Sliced " + payload.getOrDefault("path", "source")
+                            + " at L" + payload.getOrDefault("seedLine", 0);
             default -> "Completed " + name;
         };
     }
@@ -1756,6 +1768,15 @@ final class ArchitectureAgent {
                         "path", Map.of("type", "string", "description", "Optional source file path substring filter."),
                         "limit", Map.of("type", "integer")),
                 List.of()));
+        list.add(fn("vertical_trace", "Trace full-stack execution and data flow across Frontend, API Route, Spring Controller, Spring DI, Service, and JPA Entity layers, optionally stitching quarantined ADVISORY_UNVERIFIED SQL DDL and Terraform/HCL hops.",
+                Map.of("seed", Map.of("type", "string", "description", "Symbol name, node identity, HTTP route path, source path, or SQL/Terraform advisory seed."),
+                        "context", Map.of("type", "string", "description", "Optional context identity; defaults to the pinned context."),
+                        "seedKind", Map.of("type", "string", "description", "Optional seed kind hint (e.g. ENDPOINT, TYPE, SQL_TABLE, TERRAFORM_RESOURCE)."),
+                        "world", Map.of("type", "string", "description", "Optional Spring configuration world filter."),
+                        "maxDepth", Map.of("type", "integer"),
+                        "maxHops", Map.of("type", "integer"),
+                        "includeAdvisory", Map.of("type", "boolean", "description", "Include quarantined ADVISORY_UNVERIFIED SQL and Terraform hops (default true).")),
+                List.of("seed")));
         if (includeSource) {
             list.add(fn("search_captured_source", "Bounded regex or substring grep across all captured text files returning file:line snippets.",
                     Map.of("query", Map.of("type", "string"), "regex", Map.of("type", "boolean"),
@@ -1769,6 +1790,13 @@ final class ArchitectureAgent {
                     Map.of("path", Map.of("type", "string"),
                             "heading", Map.of("type", "string", "description", "Optional heading title or anchor slug. Omit to list all headings with line spans.")),
                     List.of("path")));
+            list.add(fn("trace_slice", "Compute a lazy, pre-redacted intra-method CFG/DFG/CDG program slice for a captured Java file at a given 1-based line number (SOURCE_SYNTAX, zero secret leakage).",
+                    Map.of("path", Map.of("type", "string", "description", "Repository-relative captured Java file path."),
+                            "line", Map.of("type", "integer", "description", "1-based seed line number inside the target method."),
+                            "methodSignature", Map.of("type", "string", "description", "Optional method signature or name disambiguator."),
+                            "direction", Map.of("type", "string", "enum", List.of("BACKWARD", "FORWARD", "BOTH")),
+                            "maxStatements", Map.of("type", "integer")),
+                    List.of("path", "line")));
         }
         return List.copyOf(list);
     }
@@ -2151,6 +2179,86 @@ final class ArchitectureAgent {
         createdIds.add(eid);
         safeView.put("evidenceId", eid);
         safeView.put("linkCount", filtered.links().size());
+        return Collections.unmodifiableMap(safeView);
+    }
+
+    private static Map<String, Object> executeVerticalTrace(
+            Map<String, Object> args,
+            ArchitectureChat.Pin pin,
+            ArchitectureQueryService queries,
+            List<ArchitectureChat.Evidence> evidence,
+            List<String> createdIds) {
+        String seed = stringArg(args, "seed", "");
+        if (seed.isBlank()) {
+            return Map.of("error", "seed is required");
+        }
+        String ctx = stringArg(args, "context", pin.context());
+        Optional<String> seedKind = Optional.of(stringArg(args, "seedKind", "")).filter(s -> !s.isBlank());
+        Optional<String> world = Optional.of(stringArg(args, "world", "")).filter(s -> !s.isBlank());
+        int maxDepth = intArg(args, "maxDepth", VerticalTraceEngine.DEFAULT_MAX_DEPTH);
+        int maxHops = intArg(args, "maxHops", VerticalTraceEngine.DEFAULT_MAX_HOPS);
+        boolean includeAdvisory = !(args.get("includeAdvisory") instanceof Boolean b) || b;
+
+        var req = new VerticalTraceEngine.TraceRequest(ctx, seed, seedKind, world, maxDepth, maxHops);
+        var result = FullStackVerticalTraceService.trace(queries.graph(), req, includeAdvisory);
+        var safeView = new LinkedHashMap<String, Object>(neutralizeMapForLlm(result.toView()));
+        String eid = ArchitectureChat.addEvidence(evidence, ArchitectureChat.Kind.STRUCTURE,
+                "Vertical trace: " + LlmTransport.neutralizeInjectionSentinels(seed),
+                pin.snapshot(),
+                Collections.unmodifiableMap(new LinkedHashMap<>(safeView)));
+        createdIds.add(eid);
+        safeView.put("evidenceId", eid);
+        return Collections.unmodifiableMap(safeView);
+    }
+
+    private static Map<String, Object> executeTraceSlice(
+            Map<String, Object> args,
+            ArchitectureChat.Input input,
+            ArchitectureChat.Pin pin,
+            ArchitectureQueryService queries,
+            List<ArchitectureChat.Evidence> evidence,
+            List<String> createdIds,
+            Map<String, ArchitectureChatModel.SourceUse> toolSources) {
+        if (!input.includeSource()) {
+            return Map.of("withheld", true,
+                    "reason", "Source disclosure is disabled by the user for this turn. Rely on structural metadata.");
+        }
+        String path = stringArg(args, "path", "");
+        if (path.isBlank()) {
+            return Map.of("error", "path is required");
+        }
+        int line = intArg(args, "line", 0);
+        if (line < 1) {
+            return Map.of("error", "line must be >= 1");
+        }
+        Optional<String> methodSig = Optional.of(stringArg(args, "methodSignature", "")).filter(s -> !s.isBlank());
+        String dirRaw = stringArg(args, "direction", "BACKWARD");
+        MethodSliceResult.SliceDirection direction = MethodSliceResult.SliceDirection.parse(dirRaw);
+        int maxStatements = intArg(args, "maxStatements", JavaMethodSlicer.DEFAULT_MAX_STATEMENTS);
+
+        FullStackVerticalTraceService.SliceOutcome outcome;
+        try {
+            outcome = FullStackVerticalTraceService.sliceCapturedJavaWithMetadata(
+                    queries.graph(), path, methodSig, line, direction, maxStatements);
+        } catch (FullStackVerticalTraceService.CapturedSourceNotFoundException missing) {
+            return Map.of("found", false,
+                    "path", LlmTransport.neutralizeInjectionSentinels(path),
+                    "error", "Captured source file not found in snapshot.");
+        }
+        var result = outcome.result();
+        if (outcome.contentDigest().isPresent()) {
+            var su = new ArchitectureChatModel.SourceUse(result.path(), outcome.contentDigest().orElseThrow(), false);
+            String key = su.path() + "|" + su.digest().value();
+            toolSources.putIfAbsent(key, su);
+        }
+        var safeView = new LinkedHashMap<String, Object>(neutralizeMapForLlm(result.toView()));
+        String evRef = outcome.contentDigest().map(ContentDigest::value).orElse(result.path());
+        String eid = ArchitectureChat.addEvidence(evidence, ArchitectureChat.Kind.SOURCE,
+                "Code slice: " + result.path() + " · L" + line,
+                evRef,
+                Collections.unmodifiableMap(new LinkedHashMap<>(safeView)));
+        createdIds.add(eid);
+        safeView.put("evidenceId", eid);
         return Collections.unmodifiableMap(safeView);
     }
 

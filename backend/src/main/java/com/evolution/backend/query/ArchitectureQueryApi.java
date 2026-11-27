@@ -14,10 +14,13 @@ import com.evolution.analysis.policy.PolicyEvaluation;
 import com.evolution.analysis.policy.PolicyEvaluator;
 import com.evolution.analysis.policy.PolicyGraphMapper;
 import com.evolution.analysis.policy.PolicyImpactService;
+import com.evolution.analysis.javaparser.slice.JavaMethodSlicer;
 import com.evolution.analysis.query.*;
 import com.evolution.analysis.query.projection.DsmMatrixBuilder;
 import com.evolution.analysis.query.projection.GraphProjectionService;
 import com.evolution.analysis.query.projection.TarjanSccAnalyzer;
+import com.evolution.analysis.query.trace.MethodSliceResult;
+import com.evolution.analysis.query.trace.VerticalTraceEngine;
 import com.evolution.backend.analysis.AnalysisJobs;
 import com.evolution.backend.analysis.AnalysisMode;
 import com.evolution.backend.analysis.RepositoryConnections;
@@ -35,6 +38,7 @@ import com.evolution.backend.query.repair.SandboxSetupService;
 import com.evolution.backend.query.repair.SnapshotTreeMaterializer;
 import com.evolution.backend.query.repair.SpringPreservationChecker;
 import com.evolution.backend.query.search.CapturedSearchIndex;
+import com.evolution.backend.query.trace.FullStackVerticalTraceService;
 import java.math.BigDecimal;
 import java.nio.ByteBuffer;
 import java.nio.charset.*;
@@ -1491,6 +1495,7 @@ public final class ArchitectureQueryApi {
             case "INVALID_REQUEST" -> "The request does not satisfy the API contract.";
             case "GRAPH_NOT_FOUND" -> "The requested graph is unavailable.";
             case "CONTEXT_NOT_FOUND" -> "This analysis context is unavailable.";
+            case "SOURCE_NOT_FOUND" -> "The requested captured source file is unavailable in this snapshot.";
             case "POLICY_SCOPE_UNAVAILABLE" ->
                 "Select a Java or Spring analysis context to evaluate architecture rules.";
             case "SCORING_RESOURCE_LIMIT" -> "Scoring reached the workbench resource limit. Try again shortly.";
@@ -2123,6 +2128,73 @@ public final class ArchitectureQueryApi {
             out.put("limit", res.limit());
             out.put("items", res.items().stream().map(CapturedSearchIndex.CodeSearchHit::toView).toList());
             return out;
+        }
+        if (parts.length == 7 && parts[5].equals("queries") && parts[6].equals("vertical-trace")) {
+            requireMethod(method, "POST");
+            var input = QueryJson.object(decode(body, contentType),
+                    "context", "seed", "seedKind", "world", "maxDepth", "maxHops", "includeAdvisory");
+            String seed = QueryJson.text(input, "seed");
+            if (seed.length() > 2048) {
+                throw new IllegalArgumentException("Trace seed exceeds 2048 characters");
+            }
+            String contextId = QueryJson.optionalText(input, "context").orElse("");
+            Optional<String> seedKind = QueryJson.optionalText(input, "seedKind");
+            if (seedKind.isPresent() && seedKind.orElseThrow().length() > 64) {
+                throw new IllegalArgumentException("seedKind exceeds 64 characters");
+            }
+            Optional<String> world = QueryJson.optionalText(input, "world");
+            if (world.isPresent() && world.orElseThrow().length() > 512) {
+                throw new IllegalArgumentException("world exceeds 512 characters");
+            }
+            int maxDepth = optionalInt(input, "maxDepth",
+                    VerticalTraceEngine.DEFAULT_MAX_DEPTH,
+                    VerticalTraceEngine.MIN_MAX_DEPTH,
+                    VerticalTraceEngine.MAX_MAX_DEPTH);
+            int maxHops = optionalInt(input, "maxHops",
+                    VerticalTraceEngine.DEFAULT_MAX_HOPS,
+                    VerticalTraceEngine.MIN_MAX_HOPS,
+                    VerticalTraceEngine.MAX_MAX_HOPS);
+            boolean includeAdvisory = true;
+            if (input.containsKey("includeAdvisory") && input.get("includeAdvisory") != null) {
+                if (!(input.get("includeAdvisory") instanceof Boolean b)) {
+                    throw new IllegalArgumentException("includeAdvisory must be a boolean");
+                }
+                includeAdvisory = b;
+            }
+            var graph = load(graphId);
+            var traceReq = new VerticalTraceEngine.TraceRequest(
+                    contextId, seed, seedKind, world, maxDepth, maxHops);
+            return FullStackVerticalTraceService.trace(graph, traceReq, includeAdvisory).toView();
+        }
+        if (parts.length == 7 && parts[5].equals("queries") && parts[6].equals("code-slice")) {
+            requireMethod(method, "POST");
+            var input = QueryJson.object(decode(body, contentType),
+                    "path", "methodSignature", "line", "direction", "maxStatements");
+            String sourcePath = QueryJson.text(input, "path");
+            if (sourcePath.length() > 1024) {
+                throw new IllegalArgumentException("Source path exceeds 1024 characters");
+            }
+            Optional<String> methodSignature = QueryJson.optionalText(input, "methodSignature");
+            if (methodSignature.isPresent() && methodSignature.orElseThrow().length() > 512) {
+                throw new IllegalArgumentException("methodSignature exceeds 512 characters");
+            }
+            if (!input.containsKey("line") || input.get("line") == null) {
+                throw new IllegalArgumentException("line is required");
+            }
+            int line = optionalInt(input, "line", 1, 1, 1_000_000);
+            String rawDir = QueryJson.optionalText(input, "direction").orElse("BACKWARD");
+            MethodSliceResult.SliceDirection direction = MethodSliceResult.SliceDirection.parse(rawDir);
+            int maxStatements = optionalInt(input, "maxStatements",
+                    JavaMethodSlicer.DEFAULT_MAX_STATEMENTS,
+                    JavaMethodSlicer.MIN_MAX_STATEMENTS,
+                    JavaMethodSlicer.MAX_MAX_STATEMENTS);
+            var graph = load(graphId);
+            try {
+                return FullStackVerticalTraceService.sliceCapturedJava(
+                        graph, sourcePath, methodSignature, line, direction, maxStatements).toView();
+            } catch (FullStackVerticalTraceService.CapturedSourceNotFoundException missing) {
+                throw new Failure(404, "SOURCE_NOT_FOUND");
+            }
         }
         if (parts.length == 7 && parts[5].equals("queries") && OPERATIONS.contains(parts[6])) {
             requireMethod(method, "POST");

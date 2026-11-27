@@ -583,6 +583,24 @@ public final class WorkbenchMcpMain implements AutoCloseable {
         archScoreProps.put("policy", Map.of("type", "string", "description", "Optional custom architecture-policy:v1 YAML to evaluate alongside structural dimensions."));
         archScoreProps.put("report", report);
 
+        var verticalTraceProps = new LinkedHashMap<String, Object>();
+        verticalTraceProps.put("graph", graph);
+        verticalTraceProps.put("context", Map.of("type", "string", "description", "Optional context identity; defaults to snapshot or primary context."));
+        verticalTraceProps.put("seed", Map.of("type", "string", "description", "Node identity, symbol name, HTTP endpoint path, source path, or SQL/Terraform advisory seed."));
+        verticalTraceProps.put("seedKind", Map.of("type", "string", "description", "Optional seed kind hint (e.g. ENDPOINT, TYPE, SQL_TABLE, TERRAFORM_RESOURCE)."));
+        verticalTraceProps.put("world", Map.of("type", "string", "description", "Optional Spring configuration world filter."));
+        verticalTraceProps.put("maxDepth", Map.of("type", "integer", "minimum", 1, "maximum", 16));
+        verticalTraceProps.put("maxHops", Map.of("type", "integer", "minimum", 1, "maximum", 200));
+        verticalTraceProps.put("includeAdvisory", Map.of("type", "boolean", "description", "Include quarantined ADVISORY_UNVERIFIED SQL and Terraform hops (default true)."));
+
+        var traceSliceProps = new LinkedHashMap<String, Object>();
+        traceSliceProps.put("graph", graph);
+        traceSliceProps.put("path", Map.of("type", "string", "description", "Repository-relative captured Java file path."));
+        traceSliceProps.put("methodSignature", Map.of("type", "string", "description", "Optional method signature or name disambiguator."));
+        traceSliceProps.put("line", Map.of("type", "integer", "minimum", 1, "description", "1-based seed line number inside the target method."));
+        traceSliceProps.put("direction", Map.of("type", "string", "enum", List.of("BACKWARD", "FORWARD", "BOTH")));
+        traceSliceProps.put("maxStatements", Map.of("type", "integer", "minimum", 1, "maximum", 500));
+
         return List.of(
                 tool("jobs_list", "List recent analysis jobs and their graph, snapshot and status.", Map.of(), List.of()),
                 tool("graph_get", "Read the published graph contexts and report identities.", Map.of("graph", graph), reqGraph),
@@ -619,7 +637,11 @@ public final class WorkbenchMcpMain implements AutoCloseable {
                 tool("repair_options", "Inspect applicable deterministic repair recipes, captured source eligibility, and isolated runner readiness for a diagnosed finding.",
                         repairOptionsProps, List.of("graph", "report", "identity", "bundle", "context", "diagnosisInput")),
                 tool("connections", "Inspect cross-service HTTP, gRPC, and async event bridge relationships in the selected snapshot or context.",
-                        connectionsProps, reqGraphCtx));
+                        connectionsProps, reqGraphCtx),
+                tool("vertical_trace", "Trace full-stack execution and data flow across 8 architectural layers (Frontend, API Route, Spring Controller, Spring DI, Service, JPA Entity, plus quarantined ADVISORY_UNVERIFIED SQL Table and Terraform Resource overlays).",
+                        verticalTraceProps, hasDefaultGraph ? List.of("seed") : List.of("graph", "seed")),
+                tool("trace_slice", "Compute a lazy, pre-redacted intra-method CFG/DFG/CDG program slice for a captured Java file at a 1-based line number (SOURCE_SYNTAX, zero secret leakage).",
+                        traceSliceProps, hasDefaultGraph ? List.of("path", "line") : List.of("graph", "path", "line")));
     }
 
     private static Map<String, Object> tool(String name, String description, Map<String, Object> properties, List<String> required) {
@@ -884,6 +906,46 @@ public final class WorkbenchMcpMain implements AutoCloseable {
                 payload = Map.of("request", req, "arguments", Map.of(), "page", page);
                 method = "POST";
                 path = "/api/v1/graphs/" + graph.value() + "/queries/relationships";
+            } else if (name.equals("vertical_trace")) {
+                var row = QueryJson.object(arguments, "graph", "context", "seed", "seedKind", "world",
+                        "maxDepth", "maxHops", "includeAdvisory");
+                var graph = requireGraph(row);
+                var bodyMap = new LinkedHashMap<String, Object>();
+                var ctxOpt = optionalNonBlankText(row, "context");
+                if (ctxOpt.isPresent()) {
+                    bodyMap.put("context", ctxOpt.orElseThrow());
+                } else if (resolvedDefaultContext != null && !resolvedDefaultContext.isBlank()) {
+                    bodyMap.put("context", resolvedDefaultContext);
+                }
+                bodyMap.put("seed", QueryJson.text(row, "seed"));
+                optionalNonBlankText(row, "seedKind").ifPresent(v -> bodyMap.put("seedKind", v));
+                optionalNonBlankText(row, "world").ifPresent(v -> bodyMap.put("world", v));
+                if (row.containsKey("maxDepth") && row.get("maxDepth") != null) bodyMap.put("maxDepth", row.get("maxDepth"));
+                if (row.containsKey("maxHops") && row.get("maxHops") != null) bodyMap.put("maxHops", row.get("maxHops"));
+                if (row.containsKey("includeAdvisory") && row.get("includeAdvisory") != null) {
+                    bodyMap.put("includeAdvisory", row.get("includeAdvisory"));
+                }
+                payload = bodyMap;
+                method = "POST";
+                path = "/api/v1/graphs/" + graph.value() + "/queries/vertical-trace";
+            } else if (name.equals("trace_slice")) {
+                var row = QueryJson.object(arguments, "graph", "path", "methodSignature", "line",
+                        "direction", "maxStatements");
+                var graph = requireGraph(row);
+                var bodyMap = new LinkedHashMap<String, Object>();
+                bodyMap.put("path", QueryJson.text(row, "path"));
+                optionalNonBlankText(row, "methodSignature").ifPresent(v -> bodyMap.put("methodSignature", v));
+                if (!row.containsKey("line") || row.get("line") == null) {
+                    throw new IllegalArgumentException("line is required");
+                }
+                bodyMap.put("line", row.get("line"));
+                optionalNonBlankText(row, "direction").ifPresent(v -> bodyMap.put("direction", v));
+                if (row.containsKey("maxStatements") && row.get("maxStatements") != null) {
+                    bodyMap.put("maxStatements", row.get("maxStatements"));
+                }
+                payload = bodyMap;
+                method = "POST";
+                path = "/api/v1/graphs/" + graph.value() + "/queries/code-slice";
             } else {
                 throw new IllegalArgumentException();
             }

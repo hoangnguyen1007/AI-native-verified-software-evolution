@@ -397,8 +397,8 @@ class AiAndRepairUpgradeTest {
     @Test void agentExposesTwentyToolsTruncatesJsonGracefullyAndRunsInReviewerMode() throws Exception {
         var withSource = ArchitectureAgent.toolSchemas(true);
         var withoutSource = ArchitectureAgent.toolSchemas(false);
-        assertEquals(20, withSource.size());
-        assertEquals(17, withoutSource.size());
+        assertEquals(22, withSource.size());
+        assertEquals(18, withoutSource.size());
         assertTrue(withoutSource.stream()
                 .map(t -> GraphJson.string(GraphJson.object(t.get("function")).get("name")))
                 .anyMatch("get_architecture_score"::equals));
