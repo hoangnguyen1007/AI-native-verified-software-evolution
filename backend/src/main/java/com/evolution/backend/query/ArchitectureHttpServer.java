@@ -23,6 +23,8 @@ public final class ArchitectureHttpServer implements AutoCloseable {
     private static final java.util.regex.Pattern SAFE_STATIC_PATH = java.util.regex.Pattern.compile("^/[A-Za-z0-9._/-]*$");
     private static final java.util.regex.Pattern SAFE_HOST_HEADER =
             java.util.regex.Pattern.compile("^(?:\\[[0-9a-fA-F:]+\\]|[A-Za-z0-9.-]{1,253})(?::[0-9]{1,5})?$");
+    private static final java.util.regex.Pattern LOOPBACK_HTTP_ORIGIN =
+            java.util.regex.Pattern.compile("^http://(?:127\\.0\\.0\\.1|localhost|\\[::1\\])(?::([0-9]{1,5}))?$");
 
     private final ArchitectureQueryApi api;
     private final String bindHost;
@@ -136,15 +138,21 @@ public final class ArchitectureHttpServer implements AutoCloseable {
         try {
             String rawPath = exchange.getRequestURI().getRawPath();
             String method = exchange.getRequestMethod();
+            boolean isMcpRoute = "/mcp".equals(rawPath);
             boolean isOAuthCallback = "GET".equals(method)
                     && (rawPath.equals("/api/v1/auth/github/callback")
                             || rawPath.equals("/api/v1/auth/github/manifest/callback"));
             boolean isWebhook = "POST".equals(method) && rawPath.equals("/api/v1/github/webhooks");
-            if (!isAllowedOrigin(exchange, isOAuthCallback || isWebhook)) {
+            if (isMcpRoute) {
+                if (!isAllowedMcpOrigin(exchange)) {
+                    sendJsonResponse(exchange, api.error(403, "FORBIDDEN_ORIGIN"));
+                    return;
+                }
+            } else if (!isAllowedOrigin(exchange, isOAuthCallback || isWebhook)) {
                 sendJsonResponse(exchange, api.error(403,"FORBIDDEN_ORIGIN"));
                 return;
             }
-            if (!rawPath.startsWith("/api/") && !rawPath.equals("/api/v1")) {
+            if (!isMcpRoute && !rawPath.startsWith("/api/") && !rawPath.equals("/api/v1")) {
                 serveStatic(exchange, rawPath);
                 return;
             }
@@ -272,6 +280,16 @@ public final class ArchitectureHttpServer implements AutoCloseable {
                 });
                 return;
             }
+            if (isMcpRoute) {
+                if (multiUserAuthDenied) {
+                    sendJsonResponse(exchange, api.error(401, "AUTH_REQUIRED"));
+                    return;
+                }
+                if (patScopeDenied) {
+                    sendJsonResponse(exchange, api.error(403, "INSUFFICIENT_TOKEN_SCOPE"));
+                    return;
+                }
+            }
             try {
                 if (!(acquired=slots.tryAcquire(Math.min(api.limits().queryTimeoutMillis(), 30_000L), TimeUnit.MILLISECONDS))) {
                     sendJsonResponse(exchange, api.error(503,"BUSY"));
@@ -291,18 +309,28 @@ public final class ArchitectureHttpServer implements AutoCloseable {
             String rawQuery = exchange.getRequestURI().getRawQuery();
             boolean queryAllowed = isQueryStringAllowed(method, rawPath);
             boolean acceptOk = isBrowserRedirectOrDownloadRoute(rawPath)
+                    || (isMcpRoute && !"POST".equals(method))
                     || acceptable(exchange.getRequestHeaders().containsKey("Accept") ? String.join(",",exchange.getRequestHeaders().get("Accept")) : null);
             if (rawQuery != null && !queryAllowed) response=api.error(400,"INVALID_REQUEST");
             else if (!acceptOk) response=api.error(406,"NOT_ACCEPTABLE");
             else if (exchange.getRequestHeaders().containsKey("Content-Encoding")) response=api.error(415,"UNSUPPORTED_MEDIA_TYPE");
             else if (exchange.getRequestHeaders().getOrDefault("Content-Type",List.of()).size()>1) response=api.error(415,"UNSUPPORTED_MEDIA_TYPE");
             else {
-                byte[] body=exchange.getRequestBody().readNBytes(api.limits().requestBytes()+1);
+                int maxBodyBytes = isScipIngestRoute(method, rawPath)
+                        ? Math.max(api.limits().requestBytes(), ArchitectureQueryApi.MAX_SCIP_JSON_REQUEST_BYTES)
+                        : api.limits().requestBytes();
+                byte[] body=exchange.getRequestBody().readNBytes(maxBodyBytes+1);
                 String serverOrigin = resolveServerOrigin(exchange);
+                String mcpSessionId = isMcpRoute ? exchange.getRequestHeaders().getFirst("Mcp-Session-Id") : null;
                 response=com.evolution.backend.auth.RequestContext.runWith(activeReq, serverOrigin, () ->
-                        api.handle(method,rawPath,rawQuery,
-                                exchange.getRequestHeaders().getFirst("Content-Type"),body,serverOrigin,
-                                () -> closed.get() || expired.get() || Thread.currentThread().isInterrupted()));
+                        isMcpRoute
+                                ? api.handleMcpHttp(method, rawQuery,
+                                        exchange.getRequestHeaders().getFirst("Content-Type"), body,
+                                        mcpSessionId, serverOrigin,
+                                        () -> closed.get() || expired.get() || Thread.currentThread().isInterrupted())
+                                : api.handle(method,rawPath,rawQuery,
+                                        exchange.getRequestHeaders().getFirst("Content-Type"),body,serverOrigin,
+                                        () -> closed.get() || expired.get() || Thread.currentThread().isInterrupted()));
             }
             sendJsonResponse(exchange, response);
         } catch (java.io.UncheckedIOException wrapped) {
@@ -885,7 +913,9 @@ public final class ArchitectureHttpServer implements AutoCloseable {
             headers.set("Allow", allow);
         }
         byte[] bytes=response.body();
-        long respLen = (exchange.getRequestMethod().equals("HEAD") || (bytes.length == 0 && response.status() >= 300 && response.status() < 400))
+        long respLen = (exchange.getRequestMethod().equals("HEAD")
+                || (bytes.length == 0 && (response.status() == 202 || response.status() == 204
+                        || (response.status() >= 300 && response.status() < 400))))
                 ? -1 : bytes.length;
         exchange.sendResponseHeaders(response.status(), respLen);
         if (respLen > 0) exchange.getResponseBody().write(bytes);
@@ -943,6 +973,49 @@ public final class ArchitectureHttpServer implements AutoCloseable {
         if (path.endsWith(".ico")) return "image/x-icon";
         return "application/octet-stream";
     }
+    private static boolean isScipIngestRoute(String method, String rawPath) {
+        if (!"POST".equals(method) || !rawPath.startsWith("/api/v1/graphs/") || !rawPath.endsWith("/scip/ingest")) {
+            return false;
+        }
+        String[] parts = rawPath.split("/", -1);
+        return parts.length == 7 && "graphs".equals(parts[3]) && "scip".equals(parts[5]) && "ingest".equals(parts[6]);
+    }
+
+    private boolean isAllowedMcpOrigin(HttpExchange exchange) {
+        String host = singleValidHost(exchange.getRequestHeaders().get("Host"));
+        if (host == null) return false;
+        String hostLower = host.toLowerCase(Locale.ROOT);
+        int port = server.getAddress().getPort();
+        var allowedHosts = new HashSet<String>(Set.of(
+                "127.0.0.1:" + port,
+                "localhost:" + port,
+                "[::1]:" + port));
+        boolean wildcardBind = bindHost.equals("0.0.0.0") || bindHost.equals("::") || bindHost.equals("[::]");
+        if (!wildcardBind && !bindHost.equals("127.0.0.1") && !bindHost.equalsIgnoreCase("localhost")) {
+            String formattedBind = (bindHost.contains(":") && !bindHost.startsWith("[") ? "[" + bindHost + "]" : bindHost)
+                    .toLowerCase(Locale.ROOT);
+            allowedHosts.add(formattedBind + ":" + port);
+        }
+        boolean hostAllowed = allowedHosts.contains(hostLower) || wildcardBind;
+        if (!hostAllowed) return false;
+        var origins = exchange.getRequestHeaders().get("Origin");
+        if (origins == null || origins.isEmpty()) return true;
+        if (origins.size() != 1) return false;
+        String origin = origins.getFirst().strip().toLowerCase(Locale.ROOT);
+        var matcher = LOOPBACK_HTTP_ORIGIN.matcher(origin);
+        if (!matcher.matches()) return false;
+        String portText = matcher.group(1);
+        if (portText != null) {
+            try {
+                int originPort = Integer.parseInt(portText);
+                if (originPort < 1 || originPort > 65535) return false;
+            } catch (NumberFormatException invalid) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     private boolean isAllowedOrigin(HttpExchange exchange, boolean exemptCrossOrigin) {
         String host = singleValidHost(exchange.getRequestHeaders().get("Host"));
         if (host == null) return false;

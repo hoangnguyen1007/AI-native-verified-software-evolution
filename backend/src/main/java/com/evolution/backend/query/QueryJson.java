@@ -45,17 +45,17 @@ public final class QueryJson {
         var row = object(value,"size","cursor");
         return new Page(integer(row,"size",50),optionalText(row,"cursor"));
     }
-    static Map<String,Object> object(Object value, String... allowed) {
+    public static Map<String,Object> object(Object value, String... allowed) {
         var row = GraphJson.object(value);
         if (!Set.of(allowed).containsAll(row.keySet())) throw new IllegalArgumentException("Unknown field");
         return row;
     }
-    static String text(Map<String,Object> row, String key) {
+    public static String text(Map<String,Object> row, String key) {
         String value = GraphJson.string(row.get(key));
         if (value.isBlank() || value.length() > 8192) throw new IllegalArgumentException("Invalid text");
         return value;
     }
-    static Optional<String> optionalText(Map<String,Object> row, String key) {
+    public static Optional<String> optionalText(Map<String,Object> row, String key) {
         return row.get(key) == null ? Optional.empty() : Optional.of(text(row,key));
     }
     static Set<String> strings(Map<String,Object> row, String key) {

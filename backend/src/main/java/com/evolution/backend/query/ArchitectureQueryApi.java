@@ -26,8 +26,10 @@ import com.evolution.backend.analysis.AnalysisMode;
 import com.evolution.backend.analysis.RepositoryConnections;
 import com.evolution.backend.analysis.WorkbenchPreviewStore;
 import com.evolution.backend.github.GitHubHttpApi;
+import com.evolution.analysis.execution.scip.ScipSemanticCaptureAdapter;
 import com.evolution.backend.query.chat.ChatConversationStore;
 import com.evolution.backend.query.llm.LlmConfigRegistry;
+import com.evolution.backend.query.mcp.McpToolDispatcher;
 import com.evolution.backend.query.repair.BehavioralDiffService;
 import com.evolution.backend.query.repair.GitWorktreeManager;
 import com.evolution.backend.query.repair.RepairAgentTools;
@@ -61,6 +63,9 @@ public final class ArchitectureQueryApi {
     public static final List<String> REPORT_OPERATIONS = List.of("rules", "findings", "finding", "bundle",
             "policy-metrics", "assessment", "policy-impact", "visual-graph", "replay", "diagnosis", "repair-options",
             "repair-proposal", "repair-reanalysis", "repair-verification");
+    public static final int MAX_SCIP_RAW_BYTES = 16 * 1024 * 1024;
+    public static final int MAX_SCIP_JSON_REQUEST_BYTES = 24 * 1024 * 1024;
+    private static final int MAX_SCIP_BASE64_CHARS = 22_400_000;
     private static final FindingDiagnosis REPLAY_DIAGNOSIS = FindingDiagnosis.localReplay();
     private static final RepairProposal REPAIR = new RepairProposal();
 
@@ -148,6 +153,7 @@ public final class ArchitectureQueryApi {
     private java.nio.file.Path storeDirectory;
     private CapturedSearchIndex searchIndex;
     private ChatConversationStore chatStore;
+    private java.util.concurrent.ConcurrentHashMap<String, McpToolDispatcher.McpSession> mcpSessions;
     private java.util.Map<com.evolution.analysis.contract.identity.SnapshotIdentity, ContentDigest> reanalyzedGraphs = java.util.Collections
             .synchronizedMap(new java.util.LinkedHashMap<>(32, 0.75f, true) {
                 @Override
@@ -188,6 +194,7 @@ public final class ArchitectureQueryApi {
         this.reports = Objects.requireNonNull(reports);
         this.limits = Objects.requireNonNull(limits);
         this.factory = Objects.requireNonNull(factory);
+        this.mcpSessions = new java.util.concurrent.ConcurrentHashMap<>();
     }
 
     public ApiLimits limits() {
@@ -317,6 +324,7 @@ public final class ArchitectureQueryApi {
         storeDirectory = existing.storeDirectory;
         searchIndex = existing.searchIndex;
         chatStore = existing.chatStore;
+        mcpSessions = existing.mcpSessions;
         reanalyzedGraphs = existing.reanalyzedGraphs;
         discoveryContextCache = existing.discoveryContextCache;
     }
@@ -720,8 +728,14 @@ public final class ArchitectureQueryApi {
             if (rawPath.startsWith("/api/v1/conversations/")) {
                 return handleConversationById(method, rawPath, body);
             }
+            if (rawPath.equals("/mcp")) {
+                return handleMcpHttp(method, rawQuery, contentType, body, null, serverOrigin, cancelled);
+            }
             if (rawPath.equals("/api/v1/mcp/setup")) {
                 return handleMcpSetup(method, rawQuery, serverOrigin, body);
+            }
+            if (rawPath.startsWith("/api/v1/graphs/") && rawPath.endsWith("/scip/ingest")) {
+                return handleScipIngest(method, rawPath, contentType, body, cancelled);
             }
             if (rawPath.startsWith("/api/v1/graphs/") && rawPath.endsWith("/sarif")) {
                 return handleReportSarif(method, rawPath, rawQuery, body);
@@ -1115,16 +1129,253 @@ public final class ArchitectureQueryApi {
         return okEnvelope(200, bundle.toView());
     }
 
+    public Response handleMcpHttp(String method, String rawQuery, String contentType, byte[] body,
+            String mcpSessionId, String serverOrigin, BooleanSupplier cancelled) {
+        try {
+            if (cancelled != null && cancelled.getAsBoolean()) {
+                throw new Failure(409, "REQUEST_CANCELLED");
+            }
+            var caller = com.evolution.backend.auth.RequestContext.currentUser();
+            if (caller.authMethod() == com.evolution.backend.auth.AuthenticatedUser.AuthMethod.PERSONAL_ACCESS_TOKEN
+                    && !isPatAuthorized(caller.scopes(), method, "/mcp")) {
+                return error(403, "INSUFFICIENT_TOKEN_SCOPE");
+            }
+            if (auth != null && auth.isMultiUserMode()
+                    && !com.evolution.backend.auth.RequestContext.isAuthenticatedSession()) {
+                return error(401, "AUTH_REQUIRED");
+            }
+            if (rawQuery != null) {
+                throw new Failure(400, "INVALID_REQUEST");
+            }
+            if ("GET".equals(method) || (!"POST".equals(method) && !"DELETE".equals(method))) {
+                return new Response(405,
+                        CanonicalJson.write(Map.of("apiVersion", VERSION, "queryVersion", ArchitectureQuery.VERSION,
+                                "error", Map.of("code", "METHOD_NOT_ALLOWED", "message", message("METHOD_NOT_ALLOWED"))))
+                                .getBytes(StandardCharsets.UTF_8),
+                        Map.of("Allow", List.of("POST, DELETE")));
+            }
+            String callerUserId = caller.userId();
+            boolean multiUser = auth != null && auth.isMultiUserMode();
+            if ("DELETE".equals(method)) {
+                requireEmpty(body);
+                if (mcpSessionId == null || mcpSessionId.isBlank()) {
+                    throw new Failure(400, "INVALID_REQUEST");
+                }
+                var sessionOpt = McpToolDispatcher.lookupSession(mcpSessions, mcpSessionId);
+                if (sessionOpt.isEmpty()) {
+                    throw new Failure(404, "MCP_SESSION_NOT_FOUND");
+                }
+                var session = sessionOpt.orElseThrow();
+                if (multiUser && !session.ownerUserId().equals(callerUserId)) {
+                    throw new Failure(403, "ACCESS_DENIED");
+                }
+                mcpSessions.remove(session.sessionId(), session);
+                byte[] out = BoundedJson.encode(Map.of(
+                        "terminated", true,
+                        "sessionId", session.sessionId()), limits.responseBytes());
+                return new Response(200, out);
+            }
+            // POST /mcp
+            if (body.length > limits.requestBytes()) {
+                throw new Failure(413, "REQUEST_TOO_LARGE");
+            }
+            Map<String, Object> request;
+            try {
+                request = decode(body, contentType);
+            } catch (Failure failure) {
+                return error(failure.status, failure.code);
+            } catch (IllegalArgumentException invalidJson) {
+                byte[] errBytes = BoundedJson.encode(
+                        McpToolDispatcher.errorMap(null, -32700, "Parse error"), limits.responseBytes());
+                return new Response(400, errBytes);
+            }
+            String rpcMethod = request.get("method") instanceof String m ? m : "";
+            boolean isInitialize = "initialize".equals(rpcMethod) && request.get("id") != null;
+            var activeAuthCtx = com.evolution.backend.auth.RequestContext.current().orElse(null);
+            McpToolDispatcher.ApiBackend backend = McpToolDispatcher.directBackend(
+                    this, activeAuthCtx, serverOrigin, cancelled);
+
+            java.util.concurrent.atomic.AtomicReference<String> defGraphRef;
+            java.util.concurrent.atomic.AtomicReference<String> defCtxRef;
+            if (!isInitialize && mcpSessionId != null && !mcpSessionId.isBlank()) {
+                var sessionOpt = McpToolDispatcher.lookupSession(mcpSessions, mcpSessionId);
+                if (sessionOpt.isEmpty()) {
+                    throw new Failure(404, "MCP_SESSION_NOT_FOUND");
+                }
+                var session = sessionOpt.orElseThrow();
+                if (multiUser && !session.ownerUserId().equals(callerUserId)) {
+                    throw new Failure(403, "ACCESS_DENIED");
+                }
+                defGraphRef = session.defaultGraph();
+                defCtxRef = session.defaultContext();
+            } else {
+                var discovered = discoverDefaultGraphAndContextForMcp(backend);
+                defGraphRef = new java.util.concurrent.atomic.AtomicReference<>(discovered.graph().orElse(null));
+                defCtxRef = new java.util.concurrent.atomic.AtomicReference<>(discovered.context().orElse(null));
+            }
+
+            var dispatch = McpToolDispatcher.handleJsonRpc(
+                    request, backend, defGraphRef, defCtxRef, false, null, false);
+            if (dispatch.isNotificationAccepted()) {
+                return new Response(202, new byte[0]);
+            }
+            var headers = new LinkedHashMap<String, List<String>>();
+            if (isInitialize && dispatch.httpStatus() == 200
+                    && dispatch.responseBody() != null && dispatch.responseBody().containsKey("result")) {
+                var created = McpToolDispatcher.createSession(
+                        mcpSessions,
+                        callerUserId,
+                        Optional.ofNullable(defGraphRef.get()),
+                        Optional.ofNullable(defCtxRef.get()));
+                headers.put("Mcp-Session-Id", List.of(created.sessionId()));
+            }
+            byte[] encoded = BoundedJson.encode(dispatch.responseBody(), limits.responseBytes());
+            return new Response(dispatch.httpStatus(), encoded, headers);
+        } catch (Failure failure) {
+            return error(failure.status, failure.code);
+        } catch (BoundedJson.TooLarge large) {
+            return error(422, "RESPONSE_TOO_LARGE");
+        } catch (GraphJson.LimitExceededException large) {
+            return error(413, "JSON_LIMIT_EXCEEDED");
+        } catch (IllegalArgumentException invalid) {
+            return error(400, "INVALID_REQUEST");
+        } catch (RuntimeException failed) {
+            return error(500, "INTERNAL_ERROR");
+        }
+    }
+
+    private Response handleScipIngest(String method, String rawPath, String contentType, byte[] body,
+            BooleanSupplier cancelled) {
+        if (cancelled != null && cancelled.getAsBoolean()) {
+            throw new Failure(409, "REQUEST_CANCELLED");
+        }
+        String[] parts = rawPath.split("/", -1);
+        if (parts.length != 7 || !"graphs".equals(parts[3]) || !"scip".equals(parts[5]) || !"ingest".equals(parts[6])) {
+            throw new Failure(404, "NOT_FOUND");
+        }
+        requireMethod(method, "POST");
+        if (body.length > MAX_SCIP_JSON_REQUEST_BYTES) {
+            throw new Failure(413, "REQUEST_TOO_LARGE");
+        }
+        if (!jsonMediaType(contentType)) {
+            throw new Failure(415, "UNSUPPORTED_MEDIA_TYPE");
+        }
+        var graphId = new ContentDigest(parts[4]);
+        requireAuthoritativeGraph(graphId);
+        load(graphId);
+
+        Map<String, Object> input;
+        try {
+            String text = StandardCharsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(body)).toString();
+            input = GraphJson.object(GraphJson.read(text,
+                    new GraphJson.Limits(MAX_SCIP_JSON_REQUEST_BYTES, limits.jsonDepth(), limits.jsonValues())));
+        } catch (CharacterCodingException invalid) {
+            throw new IllegalArgumentException("Invalid UTF-8");
+        }
+        QueryJson.object(input, "scipBase64", "expectedSha256", "sourceLabel");
+        Object rawB64Obj = input.get("scipBase64");
+        if (!(rawB64Obj instanceof String rawB64) || rawB64.isBlank()) {
+            throw new IllegalArgumentException("scipBase64 is required");
+        }
+        String cleanB64 = rawB64.strip();
+        if (cleanB64.length() > MAX_SCIP_BASE64_CHARS) {
+            throw new IllegalArgumentException("SCIP base64 payload exceeds 16 MiB bound");
+        }
+        byte[] scipBytes;
+        try {
+            scipBytes = Base64.getDecoder().decode(cleanB64);
+        } catch (IllegalArgumentException invalidBase64) {
+            throw new IllegalArgumentException("Invalid scipBase64 encoding");
+        }
+        if (scipBytes.length == 0 || scipBytes.length > MAX_SCIP_RAW_BYTES) {
+            throw new IllegalArgumentException("SCIP payload must be between 1 byte and 16 MiB");
+        }
+        Optional<ContentDigest> expectedSha = Optional.empty();
+        if (input.containsKey("expectedSha256") && input.get("expectedSha256") != null) {
+            String rawHash = QueryJson.text(input, "expectedSha256").strip().toLowerCase(Locale.ROOT);
+            String normalizedHash = rawHash.startsWith("sha256:") ? rawHash : ("sha256:" + rawHash);
+            expectedSha = Optional.of(new ContentDigest(normalizedHash));
+        }
+        Optional<String> sourceLabel = QueryJson.optionalText(input, "sourceLabel");
+        if (sourceLabel.isPresent() && sourceLabel.orElseThrow().length() > 512) {
+            throw new IllegalArgumentException("sourceLabel exceeds 512 characters");
+        }
+        try {
+            var result = ScipSemanticCaptureAdapter.ingest(
+                    new ScipSemanticCaptureAdapter.ScipIngestRequest(scipBytes, expectedSha, sourceLabel));
+            return okEnvelope(200, result.toView());
+        } catch (IllegalArgumentException ex) {
+            if (ex.getMessage() != null && ex.getMessage().contains("SCIP_SHA256_MISMATCH")) {
+                throw new Failure(400, "SCIP_SHA256_MISMATCH");
+            }
+            throw ex;
+        }
+    }
+
+    private record DefaultGraphContext(Optional<String> graph, Optional<String> context) {}
+
+    private DefaultGraphContext discoverDefaultGraphAndContextForMcp(McpToolDispatcher.ApiBackend backend) {
+        Optional<String> graphOpt = Optional.empty();
+        Optional<String> ctxOpt = Optional.empty();
+        if (jobs != null) {
+            try {
+                var resp = backend.dispatch("GET", "/api/v1/analysis/jobs", null);
+                if (resp.status() == 200) {
+                    var root = GraphJson.object(GraphJson.read(resp.body(), GraphJson.Limits.defaults()));
+                    var data = root.get("data") instanceof Map<?, ?> m ? m : root;
+                    Object rawList = data.get("items") instanceof List<?> ? data.get("items") : data.get("jobs");
+                    if (rawList instanceof List<?> items) {
+                        for (Object item : items) {
+                            if (item instanceof Map<?, ?> j && j.get("result") instanceof Map<?, ?> res
+                                    && res.get("graph") instanceof String g && !g.isBlank()) {
+                                graphOpt = Optional.of(g);
+                                break;
+                            }
+                        }
+                    }
+                }
+            } catch (Exception ignored) {}
+        }
+        if (graphOpt.isEmpty() && storeDirectory != null) {
+            try {
+                graphOpt = McpToolDispatcher.discoverLatestGraphDigest(storeDirectory.resolve("graphs"));
+            } catch (Exception ignored) {}
+        }
+        if (graphOpt.isPresent()) {
+            String ctx = McpToolDispatcher.resolveContextForGraph(graphOpt.orElseThrow(), backend);
+            if (ctx != null && !ctx.isBlank()) {
+                ctxOpt = Optional.of(ctx);
+            }
+        }
+        return new DefaultGraphContext(graphOpt, ctxOpt);
+    }
+
     private Response handleMcpSetup(String method, String rawQuery, String serverOrigin, byte[] body) {
         requireMethod(method, "GET");
         requireEmpty(body);
         int port = 8080;
+        String resolvedOrigin = "http://127.0.0.1:" + port;
         if (serverOrigin != null && !serverOrigin.isBlank()) {
+            String trimmedOrigin = serverOrigin.strip().replaceFirst("/+$", "");
             try {
-                int p = java.net.URI.create(serverOrigin).getPort();
-                if (p > 0) port = p;
+                var parsedOrigin = java.net.URI.create(trimmedOrigin);
+                int p = parsedOrigin.getPort();
+                if (p > 0) {
+                    port = p;
+                    resolvedOrigin = trimmedOrigin;
+                } else if (parsedOrigin.getScheme() != null && parsedOrigin.getHost() != null) {
+                    if ("127.0.0.1".equalsIgnoreCase(parsedOrigin.getHost())
+                            || "localhost".equalsIgnoreCase(parsedOrigin.getHost())) {
+                        resolvedOrigin = parsedOrigin.getScheme().toLowerCase(Locale.ROOT)
+                                + "://" + parsedOrigin.getHost() + ":" + port;
+                    } else {
+                        resolvedOrigin = trimmedOrigin;
+                    }
+                }
             } catch (IllegalArgumentException ignored) {}
         }
+        String streamableHttpUrl = resolvedOrigin + "/mcp";
         boolean multiUser = auth != null && auth.isMultiUserMode();
         String resolvedCp = resolveMcpClasspath();
         String resolvedStore = resolveMcpStoreDirectory();
@@ -1146,25 +1397,58 @@ public final class ArchitectureQueryApi {
         directEntry.put("command", "java");
         directEntry.put("args", directArgs);
 
+        var stdioConfig = Map.of("mcpServers", Map.of("evo-workbench", serverEntry));
+        var offlineStoreConfig = Map.of("mcpServers", Map.of("evo-local", directEntry));
+
+        Map<String, String> authHeaders = multiUser ? Map.of("Authorization", "Bearer ${EVO_MCP_TOKEN}") : null;
+        var antigravityServer = new LinkedHashMap<String, Object>();
+        antigravityServer.put("serverUrl", streamableHttpUrl);
+        if (authHeaders != null) antigravityServer.put("headers", authHeaders);
+        var cursorServer = new LinkedHashMap<String, Object>();
+        cursorServer.put("url", streamableHttpUrl);
+        if (authHeaders != null) cursorServer.put("headers", authHeaders);
+        var claudeServer = new LinkedHashMap<String, Object>();
+        claudeServer.put("type", "http");
+        claudeServer.put("url", streamableHttpUrl);
+        if (authHeaders != null) claudeServer.put("headers", authHeaders);
+        var vscodeServer = new LinkedHashMap<String, Object>();
+        vscodeServer.put("type", "http");
+        vscodeServer.put("url", streamableHttpUrl);
+        if (authHeaders != null) vscodeServer.put("headers", authHeaders);
+
+        var clients = new LinkedHashMap<String, Object>();
+        clients.put("antigravity", Map.of("mcpServers", Map.of("evo-workbench", Collections.unmodifiableMap(antigravityServer))));
+        clients.put("cursor", Map.of("mcpServers", Map.of("evo-workbench", Collections.unmodifiableMap(cursorServer))));
+        clients.put("claude", Map.of("mcpServers", Map.of("evo-workbench", Collections.unmodifiableMap(claudeServer))));
+        clients.put("vscode", Map.of("servers", Map.of("evo-workbench", Collections.unmodifiableMap(vscodeServer))));
+        clients.put("stdio", stdioConfig);
+        clients.put("offlineStore", offlineStoreConfig);
+
+        var activeAuthCtx = com.evolution.backend.auth.RequestContext.current().orElse(null);
+        var discovered = discoverDefaultGraphAndContextForMcp(
+                McpToolDispatcher.directBackend(this, activeAuthCtx, resolvedOrigin, () -> false));
+
         var out = new LinkedHashMap<String, Object>();
-        out.put("protocolVersion", "2025-11-25");
+        out.put("protocolVersion", McpToolDispatcher.PROTOCOL_VERSION);
+        out.put("streamableHttpUrl", streamableHttpUrl);
         out.put("multiUserMode", multiUser);
+        out.put("patRequired", multiUser);
         out.put("patMintSupported", auth != null && auth.accountStore() != null);
         out.put("workbenchPort", port);
         out.put("resolvedJarPath", resolvedCp);
         out.put("resolvedStorePath", resolvedStore);
-        out.put("toolCount", 19);
-        out.put("resources", List.of(
-                Map.of("uri", "evo://score-v2", "description", "7-dimension Architecture Health Score v2 & Confidence"),
-                Map.of("uri", "evo://report", "description", "Executive Architecture Insights Markdown report (incl. Leiden communities)"),
-                Map.of("uri", "evo://gaps", "description", "Active capability gaps & resolution obligations"),
-                Map.of("uri", "evo://hotspots", "description", "Top architectural hotspots & blast-radius centers"),
-                Map.of("uri", "evo://cycles", "description", "Tarjan SCC dependency tangles & minimal break cuts"),
-                Map.of("uri", "evo://spring-summary", "description", "Spring beans, endpoints & SAT conditional realizations")));
-        out.put("workbenchProxyConfig", Map.of("mcpServers", Map.of("evo-workbench", serverEntry)));
-        out.put("directOfflineConfig", Map.of("mcpServers", Map.of("evo-local", directEntry)));
+        out.put("evoJarPath", resolvedCp);
+        out.put("storeDir", resolvedStore);
+        discovered.graph().ifPresent(g -> out.put("defaultGraph", g));
+        discovered.context().ifPresent(c -> out.put("defaultContext", c));
+        out.put("toolCount", McpToolDispatcher.TOOL_COUNT);
+        out.put("resourceCount", McpToolDispatcher.RESOURCE_COUNT);
+        out.put("resources", McpToolDispatcher.listResourcesView());
+        out.put("clients", Collections.unmodifiableMap(clients));
+        out.put("workbenchProxyConfig", stdioConfig);
+        out.put("directOfflineConfig", offlineStoreConfig);
         out.put("agentRuleSnippet",
-                "Prefer Evo MCP tools (`architecture_brief`, `repo_map`, `graph_query`, `search_captured_source`, `inspect_advisory_links`, `inspect_codeowners`, `read_markdown_section`) before raw file grep. Treat `ADVISORY_UNVERIFIED` links as non-authoritative.");
+                "Prefer Evo MCP tools (`architecture_brief`, `repo_map`, `graph_query`, `search_captured_source`, `inspect_advisory_links`, `inspect_codeowners`, `read_markdown_section`, `vertical_trace`, `trace_slice`) before raw file grep. Treat `ADVISORY_UNVERIFIED` links as non-authoritative.");
         return okEnvelope(200, Collections.unmodifiableMap(out));
     }
 
@@ -1270,6 +1554,9 @@ public final class ArchitectureQueryApi {
     }
 
     private static boolean isMcpReadPatRoute(String method, String path) {
+        if ("/mcp".equals(path) && ("POST".equals(method) || "DELETE".equals(method) || "GET".equals(method))) {
+            return true;
+        }
         if ("GET".equals(method) || "HEAD".equals(method) || "OPTIONS".equals(method)) {
             if (path.equals("/api/v1") || path.equals("/api/v1/auth/me")
                     || path.equals("/api/v1/auth/config") || path.equals("/api/v1/mcp/setup")
@@ -1414,8 +1701,14 @@ public final class ArchitectureQueryApi {
         if (path.startsWith(GitHubHttpApi.PREFIX)) {
             return GitHubHttpApi.allowedMethods(path);
         }
+        if (path.equals("/mcp")) {
+            return "POST, DELETE";
+        }
         if (path.equals("/api/v1/mcp/setup")) {
             return "GET";
+        }
+        if (path.startsWith("/api/v1/graphs/") && path.endsWith("/scip/ingest")) {
+            return "POST";
         }
         if (path.startsWith("/api/v1/graphs/") && (path.endsWith("/codeowners") || path.endsWith("/sarif")
                 || path.endsWith("/advisory-links") || path.endsWith("/wiki-dossier"))) {
@@ -1578,6 +1871,10 @@ public final class ArchitectureQueryApi {
                 "The requested conversation belongs to a different graph snapshot.";
             case "LOCAL_CHECKOUT_DISABLED_IN_MULTI_USER" ->
                 "Host local filesystem checkouts are disabled for OAuth users in multi-user mode.";
+            case "SCIP_SHA256_MISMATCH" ->
+                "Provided SCIP artifact SHA-256 digest does not match the uploaded payload.";
+            case "MCP_SESSION_NOT_FOUND" ->
+                "The requested MCP session was not found or has expired.";
             default -> "The request could not be completed.";
         };
     }

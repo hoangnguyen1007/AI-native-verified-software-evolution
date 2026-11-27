@@ -34,10 +34,8 @@ import java.util.function.Supplier;
 final class ArchitectureAgent {
     static final int MAX_ROUNDS = 10;
     static final int MAX_TOOL_JSON_BYTES = 48_000;
-    static final Set<String> SERVICE_BRIDGE_KINDS = Set.of(
-            "CALLS_SERVICE", "INVOKES_RPC", "PUBLISHES_EVENT",
-            "polyglot.service-call.candidate", "polyglot.grpc-service-call.candidate",
-            "polyglot.event-flow.candidate", "polyglot.grpc-contract.candidate");
+    static final Set<String> SERVICE_BRIDGE_KINDS =
+            com.evolution.backend.query.mcp.McpToolDispatcher.SERVICE_BRIDGE_KINDS;
 
     interface ProgressListener {
         void onStage(String message);

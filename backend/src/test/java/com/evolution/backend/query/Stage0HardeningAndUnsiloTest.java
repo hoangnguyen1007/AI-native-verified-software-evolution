@@ -536,7 +536,7 @@ final class Stage0HardeningAndUnsiloTest {
                 assertFalse(mcpSetupResp.body().contains("\"evo.jar\""), "MCP setup must NOT contain literal evo.jar placeholder");
                 assertFalse(mcpSetupResp.body().contains("<path-to-evo-store>"), "MCP setup must NOT contain literal <path-to-evo-store>");
                 assertTrue(mcpSetupResp.body().contains("real-evo-store"), "MCP setup must resolve actual storeDirectory: " + mcpSetupResp.body());
-                assertTrue(mcpSetupResp.body().contains("\"toolCount\":19"), mcpSetupResp.body());
+                assertTrue(mcpSetupResp.body().contains("\"toolCount\":21"), mcpSetupResp.body());
                 assertTrue(mcpSetupResp.body().contains("\"patMintSupported\":true"), mcpSetupResp.body());
 
                 // 5. Read-only mcp:read PAT is REJECTED (403 INSUFFICIENT_TOKEN_SCOPE) on write routes (both Auth & Query APIs)
