@@ -1,0 +1,285 @@
+/* Evo Architecture Workbench · TrustTier Badges & Multi-Scale Graph Canvas (Dark + Light, 320px–1440px) */
+
+/* ═══ CANONICAL TRUST-TIER BADGES (window.EvoTrust) ═════════════════════════ */
+.evo-trust-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 9px;
+  border-radius: var(--r-pill, 999px);
+  font: 600 0.72rem/1.45 var(--font-mono, ui-monospace, monospace);
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  max-width: 100%;
+  vertical-align: middle;
+}
+
+.evo-trust-badge.is-compact {
+  padding: 1px 7px;
+  font-size: 0.68rem;
+}
+
+.evo-trust-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex: none;
+  background: currentColor;
+}
+
+.evo-trust-badge.is-compiler {
+  background: rgba(16, 185, 129, 0.16);
+  border: 1px solid rgba(79, 209, 154, 0.45);
+  color: var(--raw-emerald-300, #8ce2b9);
+}
+
+.evo-trust-badge.is-spring-sat {
+  background: rgba(99, 102, 241, 0.18);
+  border: 1px solid rgba(165, 180, 252, 0.48);
+  color: var(--raw-indigo-300, #a5b4fc);
+}
+
+.evo-trust-badge.is-source-syntax {
+  background: transparent;
+  border: 1px solid rgba(251, 191, 36, 0.55);
+  color: var(--raw-amber-300, #fbbf24);
+}
+
+.evo-trust-badge.is-advisory {
+  background: rgba(103, 216, 232, 0.08);
+  border: 1px dashed rgba(103, 216, 232, 0.55);
+  color: var(--raw-teal-300, #67d8e8);
+}
+
+:root[data-theme="light"] .evo-trust-badge.is-compiler {
+  background: rgba(20, 108, 78, 0.12);
+  border-color: rgba(20, 108, 78, 0.42);
+  color: var(--raw-emerald-800, #0f563e);
+}
+
+:root[data-theme="light"] .evo-trust-badge.is-spring-sat {
+  background: rgba(67, 56, 202, 0.11);
+  border-color: rgba(67, 56, 202, 0.38);
+  color: var(--raw-indigo-700, #4338ca);
+}
+
+:root[data-theme="light"] .evo-trust-badge.is-source-syntax {
+  background: rgba(217, 119, 6, 0.08);
+  border-color: rgba(180, 83, 9, 0.48);
+  color: var(--raw-amber-700, #7c3d04);
+}
+
+:root[data-theme="light"] .evo-trust-badge.is-advisory {
+  background: rgba(12, 100, 120, 0.08);
+  border-color: rgba(12, 100, 120, 0.45);
+  color: var(--raw-teal-700, #0c6478);
+}
+
+.evo-trust-subpill {
+  padding: 0 5px;
+  border-radius: 4px;
+  font-size: 0.66rem;
+  font-weight: 700;
+  background: color-mix(in srgb, currentColor 16%, transparent);
+}
+
+.evo-trust-suffix {
+  opacity: 0.85;
+  font-weight: 500;
+}
+
+/* ═══ MULTI-SCALE GRAPH CANVAS CONTROLS ═════════════════════════════════════ */
+.evo-graph-multiscale-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  padding: 8px 0 4px;
+  min-width: 0;
+}
+
+.evo-graph-seg-group {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--line-mid, var(--wb-rule));
+  border-radius: var(--r, 8px);
+  background: var(--surface-2, var(--wb-paper));
+  max-width: 100%;
+}
+
+.evo-graph-seg-label {
+  font: 600 0.72rem/1 var(--font-mono, ui-monospace, monospace);
+  color: var(--text-3, var(--wb-muted));
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 0 8px 0 6px;
+}
+
+.evo-graph-seg-btn {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--text-2, var(--wb-muted));
+  font: 600 0.78rem/1.3 var(--font-sans, system-ui, sans-serif);
+  padding: 5px 10px;
+  border-radius: var(--r-sm, 6px);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.evo-graph-seg-btn:hover {
+  color: var(--text, var(--wb-ink));
+  background: var(--surface-3, rgba(255, 255, 255, 0.05));
+}
+
+.evo-graph-seg-btn.is-active {
+  background: var(--accent-s, rgba(140, 226, 185, 0.14));
+  color: var(--accent, var(--wb-accent));
+  box-shadow: inset 0 0 0 1px var(--accent-line, rgba(140, 226, 185, 0.32));
+}
+
+:root[data-theme="light"] .evo-graph-seg-btn.is-active {
+  color: var(--raw-emerald-800, #0f563e);
+}
+
+.evo-graph-seg-btn:focus-visible {
+  outline: 2px solid var(--accent, var(--wb-accent));
+  outline-offset: 1px;
+}
+
+.evo-graph-meta-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  margin: 6px 0 8px;
+  min-width: 0;
+}
+
+.evo-graph-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 9px;
+  border-radius: var(--r-pill, 999px);
+  border: 1px solid var(--line-mid, var(--wb-rule));
+  background: var(--surface-2, var(--wb-paper));
+  color: var(--text-2, var(--wb-muted));
+  font: 600 0.72rem/1.45 var(--font-mono, ui-monospace, monospace);
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.evo-graph-pill.is-accent {
+  border-color: var(--accent-line, rgba(140, 226, 185, 0.32));
+  background: var(--accent-s, rgba(140, 226, 185, 0.11));
+  color: var(--accent, var(--wb-accent));
+}
+
+:root[data-theme="light"] .evo-graph-pill.is-accent {
+  color: var(--raw-emerald-800, #0f563e);
+}
+
+.evo-graph-pill.is-warn {
+  border-color: var(--warn-line, rgba(251, 191, 36, 0.38));
+  background: var(--warn-s, rgba(251, 191, 36, 0.12));
+  color: var(--warn, #fbbf24);
+}
+
+:root[data-theme="light"] .evo-graph-pill.is-warn {
+  color: var(--raw-amber-700, #7c3d04);
+}
+
+.evo-graph-pill.is-danger {
+  border-color: var(--danger-line, rgba(248, 113, 113, 0.4));
+  background: var(--danger-s, rgba(248, 113, 113, 0.12));
+  color: var(--danger, #f87171);
+}
+
+:root[data-theme="light"] .evo-graph-pill.is-danger {
+  color: var(--raw-crimson-600, #b91c1c);
+}
+
+.evo-graph-breadcrumbs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
+  margin-bottom: 8px;
+  border: 1px solid var(--ai-line, rgba(165, 180, 252, 0.3));
+  border-radius: var(--r, 8px);
+  background: var(--ai-s, rgba(165, 180, 252, 0.08));
+  font-size: 0.82rem;
+  min-width: 0;
+}
+
+.evo-graph-crumb-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: var(--r-pill, 999px);
+  border: 1px solid var(--line-strong, var(--wb-rule));
+  background: var(--surface, var(--wb-paper));
+  color: var(--text, var(--wb-ink));
+  font: 600 0.76rem/1.3 var(--font-sans, system-ui, sans-serif);
+  cursor: pointer;
+}
+
+.evo-graph-crumb-chip:hover {
+  border-color: var(--accent, var(--wb-accent));
+  color: var(--accent, var(--wb-accent));
+}
+
+.evo-graph-canvas-host {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+}
+
+.evo-graph-hover-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  min-height: 28px;
+  padding: 5px 11px;
+  border-top: 1px solid var(--line, var(--wb-rule));
+  background: var(--surface-2, var(--wb-paper));
+  color: var(--text-2, var(--wb-muted));
+  font-size: 0.8rem;
+  overflow-wrap: anywhere;
+}
+
+.evo-graph-hover-bar strong {
+  color: var(--text, var(--wb-ink));
+}
+
+.evo-graph-rail-trust {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0 8px;
+}
+
+@media (max-width: 640px) {
+  .evo-graph-multiscale-bar {
+    gap: 6px;
+  }
+  .evo-graph-seg-group {
+    width: 100%;
+    justify-content: space-between;
+  }
+  .evo-graph-seg-btn {
+    flex: 1 1 auto;
+    text-align: center;
+    padding: 5px 6px;
+    font-size: 0.74rem;
+  }
+}

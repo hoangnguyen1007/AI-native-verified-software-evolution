@@ -429,13 +429,166 @@
     return container;
   }
 
+  async function builtInStreamChat(graphId, payload, signal, handlers) {
+    const csrf = window.EvoGitHubAuth?.getCsrfToken?.();
+    const response = await fetch('/api/v1/graphs/' + graphId + '/architecture-chat/stream', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'text/event-stream',
+        ...(csrf ? { 'X-Evo-CSRF': csrf } : {})
+      },
+      body: JSON.stringify(payload),
+      signal
+    });
+    if (!response.ok || !response.body) {
+      let msg = 'Architecture chat request failed.';
+      let code = null, supersededBy = null;
+      try {
+        const err = await response.json();
+        msg = err?.error?.message || msg;
+        code = err?.error?.code || null;
+        supersededBy = err?.error?.supersededBy || err?.supersededBy || null;
+      } catch (_) { }
+      const e = new Error(msg);
+      e.status = response.status;
+      e.code = code;
+      e.supersededBy = supersededBy;
+      throw e;
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let finalResult = null;
+    const processBlock = block => {
+      let eventName = 'message';
+      const dataLines = [];
+      for (const line of block.split('\n')) {
+        if (line.startsWith('event:')) eventName = line.slice(6).trim();
+        else if (line.startsWith('data:')) dataLines.push(line.slice(5).trimStart());
+      }
+      if (!dataLines.length) return;
+      let parsed;
+      try { parsed = JSON.parse(dataLines.join('\n')); }
+      catch (_) { return; }
+      if (eventName === 'stage') handlers?.onStage?.(parsed.message || '');
+      else if (eventName === 'tool') {
+        const kind = window.EvoModel?.classifySseToolEvent
+          ? window.EvoModel.classifySseToolEvent(parsed)
+          : (parsed.phase === 'start' || parsed.status === 'running' ? 'start' : 'complete');
+        if (kind === 'start') handlers?.onToolStart?.(parsed);
+        else handlers?.onToolComplete?.(parsed);
+      } else if (eventName === 'delta') handlers?.onDelta?.(parsed.text || '');
+      else if (eventName === 'complete') finalResult = parsed.data ?? parsed;
+      else if (eventName === 'error') throw new Error(parsed.error?.message || parsed.message || 'Architecture chat failed.');
+    };
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true }).replace(/\r\n?/g, '\n');
+        let sep;
+        while ((sep = buffer.indexOf('\n\n')) >= 0) {
+          const block = buffer.slice(0, sep);
+          buffer = buffer.slice(sep + 2);
+          processBlock(block);
+        }
+      }
+      buffer += decoder.decode().replace(/\r\n?/g, '\n');
+      if (buffer.trim()) processBlock(buffer.trim());
+    } finally {
+      reader.cancel().catch(() => {});
+    }
+    if (!finalResult) throw new Error('Architecture chat stream ended without a final response.');
+    return finalResult;
+  }
+
+  function resolveCitationInfo(result, citeId) {
+    const resolvedList = Array.isArray(result?.resolvedCitations) ? result.resolvedCitations : [];
+    const evidenceRows = Array.isArray(result?.evidence) ? result.evidence : [];
+    const resolved = resolvedList.find(c => c && c.id === citeId) || null;
+    const row = evidenceRows.find(item => item && item.id === citeId) || null;
+    const nodeIds = [];
+    if (Array.isArray(resolved?.nodeIds)) {
+      for (const nid of resolved.nodeIds) if (typeof nid === 'string' && nid.trim()) nodeIds.push(nid.trim());
+    }
+    if (!nodeIds.length && row?.data) {
+      if (Array.isArray(row.data.nodeIds)) {
+        for (const nid of row.data.nodeIds) if (typeof nid === 'string' && nid.trim()) nodeIds.push(nid.trim());
+      }
+      for (const candidate of [row.data.identity, row.data.symbolIdentity, row.data.source, row.data.target]) {
+        if (typeof candidate === 'string' && candidate.trim() && !nodeIds.includes(candidate.trim())) {
+          nodeIds.push(candidate.trim());
+        }
+      }
+    }
+    const path = resolved?.path || row?.data?.path || null;
+    const startLine = resolved?.startLine ?? row?.data?.startLine ?? row?.data?.line ?? null;
+    const endLine = resolved?.endLine ?? row?.data?.endLine ?? null;
+    const trustTier = resolved?.trustTier || (window.EvoTrust ? window.EvoTrust.inferFromRecord(row || {}) : null);
+    return {
+      id: citeId,
+      resolved,
+      row,
+      label: resolved?.label || row?.label || citeId,
+      nodeIds: [...new Set(nodeIds)],
+      path: typeof path === 'string' && path.trim() ? path.trim() : null,
+      startLine: startLine != null && Number.isFinite(Number(startLine)) ? Number(startLine) : null,
+      endLine: endLine != null && Number.isFinite(Number(endLine)) ? Number(endLine) : null,
+      trustTier
+    };
+  }
+
+  function hydrateServerTurns(rawTurns) {
+    const turns = [];
+    if (!Array.isArray(rawTurns)) return turns;
+    let pendingUser = null;
+    for (const item of rawTurns) {
+      if (!item || typeof item !== 'object') continue;
+      const role = String(item.role || '').toLowerCase();
+      if (role === 'user') {
+        pendingUser = String(item.content || '');
+      } else if (role === 'assistant') {
+        const evidence = Array.isArray(item.evidence) ? item.evidence : [];
+        const resolvedCitations = Array.isArray(item.resolvedCitations) ? item.resolvedCitations
+          : (Array.isArray(item.citations) && item.citations.length && typeof item.citations[0] === 'object' ? item.citations : []);
+        const citations = Array.isArray(item.citations)
+          ? item.citations.map(c => (typeof c === 'string' ? c : c?.id)).filter(Boolean)
+          : resolvedCitations.map(c => c.id).filter(Boolean);
+        turns.push({
+          question: pendingUser || '(Previous message)',
+          result: {
+            status: item.status || 'ADVICE',
+            answer: String(item.content || ''),
+            evidence,
+            evidenceIdentity: item.inputDigest || item.evidenceIdentity || '',
+            citations,
+            resolvedCitations,
+            agentTrace: Array.isArray(item.toolTrace) ? item.toolTrace : [],
+            promptCacheMetrics: item.promptCacheMetrics || null,
+            model: item.modelId ? { model: item.modelId, usage: item.promptCacheMetrics || undefined } : null,
+            turnId: item.turnId || null
+          }
+        });
+        pendingUser = null;
+      }
+    }
+    return turns;
+  }
+
   window.mountEvoArchitectureChat = function mount(scope) {
+    const apiFn = typeof scope.api === 'function' ? scope.api : window.EvoApp?.api;
+    const streamFn = typeof scope.stream === 'function'
+      ? scope.stream
+      : (scope.streamEnabled ? (q, sig, handlers) => builtInStreamChat(scope.graph, q, sig, handlers) : null);
     const userScope = window.EvoGitHubAuth?.getUserId?.() || 'local';
     const key = JSON.stringify([userScope, scope.snapshot || scope.graph,scope.context,scope.finding]);
     const prefix = 'evo.chat.v1.' + encodeURIComponent(key) + '.';
     const activeKey = prefix + 'active';
     const defaults = () => ({
       turns:[],mode:scope.finding ? 'REPAIR' : 'EXPLORE',focus:'',draft:'',
+      conversationId:null,
       agentic:Boolean(scope.agentEnabled),reviewerAgentic:false,
       includeSource:Boolean(scope.provider && (scope.finding || !scope.provider.remote))
     });
@@ -455,7 +608,12 @@
       return defaults();
     }
     session = loadSession(active);
+    if (scope.seedMode && ['EXPLORE', 'DESIGN', 'REPAIR'].includes(scope.seedMode)) session.mode = scope.seedMode;
+    if (scope.seedFocus) session.focus = String(scope.seedFocus).slice(0, 256);
     if (scope.seedPrompt) session.draft = String(scope.seedPrompt).slice(0, 2400);
+
+    let serverThreadsAvailable = Boolean(apiFn && scope.graph);
+    let serverThreads = [];
 
     const node = make('section','architecture-chat');
     const head = make('header','architecture-chat-header');
@@ -469,6 +627,15 @@
     const deleteBtn = button('Delete', deleteConversation, 'button subtle');
     headerActions.append(history, fresh, exportBtn, deleteBtn);
     head.append(title, headerActions);
+
+    // Collapsible SQLite Persistent Threads Strip (gracefully hides if backend unavailable)
+    const threadsDetails = make('details', 'architecture-chat-threads');
+    threadsDetails.hidden = true;
+    const threadsSummary = make('summary');
+    const threadsCountBadge = make('span', 'architecture-chat-threads-count', '0 saved');
+    threadsSummary.append(make('span', '', 'Saved conversation threads'), threadsCountBadge);
+    const threadsStrip = make('div', 'architecture-chat-threads-strip');
+    threadsDetails.append(threadsSummary, threadsStrip);
     const pins = make('div','architecture-chat-pins');
     const snapshotKey = scope.snapshot?.split('sha256:').at(-1);
     const snapshot = make('code','',snapshotKey?.length === 64 ? 'Snapshot ' + snapshotKey.slice(0,8) : 'Captured snapshot');
@@ -597,16 +764,133 @@
     evidence.setAttribute('aria-label','Captured architecture evidence');
     conversation.append(log,status,form);
     layout.append(conversation,evidence);
-    node.append(head,pins);
+    node.append(head,pins,threadsDetails);
     if (preNotice) node.append(preNotice);
     node.append(layout);
     let pending = null;
     const reviewSlots = new WeakMap();
     const activeReviewControllers = new Set();
+    let unsubChatSeed = null;
+    if (window.EvoBus) {
+      unsubChatSeed = window.EvoBus.on('evo:chat-seed', payload => {
+        if (scope.signal?.aborted || !payload) return;
+        if (payload.mode && ['EXPLORE', 'DESIGN', 'REPAIR'].includes(payload.mode)) {
+          mode.value = session.mode = payload.mode;
+        }
+        if (typeof payload.focusNodeId === 'string' && payload.focusNodeId.trim()) {
+          focus.value = session.focus = payload.focusNodeId.trim().slice(0, 256);
+        }
+        if (typeof payload.prompt === 'string' && payload.prompt.trim()) {
+          input.value = session.draft = payload.prompt.trim().slice(0, 2400);
+        }
+        save();
+        status.textContent = 'Prompt seeded from architecture view.';
+        input.focus();
+      });
+    }
     scope.signal?.addEventListener('abort', () => {
+      unsubChatSeed?.();
       for (const c of activeReviewControllers) c.abort();
       activeReviewControllers.clear();
     }, { once: true });
+
+    function renderThreadsStrip() {
+      if (!serverThreadsAvailable) {
+        threadsDetails.hidden = true;
+        return;
+      }
+      threadsDetails.hidden = false;
+      threadsCountBadge.textContent = `${serverThreads.length} saved`;
+      threadsStrip.replaceChildren();
+      threadsStrip.append(button('+ New thread', () => reset(), 'architecture-chat-thread-chip'));
+      if (!serverThreads.length) {
+        threadsStrip.append(make('span', 'muted small', 'Start a conversation to save it in SQLite.'));
+        return;
+      }
+      for (const item of serverThreads) {
+        const cid = item.conversationId || item.id;
+        const isCurrent = session.conversationId && session.conversationId === cid;
+        const chip = make('button', 'architecture-chat-thread-chip' + (isCurrent ? ' is-active' : ''));
+        chip.type = 'button';
+        const titleSpan = make('span', 'architecture-chat-thread-title', item.title || 'Untitled thread');
+        const ts = item.updatedAtMs || item.createdAtMs;
+        const rel = ts && window.EvoModel?.formatRelativeTime ? window.EvoModel.formatRelativeTime(ts) : '';
+        chip.append(titleSpan);
+        if (rel) chip.append(make('span', 'architecture-chat-thread-meta', rel));
+        chip.title = (item.title || cid) + (item.mode ? ' · ' + item.mode : '');
+        chip.addEventListener('click', () => { void openServerThread(cid); });
+        threadsStrip.append(chip);
+      }
+    }
+
+    async function refreshServerThreads() {
+      if (!serverThreadsAvailable || !apiFn || !scope.graph) return;
+      try {
+        const res = await apiFn('/graphs/' + scope.graph + '/conversations', undefined, scope.signal, 'GET', 10000);
+        if (scope.signal?.aborted) return;
+        serverThreads = Array.isArray(res?.conversations) ? res.conversations : [];
+        renderThreadsStrip();
+        refreshHistory();
+      } catch (err) {
+        if (scope.signal?.aborted) return;
+        if (err?.status === 404 || err?.status === 405 || err?.status === 501 || err?.status === 503 || err?.status === 401 || err?.status === 403) {
+          serverThreadsAvailable = false;
+          threadsDetails.hidden = true;
+        }
+      }
+    }
+
+    async function openServerThread(conversationId) {
+      if (pending || !serverThreadsAvailable || !apiFn || !conversationId) return;
+      status.textContent = 'Loading saved conversation…';
+      try {
+        const res = await apiFn('/conversations/' + encodeURIComponent(conversationId), undefined, scope.signal, 'GET', 15000);
+        if (scope.signal?.aborted) return;
+        const conv = res?.conversation || {};
+        active = 'srv:' + conversationId;
+        session = {
+          ...defaults(),
+          conversationId,
+          title: conv.title || 'Saved conversation',
+          mode: ['EXPLORE', 'DESIGN', 'REPAIR'].includes(conv.mode) ? conv.mode : defaults().mode,
+          turns: hydrateServerTurns(res?.turns),
+          updated: conv.updatedAtMs || Date.now()
+        };
+        syncSessionControls();
+        save();
+        renderThreadsStrip();
+        renderConversation();
+        status.textContent = 'Saved conversation loaded.';
+      } catch (err) {
+        if (!scope.signal?.aborted) status.textContent = err?.message || 'Could not load saved conversation.';
+      }
+    }
+
+    async function ensureServerConversation(firstQuestion) {
+      if (!serverThreadsAvailable || !apiFn || !scope.graph) return null;
+      if (session.conversationId) return session.conversationId;
+      try {
+        const res = await apiFn('/graphs/' + scope.graph + '/conversations', {
+          contextId: scope.context,
+          snapshotDigest: scope.snapshot || scope.graph,
+          mode: mode.value,
+          title: String(firstQuestion || 'Architecture conversation').slice(0, 80),
+          ...(scope.finding?.identity ? { findingId: scope.finding.identity } : {})
+        }, scope.signal, 'POST', 10000);
+        const createdId = res?.conversation?.conversationId || res?.conversationId || null;
+        if (createdId) {
+          session.conversationId = createdId;
+          save();
+          return createdId;
+        }
+      } catch (err) {
+        if (err?.status === 404 || err?.status === 405 || err?.status === 501 || err?.status === 503) {
+          serverThreadsAvailable = false;
+          threadsDetails.hidden = true;
+        }
+      }
+      return null;
+    }
 
     function syncSessionControls() {
       mode.value = session.mode;
@@ -654,15 +938,27 @@
         option.value=id;
         history.append(option);
       }
+      for (const srv of serverThreads) {
+        const cid = srv.conversationId || srv.id;
+        if (!cid || records.has('srv:' + cid)) continue;
+        const opt = make('option', '', '☁ ' + (srv.title || 'Saved thread'));
+        opt.value = 'srv:' + cid;
+        history.append(opt);
+      }
       history.value=active;
     }
 
     history.addEventListener('change',() => {
       if (pending) return;
+      if (history.value.startsWith('srv:')) {
+        void openServerThread(history.value.slice(4));
+        return;
+      }
       active=history.value;
       session=loadSession(active);
       syncSessionControls();
       save();
+      renderThreadsStrip();
       renderConversation();
       status.textContent='Conversation restored.';
     });
@@ -730,6 +1026,49 @@
       details.append(raw);
     }
 
+    function openSourceForCitation(citeInfo, fallbackRow) {
+      const payload = {
+        path: citeInfo?.path || fallbackRow?.path,
+        startLine: citeInfo?.startLine ?? fallbackRow?.startLine ?? 1,
+        endLine: citeInfo?.endLine ?? fallbackRow?.endLine ?? undefined,
+        highlightLine: citeInfo?.startLine ?? fallbackRow?.highlightLine ?? fallbackRow?.startLine ?? 1
+      };
+      if (payload.path && window.EvoBus && window.EvoBus.listenerCount('evo:source-open') > 0) {
+        window.EvoBus.emit('evo:source-open', payload);
+        return;
+      }
+      if (typeof scope.openSource === 'function') {
+        scope.openSource(payload.path ? payload : (fallbackRow || {}));
+      }
+    }
+
+    function focusCanvasForCitation(citeInfo) {
+      if (!citeInfo?.nodeIds?.length || !window.EvoBus) return false;
+      window.EvoBus.emit('evo:canvas-focus', {
+        nodeIds: citeInfo.nodeIds,
+        path: citeInfo.path || undefined,
+        startLine: citeInfo.startLine ?? undefined,
+        endLine: citeInfo.endLine ?? undefined,
+        highlightReason: 'chat-citation:' + citeInfo.id
+      });
+      return true;
+    }
+
+    function handleCitationClick(turn, citeId, resultOverride = null) {
+      const result = resultOverride || turn?.result || {};
+      const citeInfo = resolveCitationInfo(result, citeId);
+      if (citeInfo.row || citeInfo.resolved) {
+        renderEvidence(resultOverride ? { result: resultOverride } : turn, citeId);
+      }
+      if (citeInfo.nodeIds.length > 0) {
+        focusCanvasForCitation(citeInfo);
+        return;
+      }
+      if (citeInfo.path) {
+        openSourceForCitation(citeInfo, citeInfo.row?.data);
+      }
+    }
+
     function renderEvidence(turn, selected) {
       const heading = make('header','architecture-chat-evidence-header');
       heading.append(make('h3','','Evidence'));
@@ -744,11 +1083,26 @@
       digest.title = result.evidenceIdentity || '';
       if (evidenceRows.length) heading.append(digest);
       for (const row of evidenceRows) {
+        const citeInfo = resolveCitationInfo(result, row.id);
         const details = make('details','architecture-chat-record');
         details.open = row.id === selected || (!selected && row === evidenceRows[0]);
         const recordTitle = make('summary');
         recordTitle.append(make('span','architecture-chat-ref',row.id),make('span','',row.label));
+        if (citeInfo.trustTier && window.EvoTrust) {
+          recordTitle.append(window.EvoTrust.renderBadge(citeInfo.trustTier, { compact: true }));
+        }
         details.append(recordTitle);
+        if (citeInfo.nodeIds.length || citeInfo.path) {
+          const citeActions = make('div', 'architecture-chat-cite-actions');
+          if (citeInfo.nodeIds.length && window.EvoBus) {
+            citeActions.append(button('Focus on Dependency Map', () => focusCanvasForCitation(citeInfo), 'architecture-chat-cite-pill-btn'));
+          }
+          if (citeInfo.path) {
+            const loc = citeInfo.path + (citeInfo.startLine ? ':' + citeInfo.startLine : '');
+            citeActions.append(button('Open source (' + loc + ')', () => openSourceForCitation(citeInfo, row.data), 'architecture-chat-cite-pill-btn'));
+          }
+          details.append(citeActions);
+        }
         renderRecord(details,row);
         evidence.append(details);
         if (row.id === selected) {
@@ -756,7 +1110,30 @@
           details.scrollIntoView({block:'nearest'});
         }
       }
-      if (!evidenceRows.length) evidence.append(make('p','muted','Ask an architecture question to see snapshot evidence here.'));
+      if (!evidenceRows.length && Array.isArray(result.resolvedCitations) && result.resolvedCitations.length) {
+        for (const rc of result.resolvedCitations) {
+          const citeInfo = resolveCitationInfo(result, rc.id);
+          const details = make('details', 'architecture-chat-record');
+          details.open = rc.id === selected;
+          const summaryEl = make('summary');
+          summaryEl.append(make('span', 'architecture-chat-ref', rc.id), make('span', '', citeInfo.label));
+          if (citeInfo.trustTier && window.EvoTrust) {
+            summaryEl.append(window.EvoTrust.renderBadge(citeInfo.trustTier, { compact: true }));
+          }
+          details.append(summaryEl);
+          const citeActions = make('div', 'architecture-chat-cite-actions');
+          if (citeInfo.nodeIds.length && window.EvoBus) {
+            citeActions.append(button('Focus on Dependency Map', () => focusCanvasForCitation(citeInfo), 'architecture-chat-cite-pill-btn'));
+          }
+          if (citeInfo.path) {
+            citeActions.append(button('Open captured source', () => openSourceForCitation(citeInfo, null), 'architecture-chat-cite-pill-btn'));
+          }
+          if (citeActions.childElementCount) details.append(citeActions);
+          evidence.append(details);
+        }
+      } else if (!evidenceRows.length) {
+        evidence.append(make('p','muted','Ask an architecture question to see snapshot evidence here.'));
+      }
       if (result.model) {
         const receipt = make('details','architecture-chat-record');
         receipt.append(make('summary','','Model receipt'),make('pre','',JSON.stringify(result.model,null,2)));
@@ -766,12 +1143,7 @@
 
     function buildReviewDetails(reviewResult) {
       const review = make('details','architecture-chat-review');
-      const reviewOnCite = id => {
-        const row = (reviewResult.evidence || []).find(item => item.id === id);
-        if (!row) return;
-        renderEvidence({result:reviewResult}, id);
-        if (row.kind === 'SOURCE' && row.data?.path && typeof scope.openSource === 'function') scope.openSource(row.data);
-      };
+      const reviewOnCite = id => handleCitationClick(null, id, reviewResult);
       review.append(make('summary','',reviewResult.agentTrace?.length
         ? 'Architecture reviewer · agentic second pass (' + reviewResult.agentTrace.length + ' tools)'
         : 'Architecture reviewer · second model call'),
@@ -842,14 +1214,7 @@
         }, 'architecture-chat-copy-msg');
         msgHead.append(copyReply);
       }
-      const onCite = id => {
-        const row = evidenceRows.find(item => item.id === id);
-        if (!row) return;
-        renderEvidence(turn, id);
-        if (row.kind === 'SOURCE' && row.data?.path && typeof scope.openSource === 'function') {
-          scope.openSource(row.data);
-        }
-      };
+      const onCite = id => handleCitationClick(turn, id);
       reply.append(msgHead,
         renderMarkdown(result.answer || 'The evidence panel shows the records retrieved from this snapshot.', onCite));
       if (Array.isArray(result.agentTrace) && result.agentTrace.length) {
@@ -878,9 +1243,20 @@
         reply.append(traceDetails);
       }
       const references = make('div','architecture-chat-links');
-      for (const id of citations) {
-        const row = evidenceRows.find(item => item.id === id);
-        if (row) references.append(button(id + ' · ' + row.label,() => renderEvidence(turn,id),'button subtle'));
+      const citedIds = [...new Set([
+        ...citations,
+        ...((Array.isArray(result.resolvedCitations) ? result.resolvedCitations : []).map(c => c?.id).filter(Boolean))
+      ])];
+      for (const id of citedIds) {
+        const citeInfo = resolveCitationInfo(result, id);
+        if (!citeInfo.row && !citeInfo.resolved) continue;
+        references.append(button(id + ' · ' + citeInfo.label, () => renderEvidence(turn, id), 'button subtle'));
+        if (citeInfo.nodeIds.length && window.EvoBus) {
+          references.append(button('Map ' + id, () => focusCanvasForCitation(citeInfo), 'architecture-chat-cite-pill-btn'));
+        }
+        if (citeInfo.path) {
+          references.append(button('Source ' + id, () => openSourceForCitation(citeInfo, citeInfo.row?.data), 'architecture-chat-cite-pill-btn'));
+        }
       }
       if (scope.openRepair && result.status !== 'OUT_OF_SCOPE' && !(result.status === 'EVIDENCE_ONLY' && result.answer))
         references.append(button('Open repair workflow',() => repairAction.click()));
@@ -958,8 +1334,16 @@
       status.textContent = 'Conversation exported.';
     }
 
-    function deleteConversation() {
+    async function deleteConversation() {
       if (pending) return;
+      const deletingServerId = session.conversationId;
+      if (deletingServerId && serverThreadsAvailable && apiFn) {
+        try {
+          await apiFn('/conversations/' + encodeURIComponent(deletingServerId), undefined, scope.signal, 'DELETE', 10000);
+          serverThreads = serverThreads.filter(t => (t.conversationId || t.id) !== deletingServerId);
+          renderThreadsStrip();
+        } catch (_) { /* Local cleanup still proceeds cleanly. */ }
+      }
       sessions.delete(prefix + active);
       try { localStorage.removeItem(prefix + active); } catch (_) {}
       const remaining = [];
@@ -978,6 +1362,7 @@
         session = loadSession(active);
         syncSessionControls();
         save();
+        renderThreadsStrip();
         renderConversation();
         status.textContent = 'Conversation deleted.';
       } else {
@@ -994,6 +1379,7 @@
       session.updated = Date.now();
       syncSessionControls();
       save();
+      renderThreadsStrip();
       status.textContent = 'New conversation started.';
       renderConversation();
       input.focus();
@@ -1017,7 +1403,9 @@
       messages.push({role:'user',content:question});
       const useAgent = Boolean(!evidenceOnly && scope.agentEnabled && agentToggleInput.checked);
       const useReviewerAgent = Boolean(!evidenceOnly && scope.agentEnabled && reviewerAgenticInput.checked);
+      const conversationId = await ensureServerConversation(question);
       const query = {context:scope.context,mode:mode.value,messages,
+        ...(conversationId ? {conversationId} : {}),
         ...(scope.job ? {job:scope.job} : {}),
         ...(focus.value.trim() ? {focus:focus.value.trim()} : {}),
         ...(scope.finding ? {finding:scope.finding} : {}),
@@ -1048,7 +1436,9 @@
         liveStage = make('h3','u453-live-head');
         const star = make('span','u453-ic');
         star.setAttribute('aria-hidden','true');
-        star.innerHTML = '<svg viewBox="0 0 24 24"><path d="M12 1.6c.8 5.3 5.1 9.6 10.4 10.4-5.3.8-9.6 5.1-10.4 10.4C11.2 17.1 6.9 12.8 1.6 12 6.9 11.2 11.2 6.9 12 1.6Z"/></svg>';
+        const starSvg = svgEl('svg', { viewBox: '0 0 24 24' });
+        starSvg.append(svgEl('path', { d: 'M12 1.6c.8 5.3 5.1 9.6 10.4 10.4-5.3.8-9.6 5.1-10.4 10.4C11.2 17.1 6.9 12.8 1.6 12 6.9 11.2 11.2 6.9 12 1.6Z' }));
+        star.append(starSvg);
         liveStageLabel = make('span','u453-a','Investigating snapshot…');
         liveStage.append(star, liveStageLabel);
         liveTimeline = make('div','architecture-chat-stream-timeline');
@@ -1060,9 +1450,9 @@
       };
       try {
         let result;
-        if (!evidenceOnly && typeof scope.stream === 'function') {
+        if (!evidenceOnly && typeof streamFn === 'function') {
           try {
-            result = await scope.stream(query, signal, {
+            result = await streamFn(query, signal, {
               onStage(msg) {
                 ensureLiveBox();
                 if (liveStageLabel) liveStageLabel.textContent = msg || 'Working…';
@@ -1121,6 +1511,9 @@
         if (!pin || pin.graph !== scope.graph || pin.context !== scope.context || pin.snapshot !== scope.snapshot ||
             ['identity','bundle','report'].some(field => pin.finding?.[field] !== scope.finding?.[field]))
           throw new Error('The reply belongs to a different snapshot, context, or finding.');
+        if (result.conversationId && typeof result.conversationId === 'string') {
+          session.conversationId = result.conversationId;
+        }
         const shouldReview = Boolean(!evidenceOnly && result.status !== 'EVIDENCE_ONLY' && result.status !== 'OUT_OF_SCOPE');
         const turn = {question,result,_reviewPending:shouldReview};
         session.turns.push(turn);
@@ -1130,10 +1523,12 @@
         input.value = session.draft = '';
         const stored = save();
         renderConversation();
+        void refreshServerThreads();
 
         // Fire automatic second-pass reviewer non-blocking so the user can immediately type the next message!
         if (shouldReview) {
           const reviewQuery = {...query,reviewer:true};
+          delete reviewQuery.conversationId;
           if (useReviewerAgent) reviewQuery.agentic = true;
           else delete reviewQuery.agentic;
           const reviewController = new AbortController();
@@ -1207,6 +1602,72 @@
     });
     save();
     renderConversation();
+    void refreshServerThreads();
     return node;
   };
+
+  function createView(env, host) {
+    const { M, state, $, api, inspect, inspectFinding, inspectDiagnosis, inspectCapturedRepair, loadTab, openCapturedSourceModal } = host;
+    const selected = state.chatFinding;
+    const finding = selected?.graph === env.graph && selected.context === env.context ? selected : null;
+    const findingRef = finding && { report: finding.report, identity: finding.item.identity, bundle: finding.item.bundleIdentity };
+    const seedPrompt = state.chatSeedPrompt || '';
+    const seedMode = state.chatSeedMode || '';
+    const seedFocus = state.chatSeedFocus || '';
+    state.chatSeedPrompt = '';
+    state.chatSeedMode = '';
+    state.chatSeedFocus = '';
+    return window.mountEvoArchitectureChat({
+      graph: env.graph, snapshot: env.snapshot, context: env.context, signal: env.signal, api,
+      job: state.resultJob?.result?.graph === env.graph ? state.resultJob.id : undefined,
+      contextLabel: $('context').selectedOptions[0]?.textContent || env.context,
+      provider: state.capabilities.architectureChatProvider, finding: findingRef,
+      findingLabel: finding?.item.result?.rule?.id || finding?.item.result?.kind,
+      agentEnabled: Boolean(state.capabilities?.architectureAgentEnabled),
+      truthTier: state.truthTier,
+      preliminary: Boolean(M.isPreliminaryTier?.(state.truthTier)),
+      previewMeta: state.previewMeta,
+      seedPrompt, seedMode, seedFocus,
+      send: (input, signal) => api('/graphs/' + env.graph + '/architecture-chat', input, signal, 'POST', 135000),
+      streamEnabled: Boolean(state.capabilities?.architectureChatStreamEnabled),
+      clearFinding: () => { state.chatFinding = null; return loadTab('architecture-chat'); },
+      openFinding: finding && (() => inspectFinding(finding.item, finding.report, env)),
+      openRepair: finding && (async () => {
+        const args = { identity: finding.item.identity, bundle: finding.item.bundleIdentity, context: env.context };
+        const diagnosis = await api('/graphs/' + env.graph + '/reports/' + finding.report + '/diagnosis', { arguments: args }, env.signal);
+        if (diagnosis.status !== 'CITATIONS_VALIDATED') return inspectDiagnosis(finding.item, finding.report, env, diagnosis);
+        return inspectCapturedRepair(finding.item, finding.report, env, diagnosis);
+      }),
+      chooseFinding: () => loadTab('policy'),
+      probeProvider: state.capabilities.architectureChatProvider
+        ? signal => api('/ai/providers/probe', {}, signal, 'POST', 10000)
+        : undefined,
+      openSource: row => {
+        if (row?.path) {
+          const startLine = Math.max(1, Number(row.startLine || 1));
+          const endLine = row.endLine ? Number(row.endLine) : startLine + 199;
+          return openCapturedSourceModal(env.graph, row.path, startLine, endLine, row.highlightLine || startLine);
+        }
+        if (row?.context && row?.reference) {
+          return inspect('Cited source evidence', 'SOURCE EVIDENCE', async signal => {
+            const result = await api('/graphs/' + env.graph + '/queries/evidence', {
+              request: { ...M.request(row.context), scope: 'ENTITY' }, arguments: { reference: row.reference }
+            }, signal);
+            const record = result.items.find(item => item.identity === row.reference);
+            if (!record) throw new Error('This source evidence is unavailable in the selected snapshot.');
+            return { citation: row, record };
+          });
+        }
+        return inspect('Source evidence', 'SOURCE EVIDENCE', row || {});
+      }
+    });
+  }
+
+  window.EvoArchitectureChat = Object.freeze({
+    mount: window.mountEvoArchitectureChat,
+    createView,
+    resolveCitationInfo,
+    hydrateServerTurns,
+    builtInStreamChat
+  });
 })();

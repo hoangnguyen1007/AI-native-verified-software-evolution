@@ -561,3 +561,140 @@ test('Moonshot #1 behavioralVerdictMeta, springPreservationMeta, and expanded re
   assert.ok(model.apiError('INTERRUPTED_ON_RESTART').toLowerCase().includes('restarted'));
   assert.ok(model.apiError('SERVER_RESTARTED_IN_FLIGHT').toLowerCase().includes('restarted'));
 });
+
+test('Moonshot #3 EvoBus isolates listener failures, supports unsubscribe, and mirrors canonical state', () => {
+  const EvoBus = require('../../main/resources/web/evo-bus.js');
+  const bus = EvoBus.createBus();
+  assert.equal(bus.isCanonicalEvent('evo:canvas-focus'), true);
+  assert.equal(bus.isCanonicalEvent('evo:chat-seed'), true);
+  assert.equal(bus.isCanonicalEvent('evo:source-open'), true);
+  assert.equal(bus.isCanonicalEvent('evo:repair-seed'), true);
+  assert.equal(bus.isCanonicalEvent('evo:snapshot-changed'), true);
+  assert.equal(bus.isCanonicalEvent('evo:auth-changed'), true);
+
+  const received = [];
+  const unsub1 = bus.on('evo:canvas-focus', () => { throw new Error('boom'); });
+  const unsub2 = bus.on('evo:canvas-focus', p => received.push(p.nodeIds));
+  const origErr = console.error;
+  console.error = () => {};
+  let res;
+  try {
+    res = bus.emit('evo:canvas-focus', { nodeIds: ['n1', 'n2'] });
+  } finally {
+    console.error = origErr;
+  }
+  assert.equal(res.delivered, 1);
+  assert.equal(res.errors.length, 1);
+  assert.deepEqual(received, [['n1', 'n2']]);
+
+  unsub1();
+  unsub2();
+  assert.equal(bus.listenerCount('evo:canvas-focus'), 0);
+
+  bus.emit('evo:snapshot-changed', { graphId: 'g1', snapshotId: 's1', contextId: 'c1', truthTier: 'DEEP_SEMANTIC_COMPLETE', contexts: [{ identity: 'c1' }] });
+  assert.equal(bus.getState().graphId, 'g1');
+  assert.equal(bus.getState().contextId, 'c1');
+  assert.equal(bus.lastEvent('evo:snapshot-changed').snapshotId, 's1');
+  bus.setState({ activeTab: 'dsm' });
+  assert.equal(bus.getState().activeTab, 'dsm');
+});
+
+test('Moonshot #3 EvoTrust enforces 4 canonical TrustTiers, promotion guard, and DOM pill rendering without innerHTML', () => {
+  const EvoTrust = require('../../main/resources/web/trust-badges.js');
+  assert.deepEqual([...EvoTrust.TIERS], ['COMPILER', 'SPRING_SAT', 'SOURCE_SYNTAX', 'ADVISORY_UNVERIFIED']);
+  assert.equal(EvoTrust.normalize('COMPILER'), 'COMPILER');
+  assert.equal(EvoTrust.normalize('spring-sat'), 'SPRING_SAT');
+  assert.equal(EvoTrust.normalize('advisory'), 'ADVISORY_UNVERIFIED');
+  assert.equal(EvoTrust.normalize('unknown_random_tier'), 'SOURCE_SYNTAX');
+  assert.equal(EvoTrust.meta('ADVISORY_UNVERIFIED').quarantined, true);
+  assert.equal(EvoTrust.meta('COMPILER').authoritative, true);
+  assert.equal(EvoTrust.inferFromRecord({ kind: 'SQL_TABLE' }), 'ADVISORY_UNVERIFIED');
+  assert.equal(EvoTrust.inferFromRecord({ kind: 'SPRING_BEAN' }), 'SPRING_SAT');
+  assert.equal(EvoTrust.inferFromRecord({ kind: 'TYPE', boundCallTargets: false }), 'SOURCE_SYNTAX');
+
+  const makeEl = tag => ({
+    tagName: tag.toUpperCase(),
+    className: '',
+    textContent: '',
+    dataset: {},
+    attrs: {},
+    children: [],
+    setAttribute(k, v) { this.attrs[k] = String(v); },
+    append(...nodes) { this.children.push(...nodes); }
+  });
+  const fakeDoc = { createElement: makeEl };
+  const pill = EvoTrust.renderBadge('SPRING_SAT', { classification: 'MAY', doc: fakeDoc });
+  assert.equal(pill.dataset.trustTier, 'SPRING_SAT');
+  assert.match(pill.className, /is-spring-sat/);
+  assert.match(pill.attrs['aria-label'], /Spring SAT \(MAY\)/);
+  assert.equal(pill.children.some(c => c.textContent === 'MAY'), true);
+});
+
+test('Moonshot #3 WebGL layout/grid, GraphCanvas auto engine selection, and DSM summary stay deterministic', () => {
+  const WebGL = require('../../main/resources/web/webgl-graph-engine.js');
+  const GraphCanvas = require('../../main/resources/web/graph-canvas.js');
+  const DsmMatrix = require('../../main/resources/web/dsm-matrix.js');
+
+  const sampleNodes = Array.from({ length: 120 }, (_, i) => ({
+    id: 'n' + i,
+    communityId: 'c' + (i % 4)
+  }));
+  const sampleEdges = Array.from({ length: 180 }, (_, i) => ({
+    source: 'n' + (i % 120),
+    target: 'n' + ((i * 7 + 1) % 120)
+  }));
+  const posA = WebGL.computeDeterministicLayout(sampleNodes, sampleEdges);
+  const posB = WebGL.computeDeterministicLayout(sampleNodes, sampleEdges);
+  assert.deepEqual([...posA.entries()], [...posB.entries()]);
+
+  const items = sampleNodes.map(n => ({ id: n.id, ...posA.get(n.id), radius: 8 }));
+  const grid = WebGL.buildSpatialGrid(items);
+  const hit = WebGL.hitTestGrid(items, grid, items[17].x + 1, items[17].y - 1, 1);
+  assert.equal(hit?.id, 'n17');
+
+  const normCy = GraphCanvas.normalizeVisualGraph({
+    elements: {
+      nodes: [{ data: { id: 'community:0', kind: 'COMMUNITY_SUPER_NODE', label: 'Core' }, position: { x: 120, y: -45 } }],
+      edges: [{ data: { id: 'e1', source: 'community:0', target: 'community:0', isCycle: true } }]
+    },
+    metadata: { resolvedLevel: 'MACRO', cycleMode: 'SCC' }
+  });
+  assert.equal(normCy.nodes.length, 1);
+  assert.equal(normCy.nodes[0].x, 120);
+  assert.equal(normCy.nodes[0].y, -45);
+  assert.equal(normCy.edges[0].inCycle, true);
+  assert.equal(GraphCanvas.chooseEngine('auto', normCy, 12, true, true), 'webgl2');
+  assert.equal(GraphCanvas.chooseEngine('auto', { nodes: [{ id: 'a', kind: 'TYPE' }], metadata: { resolvedLevel: 'MICRO' } }, 40, true, true), 'cytoscape');
+  assert.equal(GraphCanvas.chooseEngine('auto', { nodes: [], metadata: { resolvedLevel: 'MICRO' } }, 400, true, true), 'webgl2');
+  assert.equal(GraphCanvas.chooseEngine('cytoscape', normCy, 400, true, true), 'cytoscape');
+  // P2-5: community:external / expandable:false must NOT be treated as expandable
+  assert.equal(GraphCanvas.isExpandableSuperNodeItem({ id: 'community:0', kind: 'COMMUNITY_SUPER_NODE', properties: { expandable: true } }), true);
+  assert.equal(GraphCanvas.isExpandableSuperNodeItem({ id: 'community:external', kind: 'COMMUNITY_SUPER_NODE', properties: { expandable: false, externalGroup: true } }), false);
+  // P1-3: concrete scope derivation aligns multi-scale TYPE/SPRING_COMPONENT nodes for impact & shortest-path
+  assert.equal(GraphCanvas.resolveEffectiveScopeForNode({ id: 't1', kind: 'TYPE' }, 'PACKAGE', false, true), 'TYPE');
+  assert.equal(GraphCanvas.resolveEffectiveScopeForNode({ id: 'b1', kind: 'BEAN_DEFINITION_CANDIDATE' }, 'PACKAGE', true, true), 'SPRING_COMPONENT');
+  assert.equal(GraphCanvas.resolveEffectiveScopeForNode({ id: 'x1' }, 'PACKAGE', false, true), 'TYPE');
+  assert.equal(GraphCanvas.resolveEffectiveScopeForNode({ id: 'p1', kind: 'PACKAGE' }, 'PACKAGE', false, false), 'PACKAGE');
+
+  const dsmSum = DsmMatrix.summarizeDsm({
+    granularity: 'PACKAGE',
+    levelizationScore: 0.875,
+    totalItems: 120,
+    truncated: true,
+    order: [
+      { index: 0, id: 'p1', label: 'com.acme.a' },
+      { index: 1, id: 'p2', label: 'com.acme.b' }
+    ],
+    sccBlocks: [{ index: 0, start: 0, end: 1, size: 2, cyclic: true, members: ['p1', 'p2'] }],
+    cells: [
+      { r: 1, c: 0, weight: 4, isCycle: false, isViolation: false },
+      { r: 0, c: 1, weight: 2, isCycle: true, isViolation: true }
+    ]
+  });
+  assert.equal(dsmSum.levelizationText, '87.5%');
+  assert.equal(dsmSum.tone, 'warn');
+  assert.equal(dsmSum.cyclicBlockCount, 1);
+  assert.equal(dsmSum.backEdgeCount, 1);
+  assert.equal(dsmSum.violationCount, 1);
+  assert.equal(dsmSum.truncated, true);
+});

@@ -22,20 +22,15 @@
   const defaultDependencyContext = env => env.context === env.snapshot
     ? state.contexts.find(context => context.identity.startsWith('analysis:'))?.identity ?? env.context
     : env.context;
-  let graphRenderer, refreshGraphTheme;
-  function loadGraphRenderer() {
-    if (typeof window.cytoscape === 'function') return Promise.resolve(true);
-    return graphRenderer ??= new Promise(resolve => {
-      const script = el('script');
-      script.src = '/vendor/cytoscape-3.30.2.min.js';
-      const unavailable = () => {
-        script.remove();
-        graphRenderer = null;
-        resolve(false);
-      };
-      script.onload = () => typeof window.cytoscape === 'function' ? resolve(true) : unavailable();
-      script.onerror = unavailable;
-      document.head.append(script);
+  let refreshGraphTheme;
+  const setRefreshGraphTheme = fn => { refreshGraphTheme = typeof fn === 'function' ? fn : null; };
+  function emitSnapshotChanged() {
+    window.EvoBus?.emit?.('evo:snapshot-changed', {
+      graphId: state.graph,
+      snapshotId: state.snapshot,
+      contextId: state.context,
+      truthTier: state.truthTier,
+      contexts: state.contexts || []
     });
   }
   const workspaceTools = {
@@ -1499,6 +1494,7 @@
   }
   function notifyContextsUpdated() {
     document.dispatchEvent(new CustomEvent('evo:contexts-updated'));
+    emitSnapshotChanged();
   }
   function contextRecord(identity) {
     return state.contexts?.find(c => c.identity === identity) || { identity };
@@ -2149,76 +2145,6 @@
     return svg;
   }
 
-  async function streamArchitectureChat(graphId, payload, signal, handlers) {
-    const csrf = window.EvoGitHubAuth?.getCsrfToken?.();
-    const response = await fetch('/api/v1/graphs/' + graphId + '/architecture-chat/stream', {
-      method: 'POST',
-      credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream', ...(csrf ? { 'X-Evo-CSRF': csrf } : {}) },
-      body: JSON.stringify(payload),
-      signal
-    });
-    if (!response.ok || !response.body) {
-      let msg = 'Architecture chat request failed.';
-      let code = null, supersededBy = null;
-      try {
-        const err = await response.json();
-        msg = err?.error?.message || msg;
-        code = err?.error?.code || null;
-        supersededBy = err?.error?.supersededBy || err?.supersededBy || null;
-      } catch (_) { }
-      const e = new Error(msg);
-      e.status = response.status;
-      e.code = code;
-      e.supersededBy = supersededBy;
-      throw e;
-    }
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-    let finalResult = null;
-    const processBlock = block => {
-      let eventName = 'message';
-      const dataLines = [];
-      for (const line of block.split('\n')) {
-        if (line.startsWith('event:')) eventName = line.slice(6).trim();
-        else if (line.startsWith('data:')) dataLines.push(line.slice(5).trimStart());
-      }
-      if (!dataLines.length) return;
-      let parsed;
-      try { parsed = JSON.parse(dataLines.join('\n')); }
-      catch (_) { return; }
-      if (eventName === 'stage') handlers?.onStage?.(parsed.message || '');
-      else if (eventName === 'tool') {
-        const kind = M.classifySseToolEvent ? M.classifySseToolEvent(parsed)
-          : (parsed.phase === 'start' || parsed.status === 'running' ? 'start' : 'complete');
-        if (kind === 'start') handlers?.onToolStart?.(parsed);
-        else handlers?.onToolComplete?.(parsed);
-      } else if (eventName === 'delta') handlers?.onDelta?.(parsed.text || '');
-      else if (eventName === 'complete') finalResult = parsed.data ?? parsed;
-      else if (eventName === 'error') throw new Error(parsed.error?.message || parsed.message || 'Architecture chat failed.');
-    };
-    try {
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true }).replace(/\r\n?/g, '\n');
-        let sep;
-        while ((sep = buffer.indexOf('\n\n')) >= 0) {
-          const block = buffer.slice(0, sep);
-          buffer = buffer.slice(sep + 2);
-          processBlock(block);
-        }
-      }
-      buffer += decoder.decode().replace(/\r\n?/g, '\n');
-      if (buffer.trim()) processBlock(buffer.trim());
-    } finally {
-      reader.cancel().catch(() => {});
-    }
-    if (!finalResult) throw new Error('Architecture chat stream ended without a final response.');
-    return finalResult;
-  }
-
   function coverageCard(env, result) {
     const section = card('Analysis coverage');
     section.classList.add('job-coverage');
@@ -2736,13 +2662,6 @@
     if (evidence.metric) actions.push({ label: 'Inspect metric operand', run: () => inspect('Score metric operand', 'CANONICAL METRIC', evidence.metric) });
     return inspect('Score dimension', 'ASSESSMENT EVIDENCE', dimension, actions);
   }
-  function layoutConfig(name) {
-    if (name === 'concentric') return { name: 'concentric', padding: 36, animate: false, minNodeSpacing: 28, concentric: node => node.degree(), levelWidth: () => 2 };
-    if (name === 'circle') return { name: 'circle', padding: 36, animate: false, spacingFactor: 1.2 };
-    if (name === 'grid') return { name: 'grid', padding: 36, animate: false, condense: true, spacingFactor: 1.25 };
-    return { name: 'breadthfirst', directed: true, padding: 35, spacingFactor: 1.4, animate: false };
-  }
-
   function renderProposalResult(item, reportId, env, diagnosis, options, proposal, propBody) {
     propBody.replaceChildren();
 
@@ -3633,56 +3552,8 @@
     architectureChatAssets ??= Promise.all([loadToolAsset('link', '/architecture-chat.css'),
     loadToolAsset('script', '/architecture-chat.js')]).catch(error => { architectureChatAssets = null; throw error; });
     await architectureChatAssets;
-    const selected = state.chatFinding;
-    const finding = selected?.graph === env.graph && selected.context === env.context ? selected : null;
-    const findingRef = finding && { report: finding.report, identity: finding.item.identity, bundle: finding.item.bundleIdentity };
-    const seedPrompt = state.chatSeedPrompt || '';
-    state.chatSeedPrompt = '';
-    return window.mountEvoArchitectureChat({
-      graph: env.graph, snapshot: env.snapshot, context: env.context, signal: env.signal,
-      job: state.resultJob?.result?.graph === env.graph ? state.resultJob.id : undefined,
-      contextLabel: $('context').selectedOptions[0]?.textContent || env.context,
-      provider: state.capabilities.architectureChatProvider, finding: findingRef,
-      findingLabel: finding?.item.result?.rule?.id || finding?.item.result?.kind,
-      agentEnabled: Boolean(state.capabilities?.architectureAgentEnabled),
-      truthTier: state.truthTier,
-      preliminary: Boolean(M.isPreliminaryTier?.(state.truthTier)),
-      previewMeta: state.previewMeta,
-      seedPrompt,
-      send: (input, signal) => api('/graphs/' + env.graph + '/architecture-chat', input, signal, 'POST', 135000),
-      stream: state.capabilities?.architectureChatStreamEnabled
-        ? (input, signal, handlers) => streamArchitectureChat(env.graph, input, signal, handlers)
-        : undefined,
-      clearFinding: () => { state.chatFinding = null; return loadTab('architecture-chat'); },
-      openFinding: finding && (() => inspectFinding(finding.item, finding.report, env)),
-      openRepair: finding && (async () => {
-        const args = { identity: finding.item.identity, bundle: finding.item.bundleIdentity, context: env.context };
-        const diagnosis = await api('/graphs/' + env.graph + '/reports/' + finding.report + '/diagnosis', { arguments: args }, env.signal);
-        if (diagnosis.status !== 'CITATIONS_VALIDATED') return inspectDiagnosis(finding.item, finding.report, env, diagnosis);
-        return inspectCapturedRepair(finding.item, finding.report, env, diagnosis);
-      }),
-      chooseFinding: () => loadTab('policy'),
-      probeProvider: state.capabilities.architectureChatProvider
-        ? signal => api('/ai/providers/probe', {}, signal, 'POST', 10000)
-        : undefined,
-      openSource: row => {
-        if (row?.path) {
-          const startLine = Math.max(1, Number(row.startLine || 1));
-          const endLine = row.endLine ? Number(row.endLine) : startLine + 199;
-          return openCapturedSourceModal(env.graph, row.path, startLine, endLine, row.highlightLine || startLine);
-        }
-        if (row?.context && row?.reference) {
-          return inspect('Cited source evidence', 'SOURCE EVIDENCE', async signal => {
-            const result = await api('/graphs/' + env.graph + '/queries/evidence', {
-              request: { ...M.request(row.context), scope: 'ENTITY' }, arguments: { reference: row.reference }
-            }, signal);
-            const record = result.items.find(item => item.identity === row.reference);
-            if (!record) throw new Error('This source evidence is unavailable in the selected snapshot.');
-            return { citation: row, record };
-          });
-        }
-        return inspect('Source evidence', 'SOURCE EVIDENCE', row || {});
-      }
+    return window.EvoArchitectureChat.createView(env, {
+      M, state, $, api, inspect, inspectFinding, inspectDiagnosis, inspectCapturedRepair, loadTab, openCapturedSourceModal
     });
   }
   const views = {
@@ -4446,599 +4317,22 @@
       }); return node;
     },
     async graph(env) {
-      const node = card('Dependency map');
-      node.classList.add('dependency-map');
-      let focus = state.graphFocus || {};
-      const contexts = [...$('context').options].filter(option => option.value);
-      const initialContext = focus.context && contexts.some(option => option.value === focus.context)
-        ? focus.context : defaultDependencyContext(env);
-      const context = selectControl('Graph context', contexts.map(option =>
-        [option.value, option.value === env.snapshot ? 'Repository source evidence' : (state.contextLabels?.get(option.value) || option.textContent)]), initialContext);
-      context.addEventListener('focus', labelContextOptions);
-      context.addEventListener('pointerenter', labelContextOptions);
-      const contextField = field('Graph context', context);
-      contextField.hidden = env.context !== env.snapshot && initialContext === env.context;
-      const scope = selectControl('Graph scope', [
-        ['MODULE', 'Modules'], ['PACKAGE', 'Packages'], ['TYPE', 'Classes'],
-        ['SPRING_COMPONENT', 'Spring components'], ['ENTITY', 'Source entities']
-      ]);
-      const groupBy = selectControl('Graph grouping', [
-        ['PACKAGE', 'Packages / Modules'], ['COMMUNITY', 'Communities (Leiden)']
-      ], focus.groupBy || 'PACKAGE');
-      const projection = selectControl('Dependency view', [
-        ['BOUNDED_UNION', 'All observed'], ['MUST', 'Required'], ['MAY', 'Conditional'], ['UNKNOWN_OVERLAY', 'Uncertain'],
-        ...(focus.realization ? [['REALIZED', 'Recorded configuration']] : [])
-      ], focus.projection || 'BOUNDED_UNION');
-      const layout = selectControl('Graph layout', [
-        ['breadthfirst', 'Hierarchy'], ['concentric', 'Radial'], ['circle', 'Ring'], ['grid', 'Grid']
-      ], 'breadthfirst');
-      const depth = selectControl('Neighborhood depth', [['1', '1 hop'], ['2', '2 hops'], ['3', '3 hops']]);
-      const clear = btn('Show full map', () => {
-        focus = { ...focus, seed: null }; depthField.hidden = clear.hidden = true;
-        return load();
-      });
-      const depthField = field('Neighborhood', depth);
-      depthField.hidden = clear.hidden = !focus.seed;
-      const options = append(el('details', 'graph-options'), el('summary', '', 'View options'),
-        append(el('div', 'graph-option-fields'), field('Relationships', projection), field('Layout', layout)));
-      const content = el('div', 'graph-result');
-      node.append(append(el('div', 'graph-query-controls'), contextField, field('Scope', scope), field('Grouping', groupBy), depthField, clear, options), content);
-      const snapshotKinds = ['syntax.declaration', 'syntax.import', 'syntax.heritage', 'CALLS_SERVICE', 'INVOKES_RPC',
-        'polyglot.service-call.candidate', 'polyglot.grpc-service-call.candidate', 'polyglot.grpc-contract.candidate'];
-      const snapshotPopulation = {
-        nodeKinds: ['SOURCE_DOCUMENT', 'SOURCE_DECLARATION', 'SOURCE_IMPORT', 'SOURCE_HERITAGE',
-          'CALL_SITE', 'ROUTE_CANDIDATE', 'PROTOBUF_MESSAGE', 'PROTOBUF_SERVICE', 'PROTOBUF_RPC_METHOD']
-      };
-      let version = 0, canvasObserver, expandedDialog, pendingLayer = null;
-      function releaseCanvas() {
-        canvasObserver?.disconnect();
-        if (expandedDialog?.open) expandedDialog.close();
+      if (window.EvoGraphCanvas?.renderView) {
+        return window.EvoGraphCanvas.renderView(env, {
+          M, state, $, api, safe, btn, card, empty, selectControl, field,
+          relationshipKinds, defaultDependencyContext, labelContext, labelContextOptions,
+          inspect, inspectEntity, loadTab, download, downloadBlob, setRefreshGraphTheme
+        });
       }
-
-      async function setScope() {
-        const selected = context.value;
-        if (selected !== env.snapshot) await labelContext(selected);
-        void labelContextOptions();
-        if (env.signal.aborted || context.value !== selected) return;
-        const spring = state.contextKinds.get(selected) === 'spring.context';
-        for (const option of scope.options) {
-          option.disabled = selected === env.snapshot ? option.value !== 'ENTITY' : option.value === 'SPRING_COMPONENT' && !spring;
-        }
-        const label = state.contextLabels?.get(selected) || [...$('context').options].find(option => option.value === selected)?.textContent;
-        if (label && selected !== env.snapshot && context.selectedOptions[0]) context.selectedOptions[0].textContent = label;
-        const preferred = focus.scope ?? (selected === env.snapshot ? 'ENTITY' : spring ? 'SPRING_COMPONENT' : 'PACKAGE');
-        scope.value = [...scope.options].some(option => !option.disabled && option.value === preferred) ? preferred : 'ENTITY';
+      return empty('Dependency map unavailable', 'The graph canvas module could not be loaded.');
+    },
+    async dsm(env) {
+      if (window.EvoDsmMatrix?.renderView) {
+        return window.EvoDsmMatrix.renderView(env, {
+          M, state, api, safe, btn, card, empty, defaultDependencyContext, download
+        });
       }
-
-      function requestFor(selectedContext, layer) {
-        const snapshot = selectedContext === env.snapshot;
-        return {
-          context: selectedContext, scope: layer, projection: projection.value,
-          relationshipKinds: focus.relationshipKinds || (snapshot ? snapshotKinds : relationshipKinds(layer)),
-          ...(snapshot && !focus.relationshipKinds ? { population: snapshotPopulation } : {}),
-          ...(projection.value === 'REALIZED' ? { realization: focus.realization } : {})
-        };
-      }
-
-      async function load(preferRelationships = false) {
-        const current = ++version;
-        const active = () => !env.signal.aborted && current === version;
-        releaseCanvas();
-        state.cy?.destroy();
-        state.cy = null;
-        refreshGraphTheme = null;
-        content.replaceChildren(empty('Loading dependency map', 'Reading relationships from the selected analysis context.'));
-        const selectedContext = context.value;
-        let request = requestFor(selectedContext, scope.value);
-        try {
-          const queryGraph = query => {
-            const vArgs = {
-              ...(focus.seed ? { seed: focus.seed, depth: Number(depth.value) } : {}),
-              ...(groupBy.value === 'COMMUNITY' ? { groupBy: 'COMMUNITY' } : {})
-            };
-            return env.query('visual-graph', vArgs, undefined, query);
-          };
-          let graph;
-          try {
-            graph = await queryGraph(request);
-          } catch (error) {
-            if (!active() || !preferRelationships || request.scope !== 'PACKAGE' || error.code !== 'RESPONSE_TOO_LARGE') throw error;
-            request = requestFor(selectedContext, 'MODULE');
-            graph = await queryGraph(request);
-          }
-          // Keep a useful initial map for a single-package repository. Explicit filters stay put.
-          if (active() && preferRelationships && request.scope === 'PACKAGE' && !graph.edges.length) {
-            const typeRequest = requestFor(selectedContext, 'TYPE');
-            // A more detailed projection may be larger than the API can return.
-            const types = await queryGraph(typeRequest).catch(error => {
-              if (graph.nodes.length && error.code === 'RESPONSE_TOO_LARGE') return null;
-              throw error;
-            });
-            if (types && (types.edges.length || !graph.nodes.length && types.nodes.length)) {
-              graph = types;
-              request = typeRequest;
-            }
-          }
-          if (!active()) return;
-          scope.value = request.scope;
-          const graphEnv = { ...env, context: selectedContext, request: { ...env.request, ...request } };
-          if (!graph.nodes.length) {
-            content.replaceChildren(empty(graph.metadata?.isTruncated ? 'The map reached its query limit' : 'No nodes in this scope',
-              'Try another scope or browse the captured repository structure.'),
-              btn('Browse structure', () => loadTab('structure')));
-            return;
-          }
-          const rendererAvailable = await loadGraphRenderer();
-          if (!active()) return;
-          renderGraph(graph, graphEnv, request, active, rendererAvailable);
-        } catch (error) {
-          if (active()) content.replaceChildren(empty('Could not load the map', error.message), btn('Retry graph', () => load(preferRelationships)));
-        }
-      }
-
-      function renderGraph(graph, graphEnv, request, active, rendererAvailable) {
-        const color = name => getComputedStyle(node).getPropertyValue(name).trim();
-        const compound = item => item.id.startsWith('compound:');
-        const fullLabel = item => {
-          const prefix = 'compound:module:';
-          const module = item.id.startsWith(prefix) ? state.moduleLabels?.get(item.id.slice(prefix.length)) : null;
-          return module === '.' ? 'Root module' : module || item.label || (item.kind === 'PACKAGE' ? '(default package)' : M.shortDigest(item.id));
-        };
-        const nodes = graph.nodes.filter(item => !compound(item));
-        const byId = new Map(graph.nodes.map(item => [item.id, item]));
-        const degree = new Map();
-        for (const { source, target } of graph.edges) {
-          degree.set(source, (degree.get(source) || 0) + 1);
-          degree.set(target, (degree.get(target) || 0) + 1);
-        }
-        const ranked = [...nodes].sort((a, b) => (degree.get(b.id) || 0) - (degree.get(a.id) || 0) || a.id.localeCompare(b.id));
-        const isCommunityMode = groupBy.value === 'COMMUNITY' && graph.nodes.some(item => item.id.startsWith('compound:community:'));
-        const communityCompounds = isCommunityMode ? graph.nodes.filter(item => item.id.startsWith('compound:community:')) : [];
-        const externalCompound = isCommunityMode ? graph.nodes.find(item => item.id === 'compound:external') : null;
-        const collapsedCommunities = new Set();
-        if (isCommunityMode && nodes.length > 120 && communityCompounds.length >= 2) {
-          for (const c of communityCompounds) collapsedCommunities.add(c.id);
-          if (externalCompound) collapsedCommunities.add(externalCompound.id);
-        }
-        const visible = isCommunityMode ? ranked : ranked.slice(0, 220);
-        const included = new Set(visible.map(item => item.id));
-        for (const item of visible) {
-          for (let parent = item.parent; byId.has(parent) && !included.has(parent); parent = byId.get(parent).parent) included.add(parent);
-        }
-        const edges = isCommunityMode ? graph.edges : graph.edges.filter(edge => included.has(edge.source) && included.has(edge.target)).slice(0, 700);
-        const limited = !isCommunityMode && (visible.length < nodes.length || edges.length < graph.edges.length);
-        const counts = el('p', 'graph-counts',
-          isCommunityMode
-            ? `${communityCompounds.length} Leiden communities · ${nodes.length} nodes`
-              + (Number(graph.metadata?.externalNodeCount || 0) > 0 ? ` (${graph.metadata.externalNodeCount} external)` : '')
-              + ` · ${graph.edges.length} edges · Q=${Number(graph.metadata?.communityModularity ?? 0).toFixed(3)} · ${graph.metadata?.misplacedCount ?? 0} misplaced`
-            : visible.length + ' nodes · ' + edges.length + ' relationships' +
-              (limited ? ' shown of ' + nodes.length + ' nodes and ' + graph.edges.length + ' relationships returned' : ''));
-        counts.setAttribute('role', 'status');
-        const status = graph.metadata?.isTruncated ? el('p', 'graph-message', 'The query reached its limit. Focus a node to explore its neighborhood.') : null;
-        const edgesMissing = !graph.edges.length ? el('p', 'graph-message', 'This scope has nodes and no recorded relationships for the selected view.') : null;
-        const shortCounts = new Map();
-        const shortName = item => fullLabel(item).split('.').at(-1);
-        for (const item of visible) shortCounts.set(shortName(item), (shortCounts.get(shortName(item)) || 0) + 1);
-        const label = item => {
-          const text = fullLabel(item);
-          if (compound(item) || !['TYPE', 'PACKAGE'].includes(item.kind)) return text;
-          if (item.origin === 'PROJECT' && shortCounts.get(shortName(item)) === 1) return shortName(item);
-          return text.split('.').slice(-2).join('.');
-        };
-        const inspectNode = item => inspectEntity({ ...item, label: fullLabel(item), identity: item.id }, graphEnv);
-        const details = btn('Download graph JSON', () => download(graph, 'dependency-graph.json'));
-        const nodeList = () => append(el('div', 'graph-node-list'), ...visible.slice(0, 24).map(item =>
-          btn(fullLabel(item), () => inspectNode(item), 'graph-node-link')));
-        content.replaceChildren(counts, ...[status, edgesMissing].filter(Boolean));
-        if (!rendererAvailable) {
-          content.append(empty('Interactive view unavailable', 'Inspect the captured nodes below or download the projection.'),
-            nodeList(), details, btn('Retry graph', () => load()));
-          return;
-        }
-        const canvas = el('div', 'graph-canvas');
-        canvas.setAttribute('aria-label', 'Interactive dependency graph');
-        canvas.tabIndex = 0;
-        const selected = selectControl('Graph node', [['', 'Choose a node'], ...visible.map(item => [item.id, fullLabel(item)])], '');
-        const filter = el('input');
-        filter.type = 'search';
-        filter.placeholder = 'Highlight a node';
-        filter.setAttribute('aria-label', 'Filter canvas nodes');
-        const readout = el('p', 'graph-selection', 'Select a node to see where its arrows lead.');
-        readout.setAttribute('role', 'status');
-        const spotlight = btn('Focus & expand', () => {
-          focus = { ...focus, seed: selected.value }; depthField.hidden = clear.hidden = false;
-          return load();
-        });
-        const inspectButton = btn('Node details', () => inspectNode(byId.get(selected.value)));
-        const blastButton = btn('Blast radius', async () => {
-          const id = selected.value;
-          if (!id) return;
-          const payload = M.buildImpactQuery
-            ? M.buildImpactQuery(graphEnv.context, id, request)
-            : { request: { ...env.request, ...request, direction: 'INCOMING' }, arguments: { identity: id } };
-          const impact = await api('/graphs/' + env.graph + '/queries/impact', payload, env.signal);
-          if (!active()) return;
-          resetHighlight();
-          const affected = new Set([id]);
-          for (const entry of impact.items || []) {
-            if (Array.isArray(entry.vertices)) entry.vertices.forEach(v => affected.add(v));
-            else if (entry.target || entry.identity) affected.add(entry.target || entry.identity);
-          }
-          cy.elements().not(':parent').addClass('dimmed');
-          cy.nodes().filter(n => affected.has(n.id())).removeClass('dimmed').addClass('path-highlight');
-          cy.edges().filter(e => affected.has(e.source().id()) && affected.has(e.target().id())).removeClass('dimmed').addClass('path-highlight');
-          const impactedCount = Math.max(0, affected.size - 1);
-          readout.replaceChildren(el('strong', '', fullLabel(byId.get(id))),
-            el('span', '', `${impactedCount} upstream impacted node${impactedCount === 1 ? '' : 's'} across ${impact.items?.length || 0} path${(impact.items?.length || 0) === 1 ? '' : 's'}`));
-        });
-        const askAiNode = btn('Ask AI', () => {
-          const item = byId.get(selected.value);
-          state.chatSeedPrompt = 'Explain the responsibilities, incoming/outgoing dependencies, and refactoring risk of `' + (item ? fullLabel(item) : selected.value) + '`.';
-          return loadTab('architecture-chat');
-        });
-        spotlight.disabled = inspectButton.disabled = blastButton.disabled = askAiNode.disabled = true;
-        const hubs = append(el('div', 'graph-node-list'), ...ranked.filter(item => degree.has(item.id)).slice(0, 4).map(item =>
-          btn(fullLabel(item), () => selectNode(item.id), 'graph-node-link')));
-        const rail = append(el('aside', 'graph-rail'), field('Node', selected), readout,
-          append(el('div', 'graph-node-actions'), inspectButton, spotlight, blastButton, askAiNode),
-          hubs.children.length ? append(el('div', 'graph-hubs'), el('h3', '', 'Most connected'), hubs) : null);
-        const zoomBy = scale => cy.zoom({ level: cy.zoom() * scale, renderedPosition: { x: cy.width() / 2, y: cy.height() / 2 } });
-        const zoom = append(el('div', 'graph-zoom'),
-          btn('−', () => zoomBy(.8)), btn('+', () => zoomBy(1.25)),
-          btn('Fit', () => cy.fit(undefined, 34)));
-        zoom.children[0].setAttribute('aria-label', 'Zoom out');
-        zoom.children[1].setAttribute('aria-label', 'Zoom in');
-        zoom.children[2].setAttribute('aria-label', 'Fit graph');
-        const filterChips = el('div', 'graph-filter-chips');
-        const activeFilter = { kind: 'ALL' };
-        const applyChipFilter = kind => {
-          activeFilter.kind = kind;
-          for (const ch of filterChips.children) ch.classList.toggle('is-active', ch.dataset.filter === kind);
-          if (!cy) return;
-          resetHighlight();
-          if (kind === 'ALL') return;
-          let matched;
-          if (kind === 'EXTERNAL') matched = cy.nodes().filter(n => n.data('external'));
-          else matched = cy.edges().filter(e => e.data('classification') === kind).connectedNodes().union(cy.edges().filter(e => e.data('classification') === kind));
-          cy.elements().not(':parent').not(matched).addClass('dimmed');
-          matched.addClass('map-active');
-        };
-        for (const [fk, fl] of [['ALL', 'All'], ['MUST', 'Required'], ['MAY', 'Conditional'], ['UNKNOWN', 'Uncertain'], ['EXTERNAL', 'External']]) {
-          const ch = btn(fl, () => applyChipFilter(fk), 'graph-chip' + (fk === 'ALL' ? ' is-active' : ''));
-          ch.dataset.filter = fk;
-          filterChips.append(ch);
-        }
-        const layerPills = el('div', 'evo-layer-pills');
-        const layerState = { drift: false, bridges: false, tangles: false };
-        const applyLayers = () => {
-          if (!cy) return;
-          cy.elements().removeClass('evo-layer-drift evo-layer-bridge evo-layer-tangle');
-          const anyOn = layerState.drift || layerState.bridges || layerState.tangles;
-          if (!anyOn) {
-            if (activeFilter.kind === 'ALL') resetHighlight();
-            return;
-          }
-          resetHighlight();
-          let focusEls = cy.collection();
-          if (layerState.drift) {
-            const drifted = cy.nodes().filter(n =>
-              Boolean(n.data('misplaced'))
-              || (Boolean(n.data('isSuperNode')) && Number(n.data('misplacedCount') || 0) > 0)
-            );
-            drifted.addClass('evo-layer-drift');
-            focusEls = focusEls.union(drifted);
-          }
-          if (layerState.bridges) {
-            const bridgeEdges = cy.edges().filter(e => Boolean(e.data('isBridge')));
-            bridgeEdges.addClass('evo-layer-bridge');
-            focusEls = focusEls.union(bridgeEdges).union(bridgeEdges.connectedNodes());
-          }
-          if (layerState.tangles) {
-            const cycNodes = cy.nodes().filter(n =>
-              Boolean(n.data('inCycle'))
-              || (Boolean(n.data('isSuperNode')) && Number(n.data('inCycleCount') || 0) > 0)
-            );
-            const cycEdges = cy.edges().filter(e => Boolean(e.data('inCycle')));
-            cycNodes.addClass('evo-layer-tangle');
-            cycEdges.addClass('evo-layer-tangle');
-            focusEls = focusEls.union(cycNodes).union(cycEdges);
-          }
-          if (focusEls.length) {
-            cy.elements().not(':parent').not(focusEls).addClass('dimmed');
-          }
-        };
-        const toggleLayer = (key, buttonEl) => {
-          // Drift & Bridges require Leiden Community grouping; switch smoothly from PACKAGE mode.
-          if ((key === 'drift' || key === 'bridges') && groupBy.value !== 'COMMUNITY') {
-            groupBy.value = 'COMMUNITY';
-            pendingLayer = key;
-            void load();
-            return;
-          }
-          layerState[key] = !layerState[key];
-          buttonEl.classList.toggle('is-active', layerState[key]);
-          buttonEl.setAttribute('aria-pressed', String(layerState[key]));
-          applyLayers();
-        };
-        const driftPill = btn(
-          isCommunityMode ? `Drift (${graph.metadata?.misplacedCount ?? 0})` : 'Drift (Communities)',
-          () => toggleLayer('drift', driftPill),
-          'evo-layer-pill is-drift'
-        );
-        const bridgePill = btn(
-          isCommunityMode ? `Bridges (${graph.metadata?.bridgeEdgeCount ?? 0})` : 'Bridges (Communities)',
-          () => toggleLayer('bridges', bridgePill),
-          'evo-layer-pill is-bridges'
-        );
-        const tanglePill = btn('Tangles', () => toggleLayer('tangles', tanglePill), 'evo-layer-pill is-tangles');
-        driftPill.setAttribute('aria-pressed', 'false');
-        bridgePill.setAttribute('aria-pressed', 'false');
-        tanglePill.setAttribute('aria-pressed', 'false');
-        layerPills.append(driftPill, bridgePill, tanglePill);
-
-        let rebuildCommunityView = null;
-        if (isCommunityMode) {
-          const collapseAllBtn = btn('Collapse all', () => {
-            communityCompounds.forEach(c => collapsedCommunities.add(c.id));
-            if (externalCompound) collapsedCommunities.add(externalCompound.id);
-            rebuildCommunityView?.();
-          }, 'evo-layer-pill');
-          const expandAllBtn = btn('Expand all', () => {
-            collapsedCommunities.clear();
-            rebuildCommunityView?.();
-          }, 'evo-layer-pill');
-          layerPills.append(collapseAllBtn, expandAllBtn);
-        }
-
-        const exportPngBtn = btn('Export PNG', () => {
-          window.EvoCommunityAdvisory?.exportCytoscapePng?.(cy, 'evo-dependency-map.png', color('--map-paper') || '#0b1120');
-        }, 'evo-layer-pill');
-        const exportSvgBtn = btn('Export SVG', () => {
-          window.EvoCommunityAdvisory?.exportCytoscapeSvg?.(cy, 'evo-dependency-map.svg', {
-            bg: color('--map-paper') || '#0b1120',
-            label: color('--map-label') || '#e2e8f0',
-            node: color('--map-node') || '#1e293b',
-            border: color('--map-node-border') || '#475569',
-            edge: color('--map-edge') || '#64748b',
-            group: color('--map-group') || '#1e293b'
-          });
-        }, 'evo-layer-pill');
-        layerPills.append(exportPngBtn, exportSvgBtn);
-
-        const dialog = el('dialog', 'map-fullscreen');
-        dialog.setAttribute('aria-label', 'Expanded dependency map');
-        const expand = btn('Expand map', () => {
-          previousViewport = { zoom: cy.zoom(), pan: cy.pan() };
-          dialog.append(board);
-          dialog.showModal();
-          cy.resize();
-          cy.fit(undefined, 34);
-        }, 'button graph-fullscreen-button');
-        expand.title = 'Expand map (F)';
-        zoom.append(expand);
-        const stage = append(el('div', 'graph-stage'), filterChips, layerPills, append(el('div', 'graph-stage-controls'), filter, zoom), canvas,
-          append(el('div', 'map-legend'),
-            el('span', 'legend-must', 'Required'), el('span', 'legend-may', 'Conditional'), el('span', 'legend-unknown', 'Uncertain'),
-            M.isPreliminaryTier?.(state.truthTier) ? el('span', 'legend-may', 'Preliminary imports') : null,
-            visible.some(item => item.origin && item.origin !== 'PROJECT') ? el('span', 'legend-external', 'External') : null));
-        const board = append(el('div', 'graph-board'), stage, rail);
-        dialog.append(append(el('header', 'map-fullscreen-header'), el('h3', '', 'Dependency map'), btn('Close map', () => dialog.close())));
-        content.append(board, dialog);
-        let cy, previousViewport;
-        const graphStyle = () => [
-          {
-            selector: 'node', style: {
-              label: 'data(label)', 'font-size': 12, 'font-weight': 600, color: color('--map-label'),
-              shape: 'round-rectangle', 'background-color': color('--map-node'), 'border-color': color('--map-node-border'), 'border-width': 1.2,
-              width: 'data(nodeWidth)', height: 34, 'text-valign': 'center', 'text-halign': 'center', 'text-wrap': 'ellipsis', 'text-max-width': 115
-            }
-          },
-          {
-            selector: ':parent', style: {
-              'background-color': color('--map-group'), 'background-opacity': .22, 'border-width': 1,
-              'border-color': color('--map-node-border'), padding: 20, 'text-valign': 'top', 'text-halign': 'center', 'text-max-width': 165
-            }
-          },
-          { selector: 'node[?external]', style: { 'background-color': color('--map-external'), 'border-color': color('--map-edge') } },
-          {
-            selector: 'edge', style: {
-              'curve-style': 'bezier', 'target-arrow-shape': 'triangle', 'line-color': color('--map-edge'),
-              'target-arrow-color': color('--map-edge'), width: 1.5, opacity: .8
-            }
-          },
-          { selector: 'edge[?preliminary]', style: { 'line-style': 'dashed', 'line-dash-pattern': [5, 4], 'line-color': color('--map-may'), 'target-arrow-color': color('--map-may'), opacity: .72 } },
-          { selector: 'edge[classification="MAY"]', style: { 'line-style': 'dashed', 'line-color': color('--map-may'), 'target-arrow-color': color('--map-may') } },
-          { selector: 'edge[classification="UNKNOWN"]', style: { 'line-style': 'dotted', 'line-color': color('--map-unknown'), 'target-arrow-color': color('--map-unknown') } },
-          { selector: 'node[activationStatus="UNKNOWN"]', style: { 'border-style': 'dashed', 'border-color': color('--map-unknown') } },
-          { selector: '.dimmed', style: { opacity: .13 } },
-          { selector: 'node.map-active', style: { 'background-color': color('--map-focus'), 'border-width': 2.5 } },
-          { selector: 'edge.map-active', style: { width: 2.3, opacity: 1 } },
-          { selector: '.path-highlight', style: { 'border-width': 3, 'border-color': color('--map-unknown'), 'line-color': color('--map-unknown'), 'target-arrow-color': color('--map-unknown'), width: 3 } },
-          { selector: 'node[?isSuperNode]', style: { 'background-color': color('--map-focus'), 'background-opacity': .24, 'border-color': '#6366f1', 'border-width': 2.2, shape: 'round-rectangle', height: 48, 'font-size': 12, 'font-weight': 700, 'text-max-width': 220 } },
-          { selector: 'node[kind="COMMUNITY"]:parent', style: { 'border-color': '#6366f1', 'border-width': 1.6, 'background-opacity': .18, padding: 24 } },
-          { selector: 'node[kind="EXTERNAL_GROUP"]', style: { 'background-color': color('--map-external'), 'background-opacity': .22, 'border-style': 'dashed', 'border-color': color('--map-edge'), 'border-width': 1.5, padding: 20 } },
-          { selector: 'node[?misplaced]', style: { 'border-style': 'dashed', 'border-color': '#f59e0b', 'border-width': 2 } },
-          { selector: 'node.evo-layer-drift', style: { 'border-style': 'dashed', 'border-color': '#f59e0b', 'border-width': 3, 'background-color': 'rgba(245,158,11,0.22)' } },
-          { selector: 'edge[kind="external.dependency"]', style: { 'line-style': 'dotted', 'line-color': color('--map-edge'), 'target-arrow-color': color('--map-edge'), label: 'data(label)', 'font-size': 10, color: color('--map-label') } },
-          { selector: 'edge[?isBridge]', style: { 'line-color': '#06b6d4', 'target-arrow-color': '#06b6d4', width: 2, label: 'data(label)', 'font-size': 10, color: color('--map-label') } },
-          { selector: 'edge.evo-layer-bridge', style: { 'line-color': '#06b6d4', 'target-arrow-color': '#06b6d4', width: 3, opacity: 1 } },
-          { selector: 'node.evo-layer-tangle', style: { 'border-color': '#ef4444', 'border-width': 3 } },
-          { selector: 'edge.evo-layer-tangle', style: { 'line-color': '#ef4444', 'target-arrow-color': '#ef4444', width: 2.8, opacity: 1 } }
-        ];
-        const preliminaryGraph = Boolean(M.isPreliminaryTier?.(state.truthTier));
-        const initialElements = (isCommunityMode && window.EvoCommunityAdvisory?.buildCommunityElements)
-          ? window.EvoCommunityAdvisory.buildCommunityElements(graph, collapsedCommunities, degree, label, fullLabel, preliminaryGraph).elements
-          : [
-              ...graph.nodes.filter(item => included.has(item.id)).map(item => {
-                const deg = degree.get(item.id) || 0;
-                return {
-                  data: {
-                    ...item, label: label(item), fullLabel: fullLabel(item),
-                    nodeWidth: Math.min(152, 88 + deg * 4),
-                    parent: included.has(item.parent) ? item.parent : undefined, activationStatus: item.properties?.activationStatus,
-                    external: Boolean(item.origin && item.origin !== 'PROJECT'),
-                    misplaced: Boolean(item.properties?.misplaced),
-                    inCycle: Boolean(item.inCycle)
-                  }
-                };
-              }),
-              ...edges.map(item => ({
-                data: {
-                  ...item,
-                  isBridge: Boolean(item.properties?.isBridge),
-                  inCycle: Boolean(item.inCycle),
-                  preliminary: Boolean(preliminaryGraph || item.derivation === 'SYNTAX_IMPORT_PREVIEW')
-                }
-              }))
-            ];
-        try {
-          cy = window.cytoscape({
-            container: canvas, elements: initialElements, layout: layoutConfig(layout.value), minZoom: .06, maxZoom: 3, wheelSensitivity: .17, style: graphStyle()
-          });
-        } catch (error) {
-          stage.replaceChildren(empty('Could not draw the map', error.message), nodeList(), btn('Retry graph', () => load()));
-          rail.replaceChildren(details);
-          return;
-        }
-        if (isCommunityMode && window.EvoCommunityAdvisory?.buildCommunityElements) {
-          rebuildCommunityView = () => {
-            const built = window.EvoCommunityAdvisory.buildCommunityElements(graph, collapsedCommunities, degree, label, fullLabel, preliminaryGraph);
-            cy.batch(() => {
-              cy.elements().remove();
-              cy.add(built.elements);
-            });
-            cy.layout(layoutConfig(layout.value)).run();
-            applyLayers();
-            const extNote = built.hasExternalGroup
-              ? (built.externalCollapsed ? ' · external collapsed' : ' · external expanded')
-              : '';
-            readout.textContent = `${built.collapsedCommunityCount} of ${built.totalCommunityCount} communities collapsed${extNote} · ${built.visibleLeafCount} expanded nodes · click any group box to toggle.`;
-          };
-        }
-        if (pendingLayer) {
-          const toActivate = pendingLayer;
-          pendingLayer = null;
-          const btnMap = { drift: driftPill, bridges: bridgePill, tangles: tanglePill };
-          if (btnMap[toActivate]) {
-            layerState[toActivate] = true;
-            btnMap[toActivate].classList.add('is-active');
-            btnMap[toActivate].setAttribute('aria-pressed', 'true');
-            applyLayers();
-          }
-        }
-        state.cy = cy;
-        if (state.pendingGraphViewport && state.pendingGraphViewport.context === selectedContext) {
-          try { cy.viewport(state.pendingGraphViewport); } catch (_) { }
-          state.pendingGraphViewport = null;
-        }
-        expandedDialog = dialog;
-        dialog.addEventListener('close', () => {
-          if (!active()) return;
-          dialog.before(board);
-          cy.resize();
-          cy.viewport(previousViewport);
-          expand.focus({ preventScroll: true });
-        });
-        refreshGraphTheme = () => cy.style(graphStyle()).update();
-        graph.nodes.forEach(item => state.labels.set(item.id, fullLabel(item)));
-        canvasObserver = new ResizeObserver(() => { if (active() && !cy.destroyed()) cy.resize(); });
-        canvasObserver.observe(canvas);
-
-        function resetHighlight() { cy.elements().removeClass('dimmed map-active path-highlight'); }
-        function selectNode(id) {
-          const item = byId.get(id), picked = cy.getElementById(id);
-          if (!item || compound(item) || !picked.length) return;
-          selected.value = id;
-          spotlight.disabled = inspectButton.disabled = blastButton.disabled = askAiNode.disabled = false;
-          filter.value = '';
-          resetHighlight();
-          const neighborhood = picked.closedNeighborhood();
-          cy.elements().not(neighborhood).not(':parent').addClass('dimmed');
-          neighborhood.addClass('map-active');
-          readout.replaceChildren(el('strong', '', fullLabel(item)),
-            el('span', '', picked.indegree(false) + ' incoming · ' + picked.outdegree(false) + ' outgoing on this map'));
-        }
-        selected.addEventListener('change', () => {
-          if (selected.value) { selectNode(selected.value); return; }
-          resetHighlight();
-          spotlight.disabled = inspectButton.disabled = blastButton.disabled = askAiNode.disabled = true;
-          readout.textContent = 'Select a node to see where its arrows lead.';
-        });
-        filter.addEventListener('input', () => {
-          resetHighlight();
-          const term = filter.value.trim().toLowerCase();
-          if (!term) return;
-          const matches = cy.nodes().not(':parent').filter(item => String(item.data('fullLabel')).toLowerCase().includes(term));
-          cy.elements().not(matches.union(matches.neighborhood())).not(':parent').addClass('dimmed');
-          matches.addClass('map-active');
-        });
-        cy.on('tap', 'node', event => {
-          const targetId = event.target.id();
-          if (isCommunityMode && (targetId.startsWith('compound:community:') || targetId === 'compound:external')) {
-            if (collapsedCommunities.has(targetId)) collapsedCommunities.delete(targetId);
-            else collapsedCommunities.add(targetId);
-            rebuildCommunityView?.();
-            return;
-          }
-          selectNode(targetId);
-        });
-        cy.on('tap', 'edge', event => safe(() => {
-          const item = event.target.data();
-          const actions = (item.properties?.evidence ?? []).slice(0, 8).map(reference => ({
-            label: 'Open source evidence',
-            run: () => inspect('Dependency source', 'SOURCE EVIDENCE', signal => api('/graphs/' + env.graph + '/queries/evidence', { request: graphEnv.request, arguments: { reference } }, signal))
-          }));
-          return inspect('Dependency evidence', 'DEPENDENCY', item, actions);
-        }));
-        canvas.addEventListener('keydown', event => {
-          if (!['+', '=', '-', '0'].includes(event.key)) return;
-          event.preventDefault();
-          if (event.key === '0') cy.fit(undefined, 34);
-          else zoomBy(event.key === '-' ? .8 : 1.25);
-        });
-        const destination = selectControl('Path target', visible.map(item => [item.id, fullLabel(item)]));
-        const pathStatus = el('p', 'graph-message');
-        rail.append(append(el('details', 'graph-options'), el('summary', '', 'Paths and export'),
-          field('Path target', destination), btn('Find shortest path', async () => {
-            if (!selected.value) { pathStatus.textContent = 'Select a start node first.'; return; }
-            const result = await env.query('shortest-path', { source: selected.value, target: destination.value }, undefined, request);
-            if (!active()) return;
-            const path = result.items[0];
-            resetHighlight();
-            if (path) {
-              cy.elements().not(':parent').addClass('dimmed');
-              cy.nodes().filter(n => path.vertices.includes(n.id())).removeClass('dimmed').addClass('path-highlight');
-              cy.edges().filter(e => path.edges.some(p => p.source === e.source().id() && p.target === e.target().id())).removeClass('dimmed').addClass('path-highlight');
-            }
-            pathStatus.textContent = path ? 'Path highlighted where visible on the map.' : 'No path returned for this query.';
-            await inspect('Shortest dependency path', 'PATH EVIDENCE', result);
-          }), pathStatus, details, btn('Save graph image', async () => {
-            const blob = await cy.png({ output: 'blob-promise', full: true, scale: 1, maxWidth: 3000, maxHeight: 3000, bg: color('--map-paper') });
-            downloadBlob(blob, 'dependency-graph.png');
-          })));
-        if (focus.seed && included.has(focus.seed)) selectNode(focus.seed);
-      }
-
-      function resetFocus() { focus = {}; depthField.hidden = clear.hidden = true; }
-      function resetRealization() {
-        for (const option of projection.options) if (option.value === 'REALIZED') option.disabled = true;
-        if (projection.value === 'REALIZED') projection.value = 'BOUNDED_UNION';
-      }
-      context.addEventListener('change', () => safe(async () => {
-        const selected = context.value;
-        resetFocus(); resetRealization();
-        await setScope();
-        if (!env.signal.aborted && context.value === selected) await load(true);
-      }));
-      scope.addEventListener('change', () => safe(() => { resetFocus(); resetRealization(); return load(); }));
-      groupBy.addEventListener('change', () => safe(() => load()));
-      projection.addEventListener('change', () => safe(() => load()));
-      depth.addEventListener('change', () => safe(() => load()));
-      layout.addEventListener('change', () => state.cy?.layout(layoutConfig(layout.value)).run());
-      env.signal.addEventListener('abort', releaseCanvas, { once: true });
-      await setScope();
-      return { node, after: () => safe(() => load(!focus.scope)) };
+      return empty('DSM Matrix unavailable', 'The DSM matrix module could not be loaded.');
     },
     async connections(env) {
       const node = card('Cross-language connections', 'Trace links between code and contracts. Candidate links still need evidence to confirm their targets.');
@@ -5470,8 +4764,38 @@
     }
   };
   window.EvoApp = { state, api, inspect, loadTab, selectRepo, selectJob, configureRules, inspectFinding, inspectDiagnosis, inspectRepairProposal, inspectRepairVerification, downloadBlob, connectAndAnalyze, submit };
-  window.EvoGitHubAuth?.onChange?.(({ changedUser }) => {
-    if (changedUser) void safe(handleTenantSwitch);
+  if (window.EvoBus) {
+    window.EvoBus.on('evo:canvas-focus', payload => {
+      if (!state.graph || !payload) return;
+      const ids = Array.isArray(payload.nodeIds) ? payload.nodeIds.filter(Boolean) : [];
+      if (!ids.length) return;
+      if (state.tab !== 'graph') {
+        state.graphFocus = { seed: ids[0], focusNodes: ids, level: 'MICRO', context: payload.contextId || state.context, openInspector: Boolean(payload.openInspector) };
+        void safe(() => loadTab('graph'));
+      }
+    });
+    window.EvoBus.on('evo:chat-seed', payload => {
+      if (!state.graph || !payload) return;
+      if (state.tab !== 'architecture-chat') {
+        state.chatSeedPrompt = payload.prompt || '';
+        state.chatSeedMode = payload.mode || '';
+        state.chatSeedFocus = payload.focusNodeId || '';
+        void safe(() => loadTab('architecture-chat'));
+      }
+    });
+    window.EvoBus.on('evo:source-open', payload => {
+      if (!state.graph || !payload?.path) return;
+      void safe(() => openCapturedSourceModal(state.graph, payload.path, payload.startLine || 1, payload.endLine || null, payload.highlightLine || payload.startLine || null));
+    });
+    window.EvoBus.on('evo:repair-seed', payload => {
+      if (!state.graph || !payload) return;
+      state.pendingRepairSeed = payload;
+      if (state.tab !== 'policy') void safe(() => loadTab('policy'));
+    });
+  }
+  window.EvoGitHubAuth?.onChange?.(info => {
+    window.EvoBus?.emit?.('evo:auth-changed', info);
+    if (info?.changedUser) void safe(handleTenantSwitch);
     else void window.EvoGitHubHub?.refreshAuthStatus?.();
   });
   $('disconnect-dialog').addEventListener('close', () => {
