@@ -421,14 +421,12 @@ async function main([browser, output, screenshotDir]) {
     await page.send('Emulation.setDeviceMetricsOverride', {width: 1440, height: 900, deviceScaleFactor: 1, mobile: false});
     await page.send('Page.navigate', {url: `http://127.0.0.1:${server.address().port}`});
 
-    // 1. Verify GitHub Hub Bar, 4-stage pipeline stepper, and Partial-Gap Action Strip
-    await until('GitHub Hub Bar + Stepper + Partial Gap Strip visible', () => evalJs(`(() => {
+    // 1. Verify GitHub Hub Bar visible and removed stepper/gap-strip absent
+    await until('GitHub Hub Bar visible', () => evalJs(`(() => {
       const bar = document.getElementById('github-hub-bar');
-      const stepper = document.getElementById('job-stage-stepper');
-      const strip = document.getElementById('job-gap-action-strip');
       return bar && !bar.hidden && bar.innerText.includes('acme/shop-backend')
-        && stepper && !stepper.hidden && stepper.querySelectorAll('.gh-stage-step').length === 4
-        && strip && !strip.hidden && strip.innerText.includes('Missing Maven POM');
+        && document.getElementById('job-stage-stepper') === null
+        && document.getElementById('job-gap-action-strip') === null;
     })()`));
 
     if (screenshotDir) {
@@ -469,19 +467,20 @@ async function main([browser, output, screenshotDir]) {
     await until('PR review comment posted', () => evalJs("document.getElementById('inspector-body').innerText.includes('issuecomment-999')"));
     await evalJs("document.getElementById('inspector').close()");
 
-    // 4. Test 5-Step Guided Repair & Sandbox Studio
+    // 4. Test 4-Step Code Repair & Sandbox Studio
     await evalJs("document.getElementById('context').value = 'analysis:main'; document.getElementById('context').dispatchEvent(new Event('change'));");
     await evalJs("document.getElementById('tab-policy').click()");
     await until('Repair Studio mounted with resolved class names', () => evalJs("document.querySelector('.rs-studio') && document.querySelector('.rs-studio').innerText.includes('com.acme.OrderController')"));
+    assert.equal(await evalJs("/ad-hoc/i.test(document.querySelector('.rs-studio').innerText)"), false);
 
     // Step 1 -> Diagnosis
-    await evalJs("[...document.querySelectorAll('.rs-studio button')].find(b => b.textContent.includes('Run Evidence-Grounded Diagnosis')).click()");
+    await evalJs("[...document.querySelectorAll('.rs-studio button')].find(b => b.textContent.includes('Diagnose Issue')).click()");
     await until('Citations validated & clickable source coordinate shown', () => evalJs("document.querySelector('.rs-studio').innerText.includes('Citations Validated') && document.querySelector('.rs-citation-btn')?.textContent.includes('OrderController.java')"));
-    await evalJs("[...document.querySelectorAll('.rs-studio button')].find(b => b.textContent.includes('Continue to Step 2')).click()");
+    await evalJs("[...document.querySelectorAll('.rs-studio button')].find(b => b.textContent.includes('Continue to Patch')).click()");
 
     // Step 2 -> Generate multi-file patch & toggle Unified / Side-by-Side
     await until('Applicable recipe loaded', () => evalJs("document.querySelector('.rs-studio select')?.innerText.includes('Extract OrderGateway')"));
-    await evalJs("[...document.querySelectorAll('.rs-studio button')].find(b => b.textContent.includes('Generate Recipe Patch')).click()");
+    await evalJs("[...document.querySelectorAll('.rs-studio button')].find(b => b.textContent.includes('Generate Patch')).click()");
     await until('Multi-file diff rendered with CREATE, MODIFY, DELETE tabs', () => evalJs("document.querySelectorAll('.rs-file-tab').length === 3 && document.querySelector('.rs-file-list').innerText.includes('CREATE') && document.querySelector('.rs-file-list').innerText.includes('DELETE')"));
     await evalJs("[...document.querySelectorAll('.rs-mode-toggle button')].find(b => b.textContent === 'Side-by-side').click()");
     await until('Side-by-side split table rendered', () => evalJs("Boolean(document.querySelector('.rs-split-table'))"));
@@ -491,15 +490,15 @@ async function main([browser, output, screenshotDir]) {
       await capturePng(page, path.join(screenshotDir, 'repair-studio-diff-dark.png'));
     }
 
-    // Step 3 -> Async Isolated Sandbox Verification (SSE) -> Auto-opens Step 4 Impact Report Card
-    await evalJs("[...document.querySelectorAll('.rs-studio button')].find(b => b.textContent.includes('Verify in Isolated Sandbox')).click()");
-    await until('Step 4 Verification & Impact Report Card rendered with Score v2 +8.2 and D1-D7 breakdown', () => evalJs(`(() => {
+    // Step 3 -> Async Isolated Sandbox Verification (SSE) -> Renders Report Card in Step 3
+    await evalJs("[...document.querySelectorAll('.rs-studio button')].find(b => b.textContent.includes('Verify in Sandbox')).click()");
+    await until('Step 3 Verification & Impact Report Card rendered with Score v2 +8.2 and D1-D7 breakdown', () => evalJs(`(() => {
       const card = document.querySelector('.rs-report-card');
       return card && card.innerText.includes('VERIFIED')
         && card.innerText.includes('Isolated Sandbox Verified')
         && card.innerText.includes('71.4 → 79.6 (+8.2)')
         && card.innerText.includes('1 resolved · 0 introduced')
-        && card.innerText.includes('Hierarchy & Direction');
+        && card.textContent.includes('Hierarchy & Direction');
     })()`));
 
     if (screenshotDir) {
@@ -511,11 +510,11 @@ async function main([browser, output, screenshotDir]) {
     assert.equal(darkAudit.overflow, false, 'Dark desktop horizontal overflow: ' + JSON.stringify(darkAudit));
     assert.deepEqual(darkAudit.contrastFailures, [], 'Dark theme WCAG AA contrast failures: ' + JSON.stringify(darkAudit.contrastFailures));
 
-    // Step 5 -> Explicit Confirmation Gate: Option A (New Branch), Option B (Direct + Rollback), Option C (GitHub PR)
-    await evalJs("[...document.querySelectorAll('.rs-report-card button')].find(b => b.textContent.includes('Continue to Confirmation Gate')).click()");
-    await until('Step 5 Confirmation Gate loaded with Before-Hashes Verified', () => evalJs("document.querySelector('.rs-gate-card')?.innerText.includes('Before-Hashes Verified')"));
+    // Step 4 -> Explicit Confirmation Gate: New Branch, Direct Local, GitHub PR
+    await evalJs("[...document.querySelectorAll('.rs-report-card button')].find(b => b.textContent.includes('Continue to Apply')).click()");
+    await until('Step 4 Confirmation Gate loaded with Before-Hashes Verified', () => evalJs("document.querySelector('.rs-gate-card')?.innerText.includes('Before-Hashes Verified')"));
 
-    // Option A button MUST be disabled until safety checkbox checked
+    // New Branch button MUST be disabled until safety checkbox checked
     assert.equal(await evalJs("[...document.querySelectorAll('.rs-gate-form button')].find(b => b.textContent.includes('Confirm & Apply to New Branch')).disabled"), true);
     await evalJs("document.querySelector('.rs-gate-form input[type=checkbox]').click()");
     assert.equal(await evalJs("[...document.querySelectorAll('.rs-gate-form button')].find(b => b.textContent.includes('Confirm & Apply to New Branch')).disabled"), false);
@@ -543,7 +542,7 @@ async function main([browser, output, screenshotDir]) {
     // 5. Switch to Light Theme & capture Light Theme screenshot + run WCAG AA contrast audit!
     await evalJs("document.getElementById('theme-toggle').click()");
     assert.equal(await evalJs("document.documentElement.dataset.theme"), 'light');
-    await evalJs("[...document.querySelectorAll('.rs-step-btn')].find(b => b.textContent.includes('4. Impact Report')).click()");
+    await evalJs("[...document.querySelectorAll('.rs-step-btn')].find(b => b.textContent.includes('3. Verify')).click()");
     await until('Light theme transitions settled and Step 4 rendered', () => evalJs(`(() => {
       const card = document.querySelector('.rs-report-card');
       const veil = document.querySelector('.u219-veil');

@@ -764,77 +764,20 @@
     });
   }
 
-  /* ── 4. Sticky 4-Stage Pipeline Stepper + Partial-Gap Action Strip ──────── */
-  function syncPipelineStepper(job, liveProgress) {
+  /* ── 4. Clean Pipeline Stepper & Gap Strip No-Ops (UI Streamlined) ──────── */
+  function syncPipelineStepper() {
     const stepper = $('job-stage-stepper');
-    if (!stepper) return;
-    if (!job || !M.pipelineStageSummary) {
+    if (stepper) {
       stepper.hidden = true;
       stepper.replaceChildren();
-      return;
     }
-    const summary = M.pipelineStageSummary(job, liveProgress);
-    stepper.hidden = false;
-    const track = el('ol', 'gh-stage-stepper-list');
-    track.setAttribute('aria-label', 'Analysis pipeline stages');
-    for (const step of summary.steps) {
-      const li = el('li', 'gh-stage-step is-' + step.status);
-      li.dataset.stageId = step.id;
-      if (step.status === 'active') li.setAttribute('aria-current', 'step');
-      const glyph = step.status === 'done' ? '✓' : step.status === 'active' ? '◐' : step.status === 'failed' ? '✕' : step.status === 'warn' ? '!' : '○';
-      li.append(el('span', 'gh-stage-glyph', glyph), el('span', 'gh-stage-label', step.label));
-      track.append(li);
-    }
-    stepper.replaceChildren(track);
   }
 
-  async function syncPartialGapStrip(job) {
+  async function syncPartialGapStrip() {
     const strip = $('job-gap-action-strip');
-    if (!strip) return;
-    const appState = getAppState();
-    const gapCount = Number(job?.result?.gapCount || 0);
-    const isPartial = job && M.terminal(job) && (job.state === 'PARTIAL' || gapCount > 0);
-    if (!isPartial || !job?.result?.graph || !appState?.capabilities?.analysisCoverageEnabled) {
+    if (strip) {
       strip.hidden = true;
       strip.replaceChildren();
-      return;
-    }
-
-    const api = getApi();
-    strip.hidden = false;
-    strip.dataset.job = job.id;
-
-    const renderStripContent = (actions = [], total = gapCount) => {
-      if (strip.dataset.job !== job.id) return;
-      const top = actions[0];
-      const badgeEl = el('span', 'badge warn', job.state === 'PARTIAL' ? 'PARTIAL COVERAGE' : 'GAPS RECORDED');
-      const copy = el('div', 'gh-gap-strip-copy');
-      const headline = top
-        ? `${total.toLocaleString()} recorded gap${total === 1 ? '' : 's'} — top cause: ${top.title} (${top.count.toLocaleString()})`
-        : `${total.toLocaleString()} recorded capability gap${total === 1 ? '' : 's'} kept explicit in this snapshot`;
-      copy.append(
-        el('strong', '', headline),
-        el('p', 'small muted', top ? `Remediation tip: ${top.action}` : 'Open Gaps & Coverage to inspect exact coordinates and remediation guidance.')
-      );
-      const btns = el('div', 'gh-gap-strip-actions');
-      btns.append(btn('Inspect gaps →', () => window.EvoApp?.loadTab?.('coverage'), 'button subtle'));
-      if (appState?.capabilities?.architectureChatEnabled) {
-        btns.append(btn('Ask AI how to close gaps', () => {
-          const reasonList = actions.slice(0, 4).map(a => `${a.code} (${a.count})`).join(', ') || 'recorded capability gaps';
-          window.EvoWorkbench?.askAiPrompt?.(`Explain why this run reported ${reasonList} and give concrete steps to raise analysis coverage.`);
-        }, 'button subtle'));
-      }
-      strip.replaceChildren(badgeEl, copy, btns);
-    };
-
-    renderStripContent([], gapCount);
-    if (api && appState?.capabilities?.analysisCoverageEnabled) {
-      try {
-        const cov = await api('/analysis/jobs/' + job.id + '/coverage', undefined, undefined, 'GET', 8000);
-        if (strip.dataset.job !== job.id) return;
-        const actions = M.gapRemediationActions ? M.gapRemediationActions(cov?.topReasons || []) : [];
-        renderStripContent(actions, Number(cov?.totalGaps ?? gapCount));
-      } catch (_) { /* Keep base count strip visible */ }
     }
   }
 

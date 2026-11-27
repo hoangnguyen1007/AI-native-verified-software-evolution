@@ -201,14 +201,17 @@ async function main([browser, output]) {
     await page.send('Emulation.setDeviceMetricsOverride', {width: 1320, height: 900, deviceScaleFactor: 1, mobile: false});
     await page.send('Page.navigate', {url: `http://127.0.0.1:${server.address().port}`});
 
-    await until('Initial previous job rendered with Architecture Health v2', () =>
-      evaluate("document.querySelector('#panel-overview')?.innerText.includes('Architecture Health v2')"));
-    assert.ok(await evaluate("document.querySelector('#panel-overview').innerText.includes('Repository Hygiene (4 File Checks)')"));
+    await until('Initial previous job rendered with Architecture Health', () =>
+      evaluate("document.querySelector('#panel-overview')?.innerText.includes('Architecture Health')"));
+    assert.equal(await evaluate("document.querySelector('#panel-overview').innerText.includes('Repository Hygiene')"), false);
+    assert.equal(await evaluate("document.querySelector('#panel-overview').innerText.includes('Snapshot structure & rules')"), false);
+    assert.equal(await evaluate("document.querySelector('#panel-overview').innerText.includes('Analysis coverage')"), false);
 
     // Start new analysis run -> SSE stream opens
     await evaluate("document.getElementById('analyze').click()");
-    await until('SSE subscriber connected and live throughput visible', () =>
-      evaluate("document.querySelector('#job-live-metrics')?.innerText.includes('42.5 files/s') && document.querySelector('#job-live-metrics')?.innerText.includes('ETA ~1m 20s')"));
+    await until('SSE subscriber connected and single live progress visible', () =>
+      evaluate("document.querySelector('#job-live-metrics')?.innerText.includes('12 / 50 files') && document.querySelector('#job-live-metrics')?.innerText.includes('ETA ~1m 20s')"));
+    assert.equal(await evaluate("document.getElementById('job-live-inline')"), null);
 
     // Emit Stage 1 preview_ready while job is STILL RUNNING
     broadcastSse('preview_ready', {
@@ -218,8 +221,8 @@ async function main([browser, output]) {
     await until('Workspace unlocks at Stage 1 with PRELIMINARY STRUCTURE truth banner', () =>
       evaluate("!document.getElementById('analysis-workspace').hidden && document.getElementById('workspace-truth-banner').dataset.tier === 'PRELIMINARY_STRUCTURE' && document.getElementById('workspace-truth-banner').innerText.includes('PRELIMINARY STRUCTURE')"));
 
-    // Verify Policy tab is truthfully disabled while preliminary + 4-stage stepper visible
-    assert.equal(await evaluate("document.querySelectorAll('#job-stage-stepper .gh-stage-step').length"), 4);
+    // Verify Policy tab is truthfully disabled while preliminary + removed stage stepper is absent
+    assert.equal(await evaluate("document.getElementById('job-stage-stepper')"), null);
     await evaluate("document.getElementById('tab-policy').click()");
     await until('Policy mutations disabled during preliminary preview', () =>
       evaluate("document.getElementById('panel-policy').innerText.includes('Policy evaluation & automated repair pending')"));
@@ -238,15 +241,15 @@ async function main([browser, output]) {
     broadcastSse('incremental_summary', {jobId: 'job-live', incremental});
     broadcastSse('job_completed', {jobId: 'job-live', state: 'SUCCEEDED', truthTier: 'DEEP_SEMANTIC_COMPLETE', graphId: finalGraph});
 
-    await until('Atomic promotion to DEEP SEMANTIC COMPLETE while keeping inspector open', () =>
-      evaluate("document.getElementById('workspace-truth-banner').dataset.tier === 'DEEP_SEMANTIC_COMPLETE' && document.getElementById('inspector').open === true"));
+    await until('Atomic promotion hides preliminary banner while keeping inspector open', () =>
+      evaluate("document.getElementById('workspace-truth-banner').hidden === true && document.getElementById('inspector').open === true"));
     await evaluate("document.getElementById('inspector').close()");
 
-    // Verify Architecture Health v2 Hero, Confidence panel, 7 dimensions, context breakdown, and incremental pills
-    await until('Architecture Health v2 interval and Analysis Confidence rendered', () =>
+    // Verify Architecture Health Hero, Confidence panel, 7 dimensions, and removed incremental strip
+    await until('Architecture Health interval and Analysis Confidence rendered', () =>
       evaluate("document.querySelector('#panel-overview').innerText.includes('68.2–78.4 / 100') && document.querySelector('.evo-confidence-panel')?.innerText.includes('92%')"));
     assert.equal(await evaluate("document.querySelectorAll('.evo-v2-dim-details').length"), 7);
-    assert.ok(await evaluate("document.getElementById('job-incremental-strip').innerText.includes('3 ABI early cutoffs')"));
+    assert.equal(await evaluate("document.getElementById('job-incremental-strip')"), null);
 
     // Click 1-click Compare with Previous Snapshot -> auto-submits #compare
     await until('Compare with Previous Snapshot button visible', () =>

@@ -617,33 +617,33 @@
 
     const node = make('section','architecture-chat');
     const head = make('header','architecture-chat-header');
-    const title = make('div');
-    title.append(make('h2','','Architecture chat'),make('p','muted',scope.contextLabel));
-    const fresh = button('New conversation',reset);
+    const title = make('div','architecture-chat-header-main');
+    title.append(make('h2','architecture-chat-title','AI Chat'));
+    const fresh = button('New chat',reset);
     const history = make('select','architecture-chat-history');
     history.setAttribute('aria-label','Conversation history');
+    history.hidden = true;
     const headerActions = make('div','architecture-chat-header-actions');
     const exportBtn = button('Export .md', exportConversation, 'button subtle');
     const deleteBtn = button('Delete', deleteConversation, 'button subtle');
+    exportBtn.hidden = true;
+    deleteBtn.hidden = true;
     headerActions.append(history, fresh, exportBtn, deleteBtn);
     head.append(title, headerActions);
 
-    // Collapsible SQLite Persistent Threads Strip (gracefully hides if backend unavailable)
+    // Collapsible SQLite Persistent Threads Strip (hidden unless saved threads exist)
     const threadsDetails = make('details', 'architecture-chat-threads');
     threadsDetails.hidden = true;
     const threadsSummary = make('summary');
     const threadsCountBadge = make('span', 'architecture-chat-threads-count', '0 saved');
-    threadsSummary.append(make('span', '', 'Saved conversation threads'), threadsCountBadge);
+    threadsSummary.append(make('span', '', 'Saved threads'), threadsCountBadge);
     const threadsStrip = make('div', 'architecture-chat-threads-strip');
     threadsDetails.append(threadsSummary, threadsStrip);
     const pins = make('div','architecture-chat-pins');
-    const snapshotKey = scope.snapshot?.split('sha256:').at(-1);
-    const snapshot = make('code','',snapshotKey?.length === 64 ? 'Snapshot ' + snapshotKey.slice(0,8) : 'Captured snapshot');
-    snapshot.title = scope.snapshot || scope.graph;
-    pins.append(snapshot);
+    pins.hidden = !scope.finding;
     if (scope.finding) {
       pins.append(button(scope.findingLabel || 'Attached finding',scope.openFinding),
-        button('Detach finding',scope.clearFinding,'button subtle'));
+        button('Detach',scope.clearFinding,'button subtle'));
     }
     let preNotice = null;
     if (scope.preliminary) {
@@ -654,7 +654,7 @@
         document.createTextNode('Chat is currently grounded in the early structural preview while deep Java semantic resolution, Spring SAT, and Architecture Health v2 finish in the background.'));
     }
 
-    const layout = make('div','architecture-chat-layout');
+    const layout = make('div','architecture-chat-layout is-single-col');
     const conversation = make('div','architecture-chat-conversation');
     const log = make('div','architecture-chat-log');
     log.setAttribute('role','log');
@@ -680,19 +680,20 @@
     settings.append(label('Task',mode),label('Focus symbol (optional)',focus));
     const input = make('textarea');
     input.maxLength = 2400;
-    input.rows = 3;
+    input.rows = 2;
     input.required = true;
-    input.placeholder = 'Ask about dependencies, design trade-offs, or a repair…';
+    input.setAttribute('aria-label','Question');
+    input.placeholder = 'Ask a question about this codebase…';
     input.value = session.draft;
     input.addEventListener('input',() => { session.draft = input.value; save(); });
     const providerModelName = scope.provider?.model ? ' · ' + scope.provider.model : '';
     const modelState = make('span','architecture-chat-model-state',
-      scope.provider ? ((scope.provider.remote ? 'Remote AI' : 'Local AI') + providerModelName) : 'Local evidence');
+      scope.provider ? ((scope.provider.remote ? 'Remote' : 'Local') + providerModelName) : 'Snapshot search');
     modelState.dataset.probe = scope.provider ? 'idle' : 'offline';
     modelState.title = scope.provider?.model || 'Connect an AI provider to generate conversational answers.';
-    pins.append(modelState);
+    title.append(modelState);
     if (scope.provider && typeof scope.probeProvider === 'function') {
-      const probeBtn = button('Check provider', async () => {
+      const probeBtn = button('Check', async () => {
         probeBtn.disabled = true;
         probeBtn.textContent = 'Checking…';
         try {
@@ -700,26 +701,26 @@
           const reachable = Boolean(probe?.ok ?? probe?.reachable ?? probe?.healthy);
           modelState.dataset.probe = reachable ? 'ok' : 'fail';
           const latency = probe?.latencyMs != null ? ` (${probe.latencyMs} ms)` : '';
-          modelState.textContent = (scope.provider.remote ? 'Remote AI' : 'Local AI') +
+          modelState.textContent = (scope.provider.remote ? 'Remote' : 'Local') +
             (probe?.model ? ' · ' + probe.model : providerModelName) +
             (reachable ? ' · Ready' + latency : ' · Unreachable');
-          probeBtn.textContent = reachable ? 'Provider ready' : 'Retry probe';
+          probeBtn.textContent = reachable ? 'Ready' : 'Retry';
         } catch (_) {
           modelState.dataset.probe = 'fail';
-          probeBtn.textContent = 'Retry probe';
+          probeBtn.textContent = 'Retry';
         } finally {
           probeBtn.disabled = false;
         }
       }, 'text-button architecture-chat-probe-btn');
-      pins.append(probeBtn);
+      title.append(probeBtn);
     }
-    const repairAction = button(scope.finding ? 'Repair this finding' : 'Choose a finding to repair', async () => {
+    const repairAction = scope.finding && scope.openRepair ? button('Open repair workflow', async () => {
       repairAction.disabled = true;
-      try { await (scope.finding ? scope.openRepair() : scope.chooseFinding()); }
+      try { await scope.openRepair(); }
       catch (error) { if (!scope.signal.aborted) status.textContent = error.message; }
       finally { repairAction.disabled = false; }
-    },'button subtle');
-    if (scope.finding ? scope.openRepair : scope.chooseFinding) pins.append(repairAction);
+    },'button subtle') : null;
+    if (repairAction) pins.append(repairAction);
     const source = make('input');
     source.type = 'checkbox';
     source.name = 'includeSource';
@@ -728,9 +729,7 @@
       : Boolean(scope.provider && (scope.finding || !scope.provider.remote));
     source.addEventListener('change', () => { session.includeSource = source.checked; save(); });
     const sourceOption = make('label','architecture-chat-consent');
-    sourceOption.append(source,make('span','', scope.finding
-      ? 'Include captured source code for this finding'
-      : 'Include captured source files in AI context & tools'));
+    sourceOption.append(source,make('span','', scope.finding ? 'Include finding code' : 'Include source'));
     if (scope.provider?.remote) modelState.title = 'Questions, chat history and selected evidence are sent to ' + scope.provider.endpoint;
     const controls = make('div','architecture-chat-controls');
     const agentToggleInput = make('input');
@@ -749,19 +748,29 @@
     const reviewerAgenticLabel = make('label','architecture-chat-agent-toggle');
     reviewerAgenticLabel.title = 'Opt-in: allow the second-pass architecture reviewer to run independent graph and source tools before critiquing the answer.';
     reviewerAgenticLabel.append(reviewerAgenticInput, make('span','','Reviewer · Agentic tools'));
-    const stop = button('Stop waiting',() => pending?.abort(),'button subtle');
+    const stop = button('Stop',() => pending?.abort(),'button subtle');
     stop.hidden = true;
-    const submit = make('button','button primary',scope.provider ? 'Send question' : 'Read evidence');
+    const submit = make('button','button primary',scope.provider ? 'Send' : 'Search snapshot');
     submit.type = 'submit';
-    if (scope.agentEnabled && scope.provider) controls.append(agentToggleLabel, reviewerAgenticLabel);
-    controls.append(stop,submit);
     const contextOptions = make('details','architecture-chat-context-options');
-    contextOptions.append(make('summary','','Task and symbol focus'),settings);
-    form.append(label('Question',input),contextOptions);
-    if (scope.provider) form.append(sourceOption);
-    form.append(controls);
+    contextOptions.append(make('summary','','Options'),settings);
+    if (scope.agentEnabled && scope.provider) {
+      const toolRow = make('div','architecture-chat-agent-row');
+      toolRow.append(agentToggleLabel, reviewerAgenticLabel);
+      contextOptions.append(toolRow);
+    }
+    const leftControls = make('div','architecture-chat-controls-left');
+    leftControls.append(contextOptions);
+    if (scope.provider) leftControls.append(sourceOption);
+    const rightControls = make('div','architecture-chat-controls-right');
+    rightControls.append(stop, submit);
+    controls.append(leftControls, rightControls);
+    const inputField = make('div','architecture-chat-field');
+    inputField.append(input);
+    form.append(inputField,controls);
     const evidence = make('aside','architecture-chat-evidence');
     evidence.setAttribute('aria-label','Captured architecture evidence');
+    evidence.hidden = true;
     conversation.append(log,status,form);
     layout.append(conversation,evidence);
     node.append(head,pins,threadsDetails);
@@ -795,18 +804,14 @@
     }, { once: true });
 
     function renderThreadsStrip() {
-      if (!serverThreadsAvailable) {
+      if (!serverThreadsAvailable || !serverThreads.length) {
         threadsDetails.hidden = true;
         return;
       }
       threadsDetails.hidden = false;
       threadsCountBadge.textContent = `${serverThreads.length} saved`;
       threadsStrip.replaceChildren();
-      threadsStrip.append(button('+ New thread', () => reset(), 'architecture-chat-thread-chip'));
-      if (!serverThreads.length) {
-        threadsStrip.append(make('span', 'muted small', 'Start a conversation to save it in SQLite.'));
-        return;
-      }
+      threadsStrip.append(button('+ New chat', () => reset(), 'architecture-chat-thread-chip'));
       for (const item of serverThreads) {
         const cid = item.conversationId || item.id;
         const isCurrent = session.conversationId && session.conversationId === cid;
@@ -934,7 +939,7 @@
       history.replaceChildren();
       const ordered = [...records.entries()].sort((a,b) => (b[1].updated || 0) - (a[1].updated || 0));
       for (const [id,value] of ordered) {
-        const option=make('option','',value.title || value.turns?.[0]?.question?.slice(0,65) || 'New conversation');
+        const option=make('option','',value.title || value.turns?.[0]?.question?.slice(0,65) || 'Current chat');
         option.value=id;
         history.append(option);
       }
@@ -946,6 +951,7 @@
         history.append(opt);
       }
       history.value=active;
+      history.hidden = history.options.length <= 1;
     }
 
     history.addEventListener('change',() => {
@@ -1070,18 +1076,30 @@
     }
 
     function renderEvidence(turn, selected) {
-      const heading = make('header','architecture-chat-evidence-header');
-      heading.append(make('h3','','Evidence'));
-      evidence.replaceChildren(heading);
-      if (!turn) {
-        evidence.append(make('p','muted','Open cited records here after a reply, or read the evidence directly.'));
+      const result = turn?.result || {};
+      const evidenceRows = Array.isArray(result.evidence) ? result.evidence : [];
+      const resolvedRows = Array.isArray(result.resolvedCitations) ? result.resolvedCitations : [];
+      const hasRecords = Boolean(turn && (evidenceRows.length || resolvedRows.length));
+      if (!hasRecords) {
+        evidence.hidden = true;
+        layout.classList.add('is-single-col');
+        evidence.replaceChildren();
         return;
       }
-      const result = turn.result || {};
-      const evidenceRows = Array.isArray(result.evidence) ? result.evidence : [];
+      evidence.hidden = false;
+      layout.classList.remove('is-single-col');
+      const heading = make('header','architecture-chat-evidence-header');
+      heading.append(make('h3','','Evidence'));
       const digest = make('code','architecture-chat-digest',window.EvoModel.shortDigest(result.evidenceIdentity));
       digest.title = result.evidenceIdentity || '';
       if (evidenceRows.length) heading.append(digest);
+      const closeEv = button('×', () => {
+        evidence.hidden = true;
+        layout.classList.add('is-single-col');
+      }, 'architecture-chat-evidence-close');
+      closeEv.setAttribute('aria-label', 'Close evidence panel');
+      heading.append(closeEv);
+      evidence.replaceChildren(heading);
       for (const row of evidenceRows) {
         const citeInfo = resolveCitationInfo(result, row.id);
         const details = make('details','architecture-chat-record');
@@ -1110,8 +1128,8 @@
           details.scrollIntoView({block:'nearest'});
         }
       }
-      if (!evidenceRows.length && Array.isArray(result.resolvedCitations) && result.resolvedCitations.length) {
-        for (const rc of result.resolvedCitations) {
+      if (!evidenceRows.length && resolvedRows.length) {
+        for (const rc of resolvedRows) {
           const citeInfo = resolveCitationInfo(result, rc.id);
           const details = make('details', 'architecture-chat-record');
           details.open = rc.id === selected;
@@ -1131,8 +1149,6 @@
           if (citeActions.childElementCount) details.append(citeActions);
           evidence.append(details);
         }
-      } else if (!evidenceRows.length) {
-        evidence.append(make('p','muted','Ask an architecture question to see snapshot evidence here.'));
       }
       if (result.model) {
         const receipt = make('details','architecture-chat-record');
@@ -1259,7 +1275,7 @@
         }
       }
       if (scope.openRepair && result.status !== 'OUT_OF_SCOPE' && !(result.status === 'EVIDENCE_ONLY' && result.answer))
-        references.append(button('Open repair workflow',() => repairAction.click()));
+        references.append(button('Open repair workflow',() => scope.openRepair()));
       if (references.childElementCount) reply.append(references);
       const reviewSlot = make('div','architecture-chat-review-slot');
       if (turn.review) {
@@ -1287,28 +1303,28 @@
 
     function renderConversation() {
       log.replaceChildren();
-      if (!session.turns.length) {
+      const hasTurns = session.turns.length > 0;
+      exportBtn.hidden = !hasTurns;
+      deleteBtn.hidden = !hasTurns;
+      if (!hasTurns) {
         const empty = make('article','architecture-chat-welcome');
-        empty.append(make('h3','','What would you like to understand?'),
-          make('p','muted',scope.finding ? 'Trace the attached finding and outline a change.' :
-            'Explore dependencies, test a design idea, or plan a repair from this snapshot.'));
-        const choices = make('div','architecture-chat-starters');
-        for (const [task,title] of Object.entries(taskTitles)) choices.append(button(title,() => startQuestion(task),'button'));
+        empty.append(make('p','muted',scope.finding ? 'Ask about this finding or how to fix it safely.' :
+          'Ask about modules, dependencies, risks, or refactoring.'));
         const quickPrompts = scope.finding
           ? [
-              ['Explain root cause & blast radius', 'REPAIR', 'Trace the root cause of this finding in captured source and estimate the blast radius of removing the offending dependency.'],
-              ['Minimal safe fix + test plan', 'REPAIR', 'Outline the minimal code patch to resolve this finding without breaking callers, and list the tests to run in sandbox verification.']
+              ['Explain root cause & impact', 'REPAIR', 'Trace the root cause of this finding in captured source and estimate the blast radius of removing the offending dependency.'],
+              ['Minimal safe fix', 'REPAIR', 'Outline the minimal code patch to resolve this finding without breaking callers, and list the tests to run in sandbox verification.']
             ]
           : [
-              ['Top risks & hotspots', 'EXPLORE', 'What are the highest-risk architectural hotspots, dependency cycles, and SDP violations in this snapshot?'],
-              ['How to reduce coverage gaps', 'EXPLORE', 'Explain the recorded capability gaps in this snapshot and give prioritized steps to raise analysis completeness.'],
-              ['Key entrypoints (RepoMap)', 'EXPLORE', 'Summarize the main modules and highest-centrality entrypoints in this repository with source citations.']
+              ['Understand the structure', 'EXPLORE', prompts.EXPLORE],
+              ['Top risks & cycles', 'EXPLORE', 'What are the highest-risk architectural hotspots, dependency cycles, and SDP violations in this snapshot?'],
+              ['Key entrypoints', 'EXPLORE', 'Summarize the main modules and highest-centrality entrypoints in this repository with source citations.']
             ];
         const quickChips = make('div','architecture-chat-quick-chips');
         for (const [chipTitle, chipTask, chipPrompt] of quickPrompts) {
           quickChips.append(button(chipTitle, () => startQuestion(chipTask, chipPrompt), 'chip'));
         }
-        empty.append(choices, quickChips);
+        empty.append(quickChips);
         log.append(empty);
       }
       session.turns.forEach(appendTurn);
@@ -1380,7 +1396,7 @@
       syncSessionControls();
       save();
       renderThreadsStrip();
-      status.textContent = 'New conversation started.';
+      status.textContent = 'New chat started.';
       renderConversation();
       input.focus();
     }

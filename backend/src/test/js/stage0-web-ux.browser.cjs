@@ -276,7 +276,7 @@ async function main([browser, output]) {
         const id = 'pat-' + (tokenSeq++);
         const plaintext = 'evo_pat_stage0_secret_' + id + '_' + 'z'.repeat(18);
         const scopes = Array.isArray(jsonBody.scopes) && jsonBody.scopes.length ? jsonBody.scopes : ['mcp:read'];
-        if (jsonBody.label === 'IDE MCP Bridge') lastMcpMintScopes = scopes;
+        if (jsonBody.label === 'IDE MCP Studio') lastMcpMintScopes = scopes;
         const meta = {
           tokenId: id,
           userId: user.userId,
@@ -574,6 +574,9 @@ async function main([browser, output]) {
     await until('Minted PAT banner shown once', () =>
       ev("Boolean(document.getElementById('ws-pat-minted-banner')) && document.getElementById('ws-pat-minted-banner').innerText.includes('evo_pat_')"));
 
+    await until('Minted token appears in the list', () =>
+      ev("(document.getElementById('ws-pat-list')?.innerText || '').includes('Stage0 IDE PAT')"));
+
     const patState = await ev(`(() => {
       const secret = document.querySelector('#ws-pat-minted-banner .evo-pat-secret-code')?.textContent || '';
       const listText = document.getElementById('ws-pat-list')?.innerText || '';
@@ -650,9 +653,12 @@ async function main([browser, output]) {
     // -------------------------------------------------------------------------
     await ev("document.getElementById('open-mcp-setup').click()");
     await until('MCP modal opened with 1-click PAT helper', () =>
-      ev("document.getElementById('mcp-setup-dialog').open && document.getElementById('mcp-setup-body').innerText.includes('1-Click Mint Read-Only MCP Token')"));
+      ev("document.getElementById('mcp-setup-dialog').open && /Mint (mcp:read|Read-Only MCP) Token/.test(document.getElementById('mcp-setup-body').textContent)"));
+    await ev("Array.from(document.querySelectorAll('#mcp-setup-body [role=tab]')).find(b => b.textContent.includes('CLI Offline')).click()");
+    await until('CLI Offline tab shows the resolved store', () =>
+      ev("document.getElementById('mcp-setup-body').textContent.includes('D:/resolved/real-store')"));
     const mcpCheck = await ev(`(() => {
-      const txt = document.getElementById('mcp-setup-body').innerText;
+      const txt = document.getElementById('mcp-setup-body').textContent;
       return {
         hasLiteralEvoJar: txt.includes('"evo.jar"'),
         hasLiteralStorePlaceholder: txt.includes('<path-to-evo-store>'),
@@ -664,7 +670,7 @@ async function main([browser, output]) {
     assert.equal(mcpCheck.hasLiteralStorePlaceholder, false, 'MCP setup must not show <path-to-evo-store>');
     assert.equal(mcpCheck.hasResolvedStore, true, 'MCP setup must show real resolved store path');
 
-    await ev("Array.from(document.querySelectorAll('#mcp-setup-body button')).find(b => b.textContent.includes('1-Click Mint Read-Only MCP Token')).click()");
+    await ev("Array.from(document.querySelectorAll('#mcp-setup-body button')).find(b => /Mint (mcp:read|Read-Only MCP) Token/.test(b.textContent)).click()");
     await until('MCP 1-click PAT minted and revealed', () =>
       ev("document.getElementById('mcp-setup-body').innerText.includes('evo_pat_stage0_secret_')"));
     assert.deepEqual(lastMcpMintScopes, ['mcp:read'], '1-click MCP helper must request read-only mcp:read scope');
@@ -718,8 +724,8 @@ async function main([browser, output]) {
     })()`);
     assert.equal(rsStep1.hasRepoMapPlaceholder, true, 'Blank Focus Files input must explain automatic RepoMap seeding');
 
-    // Submit ad-hoc repair with blank focusFiles -> Step 2 renders Leiden + Advisory SQL/ADR badges!
-    await ev("Array.from(document.querySelectorAll('#stage0-rs-host button')).find(b => (b.textContent || '').includes('Generate Ad-Hoc Patch')).click()");
+    // Submit custom repair with blank focusFiles -> Step 2 renders Leiden + Advisory SQL/ADR badges!
+    await ev("Array.from(document.querySelectorAll('#stage0-rs-host button')).find(b => (b.textContent || '').includes('Generate Patch')).click()");
     await until('Repair Studio rendered Leiden & Advisory badges', () =>
       ev("document.getElementById('stage0-rs-host').innerText.includes('SQL DDL:') && document.getElementById('stage0-rs-host').innerText.includes('orders · OrderService')"));
     const rsCheck = await ev(`(() => {

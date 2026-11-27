@@ -195,10 +195,8 @@
   function clearLiveTelemetryUi() {
     state.liveProgress = null;
     state.incrementalSummary = null;
-    for (const id of ['job-live-metrics', 'job-live-inline', 'job-module-pills', 'job-incremental-strip']) {
-      const node = $(id);
-      if (node) { node.hidden = true; node.replaceChildren(); }
-    }
+    const metrics = $('job-live-metrics');
+    if (metrics) { metrics.hidden = true; metrics.replaceChildren(); }
     const cmp = $('job-compare-prev');
     if (cmp) cmp.hidden = true;
   }
@@ -207,8 +205,8 @@
     if (!banner) return;
     const tier = state.truthTier || 'NONE';
     const info = M.truthTierInfo ? M.truthTierInfo(tier, state.previewMeta) : { preliminary: false, authoritative: false, label: '', detail: '' };
-    const shouldShow = info.preliminary || (info.authoritative && state.promotedFromPreview);
-    if (!shouldShow || !info.label) {
+    if (!info.preliminary || !info.label) {
+      state.promotedFromPreview = false;
       banner.hidden = true;
       banner.replaceChildren();
       delete banner.dataset.tier;
@@ -217,17 +215,13 @@
     banner.hidden = false;
     banner.dataset.tier = tier;
     const pill = el('span', 'workspace-truth-pill', info.label);
-    const detail = el('span', '', info.detail);
+    const detail = el('span', '', 'Preliminary preview — deep analysis is still running…');
     const main = append(el('div', 'workspace-truth-main'), pill, detail);
     const actions = el('div', 'run-summary-actions');
-    if (info.preliminary) {
-      actions.append(btn('View live progress', () => {
-        const d = $('run-details');
-        if (d) { d.open = true; d.scrollIntoView?.({ behavior: 'smooth', block: 'nearest' }); }
-      }, 'button subtle'));
-    } else if (state.promotedFromPreview) {
-      actions.append(btn('Dismiss', () => { state.promotedFromPreview = false; renderTruthBanner(); }, 'button subtle'));
-    }
+    actions.append(btn('View live progress', () => {
+      const d = $('run-details');
+      if (d) { d.open = true; d.scrollIntoView?.({ behavior: 'smooth', block: 'nearest' }); }
+    }, 'button subtle'));
     banner.replaceChildren(main, actions);
   }
   function resetResult() { closeJobStream(); state.discovery?.abort(); state.publication?.abort(); $('result-opening').hidden = true; clearReadiness(); clearLiveTelemetryUi(); invalidate(); state.graphFocus = null; state.explorer = null; state.metricSubject = null; state.graph = null; state.resultJob = null; state.context = ''; state.contexts = []; state.reports = []; state.contextKinds = new Map(); state.discoveryEnriched = false; state.truthTier = 'NONE'; state.previewMeta = null; state.promotedFromPreview = false; state.scoreV2Cache = new Map(); renderTruthBanner(); document.querySelectorAll('[data-spring-view]').forEach(c => c.hidden = true); const stepper = $('job-stage-stepper'); if (stepper) { stepper.hidden = true; stepper.replaceChildren(); } const gapStrip = $('job-gap-action-strip'); if (gapStrip) { gapStrip.hidden = true; gapStrip.replaceChildren(); } $('context').replaceChildren(); notifyContextsUpdated(); $('analysis-workspace').hidden = true; $('welcome').hidden = false; updateResultStatus(); }
@@ -459,7 +453,6 @@
     if ($('inspector-title')) $('inspector-title').textContent = '';
     if ($('inspector-body')) $('inspector-body').replaceChildren();
     if ($('job-events')) $('job-events').replaceChildren();
-    if ($('job-telemetry-bar')) $('job-telemetry-bar').replaceChildren();
     if ($('result-opening')) $('result-opening').replaceChildren();
     if ($('toast-zone')) {
       for (const child of [...$('toast-zone').children]) {
@@ -604,76 +597,18 @@
   }
   function renderLiveTelemetry(job, progress = null) {
     const activeProgress = progress || (state.liveProgress && job && state.liveProgress.jobId === job.id ? state.liveProgress : null);
-    const liveInline = $('job-live-inline');
     const liveMetrics = $('job-live-metrics');
-    const moduleBox = $('job-module-pills');
-    const incStrip = $('job-incremental-strip');
     const compareBtn = $('job-compare-prev');
 
     const tp = activeProgress && M.formatThroughput ? M.formatThroughput(activeProgress) : { rateText: '', etaText: '', stageCountText: '' };
     const pills = [];
-    if (tp.stageCountText) pills.push(el('span', 'job-metric-pill', tp.stageCountText));
-    if (tp.rateText) pills.push(el('span', 'job-metric-pill is-accent', tp.rateText));
-    if (tp.etaText && job && !M.terminal(job)) pills.push(el('span', 'job-metric-pill', tp.etaText));
-    if (activeProgress?.truthTier && M.isPreliminaryTier?.(activeProgress.truthTier)) {
-      const ti = M.truthTierInfo(activeProgress.truthTier, activeProgress.preview || state.previewMeta);
-      pills.push(el('span', 'job-metric-pill is-warn', ti.shortLabel));
-    }
-    if (activeProgress?.message && job && !M.terminal(job)) {
-      pills.push(el('span', 'small muted', activeProgress.message));
-    }
-    if (liveInline) {
-      liveInline.hidden = !pills.length || (job && M.terminal(job));
-      liveInline.replaceChildren(...pills.map(p => p.cloneNode(true)));
+    if (job && !M.terminal(job)) {
+      if (tp.stageCountText) pills.push(el('span', 'job-metric-pill', tp.stageCountText));
+      if (activeProgress?.etaStatus === 'AVAILABLE' && tp.etaText) pills.push(el('span', 'job-metric-pill', tp.etaText));
     }
     if (liveMetrics) {
       liveMetrics.hidden = !pills.length;
       liveMetrics.replaceChildren(...pills);
-    }
-
-    const modules = activeProgress?.modules || [];
-    if (moduleBox) {
-      moduleBox.hidden = !modules.length;
-      moduleBox.replaceChildren();
-      for (const mod of modules) {
-        const clickable = Boolean(mod.contextId && state.contexts?.some(c => c.identity === mod.contextId));
-        const icon = mod.status === 'COMPLETED' ? '✓' : mod.status === 'REUSED' ? '⚡' : mod.status === 'RUNNING' ? '◐' : mod.status === 'FAILED' ? '✕' : '○';
-        const text = `${icon} ${mod.module}${mod.filesTotal > 0 ? ` (${mod.filesDone}/${mod.filesTotal})` : ''}`;
-        const chip = clickable
-          ? btn(text, () => {
-              state.graphFocus = null; state.explorer = null; state.metricSubject = null;
-              state.context = mod.contextId;
-              $('context').value = mod.contextId;
-              notifyContextsUpdated();
-              return loadTab(state.tab);
-            }, 'job-module-pill is-clickable')
-          : el('span', 'job-module-pill', text);
-        chip.dataset.status = mod.status || 'PENDING';
-        chip.title = [mod.module, mod.status, mod.reason || null, mod.elapsedMillis ? formatDuration(mod.elapsedMillis) : null].filter(Boolean).join(' · ');
-        moduleBox.append(chip);
-      }
-    }
-
-    const rawInc = activeProgress?.incremental || job?.incremental || state.incrementalSummary;
-    const inc = rawInc && M.summarizeIncremental ? M.summarizeIncremental(rawInc) : null;
-    if (incStrip) {
-      if (inc && (inc.hasSavings || inc.changedFiles > 0 || inc.mode !== 'COLD')) {
-        const incNodes = [
-          el('span', 'job-metric-pill is-accent', inc.mode === 'NO_CHANGE' ? 'No changes' : inc.mode === 'FALLBACK_FULL' ? 'Full recompute' : 'Incremental delta')
-        ];
-        if (inc.totalFiles > 0) incNodes.push(el('span', 'job-metric-pill', `${inc.reusedFiles.toLocaleString()}/${inc.totalFiles.toLocaleString()} files reused (${inc.reusePct}%)`));
-        if (inc.changedFiles > 0) incNodes.push(el('span', 'job-metric-pill', `+${inc.addedFiles} ~${inc.modifiedFiles} -${inc.deletedFiles}`));
-        if (inc.abiEarlyCutoffCount > 0) incNodes.push(el('span', 'job-metric-pill is-accent', `${inc.abiEarlyCutoffCount} ABI early cutoff${inc.abiEarlyCutoffCount === 1 ? '' : 's'}`));
-        if (inc.impactedDependentsCount > 0) incNodes.push(el('span', 'job-metric-pill', `${inc.impactedDependentsCount} impacted dep${inc.impactedDependentsCount === 1 ? '' : 's'}`));
-        if (inc.reusedModules > 0) incNodes.push(el('span', 'job-metric-pill', `${inc.reusedModules} module${inc.reusedModules === 1 ? '' : 's'} reused`));
-        if (inc.formattedTimeSaved) incNodes.push(el('span', 'job-metric-pill is-accent', `Est. ${inc.formattedTimeSaved} saved`));
-        if (inc.baseSnapshotId) incNodes.push(el('span', 'job-metric-pill', `Base ${M.shortDigest(inc.baseSnapshotId)}`));
-        incStrip.hidden = false;
-        incStrip.replaceChildren(...incNodes);
-      } else {
-        incStrip.hidden = true;
-        incStrip.replaceChildren();
-      }
     }
 
     if (compareBtn) {
@@ -703,16 +638,6 @@
       ? 'Quick analysis · reduced Java detail · installed Node packages inventoried'
       : mode === 'FULL' ? 'Deep analysis' : '';
     modeNote.hidden = !modeNote.textContent;
-    const timing = $('job-timing');
-    timing.dataset.job = '__submitting__';
-    timing.open = false;
-    timing.hidden = true;
-    state.telemetryJob = null;
-    $('job-telemetry-bar').replaceChildren();
-    const preview = $('job-score-preview');
-    preview.dataset.job = '__submitting__';
-    preview.hidden = true;
-    preview.textContent = '';
     $('cancel-job').hidden = true;
     $('cancel-job').disabled = true;
     const details = $('run-details');
@@ -767,59 +692,6 @@
     } finally {
       if (state.submitting === request) state.submitting = null;
       syncRunControls(); updateResultStatus();
-    }
-  }
-  async function loadTelemetry() {
-    const job = state.job, panel = $('job-timing'), bar = $('job-telemetry-bar');
-    if (!job || !panel.open || !M.terminal(job) || state.telemetryJob === job.id) return;
-    state.telemetryJob = job.id;
-    bar.textContent = 'Loading stage timings…';
-    try {
-      const telemetry = await api('/analysis/jobs/' + job.id + '/telemetry');
-      if (state.job?.id !== job.id) return;
-      const total = el('p', 'small', 'Total ' + formatDuration(telemetry.totalElapsedMillis));
-      const stages = el('dl', 'job-timing-list');
-      const totalMs = Math.max(1, Number(telemetry.totalElapsedMillis) || telemetry.stages.reduce((acc, s) => acc + (Number(s.durationMillis) || 0), 0) || 1);
-      for (const { stage, durationMillis } of telemetry.stages) {
-        const pct = Math.min(100, Math.max(2, Math.round(((Number(durationMillis) || 0) / totalMs) * 100)));
-        const dd = el('dd', 'job-timing-val');
-        const fillBar = el('span', 'job-timing-bar');
-        const inner = el('i');
-        inner.style.width = pct + '%';
-        fillBar.append(inner);
-        dd.append(el('span', 'job-timing-ms', formatDuration(durationMillis)), fillBar);
-        stages.append(el('dt', '', analysisSteps[stage]?.[0] || stage), dd);
-      }
-      const nodes = [total, stages];
-      const inc = telemetry.incremental && M.summarizeIncremental ? M.summarizeIncremental(telemetry.incremental) : null;
-      if (inc) {
-        const incGrid = el('dl', 'job-incremental-grid');
-        const rows = [
-          ['Reuse mode', inc.mode + (inc.fallbackReason ? ' · ' + inc.fallbackReason : '')],
-          ['Files reused', inc.totalFiles > 0 ? `${inc.reusedFiles.toLocaleString()} / ${inc.totalFiles.toLocaleString()} (${inc.reusePct}%)` : `${inc.reusedFiles.toLocaleString()}`],
-          ['File delta', `+${inc.addedFiles} added · ~${inc.modifiedFiles} mod · -${inc.deletedFiles} del`],
-          ['ABI early cutoffs', `${inc.abiEarlyCutoffCount.toLocaleString()} · ${inc.impactedDependentsCount.toLocaleString()} impacted`],
-          ['Modules reused', inc.recomputedModules > 0 ? `${inc.reusedModules} / ${inc.reusedModules + inc.recomputedModules}` : `${inc.reusedModules}`],
-          ...(inc.formattedTimeSaved ? [['Est. time saved', inc.formattedTimeSaved]] : []),
-          ...(inc.baseSnapshotId ? [['Base snapshot', M.shortDigest(inc.baseSnapshotId)]] : [])
-        ];
-        for (const [k, v] of rows) {
-          incGrid.append(append(el('div', 'job-incremental-stat'), el('dt', '', k), el('dd', '', v)));
-        }
-        nodes.push(el('h3', 'small', 'Incremental & Cache Telemetry'), incGrid);
-      }
-      if (telemetry.cacheMetrics && Object.keys(telemetry.cacheMetrics).length) {
-        const cachePills = el('div', 'job-live-metrics');
-        for (const [k, v] of Object.entries(telemetry.cacheMetrics)) {
-          cachePills.append(el('span', 'job-metric-pill', `${k}: ${Number(v).toLocaleString()}`));
-        }
-        nodes.push(cachePills);
-      }
-      bar.replaceChildren(...nodes);
-    } catch (error) {
-      if (state.job?.id !== job.id) return;
-      state.telemetryJob = null;
-      bar.replaceChildren(el('p', 'small muted', error.message), btn('Retry timings', loadTelemetry));
     }
   }
   const formatDuration = ms => ms < 1000 ? ms + ' ms' : (ms / 1000).toFixed(1) + ' s';
@@ -1010,6 +882,8 @@
       state.autoOpenLog = false;
       $('job-events').replaceChildren();
       showProgressConnection();
+    } else if (wasRunning && (job.state === 'SUCCEEDED' || job.state === 'PARTIAL')) {
+      details.open = false;
     }
     if (wasRunning && M.terminal(job) && window.EvoToast) {
       if (job.state === 'FAILED' || job.state === 'TIMED_OUT') {
@@ -1020,14 +894,6 @@
         window.EvoToast.push({ kind: 'ok', title: job.reuse ? 'Saved analysis reused' : 'Analysis complete', detail: repoLabel(job.setup) });
       }
     }
-    const timing = $('job-timing');
-    if (timing.dataset.job !== job.id) {
-      timing.dataset.job = job.id;
-      timing.open = false;
-      state.telemetryJob = null;
-      $('job-telemetry-bar').replaceChildren();
-    }
-    timing.hidden = !M.terminal(job);
     $('job-mode').textContent = job.mode === 'FAST_ARCHITECTURE' ? 'Quick analysis · reduced Java detail · installed Node packages inventoried'
       : job.mode === 'FULL' ? 'Deep analysis' : '';
     $('job-mode').hidden = !$('job-mode').textContent;
@@ -1040,28 +906,8 @@
     renderLiveTelemetry(job);
     syncActivityClock(job);
     showRunFailure(job);
-    requestScorePreview(job);
     window.EvoGitHubHub?.syncPipelineStepper?.(job, state.liveProgress);
     void window.EvoGitHubHub?.syncPartialGapStrip?.(job);
-  }
-  function requestScorePreview(job) {
-    const preview = $('job-score-preview');
-    const graph = job.result?.graph;
-    const active = Boolean(graph || !M.terminal(job) && ['PLATFORM', 'ANALYSIS', 'GRAPH', 'POLICY', 'PUBLICATION'].includes(job.stage));
-    if (!active || preview.dataset.job !== job.id) {
-      preview.dataset.job = job.id;
-      preview.hidden = true;
-      preview.textContent = '';
-    }
-    if (!active || !state.capabilities?.repositoryScoringEnabled) return;
-    const key = job.id + '/' + job.stage;
-    if (state.scorePreviewRequest === key || !preview.hidden) return;
-    state.scorePreviewRequest = key;
-    requestRepositoryScore(job.id, graph, savedScorePaths(job.setup)).then(score => {
-      if (state.job?.id !== job.id || !$('analysis-workspace').hidden || score.status === 'WITHHELD') return;
-      preview.textContent = 'Repository score · ' + (score.score ?? (score.lower + '–' + score.upper)) + ' / 100';
-      preview.hidden = false;
-    }).catch(() => { /* The inventory may not have sealed yet. A later stage can retry. */ });
   }
   function shouldUseJobSse(job) {
     if (typeof EventSource !== 'function' || !job) return false;
@@ -1286,7 +1132,6 @@
     state.promotedFromPreview = false;
     state.moduleLabels = new Map(); state.contextKinds = new Map(); state.contextLoads = new Map(); state.contextLabels = new Map();
     $('analysis-workspace').hidden = false; $('welcome').hidden = true;
-    $('job-score-preview').hidden = true;
     $('context').replaceChildren(el('option', '', 'Choose a context…')); $('context').firstChild.value = '';
     for (const context of state.contexts) {
       const meta = formatContext(context);
@@ -1451,13 +1296,11 @@
     state.reportIds = [...new Set([...(publication.result.reports ?? []), ...(discovery.reports ?? [])])];
     state.reportIndexLoaded = !fromReceipt;
     state.discoveryEnriched = !fromReceipt;
-    state.repositoryScore = null;
     state.policyRuns = new Map();
     state.activePolicyReports = new Map();
     state.reportLoad = null;
     state.moduleLabels = new Map(); state.contextKinds = new Map(); state.contextLoads = new Map(); state.contextLabels = new Map();
     $('analysis-workspace').hidden = false; $('welcome').hidden = true;
-    $('job-score-preview').hidden = true;
     $('context').replaceChildren(el('option', '', 'Choose a context…')); $('context').firstChild.value = '';
     for (const context of state.contexts) {
       const meta = formatContext(context);
@@ -2145,88 +1988,6 @@
     return svg;
   }
 
-  function coverageCard(env, result) {
-    const section = card('Analysis coverage');
-    section.classList.add('job-coverage');
-    const line = append(el('p', 'coverage-line'),
-      badge(result.completion),
-      el('span', '', result.gapCount.toLocaleString() + ' recorded gaps across the run'));
-    section.append(line);
-    if (!result.gapCount) return section;
-    const body = el('div');
-    const details = append(el('details', 'inventory-details'), el('summary', '', 'Gap reasons'), body);
-    const status = el('p', 'muted small');
-    status.setAttribute('role', 'status');
-    section.append(details);
-    let requested = false;
-    async function read() {
-      requested = true;
-      body.replaceChildren(status);
-      status.textContent = 'Reading the job gap ledger…';
-      try {
-        const value = await api('/analysis/jobs/' + env.jobId + '/coverage', undefined, env.signal, 'GET');
-        if (env.signal.aborted) return;
-        status.textContent = value.ledgerTotal
-          ? 'Top reasons from ' + value.counted.toLocaleString() + ' of ' + value.ledgerTotal.toLocaleString() + ' job ledger records.'
-          : 'The job ledger has no records. This run reports gaps in the graph.';
-        if (value.obligations && value.counted > 0) {
-          const ob = value.obligations;
-          const total = Math.max(1, (ob.environment || 0) + (ob.authority || 0) + (ob.boundary || 0) + (ob.source || 0));
-          const barWrap = el('div', 'obligation-bar-wrap');
-          const bar = el('div', 'obligation-bar');
-          const legend = el('div', 'obligation-legend');
-          const items = [
-            ['environment', 'Environment', 'is-env'],
-            ['authority', 'Authority / policy', 'is-auth'],
-            ['boundary', 'Analyzer boundary', 'is-boundary'],
-            ['source', 'Source / dynamic', 'is-source']
-          ];
-          for (const [key, lbl, cls] of items) {
-            const count = ob[key] || 0;
-            if (!count) continue;
-            const seg = el('span', 'obligation-seg ' + cls);
-            seg.style.width = ((count / total) * 100).toFixed(1) + '%';
-            seg.title = `${lbl}: ${count}`;
-            bar.append(seg);
-            const dot = el('span', 'obligation-dot ' + cls);
-            legend.append(append(el('span', 'obligation-legend-item'), dot, el('span', '', `${lbl}: ${count.toLocaleString()}`)));
-          }
-          if (bar.childElementCount) {
-            barWrap.append(bar, legend);
-            body.append(barWrap);
-          }
-        }
-        if (!value.topReasons.length) return;
-        const reasons = el('dl', 'summary-table');
-        for (const row of value.topReasons) {
-          const info = M.humanReason(row.reason);
-          const label = row.reason.toLowerCase().replaceAll('_', ' ').replace(/^./, c => c.toUpperCase());
-          const term = el('dt', '', label);
-          term.title = `${row.reason} — ${info.explanation}`;
-          const count = el('dd', '', row.count.toLocaleString());
-          reasons.append(append(el('div', 'summary-row'), term, count));
-        }
-        body.append(reasons);
-        const actions = el('div', 'remedy-patch-actions');
-        actions.append(btn('Open Gaps & Coverage Inspector →', () => loadTab('coverage'), 'button subtle'));
-        if (state.capabilities?.architectureChatEnabled) {
-          const topList = value.topReasons.slice(0, 5).map(r => `${r.reason} (${r.count})`).join(', ');
-          actions.append(btn('Ask AI how to reduce these gaps', () => {
-            state.chatSeedPrompt = 'Explain the top analysis gap reasons in this run (' + topList + ') and recommend prioritized actions to improve coverage.';
-            return loadTab('architecture-chat');
-          }, 'button subtle'));
-        }
-        body.append(actions);
-      } catch (error) {
-        if (!env.signal.aborted) {
-          status.textContent = 'Gap reasons are unavailable.';
-          body.append(btn('Retry gap reasons', read));
-        }
-      }
-    }
-    details.addEventListener('toggle', () => { if (details.open && !requested) read(); });
-    return section;
-  }
   async function recoverSupersededPreview(error) {
     const jobId = state.job?.id;
     const generation = state.pollGeneration;
@@ -2990,121 +2751,6 @@
     }
   }
 
-  function savedScorePaths(setup) {
-    try { return JSON.parse(localStorage.getItem('evo.rubric.' + setup)) || {}; }
-    catch (_) { return {}; }
-  }
-
-  function requestRepositoryScore(job, graph, paths, signal) {
-    const body = Object.keys(paths).length ? { paths } : undefined;
-    const fromGraph = () => api('/graphs/' + graph + '/repository-score', body, signal);
-    return job ? api('/analysis/jobs/' + job + '/repository-score', body, signal).catch(error => {
-      if (!graph || error.code !== 'SCORE_INVENTORY_UNAVAILABLE') throw error;
-      return fromGraph();
-    }) : fromGraph();
-  }
-
-  function repositoryScoreCard(env, editable = false) {
-    const node = card('Repository Hygiene (4 File Checks)', 'Baseline file-presence checks: README, Tests, CI, Build — separate from Software Architecture Health.');
-    node.classList.add('evo-hygiene-card');
-    if (!editable) node.classList.add('overview-score');
-    const heading = node.querySelector('.card-heading');
-    if (heading) heading.append(el('span', 'evo-hygiene-badge', 'File checks'));
-    const result = el('div');
-    result.setAttribute('aria-live', 'polite');
-    node.append(result);
-    const fields = Object.entries({
-      documentation: 'Documentation', tests: 'Tests', automation: 'CI configuration', build: 'Build or package setup'
-    });
-    const key = 'evo.rubric.' + env.setup;
-    let paths = savedScorePaths(env.setup);
-    let version = 0;
-    const feedback = el('p', 'small muted');
-    feedback.setAttribute('role', 'status');
-    let inputs;
-    if (editable) {
-      const editor = el('details', 'snapshot-policy-editor');
-      editor.append(el('summary', '', 'Customize repository checks'),
-        el('p', 'small muted', 'Enter an exact path inside the repository to replace a default check. Leave a path empty to use the convention.'));
-      inputs = fields.map(([id, title]) => {
-        const input = el('input');
-        input.value = paths[id] ?? '';
-        input.maxLength = 1024;
-        input.placeholder = 'Use default convention';
-        editor.append(field(title, input));
-        return [id, input];
-      });
-      editor.append(append(el('div', 'toolbar'), btn('Apply checks', () => read(
-        Object.fromEntries(inputs.map(([id, control]) => [id, control.value.trim()]).filter(([, value]) => value)), true)),
-        btn('Use default checks', () => read({}, true))), feedback);
-      node.append(editor);
-    }
-    async function read(requested = paths, save = false) {
-      const current = ++version, publication = state.publication;
-      if (!save) result.textContent = 'Reading repository score…';
-      else feedback.textContent = 'Evaluating checks…';
-      const cacheKey = JSON.stringify(requested);
-      if (state.repositoryScore?.key !== cacheKey) {
-        const promise = requestRepositoryScore(env.jobId, env.graph, requested, publication.signal);
-        const entry = { key: cacheKey, promise };
-        state.repositoryScore = entry;
-        promise.catch(() => { if (state.repositoryScore === entry) state.repositoryScore = null; });
-      }
-      try {
-        const score = await state.repositoryScore.promise;
-        if (env.signal.aborted || current !== version) return;
-        paths = score.paths ?? {};
-        if (save) {
-          for (const [id, control] of inputs) control.value = paths[id] ?? '';
-          try {
-            localStorage.setItem(key, JSON.stringify(paths));
-            feedback.textContent = 'Checks saved for this repository.';
-          } catch (_) {
-            feedback.textContent = 'Checks applied for this snapshot.';
-          }
-        }
-        const withheld = score.status === 'WITHHELD';
-        const value = score.score == null
-          ? withheld || score.lower == null || score.upper == null ? 'Unavailable' : (score.lower === score.upper ? score.lower : score.lower + '–' + score.upper) + ' / 100'
-          : score.score + ' / 100';
-        const numericRing = withheld ? null : (score.score ?? (score.lower != null && score.upper != null ? (score.lower + score.upper) / 2 : null));
-        const stateText = { OBSERVED: 'Observed', ABSENT: 'No match', UNKNOWN: '—', NOT_APPLICABLE: 'Not applicable' };
-        const breakdownRows = (score.checks || []).map(check => {
-          const label = fields.find(([id]) => id === check.name)?.[1] ?? check.name;
-          const contribution = check.state === 'OBSERVED' ? check.weight + ' / ' + check.weight
-            : check.state === 'ABSENT' ? '0 / ' + check.weight : (stateText[check.state] || '—');
-          const actionNode = check.evidence
-            ? btn(check.evidence.path, () => inspect('Scoring evidence', 'CAPTURED FILE',
-              { snapshot: score.snapshot, check: check.criterion, path: check.evidence.path, evidence: check.evidence.identity }), 'text-button evo-file-pill')
-            : null;
-          return {
-            label,
-            weight: Number(check.weight) || 0,
-            state: check.state,
-            valueText: contribution,
-            note: check.criterion,
-            actionNode
-          };
-        });
-        result.replaceChildren(renderScoreShowcase({
-          mode: 'additive',
-          rawScore: numericRing,
-          displayText: value,
-          subtitle: withheld ? 'Evidence insufficient for a deterministic repository score' : 'File-based engineering readiness checks',
-          statusLabel: withheld ? 'Withheld' : undefined,
-          statusTone: withheld || numericRing == null ? 'muted' : undefined,
-          breakdownRows
-        }));
-      } catch (error) {
-        if (env.signal.aborted || current !== version) return;
-        if (save) feedback.textContent = error.code === 'INVALID_REQUEST' ? 'Use a path inside the repository, such as qa/smoke.sh.' : error.message;
-        else result.replaceChildren(el('p', '', error.message), btn('Retry score', () => read()));
-      }
-    }
-    read();
-    return node;
-  }
-
   function fetchArchitectureScoreV2(env, policy = null) {
     const key = JSON.stringify([env.graph, env.context, policy || null]);
     const existing = state.scoreV2Cache.get(key);
@@ -3117,13 +2763,13 @@
   }
 
   function architectureScoreV2Card(env, { detailed = false } = {}) {
-    const node = card('Architecture Health v2', '7-dimension structural, modular, Spring, polyglot & policy health — strictly separated from Analysis Confidence.');
+    const node = card('Architecture Health', 'Structural, modular, framework, and policy health — kept separate from analysis confidence.');
     node.classList.add('evo-v2-card');
     if (M.isPreliminaryTier?.(state.truthTier)) {
       const info = M.truthTierInfo(state.truthTier, state.previewMeta);
       node.append(
         append(el('div', 'notice'),
-          el('strong', '', 'Architecture Health v2 pending deep semantic analysis'),
+          el('strong', '', 'Architecture Health pending deep semantic analysis'),
           el('p', 'small', info.detail)),
         append(el('div', 'toolbar'),
           btn('Explore Dependency Map', () => loadTab('graph'), 'button primary'),
@@ -3134,7 +2780,7 @@
     }
     const container = el('div');
     container.setAttribute('aria-live', 'polite');
-    container.append(skeleton(3), el('p', 'small muted', 'Computing 7-dimension Architecture Health v2…'));
+    container.append(skeleton(3), el('p', 'small muted', 'Computing Architecture Health…'));
     node.append(container);
 
     const openWitness = async witness => {
@@ -3166,11 +2812,7 @@
         mode: 'dimensions',
         rawScore: numericScore,
         displayText: rangeText,
-        subtitle: [
-          v2.scopeMode === 'WHOLE_REPOSITORY' ? 'Whole-repository composite' : 'Selected context',
-          v2.formula?.id ? `${v2.formula.id}@${v2.formula.version}` : 'v2.0',
-          v2.calibration === 'EMPIRICALLY_GROUNDED_PROVISIONAL' ? 'Provisional calibration' : v2.calibration
-        ].filter(Boolean).join(' · '),
+        subtitle: v2.scopeMode === 'WHOLE_REPOSITORY' ? 'Whole repository' : 'Selected context',
         statusLabel: v2.healthBand || (numericScore == null ? 'Withheld' : undefined),
         statusTone: overallTone,
         breakdownRows: []
@@ -3220,10 +2862,11 @@
       }
       confPanel.append(signalGrid);
       const confFooter = el('div', 'toolbar');
-      if (Number(c.openGapCount || 0) > 0) {
-        confFooter.append(btn(`Inspect ${Number(c.openGapCount).toLocaleString()} open gaps →`, () => loadTab('coverage'), 'text-button'));
+      const gapTotal = Math.max(Number(c.openGapCount || 0), Number(state.resultJob?.result?.gapCount || 0));
+      if (gapTotal > 0) {
+        confFooter.append(btn(`Inspect ${gapTotal.toLocaleString()} coverage gaps →`, () => loadTab('coverage'), 'text-button'));
       }
-      confFooter.append(btn('Raw v2 JSON', () => inspect('Architecture Health v2', 'ASSESSMENT V2', v2), 'text-button'));
+      confFooter.append(btn('Raw JSON', () => inspect('Architecture Health', 'ASSESSMENT V2', v2), 'text-button'));
       confPanel.append(confFooter);
 
       const hero = append(el('div', 'evo-v2-hero'), leftCol, confPanel);
@@ -3347,12 +2990,26 @@
       }
 
       const actions = el('div', 'toolbar');
-      if (!detailed) actions.append(btn('Open full Score & Metrics Inspector →', () => loadTab('metrics'), 'button subtle'));
-      actions.append(btn('Customize policy rules', () => configureRules(true), 'button subtle'));
+      if (!detailed) {
+        actions.append(
+          btn('Open Dependency Map', () => loadTab('graph'), 'button primary'),
+          btn('Findings & Repair', () => loadTab('policy'), 'button subtle'),
+          btn('Full metrics →', () => loadTab('metrics'), 'button subtle')
+        );
+      }
+      actions.append(btn('Customize rules', () => configureRules(true), 'button subtle'));
       if (state.capabilities?.architectureChatEnabled) {
-        actions.append(btn('Ask AI to improve score', () => {
-          state.chatSeedPrompt = `Review our Architecture Health v2 score (${rangeText}, band ${v2.healthBand}) and prioritize the highest-leverage structural refactorings.`;
+        actions.append(btn('Ask AI', () => {
+          state.chatSeedPrompt = `Review our Architecture Health score (${rangeText}, band ${v2.healthBand}) and prioritize the highest-leverage structural refactorings.`;
           return loadTab('architecture-chat');
+        }, 'button subtle'));
+      }
+      const prevGraph = !detailed && state.capabilities?.evolutionEnabled && state.resultJob ? findPreviousGraphForComparison(state.resultJob) : null;
+      if (prevGraph && state.resultJob?.result?.graph) {
+        const setupObj = state.setups.find(s => s.id === state.resultJob.setup);
+        const repoId = typeof setupObj?.repository === 'string' ? setupObj.repository : (setupObj?.repository?.value || '');
+        actions.append(btn('Compare with previous snapshot →', () => {
+          location.hash = M.buildCompareHash({ left: prevGraph, right: state.resultJob.result.graph, repo: repoId, autorun: true });
         }, 'button subtle'));
       }
       pieces.push(actions);
@@ -3364,8 +3021,8 @@
     }).catch(error => {
       if (env.signal.aborted) return;
       container.replaceChildren(
-        el('p', 'small muted', error.message || 'Architecture Health v2 is unavailable for this context.'),
-        btn('Retry Architecture Health v2', () => {
+        el('p', 'small muted', error.message || 'Architecture Health is unavailable for this context.'),
+        btn('Retry Architecture Health', () => {
           state.scoreV2Cache.clear();
           return loadTab(state.tab);
         }, 'button subtle')
@@ -3559,28 +3216,28 @@
   const views = {
     'architecture-chat': architectureChatView,
     overview(env) {
-      const node = el('div'), stats = el('div', 'summary-table');
-      const result = state.resultJob?.result;
+      const node = el('div');
+      const useV2 = Boolean(state.capabilities?.architectureScoreV2Enabled);
+      const grid = el('div', 'overview-layout');
+      if (useV2) {
+        grid.append(architectureScoreV2Card(env, { detailed: false }));
+        node.append(grid);
+        return node;
+      }
       const next = append(el('section', 'workbench-next'),
-        append(el('div'), el('h2', '', 'Explore this snapshot'),
-          el('p', '', 'Open the repository structure, inspect coverage details, review findings, or ask about a design decision.')));
+        append(el('div'), el('h2', '', 'Snapshot overview')));
       const routes = append(el('div', 'workbench-next-actions'),
         btn('Browse structure', () => loadTab('structure'), 'button subtle'),
         btn('RepoMap & Source', () => loadTab('repomap'), 'button subtle'),
         btn('Gaps & Coverage', () => loadTab('coverage'), 'button subtle'),
-        btn('Review findings', () => loadTab('policy'), 'button subtle'));
+        btn('Findings & Repair', () => loadTab('policy'), 'button subtle'));
       if (state.capabilities?.architectureChatEnabled) {
         routes.append(btn('Open architecture chat', () => loadTab('architecture-chat'), 'button primary'));
       }
       next.append(routes);
-      const grid = el('div', 'overview-layout');
       node.append(next, grid);
-      const useV2 = Boolean(state.capabilities?.architectureScoreV2Enabled);
-      if (useV2) {
-        grid.append(architectureScoreV2Card(env, { detailed: false }));
-      }
-      if (state.capabilities?.repositoryScoringEnabled) grid.append(repositoryScoreCard(env));
-      const health = card(useV2 ? 'Snapshot structure & rules' : 'Architecture assessment');
+      const stats = el('div', 'summary-table');
+      const health = card('Architecture assessment');
       health.classList.add('overview-context');
       const inventory = append(el('details', 'inventory-details'), el('summary', '', 'Structure counts'), stats);
       let requested = false;
@@ -3619,7 +3276,6 @@
       }
       health.append(healthActions);
       grid.append(health);
-      if (env.jobId && result && state.capabilities?.analysisCoverageEnabled) grid.append(coverageCard(env, result));
       return node;
     },
     async coverage(env) {
@@ -4047,7 +3703,7 @@
       level.addEventListener('change', () => { trail = []; safe(load); }); population.addEventListener('change', () => safe(load)); sourceSet.addEventListener('change', () => safe(load)); await load(); return node;
     },
     async policy(env) {
-      const node = card('Rules, findings & repair studio', 'Inspect evaluated rules, diagnose findings with cited code, verify candidate patches in an isolated sandbox, and apply only after explicit confirmation.');
+      const node = card('Findings & Repair');
       if (M.isPreliminaryTier?.(state.truthTier)) {
         node.append(empty('Policy evaluation & automated repair pending',
           'Preliminary structure is currently loaded. Policy checks, diagnosis, and repair actions unlock automatically when deep semantic analysis completes.'));
@@ -4057,14 +3713,15 @@
       const setupRec = state.setups.find(s => s.id === env.setup);
       const isGh = Boolean(window.EvoGitHubHub?.isGitHubConnection?.(conn, setupRec));
       if (!env.reportIds.length) {
-        node.append(empty('No policy report for this context', 'Add architecture policy YAML (or auto-detect rules) to evaluate findings, or use the Ad-Hoc Repair Studio below to propose & verify refactorings.'));
-        const noReportActions = append(el('div', 'toolbar'), btn('Configure rules & scoring', configureRules, 'button primary'));
-        node.append(noReportActions);
+        const bar = append(el('div', 'rs-policy-bar'),
+          el('span', 'small muted', 'No architecture rules configured for this view.'),
+          btn('Configure rules', () => configureRules(true), 'button subtle'));
+        node.append(bar);
         if (window.EvoRepairStudio?.mount) {
-          const adhocHost = el('div');
-          adhocHost.style.marginTop = '14px';
-          node.append(adhocHost);
-          window.EvoRepairStudio.mount(adhocHost, {
+          const studioHost = el('div');
+          studioHost.style.marginTop = '12px';
+          node.append(studioHost);
+          window.EvoRepairStudio.mount(studioHost, {
             env, reportId: null, findings: [], api, resolveLabels,
             openCapturedSource: openCapturedSourceModal, inspectFinding, askAboutFinding,
             downloadBlob, capabilities: state.capabilities, setupId: env.setup, isGitHubRepo: isGh
@@ -4074,10 +3731,11 @@
       }
       const toolbar = el('div', 'toolbar'), reports = el('select'), kinds = el('select'); reports.setAttribute('aria-label', 'Policy report'); kinds.setAttribute('aria-label', 'Rules or findings');
       env.reportIds.forEach((report, index) => { const option = el('option', '', 'Policy report ' + (index + 1)); option.value = report.identity; reports.append(option); });
+      reports.hidden = env.reportIds.length <= 1;
       const active = state.activePolicyReports?.get(env.context);
       if (env.reportIds.some(report => report.identity === active)) reports.value = active;
-      for (const op of ['findings', 'rules']) { const option = el('option', '', op === 'rules' ? 'Evaluated rules' : 'Observed findings'); option.value = op; kinds.append(option); }
-      toolbar.append(reports, kinds); node.append(toolbar); const results = el('div'); node.append(results); let version = 0;
+      for (const op of ['findings', 'rules']) { const option = el('option', '', op === 'rules' ? 'Evaluated rules' : 'Findings'); option.value = op; kinds.append(option); }
+      toolbar.append(reports, kinds, btn('Configure rules', () => configureRules(true), 'button subtle')); node.append(toolbar); const results = el('div'); node.append(results); let version = 0;
       async function load() {
         const current = ++version, id = reports.value, op = kinds.value;
         results.replaceChildren(empty('Loading…', 'Reading the selected report.'));
@@ -4099,7 +3757,7 @@
                 return inspectFinding(item, id, env);
               }, [rule?.severity, finding.status].filter(Boolean).join(' · '));
               r.dataset.findingId = item.identity;
-              const studioBtn = btn('Studio →', () => {
+              const studioBtn = btn('Fix →', () => {
                 studioHandle?.selectFinding?.(item);
                 studioHost.scrollIntoView?.({ behavior: 'smooth', block: 'nearest' });
               }, 'button subtle rs-open-studio-btn');
@@ -4254,11 +3912,7 @@
         v2Hero.style.marginBottom = '20px';
         node.append(v2Hero);
       }
-      if (state.capabilities?.repositoryScoringEnabled) {
-        node.append(append(el('div', 'content-grid'), repositoryScoreCard(env, true), architectureScoreCard(env)));
-      } else {
-        node.append(architectureScoreCard(env));
-      }
+      node.append(architectureScoreCard(env));
       const catalog = await env.query('metric-catalog', {}, { size: 50 }), metricCard = card('Architecture metrics', 'Choose a metric and scope.'); metricCard.style.marginTop = '20px'; node.append(metricCard);
       const metricNames = { 'metric.ca': 'Incoming coupling (Ca)', 'metric.ce': 'Outgoing coupling (Ce)', 'metric.scc': 'Connected components (SCC)', 'metric.physical-loc': 'Physical lines of code (LOC)', 'metric.inventory': 'Captured inventory', 'metric.fan-in': 'Incoming dependencies (Fan-in)', 'metric.fan-out': 'Outgoing dependencies (Fan-out)', 'metric.hotspots': 'Dependency hotspots', 'metric.crossings': 'Layer boundary crossings', 'metric.operational': 'Measured runtime', 'metric.spring': 'Spring inventory' };
       const metric = selectControl('Metric', catalog.items.filter(id => id !== 'metric.quality').map(id => [id, metricNames[id] || id.replace(/^metric\./, '').replaceAll('-', ' ').replace(/^./, letter => letter.toUpperCase())]), env.springContext ? 'metric.spring' : 'metric.inventory');
@@ -4619,7 +4273,6 @@
   $('connect-form').addEventListener('submit', connectRepository);
   $('disconnect-form')?.addEventListener('submit', disconnectRepository);
   $('analysis-mode').addEventListener('change', () => { state.retry = null; syncRunControls(); });
-  $('job-timing').addEventListener('toggle', () => { if ($('job-timing').open) loadTelemetry(); });
   $('run-details').addEventListener('toggle', () => { if ($('run-details').open) requestAnimationFrame(syncStepTrackGeometry); });
   $('job-events').addEventListener('toggle', () => requestAnimationFrame(syncStepTrackGeometry), true);
   if (typeof ResizeObserver === 'function') new ResizeObserver(() => syncStepTrackGeometry()).observe($('job-events'));

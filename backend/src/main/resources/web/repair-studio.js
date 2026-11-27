@@ -140,7 +140,7 @@
     return wrap;
   }
 
-  function renderVerificationReportCard(report, { onDownloadMarkdown, onProceedToApply }) {
+  function renderVerificationReportCard(report, { onDownloadMarkdown, onProceedToApply, onRerun }) {
     const trust = M.repairTrustMeta(report?.verdict, report?.trustLabel);
     const score = M.formatScoreV2Delta(report?.scoreV2Delta || report?.scoreDelta);
     const vDelta = report?.violationsDelta || report?.violationDelta || {};
@@ -223,7 +223,7 @@
     // Score v2 D1–D7 Dimension Deltas
     if (score.dimensions.length) {
       const dimBox = el('details', 'rs-dim-deltas');
-      dimBox.open = true;
+      dimBox.open = false;
       dimBox.append(el('summary', '', `Dimension Breakdown (${score.dimensions.length} dimensions)`));
       const dimGrid = el('div', 'rs-dim-grid');
       for (const d of score.dimensions) {
@@ -413,9 +413,12 @@
     if (typeof onDownloadMarkdown === 'function') {
       actions.append(btn('Download Report (.md)', onDownloadMarkdown, 'button subtle'));
     }
+    if (typeof onRerun === 'function') {
+      actions.append(btn('Re-run Verification', onRerun, 'button subtle'));
+    }
     if (typeof onProceedToApply === 'function') {
       const proceedBtn = btn(
-        trust.isRejected ? 'Review Rejection & Guardrails →' : 'Continue to Confirmation Gate →',
+        trust.isRejected ? 'Review Rejection & Guardrails →' : 'Continue to Apply →',
         onProceedToApply,
         trust.isRejected ? 'button subtle' : 'button primary'
       );
@@ -467,19 +470,18 @@
     env.signal?.addEventListener('abort', stopVerifyStream, { once: true });
 
     const root = el('section', 'rs-studio');
-    root.setAttribute('aria-label', 'Guided Repair and Sandbox Verification Studio');
+    root.setAttribute('aria-label', 'Code Repair');
 
     const header = el('header', 'rs-studio-header');
     const titleWrap = append(el('div'),
-      el('h3', 'rs-studio-title', 'Guided Repair & Sandbox Verification Studio'),
-      el('p', 'small muted', 'Diagnose with cited evidence, generate a compiler-checked patch, verify in an isolated sandbox, and apply only after explicit confirmation.'));
+      el('h3', 'rs-studio-title', 'Code Repair'));
     const headerModeBtns = el('div', 'rs-header-actions');
-    const findingModeBtn = btn('Finding Repair', () => {
+    const findingModeBtn = btn('Fix Finding', () => {
       studio.mode = 'finding';
       studio.step = 1;
       renderAll();
     }, 'chip' + (studio.mode === 'finding' ? ' active' : ''));
-    const adhocModeBtn = btn('Ad-Hoc Refactoring Prompt', () => {
+    const adhocModeBtn = btn('Custom Fix', () => {
       studio.mode = 'adhoc';
       studio.step = 1;
       renderAll();
@@ -490,7 +492,7 @@
     const historyDrawer = el('div', 'rs-drawer-host');
     historyDrawer.hidden = true;
 
-    const sandboxToggleBtn = btn('Sandbox Setup', () => {
+    const sandboxToggleBtn = btn('Sandbox', () => {
       studio.sandboxOpen = !studio.sandboxOpen;
       sandboxToggleBtn.classList.toggle('active', studio.sandboxOpen);
       sandboxToggleBtn.setAttribute('aria-expanded', String(studio.sandboxOpen));
@@ -524,14 +526,14 @@
     sandboxToggleBtn.setAttribute('aria-expanded', 'false');
 
     async function renderJobHistoryDrawer() {
-      historyDrawer.replaceChildren(el('p', 'small muted', 'Loading persisted repair verification jobs…'));
+      historyDrawer.replaceChildren(el('p', 'small muted', 'Loading verification history…'));
       try {
         const res = await api('/repairs/jobs', undefined, env.signal, 'GET', 15000);
         const items = Array.isArray(res?.items) ? res.items : (Array.isArray(res) ? res : []);
         const card = el('section', 'rs-history-card');
-        card.append(el('strong', '', `Persisted Verification Jobs (${items.length})`));
+        card.append(el('strong', '', `Verification History (${items.length})`));
         if (!items.length) {
-          card.append(el('p', 'small muted', 'No verification jobs persisted in jobs.db yet.'));
+          card.append(el('p', 'small muted', 'No verification runs recorded yet.'));
         } else {
           const list = el('ul', 'rs-history-list');
           for (const j of items.slice(0, 12)) {
@@ -541,7 +543,7 @@
             const tone = (verdictStr === 'VERIFIED' || verdictStr === 'VERIFIED_DEMO') ? 'good'
               : (verdictStr === 'REJECTED' || stageStr === 'FAILED') ? 'bad' : 'warn';
             const li = el('li', 'rs-history-item');
-            const openBtn = btn(j.report ? 'Open Report' : 'Inspect Job', async () => {
+            const openBtn = btn(j.report ? 'Open Report' : 'Inspect', async () => {
               try {
                 const detail = await api(`/repairs/jobs/${encodeURIComponent(j.jobId)}`, undefined, env.signal, 'GET', 15000);
                 studio.verifyJob = detail;
@@ -552,7 +554,7 @@
                 studio.prResult = null;
                 if (detail?.report || detail?.verdict) {
                   studio.verifyReport = unwrapJobReport(detail);
-                  studio.step = 4;
+                  studio.step = 3;
                 } else {
                   studio.verifyReport = null;
                   const evs = Array.isArray(detail?.events) ? detail.events : [];
@@ -587,12 +589,12 @@
         historyDrawer.replaceChildren(card);
       } catch (err) {
         if (!env.signal.aborted) {
-          historyDrawer.replaceChildren(el('div', 'rs-inline-notice is-warn', err.message || 'Could not load persisted job history.'));
+          historyDrawer.replaceChildren(el('div', 'rs-inline-notice is-warn', err.message || 'Could not load job history.'));
         }
       }
     }
 
-    const historyToggleBtn = btn('Job History', () => {
+    const historyToggleBtn = btn('History', () => {
       studio.historyOpen = !studio.historyOpen;
       historyToggleBtn.classList.toggle('active', studio.historyOpen);
       historyToggleBtn.setAttribute('aria-expanded', String(studio.historyOpen));
@@ -611,27 +613,22 @@
     }, 'chip rs-history-toggle');
     historyToggleBtn.setAttribute('aria-expanded', 'false');
 
-    headerModeBtns.append(findingModeBtn, adhocModeBtn, sandboxToggleBtn, historyToggleBtn);
+    if (findings.length > 0) {
+      headerModeBtns.append(findingModeBtn, adhocModeBtn);
+    }
+    headerModeBtns.append(sandboxToggleBtn, historyToggleBtn);
     header.append(titleWrap, headerModeBtns);
 
-    // 5-step stepper rail
+    // 4-step stepper rail
     const stepper = el('ol', 'rs-stepper');
     stepper.setAttribute('aria-label', 'Repair workflow steps');
-    const stepDefs = [
-      [1, '1. Diagnosis'],
-      [2, '2. Code Patch'],
-      [3, '3. Sandbox Verify'],
-      [4, '4. Impact Report'],
-      [5, '5. Confirm & Apply']
-    ];
 
     const stageHost = el('div', 'rs-stage-host');
     root.append(header, sandboxDrawer, historyDrawer, stepper, stageHost);
     container.replaceChildren(root);
 
     function highestUnlockedStep() {
-      if (studio.verifyReport) return 5;
-      if (studio.proposal?.status === 'PROPOSED') return 5;
+      if (studio.verifyReport || studio.proposal?.status === 'PROPOSED') return 4;
       if (studio.diagnosis?.status === 'CITATIONS_VALIDATED') return 2;
       return 1;
     }
@@ -640,6 +637,12 @@
       findingModeBtn.classList.toggle('active', studio.mode === 'finding');
       adhocModeBtn.classList.toggle('active', studio.mode === 'adhoc');
       stepper.replaceChildren();
+      const stepDefs = [
+        [1, studio.mode === 'adhoc' || !studio.selectedFinding ? '1. Describe' : '1. Diagnose'],
+        [2, '2. Patch'],
+        [3, '3. Verify'],
+        [4, '4. Apply']
+      ];
       const maxStep = highestUnlockedStep();
       for (const [num, lbl] of stepDefs) {
         const li = el('li', 'rs-step-item');
@@ -647,8 +650,7 @@
         const done = (num === 1 && (studio.diagnosis?.status === 'CITATIONS_VALIDATED' || studio.proposal?.status === 'PROPOSED'))
           || (num === 2 && studio.proposal?.status === 'PROPOSED')
           || (num === 3 && Boolean(studio.verifyReport))
-          || (num === 4 && Boolean(studio.verifyReport))
-          || (num === 5 && Boolean(studio.applyReceipt || studio.prResult));
+          || (num === 4 && Boolean(studio.applyReceipt || studio.prResult));
         const b = btn(lbl, () => {
           if (!unlocked) return;
           studio.step = num;
@@ -680,29 +682,28 @@
       renderAll();
     }
 
-    /* ── STEP 1: Diagnosis or Ad-Hoc Prompt ───────────────────────────────── */
+    /* ── STEP 1: Diagnose Issue or Describe Custom Fix ───────────────────── */
     function renderStep1() {
       if (studio.mode === 'adhoc' || !studio.selectedFinding) {
         const box = el('div', 'rs-card');
-        box.append(
-          el('h4', '', 'Ad-Hoc Architecture Repair Proposal'),
-          el('p', 'small muted', 'Describe the refactoring or structural fix you want. Evo will propose a compiler-checked multi-file patch tied to this captured snapshot, then verify it in an isolated sandbox.')
-        );
         const promptField = el('textarea', 'rs-textarea');
-        promptField.rows = 4;
-        promptField.placeholder = 'Example: Extract an OrderGateway interface to break the circular dependency between OrderService and BillingController…';
+        promptField.rows = 3;
+        promptField.placeholder = 'e.g. Extract an OrderGateway interface to break the cycle between OrderService and BillingController';
         promptField.value = studio.adhocPrompt;
         promptField.addEventListener('input', () => { studio.adhocPrompt = promptField.value; });
 
         const filesInput = el('input', 'rs-input');
-        filesInput.placeholder = 'Optional — leave blank to auto-discover via RepoMap (Trigram+IDF+PPR), or enter comma-separated paths';
+        filesInput.placeholder = 'Leave blank to auto-detect via RepoMap, or enter comma-separated paths';
         filesInput.value = studio.adhocFiles;
         filesInput.addEventListener('input', () => { studio.adhocFiles = filesInput.value; });
+
+        const filesDetails = el('details', 'rs-optional-details');
+        filesDetails.append(el('summary', '', 'Target files (optional)'), filesInput);
 
         const statusLine = el('p', 'small muted');
         statusLine.setAttribute('role', 'status');
 
-        const genBtn = btn('Generate Ad-Hoc Patch →', async () => {
+        const genBtn = btn('Generate Patch →', async () => {
           const prompt = promptField.value.trim();
           if (!prompt) {
             statusLine.textContent = 'Describe the desired code change first.';
@@ -725,15 +726,15 @@
             studio.step = 2;
             renderAll();
           } catch (err) {
-            if (!env.signal.aborted) statusLine.textContent = err.message || 'Ad-hoc proposal unavailable.';
+            if (!env.signal.aborted) statusLine.textContent = err.message || 'Could not generate patch.';
           } finally {
             genBtn.disabled = false;
           }
         }, 'button primary');
 
         box.append(
-          append(el('label', 'rs-field'), el('span', 'small muted', 'Refactoring goal'), promptField),
-          append(el('label', 'rs-field'), el('span', 'small muted', 'Focus files (optional)'), filesInput),
+          append(el('label', 'rs-field'), el('span', 'small muted', 'What would you like to fix or refactor?'), promptField),
+          filesDetails,
           append(el('div', 'rs-action-row'), genBtn),
           statusLine
         );
@@ -749,7 +750,6 @@
 
       const head = el('div', 'rs-finding-head');
       const clsStr = finding.classification || 'MUST';
-      const scopePlain = M.explainMetric?.(clsStr)?.plain || '';
       const findingOwners = Array.isArray(finding.owners) && finding.owners.length
         ? finding.owners
         : (finding.path ? window.EvoGitHubEnterprise?.ownersForPath?.(env.graph, finding.path) : []);
@@ -759,7 +759,6 @@
         window.EvoGitHubEnterprise?.makeOwnerPills?.(findingOwners)
       );
       box.append(head);
-      if (scopePlain) box.append(el('p', 'small muted', scopePlain));
 
       // Dependency path with resolved class labels (never raw sha256!)
       if (Array.isArray(bundle.path) && bundle.path.length) {
@@ -792,7 +791,7 @@
 
       const diagOut = el('div', 'rs-diag-output');
       const actions = el('div', 'rs-action-row');
-      const runDiagBtn = btn(studio.diagnosis ? 'Re-run Diagnosis' : '1. Run Evidence-Grounded Diagnosis', async () => {
+      const runDiagBtn = btn(studio.diagnosis ? 'Re-run Diagnosis' : 'Diagnose Issue', async () => {
         runDiagBtn.disabled = true;
         diagOut.replaceChildren(el('p', 'small muted', 'Running grounded diagnosis and verifying source citations…'));
         try {
@@ -808,12 +807,12 @@
 
       append(actions,
         runDiagBtn,
-        btn('Inspect Raw Evidence', () => inspectFinding(item, reportId, env), 'button subtle'),
+        btn('Details', () => inspectFinding(item, reportId, env), 'button subtle'),
         capabilities?.architectureChatEnabled
-          ? btn('Ask AI Chat about Finding', () => askAboutFinding(item, reportId, env), 'button subtle')
+          ? btn('Ask in Chat', () => askAboutFinding(item, reportId, env), 'button subtle')
           : null,
         (isGitHubRepo && capabilities?.githubEnterpriseEnabled && window.EvoGitHubEnterprise?.openCreateIssueModal)
-          ? btn('Create GitHub Issue', () => window.EvoGitHubEnterprise.openCreateIssueModal(setupId || env.setup, {
+          ? btn('Create Issue', () => window.EvoGitHubEnterprise.openCreateIssueModal(setupId || env.setup, {
               graph: env.graph,
               report: reportId,
               findingId: item.identity,
@@ -829,7 +828,7 @@
         const ok = d.status === 'CITATIONS_VALIDATED';
         const banner = el('div', 'rs-inline-notice ' + (ok ? 'is-good' : 'is-warn'));
         banner.append(
-          el('strong', '', `${d.mode === 'LOCAL_REPLAY' ? 'Deterministic Local Replay' : 'Live AI Diagnosis'} · ${ok ? 'Citations Validated' : 'Withheld'}`),
+          el('strong', '', `${d.mode === 'LOCAL_REPLAY' ? 'Local Replay' : 'AI Diagnosis'} · ${ok ? 'Citations Validated' : 'Withheld'}`),
           el('p', 'small', d.explanation || d.reason || 'Review evidence details below.')
         );
         diagOut.append(banner);
@@ -856,7 +855,7 @@
 
         if (ok) {
           diagOut.append(append(el('div', 'rs-action-row'),
-            btn('Continue to Step 2: Code Patch →', () => {
+            btn('Continue to Patch →', () => {
               studio.step = 2;
               renderAll();
             }, 'button primary')));
@@ -912,7 +911,7 @@
 
       if (studio.mode === 'finding' && studio.selectedFinding && studio.diagnosis?.input) {
         const controlsBox = el('div', 'rs-patch-controls');
-        box.append(el('h4', '', '2. Generate Compiler-Checked Code Patch'), controlsBox, statusLine);
+        box.append(el('h4', '', 'Code Patch'), controlsBox, statusLine);
 
         const renderControls = () => {
           controlsBox.replaceChildren();
@@ -933,7 +932,7 @@
             }
             const firstApp = ranked.find(r => r.applicable);
             if (firstApp) sel.value = firstApp.id;
-            const runRecipe = btn('Generate Recipe Patch', () => generateProposal({ strategy: 'RECIPE', recipe: sel.value }), 'button primary');
+            const runRecipe = btn('Generate Patch', () => generateProposal({ strategy: 'RECIPE', recipe: sel.value }), 'button primary');
             row.append(sel, runRecipe);
             controlsBox.append(row);
           }
@@ -951,8 +950,8 @@
             aiBtn.disabled = true;
             check.addEventListener('change', () => { aiBtn.disabled = !check.checked; });
             aiPanel.append(
-              el('p', 'small', `AI repair sends captured source (${fileList || 'cited files'}) to ${opts.ai.provider?.endpoint || 'configured provider'} and checks syntax with javac/parser.`),
-              append(el('label', 'gh-confirm-check'), check, el('span', '', 'Allow captured source disclosure for AI repair')),
+              el('p', 'small', `Sends cited files (${fileList || 'cited files'}) to ${opts.ai.provider?.endpoint || 'configured provider'} and checks syntax.`),
+              append(el('label', 'gh-confirm-check'), check, el('span', '', 'Allow sending cited source to AI')),
               aiBtn
             );
             controlsBox.append(aiPanel);
@@ -993,7 +992,7 @@
           renderControls();
         }
       } else {
-        box.append(el('h4', '', '2. Proposed Multi-File Patch'), statusLine);
+        box.append(el('h4', '', 'Code Patch'), statusLine);
       }
 
       if (studio.proposal) {
@@ -1005,7 +1004,7 @@
 
           const badges = el('div', 'rs-verdict-badges');
           append(badges,
-            el('span', 'badge good', 'Compiler Syntax PASSED'),
+            el('span', 'badge good', 'Syntax Valid'),
             attempts > 1 ? el('span', 'badge good', `AI Self-Healed · ${attempts} attempts`) : null,
             el('span', 'badge warn', 'Unverified candidate'),
             cand.strategy ? el('span', 'badge', cand.strategy) : null
@@ -1040,16 +1039,17 @@
             } catch (_) {}
           }, 'button subtle');
           const dlBtn = btn('Download .patch', () => downloadBlob(new Blob([patch], { type: 'text/x-diff' }), 'repair.patch'), 'button subtle');
-          const verifyCta = btn('3. Verify in Isolated Sandbox →', () => {
+          const verifyCta = btn('Verify in Sandbox →', () => {
+            studio.verifyReport = null;
             studio.step = 3;
             renderAll();
             void startSandboxVerification();
           }, 'button primary');
-          const skipToGate = btn('Inspect Confirmation Gate (Unverified)', () => {
-            studio.step = 5;
+          const skipToGate = btn('Skip to Apply →', () => {
+            studio.step = 4;
             renderAll();
           }, 'button subtle');
-          actions.append(copyBtn, dlBtn, verifyCta, skipToGate);
+          actions.append(verifyCta, copyBtn, dlBtn, skipToGate);
           box.append(actions);
         } else {
           box.append(el('div', 'rs-inline-notice is-warn',
@@ -1101,6 +1101,7 @@
       };
       const appendLog = line => {
         if (!logPre || !line) return;
+        logPre.hidden = false;
         logPre.textContent += (logPre.textContent ? '\n' : '') + line;
         logPre.scrollTop = logPre.scrollHeight;
       };
@@ -1165,7 +1166,7 @@
         studio.verifyJob = jobResp;
         if (jobResp?.verdict && !jobResp?.jobId) {
           studio.verifyReport = unwrapJobReport(jobResp);
-          studio.step = 4;
+          studio.step = 3;
           renderAll();
           return;
         }
@@ -1183,7 +1184,7 @@
             return;
           }
           studio.verifyReport = unwrapJobReport(finalJob);
-          studio.step = 4;
+          studio.step = 3;
           renderAll();
         };
 
@@ -1202,7 +1203,7 @@
             if (cur.terminal || ['SUCCEEDED', 'COMPLETED', 'REPORT_READY', 'FAILED', 'REJECTED', 'CANCELLED', 'FINISHED'].includes(st) || cur.verdict || cur.report) {
               studio.verifyJob = cur;
               studio.verifyReport = unwrapJobReport(cur);
-              studio.step = 4;
+              studio.step = 3;
               renderAll();
               return;
             }
@@ -1244,7 +1245,7 @@
             if (d && (d.verdict || d.report)) {
               stopVerifyStream();
               studio.verifyReport = unwrapJobReport(d);
-              studio.step = 4;
+              studio.step = 3;
               renderAll();
             } else {
               void finishFromJob();
@@ -1269,18 +1270,49 @@
     }
 
     function renderStep3() {
+      if (studio.verifyReport) {
+        const jobId = studio.verifyJob?.jobId || studio.verifyReport?.jobId;
+        const reportCard = renderVerificationReportCard(studio.verifyReport, {
+          onDownloadMarkdown: async () => {
+            try {
+              let md = studio.verifyReport.markdownReport || '';
+              if (!md && jobId) {
+                const resp = await fetch(`/api/v1/repairs/jobs/${encodeURIComponent(jobId)}/report.md`, { credentials: 'same-origin', signal: env.signal });
+                if (resp.ok) md = await resp.text();
+              }
+              if (!md) {
+                md = `# Repair Verification Report\n\n- Verdict: ${studio.verifyReport.verdict}\n- Trust Label: ${studio.verifyReport.trustLabel || 'UNSPECIFIED'}\n`;
+              }
+              downloadBlob(new Blob([md], { type: 'text/markdown;charset=utf-8' }), 'repair-verification-report.md');
+            } catch (_) {}
+          },
+          onRerun: () => {
+            studio.verifyReport = null;
+            renderAll();
+            void startSandboxVerification();
+          },
+          onProceedToApply: () => {
+            studio.step = 4;
+            renderAll();
+          }
+        });
+        stageHost.replaceChildren(reportCard);
+        return;
+      }
+
       const box = el('div', 'rs-card rs-verify-live');
       const backendMode = studio.sandboxSetup?.configured
         ? studio.sandboxSetup.isolationMode
         : (capabilities?.repairSandboxMode || (capabilities?.repairIsolatedRunnerConfigured ? 'ISOLATED_SANDBOX' : 'PASSIVE_REANALYSIS_ONLY'));
       box.append(
         append(el('div', 'rs-verdict-badges'),
-          el('h4', '', '3. Isolated Sandbox Verification'),
-          el('span', 'badge', `Mode: ${backendMode}`)),
-        el('p', 'small muted', 'Applies the candidate patch to a disposable isolated copy — never mutating your working tree or running untrusted builds on the host.')
+          el('h4', '', 'Sandbox Verification'),
+          el('span', 'badge', `Mode: ${backendMode}`))
       );
 
-      // Moonshot #1 Closed-Loop & 3-State Behavioral Diff options
+      // Moonshot #1 Closed-Loop & 3-State Behavioral Diff options (tucked cleanly)
+      const optDetails = el('details', 'rs-optional-details');
+      optDetails.append(el('summary', '', 'Verification options'));
       const optBox = el('div', 'rs-verify-options');
       const clCheck = el('input');
       clCheck.type = 'checkbox';
@@ -1302,22 +1334,21 @@
       probeCheck.addEventListener('change', () => { studio.proposeCharacterizationTests = probeCheck.checked; });
 
       append(optBox,
-        append(el('label', 'gh-confirm-check'), clCheck, el('span', '', 'Closed-loop self-healing (up to 3 sandbox-guided rounds)')),
-        append(el('label', 'gh-confirm-check'), bdCheck, el('span', '', 'Run 3-state behavioral diff (baseline vs candidate in sandbox)')),
-        append(el('label', 'gh-confirm-check'), probeCheck, el('span', '', 'Synthesize syntax-gated characterization probes (optional)'))
+        append(el('label', 'gh-confirm-check'), clCheck, el('span', '', 'Closed-loop self-healing (up to 3 rounds)')),
+        append(el('label', 'gh-confirm-check'), bdCheck, el('span', '', 'Run behavioral diff (baseline vs candidate)')),
+        append(el('label', 'gh-confirm-check'), probeCheck, el('span', '', 'Synthesize characterization probes (optional)'))
       );
+      optDetails.append(optBox);
 
       const track = el('div', 'rs-verify-track');
       const fill = el('div', 'rs-verify-fill');
       const jobStage = String(studio.verifyJob?.stage || studio.verifyJob?.status || '').toUpperCase();
-      const isTerminalJob = Boolean(studio.verifyReport || studio.verifyJob?.terminal
+      const isTerminalJob = Boolean(studio.verifyJob?.terminal
         || ['REPORT_READY', 'FAILED', 'CANCELLED', 'INTERRUPTED_ON_RESTART'].includes(jobStage));
       fill.style.width = isTerminalJob ? '100%' : '18%';
       track.append(fill);
       let initialStatus = 'Ready to launch isolated verification.';
-      if (studio.verifyReport) {
-        initialStatus = 'Verification complete.';
-      } else if (jobStage === 'INTERRUPTED_ON_RESTART') {
+      if (jobStage === 'INTERRUPTED_ON_RESTART') {
         initialStatus = `INTERRUPTED_ON_RESTART: ${studio.verifyJob?.error || 'Verification job was interrupted by server restart (persisted in jobs.db). Re-run when ready.'}`;
       } else if (jobStage === 'FAILED') {
         initialStatus = studio.verifyJob?.error ? `Verification failed: ${studio.verifyJob.error}` : 'Verification job failed. Inspect events below or re-run.';
@@ -1340,52 +1371,17 @@
         liveRoundsList.append(li);
       }
       const logPre = el('pre', 'rs-log-pre', '');
+      logPre.hidden = true;
       const actions = el('div', 'rs-action-row');
       append(actions,
-        btn(studio.verifyReport ? 'Re-run Sandbox Verification' : 'Run Isolated Sandbox Verification', () => void startSandboxVerification(), 'button primary'),
-        btn('Configure Sandbox…', () => { if (!studio.sandboxOpen) sandboxToggleBtn.click(); }, 'button subtle'),
-        studio.verifyReport ? btn('View Impact Report →', () => { studio.step = 4; renderAll(); }, 'button subtle') : null
+        btn('Run Sandbox Verification', () => void startSandboxVerification(), 'button primary'),
+        btn('Sandbox settings', () => { if (!studio.sandboxOpen) sandboxToggleBtn.click(); }, 'button subtle')
       );
-      box.append(optBox, track, statusEl, liveRoundsList, logPre, actions);
+      box.append(optDetails, track, statusEl, liveRoundsList, logPre, actions);
       stageHost.replaceChildren(box);
     }
 
-    /* ── STEP 4: Verification & Impact Report Card ────────────────────────── */
-    function renderStep4() {
-      if (!studio.verifyReport) {
-        const emptyCard = el('div', 'rs-card');
-        emptyCard.append(
-          el('h4', '', 'No Verification Report Yet'),
-          el('p', 'small muted', 'Run isolated sandbox verification in Step 3 to measure build/test status, Health Score v2 delta, violation transitions, and capability gap impact.'),
-          btn('Go to Step 3: Verify in Sandbox', () => { studio.step = 3; renderAll(); }, 'button primary')
-        );
-        stageHost.replaceChildren(emptyCard);
-        return;
-      }
-      const jobId = studio.verifyJob?.jobId || studio.verifyReport?.jobId;
-      const reportCard = renderVerificationReportCard(studio.verifyReport, {
-        onDownloadMarkdown: async () => {
-          try {
-            let md = studio.verifyReport.markdownReport || '';
-            if (!md && jobId) {
-              const resp = await fetch(`/api/v1/repairs/jobs/${encodeURIComponent(jobId)}/report.md`, { credentials: 'same-origin', signal: env.signal });
-              if (resp.ok) md = await resp.text();
-            }
-            if (!md) {
-              md = `# Repair Verification Report\n\n- Verdict: ${studio.verifyReport.verdict}\n- Trust Label: ${studio.verifyReport.trustLabel || 'UNSPECIFIED'}\n`;
-            }
-            downloadBlob(new Blob([md], { type: 'text/markdown;charset=utf-8' }), 'repair-verification-report.md');
-          } catch (_) {}
-        },
-        onProceedToApply: () => {
-          studio.step = 5;
-          renderAll();
-        }
-      });
-      stageHost.replaceChildren(reportCard);
-    }
-
-    /* ── STEP 5: Explicit Confirmation Gate (Local Apply, Rollback & GitHub PR) ── */
+    /* ── STEP 4: Explicit Confirmation Gate (Local Apply, Rollback & GitHub PR) ── */
     function activeProposalId() {
       return studio.verifyJob?.finalProposalId
         || studio.verifyReport?.provenance?.proposalIdentity
@@ -1403,11 +1399,11 @@
       }, env.signal, 'POST', 20000);
     }
 
-    function renderStep5() {
+    function renderStep4() {
       const box = el('div', 'rs-card rs-gate-card');
       const propId = activeProposalId();
       if (!propId) {
-        box.append(el('p', 'small muted', 'Generate a patch in Step 2 before opening the confirmation gate.'));
+        box.append(el('p', 'small muted', 'Generate a patch in Step 2 before applying changes.'));
         stageHost.replaceChildren(box);
         return;
       }
@@ -1419,10 +1415,9 @@
 
       box.append(
         append(el('div', 'rs-verdict-badges'),
-          el('h4', '', '5. Explicit Confirmation Gate'),
+          el('h4', '', 'Confirm & Apply'),
           el('span', 'badge ' + (trust.verdictTone === 'good' ? 'good' : trust.verdictTone === 'bad' ? 'bad' : 'warn'), trust.verdictShort),
-          el('span', 'rs-trust-pill is-' + trust.trustTone, trust.trustTitle)),
-        el('p', 'small muted', 'No local files are written and nothing is pushed to GitHub until you explicitly review and confirm below.')
+          el('span', 'rs-trust-pill is-' + trust.trustTone, trust.trustTitle))
       );
 
       const previewBox = el('div', 'rs-gate-preview');
@@ -1478,7 +1473,7 @@
           gateBody.append(recCard);
         }
 
-        // Target Mode Selector: Option A (New Branch), Option B (Direct Local), Option C (GitHub PR)
+        // Target Mode Selector: New Git Branch, Local Files, GitHub PR
         let targetMode = 'NEW_BRANCH_WORKTREE';
         const showPrOption = Boolean(isGitHubRepo || capabilities?.githubIntegrationEnabled);
         const modeRow = el('div', 'rs-target-modes');
@@ -1486,9 +1481,9 @@
         modeRow.setAttribute('aria-label', 'Patch application mode');
 
         const modes = [
-          ['NEW_BRANCH_WORKTREE', 'Option A · Apply to New Git Branch (Recommended)', 'Creates an isolated Git branch / worktree without disturbing your active checkout.'],
-          ['DIRECT_WORKING_TREE', 'Option B · Apply Directly to Local Source', 'Modifies your current working tree with a recorded rollback backup receipt.'],
-          ...(showPrOption ? [['GITHUB_PR', 'Option C · Push & Open Verified GitHub PR', 'Prepares an auditable PR plan and pushes only after separate remote confirmation.']] : [])
+          ['NEW_BRANCH_WORKTREE', 'New Git Branch', 'Recommended · isolated branch'],
+          ['DIRECT_WORKING_TREE', 'Local Files', 'Update working tree with rollback'],
+          ...(showPrOption ? [['GITHUB_PR', 'GitHub Pull Request', 'Push branch & open PR']] : [])
         ];
 
         const formHost = el('div', 'rs-gate-form');
@@ -1795,8 +1790,7 @@
       if (studio.step === 1) renderStep1();
       else if (studio.step === 2) renderStep2();
       else if (studio.step === 3) renderStep3();
-      else if (studio.step === 4) renderStep4();
-      else renderStep5();
+      else renderStep4();
     }
 
     function renderAll() {
@@ -1805,7 +1799,7 @@
     }
 
     renderAll();
-    return { selectFinding, openStep: step => { studio.step = step; renderAll(); } };
+    return { selectFinding, openStep: step => { studio.step = step >= 5 ? 4 : step; renderAll(); } };
   }
 
   window.EvoRepairStudio = {

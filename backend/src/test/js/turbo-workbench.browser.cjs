@@ -159,7 +159,7 @@ async function main([browser, output]) {
     live = {...job, events: [...running.events, {stage: 'FINISHED', at: new Date(1000).toISOString()}]};
     await until('Overview published', () => evaluate("document.querySelector('#panel-overview').textContent.includes('Architecture assessment')"));
     assert.equal(calls.some(route => route.endsWith(graph) || route.endsWith('/summary')), false);
-    assert.equal(await evaluate("document.querySelector('#run-details').open"), true);
+    assert.equal(await evaluate("document.querySelector('#run-details').open"), false);
     await evaluate("document.querySelector('#panel-overview .inventory-details summary').click()");
     await until('Architecture counts open on demand', () => evaluate("document.querySelector('#panel-overview .summary-row')?.innerText.includes('Types & references')"));
     assert.doesNotMatch(await evaluate("document.querySelector('#repository-workspace').innerText"), /incomplete evidence|some evidence is missing|limitations|recorded gaps/i);
@@ -170,8 +170,8 @@ async function main([browser, output]) {
     assert.match(await evaluate("document.querySelector('#job-mode').textContent"), /reduced Java detail/);
     assert.equal(calls.filter(route => route.endsWith('/provenance')).length, 0);
     assert.equal(calls.some(route => route.includes('cytoscape') || route.endsWith('/telemetry') || route.includes('/bridges/')), false);
-    await evaluate("document.querySelector('#job-timing summary').click()");
-    await until('Timing details', () => evaluate("document.querySelector('#job-telemetry-bar').textContent.includes('20 ms')"));
+    assert.equal(await evaluate("document.getElementById('job-timing')"), null);
+    assert.equal(await evaluate("document.getElementById('job-incremental-strip')"), null);
 
     await evaluate("document.querySelector('#tab-graph').click()");
     await until('Captured nodes remain visible when the renderer fails to load', () =>

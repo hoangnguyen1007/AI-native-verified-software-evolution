@@ -613,17 +613,17 @@ async function main([browser]) {
     simulateMember403 = false;
     await page.evaluate(`document.querySelector('.rs-sandbox-toggle').click()`); // close drawer
 
-    // ── 2. Step 1 -> Step 2 (Read-Only Tool Trace) -> Step 3 (Closed-Loop SSE) ─
-    await page.evaluate(`[...document.querySelectorAll('.rs-studio button')].find(b => b.textContent.includes('Run Evidence-Grounded Diagnosis')).click()`);
+    // ── 2. Step 1 -> Step 2 (Read-Only Tool Trace) -> Step 3 (Closed-Loop SSE + Report) ─
+    await page.evaluate(`[...document.querySelectorAll('.rs-studio button')].find(b => b.textContent.includes('Diagnose Issue')).click()`);
     await until('Diagnosis citations validated', () => page.evaluate(`document.querySelector('.rs-studio')?.textContent.includes('Citations Validated')`), 5000);
-    await page.evaluate(`[...document.querySelectorAll('.rs-studio button')].find(b => b.textContent.includes('Continue to Step 2')).click()`);
+    await page.evaluate(`[...document.querySelectorAll('.rs-studio button')].find(b => b.textContent.includes('Continue to Patch')).click()`);
     await until('Step 2 recipe selector', () => page.evaluate(`Boolean(document.querySelector('.rs-studio select'))`), 5000);
-    await page.evaluate(`[...document.querySelectorAll('.rs-studio button')].find(b => b.textContent.includes('Generate Recipe Patch')).click()`);
+    await page.evaluate(`[...document.querySelectorAll('.rs-studio button')].find(b => b.textContent.includes('Generate Patch')).click()`);
     await until('Step 2 read-only tool trace', () => page.evaluate(`document.querySelector('.rs-studio')?.textContent.includes('Read-only repair agent tool calls (2)')`), 5000);
 
-    // Click Step 3 Verify -> sends maxRounds=3, runBehavioralDiff=true, streams multi-round SSE -> auto-advances to Step 4!
-    await page.evaluate(`[...document.querySelectorAll('.rs-studio button')].find(b => b.textContent.includes('3. Verify in Isolated Sandbox')).click()`);
-    await until('Step 4 Behavioral Diff + Spring + Rounds cards', () => page.evaluate(`Boolean(document.querySelector('.rs-behavioral-card') && document.querySelector('.rs-spring-card') && document.querySelector('.rs-rounds-card'))`), 8000);
+    // Click Step 3 Verify -> sends maxRounds=3, runBehavioralDiff=true, streams multi-round SSE -> renders Step 3 Report Card!
+    await page.evaluate(`[...document.querySelectorAll('.rs-studio button')].find(b => b.textContent.includes('Verify in Sandbox')).click()`);
+    await until('Step 3 Behavioral Diff + Spring + Rounds cards', () => page.evaluate(`Boolean(document.querySelector('.rs-behavioral-card') && document.querySelector('.rs-spring-card') && document.querySelector('.rs-rounds-card'))`), 8000);
 
     assert.equal(lastVerifyPayload.closedLoop, true);
     assert.equal(lastVerifyPayload.maxRounds, 3);
