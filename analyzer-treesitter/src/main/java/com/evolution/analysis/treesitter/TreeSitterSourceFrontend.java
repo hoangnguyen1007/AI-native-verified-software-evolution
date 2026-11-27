@@ -116,7 +116,72 @@ public final class TreeSitterSourceFrontend {
     }
 
     private static final Map<String, java.lang.reflect.Constructor<?>> GRAMMAR_CTORS = new java.util.concurrent.ConcurrentHashMap<>();
-    private static final ThreadLocal<Map<String, TSParser>> PARSER_POOL = ThreadLocal.withInitial(HashMap::new);
+    private static final int MAX_POOLED_PARSERS_PER_LANGUAGE = Math.max(2,
+            Math.min(8, Runtime.getRuntime().availableProcessors()));
+    private static final Map<String, java.util.concurrent.ConcurrentLinkedDeque<TSParser>> PARSER_POOL = new java.util.concurrent.ConcurrentHashMap<>();
+
+    static {
+        Runtime.getRuntime().addShutdownHook(new Thread(TreeSitterSourceFrontend::closePooledParsers,
+                "evo-treesitter-pool-shutdown"));
+    }
+
+    /** Releases any idle pooled native TSParser instances (safe to invoke between runs or on shutdown). */
+    public static void closePooledParsers() {
+        for (var deque : PARSER_POOL.values()) {
+            TSParser p;
+            while ((p = deque.pollFirst()) != null) {
+                try {
+                    p.close();
+                } catch (Exception ignored) {
+                }
+            }
+        }
+    }
+
+    private static TSParser borrowParser(String language, Grammar grammar)
+            throws IOException, ReflectiveOperationException {
+        var deque = PARSER_POOL.computeIfAbsent(language, k -> new java.util.concurrent.ConcurrentLinkedDeque<>());
+        TSParser parser = deque.pollFirst();
+        if (parser != null) {
+            return parser;
+        }
+        parser = new TSParser();
+        try {
+            var ctor = GRAMMAR_CTORS.get(grammar.binding());
+            if (ctor == null) {
+                ctor = Class.forName(grammar.binding()).getConstructor();
+                GRAMMAR_CTORS.put(grammar.binding(), ctor);
+            }
+            var binding = (TSLanguage) ctor.newInstance();
+            if (!parser.setLanguage(binding)) {
+                throw new IOException("SYNTAX_GRAMMAR_ABI_MISMATCH");
+            }
+            return parser;
+        } catch (IOException | ReflectiveOperationException | RuntimeException | Error failure) {
+            try {
+                parser.close();
+            } catch (Exception ignored) {
+            }
+            throw failure;
+        }
+    }
+
+    private static void releaseParser(String language, TSParser parser, boolean healthy) {
+        if (parser == null) {
+            return;
+        }
+        if (healthy) {
+            var deque = PARSER_POOL.computeIfAbsent(language, k -> new java.util.concurrent.ConcurrentLinkedDeque<>());
+            if (deque.size() < MAX_POOLED_PARSERS_PER_LANGUAGE) {
+                deque.offerFirst(parser);
+                return;
+            }
+        }
+        try {
+            parser.close();
+        } catch (Exception ignored) {
+        }
+    }
     private static final java.util.regex.Pattern PYTHON_HTTP_CLIENT = java.util.regex.Pattern.compile("(?:requests|httpx|session|client|aiohttp|urllib\\.request)\\.(?:get|post|put|patch|delete|head|options|urlopen|request)");
     private static final java.util.regex.Pattern GO_HTTP_CLIENT = java.util.regex.Pattern.compile("(?:[A-Za-z_][A-Za-z0-9_]*(?:http|Http|client|Client|resty)[A-Za-z0-9_]*)\\.(?:Get|Post|Put|Patch|Delete|Head|R\\(\\)\\.Get|R\\(\\)\\.Post)");
     private static final java.util.regex.Pattern CSHARP_HTTP_CLIENT = java.util.regex.Pattern.compile("[A-Za-z_][A-Za-z0-9_.]*\\.(?:GetAsync|PostAsync|PutAsync|PatchAsync|DeleteAsync|GetStringAsync|GetByteArrayAsync)");
@@ -203,22 +268,13 @@ public final class TreeSitterSourceFrontend {
         // SourceCoordinates measures UTF-8 offsets over the original decoded text.
         // UTF-8 inputs have already been validated and can go straight to the parser.
         byte[] utf8 = encoding.equals("UTF-8") ? bytes : positions.text().getBytes(StandardCharsets.UTF_8);
-        String tool=toolIdentity(grammar);long nodes=0,facts=0,errors=0;
-        var pool = PARSER_POOL.get();
-        var parser = pool.get(language);
+        String tool = toolIdentity(grammar);
+        long nodes = 0, facts = 0, errors = 0;
+        TSParser parser = null;
+        boolean healthy = false;
         try {
-            if (parser == null) {
-                parser = new TSParser();
-                var ctor = GRAMMAR_CTORS.get(grammar.binding());
-                if (ctor == null) {
-                    ctor = Class.forName(grammar.binding()).getConstructor();
-                    GRAMMAR_CTORS.put(grammar.binding(), ctor);
-                }
-                var binding = (TSLanguage) ctor.newInstance();
-                if (!parser.setLanguage(binding)) throw new IOException("SYNTAX_GRAMMAR_ABI_MISMATCH");
-                pool.put(language, parser);
-            }
-            try(var tree=parser.parseWithOptions(new byte[8192],null,(buffer,offset,point)->{
+            parser = borrowParser(language, grammar);
+            try (var tree = parser.parseWithOptions(new byte[8192], null, (buffer, offset, point) -> {
                 if(offset>=utf8.length)return 0;int count=Math.min(buffer.length,utf8.length-offset);System.arraycopy(utf8,offset,buffer,0,count);return count;
             },TSInputEncoding.TSInputEncodingUTF8,state->cancelled.getAsBoolean()||Thread.currentThread().isInterrupted())) {
                 check(cancelled);var root=tree.getRootNode();boolean recovered=root.hasError();
@@ -336,20 +392,11 @@ public final class TreeSitterSourceFrontend {
                 if (recovered && errors == 0)
                     errors = 1;
             }
-        } catch (IOException | RuntimeException | Error failure) {
-            pool.remove(language);
-            if (parser != null) {
-                try { parser.close(); } catch (Exception ignored) {}
-            }
-            if (failure instanceof IOException io) throw io;
-            if (failure instanceof RuntimeException re) throw re;
-            throw (Error) failure;
+            healthy = true;
         } catch (ReflectiveOperationException failure) {
-            pool.remove(language);
-            if (parser != null) {
-                try { parser.close(); } catch (Exception ignored) {}
-            }
             throw new IOException("SYNTAX_BUNDLED_GRAMMAR_UNAVAILABLE", failure);
+        } finally {
+            releaseParser(language, parser, healthy);
         }
         return new Summary(nodes, facts, errors, grammar.library() + ":" + grammar.version(), tool);
     }
@@ -409,6 +456,9 @@ public final class TreeSitterSourceFrontend {
                 }
             } else if (language.equals("python") && kind.equals("decorated_definition")) {
                 collectPythonCeleryTaskMapping(node, utf8, scope);
+            } else if (Set.of("javascript", "typescript", "tsx").contains(language)
+                    && kind.equals("call_expression")) {
+                collectExpressRouterMount(node, utf8, scope);
             }
             if (category.equals("DECLARATION") && node.getEndByte() > node.getStartByte()) {
                 var span = positions.range(node.getStartByte(), node.getEndByte(), SourceCoordinates.Encoding.UTF8);
@@ -605,6 +655,29 @@ public final class TreeSitterSourceFrontend {
             }
             return;
         }
+        if (language.equals("go") && rhs != null && rhsText.length() <= MAX_REGEX_NODE_LENGTH) {
+            TSNode callNode = rhs;
+            if (callNode.getType().equals("expression_list") && callNode.getNamedChildCount() >= 1) {
+                callNode = callNode.getNamedChild(0);
+            }
+            if (CALLS.contains(callNode.getType())) {
+                String callee = text(head(callNode), utf8);
+                if (tailName(callee).equals("Group")) {
+                    var args = argumentsNode(callNode);
+                    if (args != null && args.getNamedChildCount() >= 1) {
+                        var resolved = resolveStaticString(unwrapArgument(args.getNamedChild(0)), utf8, scope, 0);
+                        if (resolved != null && !resolved.unquoted().isBlank()) {
+                            String parentPrefix = scope.routePrefixes.getOrDefault(receiverName(callee), "");
+                            String combined = parentPrefix.isEmpty()
+                                    ? normalizeLeadingSlash(resolved.unquoted().trim())
+                                    : joinBaseAndPath(normalizeLeadingSlash(parentPrefix), resolved.unquoted().trim());
+                            scope.routePrefixes.put(varName, combined);
+                            return;
+                        }
+                    }
+                }
+            }
+        }
         if (looksLikeHttpClientFactory(resolvedRhs) || looksLikeHttpClientFactory(rawNodeText)) {
             String baseUrl = extractBaseUrlLiteral(rhsText);
             scope.httpClients.put(varName, new ClientBinding("FACTORY", baseUrl == null ? "" : baseUrl));
@@ -692,6 +765,31 @@ public final class TreeSitterSourceFrontend {
         return "";
     }
 
+    private static void collectExpressRouterMount(TSNode call, byte[] utf8, FileScope scope) {
+        String callee = text(head(call), utf8);
+        if (!tailName(callee).equals("use")) return;
+        var args = argumentsNode(call);
+        if (args == null || args.getNamedChildCount() < 2) return;
+        var prefixRes = resolveStaticString(unwrapArgument(args.getNamedChild(0)), utf8, scope, 0);
+        if (prefixRes == null || prefixRes.unquoted().isBlank() || prefixRes.unquoted().indexOf('/') < 0) return;
+        String parentPrefix = scope.routePrefixes.getOrDefault(receiverName(callee), "");
+        String mountPrefix = parentPrefix.isEmpty()
+                ? normalizeLeadingSlash(prefixRes.unquoted().trim())
+                : joinBaseAndPath(normalizeLeadingSlash(parentPrefix), prefixRes.unquoted().trim());
+        for (int i = 1; i < args.getNamedChildCount(); i++) {
+            var target = unwrapArgument(args.getNamedChild(i));
+            if (target.getType().equals("identifier")) {
+                String routerVar = text(target, utf8);
+                if (!routerVar.isBlank()) {
+                    String existing = scope.routePrefixes.getOrDefault(routerVar, "");
+                    scope.routePrefixes.put(routerVar, existing.isEmpty()
+                            ? mountPrefix
+                            : joinBaseAndPath(mountPrefix, existing));
+                }
+            }
+        }
+    }
+
     private static void collectPythonCeleryTaskMapping(TSNode decoratedDef, byte[] utf8, FileScope scope) {
         String funcName = "";
         String explicitTaskName = "";
@@ -735,6 +833,24 @@ public final class TreeSitterSourceFrontend {
                             if (resolved != null && !resolved.unquoted().isBlank()) {
                                 return normalizeLeadingSlash(resolved.unquoted());
                             }
+                        }
+                    }
+                }
+            }
+        } else if (language.equals("kotlin")) {
+            for (int i = 0; i < classNode.getNamedChildCount(); i++) {
+                var child = classNode.getNamedChild(i);
+                if (!child.getType().equals("modifiers")) continue;
+                for (int j = 0; j < child.getNamedChildCount(); j++) {
+                    var ann = child.getNamedChild(j);
+                    if (!ann.getType().equals("annotation")) continue;
+                    String annText = text(ann, utf8);
+                    if (!annText.contains("RequestMapping")) continue;
+                    var args = argumentsNode(ann);
+                    if (args != null && args.getNamedChildCount() > 0) {
+                        var resolved = resolveStaticString(unwrapArgument(args.getNamedChild(0)), utf8, scope, 0);
+                        if (resolved != null && !resolved.unquoted().isBlank()) {
+                            return normalizeLeadingSlash(resolved.unquoted().trim());
                         }
                     }
                 }
@@ -1168,7 +1284,8 @@ public final class TreeSitterSourceFrontend {
         if (!recv.isEmpty() && scope.routePrefixes.containsKey(recv)) {
             prefix = scope.routePrefixes.get(recv);
         } else if ((Set.of("typescript", "tsx", "javascript").contains(language) && NESTJS_ROUTE_DECORATORS.contains(tail))
-                || (language.equals("csharp") && kind.equals("attribute") && tail.startsWith("Http"))) {
+                || (language.equals("csharp") && kind.equals("attribute") && tail.startsWith("Http"))
+                || (language.equals("kotlin") && kind.equals("annotation") && tail.endsWith("Mapping"))) {
             String classSpan = scope.classRoutePrefixes.containsKey(owner)
                     ? owner : scope.enclosingClassSpan.getOrDefault(owner, "");
             if (!classSpan.isEmpty()) {

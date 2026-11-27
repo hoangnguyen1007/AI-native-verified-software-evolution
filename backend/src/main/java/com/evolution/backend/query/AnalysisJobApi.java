@@ -4,6 +4,7 @@ import com.evolution.analysis.contract.common.ContentDigest;
 import com.evolution.analysis.graph.GraphJson;
 import com.evolution.analysis.query.ArchitectureQuery;
 import com.evolution.analysis.query.ArchitectureQueryService;
+import com.evolution.backend.analysis.AnalysisJobEventBroker;
 import com.evolution.backend.analysis.AnalysisJobs;
 import com.evolution.backend.analysis.AnalysisMode;
 import com.evolution.backend.analysis.RepositoryConnections;
@@ -14,6 +15,17 @@ import java.util.function.BooleanSupplier;
 
 /** Strict additive job routes; submissions select only operator-registered setups. */
 final class AnalysisJobApi {
+    static final class SseHandshake {
+        final long lastEventId;
+        AnalysisJobEventBroker.Subscription subscription;
+
+        SseHandshake(long lastEventId) {
+            this.lastEventId = lastEventId;
+        }
+    }
+
+    static final ThreadLocal<SseHandshake> SSE_HANDSHAKE = new ThreadLocal<>();
+
     private final AnalysisJobs jobs; private final ApiLimits limits;
     private final RepositoryConnections connections;
     AnalysisJobApi(AnalysisJobs jobs, ApiLimits limits) { this(jobs,limits,null); }
@@ -44,21 +56,29 @@ final class AnalysisJobApi {
                 var parts = path.split("/",-1);
                 if (parts.length != 6 && !(parts.length == 7 && parts[6].equals("disconnect"))) throw new Failure(404,"NOT_FOUND");
                 var setup = parts[5];
+                if (connections.existsOwnedByOther(setup)) throw new Failure(403,"ACCESS_DENIED");
                 if (!connections.has(setup)) throw new Failure(404,"CONNECTION_NOT_FOUND");
                 if (method.equals("DELETE") || method.equals("POST")) {
                     connections.disconnect(setup);
                     data = Map.of("disconnected", setup);
                 } else throw new Failure(405,"METHOD_NOT_ALLOWED");
             } else if (path.equals("/api/v1/analysis/setups")) {
-                method(method,"GET"); empty(body); data = Map.of("items",jobs.setups(),"versionControl","NOT_INSPECTED");
+                method(method,"GET"); empty(body);
+                var setupsList = connections == null
+                        ? jobs.setups()
+                        : jobs.setups().stream().filter(s -> !connections.existsOwnedByOther(s.id())).toList();
+                data = Map.of("items",setupsList,"versionControl","NOT_INSPECTED");
             } else if (path.equals("/api/v1/analysis/jobs")) {
                 if (method.equals("GET")) { empty(body); data = jobs.history(20,Optional.empty()); }
                 else {
                     method(method,"POST"); var input = decode(body,contentType,"setup","idempotencyKey","force","mode");
                     if (input.containsKey("force") && !(input.get("force") instanceof Boolean))
                         throw new IllegalArgumentException("Expected boolean force");
+                    var setup = QueryJson.text(input,"setup");
+                    if (connections != null && connections.existsOwnedByOther(setup))
+                        throw new Failure(403,"ACCESS_DENIED");
                     var mode = input.containsKey("mode") ? AnalysisMode.parse(QueryJson.text(input,"mode")) : AnalysisMode.FULL;
-                    var submission = jobs.submit(QueryJson.text(input,"setup"),QueryJson.text(input,"idempotencyKey"),
+                    var submission = jobs.submit(setup,QueryJson.text(input,"idempotencyKey"),
                             Boolean.TRUE.equals(input.get("force")),mode);
                     data = submission.job(); status = submission.created() ? 202 : 200;
                 }
@@ -69,7 +89,17 @@ final class AnalysisJobApi {
                 var parts = path.split("/",-1);
                 if (parts.length < 6 || parts.length > 7 || !parts[4].equals("jobs")) throw new Failure(404,"NOT_FOUND");
                 var id = uuid(parts[5]);
-                if (parts.length == 6) { method(method,"GET"); empty(body); data = jobs.get(id); }
+                if (parts.length == 6) { method(method,"GET"); empty(body); data = enrichedView(id); }
+                else if (parts[6].equals("progress")) { method(method,"GET"); empty(body); data = jobs.progress(id); }
+                else if (parts[6].equals("events")) {
+                    method(method,"GET"); empty(body);
+                    var handshake = SSE_HANDSHAKE.get();
+                    if (handshake != null) {
+                        handshake.subscription = jobs.subscribe(id, handshake.lastEventId);
+                        return new ArchitectureQueryApi.Response(200, new byte[0]);
+                    }
+                    data = jobs.progress(id);
+                }
                 else if (parts[6].equals("telemetry")) { method(method,"GET"); empty(body); data = jobs.telemetry(id); }
                 else if (parts[6].equals("coverage")) { method(method,"GET"); empty(body); data = coverage(id); }
                 else if (parts[6].equals("repository-score")) {
@@ -89,14 +119,48 @@ final class AnalysisJobApi {
             }
             return response(status,data);
         } catch (Failure failure) { return error(failure.status,failure.code); }
+        catch (SecurityException denied) {
+            String code = "LOCAL_CHECKOUT_DISABLED_IN_MULTI_USER".equals(denied.getMessage())
+                    ? "LOCAL_CHECKOUT_DISABLED_IN_MULTI_USER"
+                    : "ACCESS_DENIED";
+            return error(403, code);
+        }
         catch (AnalysisJobs.Rejected rejected) {
-            int status = switch (rejected.code()) { case "SETUP_NOT_FOUND","JOB_NOT_FOUND" -> 404; case "IDEMPOTENCY_CONFLICT","JOB_NOT_FINISHED","JOB_ALREADY_PUBLISHED","SETUP_CONFIGURATION_CHANGED" -> 409; default -> 503; };
+            int status = switch (rejected.code()) { case "ACCESS_DENIED" -> 403; case "SETUP_NOT_FOUND","JOB_NOT_FOUND" -> 404; case "IDEMPOTENCY_CONFLICT","JOB_NOT_FINISHED","JOB_ALREADY_PUBLISHED","SETUP_CONFIGURATION_CHANGED" -> 409; default -> 503; };
             return error(status,rejected.code());
         } catch (BoundedJson.TooLarge large) { return error(422,"RESPONSE_TOO_LARGE"); }
         catch (GraphJson.LimitExceededException large) { return error(413,"JSON_LIMIT_EXCEEDED"); }
         catch (IllegalArgumentException invalid) { return error(400,"INVALID_REQUEST"); }
         catch (RuntimeException failure) { return error(500,"INTERNAL_ERROR"); }
     }
+    private Map<String, Object> enrichedView(UUID id) {
+        var view = jobs.get(id);
+        var progress = jobs.progress(id);
+        var map = new TreeMap<String, Object>();
+        map.put("id", view.id());
+        map.put("setup", view.setup());
+        map.put("state", view.state());
+        map.put("stage", view.stage());
+        map.put("revision", view.revision());
+        map.put("submittedAt", view.submittedAt());
+        map.put("startedAt", view.startedAt().orElse(null));
+        map.put("finishedAt", view.finishedAt().orElse(null));
+        map.put("elapsedMillis", view.elapsedMillis());
+        map.put("stop", view.stop().orElse(null));
+        map.put("error", view.error().orElse(null));
+        map.put("events", view.events());
+        map.put("result", view.result().orElse(null));
+        map.put("force", view.force());
+        map.put("reuse", view.reuse().orElse(null));
+        map.put("reuseDecision", view.reuseDecision().orElse(null));
+        map.put("mode", view.mode().orElse(null));
+        map.put("publicationStage", progress.truthTier());
+        map.put("previewGraphId", progress.previewGraphId().orElse(null));
+        map.put("preview", progress.preview().orElse(null));
+        map.put("incremental", progress.incremental().orElse(null));
+        return map;
+    }
+
     private Map<String,Object> coverage(UUID id) {
         var result = jobs.get(id).result().orElseThrow(() -> new Failure(409,"JOB_NOT_FINISHED"));
         var page = jobs.chatGaps(id);

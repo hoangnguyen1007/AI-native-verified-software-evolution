@@ -65,8 +65,21 @@ public final class KnowledgeGraph {
      */
     public static KnowledgeGraph fromAuthenticatedCache(SnapshotIdentity snapshot, List<Context> contexts,
             List<Node> nodes, List<Edge> edges, List<GraphEvidence> evidence, ContentDigest authenticatedIdentity) {
-        return new KnowledgeGraph(snapshot, contexts, nodes, edges, evidence,
+        return fromAuthenticatedCache(snapshot, contexts, nodes, edges, evidence, authenticatedIdentity, null);
+    }
+    /**
+     * Reconstitutes a graph from an authenticated binary cache carrying both verified graph
+     * identity and verified semantic identity in its SHA-256-authenticated header.
+     */
+    public static KnowledgeGraph fromAuthenticatedCache(SnapshotIdentity snapshot, List<Context> contexts,
+            List<Node> nodes, List<Edge> edges, List<GraphEvidence> evidence,
+            ContentDigest authenticatedIdentity, ContentDigest authenticatedSemanticIdentity) {
+        KnowledgeGraph graph = new KnowledgeGraph(snapshot, contexts, nodes, edges, evidence,
                 Objects.requireNonNull(authenticatedIdentity), null, true);
+        if (authenticatedSemanticIdentity != null) {
+            graph.semanticIdentity = authenticatedSemanticIdentity;
+        }
+        return graph;
     }
     private KnowledgeGraph(SnapshotIdentity snapshot,List<Context> contexts,List<Node> nodes,List<Edge> edges,List<GraphEvidence> evidence,
                    ContentDigest expectedIdentity,ContentDigest expectedEnvelopeDigest,boolean trustAuthenticatedDigest) {
@@ -95,24 +108,29 @@ public final class KnowledgeGraph {
         });
         this.outgoing=freeze(out);this.incoming=freeze(in);
         if (expectedIdentity == null) {
-            this.identity = CanonicalJson.sha256(canonicalForm());
+            this.identity = GraphCanonicalWriter.isEnabled()
+                    ? GraphCanonicalWriter.sha256GraphBody(this.snapshot.value(), this.contexts, this.edges, this.evidence, this.nodes)
+                    : CanonicalJson.sha256(canonicalForm());
         } else if (trustAuthenticatedDigest) {
             this.identity = expectedIdentity;
         } else {
-            this.identity = verifySnapshotDigests(canonicalForm(), expectedIdentity, Objects.requireNonNull(expectedEnvelopeDigest));
+            this.identity = verifySnapshotDigests(this.snapshot.value(), this.contexts, this.edges, this.evidence, this.nodes,
+                    expectedIdentity, Objects.requireNonNull(expectedEnvelopeDigest));
         }
     }
     private static int hashCapacity(int elements) {
         return Math.max(16, (int) Math.min(Integer.MAX_VALUE / 2, (elements / 0.75f) + 1));
     }
-    private static ContentDigest verifySnapshotDigests(Object form, ContentDigest expectedIdentity, ContentDigest expectedEnvelopeDigest) {
+    private static ContentDigest verifySnapshotDigests(String snapshot, List<Context> contexts, List<Edge> edges,
+            List<GraphEvidence> evidence, List<Node> nodes,
+            ContentDigest expectedIdentity, ContentDigest expectedEnvelopeDigest) {
         try {
             var graphDigest = java.security.MessageDigest.getInstance("SHA-256");
             var envelopeDigest = java.security.MessageDigest.getInstance("SHA-256");
             byte[] prefix = ("{\"format\":\"" + GraphSnapshotCodec.FORMAT + "\",\"graph\":").getBytes(java.nio.charset.StandardCharsets.UTF_8);
             envelopeDigest.update(prefix);
             try (var writer = new DualUtf8DigestWriter(graphDigest, envelopeDigest)) {
-                CanonicalJson.writeTo(form, writer);
+                GraphCanonicalWriter.writeGraphBody(snapshot, contexts, edges, evidence, nodes, writer);
             }
             var computedId = new ContentDigest("sha256:" + HexFormat.of().formatHex(graphDigest.digest()));
             if (!computedId.equals(expectedIdentity)) throw new IllegalArgumentException("Graph snapshot digest mismatch");
@@ -163,10 +181,48 @@ public final class KnowledgeGraph {
             }
         }
         @Override public void write(int c) { putChar((char) c); }
-        @Override public void write(char[] cbuf, int off, int len) { int end = off + len; for (int i = off; i < end; i++) putChar(cbuf[i]); }
-        @Override public void write(String str, int off, int len) { int end = off + len; for (int i = off; i < end; i++) putChar(str.charAt(i)); }
-        @Override public java.io.Writer append(CharSequence csq) { String s = csq == null ? "null" : csq.toString(); write(s, 0, s.length()); return this; }
-        @Override public java.io.Writer append(CharSequence csq, int start, int end) { CharSequence cs = csq == null ? "null" : csq; for (int i = start; i < end; i++) putChar(cs.charAt(i)); return this; }
+        @Override public void write(char[] cbuf, int off, int len) {
+            int i = off, end = off + len;
+            if (highSurrogate == 0) {
+                byte[] b = this.buf; int p = this.pos, limit = b.length;
+                while (i < end) {
+                    char c = cbuf[i];
+                    if (c >= 0x80) break;
+                    if (p == limit) { primary.update(b, 0, p); secondary.update(b, 0, p); p = 0; }
+                    b[p++] = (byte) c;
+                    i++;
+                }
+                this.pos = p;
+            }
+            for (; i < end; i++) putChar(cbuf[i]);
+        }
+        @Override public void write(String str, int off, int len) {
+            int i = off, end = off + len;
+            if (highSurrogate == 0) {
+                byte[] b = this.buf; int p = this.pos, limit = b.length;
+                while (i < end) {
+                    char c = str.charAt(i);
+                    if (c >= 0x80) break;
+                    if (p == limit) { primary.update(b, 0, p); secondary.update(b, 0, p); p = 0; }
+                    b[p++] = (byte) c;
+                    i++;
+                }
+                this.pos = p;
+            }
+            for (; i < end; i++) putChar(str.charAt(i));
+        }
+        @Override public java.io.Writer append(CharSequence csq) {
+            if (csq == null) write("null", 0, 4);
+            else if (csq instanceof String s) write(s, 0, s.length());
+            else append(csq, 0, csq.length());
+            return this;
+        }
+        @Override public java.io.Writer append(CharSequence csq, int start, int end) {
+            if (csq == null) { write("null", 0, 4); return this; }
+            if (csq instanceof String s) { write(s, start, end - start); return this; }
+            for (int i = start; i < end; i++) putChar(csq.charAt(i));
+            return this;
+        }
         @Override public java.io.Writer append(char c) { putChar(c); return this; }
         @Override public void flush() { flushBuf(); }
         @Override public void close() { if (highSurrogate != 0) { highSurrogate = 0; putByte('?'); } flushBuf(); }
@@ -203,11 +259,166 @@ public final class KnowledgeGraph {
     public ContentDigest semanticIdentity() {
         var cached = semanticIdentity;
         if (cached != null) return cached;
-        var semantic=new HashMap<ContentDigest,ContentDigest>();evidence.forEach(e->semantic.put(e.identity(),e.semanticIdentity()));
-        var contextValues=mapped(contexts,c->List.of(c.identity(),c.snapshot(),c.analysis(),semantic.get(c.evidence())));
-        var nodeValues=mapped(nodes,n->List.of(n.identity(),n.context(),n.kind(),semanticSupport(n.evidence(),semantic)));
-        var edgeValues=mapped(edges,e->List.of(e.identity(),e.context(),e.kind(),e.source(),e.target(),semanticSupport(e.evidence(),semantic),e.region()));
-        return semanticIdentity = CanonicalJson.sha256(List.of(SCHEMA,"semantic-replay:v1",snapshot,contextValues,nodeValues,edgeValues,semantic.values().stream().distinct().sorted().toList()));
+        if (!GraphCanonicalWriter.isEnabled()) {
+            var semantic=new HashMap<ContentDigest,ContentDigest>(hashCapacity(evidence.size()));
+            evidence.forEach(e->semantic.put(e.identity(),e.semanticIdentity()));
+            var contextValues=mapped(contexts,c->List.of(c.identity(),c.snapshot(),c.analysis(),semantic.get(c.evidence())));
+            var nodeValues=mapped(nodes,n->List.of(n.identity(),n.context(),n.kind(),semanticSupport(n.evidence(),semantic)));
+            var edgeValues=mapped(edges,e->List.of(e.identity(),e.context(),e.kind(),e.source(),e.target(),semanticSupport(e.evidence(),semantic),e.region()));
+            return semanticIdentity = CanonicalJson.sha256(List.of(SCHEMA,"semantic-replay:v1",snapshot,contextValues,nodeValues,edgeValues,semantic.values().stream().distinct().sorted().toList()));
+        }
+        Map<ContentDigest, ContentDigest> overrides = null;
+        for (int i = 0, len = evidence.size(); i < len; i++) {
+            GraphEvidence e = evidence.get(i);
+            ContentDigest sem = e.semanticIdentity();
+            if (!sem.equals(e.identity())) {
+                if (overrides == null) overrides = new HashMap<>(16);
+                overrides.put(e.identity(), sem);
+            }
+        }
+        var md = CanonicalJson.borrowSha256();
+        try {
+            try (var out = CanonicalJson.newUtf8DigestWriter(md)) {
+            out.append("[\"");
+            out.append(SCHEMA);
+            out.append("\",\"semantic-replay:v1\",");
+            GraphCanonicalWriter.appendJsonString(snapshot.value(), out);
+            out.append(",[");
+            for (int i = 0, len = contexts.size(); i < len; i++) {
+                if (i > 0) out.append(',');
+                Context c = contexts.get(i);
+                out.append('[');
+                GraphCanonicalWriter.appendJsonString(c.identity(), out);
+                out.append(',');
+                GraphCanonicalWriter.appendJsonString(c.snapshot().value(), out);
+                out.append(',');
+                if (c.analysis().isPresent()) GraphCanonicalWriter.appendJsonString(c.analysis().orElseThrow().value(), out);
+                else out.append("null");
+                out.append(',');
+                ContentDigest ev = overrides == null ? c.evidence() : overrides.getOrDefault(c.evidence(), c.evidence());
+                GraphCanonicalWriter.appendJsonString(ev.value(), out);
+                out.append(']');
+            }
+            out.append("],[");
+            for (int i = 0, len = nodes.size(); i < len; i++) {
+                if (i > 0) out.append(',');
+                Node n = nodes.get(i);
+                out.append('[');
+                GraphCanonicalWriter.appendJsonString(n.identity(), out);
+                out.append(',');
+                GraphCanonicalWriter.appendJsonString(n.context(), out);
+                out.append(',');
+                GraphCanonicalWriter.appendJsonString(n.kind(), out);
+                out.append(',');
+                writeSemanticSupport(n.evidence(), overrides, out);
+                out.append(']');
+            }
+            out.append("],[");
+            for (int i = 0, len = edges.size(); i < len; i++) {
+                if (i > 0) out.append(',');
+                Edge e = edges.get(i);
+                out.append('[');
+                GraphCanonicalWriter.appendJsonString(e.identity(), out);
+                out.append(',');
+                GraphCanonicalWriter.appendJsonString(e.context(), out);
+                out.append(',');
+                GraphCanonicalWriter.appendJsonString(e.kind(), out);
+                out.append(',');
+                GraphCanonicalWriter.appendJsonString(e.source(), out);
+                out.append(',');
+                GraphCanonicalWriter.writeTarget(e.target(), out);
+                out.append(',');
+                writeSemanticSupport(e.evidence(), overrides, out);
+                out.append(',');
+                if (e.region().isPresent()) GraphCanonicalWriter.appendJsonString(e.region().orElseThrow(), out);
+                else out.append("null");
+                out.append(']');
+            }
+            out.append("],[");
+            if (overrides == null) {
+                for (int i = 0, len = evidence.size(); i < len; i++) {
+                    if (i > 0) out.append(',');
+                    GraphCanonicalWriter.appendJsonString(evidence.get(i).identity().value(), out);
+                }
+            } else {
+                var sortedOverrides = new ArrayList<>(new TreeSet<>(overrides.values()));
+                int oIdx = 0, oLen = sortedOverrides.size();
+                ContentDigest last = null;
+                boolean first = true;
+                for (int i = 0, len = evidence.size(); i < len; i++) {
+                    ContentDigest id = evidence.get(i).identity();
+                    if (overrides.containsKey(id)) continue;
+                    while (oIdx < oLen && sortedOverrides.get(oIdx).compareTo(id) <= 0) {
+                        ContentDigest ov = sortedOverrides.get(oIdx++);
+                        if (last == null || !last.equals(ov)) {
+                            if (!first) out.append(',');
+                            first = false;
+                            GraphCanonicalWriter.appendJsonString(ov.value(), out);
+                            last = ov;
+                        }
+                    }
+                    if (last == null || !last.equals(id)) {
+                        if (!first) out.append(',');
+                        first = false;
+                        GraphCanonicalWriter.appendJsonString(id.value(), out);
+                        last = id;
+                    }
+                }
+                while (oIdx < oLen) {
+                    ContentDigest ov = sortedOverrides.get(oIdx++);
+                    if (last == null || !last.equals(ov)) {
+                        if (!first) out.append(',');
+                        first = false;
+                        GraphCanonicalWriter.appendJsonString(ov.value(), out);
+                        last = ov;
+                    }
+                }
+            }
+            out.append("]]");
+            } catch (java.io.IOException impossible) {
+                throw new IllegalStateException("Canonical digest unavailable", impossible);
+            }
+            return semanticIdentity = new ContentDigest("sha256:" + HexFormat.of().formatHex(md.digest()));
+        } finally {
+            CanonicalJson.releaseSha256(md);
+        }
+    }
+    private static void writeSemanticSupport(List<ContentDigest> rows, Map<ContentDigest, ContentDigest> overrides,
+            Appendable out) throws java.io.IOException {
+        out.append('[');
+        if (overrides == null) {
+            for (int i = 0, len = rows.size(); i < len; i++) {
+                if (i > 0) out.append(',');
+                GraphCanonicalWriter.appendJsonString(rows.get(i).value(), out);
+            }
+        } else if (rows.size() == 1) {
+            ContentDigest d = rows.getFirst();
+            GraphCanonicalWriter.appendJsonString(overrides.getOrDefault(d, d).value(), out);
+        } else {
+            boolean anyOverride = false;
+            for (int i = 0, len = rows.size(); i < len; i++) {
+                if (overrides.containsKey(rows.get(i))) { anyOverride = true; break; }
+            }
+            if (!anyOverride) {
+                for (int i = 0, len = rows.size(); i < len; i++) {
+                    if (i > 0) out.append(',');
+                    GraphCanonicalWriter.appendJsonString(rows.get(i).value(), out);
+                }
+            } else {
+                var sorted = new TreeSet<ContentDigest>();
+                for (int i = 0, len = rows.size(); i < len; i++) {
+                    ContentDigest d = rows.get(i);
+                    sorted.add(overrides.getOrDefault(d, d));
+                }
+                boolean first = true;
+                for (ContentDigest d : sorted) {
+                    if (!first) out.append(',');
+                    first = false;
+                    GraphCanonicalWriter.appendJsonString(d.value(), out);
+                }
+            }
+        }
+        out.append(']');
     }
     private static List<ContentDigest> semanticSupport(List<ContentDigest> rows, Map<ContentDigest, ContentDigest> semantic) {
         return rows.size() == 1 ? List.of(semantic.get(rows.getFirst()))

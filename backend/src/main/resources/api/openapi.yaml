@@ -419,8 +419,38 @@ paths:
       - {$ref: '#/components/parameters/Graph'}
     get:
       operationId: graphContextsAndReports
+      description: Read enriched graph discovery metadata, contexts (with semanticState on progressive previews), reports, authoritative flag, truthTier, and optional previewMeta for active ephemeral previews.
       responses:
         '200': {$ref: '#/components/responses/Success'}
+        '410':
+          description: Preliminary preview graph was evicted and superseded; error.supersededBy identifies the newer preview or finalized graph when known.
+          $ref: '#/components/responses/Error'
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/graphs/{graph}/architecture-score:
+    parameters:
+      - {$ref: '#/components/parameters/Graph'}
+    post:
+      operationId: architectureScoreV2
+      description: >-
+        Evaluate Architecture Health Score v2 (architecture.score-formula:v2.0) across seven orthogonal structural,
+        framework/polyglot, and policy dimensions with strictly separated independent Analysis Confidence and
+        conservative lower bounds. Defaults to Whole Repository (snapshot:...) when context is omitted. Returns
+        honest WITHHELD (PRELIMINARY_GRAPH_PENDING) on Stage 1 syntax-only previews and 410 PREVIEW_SUPERSEDED on
+        evicted previews.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                context: {type: string, minLength: 1, maxLength: 8192, description: Optional context identity or snapshot identity for Whole Repository scoring.}
+                policy: {type: string, minLength: 1, maxLength: 65536, description: Optional custom architecture-policy:v1 YAML to evaluate alongside structural dimensions (mutually exclusive with report).}
+                report: {$ref: '#/components/schemas/Digest', description: Optional published policy report SHA-256 digest (mutually exclusive with policy).}
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        '410': {$ref: '#/components/responses/Error'}
         default: {$ref: '#/components/responses/Error'}
   /api/v1/graphs/{graph}/repository-score:
     parameters: [{$ref: '#/components/parameters/Graph'}]
@@ -455,6 +485,12 @@ paths:
                 policy: {type: string}
       responses:
         '200': {description: Resolved policy, assessment and report identity or compiler diagnostics}
+        '409':
+          description: PRELIMINARY_GRAPH_PENDING when targeting an ephemeral progressive preview graph.
+          $ref: '#/components/responses/Error'
+        '410':
+          description: PREVIEW_SUPERSEDED when targeting an evicted preview graph.
+          $ref: '#/components/responses/Error'
         default: {$ref: '#/components/responses/Error'}
   /api/v1/graphs/{graph}/architecture-insights:
     parameters:
@@ -671,6 +707,29 @@ paths:
       responses:
         '200': {$ref: '#/components/responses/Success'}
         default: {$ref: '#/components/responses/Error'}
+  /api/v1/graphs/{graph}/search-captured-source:
+    parameters:
+      - {$ref: '#/components/parameters/Graph'}
+    post:
+      operationId: searchCapturedSource
+      description: Pre-redacted SQLite FTS5 BM25 (or streaming regex fallback) search across captured text files pinned to this graph, reporting engine, omittedFiles, and redactedSecretCount.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [query]
+              properties:
+                query: {type: string, minLength: 1, maxLength: 512}
+                regex: {type: boolean, default: false}
+                pathFilter: {type: string, maxLength: 512}
+                language: {type: string, maxLength: 64}
+                maxMatches: {type: integer, minimum: 1, maximum: 100, default: 30}
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
   /api/v1/graphs/{graph}/repo-map:
     parameters:
       - {$ref: '#/components/parameters/Graph'}
@@ -682,7 +741,7 @@ paths:
         default: {$ref: '#/components/responses/Error'}
     post:
       operationId: repoMap
-      description: Compute a deterministic Personalized PageRank (PPR) repository map optionally seeded by symbols or file paths within a token budget.
+      description: Compute a deterministic Personalized PageRank (PPR) or Hybrid PPR + BM25 + Trigram RRF (ppr-bm25-trigram-rrf-v2) repository map optionally seeded by symbols, query terms, or file paths within a token budget. Each ranked file carries optional additive pprRank, bm25Rank, trigramRank, and rrfScore breakdown fields.
       requestBody:
         required: true
         content:
@@ -750,6 +809,68 @@ paths:
         '503':
           description: Retry PARTITION_INDEX_PREPARING or PARTITION_INDEX_BUSY. PARTITION_STORE_UNAVAILABLE indicates a storage failure.
           $ref: '#/components/responses/Error'
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/graphs/{graph}/queries/code-search:
+    parameters:
+      - {$ref: '#/components/parameters/Graph'}
+    post:
+      operationId: queryCodeSearch
+      description: Pre-redacted SQLite FTS5 BM25 (or streaming CAS fallback) code search pinned to this graph with deterministic tie-breaking, TrustTier provenance, Shannon-entropy secret pre-redaction, and honest omittedFiles accounting.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [query]
+              properties:
+                query: {type: string, minLength: 1, maxLength: 512}
+                languages:
+                  type: array
+                  maxItems: 32
+                  items: {type: string, minLength: 1, maxLength: 64}
+                includeAdvisory: {type: boolean, default: true}
+                limit: {type: integer, minimum: 1, maximum: 100, default: 25}
+                offset: {type: integer, minimum: 0, maximum: 100000, default: 0}
+      responses:
+        '200':
+          description: Pre-redacted code search hits with engine, omittedFiles, redactedSecretCount, and per-hit SemanticTrustTier provenance.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  apiVersion: {type: string}
+                  queryVersion: {type: string}
+                  resultIdentity: {type: string}
+                  data:
+                    type: object
+                    properties:
+                      graph: {type: string}
+                      query: {type: string}
+                      engine: {type: string, enum: [SQLITE_FTS5_BM25, STREAMING_FALLBACK]}
+                      totalHits: {type: integer, minimum: 0}
+                      truncated: {type: boolean}
+                      omittedFiles: {type: integer, minimum: 0}
+                      redactedSecretCount: {type: integer, minimum: 0}
+                      offset: {type: integer, minimum: 0}
+                      limit: {type: integer, minimum: 1}
+                      items:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            path: {type: string}
+                            startLine: {type: integer, minimum: 1}
+                            endLine: {type: integer, minimum: 1}
+                            score: {type: number}
+                            snippet: {type: string}
+                            contentSha256: {type: string}
+                            language: {type: string}
+                            trustTier: {$ref: '#/components/schemas/SemanticTrustTier'}
+                            isAdvisory: {type: boolean}
+                            redactedCount: {type: integer, minimum: 0}
         default: {$ref: '#/components/responses/Error'}
   /api/v1/graphs/{graph}/queries/{operation}:
     parameters:
@@ -872,6 +993,29 @@ paths:
       responses:
         '200': {$ref: '#/components/responses/JobSuccess'}
         default: {$ref: '#/components/responses/Error'}
+  /api/v1/analysis/connections/{setup}/disconnect:
+    delete:
+      operationId: disconnectRepositoryAliasDelete
+      description: Alias DELETE endpoint to disconnect a repository connection, free active setup capacity, and clean catalog records on disk.
+      parameters:
+        - name: setup
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200': {$ref: '#/components/responses/JobSuccess'}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      operationId: disconnectRepositoryAliasPost
+      description: Alias POST endpoint to disconnect a repository connection.
+      parameters:
+        - name: setup
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200': {$ref: '#/components/responses/JobSuccess'}
+        default: {$ref: '#/components/responses/Error'}
   /api/v1/analysis/setups:
     get:
       operationId: analysisSetups
@@ -901,6 +1045,7 @@ paths:
                 idempotencyKey: {$ref: '#/components/schemas/JobIdentifier'}
                 force: {type: boolean, default: false, description: Recompute even if a matching result is available.}
                 mode: {type: string, enum: [FULL, FAST_ARCHITECTURE], default: FULL, description: Explicit analysis execution profile.}
+                ref: {type: string, maxLength: 256, pattern: '^[A-Za-z0-9._/@+-]{1,256}$', description: 'Optional Git branch, tag, commit SHA, or refs/pull/{n}/head ref for remote Git/GitHub connections.'}
       responses:
         '202': {$ref: '#/components/responses/JobDetail'}
         '200': {$ref: '#/components/responses/JobDetail'}
@@ -918,6 +1063,32 @@ paths:
       operationId: analysisJob
       responses:
         '200': {$ref: '#/components/responses/JobDetail'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/analysis/jobs/{job}/progress:
+    parameters: [{$ref: '#/components/parameters/Job'}]
+    get:
+      operationId: analysisJobProgress
+      description: Live operational progress snapshot including truthTier, throughput (filesPerSec), EWMA ETA, per-module status pills, active preview publication metadata, and incremental delta telemetry.
+      responses:
+        '200': {$ref: '#/components/responses/JobSuccess'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/analysis/jobs/{job}/events:
+    parameters:
+      - {$ref: '#/components/parameters/Job'}
+      - name: Last-Event-ID
+        in: header
+        required: false
+        description: Monotonic event sequence number for bounded replay after SSE reconnect.
+        schema: {type: integer, format: int64, minimum: 0}
+    get:
+      operationId: analysisJobEvents
+      description: Dedicated virtual-thread Server-Sent Events (text/event-stream) stream emitting snapshot, stage_started, progress_update, module_progress, module_completed, preview_ready, incremental_summary, resync_required, and terminal job_completed/job_failed/job_cancelled events with 15s heartbeat comments.
+      responses:
+        '200':
+          description: Chunked text/event-stream ending cleanly after terminal job completion or failure.
+          content:
+            text/event-stream:
+              schema: {type: string}
         default: {$ref: '#/components/responses/Error'}
   /api/v1/analysis/jobs/{job}/repository-score:
     parameters: [{$ref: '#/components/parameters/Job'}]
@@ -981,6 +1152,1105 @@ paths:
       requestBody: {$ref: '#/components/requestBodies/JobPage'}
       responses:
         '200': {$ref: '#/components/responses/JobSuccess'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/github/auth/status:
+    get:
+      operationId: githubAuthStatus
+      description: Safe GitHub authentication status (authenticated, source, host, login, scopes, canPushAndOpenPr, rateLimit). Never returns any token or secret.
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/github/auth/session:
+    post:
+      operationId: setGithubSessionToken
+      description: Store a RAM-only GitHub PAT for the active local Workbench process after verifying it against GitHub /user. Never persisted to disk or echoed.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [token]
+              properties:
+                token: {type: string, minLength: 1, maxLength: 512}
+                host: {type: string, maxLength: 253}
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+    delete:
+      operationId: clearGithubSessionToken
+      description: Zero and clear the RAM-only GitHub session PAT.
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/github/refs:
+    get:
+      operationId: githubRepoRefsGet
+      description: Pre-connect discovery of repository metadata, branches, tags, and open pull requests for an allowlisted GitHub repository URL or owner/repo coordinate.
+      parameters:
+        - {name: repo, in: query, required: true, schema: {type: string, maxLength: 1024}}
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      operationId: githubRepoRefsPost
+      description: POST alternative for pre-connect discovery of GitHub repository refs.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [repo]
+              properties:
+                repo: {type: string, maxLength: 1024}
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/github/connections/{setup}/metadata:
+    parameters:
+      - {name: setup, in: path, required: true, schema: {$ref: '#/components/schemas/JobIdentifier'}}
+    get:
+      operationId: githubConnectionMetadata
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/github/connections/{setup}/branches:
+    parameters:
+      - {name: setup, in: path, required: true, schema: {$ref: '#/components/schemas/JobIdentifier'}}
+    get:
+      operationId: githubConnectionBranches
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/github/connections/{setup}/tags:
+    parameters:
+      - {name: setup, in: path, required: true, schema: {$ref: '#/components/schemas/JobIdentifier'}}
+    get:
+      operationId: githubConnectionTags
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/github/connections/{setup}/commits:
+    parameters:
+      - {name: setup, in: path, required: true, schema: {$ref: '#/components/schemas/JobIdentifier'}}
+      - {name: sha, in: query, required: false, schema: {type: string, maxLength: 256}}
+    get:
+      operationId: githubConnectionCommits
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/github/connections/{setup}/pulls:
+    parameters:
+      - {name: setup, in: path, required: true, schema: {$ref: '#/components/schemas/JobIdentifier'}}
+      - {name: state, in: query, required: false, schema: {type: string, enum: [open, closed, all]}}
+    get:
+      operationId: githubConnectionPulls
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/github/connections/{setup}/pulls/{number}:
+    parameters:
+      - {name: setup, in: path, required: true, schema: {$ref: '#/components/schemas/JobIdentifier'}}
+      - {name: number, in: path, required: true, schema: {type: integer, minimum: 1}}
+    get:
+      operationId: githubConnectionPullDetail
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/github/connections/{setup}/pulls/{number}/checks:
+    parameters:
+      - {name: setup, in: path, required: true, schema: {$ref: '#/components/schemas/JobIdentifier'}}
+      - {name: number, in: path, required: true, schema: {type: integer, minimum: 1}}
+    get:
+      operationId: githubConnectionPullChecks
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/github/connections/{setup}/compare:
+    parameters:
+      - {name: setup, in: path, required: true, schema: {$ref: '#/components/schemas/JobIdentifier'}}
+    post:
+      operationId: githubCompareArchitecture
+      description: Analyze and compare a GitHub PR (base vs head, supporting fork refs) or any two refs/branches, returning Architecture Score v2 deltas (D1-D7), semantic gap deltas, blast radius, and Markdown review report.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                pullNumber: {type: integer, minimum: 1}
+                baseRef: {type: string, maxLength: 256}
+                headRef: {type: string, maxLength: 256}
+                mode: {type: string, enum: [FULL, FAST_ARCHITECTURE], default: FAST_ARCHITECTURE}
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/github/comparisons/{diffId}:
+    parameters:
+      - {name: diffId, in: path, required: true, schema: {type: string, pattern: '^[a-f0-9]{16,64}$'}}
+    get:
+      operationId: githubGetComparison
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/github/connections/{setup}/pulls/{number}/review-comment:
+    parameters:
+      - {name: setup, in: path, required: true, schema: {$ref: '#/components/schemas/JobIdentifier'}}
+      - {name: number, in: path, required: true, schema: {type: integer, minimum: 1}}
+    post:
+      operationId: githubPostReviewComment
+      description: Explicitly user-confirmed idempotent PR architecture review comment publication bound to a pinned diffDigest.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [confirmedByUser]
+              properties:
+                diffId: {type: string, pattern: '^[a-f0-9]{16,64}$'}
+                diffDigest: {$ref: '#/components/schemas/Digest'}
+                bodyMarkdown: {type: string, maxLength: 65536}
+                confirmedByUser: {type: boolean}
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/github/repairs/prepare:
+    post:
+      operationId: githubPrepareRepairPr
+      description: Step 1 (dry-run, zero Git/GitHub writes) generating a pinned publishPlanDigest, single-use confirmationToken, diff stats, and Markdown Verification Report.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [proposalId]
+              properties:
+                proposalId: {$ref: '#/components/schemas/Digest'}
+                setupId: {$ref: '#/components/schemas/JobIdentifier'}
+                setup: {$ref: '#/components/schemas/JobIdentifier'}
+                repoCoordinate: {type: string, maxLength: 1024}
+                baseBranch: {type: string, maxLength: 128}
+                headBranch: {type: string, maxLength: 128}
+                title: {type: string, maxLength: 200}
+                draft: {type: boolean}
+                allowUnverified: {type: boolean, default: false}
+                verificationJobId: {type: string, format: uuid}
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/github/repairs/publish:
+    post:
+      operationId: githubPublishRepairPr
+      description: Step 2 (strictly gated by confirmedByUser=true, single-use confirmationToken, and publishPlanDigest) applying verified patch to a non-default branch, pushing without --force, and opening a GitHub Pull Request.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [confirmationToken, publishPlanDigest, confirmedByUser]
+              properties:
+                confirmationToken: {type: string, minLength: 32, maxLength: 128}
+                publishPlanDigest: {$ref: '#/components/schemas/Digest'}
+                confirmedByUser: {type: boolean}
+                title: {type: string, maxLength: 200}
+                bodyMarkdown: {type: string, maxLength: 65536}
+                draft: {type: boolean}
+                allowUnverified: {type: boolean}
+      responses:
+        '201': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/auth/config:
+    get:
+      operationId: authConfig
+      description: Advertise configured multi-user authentication modes (local accounts, OAuth Web PKCE, Device Flow, 1-Click GitHub App Manifest, Session PAT, local fallback), setup status, and deployment origin metadata (publicBaseUrl, callbackUrl, webhookUrl, isLoopbackHost, webhookReachable).
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/auth/me:
+    get:
+      operationId: authMe
+      description: Return the current authenticated user profile (including role and GitHub link status), session CSRF token, and GitHub rate limit without exposing secrets.
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/auth/register:
+    post:
+      operationId: authRegister
+      description: Register a new built-in workspace user account (PBKDF2WithHmacSHA256 210k iterations; first user becomes ADMIN, subsequent users MEMBER) and set HttpOnly evo_session cookie. Username is optional; when omitted or blank, a clean lowercase handle ([a-z0-9_-], length 2..40, avoiding reserved 'local') is derived from the email prefix with -2, -3 suffixes on collision.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [email, password]
+              properties:
+                email: {type: string, maxLength: 254}
+                username: {type: string, minLength: 2, maxLength: 40}
+                displayName: {type: string, maxLength: 120}
+                password: {type: string, minLength: 8, maxLength: 128}
+      responses:
+        '201': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/auth/login:
+    post:
+      operationId: authLogin
+      description: Authenticate an existing built-in workspace account by email or username using constant-time PBKDF2 verification and set HttpOnly evo_session cookie.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [identifier, password]
+              properties:
+                identifier: {type: string, maxLength: 254}
+                password: {type: string, minLength: 1, maxLength: 128}
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/auth/profile:
+    post:
+      operationId: authProfileUpdate
+      description: Update authenticated user display name and/or password (requires session cookie and X-Evo-CSRF).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                displayName: {type: string, maxLength: 120}
+                currentPassword: {type: string, maxLength: 128}
+                newPassword: {type: string, minLength: 8, maxLength: 128}
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/auth/github/unlink:
+    post:
+      operationId: authGitHubUnlink
+      description: Unlink GitHub identity and revoke stored GitHub OAuth/PAT tokens on the current session while keeping the local workspace account signed in.
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/auth/users:
+    get:
+      operationId: authListUsers
+      description: List all registered multi-user workspace accounts (ADMIN only; zero password hashes or tokens exposed).
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/auth/users/{userId}/role:
+    post:
+      operationId: authUpdateUserRole
+      description: Update a workspace user's role (ADMIN or MEMBER) and/or disabled status (ADMIN only + X-Evo-CSRF; protects the last active admin).
+      parameters:
+        - {name: userId, in: path, required: true, schema: {type: string, maxLength: 128}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [role]
+              properties:
+                role: {type: string, enum: [ADMIN, MEMBER]}
+                disabled: {type: boolean}
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/auth/tokens:
+    get:
+      operationId: authListTokens
+      description: List scoped Personal Access Token metadata belonging exclusively to the signed-in user (SHA-256 hash-only storage; zero raw tokens or hashes returned).
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      operationId: authMintToken
+      description: Mint a scoped Personal Access Token (evo_pat_...) for MCP or API access (CSRF-protected; plaintext returned exactly once).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [label]
+              properties:
+                label: {type: string, minLength: 1, maxLength: 80}
+                scopes:
+                  type: array
+                  items: {type: string, enum: ['mcp:read', 'api:read', 'api:write']}
+                expiresInDays: {type: integer, minimum: 1, maximum: 365, default: 90}
+      responses:
+        '201': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/auth/tokens/{tokenId}:
+    delete:
+      operationId: authRevokeToken
+      description: Revoke a scoped Personal Access Token (owner or ADMIN only + X-Evo-CSRF).
+      parameters:
+        - {name: tokenId, in: path, required: true, schema: {type: string, maxLength: 64}}
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/auth/github/setup:
+    get:
+      operationId: authGitHubSetupGet
+      description: Inspect current GitHub OAuth / App setup status, auto-detected publicBaseUrl, callbackUrl, webhookUrl, isLoopbackHost, and webhookReachable flags without exposing client or webhook secrets.
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      operationId: authGitHubSetupSave
+      description: Encrypt, persist, and live hot-reload in-app GitHub OAuth and webhook credentials (ADMIN or initial first-run setup; zero server restart required).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [clientId]
+              properties:
+                clientId: {type: string, minLength: 1, maxLength: 256}
+                clientSecret: {type: string, maxLength: 512}
+                host: {type: string, maxLength: 256}
+                webhookSecret: {type: string, maxLength: 512}
+                deviceFlowEnabled: {type: boolean}
+                publicBaseUrl: {type: string, maxLength: 512}
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+    delete:
+      operationId: authGitHubSetupClear
+      description: Clear saved in-app encrypted GitHub OAuth credentials and hot-reload effective configuration live (ADMIN + X-Evo-CSRF).
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/auth/github/manifest/prepare:
+    post:
+      operationId: authGitHubManifestPrepare
+      description: Generate an official 1-click GitHub App Manifest JSON payload, actionUrl, and single-use state token (ADMIN or initial first-run setup). Sets hook_attributes.active=false on loopback origins so localhost registration succeeds cleanly, and hook_attributes.active=true when webhookReachable is true (non-loopback https://).
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                appName: {type: string, maxLength: 64}
+                host: {type: string, maxLength: 256}
+                publicBaseUrl: {type: string, maxLength: 512}
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/auth/github/manifest/callback:
+    get:
+      operationId: authGitHubManifestCallback
+      description: Verify single-use manifest state, convert temporary code via GitHub App Manifest conversions API, encrypt and hot-reload credentials live, and redirect back to Workbench.
+      parameters:
+        - {name: code, in: query, required: true, schema: {type: string}}
+        - {name: state, in: query, required: true, schema: {type: string}}
+      responses:
+        '302': {description: Redirect to Workbench after live GitHub App configuration.}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/auth/github/login:
+    get:
+      operationId: authGitHubLogin
+      description: Start GitHub OAuth 2.0 Web Application Flow with PKCE S256 and single-use state, returning a 302 redirect.
+      parameters:
+        - {name: returnTo, in: query, required: false, schema: {type: string, maxLength: 512}}
+      responses:
+        '302': {description: Redirect to GitHub OAuth authorize endpoint.}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/auth/github/callback:
+    get:
+      operationId: authGitHubCallback
+      description: Complete GitHub OAuth Web callback, set HttpOnly SameSite=Lax evo_session cookie, and redirect back to Workbench.
+      parameters:
+        - {name: code, in: query, required: false, schema: {type: string}}
+        - {name: state, in: query, required: false, schema: {type: string}}
+        - {name: error, in: query, required: false, schema: {type: string}}
+      responses:
+        '302': {description: Redirect to Workbench with session cookie set.}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/auth/github/device/start:
+    post:
+      operationId: authGitHubDeviceStart
+      description: Start GitHub OAuth Device Authorization Flow (RFC 8628) returning a user code and verification URI.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                scopes: {type: string, maxLength: 512}
+                host: {type: string, maxLength: 256}
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/auth/github/device/poll:
+    post:
+      operationId: authGitHubDevicePoll
+      description: Poll GitHub Device Flow status; sets HttpOnly evo_session cookie and returns user plus csrfToken when AUTHORIZED.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [deviceFlowId]
+              properties:
+                deviceFlowId: {type: string, minLength: 8, maxLength: 256}
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/auth/logout:
+    post:
+      operationId: authLogout
+      description: Revoke current user session and clear evo_session cookie.
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/auth/logout-all:
+    post:
+      operationId: authLogoutAll
+      description: Revoke all active sessions for the current authenticated user and clear evo_session cookie.
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/github/orgs:
+    get:
+      operationId: githubUserOrgs
+      description: List GitHub organizations for the authenticated user session.
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/github/user/repos:
+    get:
+      operationId: githubUserRepos
+      description: List and search personal or organization GitHub repositories for 1-click Workbench import.
+      parameters:
+        - {name: q, in: query, required: false, schema: {type: string, maxLength: 256}}
+        - {name: org, in: query, required: false, schema: {type: string, maxLength: 100}}
+        - {name: visibility, in: query, required: false, schema: {type: string, enum: [all, public, private]}}
+        - {name: sort, in: query, required: false, schema: {type: string, enum: [updated, pushed, full_name, created]}}
+        - {name: page, in: query, required: false, schema: {type: integer, minimum: 1}}
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/github/webhooks:
+    post:
+      operationId: githubWebhookReceive
+      description: Receive GitHub webhook deliveries verified via constant-time HMAC-SHA256 X-Hub-Signature-256 and X-GitHub-Delivery replay dedup.
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        '202': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/github/webhooks/deliveries:
+    get:
+      operationId: githubWebhookDeliveries
+      description: List recent sanitized GitHub webhook deliveries and ChatOps commands.
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/github/connections/{setup}/pulls/enriched:
+    parameters:
+      - {name: setup, in: path, required: true, schema: {$ref: '#/components/schemas/JobIdentifier'}}
+      - {name: state, in: query, required: false, schema: {type: string, enum: [open, closed, all]}}
+    get:
+      operationId: githubEnrichedPulls
+      description: List Pull Requests enriched with CI status and latest Evo Architecture Quality Gate verdict.
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/github/connections/{setup}/pulls/{number}/review/preview:
+    parameters:
+      - {name: setup, in: path, required: true, schema: {$ref: '#/components/schemas/JobIdentifier'}}
+      - {name: number, in: path, required: true, schema: {type: integer, minimum: 1}}
+    post:
+      operationId: githubPreviewInlinePrReview
+      description: Dry-run PR inline diff review preview with Quality Gate evaluation, CODEOWNERS attribution, and GitHub suggestion blocks.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: object}
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/github/connections/{setup}/pulls/{number}/review/publish:
+    parameters:
+      - {name: setup, in: path, required: true, schema: {$ref: '#/components/schemas/JobIdentifier'}}
+      - {name: number, in: path, required: true, schema: {type: integer, minimum: 1}}
+    post:
+      operationId: githubPublishInlinePrReview
+      description: Explicitly user-confirmed GitHub Pull Request Review publication with inline line comments and optional Commit Status or Check Run.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [confirmationToken, reviewPlanDigest, confirmedByUser]
+              properties:
+                confirmationToken: {type: string}
+                reviewPlanDigest: {$ref: '#/components/schemas/Digest'}
+                confirmedByUser: {type: boolean}
+                event: {type: string, enum: [COMMENT, REQUEST_CHANGES, APPROVE]}
+                bodyOverride: {type: string}
+                postCommitStatus: {type: boolean}
+                postCheckRun: {type: boolean}
+      responses:
+        '201': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/github/connections/{setup}/commits/{sha}/status:
+    parameters:
+      - {name: setup, in: path, required: true, schema: {$ref: '#/components/schemas/JobIdentifier'}}
+      - {name: sha, in: path, required: true, schema: {type: string}}
+    post:
+      operationId: githubPostCommitStatus
+      description: Explicitly confirmed GitHub Commit Status (and optional Check Run) publication for Architecture Quality Gate.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [confirmedByUser, state, description]
+              properties:
+                confirmedByUser: {type: boolean}
+                state: {type: string, enum: [success, failure, pending, error]}
+                context: {type: string}
+                description: {type: string}
+                targetUrl: {type: string}
+                createCheckRun: {type: boolean}
+      responses:
+        '201': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/github/connections/{setup}/code-scanning/sarif:
+    parameters:
+      - {name: setup, in: path, required: true, schema: {$ref: '#/components/schemas/JobIdentifier'}}
+    post:
+      operationId: githubUploadCodeScanningSarif
+      description: Explicitly confirmed gzip+base64 SARIF 2.1.0 upload to GitHub Code Scanning.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [graph, report, commitSha, ref, confirmedByUser]
+              properties:
+                graph: {$ref: '#/components/schemas/Digest'}
+                report: {$ref: '#/components/schemas/Digest'}
+                commitSha: {type: string}
+                ref: {type: string}
+                confirmedByUser: {type: boolean}
+      responses:
+        '201': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/github/connections/{setup}/issues/prepare:
+    parameters:
+      - {name: setup, in: path, required: true, schema: {$ref: '#/components/schemas/JobIdentifier'}}
+    post:
+      operationId: githubPrepareIssue
+      description: Step 1 dry-run issue preview from an architectural finding or hotspot with GitHub permalinks, Mermaid dependency context, and CODEOWNERS.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: object}
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/github/connections/{setup}/issues/publish:
+    parameters:
+      - {name: setup, in: path, required: true, schema: {$ref: '#/components/schemas/JobIdentifier'}}
+    post:
+      operationId: githubPublishIssue
+      description: Step 2 confirmed GitHub Issue publication bound to confirmationToken and issuePlanDigest.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [confirmationToken, issuePlanDigest, confirmedByUser]
+              properties:
+                confirmationToken: {type: string}
+                issuePlanDigest: {$ref: '#/components/schemas/Digest'}
+                confirmedByUser: {type: boolean}
+      responses:
+        '201': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/github/connections/{setup}/ci-workflow:
+    parameters:
+      - {name: setup, in: path, required: true, schema: {$ref: '#/components/schemas/JobIdentifier'}}
+      - {name: failOnMust, in: query, required: false, schema: {type: boolean}}
+      - {name: minScore, in: query, required: false, schema: {type: integer}}
+    get:
+      operationId: githubGenerateCiWorkflow
+      description: Generate a ready-to-use GitHub Actions workflow YAML for Evo Architecture Quality Gate and SARIF upload.
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/graphs/{graph}/codeowners:
+    parameters:
+      - {name: graph, in: path, required: true, schema: {$ref: '#/components/schemas/Digest'}}
+      - {name: path, in: query, required: false, schema: {type: string, maxLength: 1024}}
+    get:
+      operationId: graphCodeowners
+      description: Passively inspect CODEOWNERS ownership rules from a captured snapshot graph.
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/graphs/{graph}/advisory-links:
+    parameters:
+      - {name: graph, in: path, required: true, schema: {$ref: '#/components/schemas/Digest'}}
+      - {name: entity, in: query, required: false, schema: {type: string, maxLength: 512}}
+      - {name: kind, in: query, required: false, schema: {type: string, maxLength: 128}}
+      - {name: path, in: query, required: false, schema: {type: string, maxLength: 1024}}
+      - {name: limit, in: query, required: false, schema: {type: integer, minimum: 1, maximum: 500}}
+    get:
+      operationId: graphAdvisoryLinks
+      description: Inspect quarantined deterministic non-code advisory links (Markdown/ADR, SQL DDL <-> JPA, Terraform/HCL, JS/TS workspace aliases, MCP configs). All records carry advisory.doc-link:v1 / INFERRED / ADVISORY_UNVERIFIED and never modify canonical graph digests, policy findings, or Score v2.
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/graphs/{graph}/markdown-section:
+    parameters:
+      - {name: graph, in: path, required: true, schema: {$ref: '#/components/schemas/Digest'}}
+    post:
+      operationId: readCapturedMarkdownSection
+      description: List Markdown headings or read one exact heading section on-demand from a captured .md/.mdx file with startLine..endLine, SHA-256 provenance, and outbound secret redaction.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [path]
+              additionalProperties: false
+              properties:
+                path: {type: string, maxLength: 1024}
+                heading: {type: string, maxLength: 256}
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/graphs/{graph}/wiki-dossier:
+    parameters:
+      - {name: graph, in: path, required: true, schema: {$ref: '#/components/schemas/Digest'}}
+      - {name: context, in: query, required: false, schema: {type: string, maxLength: 512}}
+      - {name: format, in: query, required: false, schema: {type: string, enum: [json, zip, markdown]}}
+    get:
+      operationId: graphWikiDossier
+      description: Generate a deterministic offline multi-page Architecture Wiki & Dossier preview (JSON), reproducible ZIP archive, or single combined Markdown dossier.
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/graphs/{graph}/community-evolution:
+    parameters:
+      - {name: graph, in: path, required: true, schema: {$ref: '#/components/schemas/Digest'}}
+    post:
+      operationId: graphCommunityEvolution
+      description: Pairwise Leiden community evolution matching (SURVIVED, SPLIT, MERGED, BORN, DISSOLVED) between two published graphs/contexts without mutating single-snapshot canonical community IDs.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [context, otherGraph, otherContext]
+              additionalProperties: false
+              properties:
+                context: {type: string, maxLength: 512}
+                otherGraph: {$ref: '#/components/schemas/Digest'}
+                otherContext: {type: string, maxLength: 512}
+                scope: {type: string, enum: [TYPE, PACKAGE, MODULE, SPRING_COMPONENT]}
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/mcp/setup:
+    get:
+      operationId: mcpSetupSnippets
+      description: Return copy-pasteable MCP client configurations (Live Workbench Proxy with multi-user auth guidance and Direct Offline Store) plus the 6 built-in MCP Resources.
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/graphs/{graph}/reports/{report}/sarif:
+    parameters:
+      - {name: graph, in: path, required: true, schema: {$ref: '#/components/schemas/Digest'}}
+      - {name: report, in: path, required: true, schema: {$ref: '#/components/schemas/Digest'}}
+      - {name: download, in: query, required: false, schema: {type: string}}
+    get:
+      operationId: exportReportSarif
+      description: Export a deterministic SARIF 2.1.0 document for a canonical policy report.
+      responses:
+        '200':
+          description: SARIF 2.1.0 JSON document
+          content:
+            application/sarif+json:
+              schema: {type: object}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/ai/providers:
+    get:
+      operationId: listAiProviders
+      description: Describe configured operator LLM providers across Chat, Repair, and Diagnosis roles (never exposes API keys).
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/ai/providers/probe:
+    post:
+      operationId: probeAiProviders
+      description: Probe reachability of configured LLM provider roles without exposing credentials.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                role: {type: string, enum: [CHAT, REPAIR, DIAGNOSIS]}
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/graphs/{graph}/repair-proposal/ad-hoc:
+    parameters:
+      - {name: graph, in: path, required: true, schema: {$ref: '#/components/schemas/Digest'}}
+    post:
+      operationId: proposeAdHocRepair
+      description: Propose a compiler/syntax-checked multi-file ad-hoc architecture repair tied to a captured snapshot.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [context]
+              properties:
+                context: {type: string, maxLength: 512}
+                title: {type: string, maxLength: 256}
+                description: {type: string, maxLength: 8192}
+                prompt: {type: string, maxLength: 8192}
+                targetPaths: {type: array, items: {type: string, maxLength: 512}}
+                files: {type: array, items: {type: string, maxLength: 512}}
+                targetSymbols: {type: array, items: {type: string, maxLength: 512}}
+                strategy: {type: string, enum: [RECIPE, AI]}
+                recipeId: {type: string, maxLength: 128}
+                recipe: {type: string, maxLength: 128}
+                maxRepairAttempts: {type: integer, minimum: 1, maximum: 4}
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/graphs/{graph}/reports/{report}/repair-verification/jobs:
+    parameters:
+      - {name: graph, in: path, required: true, schema: {$ref: '#/components/schemas/Digest'}}
+      - {name: report, in: path, required: true, schema: {$ref: '#/components/schemas/Digest'}}
+    post:
+      operationId: startReportRepairVerificationJob
+      description: Start an async repair verification job bound to a specific authoritative graph and policy report. Validates upfront that {report} exists and belongs to {graph} (returning 404 REPORT_NOT_FOUND otherwise).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                graph: {$ref: '#/components/schemas/Digest'}
+                report: {$ref: '#/components/schemas/Digest'}
+                proposal: {$ref: '#/components/schemas/Digest'}
+                context: {type: string, maxLength: 512}
+                finding: {$ref: '#/components/schemas/Digest'}
+                identity: {$ref: '#/components/schemas/Digest'}
+                bundle: {$ref: '#/components/schemas/Digest'}
+                diagnosisInput: {$ref: '#/components/schemas/Digest'}
+                runIsolated: {type: boolean}
+                includeControl: {type: boolean}
+                closedLoop: {type: boolean}
+                maxRounds: {type: integer, minimum: 1, maximum: 3}
+                runDiffTestGen: {type: boolean}
+                runBehavioralDiff: {type: boolean}
+                proposeCharacterizationTests: {type: boolean}
+                arguments:
+                  type: object
+                  additionalProperties: false
+                  properties:
+                    graph: {$ref: '#/components/schemas/Digest'}
+                    report: {$ref: '#/components/schemas/Digest'}
+                    proposal: {$ref: '#/components/schemas/Digest'}
+                    context: {type: string, maxLength: 512}
+                    finding: {$ref: '#/components/schemas/Digest'}
+                    identity: {$ref: '#/components/schemas/Digest'}
+                    bundle: {$ref: '#/components/schemas/Digest'}
+                    diagnosisInput: {$ref: '#/components/schemas/Digest'}
+                    runIsolated: {type: boolean}
+                    includeControl: {type: boolean}
+                    closedLoop: {type: boolean}
+                    maxRounds: {type: integer, minimum: 1, maximum: 3}
+                    runDiffTestGen: {type: boolean}
+                    runBehavioralDiff: {type: boolean}
+                    proposeCharacterizationTests: {type: boolean}
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        '202': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/repairs/sandbox/setup:
+    get:
+      operationId: getRepairSandboxSetup
+      description: Inspect active in-app isolated repair sandbox runner configuration, fail-closed security policy, and persistence status. ADMIN-only in multi-user mode; PAT requires api:read or api:write (never mcp:read).
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      operationId: configureRepairSandboxSetup
+      description: Configure, persist, and live hot-reload the isolated CapturedRepairRunner without server restart or terminal JVM flags. Strictly fail-closed (--network=none, --read-only, --cap-drop=ALL, pinned digests, zero host execution). CSRF-protected; ADMIN-only in multi-user mode; PAT requires api:write.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                enabled: {type: boolean}
+                autoDetect: {type: boolean}
+                isolationMode: {type: string, enum: [DOCKER_HARDENED_CONTAINER, QEMU_IN_DOCKER]}
+                buildTool: {type: string, enum: [auto, maven, gradle, node, python, go]}
+                baseImage: {type: string, maxLength: 256}
+                pythonExecutable: {type: string, maxLength: 260}
+                dockerContext: {type: string, maxLength: 128}
+                baseCacheTag: {type: string, maxLength: 128}
+                m2Repository: {type: string, maxLength: 1024}
+                mavenZip: {type: string, maxLength: 1024}
+                gradleZip: {type: string, maxLength: 1024}
+                gradleHome: {type: string, maxLength: 1024}
+                npmCache: {type: string, maxLength: 1024}
+                pipWheelhouse: {type: string, maxLength: 1024}
+                goModCache: {type: string, maxLength: 1024}
+                workRoot: {type: string, maxLength: 1024}
+                skipTests: {type: boolean}
+                timeoutSeconds: {type: integer, minimum: 30, maximum: 1800}
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+    delete:
+      operationId: disableRepairSandboxSetup
+      description: Disable and clear the persisted isolated repair sandbox configuration, hot-reloading back to fail-closed PASSIVE_REANALYSIS_ONLY. CSRF-protected; ADMIN-only in multi-user mode; PAT requires api:write.
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/repairs/sandbox/probe:
+    post:
+      operationId: probeRepairSandboxEnvironment
+      description: Strictly read-only environment probe checking Python 3, Docker CLI/daemon reachability, local pinned container digests, and offline Maven/Gradle/npm/pip/Go caches without executing any target repository build. CSRF-protected; ADMIN-only in multi-user mode; PAT requires api:write.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                pythonExecutable: {type: string, maxLength: 260}
+                dockerContext: {type: string, maxLength: 128}
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/repairs/{proposalId}/verify:
+    parameters:
+      - {name: proposalId, in: path, required: true, schema: {$ref: '#/components/schemas/Digest'}}
+    post:
+      operationId: startRepairVerificationJob
+      description: Start an async isolated sandbox + passive reanalysis + optional closed-loop multi-round (maxRounds=3) + 3-state behavioral diff + Spring truth-region preservation repair verification job with live SSE streaming and SQLite persistence. Emits truthful RepairTrustLabel values gated on verdict == VERIFIED and tests not skipped.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                graph: {$ref: '#/components/schemas/Digest'}
+                report: {$ref: '#/components/schemas/Digest'}
+                proposal: {$ref: '#/components/schemas/Digest'}
+                context: {type: string, maxLength: 512}
+                finding: {$ref: '#/components/schemas/Digest'}
+                identity: {$ref: '#/components/schemas/Digest'}
+                bundle: {$ref: '#/components/schemas/Digest'}
+                diagnosisInput: {$ref: '#/components/schemas/Digest'}
+                runIsolated: {type: boolean}
+                includeControl: {type: boolean}
+                closedLoop: {type: boolean}
+                maxRounds: {type: integer, minimum: 1, maximum: 3}
+                runDiffTestGen: {type: boolean}
+                runBehavioralDiff: {type: boolean}
+                proposeCharacterizationTests: {type: boolean}
+      responses:
+        '202': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/repairs/jobs:
+    get:
+      operationId: listRepairVerificationJobs
+      description: List caller-owned repair verification jobs (live and persisted in SQLite jobs.db). In-flight jobs recovered after a server restart appear with stage=INTERRUPTED_ON_RESTART, status=INTERRUPTED_ON_RESTART, terminal=true, interruptedOnRestart=true, and errorCode=INTERRUPTED_ON_RESTART while preserving prior events and rounds.
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/repairs/jobs/{jobId}:
+    parameters:
+      - {name: jobId, in: path, required: true, schema: {type: string, format: uuid}}
+    get:
+      operationId: getRepairVerificationJob
+      description: Retrieve a caller-owned repair verification job including RepairVerificationJobStage (including INTERRUPTED_ON_RESTART crash-recovery stage with errorCode=INTERRUPTED_ON_RESTART), rounds, events, BehavioralVerdict, SpringPreservationStatus, and truthful RepairTrustLabel.
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/repairs/jobs/{jobId}/events:
+    parameters:
+      - {name: jobId, in: path, required: true, schema: {type: string, format: uuid}}
+    get:
+      operationId: streamRepairVerificationJobEvents
+      description: Server-Sent Events stream for async repair verification stages (RepairVerificationJobStage) and completion, replaying persisted SQLite events including INTERRUPTED_ON_RESTART recovery records after restart.
+      responses:
+        '200':
+          description: text/event-stream
+          content:
+            text/event-stream:
+              schema: {type: string}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/repairs/jobs/{jobId}/report.md:
+    parameters:
+      - {name: jobId, in: path, required: true, schema: {type: string, format: uuid}}
+    get:
+      operationId: downloadRepairVerificationMarkdown
+      responses:
+        '200':
+          description: Markdown verification report
+          content:
+            text/markdown:
+              schema: {type: string}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/repairs/jobs/{jobId}/cancel:
+    parameters:
+      - {name: jobId, in: path, required: true, schema: {type: string, format: uuid}}
+    post:
+      operationId: cancelRepairVerificationJob
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/repairs/{proposalId}/apply/preview:
+    parameters:
+      - {name: proposalId, in: path, required: true, schema: {$ref: '#/components/schemas/Digest'}}
+    post:
+      operationId: previewLocalPatchApply
+      description: Read-only preflight verifying SHA-256 baseline hashes, Git tree status, and issuing a 15-minute approvalToken.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                graph: {$ref: '#/components/schemas/Digest'}
+                setup: {$ref: '#/components/schemas/JobIdentifier'}
+                repoDir: {type: string, maxLength: 1024}
+                mode: {type: string, enum: [NEW_BRANCH_WORKTREE, DIRECT_WORKING_TREE]}
+                branchName: {type: string, maxLength: 128}
+                verificationJobId: {type: string, format: uuid}
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/repairs/{proposalId}/apply/confirm:
+    parameters:
+      - {name: proposalId, in: path, required: true, schema: {$ref: '#/components/schemas/Digest'}}
+    post:
+      operationId: confirmLocalPatchApply
+      description: Explicitly user-confirmed local patch application in an isolated Git branch worktree or backed-up working tree. Hard-blocks REJECTED proposals.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [approvalToken, userConfirmed]
+              properties:
+                approvalToken: {type: string, maxLength: 256}
+                userConfirmed: {type: boolean}
+                mode: {type: string, enum: [NEW_BRANCH_WORKTREE, DIRECT_WORKING_TREE]}
+                branchName: {type: string, maxLength: 128}
+                commitMessage: {type: string, maxLength: 4096}
+                acknowledgeUnverified: {type: boolean}
+                graph: {$ref: '#/components/schemas/Digest'}
+                setup: {$ref: '#/components/schemas/JobIdentifier'}
+                repoDir: {type: string, maxLength: 1024}
+                verificationJobId: {type: string, format: uuid}
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/repairs/applies/{applyId}/rollback:
+    parameters:
+      - {name: applyId, in: path, required: true, schema: {type: string, maxLength: 64}}
+    post:
+      operationId: rollbackLocalPatchApply
+      description: Restore original files from an atomic pre-apply backup receipt. Requires explicit confirmedByUser=true.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [confirmedByUser]
+              properties:
+                confirmedByUser: {type: boolean}
+                force: {type: boolean}
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v2/executions/{operation}:
+    parameters:
+      - {name: operation, in: path, required: true, schema: {type: string, enum: [submit, status, cancel, recover]}}
+    post:
+      operationId: registeredExecution
+      description: Operate a pre-registered isolated execution by registration digest.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [registration]
+              properties:
+                registration: {$ref: '#/components/schemas/Digest'}
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
         default: {$ref: '#/components/responses/Error'}
 components:
   # The semantic adapter has its own version and does not add queryVersion.
@@ -1146,7 +2416,7 @@ components:
                     required: [items, total, continuation]
                     properties:
                       items: {type: array, maxItems: 50, items: {$ref: '#/components/schemas/AnalysisJob'}}
-                      total: {type: integer, minimum: 0, maximum: 256}
+                      total: {type: integer, minimum: 0}
                       continuation: {type: [string, 'null'], maxLength: 512}
     Success:
       description: Canonical data with SHA-256 of its canonical UTF-8 JSON. Cache-Control is no-store.
@@ -1163,7 +2433,7 @@ components:
               - properties:
                   data: {$ref: '#/components/schemas/QueryResult'}
     Error:
-      description: '400 invalid request; 403 origin; 404 absent route/graph/report/artifact/setup/job; 405 method; 406 Accept; 409 retry conflict/unfinished job/request cancelled; 413 input limit; 415 media/encoding; 422 response limit; 500 internal; 503 storage/busy/job queue/history full/closed/unconfigured. Transport interruption may close the connection before a response is possible.'
+      description: '400 invalid request; 403 origin; 404 absent route/graph/report/artifact/setup/job; 405 method; 406 Accept; 409 retry conflict/unfinished job/request cancelled/PRELIMINARY_GRAPH_PENDING; 410 PREVIEW_SUPERSEDED (with optional error.supersededBy digest); 413 input limit; 415 media/encoding; 422 response limit; 500 internal; 503 storage/busy/job queue/history full/closed/unconfigured. Transport interruption may close the connection before a response is possible.'
       content:
         application/json:
           schema:
@@ -1181,6 +2451,7 @@ components:
                 properties:
                   code: {type: string}
                   message: {type: string}
+                  supersededBy: {$ref: '#/components/schemas/Digest'}
   schemas:
     EvolutionRequest:
       type: object
@@ -1368,7 +2639,7 @@ components:
                 sourceFinishedAt: {type: string, format: date-time}
                 verifiedAt: {type: string, format: date-time}
         stop: {type: [string, 'null'], enum: [USER_CANCELLED, DEADLINE_EXCEEDED, SERVICE_CLOSED, PROVIDER_INTERRUPTED, null]}
-        error: {type: [string, 'null'], enum: [ANALYSIS_FAILED, RESULT_STORAGE_FAILED, RESULT_PUBLICATION_FAILED, null]}
+        error: {type: [string, 'null'], enum: [ANALYSIS_FAILED, RESULT_STORAGE_FAILED, RESULT_PUBLICATION_FAILED, SEMANTIC_WORKER_REQUIRED, JOB_STORAGE_UNAVAILABLE, SETUP_CONFIGURATION_CHANGED, null]}
         events:
           type: array
           maxItems: 8
@@ -1383,6 +2654,108 @@ components:
           anyOf:
             - {type: 'null'}
             - {$ref: '#/components/schemas/AnalysisResult'}
+        publicationStage: {$ref: '#/components/schemas/TruthTier'}
+        previewGraphId: {anyOf: [{$ref: '#/components/schemas/Digest'}, {type: 'null'}]}
+        preview: {anyOf: [{$ref: '#/components/schemas/PreviewPublication'}, {type: 'null'}]}
+        incremental: {anyOf: [{$ref: '#/components/schemas/IncrementalMetrics'}, {type: 'null'}]}
+    TruthTier:
+      type: string
+      enum: [NONE, PRELIMINARY_STRUCTURE, PARTIAL_CONTEXTS, DEEP_SEMANTIC_COMPLETE]
+    SemanticTrustTier:
+      type: string
+      enum: [COMPILER, SPRING_SAT, SOURCE_SYNTAX, ADVISORY_UNVERIFIED]
+    BehavioralVerdict:
+      type: string
+      enum: [EQUIVALENT_ON_BOUNDED_CHECKS, BEHAVIOR_CHANGED, UNKNOWN_UNTESTED]
+    SpringPreservationStatus:
+      type: string
+      enum: [PRESERVED, DRIFT_DETECTED, NOT_APPLICABLE]
+    RepairVerificationJobStage:
+      type: string
+      description: Lifecycle stage of a repair verification job, including atomic restart-recovery stage INTERRUPTED_ON_RESTART (errorCode=INTERRUPTED_ON_RESTART).
+      enum: [QUEUED, STAGING, PASSIVE_REANALYSIS, SANDBOX_BUILD, SANDBOX_TEST, DIFF_TESTGEN, CLOSED_LOOP_REPAIR, IMPACT_SCORING, REPORT_READY, FAILED, CANCELLED, INTERRUPTED_ON_RESTART]
+    RepairRestartRecoveryErrorCode:
+      type: string
+      description: Canonical error code recorded on repair_jobs rows and recovery SSE events when a server restarts while a job is in flight.
+      enum: [INTERRUPTED_ON_RESTART]
+    RepairTrustLabel:
+      type: string
+      description: Truthful verification trust label. ISOLATED_VM_VERIFIED and ISOLATED_CONTAINER_VERIFIED require verdict == VERIFIED and tests not skipped.
+      enum: [ISOLATED_VM_VERIFIED, ISOLATED_CONTAINER_VERIFIED, ISOLATED_VM_REJECTED, ISOLATED_CONTAINER_REJECTED, ISOLATED_VM_UNVERIFIED, ISOLATED_CONTAINER_UNVERIFIED, PASSIVE_REANALYSIS_ONLY, SYNTAX_ONLY]
+    PreviewMeta:
+      type: object
+      additionalProperties: false
+      required: [truthTier, completedContexts, totalContexts, pendingModules]
+      properties:
+        jobId: {type: string, format: uuid}
+        truthTier: {$ref: '#/components/schemas/TruthTier'}
+        completedContexts: {type: integer, minimum: 0}
+        totalContexts: {type: integer, minimum: 0}
+        pendingModules: {type: array, items: {type: string}}
+        publishedAt: {type: string, format: date-time}
+        supersededByGraphId: {$ref: '#/components/schemas/Digest'}
+    PreviewPublication:
+      type: object
+      additionalProperties: false
+      required: [graphId, truthTier, completedContexts, totalContexts, pendingModules, publishedAt]
+      properties:
+        graphId: {$ref: '#/components/schemas/Digest'}
+        truthTier: {$ref: '#/components/schemas/TruthTier'}
+        completedContexts: {type: integer, minimum: 0}
+        totalContexts: {type: integer, minimum: 0}
+        pendingModules: {type: array, items: {type: string}}
+        publishedAt: {type: string, format: date-time}
+    IncrementalMetrics:
+      type: object
+      additionalProperties: false
+      required: [baseSnapshotId, addedFiles, modifiedFiles, deletedFiles, reusedFiles, abiEarlyCutoffCount, impactedDependentsCount, reusedModules, timeSavedEstimateMs]
+      properties:
+        baseSnapshotId: {type: [string, 'null']}
+        addedFiles: {type: integer, minimum: 0}
+        modifiedFiles: {type: integer, minimum: 0}
+        deletedFiles: {type: integer, minimum: 0}
+        reusedFiles: {type: integer, minimum: 0}
+        abiEarlyCutoffCount: {type: integer, minimum: 0}
+        impactedDependentsCount: {type: integer, minimum: 0}
+        reusedModules: {type: integer, minimum: 0}
+        timeSavedEstimateMs: {type: integer, minimum: 0}
+    ModuleProgress:
+      type: object
+      additionalProperties: false
+      required: [module, status, filesDone, filesTotal, elapsedMillis, contextId, reason]
+      properties:
+        module: {type: string}
+        status: {type: string}
+        filesDone: {type: integer, minimum: 0}
+        filesTotal: {type: integer, minimum: 0}
+        elapsedMillis: {type: integer, minimum: 0}
+        contextId: {type: [string, 'null']}
+        reason: {type: [string, 'null']}
+    LiveProgress:
+      type: object
+      additionalProperties: false
+      required: [jobId, setup, state, stage, revision, truthTier, previewGraphId, preview, overallRatio, stageDone, stageTotal, filesPerSecond, etaSeconds, etaStatus, elapsedMillis, message, modules, stageMillis, cacheMetrics, incremental]
+      properties:
+        jobId: {type: string, format: uuid}
+        setup: {$ref: '#/components/schemas/JobIdentifier'}
+        state: {type: string, enum: [QUEUED, RUNNING, CANCELLING, SUCCEEDED, PARTIAL, EMPTY, FAILED, CANCELLED, TIMED_OUT]}
+        stage: {$ref: '#/components/schemas/JobStage'}
+        revision: {type: integer, minimum: 1}
+        truthTier: {$ref: '#/components/schemas/TruthTier'}
+        previewGraphId: {anyOf: [{$ref: '#/components/schemas/Digest'}, {type: 'null'}]}
+        preview: {anyOf: [{$ref: '#/components/schemas/PreviewPublication'}, {type: 'null'}]}
+        overallRatio: {type: number, minimum: 0, maximum: 1}
+        stageDone: {type: integer, minimum: 0}
+        stageTotal: {type: integer, minimum: 0}
+        filesPerSecond: {type: [number, 'null']}
+        etaSeconds: {type: [integer, 'null']}
+        etaStatus: {type: string}
+        elapsedMillis: {type: integer, minimum: 0}
+        message: {type: string}
+        modules: {type: array, items: {$ref: '#/components/schemas/ModuleProgress'}}
+        stageMillis: {type: object, additionalProperties: {type: integer, minimum: 0}}
+        cacheMetrics: {type: object, additionalProperties: {type: integer, minimum: 0}}
+        incremental: {anyOf: [{$ref: '#/components/schemas/IncrementalMetrics'}, {type: 'null'}]}
     AnalysisResult:
       type: object
       additionalProperties: false

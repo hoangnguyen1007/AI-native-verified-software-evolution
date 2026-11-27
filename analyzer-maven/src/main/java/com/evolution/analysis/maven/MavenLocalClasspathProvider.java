@@ -110,6 +110,7 @@ public final class MavenLocalClasspathProvider implements ClasspathProvider {
         private final Set<String> coordinates = new HashSet<>();
         private final List<Decision> decisions = new ArrayList<>();
         private final List<Problem> problems = new ArrayList<>();
+        private final Map<String, Dependency> managedByKey;
 
         private GraphResolution(
                 ModuleModel rootModule,
@@ -125,6 +126,18 @@ public final class MavenLocalClasspathProvider implements ClasspathProvider {
             this.reactor = reactor;
             this.cache = cache;
             this.modelReader = modelReader;
+            var managedList = this.rootPom.managedDependencies();
+            var index = new HashMap<String, Dependency>(Math.max(16, (int) (managedList.size() / 0.75f) + 1));
+            for (int i = 0, len = managedList.size(); i < len; i++) {
+                Dependency managed = managedList.get(i);
+                if ("import".equals(managed.scope())) continue;
+                try {
+                    index.putIfAbsent(artifactKey(managed), managed);
+                } catch (IllegalArgumentException ignored) {
+                    // An unusable management row cannot match an exact dependency key.
+                }
+            }
+            this.managedByKey = index;
         }
 
         private Manifest resolve() {
@@ -175,8 +188,12 @@ public final class MavenLocalClasspathProvider implements ClasspathProvider {
             try {
                 coordinate = artifact(dependency);
             } catch (IllegalArgumentException exception) {
-                problem(Reason.NON_EXACT_VERSION, subject(dependency), Requirement.EXACT_VERSION, next.evidence);
-                return;
+                Optional<ArtifactCoordinate> ranged = resolveLocalRangeCoordinate(dependency);
+                if (ranged.isEmpty()) {
+                    problem(Reason.NON_EXACT_VERSION, subject(dependency), Requirement.EXACT_VERSION, next.evidence);
+                    return;
+                }
+                coordinate = ranged.orElseThrow();
             }
             if (next.path.contains(coordinate.notation())) {
                 problem(Reason.DEPENDENCY_CYCLE, coordinate.notation(), Requirement.ARTIFACT_POM, next.evidence);
@@ -331,12 +348,14 @@ public final class MavenLocalClasspathProvider implements ClasspathProvider {
                         node.evidence));
                 problem(Reason.REACTOR_OUTPUT_NOT_ACQUIRED,
                         node.coordinate.notation(), Requirement.REACTOR_OUTPUT, node.evidence);
-            } else if (!node.coordinate.extension().equals("jar")) {
+            } else if (!node.coordinate.extension().equals("jar")
+                    && !node.coordinate.extension().equals("aar")
+                    && !(node.coordinate.extension().equals("war") && cache.hasLocalFile(node.coordinate))) {
                 problem(Reason.UNSUPPORTED_ARTIFACT_TYPE,
                         node.coordinate.notation(), Requirement.DEPENDENCY_ARTIFACT, node.evidence);
             } else {
                 try {
-                    LocalArtifactCache.Material material = cache.jar(node.coordinate);
+                    LocalArtifactCache.Material material = cache.binary(node.coordinate);
                     if (!material.hasZipMagic()) {
                         problem(Reason.INVALID_JAR,
                                 node.coordinate.notation(), Requirement.DEPENDENCY_ARTIFACT,
@@ -361,46 +380,47 @@ public final class MavenLocalClasspathProvider implements ClasspathProvider {
         }
 
         private ManagedDependency manage(Dependency dependency, int depth) {
-            if (depth == 1) return new ManagedDependency(dependency, Optional.empty());
+            if (depth == 1 || managedByKey.isEmpty()) return new ManagedDependency(dependency, Optional.empty());
             String key;
             try {
                 key = artifactKey(dependency);
             } catch (IllegalArgumentException exception) {
                 return new ManagedDependency(dependency, Optional.empty());
             }
-            for (Dependency managed : rootPom.managedDependencies()) {
-                try {
-                    if (!artifactKey(managed).equals(key) || managed.scope().equals("import")) continue;
-                    String version = managed.version().isEmpty() ? dependency.version() : managed.version();
-                    String scope = managed.scope().isEmpty() ? dependency.scope() : managed.scope();
-                    List<String> exclusions = new ArrayList<>(dependency.exclusions());
-                    exclusions.addAll(managed.exclusions());
-                    Dependency selected = new Dependency(
-                            dependency.groupId(),
-                            dependency.artifactId(),
-                            version,
-                            dependency.type(),
-                            dependency.classifier(),
-                            scope,
-                            dependency.optional() || managed.optional(),
-                            exclusions.stream().distinct().sorted().toList());
-                    if (selected.version().equals(dependency.version()) && selected.scope().equals(dependency.scope())
-                            && selected.optional() == dependency.optional()
-                            && selected.exclusions().equals(dependency.exclusions())) {
-                        return new ManagedDependency(selected, Optional.empty());
-                    }
-                    Optional<ArtifactCoordinate> original;
-                    try {
-                        original = Optional.of(artifact(dependency));
-                    } catch (IllegalArgumentException exception) {
-                        original = Optional.empty();
-                    }
-                    return new ManagedDependency(selected, original);
-                } catch (IllegalArgumentException ignored) {
-                    // An unusable management row cannot match an exact dependency key.
-                }
+            Dependency managed = managedByKey.get(key);
+            if (managed == null) return new ManagedDependency(dependency, Optional.empty());
+            String version = managed.version().isEmpty() ? dependency.version() : managed.version();
+            String scope = managed.scope().isEmpty() ? dependency.scope() : managed.scope();
+            List<String> exclusions;
+            if (managed.exclusions().isEmpty()) {
+                exclusions = dependency.exclusions();
+            } else {
+                var merged = new ArrayList<String>(dependency.exclusions().size() + managed.exclusions().size());
+                merged.addAll(dependency.exclusions());
+                merged.addAll(managed.exclusions());
+                exclusions = merged.stream().distinct().sorted().toList();
             }
-            return new ManagedDependency(dependency, Optional.empty());
+            Dependency selected = new Dependency(
+                    dependency.groupId(),
+                    dependency.artifactId(),
+                    version,
+                    dependency.type(),
+                    dependency.classifier(),
+                    scope,
+                    dependency.optional() || managed.optional(),
+                    exclusions);
+            if (selected.version().equals(dependency.version()) && selected.scope().equals(dependency.scope())
+                    && selected.optional() == dependency.optional()
+                    && selected.exclusions().equals(dependency.exclusions())) {
+                return new ManagedDependency(selected, Optional.empty());
+            }
+            Optional<ArtifactCoordinate> original;
+            try {
+                original = Optional.of(artifact(dependency));
+            } catch (IllegalArgumentException exception) {
+                original = Optional.empty();
+            }
+            return new ManagedDependency(selected, original);
         }
 
         private DependencyScope scope(String value, String subject) {
@@ -454,14 +474,42 @@ public final class MavenLocalClasspathProvider implements ClasspathProvider {
             };
         }
 
+        private static final List<DependencyScope> SCOPE_ORDER = List.of(
+                DependencyScope.COMPILE,
+                DependencyScope.RUNTIME,
+                DependencyScope.PROVIDED,
+                DependencyScope.TEST,
+                DependencyScope.SYSTEM);
+
         private static DependencyScope broader(DependencyScope left, DependencyScope right) {
-            List<DependencyScope> order = List.of(
-                    DependencyScope.COMPILE,
-                    DependencyScope.RUNTIME,
-                    DependencyScope.PROVIDED,
-                    DependencyScope.TEST,
-                    DependencyScope.SYSTEM);
-            return order.indexOf(left) <= order.indexOf(right) ? left : right;
+            return SCOPE_ORDER.indexOf(left) <= SCOPE_ORDER.indexOf(right) ? left : right;
+        }
+
+        private Optional<ArtifactCoordinate> resolveLocalRangeCoordinate(Dependency dependency) {
+            String ver = dependency.version() == null ? "" : dependency.version().trim();
+            if (ver.length() < 3 || !(ver.startsWith("[") || ver.startsWith("("))
+                    || !(ver.endsWith("]") || ver.endsWith(")"))) {
+                return Optional.empty();
+            }
+            String type = dependency.type().isEmpty() ? "jar" : dependency.type().toLowerCase(Locale.ROOT);
+            String ext = switch (type) {
+                case "jar", "bundle", "maven-plugin", "ejb", "eclipse-plugin", "hk2-jar", "test-jar", "ejb-client" -> "jar";
+                default -> type;
+            };
+            String classifier = dependency.classifier();
+            if (type.equals("test-jar") && classifier.isEmpty()) classifier = "tests";
+            if (type.equals("ejb-client") && classifier.isEmpty()) classifier = "client";
+            Optional<String> matched = cache.resolveLocalVersionRange(
+                    dependency.groupId(), dependency.artifactId(), ver, ext, classifier);
+            if (matched.isEmpty()) return Optional.empty();
+            try {
+                return Optional.of(artifact(new Dependency(
+                        dependency.groupId(), dependency.artifactId(), matched.orElseThrow(),
+                        dependency.type(), dependency.classifier(), dependency.scope(),
+                        dependency.optional(), dependency.exclusions())));
+            } catch (IllegalArgumentException ignored) {
+                return Optional.empty();
+            }
         }
 
         private static ArtifactCoordinate artifact(Dependency dependency) {

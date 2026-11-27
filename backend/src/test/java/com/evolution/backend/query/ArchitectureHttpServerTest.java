@@ -144,6 +144,44 @@ class ArchitectureHttpServerTest {
             assertEquals("GET, HEAD",postRoot.headers().firstValue("Allow").orElseThrow());
         }
     }
+
+    @Test void cspAllowsGitHubAvatarsOnlyWhenOAuthOrMultiUserEnabled() throws Exception {
+        var store = new QueryFixture().store();
+        var transport = (com.evolution.backend.github.GitHubRestClient.Transport) (u, m, h, b, c) ->
+                new com.evolution.backend.github.GitHubRestClient.RawResponse(404, Map.of(), new byte[0]);
+        try (var sessions = new com.evolution.backend.auth.UserSessionStore()) {
+            // Single-operator mode without OAuth client ID keeps strict zero-https: CSP
+            var localCfg = new com.evolution.backend.auth.GitHubOAuthService.Config(
+                    false, "", "", "github.com", com.evolution.backend.auth.GitHubOAuthService.DEFAULT_SCOPES,
+                    false, Optional.empty(), Optional.empty(), Optional.empty());
+            var localAuth = new com.evolution.backend.auth.AuthHttpApi(
+                    new com.evolution.backend.auth.GitHubOAuthService(localCfg, sessions, transport),
+                    null, ApiLimits.defaults());
+            try (var server = new ArchitectureHttpServer(
+                    ArchitectureQueryApi.withAuth(new ArchitectureQueryApi(store), localAuth), 0)) {
+                server.start();
+                String csp = send(server, "GET", "/", null, "").headers().firstValue("Content-Security-Policy").orElseThrow();
+                assertFalse(csp.contains("https:"), "Local offline mode must not allow https: origins in CSP: " + csp);
+                assertTrue(csp.contains("img-src 'self' data:;"));
+            }
+
+            // Multi-user mode explicitly allows GitHub avatars in img-src while keeping script-src/connect-src strictly 'self'
+            var multiCfg = new com.evolution.backend.auth.GitHubOAuthService.Config(
+                    true, "", "", "github.com", com.evolution.backend.auth.GitHubOAuthService.DEFAULT_SCOPES,
+                    false, Optional.empty(), Optional.empty(), Optional.empty());
+            var multiAuth = new com.evolution.backend.auth.AuthHttpApi(
+                    new com.evolution.backend.auth.GitHubOAuthService(multiCfg, sessions, transport),
+                    null, ApiLimits.defaults());
+            try (var server = new ArchitectureHttpServer(
+                    ArchitectureQueryApi.withAuth(new ArchitectureQueryApi(store), multiAuth), 0)) {
+                server.start();
+                String csp = send(server, "GET", "/", null, "").headers().firstValue("Content-Security-Policy").orElseThrow();
+                assertTrue(csp.contains("img-src 'self' data: https://avatars.githubusercontent.com;"), csp);
+                assertTrue(csp.contains("script-src 'self'"));
+                assertTrue(csp.contains("connect-src 'self'"));
+            }
+        }
+    }
     @Test void staticAssetsAndControlRoutesStayResponsiveWhileGraphSlotsAreOccupied() throws Exception {
         var f = new QueryFixture().node("a");
         var slowStore = new GraphStore() {
@@ -177,5 +215,43 @@ class ArchitectureHttpServerTest {
                 pool.shutdownNow();
             }
         }
+    }
+
+    @Test void bindHostTrustProxyHeadersAndWorkbenchLaunchOptionsSupportLocalAndPaasDeploy() {
+        assertEquals("127.0.0.1", ArchitectureHttpServer.bindHostFromEnvironment(k -> null, k -> null));
+        assertEquals("0.0.0.0", ArchitectureHttpServer.bindHostFromEnvironment(
+                Map.of("EVO_BIND_HOST", "0.0.0.0")::get, k -> null));
+        assertEquals("127.0.0.1", ArchitectureHttpServer.bindHostFromEnvironment(
+                Map.of("EVO_BIND_HOST", "0.0.0.0")::get,
+                Map.of("evo.http.bindHost", "127.0.0.1")::get));
+
+        assertFalse(ArchitectureHttpServer.trustProxyHeadersFromEnvironment(k -> null, k -> null));
+        assertTrue(ArchitectureHttpServer.trustProxyHeadersFromEnvironment(
+                Map.of("EVO_TRUST_PROXY_HEADERS", "true")::get, k -> null));
+        assertTrue(ArchitectureHttpServer.trustProxyHeadersFromEnvironment(
+                Map.of("EVO_TRUST_PROXY_HEADERS", "1")::get, k -> null));
+        assertFalse(ArchitectureHttpServer.trustProxyHeadersFromEnvironment(
+                Map.of("EVO_TRUST_PROXY_HEADERS", "true")::get,
+                Map.of("evo.http.trustProxyHeaders", "false")::get));
+
+        String[] baseArgs = {"src", "urn:evo:demo:app", "jdk", "21", "m2", "store"};
+        var defaults = com.evolution.backend.analysis.WorkbenchApiMain.parseLaunchOptions(baseArgs, k -> null, k -> null);
+        assertEquals("127.0.0.1", defaults.bindHost());
+        assertEquals(8080, defaults.port());
+        assertEquals("urn:evo:demo:app", defaults.coordinate());
+        assertEquals(21, defaults.release());
+
+        var paas = com.evolution.backend.analysis.WorkbenchApiMain.parseLaunchOptions(
+                baseArgs, Map.of("EVO_BIND_HOST", "0.0.0.0", "PORT", "9091")::get, k -> null);
+        assertEquals("0.0.0.0", paas.bindHost());
+        assertEquals(9091, paas.port());
+
+        String[] flagArgs = {"--host", "0.0.0.0", "--port=9443", "src", "urn:evo:demo:app", "jdk", "21", "m2", "store"};
+        var explicitFlags = com.evolution.backend.analysis.WorkbenchApiMain.parseLaunchOptions(
+                flagArgs, Map.of("PORT", "9091")::get, k -> null);
+        assertEquals("0.0.0.0", explicitFlags.bindHost());
+        assertEquals(9443, explicitFlags.port());
+        assertEquals("urn:evo:demo:app", explicitFlags.coordinate());
+        assertEquals(21, explicitFlags.release());
     }
 }

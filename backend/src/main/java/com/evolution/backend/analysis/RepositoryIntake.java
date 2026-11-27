@@ -27,6 +27,9 @@ public final class RepositoryIntake implements AutoCloseable {
     }
     public RepositoryIntake(Path root,boolean readOnly)throws IOException{this.root=root.toAbsolutePath().normalize();this.readOnly=readOnly;content=new StreamingContentStore(this.root.resolve("content"));inventory=new SqliteInventoryStore(this.root.resolve("metadata"),content,readOnly);}
     public InventoryReader inventory(){return inventory;}
+    public Optional<SqliteInventoryStore.SealedHead> latestSealed(RepositoryIdentity repository, ContentDigest selection) throws IOException {
+        return inventory.latestSealed(repository, selection);
+    }
     boolean hasUncapturedEntries(String revision) throws IOException { return inventory.hasUncapturedEntries(revision); }
     /** Product capture drains traversal in one invocation and retries only an unsettled
      * filesystem checkpoint. Missing LFS/content/resources and cancellation never spin. */
@@ -44,6 +47,25 @@ public final class RepositoryIntake implements AutoCloseable {
         }
         return result;
     }
+    public StreamingRepositoryAcquirer.IncrementalReceipt localCompleteIncremental(
+            Path source,
+            String revision,
+            Optional<String> baseRevision,
+            StreamingAcquisitionRequest request,
+            boolean verifyAll,
+            BooleanSupplier cancelled) throws IOException {
+        StreamingRepositoryAcquirer.IncrementalReceipt inc = localIncremental(source, revision, baseRevision, request, verifyAll, cancelled);
+        var result = inc.receipt();
+        if (result.manifest().isPresent() || cancelled.getAsBoolean() || Thread.currentThread().isInterrupted()) {
+            return inc;
+        }
+        if (!result.reason().equals("INVENTORY_FRONTIER_OPEN") && !result.reason().equals("SOURCE_DIRECTORY_CHANGED")) {
+            return inc;
+        }
+        // Retry unsettled filesystem checkpoint using full localComplete path for safety.
+        var retried = localComplete(source, revision, request, cancelled);
+        return new StreamingRepositoryAcquirer.IncrementalReceipt(retried, false, "RETRY_AFTER_TRANSIENT_MUTATION", Optional.empty());
+    }
     /** Immutable captured bytes for isolated build transport; never a mutable host source view. */
     public RepositoryContentStore content(){return content;}
     public JobJournal journal(){return inventory;}
@@ -51,10 +73,23 @@ public final class RepositoryIntake implements AutoCloseable {
         return readiness(revision,policy,cancelled,false);
     }
     ReadinessPlan readiness(String revision,ReadinessPlanner.Policy policy,BooleanSupplier cancelled,boolean fast)throws IOException{
+        return readinessIncremental(revision, Optional.empty(), policy, cancelled, fast);
+    }
+    /**
+     * Delta-aware readiness plan computation: when {@code delta} confirms zero added/deleted files
+     * and only readiness-neutral modifications (e.g., D1 Java/Kotlin or D0 polyglot body edits),
+     * rebinds the base revision's persisted {@link ReadinessPlan} deterministically with exact
+     * {@link ReadinessPlan#identity()} parity instead of rescanning inventory and ownership.
+     */
+    public ReadinessPlan readinessIncremental(
+            String revision,
+            Optional<StreamingRepositoryAcquirer.FileDelta> delta,
+            ReadinessPlanner.Policy policy,
+            BooleanSupplier cancelled,
+            boolean fast) throws IOException {
         if(cancelled.getAsBoolean()||Thread.currentThread().isInterrupted())throw new IOException("READINESS_CANCELLED");
         var manifest=inventory.manifest(revision).orElseThrow(()->new IOException("SEALED_INVENTORY_REQUIRED"));
-        var request=IngestionEvidence.digest(fast?List.of(ReadinessPlan.PROVIDER,manifest,policy,"installed-node-dependency-scope:v1"):
-                List.of(ReadinessPlan.PROVIDER,manifest,policy));
+        var request=readinessRequestKey(manifest, policy, fast);
         if(Files.isRegularFile(root.resolve("readiness/index.sqlite"),LinkOption.NOFOLLOW_LINKS)){
             try(var reports=new ReadinessReports(root.resolve("readiness"),content,true)){
                 var saved=reports.get(request,cancelled);if(saved.isPresent())return saved.orElseThrow();
@@ -63,6 +98,20 @@ public final class RepositoryIntake implements AutoCloseable {
         if(readOnly)throw new IOException("READINESS_PLAN_NOT_PUBLISHED");
         try(var reports=new ReadinessReports(root.resolve("readiness"),content)){
             var saved=reports.get(request,cancelled);if(saved.isPresent())return saved.orElseThrow();
+            if(delta.isPresent() && !Boolean.getBoolean("evo.incremental.disabled")) {
+                var d = delta.orElseThrow();
+                var baseManifest = inventory.manifest(d.baseRevision());
+                if(baseManifest.isPresent()) {
+                    var baseRequest = readinessRequestKey(baseManifest.orElseThrow(), policy, fast);
+                    var basePlan = reports.get(baseRequest, cancelled);
+                    if(basePlan.isPresent() && ReadinessDelta.canFastRebind(
+                            basePlan.orElseThrow(), manifest, d.addedPaths(), d.modifiedPaths(), d.deletedPaths())) {
+                        var rebound = ReadinessDelta.rebindPlan(basePlan.orElseThrow(), manifest);
+                        reports.save(request, rebound, cancelled);
+                        return rebound;
+                    }
+                }
+            }
             ReadinessPlan plan;
             try {
                 plan=new ReadinessPlanner(List.of(new PassiveReadinessDiscovery(),new MavenReadinessDiscovery()))
@@ -70,6 +119,10 @@ public final class RepositoryIntake implements AutoCloseable {
             }catch(UncheckedIOException unavailable){throw unavailable.getCause();}
             reports.save(request,plan,cancelled);return plan;
         }
+    }
+    private static ContentDigest readinessRequestKey(InventoryManifest manifest, ReadinessPlanner.Policy policy, boolean fast) {
+        return IngestionEvidence.digest(fast?List.of(ReadinessPlan.PROVIDER,manifest,policy,"installed-node-dependency-scope:v1"):
+                List.of(ReadinessPlan.PROVIDER,manifest,policy));
     }
     public Object readinessPage(String revision,String section,int size,Optional<String> cursor)throws IOException{
         return readinessPage(revision,section,size,cursor,ReadinessPlanner.Policy.comprehensive());
@@ -150,8 +203,35 @@ public final class RepositoryIntake implements AutoCloseable {
         }
         return new StreamingRepositoryAcquirer(content,inventory).acquire(source,revision,request,cancelled);
     }
+    public StreamingRepositoryAcquirer.IncrementalReceipt localIncremental(
+            Path source,
+            String revision,
+            Optional<String> baseRevision,
+            StreamingAcquisitionRequest request,
+            boolean verifyAll,
+            BooleanSupplier cancelled) throws IOException {
+        if(root.startsWith(source.toAbsolutePath().normalize())){
+            String state=source.toAbsolutePath().normalize().relativize(root).toString().replace('\\','/');
+            if(state.isEmpty()||!request.excludes(state))throw new IOException("STATE_DIRECTORY_MUST_BE_EXCLUDED");
+        }
+        return new StreamingRepositoryAcquirer(content,inventory)
+                .acquireIncremental(source, revision, baseRevision, request, verifyAll, cancelled);
+    }
     public StreamingRepositoryAcquirer.Receipt git(URI uri,String ref,String revision,StreamingAcquisitionRequest request,GitHostPolicy policy,String executable,BooleanSupplier cancelled)throws IOException{
         return new GitSnapshotAcquirer(content,inventory,policy,executable,60_000).acquire(root.resolve("git").resolve(ContentDigest.sha256Utf8(revision).value().substring(7)),revision,uri,ref,request,cancelled);
+    }
+    public StreamingRepositoryAcquirer.IncrementalReceipt gitIncremental(
+            URI uri,
+            String ref,
+            String revision,
+            Optional<String> baseRevision,
+            StreamingAcquisitionRequest request,
+            GitHostPolicy policy,
+            String executable,
+            BooleanSupplier cancelled) throws IOException {
+        Path mirror = root.resolve("git-mirrors").resolve(ContentDigest.sha256Utf8(uri.toASCIIString()).value().substring(7));
+        return new GitSnapshotAcquirer(content, inventory, policy, executable, 60_000)
+                .acquireIncremental(mirror, revision, baseRevision, uri, ref, request, cancelled);
     }
     public StreamingRepositoryAcquirer.Receipt archive(Path archive,String revision,StreamingAcquisitionRequest request,BooleanSupplier cancelled)throws IOException{
         ContentHandle captured;try(var input=Files.newInputStream(LocalAnalysisRunner.safe(archive),LinkOption.NOFOLLOW_LINKS)){captured=content.put(input,cancelled);}
@@ -178,7 +258,7 @@ public final class RepositoryIntake implements AutoCloseable {
         }
         return false;
     }
-    Predicate<String> installedNodeDependencies(String revision){
+    public Predicate<String> installedNodeDependencies(String revision){
         return installedNodeDependencies(revision,new HashMap<>());
     }
     private Predicate<String> installedNodeDependencies(String revision,Map<String,Boolean> existsCache){

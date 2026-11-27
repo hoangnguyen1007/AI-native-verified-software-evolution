@@ -978,7 +978,8 @@ class UniversalArchitecturePipelineIntegrationTest {
         assertTrue(report.types().stream().anyMatch(t -> t.qualifiedName().contains("\"OwnerController\"")));
         assertTrue(report.entryPoints().stream().anyMatch(e -> e.kind() == UniversalArchitectureReport.EntryPointKind.BOOT_APPLICATION));
         assertTrue(report.entryPoints().stream().anyMatch(e -> e.kind() == UniversalArchitectureReport.EntryPointKind.CONTROLLER_ENDPOINT));
-        assertTrue(report.injectionSites().stream().anyMatch(s -> s.targetType().contains("OwnerRepository")));
+        assertTrue(report.injectionSites().stream().anyMatch(s -> s.targetType().contains("OwnerRepository")),
+                () -> "injectionSites=" + report.injectionSites() + " components=" + report.components() + " gaps=" + report.gaps() + " issues=" + report.issues());
     }
 
     @Test

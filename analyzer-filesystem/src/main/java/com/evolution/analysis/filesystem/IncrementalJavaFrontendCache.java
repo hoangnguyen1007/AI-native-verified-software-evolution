@@ -10,6 +10,8 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.security.*;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.zip.Deflater;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.GZIPOutputStream;
 
@@ -17,21 +19,24 @@ import java.util.zip.GZIPOutputStream;
  * Per-source-set content-addressed cache for Java {@link FrontendResult} outputs.
  * <p>
  * The key hashes only the exact inputs that determine a single source set's Java extraction
- * (sources, reactor sources, platform, ordered binaries, frontend provider, and profile),
- * deliberately excluding global snapshot or unrelated module hashes. Any hit rebinds
- * {@code FrontendResult.analysis} to the current request's {@link AnalysisIdentity}.
+ * (sources, reactor sources or reactor ABIs, {@code lombok.config} files, platform, ordered binaries,
+ * frontend provider, and profile), deliberately excluding global snapshot or unrelated module hashes.
+ * Any hit rebinds {@code FrontendResult.analysis} to the current request's {@link AnalysisIdentity}
+ * (and rebinds peer upstream declaration spans when using ABI-aware lookup).
  * <p>
  * Every entry carries a trailing SHA-256 checksum over the entire payload and returns
  * {@link Optional#empty()} on any mismatch or corruption.
  */
 public final class IncrementalJavaFrontendCache {
-    private static final byte[] MAGIC = "EVOJFC1\n".getBytes(StandardCharsets.US_ASCII);
-    private static final int FORMAT_VERSION = 1;
+    private static final byte[] MAGIC = "EVOJFC2\n".getBytes(StandardCharsets.US_ASCII);
+    private static final int FORMAT_VERSION = 2;
     private static final int MAX_ENTRIES = Integer.getInteger("evo.incremental.javaCacheMaxEntries", 512);
     private static final int IO_BUFFER_BYTES = 32 * 1024;
+    private static final int EVICT_CHECK_INTERVAL = 32;
 
     private final Path directory;
     private final Object evictionLock = new Object();
+    private final AtomicInteger writeCount = new AtomicInteger();
 
     public IncrementalJavaFrontendCache(Path cacheRoot) {
         this.directory = Objects.requireNonNull(cacheRoot).toAbsolutePath().normalize().resolve("java-sets");
@@ -39,71 +44,136 @@ public final class IncrementalJavaFrontendCache {
 
     /** Computes the deterministic key for one {@link FrontendRequest}, independent of unrelated modules. */
     public static ContentDigest cacheKey(FrontendRequest request, VersionedIdentifier provider) {
+        return computeKey(request, provider, null);
+    }
+
+    /**
+     * Computes an ABI-aware cache key where upstream {@code reactorSources} are hashed by their
+     * deterministic module ABI digest when provided (falling back to raw file digests for any module
+     * without an ABI digest). Enables cross-module Early Cutoff on upstream body-only edits.
+     */
+    public static ContentDigest cacheKeyWithReactorAbi(
+            FrontendRequest request,
+            VersionedIdentifier provider,
+            Map<ModuleIdentity, ContentDigest> reactorModuleAbiDigests) {
+        Objects.requireNonNull(reactorModuleAbiDigests);
+        return computeKey(request, provider, reactorModuleAbiDigests);
+    }
+
+    private static ContentDigest computeKey(
+            FrontendRequest request,
+            VersionedIdentifier provider,
+            Map<ModuleIdentity, ContentDigest> reactorModuleAbiDigests) {
         Objects.requireNonNull(request);
         Objects.requireNonNull(provider);
         try {
             MessageDigest md = MessageDigest.getInstance("SHA-256");
             try (var out = new DataOutputStream(new DigestOutputStream(OutputStream.nullOutputStream(), md))) {
-                out.writeUTF("java-source-set-cache:v1");
-                out.writeUTF(provider.id());
-                out.writeUTF(provider.version());
+                writeLongUtf(out, reactorModuleAbiDigests == null
+                        ? "java-source-set-cache:v4"
+                        : "java-source-set-abi-cache:v4");
+                writeLongUtf(out, provider.id());
+                writeLongUtf(out, provider.version());
                 String profile = request.manifest().configuration().values().getOrDefault("analysis.profile", "");
-                out.writeUTF(profile);
+                writeLongUtf(out, profile);
                 out.writeBoolean(request.sourceRecovery());
-                out.writeUTF(request.manifest().configuration().values()
+                writeLongUtf(out, request.manifest().configuration().values()
                         .getOrDefault(FrontendRequest.RECOVERY_PLATFORM_COMPATIBLE, ""));
-                out.writeUTF(request.manifest().configuration().values()
+                writeLongUtf(out, request.manifest().configuration().values()
                         .getOrDefault("java.binary-native-origins", ""));
+                writeLongUtf(out, request.manifest().configuration().values()
+                        .getOrDefault("java.generated-overlay", ""));
                 out.writeInt(request.plan().syntaxLevel().orElse(-1));
                 out.writeInt(request.plan().bytecodeTarget().orElse(-1));
                 out.writeBoolean(request.plan().preview());
-                out.writeUTF(request.module().value());
-                out.writeUTF(request.sourceSet().name());
-                out.writeUTF(request.platform().entry().logicalName());
-                out.writeUTF(request.platform().entry().contentDigest().value());
+                writeLongUtf(out, request.module().value());
+                writeLongUtf(out, request.sourceSet().name());
+                writeLongUtf(out, request.platform().entry().logicalName());
+                writeLongUtf(out, request.platform().entry().contentDigest().value());
                 out.writeInt(request.platform().release());
-                out.writeUTF(request.platform().version());
-                out.writeUTF(request.platform().vendor());
+                writeLongUtf(out, request.platform().version());
+                writeLongUtf(out, request.platform().vendor());
                 out.writeInt(request.platform().artifacts().size());
                 for (var art : request.platform().artifacts()) {
-                    out.writeUTF(art.logicalName());
-                    out.writeUTF(art.contentDigest().value());
+                    writeLongUtf(out, art.logicalName());
+                    writeLongUtf(out, art.contentDigest().value());
+                }
+                // Soundness invariant: Extraction.hasLombokConfiguration() inspects all lombok.config files in snapshot,
+                // and AndroidSyntheticDeclarations.populate() reads all .aidl and AndroidManifest.xml snapshot files.
+                var lombokConfigs = new TreeMap<String, String>();
+                var androidMeta = new TreeMap<String, String>();
+                for (var sf : request.manifest().snapshot().files()) {
+                    String path = sf.path().replace('\\', '/');
+                    if ("lombok.config".equals(path) || path.endsWith("/lombok.config")) {
+                        lombokConfigs.put(path, sf.contentDigest().value());
+                    } else if (path.endsWith(".aidl") || path.endsWith("AndroidManifest.xml")) {
+                        androidMeta.put(path, sf.contentDigest().value());
+                    }
+                }
+                out.writeInt(lombokConfigs.size());
+                for (var entry : lombokConfigs.entrySet()) {
+                    writeLongUtf(out, entry.getKey());
+                    writeLongUtf(out, entry.getValue());
+                }
+                out.writeInt(androidMeta.size());
+                for (var entry : androidMeta.entrySet()) {
+                    writeLongUtf(out, entry.getKey());
+                    writeLongUtf(out, entry.getValue());
                 }
                 out.writeInt(request.sources().size());
                 for (var src : request.sources()) {
                     var doc = src.document();
-                    out.writeUTF(doc.identity().value());
-                    out.writeUTF(doc.path());
-                    out.writeUTF(doc.contentDigest().value());
-                    out.writeUTF(doc.classification().name());
-                    out.writeUTF(src.decoding().charset());
+                    writeLongUtf(out, doc.identity().value());
+                    writeLongUtf(out, doc.path());
+                    writeLongUtf(out, doc.contentDigest().value());
+                    writeLongUtf(out, doc.classification().name());
+                    writeLongUtf(out, src.decoding().charset());
                 }
                 out.writeInt(request.dependencies().size());
                 for (var dep : request.dependencies()) {
-                    out.writeUTF(dep.entry().logicalName());
-                    out.writeUTF(dep.entry().contentDigest().value());
-                    out.writeUTF(dep.originEntry().logicalName());
-                    out.writeUTF(dep.originEntry().contentDigest().value());
-                    out.writeUTF(dep.reactorModule().map(ModuleIdentity::value).orElse(""));
-                    out.writeUTF(dep.nativeOrigin().map(o -> o.original().contentDigest().value()).orElse(""));
+                    writeLongUtf(out, dep.entry().logicalName());
+                    writeLongUtf(out, dep.entry().contentDigest().value());
+                    writeLongUtf(out, dep.originEntry().logicalName());
+                    writeLongUtf(out, dep.originEntry().contentDigest().value());
+                    writeLongUtf(out, dep.reactorModule().map(ModuleIdentity::value).orElse(""));
+                    writeLongUtf(out, dep.nativeOrigin().map(o -> o.original().contentDigest().value()).orElse(""));
                 }
                 out.writeInt(request.reactorSources().size());
                 for (var r : request.reactorSources()) {
                     out.writeInt(r.order());
-                    out.writeUTF(r.identity().value());
-                    out.writeInt(r.sources().size());
-                    for (var rs : r.sources()) {
-                        out.writeUTF(rs.document().identity().value());
-                        out.writeUTF(rs.document().path());
-                        out.writeUTF(rs.document().contentDigest().value());
-                        out.writeUTF(rs.document().classification().name());
-                        out.writeUTF(rs.decoding().charset());
+                    writeLongUtf(out, r.module().value());
+                    writeLongUtf(out, r.sourceSet().name());
+                    ContentDigest abiDigest = reactorModuleAbiDigests == null ? null : reactorModuleAbiDigests.get(r.module());
+                    if (abiDigest != null) {
+                        out.writeByte(1);
+                        writeLongUtf(out, abiDigest.value());
+                    } else {
+                        out.writeByte(0);
+                        writeLongUtf(out, r.identity().value());
+                        out.writeInt(r.sources().size());
+                        for (var rs : r.sources()) {
+                            writeLongUtf(out, rs.document().identity().value());
+                            writeLongUtf(out, rs.document().path());
+                            writeLongUtf(out, rs.document().contentDigest().value());
+                            writeLongUtf(out, rs.document().classification().name());
+                            writeLongUtf(out, rs.decoding().charset());
+                        }
                     }
                 }
                 out.writeBoolean(request.correspondence().isPresent());
                 if (request.correspondence().isPresent()) {
-                    out.writeUTF(request.manifest().configuration().values()
+                    var corr = request.correspondence().orElseThrow();
+                    writeLongUtf(out, request.manifest().configuration().values()
                             .getOrDefault("java.source-binary-correspondence", ""));
+                    writeLongUtf(out, com.evolution.analysis.contract.serialization.CanonicalJson
+                            .sha256(corr.canonicalForm()).value());
+                    var sortedViews = new TreeMap<>(corr.binaryViews());
+                    out.writeInt(sortedViews.size());
+                    for (var v : sortedViews.entrySet()) {
+                        writeLongUtf(out, v.getKey().value());
+                        writeLongUtf(out, v.getValue().digest().value());
+                        out.writeLong(v.getValue().size());
+                    }
                 }
                 out.flush();
             }
@@ -120,13 +190,34 @@ public final class IncrementalJavaFrontendCache {
 
     public Optional<FrontendResult> get(FrontendRequest request, VersionedIdentifier provider) {
         if (Boolean.getBoolean("evo.incremental.disabled")) return Optional.empty();
-        ContentDigest key = cacheKey(request, provider);
+        return getByKey(cacheKey(request, provider), request, Map.of());
+    }
+
+    /**
+     * Looks up a cached {@link FrontendResult} by its reactor-ABI key and rebinds any upstream
+     * peer {@link DeclarationRecord} spans to match {@code currentReactorDeclarations}, guaranteeing
+     * bit-for-bit identical spans after upstream body-only edits.
+     */
+    public Optional<FrontendResult> getByAbi(
+            FrontendRequest request,
+            VersionedIdentifier provider,
+            Map<ModuleIdentity, ContentDigest> reactorModuleAbiDigests,
+            Map<EntityIdentity, DeclarationRecord> currentReactorDeclarations) {
+        if (Boolean.getBoolean("evo.incremental.disabled")) return Optional.empty();
+        Objects.requireNonNull(reactorModuleAbiDigests);
+        Objects.requireNonNull(currentReactorDeclarations);
+        return getByKey(cacheKeyWithReactorAbi(request, provider, reactorModuleAbiDigests), request, currentReactorDeclarations);
+    }
+
+    private Optional<FrontendResult> getByKey(
+            ContentDigest key,
+            FrontendRequest request,
+            Map<EntityIdentity, DeclarationRecord> currentReactorDeclarations) {
         Path file = entryPath(key);
         if (!Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS)) return Optional.empty();
         try {
             MessageDigest md = MessageDigest.getInstance("SHA-256");
             byte[] compressedTrailer = new byte[32];
-            byte[] payloadBytes;
             try (var in = new BufferedInputStream(Files.newInputStream(file, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS), IO_BUFFER_BYTES)) {
                 byte[] all = in.readAllBytes();
                 if (all.length < 32) {
@@ -140,18 +231,26 @@ public final class IncrementalJavaFrontendCache {
                     deleteQuietly(file);
                     return Optional.empty();
                 }
-                payloadBytes = all;
                 try (var din = new DataInputStream(new BufferedInputStream(
-                        new GZIPInputStream(new ByteArrayInputStream(payloadBytes, 0, bodyLen)), IO_BUFFER_BYTES))) {
+                        new GZIPInputStream(new ByteArrayInputStream(all, 0, bodyLen)), IO_BUFFER_BYTES))) {
                     byte[] magic = new byte[MAGIC.length];
                     din.readFully(magic);
                     if (!Arrays.equals(MAGIC, magic)
                             || din.readInt() != FORMAT_VERSION
-                            || !key.value().equals(din.readUTF())) {
+                            || !key.value().equals(readLongUtf(din))) {
                         deleteQuietly(file);
                         return Optional.empty();
                     }
                     FrontendResult loaded = readResult(din, request.manifest().identity());
+                    if (!currentReactorDeclarations.isEmpty()) {
+                        loaded = rebindPeerDeclarations(loaded, request.module(), currentReactorDeclarations);
+                    }
+                    if (!request.reactorSources().isEmpty()) {
+                        loaded = reconcileReactorSourceOutcomes(loaded, request);
+                        if (loaded == null) {
+                            return Optional.empty();
+                        }
+                    }
                     loaded.validateFor(request);
                     touchQuietly(file);
                     return Optional.of(loaded);
@@ -163,42 +262,187 @@ public final class IncrementalJavaFrontendCache {
         }
     }
 
+    /**
+     * Rebinds upstream reactor {@link DeclarationRecord} entries inside a cached {@link FrontendResult}
+     * to match current upstream declarations (e.g. updated {@link SourceSpan} line numbers after an
+     * upstream method body edit that kept ABI identical).
+     */
+    public static FrontendResult rebindPeerDeclarations(
+            FrontendResult result,
+            ModuleIdentity owningModule,
+            Map<EntityIdentity, DeclarationRecord> currentReactorDeclarations) {
+        Objects.requireNonNull(result);
+        Objects.requireNonNull(owningModule);
+        if (currentReactorDeclarations == null || currentReactorDeclarations.isEmpty() || result.declarations().isEmpty()) {
+            return result;
+        }
+        EntityScope ownScope = EntityScope.project(owningModule);
+        var coveredDocs = new HashSet<SourceDocumentIdentity>(result.sources().size() * 2);
+        for (var s : result.sources()) coveredDocs.add(s.document());
+        List<DeclarationRecord> rebound = null;
+        var orig = result.declarations();
+        for (int i = 0; i < orig.size(); i++) {
+            DeclarationRecord decl = orig.get(i);
+            var entity = decl.entity();
+            if (entity.origin() == EntityOrigin.PROJECT && !entity.stableScope().equals(ownScope)) {
+                DeclarationRecord fresh = currentReactorDeclarations.get(entity.identity());
+                if (fresh != null && !fresh.equals(decl)) {
+                    boolean spanCovered = fresh.entity().declaration()
+                            .map(sp -> coveredDocs.contains(sp.document()))
+                            .orElse(true);
+                    if (spanCovered) {
+                        if (rebound == null) {
+                            rebound = new ArrayList<>(orig);
+                        }
+                        rebound.set(i, fresh);
+                    }
+                }
+            }
+        }
+        if (rebound == null) return result;
+        return new FrontendResult(
+                result.analysis(), result.frontend(), result.state(),
+                rebound, result.occurrences(), result.observations(), result.sources(),
+                result.coverage(), result.diagnostics(), result.types(), result.annotations(),
+                result.derivedRelationships(), result.typeDeclarations(), result.memberDeclarations(),
+                result.constructorCandidates(), result.httpClientCalls());
+    }
+
+    /**
+     * Reconciles upstream reactor {@link SourceOutcome} entries after an ABI-preserving edit in an upstream
+     * module (such as adding/removing a private helper file). Never drops a document still referenced by any
+     * declaration, occurrence, observation, type, annotation, or derived record (returns {@code null} to force
+     * clean re-extraction instead of deleting or corrupting the cache entry).
+     */
+    private static FrontendResult reconcileReactorSourceOutcomes(FrontendResult result, FrontendRequest request) {
+        var primaryDocs = new HashSet<SourceDocumentIdentity>(request.sources().size() * 2);
+        for (var s : request.sources()) primaryDocs.add(s.document().identity());
+        var expectedReactorDocs = new LinkedHashSet<SourceDocumentIdentity>();
+        for (var r : request.reactorSources()) {
+            for (var s : r.sources()) expectedReactorDocs.add(s.document().identity());
+        }
+        var currentByDoc = new LinkedHashMap<SourceDocumentIdentity, SourceOutcome>(result.sources().size() * 2);
+        for (var so : result.sources()) currentByDoc.put(so.document(), so);
+
+        boolean changed = false;
+        var updatedSources = new ArrayList<SourceOutcome>(primaryDocs.size() + expectedReactorDocs.size());
+        for (var doc : primaryDocs) {
+            var existing = currentByDoc.get(doc);
+            if (existing == null) return null;
+            updatedSources.add(existing);
+        }
+        for (var doc : expectedReactorDocs) {
+            var existing = currentByDoc.get(doc);
+            if (existing != null) {
+                updatedSources.add(existing);
+            } else {
+                // Newly added private upstream file that did not change public ABI: never alters downstream facts.
+                updatedSources.add(new SourceOutcome(doc, SourceOutcome.State.PROCESSED, List.of()));
+                changed = true;
+            }
+        }
+        if (updatedSources.size() != result.sources().size()) {
+            changed = true;
+        }
+        if (!changed) return result;
+
+        var keptDocs = new HashSet<SourceDocumentIdentity>(updatedSources.size() * 2);
+        for (var so : updatedSources) keptDocs.add(so.document());
+        for (var d : result.declarations()) {
+            if (d.entity().declaration().isPresent() && !keptDocs.contains(d.entity().declaration().orElseThrow().document())) {
+                return null;
+            }
+        }
+        for (var o : result.observations()) {
+            if (!keptDocs.contains(o.document())) return null;
+        }
+        for (var t : result.types()) {
+            if (!keptDocs.contains(t.span().document())) return null;
+        }
+        for (var a : result.annotations()) {
+            if (!keptDocs.contains(a.span().document())) return null;
+        }
+        for (var dr : result.derivedRelationships()) {
+            for (var sp : dr.supportingSpans()) {
+                if (!keptDocs.contains(sp.document())) return null;
+            }
+        }
+        for (var c : result.constructorCandidates()) {
+            for (var sp : c.supportingSpans()) {
+                if (!keptDocs.contains(sp.document())) return null;
+            }
+        }
+        for (var hc : result.httpClientCalls()) {
+            if (!keptDocs.contains(hc.span().document())) return null;
+        }
+        return new FrontendResult(
+                result.analysis(), result.frontend(), result.state(),
+                result.declarations(), result.occurrences(), result.observations(), updatedSources,
+                result.coverage(), result.diagnostics(), result.types(), result.annotations(),
+                result.derivedRelationships(), result.typeDeclarations(), result.memberDeclarations(),
+                result.constructorCandidates(), result.httpClientCalls());
+    }
+
     public void put(FrontendRequest request, FrontendResult result) {
         if (Boolean.getBoolean("evo.incremental.disabled")) return;
         Objects.requireNonNull(request);
         Objects.requireNonNull(result);
-        ContentDigest key = cacheKey(request, result.frontend());
+        putByKey(cacheKey(request, result.frontend()), result);
+    }
+
+    public void putByAbi(
+            FrontendRequest request,
+            FrontendResult result,
+            Map<ModuleIdentity, ContentDigest> reactorModuleAbiDigests) {
+        if (Boolean.getBoolean("evo.incremental.disabled")) return;
+        Objects.requireNonNull(request);
+        Objects.requireNonNull(result);
+        Objects.requireNonNull(reactorModuleAbiDigests);
+        putByKey(cacheKeyWithReactorAbi(request, result.frontend(), reactorModuleAbiDigests), result);
+    }
+
+    private void putByKey(ContentDigest key, FrontendResult result) {
         Path target = entryPath(key);
         if (Files.isRegularFile(target, LinkOption.NOFOLLOW_LINKS)) return;
         Path pending = null;
         try {
             Files.createDirectories(directory);
             pending = Files.createTempFile(directory, "jfc-", ".tmp");
-            var bodyBuffer = new ByteArrayOutputStream(8192);
-            try (var gz = new GZIPOutputStream(bodyBuffer);
-                 var out = new DataOutputStream(new BufferedOutputStream(gz, IO_BUFFER_BYTES))) {
-                out.write(MAGIC);
-                out.writeInt(FORMAT_VERSION);
-                out.writeUTF(key.value());
-                writeResult(out, result);
-                out.flush();
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
+            try (var fileOut = new BufferedOutputStream(
+                    Files.newOutputStream(pending, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING),
+                    IO_BUFFER_BYTES)) {
+                var digestOut = new DigestOutputStream(fileOut, md);
+                var keepOpen = new FilterOutputStream(digestOut) {
+                    @Override public void write(byte[] b, int off, int len) throws IOException { out.write(b, off, len); }
+                    @Override public void close() throws IOException { flush(); }
+                };
+                try (var gz = new FastGzipOutputStream(keepOpen, IO_BUFFER_BYTES);
+                     var out = new DataOutputStream(new BufferedOutputStream(gz, IO_BUFFER_BYTES))) {
+                    out.write(MAGIC);
+                    out.writeInt(FORMAT_VERSION);
+                    writeLongUtf(out, key.value());
+                    writeResult(out, result);
+                    out.flush();
+                }
+                fileOut.write(md.digest());
+                fileOut.flush();
             }
-            byte[] compressed = bodyBuffer.toByteArray();
-            byte[] checksum = MessageDigest.getInstance("SHA-256").digest(compressed);
-            try (var out = Files.newOutputStream(pending, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING)) {
-                out.write(compressed);
-                out.write(checksum);
+            StreamingContentStore.moveAtomicWithRetry(pending, target);
+            if ((writeCount.incrementAndGet() % EVICT_CHECK_INTERVAL) == 0) {
+                evictIfNeeded();
             }
-            try {
-                Files.move(pending, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
-            } catch (AtomicMoveNotSupportedException unsupported) {
-                Files.move(pending, target, StandardCopyOption.REPLACE_EXISTING);
-            }
-            evictIfNeeded();
         } catch (IOException | RuntimeException | NoSuchAlgorithmException ignored) {
             // Incremental cache writes are strictly best-effort.
         } finally {
             if (pending != null) deleteQuietly(pending);
+        }
+    }
+
+    private static final class FastGzipOutputStream extends GZIPOutputStream {
+        FastGzipOutputStream(OutputStream out, int bufferSize) throws IOException {
+            super(out, bufferSize);
+            this.def.setLevel(Deflater.BEST_SPEED);
         }
     }
 
@@ -483,11 +727,24 @@ public final class IncrementalJavaFrontendCache {
     private static <T> Optional<T> readOpt(DataInputStream in, ReaderFn<T> fn) throws IOException {
         return in.readBoolean() ? Optional.of(fn.read()) : Optional.empty();
     }
+    private static void writeLongUtf(DataOutputStream out, String value) throws IOException {
+        byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
+        out.writeInt(bytes.length);
+        out.write(bytes);
+    }
+    private static String readLongUtf(DataInputStream in) throws IOException {
+        int len = in.readInt();
+        if (len < 0 || len > 32 * 1024 * 1024) throw new IOException("Invalid UTF length: " + len);
+        if (len == 0) return "";
+        byte[] bytes = new byte[len];
+        in.readFully(bytes);
+        return new String(bytes, StandardCharsets.UTF_8);
+    }
     private static void writeVer(DataOutputStream out, VersionedIdentifier v) throws IOException {
-        out.writeUTF(v.id()); out.writeUTF(v.version());
+        writeLongUtf(out, v.id()); writeLongUtf(out, v.version());
     }
     private static VersionedIdentifier readVer(DataInputStream in) throws IOException {
-        return new VersionedIdentifier(in.readUTF(), in.readUTF());
+        return new VersionedIdentifier(readLongUtf(in), readLongUtf(in));
     }
     private static void writeEntity(DataOutputStream out, Pool pool, Entity e) throws IOException {
         out.writeInt(pool.intern(e.identity().value()));

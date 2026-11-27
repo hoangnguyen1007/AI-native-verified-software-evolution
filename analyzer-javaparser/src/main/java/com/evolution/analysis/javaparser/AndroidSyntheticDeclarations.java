@@ -33,6 +33,7 @@ final class AndroidSyntheticDeclarations {
     private static final Pattern AIDL_METHOD = Pattern.compile(
             "(?m)^\\s*(?:oneway\\s+)?([A-Za-z0-9_.<>\\[\\]]+)\\s+([A-Za-z_][A-Za-z0-9_]*)\\s*\\(([^)]*)\\)\\s*;");
 
+    private static volatile List<CompilationUnit> cachedPlatformTemplates;
     private boolean androidUsed;
     private final Set<String> rPackages = new LinkedHashSet<>();
     private final Set<String> buildConfigPackages = new LinkedHashSet<>();
@@ -43,6 +44,39 @@ final class AndroidSyntheticDeclarations {
     private final Map<String, String> simpleToBindingFqn = new LinkedHashMap<>();
     private final Set<String> sourceAidlFqns = new LinkedHashSet<>();
     private final Map<String, Set<String>> sourceAidlZeroArgMethods = new LinkedHashMap<>();
+    private final List<CompilationUnit> generatedProjectTemplates = new ArrayList<>();
+    private boolean populatedPlatformStubs;
+
+    boolean isAndroidUsed() {
+        return androidUsed;
+    }
+
+    /** Populates worker-private MemoryTypeSolvers by cloning already-parsed templates (zero re-parsing). */
+    void populateWorkerSolvers(
+            MemoryTypeSolver workerAndroidProject,
+            MemoryTypeSolver workerAndroidPlatform,
+            com.github.javaparser.symbolsolver.JavaSymbolSolver workerSymbolSolver) {
+        if (!androidUsed) return;
+        if (populatedPlatformStubs) {
+            for (CompilationUnit template : platformTemplates()) {
+                CompilationUnit cloned = template.clone();
+                cloned.setData(com.github.javaparser.ast.Node.SYMBOL_RESOLVER_KEY, workerSymbolSolver);
+                indexClonedUnit(cloned, workerAndroidPlatform);
+            }
+        }
+        for (CompilationUnit template : generatedProjectTemplates) {
+            CompilationUnit cloned = template.clone();
+            cloned.setData(com.github.javaparser.ast.Node.SYMBOL_RESOLVER_KEY, workerSymbolSolver);
+            indexClonedUnit(cloned, workerAndroidProject);
+        }
+    }
+
+    private static void indexClonedUnit(CompilationUnit cu, MemoryTypeSolver target) {
+        for (TypeDeclaration<?> type : cu.findAll(TypeDeclaration.class)) {
+            if (type.getFullyQualifiedName().isEmpty()) continue;
+            target.addDeclaration(type.getFullyQualifiedName().orElseThrow(), type.resolve());
+        }
+    }
 
     AndroidSyntheticDeclarations() {
         for (String cat : R_CATEGORIES) {
@@ -240,6 +274,7 @@ final class AndroidSyntheticDeclarations {
             return;
         }
         if (!environment.isKnownInPrimarySolvers("android.app.Activity")) {
+            populatedPlatformStubs = true;
             populateAndroidPlatformStubs(environment.androidPlatform, parser);
         }
         populateAidlStubs(request, environment, parser);
@@ -248,6 +283,19 @@ final class AndroidSyntheticDeclarations {
     }
 
     private static void populateAndroidPlatformStubs(MemoryTypeSolver target, JavaParser parser) {
+        var symbolResolver = parser.getParserConfiguration().getSymbolResolver().orElse(null);
+        for (CompilationUnit template : platformTemplates()) {
+            CompilationUnit cloned = template.clone();
+            if (symbolResolver != null) {
+                cloned.setData(com.github.javaparser.ast.Node.SYMBOL_RESOLVER_KEY, symbolResolver);
+            }
+            indexClonedUnit(cloned, target);
+        }
+    }
+
+    private static List<CompilationUnit> platformTemplates() {
+        List<CompilationUnit> cached = cachedPlatformTemplates;
+        if (cached != null) return cached;
         List<String> sources = List.of(
                 """
                 package android.os;
@@ -695,9 +743,20 @@ final class AndroidSyntheticDeclarations {
                     public LinearLayoutManager(Context context, int orientation, boolean reverseLayout) {}
                 }
                 """);
+        var rawParser = new JavaParser(new com.github.javaparser.ParserConfiguration()
+                .setLanguageLevel(com.github.javaparser.ParserConfiguration.LanguageLevel.JAVA_21)
+                .setStoreTokens(false)
+                .setAttributeComments(false));
+        var parsedList = new ArrayList<CompilationUnit>(sources.size());
         for (String source : sources) {
-            parseAndIndex(source, target, parser, null);
+            var parsed = rawParser.parse(source);
+            if (parsed.isSuccessful() && parsed.getResult().isPresent()) {
+                parsedList.add(parsed.getResult().orElseThrow());
+            }
         }
+        cached = List.copyOf(parsedList);
+        cachedPlatformTemplates = cached;
+        return cached;
     }
 
     private void populateAidlStubs(
@@ -896,7 +955,7 @@ final class AndroidSyntheticDeclarations {
         return null;
     }
 
-    private static void parseAndIndex(
+    private void parseAndIndex(
             String source,
             MemoryTypeSolver solver,
             JavaParser parser,
@@ -906,6 +965,7 @@ final class AndroidSyntheticDeclarations {
             return;
         }
         CompilationUnit cu = parsed.getResult().orElseThrow();
+        boolean addedAny = false;
         for (TypeDeclaration<?> type : cu.findAll(TypeDeclaration.class)) {
             if (type.getFullyQualifiedName().isEmpty()) {
                 continue;
@@ -915,6 +975,12 @@ final class AndroidSyntheticDeclarations {
                 continue;
             }
             solver.addDeclaration(fqn, type.resolve());
+            addedAny = true;
+        }
+        if (addedAny && environment != null) {
+            CompilationUnit template = cu.clone();
+            template.removeData(com.github.javaparser.ast.Node.SYMBOL_RESOLVER_KEY);
+            generatedProjectTemplates.add(template);
         }
     }
 

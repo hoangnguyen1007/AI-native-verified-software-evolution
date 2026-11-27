@@ -110,7 +110,14 @@ public final class ArchitectureMetricsService implements Metrics {
                             measurements, "failures", measurements.stream().filter(PhaseMeasurement::failed).count()),
                     layers);
         }
-        if (!input.queries.supportsArchitectureScope(context, request.scope())) {
+        boolean springManifestSupported = metric.equals("metric.spring")
+                && request.scope() == Scope.SPRING_COMPONENT
+                && "analysis.manifest".equals(graph.evidence(context.evidence()).orElseThrow().family())
+                && graph.nodes(context.identity()).stream().anyMatch(n -> Set.of(
+                        "ENDPOINT", "BEAN_PRODUCER", "BEAN_DEFINITION_CANDIDATE",
+                        "INJECTION_POINT", "INJECTION_USE", "SOURCE_INJECTION_SITE",
+                        "SOURCE_BEAN_CANDIDATE", "SPRING_SOURCE_WIRING").contains(n.kind()));
+        if (!springManifestSupported && !input.queries.supportsArchitectureScope(context, request.scope())) {
             input.references.add(context.evidence());
             return input.absent(subject, AssessmentStatus.NOT_APPLICABLE, "METRIC_SCOPE_NOT_APPLICABLE_TO_CONTEXT",
                     Map.of("contextEvidenceFamily", graph.evidence(context.evidence()).orElseThrow().family()),

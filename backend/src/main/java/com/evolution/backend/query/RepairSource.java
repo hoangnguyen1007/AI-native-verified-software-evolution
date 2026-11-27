@@ -15,14 +15,21 @@ import java.util.function.BiFunction;
 
 /** Opens captured file bytes using only the validated finding and its graph partition. */
 public final class RepairSource {
-    static final int MAX_FILE_BYTES = 1024 * 1024;
+    public static final int MAX_FILE_BYTES = 1024 * 1024;
     private static final int MAX_ENCODED_BYTES = ((MAX_FILE_BYTES + 2) / 3) * 4;
     private static final GraphJson.Limits SOURCE_JSON = new GraphJson.Limits(MAX_ENCODED_BYTES + 8192,20,1024);
+    private static final java.util.concurrent.atomic.AtomicLong CONTENT_FALLBACK_GENERATION =
+            new java.util.concurrent.atomic.AtomicLong();
     private static volatile BiFunction<ContentDigest, OptionalLong, Optional<byte[]>> contentStoreFallback =
             (digest, size) -> Optional.empty();
 
     public static void registerContentFallback(BiFunction<ContentDigest, OptionalLong, Optional<byte[]>> fallback) {
         contentStoreFallback = fallback == null ? (digest, size) -> Optional.empty() : fallback;
+        CONTENT_FALLBACK_GENERATION.incrementAndGet();
+    }
+
+    public static long contentFallbackGeneration() {
+        return CONTENT_FALLBACK_GENERATION.get();
     }
 
     static Optional<byte[]> resolveContentFromStore(ContentDigest digest, OptionalLong expectedSize) {
@@ -108,12 +115,46 @@ public final class RepairSource {
         final Issue issue;
         Unavailable(Issue issue) { this.issue=issue; }
     }
-    record File(String path, ContentDigest digest, ContentDigest byteEvidence, String text, boolean ascii,
+    public record File(String path, ContentDigest digest, ContentDigest byteEvidence, String text, boolean ascii,
                 String module, SourceClassification role,
                 List<FindingDiagnosis.Citation> citations) {}
 
     static File open(KnowledgeGraph graph,List<FindingDiagnosis.Citation> citations) {
         return read(graph,citations,true);
+    }
+
+    /**
+     * Opens any captured editable file (Java or supported polyglot/config language) by path,
+     * preserving generated-file protection, path safety, UTF-8/ASCII decoding, and SHA-256 verification.
+     */
+    static Optional<File> openEditableByPath(KnowledgeGraph graph, String path, List<FindingDiagnosis.Citation> citations) {
+        if (!safePath(path)) return Optional.empty();
+        if (!com.evolution.backend.query.repair.RepairSyntaxGate.supportsPath(path)) return Optional.empty();
+        if (citations != null && !citations.isEmpty() && path.endsWith(".java")) {
+            try { return Optional.of(open(graph, citations)); }
+            catch (Unavailable ignored) { /* fall through to CapturedFileIndex */ }
+        }
+        var fileIndex = CapturedFileIndex.forGraph(graph);
+        var entryOpt = fileIndex.findExact(path);
+        if (entryOpt.isEmpty()) return Optional.empty();
+        var entry = entryOpt.orElseThrow();
+        byte[] bytes = fileIndex.readBytes(graph, entry).orElse(null);
+        if (bytes == null || bytes.length > MAX_FILE_BYTES) return Optional.empty();
+        var actualDigest = ContentDigest.sha256(bytes);
+        if (entry.digest().isPresent() && !entry.digest().orElseThrow().equals(actualDigest)) return Optional.empty();
+        try {
+            String text = StandardCharsets.UTF_8.newDecoder().decode(ByteBuffer.wrap(bytes)).toString();
+            if (text.indexOf(0) >= 0 || text.startsWith("\uFEFF")) return Optional.empty();
+            boolean ascii = StandardCharsets.US_ASCII.newEncoder().canEncode(text);
+            return Optional.of(new File(entry.path(), actualDigest, entry.evidenceId(), text, ascii,
+                    "", SourceClassification.MAIN, citations == null ? List.of() : List.copyOf(citations)));
+        } catch (CharacterCodingException invalid) {
+            return Optional.empty();
+        }
+    }
+
+    public static boolean isSafeRelativePath(String path) {
+        return safePath(path);
     }
 
     static File read(KnowledgeGraph graph,List<FindingDiagnosis.Citation> citations,boolean editable) {

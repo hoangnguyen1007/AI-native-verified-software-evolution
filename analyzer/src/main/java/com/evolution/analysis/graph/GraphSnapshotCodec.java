@@ -10,10 +10,23 @@ import static com.evolution.analysis.graph.GraphJson.*;
 public final class GraphSnapshotCodec {
     public static final String FORMAT="graph-snapshot:m5.1-v1";
     public String encode(KnowledgeGraph graph) {
+        if (GraphCanonicalWriter.isEnabled()) {
+            var out = new StringBuilder(Math.max(256, graph.nodes().size() * 128 + graph.evidence().size() * 256));
+            try {
+                GraphCanonicalWriter.writeEnvelope(graph, out);
+            } catch (java.io.IOException impossible) {
+                throw new IllegalStateException(impossible);
+            }
+            return out.toString();
+        }
         return CanonicalJson.write(Map.of("format",FORMAT,"identity",graph.identity(),"graph",graph.canonicalForm()));
     }
     /** Producer-side streaming for already validated graphs; no whole-snapshot string or byte array. */
     public void encodeTo(KnowledgeGraph graph,java.io.Writer writer)throws java.io.IOException {
+        if (GraphCanonicalWriter.isEnabled()) {
+            GraphCanonicalWriter.writeEnvelope(graph, writer);
+            return;
+        }
         CanonicalJson.writeTo(Map.of("format",FORMAT,"identity",graph.identity(),"graph",graph.canonicalForm()),writer);
     }
     /** Trusted immutable graph input has already passed graph/evidence invariants. */
@@ -21,6 +34,13 @@ public final class GraphSnapshotCodec {
         encodeTo(graph,writer,GraphJson.StreamLimits.from(limits));
     }
     public void encodeTo(KnowledgeGraph graph,java.io.Writer writer,GraphJson.StreamLimits limits)throws java.io.IOException {
+        if (GraphCanonicalWriter.isEnabled()) {
+            if (!GraphCanonicalWriter.fitsEnvelopeStructure(graph, limits.maxDepth(), limits.maxValues())) {
+                throw new GraphJson.LimitExceededException("Graph JSON structural limit");
+            }
+            GraphCanonicalWriter.writeEnvelope(graph, writer);
+            return;
+        }
         var envelope=Map.of("format",FORMAT,"identity",graph.identity(),"graph",graph.canonicalForm());
         if(!CanonicalJson.fitsStructure(envelope,limits.maxDepth(),limits.maxValues()))throw new GraphJson.LimitExceededException("Graph JSON structural limit");
         CanonicalJson.writeTo(envelope,writer);

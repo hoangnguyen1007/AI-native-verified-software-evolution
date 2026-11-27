@@ -182,4 +182,100 @@ class AnalysisJobsTest {
         assertThrows(IllegalArgumentException.class,() -> new AnalysisJobs.Limits(1,1,1,100,100));
         assertThrows(IllegalArgumentException.class,() -> new AnalysisJobs(List.of(registration("same",control -> output(other)),registration("same",control -> output(other))),new InMemoryGraphStore(),new PublishedReports(),limits()));
     }
+
+    @Test void multiUserIdempotencyKeysResumeOwnerAndDiskHistoryTotalAreTenantIsolated(@org.junit.jupiter.api.io.TempDir java.nio.file.Path tempDir) throws Exception {
+        var graph = new QueryFixture().node("tenant").graph();
+        var resumedUserObserved = new AtomicReference<String>();
+        var failFirstRun = new AtomicBoolean(true);
+        var aliceUser = new com.evolution.backend.auth.AuthenticatedUser("1001", "alice", "Alice", "", "alice@acme.dev",
+                List.of(), List.of("repo"), com.evolution.backend.auth.AuthenticatedUser.AuthMethod.OAUTH_WEB,
+                "github.com", "csrf-a", System.currentTimeMillis(), 0L);
+        var bobUser = new com.evolution.backend.auth.AuthenticatedUser("2002", "bob", "Bob", "", "bob@labs.dev",
+                List.of(), List.of("repo"), com.evolution.backend.auth.AuthenticatedUser.AuthMethod.OAUTH_WEB,
+                "github.com", "csrf-b", System.currentTimeMillis(), 0L);
+        var charlieUser = new com.evolution.backend.auth.AuthenticatedUser("3003", "charlie", "Charlie", "", "charlie@other.dev",
+                List.of(), List.of("repo"), com.evolution.backend.auth.AuthenticatedUser.AuthMethod.OAUTH_WEB,
+                "github.com", "csrf-c", System.currentTimeMillis(), 0L);
+        var aliceReq = new com.evolution.backend.auth.RequestContext.ActiveRequest(
+                Optional.of("sid-a"), aliceUser, true, true, h -> Optional.empty());
+        var bobReq = new com.evolution.backend.auth.RequestContext.ActiveRequest(
+                Optional.of("sid-b"), bobUser, true, true, h -> Optional.empty());
+        var charlieReq = new com.evolution.backend.auth.RequestContext.ActiveRequest(
+                Optional.of("sid-c"), charlieUser, true, true, h -> Optional.empty());
+
+        try (var disk = new com.evolution.backend.analysis.AnalysisJobDiskStore(tempDir.resolve("jobs"));
+             var jobs = new AnalysisJobs(List.of(
+                     registration("setup-a", ctrl -> {
+                         resumedUserObserved.set(com.evolution.backend.auth.RequestContext.currentUserId());
+                         if (failFirstRun.compareAndSet(true, false)) {
+                             throw new IllegalStateException("transient failure");
+                         }
+                         return output(graph);
+                     }),
+                     registration("setup-b", ctrl -> output(graph))),
+                     new InMemoryGraphStore(), new PublishedReports(), limits(), disk)) {
+            // Same idempotencyKey ("shared-key") used by Alice on setup-a and Bob on setup-b MUST NOT collide!
+            var aliceSub = com.evolution.backend.auth.RequestContext.runWith(aliceReq,
+                    () -> jobs.submit("setup-a", "shared-key"));
+            assertTrue(aliceSub.created());
+            var aliceFailed = com.evolution.backend.auth.RequestContext.runWith(aliceReq, () -> {
+                try { return finished(jobs, aliceSub.job().id()); }
+                catch (Exception e) { throw new RuntimeException(e); }
+            });
+            assertEquals(AnalysisJobs.State.FAILED, aliceFailed.state());
+
+            var bobSub = com.evolution.backend.auth.RequestContext.runWith(bobReq,
+                    () -> jobs.submit("setup-b", "shared-key"));
+            assertTrue(bobSub.created());
+            assertNotEquals(aliceSub.job().id(), bobSub.job().id());
+            var bobDone = com.evolution.backend.auth.RequestContext.runWith(bobReq, () -> {
+                try { return finished(jobs, bobSub.job().id()); }
+                catch (Exception e) { throw new RuntimeException(e); }
+            });
+            assertEquals(AnalysisJobs.State.SUCCEEDED, bobDone.state());
+
+            // Resume preserves Alice's ownerUserId & RequestContext (Bob cannot resume or view it)
+            UUID aliceId = UUID.fromString(aliceSub.job().id());
+            assertEquals("ACCESS_DENIED", assertThrows(AnalysisJobs.Rejected.class,
+                    () -> com.evolution.backend.auth.RequestContext.runWith(bobReq, () -> jobs.resume(aliceId))).code());
+            resumedUserObserved.set(null);
+            com.evolution.backend.auth.RequestContext.runWith(aliceReq, () -> jobs.resume(aliceId));
+            var aliceResumed = com.evolution.backend.auth.RequestContext.runWith(aliceReq, () -> {
+                try { return finished(jobs, aliceSub.job().id()); }
+                catch (Exception e) { throw new RuntimeException(e); }
+            });
+            assertEquals(AnalysisJobs.State.SUCCEEDED, aliceResumed.state());
+            assertEquals("1001", resumedUserObserved.get(), "Resumed job worker must run under Alice's RequestContext");
+
+            // Submit a second job for Alice so Alice=2, Bob=1, Charlie=0 on disk
+            var aliceSub2 = com.evolution.backend.auth.RequestContext.runWith(aliceReq,
+                    () -> jobs.submit("setup-a", "alice-second"));
+            com.evolution.backend.auth.RequestContext.runWith(aliceReq, () -> {
+                try { return finished(jobs, aliceSub2.job().id()); }
+                catch (Exception e) { throw new RuntimeException(e); }
+            });
+
+            // Disk history total() MUST reflect exact tenant-filtered count (not global disk count=3!)
+            var alicePage1 = com.evolution.backend.auth.RequestContext.runWith(aliceReq,
+                    () -> jobs.history(1, Optional.empty()));
+            assertEquals(2, alicePage1.total());
+            assertEquals(1, alicePage1.items().size());
+            assertTrue(alicePage1.continuation().isPresent());
+            var alicePage2 = com.evolution.backend.auth.RequestContext.runWith(aliceReq,
+                    () -> jobs.history(1, alicePage1.continuation()));
+            assertEquals(2, alicePage2.total());
+            assertEquals(1, alicePage2.items().size());
+            assertTrue(alicePage2.continuation().isEmpty());
+
+            var bobHist = com.evolution.backend.auth.RequestContext.runWith(bobReq,
+                    () -> jobs.history(20, Optional.empty()));
+            assertEquals(1, bobHist.total());
+            assertEquals(1, bobHist.items().size());
+
+            var charlieHist = com.evolution.backend.auth.RequestContext.runWith(charlieReq,
+                    () -> jobs.history(20, Optional.empty()));
+            assertEquals(0, charlieHist.total());
+            assertTrue(charlieHist.items().isEmpty());
+        }
+    }
 }

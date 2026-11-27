@@ -1,5 +1,6 @@
 package com.evolution.backend.query;
 
+import com.evolution.analysis.assessment.v2.LeidenCommunityDetector;
 import com.evolution.analysis.contract.assessment.AssessmentStatus;
 import com.evolution.analysis.contract.common.ContentDigest;
 import com.evolution.analysis.contract.common.VersionedIdentifier;
@@ -182,7 +183,11 @@ public final class ArchitectureInsightsAdvisor {
             CouplingMatrix couplingMatrix,
             String markdownReport,
             List<SdpEdgeViolation> sdpViolations,
-            List<PackageMetric> packageMetrics) {
+            List<PackageMetric> packageMetrics,
+            List<LeidenCommunityDetector.EmergentCommunity> communities,
+            List<LeidenCommunityDetector.MisplacedType> misplacedTypes,
+            List<LeidenCommunityDetector.CommunityBridge> communityBridges,
+            BigDecimal communityModularity) {
         public InsightsReport(
                 VersionedIdentifier schemaVersion,
                 ContentDigest graph,
@@ -199,14 +204,42 @@ public final class ArchitectureInsightsAdvisor {
                 CouplingMatrix couplingMatrix,
                 String markdownReport) {
             this(schemaVersion, graph, context, scope, projection, status, operation, gaps, bounds, summary,
-                    tangles, hotspots, couplingMatrix, markdownReport, List.of(), List.of());
+                    tangles, hotspots, couplingMatrix, markdownReport, List.of(), List.of(),
+                    List.of(), List.of(), List.of(), ZERO_4);
         }
+
+        public InsightsReport(
+                VersionedIdentifier schemaVersion,
+                ContentDigest graph,
+                String context,
+                Scope scope,
+                Projection projection,
+                AssessmentStatus status,
+                Operation operation,
+                List<CapabilityGapRecord> gaps,
+                Bounds bounds,
+                SummaryMetrics summary,
+                List<Tangle> tangles,
+                List<Hotspot> hotspots,
+                CouplingMatrix couplingMatrix,
+                String markdownReport,
+                List<SdpEdgeViolation> sdpViolations,
+                List<PackageMetric> packageMetrics) {
+            this(schemaVersion, graph, context, scope, projection, status, operation, gaps, bounds, summary,
+                    tangles, hotspots, couplingMatrix, markdownReport, sdpViolations, packageMetrics,
+                    List.of(), List.of(), List.of(), ZERO_4);
+        }
+
         public InsightsReport {
             gaps = List.copyOf(gaps);
             tangles = List.copyOf(tangles);
             hotspots = List.copyOf(hotspots);
             sdpViolations = List.copyOf(sdpViolations);
             packageMetrics = List.copyOf(packageMetrics);
+            communities = List.copyOf(communities == null ? List.of() : communities);
+            misplacedTypes = List.copyOf(misplacedTypes == null ? List.of() : misplacedTypes);
+            communityBridges = List.copyOf(communityBridges == null ? List.of() : communityBridges);
+            communityModularity = communityModularity == null ? ZERO_4 : communityModularity;
         }
     }
 
@@ -504,8 +537,28 @@ public final class ArchitectureInsightsAdvisor {
                 distance,
                 allSdpEdges.size());
 
+        // 7. Pure-Java Deterministic Leiden Communities, Package-vs-Community Drift & Cross-Community Bridges
+        var leidenNodes = new ArrayList<LeidenCommunityDetector.NodeInput>(n);
+        for (int i = 0; i < n; i++) {
+            String id = nodeIds.get(i);
+            EntityView ev = projectEntities.get(id);
+            leidenNodes.add(new LeidenCommunityDetector.NodeInput(
+                    id,
+                    shortLabel(ev, baseRequest.scope()),
+                    groupByNode.getOrDefault(id, ""),
+                    ev.kind()));
+        }
+        var leidenEdges = new ArrayList<LeidenCommunityDetector.EdgeInput>(internalEdges.size());
+        for (EdgeView edge : internalEdges) {
+            String kind = edge.kinds().isEmpty() ? "graph.depends-on" : edge.kinds().getFirst();
+            leidenEdges.add(new LeidenCommunityDetector.EdgeInput(
+                    edge.source(), edge.target(), Math.max(1.0, edge.supportCount()), kind));
+        }
+        var leiden = LeidenCommunityDetector.detect(leidenNodes, leidenEdges, checkpoint);
+
         String markdown = renderMarkdown(
-                baseRequest, projected.status(), projected.gaps(), summary, tangles, topHotspots, dsm, topSdpEdges, packageMetrics);
+                baseRequest, projected.status(), projected.gaps(), summary, tangles, topHotspots, dsm,
+                topSdpEdges, packageMetrics, leiden);
 
         return new InsightsReport(
                 VERSION,
@@ -523,7 +576,58 @@ public final class ArchitectureInsightsAdvisor {
                 dsm,
                 markdown,
                 topSdpEdges,
-                packageMetrics);
+                packageMetrics,
+                leiden.communities(),
+                leiden.misplacedTypes(),
+                leiden.bridges(),
+                leiden.modularity());
+    }
+
+    /** Direct read-side helper for pairwise community evolution and PR overlap checks. */
+    public static LeidenCommunityDetector.Result detectCommunities(ArchitectureQueryService service, Request baseRequest) {
+        Objects.requireNonNull(service);
+        Objects.requireNonNull(baseRequest);
+        var projRequest = new Request(
+                baseRequest.graph(),
+                baseRequest.context(),
+                baseRequest.scope(),
+                baseRequest.projection(),
+                Direction.OUTGOING,
+                baseRequest.relationshipKinds(),
+                baseRequest.population(),
+                baseRequest.includeMust(),
+                baseRequest.realization(),
+                baseRequest.limits());
+        Runnable checkpoint = () -> {
+            var stop = service.assessmentStopReason();
+            if (stop != StopReason.NONE) throw new CalculationInterrupted(stop);
+        };
+        Result<MetricProjection> projected = service.metricProjection(projRequest);
+        MetricProjection mp = projected.items().isEmpty()
+                ? new MetricProjection(List.of(), List.of(), List.of(), List.of())
+                : projected.items().getFirst();
+        var projectEntities = new TreeMap<String, EntityView>();
+        for (EntityView ev : mp.entities()) {
+            if (isProjectEntity(ev)) projectEntities.put(ev.identity(), ev);
+        }
+        String commonPkgPrefix = computeCommonPackagePrefix(projectEntities.values(), baseRequest.scope());
+        var leidenNodes = new ArrayList<LeidenCommunityDetector.NodeInput>(projectEntities.size());
+        for (EntityView ev : projectEntities.values()) {
+            leidenNodes.add(new LeidenCommunityDetector.NodeInput(
+                    ev.identity(),
+                    shortLabel(ev, baseRequest.scope()),
+                    groupName(ev, baseRequest.scope(), commonPkgPrefix),
+                    ev.kind()));
+        }
+        var leidenEdges = new ArrayList<LeidenCommunityDetector.EdgeInput>();
+        for (EdgeView edge : mp.edges()) {
+            if (projectEntities.containsKey(edge.source()) && projectEntities.containsKey(edge.target())) {
+                String kind = edge.kinds().isEmpty() ? "graph.depends-on" : edge.kinds().getFirst();
+                leidenEdges.add(new LeidenCommunityDetector.EdgeInput(
+                        edge.source(), edge.target(), Math.max(1.0, edge.supportCount()), kind));
+            }
+        }
+        return LeidenCommunityDetector.detect(leidenNodes, leidenEdges, checkpoint);
     }
 
     private static Set<String> collectAbstractEntityIds(ArchitectureQueryService service) {
@@ -942,74 +1046,15 @@ public final class ArchitectureInsightsAdvisor {
     }
 
     private static String computeCommonPackagePrefix(Collection<EntityView> entities, Scope scope) {
-        if (scope == Scope.MODULE) return "";
-        String common = null;
-        int seen = 0;
-        for (EntityView ev : entities) {
-            String qn = ev.qualifiedName().or(ev::canonicalName).orElse("");
-            int lastDot = scope == Scope.PACKAGE ? qn.length() : qn.lastIndexOf('.');
-            if (lastDot <= 0) continue;
-            String pkg = qn.substring(0, lastDot);
-            seen++;
-            if (common == null) {
-                common = pkg;
-            } else {
-                common = sharedDotPrefix(common, pkg);
-                if (common.isEmpty()) break;
-            }
-        }
-        return seen >= 2 && common != null ? common : "";
-    }
-
-    private static String sharedDotPrefix(String a, String b) {
-        String[] pa = a.split("\\.");
-        String[] pb = b.split("\\.");
-        int limit = Math.min(pa.length, pb.length);
-        int match = 0;
-        while (match < limit && pa[match].equals(pb[match])) match++;
-        if (match == 0) return "";
-        return String.join(".", Arrays.copyOf(pa, match));
+        return com.evolution.analysis.query.projection.GraphProjectionService.computeCommonPackagePrefix(entities, scope);
     }
 
     private static String groupName(EntityView ev, Scope scope, String commonPrefix) {
-        if (scope == Scope.MODULE) {
-            return shortLabel(ev, scope);
-        }
-        String qn = ev.qualifiedName().or(ev::canonicalName).orElse("");
-        if (scope == Scope.PACKAGE) {
-            if (!commonPrefix.isEmpty() && qn.startsWith(commonPrefix + ".")) {
-                String rem = qn.substring(commonPrefix.length() + 1);
-                int dot = rem.indexOf('.');
-                return dot > 0 ? rem.substring(0, dot) : rem;
-            }
-            return qn.isEmpty() ? "(default)" : qn;
-        }
-        int lastDot = qn.lastIndexOf('.');
-        if (lastDot <= 0) return ev.module().orElse("(root)");
-        String pkg = qn.substring(0, lastDot);
-        if (!commonPrefix.isEmpty()) {
-            if (pkg.equals(commonPrefix)) return "(root)";
-            if (pkg.startsWith(commonPrefix + ".")) {
-                String rem = pkg.substring(commonPrefix.length() + 1);
-                int dot = rem.indexOf('.');
-                return dot > 0 ? rem.substring(0, dot) : rem;
-            }
-        }
-        int lastPkgDot = pkg.lastIndexOf('.');
-        return lastPkgDot >= 0 ? pkg.substring(lastPkgDot + 1) : pkg;
+        return com.evolution.analysis.query.projection.GraphProjectionService.groupName(ev, scope, commonPrefix);
     }
 
     private static String shortLabel(EntityView ev, Scope scope) {
-        if (ev == null) return "unknown";
-        String raw = ev.qualifiedName().or(ev::canonicalName).or(ev::spelling).orElse(ev.identity());
-        if (scope == Scope.TYPE || scope == Scope.SPRING_COMPONENT) {
-            int dot = raw.lastIndexOf('.');
-            if (dot > 0 && dot + 1 < raw.length() && !raw.startsWith("sha256:")) {
-                int prevDot = raw.lastIndexOf('.', dot - 1);
-                return prevDot >= 0 ? raw.substring(prevDot + 1) : raw;
-            }
-        }
-        return raw;
+        return com.evolution.analysis.query.projection.GraphProjectionService.shortLabel(ev, scope);
     }
 
     private static String renderMarkdown(
@@ -1021,7 +1066,8 @@ public final class ArchitectureInsightsAdvisor {
             List<Hotspot> hotspots,
             CouplingMatrix dsm,
             List<SdpEdgeViolation> sdpEdges,
-            List<PackageMetric> packageMetrics) {
+            List<PackageMetric> packageMetrics,
+            LeidenCommunityDetector.Result leiden) {
         var md = new StringBuilder(4096);
         md.append("# Architecture Intelligence & Refactoring Executive Report\n\n");
         md.append("- **Graph Digest:** `").append(req.graph().value()).append("`\n");
@@ -1136,6 +1182,47 @@ public final class ArchitectureInsightsAdvisor {
                   .append(" | ").append(pm.instability())
                   .append(" | ").append(pm.distance())
                   .append(" | `").append(pm.zone()).append("` |\n");
+            }
+        }
+        if (leiden != null && !leiden.communities().isEmpty()) {
+            md.append("\n## 7. Emergent Leiden Communities, Drift & Cross-Community Bridges\n\n");
+            md.append("- **Modularity ($Q$):** `").append(leiden.modularity()).append("` · **Communities:** ")
+              .append(leiden.communities().size()).append(" · **Misplaced Types:** ")
+              .append(leiden.misplacedTypes().size()).append(" · **Cross-Community Bridges:** ")
+              .append(leiden.bridges().size()).append("\n\n");
+            md.append("| Community | Dominant Package | Members | Cohesion | Misplaced | Bridges |\n");
+            md.append("|---|---|---:|---:|---:|---:|\n");
+            for (int i = 0; i < Math.min(15, leiden.communities().size()); i++) {
+                var c = leiden.communities().get(i);
+                md.append("| ").append(c.label())
+                  .append(" | `").append(c.dominantPackage().isEmpty() ? "—" : c.dominantPackage()).append("`")
+                  .append(" | ").append(c.memberCount())
+                  .append(" | ").append(c.cohesion())
+                  .append(" | ").append(c.misplacedCount())
+                  .append(" | ").append(c.bridgeEdgeCount()).append(" |\n");
+            }
+            if (!leiden.misplacedTypes().isEmpty()) {
+                md.append("\n### Package-vs-Community Drift (Misplaced Types)\n\n");
+                md.append("| Type | Declared Package | Emergent Community | Community Edges | Declared Pkg Edges |\n");
+                md.append("|---|---|---|---:|---:|\n");
+                for (int i = 0; i < Math.min(12, leiden.misplacedTypes().size()); i++) {
+                    var m = leiden.misplacedTypes().get(i);
+                    md.append("| `").append(m.label()).append("` | `").append(m.declaredPackage()).append("` | ")
+                      .append(m.communityLabel()).append(" | ").append(m.internalCommunityEdges())
+                      .append(" | ").append(m.declaredPackageEdges()).append(" |\n");
+                }
+            }
+            if (!leiden.bridges().isEmpty()) {
+                md.append("\n### Top Cross-Community Bridges\n\n");
+                for (int i = 0; i < Math.min(10, leiden.bridges().size()); i++) {
+                    var b = leiden.bridges().get(i);
+                    md.append("- **").append(b.fromCommunityLabel()).append(" -> ").append(b.toCommunityLabel())
+                      .append("** (`").append(b.edgeCount()).append("` edges, weight ").append(b.totalWeight()).append(")");
+                    if (!b.sampleEdges().isEmpty()) {
+                        md.append(": ").append(String.join("; ", b.sampleEdges().stream().limit(3).toList()));
+                    }
+                    md.append("\n");
+                }
             }
         }
         return md.toString();

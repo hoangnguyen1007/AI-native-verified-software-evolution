@@ -17,14 +17,74 @@ public final class AnalysisJobDiskStore implements AutoCloseable {
     private static final String LEGACY_SCHEMA = "analysis-job-storage:m8.4-v2";
     private static final String PREVIOUS_SCHEMA = "analysis-job-storage:m8.4-v3";
     private static final String SCHEMA = "analysis-job-storage:m8.4-v4";
+    public static final String SCHEMA_V5 = "analysis-job-storage:m8.4-v5";
     private static final String REUSE_INDEX = "workbench-result-index-v1";
     private static final String REUSE_SCHEMA = "workbench-result-publication:v1";
     private static final System.Logger LOG = System.getLogger(AnalysisJobDiskStore.class.getName());
-    public record Saved(String schema,String retry,AnalysisJobs.View view,List<CapabilityGapRecord> gaps,List<AnalysisJobs.InputProblem> inputProblems){
-        public Saved{if(!Set.of(SCHEMA,PREVIOUS_SCHEMA,LEGACY_SCHEMA).contains(schema))throw new IllegalArgumentException("Unknown job storage schema");gaps=List.copyOf(gaps);inputProblems=List.copyOf(inputProblems);}
+
+    public record PersistedTelemetry(
+            Map<String, Long> stageMillis,
+            Map<String, Long> cacheMetrics,
+            Optional<AnalysisJobs.IncrementalMetrics> incremental) {
+        public PersistedTelemetry {
+            stageMillis = Collections.unmodifiableMap(new TreeMap<>(stageMillis == null ? Map.of() : stageMillis));
+            cacheMetrics = Collections.unmodifiableMap(new TreeMap<>(cacheMetrics == null ? Map.of() : cacheMetrics));
+            incremental = Objects.requireNonNull(incremental, "incremental");
+        }
+
+        public boolean isEmpty() {
+            return stageMillis.isEmpty() && cacheMetrics.isEmpty() && incremental.isEmpty();
+        }
+
+        boolean hasExtendedV5Data() {
+            if (incremental.isPresent() || !cacheMetrics.isEmpty()) {
+                return true;
+            }
+            for (String stage : stageMillis.keySet()) {
+                if (!"QUEUED".equals(stage) && !"PUBLICATION".equals(stage)) {
+                    return true;
+                }
+            }
+            return false;
+        }
     }
-    public record Envelope(String schema,String retry,AnalysisJobs.Setup setup,AnalysisJobs.View view,ContentHandle gaps,ContentHandle inputProblems){
-        public Envelope{if(!Set.of(SCHEMA,PREVIOUS_SCHEMA).contains(schema)||!setup.id().equals(view.setup()))throw new IllegalArgumentException("Unknown or mismatched job storage schema");}
+
+    public record Saved(String schema, String retry, AnalysisJobs.View view, List<CapabilityGapRecord> gaps,
+            List<AnalysisJobs.InputProblem> inputProblems, Optional<PersistedTelemetry> telemetry) {
+        public Saved(String schema, String retry, AnalysisJobs.View view, List<CapabilityGapRecord> gaps,
+                List<AnalysisJobs.InputProblem> inputProblems) {
+            this(schema, retry, view, gaps, inputProblems, Optional.empty());
+        }
+
+        public Saved {
+            if (!Set.of(SCHEMA_V5, SCHEMA, PREVIOUS_SCHEMA, LEGACY_SCHEMA).contains(schema))
+                throw new IllegalArgumentException("Unknown job storage schema");
+            gaps = List.copyOf(gaps);
+            inputProblems = List.copyOf(inputProblems);
+            telemetry = Objects.requireNonNull(telemetry, "telemetry");
+        }
+    }
+
+    public record Envelope(String schema, String retry, AnalysisJobs.Setup setup, AnalysisJobs.View view,
+            ContentHandle gaps, ContentHandle inputProblems, Optional<ContentHandle> telemetry) {
+        public Envelope(String schema, String retry, AnalysisJobs.Setup setup, AnalysisJobs.View view,
+                ContentHandle gaps, ContentHandle inputProblems) {
+            this(schema, retry, setup, view, gaps, inputProblems, Optional.empty());
+        }
+
+        public Envelope {
+            if (!Set.of(SCHEMA_V5, SCHEMA, PREVIOUS_SCHEMA).contains(schema) || !setup.id().equals(view.setup()))
+                throw new IllegalArgumentException("Unknown or mismatched job storage schema");
+            telemetry = Objects.requireNonNull(telemetry, "telemetry");
+        }
+    }
+
+    private record EnvelopeV4(String schema, String retry, AnalysisJobs.Setup setup, AnalysisJobs.View view,
+            ContentHandle gaps, ContentHandle inputProblems) {
+    }
+
+    private static boolean usesSegmentedGaps(String schema) {
+        return SCHEMA.equals(schema) || SCHEMA_V5.equals(schema);
     }
     public record InputLedger(List<AnalysisJobs.InputProblem> inputProblems){}
     private record IndexedResult(String schema, ContentDigest input, ContentHandle receipt) {
@@ -35,7 +95,16 @@ public final class AnalysisJobDiskStore implements AutoCloseable {
     private final StreamingContentStore content;private final SqliteInventoryStore journal;
     private final StoredGapLedger ledgers;
     private final String namespace;
-    public AnalysisJobDiskStore(Path root)throws IOException{namespace=ContentDigest.sha256(root.toAbsolutePath().normalize().toString().getBytes(StandardCharsets.UTF_8)).value().substring(7);content=new StreamingContentStore(root.resolve("content"));ledgers=new StoredGapLedger(content);journal=new SqliteInventoryStore(root.resolve("metadata"),content);}
+    public AnalysisJobDiskStore(Path root) throws IOException {
+        this(root, false);
+    }
+
+    public AnalysisJobDiskStore(Path root, boolean readOnly) throws IOException {
+        namespace = ContentDigest.sha256(root.toAbsolutePath().normalize().toString().getBytes(StandardCharsets.UTF_8)).value().substring(7);
+        content = new StreamingContentStore(root.resolve("content"));
+        ledgers = new StoredGapLedger(content);
+        journal = new SqliteInventoryStore(root.resolve("metadata"), content, readOnly);
+    }
     public String namespace(){return namespace;}
     record PreparedLedgers(ContentHandle gaps, ContentHandle inputs) {}
     PreparedLedgers prepareLedgers(List<CapabilityGapRecord> gaps,List<AnalysisJobs.InputProblem> problems,
@@ -43,21 +112,50 @@ public final class AnalysisJobDiskStore implements AutoCloseable {
         return new PreparedLedgers(ledgers.write(gaps,cancelled),write(new InputLedger(problems),cancelled));
     }
     public synchronized void save(String retry,AnalysisJobs.Setup setup,AnalysisJobs.View view,List<CapabilityGapRecord> gaps,List<AnalysisJobs.InputProblem> problems)throws IOException{
-        save(retry,setup,view,gaps,problems,null,Optional.empty());
+        save(retry,setup,view,gaps,problems,null,Optional.empty(),null,Optional.empty(),false);
+    }
+    public synchronized void save(String retry,AnalysisJobs.Setup setup,AnalysisJobs.View view,List<CapabilityGapRecord> gaps,List<AnalysisJobs.InputProblem> problems,PersistedTelemetry telemetry)throws IOException{
+        save(retry,setup,view,gaps,problems,null,Optional.empty(),null,Optional.ofNullable(telemetry),telemetry!=null);
     }
     synchronized void save(String retry, AnalysisJobs.Setup setup, AnalysisJobs.View view, List<CapabilityGapRecord> gaps,
                            List<AnalysisJobs.InputProblem> problems, Envelope reused, Optional<ContentDigest> reusableKey) throws IOException {
-        save(retry,setup,view,gaps,problems,reused,reusableKey,null);
+        save(retry,setup,view,gaps,problems,reused,reusableKey,null,Optional.empty(),false);
     }
     synchronized void save(String retry, AnalysisJobs.Setup setup, AnalysisJobs.View view, List<CapabilityGapRecord> gaps,
                            List<AnalysisJobs.InputProblem> problems, Envelope reused, Optional<ContentDigest> reusableKey,
                            PreparedLedgers prepared) throws IOException {
+        save(retry,setup,view,gaps,problems,reused,reusableKey,prepared,Optional.empty(),false);
+    }
+    synchronized void save(String retry, AnalysisJobs.Setup setup, AnalysisJobs.View view, List<CapabilityGapRecord> gaps,
+                           List<AnalysisJobs.InputProblem> problems, Envelope reused, Optional<ContentDigest> reusableKey,
+                           PreparedLedgers prepared, Optional<PersistedTelemetry> telemetry) throws IOException {
+        save(retry,setup,view,gaps,problems,reused,reusableKey,prepared,telemetry,false);
+    }
+    private void save(String retry, AnalysisJobs.Setup setup, AnalysisJobs.View view, List<CapabilityGapRecord> gaps,
+                      List<AnalysisJobs.InputProblem> problems, Envelope reused, Optional<ContentDigest> reusableKey,
+                      PreparedLedgers prepared, Optional<PersistedTelemetry> telemetry, boolean forceV5) throws IOException {
         var blocks = reused != null ? new PreparedLedgers(reused.gaps(),reused.inputProblems())
                 : prepared != null ? prepared : prepareLedgers(gaps,problems,()->false);
         var gapHandle = blocks.gaps();
         var inputHandle = blocks.inputs();
-        var envelope = new Envelope(reused == null ? SCHEMA : reused.schema(),retry,setup,view,gapHandle,inputHandle);
-        var handle = write(envelope);
+        boolean writeV5;
+        String targetSchema;
+        Optional<ContentHandle> telemetryHandle;
+        if (reused != null) {
+            targetSchema = reused.schema();
+            telemetryHandle = reused.telemetry();
+            writeV5 = SCHEMA_V5.equals(targetSchema);
+        } else if (telemetry.isPresent() && (forceV5 || telemetry.orElseThrow().hasExtendedV5Data())) {
+            targetSchema = SCHEMA_V5;
+            telemetryHandle = Optional.of(write(telemetry.orElseThrow()));
+            writeV5 = true;
+        } else {
+            targetSchema = SCHEMA;
+            telemetryHandle = Optional.empty();
+            writeV5 = false;
+        }
+        var envelope = new Envelope(targetSchema,retry,setup,view,gapHandle,inputHandle,telemetryHandle);
+        var handle = writeV5 ? write(envelope) : write(new EnvelopeV4(targetSchema,retry,setup,view,gapHandle,inputHandle));
         Optional<ContentDigest> candidate = Optional.empty();
         if (reused == null && reusableKey.isPresent() && eligiblePublication(view)) {
             try {
@@ -101,7 +199,7 @@ public final class AnalysisJobDiskStore implements AutoCloseable {
         if (candidate.isEmpty()) return Optional.empty();
         var receipt = candidate.orElseThrow();
         if (!setup.equals(receipt.setup())) return Optional.empty();
-        boolean verifiedGaps = receipt.schema().equals(SCHEMA)
+        boolean verifiedGaps = usesSegmentedGaps(receipt.schema())
                 ? ledgers.verify(ledgerIndex(receipt), cancelled) : content.verify(receipt.gaps(), cancelled);
         if (!verifiedGaps || !content.verify(receipt.inputProblems(), cancelled))
             throw new IOException("WORKBENCH_RESULT_LEDGERS_UNAVAILABLE");
@@ -157,7 +255,7 @@ public final class AnalysisJobDiskStore implements AutoCloseable {
     record GapPage(List<CapabilityGapRecord> items,int total){}
     GapPage gaps(UUID id,int offset,int size,OptionalInt expectedTotal)throws IOException{
         var envelope=required(id);
-        if(envelope.schema().equals(SCHEMA)){
+        if(usesSegmentedGaps(envelope.schema())){
             var index=ledgerIndex(envelope);validateOffset(index.total(),offset,expectedTotal);
             return new GapPage(ledgers.page(index,offset,size),index.total());
         }
@@ -173,7 +271,7 @@ public final class AnalysisJobDiskStore implements AutoCloseable {
         return index;
     }
     private ContentDigest gapDigest(Envelope envelope)throws IOException{
-        return envelope.schema().equals(SCHEMA)?ledgerIndex(envelope).canonical():envelope.gaps().digest();
+        return usesSegmentedGaps(envelope.schema())?ledgerIndex(envelope).canonical():envelope.gaps().digest();
     }
     private static void validateOffset(int total,int offset,OptionalInt expected){
         if(expected.isPresent()&&expected.getAsInt()!=total||offset<0||offset>=total&&offset!=0)
@@ -224,12 +322,17 @@ public final class AnalysisJobDiskStore implements AutoCloseable {
     private Envelope readEnvelope(ContentHandle handle) throws IOException {
         try {
             var row = GraphJson.object(readJson(handle));
+            Object schema = row.get("schema");
             var view = new TreeMap<>(GraphJson.object(row.get("view")));
             var setup = new TreeMap<>(GraphJson.object(row.get("setup")));
-            boolean legacy = LEGACY_SCHEMA.equals(row.get("schema"));
-            if (!legacy && view.containsKey("mode") && setup.containsKey("artifactPolicy")) return checked(row, handle, Envelope.class);
-            // Authenticate the old preimage before adding defaults. Existing history is never rewritten for migration.
+            if (SCHEMA_V5.equals(schema) && view.containsKey("mode") && setup.containsKey("artifactPolicy")
+                    && row.containsKey("telemetry")) {
+                return checked(row, handle, Envelope.class);
+            }
+            // Authenticate the original preimage before adding backward-compatible defaults.
+            // Existing v2/v3/v4 history is never rewritten for migration.
             if (!CanonicalJson.sha256(row).equals(handle.digest())) throw new IOException("JOB_RECEIPT_NONCANONICAL");
+            boolean legacy = LEGACY_SCHEMA.equals(schema);
             var upgraded = new TreeMap<>(row);
             if (legacy) {
                 if (view.containsKey("force") || view.containsKey("reuse") || view.containsKey("reuseDecision")
@@ -241,6 +344,7 @@ public final class AnalysisJobDiskStore implements AutoCloseable {
             }
             view.putIfAbsent("mode", null);
             setup.putIfAbsent("artifactPolicy", null);
+            upgraded.putIfAbsent("telemetry", null);
             upgraded.put("view", view);
             upgraded.put("setup", setup);
             return CanonicalRecordReader.read(upgraded, Envelope.class);
@@ -251,11 +355,17 @@ public final class AnalysisJobDiskStore implements AutoCloseable {
         var envelope=readEnvelope(handle);
         List<CapabilityGapRecord> gaps=List.of();
         if(includeLedgers){
-            if(envelope.schema().equals(SCHEMA)){
+            if(usesSegmentedGaps(envelope.schema())){
                 var index=ledgerIndex(envelope);gaps=ledgers.page(index,0,index.total());
             }else gaps=legacyPage(envelope,0,Integer.MAX_VALUE,OptionalInt.empty()).items();
         }
-        return new Saved(envelope.schema(),envelope.retry(),envelope.view(),gaps,includeLedgers?read(envelope.inputProblems(),InputLedger.class).inputProblems():List.of());
+        Optional<PersistedTelemetry> telemetry = Optional.empty();
+        if (envelope.telemetry().isPresent()) {
+            telemetry = Optional.of(read(envelope.telemetry().orElseThrow(), PersistedTelemetry.class));
+        }
+        return new Saved(envelope.schema(),envelope.retry(),envelope.view(),gaps,
+                includeLedgers?read(envelope.inputProblems(),InputLedger.class).inputProblems():List.of(),
+                telemetry);
     }
     public record Page(List<Saved> items,long total,Optional<Long> continuation,long highWaterSequence){public Page{items=List.copyOf(items);}}
     public synchronized Page history(long afterSequence,int size)throws IOException{
@@ -270,11 +380,23 @@ public final class AnalysisJobDiskStore implements AutoCloseable {
     }
     public synchronized void recover(AnalysisJobs.Setup expected)throws IOException{
         String setup=expected.id();
-        for(String state:List.of("RUNNING","CANCELLING","RECOVERABLE"))for(var row:journal.waiting(state+"."+setup,64)){
-            var saved=load(row.payload().orElseThrow());var v=saved.view();boolean cancelled=v.stop().filter(s->s==AnalysisJobs.Stop.USER_CANCELLED).isPresent();
-            var next=new AnalysisJobs.View(v.id(),v.setup(),cancelled?AnalysisJobs.State.CANCELLED:AnalysisJobs.State.QUEUED,cancelled?AnalysisJobs.Stage.FINISHED:AnalysisJobs.Stage.QUEUED,v.revision()+1,v.submittedAt(),Optional.empty(),cancelled?Optional.of(java.time.Instant.now()):Optional.empty(),v.elapsedMillis(),cancelled?v.stop():Optional.empty(),Optional.empty(),List.of(new AnalysisJobs.Event(AnalysisJobs.Stage.QUEUED,java.time.Instant.now())),Optional.empty(),v.force(),Optional.empty(),Optional.empty(),v.mode());
-            var original=intent(UUID.fromString(v.id()));if(!original.equals(expected))next=new AnalysisJobs.View(v.id(),v.setup(),AnalysisJobs.State.FAILED,AnalysisJobs.Stage.FINISHED,v.revision()+1,v.submittedAt(),v.startedAt(),Optional.of(java.time.Instant.now()),v.elapsedMillis(),Optional.empty(),Optional.of("SETUP_CONFIGURATION_CHANGED"),v.events(),v.result(),v.force(),Optional.empty(),Optional.empty(),v.mode());
-            save(saved.retry(),original,next,saved.gaps(),saved.inputProblems());
+        for(String state:List.of("RUNNING","CANCELLING","RECOVERABLE")){
+            var seen=new HashSet<String>();
+            while(true){
+                var batch=journal.waiting(state+"."+setup,64);
+                if(batch.isEmpty())break;
+                int progressed=0;
+                for(var row:batch){
+                    var saved=load(row.payload().orElseThrow());var v=saved.view();
+                    if(!seen.add(v.id()))continue;
+                    progressed++;
+                    boolean cancelled=v.stop().filter(s->s==AnalysisJobs.Stop.USER_CANCELLED).isPresent();
+                    var next=new AnalysisJobs.View(v.id(),v.setup(),cancelled?AnalysisJobs.State.CANCELLED:AnalysisJobs.State.QUEUED,cancelled?AnalysisJobs.Stage.FINISHED:AnalysisJobs.Stage.QUEUED,v.revision()+1,v.submittedAt(),Optional.empty(),cancelled?Optional.of(java.time.Instant.now()):Optional.empty(),v.elapsedMillis(),cancelled?v.stop():Optional.empty(),Optional.empty(),List.of(new AnalysisJobs.Event(AnalysisJobs.Stage.QUEUED,java.time.Instant.now())),Optional.empty(),v.force(),Optional.empty(),Optional.empty(),v.mode());
+                    var original=intent(UUID.fromString(v.id()));if(!original.equals(expected))next=new AnalysisJobs.View(v.id(),v.setup(),AnalysisJobs.State.FAILED,AnalysisJobs.Stage.FINISHED,v.revision()+1,v.submittedAt(),v.startedAt(),Optional.of(java.time.Instant.now()),v.elapsedMillis(),Optional.empty(),Optional.of("SETUP_CONFIGURATION_CHANGED"),v.events(),v.result(),v.force(),Optional.empty(),Optional.empty(),v.mode());
+                    save(saved.retry(),original,next,saved.gaps(),saved.inputProblems());
+                }
+                if(progressed==0)break;
+            }
         }
     }
     @Override public void close()throws IOException{journal.close();}

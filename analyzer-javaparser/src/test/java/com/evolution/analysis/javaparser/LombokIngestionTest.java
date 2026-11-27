@@ -70,9 +70,13 @@ class LombokIngestionTest {
         assertEquals(1,r.declarations().stream().filter(d->d.entity().kind()==EntityKind.CONSTRUCTOR&&d.entity().origin()==EntityOrigin.PROJECT).count());
         var access=analyze("class C { @lombok.Getter(lombok.AccessLevel.PRIVATE) String secret; } class D { String leak(C c){return c.getSecret();} }");
         assertTrue(access.occurrences().stream().filter(o->o.relationship().kind().value().equals("java.calls")).allMatch(o->o.status()!=SemanticStatus.RESOLVED));
-        var customized=analyze("@lombok.Getter @lombok.experimental.Accessors(fluent=true) class C { String value; }");
-        assertTrue(customized.diagnostics().stream().anyMatch(d->d.code().startsWith("lombok.")));
-        assertEquals(1,customized.declarations().stream().filter(d->d.entity().kind()==EntityKind.CONSTRUCTOR&&d.entity().origin()==EntityOrigin.PROJECT).count());
+        var fluent=analyze("@lombok.Getter @lombok.experimental.Accessors(fluent=true) class C { String value; String run(){return value();} }");
+        assertTrue(fluent.diagnostics().stream().noneMatch(d->d.code().startsWith("lombok.")));
+        assertEquals(1,fluent.declarations().stream().filter(d->d.entity().kind()==EntityKind.CONSTRUCTOR&&d.entity().origin()==EntityOrigin.PROJECT).count());
+        assertEquals(1,fluent.occurrences().stream().filter(o->o.relationship().kind().value().equals("java.calls")&&o.status()==SemanticStatus.RESOLVED).count());
+        var unsupportedAccessor=analyze("@lombok.Getter @lombok.experimental.Accessors(makeFinal=true) class C { String value; }");
+        assertTrue(unsupportedAccessor.diagnostics().stream().anyMatch(d->d.code().equals("lombok.member-customization")));
+        assertEquals(1,unsupportedAccessor.declarations().stream().filter(d->d.entity().kind()==EntityKind.CONSTRUCTOR&&d.entity().origin()==EntityOrigin.PROJECT).count());
     }
     @Test void generatedCallsKeepTheirOwnerAcrossDeclarationSkeletonAndActiveBody()throws Exception {
         Path jar=Path.of(lombok.Data.class.getProtectionDomain().getCodeSource().getLocation().toURI());
@@ -117,12 +121,13 @@ class LombokIngestionTest {
         assertFalse(missingGenerator.declarations().stream().anyMatch(d->d.entity().kind()==EntityKind.CONSTRUCTOR),"Missing processor evidence cannot manufacture a Java default constructor");
     }
     @Test void unsupportedGeneratorTargetsAndGeneratorsRemainExplicit()throws Exception {
-        for(String source:List.of("class C { @lombok.Builder C(String value) {} }",
-                "class C { @lombok.Builder static C create(String value) { return new C(); } }",
-                "@lombok.experimental.SuperBuilder class C { String value; }")) {
+        for(String source:List.of("class C { @lombok.Builder void instanceVoid(String value) {} }",
+                "class C { @lombok.Builder C instanceBuild(String value) { return this; } }",
+                "class C { @lombok.experimental.Delegate final Runnable r = () -> {}; }")) {
             var result=analyze(source);
             assertEquals(FrontendResult.State.PARTIAL,result.state());
-            assertTrue(result.diagnostics().stream().anyMatch(d->d.code().equals("lombok.generator-unsupported")));
+            assertTrue(result.diagnostics().stream().anyMatch(d->d.code().equals("lombok.generator-unsupported")),
+                    ()->"Expected lombok.generator-unsupported for: " + source + " got " + result.diagnostics());
         }
     }
     @Test void explicitDataConstructorSuppressesGenerationAndExplicitConstructorAnnotationsDoNot()throws Exception {

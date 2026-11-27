@@ -2,7 +2,7 @@
 (() => {
   'use strict';
   const M = window.EvoModel, $ = id => document.getElementById(id);
-  const state = { setups: [], connections: [], jobs: [], labels: new Map(), setup: null, job: null, resultJob: null, graph: null, contexts: [], reports: [], context: '', tab: 'overview', epoch: 0, pollGeneration: 0, historyLimit: 8, cy: null, online: false, retry: null, submitting: null };
+  const state = { setups: [], connections: [], jobs: [], labels: new Map(), setup: null, job: null, resultJob: null, graph: null, contexts: [], reports: [], context: '', tab: 'overview', epoch: 0, pollGeneration: 0, historyLimit: 8, cy: null, online: false, retry: null, submitting: null, autoOpenLog: false, observedJobStates: new Map(), eventSource: null, liveProgress: null, truthTier: 'NONE', previewMeta: null, promotedFromPreview: false, incrementalSummary: null, scoreV2Cache: new Map(), pendingGraphViewport: null };
   let openChatOnFirstResult = new URLSearchParams(location.search).get('view') === 'chat';
   const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = String(text); return n; };
   const append = (parent, ...children) => { children.filter(Boolean).forEach(child => parent.append(child)); return parent; };
@@ -61,7 +61,8 @@
   }
   async function updateWorkspaceTool() {
     if (!state.capabilities) return;
-    const selected = workspaceTools[location.hash], panel = $('workbench-tool'), content = $('workbench-tool-content');
+    const parsedHash = M.parseToolHash ? M.parseToolHash(location.hash) : { baseHash: location.hash, params: {} };
+    const selected = workspaceTools[parsedHash.baseHash], panel = $('workbench-tool'), content = $('workbench-tool-content');
     $('workspace-tools').open = false;
     $('repository-workspace').hidden = Boolean(selected);
     panel.hidden = !selected;
@@ -98,6 +99,13 @@
             btn('Retry', () => { toolPanels.delete(selected); tool.remove(); return updateWorkspaceTool(); }));
         }
       }
+    } else if (parsedHash.baseHash === '#compare' && parsedHash.params && Object.keys(parsedHash.params).length) {
+      tool.EvoApplyCompareParams?.({
+        left: parsedHash.params.left || '',
+        right: parsedHash.params.right || '',
+        repo: parsedHash.params.repo || '',
+        autorun: parsedHash.params.autorun === '1' || parsedHash.params.autorun === 'true'
+      });
     }
     for (const [key, item] of toolPanels) item.hidden = key !== state.openTool;
     if (selected !== previous && state.openTool === selected) {
@@ -131,8 +139,10 @@
     if (!['analysis.manifest', 'spring.context'].includes(state.contextKinds.get(state.context))) {
       const next = state.contexts.find(context => context.analysis);
       if (next) {
+        state.graphFocus = null; state.explorer = null; state.metricSubject = null;
         state.context = next.identity;
         $('context').value = next.identity;
+        notifyContextsUpdated();
       }
     }
     await loadTab('metrics');
@@ -143,15 +153,30 @@
     }
   }
   function notice(message, error = false) { $('notice').hidden = !message; $('notice').textContent = message || ''; $('notice').classList.toggle('error', error); }
-  async function api(path, body, signal, method = (body === undefined ? 'GET' : 'POST'), timeoutMillis = 180000) {
+  async function api(path, body, signal, method = (body === undefined ? 'GET' : 'POST'), timeoutMillis = 180000, _csrfRetried = false) {
     const timeout = AbortSignal.timeout(timeoutMillis), combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
+    const headers = { Accept: 'application/json', ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) };
+    if (method !== 'GET' && method !== 'HEAD') {
+      const csrf = window.EvoGitHubAuth?.getCsrfToken?.();
+      if (csrf) headers['X-Evo-CSRF'] = csrf;
+    }
     let response;
-    try { response = await fetch((path.startsWith('/api/') ? '' : '/api/v1') + path, { method, headers: { Accept: 'application/json', ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: combined }); }
+    try { response = await fetch((path.startsWith('/api/') ? '' : '/api/v1') + path, { method, credentials: 'same-origin', headers, ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: combined }); }
     catch (error) { if (signal?.aborted) throw error; throw new Error(error.name === 'TimeoutError' ? 'The server took too long. Retry or narrow the request.' : 'Cannot reach the analysis server. Check that it is running, then refresh.'); }
-    const envelope = await response.json();
+    let envelope = {};
+    try {
+      const text = await response.text();
+      envelope = text ? JSON.parse(text) : {};
+    } catch (_) {
+      envelope = {};
+    }
+    if (response.status === 403 && envelope.error?.code === 'CSRF_TOKEN_INVALID' && !_csrfRetried && window.EvoGitHubAuth?.refreshAuth) {
+      await window.EvoGitHubAuth.refreshAuth({ notifyOnChange: false }).catch(() => {});
+      return api(path, body, signal, method, timeoutMillis, true);
+    }
     if (!response.ok || envelope.error) {
-      throw Object.assign(new Error(envelope.error?.message || M.apiError(envelope.error?.code)),
-        { code: envelope.error?.code, status: response.status });
+      throw Object.assign(new Error(envelope.error?.message || M.apiError(envelope.error?.code) || `Server error (${response.status}).`),
+        { code: envelope.error?.code, status: response.status, supersededBy: envelope.error?.supersededBy || envelope.supersededBy || null });
     }
     return envelope.data;
   }
@@ -160,18 +185,94 @@
     const setup = state.setups.find(s => s.id === id);
     return cleanRepoName(id, conn, setup);
   };
-  function invalidate() { state.epoch++; state.view?.abort(); state.cy?.destroy(); state.cy = null; refreshGraphTheme = null; closeInspector(); $('view-status').textContent = ''; }
+  function closeJobStream() {
+    if (state.eventSource) {
+      try { state.eventSource.close(); } catch (_) { }
+      state.eventSource = null;
+    }
+  }
+  function invalidate(keepInspector = false) { state.epoch++; state.view?.abort(); state.cy?.destroy(); state.cy = null; refreshGraphTheme = null; if (!keepInspector) closeInspector(); $('view-status').textContent = ''; }
   function clearReadiness() {
     state.readiness?.abort(); state.readiness = null;
     state.readinessStage = '';
     state.buildPreview = null;
   }
-  function resetResult() { state.discovery?.abort(); state.publication?.abort(); $('result-opening').hidden = true; clearReadiness(); invalidate(); state.graphFocus = null; state.explorer = null; state.graph = null; state.resultJob = null; state.context = ''; state.contexts = []; state.reports = []; $('analysis-workspace').hidden = true; $('welcome').hidden = false; updateResultStatus(); }
+  function clearLiveTelemetryUi() {
+    state.liveProgress = null;
+    state.incrementalSummary = null;
+    for (const id of ['job-live-metrics', 'job-live-inline', 'job-module-pills', 'job-incremental-strip']) {
+      const node = $(id);
+      if (node) { node.hidden = true; node.replaceChildren(); }
+    }
+    const cmp = $('job-compare-prev');
+    if (cmp) cmp.hidden = true;
+  }
+  function renderTruthBanner() {
+    const banner = $('workspace-truth-banner');
+    if (!banner) return;
+    const tier = state.truthTier || 'NONE';
+    const info = M.truthTierInfo ? M.truthTierInfo(tier, state.previewMeta) : { preliminary: false, authoritative: false, label: '', detail: '' };
+    const shouldShow = info.preliminary || (info.authoritative && state.promotedFromPreview);
+    if (!shouldShow || !info.label) {
+      banner.hidden = true;
+      banner.replaceChildren();
+      delete banner.dataset.tier;
+      return;
+    }
+    banner.hidden = false;
+    banner.dataset.tier = tier;
+    const pill = el('span', 'workspace-truth-pill', info.label);
+    const detail = el('span', '', info.detail);
+    const main = append(el('div', 'workspace-truth-main'), pill, detail);
+    const actions = el('div', 'run-summary-actions');
+    if (info.preliminary) {
+      actions.append(btn('View live progress', () => {
+        const d = $('run-details');
+        if (d) { d.open = true; d.scrollIntoView?.({ behavior: 'smooth', block: 'nearest' }); }
+      }, 'button subtle'));
+    } else if (state.promotedFromPreview) {
+      actions.append(btn('Dismiss', () => { state.promotedFromPreview = false; renderTruthBanner(); }, 'button subtle'));
+    }
+    banner.replaceChildren(main, actions);
+  }
+  function resetResult() { closeJobStream(); state.discovery?.abort(); state.publication?.abort(); $('result-opening').hidden = true; clearReadiness(); clearLiveTelemetryUi(); invalidate(); state.graphFocus = null; state.explorer = null; state.metricSubject = null; state.graph = null; state.resultJob = null; state.context = ''; state.contexts = []; state.reports = []; state.contextKinds = new Map(); state.discoveryEnriched = false; state.truthTier = 'NONE'; state.previewMeta = null; state.promotedFromPreview = false; state.scoreV2Cache = new Map(); renderTruthBanner(); document.querySelectorAll('[data-spring-view]').forEach(c => c.hidden = true); const stepper = $('job-stage-stepper'); if (stepper) { stepper.hidden = true; stepper.replaceChildren(); } const gapStrip = $('job-gap-action-strip'); if (gapStrip) { gapStrip.hidden = true; gapStrip.replaceChildren(); } $('context').replaceChildren(); notifyContextsUpdated(); $('analysis-workspace').hidden = true; $('welcome').hidden = false; updateResultStatus(); }
   function showRepositoryPrompt() {
+    window.EvoGitHubAuth?.clearInlineAuthGate?.($('welcome'));
     $('repository-title').textContent = 'Explore your architecture';
+    $('repository-description').hidden = true;
+    $('repository-description').textContent = '';
+    const ghBar = $('github-hub-bar');
+    if (ghBar) { ghBar.hidden = true; ghBar.replaceChildren(); }
     $('welcome').querySelector('h2').textContent = 'Connect a repository';
     $('welcome').querySelector('p').textContent = 'Use a local folder or a Git repository to explore dependencies and findings.';
-    $('welcome').querySelector('button').hidden = false;
+    const connectBtn = $('welcome').querySelector('button[data-action=connect]');
+    if (connectBtn) connectBtn.hidden = false;
+    const signInCta = $('welcome-github-signin');
+    if (signInCta) signInCta.hidden = true;
+  }
+  function showMultiUserSignInPrompt() {
+    $('repository-title').textContent = 'Sign in to your workspace';
+    $('repository-description').textContent = 'Multi-user mode is active. Sign in with your workspace account or GitHub to browse organizations, import repositories, and run isolated analyses.';
+    $('repository-description').hidden = false;
+    const ghBar = $('github-hub-bar');
+    if (ghBar) { ghBar.hidden = true; ghBar.replaceChildren(); }
+    $('welcome').hidden = false;
+    if (window.EvoGitHubAuth?.renderInlineAuthGate) {
+      window.EvoGitHubAuth.renderInlineAuthGate($('welcome'));
+      return;
+    }
+    $('welcome').querySelector('h2').textContent = 'Sign in with GitHub';
+    $('welcome').querySelector('p').textContent = 'Authenticate with GitHub OAuth, Device Code, or a session-scoped RAM token to access your private tenant workspace.';
+    const connectBtn = $('welcome').querySelector('button[data-action=connect]');
+    if (connectBtn) connectBtn.hidden = true;
+    let signInCta = $('welcome-github-signin');
+    if (!signInCta) {
+      signInCta = btn('Sign in with GitHub', () => window.EvoGitHubAuth?.openSignInModal?.(), 'button primary');
+      signInCta.id = 'welcome-github-signin';
+      if (connectBtn) connectBtn.after(signInCta);
+      else $('welcome').append(signInCta);
+    }
+    signInCta.hidden = false;
   }
   function updateResultStatus() {
     const job = state.job, displayed = state.resultJob;
@@ -199,7 +300,9 @@
     $('analysis-mode-note').hidden = $('analysis-mode-field').hidden || $('analysis-mode').value !== 'FAST_ARCHITECTURE';
     $('artifact-recovery-note').hidden = !state.setups.find(setup => setup.id === state.setup)?.artifactPolicy;
     $('analyze').disabled = unavailable;
-    $('analyze').textContent = state.retry && !state.submitting ? 'Retry submission' : 'Run analysis';
+    $('analyze').classList.toggle('is-busy', Boolean(busy));
+    $('analyze').setAttribute('aria-busy', String(Boolean(busy)));
+    $('analyze').textContent = state.retry && !state.submitting ? 'Retry submission' : busy ? 'Running…' : 'Run analysis';
     $('analyze-force').hidden = !state.capabilities?.analysisResultReuseEnabled ||
       !(state.job?.result?.graph || state.resultJob?.setup === state.setup && state.resultJob?.result?.graph);
     $('analyze-force').disabled = unavailable || Boolean(state.retry);
@@ -282,6 +385,36 @@
     try {
       state.capabilities = await api(''); state.online = true;
       $('connection-status').textContent = 'Local server connected'; $('connection-dot').classList.add('online');
+      const authState = await window.EvoGitHubAuth?.refreshAuth?.({ notifyOnChange: false });
+      window.EvoGitHubHub?.syncConnectTabsVisibility?.();
+      $('view-insights').hidden = !state.capabilities.architectureInsightsEnabled;
+      $('tab-architecture-chat').hidden = !state.capabilities.architectureChatEnabled;
+      $('open-comparison').hidden = !state.capabilities.evolutionEnabled;
+      $('open-bridge-captures').hidden = !state.capabilities.bridgesEnabled;
+      $('workspace-tools').hidden = false;
+      updateWorkspaceTool();
+
+      const multiUserSignedOut = Boolean((authState?.me?.multiUserMode ?? state.capabilities.multiUserMode ?? false) && !authState?.me?.authenticated);
+      if (multiUserSignedOut) {
+        state.setups = [];
+        state.connections = [];
+        state.jobs = [];
+        state.setup = null;
+        state.job = null;
+        resetResult();
+        $('job-panel').hidden = true;
+        showMultiUserSignInPrompt();
+        document.querySelectorAll('[data-action=connect]').forEach(n => { n.disabled = !state.capabilities.repositoryConnectionsEnabled; n.title = n.disabled ? 'Repository connections are not enabled by this server.' : ''; });
+        $('repositories').replaceChildren(el('p', 'muted small', 'Sign in with GitHub to view your repositories.'));
+        $('history').replaceChildren(el('p', 'muted small', 'Sign in to view your recent runs.'));
+        $('history-more').hidden = true;
+        syncRunControls();
+        return;
+      }
+
+      window.EvoGitHubAuth?.clearInlineAuthGate?.($('welcome'));
+      const signInCta = $('welcome-github-signin');
+      if (signInCta) signInCta.hidden = true;
       const [setups, connections] = await Promise.all([
         state.capabilities.analysisJobsEnabled ? api('/analysis/setups') : null,
         state.capabilities.repositoryConnectionsEnabled ? api('/analysis/connections') : null,
@@ -289,12 +422,6 @@
       ]);
       state.setups = setups?.items ?? [];
       state.connections = connections?.items ?? [];
-      $('view-insights').hidden = !state.capabilities.architectureInsightsEnabled;
-      $('tab-architecture-chat').hidden = !state.capabilities.architectureChatEnabled;
-      $('open-comparison').hidden = !state.capabilities.evolutionEnabled;
-      $('open-bridge-captures').hidden = !state.capabilities.bridgesEnabled;
-      $('workspace-tools').hidden = $('open-comparison').hidden && $('open-bridge-captures').hidden;
-      updateWorkspaceTool();
       document.querySelectorAll('[data-action=connect]').forEach(n => { n.disabled = !state.capabilities.repositoryConnectionsEnabled; n.title = n.disabled ? 'Repository connections are not enabled by this server.' : ''; });
       if (state.setup && !state.setups.some(setup => setup.id === state.setup)) {
         state.setup = null; state.job = null; resetResult(); $('job-panel').hidden = true;
@@ -306,10 +433,50 @@
       if (!state.setup && state.setups.some(setup => setup.id === saved)) await selectRepo(saved);
       else if (!state.setup && state.setups.some(setup => setup.id === 'local')) await selectRepo('local');
       else if (!state.setup && state.setups.length === 1) await selectRepo(state.setups[0].id);
-      else renderSidebar();
+      else {
+        if (!state.setup) showRepositoryPrompt();
+        renderSidebar();
+      }
       syncRunControls();
+      void window.EvoGitHubHub?.refreshAuthStatus?.();
       if (!state.capabilities.analysisJobsEnabled) notice('This server is read-only. Start the workbench server to connect repositories and run analyses.');
     } catch (error) { state.online = false; $('connection-status').textContent = 'Server unavailable'; $('connection-dot').classList.remove('online'); syncRunControls(); renderSidebar(); notice(error.message, true); }
+  }
+  async function handleTenantSwitch() {
+    closeJobStream();
+    stopActivityClock();
+    state.pollGeneration++;
+    state.setup = null;
+    state.job = null;
+    state.retry = null;
+    state.setups = [];
+    state.connections = [];
+    state.jobs = [];
+    state.labels = new Map();
+    state.chatFinding = null;
+    state.chatSeedPrompt = '';
+    try { localStorage.removeItem('evo_repository'); } catch (_) {}
+    window.EvoGitHubHub?.clearCaches?.();
+    window.EvoGitHubEnterprise?.clearCaches?.();
+    resetResult();
+    document.querySelectorAll('.analysis-content section[id^="panel-"]').forEach(p => p.replaceChildren());
+    for (const [key, panel] of toolPanels) { panel.remove(); toolPanels.delete(key); }
+    if ($('inspector-title')) $('inspector-title').textContent = '';
+    if ($('inspector-body')) $('inspector-body').replaceChildren();
+    if ($('job-events')) $('job-events').replaceChildren();
+    if ($('job-telemetry-bar')) $('job-telemetry-bar').replaceChildren();
+    if ($('result-opening')) $('result-opening').replaceChildren();
+    if ($('toast-zone')) {
+      for (const child of [...$('toast-zone').children]) {
+        if (child.id === 'toast-live') child.textContent = '';
+        else child.remove();
+      }
+    }
+    $('job-panel').hidden = true;
+    showRepositoryPrompt();
+    renderSidebar();
+    syncRunControls();
+    await connectServer();
   }
   async function selectRepo(id) {
     stopActivityClock();
@@ -319,19 +486,43 @@
     $('welcome').querySelector('h2').textContent = 'Ready to inspect your code';
     $('welcome').querySelector('p').textContent = 'Run an analysis to capture the current source, then explore its architecture and evidence.';
     $('welcome').querySelector('button').hidden = true;
-    $('repository-title').textContent = repoLabel(id); $('repository-description').textContent = 'Run an analysis to inspect this repository. Results stay linked to their captured source.';
+    $('repository-title').textContent = repoLabel(id);
+    $('repository-description').textContent = 'Run an analysis to inspect this repository. Results stay linked to their captured source.';
+    $('repository-description').hidden = false;
     syncRunControls();
+    void window.EvoGitHubHub?.syncConnectedRepoBar?.(id);
     closeMobileSidebar(); const latest = state.jobs.find(job => job.setup === id); renderSidebar();
     if (latest) await selectJob(latest, true);
+  }
+  async function connectAndAnalyze(source, ref = '') {
+    const connection = await api('/analysis/connections', { source });
+    if (ref) {
+      window.EvoGitHubHub?.setSelectedRef?.(connection.setup, ref, null);
+    }
+    state.connections = (await api('/analysis/connections')).items;
+    state.setups = (await api('/analysis/setups')).items;
+    await selectRepo(connection.setup);
+    if (!state.job && state.setup === connection.setup) {
+      await safe(() => submit());
+    }
+    return connection;
   }
   async function connectRepository(event) {
     event.preventDefault(); $('connect-error').hidden = true; $('connect-submit').disabled = true;
     try {
       const policy = $('repository-policy').value;
-      const connection = await api('/analysis/connections', { source: $('repository-source').value.trim(), ...(policy.trim() ? { policy } : {}) });
+      const intake = window.EvoGitHubHub?.getConnectSubmissionOptions?.() || { source: $('repository-source').value.trim(), ref: '', pullNumber: null, comparePrAfterConnect: false };
+      const connection = await api('/analysis/connections', { source: intake.source, ...(policy.trim() ? { policy } : {}) });
+      if (intake.ref || intake.pullNumber) {
+        window.EvoGitHubHub?.setSelectedRef?.(connection.setup, intake.ref, intake.pullNumber);
+      }
       state.connections = (await api('/analysis/connections')).items; state.setups = (await api('/analysis/setups')).items;
       $('connect-dialog').close(); await selectRepo(connection.setup);
-      if (!state.job && state.setup === connection.setup) await safe(() => submit());
+      if (intake.comparePrAfterConnect && intake.pullNumber && window.EvoGitHubHub?.openPrComparisonModal) {
+        await safe(() => window.EvoGitHubHub.openPrComparisonModal(connection.setup, { pullNumber: intake.pullNumber }));
+      } else if (!state.job && state.setup === connection.setup) {
+        await safe(() => submit());
+      }
     } catch (error) { $('connect-error').textContent = error.message; $('connect-error').hidden = false; $('repository-source').focus(); }
     finally { $('connect-submit').disabled = false; }
   }
@@ -389,20 +580,193 @@
       if (confirmBtn) confirmBtn.disabled = false;
     }
   }
+  function updateJobProgressUi(job, submitting = false) {
+    const panel = $('job-panel');
+    if (!panel) return;
+    const live = state.liveProgress && (!job || state.liveProgress.jobId === job.id) ? state.liveProgress : null;
+    const progress = M.jobProgress(job, submitting, live);
+    panel.classList.toggle('is-det', progress.determinate);
+    panel.classList.toggle('is-done', progress.done);
+    panel.dataset.tone = progress.tone;
+    const fill = $('job-progress-fill');
+    if (fill) fill.style.setProperty('--p', progress.ratio.toFixed(3));
+    const pill = $('job-status-pill');
+    if (pill) {
+      pill.textContent = progress.statusLabel;
+      pill.dataset.tone = progress.tone;
+      pill.hidden = !job && !submitting;
+    }
+  }
+  function findPreviousGraphForComparison(job) {
+    if (!job?.result?.graph) return null;
+    const inc = job.incremental || state.liveProgress?.incremental || state.incrementalSummary;
+    const fromInc = inc?.baseGraphId;
+    if (typeof fromInc === 'string' && /^sha256:[0-9a-f]{64}$/.test(fromInc) && fromInc !== job.result.graph) {
+      return fromInc;
+    }
+    const older = state.jobs.find(item => item.setup === job.setup && item.id !== job.id && item.result?.graph && item.result.graph !== job.result.graph);
+    return older?.result?.graph || null;
+  }
+  function renderLiveTelemetry(job, progress = null) {
+    const activeProgress = progress || (state.liveProgress && job && state.liveProgress.jobId === job.id ? state.liveProgress : null);
+    const liveInline = $('job-live-inline');
+    const liveMetrics = $('job-live-metrics');
+    const moduleBox = $('job-module-pills');
+    const incStrip = $('job-incremental-strip');
+    const compareBtn = $('job-compare-prev');
+
+    const tp = activeProgress && M.formatThroughput ? M.formatThroughput(activeProgress) : { rateText: '', etaText: '', stageCountText: '' };
+    const pills = [];
+    if (tp.stageCountText) pills.push(el('span', 'job-metric-pill', tp.stageCountText));
+    if (tp.rateText) pills.push(el('span', 'job-metric-pill is-accent', tp.rateText));
+    if (tp.etaText && job && !M.terminal(job)) pills.push(el('span', 'job-metric-pill', tp.etaText));
+    if (activeProgress?.truthTier && M.isPreliminaryTier?.(activeProgress.truthTier)) {
+      const ti = M.truthTierInfo(activeProgress.truthTier, activeProgress.preview || state.previewMeta);
+      pills.push(el('span', 'job-metric-pill is-warn', ti.shortLabel));
+    }
+    if (activeProgress?.message && job && !M.terminal(job)) {
+      pills.push(el('span', 'small muted', activeProgress.message));
+    }
+    if (liveInline) {
+      liveInline.hidden = !pills.length || (job && M.terminal(job));
+      liveInline.replaceChildren(...pills.map(p => p.cloneNode(true)));
+    }
+    if (liveMetrics) {
+      liveMetrics.hidden = !pills.length;
+      liveMetrics.replaceChildren(...pills);
+    }
+
+    const modules = activeProgress?.modules || [];
+    if (moduleBox) {
+      moduleBox.hidden = !modules.length;
+      moduleBox.replaceChildren();
+      for (const mod of modules) {
+        const clickable = Boolean(mod.contextId && state.contexts?.some(c => c.identity === mod.contextId));
+        const icon = mod.status === 'COMPLETED' ? '✓' : mod.status === 'REUSED' ? '⚡' : mod.status === 'RUNNING' ? '◐' : mod.status === 'FAILED' ? '✕' : '○';
+        const text = `${icon} ${mod.module}${mod.filesTotal > 0 ? ` (${mod.filesDone}/${mod.filesTotal})` : ''}`;
+        const chip = clickable
+          ? btn(text, () => {
+              state.graphFocus = null; state.explorer = null; state.metricSubject = null;
+              state.context = mod.contextId;
+              $('context').value = mod.contextId;
+              notifyContextsUpdated();
+              return loadTab(state.tab);
+            }, 'job-module-pill is-clickable')
+          : el('span', 'job-module-pill', text);
+        chip.dataset.status = mod.status || 'PENDING';
+        chip.title = [mod.module, mod.status, mod.reason || null, mod.elapsedMillis ? formatDuration(mod.elapsedMillis) : null].filter(Boolean).join(' · ');
+        moduleBox.append(chip);
+      }
+    }
+
+    const rawInc = activeProgress?.incremental || job?.incremental || state.incrementalSummary;
+    const inc = rawInc && M.summarizeIncremental ? M.summarizeIncremental(rawInc) : null;
+    if (incStrip) {
+      if (inc && (inc.hasSavings || inc.changedFiles > 0 || inc.mode !== 'COLD')) {
+        const incNodes = [
+          el('span', 'job-metric-pill is-accent', inc.mode === 'NO_CHANGE' ? 'No changes' : inc.mode === 'FALLBACK_FULL' ? 'Full recompute' : 'Incremental delta')
+        ];
+        if (inc.totalFiles > 0) incNodes.push(el('span', 'job-metric-pill', `${inc.reusedFiles.toLocaleString()}/${inc.totalFiles.toLocaleString()} files reused (${inc.reusePct}%)`));
+        if (inc.changedFiles > 0) incNodes.push(el('span', 'job-metric-pill', `+${inc.addedFiles} ~${inc.modifiedFiles} -${inc.deletedFiles}`));
+        if (inc.abiEarlyCutoffCount > 0) incNodes.push(el('span', 'job-metric-pill is-accent', `${inc.abiEarlyCutoffCount} ABI early cutoff${inc.abiEarlyCutoffCount === 1 ? '' : 's'}`));
+        if (inc.impactedDependentsCount > 0) incNodes.push(el('span', 'job-metric-pill', `${inc.impactedDependentsCount} impacted dep${inc.impactedDependentsCount === 1 ? '' : 's'}`));
+        if (inc.reusedModules > 0) incNodes.push(el('span', 'job-metric-pill', `${inc.reusedModules} module${inc.reusedModules === 1 ? '' : 's'} reused`));
+        if (inc.formattedTimeSaved) incNodes.push(el('span', 'job-metric-pill is-accent', `Est. ${inc.formattedTimeSaved} saved`));
+        if (inc.baseSnapshotId) incNodes.push(el('span', 'job-metric-pill', `Base ${M.shortDigest(inc.baseSnapshotId)}`));
+        incStrip.hidden = false;
+        incStrip.replaceChildren(...incNodes);
+      } else {
+        incStrip.hidden = true;
+        incStrip.replaceChildren();
+      }
+    }
+
+    if (compareBtn) {
+      const prevGraph = job && M.terminal(job) ? findPreviousGraphForComparison(job) : null;
+      const showCompare = Boolean(state.capabilities?.evolutionEnabled && prevGraph && job?.result?.graph);
+      compareBtn.hidden = !showCompare;
+      if (showCompare) {
+        const setupObj = state.setups.find(s => s.id === job.setup);
+        const repoId = typeof setupObj?.repository === 'string' ? setupObj.repository : (setupObj?.repository?.value || '');
+        compareBtn.onclick = () => {
+          location.hash = M.buildCompareHash({ left: prevGraph, right: job.result.graph, repo: repoId, autorun: true });
+        };
+      }
+    }
+    window.EvoGitHubHub?.syncPipelineStepper?.(job, activeProgress);
+  }
+  function showSubmittingLog(mode = 'FULL') {
+    stopActivityClock();
+    $('job-panel').hidden = false;
+    $('welcome').hidden = true;
+    $('job-description').textContent = 'Starting analysis…';
+    $('job-elapsed').textContent = '0 s';
+    $('job-failure').hidden = true;
+    showProgressConnection();
+    const modeNote = $('job-mode');
+    modeNote.textContent = mode === 'FAST_ARCHITECTURE'
+      ? 'Quick analysis · reduced Java detail · installed Node packages inventoried'
+      : mode === 'FULL' ? 'Deep analysis' : '';
+    modeNote.hidden = !modeNote.textContent;
+    const timing = $('job-timing');
+    timing.dataset.job = '__submitting__';
+    timing.open = false;
+    timing.hidden = true;
+    state.telemetryJob = null;
+    $('job-telemetry-bar').replaceChildren();
+    const preview = $('job-score-preview');
+    preview.dataset.job = '__submitting__';
+    preview.hidden = true;
+    preview.textContent = '';
+    $('cancel-job').hidden = true;
+    $('cancel-job').disabled = true;
+    const details = $('run-details');
+    details.dataset.job = '__submitting__';
+    details.open = true;
+    const list = $('job-events');
+    const stepDetails = append(el('details'),
+      append(el('summary'),
+        makeStepIndicator(),
+        el('span', 'step-title', 'Submitting analysis run'),
+        el('span', 'step-duration', '0 s')),
+      el('p', 'step-note', 'Sending the analysis request and preparing the live activity log.'));
+    stepDetails.dataset.stage = 'QUEUED';
+    const item = append(el('li'), stepDetails);
+    item.dataset.event = '__submitting__';
+    item.dataset.s = 'run';
+    item.setAttribute('aria-current', 'step');
+    list.replaceChildren(item);
+    const trackFill = $('job-step-track-fill');
+    if (trackFill) trackFill.style.setProperty('--u454-p', '0');
+    updateJobProgressUi(null, true);
+    requestAnimationFrame(syncStepTrackGeometry);
+  }
   async function submit(force = false) {
     if (!state.setup || state.submitting || (state.job && !M.terminal(state.job))) return;
     notice('');
     const setup = state.setup, generation = state.pollGeneration;
     const mode = $('analysis-mode-field').hidden ? 'FULL' : $('analysis-mode').value;
-    const request = state.retry ||= { setup, idempotencyKey: crypto.randomUUID(), ...(force ? { force: true } : {}), ...(mode === 'FAST_ARCHITECTURE' ? { mode: 'FAST_ARCHITECTURE' } : {}) };
+    const selectedRef = window.EvoGitHubHub?.getSelectedRef?.(setup) || '';
+    const request = state.retry ||= { setup, idempotencyKey: crypto.randomUUID(), ...(force ? { force: true } : {}), ...(mode === 'FAST_ARCHITECTURE' ? { mode: 'FAST_ARCHITECTURE' } : {}), ...(selectedRef ? { ref: selectedRef } : {}) };
+    state.autoOpenLog = true;
     $('run-options').open = false; state.submitting = request; syncRunControls(); updateResultStatus();
+    showSubmittingLog(mode);
     try {
       const job = await api('/analysis/jobs', request, undefined, 'POST', 15000);
       if (state.retry === request) state.retry = null;
       if (state.setup === setup && state.pollGeneration === generation) await selectJob(job, true);
       await refreshHistory();
     } catch (error) {
+      state.autoOpenLog = false;
       if (state.setup === setup && state.pollGeneration === generation) {
+        if (state.job) {
+          renderJob(state.job);
+        } else {
+          $('job-panel').hidden = true;
+          $('run-details').dataset.job = '';
+          $('job-events').replaceChildren();
+          if (!state.graph) $('welcome').hidden = false;
+        }
         notice(error.code ? M.apiError(error.code) : error.message, true);
       }
     } finally {
@@ -420,10 +784,43 @@
       if (state.job?.id !== job.id) return;
       const total = el('p', 'small', 'Total ' + formatDuration(telemetry.totalElapsedMillis));
       const stages = el('dl', 'job-timing-list');
+      const totalMs = Math.max(1, Number(telemetry.totalElapsedMillis) || telemetry.stages.reduce((acc, s) => acc + (Number(s.durationMillis) || 0), 0) || 1);
       for (const { stage, durationMillis } of telemetry.stages) {
-        stages.append(el('dt', '', analysisSteps[stage]?.[0] || stage), el('dd', '', formatDuration(durationMillis)));
+        const pct = Math.min(100, Math.max(2, Math.round(((Number(durationMillis) || 0) / totalMs) * 100)));
+        const dd = el('dd', 'job-timing-val');
+        const fillBar = el('span', 'job-timing-bar');
+        const inner = el('i');
+        inner.style.width = pct + '%';
+        fillBar.append(inner);
+        dd.append(el('span', 'job-timing-ms', formatDuration(durationMillis)), fillBar);
+        stages.append(el('dt', '', analysisSteps[stage]?.[0] || stage), dd);
       }
-      bar.replaceChildren(total, stages);
+      const nodes = [total, stages];
+      const inc = telemetry.incremental && M.summarizeIncremental ? M.summarizeIncremental(telemetry.incremental) : null;
+      if (inc) {
+        const incGrid = el('dl', 'job-incremental-grid');
+        const rows = [
+          ['Reuse mode', inc.mode + (inc.fallbackReason ? ' · ' + inc.fallbackReason : '')],
+          ['Files reused', inc.totalFiles > 0 ? `${inc.reusedFiles.toLocaleString()} / ${inc.totalFiles.toLocaleString()} (${inc.reusePct}%)` : `${inc.reusedFiles.toLocaleString()}`],
+          ['File delta', `+${inc.addedFiles} added · ~${inc.modifiedFiles} mod · -${inc.deletedFiles} del`],
+          ['ABI early cutoffs', `${inc.abiEarlyCutoffCount.toLocaleString()} · ${inc.impactedDependentsCount.toLocaleString()} impacted`],
+          ['Modules reused', inc.recomputedModules > 0 ? `${inc.reusedModules} / ${inc.reusedModules + inc.recomputedModules}` : `${inc.reusedModules}`],
+          ...(inc.formattedTimeSaved ? [['Est. time saved', inc.formattedTimeSaved]] : []),
+          ...(inc.baseSnapshotId ? [['Base snapshot', M.shortDigest(inc.baseSnapshotId)]] : [])
+        ];
+        for (const [k, v] of rows) {
+          incGrid.append(append(el('div', 'job-incremental-stat'), el('dt', '', k), el('dd', '', v)));
+        }
+        nodes.push(el('h3', 'small', 'Incremental & Cache Telemetry'), incGrid);
+      }
+      if (telemetry.cacheMetrics && Object.keys(telemetry.cacheMetrics).length) {
+        const cachePills = el('div', 'job-live-metrics');
+        for (const [k, v] of Object.entries(telemetry.cacheMetrics)) {
+          cachePills.append(el('span', 'job-metric-pill', `${k}: ${Number(v).toLocaleString()}`));
+        }
+        nodes.push(cachePills);
+      }
+      bar.replaceChildren(...nodes);
     } catch (error) {
       if (state.job?.id !== job.id) return;
       state.telemetryJob = null;
@@ -496,6 +893,35 @@
     if (running && activityPulse === undefined) activityPulse = setInterval(tickActivity, 1000);
     else if (!running) stopActivityClock();
   }
+  function syncStepTrackGeometry() {
+    const list = $('job-events');
+    const wrap = list?.closest('.u454-wrap');
+    const track = wrap?.querySelector('.u454-tr');
+    if (!list || !wrap || !track) return;
+    const icons = list.querySelectorAll('.u454-ic');
+    if (icons.length < 2) {
+      track.style.top = '0px';
+      track.style.height = '0px';
+      return;
+    }
+    const wrapRect = wrap.getBoundingClientRect();
+    const first = icons[0].getBoundingClientRect();
+    const last = icons[icons.length - 1].getBoundingClientRect();
+    if (!first.height || !last.height) return;
+    const top = Math.max(0, first.top + first.height / 2 - wrapRect.top);
+    const height = Math.max(0, (last.top + last.height / 2) - (first.top + first.height / 2));
+    track.style.top = top.toFixed(1) + 'px';
+    track.style.height = height.toFixed(1) + 'px';
+  }
+  function makeStepIndicator() {
+    const ic = el('span', 'u454-ic');
+    ic.setAttribute('aria-hidden', 'true');
+    ic.innerHTML = '<i class="u454-d"></i><i class="u454-sp"></i>' +
+      '<span class="u454-ck"><svg viewBox="0 0 24 24"><path d="m6 12.5 4 4 8-9"/></svg></span>' +
+      '<span class="u454-err"><svg viewBox="0 0 24 24"><path d="M8 8l8 8M16 8l-8 8"/></svg></span>' +
+      '<span class="u454-warn"><svg viewBox="0 0 24 24"><path d="M8 12h8"/></svg></span>';
+    return ic;
+  }
   function renderActivity(job) {
     const list = $('job-events'), events = [...(job.events ?? [])];
     if (M.terminal(job) && events.at(-1)?.stage !== 'FINISHED' && job.finishedAt) {
@@ -503,8 +929,11 @@
     }
     const items = new Map([...list.children].map(item => [item.dataset.event, item]));
     const remaining = new Set(items.values());
-    const failed = job.state === 'FAILED' || job.state === 'TIMED_OUT' || job.state === 'CANCELLED';
+    const cancelled = job.state === 'CANCELLED';
+    const hardFailed = job.state === 'FAILED' || job.state === 'TIMED_OUT';
+    const failed = hardFailed || cancelled;
     const failureCode = job.error || job.stop;
+    let doneCount = 0;
     for (const [index, event] of events.entries()) {
       const key = event.stage + '/' + event.at;
       let item = items.get(key);
@@ -512,7 +941,7 @@
         const time = el('time', 'step-started', new Date(event.at).toLocaleTimeString());
         time.dateTime = event.at;
         const details = append(el('details'), append(el('summary'),
-          el('span', 'step-title'), el('span', 'step-duration')),
+          makeStepIndicator(), el('span', 'step-title'), el('span', 'step-duration')),
           time, el('p', 'step-note'), el('p', 'step-observation'));
         details.dataset.stage = event.stage;
         item = append(el('li'), details);
@@ -523,6 +952,12 @@
       const step = analysisSteps[event.stage], next = events[index + 1], finished = event.stage === 'FINISHED';
       const active = !M.terminal(job) && event.stage === job.stage && !next;
       const interrupted = failed && next?.stage === 'FINISHED';
+      const stepState = active ? 'run'
+        : ((finished || interrupted) && hardFailed) ? 'fail'
+        : ((finished || interrupted) && cancelled) ? 'warn'
+        : 'done';
+      item.dataset.s = stepState;
+      if (stepState === 'done') doneCount++;
       if (active) item.setAttribute('aria-current', 'step'); else item.removeAttribute('aria-current');
       item.querySelector('.step-title').textContent = finished ? runOutcomes[job.state] :
         step?.[active || interrupted ? 0 : 1] ?? 'Analysis';
@@ -538,6 +973,13 @@
       observation.hidden = !observation.textContent;
     }
     for (const item of remaining) item.remove();
+    const trackFill = $('job-step-track-fill');
+    if (trackFill) {
+      const denom = Math.max(1, events.length - 1);
+      const ratio = events.length <= 1 ? (M.terminal(job) ? 1 : 0) : Math.min(1, Math.max(0, (doneCount - (M.terminal(job) ? 0 : 0.25)) / denom));
+      trackFill.style.setProperty('--u454-p', ratio.toFixed(3));
+    }
+    requestAnimationFrame(syncStepTrackGeometry);
   }
   function showProgressConnection(message = '') {
     const status = $('job-connection');
@@ -560,14 +1002,28 @@
   }
   function renderJob(job) {
     $('job-panel').hidden = false; $('welcome').hidden = true;
+    const prevState = state.observedJobStates.get(job.id);
+    const wasRunning = prevState && !M.terminal({ state: prevState });
+    state.observedJobStates.set(job.id, job.state);
     const summary = job.state === 'CANCELLING' ? 'Cancelling run' : runOutcomes[job.state] ?? analysisSteps[job.stage]?.[0] ?? 'Analysis in progress';
     if ($('job-description').textContent !== summary) $('job-description').textContent = summary;
+    updateJobProgressUi(job, false);
     const details = $('run-details');
     if (details.dataset.job !== job.id) {
       details.dataset.job = job.id;
-      details.open = job.state === 'FAILED' || job.state === 'TIMED_OUT';
+      details.open = M.shouldAutoExpandRunLog(job, state.autoOpenLog);
+      state.autoOpenLog = false;
       $('job-events').replaceChildren();
       showProgressConnection();
+    }
+    if (wasRunning && M.terminal(job) && window.EvoToast) {
+      if (job.state === 'FAILED' || job.state === 'TIMED_OUT') {
+        window.EvoToast.push({ kind: 'err', title: runOutcomes[job.state] || 'Analysis failed', detail: failureMessages[job.error || job.stop] || 'Inspect the activity log for details.' });
+      } else if (job.state === 'CANCELLED') {
+        window.EvoToast.push({ kind: 'warn', title: 'Analysis cancelled', detail: 'Run stopped before completion.' });
+      } else {
+        window.EvoToast.push({ kind: 'ok', title: job.reuse ? 'Saved analysis reused' : 'Analysis complete', detail: repoLabel(job.setup) });
+      }
     }
     const timing = $('job-timing');
     if (timing.dataset.job !== job.id) {
@@ -580,12 +1036,18 @@
     $('job-mode').textContent = job.mode === 'FAST_ARCHITECTURE' ? 'Quick analysis · reduced Java detail · installed Node packages inventoried'
       : job.mode === 'FULL' ? 'Deep analysis' : '';
     $('job-mode').hidden = !$('job-mode').textContent;
-    if (job.result?.graph) $('repository-description').textContent = 'Captured ' + new Date(job.reuse?.sourceFinishedAt || job.finishedAt || job.submittedAt).toLocaleString() + ' · Run a new analysis after changing the source.';
+    if (job.result?.graph) {
+      $('repository-description').textContent = 'Captured ' + new Date(job.reuse?.sourceFinishedAt || job.finishedAt || job.submittedAt).toLocaleString() + ' · Run a new analysis after changing the source.';
+      $('repository-description').hidden = false;
+    }
     $('cancel-job').hidden = M.terminal(job); $('cancel-job').disabled = job.state === 'CANCELLING'; syncRunControls(); updateResultStatus();
     renderActivity(job);
+    renderLiveTelemetry(job);
     syncActivityClock(job);
     showRunFailure(job);
     requestScorePreview(job);
+    window.EvoGitHubHub?.syncPipelineStepper?.(job, state.liveProgress);
+    void window.EvoGitHubHub?.syncPartialGapStrip?.(job);
   }
   function requestScorePreview(job) {
     const preview = $('job-score-preview');
@@ -606,19 +1068,279 @@
       preview.hidden = false;
     }).catch(() => { /* The inventory may not have sealed yet. A later stage can retry. */ });
   }
+  function shouldUseJobSse(job) {
+    if (typeof EventSource !== 'function' || !job) return false;
+    return Boolean(state.capabilities?.analysisJobEventsEnabled || state.capabilities?.progressiveAnalysisEnabled
+      || job.publicationStage || job.previewGraphId);
+  }
+  function connectJobStream(id, generation) {
+    closeJobStream();
+    if (!selectedJob(id, generation)) return;
+    let source;
+    try {
+      source = new EventSource('/api/v1/analysis/jobs/' + id + '/events');
+    } catch (_) {
+      poll(id, generation);
+      return;
+    }
+    state.eventSource = source;
+    let opened = false;
+    let consecutiveErrors = 0;
+    let resyncController = null;
+    const markAlive = () => { opened = true; consecutiveErrors = 0; showProgressConnection(); };
+    const parsePayload = event => {
+      try { return event?.data ? JSON.parse(event.data) : null; }
+      catch (_) { return null; }
+    };
+    const syncPreviewIfReady = (graphId, truthTier, meta) => {
+      if (!graphId || !M.isPreliminaryTier?.(truthTier)) return;
+      if (state.graph === graphId && state.truthTier === truthTier) return;
+      void safe(() => loadPreviewGraph({ graphId, truthTier, ...meta }, id, generation));
+    };
+
+    source.addEventListener('snapshot', event => {
+      markAlive();
+      if (!selectedJob(id, generation)) { closeJobStream(); return; }
+      const snap = parsePayload(event);
+      if (!snap) return;
+      state.liveProgress = snap;
+      if (snap.incremental) state.incrementalSummary = snap.incremental;
+      if (snap.stage && state.job && snap.stage !== state.job.stage) {
+        state.job = { ...state.job, stage: snap.stage, state: snap.state || state.job.state, revision: snap.revision ?? state.job.revision };
+        renderJob(state.job);
+      } else {
+        updateJobProgressUi(state.job, false);
+        renderLiveTelemetry(state.job, snap);
+      }
+      if (snap.previewGraphId && M.isPreliminaryTier?.(snap.truthTier)) {
+        syncPreviewIfReady(snap.previewGraphId, snap.truthTier, snap.preview || {});
+      }
+    });
+
+    source.addEventListener('stage_started', event => {
+      markAlive();
+      if (!selectedJob(id, generation)) { closeJobStream(); return; }
+      const data = parsePayload(event);
+      if (!data?.stage || !state.job) return;
+      const exists = (state.job.events || []).some(e => e.stage === data.stage);
+      const events = exists ? state.job.events : [...(state.job.events || []), { stage: data.stage, at: new Date().toISOString() }];
+      state.job = { ...state.job, state: data.state || 'RUNNING', stage: data.stage, revision: Math.max(state.job.revision || 0, data.revision || 0), events };
+      if (state.liveProgress) state.liveProgress = { ...state.liveProgress, stage: data.stage, overallRatio: data.overallRatio ?? state.liveProgress.overallRatio };
+      renderJob(state.job);
+    });
+
+    source.addEventListener('progress_update', event => {
+      markAlive();
+      if (!selectedJob(id, generation)) { closeJobStream(); return; }
+      const data = parsePayload(event);
+      if (!data) return;
+      state.liveProgress = { ...(state.liveProgress || { jobId: id, modules: [] }), ...data, jobId: id };
+      updateJobProgressUi(state.job, false);
+      renderLiveTelemetry(state.job, state.liveProgress);
+    });
+
+    const handleModuleEvent = event => {
+      markAlive();
+      if (!selectedJob(id, generation)) { closeJobStream(); return; }
+      const data = parsePayload(event);
+      if (!data) return;
+      const base = state.liveProgress || { jobId: id, modules: [] };
+      let modules = Array.isArray(base.modules) ? [...base.modules] : [];
+      if (Array.isArray(data.modules)) {
+        modules = data.modules;
+      } else if (data.module) {
+        const idx = modules.findIndex(m => m.module === data.module);
+        const entry = {
+          module: data.module, status: data.status || 'RUNNING',
+          filesDone: data.filesDone ?? 0, filesTotal: data.filesTotal ?? 0,
+          elapsedMillis: data.elapsedMillis ?? 0, contextId: data.contextId || null, reason: data.reason || null
+        };
+        if (idx >= 0) modules[idx] = entry; else modules.push(entry);
+      }
+      state.liveProgress = { ...base, jobId: id, modules };
+      renderLiveTelemetry(state.job, state.liveProgress);
+    };
+    source.addEventListener('module_progress', handleModuleEvent);
+    source.addEventListener('module_completed', handleModuleEvent);
+
+    source.addEventListener('preview_ready', event => {
+      markAlive();
+      if (!selectedJob(id, generation)) { closeJobStream(); return; }
+      const data = parsePayload(event);
+      if (!data?.graphId) return;
+      state.liveProgress = {
+        ...(state.liveProgress || { jobId: id, modules: [] }),
+        jobId: id,
+        truthTier: data.truthTier,
+        previewGraphId: data.graphId,
+        preview: data
+      };
+      renderLiveTelemetry(state.job, state.liveProgress);
+      syncPreviewIfReady(data.graphId, data.truthTier, data);
+    });
+
+    source.addEventListener('incremental_summary', event => {
+      markAlive();
+      if (!selectedJob(id, generation)) { closeJobStream(); return; }
+      const data = parsePayload(event);
+      if (!data?.incremental) return;
+      state.incrementalSummary = data.incremental;
+      if (state.liveProgress) state.liveProgress = { ...state.liveProgress, incremental: data.incremental };
+      renderLiveTelemetry(state.job, state.liveProgress);
+    });
+
+    source.addEventListener('resync_required', () => {
+      markAlive();
+      if (!selectedJob(id, generation)) return;
+      resyncController?.abort();
+      resyncController = new AbortController();
+      const resyncSignal = resyncController.signal;
+      safe(async () => {
+        const [latestJob, latestProgress] = await Promise.all([
+          api('/analysis/jobs/' + id, undefined, resyncSignal, 'GET', 8000),
+          api('/analysis/jobs/' + id + '/progress', undefined, resyncSignal, 'GET', 8000).catch(() => null)
+        ]);
+        if (resyncSignal.aborted || !selectedJob(id, generation)) return;
+        if (latestProgress) state.liveProgress = latestProgress;
+        state.job = latestJob;
+        renderJob(latestJob);
+      });
+    });
+
+    const onTerminalEvent = () => {
+      resyncController?.abort();
+      closeJobStream();
+      if (!selectedJob(id, generation)) return;
+      safe(async () => {
+        const finalJob = await api('/analysis/jobs/' + id, undefined, undefined, 'GET', 10000);
+        if (!selectedJob(id, generation)) return;
+        const hadPreview = M.isPreliminaryTier?.(state.truthTier);
+        state.job = finalJob;
+        state.jobs = state.jobs.map(item => item.id === id ? finalJob : item);
+        if (finalJob.incremental) state.incrementalSummary = finalJob.incremental;
+        renderJob(finalJob);
+        renderSidebar();
+        clearReadiness();
+        if (finalJob.result?.graph) {
+          await loadGraph(finalJob, id, generation, { preserveInteraction: hadPreview, promotedFromPreview: hadPreview });
+        }
+        if (selectedJob(id, generation)) await refreshHistory();
+      });
+    };
+    source.addEventListener('job_completed', onTerminalEvent);
+    source.addEventListener('job_failed', onTerminalEvent);
+    source.addEventListener('job_cancelled', onTerminalEvent);
+
+    source.onerror = () => {
+      if (!selectedJob(id, generation) || (state.job && M.terminal(state.job))) {
+        closeJobStream();
+        return;
+      }
+      consecutiveErrors++;
+      if (opened && source.readyState === EventSource.CONNECTING && consecutiveErrors <= 2) {
+        showProgressConnection('Live stream interrupted — reconnecting with Last-Event-ID…');
+        return;
+      }
+      resyncController?.abort();
+      closeJobStream();
+      if (!opened) showProgressConnection('Live event stream unavailable — switched to polling.');
+      poll(id, generation);
+    };
+  }
+  async function loadPreviewGraph(preview, jobId, generation) {
+    if (!preview?.graphId || !selectedJob(jobId, generation)) return;
+    const graphId = preview.graphId;
+    const wasPreliminary = M.isPreliminaryTier?.(state.truthTier);
+    const keepInteraction = Boolean(state.graph && (wasPreliminary || !$('analysis-workspace').hidden));
+    const savedChatDraft = document.querySelector('#panel-architecture-chat textarea')?.value ?? null;
+    if (state.cy && !state.cy.destroyed()) {
+      state.pendingGraphViewport = { zoom: state.cy.zoom(), pan: state.cy.pan(), context: state.context };
+    }
+    state.discovery?.abort();
+    const controller = new AbortController(); state.discovery = controller;
+    let discovery;
+    try {
+      discovery = await api('/graphs/' + graphId, undefined, controller.signal, 'GET', 15000);
+    } catch (error) {
+      if (error.status === 410 || error.code === 'PREVIEW_SUPERSEDED') {
+        const refreshed = await api('/analysis/jobs/' + jobId, undefined, undefined, 'GET', 8000).catch(() => null);
+        if (refreshed && selectedJob(jobId, generation)) {
+          state.job = refreshed;
+          if (refreshed.result?.graph) return loadGraph(refreshed, jobId, generation, { preserveInteraction: true, promotedFromPreview: true });
+          const nextPreviewId = error.supersededBy || refreshed.previewGraphId;
+          if (nextPreviewId && nextPreviewId !== graphId) {
+            return loadPreviewGraph({ graphId: nextPreviewId, truthTier: refreshed.publicationStage || 'PARTIAL_CONTEXTS', ...(refreshed.preview || {}) }, jobId, generation);
+          }
+        }
+      }
+      return;
+    }
+    if (state.discovery !== controller || !selectedJob(jobId, generation)) return;
+    state.snapshot = discovery.snapshot;
+    state.publication?.abort(); state.publication = new AbortController();
+    state.graph = graphId;
+    state.resultJob = state.job;
+    state.contexts = discovery.contexts || [];
+    state.reports = [];
+    state.reportIds = [];
+    state.reportIndexLoaded = true;
+    state.discoveryEnriched = true;
+    state.scoreV2Cache = new Map();
+    state.truthTier = discovery.truthTier || preview.truthTier || 'PRELIMINARY_STRUCTURE';
+    state.previewMeta = { ...preview, ...(discovery.previewMeta || {}) };
+    state.promotedFromPreview = false;
+    state.moduleLabels = new Map(); state.contextKinds = new Map(); state.contextLoads = new Map(); state.contextLabels = new Map();
+    $('analysis-workspace').hidden = false; $('welcome').hidden = true;
+    $('job-score-preview').hidden = true;
+    $('context').replaceChildren(el('option', '', 'Choose a context…')); $('context').firstChild.value = '';
+    for (const context of state.contexts) {
+      const meta = formatContext(context);
+      const option = el('option', '', meta.label);
+      option.value = context.identity;
+      option.title = context.identity;
+      applyOptionMeta(option, meta, false);
+      $('context').append(option);
+      recordContextMetadata(context, meta);
+    }
+    state.context = M.selectDefaultContext ? M.selectDefaultContext(state.contexts, state.snapshot, state.context)
+      : (state.contexts.find(c => c.identity === state.snapshot)?.identity ?? state.contexts[0]?.identity ?? '');
+    $('context').value = state.context;
+    notifyContextsUpdated();
+    renderTruthBanner();
+    updateResultStatus();
+    if (!wasPreliminary && window.EvoToast) {
+      window.EvoToast.push({ kind: 'info', title: 'Preliminary structure ready', detail: 'Explore modules, graph, and captured source while deep analysis continues.' });
+    }
+    await loadTab(state.tab, { keepInspector: keepInteraction });
+    if (savedChatDraft) {
+      const ta = document.querySelector('#panel-architecture-chat textarea');
+      if (ta && !ta.value) {
+        ta.value = savedChatDraft;
+        ta.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+    }
+  }
   async function selectJob(job, keepPrevious = false) {
+    closeJobStream();
     state.job = job; state.setup = job.setup; state.retry = null; state.pollGeneration++;
     state.discovery?.abort();
     clearReadiness();
+    clearLiveTelemetryUi();
     if (!keepPrevious || state.resultJob?.setup !== job.setup) resetResult();
+    if (job.incremental) state.incrementalSummary = job.incremental;
     $('repository-title').textContent = repoLabel(job.setup); renderJob(job); renderSidebar();
     const generation = state.pollGeneration;
     const previous = keepPrevious && !state.graph && state.jobs.find(item => item.setup === job.setup && item.id !== job.id && item.result?.graph);
-    if (!M.terminal(job)) poll(job.id, generation);
+    if (!M.terminal(job)) {
+      if (shouldUseJobSse(job)) connectJobStream(job.id, generation);
+      else poll(job.id, generation);
+    }
     requestReadiness(job, generation);
     try {
       if (job.result?.graph) await loadGraph(job, job.id, generation);
-      else if (previous) await loadGraph(previous, job.id, generation);
+      else if (job.previewGraphId && M.isPreliminaryTier?.(job.publicationStage)) {
+        await loadPreviewGraph({ graphId: job.previewGraphId, truthTier: job.publicationStage, ...(job.preview || {}) }, job.id, generation);
+      } else if (previous) await loadGraph(previous, job.id, generation);
     } catch (error) { if (error.name !== 'AbortError') throw error; }
   }
   const selectedJob = (id, generation) => state.job?.id === id && state.pollGeneration === generation;
@@ -665,12 +1387,17 @@
     if (job.revision > state.job.revision || job.revision === state.job.revision && M.terminal(job)) {
       state.job = job;
       state.jobs = state.jobs.map(item => item.id === id ? job : item);
+      if (job.incremental) state.incrementalSummary = job.incremental;
       renderJob(job);
       renderSidebar();
+      if (!M.terminal(job) && job.previewGraphId && M.isPreliminaryTier?.(job.publicationStage) && state.graph !== job.previewGraphId) {
+        void safe(() => loadPreviewGraph({ graphId: job.previewGraphId, truthTier: job.publicationStage, ...(job.preview || {}) }, id, generation));
+      }
     } else if (job.revision === state.job.revision) syncActivityClock(job);
     if (M.terminal(state.job)) {
       clearReadiness();
-      if (state.job.result?.graph) await loadGraph(state.job, id, generation);
+      const hadPreview = M.isPreliminaryTier?.(state.truthTier);
+      if (state.job.result?.graph) await loadGraph(state.job, id, generation, { preserveInteraction: hadPreview, promotedFromPreview: hadPreview });
       if (selectedJob(id, generation)) await refreshHistory();
       return;
     }
@@ -678,12 +1405,18 @@
     const age = performance.now() - since;
     setTimeout(() => safe(() => poll(id, generation, since)), age < 2000 ? 250 : age < 30000 ? 1000 : 2500);
   }
-  async function loadGraph(publication, jobId, generation) {
+  async function loadGraph(publication, jobId, generation, opts = {}) {
     const { graph, snapshot, contexts } = publication.result;
+    const preserveInteraction = Boolean(opts.preserveInteraction);
+    const promotedFromPreview = Boolean(opts.promotedFromPreview || M.isPreliminaryTier?.(state.truthTier));
     const displayed = state.resultJob;
-    if (state.graph === graph && displayed && (displayed.id === publication.id ||
+    if (state.graph === graph && displayed && !M.isPreliminaryTier?.(state.truthTier) && (displayed.id === publication.id ||
       publication.reuse?.sourceJob === (displayed.reuse?.sourceJob ?? displayed.id))) {
       state.resultJob = publication; updateResultStatus(); return;
+    }
+    const savedChatDraft = preserveInteraction ? (document.querySelector('#panel-architecture-chat textarea')?.value ?? null) : null;
+    if (preserveInteraction && state.cy && !state.cy.destroyed()) {
+      state.pendingGraphViewport = { zoom: state.cy.zoom(), pan: state.cy.pan(), context: state.context };
     }
     state.discovery?.abort();
     const controller = new AbortController(); state.discovery = controller;
@@ -695,8 +1428,10 @@
     if (fromReceipt) {
       discovery = { snapshot, contexts: contexts.map(identity => ({ identity })) };
     } else {
-      loading.replaceChildren(el('p', '', 'Reading the saved result…'));
-      loading.hidden = false;
+      if (!preserveInteraction) {
+        loading.replaceChildren(el('p', '', 'Reading the saved result…'));
+        loading.hidden = false;
+      }
       try {
         discovery = await api('/graphs/' + graph, undefined, signal, 'GET', 30000);
       } catch (error) {
@@ -712,8 +1447,15 @@
 
     state.publication?.abort(); state.publication = new AbortController();
     state.graph = graph; state.resultJob = publication; state.contexts = discovery.contexts; state.reports = []; updateResultStatus();
+    state.truthTier = 'DEEP_SEMANTIC_COMPLETE';
+    state.previewMeta = null;
+    state.promotedFromPreview = promotedFromPreview;
+    state.scoreV2Cache = new Map();
+    renderTruthBanner();
+    void window.EvoGitHubEnterprise?.loadCodeowners?.(graph);
     state.reportIds = [...new Set([...(publication.result.reports ?? []), ...(discovery.reports ?? [])])];
     state.reportIndexLoaded = !fromReceipt;
+    state.discoveryEnriched = !fromReceipt;
     state.repositoryScore = null;
     state.policyRuns = new Map();
     state.activePolicyReports = new Map();
@@ -721,36 +1463,91 @@
     state.moduleLabels = new Map(); state.contextKinds = new Map(); state.contextLoads = new Map(); state.contextLabels = new Map();
     $('analysis-workspace').hidden = false; $('welcome').hidden = true;
     $('job-score-preview').hidden = true;
-    $('context').replaceChildren(el('option', '', 'Choose a context…')); $('context').firstChild.value = ''; let index = 0;
+    $('context').replaceChildren(el('option', '', 'Choose a context…')); $('context').firstChild.value = '';
     for (const context of state.contexts) {
-      const label = context.identity === state.snapshot ? 'Whole repository' : 'Analysis context ' + (++index);
-      const option = el('option', '', label);
+      const meta = formatContext(context);
+      const option = el('option', '', meta.label);
       option.value = context.identity;
       option.title = context.identity;
+      applyOptionMeta(option, meta, false);
       $('context').append(option);
+      recordContextMetadata(context, meta);
     }
     state.context = M.selectDefaultContext ? M.selectDefaultContext(state.contexts, state.snapshot, state.context)
       : (state.contexts.some(context => context.identity === state.context)
           ? state.context
           : (state.contexts.find(context => context.identity === state.snapshot)?.identity ?? state.contexts[0]?.identity ?? ''));
     $('context').value = state.context;
-    void labelContextOptions();
+    notifyContextsUpdated();
+    renderLiveTelemetry(publication);
+    if (hasUnresolvedContexts() && (!fromReceipt || Boolean(state.capabilities?.contextMetadataEnabled))) {
+      void labelContextOptions();
+    }
     if (openChatOnFirstResult && state.capabilities?.architectureChatEnabled) {
       openChatOnFirstResult = false;
-      await loadTab('architecture-chat');
+      await loadTab('architecture-chat', { keepInspector: preserveInteraction });
       return;
     }
-    await loadTab(state.tab);
+    await loadTab(state.tab, { keepInspector: preserveInteraction });
+    if (savedChatDraft) {
+      const ta = document.querySelector('#panel-architecture-chat textarea');
+      if (ta && !ta.value) {
+        ta.value = savedChatDraft;
+        ta.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+    }
   }
-  function applyContextLabel(identity, label) {
-    if (!identity || !label) return;
-    state.contextLabels?.set(identity, label);
+  function notifyContextsUpdated() {
+    document.dispatchEvent(new CustomEvent('evo:contexts-updated'));
+  }
+  function contextRecord(identity) {
+    return state.contexts?.find(c => c.identity === identity) || { identity };
+  }
+  function formatContext(context, provenance = null) {
+    if (M.formatContextOption) return M.formatContextOption(context, state.snapshot, provenance);
+    const id = typeof context === 'string' ? context : String(context?.identity || '');
+    return { label: id === state.snapshot ? 'Whole repository' : (context?.label || id), badge: 'CTX', subtitle: '', kind: 'context' };
+  }
+  function applyOptionMeta(option, meta, isGraphSelect = false) {
+    if (!option || !meta) return;
+    option.textContent = isGraphSelect && option.value === state.snapshot ? 'Repository source evidence' : meta.label;
+    option.dataset.badge = meta.badge || '';
+    option.dataset.sub = meta.subtitle || '';
+    option.dataset.kind = meta.kind || '';
+  }
+  function recordContextMetadata(context, meta) {
+    if (!context?.identity) return;
+    if (context.family) {
+      state.contextKinds.set(context.identity, context.family);
+      if (context.family === 'spring.context') {
+        document.querySelectorAll('[data-spring-view]').forEach(control => control.hidden = false);
+      }
+    }
+    if (context.identity === state.snapshot || context.label || context.modulePath || context.language || context.family) {
+      state.contextLabels.set(context.identity, meta.label);
+    }
+  }
+  function hasUnresolvedContexts() {
+    return (state.contexts || []).some(context => context.identity !== state.snapshot && !state.contextKinds?.has(context.identity));
+  }
+  function applyContextLabel(identity, labelOrMeta) {
+    if (!identity || !labelOrMeta) return;
+    const meta = typeof labelOrMeta === 'string'
+      ? { ...formatContext(contextRecord(identity)), label: labelOrMeta }
+      : labelOrMeta;
+    if (!meta?.label) return;
+    state.contextLabels?.set(identity, meta.label);
     const mainOption = [...$('context').options].find(n => n.value === identity);
-    if (mainOption) mainOption.textContent = label;
+    if (mainOption) applyOptionMeta(mainOption, meta, false);
     for (const select of document.querySelectorAll('select[aria-label="Graph context"]')) {
       const option = [...select.options].find(n => n.value === identity);
-      if (option) option.textContent = identity === state.snapshot ? 'Repository source evidence' : label;
+      if (option) applyOptionMeta(option, meta, true);
     }
+    for (const select of document.querySelectorAll('select[aria-label="Spring context"]')) {
+      const option = [...select.options].find(n => n.value === identity);
+      if (option) applyOptionMeta(option, meta, false);
+    }
+    notifyContextsUpdated();
   }
   function labelContext(identity) {
     const graph = state.graph, publication = state.publication, loads = state.contextLoads;
@@ -766,15 +1563,12 @@
         if (evidence?.family === 'spring.context') {
           document.querySelectorAll('[data-spring-view]').forEach(control => control.hidden = false);
         }
-        let label = '';
-        if (build) {
-          const path = metadata.modulePath || state.moduleLabels.get(build.module) || (build.module?.includes('sha256:') ? null : build.module);
-          const module = path === '.' ? 'Root module' : path;
-          label = [module || (evidence.family === 'spring.context' ? 'Spring configuration' : 'Java analysis'),
-          evidence.family === 'spring.context' && module ? 'Spring' : null, build.sourceSet?.toLowerCase()].filter(Boolean).join(' / ');
-        } else if (evidence?.family === 'spring.context') label = 'Spring configuration';
-        else if (metadata?.modulePath) label = (metadata.modulePath === '.' ? 'Root module' : metadata.modulePath) + ' / ' + (metadata.sourceSet?.toLowerCase() || 'Java');
-        if (label) applyContextLabel(identity, label);
+        const resolvedPath = metadata?.modulePath || (build?.module ? state.moduleLabels.get(build.module) : null);
+        const normalizedEvidence = evidence
+          ? { ...evidence, metadata: { ...(metadata || {}), ...(resolvedPath ? { modulePath: resolvedPath } : {}) } }
+          : null;
+        const meta = formatContext(contextRecord(identity), normalizedEvidence);
+        if (meta?.label) applyContextLabel(identity, meta);
       } catch (_) {
         // Keep the existing explicit context label if provenance is unavailable.
       } finally {
@@ -785,14 +1579,56 @@
     return load;
   }
   async function labelContextOptions() {
-    const publication = state.publication;
-    if (!publication || state.contextOptionsLoading === publication) return;
+    const publication = state.publication, graph = state.graph;
+    if (!publication || !graph || state.contextOptionsLoading === publication) return;
     state.contextOptionsLoading = publication;
-    const contexts = state.contexts.filter(context => context.identity !== state.snapshot && !state.contextKinds.has(context.identity));
-    for (let i = 0; i < contexts.length && !publication.signal.aborted; i += 2) {
-      await Promise.all(contexts.slice(i, i + 2).map(context => labelContext(context.identity)));
+    try {
+      if (!state.discoveryEnriched && Boolean(state.capabilities?.contextMetadataEnabled) && hasUnresolvedContexts()) {
+        state.discoveryEnriched = true;
+        try {
+          const discovery = await api('/graphs/' + graph, undefined, publication.signal, 'GET', 60000);
+          if (state.publication !== publication || publication.signal.aborted) return;
+          if (Array.isArray(discovery?.reports)) {
+            state.reportIds = [...new Set([...state.reportIds, ...discovery.reports])];
+            state.reportIndexLoaded = true;
+          }
+          if (Array.isArray(discovery?.contexts) && discovery.contexts.length) {
+            const byId = new Map(discovery.contexts.map(c => [c.identity, c]));
+            let updated = false;
+            state.contexts = state.contexts.map(existing => {
+              const enriched = byId.get(existing.identity);
+              return enriched ? { ...existing, ...enriched } : existing;
+            });
+            for (const context of state.contexts) {
+              const enriched = byId.get(context.identity);
+              if (!enriched) continue;
+              const meta = formatContext(context);
+              recordContextMetadata(context, meta);
+              const mainOption = [...$('context').options].find(n => n.value === context.identity);
+              if (mainOption) applyOptionMeta(mainOption, meta, false);
+              for (const select of document.querySelectorAll('select[aria-label="Graph context"]')) {
+                const option = [...select.options].find(n => n.value === context.identity);
+                if (option) applyOptionMeta(option, meta, true);
+              }
+              for (const select of document.querySelectorAll('select[aria-label="Spring context"]')) {
+                const option = [...select.options].find(n => n.value === context.identity);
+                if (option) applyOptionMeta(option, meta, false);
+              }
+              updated = true;
+            }
+            if (updated) notifyContextsUpdated();
+          }
+        } catch (_) {
+          // Fall back cleanly to per-context provenance lookup if discovery is unavailable.
+        }
+      }
+      const contexts = state.contexts.filter(context => context.identity !== state.snapshot && !state.contextKinds.has(context.identity));
+      for (let i = 0; i < contexts.length && !publication.signal.aborted; i += 2) {
+        await Promise.all(contexts.slice(i, i + 2).map(context => labelContext(context.identity)));
+      }
+    } finally {
+      if (state.contextOptionsLoading === publication) state.contextOptionsLoading = null;
     }
-    if (state.contextOptionsLoading === publication) state.contextOptionsLoading = null;
   }
   async function loadReports() {
     if (state.reportLoad) return state.reportLoad;
@@ -831,6 +1667,7 @@
     };
   }
   function skeleton(rows = 3) {
+    if (window.EvoLucian?.createSkeletonCard) return window.EvoLucian.createSkeletonCard(rows);
     const wrap = el('div', 'evo-skeleton-stack');
     wrap.setAttribute('aria-hidden', 'true');
     wrap.append(el('i', 'evo-skeleton-bone is-title'));
@@ -840,8 +1677,13 @@
   function renderSourceCodeBlock(data, highlightLine, onPage) {
     const shell = el('div', 'source-viewer-shell');
     const bar = el('div', 'source-viewer-bar');
+    const ghEnt = window.EvoGitHubEnterprise;
+    const owners = Array.isArray(data.owners) && data.owners.length
+      ? data.owners
+      : (data.path ? ghEnt?.ownersForPath?.(state.graph, data.path) : []);
+    const ownerPills = ghEnt?.makeOwnerPills?.(owners);
     const meta = append(el('div'),
-      el('div', 'source-viewer-path', data.path || 'Captured file'),
+      append(el('div', 'gh-owner-row'), el('div', 'source-viewer-path', data.path || 'Captured file'), ownerPills),
       el('div', 'small muted', [
         data.language || 'text',
         data.startLine && data.endLine ? `Lines ${data.startLine}–${data.endLine} of ${data.totalLines || data.endLine}` : null,
@@ -849,14 +1691,16 @@
       ].filter(Boolean).join(' · '))
     );
     const barActions = el('div', 'remedy-patch-actions');
+    const permUrl = ghEnt?.permalinkFor?.(data.path, data.startLine || highlightLine || 1, data.endLine, data.permalink);
+    const permLink = ghEnt?.makePermalinkAnchor?.(permUrl, 'View on GitHub ↗', 'gh-permalink-link');
+    if (permLink) barActions.append(permLink);
     const copyBtn = btn('Copy code', async () => {
       try {
         await navigator.clipboard?.writeText(data.content || '');
-        copyBtn.textContent = 'Copied';
+        window.EvoCopyFx?.flash?.(copyBtn, 'Copied', 'Copy code');
         window.EvoToast?.push({ kind: 'ok', title: 'Source copied', detail: data.path });
-        setTimeout(() => { copyBtn.textContent = 'Copy code'; }, 1400);
       } catch (_) {}
-    }, 'button subtle');
+    }, 'button subtle u008-cp-btn');
     barActions.append(copyBtn);
     if (onPage && data.startLine > 1) {
       barActions.append(btn('← Prev 200', () => onPage(Math.max(1, data.startLine - 200), data.startLine - 1), 'button subtle'));
@@ -903,6 +1747,382 @@
     return loadRange(startLine, endLine || (startLine + 199));
   }
 
+  /* Lucian UX/UI Prompt #472, #098 · MIT License (c) 2026 Seokwoooo · https://lucianlabs.dev/uxui-prompt/#472 */
+  function renderScoreShowcase({ mode = 'dimensions', rawScore, displayText, subtitle, statusLabel, statusTone, breakdownRows = [] }) {
+    const num = rawScore == null ? NaN : Number(rawScore);
+    const numeric = Number.isFinite(num) ? Math.max(0, Math.min(100, num)) : null;
+    const tone = statusTone || (numeric == null ? 'muted' : numeric >= 80 ? 'good' : numeric >= 50 ? 'warn' : 'danger');
+    const bandLabel = statusLabel || (numeric == null ? 'Unavailable' : numeric >= 80 ? 'Strong' : numeric >= 50 ? 'Moderate' : 'At risk');
+    const isAdditive = mode === 'additive' && breakdownRows.length > 0;
+    const totalWeight = isAdditive ? breakdownRows.reduce((sum, r) => sum + Math.max(0, Number(r.weight) || 0), 0) : 0;
+    const hasWeights = isAdditive && totalWeight > 0;
+    const rm = Boolean(window.matchMedia?.('(prefers-reduced-motion: reduce)').matches);
+    const ns = 'http://www.w3.org/2000/svg';
+    const svgEl = (tag, attrs = {}) => {
+      const n = document.createElementNS(ns, tag);
+      for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, String(v));
+      return n;
+    };
+
+    const wrap = el('div', 'evo-score-wrap');
+    const stage = el('div', 'ux evo-score-stage' + (breakdownRows.length ? '' : ' is-compact'));
+    stage.dataset.tone = tone;
+    stage.dataset.mode = hasWeights ? 'additive' : 'dimensions';
+
+    // ── Left: Restrained Single-Accent Precision Dial (136px, viewBox 0 0 144 144) ──
+    const dialWrap = el('div', 'evo-dial');
+    const svg = svgEl('svg', { class: 'evo-dial-svg', viewBox: '0 0 144 144', 'aria-hidden': 'true' });
+    const cx = 72, cy = 72, rad = 54, C = 2 * Math.PI * rad;
+
+    const bezel = svgEl('g', { class: 'evo-dial-bezel' });
+    for (let i = 0; i < 24; i++) {
+      const a = -Math.PI / 2 + (i / 24) * Math.PI * 2;
+      const major = i % 6 === 0;
+      bezel.append(svgEl('line', {
+        x1: (cx + Math.cos(a) * 64.5).toFixed(2),
+        y1: (cy + Math.sin(a) * 64.5).toFixed(2),
+        x2: (cx + Math.cos(a) * (major ? 70 : 67.2)).toFixed(2),
+        y2: (cy + Math.sin(a) * (major ? 70 : 67.2)).toFixed(2),
+        class: major ? 'major' : ''
+      }));
+    }
+    svg.append(bezel);
+
+    const dialSegs = [];
+    const animArcs = [];
+
+    if (hasWeights && numeric != null) {
+      const count = breakdownRows.length;
+      const gapRad = count > 1 ? 3.2 / rad : 0;
+      let cursor = 0;
+      breakdownRows.forEach((row, idx) => {
+        const w = Math.max(0, Number(row.weight) || 0);
+        const frac = w / totalWeight;
+        const f0 = cursor;
+        const f1 = cursor + frac;
+        cursor = f1;
+        const observed = row.state === 'OBSERVED';
+        const g = svgEl('g', { class: 'evo-dial-seg', 'data-seg-idx': String(idx), 'data-step': String(idx % 4), 'data-state': observed ? 'observed' : 'gap' });
+
+        if (count === 1) {
+          const slot = svgEl('circle', { class: 'evo-dial-slot', cx, cy, r: rad });
+          g.append(slot);
+          if (observed) {
+            const arc = svgEl('circle', {
+              class: 'evo-dial-arc', cx, cy, r: rad,
+              transform: `rotate(-90 ${cx} ${cy})`,
+              'stroke-dasharray': rm ? `${C.toFixed(2)} ${C.toFixed(2)}` : `0 ${C.toFixed(2)}`
+            });
+            g.append(arc);
+            animArcs.push({ el: arc, len: C, total: C, delay: 100 });
+          }
+          g.append(svgEl('circle', { class: 'evo-dial-hit', cx, cy, r: rad }));
+        } else {
+          const a0 = -Math.PI / 2 + f0 * Math.PI * 2 + gapRad / 2;
+          const a1 = -Math.PI / 2 + f1 * Math.PI * 2 - gapRad / 2;
+          const span = Math.max(0.02, a1 - a0);
+          const largeArc = span > Math.PI ? 1 : 0;
+          const x0 = cx + Math.cos(a0) * rad, y0 = cy + Math.sin(a0) * rad;
+          const x1 = cx + Math.cos(a1) * rad, y1 = cy + Math.sin(a1) * rad;
+          const d = `M ${x0.toFixed(2)} ${y0.toFixed(2)} A ${rad} ${rad} 0 ${largeArc} 1 ${x1.toFixed(2)} ${y1.toFixed(2)}`;
+          const segLen = span * rad;
+
+          g.append(svgEl('path', { class: 'evo-dial-slot', d }));
+          if (observed) {
+            const arc = svgEl('path', {
+              class: 'evo-dial-arc', d,
+              'stroke-dasharray': rm ? `${segLen.toFixed(2)} ${(segLen + 2).toFixed(2)}` : `0 ${(segLen + 2).toFixed(2)}`
+            });
+            g.append(arc);
+            animArcs.push({ el: arc, len: segLen, total: segLen + 2, delay: idx * 90 + 110 });
+          }
+          g.append(svgEl('path', { class: 'evo-dial-hit', d }));
+        }
+        svg.append(g);
+        dialSegs.push(g);
+      });
+    } else {
+      const track = svgEl('circle', {
+        class: 'evo-dial-track' + (numeric == null ? ' is-withheld' : ''),
+        cx, cy, r: rad
+      });
+      svg.append(track);
+      if (numeric != null && numeric > 0) {
+        const targetLen = (numeric / 100) * C;
+        const arc = svgEl('circle', {
+          class: 'evo-dial-single-arc', cx, cy, r: rad,
+          transform: `rotate(-90 ${cx} ${cy})`,
+          'stroke-dasharray': rm ? `${targetLen.toFixed(2)} ${C.toFixed(2)}` : `0 ${C.toFixed(2)}`
+        });
+        svg.append(arc);
+        animArcs.push({ el: arc, len: targetLen, total: C, delay: 80 });
+      }
+    }
+
+    const center = el('div', 'evo-dial-center');
+    center.setAttribute('aria-hidden', 'true');
+    const centerText = numeric == null ? '—'
+      : Number.isInteger(numeric) ? String(numeric) : String(Math.round(numeric * 10) / 10);
+    const centerSubText = numeric != null ? '/ 100' : (bandLabel === 'Withheld' ? 'Withheld' : 'N/A');
+    center.append(el('span', 'evo-dial-val', centerText), el('span', 'evo-dial-sub', centerSubText));
+    dialWrap.append(svg, center);
+
+    // ── Right Top: Lucian #098 Odometer Readout + Editorial Qualification Pill ──
+    const summary = el('div', 'evo-score-summary');
+    const headRow = el('div', 'score-heading');
+    const scoreText = displayText || 'Unavailable';
+    const exactStrong = el('strong', 'score', scoreText);
+    const odometerMatch = numeric != null && /^\s*(\d+(?:\.\d+)?)\s*\/\s*100\s*$/.exec(scoreText);
+
+    if (odometerMatch) {
+      exactStrong.classList.add('sr-only');
+      const numStr = odometerMatch[1];
+      const odo = el('div', 'u098-num');
+      odo.setAttribute('aria-hidden', 'true');
+      const digitCols = [];
+      [...numStr].forEach((ch, idx) => {
+        if (ch >= '0' && ch <= '9') {
+          const col = el('span', 'u098-col');
+          col.style.setProperty('--i', String(idx));
+          col.style.setProperty('--d', '0');
+          for (let d = 0; d <= 9; d++) col.append(el('span', '', String(d)));
+          digitCols.push({ col, target: Number(ch) });
+          odo.append(col);
+        } else {
+          odo.append(el('span', 'u098-dot', ch));
+        }
+      });
+      odo.append(el('span', 'u098-unit', '/ 100'));
+      headRow.append(odo, exactStrong);
+      if (rm) {
+        digitCols.forEach(dc => dc.col.style.setProperty('--d', String(dc.target)));
+      } else {
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          digitCols.forEach(dc => dc.col.style.setProperty('--d', String(dc.target)));
+        }));
+      }
+    } else {
+      headRow.append(exactStrong);
+    }
+
+    const pill = el('span', 'evo-score-pill', bandLabel);
+    pill.dataset.tone = tone;
+    headRow.append(pill);
+    summary.append(headRow);
+    if (subtitle) summary.append(el('p', 'small muted evo-score-sub', subtitle));
+
+    // ── Shared 3-way hover/focus linkage (Dial Arc <-> #472 Ribbon <-> Audit Ledger) ──
+    const segButtons = [];
+    const rowNodes = [];
+    let ribbonRoot = null, siEl = null, siDot = null, siLabel = null, siVal = null, siPct = null;
+    let activeIdx = -1;
+
+    const highlight = idx => {
+      const next = hasWeights && idx >= 0 && idx < breakdownRows.length ? idx : -1;
+      if (next === activeIdx) return;
+      const prev = activeIdx;
+      activeIdx = next;
+      const active = next >= 0;
+      stage.classList.toggle('has', active);
+      dialSegs.forEach((g, k) => g.classList.toggle('is-on', active && k === next));
+      segButtons.forEach((b, k) => b.classList.toggle('is-on', active && k === next));
+      rowNodes.forEach((rn, k) => rn.classList.toggle('is-on', active && k === next));
+      if (ribbonRoot) ribbonRoot.classList.toggle('is-hl', active);
+      if (active && siEl) {
+        const row = breakdownRows[next];
+        const observed = numeric != null && row.state === 'OBSERVED';
+        const pct = Math.round(((Math.max(0, Number(row.weight) || 0)) / totalWeight) * 100);
+        siDot.classList.toggle('is-gap', !observed);
+        siDot.dataset.step = String(next % 4);
+        siDot.style.background = observed ? `var(--evo-step-${next % 4})` : '';
+        siLabel.textContent = row.label;
+        siVal.textContent = row.valueText;
+        siPct.textContent = '· ' + pct + '%';
+        if (prev >= 0 && !rm) {
+          siEl.classList.remove('is-tick');
+          void siEl.offsetWidth;
+          siEl.classList.add('is-tick');
+        }
+      }
+    };
+
+    // ── Right Middle (Additive Repository Score ONLY): Lucian #472 Proportional Composition Ribbon ──
+    if (hasWeights) {
+      ribbonRoot = el('div', 'evo-u472 u472');
+      const hd = el('div', 'u472-hd');
+      const observedCount = breakdownRows.filter(r => r.state === 'OBSERVED').length;
+      const earnedPts = breakdownRows.reduce((sum, r) => sum + (r.state === 'OBSERVED' ? Math.max(0, Number(r.weight) || 0) : 0), 0);
+      const summaryLine = el('p', 'u472-us');
+      if (numeric == null) {
+        summaryLine.append(el('b', '', String(breakdownRows.length) + ' checks'), ` · ${totalWeight} pts weighted`);
+      } else {
+        summaryLine.append(
+          el('b', '', `${observedCount} of ${breakdownRows.length}`),
+          ` observed · ${earnedPts === totalWeight ? totalWeight + ' pts' : earnedPts + ' / ' + totalWeight + ' pts'}`
+        );
+      }
+
+      siEl = el('p', 'u472-si');
+      siEl.setAttribute('aria-hidden', 'true');
+      siDot = el('i');
+      siLabel = el('span', 'u472-tl');
+      siVal = el('b', 'u472-tv');
+      siPct = el('em', 'u472-tp');
+      siEl.append(siDot, siLabel, siVal, siPct);
+
+      const sw = append(el('div', 'u472-sw'), summaryLine, siEl);
+      hd.append(el('span', 'u472-lbl', 'Weight composition'), sw);
+
+      const bar = el('div', 'u472-bar');
+      bar.setAttribute('role', 'group');
+      bar.setAttribute('aria-label', 'Proportional check weight composition');
+
+      breakdownRows.forEach((row, idx) => {
+        const w = Math.max(0, Number(row.weight) || 0);
+        const pctFloat = (w / totalWeight) * 100;
+        const pctRounded = Math.round(pctFloat);
+        const observed = numeric != null && row.state === 'OBSERVED';
+        const seg = document.createElement('button');
+        seg.type = 'button';
+        seg.className = 'u472-s';
+        seg.dataset.step = String(idx % 4);
+        seg.dataset.state = observed ? 'observed' : 'gap';
+        seg.style.setProperty('--u472-i', String(idx));
+        seg.style.setProperty('--u472-w', pctFloat.toFixed(4) + '%');
+        seg.setAttribute('aria-label', `${row.label}: ${row.valueText} (${pctRounded}% weight)`);
+        seg.addEventListener('pointerenter', () => highlight(idx));
+        seg.addEventListener('focus', () => highlight(idx));
+        seg.addEventListener('blur', () => { if (!stage.matches(':hover')) highlight(-1); });
+        seg.addEventListener('click', () => highlight(activeIdx === idx ? -1 : idx));
+        segButtons.push(seg);
+        bar.append(seg);
+      });
+
+      bar.addEventListener('pointerleave', () => {
+        if (!bar.contains(document.activeElement)) highlight(-1);
+      });
+
+      ribbonRoot.append(hd, bar);
+      summary.append(ribbonRoot);
+
+      if (rm) {
+        ribbonRoot.classList.add('is-in');
+      } else {
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          ribbonRoot.classList.add('is-in');
+        }));
+      }
+    }
+
+    // ── Right Bottom: Clean Editorial Audit Ledger (Zero full-width bars) ──
+    if (breakdownRows.length) {
+      const ledger = el('div', 'evo-score-ledger');
+      breakdownRows.forEach((row, idx) => {
+        if (hasWeights) {
+          const observed = numeric != null && row.state === 'OBSERVED';
+          const absent = row.state === 'ABSENT';
+          const rowEl = el('div', 'evo-ledger-row');
+          rowEl.dataset.step = String(idx % 4);
+          rowEl.dataset.state = observed ? 'observed' : 'gap';
+
+          const main = el('div', 'evo-ledger-main');
+          const head = el('div', 'evo-ledger-head');
+          const swatch = el('span', 'evo-ledger-swatch');
+          swatch.setAttribute('aria-hidden', 'true');
+          const glyph = el('span', 'evo-ledger-status', observed ? '✓' : absent ? '○' : '—');
+          glyph.dataset.state = observed ? 'observed' : absent ? 'absent' : 'unknown';
+          glyph.setAttribute('aria-hidden', 'true');
+          head.append(swatch, glyph, el('span', 'evo-ledger-name', row.label));
+          main.append(head);
+
+          if (row.note || row.actionNode) {
+            const meta = el('div', 'evo-ledger-meta');
+            if (row.note) meta.append(el('span', 'evo-ledger-note', row.note));
+            if (row.actionNode) meta.append(row.actionNode);
+            main.append(meta);
+          }
+
+          const val = el('strong', 'evo-ledger-val' + (observed ? '' : ' is-muted'), row.valueText);
+          rowEl.append(main, val);
+
+          rowEl.addEventListener('pointerenter', () => highlight(idx));
+          rowEl.addEventListener('focusin', () => highlight(idx));
+          rowEl.addEventListener('pointerleave', () => {
+            if (!rowEl.contains(document.activeElement)) highlight(-1);
+          });
+          rowEl.addEventListener('focusout', e => {
+            if (!stage.contains(e.relatedTarget)) highlight(-1);
+          });
+
+          rowNodes.push(rowEl);
+          ledger.append(rowEl);
+        } else {
+          // Independent Architecture Assessment dimension row: understated 44px x 4px micro-meter + tabular score
+          const rowEl = el('div', 'evo-ledger-row is-dim-row');
+          const hasRatio = row.ratio != null && Number.isFinite(row.ratio);
+          const dimTone = !hasRatio ? 'muted' : (row.tone || 'good');
+
+          const head = el('div', 'evo-ledger-head');
+          const dot = el('span', 'evo-dim-dot');
+          dot.dataset.tone = dimTone;
+          dot.setAttribute('aria-hidden', 'true');
+          head.append(dot);
+          if (typeof row.onInspect === 'function') {
+            head.append(btn(row.label, row.onInspect, 'text-button evo-dim-btn'));
+          } else {
+            head.append(el('span', 'evo-ledger-name', row.label));
+          }
+
+          const end = el('div', 'evo-dim-end');
+          const meter = el('span', 'evo-micro-meter' + (hasRatio ? '' : ' is-empty'));
+          meter.dataset.tone = dimTone;
+          meter.setAttribute('aria-hidden', 'true');
+          if (hasRatio) {
+            const fill = el('i');
+            fill.style.width = (Math.max(0, Math.min(1, row.ratio)) * 100).toFixed(1) + '%';
+            meter.append(fill);
+          }
+          const val = el('strong', 'evo-ledger-val' + (hasRatio ? '' : ' is-muted'), row.valueText);
+          end.append(meter, val);
+
+          rowEl.append(head, end);
+          rowNodes.push(rowEl);
+          ledger.append(rowEl);
+        }
+      });
+      summary.append(ledger);
+    }
+
+    if (hasWeights && dialSegs.length) {
+      dialSegs.forEach((g, idx) => {
+        g.addEventListener('pointerenter', () => highlight(idx));
+        g.addEventListener('pointerleave', () => highlight(-1));
+      });
+    }
+
+    stage.append(dialWrap, summary);
+    wrap.append(stage);
+
+    // Smoothly sweep dial arc(s) from 0 to target (instant when prefers-reduced-motion)
+    if (!rm && animArcs.length) {
+      const t0 = performance.now();
+      const dur = 820;
+      (function frame(now) {
+        if (!stage.isConnected && now - t0 > 1400) return;
+        let done = true;
+        animArcs.forEach(a => {
+          const t = Math.max(0, Math.min(1, (now - t0 - a.delay) / dur));
+          if (t < 1) done = false;
+          const e = 1 - Math.pow(1 - t, 3);
+          a.el.setAttribute('stroke-dasharray', `${(a.len * e).toFixed(2)} ${a.total.toFixed(2)}`);
+        });
+        if (!done) requestAnimationFrame(frame);
+      })(t0);
+    }
+
+    return wrap;
+  }
+
   function scoreRingSvg(rawScore, label) {
     const num = Number(rawScore);
     const pct = Number.isFinite(num) ? Math.max(0, Math.min(100, num)) : 0;
@@ -930,49 +2150,70 @@
   }
 
   async function streamArchitectureChat(graphId, payload, signal, handlers) {
+    const csrf = window.EvoGitHubAuth?.getCsrfToken?.();
     const response = await fetch('/api/v1/graphs/' + graphId + '/architecture-chat/stream', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream', ...(csrf ? { 'X-Evo-CSRF': csrf } : {}) },
       body: JSON.stringify(payload),
       signal
     });
     if (!response.ok || !response.body) {
       let msg = 'Architecture chat request failed.';
-      try { const err = await response.json(); msg = err?.error?.message || msg; } catch (_) { }
+      let code = null, supersededBy = null;
+      try {
+        const err = await response.json();
+        msg = err?.error?.message || msg;
+        code = err?.error?.code || null;
+        supersededBy = err?.error?.supersededBy || err?.supersededBy || null;
+      } catch (_) { }
       const e = new Error(msg);
       e.status = response.status;
+      e.code = code;
+      e.supersededBy = supersededBy;
       throw e;
     }
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
     let finalResult = null;
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true }).replace(/\r\n?/g, '\n');
-      let sep;
-      while ((sep = buffer.indexOf('\n\n')) >= 0) {
-        const block = buffer.slice(0, sep);
-        buffer = buffer.slice(sep + 2);
-        let eventName = 'message';
-        const dataLines = [];
-        for (const line of block.split('\n')) {
-          if (line.startsWith('event:')) eventName = line.slice(6).trim();
-          else if (line.startsWith('data:')) dataLines.push(line.slice(5).trimStart());
-        }
-        if (!dataLines.length) continue;
-        const parsed = JSON.parse(dataLines.join('\n'));
-        if (eventName === 'stage') handlers?.onStage?.(parsed.message || '');
-        else if (eventName === 'tool') {
-          const kind = M.classifySseToolEvent ? M.classifySseToolEvent(parsed)
-            : (parsed.phase === 'start' || parsed.status === 'running' ? 'start' : 'complete');
-          if (kind === 'start') handlers?.onToolStart?.(parsed);
-          else handlers?.onToolComplete?.(parsed);
-        } else if (eventName === 'delta') handlers?.onDelta?.(parsed.text || '');
-        else if (eventName === 'complete') finalResult = parsed.data ?? parsed;
-        else if (eventName === 'error') throw new Error(parsed.error?.message || parsed.message || 'Architecture chat failed.');
+    const processBlock = block => {
+      let eventName = 'message';
+      const dataLines = [];
+      for (const line of block.split('\n')) {
+        if (line.startsWith('event:')) eventName = line.slice(6).trim();
+        else if (line.startsWith('data:')) dataLines.push(line.slice(5).trimStart());
       }
+      if (!dataLines.length) return;
+      let parsed;
+      try { parsed = JSON.parse(dataLines.join('\n')); }
+      catch (_) { return; }
+      if (eventName === 'stage') handlers?.onStage?.(parsed.message || '');
+      else if (eventName === 'tool') {
+        const kind = M.classifySseToolEvent ? M.classifySseToolEvent(parsed)
+          : (parsed.phase === 'start' || parsed.status === 'running' ? 'start' : 'complete');
+        if (kind === 'start') handlers?.onToolStart?.(parsed);
+        else handlers?.onToolComplete?.(parsed);
+      } else if (eventName === 'delta') handlers?.onDelta?.(parsed.text || '');
+      else if (eventName === 'complete') finalResult = parsed.data ?? parsed;
+      else if (eventName === 'error') throw new Error(parsed.error?.message || parsed.message || 'Architecture chat failed.');
+    };
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true }).replace(/\r\n?/g, '\n');
+        let sep;
+        while ((sep = buffer.indexOf('\n\n')) >= 0) {
+          const block = buffer.slice(0, sep);
+          buffer = buffer.slice(sep + 2);
+          processBlock(block);
+        }
+      }
+      buffer += decoder.decode().replace(/\r\n?/g, '\n');
+      if (buffer.trim()) processBlock(buffer.trim());
+    } finally {
+      reader.cancel().catch(() => {});
     }
     if (!finalResult) throw new Error('Architecture chat stream ended without a final response.');
     return finalResult;
@@ -981,7 +2222,10 @@
   function coverageCard(env, result) {
     const section = card('Analysis coverage');
     section.classList.add('job-coverage');
-    section.append(el('p', '', result.completion + ' · ' + result.gapCount.toLocaleString() + ' recorded gaps across the run'));
+    const line = append(el('p', 'coverage-line'),
+      badge(result.completion),
+      el('span', '', result.gapCount.toLocaleString() + ' recorded gaps across the run'));
+    section.append(line);
     if (!result.gapCount) return section;
     const body = el('div');
     const details = append(el('details', 'inventory-details'), el('summary', '', 'Gap reasons'), body);
@@ -1057,10 +2301,33 @@
     details.addEventListener('toggle', () => { if (details.open && !requested) read(); });
     return section;
   }
-  async function loadTab(tab) {
+  async function recoverSupersededPreview(error) {
+    const jobId = state.job?.id;
+    const generation = state.pollGeneration;
+    if (jobId) {
+      const refreshed = await api('/analysis/jobs/' + jobId, undefined, undefined, 'GET', 10000).catch(() => null);
+      if (refreshed && selectedJob(jobId, generation)) {
+        state.job = refreshed;
+        if (refreshed.result?.graph && refreshed.result.graph !== state.graph) {
+          await loadGraph(refreshed, jobId, generation, { preserveInteraction: true, promotedFromPreview: true });
+          return true;
+        }
+        const nextPreviewId = error?.supersededBy || refreshed.previewGraphId;
+        if (nextPreviewId && nextPreviewId !== state.graph) {
+          await loadPreviewGraph({ graphId: nextPreviewId, truthTier: refreshed.publicationStage || 'PARTIAL_CONTEXTS', ...(refreshed.preview || {}) }, jobId, generation);
+          return true;
+        }
+      }
+    } else if (error?.supersededBy && error.supersededBy !== state.graph) {
+      await loadPreviewGraph({ graphId: error.supersededBy, truthTier: 'PARTIAL_CONTEXTS' }, state.job?.id, generation);
+      return true;
+    }
+    return false;
+  }
+  async function loadTab(tab, opts = {}) {
     const panel = $('panel-' + tab);
     if (!panel) return;
-    invalidate(); state.tab = tab; const epoch = state.epoch;
+    invalidate(Boolean(opts.keepInspector)); state.tab = tab; const epoch = state.epoch;
     const group = panel.closest('[data-view-group]');
     const primary = group?.dataset.viewGroup ?? tab;
     for (const control of $('tabs').querySelectorAll('[data-tab]')) {
@@ -1098,7 +2365,26 @@
       updateSpringViews();
       const view = await views[tab](envFor(signal)); if (epoch !== state.epoch) return; panel.replaceChildren(view.node || view); panel.setAttribute('aria-busy', 'false'); $('view-status').textContent = view.status || 'View loaded for the selected analysis context.'; view.after?.();
     }
-    catch (error) { if (epoch === state.epoch && error.name !== 'AbortError') { panel.setAttribute('aria-busy', 'false'); panel.replaceChildren(empty('Unable to load this view', error.message), btn('Retry', () => loadTab(tab))); $('view-status').textContent = 'Request failed. Retry to read this analysis.'; } }
+    catch (error) {
+      if (epoch !== state.epoch || error.name === 'AbortError') return;
+      if ((error.status === 410 || error.code === 'PREVIEW_SUPERSEDED') && !opts._recoveredPreview) {
+        const recovered = await recoverSupersededPreview(error);
+        if (recovered) return;
+      }
+      panel.setAttribute('aria-busy', 'false');
+      if (error.status === 409 && error.code === 'PRELIMINARY_GRAPH_PENDING') {
+        panel.replaceChildren(
+          empty('Deep semantic analysis in progress', M.apiError('PRELIMINARY_GRAPH_PENDING')),
+          append(el('div', 'toolbar'),
+            btn('View live progress', () => { const d = $('run-details'); if (d) d.open = true; }, 'button subtle'),
+            btn('Retry now', () => loadTab(tab), 'button primary'))
+        );
+        $('view-status').textContent = 'Waiting for deep semantic analysis to complete.';
+        return;
+      }
+      panel.replaceChildren(empty('Unable to load this view', error.message), btn('Retry', () => loadTab(tab)));
+      $('view-status').textContent = 'Request failed. Retry to read this analysis.';
+    }
   }
   function row(item, action, subtitle) {
     if (item.identity) state.labels.set(item.identity, M.label(item));
@@ -1142,8 +2428,9 @@
         $('download-details').disabled = false;
       };
       if (render) { render(body, value); finish(); return; }
+      const includeTechnical = kind === 'CAPABILITY GAP';
       const fields = el('dl', 'data-fields');
-      for (const [key, val] of Object.entries(value || {})) if (val != null && typeof val !== 'object' && !technicalField(key, val) && !['query', 'identity', 'id', 'setup', 'graph', 'snapshot', 'acquisition', 'sourceReport', 'continuation'].includes(key)) {
+      for (const [key, val] of Object.entries(value || {})) if (val != null && typeof val !== 'object' && (includeTechnical || !technicalField(key, val)) && !['query', 'identity', 'id', 'setup', 'graph', 'snapshot', 'acquisition', 'sourceReport', 'continuation'].includes(key)) {
         const dd = el('dd');
         if (typeof val === 'string' && /^sha256:[0-9a-f]{16,}$/i.test(val)) dd.append(digestChip(val));
         else dd.textContent = String(val);
@@ -1151,7 +2438,7 @@
       }
       body.append(fields);
       if (Array.isArray(value?.items)) {
-        const items = value.items.filter(item => item.kind !== 'CAPABILITY_GAP' && !item.gapIdentity);
+        const items = includeTechnical ? value.items : value.items.filter(item => item.kind !== 'CAPABILITY_GAP' && !item.gapIdentity);
         for (const [index, item] of items.entries()) {
           const section = el('div', 'evidence-item');
           const itemTitle = item.vertices ? 'Dependency path ' + (index + 1) : item.family || item.kind || 'Evidence ' + (index + 1);
@@ -1168,13 +2455,13 @@
             }, 'text-button')))); section.append(path);
           } else if (item.span && item.sourceDigest) {
             const span = item.span; section.append(el('p', 'source-coord-pill', (state.labels.get(span.document) || M.shortDigest(span.document) || 'Captured source') + ' · Line ' + span.startLine + ':' + span.startColumn + ' → ' + span.endLine + ':' + span.endColumn));
-            const detail = append(el('details'), el('summary', '', 'Source identities & coordinates')); renderFields(detail, item, 0); section.append(detail);
-          } else renderFields(section, item.metadata || item, 0);
+            const detail = append(el('details'), el('summary', '', 'Source identities & coordinates')); renderFields(detail, item, 0, false, includeTechnical); section.append(detail);
+          } else renderFields(section, item.metadata || item, 0, false, includeTechnical);
           body.append(section);
         }
         if (!items.length) body.append(empty('No records returned', ''));
         if (value.continuation && typeof loader === 'function') body.append(btn('Load more evidence', () => inspect(title, kind, loader, actions, value.items, value.continuation)));
-      } else renderFields(body, value, 0, true);
+      } else renderFields(body, value, 0, true, includeTechnical);
       finish();
     } catch (error) { if (!controller.signal.aborted) $('inspector-body').replaceChildren(empty('Details unavailable', error.message)); }
   }
@@ -1182,11 +2469,11 @@
     return /gap|limitation|diagnostic|^bounds$|^confidence$|^evidenceStatus$|^isTruncated$/i.test(key)
       || /status$/i.test(key) && ['COMPLETE', 'PARTIAL'].includes(value);
   }
-  function renderFields(parent, value, depth, objectsOnly = false) {
+  function renderFields(parent, value, depth, objectsOnly = false, includeTechnical = false) {
     if (!value || typeof value !== 'object') return;
     const fields = el('dl', 'data-fields');
     for (const [key, val] of Object.entries(value)) {
-      if (val == null || technicalField(key, val) || objectsOnly && typeof val !== 'object') continue;
+      if (val == null || (!includeTechnical && technicalField(key, val)) || objectsOnly && typeof val !== 'object') continue;
       if (typeof val !== 'object') {
         const resolved = ['source', 'target'].includes(key) ? state.labels.get(val) || val : val;
         const dd = el('dd');
@@ -1195,8 +2482,8 @@
         append(fields, append(el('div', 'data-field'), el('dt', '', key.replace(/([A-Z])/g, ' $1')), dd));
       } else if (depth < 3 && Object.keys(val).length) {
         const detail = append(el('details'), el('summary', '', key.replace(/([A-Z])/g, ' $1')));
-        if (['entity', 'span', 'sourceSpan', 'declaration', 'path', 'dimensions'].includes(key)) detail.open = true;
-        renderFields(detail, val, depth + 1); fields.append(detail);
+        if (['entity', 'span', 'sourceSpan', 'declaration', 'path', 'dimensions', 'record', 'humanExplanation'].includes(key)) detail.open = true;
+        renderFields(detail, val, depth + 1, false, includeTechnical); fields.append(detail);
       }
     }
     parent.append(fields);
@@ -1216,7 +2503,14 @@
     if (sourcePath && !String(sourcePath).startsWith('sha256:')) {
       actions.unshift({ label: 'View captured source', run: () => openCapturedSourceModal(env.graph, sourcePath) });
     }
-    return inspect(M.label(item), item.kind || 'ENTITY', (signal, cursor) => query('explain', { identity: item.identity }, signal, {}, cursor), actions);
+    const entityHint = M.label(item) || item.identity || sourcePath;
+    const p = inspect(M.label(item), item.kind || 'ENTITY', (signal, cursor) => query('explain', { identity: item.identity }, signal, {}, cursor), actions);
+    void p.then(() => {
+      if (state.inspector && !state.inspector.signal.aborted && window.EvoCommunityAdvisory?.attachInspectorAdvisoryLinks) {
+        void window.EvoCommunityAdvisory.attachInspectorAdvisoryLinks($('inspector-body'), api, env.graph, entityHint, state.inspector.signal);
+      }
+    });
+    return p;
   }
   function downloadBlob(blob, name) { const url = URL.createObjectURL(blob), link = el('a'); link.href = url; link.download = name; document.body.append(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 10000); }
   function download(value, name) { downloadBlob(new Blob([JSON.stringify(value, null, 2)], { type: 'application/json' }), name); }
@@ -1277,9 +2571,15 @@
         if (f.kind === 'ACYCLIC' && f.bundle?.path) {
           const cycleCard = el('div', 'notice');
           cycleCard.style.marginTop = '12px';
+          const cycleText = el('p', 'small', `This finding represents a circular dependency cycle across ${f.bundle.path.length} classes: ${f.bundle.path.map(id => state.labels.get(id) || M.shortDigest(id)).join(' → ')}.`);
+          resolveLabels(f.bundle.path, env).then(() => {
+            if (!env.signal.aborted && cycleText.isConnected) {
+              cycleText.textContent = `This finding represents a circular dependency cycle across ${f.bundle.path.length} classes: ${f.bundle.path.map(id => state.labels.get(id) || M.shortDigest(id)).join(' → ')}.`;
+            }
+          }).catch(() => {});
           append(cycleCard,
             el('strong', '', 'Circular Dependency Structure'),
-            el('p', 'small', `This finding represents a circular dependency cycle across ${f.bundle.path.length} classes: ${f.bundle.path.join(' → ')}.`),
+            cycleText,
             el('p', 'small', 'Resolving cycles requires multi-class architectural decoupling (such as extracting an interface or mediating service). Single-patch automated recipes apply to direct forbidden dependencies (e.g. Layering rules).'),
             btn('View cycle path in Graph ↗', () => {
               state.graphFocus = { seed: f.bundle.path[0], scope: f.bundle.request?.scope || 'TYPE' };
@@ -1443,257 +2743,6 @@
     return { name: 'breadthfirst', directed: true, padding: 35, spacingFactor: 1.4, animate: false };
   }
 
-  /* ═══════════════════════════════════════════════════════════════════════════
-     REMEDIATION & EVOLUTION PIPELINE (4-Stage Deterministic Workflow)
-     ═══════════════════════════════════════════════════════════════════════════ */
-  function selectRemediationFinding(item, reportId, env) {
-    state.selectedFinding = item;
-    state.selectedReportId = reportId;
-    state.selectedEnv = env;
-
-    // Highlight row in list
-    document.querySelectorAll('#panel-policy .entity-row').forEach(row => {
-      row.classList.toggle('active', row.dataset.findingId === item.identity);
-    });
-
-    const emptyState = $('remediation-empty-state');
-    const activeWorkflow = $('remediation-active-workflow');
-    if (emptyState) emptyState.hidden = true;
-    if (activeWorkflow) activeWorkflow.hidden = false;
-
-    const finding = item.result || {};
-    const bundle = finding.bundle || {};
-    const rule = finding.rule?.header || finding.rule || {};
-
-    // Update Header
-    const badgeEl = $('remedy-finding-badge');
-    if (badgeEl) {
-      badgeEl.textContent = finding.classification || 'MUST';
-      badgeEl.className = 'badge ' + (finding.severity === 'ERROR' ? 'bad' : 'warn');
-    }
-    const titleEl = $('remedy-finding-title');
-    if (titleEl) {
-      titleEl.textContent = rule.name || rule.id || finding.kind || 'Finding';
-    }
-
-    // Reset stages
-    const stageDiag = $('stage-diagnosis');
-    const stageProp = $('stage-proposal');
-    const stageVerif = $('stage-verification');
-    if (stageDiag) stageDiag.hidden = true;
-    if (stageProp) stageProp.hidden = true;
-    if (stageVerif) stageVerif.hidden = true;
-
-    const proposeBtn = $('remedy-propose-btn');
-    const verifyBtn = $('remedy-verify-btn');
-    if (proposeBtn) proposeBtn.hidden = true;
-    if (verifyBtn) verifyBtn.hidden = true;
-
-    // ── STAGE 1: Render Violation Evidence ──
-    const evidenceBody = $('remedy-evidence-body');
-    if (evidenceBody) {
-      evidenceBody.replaceChildren();
-
-      // Meta info
-      const metaBox = el('div', 'remedy-meta-grid');
-      const kind = finding.kind || 'RULE';
-      const severity = rule.severity || 'ERROR';
-      const scope = bundle.request?.scope || 'TYPE';
-
-      append(metaBox,
-        el('div', 'meta-item', `Rule: ${rule.id || 'N/A'}`),
-        el('div', 'meta-item', `Kind: ${kind}`),
-        el('div', 'meta-item', `Severity: ${severity}`),
-        el('div', 'meta-item', `Scope: ${scope}`)
-      );
-      evidenceBody.append(metaBox);
-
-      // Path / Cycle Chain
-      if (bundle.path && bundle.path.length) {
-        const pathBox = el('div', 'remedy-path-chain');
-        pathBox.append(el('span', 'remedy-chain-label', kind === 'ACYCLIC' ? 'Circular Dependency Path:' : 'Violation Path:'));
-        const chainWrap = el('div', 'chain-nodes');
-        bundle.path.forEach((v, idx) => {
-          if (idx > 0) chainWrap.append(el('span', 'chain-arrow', '→'));
-          const nodeBtn = btn(v, () => {
-            state.graphFocus = { seed: v, scope: bundle.request?.scope || 'TYPE' };
-            closeInspector();
-            loadTab('graph');
-          }, 'chain-node-pill');
-          chainWrap.append(nodeBtn);
-        });
-        pathBox.append(chainWrap);
-        evidenceBody.append(pathBox);
-      }
-
-      // Action toolbar for Stage 1
-      const actionRow = el('div', 'remedy-stage-actions');
-      const coordsBtn = btn('📄 Source Coordinates', () => {
-        let coordsCard = $('remedy-coords-card');
-        if (coordsCard) { coordsCard.remove(); return; }
-        coordsCard = el('div', 'card remedy-card-inner');
-        coordsCard.id = 'remedy-coords-card';
-        coordsCard.style.marginTop = '10px';
-        coordsCard.append(el('strong', '', 'Source Locations (' + (bundle.sources?.length || 0) + ')'));
-        if (bundle.sources && bundle.sources.length) {
-          const sList = el('ul', 'remedy-source-list');
-          bundle.sources.forEach(s => {
-            const span = s.span || {};
-            const doc = state.labels?.get(span.document) || span.document || 'source';
-            sList.append(el('li', 'mono small', `${doc} [L${span.startLine}:${span.startColumn} - L${span.endLine}:${span.endColumn}]`));
-          });
-          coordsCard.append(sList);
-        } else {
-          coordsCard.append(el('p', 'small muted', 'No explicit source span captured for derived relationship.'));
-        }
-        evidenceBody.append(coordsCard);
-      }, 'btn ghost btn-sm');
-
-      const replayBtn = btn('🔄 Replay Witness', async () => {
-        let replayCard = $('remedy-replay-card');
-        if (replayCard) { replayCard.remove(); return; }
-        replayCard = el('div', 'card remedy-card-inner');
-        replayCard.id = 'remedy-replay-card';
-        replayCard.style.marginTop = '10px';
-        replayCard.append(el('p', 'small muted', 'Verifying witness condition against the captured model…'));
-        evidenceBody.append(replayCard);
-        try {
-          const replay = await api('/graphs/' + env.graph + '/reports/' + reportId + '/replay', { arguments: { identity: item.identity, counterWitness: false } });
-          replayCard.replaceChildren();
-          const matched = replay.items?.[0]?.matched;
-          replayCard.append(
-            el('strong', '', matched ? '✔ Witness Matches Model' : 'Witness Check Complete'),
-            el('p', 'small', 'The recorded rule predicate was evaluated deterministically at its captured configuration state without executing host code.')
-          );
-        } catch (e) {
-          replayCard.replaceChildren(el('p', 'small text-error', 'Replay check unavailable: ' + e.message));
-        }
-      }, 'btn ghost btn-sm');
-
-      const graphLinkBtn = btn('🗺 View in Graph ↗', () => {
-        if (bundle.path && bundle.path.length) {
-          state.graphFocus = { seed: bundle.path[0], scope: bundle.request?.scope || 'TYPE' };
-        }
-        closeInspector();
-        loadTab('graph');
-      }, 'btn ghost btn-sm');
-
-      append(actionRow, coordsBtn, replayBtn, graphLinkBtn);
-      evidenceBody.append(actionRow);
-    }
-
-    // Wire Topbar Actions
-    const diagBtn = $('remedy-diagnose-btn');
-    if (diagBtn) {
-      diagBtn.disabled = false;
-      diagBtn.textContent = 'Run AI Diagnosis';
-      diagBtn.onclick = () => runDiagnosisStep(item, reportId, env);
-    }
-
-    const graphBtn = $('remedy-graph-btn');
-    if (graphBtn) {
-      graphBtn.onclick = () => {
-        if (bundle.path && bundle.path.length) {
-          state.graphFocus = { seed: bundle.path[0], scope: bundle.request?.scope || 'TYPE' };
-        }
-        closeInspector();
-        loadTab('graph');
-      };
-    }
-  }
-
-  async function runDiagnosisStep(item, reportId, env) {
-    const diagBtn = $('remedy-diagnose-btn');
-    if (diagBtn) {
-      diagBtn.disabled = true;
-      diagBtn.textContent = 'Running Diagnosis…';
-    }
-
-    const stageDiag = $('stage-diagnosis');
-    const diagBody = $('remedy-diagnosis-body');
-    const diagMode = $('remedy-diagnosis-mode');
-    if (stageDiag) stageDiag.hidden = false;
-    if (diagBody) diagBody.replaceChildren(empty('Analyzing citations…', 'Retrieving evidence-grounded diagnosis from canonical knowledge graph.'));
-
-    try {
-      const args = { identity: item.identity, bundle: item.bundleIdentity, context: env.context };
-      const diagnosis = await api('/graphs/' + env.graph + '/reports/' + reportId + '/diagnosis', { arguments: args });
-
-      const validated = diagnosis.status === 'CITATIONS_VALIDATED';
-      if (diagMode) {
-        diagMode.textContent = validated ? 'Citations Validated' : 'Diagnosis Withheld';
-        diagMode.className = 'badge ' + (validated ? 'good' : 'warn');
-      }
-
-      diagBody.replaceChildren();
-
-      // Explanation card
-      const explBox = el('div', 'remedy-explanation-box');
-      append(explBox,
-        el('strong', '', validated ? 'AI & Graph Grounded Diagnosis' : 'Diagnosis Assessment'),
-        el('p', '', validated ? diagnosis.explanation : diagnosisReasons[diagnosis.reason] || 'Diagnosis unavailable.')
-      );
-      diagBody.append(explBox);
-
-      // Citations
-      if (diagnosis.citations && diagnosis.citations.length) {
-        const citeBox = el('div', 'remedy-citations-box');
-        citeBox.append(el('h4', 'remedy-subhead', `Source Citations (${diagnosis.citations.length})`));
-        const list = el('ol', 'dependency-path');
-        diagnosis.citations.forEach(cit => {
-          const s = cit.span || {};
-          const label = `${cit.path} · L${s.startLine}:${s.startColumn}–L${s.endLine}:${s.endColumn}`;
-          const li = el('li');
-          const citeLink = btn(label, () => {
-            inspect('Cited source evidence', 'SOURCE EVIDENCE', async signal => {
-              const evidence = await api('/graphs/' + env.graph + '/queries/evidence', {
-                request: { ...M.request(cit.context), scope: 'ENTITY' }, arguments: { reference: cit.evidence }
-              }, signal);
-              const record = evidence.items.find(r => r.identity === cit.evidence && r.family === cit.family);
-              return { citation: cit, record };
-            });
-          }, 'textlink mono small');
-          li.append(citeLink);
-          list.append(li);
-        });
-        citeBox.append(list);
-        diagBody.append(citeBox);
-      }
-
-      // Next Action: Enable Generate Patch
-      const propBtn = $('remedy-propose-btn');
-      if (propBtn) {
-        propBtn.hidden = false;
-        propBtn.disabled = false;
-        propBtn.textContent = 'Generate Patch →';
-        propBtn.onclick = () => runProposalStep(item, reportId, env, diagnosis);
-      }
-
-      // If cycle finding, also provide Decoupling Guidance
-      const f = item.result || {};
-      if (f.kind === 'ACYCLIC' && f.bundle?.path) {
-        const decouplingCard = el('div', 'card remedy-decoupling-card');
-        decouplingCard.style.marginTop = '12px';
-        append(decouplingCard,
-          el('strong', '', 'Architectural Decoupling Blueprint'),
-          el('p', 'small', `Circular cycle spans ${f.bundle.path.length} classes: ${f.bundle.path.join(' → ')}. To cleanly break this cycle without regressions, introduce an abstraction (Interface Extraction or Event-driven mediation) at the lowest-affinity dependency link.`),
-          el('pre', 'repair-patch mono small', `// Recommended Decoupling Strategy:
-// 1. Extract interface for ${f.bundle.path[1] || 'Dependency'}
-// 2. Invert constructor injection in ${f.bundle.path[0] || 'Client'}
-// 3. Register bean as implementation interface`)
-        );
-        diagBody.append(decouplingCard);
-      }
-    } catch (e) {
-      diagBody.replaceChildren(empty('Diagnosis unavailable', e.message));
-    } finally {
-      if (diagBtn) {
-        diagBtn.disabled = false;
-        diagBtn.textContent = 'Run AI Diagnosis';
-      }
-    }
-  }
-
   function renderProposalResult(item, reportId, env, diagnosis, options, proposal, propBody) {
     propBody.replaceChildren();
 
@@ -1824,8 +2873,11 @@
         } else if (line.startsWith('-')) {
           lineEl.className += ' diff-del';
           lineEl.append(el('span', 'diff-line-num', String(oldLine++)), document.createTextNode(line));
+        } else if (line.startsWith('\\ No newline at end of file')) {
+          lineEl.className += ' diff-meta';
+          lineEl.textContent = line;
         } else {
-          if (oldLine || newLine) lineEl.append(el('span', 'diff-line-num', String(newLine++ || oldLine++)));
+          if (oldLine || newLine) lineEl.append(el('span', 'diff-line-num', String(newLine++ || oldLine)));
           lineEl.append(document.createTextNode(line));
           if (oldLine) oldLine++;
         }
@@ -1838,11 +2890,10 @@
       const copyBtn = btn('Copy Patch', async () => {
         try {
           await navigator.clipboard.writeText(patch);
-          copyBtn.textContent = 'Copied!';
+          window.EvoCopyFx?.flash?.(copyBtn, 'Copied!', 'Copy Patch');
           window.EvoToast?.push({ kind: 'ok', title: 'Patch copied', detail: targetList });
-          setTimeout(() => { copyBtn.textContent = 'Copy Patch'; }, 1500);
         } catch (_) { }
-      }, 'button subtle');
+      }, 'button subtle u008-cp-btn');
 
       const dlBtn = btn('Download .patch', () => {
         downloadBlob(new Blob([patch], { type: 'text/x-diff' }), 'evolution-repair.patch');
@@ -1993,16 +3044,6 @@
         verifyPanel.append(verifyHead, isolatedLabel, verifyActions, verifyOut);
         propBody.append(verifyPanel);
       }
-
-      const topDlBtn = $('remedy-download-btn');
-      if (topDlBtn) topDlBtn.onclick = () => downloadBlob(new Blob([patch], { type: 'text/x-diff' }), 'evolution-repair.patch');
-      const verifBtn = $('remedy-verify-btn');
-      if (verifBtn) {
-        verifBtn.hidden = false;
-        verifBtn.disabled = false;
-        verifBtn.textContent = 'Verify Candidate →';
-        verifBtn.onclick = () => runVerificationStep(item, reportId, env, diagnosis, proposal);
-      }
     } else {
       const msg = el('div', 'notice');
       append(msg,
@@ -2012,12 +3053,6 @@
           + ' · Registered total: ' + rankedRecipes.length)
       );
       propBody.append(msg);
-
-      const verifBtn = $('remedy-verify-btn');
-      if (verifBtn) {
-        verifBtn.hidden = true;
-        verifBtn.disabled = true;
-      }
     }
   }
 
@@ -2036,180 +3071,6 @@
     }
   }
 
-  async function runProposalStep(item, reportId, env, diagnosis) {
-    const propBtn = $('remedy-propose-btn');
-    if (propBtn) {
-      propBtn.disabled = true;
-      propBtn.textContent = 'Generating Patch…';
-    }
-
-    const stageProp = $('stage-proposal');
-    const propBody = $('remedy-proposal-body');
-    if (stageProp) stageProp.hidden = false;
-    if (propBody) propBody.replaceChildren(empty('Generating proposal…', 'Checking repair options and compiler syntax…'));
-
-    try {
-      const baseArgs = { identity: item.identity, bundle: item.bundleIdentity, context: env.context, diagnosisInput: diagnosis.input };
-      const options = await api('/graphs/' + env.graph + '/reports/' + reportId + '/repair-options', { arguments: baseArgs });
-      let proposal = await api('/graphs/' + env.graph + '/reports/' + reportId + '/repair-proposal', { arguments: baseArgs });
-
-      if (proposal.status !== 'PROPOSED' && options.recipes?.length) {
-        for (const r of options.recipes) {
-          const candidate = await api('/graphs/' + env.graph + '/reports/' + reportId + '/repair-proposal', {
-            arguments: Object.assign({}, baseArgs, { strategy: 'RECIPE', recipe: r.id })
-          });
-          if (candidate.status === 'PROPOSED') {
-            proposal = candidate;
-            break;
-          }
-        }
-      }
-      renderProposalResult(item, reportId, env, diagnosis, options, proposal, propBody);
-    } catch (e) {
-      propBody.replaceChildren(empty('Proposal unavailable', e.message));
-    } finally {
-      if (propBtn) {
-        propBtn.disabled = false;
-        propBtn.textContent = 'Generate Patch';
-      }
-    }
-  }
-
-  async function runVerificationStep(item, reportId, env, diagnosis, proposal, operands = {}) {
-    const verifBtn = $('remedy-verify-btn');
-    if (verifBtn) {
-      verifBtn.disabled = true;
-      verifBtn.textContent = 'Verifying…';
-    }
-
-    const stageVerif = $('stage-verification');
-    const verifBody = $('remedy-verification-body');
-    const verifBadge = $('remedy-verification-verdict');
-    if (stageVerif) stageVerif.hidden = false;
-    if (verifBody) verifBody.replaceChildren(empty('Verifying proposal…', 'Checking server-side baseline pins, reanalysis comparisons, and isolated VM proof.'));
-
-    try {
-      const propId = proposal?.proposal?.identity;
-      if (!propId) {
-        throw new Error('Verification requires a compiler-checked proposal.');
-      }
-      const args = {
-        identity: item.identity,
-        bundle: item.bundleIdentity,
-        context: env.context,
-        diagnosisInput: diagnosis.input,
-        proposal: propId
-      };
-      if (operands.candidateReport) args.candidateReport = operands.candidateReport;
-      if (operands.controlReport) args.controlReport = operands.controlReport;
-
-      const outcome = await api('/graphs/' + env.graph + '/reports/' + reportId + '/repair-verification', { arguments: args });
-      const verified = outcome.verdict === 'VERIFIED' || outcome.verdict === 'VERIFIED_DEMO';
-      const rejected = outcome.verdict === 'REJECTED';
-
-      if (verifBadge) {
-        verifBadge.textContent = outcome.verdict || 'UNVERIFIED';
-        verifBadge.className = 'badge ' + (verified ? 'good' : (rejected ? 'bad' : 'warn'));
-      }
-
-      verifBody.replaceChildren();
-
-      const actionRow = el('div', 'remedy-patch-actions');
-      if (state.capabilities?.repairReanalysisEnabled) {
-        const reanalyzeBtn = btn('Run Candidate Reanalysis + Control', async () => {
-          reanalyzeBtn.disabled = true;
-          try {
-            reanalyzeBtn.textContent = 'Reanalyzing candidate + control in parallel…';
-            const reResult = await api('/graphs/' + env.graph + '/reports/' + reportId + '/repair-reanalysis', { arguments: Object.assign({}, args, { includeControl: true }) });
-            await runVerificationStep(item, reportId, env, diagnosis, proposal, {
-              candidateReport: reResult.candidateReport || operands.candidateReport,
-              controlReport: reResult.controlReport || operands.controlReport
-            });
-          } catch (err) {
-            verifBody.prepend(el('p', 'small bad', 'Reanalysis error: ' + err.message));
-            reanalyzeBtn.disabled = false;
-            reanalyzeBtn.textContent = 'Run Candidate Reanalysis + Control';
-          }
-        }, 'btn primary btn-sm');
-        actionRow.append(reanalyzeBtn);
-      }
-      const refreshBtn = btn('Refresh Verification', () => runVerificationStep(item, reportId, env, diagnosis, proposal, operands), 'btn ghost btn-sm');
-      actionRow.append(refreshBtn);
-      verifBody.append(actionRow);
-
-      const checkCard = el('div', 'card remedy-verif-card');
-      checkCard.append(el('strong', '', 'Verification Checks'));
-      const list = el('ul', 'remedy-check-list');
-      (outcome.checks || []).forEach(c => {
-        const passed = c.status === 'PASSED';
-        const failed = c.status === 'FAILED';
-        const icon = passed ? '✔' : (failed ? '✘' : '•');
-        const li = el('li', 'check-item');
-        append(li,
-          el('span', 'check-icon', icon),
-          append(el('div', 'check-text'),
-            el('strong', '', `${c.id} (${c.status})`),
-            el('p', 'small muted', c.reason + (c.evidence ? ` · ${M.shortDigest(c.evidence)}` : '')))
-        );
-        list.append(li);
-      });
-      checkCard.append(list);
-      verifBody.append(checkCard);
-
-      if (outcome.candidateComparison) {
-        const cc = outcome.candidateComparison;
-        const cmpCard = el('div', 'card remedy-verif-card');
-        append(cmpCard,
-          el('strong', '', 'Candidate Snapshot Comparison'),
-          el('p', 'small', `Status: ${cc.status} · Transitions: ${(cc.transitions || []).join(', ') || 'none'} · Regression: ${cc.regressionDetected ? 'YES' : 'NO'}`),
-          el('p', 'small muted', `Reasons: ${(cc.reasons || []).join(', ') || 'none'}`)
-        );
-        verifBody.append(cmpCard);
-      }
-
-      if (outcome.isolatedProof) {
-        const vm = outcome.isolatedProof;
-        const vmCard = el('div', 'card remedy-verif-card');
-        append(vmCard,
-          el('strong', '', 'Isolated QEMU VM Build & Test Proof'),
-          el('p', 'small', `Tool: ${vm.buildTool} · Modules: ${(vm.modules || []).join(', ')} · Compile exit: ${vm.compileExit} · Test exit: ${vm.testExit}`),
-          el('p', 'small', `Tests run: ${vm.testsRun}, failed: ${vm.testsFailed}, errors: ${vm.testsErrors} · Bytecode classes: ${vm.classCount}`),
-          el('p', 'small mono muted', `Capture: ${M.shortDigest(vm.capture)} · Census: ${M.shortDigest(vm.classCensusDigest)}`)
-        );
-        verifBody.append(vmCard);
-      }
-
-      const prCard = el('div', 'remedy-pr-box');
-      if (verified) {
-        append(prCard,
-          el('strong', '', 'Verified Patch Receipt'),
-          el('p', 'small mono', `Plan: ${M.shortDigest(outcome.planIdentity)} · Proposal: ${M.shortDigest(propId)}`),
-          el('p', 'small', 'Server-verified: all required checks passed and original policy finding is resolved.')
-        );
-      } else {
-        append(prCard,
-          el('strong', '', rejected ? 'Verification Rejected' : 'Verification Incomplete'),
-          el('p', 'small mono', `Plan: ${M.shortDigest(outcome.planIdentity)} · Proposal: ${M.shortDigest(propId)}`),
-          el('p', 'small', rejected
-            ? 'One or more verification checks failed. Inspect failed checks above before using this patch.'
-            : 'Run candidate reanalysis and configure an isolated VM capture (capture.json) to complete verification.')
-        );
-      }
-      verifBody.append(prCard);
-    } catch (e) {
-      if (verifBadge) {
-        verifBadge.textContent = 'UNVERIFIED';
-        verifBadge.className = 'badge warn';
-      }
-      verifBody.replaceChildren(empty('Verification unavailable', e.message));
-    } finally {
-      if (verifBtn) {
-        verifBtn.disabled = false;
-        verifBtn.textContent = 'Verify Candidate →';
-      }
-    }
-  }
-
   function savedScorePaths(setup) {
     try { return JSON.parse(localStorage.getItem('evo.rubric.' + setup)) || {}; }
     catch (_) { return {}; }
@@ -2225,8 +3086,11 @@
   }
 
   function repositoryScoreCard(env, editable = false) {
-    const node = card('Repository score', 'File-based checks for this snapshot.');
+    const node = card('Repository Hygiene (4 File Checks)', 'Baseline file-presence checks: README, Tests, CI, Build — separate from Software Architecture Health.');
+    node.classList.add('evo-hygiene-card');
     if (!editable) node.classList.add('overview-score');
+    const heading = node.querySelector('.card-heading');
+    if (heading) heading.append(el('span', 'evo-hygiene-badge', 'File checks'));
     const result = el('div');
     result.setAttribute('aria-live', 'polite');
     node.append(result);
@@ -2280,26 +3144,38 @@
             feedback.textContent = 'Checks applied for this snapshot.';
           }
         }
+        const withheld = score.status === 'WITHHELD';
         const value = score.score == null
-          ? score.status === 'WITHHELD' || score.lower == null || score.upper == null ? 'Unavailable' : (score.lower === score.upper ? score.lower : score.lower + '–' + score.upper) + ' / 100'
+          ? withheld || score.lower == null || score.upper == null ? 'Unavailable' : (score.lower === score.upper ? score.lower : score.lower + '–' + score.upper) + ' / 100'
           : score.score + ' / 100';
-        const numericRing = score.score ?? (score.lower != null && score.upper != null ? (score.lower + score.upper) / 2 : null);
-        result.replaceChildren(append(el('div', 'score-heading'),
-          scoreRingSvg(numericRing, numericRing == null ? '—' : String(Math.round(numericRing))),
-          el('strong', 'score', value)));
-        const rows = el('dl', 'score-checks');
-        for (const check of score.checks) {
+        const numericRing = withheld ? null : (score.score ?? (score.lower != null && score.upper != null ? (score.lower + score.upper) / 2 : null));
+        const stateText = { OBSERVED: 'Observed', ABSENT: 'No match', UNKNOWN: '—', NOT_APPLICABLE: 'Not applicable' };
+        const breakdownRows = (score.checks || []).map(check => {
           const label = fields.find(([id]) => id === check.name)?.[1] ?? check.name;
-          const stateText = { OBSERVED: 'Observed', ABSENT: 'No match', UNKNOWN: '—', NOT_APPLICABLE: 'Not applicable' };
           const contribution = check.state === 'OBSERVED' ? check.weight + ' / ' + check.weight
-            : check.state === 'ABSENT' ? '0 / ' + check.weight : stateText[check.state];
-          const evidence = el('dd', 'small muted', check.criterion);
-          if (check.evidence) evidence.append(' · ', btn(check.evidence.path, () => inspect('Scoring evidence', 'CAPTURED FILE',
-            { snapshot: score.snapshot, check: check.criterion, path: check.evidence.path, evidence: check.evidence.identity }), 'text-button'));
-          rows.append(el('dt', '', label), el('dd', 'score-points', contribution), evidence);
-        }
-        if (editable) result.append(rows);
-        else result.append(append(el('details'), el('summary', '', 'How this score was calculated'), rows));
+            : check.state === 'ABSENT' ? '0 / ' + check.weight : (stateText[check.state] || '—');
+          const actionNode = check.evidence
+            ? btn(check.evidence.path, () => inspect('Scoring evidence', 'CAPTURED FILE',
+              { snapshot: score.snapshot, check: check.criterion, path: check.evidence.path, evidence: check.evidence.identity }), 'text-button evo-file-pill')
+            : null;
+          return {
+            label,
+            weight: Number(check.weight) || 0,
+            state: check.state,
+            valueText: contribution,
+            note: check.criterion,
+            actionNode
+          };
+        });
+        result.replaceChildren(renderScoreShowcase({
+          mode: 'additive',
+          rawScore: numericRing,
+          displayText: value,
+          subtitle: withheld ? 'Evidence insufficient for a deterministic repository score' : 'File-based engineering readiness checks',
+          statusLabel: withheld ? 'Withheld' : undefined,
+          statusTone: withheld || numericRing == null ? 'muted' : undefined,
+          breakdownRows
+        }));
       } catch (error) {
         if (env.signal.aborted || current !== version) return;
         if (save) feedback.textContent = error.code === 'INVALID_REQUEST' ? 'Use a path inside the repository, such as qa/smoke.sh.' : error.message;
@@ -2307,6 +3183,275 @@
       }
     }
     read();
+    return node;
+  }
+
+  function fetchArchitectureScoreV2(env, policy = null) {
+    const key = JSON.stringify([env.graph, env.context, policy || null]);
+    const existing = state.scoreV2Cache.get(key);
+    if (existing) return existing;
+    const body = { context: env.context, ...(policy ? { policy } : {}) };
+    const promise = api('/graphs/' + env.graph + '/architecture-score', body, state.publication?.signal, 'POST', 60000);
+    state.scoreV2Cache.set(key, promise);
+    promise.catch(() => { if (state.scoreV2Cache.get(key) === promise) state.scoreV2Cache.delete(key); });
+    return promise;
+  }
+
+  function architectureScoreV2Card(env, { detailed = false } = {}) {
+    const node = card('Architecture Health v2', '7-dimension structural, modular, Spring, polyglot & policy health — strictly separated from Analysis Confidence.');
+    node.classList.add('evo-v2-card');
+    if (M.isPreliminaryTier?.(state.truthTier)) {
+      const info = M.truthTierInfo(state.truthTier, state.previewMeta);
+      node.append(
+        append(el('div', 'notice'),
+          el('strong', '', 'Architecture Health v2 pending deep semantic analysis'),
+          el('p', 'small', info.detail)),
+        append(el('div', 'toolbar'),
+          btn('Explore Dependency Map', () => loadTab('graph'), 'button primary'),
+          btn('Browse RepoMap & Source', () => loadTab('repomap'), 'button subtle'),
+          btn('Browse Structure', () => loadTab('structure'), 'button subtle'))
+      );
+      return node;
+    }
+    const container = el('div');
+    container.setAttribute('aria-live', 'polite');
+    container.append(skeleton(3), el('p', 'small muted', 'Computing 7-dimension Architecture Health v2…'));
+    node.append(container);
+
+    const openWitness = async witness => {
+      if (!witness) return;
+      if (witness.identity && witness.kind && ['TYPE', 'PACKAGE', 'MODULE', 'BEAN_DEFINITION_CANDIDATE'].includes(witness.kind)) {
+        state.graphFocus = { seed: witness.identity, scope: witness.kind === 'BEAN_DEFINITION_CANDIDATE' ? 'SPRING_COMPONENT' : witness.kind, context: defaultDependencyContext(env) };
+        return loadTab('graph');
+      }
+      return inspect(witness.label || witness.identity || 'Evidence witness', 'SCORE V2 WITNESS', witness, [
+        ...(witness.identity ? [{
+          label: 'Focus in dependency map',
+          run: () => {
+            state.graphFocus = { seed: witness.identity, scope: 'TYPE', context: defaultDependencyContext(env) };
+            closeInspector();
+            return loadTab('graph');
+          }
+        }] : [])
+      ]);
+    };
+
+    const renderV2 = v2 => {
+      const rangeText = M.formatHealthRange(v2);
+      const overallTone = M.v2OverallTone(v2);
+      const conf = M.confidenceBadge(v2.confidence);
+      const numericScore = v2.score != null && v2.status !== 'WITHHELD' ? Number(v2.score) : null;
+      const hasInterval = Number(v2.uncertaintyDelta ?? 0) > 0 && v2.conservativeLowerBound != null && numericScore != null && Number(v2.conservativeLowerBound) < numericScore - 0.05;
+
+      const showcase = renderScoreShowcase({
+        mode: 'dimensions',
+        rawScore: numericScore,
+        displayText: rangeText,
+        subtitle: [
+          v2.scopeMode === 'WHOLE_REPOSITORY' ? 'Whole-repository composite' : 'Selected context',
+          v2.formula?.id ? `${v2.formula.id}@${v2.formula.version}` : 'v2.0',
+          v2.calibration === 'EMPIRICALLY_GROUNDED_PROVISIONAL' ? 'Provisional calibration' : v2.calibration
+        ].filter(Boolean).join(' · '),
+        statusLabel: v2.healthBand || (numericScore == null ? 'Withheld' : undefined),
+        statusTone: overallTone,
+        breakdownRows: []
+      });
+
+      const leftCol = el('div');
+      leftCol.append(showcase);
+      if (hasInterval) {
+        leftCol.append(el('span', 'evo-v2-range-badge',
+          `Conservative lower bound ${Number(v2.conservativeLowerBound).toFixed(1)} · observed ${numericScore.toFixed(1)} (Δ${Number(v2.uncertaintyDelta).toFixed(1)})`));
+      }
+
+      // Companion Analysis Confidence panel (strictly separate from Health!)
+      const confPanel = el('aside', 'evo-confidence-panel');
+      confPanel.setAttribute('aria-label', 'Analysis confidence');
+      const confPill = el('span', 'evo-score-pill', `${conf.icon} ${conf.label}`);
+      confPill.dataset.tone = conf.tone;
+      confPanel.append(
+        append(el('div', 'evo-confidence-head'),
+          el('span', 'evo-confidence-title', 'Analysis confidence'),
+          confPill),
+        append(el('div', 'evo-confidence-score-row'),
+          el('strong', 'evo-confidence-num', conf.pctText),
+          el('span', 'small muted', conf.evidenceTier ? conf.evidenceTier.replaceAll('_', ' ') : 'Evidence coverage'))
+      );
+
+      const c = v2.confidence || {};
+      const signals = [
+        ['Parse completeness', c.parseCompleteness],
+        ['Internal edge completeness', c.internalEdgeCompleteness],
+        ['Semantic resolution', c.overallSemanticResolution],
+        ['Build completeness', c.buildCompleteness],
+        ...(c.springSpaceDefiniteness != null ? [['Spring space definiteness', c.springSpaceDefiniteness]] : [])
+      ];
+      const signalGrid = el('div', 'evo-confidence-signals');
+      for (const [labelText, ratioVal] of signals) {
+        if (ratioVal == null || !Number.isFinite(Number(ratioVal))) continue;
+        const pct = Math.max(0, Math.min(100, Math.round(Number(ratioVal) * 100)));
+        const sTone = pct >= 85 ? 'good' : pct >= 60 ? 'warn' : 'danger';
+        const track = el('span', 'evo-signal-track');
+        const fill = el('i');
+        fill.style.width = pct + '%';
+        track.append(fill);
+        const sRow = append(el('div', 'evo-signal-row'), el('span', '', labelText), track, el('span', 'evo-signal-val', pct + '%'));
+        sRow.dataset.tone = sTone;
+        signalGrid.append(sRow);
+      }
+      confPanel.append(signalGrid);
+      const confFooter = el('div', 'toolbar');
+      if (Number(c.openGapCount || 0) > 0) {
+        confFooter.append(btn(`Inspect ${Number(c.openGapCount).toLocaleString()} open gaps →`, () => loadTab('coverage'), 'text-button'));
+      }
+      confFooter.append(btn('Raw v2 JSON', () => inspect('Architecture Health v2', 'ASSESSMENT V2', v2), 'text-button'));
+      confPanel.append(confFooter);
+
+      const hero = append(el('div', 'evo-v2-hero'), leftCol, confPanel);
+
+      // 7 Interactive Architecture Dimensions with expandable Sub-Metrics & Calibration Tracks
+      const dimsWrap = el('div', 'evo-v2-dims-list');
+      for (const dim of v2.dimensions || []) {
+        const dTone = M.v2DimensionTone(dim, conf.tier);
+        const dNum = dim.score != null && Number.isFinite(Number(dim.score)) ? Number(dim.score) : null;
+        const dDetails = el('details', 'evo-v2-dim-details');
+        if (detailed && dNum != null && dNum < 70) dDetails.open = true;
+
+        const dot = el('span', 'evo-dim-dot');
+        dot.dataset.tone = dTone;
+        dot.setAttribute('aria-hidden', 'true');
+        const titleWrap = append(el('div', 'evo-v2-dim-title-wrap'),
+          dot,
+          el('span', 'evo-v2-dim-name', dim.displayName || dim.id),
+          el('span', 'evo-v2-dim-meta', `${dim.iso25010Mapping || ''} · weight ${Number(dim.weight || 0)}%`));
+
+        const end = el('div', 'evo-dim-end');
+        const meter = el('span', 'evo-micro-meter' + (dNum == null ? ' is-empty' : ''));
+        meter.dataset.tone = dTone;
+        if (dNum != null) {
+          const fill = el('i');
+          fill.style.width = Math.max(0, Math.min(100, dNum)).toFixed(1) + '%';
+          meter.append(fill);
+        }
+        const valStr = dNum != null
+          ? (Number(dim.uncertaintyDelta ?? 0) > 0 && dim.conservativeLowerBound != null && Number(dim.conservativeLowerBound) < dNum - 0.05
+              ? `${Number(dim.conservativeLowerBound).toFixed(0)}–${dNum.toFixed(0)}`
+              : dNum.toFixed(1))
+          : (dim.status === 'NOT_APPLICABLE' ? 'N/A' : 'Withheld');
+        end.append(meter, el('strong', 'evo-ledger-val' + (dNum == null ? ' is-muted' : ''), valStr));
+
+        dDetails.append(append(el('summary', 'evo-v2-dim-summary'), titleWrap, end));
+
+        const drawer = el('div', 'evo-submetric-drawer');
+        for (const sub of dim.subMetrics || []) {
+          const sCard = el('article', 'evo-submetric-card');
+          const subScore = sub.score != null ? Number(sub.score).toFixed(1) + ' / 100' : (sub.status === 'NOT_APPLICABLE' ? 'N/A' : 'Withheld');
+          const rawStr = sub.rawValue != null ? `${sub.rawValue}${sub.unit ? ' ' + sub.unit : ''}` : '—';
+          sCard.append(
+            append(el('div', 'evo-submetric-head'),
+              el('span', 'evo-submetric-title', sub.displayName || sub.id),
+              el('span', 'evo-submetric-val', `${rawStr} · ${subScore}`))
+          );
+          if (sub.curve && sub.rawValue != null) {
+            const pos = M.subMetricPosition(sub.rawValue, sub.curve);
+            const track = append(el('div', 'evo-calibration-track'),
+              el('span', 'evo-calibration-zone is-ideal'),
+              el('span', 'evo-calibration-zone is-acceptable'),
+              el('span', 'evo-calibration-zone is-critical'));
+            const pin = el('span', 'evo-calibration-pin');
+            pin.style.left = pos.percent + '%';
+            pin.title = `${pos.zoneLabel} (${rawStr})`;
+            track.append(pin);
+            const legend = append(el('div', 'evo-calibration-legend'),
+              el('span', '', `Ideal ${sub.curve.ideal}`),
+              el('span', '', `Acceptable ${sub.curve.acceptable}`),
+              el('span', '', `Poor ${sub.curve.poor}`),
+              el('span', '', `Critical ${sub.curve.critical}`));
+            sCard.append(track, legend);
+          }
+          if (sub.explanation) sCard.append(el('p', 'small muted', sub.explanation));
+          if (sub.remediationHint) sCard.append(el('p', 'small', 'Tip: ' + sub.remediationHint));
+          if (Array.isArray(sub.witnesses) && sub.witnesses.length) {
+            const wList = el('div', 'evo-witness-list');
+            for (const w of sub.witnesses.slice(0, 6)) {
+              const chip = btn(w.label || M.shortDigest(w.identity), () => openWitness(w), 'evo-witness-chip');
+              chip.title = [w.kind, w.label, w.detail].filter(Boolean).join(' — ');
+              wList.append(chip);
+            }
+            sCard.append(wList);
+          }
+          drawer.append(sCard);
+        }
+        if (!drawer.childElementCount) {
+          drawer.append(el('p', 'small muted', (dim.reasons || []).join(' · ') || 'No sub-metrics applicable in this context.'));
+        }
+        dDetails.append(drawer);
+        dimsWrap.append(dDetails);
+      }
+
+      const pieces = [hero, dimsWrap];
+
+      // Whole-Repository Context Breakdown (clickable module/service drilldown)
+      if (Array.isArray(v2.contextBreakdown) && v2.contextBreakdown.length) {
+        const ctxList = el('div', 'evo-context-score-list');
+        for (const item of v2.contextBreakdown) {
+          const scoreLabel = item.score != null ? Number(item.score).toFixed(1) : (item.status === 'WITHHELD' ? 'Withheld' : 'N/A');
+          const cBtn = btn('', () => {
+            if (state.contexts.some(ctx => ctx.identity === item.contextId)) {
+              state.graphFocus = null; state.explorer = null; state.metricSubject = null;
+              state.context = item.contextId;
+              $('context').value = item.contextId;
+              notifyContextsUpdated();
+              return loadTab(state.tab);
+            }
+          }, 'evo-context-score-row');
+          append(cBtn,
+            append(el('div'),
+              el('strong', '', item.label || item.contextId),
+              el('p', 'small muted', `${item.kind} · ${Number(item.entityCount || 0).toLocaleString()} entities · ${item.confidenceTier}`)),
+            el('strong', 'evo-ledger-val', scoreLabel));
+          ctxList.append(cBtn);
+        }
+        pieces.push(el('h3', 'small', 'Context Score Breakdown (click to drill down)'), ctxList);
+      }
+
+      // Inferred Architecture Style & Layer Map + 1-click Customize as Policy YAML
+      if (v2.inferredLayers && v2.inferredLayers.style) {
+        const styleStrip = el('div', 'evo-layer-map-strip');
+        const layerNames = Object.keys(v2.inferredLayers.layerPackages || {});
+        append(styleStrip,
+          append(el('div'),
+            el('strong', '', `Inferred Architecture Style: ${v2.inferredLayers.style}`),
+            el('p', 'small muted', layerNames.length ? `Detected layers: ${layerNames.join(' · ')}` : 'Inferred from package & stereotype conventions.')),
+          btn('Customize as Policy YAML →', () => configureRules(true), 'button subtle'));
+        pieces.push(styleStrip);
+      }
+
+      const actions = el('div', 'toolbar');
+      if (!detailed) actions.append(btn('Open full Score & Metrics Inspector →', () => loadTab('metrics'), 'button subtle'));
+      actions.append(btn('Customize policy rules', () => configureRules(true), 'button subtle'));
+      if (state.capabilities?.architectureChatEnabled) {
+        actions.append(btn('Ask AI to improve score', () => {
+          state.chatSeedPrompt = `Review our Architecture Health v2 score (${rangeText}, band ${v2.healthBand}) and prioritize the highest-leverage structural refactorings.`;
+          return loadTab('architecture-chat');
+        }, 'button subtle'));
+      }
+      pieces.push(actions);
+      container.replaceChildren(...pieces);
+    };
+
+    fetchArchitectureScoreV2(env).then(v2 => {
+      if (!env.signal.aborted) renderV2(v2);
+    }).catch(error => {
+      if (env.signal.aborted) return;
+      container.replaceChildren(
+        el('p', 'small muted', error.message || 'Architecture Health v2 is unavailable for this context.'),
+        btn('Retry Architecture Health v2', () => {
+          state.scoreV2Cache.clear();
+          return loadTab(state.tab);
+        }, 'button subtle')
+      );
+    });
     return node;
   }
 
@@ -2322,18 +3467,35 @@
     node.append(detail);
     let version = 0;
     function render(id, value, label) {
-      const ringNum = value.score ?? value.overall ?? (value.lower != null && value.upper != null ? (value.lower + value.upper) / 2 : null);
-      detail.replaceChildren(append(el('div', 'score-heading'),
-        ringNum != null ? scoreRingSvg(ringNum, String(Math.round(ringNum))) : null,
-        el('strong', 'score', M.assessment(value))));
-      if (label) detail.append(el('p', 'small muted', label));
-      for (const dimension of value.dimensions ?? []) {
-        detail.append(append(el('div', 'dimension'), btn(dimension.id.replace(/^health[.:]/, '').replaceAll('-', ' '),
-          () => inspectScoreDimension(value, dimension, id, env), 'text-button'), el('strong', '', dimension.score ?? 'Unavailable')));
-      }
-      detail.append(append(el('div', 'toolbar'),
-        btn('View findings', () => { state.activePolicyReports.set(env.context, id); return loadTab('policy'); }),
-        btn('Assessment evidence', () => inspect('Architecture assessment', 'ASSESSMENT', value), 'text-button')));
+      const display = M.assessment(value);
+      const unavailable = value?.score == null;
+      const ringNum = unavailable ? null : Number(value.score);
+      const withheld = unavailable && (value?.status === 'WITHHELD' || value?.confidence?.sufficient === false);
+      const dims = value.dimensions ?? [];
+      const breakdownRows = dims.map(dimension => {
+        const dNum = dimension.score != null && Number.isFinite(Number(dimension.score)) ? Number(dimension.score) : null;
+        return {
+          label: dimension.id.replace(/^health[.:]/, '').replaceAll('-', ' '),
+          valueText: dimension.score != null ? String(dimension.score) : 'Unavailable',
+          ratio: dNum != null ? dNum / 100 : null,
+          tone: dNum == null ? 'muted' : dNum < 50 ? 'danger' : dNum < 80 ? 'warn' : 'good',
+          onInspect: () => inspectScoreDimension(value, dimension, id, env)
+        };
+      });
+      detail.replaceChildren(
+        renderScoreShowcase({
+          mode: 'dimensions',
+          rawScore: ringNum,
+          displayText: display,
+          subtitle: label || 'Evaluated policy dimensions',
+          statusLabel: unavailable ? (withheld ? 'Withheld' : 'Unavailable') : undefined,
+          statusTone: unavailable ? 'muted' : undefined,
+          breakdownRows
+        }),
+        append(el('div', 'toolbar'),
+          btn('View findings', () => { state.activePolicyReports.set(env.context, id); return loadTab('policy'); }),
+          btn('Assessment evidence', () => inspect('Architecture assessment', 'ASSESSMENT', value), 'text-button'))
+      );
     }
     const preferenceKey = 'evo.rules.' + env.setup + '.' + (env.springContext ? 'spring' : 'java');
     let saved = '';
@@ -2483,6 +3645,9 @@
       provider: state.capabilities.architectureChatProvider, finding: findingRef,
       findingLabel: finding?.item.result?.rule?.id || finding?.item.result?.kind,
       agentEnabled: Boolean(state.capabilities?.architectureAgentEnabled),
+      truthTier: state.truthTier,
+      preliminary: Boolean(M.isPreliminaryTier?.(state.truthTier)),
+      previewMeta: state.previewMeta,
       seedPrompt,
       send: (input, signal) => api('/graphs/' + env.graph + '/architecture-chat', input, signal, 'POST', 135000),
       stream: state.capabilities?.architectureChatStreamEnabled
@@ -2497,14 +3662,27 @@
         return inspectCapturedRepair(finding.item, finding.report, env, diagnosis);
       }),
       chooseFinding: () => loadTab('policy'),
-      openSource: row => inspect('Cited source evidence', 'SOURCE EVIDENCE', async signal => {
-        const result = await api('/graphs/' + env.graph + '/queries/evidence', {
-          request: { ...M.request(row.context), scope: 'ENTITY' }, arguments: { reference: row.reference }
-        }, signal);
-        const record = result.items.find(item => item.identity === row.reference);
-        if (!record) throw new Error('This source evidence is unavailable in the selected snapshot.');
-        return { citation: row, record };
-      })
+      probeProvider: state.capabilities.architectureChatProvider
+        ? signal => api('/ai/providers/probe', {}, signal, 'POST', 10000)
+        : undefined,
+      openSource: row => {
+        if (row?.path) {
+          const startLine = Math.max(1, Number(row.startLine || 1));
+          const endLine = row.endLine ? Number(row.endLine) : startLine + 199;
+          return openCapturedSourceModal(env.graph, row.path, startLine, endLine, row.highlightLine || startLine);
+        }
+        if (row?.context && row?.reference) {
+          return inspect('Cited source evidence', 'SOURCE EVIDENCE', async signal => {
+            const result = await api('/graphs/' + env.graph + '/queries/evidence', {
+              request: { ...M.request(row.context), scope: 'ENTITY' }, arguments: { reference: row.reference }
+            }, signal);
+            const record = result.items.find(item => item.identity === row.reference);
+            if (!record) throw new Error('This source evidence is unavailable in the selected snapshot.');
+            return { citation: row, record };
+          });
+        }
+        return inspect('Source evidence', 'SOURCE EVIDENCE', row || {});
+      }
     });
   }
   const views = {
@@ -2512,62 +3690,26 @@
     overview(env) {
       const node = el('div'), stats = el('div', 'summary-table');
       const result = state.resultJob?.result;
-
-      // Executive Health & Coverage Hero Strip (truthful trust & coverage denominator)
-      const hero = el('section', 'evo-hero-strip');
-      hero.setAttribute('aria-label', 'Snapshot trust and coverage overview');
-      const completionVal = result?.completion || (state.resultJob?.state || 'CAPTURED');
-      const trustTile = el('div', 'evo-hero-metric');
-      trustTile.append(
-        el('span', 'evo-hero-metric-label', 'Capture Trust Status'),
-        append(el('div', 'evo-hero-metric-value'), badge(completionVal)),
-        el('span', 'evo-hero-metric-sub', state.resultJob?.mode === 'FAST_ARCHITECTURE' ? 'Quick architecture pass' : 'Deterministic verified capture')
-      );
-      hero.append(trustTile);
-
-      const gapTotal = result?.gapCount;
-      const gapTile = btn('', () => loadTab('coverage'), 'evo-hero-metric is-interactive');
-      gapTile.append(
-        el('span', 'evo-hero-metric-label', 'Recorded Coverage Gaps'),
-        append(el('div', 'evo-hero-metric-value'),
-          el('span', '', gapTotal != null ? gapTotal.toLocaleString() : 'Inspect'),
-          gapTotal === 0 ? badge('COMPLETE') : gapTotal > 0 ? badge('PARTIAL') : null),
-        el('span', 'evo-hero-metric-sub', 'Closed reporting denominator · inspect reasons →')
-      );
-      hero.append(gapTile);
-
-      const springCount = state.contexts.filter(c => c.identity.startsWith('spring-context:') || state.contextKinds?.get(c.identity) === 'spring.context').length;
-      const ctxTile = btn('', () => loadTab(springCount ? 'spring' : 'structure'), 'evo-hero-metric is-interactive');
-      ctxTile.append(
-        el('span', 'evo-hero-metric-label', 'Analyzed Contexts'),
-        el('div', 'evo-hero-metric-value', String(state.contexts.length)),
-        el('span', 'evo-hero-metric-sub', springCount ? `${springCount} Spring context${springCount > 1 ? 's' : ''} detected →` : 'Browse modules & symbols →')
-      );
-      hero.append(ctxTile);
-
-      const repoMapTile = btn('', () => loadTab('repomap'), 'evo-hero-metric is-interactive');
-      repoMapTile.append(
-        el('span', 'evo-hero-metric-label', 'RepoMap & Source'),
-        el('div', 'evo-hero-metric-value', 'PPR'),
-        el('span', 'evo-hero-metric-sub', 'Ranked files & captured source viewer →')
-      );
-      hero.append(repoMapTile);
-
       const next = append(el('section', 'workbench-next'),
         append(el('div'), el('h2', '', 'Explore this snapshot'),
-          el('p', '', 'Open the repository structure, inspect coverage gaps, review a finding, or ask about a design decision.')));
+          el('p', '', 'Open the repository structure, inspect coverage details, review findings, or ask about a design decision.')));
       const routes = append(el('div', 'workbench-next-actions'),
         btn('Browse structure', () => loadTab('structure'), 'button subtle'),
         btn('RepoMap & Source', () => loadTab('repomap'), 'button subtle'),
         btn('Gaps & Coverage', () => loadTab('coverage'), 'button subtle'),
         btn('Review findings', () => loadTab('policy'), 'button subtle'));
-      if (state.capabilities?.architectureChatEnabled)
+      if (state.capabilities?.architectureChatEnabled) {
         routes.append(btn('Open architecture chat', () => loadTab('architecture-chat'), 'button primary'));
+      }
       next.append(routes);
-      const grid = el('div', 'overview-layout'); node.append(hero, next, grid);
-      if (env.jobId && result && state.capabilities?.analysisCoverageEnabled) grid.append(coverageCard(env, result));
+      const grid = el('div', 'overview-layout');
+      node.append(next, grid);
+      const useV2 = Boolean(state.capabilities?.architectureScoreV2Enabled);
+      if (useV2) {
+        grid.append(architectureScoreV2Card(env, { detailed: false }));
+      }
       if (state.capabilities?.repositoryScoringEnabled) grid.append(repositoryScoreCard(env));
-      const health = card('Architecture assessment');
+      const health = card(useV2 ? 'Snapshot structure & rules' : 'Architecture assessment');
       health.classList.add('overview-context');
       const inventory = append(el('details', 'inventory-details'), el('summary', '', 'Structure counts'), stats);
       let requested = false;
@@ -2595,8 +3737,18 @@
       }
       inventory.addEventListener('toggle', () => { if (inventory.open && !requested) readCounts(); });
       health.append(inventory);
-      health.append(append(el('div', 'toolbar'), btn('Review score and rules', () => configureRules(false))));
+      const healthActions = append(el('div', 'toolbar'), btn('Review score and rules', () => configureRules(false)));
+      const prevGraph = state.capabilities?.evolutionEnabled && state.resultJob ? findPreviousGraphForComparison(state.resultJob) : null;
+      if (prevGraph && state.resultJob?.result?.graph) {
+        const setupObj = state.setups.find(s => s.id === state.resultJob.setup);
+        const repoId = typeof setupObj?.repository === 'string' ? setupObj.repository : (setupObj?.repository?.value || '');
+        healthActions.append(btn('Compare with Previous Snapshot →', () => {
+          location.hash = M.buildCompareHash({ left: prevGraph, right: state.resultJob.result.graph, repo: repoId, autorun: true });
+        }, 'button subtle'));
+      }
+      health.append(healthActions);
       grid.append(health);
+      if (env.jobId && result && state.capabilities?.analysisCoverageEnabled) grid.append(coverageCard(env, result));
       return node;
     },
     async coverage(env) {
@@ -2620,7 +3772,9 @@
 
       let selectedReason = '';
       let cachedJobGaps = [];
+      let jobGapsCursor = null;
       let graphGapItems = [];
+      let visibleLimit = 80;
       let version = 0;
 
       function extractGapCode(item) {
@@ -2712,7 +3866,7 @@
             term ? 'Clear or loosen the filter to inspect all recorded gaps.' : 'No gaps were recorded for the selected context and view.'));
           return;
         }
-        visible.slice(0, 80).forEach(item => {
+        visible.slice(0, visibleLimit).forEach(item => {
           const code = extractGapCode(item);
           const info = M.humanReason(code);
           const bucket = M.classifyGapObligation ? M.classifyGapObligation(code) : null;
@@ -2727,7 +3881,26 @@
           }, () => inspect(info.title, 'CAPABILITY GAP', { humanExplanation: info, obligation: bucket?.label, record: item },
             item.path ? [{ label: 'Open captured source', run: () => openCapturedSourceModal(env.graph, item.path) }] : []), subtitle));
         });
-        recordsBox.replaceChildren(el('h3', '', `Recorded Gaps (${visible.length}${visible.length > 80 ? ' · showing first 80' : ''})`), list);
+        const shownCount = Math.min(visible.length, visibleLimit);
+        const pager = el('div', 'page-footer');
+        pager.append(el('span', 'small muted', `Showing ${shownCount.toLocaleString()} of ${visible.length.toLocaleString()} loaded gaps${jobGapsCursor ? ' · More on server' : ''}`));
+        if (visible.length > visibleLimit) {
+          pager.append(btn('Show 80 more', () => { visibleLimit += 80; renderFiltered(); }, 'button subtle'));
+        }
+        if (jobGapsCursor && env.jobId) {
+          pager.append(btn('Load more gaps', () => safe(loadMoreJobGaps), 'button subtle'));
+        }
+        recordsBox.replaceChildren(el('h3', '', `Recorded Gaps (${visible.length.toLocaleString()}${jobGapsCursor ? '+' : ''})`), list, pager);
+      }
+
+      async function loadMoreJobGaps() {
+        if (!env.jobId || !jobGapsCursor) return;
+        const page = await api('/analysis/jobs/' + env.jobId + '/gaps', { size: 50, cursor: jobGapsCursor }, env.signal, 'POST');
+        if (env.signal.aborted) return;
+        if (Array.isArray(page?.items)) cachedJobGaps.push(...page.items);
+        jobGapsCursor = page?.continuation || null;
+        visibleLimit = Math.max(visibleLimit, cachedJobGaps.length);
+        renderFiltered();
       }
 
       async function loadGraphGaps() {
@@ -2744,6 +3917,7 @@
           graphGapItems = graphRes?.items || [];
           if (jobRes && Array.isArray(jobRes.items)) {
             cachedJobGaps = jobRes.items;
+            jobGapsCursor = jobRes.continuation || null;
             if (!groupBox.childElementCount && cachedJobGaps.length) {
               const groups = M.summarizeGaps(cachedJobGaps);
               renderGroupCards(groups.map(g => ({ code: g.code, count: g.count })), 'Observed Gap Categories');
@@ -2766,7 +3940,8 @@
       const modeBar = el('div', 'chip-bar');
       const mapTabBtn = btn('PPR Ranked RepoMap', () => setMode('map'), 'chip active');
       const filesTabBtn = btn('All Captured Files', () => setMode('files'), 'chip');
-      modeBar.append(mapTabBtn, filesTabBtn);
+      const searchTabBtn = btn('Code Search (FTS5)', () => setMode('search'), 'chip');
+      modeBar.append(mapTabBtn, filesTabBtn, searchTabBtn);
 
       const seedInput = el('input');
       seedInput.type = 'search';
@@ -2789,19 +3964,33 @@
       const leftPane = el('div');
       const rightPane = el('div');
       rightPane.append(empty('Select a file to inspect source', 'Choose any ranked RepoMap file or captured file on the left to read its captured source with line numbers.'));
+      const searchPane = el('div');
+      searchPane.hidden = true;
       layout.append(leftPane, rightPane);
-      node.append(modeBar, mapToolbar, filesToolbar, metaBar, layout);
+      node.append(modeBar, mapToolbar, filesToolbar, metaBar, layout, searchPane);
 
-      let activeMode = 'map', activePath = '', mapVersion = 0, fileVersion = 0, sourceVersion = 0;
+      let activeMode = 'map', activePath = '', mapVersion = 0, fileVersion = 0, sourceVersion = 0, searchMounted = false;
 
       function setMode(next) {
         activeMode = next;
         mapTabBtn.classList.toggle('active', next === 'map');
         filesTabBtn.classList.toggle('active', next === 'files');
+        searchTabBtn.classList.toggle('active', next === 'search');
         mapToolbar.hidden = next !== 'map';
         filesToolbar.hidden = next !== 'files';
+        layout.hidden = next === 'search';
+        metaBar.hidden = next === 'search';
+        searchPane.hidden = next !== 'search';
         if (next === 'map') safe(loadMap);
-        else safe(() => loadFiles(0));
+        else if (next === 'files') safe(() => loadFiles(0));
+        else if (!searchMounted && window.EvoCodeSearch?.mountCodeSearch) {
+          searchMounted = true;
+          window.EvoCodeSearch.mountCodeSearch(searchPane, {
+            graph: env.graph, snapshot: env.snapshot, context: defaultDependencyContext(env), api, signal: env.signal,
+            openSource: (p, s, e, h) => openCapturedSourceModal(env.graph, p, s, e, h),
+            askAi: prompt => { state.chatSeedPrompt = prompt; loadTab('architecture-chat'); }
+          });
+        }
       }
 
       async function loadSource(path, startLine = 1, endLine = 200) {
@@ -2862,7 +4051,9 @@
             fill.style.width = Math.max(4, Math.round(((Number(f.score) || 0) / maxScore) * 100)) + '%';
             bar.append(fill);
             const meta = el('div', 'repomap-meta-row', `Score ${(Number(f.score) || 0).toFixed(4)} · In ${f.inDegree ?? 0} · Out ${f.outDegree ?? 0}` + (f.endpoints?.length ? ` · ${f.endpoints.length} endpoints` : ''));
+            const rrfBadges = window.EvoCodeSearch?.renderRrfBadges?.(f);
             cardBtn.append(head, bar, meta);
+            if (rrfBadges) cardBtn.append(rrfBadges);
             if (Array.isArray(f.declarations) && f.declarations.length) {
               const decls = el('div', 'repomap-decl-chips');
               f.declarations.slice(0, 6).forEach(d => decls.append(el('span', 'repomap-decl-chip', d.name || d.kind)));
@@ -2985,8 +4176,31 @@
       level.addEventListener('change', () => { trail = []; safe(load); }); population.addEventListener('change', () => safe(load)); sourceSet.addEventListener('change', () => safe(load)); await load(); return node;
     },
     async policy(env) {
-      const node = card('Rules & findings', 'Inspect the evaluated rules and their evidence. An absent report is not a clean architecture verdict.');
-      if (!env.reportIds.length) { node.append(empty('No policy report for this context', 'Add architecture policy YAML when connecting the repository, then run a new analysis.'), btn('Configure rules & scoring', configureRules, 'button primary')); return node; }
+      const node = card('Rules, findings & repair studio', 'Inspect evaluated rules, diagnose findings with cited code, verify candidate patches in an isolated sandbox, and apply only after explicit confirmation.');
+      if (M.isPreliminaryTier?.(state.truthTier)) {
+        node.append(empty('Policy evaluation & automated repair pending',
+          'Preliminary structure is currently loaded. Policy checks, diagnosis, and repair actions unlock automatically when deep semantic analysis completes.'));
+        return node;
+      }
+      const conn = state.connections.find(c => c.setup === env.setup);
+      const setupRec = state.setups.find(s => s.id === env.setup);
+      const isGh = Boolean(window.EvoGitHubHub?.isGitHubConnection?.(conn, setupRec));
+      if (!env.reportIds.length) {
+        node.append(empty('No policy report for this context', 'Add architecture policy YAML (or auto-detect rules) to evaluate findings, or use the Ad-Hoc Repair Studio below to propose & verify refactorings.'));
+        const noReportActions = append(el('div', 'toolbar'), btn('Configure rules & scoring', configureRules, 'button primary'));
+        node.append(noReportActions);
+        if (window.EvoRepairStudio?.mount) {
+          const adhocHost = el('div');
+          adhocHost.style.marginTop = '14px';
+          node.append(adhocHost);
+          window.EvoRepairStudio.mount(adhocHost, {
+            env, reportId: null, findings: [], api, resolveLabels,
+            openCapturedSource: openCapturedSourceModal, inspectFinding, askAboutFinding,
+            downloadBlob, capabilities: state.capabilities, setupId: env.setup, isGitHubRepo: isGh
+          });
+        }
+        return node;
+      }
       const toolbar = el('div', 'toolbar'), reports = el('select'), kinds = el('select'); reports.setAttribute('aria-label', 'Policy report'); kinds.setAttribute('aria-label', 'Rules or findings');
       env.reportIds.forEach((report, index) => { const option = el('option', '', 'Policy report ' + (index + 1)); option.value = report.identity; reports.append(option); });
       const active = state.activePolicyReports?.get(env.context);
@@ -2994,32 +4208,60 @@
       for (const op of ['findings', 'rules']) { const option = el('option', '', op === 'rules' ? 'Evaluated rules' : 'Observed findings'); option.value = op; kinds.append(option); }
       toolbar.append(reports, kinds); node.append(toolbar); const results = el('div'); node.append(results); let version = 0;
       async function load() {
-        const current = ++version, id = reports.value, op = kinds.value, target = el('div');
+        const current = ++version, id = reports.value, op = kinds.value;
         results.replaceChildren(empty('Loading…', 'Reading the selected report.'));
         try {
+          if (op === 'findings' && window.EvoRepairStudio?.mount) {
+            const layout = el('div', 'rs-layout');
+            const rail = el('div', 'rs-findings-rail');
+            const studioHost = el('div');
+            layout.append(rail, studioHost);
+            const loadedFindings = [];
+            let studioHandle = null;
+            await pagedList(rail, env, cursor => env.report(id, op, {}, { size: 50, ...(cursor ? { cursor } : {}) }), item => {
+              loadedFindings.push(item);
+              const finding = item.result, rule = finding.rule?.header || finding.rule;
+              const label = rule?.name || rule?.id || finding.kind || 'Evaluated rule';
+              const wrap = el('div', 'rs-finding-item-wrap');
+              const r = row({ label, kind: finding.classification || finding.status }, () => {
+                studioHandle?.selectFinding?.(item);
+                return inspectFinding(item, id, env);
+              }, [rule?.severity, finding.status].filter(Boolean).join(' · '));
+              r.dataset.findingId = item.identity;
+              const studioBtn = btn('Studio →', () => {
+                studioHandle?.selectFinding?.(item);
+                studioHost.scrollIntoView?.({ behavior: 'smooth', block: 'nearest' });
+              }, 'button subtle rs-open-studio-btn');
+              const issueBtn = (isGh && state.capabilities?.githubEnterpriseEnabled && window.EvoGitHubEnterprise?.openCreateIssueModal)
+                ? btn('Issue', () => window.EvoGitHubEnterprise.openCreateIssueModal(env.setup, {
+                    graph: env.graph, report: id, findingId: item.identity, title: label, filePath: finding.path || ''
+                  }), 'button subtle rs-open-studio-btn')
+                : null;
+              append(wrap, r, studioBtn, issueBtn);
+              return wrap;
+            }, 'No observed findings', 'Review the report status and rule denominator before interpreting this result.');
+            if (!env.signal.aborted && current === version) {
+              studioHandle = window.EvoRepairStudio.mount(studioHost, {
+                env, reportId: id, findings: loadedFindings, api, resolveLabels,
+                openCapturedSource: openCapturedSourceModal, inspectFinding, askAboutFinding,
+                downloadBlob, capabilities: state.capabilities, setupId: env.setup, isGitHubRepo: isGh
+              });
+              results.replaceChildren(layout);
+            }
+            return;
+          }
+          const target = el('div');
           await pagedList(target, env, cursor => env.report(id, op, {}, { size: 50, ...(cursor ? { cursor } : {}) }), item => {
             const finding = item.result, rule = finding.rule?.header || finding.rule;
             const label = rule?.name || rule?.id || finding.kind || 'Evaluated rule';
             const r = row({ label, kind: finding.classification || finding.status }, () => {
-              if (op === 'findings') {
-                if ($('remediation-active-workflow')) return selectRemediationFinding(item, id, env);
-                return inspectFinding(item, id, env);
-              } else {
-                inspect(label, 'POLICY EVIDENCE', finding);
-              }
+              if (op === 'findings') return inspectFinding(item, id, env);
+              inspect(label, 'POLICY EVIDENCE', finding);
             }, [rule?.severity, finding.status].filter(Boolean).join(' · '));
             r.dataset.findingId = item.identity;
             return r;
           }, op === 'findings' ? 'No observed findings' : 'No evaluated rules', 'Review the report status and rule denominator before interpreting this result.');
-          if (!env.signal.aborted && current === version) {
-            results.replaceChildren(target);
-            if (op === 'findings') {
-              const firstRow = target.querySelector('.entity-row');
-              if (firstRow && $('remediation-active-workflow') && !state.selectedFinding) {
-                firstRow.click();
-              }
-            }
-          }
+          if (!env.signal.aborted && current === version) results.replaceChildren(target);
         } catch (error) { if (!env.signal.aborted && current === version) results.replaceChildren(empty('Report unavailable', error.message), btn('Retry', load)); }
       }
       reports.addEventListener('change', () => safe(load)); kinds.addEventListener('change', () => safe(load)); await load(); return node;
@@ -3032,7 +4274,7 @@
         : (springContexts[0]?.identity || env.context);
       let activeCtx = initialCtx;
       const ctxSelect = springContexts.length > 1
-        ? selectControl('Spring context', springContexts.map(c => [c.identity, state.contextLabels?.get(c.identity) || c.identity]), activeCtx)
+        ? selectControl('Spring context', springContexts.map(c => [c.identity, state.contextLabels?.get(c.identity) || formatContext(c).label]), activeCtx)
         : null;
       const categories = [
         ['components', 'Beans & Injection'],
@@ -3136,6 +4378,11 @@
     },
     async metrics(env) {
       const node = el('div');
+      if (state.capabilities?.architectureScoreV2Enabled) {
+        const v2Hero = architectureScoreV2Card(env, { detailed: true });
+        v2Hero.style.marginBottom = '20px';
+        node.append(v2Hero);
+      }
       if (state.capabilities?.repositoryScoringEnabled) {
         node.append(append(el('div', 'content-grid'), repositoryScoreCard(env, true), architectureScoreCard(env)));
       } else {
@@ -3215,6 +4462,9 @@
         ['MODULE', 'Modules'], ['PACKAGE', 'Packages'], ['TYPE', 'Classes'],
         ['SPRING_COMPONENT', 'Spring components'], ['ENTITY', 'Source entities']
       ]);
+      const groupBy = selectControl('Graph grouping', [
+        ['PACKAGE', 'Packages / Modules'], ['COMMUNITY', 'Communities (Leiden)']
+      ], focus.groupBy || 'PACKAGE');
       const projection = selectControl('Dependency view', [
         ['BOUNDED_UNION', 'All observed'], ['MUST', 'Required'], ['MAY', 'Conditional'], ['UNKNOWN_OVERLAY', 'Uncertain'],
         ...(focus.realization ? [['REALIZED', 'Recorded configuration']] : [])
@@ -3232,14 +4482,14 @@
       const options = append(el('details', 'graph-options'), el('summary', '', 'View options'),
         append(el('div', 'graph-option-fields'), field('Relationships', projection), field('Layout', layout)));
       const content = el('div', 'graph-result');
-      node.append(append(el('div', 'graph-query-controls'), contextField, field('Scope', scope), depthField, clear, options), content);
+      node.append(append(el('div', 'graph-query-controls'), contextField, field('Scope', scope), field('Grouping', groupBy), depthField, clear, options), content);
       const snapshotKinds = ['syntax.declaration', 'syntax.import', 'syntax.heritage', 'CALLS_SERVICE', 'INVOKES_RPC',
         'polyglot.service-call.candidate', 'polyglot.grpc-service-call.candidate', 'polyglot.grpc-contract.candidate'];
       const snapshotPopulation = {
         nodeKinds: ['SOURCE_DOCUMENT', 'SOURCE_DECLARATION', 'SOURCE_IMPORT', 'SOURCE_HERITAGE',
           'CALL_SITE', 'ROUTE_CANDIDATE', 'PROTOBUF_MESSAGE', 'PROTOBUF_SERVICE', 'PROTOBUF_RPC_METHOD']
       };
-      let version = 0, canvasObserver, expandedDialog;
+      let version = 0, canvasObserver, expandedDialog, pendingLayer = null;
       function releaseCanvas() {
         canvasObserver?.disconnect();
         if (expandedDialog?.open) expandedDialog.close();
@@ -3281,7 +4531,13 @@
         const selectedContext = context.value;
         let request = requestFor(selectedContext, scope.value);
         try {
-          const queryGraph = query => env.query('visual-graph', focus.seed ? { seed: focus.seed, depth: Number(depth.value) } : {}, undefined, query);
+          const queryGraph = query => {
+            const vArgs = {
+              ...(focus.seed ? { seed: focus.seed, depth: Number(depth.value) } : {}),
+              ...(groupBy.value === 'COMMUNITY' ? { groupBy: 'COMMUNITY' } : {})
+            };
+            return env.query('visual-graph', vArgs, undefined, query);
+          };
           let graph;
           try {
             graph = await queryGraph(request);
@@ -3336,16 +4592,28 @@
           degree.set(target, (degree.get(target) || 0) + 1);
         }
         const ranked = [...nodes].sort((a, b) => (degree.get(b.id) || 0) - (degree.get(a.id) || 0) || a.id.localeCompare(b.id));
-        const visible = ranked.slice(0, 220);
+        const isCommunityMode = groupBy.value === 'COMMUNITY' && graph.nodes.some(item => item.id.startsWith('compound:community:'));
+        const communityCompounds = isCommunityMode ? graph.nodes.filter(item => item.id.startsWith('compound:community:')) : [];
+        const externalCompound = isCommunityMode ? graph.nodes.find(item => item.id === 'compound:external') : null;
+        const collapsedCommunities = new Set();
+        if (isCommunityMode && nodes.length > 120 && communityCompounds.length >= 2) {
+          for (const c of communityCompounds) collapsedCommunities.add(c.id);
+          if (externalCompound) collapsedCommunities.add(externalCompound.id);
+        }
+        const visible = isCommunityMode ? ranked : ranked.slice(0, 220);
         const included = new Set(visible.map(item => item.id));
         for (const item of visible) {
           for (let parent = item.parent; byId.has(parent) && !included.has(parent); parent = byId.get(parent).parent) included.add(parent);
         }
-        const edges = graph.edges.filter(edge => included.has(edge.source) && included.has(edge.target)).slice(0, 700);
-        const limited = visible.length < nodes.length || edges.length < graph.edges.length;
+        const edges = isCommunityMode ? graph.edges : graph.edges.filter(edge => included.has(edge.source) && included.has(edge.target)).slice(0, 700);
+        const limited = !isCommunityMode && (visible.length < nodes.length || edges.length < graph.edges.length);
         const counts = el('p', 'graph-counts',
-          visible.length + ' nodes · ' + edges.length + ' relationships' +
-          (limited ? ' shown of ' + nodes.length + ' nodes and ' + graph.edges.length + ' relationships returned' : ''));
+          isCommunityMode
+            ? `${communityCompounds.length} Leiden communities · ${nodes.length} nodes`
+              + (Number(graph.metadata?.externalNodeCount || 0) > 0 ? ` (${graph.metadata.externalNodeCount} external)` : '')
+              + ` · ${graph.edges.length} edges · Q=${Number(graph.metadata?.communityModularity ?? 0).toFixed(3)} · ${graph.metadata?.misplacedCount ?? 0} misplaced`
+            : visible.length + ' nodes · ' + edges.length + ' relationships' +
+              (limited ? ' shown of ' + nodes.length + ' nodes and ' + graph.edges.length + ' relationships returned' : ''));
         counts.setAttribute('role', 'status');
         const status = graph.metadata?.isTruncated ? el('p', 'graph-message', 'The query reached its limit. Focus a node to explore its neighborhood.') : null;
         const edgesMissing = !graph.edges.length ? el('p', 'graph-message', 'This scope has nodes and no recorded relationships for the selected view.') : null;
@@ -3441,6 +4709,103 @@
           ch.dataset.filter = fk;
           filterChips.append(ch);
         }
+        const layerPills = el('div', 'evo-layer-pills');
+        const layerState = { drift: false, bridges: false, tangles: false };
+        const applyLayers = () => {
+          if (!cy) return;
+          cy.elements().removeClass('evo-layer-drift evo-layer-bridge evo-layer-tangle');
+          const anyOn = layerState.drift || layerState.bridges || layerState.tangles;
+          if (!anyOn) {
+            if (activeFilter.kind === 'ALL') resetHighlight();
+            return;
+          }
+          resetHighlight();
+          let focusEls = cy.collection();
+          if (layerState.drift) {
+            const drifted = cy.nodes().filter(n =>
+              Boolean(n.data('misplaced'))
+              || (Boolean(n.data('isSuperNode')) && Number(n.data('misplacedCount') || 0) > 0)
+            );
+            drifted.addClass('evo-layer-drift');
+            focusEls = focusEls.union(drifted);
+          }
+          if (layerState.bridges) {
+            const bridgeEdges = cy.edges().filter(e => Boolean(e.data('isBridge')));
+            bridgeEdges.addClass('evo-layer-bridge');
+            focusEls = focusEls.union(bridgeEdges).union(bridgeEdges.connectedNodes());
+          }
+          if (layerState.tangles) {
+            const cycNodes = cy.nodes().filter(n =>
+              Boolean(n.data('inCycle'))
+              || (Boolean(n.data('isSuperNode')) && Number(n.data('inCycleCount') || 0) > 0)
+            );
+            const cycEdges = cy.edges().filter(e => Boolean(e.data('inCycle')));
+            cycNodes.addClass('evo-layer-tangle');
+            cycEdges.addClass('evo-layer-tangle');
+            focusEls = focusEls.union(cycNodes).union(cycEdges);
+          }
+          if (focusEls.length) {
+            cy.elements().not(':parent').not(focusEls).addClass('dimmed');
+          }
+        };
+        const toggleLayer = (key, buttonEl) => {
+          // Drift & Bridges require Leiden Community grouping; switch smoothly from PACKAGE mode.
+          if ((key === 'drift' || key === 'bridges') && groupBy.value !== 'COMMUNITY') {
+            groupBy.value = 'COMMUNITY';
+            pendingLayer = key;
+            void load();
+            return;
+          }
+          layerState[key] = !layerState[key];
+          buttonEl.classList.toggle('is-active', layerState[key]);
+          buttonEl.setAttribute('aria-pressed', String(layerState[key]));
+          applyLayers();
+        };
+        const driftPill = btn(
+          isCommunityMode ? `Drift (${graph.metadata?.misplacedCount ?? 0})` : 'Drift (Communities)',
+          () => toggleLayer('drift', driftPill),
+          'evo-layer-pill is-drift'
+        );
+        const bridgePill = btn(
+          isCommunityMode ? `Bridges (${graph.metadata?.bridgeEdgeCount ?? 0})` : 'Bridges (Communities)',
+          () => toggleLayer('bridges', bridgePill),
+          'evo-layer-pill is-bridges'
+        );
+        const tanglePill = btn('Tangles', () => toggleLayer('tangles', tanglePill), 'evo-layer-pill is-tangles');
+        driftPill.setAttribute('aria-pressed', 'false');
+        bridgePill.setAttribute('aria-pressed', 'false');
+        tanglePill.setAttribute('aria-pressed', 'false');
+        layerPills.append(driftPill, bridgePill, tanglePill);
+
+        let rebuildCommunityView = null;
+        if (isCommunityMode) {
+          const collapseAllBtn = btn('Collapse all', () => {
+            communityCompounds.forEach(c => collapsedCommunities.add(c.id));
+            if (externalCompound) collapsedCommunities.add(externalCompound.id);
+            rebuildCommunityView?.();
+          }, 'evo-layer-pill');
+          const expandAllBtn = btn('Expand all', () => {
+            collapsedCommunities.clear();
+            rebuildCommunityView?.();
+          }, 'evo-layer-pill');
+          layerPills.append(collapseAllBtn, expandAllBtn);
+        }
+
+        const exportPngBtn = btn('Export PNG', () => {
+          window.EvoCommunityAdvisory?.exportCytoscapePng?.(cy, 'evo-dependency-map.png', color('--map-paper') || '#0b1120');
+        }, 'evo-layer-pill');
+        const exportSvgBtn = btn('Export SVG', () => {
+          window.EvoCommunityAdvisory?.exportCytoscapeSvg?.(cy, 'evo-dependency-map.svg', {
+            bg: color('--map-paper') || '#0b1120',
+            label: color('--map-label') || '#e2e8f0',
+            node: color('--map-node') || '#1e293b',
+            border: color('--map-node-border') || '#475569',
+            edge: color('--map-edge') || '#64748b',
+            group: color('--map-group') || '#1e293b'
+          });
+        }, 'evo-layer-pill');
+        layerPills.append(exportPngBtn, exportSvgBtn);
+
         const dialog = el('dialog', 'map-fullscreen');
         dialog.setAttribute('aria-label', 'Expanded dependency map');
         const expand = btn('Expand map', () => {
@@ -3452,9 +4817,10 @@
         }, 'button graph-fullscreen-button');
         expand.title = 'Expand map (F)';
         zoom.append(expand);
-        const stage = append(el('div', 'graph-stage'), filterChips, append(el('div', 'graph-stage-controls'), filter, zoom), canvas,
+        const stage = append(el('div', 'graph-stage'), filterChips, layerPills, append(el('div', 'graph-stage-controls'), filter, zoom), canvas,
           append(el('div', 'map-legend'),
             el('span', 'legend-must', 'Required'), el('span', 'legend-may', 'Conditional'), el('span', 'legend-unknown', 'Uncertain'),
+            M.isPreliminaryTier?.(state.truthTier) ? el('span', 'legend-may', 'Preliminary imports') : null,
             visible.some(item => item.origin && item.origin !== 'PROJECT') ? el('span', 'legend-external', 'External') : null));
         const board = append(el('div', 'graph-board'), stage, rail);
         dialog.append(append(el('header', 'map-fullscreen-header'), el('h3', '', 'Dependency map'), btn('Close map', () => dialog.close())));
@@ -3481,17 +4847,29 @@
               'target-arrow-color': color('--map-edge'), width: 1.5, opacity: .8
             }
           },
+          { selector: 'edge[?preliminary]', style: { 'line-style': 'dashed', 'line-dash-pattern': [5, 4], 'line-color': color('--map-may'), 'target-arrow-color': color('--map-may'), opacity: .72 } },
           { selector: 'edge[classification="MAY"]', style: { 'line-style': 'dashed', 'line-color': color('--map-may'), 'target-arrow-color': color('--map-may') } },
           { selector: 'edge[classification="UNKNOWN"]', style: { 'line-style': 'dotted', 'line-color': color('--map-unknown'), 'target-arrow-color': color('--map-unknown') } },
           { selector: 'node[activationStatus="UNKNOWN"]', style: { 'border-style': 'dashed', 'border-color': color('--map-unknown') } },
           { selector: '.dimmed', style: { opacity: .13 } },
           { selector: 'node.map-active', style: { 'background-color': color('--map-focus'), 'border-width': 2.5 } },
           { selector: 'edge.map-active', style: { width: 2.3, opacity: 1 } },
-          { selector: '.path-highlight', style: { 'border-width': 3, 'border-color': color('--map-unknown'), 'line-color': color('--map-unknown'), 'target-arrow-color': color('--map-unknown'), width: 3 } }
+          { selector: '.path-highlight', style: { 'border-width': 3, 'border-color': color('--map-unknown'), 'line-color': color('--map-unknown'), 'target-arrow-color': color('--map-unknown'), width: 3 } },
+          { selector: 'node[?isSuperNode]', style: { 'background-color': color('--map-focus'), 'background-opacity': .24, 'border-color': '#6366f1', 'border-width': 2.2, shape: 'round-rectangle', height: 48, 'font-size': 12, 'font-weight': 700, 'text-max-width': 220 } },
+          { selector: 'node[kind="COMMUNITY"]:parent', style: { 'border-color': '#6366f1', 'border-width': 1.6, 'background-opacity': .18, padding: 24 } },
+          { selector: 'node[kind="EXTERNAL_GROUP"]', style: { 'background-color': color('--map-external'), 'background-opacity': .22, 'border-style': 'dashed', 'border-color': color('--map-edge'), 'border-width': 1.5, padding: 20 } },
+          { selector: 'node[?misplaced]', style: { 'border-style': 'dashed', 'border-color': '#f59e0b', 'border-width': 2 } },
+          { selector: 'node.evo-layer-drift', style: { 'border-style': 'dashed', 'border-color': '#f59e0b', 'border-width': 3, 'background-color': 'rgba(245,158,11,0.22)' } },
+          { selector: 'edge[kind="external.dependency"]', style: { 'line-style': 'dotted', 'line-color': color('--map-edge'), 'target-arrow-color': color('--map-edge'), label: 'data(label)', 'font-size': 10, color: color('--map-label') } },
+          { selector: 'edge[?isBridge]', style: { 'line-color': '#06b6d4', 'target-arrow-color': '#06b6d4', width: 2, label: 'data(label)', 'font-size': 10, color: color('--map-label') } },
+          { selector: 'edge.evo-layer-bridge', style: { 'line-color': '#06b6d4', 'target-arrow-color': '#06b6d4', width: 3, opacity: 1 } },
+          { selector: 'node.evo-layer-tangle', style: { 'border-color': '#ef4444', 'border-width': 3 } },
+          { selector: 'edge.evo-layer-tangle', style: { 'line-color': '#ef4444', 'target-arrow-color': '#ef4444', width: 2.8, opacity: 1 } }
         ];
-        try {
-          cy = window.cytoscape({
-            container: canvas, elements: [
+        const preliminaryGraph = Boolean(M.isPreliminaryTier?.(state.truthTier));
+        const initialElements = (isCommunityMode && window.EvoCommunityAdvisory?.buildCommunityElements)
+          ? window.EvoCommunityAdvisory.buildCommunityElements(graph, collapsedCommunities, degree, label, fullLabel, preliminaryGraph).elements
+          : [
               ...graph.nodes.filter(item => included.has(item.id)).map(item => {
                 const deg = degree.get(item.id) || 0;
                 return {
@@ -3499,19 +4877,61 @@
                     ...item, label: label(item), fullLabel: fullLabel(item),
                     nodeWidth: Math.min(152, 88 + deg * 4),
                     parent: included.has(item.parent) ? item.parent : undefined, activationStatus: item.properties?.activationStatus,
-                    external: Boolean(item.origin && item.origin !== 'PROJECT')
+                    external: Boolean(item.origin && item.origin !== 'PROJECT'),
+                    misplaced: Boolean(item.properties?.misplaced),
+                    inCycle: Boolean(item.inCycle)
                   }
                 };
               }),
-              ...edges.map(item => ({ data: item }))
-            ], layout: layoutConfig(layout.value), minZoom: .06, maxZoom: 3, wheelSensitivity: .17, style: graphStyle()
+              ...edges.map(item => ({
+                data: {
+                  ...item,
+                  isBridge: Boolean(item.properties?.isBridge),
+                  inCycle: Boolean(item.inCycle),
+                  preliminary: Boolean(preliminaryGraph || item.derivation === 'SYNTAX_IMPORT_PREVIEW')
+                }
+              }))
+            ];
+        try {
+          cy = window.cytoscape({
+            container: canvas, elements: initialElements, layout: layoutConfig(layout.value), minZoom: .06, maxZoom: 3, wheelSensitivity: .17, style: graphStyle()
           });
         } catch (error) {
           stage.replaceChildren(empty('Could not draw the map', error.message), nodeList(), btn('Retry graph', () => load()));
           rail.replaceChildren(details);
           return;
         }
+        if (isCommunityMode && window.EvoCommunityAdvisory?.buildCommunityElements) {
+          rebuildCommunityView = () => {
+            const built = window.EvoCommunityAdvisory.buildCommunityElements(graph, collapsedCommunities, degree, label, fullLabel, preliminaryGraph);
+            cy.batch(() => {
+              cy.elements().remove();
+              cy.add(built.elements);
+            });
+            cy.layout(layoutConfig(layout.value)).run();
+            applyLayers();
+            const extNote = built.hasExternalGroup
+              ? (built.externalCollapsed ? ' · external collapsed' : ' · external expanded')
+              : '';
+            readout.textContent = `${built.collapsedCommunityCount} of ${built.totalCommunityCount} communities collapsed${extNote} · ${built.visibleLeafCount} expanded nodes · click any group box to toggle.`;
+          };
+        }
+        if (pendingLayer) {
+          const toActivate = pendingLayer;
+          pendingLayer = null;
+          const btnMap = { drift: driftPill, bridges: bridgePill, tangles: tanglePill };
+          if (btnMap[toActivate]) {
+            layerState[toActivate] = true;
+            btnMap[toActivate].classList.add('is-active');
+            btnMap[toActivate].setAttribute('aria-pressed', 'true');
+            applyLayers();
+          }
+        }
         state.cy = cy;
+        if (state.pendingGraphViewport && state.pendingGraphViewport.context === selectedContext) {
+          try { cy.viewport(state.pendingGraphViewport); } catch (_) { }
+          state.pendingGraphViewport = null;
+        }
         expandedDialog = dialog;
         dialog.addEventListener('close', () => {
           if (!active()) return;
@@ -3553,7 +4973,16 @@
           cy.elements().not(matches.union(matches.neighborhood())).not(':parent').addClass('dimmed');
           matches.addClass('map-active');
         });
-        cy.on('tap', 'node', event => selectNode(event.target.id()));
+        cy.on('tap', 'node', event => {
+          const targetId = event.target.id();
+          if (isCommunityMode && (targetId.startsWith('compound:community:') || targetId === 'compound:external')) {
+            if (collapsedCommunities.has(targetId)) collapsedCommunities.delete(targetId);
+            else collapsedCommunities.add(targetId);
+            rebuildCommunityView?.();
+            return;
+          }
+          selectNode(targetId);
+        });
         cy.on('tap', 'edge', event => safe(() => {
           const item = event.target.data();
           const actions = (item.properties?.evidence ?? []).slice(0, 8).map(reference => ({
@@ -3603,31 +5032,13 @@
         if (!env.signal.aborted && context.value === selected) await load(true);
       }));
       scope.addEventListener('change', () => safe(() => { resetFocus(); resetRealization(); return load(); }));
+      groupBy.addEventListener('change', () => safe(() => load()));
       projection.addEventListener('change', () => safe(() => load()));
       depth.addEventListener('change', () => safe(() => load()));
       layout.addEventListener('change', () => state.cy?.layout(layoutConfig(layout.value)).run());
       env.signal.addEventListener('abort', releaseCanvas, { once: true });
       await setScope();
       return { node, after: () => safe(() => load(!focus.scope)) };
-    },
-    async ai(env) {
-      // AI Pipeline view — surfaces the pipeline panel from the HTML.
-      // The actual diagnosis/repair content is triggered from the Rules tab
-      // via "Diagnose finding" actions; this view just presents the shell.
-      const node = document.createElement('div');
-      const pipelineContent = document.getElementById('ai-pipeline-content');
-      if (pipelineContent) {
-        // Clone the current pipeline content so it shows in the tab panel
-        node.appendChild(pipelineContent.cloneNode(true));
-      }
-      // Show a contextual guide if no diagnosis is in progress
-      const existing = node.querySelector('.empty');
-      if (!existing) {
-        node.append(
-          (() => { const d = document.createElement('div'); d.className = 'empty'; d.innerHTML = '<h3>No finding selected</h3><p>Open the <strong>Rules</strong> tab, inspect a violation finding, and choose <em>Diagnose finding</em> to start the AI pipeline.</p>'; return d; })()
-        );
-      }
-      return { node, status: 'AI Pipeline — Diagnosis · Repair · Verification' };
     },
     async connections(env) {
       const node = card('Cross-language connections', 'Trace links between code and contracts. Candidate links still need evidence to confirm their targets.');
@@ -3662,6 +5073,12 @@
             badge(candidate ? 'Candidate' : 'Recorded'));
         }, 'No connections in this capture', 'The available analysis has no cross-language connection records for this snapshot.');
       return node;
+    },
+    advisory(env) {
+      if (window.EvoCommunityAdvisory?.renderAdvisoryView) {
+        return window.EvoCommunityAdvisory.renderAdvisoryView(env, api);
+      }
+      return empty('Advisory links unavailable', 'The advisory overlay module could not be loaded.');
     },
     insights(env) {
       const root = el('div', 'insights-view');
@@ -3704,20 +5121,40 @@
           const data = await api('/graphs/' + env.graph + '/architecture-insights', { request, arguments: { topN: 10 } }, signal);
           if (signal.aborted) return;
           status.textContent = '';
-          exports.append(btn('Download report', () => {
-            downloadBlob(new Blob([data.markdownReport], { type: 'text/markdown;charset=utf-8' }), 'architecture-insights.md');
-          }));
+          exports.append(
+            btn('Download report', () => {
+              downloadBlob(new Blob([data.markdownReport], { type: 'text/markdown;charset=utf-8' }), 'architecture-insights.md');
+            }),
+            btn('Architecture Wiki / Dossier', () => {
+              window.EvoCommunityAdvisory?.openWikiDossierModal?.(api, env.graph, context);
+            }, 'button primary')
+          );
           const summary = data.summary;
           const stats = el('div', 'stats');
           const statRows = [
-            ['Entities', summary.analyzedEntities], ['Dependencies', summary.internalDependencies],
-            ['Cyclic groups', summary.tangleCount], ['Max. transitive dependents', summary.maxBlastRadius]
+            ['Entities', summary.analyzedEntities, null], ['Dependencies', summary.internalDependencies, null],
+            ['Cyclic groups', summary.tangleCount, 'Strongly connected dependency loops that couple components bidirectionally.'],
+            ['Max. transitive dependents', summary.maxBlastRadius, 'Largest blast radius reachable from any single component in this scope.']
           ];
-          if (summary.abstractness != null) statRows.push(['Abstractness (A)', Number(summary.abstractness).toFixed(2)]);
-          if (summary.distanceFromMainSequence != null) statRows.push(['Main-Sequence Dist. (D)', Number(summary.distanceFromMainSequence).toFixed(2)]);
-          if (summary.edgeSdpViolationCount != null) statRows.push(['SDP Violations', summary.edgeSdpViolationCount]);
-          for (const [label, value] of statRows) stats.append(append(el('div', 'stat'), el('span', '', label), el('strong', '', value)));
+          if (summary.abstractness != null) statRows.push(['Abstractness (A)', Number(summary.abstractness).toFixed(2), M.explainMetric?.('A')?.plain]);
+          if (summary.distanceFromMainSequence != null) statRows.push(['Main-Sequence Dist. (D)', Number(summary.distanceFromMainSequence).toFixed(2), M.explainMetric?.('D')?.plain]);
+          if (summary.edgeSdpViolationCount != null) statRows.push(['SDP Violations', summary.edgeSdpViolationCount, M.explainMetric?.('SDP')?.plain]);
+          if (Array.isArray(data.communities)) statRows.push(['Leiden Communities', `${data.communities.length} (Q=${Number(data.communityModularity ?? 0).toFixed(2)})`, 'Deterministic Traag et al. (2019) Leiden structural communities.']);
+          if (Array.isArray(data.misplacedTypes)) statRows.push(['Misplaced Types (Drift)', data.misplacedTypes.length, 'Types whose structural dependencies pull them outside their declared package.']);
+          for (const [label, value, help] of statRows) {
+            const tile = append(el('div', 'stat'), el('span', '', label), el('strong', '', value));
+            if (help) tile.title = help;
+            stats.append(tile);
+          }
           body.append(stats);
+
+          window.EvoCommunityAdvisory?.renderCommunitiesInsights?.(body, data, {
+            scope: sc,
+            openCommunityInMap: (seed, targetScope) => {
+              state.graphFocus = { seed: seed || null, scope: targetScope, groupBy: 'COMMUNITY', context, relationshipKinds: relationshipKinds(targetScope) };
+              return loadTab('graph');
+            }
+          });
 
           if (Array.isArray(data.sdpViolations) && data.sdpViolations.length) {
             const sdpCard = card('Stable Dependencies Principle (SDP) Violations', 'Edges pointing from a more stable package/component toward a less stable one (Δ instability > 0).');
@@ -3770,17 +5207,39 @@
           const hotspots = card('Highest-impact entities', 'Prioritized using observed coupling, cycle membership and available policy findings.');
           if (data.hotspots.length) {
             const maxRisk = Math.max(1, ...data.hotspots.map(h => h.hotspotScore || 0));
-            hotspots.append(table(['Entity', 'Archetype', 'Risk score', 'Dependents', 'Direct in / out'], data.hotspots.map(h => {
-              const fill = el('div', 'hotspot-risk-fill');
-              fill.style.width = Math.min(100, Math.round(((h.hotspotScore || 0) / maxRisk) * 100)) + '%';
-              const riskCell = append(el('div', 'hotspot-risk-wrap'), el('span', '', h.hotspotScore), append(el('div', 'hotspot-risk-bar'), fill));
-              return append(el('tr'),
-                append(el('td'), btn(h.label, () => openGraph(h.identity, sc), 'text-button')),
-                el('td', '', h.archetype || '—'),
-                append(el('td'), riskCell),
-                el('td', '', h.transitiveDependents),
-                el('td', '', h.fanIn + ' / ' + h.fanOut));
-            })));
+            const conn = state.connections.find(c => c.setup === env.setup);
+            const setupRec = state.setups.find(s => s.id === env.setup);
+            const isGh = Boolean(window.EvoGitHubHub?.isGitHubConnection?.(conn, setupRec));
+            const canIssue = Boolean(isGh && state.capabilities?.githubEnterpriseEnabled && window.EvoGitHubEnterprise?.openCreateIssueModal);
+            hotspots.append(table(
+              canIssue ? ['Entity', 'Archetype', 'Risk score', 'Dependents', 'Direct in / out', 'Action'] : ['Entity', 'Archetype', 'Risk score', 'Dependents', 'Direct in / out'],
+              data.hotspots.map(h => {
+                const fill = el('div', 'hotspot-risk-fill');
+                fill.style.width = Math.min(100, Math.round(((h.hotspotScore || 0) / maxRisk) * 100)) + '%';
+                const riskCell = append(el('div', 'hotspot-risk-wrap'), el('span', '', h.hotspotScore), append(el('div', 'hotspot-risk-bar'), fill));
+                const owners = Array.isArray(h.owners) && h.owners.length ? h.owners : (h.path ? window.EvoGitHubEnterprise?.ownersForPath?.(env.graph, h.path) : []);
+                const entityCell = append(el('td'), append(el('div', 'gh-owner-row'),
+                  btn(h.label, () => openGraph(h.identity, sc), 'text-button'),
+                  window.EvoGitHubEnterprise?.makeOwnerPills?.(owners)
+                ));
+                const cols = [
+                  entityCell,
+                  el('td', '', h.archetype || '—'),
+                  append(el('td'), riskCell),
+                  el('td', '', h.transitiveDependents),
+                  el('td', '', h.fanIn + ' / ' + h.fanOut)
+                ];
+                if (canIssue) {
+                  cols.push(append(el('td'), btn('Create Issue', () => window.EvoGitHubEnterprise.openCreateIssueModal(env.setup, {
+                    graph: env.graph,
+                    hotspotSymbol: h.label || h.identity,
+                    title: `Refactor high-risk hotspot ${h.label}`,
+                    filePath: h.path || ''
+                  }), 'button subtle')));
+                }
+                return append(el('tr'), ...cols);
+              })
+            ));
           } else hotspots.append(el('p', 'small muted', 'No project entities in this projection.'));
           body.append(hotspots);
 
@@ -3842,7 +5301,12 @@
       presetBox.append(chip);
     }
   }
-  document.querySelectorAll('[data-action=connect]').forEach(n => n.addEventListener('click', () => { $('connect-title').textContent = 'Connect your code'; $('connect-error').hidden = true; $('connect-dialog').showModal(); }));
+  document.querySelectorAll('[data-action=connect]').forEach(n => n.addEventListener('click', () => {
+    $('connect-title').textContent = 'Connect your code';
+    $('connect-error').hidden = true;
+    window.EvoGitHubHub?.setConnectTab?.('manual');
+    $('connect-dialog').showModal();
+  }));
   $('policy-example').addEventListener('click', () => { if ($('repository-policy').value.trim()) { $('connect-error').textContent = 'The policy field already contains rules. Clear it before inserting an example.'; $('connect-error').hidden = false; return; } $('repository-policy').value = 'schema: architecture-policy:v1\nid: project.cycles\nversion: "1"\nrules:\n  - id: project.no-cycles\n    version: "1"\n    kind: ACYCLIC\n    severity: ERROR\n    scope: TYPE\n    relationships: [graph.depends-on]\n    within: {origins: [PROJECT]}\n'; });
   document.querySelectorAll('[data-action=refresh]').forEach(n => n.addEventListener('click', () => safe(async () => {
     await connectServer();
@@ -3856,8 +5320,13 @@
   $('disconnect-form')?.addEventListener('submit', disconnectRepository);
   $('analysis-mode').addEventListener('change', () => { state.retry = null; syncRunControls(); });
   $('job-timing').addEventListener('toggle', () => { if ($('job-timing').open) loadTelemetry(); });
+  $('run-details').addEventListener('toggle', () => { if ($('run-details').open) requestAnimationFrame(syncStepTrackGeometry); });
+  $('job-events').addEventListener('toggle', () => requestAnimationFrame(syncStepTrackGeometry), true);
+  if (typeof ResizeObserver === 'function') new ResizeObserver(() => syncStepTrackGeometry()).observe($('job-events'));
   $('context').addEventListener('focus', labelContextOptions);
   $('context').addEventListener('pointerenter', labelContextOptions);
+  $('context-picker-shell')?.addEventListener('focusin', labelContextOptions);
+  $('context-picker-shell')?.addEventListener('pointerenter', labelContextOptions);
   $('analyze').addEventListener('click', () => safe(() => submit()));
   $('analyze-force').addEventListener('click', () => safe(() => submit(true)));
   $('cancel-job').addEventListener('click', () => safe(async () => {
@@ -3866,7 +5335,7 @@
     if (selectedJob(id, generation) && job.revision >= state.job.revision) { state.job = job; renderJob(job); }
   }));
   $('history-more').addEventListener('click', () => safe(() => refreshHistory(true)));
-  $('context').addEventListener('change', () => { state.graphFocus = null; state.explorer = null; state.metricSubject = null; state.context = $('context').value; safe(() => loadTab(state.tab)); });
+  $('context').addEventListener('change', () => { state.graphFocus = null; state.explorer = null; state.metricSubject = null; state.context = $('context').value; notifyContextsUpdated(); safe(() => loadTab(state.tab)); });
   $('tabs').addEventListener('click', event => { const tab = event.target.closest('[data-tab]'); if (tab) safe(() => loadTab(tab.dataset.tab)); });
   $('tabs').addEventListener('keydown', event => {
     if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
@@ -3884,15 +5353,8 @@
     if ($('repository-workspace').hidden) return;
     const tag = document.activeElement?.tagName;
     const inInput = ['INPUT', 'TEXTAREA', 'SELECT'].includes(tag) || document.activeElement?.isContentEditable;
-    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
-      if (!$('connect-dialog').open && !$('inspector').open) {
-        event.preventDefault();
-        window.EvoCommandPalette?.open?.();
-      }
-      return;
-    }
     if (event.key === '/' && !inInput && !event.ctrlKey && !event.metaKey) {
-      if (!$('analysis-workspace').hidden && !$('connect-dialog').open && !$('inspector').open) {
+      if (!$('analysis-workspace').hidden && !$('connect-dialog').open && !$('inspector').open && !$('github-session-dialog')?.open && !$('github-auth-dialog')?.open && !$('workspace-account-dialog')?.open) {
         event.preventDefault();
         if (state.tab !== 'structure') safe(() => loadTab('structure'));
         $('search').focus();
@@ -3920,15 +5382,23 @@
     document.documentElement.dataset.theme = theme;
     refreshGraphTheme?.();
     const label = 'Switch to ' + (theme === 'dark' ? 'light' : 'dark') + ' theme';
-    const paths = theme === 'dark' ? '<circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/>' : '<path d="M20 15.5A8 8 0 0 1 8.5 4 8 8 0 1 0 20 15.5Z"/>';
-    $('theme-toggle').innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true">' + paths + '</svg>';
-    $('theme-toggle').className = 'icon-button';
-    $('theme-toggle').setAttribute('aria-label', label);
-    $('theme-toggle').setAttribute('data-tooltip', '');
+    const sun = '<svg class="u219-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/></svg>';
+    const moon = '<svg class="u219-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 15.5A8 8 0 0 1 8.5 4 8 8 0 1 0 20 15.5Z"/></svg>';
+    const toggle = $('theme-toggle');
+    toggle.innerHTML = sun + moon;
+    toggle.className = 'icon-button u219-tg' + (theme === 'light' ? ' is-light' : '');
+    toggle.setAttribute('aria-label', label);
+    toggle.setAttribute('aria-pressed', String(theme === 'light'));
+    toggle.setAttribute('data-tooltip', '');
     try { localStorage.setItem('evo_theme', theme); } catch (_) { }
   }
   let theme = 'dark'; try { theme = localStorage.getItem('evo_theme') === 'light' ? 'light' : 'dark'; } catch (_) { } applyTheme(theme);
-  $('theme-toggle').addEventListener('click', () => { applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'); if (state.tab === 'graph' && state.context) safe(() => loadTab('graph')); });
+  $('theme-toggle').addEventListener('click', () => {
+    const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+    window.EvoThemeReveal?.trigger?.($('theme-toggle'), next, () => {
+      applyTheme(next);
+    }) || applyTheme(next);
+  });
   function closeMobileSidebar() {
     const shell = document.querySelector('.app-shell');
     if (!shell.classList.contains('mobile-sidebar-open')) return;
@@ -3957,6 +5427,14 @@
   }
   window.addEventListener('resize', () => { state.cy?.resize(); syncSidebarState(); });
   syncSidebarState();
+  $('open-wiki-dossier')?.addEventListener('click', () => {
+    $('workspace-tools').open = false;
+    void window.EvoCommunityAdvisory?.openWikiDossierModal?.(api, state.graph, state.context);
+  });
+  $('open-mcp-setup')?.addEventListener('click', () => {
+    $('workspace-tools').open = false;
+    void window.EvoCommunityAdvisory?.openMcpSetupModal?.(api);
+  });
   window.EvoWorkbench = {
     async searchSymbols(query) {
       if (!state.graph || !state.context) return [];
@@ -3983,10 +5461,25 @@
     askAiPrompt(prompt) {
       state.chatSeedPrompt = prompt || '';
       return loadTab('architecture-chat');
+    },
+    openWikiDossier() {
+      return window.EvoCommunityAdvisory?.openWikiDossierModal?.(api, state.graph, state.context);
+    },
+    openMcpSetup() {
+      return window.EvoCommunityAdvisory?.openMcpSetupModal?.(api);
     }
   };
-  window.EvoApp = { state, api, loadTab, selectRepo, selectJob, configureRules, inspectFinding, inspectDiagnosis, inspectRepairProposal, inspectRepairVerification, selectRemediationFinding };
-  $('disconnect-dialog').addEventListener('close', () => $('run-options').querySelector('summary').focus());
+  window.EvoApp = { state, api, inspect, loadTab, selectRepo, selectJob, configureRules, inspectFinding, inspectDiagnosis, inspectRepairProposal, inspectRepairVerification, downloadBlob, connectAndAnalyze, submit };
+  window.EvoGitHubAuth?.onChange?.(({ changedUser }) => {
+    if (changedUser) void safe(handleTenantSwitch);
+    else void window.EvoGitHubHub?.refreshAuthStatus?.();
+  });
+  $('disconnect-dialog').addEventListener('close', () => {
+    const options = $('run-options');
+    if (options && !options.hidden && !$('run-controls').hidden) options.querySelector('summary')?.focus();
+    else document.querySelector('[data-action=connect]')?.focus() || $('repository-title')?.focus();
+  });
+  window.addEventListener('pagehide', closeJobStream);
   window.addEventListener('hashchange', updateWorkspaceTool);
   safe(connectServer);
 })();

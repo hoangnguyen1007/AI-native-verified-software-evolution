@@ -44,6 +44,6 @@ class NativeEvidenceSigningFixtureTest {
         Map<String,Object> raw;try(var in=data.content().open(issued.envelope())){raw=new TreeMap<>(GraphJson.object(GraphJson.read(new String(in.readAllBytes(),StandardCharsets.UTF_8),GraphJson.Limits.defaults())));}
         raw.put("validatorSignature",raw.get("controllerSignature"));var forged=put(data.content(),raw);assertThrows(IOException.class,()->fixture.replay(forged));
         String hex=data.closure().digest().value().substring(7);Files.writeString(temp.resolve("sha256").resolve(hex.substring(0,2)).resolve(hex.substring(2)),"changed fixture input");
-        assertThrows(IOException.class,()->issued.verified().current());assertThrows(IOException.class,()->fixture.replay(issued.envelope()));
+        assertFalse(issued.verified().current(),"Tampered CAS blob must fail currency verification");assertThrows(IOException.class,()->fixture.replay(issued.envelope()));
     }
 }

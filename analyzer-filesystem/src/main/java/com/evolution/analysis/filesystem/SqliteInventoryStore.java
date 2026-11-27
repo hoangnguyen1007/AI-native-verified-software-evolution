@@ -38,9 +38,20 @@ public final class SqliteInventoryStore implements InventoryReader, JobJournal, 
     private PreparedStatement getJobRequestStmt;
     private PreparedStatement upsertInventoryStmt;
     private PreparedStatement deleteInventoryStmt;
+    private PreparedStatement cloneBaseInventoryStmt;
     private PreparedStatement upsertJobStmt;
     private PreparedStatement insertSealStmt;
+    private PreparedStatement upsertRepoHeadStmt;
+    private PreparedStatement upsertGitOidStmt;
     private PreparedStatement upsertMetaStmt;
+
+    public record SealedHead(
+            String revision,
+            RepositoryIdentity repository,
+            ContentDigest selection,
+            ContentDigest inventory,
+            long sealedAtMillis,
+            Optional<SnapshotIdentity> compatibleV1Snapshot) {}
 
     SqliteInventoryStore(Path root, StreamingContentStore content, Runnable afterLogPublication) throws IOException {
         this(root, content);
@@ -99,7 +110,12 @@ public final class SqliteInventoryStore implements InventoryReader, JobJournal, 
                 sql.execute("CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY,request TEXT NOT NULL,revision INTEGER NOT NULL,state TEXT NOT NULL,reason TEXT NOT NULL,digest TEXT,size INTEGER,sequence INTEGER NOT NULL)");
                 sql.execute("CREATE INDEX IF NOT EXISTS jobs_request ON jobs(request)");
                 sql.execute("CREATE TABLE IF NOT EXISTS seals(revision TEXT PRIMARY KEY,repository TEXT NOT NULL,selection TEXT NOT NULL,digest TEXT NOT NULL,entries INTEGER,files INTEGER,bytes INTEGER,excluded INTEGER,v1snapshot TEXT,v1content TEXT)");
+                sql.execute("CREATE TABLE IF NOT EXISTS repo_heads(revision TEXT PRIMARY KEY,repository TEXT NOT NULL,selection TEXT NOT NULL,sealed_seq INTEGER NOT NULL,sealed_at_ms INTEGER NOT NULL,digest TEXT NOT NULL,v1snapshot TEXT)");
+                sql.execute("CREATE INDEX IF NOT EXISTS repo_heads_lookup ON repo_heads(repository,selection,sealed_seq DESC)");
+                sql.execute("CREATE TABLE IF NOT EXISTS git_oid_map(git_oid TEXT PRIMARY KEY,digest TEXT NOT NULL,size INTEGER NOT NULL)");
                 sql.execute("CREATE TABLE IF NOT EXISTS journal_meta(id INTEGER PRIMARY KEY CHECK(id=1),sequence INTEGER NOT NULL,head TEXT NOT NULL)");
+                // Upgrade backfill for existing v2 derived databases opened cleanly without replay (monotonic ROWID breaks ties).
+                sql.execute("INSERT OR IGNORE INTO repo_heads(revision,repository,selection,sealed_seq,sealed_at_ms,digest,v1snapshot) SELECT revision,repository,selection,rowid,0,digest,v1snapshot FROM seals");
             }
             prepareStatements(false);
             Path operations = StreamingContentStore.directory(this.root.resolve("operations"));
@@ -129,8 +145,11 @@ public final class SqliteInventoryStore implements InventoryReader, JobJournal, 
         if (!ro) {
             upsertInventoryStmt = db.prepareStatement("INSERT INTO inventory VALUES(?,?,?,?,?,?,?) ON CONFLICT(revision,k) DO UPDATE SET v=excluded.v,stamp=excluded.stamp,kind=excluded.kind,status=excluded.status,v1key=excluded.v1key");
             deleteInventoryStmt = db.prepareStatement("DELETE FROM inventory WHERE revision=? AND k=?");
+            cloneBaseInventoryStmt = db.prepareStatement("INSERT INTO inventory(revision,k,v,stamp,kind,status,v1key) SELECT ?,k,v,stamp,kind,status,v1key FROM inventory WHERE revision=?");
             upsertJobStmt = db.prepareStatement("INSERT INTO jobs VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision,state=excluded.state,reason=excluded.reason,digest=excluded.digest,size=excluded.size");
             insertSealStmt = db.prepareStatement("INSERT INTO seals VALUES(?,?,?,?,?,?,?,?,?,?)");
+            upsertRepoHeadStmt = db.prepareStatement("INSERT INTO repo_heads VALUES(?,?,?,?,?,?,?) ON CONFLICT(revision) DO UPDATE SET repository=excluded.repository,selection=excluded.selection,sealed_seq=excluded.sealed_seq,sealed_at_ms=excluded.sealed_at_ms,digest=excluded.digest,v1snapshot=excluded.v1snapshot");
+            upsertGitOidStmt = db.prepareStatement("INSERT INTO git_oid_map VALUES(?,?,?) ON CONFLICT(git_oid) DO UPDATE SET digest=excluded.digest,size=excluded.size");
             upsertMetaStmt = db.prepareStatement("INSERT INTO journal_meta(id,sequence,head) VALUES(1,?,?) ON CONFLICT(id) DO UPDATE SET sequence=excluded.sequence,head=excluded.head");
         }
     }
@@ -138,13 +157,15 @@ public final class SqliteInventoryStore implements InventoryReader, JobJournal, 
     private void closeStatements() {
         for (PreparedStatement stmt : Arrays.asList(
                 observationStmt, hasUncapturedStmt, pageStmt, observationPageStmt, getSealStmt, getJobStmt, getJobRequestStmt,
-                upsertInventoryStmt, deleteInventoryStmt, upsertJobStmt, insertSealStmt, upsertMetaStmt)) {
+                upsertInventoryStmt, deleteInventoryStmt, cloneBaseInventoryStmt, upsertJobStmt, insertSealStmt,
+                upsertRepoHeadStmt, upsertGitOidStmt, upsertMetaStmt)) {
             if (stmt != null) {
                 try { stmt.close(); } catch (SQLException ignored) {}
             }
         }
         observationStmt = hasUncapturedStmt = pageStmt = observationPageStmt = getSealStmt = getJobStmt = getJobRequestStmt = null;
-        upsertInventoryStmt = deleteInventoryStmt = upsertJobStmt = insertSealStmt = upsertMetaStmt = null;
+        upsertInventoryStmt = deleteInventoryStmt = cloneBaseInventoryStmt = upsertJobStmt = insertSealStmt = null;
+        upsertRepoHeadStmt = upsertGitOidStmt = upsertMetaStmt = null;
     }
 
     private void resetTables() throws SQLException {
@@ -152,6 +173,8 @@ public final class SqliteInventoryStore implements InventoryReader, JobJournal, 
             sql.execute("DELETE FROM inventory");
             sql.execute("DELETE FROM jobs");
             sql.execute("DELETE FROM seals");
+            sql.execute("DELETE FROM repo_heads");
+            sql.execute("DELETE FROM git_oid_map");
             sql.execute("DELETE FROM journal_meta");
         }
     }
@@ -204,7 +227,7 @@ public final class SqliteInventoryStore implements InventoryReader, JobJournal, 
                     }
                 }
             }
-            try (var result = sql.executeQuery("PRAGMA user_version")) { if (result.next() && result.getInt(1) > 2) throw new IOException("UNSUPPORTED_METADATA_SCHEMA"); }
+            try (var result = sql.executeQuery("PRAGMA user_version")) { if (result.next() && result.getInt(1) > 3) throw new IOException("UNSUPPORTED_METADATA_SCHEMA"); }
             // Authoritative durability lives in fsynced operations/*.commit + CAS blobs; SQLite is a rebuildable derived index.
             sql.execute("PRAGMA journal_mode=WAL");
             sql.execute("PRAGMA synchronous=NORMAL");
@@ -212,7 +235,7 @@ public final class SqliteInventoryStore implements InventoryReader, JobJournal, 
             sql.execute("PRAGMA temp_store=MEMORY");
             sql.execute("PRAGMA cache_size=-16384");
             sql.execute("PRAGMA application_id=" + 0x45564f32);
-            sql.execute("PRAGMA user_version=2");
+            sql.execute("PRAGMA user_version=3");
         }
     }
 
@@ -294,6 +317,9 @@ public final class SqliteInventoryStore implements InventoryReader, JobJournal, 
                     if (count < 0 || count > MAX_ENTRY_BATCH) throw new IOException("CORRUPT_OPERATION");
                     var p = upsertInventoryStmt;
                     p.clearBatch();
+                    var g = upsertGitOidStmt;
+                    g.clearBatch();
+                    boolean hasGitOids = false;
                     for (int i = 0; i < count; i++) {
                         String stamp = InventoryCodec.text(in); int length = in.readInt();
                         if (length < 0 || length > 8_388_608) throw new IOException("CORRUPT_OPERATION");
@@ -302,8 +328,14 @@ public final class SqliteInventoryStore implements InventoryReader, JobJournal, 
                         p.setString(1, revision); p.setString(2, e.path().key()); p.setBytes(3, bytes);
                         p.setString(4, stamp); p.setString(5, e.kind().name()); p.setString(6, e.disposition().name());
                         p.setString(7, v1key(e.path())); p.addBatch();
+                        if (e.disposition() == InventoryEntry.Disposition.ACQUIRED && e.content().isPresent() && isGitOid(stamp)) {
+                            var h = e.content().orElseThrow();
+                            g.setString(1, stamp); g.setString(2, h.digest().value()); g.setLong(3, h.size()); g.addBatch();
+                            hasGitOids = true;
+                        }
                     }
                     p.executeBatch();
+                    if (hasGitOids) g.executeBatch();
                 }
                 case "job" -> {
                     String id = InventoryCodec.text(in), request = InventoryCodec.text(in); long revision = in.readLong(); String state = InventoryCodec.text(in), reason = InventoryCodec.text(in); var h = InventoryCodec.handle(in);
@@ -311,17 +343,56 @@ public final class SqliteInventoryStore implements InventoryReader, JobJournal, 
                     p.setString(1, id); p.setString(2, request); p.setLong(3, revision); p.setString(4, state); p.setString(5, reason); p.setString(6, h.map(v -> v.digest().value()).orElse(null));
                     if (h.isPresent()) p.setLong(7, h.orElseThrow().size()); else p.setNull(7, Types.INTEGER); p.setLong(8, seq); p.executeUpdate();
                 }
-                case "seal" -> {
+                case "seal", "seal_v3" -> {
                     String revision = InventoryCodec.text(in);
+                    String repository = InventoryCodec.text(in);
+                    String selection = InventoryCodec.text(in);
+                    String digest = InventoryCodec.text(in);
+                    long entriesCount = in.readLong(), filesCount = in.readLong(), bytesCount = in.readLong(), excludedCount = in.readLong();
+                    String v1snapshot = InventoryCodec.optional(in).orElse(null);
+                    String v1content = InventoryCodec.optional(in).orElse(null);
+                    long sealedAtMs = "seal_v3".equals(type) ? in.readLong() : 0L;
                     var p = insertSealStmt;
-                    p.setString(1, revision); for (int i = 2; i <= 4; i++) p.setString(i, InventoryCodec.text(in));
-                    for (int i = 5; i <= 8; i++) p.setLong(i, in.readLong()); p.setString(9, InventoryCodec.optional(in).orElse(null)); p.setString(10, InventoryCodec.optional(in).orElse(null)); p.executeUpdate();
+                    p.setString(1, revision); p.setString(2, repository); p.setString(3, selection); p.setString(4, digest);
+                    p.setLong(5, entriesCount); p.setLong(6, filesCount); p.setLong(7, bytesCount); p.setLong(8, excludedCount);
+                    p.setString(9, v1snapshot); p.setString(10, v1content); p.executeUpdate();
+                    var rh = upsertRepoHeadStmt;
+                    rh.setString(1, revision); rh.setString(2, repository); rh.setString(3, selection);
+                    rh.setLong(4, seq); rh.setLong(5, sealedAtMs); rh.setString(6, digest); rh.setString(7, v1snapshot);
+                    rh.executeUpdate();
+                }
+                case "clone_base" -> {
+                    String targetRevision = InventoryCodec.text(in);
+                    String baseRevision = InventoryCodec.text(in);
+                    String expectedDigest = InventoryCodec.text(in);
+                    getSealStmt.setString(1, baseRevision);
+                    try (var r = getSealStmt.executeQuery()) {
+                        if (!r.next() || !expectedDigest.equals(r.getString("digest"))) {
+                            throw new IOException("BASE_REVISION_MISSING");
+                        }
+                    }
+                    cloneBaseInventoryStmt.setString(1, targetRevision);
+                    cloneBaseInventoryStmt.setString(2, baseRevision);
+                    cloneBaseInventoryStmt.executeUpdate();
                 }
                 case "delete_entry" -> {
                     String revision = InventoryCodec.text(in);
                     String key = InventoryCodec.text(in);
                     var p = deleteInventoryStmt;
                     p.setString(1, revision); p.setString(2, key); p.executeUpdate();
+                }
+                case "delete_entries" -> {
+                    String revision = InventoryCodec.text(in);
+                    int count = in.readInt();
+                    if (count < 1 || count > MAX_ENTRY_BATCH) throw new IOException("CORRUPT_OPERATION");
+                    var p = deleteInventoryStmt;
+                    p.clearBatch();
+                    for (int i = 0; i < count; i++) {
+                        p.setString(1, revision);
+                        p.setString(2, InventoryCodec.text(in));
+                        p.addBatch();
+                    }
+                    p.executeBatch();
                 }
                 default -> throw new IOException("UNKNOWN_OPERATION");
             }
@@ -353,6 +424,123 @@ public final class SqliteInventoryStore implements InventoryReader, JobJournal, 
         var bytes = new ByteArrayOutputStream(); try (var out = new DataOutputStream(bytes)) {
             InventoryCodec.text(out, "delete_entry"); InventoryCodec.text(out, revision); InventoryCodec.text(out, path.key());
         } commit(bytes.toByteArray());
+    }
+
+    public synchronized void deleteEntries(String revision, List<LogicalPath> paths) throws IOException {
+        if (manifest(revision).isPresent()) throw new IOException("INVENTORY_ALREADY_SEALED");
+        if (paths.isEmpty() || paths.size() > MAX_ENTRY_BATCH) throw new IllegalArgumentException("Invalid delete batch");
+        var bytes = new ByteArrayOutputStream(paths.size() * 64);
+        try (var out = new DataOutputStream(bytes)) {
+            InventoryCodec.text(out, "delete_entries");
+            InventoryCodec.text(out, revision);
+            out.writeInt(paths.size());
+            for (var path : paths) InventoryCodec.text(out, path.key());
+        }
+        commit(bytes.toByteArray());
+    }
+
+    /** Atomically clones all inventory rows of a sealed base revision into {@code targetRevision} in one journal commit. */
+    public synchronized void cloneBase(String targetRevision, String baseRevision, ContentDigest baseInventoryDigest) throws IOException {
+        if (manifest(targetRevision).isPresent()) throw new IOException("INVENTORY_ALREADY_SEALED");
+        var base = manifest(baseRevision);
+        if (base.isEmpty() || !base.orElseThrow().inventory().equals(baseInventoryDigest)) {
+            throw new IOException("BASE_REVISION_MISSING");
+        }
+        var bytes = new ByteArrayOutputStream(256);
+        try (var out = new DataOutputStream(bytes)) {
+            InventoryCodec.text(out, "clone_base");
+            InventoryCodec.text(out, targetRevision);
+            InventoryCodec.text(out, baseRevision);
+            InventoryCodec.text(out, baseInventoryDigest.value());
+        }
+        commit(bytes.toByteArray());
+    }
+
+    public synchronized Optional<SealedHead> latestSealed(RepositoryIdentity repository, ContentDigest selection) throws IOException {
+        try (var p = db.prepareStatement("SELECT revision,repository,selection,digest,sealed_at_ms,v1snapshot FROM repo_heads WHERE repository=? AND selection=? ORDER BY sealed_seq DESC LIMIT 1")) {
+            p.setString(1, repository.value());
+            p.setString(2, selection.value());
+            try (var r = p.executeQuery()) {
+                if (!r.next()) return Optional.empty();
+                return Optional.of(readSealedHead(r));
+            }
+        } catch (SQLException failure) {
+            if (readOnly && String.valueOf(failure.getMessage()).contains("no such table")) return Optional.empty();
+            throw new IOException("INVENTORY_UNAVAILABLE", failure);
+        }
+    }
+
+    public synchronized Optional<SealedHead> sealedHead(String revision) throws IOException {
+        try (var p = db.prepareStatement("SELECT revision,repository,selection,digest,sealed_at_ms,v1snapshot FROM repo_heads WHERE revision=?")) {
+            p.setString(1, revision);
+            try (var r = p.executeQuery()) {
+                if (!r.next()) return Optional.empty();
+                return Optional.of(readSealedHead(r));
+            }
+        } catch (SQLException failure) {
+            if (readOnly && String.valueOf(failure.getMessage()).contains("no such table")) return Optional.empty();
+            throw new IOException("INVENTORY_UNAVAILABLE", failure);
+        }
+    }
+
+    private static SealedHead readSealedHead(ResultSet r) throws SQLException {
+        return new SealedHead(
+                r.getString("revision"),
+                new RepositoryIdentity(r.getString("repository")),
+                new ContentDigest(r.getString("selection")),
+                new ContentDigest(r.getString("digest")),
+                r.getLong("sealed_at_ms"),
+                Optional.ofNullable(r.getString("v1snapshot")).map(SnapshotIdentity::new));
+    }
+
+    public synchronized Optional<ContentHandle> findByGitOid(String gitOid) throws IOException {
+        if (!isGitOid(gitOid)) return Optional.empty();
+        try (var p = db.prepareStatement("SELECT digest,size FROM git_oid_map WHERE git_oid=?")) {
+            p.setString(1, gitOid);
+            try (var r = p.executeQuery()) {
+                if (!r.next()) return Optional.empty();
+                return Optional.of(new ContentHandle(new ContentDigest(r.getString(1)), r.getLong(2)));
+            }
+        } catch (SQLException failure) {
+            if (readOnly && String.valueOf(failure.getMessage()).contains("no such table")) return Optional.empty();
+            throw new IOException("INVENTORY_UNAVAILABLE", failure);
+        }
+    }
+
+    synchronized Map<String, Observation> loadObservationsByKey(String revision) throws IOException {
+        var map = new HashMap<String, Observation>(2048);
+        try (var p = db.prepareStatement("SELECT k,v,stamp FROM inventory WHERE revision=?")) {
+            p.setString(1, revision);
+            try (var r = p.executeQuery()) {
+                while (r.next()) {
+                    map.put(r.getString(1), new Observation(InventoryCodec.entry(r.getBytes(2)), r.getString(3)));
+                }
+            }
+        } catch (SQLException failure) {
+            throw new IOException("INVENTORY_UNAVAILABLE", failure);
+        }
+        return map;
+    }
+
+    synchronized boolean hasKind(String revision, InventoryEntry.Kind kind) throws IOException {
+        try (var p = db.prepareStatement("SELECT 1 FROM inventory WHERE revision=? AND kind=? LIMIT 1")) {
+            p.setString(1, revision);
+            p.setString(2, kind.name());
+            try (var r = p.executeQuery()) { return r.next(); }
+        } catch (SQLException failure) {
+            throw new IOException("INVENTORY_UNAVAILABLE", failure);
+        }
+    }
+
+    private static boolean isGitOid(String s) {
+        if (s == null) return false;
+        int len = s.length();
+        if (len != 40 && len != 64) return false;
+        for (int i = 0; i < len; i++) {
+            char c = s.charAt(i);
+            if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) return false;
+        }
+        return true;
     }
 
     public synchronized Optional<Observation> observation(String revision, LogicalPath path) throws IOException {
@@ -489,10 +677,11 @@ public final class SqliteInventoryStore implements InventoryReader, JobJournal, 
                     compatible ? Optional.of(old) : Optional.empty());
             var operation = new ByteArrayOutputStream();
             try (var out = new DataOutputStream(operation)) {
-                InventoryCodec.text(out, "seal"); InventoryCodec.text(out, revision); InventoryCodec.text(out, repository.value()); InventoryCodec.text(out, selection.value()); InventoryCodec.text(out, inventory.value());
+                InventoryCodec.text(out, "seal_v3"); InventoryCodec.text(out, revision); InventoryCodec.text(out, repository.value()); InventoryCodec.text(out, selection.value()); InventoryCodec.text(out, inventory.value());
                 out.writeLong(count); out.writeLong(files); out.writeLong(bytes); out.writeLong(excluded);
                 InventoryCodec.optional(out, result.compatibleV1Snapshot().map(SnapshotIdentity::value));
                 InventoryCodec.optional(out, result.compatibleV1Content().map(ContentDigest::value));
+                out.writeLong(System.currentTimeMillis());
             }
             commit(operation.toByteArray());
             return result;

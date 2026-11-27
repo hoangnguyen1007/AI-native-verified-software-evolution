@@ -407,8 +407,32 @@ final class ExplicitImportTypeSolver implements TypeSolver {
 
     private static final Set<String> SYNTHETIC_MISSING_PACKAGES = Set.of("other", "missing", "unavailable");
 
+    static final com.github.javaparser.ast.DataKey<String> UNIT_PATH_KEY = new com.github.javaparser.ast.DataKey<>() {};
+
+    record WildcardUse(String simpleName, Set<String> wildcardPackages, boolean isAnnotation) {}
+
+    /**
+     * Compact, AST-free per-unit recovery observation summary stored in {@link ModuleIncrementalCache.UnitEntry}
+     * so incremental {@code SOURCE_RECOVERY} runs reconstruct exact {@link ExplicitImportTypeSolver} state
+     * without re-parsing clean files (Speedup S6).
+     */
+    record UnitObservation(
+            String unitKey,
+            String unitPackage,
+            Map<String, String> localSimpleToFqn,
+            Set<String> explicitFqns,
+            Set<String> qualifiedTypes,
+            Map<String, Integer> maxTypeArgs,
+            Set<String> interfaceHints,
+            Set<String> annotationHints,
+            List<WildcardUse> wildcardUses) {
+        static final UnitObservation EMPTY = new UnitObservation(
+                "", "", Map.of(), Set.of(), Set.of(), Map.of(), Set.of(), Set.of(), List.of());
+    }
+
     private record PendingWildcardCandidate(
             CompilationUnit unit,
+            String unitKey,
             String unitPackage,
             String simpleName,
             Set<String> wildcardPackages,
@@ -420,6 +444,7 @@ final class ExplicitImportTypeSolver implements TypeSolver {
     private final Set<String> observedInterfaceHints = new HashSet<>();
     private final Set<String> observedAnnotationHints = new HashSet<>();
     private final Map<CompilationUnit, Map<String, String>> unitSimpleToFqn = new IdentityHashMap<>();
+    private final Map<String, Map<String, String>> pathSimpleToFqn = new HashMap<>();
     private final Set<String> observedExplicitFqns = new LinkedHashSet<>();
     private final Set<String> observedQualifiedTypes = new LinkedHashSet<>();
     private final List<PendingWildcardCandidate> pendingWildcardCandidates = new ArrayList<>();
@@ -428,7 +453,55 @@ final class ExplicitImportTypeSolver implements TypeSolver {
     Optional<String> resolveSimpleNameInUnit(CompilationUnit unit, String simpleName) {
         if (unit == null || simpleName == null || simpleName.isEmpty()) return Optional.empty();
         Map<String, String> local = unitSimpleToFqn.get(unit);
+        if (local == null && unit.containsData(UNIT_PATH_KEY)) {
+            local = pathSimpleToFqn.get(unit.getData(UNIT_PATH_KEY));
+        }
         return local == null ? Optional.empty() : Optional.ofNullable(local.get(simpleName));
+    }
+
+    /** Creates a thread-isolated copy of the materialized recovery declarations (top-level + nested + per-unit maps) for a parallel worker. */
+    ExplicitImportTypeSolver copyForWorker() {
+        var copy = new ExplicitImportTypeSolver();
+        copy.observedMaxTypeArgs.putAll(this.observedMaxTypeArgs);
+        copy.observedInterfaceHints.addAll(this.observedInterfaceHints);
+        copy.observedAnnotationHints.addAll(this.observedAnnotationHints);
+        copy.explicitlyImportedFqns.addAll(this.explicitlyImportedFqns);
+        for (var e : this.pathSimpleToFqn.entrySet()) {
+            copy.pathSimpleToFqn.put(e.getKey(), new HashMap<>(e.getValue()));
+        }
+        for (var e : this.unitSimpleToFqn.entrySet()) {
+            copy.unitSimpleToFqn.put(e.getKey(), new HashMap<>(e.getValue()));
+        }
+        var nestedToReplay = new ArrayList<ExplicitImportTypeDeclaration>();
+        for (var entry : this.declarations.entrySet()) {
+            var d = entry.getValue();
+            if (d.containerType().isEmpty()) {
+                copy.registerDeclaration(
+                        d.getQualifiedName(),
+                        d.getTypeParameters().size(),
+                        d.isInterface(),
+                        d.isAnnotation());
+            } else {
+                nestedToReplay.add(d);
+            }
+        }
+        nestedToReplay.sort(Comparator.comparingInt(d -> d.getQualifiedName().length()));
+        for (var nested : nestedToReplay) {
+            copy.tryToSolveType(nested.getQualifiedName());
+        }
+        return copy;
+    }
+
+    /** Deterministic signature map of materialized recovery declarations for incremental SOURCE_RECOVERY diffing. */
+    Map<String, String> materializedSignatures() {
+        var sigs = new TreeMap<String, String>();
+        for (var entry : declarations.entrySet()) {
+            var d = entry.getValue();
+            sigs.put(entry.getKey(),
+                    d.getTypeParameters().size() + ":" + d.isInterface() + ":" + d.isAnnotation()
+                            + ":" + isExplicitlyImported(entry.getKey()));
+        }
+        return Collections.unmodifiableMap(sigs);
     }
 
     @Override
@@ -475,6 +548,13 @@ final class ExplicitImportTypeSolver implements TypeSolver {
     }
 
     void observeUnit(CompilationUnit unit) {
+        observeUnitWithSummary(unit, null);
+    }
+
+    UnitObservation observeUnitWithSummary(CompilationUnit unit, String unitKey) {
+        if (unitKey != null && !unitKey.isEmpty()) {
+            unit.setData(UNIT_PATH_KEY, unitKey);
+        }
         String unitPkg = unit.getPackageDeclaration().map(p -> p.getNameAsString()).orElse("");
         Set<String> unitLocalNames = new HashSet<>();
         for (com.github.javaparser.ast.body.TypeDeclaration<?> td : unit.findAll(com.github.javaparser.ast.body.TypeDeclaration.class)) {
@@ -485,6 +565,12 @@ final class ExplicitImportTypeSolver implements TypeSolver {
         }
         Map<String, String> localSimpleToFqn = new HashMap<>();
         Set<String> wildcardPackages = new LinkedHashSet<>();
+        Set<String> unitExplicitFqns = new LinkedHashSet<>();
+        Set<String> unitQualifiedTypes = new LinkedHashSet<>();
+        Map<String, Integer> unitMaxTypeArgs = new TreeMap<>();
+        Set<String> unitInterfaceHints = new TreeSet<>();
+        Set<String> unitAnnotationHints = new TreeSet<>();
+        List<WildcardUse> unitWildcardUses = new ArrayList<>();
         for (ImportDeclaration imp : unit.getImports()) {
             if (imp.isAsterisk()) {
                 if (!imp.isStatic()) {
@@ -507,10 +593,12 @@ final class ExplicitImportTypeSolver implements TypeSolver {
                 String simple = ownerType.substring(ownerDot + 1);
                 localSimpleToFqn.put(simple, ownerType);
                 observedExplicitFqns.add(ownerType);
+                unitExplicitFqns.add(ownerType);
             } else {
                 String simple = fqn.substring(dot + 1);
                 localSimpleToFqn.put(simple, fqn);
                 observedExplicitFqns.add(fqn);
+                unitExplicitFqns.add(fqn);
             }
         }
         for (ClassOrInterfaceType type : unit.findAll(ClassOrInterfaceType.class)) {
@@ -523,16 +611,22 @@ final class ExplicitImportTypeSolver implements TypeSolver {
                         String wFqn = knownWildcard.orElseThrow();
                         localSimpleToFqn.put(simple, wFqn);
                         observedExplicitFqns.add(wFqn);
+                        unitExplicitFqns.add(wFqn);
                     } else if (!wildcardPackages.isEmpty()
                             && simple.length() > 1
                             && Character.isUpperCase(simple.codePointAt(0))
                             && !unitLocalNames.contains(simple)) {
+                        Set<String> wCopy = Set.copyOf(wildcardPackages);
                         pendingWildcardCandidates.add(new PendingWildcardCandidate(
-                                unit, unitPkg, simple, Set.copyOf(wildcardPackages), false));
+                                unit, unitKey, unitPkg, simple, wCopy, false));
+                        unitWildcardUses.add(new WildcardUse(simple, wCopy, false));
                     }
                 }
             } else {
-                extractInlineTopLevelFqn(scoped, localSimpleToFqn).ifPresent(observedQualifiedTypes::add);
+                extractInlineTopLevelFqn(scoped, localSimpleToFqn).ifPresent(q -> {
+                    observedQualifiedTypes.add(q);
+                    unitQualifiedTypes.add(q);
+                });
             }
             String fqn = type.getScope().isPresent()
                     ? resolveScopedFqn(scoped, localSimpleToFqn)
@@ -540,8 +634,10 @@ final class ExplicitImportTypeSolver implements TypeSolver {
             if (type.getTypeArguments().isPresent()) {
                 int count = type.getTypeArguments().orElseThrow().size();
                 observedMaxTypeArgs.merge(fqn, count, Math::max);
+                unitMaxTypeArgs.merge(fqn, count, Math::max);
                 if (!fqn.contains(".")) {
                     observedMaxTypeArgs.merge(simple, count, Math::max);
+                    unitMaxTypeArgs.merge(simple, count, Math::max);
                 }
             }
         }
@@ -552,17 +648,23 @@ final class ExplicitImportTypeSolver implements TypeSolver {
                         ? resolveScopedFqn(scoped, localSimpleToFqn)
                         : localSimpleToFqn.getOrDefault(impl.getNameAsString(), scoped);
                 observedInterfaceHints.add(fqn);
+                unitInterfaceHints.add(fqn);
                 if (!fqn.contains(".")) {
                     observedInterfaceHints.add(impl.getNameAsString());
+                    unitInterfaceHints.add(impl.getNameAsString());
                 }
             }
         }
         for (AnnotationExpr ann : unit.findAll(AnnotationExpr.class)) {
             String rawName = ann.getNameAsString();
             if (rawName.contains(".")) {
-                extractInlineTopLevelFqn(rawName, localSimpleToFqn).ifPresent(observedQualifiedTypes::add);
+                extractInlineTopLevelFqn(rawName, localSimpleToFqn).ifPresent(q -> {
+                    observedQualifiedTypes.add(q);
+                    unitQualifiedTypes.add(q);
+                });
                 String fqn = resolveScopedFqn(rawName, localSimpleToFqn);
                 observedAnnotationHints.add(fqn);
+                unitAnnotationHints.add(fqn);
             } else {
                 if (!localSimpleToFqn.containsKey(rawName)) {
                     Optional<String> knownWildcard = resolveWildcardSimple(rawName, wildcardPackages);
@@ -570,26 +672,63 @@ final class ExplicitImportTypeSolver implements TypeSolver {
                         String wFqn = knownWildcard.orElseThrow();
                         localSimpleToFqn.put(rawName, wFqn);
                         observedExplicitFqns.add(wFqn);
+                        unitExplicitFqns.add(wFqn);
                     } else if (KOTLIN_IMPLICIT_JVM_ANNOTATIONS.contains(rawName)) {
                         String ktFqn = "kotlin.jvm." + rawName;
                         localSimpleToFqn.put(rawName, ktFqn);
                         observedExplicitFqns.add(ktFqn);
+                        unitExplicitFqns.add(ktFqn);
                     } else if (!wildcardPackages.isEmpty()
                             && rawName.length() > 1
                             && Character.isUpperCase(rawName.codePointAt(0))
                             && !unitLocalNames.contains(rawName)) {
+                        Set<String> wCopy = Set.copyOf(wildcardPackages);
                         pendingWildcardCandidates.add(new PendingWildcardCandidate(
-                                unit, unitPkg, rawName, Set.copyOf(wildcardPackages), true));
+                                unit, unitKey, unitPkg, rawName, wCopy, true));
+                        unitWildcardUses.add(new WildcardUse(rawName, wCopy, true));
                     }
                 }
                 String fqn = localSimpleToFqn.getOrDefault(rawName, rawName);
                 observedAnnotationHints.add(fqn);
+                unitAnnotationHints.add(fqn);
                 if (!fqn.contains(".")) {
                     observedAnnotationHints.add(rawName);
+                    unitAnnotationHints.add(rawName);
                 }
             }
         }
-        unitSimpleToFqn.put(unit, new HashMap<>(localSimpleToFqn));
+        var localCopy = new HashMap<>(localSimpleToFqn);
+        unitSimpleToFqn.put(unit, localCopy);
+        if (unitKey != null && !unitKey.isEmpty()) {
+            pathSimpleToFqn.put(unitKey, localCopy);
+        }
+        return new UnitObservation(
+                unitKey == null ? "" : unitKey,
+                unitPkg,
+                Map.copyOf(localSimpleToFqn),
+                Collections.unmodifiableSet(unitExplicitFqns),
+                Collections.unmodifiableSet(unitQualifiedTypes),
+                Collections.unmodifiableMap(unitMaxTypeArgs),
+                Collections.unmodifiableSet(unitInterfaceHints),
+                Collections.unmodifiableSet(unitAnnotationHints),
+                List.copyOf(unitWildcardUses));
+    }
+
+    /** Replays a cached {@link UnitObservation} without parsing the clean file's AST (Speedup S6). */
+    void replayObservation(UnitObservation obs) {
+        if (obs == null) return;
+        observedExplicitFqns.addAll(obs.explicitFqns());
+        observedQualifiedTypes.addAll(obs.qualifiedTypes());
+        obs.maxTypeArgs().forEach((k, v) -> observedMaxTypeArgs.merge(k, v, Math::max));
+        observedInterfaceHints.addAll(obs.interfaceHints());
+        observedAnnotationHints.addAll(obs.annotationHints());
+        if (!obs.unitKey().isEmpty()) {
+            pathSimpleToFqn.put(obs.unitKey(), new HashMap<>(obs.localSimpleToFqn()));
+        }
+        for (var wu : obs.wildcardUses()) {
+            pendingWildcardCandidates.add(new PendingWildcardCandidate(
+                    null, obs.unitKey(), obs.unitPackage(), wu.simpleName(), wu.wildcardPackages(), wu.isAnnotation()));
+        }
     }
 
     private static Optional<String> resolveWildcardSimple(String simple, Set<String> wildcardPackages) {
@@ -654,7 +793,9 @@ final class ExplicitImportTypeSolver implements TypeSolver {
         }
         for (PendingWildcardCandidate cand : pendingWildcardCandidates) {
             String simple = cand.simpleName();
-            Map<String, String> unitMap = unitSimpleToFqn.get(cand.unit());
+            Map<String, String> unitMap = cand.unit() != null
+                    ? unitSimpleToFqn.get(cand.unit())
+                    : (cand.unitKey() != null && !cand.unitKey().isEmpty() ? pathSimpleToFqn.get(cand.unitKey()) : null);
             if (unitMap != null && unitMap.containsKey(simple)) continue;
             if (environment.isKnownInPrimarySolvers("java.lang." + simple)) continue;
             if (!cand.unitPackage().isEmpty()) {

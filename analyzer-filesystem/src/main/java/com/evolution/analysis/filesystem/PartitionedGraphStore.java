@@ -473,12 +473,139 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
             long nodes = root.trees().get("nodes").rows();
             long edges = root.trees().get("edges").rows();
             long evidence = root.trees().get("evidence").rows();
-            return Optional.of(new GraphManifest(KnowledgeGraph.SCHEMA, graph, graph,
+            ContentDigest semId = semanticIdentity(root, () -> false);
+            return Optional.of(new GraphManifest(KnowledgeGraph.SCHEMA, graph, semId,
                     new com.evolution.analysis.contract.identity.SnapshotIdentity(root.snapshot()), contexts,
                     (int) Math.min(nodes, Integer.MAX_VALUE),
                     (int) Math.min(edges, Integer.MAX_VALUE),
                     (int) Math.min(evidence, Integer.MAX_VALUE)));
         }
+    }
+
+    private final java.util.concurrent.ConcurrentHashMap<ContentDigest, ContentDigest> semanticIdentityCache =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * Computes the exact {@link KnowledgeGraph#semanticIdentity()} digest by streaming authenticated
+     * B-tree pages (matching {@link FileGraphStore} and {@link KnowledgeGraph} bit-for-bit).
+     */
+    private ContentDigest semanticIdentity(Root root, BooleanSupplier cancelled) throws IOException {
+        ContentDigest cached = semanticIdentityCache.get(root.graph());
+        if (cached != null) return cached;
+        var overrides = new HashMap<ContentDigest, ContentDigest>();
+        visit(root.trees().get("evidence"), "", "\uffff", null, entry -> {
+            var ev = GraphSnapshotCodec.evidence(entry.row());
+            ContentDigest sem = ev.semanticIdentity();
+            if (!sem.equals(ev.identity())) {
+                overrides.put(ev.identity(), sem);
+            }
+        }, cancelled, 0);
+        Map<ContentDigest, ContentDigest> ovMap = overrides.isEmpty() ? null : overrides;
+        var md = CanonicalJson.borrowSha256();
+        try {
+            try (var out = CanonicalJson.newUtf8DigestWriter(md)) {
+                out.append("[\"");
+                out.append(KnowledgeGraph.SCHEMA);
+                out.append("\",\"semantic-replay:v1\",");
+                com.evolution.analysis.graph.GraphCanonicalWriter.appendJsonString(root.snapshot(), out);
+                out.append(",[");
+                boolean[] first = { true };
+                visit(root.trees().get("contexts"), "", "\uffff", null, entry -> {
+                    var c = GraphSnapshotCodec.context(entry.row());
+                    if (!first[0]) out.append(',');
+                    first[0] = false;
+                    out.append('[');
+                    com.evolution.analysis.graph.GraphCanonicalWriter.appendJsonString(c.identity(), out);
+                    out.append(',');
+                    com.evolution.analysis.graph.GraphCanonicalWriter.appendJsonString(c.snapshot().value(), out);
+                    out.append(',');
+                    if (c.analysis().isPresent()) com.evolution.analysis.graph.GraphCanonicalWriter.appendJsonString(c.analysis().orElseThrow().value(), out);
+                    else out.append("null");
+                    out.append(',');
+                    ContentDigest ev = ovMap == null ? c.evidence() : ovMap.getOrDefault(c.evidence(), c.evidence());
+                    com.evolution.analysis.graph.GraphCanonicalWriter.appendJsonString(ev.value(), out);
+                    out.append(']');
+                }, cancelled, 0);
+                out.append("],[");
+                first[0] = true;
+                visit(root.trees().get("nodes"), "", "\uffff", null, entry -> {
+                    var n = GraphSnapshotCodec.node(entry.row());
+                    if (!first[0]) out.append(',');
+                    first[0] = false;
+                    out.append('[');
+                    com.evolution.analysis.graph.GraphCanonicalWriter.appendJsonString(n.identity(), out);
+                    out.append(',');
+                    com.evolution.analysis.graph.GraphCanonicalWriter.appendJsonString(n.context(), out);
+                    out.append(',');
+                    com.evolution.analysis.graph.GraphCanonicalWriter.appendJsonString(n.kind(), out);
+                    out.append(',');
+                    writeSemanticSupportList(n.evidence(), ovMap, out);
+                    out.append(']');
+                }, cancelled, 0);
+                out.append("],[");
+                first[0] = true;
+                visit(root.trees().get("edges"), "", "\uffff", null, entry -> {
+                    var e = GraphSnapshotCodec.edge(entry.row());
+                    if (!first[0]) out.append(',');
+                    first[0] = false;
+                    out.append('[');
+                    com.evolution.analysis.graph.GraphCanonicalWriter.appendJsonString(e.identity(), out);
+                    out.append(',');
+                    com.evolution.analysis.graph.GraphCanonicalWriter.appendJsonString(e.context(), out);
+                    out.append(',');
+                    com.evolution.analysis.graph.GraphCanonicalWriter.appendJsonString(e.kind(), out);
+                    out.append(',');
+                    com.evolution.analysis.graph.GraphCanonicalWriter.appendJsonString(e.source(), out);
+                    out.append(',');
+                    com.evolution.analysis.graph.GraphCanonicalWriter.writeTarget(e.target(), out);
+                    out.append(',');
+                    writeSemanticSupportList(e.evidence(), ovMap, out);
+                    out.append(',');
+                    if (e.region().isPresent()) com.evolution.analysis.graph.GraphCanonicalWriter.appendJsonString(e.region().orElseThrow(), out);
+                    else out.append("null");
+                    out.append(']');
+                }, cancelled, 0);
+                out.append("],[");
+                var uniqueEvidence = new TreeSet<ContentDigest>();
+                visit(root.trees().get("evidence"), "", "\uffff", null, entry -> {
+                    var ev = GraphSnapshotCodec.evidence(entry.row());
+                    uniqueEvidence.add(ovMap == null ? ev.identity() : ovMap.getOrDefault(ev.identity(), ev.identity()));
+                }, cancelled, 0);
+                boolean firstEv = true;
+                for (var id : uniqueEvidence) {
+                    if (!firstEv) out.append(',');
+                    firstEv = false;
+                    com.evolution.analysis.graph.GraphCanonicalWriter.appendJsonString(id.value(), out);
+                }
+                out.append("]]");
+            }
+            ContentDigest computed = new ContentDigest("sha256:" + HexFormat.of().formatHex(md.digest()));
+            semanticIdentityCache.put(root.graph(), computed);
+            return computed;
+        } finally {
+            CanonicalJson.releaseSha256(md);
+        }
+    }
+
+    private static void writeSemanticSupportList(List<ContentDigest> rows, Map<ContentDigest, ContentDigest> overrides,
+            Appendable out) throws IOException {
+        out.append('[');
+        if (overrides == null) {
+            for (int i = 0; i < rows.size(); i++) {
+                if (i > 0) out.append(',');
+                com.evolution.analysis.graph.GraphCanonicalWriter.appendJsonString(rows.get(i).value(), out);
+            }
+        } else {
+            var unique = new TreeSet<ContentDigest>();
+            for (var d : rows) unique.add(overrides.getOrDefault(d, d));
+            boolean first = true;
+            for (var d : unique) {
+                if (!first) out.append(',');
+                first = false;
+                com.evolution.analysis.graph.GraphCanonicalWriter.appendJsonString(d.value(), out);
+            }
+        }
+        out.append(']');
     }
 
     /**
@@ -580,13 +707,14 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
                     sql.execute("PRAGMA journal_mode=OFF");
                     sql.execute("PRAGMA synchronous=OFF");
                     sql.execute("PRAGMA temp_store=MEMORY");
-                    sql.execute("PRAGMA cache_size=-16384");
+                    sql.execute("PRAGMA cache_size=-65536");
                     sql.execute(
                             "CREATE TABLE rows(space TEXT NOT NULL,k TEXT NOT NULL,payload TEXT NOT NULL,kind TEXT,PRIMARY KEY(space,k)) WITHOUT ROWID");
                 }
                 database.setAutoCommit(false);
                 try (var workspace = new SqliteGraphProjection(database, rowBytes, cancelled)) {
                     contribution.project(workspace);
+                    workspace.flush();
                     var gaps = workspace.gapCounts();
                     var contexts = new ArrayList<KnowledgeGraph.Context>(
                             workspace.records("contexts", GraphSnapshotCodec::context).values());
@@ -607,6 +735,7 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
                         }
                         if (batched > 0) insert.executeBatch();
                     }
+                    workspace.flush();
                     database.commit();
                     var digest = StreamingContentStore.sha256();
                     ContentDigest identity;
@@ -774,7 +903,7 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
                 sql.execute("PRAGMA journal_mode=OFF");
                 sql.execute("PRAGMA synchronous=OFF");
                 sql.execute("PRAGMA temp_store=MEMORY");
-                sql.execute("PRAGMA cache_size=-16384");
+                sql.execute("PRAGMA cache_size=-65536");
                 sql.execute(
                         "CREATE TABLE rows(space TEXT NOT NULL,k TEXT NOT NULL,payload TEXT NOT NULL,kind TEXT,PRIMARY KEY(space,k)) WITHOUT ROWID");
             }
@@ -784,6 +913,7 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
                 var body = new TreeMap<String, Object>();
                 var members = new HashSet<String>();
                 var digest = MessageDigest.getInstance("SHA-256");
+                int[] importBatch = { 0 };
                 try (var insert = database.prepareStatement("INSERT INTO rows(space,k,payload) VALUES(?,?,?)");
                         var input = new DigestInputStream(
                                 new BufferedInputStream(Files.newInputStream(source, LinkOption.NOFOLLOW_LINKS), 65536),
@@ -822,15 +952,28 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
                                                 default -> throw new AssertionError();
                                             };
                                             try {
-                                                insert(workspace, insert, space, key, value, cancelled);
+                                                addInsertBatch(workspace, insert, space, key, value, cancelled);
+                                                if (++importBatch[0] >= 1024) {
+                                                    insert.executeBatch();
+                                                    importBatch[0] = 0;
+                                                }
                                                 if (value instanceof KnowledgeGraph.Edge edge) {
-                                                    insert(workspace, insert, "outgoing",
+                                                    addInsertBatch(workspace, insert, "outgoing",
                                                             key(edge.context(), edge.source(), edge.identity()), key,
                                                             cancelled);
-                                                    for (String target : edge.target().identities())
-                                                        insert(workspace, insert, "incoming",
+                                                    if (++importBatch[0] >= 1024) {
+                                                        insert.executeBatch();
+                                                        importBatch[0] = 0;
+                                                    }
+                                                    for (String target : edge.target().identities()) {
+                                                        addInsertBatch(workspace, insert, "incoming",
                                                                 key(edge.context(), target, edge.identity()), key,
                                                                 cancelled);
+                                                        if (++importBatch[0] >= 1024) {
+                                                            insert.executeBatch();
+                                                            importBatch[0] = 0;
+                                                        }
+                                                    }
                                                 }
                                             } catch (SQLException failure) {
                                                 throw new IOException("GRAPH_PARTITION_DUPLICATE_OR_INVALID_ROW",
@@ -841,6 +984,13 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
                                 else
                                     throw new IOException("GRAPH_PARTITION_INPUT_FIELDS");
                             });
+                    if (importBatch[0] > 0) {
+                        try {
+                            insert.executeBatch();
+                        } catch (SQLException failure) {
+                            throw new IOException("GRAPH_PARTITION_DUPLICATE_OR_INVALID_ROW", failure);
+                        }
+                    }
                 }
                 if (!header.keySet().equals(Set.of("format", "identity"))
                         || !GraphSnapshotCodec.FORMAT.equals(header.get("format"))
@@ -848,6 +998,7 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
                         || !members.equals(Set.of("schema", "snapshot", "contexts", "nodes", "edges", "evidence"))
                         || !KnowledgeGraph.SCHEMA.equals(body.get("schema")))
                     throw new IOException("GRAPH_PARTITION_INPUT_SCOPE");
+                workspace.flush();
                 database.commit();
                 publish(database, workspace, expected, text(body.get("snapshot")), cancelled,
                         Optional.of(new ContentDigest("sha256:" + HexFormat.of().formatHex(digest.digest()))));
@@ -878,6 +1029,7 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
                             partition(graph, context.identity(), nodes, edges, trees, cancelled), cancelled);
                 }
             }
+            workspace.flush();
             database.commit();
             trees.put("partitions", build(database, workspace, "partitions", cancelled, workers));
             var root = rootDocument(graph, snapshot, trees, cancelled);
@@ -1268,7 +1420,7 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
      * index.
      */
     private final class Audit implements AutoCloseable {
-        private static final int DEDUP_CAP = 131_072;
+        private static final int DEDUP_CAP = 524_288;
         final Root root;
         final BooleanSupplier cancelled;
         final Path file;
@@ -1290,7 +1442,7 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
                     sql.execute("PRAGMA journal_mode=OFF");
                     sql.execute("PRAGMA synchronous=OFF");
                     sql.execute("PRAGMA temp_store=MEMORY");
-                    sql.execute("PRAGMA cache_size=-16384");
+                    sql.execute("PRAGMA cache_size=-65536");
                     sql.execute(
                             "CREATE TABLE audit(space TEXT,k TEXT,payload TEXT,PRIMARY KEY(space,k)) WITHOUT ROWID");
                 }
@@ -1323,7 +1475,7 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
         void add(String space, String key, String value) throws IOException {
             check(cancelled);
             if (value.isEmpty()) {
-                var set = seenKeys.computeIfAbsent(space, ignored -> new HashSet<>(256));
+                var set = seenKeys.computeIfAbsent(space, ignored -> new HashSet<>(1024));
                 if (set.contains(key)) return;
                 if (set.size() < DEDUP_CAP) set.add(key);
             }
@@ -1332,7 +1484,7 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
                 insert.setString(2, key);
                 insert.setString(3, value);
                 insert.addBatch();
-                if (++batched == 1024) {
+                if (++batched == 4096) {
                     insert.executeBatch();
                     batched = 0;
                 }
@@ -1687,121 +1839,11 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
     }
 
     private static String encodeGraphValue(Object value) {
-        if (value instanceof KnowledgeGraph.Node || value instanceof KnowledgeGraph.Edge
-                || value instanceof KnowledgeGraph.Context || value instanceof GraphEvidence
-                || value instanceof String) {
-            var out = new StringBuilder(256);
-            try { writeGraphValue(value, out); }
-            catch (IOException impossible) { throw new IllegalStateException(impossible); }
-            return out.toString();
-        }
-        return CanonicalJson.write(value);
+        return GraphCanonicalWriter.encodeValue(value);
     }
 
     private static void writeGraphValue(Object value, Appendable out) throws IOException {
-        if (value instanceof String s) {
-            appendJsonString(s, out);
-        } else if (value instanceof KnowledgeGraph.Context c) {
-            out.append("{\"analysis\":");
-            if (c.analysis().isPresent()) appendJsonString(c.analysis().orElseThrow().value(), out);
-            else out.append("null");
-            out.append(",\"evidence\":");
-            appendJsonString(c.evidence().value(), out);
-            out.append(",\"identity\":");
-            appendJsonString(c.identity(), out);
-            out.append(",\"snapshot\":");
-            appendJsonString(c.snapshot().value(), out);
-            out.append('}');
-        } else if (value instanceof KnowledgeGraph.Node n) {
-            out.append("{\"context\":");
-            appendJsonString(n.context(), out);
-            out.append(",\"evidence\":[");
-            var ev = n.evidence();
-            for (int i = 0; i < ev.size(); i++) {
-                if (i > 0) out.append(',');
-                appendJsonString(ev.get(i).value(), out);
-            }
-            out.append("],\"identity\":");
-            appendJsonString(n.identity(), out);
-            out.append(",\"kind\":");
-            appendJsonString(n.kind(), out);
-            out.append('}');
-        } else if (value instanceof KnowledgeGraph.Edge e) {
-            out.append("{\"context\":");
-            appendJsonString(e.context(), out);
-            out.append(",\"evidence\":[");
-            var ev = e.evidence();
-            for (int i = 0; i < ev.size(); i++) {
-                if (i > 0) out.append(',');
-                appendJsonString(ev.get(i).value(), out);
-            }
-            out.append("],\"identity\":");
-            appendJsonString(e.identity(), out);
-            out.append(",\"kind\":");
-            appendJsonString(e.kind(), out);
-            out.append(",\"region\":");
-            if (e.region().isPresent()) appendJsonString(e.region().orElseThrow(), out);
-            else out.append("null");
-            out.append(",\"source\":");
-            appendJsonString(e.source(), out);
-            var t = e.target();
-            out.append(",\"target\":{\"identities\":[");
-            var ids = t.identities();
-            for (int i = 0; i < ids.size(); i++) {
-                if (i > 0) out.append(',');
-                appendJsonString(ids.get(i), out);
-            }
-            out.append("],\"state\":");
-            appendJsonString(t.state().name(), out);
-            out.append(",\"unresolvedReference\":");
-            if (t.unresolvedReference().isPresent()) appendJsonString(t.unresolvedReference().orElseThrow(), out);
-            else out.append("null");
-            out.append("}}");
-        } else if (value instanceof GraphEvidence g) {
-            out.append("{\"canonicalJson\":");
-            appendJsonString(g.canonicalJson(), out);
-            out.append(",\"family\":");
-            appendJsonString(g.family(), out);
-            out.append(",\"identity\":");
-            appendJsonString(g.identity().value(), out);
-            out.append('}');
-        } else if (out instanceof Writer w) {
-            CanonicalJson.writeTo(value, w);
-        } else {
-            out.append(CanonicalJson.write(value));
-        }
-    }
-
-    private static void appendJsonString(String value, Appendable output) throws IOException {
-        output.append('"');
-        int start = 0;
-        for (int index = 0; index < value.length(); index++) {
-            char character = value.charAt(index);
-            if (character == '"' || character == '\\' || character < 0x20) {
-                if (index > start) output.append(value, start, index);
-                switch (character) {
-                    case '"' -> output.append("\\\"");
-                    case '\\' -> output.append("\\\\");
-                    case '\b' -> output.append("\\b");
-                    case '\f' -> output.append("\\f");
-                    case '\n' -> output.append("\\n");
-                    case '\r' -> output.append("\\r");
-                    case '\t' -> output.append("\\t");
-                    default -> output.append("\\u00")
-                            .append("0123456789abcdef".charAt(character >>> 4))
-                            .append("0123456789abcdef".charAt(character & 15));
-                }
-                start = index + 1;
-            } else if (Character.isHighSurrogate(character)) {
-                if (index + 1 >= value.length() || !Character.isLowSurrogate(value.charAt(index + 1)))
-                    throw new IllegalArgumentException("String contains an unpaired surrogate");
-                index++;
-            } else if (Character.isLowSurrogate(character)) {
-                throw new IllegalArgumentException("String contains an unpaired surrogate");
-            }
-        }
-        if (start < value.length()) output.append(value, start, value.length());
-        output.append('"');
+        GraphCanonicalWriter.writeValue(value, out);
     }
 
     private Object parse(String encoded) {

@@ -6,6 +6,7 @@ import com.evolution.analysis.graph.GraphEvidence;
 import com.evolution.analysis.graph.GraphJson;
 import com.evolution.analysis.graph.KnowledgeGraph;
 import com.evolution.analysis.query.ArchitectureQuery.StopReason;
+import com.evolution.backend.query.search.CapturedSearchIndex;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -13,13 +14,18 @@ import java.util.*;
 import java.util.function.Supplier;
 
 /**
- * Deterministic Aider-style Personalized PageRank (PPR) repository map computed strictly
- * over the canonical KnowledgeGraph dependency, call, injection, and bridge edges.
+ * Deterministic Aider-style Personalized PageRank (PPR) &amp; Hybrid PPR + BM25 + Trigram RRF
+ * repository map computed strictly over canonical KnowledgeGraph edges and pre-redacted FTS5 BM25 hits.
  */
-final class RepoMapBuilder {
+public final class RepoMapBuilder {
     static final String ALGORITHM = "personalized-pagerank-v1";
+    public static final String RRF_ALGORITHM = "ppr-bm25-trigram-rrf-v2";
     static final double DAMPING = 0.85;
     static final int ITERATIONS = 20;
+    static final double RRF_K = 60.0;
+    static final double RRF_WEIGHT_PPR = 1.0;
+    static final double RRF_WEIGHT_BM25 = 1.2;
+    static final double RRF_WEIGHT_TRIGRAM = 0.6;
     private static final Set<String> CONTAINMENT_EDGES = Set.of(
             "graph.contains", "graph.declares", "graph.owns-source", "graph.inventory-under-component",
             "spring.declares-injection");
@@ -42,29 +48,43 @@ final class RepoMapBuilder {
     private static final Set<String> CALL_INHERIT_EDGES = Set.of(
             "java.calls", "java.extends", "java.implements");
 
-    record Declaration(String identity, String name, String kind) {}
+    public record Declaration(String identity, String name, String kind) {}
 
-    record FileRank(int rank, String path, BigDecimal score, String language,
+    public record FileRank(int rank, String path, BigDecimal score, String language,
                     int inDegree, int outDegree, List<Declaration> declarations,
-                    List<String> endpoints, int gapCount) {
-        FileRank {
+                    List<String> endpoints, int gapCount,
+                    Integer pprRank, Integer bm25Rank, Integer trigramRank, BigDecimal rrfScore) {
+        public FileRank(int rank, String path, BigDecimal score, String language,
+                        int inDegree, int outDegree, List<Declaration> declarations,
+                        List<String> endpoints, int gapCount) {
+            this(rank, path, score, language, inDegree, outDegree, declarations, endpoints, gapCount,
+                    rank, null, null, null);
+        }
+
+        public FileRank {
             declarations = List.copyOf(declarations);
             endpoints = List.copyOf(endpoints);
         }
     }
 
-    record Result(ContentDigest graph, String context, String algorithm, BigDecimal damping, int iterations,
+    public record Result(ContentDigest graph, String context, String algorithm, BigDecimal damping, int iterations,
                   int totalNodes, int totalEdges, int totalFiles, int seedCount, int estimatedTokens,
                   boolean truncated, List<FileRank> files, String renderedMap) {
-        Result {
+        public Result {
             files = List.copyOf(files);
         }
     }
 
     private RepoMapBuilder() {}
 
-    static Result build(KnowledgeGraph graph, Optional<String> preferredContext, List<String> rawSeeds,
+    public static Result build(KnowledgeGraph graph, Optional<String> preferredContext, List<String> rawSeeds,
                         int requestedMaxFiles, int requestedMaxTokens, Supplier<StopReason> stop) {
+        return build(graph, preferredContext, rawSeeds, requestedMaxFiles, requestedMaxTokens, stop, null);
+    }
+
+    public static Result build(KnowledgeGraph graph, Optional<String> preferredContext, List<String> rawSeeds,
+                        int requestedMaxFiles, int requestedMaxTokens, Supplier<StopReason> stop,
+                        CapturedSearchIndex searchIndex) {
         int maxFiles = Math.max(1, Math.min(100, requestedMaxFiles));
         int maxTokens = Math.max(500, Math.min(24_000, requestedMaxTokens));
         var seeds = rawSeeds == null ? List.<String>of()
@@ -210,9 +230,8 @@ final class RepoMapBuilder {
             }
         }
 
-        // Seed remaining readable captured files so non-symbol files (configs/scripts/README) remain discoverable
+        // Seed ALL readable captured files (no 500-file non-code cliff; I5 comprehensive coverage)
         for (var entry : fileIndex.entries()) {
-            if (allFiles.size() >= 500) break;
             if (entry.readable() && !isOpaqueIdentity(entry.path())) {
                 allFiles.add(entry.path());
             }
@@ -226,6 +245,8 @@ final class RepoMapBuilder {
 
         var outEdges = new ArrayList<Map<Integer, Double>>(n);
         for (int i = 0; i < n; i++) outEdges.add(new TreeMap<>());
+        var edgeDetails = new ArrayList<Map<String, EdgeLabelCount>>(n);
+        for (int i = 0; i < n; i++) edgeDetails.add(new LinkedHashMap<>());
         int[] inDegree = new int[n];
         int[] outDegree = new int[n];
         int totalEdges = 0;
@@ -243,12 +264,19 @@ final class RepoMapBuilder {
                 Integer u = fileIndexMap.get(srcFile);
                 if (u == null) continue;
                 double w = edgeWeight(edge.kind());
+                String edgeQual = edgeQualifier(graph, edge);
+                boolean notableKind = HIGH_WEIGHT_EDGES.contains(edge.kind()) || CALL_INHERIT_EDGES.contains(edge.kind());
                 for (String targetId : edge.target().identities()) {
                     String dstFile = nodeToFile.get(targetId);
                     if (dstFile == null || dstFile.equals(srcFile)) continue;
                     Integer v = fileIndexMap.get(dstFile);
                     if (v == null) continue;
                     outEdges.get(u).merge(v, w, Double::sum);
+                    if (notableKind) {
+                        String detailKey = edge.kind() + "|" + edgeQual + "|" + dstFile;
+                        edgeDetails.get(u).merge(detailKey, new EdgeLabelCount(edge.kind(), edgeQual, dstFile, 1),
+                                (a, b) -> new EdgeLabelCount(a.kind(), a.qualifier(), a.targetFile(), a.count() + b.count()));
+                    }
                     long pairKey = (((long) u) << 32) | (v & 0xffffffffL);
                     if (seenPairs.add(pairKey)) {
                         outDegree[u]++;
@@ -258,27 +286,63 @@ final class RepoMapBuilder {
             }
         }
 
-        // 4. Compute deterministic Personalized PageRank (PPR)
+        // 4. Compute deterministic Personalized PageRank (PPR) + optional BM25 + Trigram RRF
         double[] personalization = new double[n];
         int matchedSeedFiles = 0;
         if (n > 0) {
-            boolean[] isSeeded = new boolean[n];
+            double[] trigramScores = new double[n];
+            var trigramRanks = new HashMap<Integer, Integer>();
+            var bm25Ranks = new HashMap<Integer, Integer>();
             if (!seeds.isEmpty()) {
+                trigramScores = scoreFilesBySeeds(fileList, declsByFile, endpointsByFile, seeds);
+                var triIndices = new ArrayList<Integer>();
                 for (int i = 0; i < n; i++) {
-                    String path = fileList.get(i);
-                    var decls = declsByFile.getOrDefault(path, new LinkedHashMap<>());
-                    var eps = endpointsByFile.getOrDefault(path, new TreeSet<>());
-                    if (matchesAnySeed(path, decls.values(), eps, seeds)) {
-                        isSeeded[i] = true;
+                    if (trigramScores[i] > 0.0) {
+                        triIndices.add(i);
+                    }
+                }
+                final double[] triRef = trigramScores;
+                triIndices.sort((a, b) -> {
+                    int cmp = Double.compare(triRef[b], triRef[a]);
+                    if (cmp != 0) return cmp;
+                    return fileList.get(a).compareTo(fileList.get(b));
+                });
+                for (int pos = 0; pos < triIndices.size(); pos++) {
+                    trigramRanks.put(triIndices.get(pos), pos + 1);
+                }
+
+                if (searchIndex != null && !stopped(stop)) {
+                    int bm25Cap = Math.min(300, Math.max(60, maxFiles * 5));
+                    for (var hit : searchIndex.rankFiles(graph, seeds, bm25Cap, stop)) {
+                        Integer idx = fileIndexMap.get(hit.path());
+                        if (idx != null) {
+                            bm25Ranks.putIfAbsent(idx, hit.bm25Rank());
+                        }
+                    }
+                }
+
+                // Combine trigram and BM25 relevance into PPR personalization mass
+                double[] combinedSeedWeight = new double[n];
+                double totalSeedWeight = 0.0;
+                for (int i = 0; i < n; i++) {
+                    double w = trigramScores[i];
+                    Integer br = bm25Ranks.get(i);
+                    if (br != null) {
+                        w += 25.0 / (10.0 + br);
+                    }
+                    if (w > 0.0) {
+                        combinedSeedWeight[i] = w;
+                        totalSeedWeight += w;
                         matchedSeedFiles++;
                     }
                 }
-            }
-            if (matchedSeedFiles > 0) {
-                double seedShare = 0.85 / matchedSeedFiles;
-                double baseShare = 0.15 / n;
-                for (int i = 0; i < n; i++) {
-                    personalization[i] = baseShare + (isSeeded[i] ? seedShare : 0.0);
+                if (matchedSeedFiles > 0 && totalSeedWeight > 0.0) {
+                    double baseShare = 0.10 / n;
+                    for (int i = 0; i < n; i++) {
+                        personalization[i] = baseShare + (0.90 * (combinedSeedWeight[i] / totalSeedWeight));
+                    }
+                } else {
+                    Arrays.fill(personalization, 1.0 / n);
                 }
             } else {
                 Arrays.fill(personalization, 1.0 / n);
@@ -312,16 +376,51 @@ final class RepoMapBuilder {
                 rank = next;
             }
 
-            Integer[] order = new Integer[n];
-            for (int i = 0; i < n; i++) order[i] = i;
+            Integer[] pprOrder = new Integer[n];
+            for (int i = 0; i < n; i++) pprOrder[i] = i;
             final double[] finalRank = rank;
-            Arrays.sort(order, (a, b) -> {
+            Arrays.sort(pprOrder, (a, b) -> {
                 int cmp = Double.compare(finalRank[b], finalRank[a]);
                 if (cmp != 0) return cmp;
                 cmp = Integer.compare(inDegree[b], inDegree[a]);
                 if (cmp != 0) return cmp;
                 return fileList.get(a).compareTo(fileList.get(b));
             });
+            int[] pprRankByIdx = new int[n];
+            for (int pos = 0; pos < n; pos++) {
+                pprRankByIdx[pprOrder[pos]] = pos + 1;
+            }
+
+            boolean useRrf = !seeds.isEmpty() && (!bm25Ranks.isEmpty() || !trigramRanks.isEmpty());
+            String effectiveAlgorithm = useRrf ? RRF_ALGORITHM : ALGORITHM;
+            double[] rrfValues = useRrf ? new double[n] : null;
+            Integer[] order;
+            if (useRrf) {
+                for (int i = 0; i < n; i++) {
+                    double pprTerm = RRF_WEIGHT_PPR / (RRF_K + pprRankByIdx[i]);
+                    Integer br = bm25Ranks.get(i);
+                    Integer tr = trigramRanks.get(i);
+                    double bm25Term = br != null ? (RRF_WEIGHT_BM25 / (RRF_K + br)) : 0.0;
+                    double triTerm = tr != null ? (RRF_WEIGHT_TRIGRAM / (RRF_K + tr)) : 0.0;
+                    rrfValues[i] = pprTerm + bm25Term + triTerm;
+                }
+                order = new Integer[n];
+                for (int i = 0; i < n; i++) order[i] = i;
+                final double[] rrfRef = rrfValues;
+                // Deterministic RRF tie-break strictly by (rrfScore DESC, path ASC)
+                Arrays.sort(order, (a, b) -> {
+                    int cmp = Double.compare(rrfRef[b], rrfRef[a]);
+                    if (cmp != 0) return cmp;
+                    return fileList.get(a).compareTo(fileList.get(b));
+                });
+            } else {
+                order = pprOrder;
+            }
+
+            var topFileSet = new HashSet<String>();
+            for (int pos = 0; pos < Math.min(n, maxFiles); pos++) {
+                topFileSet.add(fileList.get(order[pos]));
+            }
 
             var rankedFiles = new ArrayList<FileRank>();
             var mapOut = new StringBuilder();
@@ -334,15 +433,30 @@ final class RepoMapBuilder {
                 }
                 int idx = order[pos];
                 String path = fileList.get(idx);
-                BigDecimal score = BigDecimal.valueOf(finalRank[idx]).setScale(6, RoundingMode.HALF_UP);
+                BigDecimal rrfScore = useRrf
+                        ? BigDecimal.valueOf(rrfValues[idx]).setScale(6, RoundingMode.HALF_UP) : null;
+                BigDecimal score = useRrf
+                        ? rrfScore
+                        : BigDecimal.valueOf(finalRank[idx]).setScale(6, RoundingMode.HALF_UP);
+                Integer pprRankVal = pprRankByIdx[idx];
+                Integer bm25RankVal = bm25Ranks.get(idx);
+                Integer triRankVal = trigramRanks.get(idx);
                 String lang = langByPath.getOrDefault(path, CapturedFileIndex.inferLanguage(path, List.of()));
                 var decls = declsByFile.getOrDefault(path, new LinkedHashMap<>()).values().stream()
                         .sorted(Comparator.comparing(Declaration::kind).thenComparing(Declaration::name))
                         .limit(10).toList();
                 var eps = endpointsByFile.getOrDefault(path, new TreeSet<>()).stream().limit(6).toList();
                 int gaps = gapsByFile.getOrDefault(path, 0);
+                var archEdges = edgeDetails.get(idx).values().stream()
+                        .filter(e -> topFileSet.contains(e.targetFile()))
+                        .sorted(Comparator.comparingInt(EdgeLabelCount::count).reversed()
+                                .thenComparing(EdgeLabelCount::kind)
+                                .thenComparing(EdgeLabelCount::targetFile))
+                        .limit(5)
+                        .toList();
 
-                String block = renderFileBlock(pos + 1, path, score, lang, inDegree[idx], outDegree[idx], decls, eps, gaps);
+                String block = renderFileBlock(pos + 1, path, score, lang, inDegree[idx], outDegree[idx],
+                        decls, eps, gaps, archEdges, useRrf, pprRankVal, bm25RankVal, triRankVal);
                 int blockTokens = Math.max(1, (block.length() + 3) / 4);
                 if (!rankedFiles.isEmpty() && usedTokens + blockTokens > maxTokens) {
                     truncated = true;
@@ -350,10 +464,11 @@ final class RepoMapBuilder {
                 }
                 usedTokens += blockTokens;
                 mapOut.append(block);
-                rankedFiles.add(new FileRank(pos + 1, path, score, lang, inDegree[idx], outDegree[idx], decls, eps, gaps));
+                rankedFiles.add(new FileRank(pos + 1, path, score, lang, inDegree[idx], outDegree[idx],
+                        decls, eps, gaps, pprRankVal, bm25RankVal, triRankVal, rrfScore));
             }
 
-            return new Result(graph.identity(), chosenContext, ALGORITHM,
+            return new Result(graph.identity(), chosenContext, effectiveAlgorithm,
                     BigDecimal.valueOf(DAMPING).setScale(2, RoundingMode.HALF_UP), ITERATIONS,
                     totalNodes, totalEdges, n, matchedSeedFiles, usedTokens, truncated,
                     rankedFiles, mapOut.toString());
@@ -485,7 +600,7 @@ final class RepoMapBuilder {
         return new NodeInfo(name, path, language, origin, endpoint, isDecl);
     }
 
-    static String readableCanonicalName(String canonical) {
+    public static String readableCanonicalName(String canonical) {
         if (canonical == null || !canonical.startsWith("java:v1:")) return canonical;
         try {
             var tuple = GraphJson.array(GraphJson.read(canonical.substring(8), new GraphJson.Limits(65_536, 32, 4_096)));
@@ -517,27 +632,205 @@ final class RepoMapBuilder {
         return 1.0;
     }
 
-    private static boolean matchesAnySeed(String path, Collection<Declaration> decls, Set<String> endpoints, List<String> seeds) {
-        String pLow = path.toLowerCase(Locale.ROOT);
-        for (String rawSeed : seeds) {
-            String s = rawSeed.toLowerCase(Locale.ROOT);
-            if (pLow.contains(s)) return true;
-            for (var d : decls) {
-                if (d.identity().equalsIgnoreCase(rawSeed) || d.name().toLowerCase(Locale.ROOT).contains(s)) return true;
+    private record EdgeLabelCount(String kind, String qualifier, String targetFile, int count) {}
+
+    private static String edgeQualifier(KnowledgeGraph graph, KnowledgeGraph.Edge edge) {
+        if (edge.region().isPresent()) {
+            String regionId = edge.region().orElseThrow();
+            for (var ref : edge.evidence()) {
+                var ev = graph.evidence(ref).orElse(null);
+                if (ev == null) continue;
+                var obj = readSmall(ev);
+                if (obj.get("classification") instanceof String cls && !cls.isBlank()) {
+                    return cls;
+                }
             }
-            for (var ep : endpoints) {
-                if (ep.toLowerCase(Locale.ROOT).contains(s)) return true;
+            return regionId.contains("MUST") ? "MUST" : "CONDITIONAL";
+        }
+        return "";
+    }
+
+    /**
+     * Splits paths and identifiers on separators and camelCase boundaries (e.g. {@code OrderServiceImpl}
+     * -> {@code order}, {@code service}, {@code impl}, {@code orderserviceimpl}).
+     */
+    static List<String> tokenizeIdentifier(String raw) {
+        if (raw == null || raw.isBlank()) return List.of();
+        var tokens = new LinkedHashSet<String>();
+        String[] coarse = raw.split("[^A-Za-z0-9]+");
+        for (String part : coarse) {
+            if (part.isEmpty()) continue;
+            String lower = part.toLowerCase(Locale.ROOT);
+            tokens.add(lower);
+            // Split camelCase / acronym boundaries: HTTPServer -> http, server; orderService -> order, service
+            int start = 0;
+            for (int i = 1; i < part.length(); i++) {
+                char prev = part.charAt(i - 1);
+                char cur = part.charAt(i);
+                char next = (i + 1 < part.length()) ? part.charAt(i + 1) : 0;
+                boolean boundary = (Character.isLowerCase(prev) && Character.isUpperCase(cur))
+                        || (Character.isDigit(prev) != Character.isDigit(cur))
+                        || (Character.isUpperCase(prev) && Character.isUpperCase(cur) && next != 0 && Character.isLowerCase(next));
+                if (boundary) {
+                    if (i > start) tokens.add(part.substring(start, i).toLowerCase(Locale.ROOT));
+                    start = i;
+                }
+            }
+            if (start > 0 && start < part.length()) {
+                tokens.add(part.substring(start).toLowerCase(Locale.ROOT));
             }
         }
-        return false;
+        return List.copyOf(tokens);
+    }
+
+    static Set<String> trigramsOf(String token) {
+        if (token == null || token.isEmpty()) return Set.of();
+        if (token.length() < 3) return Set.of("=" + token);
+        var out = new LinkedHashSet<String>();
+        for (int i = 0; i <= token.length() - 3; i++) {
+            out.add(token.substring(i, i + 3));
+        }
+        return out;
+    }
+
+    /**
+     * Computes deterministic graph-wide IDF-weighted token + character trigram relevance scores with
+     * squared term-coverage scaling across all repository files.
+     */
+    static double[] scoreFilesBySeeds(
+            List<String> fileList,
+            Map<String, LinkedHashMap<String, Declaration>> declsByFile,
+            Map<String, TreeSet<String>> endpointsByFile,
+            List<String> seeds) {
+        int n = fileList.size();
+        double[] scores = new double[n];
+        if (n == 0 || seeds == null || seeds.isEmpty()) return scores;
+
+        var fileTokens = new ArrayList<Set<String>>(n);
+        var fileTrigrams = new ArrayList<Set<String>>(n);
+        var tokenDf = new HashMap<String, Integer>();
+        var trigramDf = new HashMap<String, Integer>();
+
+        for (int i = 0; i < n; i++) {
+            String path = fileList.get(i);
+            var toks = new HashSet<String>(tokenizeIdentifier(path));
+            var decls = declsByFile.getOrDefault(path, new LinkedHashMap<>());
+            for (var d : decls.values()) {
+                toks.addAll(tokenizeIdentifier(d.name()));
+            }
+            var eps = endpointsByFile.getOrDefault(path, new TreeSet<>());
+            for (var ep : eps) {
+                toks.addAll(tokenizeIdentifier(ep));
+            }
+            var tris = new HashSet<String>();
+            for (String t : toks) {
+                tokenDf.merge(t, 1, Integer::sum);
+                tris.addAll(trigramsOf(t));
+            }
+            for (String g : tris) {
+                trigramDf.merge(g, 1, Integer::sum);
+            }
+            fileTokens.add(toks);
+            fileTrigrams.add(tris);
+        }
+
+        // Precompute query term sets per seed
+        record QuerySeed(String raw, String lower, Set<String> tokens, Set<String> trigrams) {}
+        var querySeeds = new ArrayList<QuerySeed>(seeds.size());
+        for (String raw : seeds) {
+            if (raw == null || raw.isBlank()) continue;
+            String s = raw.strip();
+            var qToks = new LinkedHashSet<String>(tokenizeIdentifier(s));
+            var qTris = new LinkedHashSet<String>();
+            for (String t : qToks) qTris.addAll(trigramsOf(t));
+            querySeeds.add(new QuerySeed(s, s.toLowerCase(Locale.ROOT), qToks, qTris));
+        }
+
+        for (int i = 0; i < n; i++) {
+            String path = fileList.get(i);
+            String pLow = path.toLowerCase(Locale.ROOT);
+            var decls = declsByFile.getOrDefault(path, new LinkedHashMap<>()).values();
+            var eps = endpointsByFile.getOrDefault(path, new TreeSet<>());
+            var fToks = fileTokens.get(i);
+            var fTris = fileTrigrams.get(i);
+
+            double fileTotal = 0.0;
+            for (var qs : querySeeds) {
+                double exactBonus = 0.0;
+                if (pLow.equals(qs.lower()) || pLow.endsWith("/" + qs.lower())) {
+                    exactBonus = 20.0;
+                } else if (pLow.contains(qs.lower())) {
+                    exactBonus = 12.0;
+                }
+                for (var d : decls) {
+                    if (d.identity().equalsIgnoreCase(qs.raw())) {
+                        exactBonus = Math.max(exactBonus, 24.0);
+                    } else if (d.name().equalsIgnoreCase(qs.raw())) {
+                        exactBonus = Math.max(exactBonus, 20.0);
+                    } else if (d.name().toLowerCase(Locale.ROOT).contains(qs.lower())) {
+                        exactBonus = Math.max(exactBonus, 14.0);
+                    }
+                }
+                for (var ep : eps) {
+                    if (ep.toLowerCase(Locale.ROOT).contains(qs.lower())) {
+                        exactBonus = Math.max(exactBonus, 12.0);
+                    }
+                }
+
+                // Token IDF with squared term-coverage scaling
+                double tokenScore = 0.0;
+                int matchedTok = 0;
+                if (!qs.tokens().isEmpty()) {
+                    for (String qt : qs.tokens()) {
+                        if (fToks.contains(qt)) {
+                            matchedTok++;
+                            int df = tokenDf.getOrDefault(qt, 1);
+                            tokenScore += StrictMath.log((n + 1.0) / (df + 1.0)) + 1.0;
+                        }
+                    }
+                    double tokCov = (double) matchedTok / qs.tokens().size();
+                    tokenScore *= (tokCov * tokCov);
+                }
+
+                // Character trigram IDF with squared coverage scaling (handles typos/partial identifiers)
+                double triScore = 0.0;
+                int matchedTri = 0;
+                if (!qs.trigrams().isEmpty()) {
+                    for (String qg : qs.trigrams()) {
+                        if (fTris.contains(qg)) {
+                            matchedTri++;
+                            int df = trigramDf.getOrDefault(qg, 1);
+                            triScore += StrictMath.log((n + 1.0) / (df + 1.0)) + 1.0;
+                        }
+                    }
+                    double triCov = (double) matchedTri / qs.trigrams().size();
+                    if (triCov >= 0.45 || matchedTok > 0 || exactBonus > 0.0) {
+                        triScore = (triScore / Math.max(1, qs.trigrams().size())) * (triCov * triCov) * 2.0;
+                    } else {
+                        triScore = 0.0;
+                    }
+                }
+
+                fileTotal += exactBonus + tokenScore + triScore;
+            }
+            scores[i] = fileTotal;
+        }
+        return scores;
     }
 
     private static String renderFileBlock(int rank, String path, BigDecimal score, String lang,
-                                          int inDeg, int outDeg, List<Declaration> decls, List<String> eps, int gaps) {
+                                          int inDeg, int outDeg, List<Declaration> decls, List<String> eps,
+                                          int gaps, List<EdgeLabelCount> archEdges,
+                                          boolean useRrf, Integer pprRank, Integer bm25Rank, Integer triRank) {
         var sb = new StringBuilder();
         sb.append(rank).append(". ").append(path)
-                .append(" [score=").append(score)
-                .append(", in=").append(inDeg)
+                .append(useRrf ? " [rrf=" : " [score=").append(score);
+        if (useRrf) {
+            if (pprRank != null) sb.append(", ppr=#").append(pprRank);
+            if (bm25Rank != null) sb.append(", bm25=#").append(bm25Rank);
+            if (triRank != null) sb.append(", tri=#").append(triRank);
+        }
+        sb.append(", in=").append(inDeg)
                 .append(", out=").append(outDeg)
                 .append(", ").append(lang);
         if (gaps > 0) sb.append(", gaps=").append(gaps);
@@ -547,6 +840,13 @@ final class RepoMapBuilder {
         }
         for (var ep : eps) {
             sb.append("   - ENDPOINT ").append(ep).append('\n');
+        }
+        for (var ae : archEdges) {
+            sb.append("   -> ").append(ae.kind());
+            if (!ae.qualifier().isEmpty()) sb.append(" [").append(ae.qualifier()).append(']');
+            sb.append(' ').append(ae.targetFile());
+            if (ae.count() > 1) sb.append(" (x").append(ae.count()).append(')');
+            sb.append('\n');
         }
         return sb.toString();
     }

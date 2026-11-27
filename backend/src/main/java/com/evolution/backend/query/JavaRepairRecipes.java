@@ -8,7 +8,7 @@ import java.util.*;
 import java.util.regex.Pattern;
 
 /** Built-in recipes only. No repository-supplied plugins or arbitrary search/replace. */
-final class JavaRepairRecipes {
+public final class JavaRepairRecipes {
     enum Recipe {
         PRIVATE_FIELD("java.remove-unused-private-field","Remove an unannotated private field that has no initializer or source references."),
         CONSTRUCTOR_PARAMETER("java.remove-empty-constructor-parameter","Remove an unannotated sole parameter from an empty constructor; review callers and reflection."),
@@ -23,12 +23,18 @@ final class JavaRepairRecipes {
         MAKE_DEPENDENCY_OPTIONAL("java.make-dependency-optional","Make a cited @Autowired injection site or constructor parameter optional."),
         OBJECT_PROVIDER_CYCLE_BREAKER("java.break-cycle-with-object-provider","Wrap a cited circularly injected dependency in Spring ObjectProvider<T> to break the cycle."),
         REPLACE_NEW_WITH_CONSTRUCTOR_INJECTION("java.replace-new-with-constructor-injection","Replace a cited direct no-arg instantiation of a collaborator with constructor injection."),
-        REMOVE_UNUSED_STATIC_IMPORT("java.remove-unused-static-import","Remove a single static import with no other mention in this compilation unit.");
+        REMOVE_UNUSED_STATIC_IMPORT("java.remove-unused-static-import","Remove a single static import with no other mention in this compilation unit."),
+        CONVERT_LOMBOK_FIELD_INJECTION("java.convert-lombok-field-injection","Convert cited @Autowired/@Inject fields in a Lombok @RequiredArgsConstructor class into private final fields."),
+        EXTRACT_INTERFACE_DECOUPLE("java.extract-interface-decouple","Extract a <Target>Port interface into the caller's package (multi-file DIP decoupling) to break cycles or forbidden layer dependencies.");
         final String id, summary;
         Recipe(String id,String summary) { this.id=id; this.summary=summary; }
         Spec spec() { return new Spec(id,"1",summary); }
     }
     public record Spec(String id,String version,String summary) {}
+    public record FileChange(String path, String beforeText, String afterText, boolean created) {}
+    public record MultiFileCandidate(List<FileChange> changes) {
+        public MultiFileCandidate { changes = List.copyOf(changes); }
+    }
     record Range(int start,int end) {}
 
     private static final Set<String> SERIALIZATION_FIELDS = Set.of("serialVersionUID","serialPersistentFields");
@@ -75,13 +81,267 @@ final class JavaRepairRecipes {
                         case MAKE_DEPENDENCY_OPTIONAL -> collectMakeDependencyOptional(owner,unit,parsed,text,targets,results);
                         case OBJECT_PROVIDER_CYCLE_BREAKER -> collectObjectProviderCycleBreaker(owner,unit,parsed,text,targets,results);
                         case REPLACE_NEW_WITH_CONSTRUCTOR_INJECTION -> collectReplaceNewWithConstructorInjection(owner,unit,parsed,text,targets,results);
+                        case CONVERT_LOMBOK_FIELD_INJECTION -> collectConvertLombokFieldInjection(owner,unit,parsed,text,targets,results);
                         default -> {}
                     }
+                } else if ((owner.getKind()==Tree.Kind.RECORD || owner.getKind()==Tree.Kind.ENUM)
+                        && recipe == Recipe.REMOVE_UNUSED_PRIVATE_METHOD) {
+                    collectUnusedPrivateMethod(owner,unit,parsed,text,targets,results);
                 }
                 return super.visitClass(owner,unused);
             }
         }.scan(unit,null);
         return List.copyOf(results);
+    }
+
+    static List<MultiFileCandidate> multiFileCandidates(
+            Recipe recipe,
+            RepairSource.File primarySource,
+            JavaRepairSyntax.Parsed primaryParsed,
+            Map<String, RepairSource.File> contextFiles,
+            JavaRepairSyntax.ContextProfile profile) {
+        if (recipe != Recipe.EXTRACT_INTERFACE_DECOUPLE || primaryParsed.tree() == null
+                || primarySource.text().contains("\\u") || contextFiles == null || contextFiles.isEmpty()) {
+            return List.of();
+        }
+        return collectExtractInterfaceDecouple(primarySource, primaryParsed, contextFiles, profile);
+    }
+
+    private static void collectConvertLombokFieldInjection(ClassTree owner, CompilationUnitTree unit,
+                                                           JavaRepairSyntax.Parsed parsed, String text,
+                                                           List<Range> targets, Set<String> out) {
+        boolean hasRequiredArgs = owner.getModifiers().getAnnotations().stream()
+                .anyMatch(ann -> {
+                    String n = ann.getAnnotationType().toString();
+                    return n.equals("RequiredArgsConstructor") || n.equals("lombok.RequiredArgsConstructor");
+                });
+        if (!hasRequiredArgs || !concreteConstructors(owner).isEmpty()) return;
+        for (var member : owner.getMembers()) {
+            if (!(member instanceof VariableTree field)
+                    || !field.getModifiers().getFlags().equals(Set.of(Modifier.PRIVATE))
+                    || field.getModifiers().getAnnotations().isEmpty()
+                    || field.getInitializer() != null) continue;
+            var optFr = range(parsed, field, text.length());
+            var optTr = range(parsed, field.getType(), text.length());
+            if (optFr.isEmpty() || optTr.isEmpty()) continue;
+            var fr = optFr.orElseThrow();
+            if (text.charAt(fr.end() - 1) != ';' || !removableText(text, fr)
+                    || !citedOverlapping(fr, targets)
+                    || hasOverlappingSiblingField(owner, field, fr, parsed, text.length())) continue;
+            boolean hasInject = false;
+            boolean safeOnly = true;
+            for (var ann : field.getModifiers().getAnnotations()) {
+                String n = ann.getAnnotationType().toString();
+                if (n.endsWith("Autowired") || n.endsWith("Inject")) {
+                    hasInject = true;
+                } else {
+                    safeOnly = false;
+                    break;
+                }
+            }
+            if (!hasInject || !safeOnly) continue;
+            String typeText = text.substring(optTr.orElseThrow().start(), optTr.orElseThrow().end()).trim();
+            String fieldName = field.getName().toString();
+            String updated = applyPatches(text, List.of(new TextPatch(fr.start(), fr.end(),
+                    "private final " + typeText + " " + fieldName + ";")));
+            out.add(pruneUnusedDiImports(updated));
+        }
+    }
+
+    /**
+     * Multi-file Dependency Inversion recipe: extracts a {@code <Target>Port} interface into the
+     * caller's package, updates the caller to depend on {@code <Target>Port} (removing the direct
+     * dependency on {@code <Target>}), and adds {@code implements <Target>Port} on {@code <Target>}.
+     */
+    private static List<MultiFileCandidate> collectExtractInterfaceDecouple(
+            RepairSource.File callerFile,
+            JavaRepairSyntax.Parsed callerParsed,
+            Map<String, RepairSource.File> contextFiles,
+            JavaRepairSyntax.ContextProfile profile) {
+        String callerText = callerFile.text();
+        String nl = callerText.contains("\r\n") ? "\r\n" : "\n";
+        var callerUnit = callerParsed.tree();
+        var targets = citationRanges(callerFile);
+        String callerPkg = callerUnit.getPackageName() == null ? "" : callerUnit.getPackageName().toString();
+
+        // Map simple class name -> (file, parsed, classTree, fqn) for candidate concrete target classes
+        record TargetInfo(RepairSource.File file, JavaRepairSyntax.Parsed parsed, ClassTree tree, String pkg, String simple, String fqn) {}
+        var targetBySimple = new LinkedHashMap<String, TargetInfo>();
+        for (var entry : contextFiles.entrySet()) {
+            var f = entry.getValue();
+            if (f.path().equals(callerFile.path()) || !f.path().endsWith(".java")) continue;
+            var p = JavaRepairSyntax.parse(f.text(), profile.forFile(f));
+            if (p.tree() == null) continue;
+            String tPkg = p.tree().getPackageName() == null ? "" : p.tree().getPackageName().toString();
+            for (var decl : p.tree().getTypeDecls()) {
+                if (decl instanceof ClassTree cls && cls.getKind() == Tree.Kind.CLASS
+                        && cls.getModifiers().getFlags().contains(Modifier.PUBLIC)
+                        && !cls.getModifiers().getFlags().contains(Modifier.FINAL)) {
+                    String simple = cls.getSimpleName().toString();
+                    String fqn = tPkg.isEmpty() ? simple : (tPkg + "." + simple);
+                    targetBySimple.putIfAbsent(simple, new TargetInfo(f, p, cls, tPkg, simple, fqn));
+                }
+            }
+        }
+        if (targetBySimple.isEmpty()) return List.of();
+
+        var results = new ArrayList<MultiFileCandidate>();
+        var seenTypes = new HashSet<String>();
+        for (var decl : callerUnit.getTypeDecls()) {
+            if (!(decl instanceof ClassTree owner) || owner.getKind() != Tree.Kind.CLASS) continue;
+            for (var member : owner.getMembers()) {
+                String candidateTypeName = null;
+                if (member instanceof VariableTree field) {
+                    var fr = range(callerParsed, field, callerText.length());
+                    if (fr.isPresent() && (targets.isEmpty() || citedOverlapping(fr.orElseThrow(), targets))) {
+                        candidateTypeName = simpleTypeName(field.getType());
+                    }
+                } else if (member instanceof MethodTree ctor && ctor.getReturnType() == null) {
+                    for (var param : ctor.getParameters()) {
+                        var pr = range(callerParsed, param, callerText.length());
+                        if (pr.isPresent() && (targets.isEmpty() || citedOverlapping(pr.orElseThrow(), targets))) {
+                            candidateTypeName = simpleTypeName(param.getType());
+                            break;
+                        }
+                    }
+                }
+                if (candidateTypeName == null || !seenTypes.add(candidateTypeName)) continue;
+                var info = targetBySimple.get(candidateTypeName);
+                if (info == null) continue;
+                String portName = info.simple() + "Port";
+                if (mentions(callerText, portName) || mentions(info.file().text(), portName)) continue;
+
+                // Collect public non-static methods of target class
+                var methodSignatures = new ArrayList<String>();
+                String targetText = info.file().text();
+                for (var tMember : info.tree().getMembers()) {
+                    if (!(tMember instanceof MethodTree m) || m.getReturnType() == null) continue;
+                    var flags = m.getModifiers().getFlags();
+                    if (!flags.contains(Modifier.PUBLIC) || flags.contains(Modifier.STATIC)) continue;
+                    var mr = range(info.parsed(), m, targetText.length());
+                    var br = m.getBody() == null ? Optional.<Range>empty() : range(info.parsed(), m.getBody(), targetText.length());
+                    if (mr.isEmpty() || br.isEmpty()) continue;
+                    String header = targetText.substring(mr.orElseThrow().start(), br.orElseThrow().start()).strip();
+                    // Strip leading annotations & public modifier for clean interface signature
+                    header = header.replaceAll("(?m)^\\s*@\\w+(?:\\([^)]*\\))?\\s*", "").strip();
+                    if (header.startsWith("public ")) header = header.substring("public ".length()).strip();
+                    if (!header.isEmpty() && methodSignatures.size() < 12) {
+                        methodSignatures.add("    " + header + ";");
+                    }
+                }
+                if (methodSignatures.isEmpty()) continue;
+
+                // 1. Build new <Target>Port.java in caller's package directory
+                int lastSlash = callerFile.path().lastIndexOf('/');
+                String portPath = (lastSlash >= 0 ? callerFile.path().substring(0, lastSlash + 1) : "") + portName + ".java";
+                if (contextFiles.containsKey(portPath)) continue;
+                var portSrc = new StringBuilder();
+                if (!callerPkg.isEmpty()) portSrc.append("package ").append(callerPkg).append(";").append(nl).append(nl);
+                // Copy non-conflicting imports from target if their simple names appear in method signatures
+                String allSigs = String.join("\n", methodSignatures);
+                for (var imp : info.parsed().tree().getImports()) {
+                    if (imp.isStatic()) continue;
+                    String q = imp.getQualifiedIdentifier().toString();
+                    int dot = q.lastIndexOf('.');
+                    String impSimple = dot >= 0 ? q.substring(dot + 1) : q;
+                    if (!impSimple.equals("*") && mentions(allSigs, impSimple)) {
+                        portSrc.append("import ").append(q).append(";").append(nl);
+                    }
+                }
+                if (!portSrc.toString().endsWith(nl + nl) && !portSrc.isEmpty()) portSrc.append(nl);
+                portSrc.append("public interface ").append(portName).append(" {").append(nl);
+                for (String sig : methodSignatures) portSrc.append(sig).append(nl);
+                portSrc.append("}").append(nl);
+                String portText = portSrc.toString();
+
+                // 2. Rewrite callerFile: replace type references of TargetSimple -> PortName & drop target import
+                String updatedCaller = replaceTypeTokenInCaller(callerText, callerUnit, callerParsed, info.simple(), info.fqn(), portName);
+                if (updatedCaller == null || updatedCaller.equals(callerText)) continue;
+
+                // 3. Rewrite targetFile: add `implements <PortName>` and import callerPkg.<PortName> if different package
+                String updatedTarget = addImplementsToTarget(info.file().text(), info.parsed(), info.tree(), callerPkg, info.pkg(), portName);
+                if (updatedTarget == null || updatedTarget.equals(info.file().text())) continue;
+
+                // Verify all 3 files pass javac parse before offering!
+                if (JavaRepairSyntax.parse(portText, profile.forFile(callerFile)).check().status() != JavaRepairSyntax.Status.PASSED
+                        || JavaRepairSyntax.parse(updatedCaller, profile.forFile(callerFile)).check().status() != JavaRepairSyntax.Status.PASSED
+                        || JavaRepairSyntax.parse(updatedTarget, profile.forFile(info.file())).check().status() != JavaRepairSyntax.Status.PASSED) {
+                    continue;
+                }
+                results.add(new MultiFileCandidate(List.of(
+                        new FileChange(portPath, "", portText, true),
+                        new FileChange(callerFile.path(), callerText, updatedCaller, false),
+                        new FileChange(info.file().path(), info.file().text(), updatedTarget, false))));
+            }
+        }
+        return List.copyOf(results);
+    }
+
+    private static String simpleTypeName(Tree typeTree) {
+        if (typeTree == null) return null;
+        String raw = typeTree.toString().strip();
+        int gen = raw.indexOf('<');
+        if (gen >= 0) raw = raw.substring(0, gen).strip();
+        int dot = raw.lastIndexOf('.');
+        return dot >= 0 ? raw.substring(dot + 1) : raw;
+    }
+
+    private static String replaceTypeTokenInCaller(String text, CompilationUnitTree unit, JavaRepairSyntax.Parsed parsed,
+                                                   String targetSimple, String targetFqn, String portName) {
+        // Reject if caller constructs `new TargetSimple(...)` directly (cannot instantiate an interface)
+        if (Pattern.compile("\\bnew\\s+" + Pattern.quote(targetSimple) + "\\b").matcher(stripCommentsAndLiterals(text)).find()) {
+            return null;
+        }
+        var patches = new ArrayList<TextPatch>();
+        for (var imp : unit.getImports()) {
+            if (!imp.isStatic() && imp.getQualifiedIdentifier().toString().equals(targetFqn)) {
+                var r = range(parsed, imp, text.length());
+                if (r.isPresent()) {
+                    var lineR = expandLineIfStandalone(text, r.orElseThrow());
+                    patches.add(new TextPatch(lineR.start(), lineR.end(), ""));
+                }
+            }
+        }
+        String stripped = stripCommentsAndLiterals(text);
+        int typeStart = 0;
+        for (var d : unit.getTypeDecls()) {
+            long pos = parsed.positions().getStartPosition(unit, d);
+            if (pos >= 0) { typeStart = (int) pos; break; }
+        }
+        var m = Pattern.compile("(?<!\\p{javaJavaIdentifierPart})" + Pattern.quote(targetSimple) + "(?!\\p{javaJavaIdentifierPart})")
+                .matcher(stripped);
+        boolean replacedAny = false;
+        while (m.find()) {
+            if (m.start() < typeStart) continue;
+            patches.add(new TextPatch(m.start(), m.end(), portName));
+            replacedAny = true;
+        }
+        if (!replacedAny || hasOverlappingTextPatches(patches)) return null;
+        return applyPatches(text, patches);
+    }
+
+    private static String addImplementsToTarget(String text, JavaRepairSyntax.Parsed parsed, ClassTree cls,
+                                                String callerPkg, String targetPkg, String portName) {
+        String nl = text.contains("\r\n") ? "\r\n" : "\n";
+        var clsRange = range(parsed, cls, text.length());
+        if (clsRange.isEmpty()) return null;
+        String stripped = stripCommentsAndLiterals(text);
+        int openBrace = stripped.indexOf('{', clsRange.orElseThrow().start());
+        if (openBrace < 0 || openBrace > clsRange.orElseThrow().end()) return null;
+        var patches = new ArrayList<TextPatch>();
+        if (!callerPkg.isEmpty() && !callerPkg.equals(targetPkg)) {
+            if (!addImportPatch(parsed.tree(), parsed, text, callerPkg + "." + portName, nl, patches)) return null;
+        }
+        int insertPos = openBrace;
+        while (insertPos > clsRange.orElseThrow().start() && Character.isWhitespace(text.charAt(insertPos - 1))) {
+            insertPos--;
+        }
+        String addition = cls.getImplementsClause().isEmpty()
+                ? (" implements " + portName)
+                : (", " + portName);
+        patches.add(new TextPatch(insertPos, insertPos, addition));
+        if (hasOverlappingTextPatches(patches)) return null;
+        return applyPatches(text, patches);
     }
 
     static List<Range> edits(Recipe recipe, RepairSource.File source, JavaRepairSyntax.Parsed parsed) {

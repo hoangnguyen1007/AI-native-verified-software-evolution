@@ -394,9 +394,26 @@ class AiAndRepairUpgradeTest {
 
     // --- 3. Peak AI / GraphRAG Agent, Citations, History Cap, Reviewer Agentic & Stream Title Filter ---
 
-    @Test void agentExposesFifteenToolsTruncatesJsonGracefullyAndRunsInReviewerMode() throws Exception {
-        assertEquals(15, ArchitectureAgent.toolSchemas(true).size());
-        assertEquals(13, ArchitectureAgent.toolSchemas(false).size());
+    @Test void agentExposesTwentyToolsTruncatesJsonGracefullyAndRunsInReviewerMode() throws Exception {
+        var withSource = ArchitectureAgent.toolSchemas(true);
+        var withoutSource = ArchitectureAgent.toolSchemas(false);
+        assertEquals(20, withSource.size());
+        assertEquals(17, withoutSource.size());
+        assertTrue(withoutSource.stream()
+                .map(t -> GraphJson.string(GraphJson.object(t.get("function")).get("name")))
+                .anyMatch("get_architecture_score"::equals));
+        assertTrue(withoutSource.stream()
+                .map(t -> GraphJson.string(GraphJson.object(t.get("function")).get("name")))
+                .anyMatch("inspect_codeowners"::equals));
+        assertTrue(withoutSource.stream()
+                .map(t -> GraphJson.string(GraphJson.object(t.get("function")).get("name")))
+                .anyMatch("architecture_brief"::equals));
+        assertTrue(withoutSource.stream()
+                .map(t -> GraphJson.string(GraphJson.object(t.get("function")).get("name")))
+                .anyMatch("inspect_advisory_links"::equals));
+        assertTrue(withSource.stream()
+                .map(t -> GraphJson.string(GraphJson.object(t.get("function")).get("name")))
+                .anyMatch("read_markdown_section"::equals));
 
         // Graceful JSON truncation never cuts mid-JSON
         var hugePayload = Map.<String, Object>of(

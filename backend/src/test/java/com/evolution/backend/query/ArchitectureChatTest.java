@@ -230,6 +230,55 @@ class ArchitectureChatTest {
         assertEquals("EVIDENCE_ONLY",GraphJson.object(body(send(api,fixture,input)).get("data")).get("status"));
     }
 
+    @Test void preliminaryPreviewGraphAddsDisclaimerAndRejectsRepairMode() {
+        var repo = com.evolution.analysis.contract.identity.RepositoryIdentity.fromCanonicalCoordinate("https://example.test/prelim-chat.git");
+        var snapshot = com.evolution.analysis.contract.identity.SnapshotIdentity.from(
+                repo, com.evolution.analysis.contract.common.ContentDigest.sha256Utf8("prelim-chat-snap"));
+        var skeleton = new com.evolution.backend.analysis.FastJavaSkeletonScanner().scan(
+                List.of(new com.evolution.backend.analysis.FastJavaSkeletonScanner.SourceFile(
+                        "src/main/java/com/acme/web/OrderController.java", ".",
+                        com.evolution.analysis.contract.common.ContentDigest.sha256Utf8("class OrderController {}"),
+                        "package com.acme.web;\npublic class OrderController {}\n")),
+                () -> false);
+        var previewGraph = new com.evolution.backend.analysis.PreliminaryGraphBuilder().build(
+                com.evolution.backend.analysis.PreliminaryGraphBuilder.Input.stage1(
+                        repo, snapshot,
+                        List.of(new com.evolution.backend.analysis.PreliminaryGraphBuilder.ModuleInfo(".", "root", "MAVEN", 1)),
+                        skeleton, List.of(".")));
+        var previewStore = new com.evolution.backend.analysis.WorkbenchPreviewStore();
+        previewStore.putPreview("11111111-1111-1111-1111-111111111111", previewGraph,
+                com.evolution.backend.analysis.AnalysisJobs.TruthTier.PRELIMINARY_STRUCTURE, 0, 1, List.of("."));
+
+        var api = ArchitectureQueryApi.withPreviewStore(new ArchitectureQueryApi(new InMemoryGraphStore()), previewStore);
+        String url = "/api/v1/graphs/" + previewGraph.identity().value() + "/architecture-chat";
+
+        var explore = api.handle("POST", url, "application/json",
+                bytes(Map.of("context", snapshot.value(), "mode", "EXPLORE",
+                        "messages", List.of(Map.of("role", "user", "content", "What modules and types exist?")))),
+                () -> false);
+        assertEquals(200, explore.status(), () -> body(explore).toString());
+        var exploreData = GraphJson.object(body(explore).get("data"));
+        var limits = GraphJson.array(exploreData.get("limitations"));
+        assertTrue(limits.stream().anyMatch(l -> l.toString().contains("PRELIMINARY_STRUCTURE")),
+                () -> "Expected preliminary disclaimer in limitations: " + limits);
+
+        var overview = api.handle("POST", url, "application/json",
+                bytes(Map.of("context", snapshot.value(), "mode", "EXPLORE",
+                        "messages", List.of(Map.of("role", "user", "content", "What is the current project context?")))),
+                () -> false);
+        assertEquals(200, overview.status(), () -> body(overview).toString());
+        var overviewLimits = GraphJson.array(GraphJson.object(body(overview).get("data")).get("limitations"));
+        assertTrue(overviewLimits.stream().anyMatch(l -> l.toString().contains("PRELIMINARY_STRUCTURE")),
+                () -> "Expected preliminary disclaimer on overview: " + overviewLimits);
+
+        var repair = api.handle("POST", url, "application/json",
+                bytes(Map.of("context", snapshot.value(), "mode", "REPAIR",
+                        "messages", List.of(Map.of("role", "user", "content", "Propose a repair patch.")))),
+                () -> false);
+        assertEquals(409, repair.status(), () -> body(repair).toString());
+        assertEquals("PRELIMINARY_GRAPH_PENDING", GraphJson.object(body(repair).get("error")).get("code"));
+    }
+
     private static Map<String,Object> question(String context) {
         return Map.of("context", context, "mode", "EXPLORE",
                 "messages", List.of(Map.of("role", "user", "content", "What was analyzed?")));

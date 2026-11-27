@@ -1,0 +1,729 @@
+/* Lucian UX/UI Prompt #417, #040 · MIT License (c) 2026 Seokwoooo · https://lucianlabs.dev/uxui-prompt/#417 */
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Collapsible Sidebar & Expanding Icon-Rail Control (#417 + #040)
+ * Precision Editorial tokens only (Obsidian-Forest Dark & Warm Alabaster Light)
+ * Mobile safety: rail & edge handle strictly gated to @media (min-width: 761px)
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Shared Spring Active-Item Highlight Pill (#417 .u417-pl -> .u417-hl) ── */
+.workbench-page #repositories,
+.workbench-page #history {
+  position: relative;
+}
+
+.workbench-page .u417-hl {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: var(--pw, 100%);
+  height: var(--ph, 40px);
+  z-index: 0;
+  pointer-events: none;
+  border-radius: var(--r-md);
+  background: var(--ux-surface-2);
+  box-shadow: inset 0 0 0 1px var(--ux-line-2);
+  opacity: 0;
+  transform: translate3d(var(--px, 0px), var(--py, 0px), 0);
+  transition:
+    transform .55s cubic-bezier(.3, 1.45, .5, 1),
+    width .45s cubic-bezier(.3, 1.35, .5, 1),
+    height .35s var(--ux-ease),
+    opacity .2s var(--ux-ease);
+  will-change: transform, width, height;
+}
+
+.workbench-page .u417-hl.is-show {
+  opacity: 1;
+}
+
+.workbench-page .u417-hl::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 8px;
+  bottom: 8px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--ux-accent);
+  transition: opacity .2s var(--ux-ease);
+}
+
+.workbench-page .u417-has-hl > .sidebar-item {
+  position: relative;
+  z-index: 1;
+}
+
+.workbench-page .u417-has-hl > .sidebar-item.active {
+  background: transparent !important;
+  border-color: transparent !important;
+}
+
+.workbench-page .u417-has-hl > .sidebar-item.active::before {
+  display: none !important;
+}
+
+.workbench-page .u417-has-hl > .sidebar-item:hover:not(.active) {
+  background: color-mix(in srgb, var(--ux-surface-2) 72%, transparent) !important;
+}
+
+.workbench-page .u417-has-hl > .sidebar-item.active:hover {
+  background: transparent !important;
+}
+
+/* Rail-only visual elements stay hidden in expanded / mobile drawer views */
+.workbench-page .u417-av,
+.workbench-page .u417-run-dot {
+  display: none;
+}
+
+/* Edge toggle hidden by default on mobile */
+.workbench-page .u417-edge {
+  display: none;
+}
+
+/* ── Desktop Collapsible Sidebar & 64px Icon-Rail (min-width: 761px) ── */
+@media (min-width: 761px) {
+  .workbench-page .app-shell:not(.sidebar-collapsed) {
+    --sidebar-w: 260px;
+    grid-template-columns: 260px minmax(0, 1fr);
+    transition: grid-template-columns .6s cubic-bezier(.3, 1.3, .45, 1);
+  }
+
+  .workbench-page .app-shell.sidebar-rail:not(.sidebar-collapsed) {
+    --sidebar-w: 64px;
+    grid-template-columns: 64px minmax(0, 1fr);
+  }
+
+  .workbench-page .app-shell.u417-no-anim,
+  .workbench-page .app-shell.u417-no-anim * {
+    transition: none !important;
+    animation: none !important;
+  }
+
+  /* Keep sidebar sticky & allow edge button to protrude cleanly without clipping */
+  .workbench-page .app-shell > .sidebar {
+    position: sticky;
+    top: 0;
+    height: 100dvh;
+    z-index: 20;
+    padding: 12px 10px 12px;
+    gap: 0;
+    overflow: visible;
+    background: var(--ux-surface);
+    border-right: 1px solid var(--ux-line);
+    transition: padding .45s var(--ux-ease);
+  }
+
+  .workbench-page .app-shell.sidebar-rail > .sidebar {
+    padding: 12px 6px 12px;
+  }
+
+  /* Scroll stays inside .sidebar-inner so edge handle never clips & x never overflows */
+  .workbench-page .app-shell > .sidebar > .sidebar-inner {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-width: thin;
+    scrollbar-color: var(--surface-3) transparent;
+    padding-bottom: 8px;
+  }
+
+  /* Brand header */
+  .workbench-page .app-shell > .sidebar > .brand {
+    min-height: 40px;
+    height: 40px;
+    padding: 0 8px;
+    margin: 0 0 12px;
+    gap: 9px;
+    justify-content: flex-start;
+    overflow: hidden;
+    flex-shrink: 0;
+    transition: padding .35s var(--ux-ease), gap .35s var(--ux-ease);
+  }
+
+  .workbench-page .app-shell > .sidebar > .brand .brand-logo {
+    width: 28px;
+    height: 28px;
+    flex: none;
+    transition: transform .45s var(--ux-spring);
+  }
+
+  .workbench-page .app-shell > .sidebar > .brand .brand-name {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    opacity: 1;
+    transform: none;
+    transition: opacity .3s var(--ux-ease) .12s, transform .5s var(--ux-spring) .12s;
+  }
+
+  /* Bottom connection bar — preserve at 761px..980px over legacy styles.css rule */
+  .workbench-page .app-shell > .sidebar > .sidebar-bottom {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 36px;
+    padding: 10px 8px 0;
+    margin-top: auto;
+    flex-shrink: 0;
+    overflow: hidden;
+    border-top: 1px solid var(--ux-line);
+    transition: padding .35s var(--ux-ease);
+  }
+
+  .workbench-page .app-shell > .sidebar > .sidebar-bottom #connection-status {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    opacity: 1;
+    transform: none;
+    transition: opacity .3s var(--ux-ease) .16s, transform .5s var(--ux-spring) .16s;
+  }
+
+  .workbench-page .app-shell > .sidebar > .sidebar-bottom #connection-dot {
+    width: 7px;
+    height: 7px;
+    flex: none;
+    transition: transform .35s var(--ux-spring), box-shadow .25s var(--ux-ease);
+  }
+
+  .workbench-page .app-shell > .sidebar > .sidebar-bottom #connection-dot.online {
+    box-shadow: 0 0 0 3px var(--ux-accent-soft);
+  }
+
+  .workbench-page .app-shell > .sidebar .sidebar-section-header h2 {
+    margin: 0;
+    font-size: 10.5px;
+    font-weight: 650;
+    letter-spacing: 0.1em;
+    color: var(--ux-ink-3);
+  }
+
+  /* ── Lucian #417 Tactile Round Edge Collapse Handle (.u417-edge) ── */
+  .workbench-page .u417-edge {
+    position: absolute;
+    right: -12px;
+    top: 20px;
+    z-index: 25;
+    display: grid;
+    place-items: center;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: var(--ux-surface);
+    color: var(--ux-ink-2);
+    box-shadow: 0 0 0 1px var(--ux-line-2), 0 2px 6px -2px var(--ux-shadow-strong);
+    cursor: pointer;
+    transition:
+      transform .5s cubic-bezier(.3, 1.6, .5, 1),
+      color .2s var(--ux-ease),
+      box-shadow .2s var(--ux-ease),
+      background-color .2s var(--ux-ease);
+  }
+
+  .workbench-page .u417-edge:hover {
+    transform: scale(1.12);
+    color: var(--ux-ink);
+    background: var(--ux-surface-2);
+    box-shadow: 0 0 0 1px var(--accent-line), 0 4px 12px -3px var(--ux-shadow-strong);
+  }
+
+  .workbench-page .u417-edge:active {
+    transform: scale(.94);
+  }
+
+  .workbench-page .u417-edge:focus-visible {
+    outline: 2px solid var(--ux-accent);
+    outline-offset: 2px;
+    color: var(--ux-ink);
+  }
+
+  .workbench-page .u417-edge svg {
+    width: 12px;
+    height: 12px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.9;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    display: block;
+    transition: transform .55s cubic-bezier(.3, 1.6, .5, 1);
+  }
+
+  .workbench-page .app-shell.sidebar-rail .u417-edge svg {
+    transform: rotate(180deg);
+  }
+
+  /* ── Lucian #040 Staggered Line-by-Line Reveal on Expand ── */
+  @keyframes u040-reveal {
+    0% {
+      opacity: 0;
+      transform: translateX(-8px);
+    }
+    100% {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  .workbench-page .app-shell.u040-expanding .sidebar .brand-name {
+    animation: u040-reveal .46s var(--ux-spring) .10s both;
+  }
+
+  .workbench-page .app-shell.u040-expanding .sidebar .u002-label {
+    animation: u040-reveal .46s var(--ux-spring) .12s both;
+  }
+
+  .workbench-page .app-shell.u040-expanding .sidebar .sidebar-section-header h2 {
+    animation: u040-reveal .42s var(--ux-spring) .14s both;
+  }
+
+  .workbench-page .app-shell.u040-expanding .sidebar .sidebar-item .sidebar-item-head,
+  .workbench-page .app-shell.u040-expanding .sidebar .sidebar-item .repo-meta {
+    animation: u040-reveal .48s var(--ux-spring) calc(.12s + var(--u040-i, 0) * 35ms) both;
+  }
+
+  .workbench-page .app-shell.u040-expanding .sidebar #connection-status {
+    animation: u040-reveal .44s var(--ux-spring) .22s both;
+  }
+
+  /* ── 64px Icon-Only Rail Mode (.app-shell.sidebar-rail) ── */
+
+  /* 1. Brand centered logo, text folded smoothly */
+  .workbench-page .app-shell.sidebar-rail > .sidebar > .brand {
+    padding: 0;
+    gap: 0;
+    justify-content: center;
+  }
+
+  .workbench-page .app-shell.sidebar-rail > .sidebar > .brand .brand-name {
+    max-width: 0;
+    opacity: 0;
+    transform: translateX(-8px);
+    pointer-events: none;
+    transition: opacity .15s var(--ux-ease), transform .25s var(--ux-ease), max-width .2s var(--ux-ease);
+  }
+
+  /* 2. Connect Repository (#002) -> 40x40 circular emerald + orb */
+  .workbench-page .app-shell.sidebar-rail > .sidebar .u002-connect {
+    width: 40px;
+    height: 40px;
+    padding: 0;
+    margin: 0 auto 14px;
+    gap: 0;
+    justify-content: center;
+    border-radius: 50%;
+  }
+
+  .workbench-page .app-shell.sidebar-rail > .sidebar .u002-connect .u002-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    opacity: 0;
+    transform: translateX(-8px);
+    pointer-events: none;
+  }
+
+  .workbench-page .app-shell.sidebar-rail > .sidebar .u002-connect .u002-fill {
+    clip-path: circle(16px at 50% 50%);
+  }
+
+  .workbench-page .app-shell.sidebar-rail > .sidebar .u002-connect:hover .u002-fill,
+  .workbench-page .app-shell.sidebar-rail > .sidebar .u002-connect:focus-visible .u002-fill {
+    clip-path: circle(100% at 50% 50%);
+  }
+
+  .workbench-page .app-shell.sidebar-rail > .sidebar .u002-connect .u002-orb {
+    width: 32px;
+    height: 32px;
+  }
+
+  /* 3. Section headers collapse cleanly to subtle rail hairline separators */
+  .workbench-page .app-shell.sidebar-rail > .sidebar .sidebar-section {
+    padding: 10px 0 6px;
+    border-top: 0;
+    position: relative;
+  }
+
+  .workbench-page .app-shell.sidebar-rail > .sidebar .sidebar-section::before {
+    content: "";
+    display: block;
+    width: 24px;
+    height: 1px;
+    margin: 0 auto 10px;
+    background: var(--ux-line-2);
+  }
+
+  .workbench-page .app-shell.sidebar-rail > .sidebar .sidebar-section-header {
+    padding: 0;
+    justify-content: center;
+    min-height: 0;
+    margin-bottom: 4px;
+  }
+
+  .workbench-page .app-shell.sidebar-rail > .sidebar .sidebar-section-header h2 {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    opacity: 0;
+    transform: translateX(-8px);
+    pointer-events: none;
+  }
+
+  .workbench-page .app-shell.sidebar-rail > .sidebar .sidebar-section-header [data-action="refresh"] {
+    width: 26px !important;
+    height: 26px !important;
+    border-radius: 7px;
+    margin-bottom: 4px;
+    color: var(--ux-ink-3) !important;
+    transition: color .18s var(--ux-ease), background-color .18s var(--ux-ease), transform .35s var(--ux-spring);
+  }
+
+  .workbench-page .app-shell.sidebar-rail > .sidebar .sidebar-section-header [data-action="refresh"]:hover {
+    color: var(--ux-ink) !important;
+    background: var(--ux-surface-2) !important;
+    transform: rotate(90deg);
+  }
+
+  /* Hide empty-state prose inside 64px rail so text never stacks vertically */
+  .workbench-page .app-shell.sidebar-rail > .sidebar #repositories > p,
+  .workbench-page .app-shell.sidebar-rail > .sidebar #history > p {
+    display: none;
+  }
+
+  /* 4. Repositories list items -> centered 44x44 icon/monogram tiles */
+  .workbench-page .app-shell.sidebar-rail > .sidebar #repositories {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .workbench-page .app-shell.sidebar-rail > .sidebar #repositories .sidebar-item.repository-row {
+    width: 44px !important;
+    height: 44px !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    align-items: center !important;
+    justify-content: center !important;
+    border-radius: var(--r-md) !important;
+    overflow: visible !important;
+  }
+
+  .workbench-page .app-shell.sidebar-rail > .sidebar #repositories .sidebar-item.repository-row .sidebar-item-head,
+  .workbench-page .app-shell.sidebar-rail > .sidebar #repositories .sidebar-item.repository-row .repo-meta {
+    position: absolute !important;
+    width: 1px !important;
+    height: 1px !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    overflow: hidden !important;
+    clip-path: inset(50%) !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+  }
+
+  .workbench-page .app-shell.sidebar-rail > .sidebar #repositories .u417-av {
+    position: relative;
+    display: grid;
+    place-items: center;
+    width: 34px;
+    height: 34px;
+    border-radius: 9px;
+    border: 1px solid var(--ux-line);
+    background: var(--ux-surface-2);
+    color: var(--ux-ink-2);
+    font: 650 11.5px/1 var(--font-mono);
+    letter-spacing: -0.02em;
+    transition:
+      transform .35s var(--ux-spring),
+      border-color .18s var(--ux-ease),
+      background-color .18s var(--ux-ease),
+      color .18s var(--ux-ease);
+  }
+
+  .workbench-page .app-shell.sidebar-rail > .sidebar #repositories .sidebar-item:hover .u417-av,
+  .workbench-page .app-shell.sidebar-rail > .sidebar #repositories .sidebar-item:focus-visible .u417-av {
+    color: var(--ux-ink);
+    border-color: var(--line-strong);
+    transform: scale(1.04);
+  }
+
+  /* Active rail tile lets .u417-hl be the single tactile pill surface (zero box-in-box) */
+  .workbench-page .app-shell.sidebar-rail > .sidebar #repositories .sidebar-item.active .u417-av {
+    background: transparent;
+    border-color: transparent;
+    color: var(--ux-accent);
+  }
+
+  .workbench-page .app-shell.sidebar-rail > .sidebar #repositories .u417-av-kind {
+    position: absolute;
+    right: -3px;
+    bottom: -3px;
+    width: 14px;
+    height: 14px;
+    border-radius: 4px;
+    display: grid;
+    place-items: center;
+    background: var(--ux-surface);
+    border: 1px solid var(--ux-line-2);
+    color: var(--ux-ink-3);
+  }
+
+  .workbench-page .app-shell.sidebar-rail > .sidebar #repositories .sidebar-item.active .u417-av-kind {
+    background: var(--ux-surface);
+    border-color: var(--accent-line);
+    color: var(--ux-accent);
+  }
+
+  .workbench-page .app-shell.sidebar-rail > .sidebar #repositories .u417-av-kind svg {
+    width: 8.5px;
+    height: 8.5px;
+    display: block;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2.2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  /* Keep spring highlight crisp around rail tiles */
+  .workbench-page .app-shell.sidebar-rail > .sidebar #repositories .u417-hl {
+    border-radius: var(--r-md);
+    background: var(--ux-accent-soft);
+    box-shadow: inset 0 0 0 1px var(--accent-line);
+  }
+
+  .workbench-page .app-shell.sidebar-rail > .sidebar .u417-hl::before {
+    top: 9px;
+    bottom: 9px;
+    width: 2.5px;
+  }
+
+  /* 5. Recent runs (#history) -> centered compact status-dot markers */
+  .workbench-page .app-shell.sidebar-rail > .sidebar #history {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+  }
+
+  .workbench-page .app-shell.sidebar-rail > .sidebar #history .sidebar-item.history-row {
+    width: 38px !important;
+    height: 28px !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    align-items: center !important;
+    justify-content: center !important;
+    border-radius: 8px !important;
+  }
+
+  .workbench-page .app-shell.sidebar-rail > .sidebar #history .sidebar-item.history-row .sidebar-item-head,
+  .workbench-page .app-shell.sidebar-rail > .sidebar #history .sidebar-item.history-row .repo-meta {
+    position: absolute !important;
+    width: 1px !important;
+    height: 1px !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    overflow: hidden !important;
+    clip-path: inset(50%) !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+  }
+
+  .workbench-page .app-shell.sidebar-rail > .sidebar #history .u417-run-dot {
+    display: block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--ux-accent);
+    transition: transform .3s var(--ux-spring), box-shadow .2s var(--ux-ease);
+  }
+
+  .workbench-page .app-shell.sidebar-rail > .sidebar #history .u417-run-dot[data-tone="warn"] {
+    background: var(--ux-warn);
+  }
+
+  .workbench-page .app-shell.sidebar-rail > .sidebar #history .u417-run-dot[data-tone="danger"] {
+    background: var(--ux-danger);
+  }
+
+  .workbench-page .app-shell.sidebar-rail > .sidebar #history .u417-run-dot[data-tone="muted"] {
+    background: var(--ux-ink-3);
+  }
+
+  .workbench-page .app-shell.sidebar-rail > .sidebar #history .sidebar-item:hover .u417-run-dot {
+    transform: scale(1.22);
+  }
+
+  .workbench-page .app-shell.sidebar-rail > .sidebar #history .sidebar-item.active .u417-run-dot {
+    transform: scale(1.18);
+    box-shadow: 0 0 0 3px var(--ux-accent-soft);
+  }
+
+  .workbench-page .app-shell.sidebar-rail > .sidebar #history .sidebar-item.active .u417-run-dot[data-tone="danger"] {
+    box-shadow: 0 0 0 3px var(--danger-s);
+  }
+
+  .workbench-page .app-shell.sidebar-rail > .sidebar #history .sidebar-item.active .u417-run-dot[data-tone="warn"] {
+    box-shadow: 0 0 0 3px var(--warn-s);
+  }
+
+  /* Compact Load More pill in rail mode */
+  .workbench-page .app-shell.sidebar-rail > .sidebar #history-more:not([hidden]) {
+    display: grid;
+    place-items: center;
+    width: 34px;
+    height: 24px;
+    margin: 6px auto 0 !important;
+    padding: 0;
+    font-size: 0 !important;
+    border-radius: 7px;
+  }
+
+  .workbench-page .app-shell.sidebar-rail > .sidebar #history-more:not([hidden])::after {
+    content: "···";
+    font-size: 12px;
+    letter-spacing: 1px;
+    line-height: 1;
+    color: var(--ux-ink-2);
+  }
+
+  /* 6. Bottom connection indicator centered */
+  .workbench-page .app-shell.sidebar-rail > .sidebar > .sidebar-bottom {
+    padding: 10px 0 0;
+    gap: 0;
+    justify-content: center;
+  }
+
+  .workbench-page .app-shell.sidebar-rail > .sidebar > .sidebar-bottom #connection-status {
+    max-width: 0;
+    opacity: 0;
+    transform: translateX(-8px);
+    pointer-events: none;
+    transition: opacity .15s var(--ux-ease), transform .25s var(--ux-ease), max-width .2s var(--ux-ease);
+  }
+
+  .workbench-page .app-shell.sidebar-rail > .sidebar > .sidebar-bottom #connection-dot {
+    width: 8px;
+    height: 8px;
+  }
+}
+
+/* ── Fixed Right-Anchored Floating Rail Tooltip (.u417-tip) ── */
+.u417-tip {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 520;
+  pointer-events: none;
+  max-width: 248px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: var(--ux-surface-3);
+  color: var(--ux-ink);
+  border: 1px solid var(--line-strong);
+  box-shadow: 0 10px 26px -8px var(--ux-shadow-strong);
+  opacity: 0;
+  visibility: hidden;
+  transform: translate3d(-5px, -50%, 0) scale(.96);
+  transition:
+    opacity .15s var(--ux-ease),
+    transform .28s cubic-bezier(.3, 1.45, .5, 1),
+    visibility 0s linear .18s;
+}
+
+:root[data-theme="light"] .u417-tip {
+  background: var(--ux-surface);
+  border-color: var(--line-strong);
+  box-shadow: 0 10px 24px -8px var(--ux-shadow-strong);
+}
+
+.u417-tip.is-open {
+  opacity: 1;
+  visibility: visible;
+  transform: translate3d(0, -50%, 0) scale(1);
+  transition:
+    opacity .15s var(--ux-ease),
+    transform .28s cubic-bezier(.3, 1.45, .5, 1),
+    visibility 0s;
+}
+
+.u417-tip::before {
+  content: "";
+  position: absolute;
+  left: -4.5px;
+  top: 50%;
+  width: 8px;
+  height: 8px;
+  background: inherit;
+  border-left: 1px solid var(--line-strong);
+  border-bottom: 1px solid var(--line-strong);
+  transform: translateY(-50%) rotate(45deg);
+}
+
+.u417-tip-t {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--ux-ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.u417-tip-s {
+  display: block;
+  margin-top: 1px;
+  font-size: 11px;
+  line-height: 1.3;
+  color: var(--ux-ink-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.u417-tip-s:empty {
+  display: none;
+}
+
+/* ── Mobile Safety (max-width: 760px) ── */
+@media (max-width: 760px) {
+  .workbench-page .u417-edge,
+  .u417-tip {
+    display: none !important;
+  }
+}
+
+/* ── Reduced Motion Discipline ── */
+@media (prefers-reduced-motion: reduce) {
+  .workbench-page .app-shell:not(.sidebar-collapsed),
+  .workbench-page .app-shell > .sidebar,
+  .workbench-page .app-shell > .sidebar > .brand,
+  .workbench-page .app-shell > .sidebar > .brand .brand-logo,
+  .workbench-page .app-shell > .sidebar > .brand .brand-name,
+  .workbench-page .app-shell > .sidebar > .sidebar-bottom,
+  .workbench-page .app-shell > .sidebar > .sidebar-bottom #connection-status,
+  .workbench-page .u417-edge,
+  .workbench-page .u417-edge svg,
+  .workbench-page .u417-hl,
+  .workbench-page .u417-av,
+  .workbench-page .u417-run-dot,
+  .u417-tip {
+    transition: none !important;
+    animation: none !important;
+  }
+
+  .workbench-page .app-shell.u040-expanding .sidebar * {
+    animation: none !important;
+  }
+}

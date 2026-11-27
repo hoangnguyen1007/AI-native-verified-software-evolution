@@ -25,8 +25,19 @@ public final class LiteralConditionAnnotation {
             boolean named = false, positional = false;
             do {
                 skip(); String name;
-                if (peek() == '"' || peek() == '{') { name = "value"; positional = true; }
-                else { name = identifier(); require('='); named = true; }
+                if (peek() == '"' || peek() == '{') {
+                    name = "value"; positional = true;
+                } else {
+                    int saved = offset;
+                    String candidateName = identifier();
+                    skip();
+                    if (take('=')) {
+                        name = candidateName; named = true;
+                    } else {
+                        offset = saved;
+                        name = "value"; positional = true;
+                    }
+                }
                 if (named && positional || attributes.putIfAbsent(name, value()) != null) throw unsupported();
             } while (take(','));
             require(')');

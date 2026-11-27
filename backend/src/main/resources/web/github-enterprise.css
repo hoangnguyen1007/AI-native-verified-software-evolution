@@ -1,0 +1,454 @@
+/* Enterprise GitHub Hub: PRs & Quality Gate, Diff-Anchored Inline Review with Suggestions,
+ * SARIF 2.1.0, CI Workflow Generator, Webhooks & /evo Deliveries, CODEOWNERS & Permalinks.
+ * WCAG AA >= 4.5:1 contrast in both Dark and Light themes. */
+
+.gh-enterprise-drawer {
+  margin: 0 0 14px;
+}
+.gh-enterprise-drawer[hidden] { display: none; }
+
+.gh-ent-shell {
+  border-radius: var(--r-md);
+  background: var(--surface);
+  border: 1px solid var(--line-mid);
+  box-shadow: var(--shadow-md);
+  overflow: hidden;
+}
+
+.gh-ent-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 14px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--line-mid);
+}
+.gh-ent-title-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  min-width: 0;
+}
+.gh-ent-title {
+  margin: 0;
+  font-size: 0.96rem;
+  font-weight: 700;
+  color: var(--text);
+}
+.gh-ent-close {
+  width: 28px;
+  height: 28px;
+  flex: none;
+}
+
+.gh-ent-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+.gh-ent-tab {
+  padding: 6px 12px;
+  border-radius: var(--r);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 0.83rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.gh-ent-tab:hover {
+  color: var(--text);
+  background: var(--surface-2);
+}
+.gh-ent-tab.is-active {
+  background: var(--surface-2);
+  border-color: var(--accent-line);
+  color: var(--text);
+}
+
+.gh-ent-body {
+  padding: 14px;
+  display: grid;
+  gap: 14px;
+}
+
+/* PR Cards & Quality Gate */
+.gh-pr-list {
+  display: grid;
+  gap: 10px;
+}
+.gh-pr-card {
+  padding: 12px 14px;
+  border-radius: var(--r);
+  background: var(--surface-2);
+  border: 1px solid var(--line-mid);
+  display: grid;
+  gap: 8px;
+}
+.gh-pr-card-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+}
+.gh-pr-title-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+.gh-pr-avatar-mono {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface);
+  border: 1px solid var(--line-mid);
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: var(--text);
+  flex: none;
+}
+.gh-pr-num {
+  font-family: var(--font-mono);
+  font-size: 0.84rem;
+  color: var(--accent);
+}
+.gh-pr-title {
+  font-weight: 600;
+  color: var(--text);
+  font-size: 0.9rem;
+}
+.gh-pr-badges {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.gh-pr-meta {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+}
+.gh-pr-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Quality Gate Pill (solid surface bg avoids translucent contrast drop) */
+.gh-gate-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 9px;
+  border-radius: var(--r-pill);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  background: var(--surface);
+  border: 1px solid var(--line-mid);
+  color: var(--text);
+}
+.gh-gate-badge.is-good {
+  border-color: var(--accent-line);
+  color: var(--accent);
+}
+.gh-gate-badge.is-warn {
+  border-color: var(--warn-line);
+  color: var(--warn);
+}
+.gh-gate-badge.is-bad {
+  border-color: var(--danger-line);
+  color: var(--danger);
+}
+
+/* Inline PR Review Preview Card */
+.gh-review-preview-card {
+  padding: 14px;
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+  border: 1px solid var(--accent-line);
+  display: grid;
+  gap: 12px;
+}
+.gh-review-preview-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.gh-review-preview-head h4,
+.gh-ent-card h4 {
+  margin: 0;
+  font-size: 0.94rem;
+  color: var(--text);
+}
+.gh-subhead {
+  margin: 4px 0 0;
+  font-size: 0.84rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.gh-qg-card {
+  padding: 10px 12px;
+  border-radius: var(--r);
+  background: var(--surface);
+  border: 1px solid var(--line-mid);
+  display: grid;
+  gap: 6px;
+}
+.gh-qg-card.is-good { border-left: 3px solid var(--accent); }
+.gh-qg-card.is-warn { border-left: 3px solid var(--warn); }
+.gh-qg-card.is-bad { border-left: 3px solid var(--danger); }
+.gh-qg-cond-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+.gh-qg-cond {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.82rem;
+  color: var(--text);
+}
+.gh-qg-cond.is-good span:first-child { color: var(--accent); font-weight: 700; }
+.gh-qg-cond.is-bad span:first-child { color: var(--danger); font-weight: 700; }
+
+.gh-inline-comments {
+  display: grid;
+  gap: 10px;
+}
+.gh-inline-comment {
+  padding: 10px 12px;
+  border-radius: var(--r);
+  background: var(--surface);
+  border: 1px solid var(--line-mid);
+  display: grid;
+  gap: 8px;
+}
+.gh-inline-comment-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+}
+.gh-comment-loc {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: var(--text);
+  background: var(--surface-2);
+  padding: 2px 7px;
+  border-radius: var(--r);
+  border: 1px solid var(--line);
+}
+.gh-comment-body p { margin: 0 0 6px; }
+.gh-comment-body p:last-child { margin-bottom: 0; }
+
+.gh-suggestion-box {
+  margin-top: 6px;
+  border-radius: var(--r);
+  border: 1px solid var(--accent-line);
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.gh-suggestion-head {
+  padding: 5px 10px;
+  font-size: 0.74rem;
+  font-weight: 700;
+  color: var(--accent);
+  background: var(--accent-s);
+  border-bottom: 1px solid var(--accent-line);
+}
+.gh-suggestion-code {
+  margin: 0;
+  padding: 8px 10px;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  color: var(--text);
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.gh-check-options {
+  display: grid;
+  gap: 4px;
+}
+
+/* Cards for SARIF, CI Workflow, Webhooks */
+.gh-ent-card {
+  display: grid;
+  gap: 10px;
+}
+.gh-divider {
+  border: 0;
+  border-top: 1px solid var(--line);
+  margin: 4px 0;
+}
+.gh-two-col {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.gh-ci-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+}
+.gh-inline-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.gh-score-num {
+  width: 72px;
+}
+.gh-ci-meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.gh-yaml-pre {
+  margin: 0;
+  padding: 12px;
+  border-radius: var(--r);
+  background: var(--surface-2);
+  border: 1px solid var(--line-mid);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  line-height: 1.48;
+  color: var(--text);
+  overflow-x: auto;
+  max-height: 360px;
+}
+
+.gh-chatops-ref {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: var(--r);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+}
+.gh-chatops-cmd {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  padding: 2px 7px;
+  border-radius: var(--r);
+  background: var(--surface);
+  border: 1px solid var(--line-mid);
+  color: var(--text);
+}
+
+.gh-webhook-table {
+  table-layout: auto;
+  width: 100%;
+}
+.gh-webhook-table th,
+.gh-webhook-table td,
+.gh-webhook-table th:first-child,
+.gh-webhook-table td:first-child {
+  width: auto;
+  white-space: nowrap;
+}
+
+.gh-issue-modal {
+  display: grid;
+  gap: 10px;
+}
+.gh-publish-status {
+  display: grid;
+  gap: 6px;
+}
+
+/* CODEOWNERS Pills & GitHub Permalinks Everywhere */
+.gh-owner-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.gh-owner-pills {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+.gh-owner-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border-radius: var(--r-pill);
+  background: var(--surface);
+  border: 1px solid var(--ai-line);
+  color: var(--ai);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+.gh-owner-pill.is-more {
+  border-color: var(--line-mid);
+  color: var(--text-2);
+}
+
+.gh-permalink-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 8px;
+  border-radius: var(--r);
+  border: 1px solid var(--line-mid);
+  background: var(--surface);
+  color: var(--accent);
+  font-size: 0.76rem;
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.gh-permalink-link:hover {
+  border-color: var(--accent-line);
+  background: var(--accent-s);
+}
+.gh-permalink-btn {
+  text-decoration: none;
+}
+
+/* Enterprise Action Cluster inside #github-hub-bar */
+.gh-ent-bar-btns {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.gh-ent-bar-btn {
+  font-size: 0.78rem;
+  padding: 4px 9px;
+}
+
+@media (max-width: 760px) {
+  .gh-two-col {
+    grid-template-columns: 1fr;
+  }
+  .gh-ent-body {
+    padding: 10px;
+  }
+}

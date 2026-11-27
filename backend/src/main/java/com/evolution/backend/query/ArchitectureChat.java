@@ -98,6 +98,25 @@ final class ArchitectureChat {
         }
     }
 
+    /** Gracefully compacts oldest conversation turns when total history exceeds {@code maxChars}. */
+    static List<Message> compactHistory(List<Message> messages, int maxChars) {
+        if (messages == null || messages.size() <= 1) return messages == null ? List.of() : messages;
+        int total = 0;
+        for (var m : messages) total += m.content().length();
+        if (total <= maxChars) return messages;
+        var out = new ArrayList<Message>(messages);
+        for (int i = 0; i < out.size() - 1 && total > maxChars; i++) {
+            var m = out.get(i);
+            int cap = m.role().equals("assistant") ? 600 : 400;
+            if (m.content().length() > cap) {
+                String compacted = m.content().substring(0, cap) + "\n... [earlier turn compacted]";
+                total -= (m.content().length() - compacted.length());
+                out.set(i, new Message(m.role(), compacted));
+            }
+        }
+        return List.copyOf(out);
+    }
+
     record Evidence(String id, Kind kind, String label, String identity, Map<String, ?> data) {
     }
 
@@ -109,6 +128,28 @@ final class ArchitectureChat {
 
         ContentDigest identity() {
             return ContentDigest.sha256Utf8(CanonicalJson.write(List.of(VERSION, metadata())));
+        }
+
+        Map<String, Object> snapshotBrief() {
+            var brief = new LinkedHashMap<String, Object>();
+            brief.put("version", VERSION);
+            brief.put("graph", pin.graph().value());
+            brief.put("snapshot", pin.snapshot());
+            brief.put("context", pin.context());
+            pin.finding().ifPresent(ref -> brief.put("finding", Map.of(
+                    "report", ref.report().value(),
+                    "identity", ref.identity().value(),
+                    "bundle", ref.bundle().value())));
+            return Collections.unmodifiableMap(brief);
+        }
+
+        ContentDigest pinDigest() {
+            return ContentDigest.sha256Utf8(CanonicalJson.write(snapshotBrief()));
+        }
+
+        String snapshotPinnedBrief() {
+            return "Snapshot-pinned architecture brief (immutable for this graph/context): "
+                    + CanonicalJson.write(snapshotBrief());
         }
 
         Context withReadiness(Map<String, Object> overview, String job) {
@@ -190,7 +231,7 @@ final class ArchitectureChat {
 
         static Result overview(Context context, ArchitectureChatOverview.Answer answer) {
             return new Result(VERSION, "EVIDENCE_ONLY", context.pin(), context.identity(), Optional.of(answer.text()),
-                    Optional.of(answer.title()), answer.citations(), context.evidence(), List.of(), Optional.empty(),
+                    Optional.of(answer.title()), answer.citations(), context.evidence(), context.limitations(), Optional.empty(),
                     List.of());
         }
 
@@ -219,8 +260,6 @@ final class ArchitectureChat {
     }
 
     static boolean directlyOutOfScope(Input input) {
-        // Deliberately match complete, clear requests. The model judges other phrasing
-        // and follow-ups.
         return DIRECT_OFF_TOPIC.matcher(input.question().replaceAll("\\s+", " ")).matches();
     }
 
@@ -233,6 +272,9 @@ final class ArchitectureChat {
         var pin = pin(input, partition, queries.graph().identity());
         var evidence = new ArrayList<Evidence>();
         var limitations = new ArrayList<String>();
+        detectPreliminaryTruthTier(queries.graph()).ifPresent(tier -> limitations.add(
+                "Preliminary preview graph (" + tier
+                        + "): deep semantic analysis is still in progress; syntax-import preview edges are non-authoritative."));
         var request = Request.dependencies(pin.graph(), pin.context());
         var summary = queries.summary(request);
         add(evidence, Kind.SUMMARY, "Captured architecture summary", summary.query().value(), withStatus(summary,
@@ -269,17 +311,17 @@ final class ArchitectureChat {
                             && candidate.analysis().isPresent() && !candidate.identity().equals(pin.context()))
                     .toList();
             for (var candidate : related.stream().limit(8).toList()) {
-                var semantic = queries.summary(Request.dependencies(pin.graph(),candidate.identity()));
-                var mods = queries.entities(new Request(pin.graph(),candidate.identity(),Scope.MODULE,request.projection(),
-                        request.direction(),request.relationshipKinds(),request.population(),false,Optional.empty(),request.limits()),"",new Page(8, Optional.empty()));
-                var ctxPayload = new LinkedHashMap<String,Object>();
-                ctxPayload.put("context",candidate.identity());
-                ctxPayload.put("counts",semantic.items());
-                ctxPayload.put("gapCount",semantic.gaps().size());
+                var semantic = queries.summary(Request.dependencies(pin.graph(), candidate.identity()));
+                var mods = queries.entities(new Request(pin.graph(), candidate.identity(), Scope.MODULE, request.projection(),
+                        request.direction(), request.relationshipKinds(), request.population(), false, Optional.empty(), request.limits()), "", new Page(8, Optional.empty()));
+                var ctxPayload = new LinkedHashMap<String, Object>();
+                ctxPayload.put("context", candidate.identity());
+                ctxPayload.put("counts", semantic.items());
+                ctxPayload.put("gapCount", semantic.gaps().size());
                 if (!mods.items().isEmpty()) {
                     ctxPayload.put("modules", mods.items().stream().map(ArchitectureChat::symbol).toList());
                 }
-                add(evidence,Kind.SUMMARY,"Captured analysis context",semantic.query().value(),withStatus(semantic,
+                add(evidence, Kind.SUMMARY, "Captured analysis context", semantic.query().value(), withStatus(semantic,
                         Collections.unmodifiableMap(ctxPayload)));
             }
             if (related.size() > 8)
@@ -287,7 +329,7 @@ final class ArchitectureChat {
         }
         if (input.mode() == Mode.REPAIR && finding.isEmpty())
             limitations.add("Attach a published finding to use the captured-source repair workflow.");
-        if (input.focus().isEmpty() && !input.evidenceOnly() && !ArchitectureChatOverview.matches(input.question())) {
+        if (!ArchitectureChatOverview.matches(input.question())) {
             enrichQuestionMentions(input.question(), pin, queries, evidence);
             if (!partition.identity().equals(partition.snapshot().value())) {
                 enrichInsightsSummary(pin, queries, evidence);
@@ -303,8 +345,104 @@ final class ArchitectureChat {
                     enrichInsightsSummaryAcross(pin, analysisContexts, queries, evidence);
                 }
             }
+            enrichRepoMapHubs(input.question(), input.focus(), pin, queries, evidence);
+            enrichAdvisoryLinks(input.question(), input.focus(), pin, queries, evidence);
         }
         return new Context(pin, List.copyOf(evidence), List.copyOf(limitations), sources);
+    }
+
+    private static void enrichRepoMapHubs(String question, Optional<String> focus, Pin pin,
+                                          ArchitectureQueryService queries, List<Evidence> evidence) {
+        try {
+            var fileIndex = CapturedFileIndex.forGraph(queries.graph());
+            if (fileIndex.entries().isEmpty()) return;
+            var seedSet = new LinkedHashSet<String>();
+            focus.filter(f -> !f.isBlank()).ifPresent(seedSet::add);
+            seedSet.addAll(extractMentionCandidates(question));
+            var seeds = List.copyOf(seedSet);
+            var map = RepoMapBuilder.build(queries.graph(), Optional.of(pin.context()), seeds, 10, 1800, () -> StopReason.NONE);
+            if (map.files().isEmpty()) return;
+            var hubs = map.files().stream().map(f -> Map.<String, Object>of(
+                    "rank", f.rank(),
+                    "path", neutralize(f.path()),
+                    "score", f.score(),
+                    "language", f.language(),
+                    "inDegree", f.inDegree(),
+                    "outDegree", f.outDegree(),
+                    "gapCount", f.gapCount())).toList();
+            add(evidence, Kind.STRUCTURE, "Top PPR repository hubs", pin.context(),
+                    Map.of("algorithm", map.algorithm(), "totalFiles", map.totalFiles(),
+                            "seedCount", map.seedCount(), "hubs", hubs,
+                            "renderedMap", neutralize(map.renderedMap())));
+        } catch (RuntimeException ignored) {
+            // Opportunistic PPR seeding never fails retrieval.
+        }
+    }
+
+    private static void enrichAdvisoryLinks(String question, Optional<String> focus, Pin pin,
+                                            ArchitectureQueryService queries, List<Evidence> evidence) {
+        try {
+            var advisory = com.evolution.backend.query.advisory.AdvisoryOverlayService.forGraph(queries.graph());
+            if (advisory.links().isEmpty() && advisory.nodes().isEmpty()) return;
+            var seeds = new LinkedHashSet<String>();
+            focus.filter(f -> !f.isBlank()).ifPresent(f -> {
+                seeds.add(f);
+                int dot = f.lastIndexOf('.');
+                if (dot >= 0 && dot < f.length() - 1) seeds.add(f.substring(dot + 1));
+            });
+            seeds.addAll(extractMentionCandidates(question));
+
+            var matchedLinks = new LinkedHashMap<String, com.evolution.backend.query.advisory.AdvisoryOverlay.AdvisoryLink>();
+            for (String seed : seeds) {
+                if (matchedLinks.size() >= 10) break;
+                var filtered = com.evolution.backend.query.advisory.AdvisoryOverlayService.filter(advisory, seed, "", "");
+                for (var l : filtered.links()) {
+                    if (matchedLinks.size() >= 10) break;
+                    matchedLinks.putIfAbsent(l.id(), l);
+                }
+            }
+            // If no explicit seed matched, include top high-signal cross-layer links (SQL<->JPA, ADR, IaC)
+            if (matchedLinks.isEmpty()) {
+                for (var l : advisory.links()) {
+                    if (matchedLinks.size() >= 6) break;
+                    if ("SQL_TABLE_MAPS_JPA_ENTITY".equals(l.kind())
+                            || "DOC_MENTIONS_SYMBOL".equals(l.kind())
+                            || "FOREIGN_KEY".equals(l.kind())
+                            || l.kind().startsWith("TF_")) {
+                        matchedLinks.putIfAbsent(l.id(), l);
+                    }
+                }
+                for (var l : advisory.links()) {
+                    if (matchedLinks.size() >= 6) break;
+                    matchedLinks.putIfAbsent(l.id(), l);
+                }
+            }
+            var linkViews = matchedLinks.values().stream().map(l -> {
+                var row = new LinkedHashMap<String, Object>();
+                row.put("kind", l.kind());
+                row.put("sourceLabel", com.evolution.backend.query.llm.LlmTransport.neutralizeInjectionSentinels(l.sourceLabel()));
+                row.put("targetLabel", com.evolution.backend.query.llm.LlmTransport.neutralizeInjectionSentinels(l.targetLabel()));
+                row.put("targetKind", l.targetKind());
+                row.put("sourcePath", com.evolution.backend.query.llm.LlmTransport.neutralizeInjectionSentinels(l.sourcePath()));
+                row.put("startLine", l.startLine());
+                row.put("endLine", l.endLine());
+                row.put("matchBasis", com.evolution.backend.query.llm.LlmTransport.neutralizeInjectionSentinels(l.matchBasis()));
+                return Collections.unmodifiableMap(row);
+            }).toList();
+            var payload = new LinkedHashMap<String, Object>();
+            payload.put("schema", advisory.schema());
+            payload.put("derivation", advisory.derivation());
+            payload.put("trust", advisory.trust());
+            payload.put("totalNodes", advisory.nodes().size());
+            payload.put("totalLinks", advisory.links().size());
+            payload.put("nodeCountsByKind", advisory.nodeCountsByKind());
+            payload.put("linkCountsByKind", advisory.linkCountsByKind());
+            payload.put("links", linkViews);
+            add(evidence, Kind.STRUCTURE, "Advisory non-code links (ADVISORY_UNVERIFIED)", pin.snapshot(),
+                    Collections.unmodifiableMap(payload));
+        } catch (RuntimeException ignored) {
+            // Opportunistic advisory enrichment never fails retrieval.
+        }
     }
 
     private static final Pattern BACKTICK_SYMBOL = Pattern.compile("`([A-Za-z0-9_./$-]{2,140})`");
@@ -362,8 +500,8 @@ final class ArchitectureChat {
             if (added >= 3) break;
             String termLower = term.toLowerCase(Locale.ROOT);
             for (String ctx : contexts) {
-                var outReq = new Request(pin.graph(),ctx,Scope.ENTITY,Projection.BOUNDED_UNION,Direction.OUTGOING,
-                        relKinds,Population.all(),false,Optional.empty(),baseLimits);
+                var outReq = new Request(pin.graph(), ctx, Scope.ENTITY, Projection.BOUNDED_UNION, Direction.OUTGOING,
+                        relKinds, Population.all(), false, Optional.empty(), baseLimits);
                 var matches = queries.entities(outReq, term, new Page(10, Optional.empty()));
                 EntityView symbol = pickBestMentionMatch(matches.items(), termLower);
                 if (symbol == null && matches.items().isEmpty()) {
@@ -372,8 +510,8 @@ final class ArchitectureChat {
                 }
                 if (symbol == null || !seenSymbols.add(symbol.identity())) continue;
                 var outDeps = collectEdges(queries.expand(outReq, symbol.identity()));
-                var inReq = new Request(pin.graph(),ctx,Scope.ENTITY,Projection.BOUNDED_UNION,Direction.INCOMING,
-                        relKinds,Population.all(),false,Optional.empty(),baseLimits);
+                var inReq = new Request(pin.graph(), ctx, Scope.ENTITY, Projection.BOUNDED_UNION, Direction.INCOMING,
+                        relKinds, Population.all(), false, Optional.empty(), baseLimits);
                 var inDeps = collectEdges(queries.expand(inReq, symbol.identity()));
                 add(evidence, Kind.DEPENDENCIES, "Ego-graph of mentioned symbol " + label(symbol), symbol.identity(),
                         Map.of("context", ctx, "symbol", symbol(symbol), "outgoingEdges", outDeps, "incomingEdges", inDeps));
@@ -408,8 +546,8 @@ final class ArchitectureChat {
         ArchitectureInsightsAdvisor.InsightsReport bestReport = null;
         for (String ctx : contexts) {
             try {
-                var req = new Request(pin.graph(),ctx,Scope.TYPE,Projection.BOUNDED_UNION,Direction.OUTGOING,
-                        Set.of("graph.depends-on"),Population.all(),false,Optional.empty(),Limits.defaults());
+                var req = new Request(pin.graph(), ctx, Scope.TYPE, Projection.BOUNDED_UNION, Direction.OUTGOING,
+                        Set.of("graph.depends-on"), Population.all(), false, Optional.empty(), Limits.defaults());
                 var report = ArchitectureInsightsAdvisor.analyze(queries, req, Optional.empty(), 5);
                 if (report.summary().analyzedEntities() > bestCount && report.summary().analyzedEntities() >= 3) {
                     bestCount = report.summary().analyzedEntities();
@@ -420,17 +558,8 @@ final class ArchitectureChat {
             }
         }
         if (bestReport != null) {
-            var tangles = bestReport.tangles().stream().limit(3).map(t -> Map.of(
-                    "id", t.id(), "severity", t.severity(), "members", t.memberLabels().stream().limit(8).toList(),
-                    "breakCandidates", t.breakCandidates().stream().limit(2).map(c -> Map.of(
-                            "source", c.sourceLabel(), "target", c.targetLabel(), "strategy", c.recommendedStrategy(), "rationale", c.rationale())).toList()
-            )).toList();
-            var hotspots = bestReport.hotspots().stream().limit(5).map(h -> Map.of(
-                    "label", h.label(), "archetype", h.archetype(), "score", h.hotspotScore(),
-                    "transitiveDependents", h.transitiveDependents(), "instability", h.instability(), "inCycle", h.inCycle()
-            )).toList();
-            add(evidence, Kind.STRUCTURE, "Structural hotspots & cycles", bestReport.context(), Map.of(
-                    "context", bestReport.context(), "summary", bestReport.summary(), "tangles", tangles, "hotspots", hotspots));
+            add(evidence, Kind.STRUCTURE, "Structural hotspots, cycles & Leiden communities", bestReport.context(),
+                    buildInsightsEvidencePayload(bestReport, true));
         }
     }
 
@@ -441,21 +570,55 @@ final class ArchitectureChat {
             var report = ArchitectureInsightsAdvisor.analyze(queries, req, Optional.empty(), 5);
             if (report.summary().analyzedEntities() < 3)
                 return;
-            var tangles = report.tangles().stream().limit(3).map(t -> Map.of(
-                    "id", t.id(), "severity", t.severity(), "members", t.memberLabels().stream().limit(8).toList(),
-                    "breakCandidates", t.breakCandidates().stream().limit(2).map(c -> Map.of(
-                            "source", c.sourceLabel(), "target", c.targetLabel(), "strategy", c.recommendedStrategy(),
-                            "rationale", c.rationale())).toList()))
-                    .toList();
-            var hotspots = report.hotspots().stream().limit(5).map(h -> Map.of(
-                    "label", h.label(), "archetype", h.archetype(), "score", h.hotspotScore(),
-                    "transitiveDependents", h.transitiveDependents(), "instability", h.instability(), "inCycle",
-                    h.inCycle())).toList();
-            add(evidence, Kind.STRUCTURE, "Structural hotspots & cycles", pin.context(), Map.of(
-                    "summary", report.summary(), "tangles", tangles, "hotspots", hotspots));
+            add(evidence, Kind.STRUCTURE, "Structural hotspots, cycles & Leiden communities", pin.context(),
+                    buildInsightsEvidencePayload(report, false));
         } catch (RuntimeException ignored) {
             // Bounded insights enrichment is opportunistic; never fail chat retrieval.
         }
+    }
+
+    private static String neutralize(String raw) {
+        return com.evolution.backend.query.llm.LlmTransport.neutralizeInjectionSentinels(raw);
+    }
+
+    private static Map<String, Object> buildInsightsEvidencePayload(
+            ArchitectureInsightsAdvisor.InsightsReport report, boolean includeContext) {
+        var tangles = report.tangles().stream().limit(3).map(t -> Map.of(
+                "id", neutralize(t.id()), "severity", t.severity(),
+                "members", t.memberLabels().stream().limit(8).map(ArchitectureChat::neutralize).toList(),
+                "breakCandidates", t.breakCandidates().stream().limit(2).map(c -> Map.of(
+                        "source", neutralize(c.sourceLabel()), "target", neutralize(c.targetLabel()),
+                        "strategy", neutralize(c.recommendedStrategy()),
+                        "rationale", neutralize(c.rationale()))).toList())).toList();
+        var hotspots = report.hotspots().stream().limit(5).map(h -> Map.of(
+                "label", neutralize(h.label()), "archetype", neutralize(h.archetype()), "score", h.hotspotScore(),
+                "transitiveDependents", h.transitiveDependents(), "instability", h.instability(), "inCycle",
+                h.inCycle())).toList();
+        var communities = report.communities().stream().limit(8).map(c -> Map.<String, Object>of(
+                "id", neutralize(c.id()), "label", neutralize(c.label()),
+                "dominantPackage", neutralize(c.dominantPackage()),
+                "memberCount", c.memberCount(), "cohesion", c.cohesion(),
+                "misplacedCount", c.misplacedCount(), "bridgeEdgeCount", c.bridgeEdgeCount())).toList();
+        var misplacedTypes = report.misplacedTypes().stream().limit(8).map(m -> Map.<String, Object>of(
+                "label", neutralize(m.label()), "declaredPackage", neutralize(m.declaredPackage()),
+                "communityLabel", neutralize(m.communityLabel()),
+                "internalCommunityEdges", m.internalCommunityEdges(),
+                "declaredPackageEdges", m.declaredPackageEdges(),
+                "rationale", neutralize(m.rationale()))).toList();
+        var communityBridges = report.communityBridges().stream().limit(6).map(b -> Map.<String, Object>of(
+                "from", neutralize(b.fromCommunityLabel()), "to", neutralize(b.toCommunityLabel()),
+                "edgeCount", b.edgeCount(), "totalWeight", b.totalWeight(),
+                "sampleEdges", b.sampleEdges().stream().limit(3).map(ArchitectureChat::neutralize).toList())).toList();
+        var payload = new LinkedHashMap<String, Object>();
+        if (includeContext) payload.put("context", neutralize(report.context()));
+        payload.put("summary", report.summary());
+        payload.put("tangles", tangles);
+        payload.put("hotspots", hotspots);
+        payload.put("communityModularity", report.communityModularity());
+        payload.put("communities", communities);
+        payload.put("misplacedTypes", misplacedTypes);
+        payload.put("communityBridges", communityBridges);
+        return Collections.unmodifiableMap(payload);
     }
 
     private static void retrieveFocus(String focus, Pin pin, ArchitectureQueryService queries,
@@ -466,7 +629,7 @@ final class ArchitectureChat {
                 Population.all(), false, Optional.empty(),
                 new Limits(1, 100_000, 6, 100_000, 500_000, 1_000_000, 100_000, 200_000));
         var matches = queries.entities(request, focus, SAMPLE);
-        add(evidence, Kind.SYMBOLS, "Symbols matching " + focus, matches.query().value(),
+        add(evidence, Kind.SYMBOLS, "Symbols matching " + neutralize(focus), matches.query().value(),
                 withStatus(matches,
                         Map.of("matches", matches.items().stream().map(ArchitectureChat::symbol).toList())));
         if (matches.exactTotal().orElse(0L) != 1 || matches.items().size() != 1) {
@@ -516,11 +679,25 @@ final class ArchitectureChat {
                         "gapCount", bundle.gaps().size(), "diagnosis", diagnosis.status()));
         if (diagnosis.status() != FindingDiagnosis.Status.CITATIONS_VALIDATED)
             limitations.add("Source citations were withheld: " + diagnosis.reason().orElseThrow().name() + ".");
+        var ghCoords = GitHubProvenance.extractFromGraph(queries.graph());
+        var codeowners = GitHubProvenance.CodeownersIndex.fromGraph(queries.graph());
         for (var citation : diagnosis.citations()) {
-            add(evidence, Kind.SOURCE, citation.path() + " · line " + citation.span().startLine(),
-                    citation.identity().value(),
-                    Map.of("path", citation.path(), "span", citation.span(), "sourceDigest", citation.sourceDigest(),
-                            "context", citation.context(), "reference", citation.evidence()));
+            var data = new LinkedHashMap<String, Object>();
+            String safePath = neutralize(citation.path());
+            data.put("path", safePath);
+            data.put("span", citation.span());
+            data.put("sourceDigest", citation.sourceDigest());
+            data.put("context", citation.context());
+            data.put("reference", citation.evidence());
+            var owners = codeowners.ownersOf(citation.path());
+            if (!owners.isEmpty()) {
+                data.put("owners", owners.stream().map(ArchitectureChat::neutralize).toList());
+            }
+            ghCoords.flatMap(c -> GitHubProvenance.blobPermalink(
+                    c, citation.path(), citation.span().startLine(), citation.span().endLine()))
+                    .ifPresent(url -> data.put("permalink", url));
+            add(evidence, Kind.SOURCE, safePath + " · line " + citation.span().startLine(),
+                    citation.identity().value(), Collections.unmodifiableMap(data));
         }
         if (bundle.path().size() > 8)
             limitations.add("The finding path is sampled.");
@@ -533,7 +710,7 @@ final class ArchitectureChat {
     }
 
     private static String label(EntityView entity) {
-        return entity.qualifiedName().or(entity::canonicalName).or(entity::spelling).orElse(entity.identity());
+        return neutralize(entity.qualifiedName().or(entity::canonicalName).or(entity::spelling).orElse(entity.identity()));
     }
 
     private static Map<String, ?> withStatus(ArchitectureQuery.Result<?> result, Map<String, ?> fields) {
@@ -554,6 +731,25 @@ final class ArchitectureChat {
 
     private static void add(List<Evidence> evidence, Kind kind, String label, String identity, Map<String, ?> data) {
         addEvidence(evidence, kind, label, identity, data);
+    }
+
+    private static Optional<String> detectPreliminaryTruthTier(KnowledgeGraph graph) {
+        if (graph == null) return Optional.empty();
+        for (var ev : graph.evidence()) {
+            if ("analysis.publication-stage".equals(ev.family()) || "preliminary.context".equals(ev.family())) {
+                try {
+                    var obj = GraphJson.object(GraphJson.read(ev.canonicalJson(), GraphJson.Limits.defaults()));
+                    if (Boolean.FALSE.equals(obj.get("authoritative"))) {
+                        String tier = obj.get("truthTier") instanceof String s && !s.isBlank()
+                                ? s : "PRELIMINARY_STRUCTURE";
+                        return Optional.of(tier);
+                    }
+                } catch (RuntimeException ignored) {
+                    return Optional.of("PRELIMINARY_STRUCTURE");
+                }
+            }
+        }
+        return Optional.empty();
     }
 
     private ArchitectureChat() {

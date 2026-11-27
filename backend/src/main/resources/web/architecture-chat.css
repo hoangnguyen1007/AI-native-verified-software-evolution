@@ -88,6 +88,33 @@
   border-radius: 50%;
   background: var(--wb-accent);
 }
+.architecture-chat-model-state[data-probe="ok"]::before { background: var(--accent); }
+.architecture-chat-model-state[data-probe="fail"]::before { background: var(--danger); }
+.architecture-chat-model-state[data-probe="offline"]::before { background: var(--text-3); }
+
+.architecture-chat-probe-btn {
+  font-size: 0.8rem;
+}
+
+.architecture-chat-quick-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.architecture-chat-review-pending {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  padding: 4px 10px;
+  border-radius: var(--r-pill, 999px);
+  border: 1px solid var(--line-mid, var(--wb-rule));
+  background: var(--wb-paper);
+  color: var(--wb-muted);
+  font-size: 0.8rem;
+}
 
 .architecture-chat-layout {
   display: grid;
@@ -651,4 +678,107 @@
   font: 0.72rem var(--font-mono);
   font-variant-numeric: tabular-nums;
   color: var(--wb-muted);
+}
+
+.architecture-chat-turn-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line, var(--wb-rule));
+}
+
+.architecture-chat-usage-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 9px;
+  border-radius: var(--r-pill, 999px);
+  border: 1px solid var(--line-mid, var(--wb-rule));
+  background: var(--surface-2, var(--wb-paper));
+  color: var(--wb-muted);
+  font: 600 0.72rem/1.45 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.architecture-chat-usage-badge.is-cache-hit {
+  background: var(--accent-s, rgba(140, 226, 185, 0.11));
+  border-color: var(--accent-line, rgba(140, 226, 185, 0.28));
+  color: var(--accent, var(--wb-accent));
+}
+
+.architecture-chat-usage-badge.is-cache-warm {
+  background: var(--ai-s, rgba(165, 180, 252, 0.11));
+  border-color: var(--ai-line, rgba(165, 180, 252, 0.28));
+  color: var(--ai, var(--wb-accent));
+}
+
+:root[data-theme=light] .architecture-chat-usage-badge.is-cache-hit {
+  color: var(--raw-emerald-800, #0f563e);
+}
+
+:root[data-theme=light] .architecture-chat-usage-badge.is-cache-warm {
+  color: var(--raw-indigo-700, #4338ca);
+}
+
+/* ── Lucian UX/UI Prompt #453 · MIT License (c) 2026 Seokwoooo · https://lucianlabs.dev/uxui-prompt/#453 ── */
+.u453-live-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.92rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.u453-live-head .u453-ic {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  color: var(--ux-accent, var(--wb-accent));
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.u453-live-head .u453-ic svg {
+  display: block;
+  width: 16px;
+  height: 16px;
+  fill: currentColor;
+  animation: u453-star 2.4s linear infinite;
+}
+@keyframes u453-star {
+  0% { transform: rotate(0deg) scale(1); }
+  50% { transform: rotate(180deg) scale(.78); }
+  100% { transform: rotate(360deg) scale(1); }
+}
+.u453-live-head .u453-a {
+  color: var(--ux-ink-3, var(--wb-muted));
+  background: linear-gradient(100deg, var(--ux-ink-3, var(--wb-muted)) 0 36%, var(--ux-ink, var(--wb-ink)) 50%, var(--ux-ink-3, var(--wb-muted)) 64% 100%);
+  background-size: 280% 100%;
+  background-position: 100% 0;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: u453-sh 1.9s cubic-bezier(.45,0,.55,1) infinite;
+}
+@keyframes u453-sh {
+  to { background-position: 0 0; }
+}
+.architecture-chat-copy-code.is-copied,
+.architecture-chat-copy-msg.is-copied {
+  border-color: var(--ux-mint, var(--wb-accent)) !important;
+  color: var(--ux-mint, var(--wb-accent)) !important;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ux-mint, var(--wb-accent)) 18%, transparent);
+}
+@media (prefers-reduced-motion: reduce) {
+  .u453-live-head .u453-ic svg,
+  .u453-live-head .u453-a {
+    animation: none !important;
+    -webkit-text-fill-color: currentColor;
+    color: var(--wb-ink);
+  }
 }

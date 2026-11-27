@@ -1,0 +1,439 @@
+/* GitHub Hub, Smart Intake, Session PAT Dialog, Pipeline Stepper & Partial-Gap Strip */
+
+.gh-intake-preview {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  margin-top: 10px;
+  padding: 9px 12px;
+  border-radius: var(--r);
+  background: var(--surface-2);
+  border: 1px solid var(--line-mid);
+  font-size: 0.86rem;
+}
+
+.gh-intake-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: var(--r-pill);
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border: 1px solid var(--line-mid);
+  background: var(--surface-3);
+  color: var(--text);
+}
+.gh-intake-badge.is-github,
+.gh-intake-badge.is-pr {
+  background: var(--accent-s);
+  border-color: var(--accent-line);
+  color: var(--accent);
+}
+.gh-intake-badge.is-pr {
+  background: var(--ai-s);
+  border-color: var(--ai-line);
+  color: var(--ai);
+}
+.gh-intake-target {
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.gh-intake-tip {
+  color: var(--text-2);
+  font-size: 0.82rem;
+}
+
+.gh-auth-pill {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  padding: 6px 10px;
+  border-radius: var(--r);
+  background: var(--surface-2);
+  border: 1px solid var(--line-mid);
+  font-size: 0.82rem;
+  color: var(--text-2);
+}
+.gh-auth-pill[hidden] { display: none; }
+
+.gh-auth-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--text-3);
+}
+.gh-auth-dot.is-good { background: var(--accent); }
+.gh-auth-dot.is-warn { background: var(--warn); }
+
+.gh-auth-label {
+  font-weight: 600;
+  color: var(--text);
+}
+.gh-auth-meta {
+  color: var(--text-2);
+}
+.gh-auth-action {
+  margin-inline-start: auto;
+  font-size: 0.82rem;
+}
+
+.gh-ref-box {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: var(--r);
+  background: var(--surface-2);
+  border: 1px solid var(--line-mid);
+  display: grid;
+  gap: 6px;
+}
+.gh-ref-box[hidden] { display: none; }
+.gh-ref-box select {
+  width: 100%;
+  min-width: 0;
+}
+
+.gh-auto-policy-row,
+.gh-confirm-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 10px;
+  font-size: 0.88rem;
+  color: var(--text);
+  cursor: pointer;
+}
+.gh-auto-policy-row input,
+.gh-confirm-check input {
+  margin-top: 3px;
+  flex: none;
+  width: auto;
+}
+
+/* Connected Repository GitHub Bar */
+.github-hub-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  border-radius: var(--r-md);
+  background: var(--surface);
+  border: 1px solid var(--line-mid);
+}
+.github-hub-bar[hidden] { display: none; }
+
+.gh-bar-left {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  min-width: 0;
+}
+.gh-repo-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 0.84rem;
+  font-weight: 600;
+  color: var(--text);
+}
+.gh-bar-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.gh-ref-select {
+  max-width: 240px;
+  min-width: 150px;
+  font-size: 0.84rem;
+}
+
+/* 4-Stage Sticky Pipeline Stepper */
+.gh-stage-stepper {
+  margin: 6px 0 10px;
+}
+.gh-stage-stepper[hidden] { display: none; }
+.gh-stage-stepper-list {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.gh-stage-step {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: var(--r);
+  border: 1px solid var(--line-mid);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: 0.8rem;
+  font-weight: 600;
+  min-width: 0;
+}
+.gh-stage-step.is-done {
+  border-color: var(--accent-line);
+  background: var(--accent-s);
+  color: var(--accent);
+}
+.gh-stage-step.is-active {
+  border-color: var(--ai-line);
+  background: var(--ai-s);
+  color: var(--ai);
+}
+.gh-stage-step.is-failed {
+  border-color: var(--danger-line);
+  background: var(--danger-s);
+  color: var(--danger);
+}
+.gh-stage-step.is-warn {
+  border-color: var(--warn-line);
+  background: var(--warn-s);
+  color: var(--warn);
+}
+.gh-stage-glyph {
+  flex: none;
+  font-family: var(--font-mono);
+}
+.gh-stage-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Partial-Gap Action Strip */
+.gh-gap-action-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 14px;
+  margin-top: 10px;
+  padding: 10px 14px;
+  border-radius: var(--r);
+  border: 1px solid var(--warn-line);
+  background: var(--warn-s);
+}
+.gh-gap-action-strip .badge {
+  background: var(--surface);
+}
+.gh-gap-action-strip[hidden] { display: none; }
+.gh-gap-strip-copy {
+  flex: 1 1 280px;
+  min-width: 0;
+}
+.gh-gap-strip-copy strong {
+  display: block;
+  font-size: 0.88rem;
+  color: var(--text);
+}
+.gh-gap-strip-copy p {
+  margin: 2px 0 0;
+}
+.gh-gap-strip-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* PR Comparison Modal Styles */
+.gh-pr-cmp-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  margin-bottom: 12px;
+}
+.gh-pr-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.gh-pr-kpi-tile {
+  padding: 10px 12px;
+  border-radius: var(--r);
+  background: var(--surface-2);
+  border: 1px solid var(--line-mid);
+  display: grid;
+  gap: 4px;
+}
+.gh-kpi-val {
+  font-size: 0.98rem;
+  font-weight: 700;
+  color: var(--text);
+}
+.gh-kpi-val.is-good { color: var(--accent); }
+.gh-kpi-val.is-bad { color: var(--danger); }
+.gh-kpi-val.is-warn { color: var(--warn); }
+
+.gh-pr-review-gate {
+  margin-top: 16px;
+  padding: 12px 14px;
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+  border: 1px solid var(--line-mid);
+  display: grid;
+  gap: 10px;
+}
+.gh-pr-review-body {
+  width: 100%;
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+}
+
+.gh-ram-notice {
+  padding: 10px 12px;
+  border-radius: var(--r);
+  border: 1px solid var(--accent-line);
+  background: var(--accent-s);
+  color: var(--text);
+  font-size: 0.85rem;
+  margin: 8px 0 12px;
+}
+
+@media (max-width: 760px) {
+  .github-hub-bar {
+    margin: 0 0 10px;
+  }
+  .gh-stage-stepper-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .gh-ref-select {
+    max-width: 100%;
+    width: 100%;
+  }
+}
+
+/* Connect Dialog 2-Tab Bar + Vercel/SonarCloud GitHub Repo & Org Import Browser */
+.gh-connect-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  padding: 4px;
+  margin-bottom: 12px;
+  border-radius: var(--r);
+  background: var(--surface-2);
+  border: 1px solid var(--line-mid);
+}
+.gh-connect-tabs[hidden] { display: none; }
+.gh-connect-tab {
+  padding: 7px 10px;
+  border-radius: calc(var(--r) - 2px);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 0.84rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.gh-connect-tab:hover { color: var(--text); }
+.gh-connect-tab.is-active {
+  background: var(--surface);
+  border-color: var(--accent-line);
+  color: var(--text);
+}
+
+.gh-repo-browser {
+  display: grid;
+  gap: 10px;
+}
+.gh-repo-browser[hidden] { display: none; }
+
+.gh-browser-signin {
+  padding: 16px;
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+  border: 1px solid var(--line-mid);
+  display: grid;
+  gap: 8px;
+}
+.gh-browser-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.gh-browser-org {
+  flex: 0 1 190px;
+  min-width: 150px;
+}
+.gh-browser-search {
+  flex: 1 1 180px;
+  min-width: 150px;
+}
+.gh-vis-pills {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.gh-browser-status {
+  margin: 0;
+}
+.gh-browser-list {
+  display: grid;
+  gap: 8px;
+  max-height: 360px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+.gh-repo-card {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 12px;
+  padding: 10px 12px;
+  border-radius: var(--r);
+  background: var(--surface-2);
+  border: 1px solid var(--line-mid);
+}
+.gh-repo-card-info {
+  flex: 1 1 240px;
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+.gh-repo-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.gh-repo-card-name {
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.gh-repo-card-desc {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.gh-import-btn {
+  flex: none;
+  white-space: nowrap;
+}
+.gh-browser-footer {
+  display: flex;
+  justify-content: center;
+}

@@ -1,0 +1,420 @@
+/* Modular Hybrid Code Search (FTS5/BM25), TrustTier Pills & RRF Score Breakdown
+ * Uses Layer 1/2/3 tokens from styles.css for dark & light theme parity and 0px horizontal overflow (320px-1440px+).
+ */
+
+.evo-cs-root {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.evo-cs-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: var(--r-md, 10px);
+  border: 1px solid var(--line-mid);
+  background: var(--surface-2);
+  min-width: 0;
+}
+
+.evo-cs-input-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.evo-cs-input {
+  flex: 1 1 220px;
+  min-width: 0;
+  width: 100%;
+  padding: 8px 11px;
+  border-radius: var(--r, 8px);
+  border: 1px solid var(--line-mid);
+  background: var(--surface);
+  color: var(--text);
+  font: 0.92rem/1.45 var(--font-sans);
+}
+
+.evo-cs-input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.evo-cs-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  min-width: 0;
+}
+
+.evo-cs-advisory-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: var(--r-pill, 999px);
+  border: 1px dashed var(--line-strong);
+  background: var(--surface);
+  color: var(--text-2);
+  font-size: 0.8rem;
+  cursor: pointer;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.evo-cs-advisory-toggle input {
+  accent-color: var(--cyan);
+  margin: 0;
+}
+
+.evo-cs-lang-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.evo-cs-lang-chip {
+  font-size: 0.76rem;
+  padding: 3px 9px;
+}
+
+.evo-cs-status-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.evo-cs-engine-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: var(--r-pill, 999px);
+  border: 1px solid var(--accent-line);
+  background: var(--accent-s);
+  color: var(--accent);
+  font: 650 0.71rem/1.4 var(--font-mono);
+  letter-spacing: 0.02em;
+}
+
+.evo-cs-redact-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: var(--r-pill, 999px);
+  border: 1px solid var(--warn-line);
+  background: var(--warn-s);
+  color: var(--warn);
+  font: 600 0.71rem/1.4 var(--font-mono);
+}
+
+.evo-cs-honesty-banner {
+  padding: 9px 12px;
+  border-radius: var(--r, 8px);
+  border: 1px solid var(--warn-line);
+  background: var(--warn-s);
+  color: var(--text);
+  font-size: 0.84rem;
+  overflow-wrap: anywhere;
+}
+
+.evo-cs-list {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+  min-width: 0;
+}
+
+.evo-cs-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+  padding: 12px 14px;
+  border-radius: var(--r-md, 10px);
+  border: 1px solid var(--line-mid);
+  background: var(--surface-2);
+  min-width: 0;
+  max-width: 100%;
+  transition: border-color var(--dur-fast, 120ms) var(--ease-out, ease);
+}
+
+.evo-cs-card:hover {
+  border-color: var(--accent-line);
+}
+
+.evo-cs-card.is-advisory {
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--cyan) 42%, var(--line-mid));
+}
+
+.evo-cs-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 10px;
+  min-width: 0;
+}
+
+.evo-cs-path-btn {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: 600 0.84rem/1.4 var(--font-mono);
+  text-align: left;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+
+.evo-cs-path-btn:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.evo-cs-card-pills {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.evo-cs-line-pill,
+.evo-cs-score-pill,
+.evo-cs-sha {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  border-radius: var(--r-xs, 4px);
+  border: 1px solid var(--line-mid);
+  background: var(--surface);
+  color: var(--text-2);
+  font: 600 0.71rem/1.45 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Unified 4-Tier Trust Badges ── */
+.evo-trust-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  border-radius: var(--r-pill, 999px);
+  font: 650 0.7rem/1.45 var(--font-mono);
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.evo-trust-badge.is-compiler {
+  background: var(--accent-s);
+  border: 1px solid var(--accent-line);
+  color: var(--accent);
+}
+
+.evo-trust-badge.is-spring-sat {
+  background: var(--ai-s);
+  border: 1px solid var(--ai-line);
+  color: var(--ai);
+}
+
+.evo-trust-badge.is-source-syntax {
+  background: var(--warn-s);
+  border: 1px solid var(--warn-line);
+  color: var(--warn);
+}
+
+.evo-trust-badge.is-advisory {
+  background: var(--cyan-s);
+  border: 1px dashed color-mix(in srgb, var(--cyan) 55%, transparent);
+  color: var(--cyan);
+}
+
+/* ── RRF Score Breakdown Badges (RepoMap & Hybrid Search) ── */
+.evo-rrf-badges {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.evo-rrf-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: var(--r-xs, 4px);
+  font: 650 0.69rem/1.4 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  border: 1px solid var(--line-mid);
+  background: var(--surface);
+  color: var(--text-2);
+}
+
+.evo-rrf-pill.is-bm25 {
+  background: var(--ai-s);
+  border-color: var(--ai-line);
+  color: var(--ai);
+}
+
+.evo-rrf-pill.is-ppr {
+  background: var(--cyan-s);
+  border-color: color-mix(in srgb, var(--cyan) 36%, transparent);
+  color: var(--cyan);
+}
+
+.evo-rrf-pill.is-trigram {
+  background: var(--warn-s);
+  border-color: var(--warn-line);
+  color: var(--warn);
+}
+
+.evo-rrf-pill.is-rrf {
+  background: var(--accent-s);
+  border-color: var(--accent-line);
+  color: var(--accent);
+}
+
+/* ── Line-Numbered Code Snippet Viewer ── */
+.evo-cs-snippet {
+  border-radius: var(--r-sm, 6px);
+  border: 1px solid var(--code-border, var(--line-mid));
+  background: var(--code-bg, var(--surface));
+  overflow-x: auto;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.evo-cs-snippet-pre {
+  margin: 0;
+  padding: 8px 0;
+  font: 0.78rem/1.55 var(--font-mono);
+  color: var(--text);
+  tab-size: 4;
+}
+
+.evo-cs-snippet-code {
+  display: block;
+  min-width: max-content;
+}
+
+.evo-cs-line {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  gap: 10px;
+  padding: 0 10px;
+}
+
+.evo-cs-ln {
+  text-align: right;
+  color: var(--text-3);
+  user-select: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.evo-cs-code-text {
+  white-space: pre;
+}
+
+.evo-cs-hl {
+  background: color-mix(in srgb, var(--accent) 26%, transparent);
+  color: var(--text);
+  border-radius: 3px;
+  padding: 0 2px;
+}
+
+.evo-cs-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.evo-cs-action-btn {
+  font-size: 0.78rem;
+  padding: 4px 10px;
+}
+
+.evo-cs-ask-btn {
+  border-color: var(--ai-line);
+  color: var(--ai);
+}
+
+.evo-cs-pager {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+.evo-cs-empty,
+.evo-cs-loading {
+  padding: 18px 16px;
+  border-radius: var(--r-md, 10px);
+  border: 1px dashed var(--line-mid);
+  background: var(--surface);
+  color: var(--text-2);
+}
+
+.evo-cs-empty h3 {
+  margin: 0 0 6px;
+  font-size: 1rem;
+  color: var(--text);
+}
+
+.evo-cs-empty p {
+  margin: 0;
+  font-size: 0.88rem;
+}
+
+.evo-cs-err-text {
+  color: var(--danger);
+}
+
+:root[data-theme=light] .evo-trust-badge.is-compiler,
+:root[data-theme=light] .evo-rrf-pill.is-rrf,
+:root[data-theme=light] .evo-cs-engine-pill {
+  color: var(--raw-emerald-800, #0f563e);
+}
+
+:root[data-theme=light] .evo-trust-badge.is-spring-sat,
+:root[data-theme=light] .evo-rrf-pill.is-bm25,
+:root[data-theme=light] .evo-cs-ask-btn {
+  color: var(--raw-indigo-700, #4338ca);
+}
+
+:root[data-theme=light] .evo-trust-badge.is-source-syntax,
+:root[data-theme=light] .evo-cs-redact-pill,
+:root[data-theme=light] .evo-rrf-pill.is-trigram {
+  color: var(--raw-amber-700, #7c3d04);
+}
+
+:root[data-theme=light] .evo-trust-badge.is-advisory,
+:root[data-theme=light] .evo-rrf-pill.is-ppr {
+  color: var(--raw-teal-700, #0c6478);
+}
+
+@media (max-width: 480px) {
+  .evo-cs-form,
+  .evo-cs-card {
+    padding: 10px;
+  }
+  .evo-cs-line {
+    grid-template-columns: 36px minmax(0, 1fr);
+    gap: 8px;
+    padding: 0 8px;
+  }
+}

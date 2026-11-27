@@ -30,5 +30,12 @@ $port = if ($args.Length -ge 1) { $args[0] } else { 8080 }
 
 Write-Host "Starting Architecture Workbench on http://localhost:$port (store: $storeDir) ..." -ForegroundColor Cyan
 
-& $javaBin -Xmx8g -cp $evoJar com.evolution.backend.analysis.WorkbenchApiMain `
+$sqliteTmp = Join-Path $PSScriptRoot '.evo\sqlite-tmp'
+if (-not (Test-Path $sqliteTmp)) {
+    New-Item -ItemType Directory -Path $sqliteTmp -Force | Out-Null
+}
+
+$heapOpts = if ($env:EVO_HEAP) { $env:EVO_HEAP -split '\s+' } else { @("-Xms1g", "-Xmx8g") }
+
+& $javaBin @heapOpts -XX:+UseG1GC -XX:SoftRefLRUPolicyMSPerMB=1 "-Dfile.encoding=UTF-8" "-Dorg.sqlite.tmpdir=$sqliteTmp" -cp $evoJar com.evolution.backend.analysis.WorkbenchApiMain `
     $PSScriptRoot 'urn:local:evo' $jdkPath 21 $m2Cache $storeDir $port

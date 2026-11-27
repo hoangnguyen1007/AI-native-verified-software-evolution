@@ -5,7 +5,11 @@ import com.evolution.analysis.contract.identity.RepositoryIdentity;
 import com.evolution.analysis.contract.serialization.CanonicalJson;
 import com.evolution.analysis.acquisition.*;
 import com.evolution.analysis.assessment.*;
+import com.evolution.analysis.assessment.v2.ArchitectureAssessmentV2;
+import com.evolution.analysis.assessment.v2.ArchitectureAssessmentV2Service;
+import com.evolution.analysis.assessment.v2.ArchitectureScoreModelV2;
 import com.evolution.analysis.buildmodel.*;
+import com.evolution.analysis.contract.assessment.AssessmentStatus;
 import com.evolution.analysis.evidence.EvidenceContext;
 import com.evolution.analysis.filesystem.*;
 import com.evolution.analysis.graph.*;
@@ -17,6 +21,7 @@ import com.evolution.analysis.metrics.*;
 import com.evolution.analysis.policy.*;
 import com.evolution.analysis.query.*;
 import com.evolution.backend.query.*;
+import com.evolution.backend.analysis.IncrementalSummary;
 import com.evolution.backend.analysis.MavenScan;
 import com.evolution.analysis.readiness.*;
 import com.evolution.backend.analysis.ScanSelection;
@@ -28,6 +33,8 @@ import com.evolution.backend.analysis.CanonicalRecordReader;
 import com.evolution.analysis.execution.nativebuild.*;
 import com.evolution.analysis.acquisition.streaming.*;
 import java.io.*;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.nio.file.Path;
@@ -47,6 +54,7 @@ public final class EvoApp {
     private final boolean terminal;private final Map<String,String> environment;
     private final TerminalSession.Profile terminalProfile;
     private final com.evolution.analysis.execution.RegisteredExecutionPort executions;
+    private GitHubCommand.ContextFactory githubFactory = GitHubCommand.DEFAULT_FACTORY;
     private String sessionLang="en",sessionColor="auto";private boolean sessionAscii;
     private Root interactiveDefaults;
     private KnowledgeGraph sessionGraph;
@@ -63,6 +71,10 @@ public final class EvoApp {
             Map<String,String> environment,com.evolution.analysis.execution.RegisteredExecutionPort executions){
         return new EvoApp(directory,input,out,err,terminal,environment,TerminalSession.Profile.suppliedWriter(),Objects.requireNonNull(executions));
     }
+    EvoApp withGitHubFactory(GitHubCommand.ContextFactory factory) {
+        this.githubFactory = Objects.requireNonNull(factory);
+        return this;
+    }
     private EvoApp(Path directory,Reader input,PrintWriter out,PrintWriter err,boolean terminal,Map<String,String> environment,
             TerminalSession.Profile terminalProfile,com.evolution.analysis.execution.RegisteredExecutionPort executions) {
         this.directory=directory.toAbsolutePath().normalize();this.input=new BufferedReader(input);this.out=out;this.err=err;
@@ -73,7 +85,7 @@ public final class EvoApp {
     @Command(name="evo",version=VERSION,mixinStandardHelpOptions=true,sortOptions=false)
     private final class Root implements Callable<Integer> {
         @Option(names={"-w","--workspace"},scope=ScopeType.INHERIT,paramLabel="DIR",description="Session directory / Thư mục phiên") Path workspace=directory;
-        @Option(names={"-g","--graph"},scope=ScopeType.INHERIT,paramLabel="FILE",description="Canonical snapshot / Snapshot canonical") Path graph;
+        @Option(names={"-g","--graph"},scope=ScopeType.INHERIT,paramLabel="FILE|SHA256",description="Canonical snapshot file or digest / Snapshot canonical hoặc digest") String graph;
         @Option(names={"-c","--context"},scope=ScopeType.INHERIT,paramLabel="ID|N",description="Exact context ID or index / Ngữ cảnh chính xác") String context;
         @Option(names="--lang",scope=ScopeType.INHERIT,paramLabel="en|vi",description="Interface language / Ngôn ngữ") String lang=sessionLang;
         @Option(names="--color",scope=ScopeType.INHERIT,paramLabel="auto|always|never",description="Terminal color / Màu terminal") String color=sessionColor;
@@ -158,6 +170,13 @@ public final class EvoApp {
         command.addSubcommand("build-recover",new NativeBuildRecover(r));
         command.addSubcommand("verify-repair",new VerifyRepair(r));
         command.addSubcommand("repair",new RepairCommand(r));
+        command.addSubcommand("github",new GitHubCommand.GitHubGroup(directory,out,err,()->r.json,githubFactory));
+        command.addSubcommand("pr",new GitHubCommand.PrGroup(directory,out,err,()->r.storage().root,()->r.json,githubFactory));
+        command.addSubcommand("issue",new GitHubCommand.IssueGroup(directory,out,err,()->r.json,githubFactory));
+        command.addSubcommand("login",new GitHubCommand.LoginCmd(out,err,()->r.storage().root,()->r.json,githubFactory));
+        command.addSubcommand("logout",new GitHubCommand.LogoutCmd(out,err,()->r.storage().root,()->r.json,githubFactory));
+        command.addSubcommand("whoami",new GitHubCommand.WhoamiCmd(out,err,()->r.json,githubFactory));
+        command.addSubcommand("users",new GitHubCommand.UsersGroup(out,err,()->r.storage().root,()->r.json));
         command.addSubcommand("semantic",new SemanticInspect(r));
         command.addSubcommand("bridges",new BridgeInspect(r));
         command.addSubcommand("acquire",new Acquire(r));
@@ -168,10 +187,12 @@ public final class EvoApp {
                 {"reach","reachability","Bounded reachability / Khả năng đi tới có giới hạn"},{"evidence","evidence","Exact evidence / Bằng chứng chính xác"},{"explain","explain","Entity evidence / Bằng chứng thực thể"},
                 {"gaps","gaps","Explicit limitations / Hạn chế tường minh"},{"spring","spring","Spring inventory / Danh mục Spring"},{"config","configurations","Configurations & witnesses / Cấu hình & nhân chứng"},
                 {"provenance","provenance","Analysis provenance / Nguồn gốc phân tích"},{"metrics","metric-catalog","Metric catalog or one metric / Danh mục hoặc một metric"},{"query","","All canonical operations / Mọi thao tác canonical"},
-                {"check","rules","Check rules / Kiểm tra quy tắc"},{"score","assessment","Explain confidence / Giải thích độ tin cậy"},{"findings","findings","Observed findings / Phát hiện quan sát được"},
+                {"check","rules","Check rules / Kiểm tra quy tắc"},{"findings","findings","Observed findings / Phát hiện quan sát được"},
                 {"rules","rules","Closed rule denominator / Toàn bộ mẫu số luật"},{"bundle","bundle","Finding evidence bundle / Gói bằng chứng"},{"witness","bundle","Witness replay inputs / Đầu vào tái hiện nhân chứng"},{"replay","replay","Re-evaluate bundle formula / Đánh giá lại công thức"},
                 {"visual","visual-graph","Visual workbench graph projection / Phép chiếu đồ thị trực quan"}};
         for(var row:commands){var child=new CommandLine(new Query(r,row[0],row[1]));child.getCommandSpec().name(row[0]).usageMessage().description(row[2]);command.addSubcommand(row[0],child);}
+        command.addSubcommand("score",new ScoreCommand(r,false));
+        command.addSubcommand("arch-score",new ScoreCommand(r,true));
         command.addSubcommand("open",new Open(r));command.addSubcommand("use",new Use(r));command.addSubcommand("export",new Export(r));
         command.addSubcommand("insights",new Insights(r));
         command.addSubcommand("next",new Next(r));
@@ -235,10 +256,12 @@ public final class EvoApp {
                 @Option(names="--strategy",required=true) String strategy,
                 @Option(names="--recipe") String recipe,
                 @Option(names="--model-input") String modelInput,
+                @Option(names="--max-repair-attempts",defaultValue="1",description="Maximum syntax-checked AI repair attempts (1..3)") int maxRepairAttempts,
                 @Option(names="--out") Path outFile,
                 @Option(names="--patch-out") Path patchFile,
                 @Option(names="--port",defaultValue="8080") int port) throws Exception {
             if (port<1 || port>65535) throw new IllegalArgumentException("INVALID_PORT");
+            if (maxRepairAttempts<1 || maxRepairAttempts>3) throw new IllegalArgumentException("INVALID_MAX_REPAIR_ATTEMPTS");
             String context=root.context;
             if (context==null || context.isBlank()) throw new InputFailure("CONTEXT_REQUIRED");
             String resolvedDiag=resolveDiagnosisInput(port,graph,report,finding,bundle,context,diagnosisInput);
@@ -249,6 +272,7 @@ public final class EvoApp {
             args.put("context",context);
             args.put("diagnosisInput",resolvedDiag);
             args.put("strategy",strategy);
+            if (maxRepairAttempts>1) args.put("maxRepairAttempts",maxRepairAttempts);
             if ("RECIPE".equals(strategy)) {
                 if (recipe==null || recipe.isBlank()) throw new IllegalArgumentException("RECIPE_REQUIRED");
                 args.put("recipe",recipe);
@@ -793,10 +817,11 @@ public final class EvoApp {
         final Root r;NativeBuildRecover(Root r){this.r=r;}@Parameters String attempt;@Option(names="--build-profile",defaultValue="default")String profile;
         public Integer call()throws Exception{r.validate();return emit(r,"build-recover",envelope(nativeCoordinator(profile,null).recover(UUID.fromString(attempt))),0);}
     }
-    @Command(name="scan",mixinStandardHelpOptions=true,description="Source or authenticated captured-context repository analysis")
+    @Command(name="scan",mixinStandardHelpOptions=true,description="Source, remote Git/GitHub, or authenticated captured-context repository analysis")
     private final class Scan implements Callable<Integer>{
         final Root r;Scan(Root r){this.r=r;}
-        @Parameters(arity="0..1",defaultValue=".",paramLabel="DIR") Path source;
+        @Parameters(arity="0..1",defaultValue=".",paramLabel="DIR|GIT_URL") String source;
+        @Option(names="--ref",defaultValue="HEAD",paramLabel="REF",description="Git branch, tag, commit SHA, or refs/pull/N/head for remote URLs") String ref;
         @Option(names="--repo",paramLabel="COORDINATE",description="Stable repository coordinate / Định danh repository") String repository;
         @Option(names="--jdk",paramLabel="DIR",description="Analyzed JDK; default captured host JDK / JDK phân tích") Path jdk=Path.of(System.getProperty("java.home"));
         @Option(names="--android-sdk",paramLabel="DIR",description="Android SDK root with platforms/android-N/android.jar / Thư mục Android SDK") Path androidSdk;
@@ -820,6 +845,7 @@ public final class EvoApp {
         @Option(names="--fast",description="Fast architecture profile (shorthand for --mode fast) / Chế độ kiến trúc nhanh")boolean fastFlag;
         @Option(names="--spring-sat",description="Enable automatic multi-config Spring SAT evaluation / Bật đánh giá SAT đa cấu hình Spring")boolean springSat;
         @Option(names="--force",description="Bypass incremental Java/polyglot syntax caches / Bỏ qua cache phân tích tăng dần")boolean force;
+        @Option(names="--no-incremental",description="Disable incremental delta re-analysis and caches (clean full scan) / Tắt phân tích tăng dần")boolean noIncremental;
         @Option(names="--telemetry",description="Print per-stage millisecond and cache telemetry to stderr / Ghi thời gian và cache từng giai đoạn")boolean telemetry;
         @Option(names="--artifact-repository",paramLabel="HTTPS_URI",description="Explicit credential-free dependency repository; repeatable") List<java.net.URI> artifactRepositories=new ArrayList<>();
         public Integer call()throws Exception{
@@ -838,26 +864,83 @@ public final class EvoApp {
             if((semanticStore==null)!=(semanticPlan==null)||semanticStore==null&&(semanticPolicy!=null||semanticAuthority!=null)||semanticStore!=null&&semanticPolicy==null&&semanticAuthority==null)throw new InputFailure("SEMANTIC_CAPTURE_OPTIONS_REQUIRED");
             var repositories=offline?List.<java.net.URI>of():artifactRepositories.isEmpty()?MavenScan.DEFAULT_REPOSITORIES:List.copyOf(artifactRepositories);
             sessionGraph=null;
-            var sourcePath=Workspace.safe(resolve(source));var repo=RepositoryIdentity.fromCanonicalCoordinate(repository!=null?repository:"urn:evo:local:"+ContentDigest.sha256Utf8(sourcePath.toString()).value().substring(7));
+            boolean remoteSource = source != null && (source.contains("://") || source.startsWith("git@") || source.startsWith("github:"));
+            Path sourcePath = null;
+            String remoteCloneUrl = null;
+            RepositoryIdentity repo;
+            if (remoteSource) {
+                var ghOpt = com.evolution.backend.github.GitHubCoordinates.tryParse(source);
+                remoteCloneUrl = ghOpt.map(com.evolution.backend.github.GitHubCoordinates.Coordinates::canonicalCloneUrl).orElse(source);
+                repo = RepositoryIdentity.fromCanonicalCoordinate(repository != null ? repository : remoteCloneUrl);
+            } else {
+                sourcePath = Workspace.safe(resolve(Path.of(source)));
+                repo = RepositoryIdentity.fromCanonicalCoordinate(repository != null ? repository
+                        : "urn:evo:local:" + ContentDigest.sha256Utf8(sourcePath.toString()).value().substring(7));
+            }
+            final Path localSourcePath = sourcePath;
             Optional<PolyglotScan.Published> languageEvidence=Optional.empty();
             if(semanticStore!=null) {
                 var store=Workspace.safe(resolve(semanticStore));var authority=Optional.ofNullable(semanticAuthority).map(EvoApp.this::resolve);
-                if(store.startsWith(sourcePath)||authority.filter(p->p.toAbsolutePath().normalize().startsWith(sourcePath)).isPresent())throw new InputFailure("CAPTURE_REGISTRATION_INSIDE_TARGET");
+                if(localSourcePath!=null && (store.startsWith(localSourcePath)||authority.filter(p->p.toAbsolutePath().normalize().startsWith(localSourcePath)).isPresent()))throw new InputFailure("CAPTURE_REGISTRATION_INSIDE_TARGET");
                 var trust=semanticPolicy==null?SemanticAuthorityStore.policy(authority.orElseThrow()):new ContentDigest(semanticPolicy);
                 languageEvidence=Optional.of(PolyglotScan.load(store,new ContentDigest(semanticPlan),trust,authority,()->Thread.currentThread().isInterrupted()));
             }
             var excluded=new TreeSet<>(List.of(".git",".evo"));excluded.addAll(excludes);Path session=r.storage().root;
-            if(session.startsWith(sourcePath)&&!session.equals(sourcePath))excluded.add(sourcePath.relativize(session).toString().replace('\\','/'));
-            var selection=ScanSelection.plan(sourcePath,includeTests,allFiles,List.copyOf(excluded));excluded.addAll(selection.excluded());
+            if(sourcePath!=null && session.startsWith(sourcePath)&&!session.equals(sourcePath))excluded.add(sourcePath.relativize(session).toString().replace('\\','/'));
+            var selection=sourcePath!=null
+                    ? ScanSelection.plan(sourcePath,includeTests,allFiles,List.copyOf(excluded))
+                    : new ScanSelection.Plan("repository.selection:m8.4-v2",includeTests,true,List.copyOf(excluded));
+            excluded.addAll(selection.excluded());
             r.stage="acquisition";
             progress(r,prepareDependencies?"[1/2] Capturing dependency declarations…":"[1/4] Reading selected source/build/configuration files…",prepareDependencies?"[1/2] Thu nhận khai báo dependency…":"[1/4] Đọc mã nguồn, build và cấu hình đã chọn…");
+            boolean incrementalDisabled=force||noIncremental||Boolean.getBoolean("evo.incremental.disabled");
+            var sharedCaches=com.evolution.backend.analysis.LocalAnalysisRunner.sharedCaches(r.storage().root.resolve("acquisition"));
+            var runDeltaCache=incrementalDisabled?null:sharedCaches.buildDelta().forRun();
+            if(!incrementalDisabled){
+                JavaParserFrontend.configureModuleCacheDirectory(r.storage().root.resolve("acquisition").resolve("incremental-cache").resolve("javaparser-modules"));
+            }
             String intakeRevision=UUID.randomUUID().toString();StreamingRepositoryAcquirer.Receipt captured;
+            Optional<StreamingRepositoryAcquirer.FileDelta> fileDelta=Optional.empty();
+            Optional<String> baseSnapshotId=Optional.empty();
+            String incFallbackReason=noIncremental?"NO_INCREMENTAL_FLAG":force?"FORCE_FLAG":Boolean.getBoolean("evo.incremental.disabled")?"INCREMENTAL_DISABLED_PROPERTY":"";
             RepositoryAcquisitionResult acquisition;ReadinessPlan readiness;NativeBuildCoordinator.Result nativeBuild=null;PolyglotScan.Result polyglot;
+            try(var artifactSession=com.evolution.analysis.input.VerifiedArtifactSession.open();
+                var ignoredJpSession=JavaParserFrontend.openVerificationSession();
+                var githubBroker=githubFactory.tokenBroker()){
             try(var intake=new RepositoryIntake(r.storage().root.resolve("acquisition"))){
-                captured=intake.localComplete(sourcePath,intakeRevision,new StreamingAcquisitionRequest(repo,Optional.ofNullable(revision),dirty,List.copyOf(excluded)),()->Thread.currentThread().isInterrupted());
+                var acqReq=new StreamingAcquisitionRequest(repo,Optional.ofNullable(revision),!remoteSource&&dirty,List.copyOf(excluded));
+                if(remoteSource){
+                    var gitPolicy=new GitHostPolicy(Set.of(),Map.of(),java.net.InetAddress::getAllByName,githubBroker.readOnlyGitCredentials());
+                    String validRef=com.evolution.backend.github.GitHubCoordinates.validateRef(ref);
+                    if(!incrementalDisabled){
+                        Optional<String> baseRev=intake.latestSealed(repo,acqReq.identity()).map(SqliteInventoryStore.SealedHead::revision);
+                        var incRec=intake.gitIncremental(java.net.URI.create(remoteCloneUrl),validRef,intakeRevision,baseRev,acqReq,gitPolicy,"git",()->Thread.currentThread().isInterrupted());
+                        captured=incRec.receipt();
+                        fileDelta=incRec.delta();
+                        if(incRec.fallbackReason()!=null&&!incRec.fallbackReason().isBlank())incFallbackReason=incRec.fallbackReason();
+                    }else{
+                        captured=intake.git(java.net.URI.create(remoteCloneUrl),validRef,intakeRevision,acqReq,gitPolicy,"git",()->Thread.currentThread().isInterrupted());
+                    }
+                    var pinned=intake.pinnedCommit(intakeRevision);
+                    if(revision==null&&pinned.isPresent())revision=pinned.orElseThrow();
+                }else if(!incrementalDisabled){
+                    boolean verifyAll=!Boolean.getBoolean("evo.incremental.trustStatCache");
+                    var incRec=intake.localCompleteIncremental(sourcePath,intakeRevision,Optional.empty(),acqReq,verifyAll,()->Thread.currentThread().isInterrupted());
+                    captured=incRec.receipt();
+                    fileDelta=incRec.delta();
+                    if(incRec.fallbackReason()!=null&&!incRec.fallbackReason().isBlank())incFallbackReason=incRec.fallbackReason();
+                    if(fileDelta.isPresent()){
+                        baseSnapshotId=intake.inventory().manifest(fileDelta.orElseThrow().baseRevision())
+                                .map(m->com.evolution.analysis.contract.identity.SnapshotIdentity.from(repo,m.inventory()).value());
+                    }
+                }else{
+                    captured=intake.localComplete(sourcePath,intakeRevision,acqReq,()->Thread.currentThread().isInterrupted());
+                }
                 if(captured.manifest().isEmpty())return emit(r,"scan",envelope(Map.of("status",captured.state(),"acquisition",captured,"graphCreated",false)),3);
-                readiness=intake.readiness(intakeRevision,ReadinessPlanner.Policy.comprehensive(),()->Thread.currentThread().isInterrupted());
-                if(!prepareDependencies&&javaCapture==null&&!buildMode.equals("off")){
+                readiness=!incrementalDisabled
+                        ?intake.readinessIncremental(intakeRevision,fileDelta,ReadinessPlanner.Policy.comprehensive(),()->Thread.currentThread().isInterrupted(),fast)
+                        :intake.readiness(intakeRevision,ReadinessPlanner.Policy.comprehensive(),()->Thread.currentThread().isInterrupted());
+                if(!prepareDependencies&&javaCapture==null&&!buildMode.equals("off")&&sourcePath!=null){
                     r.stage="isolated-native-build";nativeBuild=buildNative(buildProfile,sourcePath,readiness,intakeRevision,intake);
                     if(buildMode.equals("required")&&!Set.of("BUILT","NOT_APPLICABLE").contains(nativeBuild.status()))return emit(r,"scan",envelope(Map.of("status",nativeBuild.status(),"nativeBuild",nativeBuild,"graphCreated",false)),nativeBuild.status().equals("FAILED")?1:3);
                 }
@@ -894,7 +977,7 @@ public final class EvoApp {
             if(acquisition.snapshot().isEmpty())return emit(r,"scan",envelope(Map.of("status","TERMINAL_FAILURE","stage","acquisition","acquisition",acquisitionInfo,"selection",selection,"graphCreated",false)),1);
             if(javaCapture!=null){
                 r.stage="captured-native-context";var root=Workspace.safe(resolve(javaCapture));
-                if(root.startsWith(sourcePath))throw new InputFailure("CAPTURE_REGISTRATION_INSIDE_TARGET");
+                if(sourcePath!=null && root.startsWith(sourcePath))throw new InputFailure("CAPTURE_REGISTRATION_INSIDE_TARGET");
                 var expected=new CapturedJavaScan.Expected(repo,acquisition.snapshot().orElseThrow().identity(),readiness.identity());
                 CapturedJavaScan.Result nativeResult;
                 try{nativeResult=new CapturedJavaScan().run(root,expected,r.storage().root.resolve("captured-java"),()->Thread.currentThread().isInterrupted());}
@@ -924,8 +1007,9 @@ public final class EvoApp {
             var polyglotContext=com.evolution.analysis.evidence.EvidenceContext.forSnapshot(acquisition.snapshot().orElseThrow().identity());
             var finalLanguageEvidence=languageEvidence;
             var polyglotFuture=java.util.concurrent.CompletableFuture.supplyAsync(()->{
-                try(var roIntake=new RepositoryIntake(r.storage().root.resolve("acquisition"),true)){
-                    return new PolyglotScan().run(intakeRevision,roIntake,readiness,polyglotContext,finalLanguageEvidence,r.storage().root.resolve("semantic-work"),polyglotCancel,verifiedPolyglotBytes::get,fast,path->false,force?Optional.empty():Optional.of(r.storage().root.resolve("incremental-cache")));
+                try(var attached=artifactSession.attach();
+                    var roIntake=new RepositoryIntake(r.storage().root.resolve("acquisition"),true)){
+                    return new PolyglotScan().run(intakeRevision,roIntake,readiness,polyglotContext,finalLanguageEvidence,r.storage().root.resolve("semantic-work"),polyglotCancel,verifiedPolyglotBytes::get,fast,fast?roIntake.installedNodeDependencies(intakeRevision):path->false,incrementalDisabled?Optional.empty():Optional.of(r.storage().root.resolve("incremental-cache")));
                 }catch(Exception failure){
                     asyncFailed.set(true);
                     throw new java.util.concurrent.CompletionException(failure);
@@ -936,7 +1020,7 @@ public final class EvoApp {
             var safeJdk=Workspace.safe(resolve(jdk));
             var platform=com.evolution.backend.analysis.LocalAnalysisRunner.acquireCachedPlatform(safeJdk,release);var defaults=UniversalBuildIngestion.Policy.defaults();
             var cachePath=Workspace.safe(resolve(mavenCache));
-            var models=MavenScan.models(acquisition,cachePath,repositories);
+            var models=MavenScan.models(acquisition,cachePath,repositories,runDeltaCache);
             var buildPolicy=new UniversalBuildIngestion.Policy(Optional.of(release),Optional.of(release),Optional.of("UTF-8"),32_768,defaults.maxCharacters(),defaults.maxTokens(),128);
             var decodePolicy=new RepositoryInputDecoder.Policy("UTF-8",500_000,100_000_000,fast);
             var decoded=new RepositoryInputDecoder.Prepared(acquisition,decodePolicy);
@@ -952,16 +1036,16 @@ public final class EvoApp {
             var platformLedgers=additionalPlatforms.isEmpty()?List.<com.evolution.analysis.evidence.EvidenceAcquisitionLedger>of():List.of(com.evolution.analysis.evidence.CapabilityGapNormalizer.normalize(
                     EvidenceContext.forSnapshot(acquisition.snapshot().orElseThrow().identity()),com.evolution.analysis.evidence.EvidenceNormalizationInput.builder().platformResults(additionalPlatforms).build()));
             var depPolicy=new com.evolution.analysis.dependency.DependencyAcquisitionPolicy(4096,64_000_000,MavenScan.DEFAULT_DEPENDENCY_TOTAL_BYTES,64,repositories,5000,15000,offline?0:1,8);
-            var mavenBase=MavenScan.inputs(acquisition,models,cachePath,platform.platform(),depPolicy,availablePlatforms);
+            var mavenBase=MavenScan.inputs(acquisition,models,cachePath,platform.platform(),depPolicy,availablePlatforms,runDeltaCache);
             Optional<Path> resolvedAndroidSdk=androidSdk!=null?Optional.of(Workspace.safe(resolve(androidSdk))):com.evolution.backend.analysis.GradleScan.discoverAndroidSdk();
-            var mavenInputs=com.evolution.backend.analysis.GradleScan.augment(mavenBase,acquisition,gradleModel,cachePath,platform.platform(),depPolicy,availablePlatforms,resolvedAndroidSdk);
+            var mavenInputs=com.evolution.backend.analysis.GradleScan.augment(mavenBase,acquisition,gradleModel,cachePath,platform.platform(),depPolicy,availablePlatforms,resolvedAndroidSdk,runDeltaCache);
             long tAfterPlatformDeps=System.nanoTime();
             r.stage="analysis";
             // Supply fallback evidence without Builder.defaultPlatform's Maven user-property overrides.
             // Declared Maven release/encoding must keep their authority over CLI defaults.
             var javaCacheStats=new java.util.concurrent.atomic.AtomicLong[]{new java.util.concurrent.atomic.AtomicLong(),new java.util.concurrent.atomic.AtomicLong()};
             var policy=new UniversalArchitecturePipeline.Policy(
-                    buildPolicy,decodePolicy,frontend(r,force,javaCacheStats),JavaParserFrontend.PROVIDER,
+                    buildPolicy,decodePolicy,frontend(r,incrementalDisabled,javaCacheStats),JavaParserFrontend.PROVIDER,
                     mavenInputs.resolutions(),platform.platform(),Optional.of(new MavenBuildModelProvider()),mavenInputs.externalPoms(),MavenScan.POLICY,
                     100_000,1_000,UniversalArchitecturePipeline.TruthEvaluationMode.AUTO,Map.of(),Optional.empty(),Optional.empty(),com.evolution.analysis.spring.truth.TruthRegionEvaluation.Limits.conservative())
                     .withReadiness(readiness.identity())
@@ -969,12 +1053,14 @@ public final class EvoApp {
             if(fast)policy=policy.withAnalysisOptions(Map.of("analysis.profile","FAST_ARCHITECTURE"));
             if(springSat)policy=policy.withSpringSatMode(UniversalArchitecturePipeline.SpringSatMode.AUTO_MULTI_CONFIG_SAT);
             progress(r,"[3/4] Analyzing source contexts / Spring and captured native language evidence…","[3/4] Phân tích context nguồn / Spring và bằng chứng native đa ngôn ngữ…");
-            com.evolution.analysis.filesystem.FileAnalysisWorkspace diskWorkspace=acquiredBytesTotal<=32_000_000L?null:new com.evolution.analysis.filesystem.FileAnalysisWorkspace(r.storage().root.resolve("analysis-work"));
+            boolean useDiskSpill=UniversalArchitecturePipeline.shouldUseDiskSpill(acquiredBytesTotal,acquisition.files().size(),mavenInputs.resolutions().size());
+            com.evolution.analysis.filesystem.FileAnalysisWorkspace diskWorkspace=useDiskSpill?new com.evolution.analysis.filesystem.FileAnalysisWorkspace(r.storage().root.resolve("analysis-work")):null;
             AnalysisWorkspace analysisWorkspace=diskWorkspace!=null?diskWorkspace:AnalysisWorkspace.MEMORY;
+            int aggWorkers=analysisWorkspace.concurrentTables()?com.evolution.analysis.concurrent.BoundedTasks.automaticWorkers():1;
             try(var closeableWorkspace=diskWorkspace){
             UniversalArchitecturePipeline.DetailedResult detailed;
             try {
-                detailed=new UniversalArchitecturePipeline(analysisWorkspace).runWithEvidence(decoded,policy);
+                detailed=new UniversalArchitecturePipeline(analysisWorkspace,aggWorkers,incrementalDisabled?null:sharedCaches.springCache()).runWithEvidence(decoded,policy);
                 polyglot=polyglotFuture.join();
             } catch(java.util.concurrent.CompletionException ce) {
                 asyncFailed.set(true);
@@ -1035,6 +1121,35 @@ public final class EvoApp {
                 data.remove("rootCauses");data.put("rootCauseSummary",Map.of("total",detailed.report().rootCauses().size(),"byCategory",reasonCounts(detailed.report().rootCauses(),c->c.category().name())));
             }
             long tScanEnd=System.nanoTime();
+            int reusedMods=(int)javaCacheStats[0].get();
+            int recomputedMods=(int)javaCacheStats[1].get();
+            long polyHits=polyglot.syntax().cacheHits();
+            long polyMisses=polyglot.syntax().cacheMisses();
+            IncrementalSummary incrementalSummary;
+            if(incrementalDisabled){
+                incrementalSummary=IncrementalSummary.cold(incFallbackReason);
+            }else if(fileDelta.isPresent()){
+                var d=fileDelta.orElseThrow();
+                String incMode=(d.addedFiles()==0L&&d.modifiedFiles()==0L&&d.deletedFiles()==0L)
+                        ?IncrementalSummary.MODE_NO_CHANGE:IncrementalSummary.MODE_INCREMENTAL;
+                incrementalSummary=new IncrementalSummary(
+                        incMode,"",baseSnapshotId,Optional.empty(),Optional.empty(),
+                        d.addedFiles(),d.modifiedFiles(),d.deletedFiles(),d.unchangedFiles(),d.unchangedFiles(),
+                        0,0,0,0,0,0,
+                        reusedMods,recomputedMods,0,0,polyHits,polyMisses,0,0,0L,false);
+            }else{
+                incrementalSummary=new IncrementalSummary(
+                        IncrementalSummary.MODE_COLD,incFallbackReason.isBlank()?"NO_PREVIOUS_SNAPSHOT":incFallbackReason,
+                        Optional.empty(),Optional.empty(),Optional.empty(),
+                        0L,0L,0L,0L,0L,0,0,0,0,0,0,
+                        reusedMods,recomputedMods,0,0,polyHits,polyMisses,0,0,0L,false);
+            }
+            // Persist operational incremental telemetry outside canonical stdout receipt/digests so cold & warm receipts remain bit-for-bit deterministic.
+            try{
+                Files.createDirectories(r.storage().root);
+                Files.writeString(r.storage().root.resolve("last-incremental-summary.json"),
+                        CanonicalJson.write(incrementalSummary.toMap()),StandardCharsets.UTF_8);
+            }catch(IOException ignored){}
             if(telemetry||(terminal&&!r.json)){
                 long intakeMs=java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(tAfterIntake-tScanStart);
                 long platMs=java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(tAfterPlatformDeps-tAfterIntake);
@@ -1042,13 +1157,15 @@ public final class EvoApp {
                 long graphMs=java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(tScanEnd-tAfterAnalysis);
                 long totalMs=java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(tScanEnd-tScanStart);
                 err.println("[evo] Telemetry ("+analysisMode.name()+"): total="+totalMs+"ms | intake="+intakeMs+"ms | platform+deps="+platMs+"ms | jvm+polyglot="+anaMs+"ms | graph+publish="+graphMs+"ms");
-                err.println("[evo] Cache: javaHits="+javaCacheStats[0].get()+" javaMisses="+javaCacheStats[1].get()+" | polyglotHits="+polyglot.syntax().cacheHits()+" polyglotMisses="+polyglot.syntax().cacheMisses());
+                err.println("[evo] Cache: javaHits="+reusedMods+" javaMisses="+recomputedMods+" | polyglotHits="+polyHits+" polyglotMisses="+polyMisses);
+                err.println("[evo] Incremental ("+incrementalSummary.mode()+"): unchanged="+incrementalSummary.unchangedFiles()+" added="+incrementalSummary.addedFiles()+" modified="+incrementalSummary.modifiedFiles()+" deleted="+incrementalSummary.deletedFiles()+" | reusedModules="+reusedMods+" recomputedModules="+recomputedMods+(incrementalSummary.baseSnapshotId().isPresent()?" | baseSnapshot="+incrementalSummary.baseSnapshotId().orElseThrow():"")+(incrementalSummary.fallbackReason().isEmpty()?"":" | reason="+incrementalSummary.fallbackReason()));
                 err.flush();
             }
             r.stage="receipt";
             int exitCode=detailed.graphInput().isEmpty()||detailed.report().status()==UniversalArchitectureReport.Status.TERMINAL_FAILURE
                     ?1:("COMPLETE".equals(String.valueOf(data.get("status")))&&!availablePlatforms.isEmpty()?0:3);
             return emit(r,"scan",envelope(data),exitCode);
+            }
             }
         }
         private int prepareDependencies(RepositoryAcquisitionResult acquisition,List<java.net.URI> repositories)throws IOException {
@@ -1077,6 +1194,157 @@ public final class EvoApp {
     @Command(name="use",mixinStandardHelpOptions=true,description="Remember exact context / Ghi nhớ ngữ cảnh chính xác")
     private final class Use implements Callable<Integer>{final Root r;Use(Root r){this.r=r;}@Parameters(paramLabel="ID|N") String selected;
         public Integer call()throws Exception{r.validate();var graph=load(r);String context=findContext(graph,selected);if(r.graph==null)r.storage().rememberContext(graph,context);else r.storage().select(graph,Optional.of(context));if(interactiveDefaults!=null){interactiveDefaults.context=context;interactiveDefaults.graph=null;sessionGraph=graph;}return emit(r,"use",envelope(Map.of("graph",graph.identity(),"context",context,"selected",selected)),0);}}
+    @Command(mixinStandardHelpOptions=true,description="Architecture Health Score v2 (--v2 / arch-score) or legacy M6 policy confidence assessment / Chấm điểm kiến trúc v2 hoặc đánh giá chính sách")
+    private final class ScoreCommand implements Callable<Integer>{
+        final Root r;final boolean defaultV2;
+        @Option(names="--v2",description="Evaluate Architecture Health Score v2 (7 dimensions + independent Analysis Confidence)") boolean v2;
+        @Option(names="--v1",description="Force legacy M6 policy exposure assessment") boolean v1;
+        @Option(names="--store",paramLabel="DIR",description="Graph store directory for digest-addressed --graph sha256:... lookups") Path storeDir;
+        @Option(names="--whole-repo",description="Evaluate Whole Repository (snapshot:...) Architecture Health v2") boolean wholeRepo;
+        @Option(names="--fail-on",paramLabel="none|info|warning|error",description="CI policy threshold (legacy v1) / Ngưỡng chính sách CI") String failOn="none";
+        @Option(names="--gap-view",paramLabel="CURRENT|HISTORY|ALL",description="Not applicable on score") String gapView;
+        ScoreCommand(Root r,boolean defaultV2){this.r=r;this.defaultV2=defaultV2;}
+        @Override public Integer call() throws Exception {
+            r.validate();
+            if(v1&&(defaultV2||v2||storeDir!=null||wholeRepo))throw new InputFailure("CONFLICTING_REQUEST");
+            boolean useV2=!v1&&(defaultV2||v2||storeDir!=null||wholeRepo||(r.graph!=null&&r.graph.startsWith("sha256:")));
+            if(!useV2){
+                var legacy=new Query(r,"score","assessment");
+                legacy.failOn=failOn;legacy.gapView=gapView;
+                return legacy.call();
+            }
+            if(gapView!=null)throw new InputFailure("GAP_VIEW_NOT_APPLICABLE");
+            if(!"none".equals(failOn))throw new InputFailure("THRESHOLD_NOT_APPLICABLE");
+            var graph=loadForScore(r,storeDir);
+            String targetContext=wholeRepo?graph.snapshot().value()
+                    :(r.context!=null?findContext(graph,r.context):graph.snapshot().value());
+            var queries=new ArchitectureMetricsService(graph).queries();
+            var service=new ArchitectureAssessmentV2Service();
+            var model=ArchitectureScoreModelV2.standard();
+            ArchitectureAssessmentV2.Result result;
+            if(targetContext.equals(graph.snapshot().value())){
+                var customByCtx=new LinkedHashMap<String,PolicyEvaluation.Result>();
+                if(r.policy!=null){
+                    byte[] policyBytes=Workspace.read(resolve(r.policy),262_144);
+                    var compiled=new PolicyCompiler().compile(policyBytes,EvidenceContext.forSnapshot(graph.snapshot()),PolicyCompiler.Limits.defaults());
+                    if(compiled.policy().isEmpty())throw new InputFailure("INVALID_POLICY");
+                    for(var ctx:graph.contexts()){
+                        if(ctx.identity().equals(graph.snapshot().value()))continue;
+                        var sc=graph.evidence(ctx.evidence()).filter(e->"spring.context".equals(e.family())).map(e->Scope.SPRING_COMPONENT).orElse(Scope.TYPE);
+                        if(!queries.supportsArchitectureScope(ctx,sc))continue;
+                        var plan=new PolicyGraphMapper().bind(compiled,queries,ctx.identity(),PolicyGraphMapper.Limits.defaults());
+                        customByCtx.put(ctx.identity(),new PolicyEvaluator().evaluate(compiled,plan,queries,PolicyEvaluation.Limits.defaults()));
+                    }
+                }
+                result=service.assessRepository(queries,customByCtx,Optional.empty(),model);
+            }else{
+                Optional<PolicyEvaluation.Result> customEval=Optional.empty();
+                if(r.policy!=null){
+                    byte[] policyBytes=Workspace.read(resolve(r.policy),262_144);
+                    var compiled=new PolicyCompiler().compile(policyBytes,EvidenceContext.forSnapshot(graph.snapshot()),PolicyCompiler.Limits.defaults());
+                    if(compiled.policy().isEmpty())throw new InputFailure("INVALID_POLICY");
+                    var plan=new PolicyGraphMapper().bind(compiled,queries,targetContext,PolicyGraphMapper.Limits.defaults());
+                    customEval=Optional.of(new PolicyEvaluator().evaluate(compiled,plan,queries,PolicyEvaluation.Limits.defaults()));
+                }
+                result=service.assess(queries,targetContext,customEval,Optional.empty(),model);
+            }
+            int code=result.status()==AssessmentStatus.COMPLETE?0:3;
+            if(r.json)return emit(r,"score",envelope(result),code);
+            renderScoreV2Report(result);
+            return code;
+        }
+    }
+
+    private KnowledgeGraph loadForScore(Root r,Path storeDir)throws IOException{
+        if(storeDir!=null){
+            var fgs=new FileGraphStore(Workspace.safe(resolve(storeDir)));
+            if(r.graph!=null&&r.graph.startsWith("sha256:")){
+                return fgs.load(new ContentDigest(r.graph)).orElseThrow(()->new InputFailure("NO_SNAPSHOT"));
+            }
+            if(r.graph!=null){
+                return Workspace.graph(resolve(Path.of(r.graph)));
+            }
+            var ws=new Workspace(Workspace.safe(resolve(storeDir)));
+            if(Files.exists(ws.root.resolve("selection.json"),LinkOption.NOFOLLOW_LINKS))return ws.selectedGraph();
+            throw new InputFailure("NO_SNAPSHOT");
+        }
+        return load(r);
+    }
+
+    private void renderScoreV2Report(ArchitectureAssessmentV2.Result res){
+        out.println("Architecture Health Score v2 ("+res.formula().id()+":"+res.formula().version()+") · "+res.scopeMode());
+        if(res.score().isPresent()){
+            String sc=res.score().orElseThrow().setScale(2,RoundingMode.HALF_EVEN).toPlainString();
+            String interval="";
+            if(res.conservativeLowerBound().isPresent()&&res.uncertaintyDelta().signum()>0){
+                String lb=res.conservativeLowerBound().orElseThrow().setScale(2,RoundingMode.HALF_EVEN).toPlainString();
+                String delta=res.uncertaintyDelta().setScale(2,RoundingMode.HALF_EVEN).toPlainString();
+                interval=" | Conservative bound: ["+lb+" .. "+sc+"] (delta -"+delta+")";
+            }
+            out.println("  Architecture Health: "+sc+"/100 ("+res.healthBand()+") ["+res.status()+"]"+interval);
+        }else{
+            out.println("  Architecture Health: "+res.status()+" ("+res.healthBand()+")");
+        }
+        var c=res.confidence();
+        out.println("  Analysis Confidence (Independent): "+c.confidenceScore().setScale(2,RoundingMode.HALF_EVEN)+"/100 ("+c.tier()+")"
+                +" · Evidence: "+c.evidenceTier()
+                +" · Parse: "+pct(c.parseCompleteness())
+                +" · Internal Edges: "+pct(c.internalEdgeCompleteness())
+                +" · Build: "+pct(c.buildCompleteness())
+                +" · Open Gaps: "+c.openGapCount());
+        if(c.springSpaceDefiniteness().isPresent()){
+            out.println("  Spring Space Definiteness: "+pct(c.springSpaceDefiniteness().orElseThrow()));
+        }
+        for(String lim:c.limitations()){
+            out.println("    ! "+lim);
+        }
+        res.inferredLayers().ifPresent(lm->{
+            String summary=lm.layers().stream().map(ls->ls.layer()+"("+ls.packageCount()+"p/"+ls.typeCount()+"t)")
+                    .collect(java.util.stream.Collectors.joining(", "));
+            out.println("  Inferred Style: "+lm.detectedStyle()+(summary.isEmpty()?"":" — "+summary));
+        });
+        if(!res.dimensions().isEmpty()){
+            out.println("  Dimensions:");
+            for(var d:res.dimensions()){
+                String dScore=d.score().map(v->v.setScale(1,RoundingMode.HALF_EVEN)+"/100").orElse(d.status().name());
+                String bound=(d.score().isPresent()&&d.conservativeLowerBound().isPresent()&&d.uncertaintyDelta().signum()>0)
+                        ?" [>="+d.conservativeLowerBound().orElseThrow().setScale(1,RoundingMode.HALF_EVEN)+"]":"";
+                out.println("    - "+d.displayName()+" ("+d.weight().setScale(0,RoundingMode.HALF_EVEN)+"%): "+dScore+bound+" ["+d.status()+"]");
+            }
+            var offenders=res.dimensions().stream()
+                    .flatMap(d->d.subMetrics().stream().filter(sm->sm.score().isPresent()&&sm.score().orElseThrow().compareTo(new BigDecimal("85"))<0)
+                            .map(sm->Map.entry(d.displayName(),sm)))
+                    .sorted(Comparator.comparing(e->e.getValue().score().orElseThrow()))
+                    .limit(6).toList();
+            if(!offenders.isEmpty()){
+                out.println("  Top Architectural Offenders:");
+                for(var entry:offenders){
+                    var sm=entry.getValue();
+                    out.println("    * ["+entry.getKey()+"] "+sm.displayName()+": "
+                            +sm.score().orElseThrow().setScale(1,RoundingMode.HALF_EVEN)+"/100"
+                            +sm.rawValue().map(v->" (raw="+v.setScale(4,RoundingMode.HALF_EVEN)+")").orElse("")
+                            +" — "+sm.explanation());
+                    if(!sm.remediationHint().isBlank())out.println("      Fix: "+sm.remediationHint());
+                    for(var w:sm.witnesses().stream().limit(2).toList()){
+                        out.println("      Witness: ["+w.kind()+"] "+w.label()+" — "+w.detail());
+                    }
+                }
+            }
+        }
+        if(!res.contextBreakdown().isEmpty()){
+            out.println("  Context Breakdown ("+res.contextBreakdown().size()+"):");
+            for(var cb:res.contextBreakdown()){
+                String cbScore=cb.score().map(v->v.setScale(1,RoundingMode.HALF_EVEN)+"/100").orElse(cb.status().name());
+                out.println("    - "+cb.label()+" ["+cb.kind()+", "+cb.entityCount()+" entities]: "+cbScore+" ("+cb.confidenceTier()+" confidence)");
+            }
+        }
+        out.flush();
+    }
+
+    private static String pct(BigDecimal ratio){
+        return ratio.multiply(new BigDecimal("100")).setScale(1,RoundingMode.HALF_EVEN)+"%";
+    }
+
     @Command(name="insights",mixinStandardHelpOptions=true,description="Tarjan SCC tangles, minimal cycle-breakers, hotspots, DSM & executive Markdown report / Cố vấn kiến trúc & tái cấu trúc")
     private final class Insights implements Callable<Integer>{
         final Root r;Insights(Root r){this.r=r;}
@@ -1159,7 +1427,13 @@ public final class EvoApp {
     private static <T> Map<String,Long> reasonCounts(Collection<T> rows,java.util.function.Function<T,String> reason){var counts=new TreeMap<String,Long>();for(T row:rows)counts.merge(reason.apply(row),1L,Long::sum);return counts;}
     private Path resolve(Path path){return path.isAbsolute()?path:directory.resolve(path);}
     private KnowledgeGraph load(Root r)throws IOException{
-        if(r.graph!=null)return Workspace.graph(resolve(r.graph));
+        if(r.graph!=null){
+            if(r.graph.startsWith("sha256:")){
+                return new FileGraphStore(r.storage().root).load(new ContentDigest(r.graph))
+                        .orElseThrow(()->new InputFailure("NO_SNAPSHOT"));
+            }
+            return Workspace.graph(resolve(Path.of(r.graph)));
+        }
         if(!Files.exists(r.storage().root.resolve("selection.json"),LinkOption.NOFOLLOW_LINKS))throw new InputFailure("NO_SNAPSHOT");
         var selected=new ContentDigest(GraphJson.string(r.storage().selection().get("graph")));
         if(interactiveDefaults!=null&&sessionGraph!=null&&sessionGraph.identity().equals(selected))return sessionGraph;

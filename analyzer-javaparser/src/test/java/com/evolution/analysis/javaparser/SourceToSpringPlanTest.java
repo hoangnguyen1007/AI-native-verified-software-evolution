@@ -61,7 +61,10 @@ class SourceToSpringPlanTest {
         var plan=prepare(f,true);
         assertTrue(plan.gaps().stream().noneMatch(g->g.reasonCode().equals("CONSTRUCTOR_SET_INCOMPLETE")));
         var truth=evaluate(f,plan);assertEquals(1,truth.regions().stream().filter(r->r.fact().kind()==ConditionalFactKey.Kind.DEFINITION_PRESENT&&r.classification()==TruthRegionEvaluation.Classification.MAY).count());
-        for(String marker:List.of("interface Marker { void work(); }","interface Marker<T> {}","interface Marker extends Missing {}")){
+        var pureAbstract=sourceFixture("package app; interface Marker { void work(); } class Tagged implements Marker {}");
+        var pureOwner=pureAbstract.source().declarations().values().stream().map(DeclarationRecord::entity).filter(e->"app.Tagged".equals(pureAbstract.source().typeName(e.identity()))).findFirst().orElseThrow();
+        assertTrue(pureAbstract.source().sourceHierarchy(pureOwner.identity(),16).complete(),"Pure abstract source interface without default methods or non-benign metadata is proven safe");
+        for(String marker:List.of("interface Marker { default void work() {} }","interface Marker<T> {}","interface Marker extends Missing {}")){
             var unsupported=sourceFixture("package app; "+marker+" class Tagged implements Marker {}");
             var owner=unsupported.source().declarations().values().stream().map(DeclarationRecord::entity).filter(e->"app.Tagged".equals(unsupported.source().typeName(e.identity()))).findFirst().orElseThrow();
             assertFalse(unsupported.source().sourceHierarchy(owner.identity(),16).complete(),marker);
@@ -276,7 +279,7 @@ class SourceToSpringPlanTest {
     @Test void unsupportedSourceHierarchiesNeverCertifyMemberClosure() throws Exception {
         for(String header:List.of("class Base<T> {} class Client extends Base<Store>",
                 "class Base<T> {} class Client extends Base", "class Client extends Missing",
-                "class Client extends java.util.ArrayList<Store>","interface Base { void work(); } class Client implements Base")) {
+                "class Client extends java.util.ArrayList<Store>","interface Base { default void work() {} } class Client implements Base")) {
             // Component annotation belongs to Client in each variant.
             var split=header.lastIndexOf("class Client");
             var f=sourceFixture("""

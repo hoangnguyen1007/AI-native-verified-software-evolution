@@ -145,7 +145,10 @@ final class ModelInputs {
             Model model = shared.readModel(source.input);
             if (source.coordinate.isPresent()) validateCoordinate(model, source.coordinate.orElseThrow(), source.path.isPresent());
             checkProfiles(model, source.id, evidence);
-            if (model.getBuild() != null && (!model.getBuild().getExtensions().isEmpty()
+            // Only inspect raw <build> extensions on workspace POMs here; external BOM imports do not
+            // contribute <build> extensions to the importing module, while real parent/profile extensions
+            // are verified on the effective model in MavenBuildModelProvider.
+            if (source.path.isPresent() && model.getBuild() != null && (!model.getBuild().getExtensions().isEmpty()
                     || model.getBuild().getPlugins().stream().anyMatch(p -> p.isExtensions()))) {
                 problems.add(new Problem(Reason.EXTENSIONS_NOT_LOADED, root,
                         Requirement.AUTHORIZED_EXTENSION_PROVIDER, List.of(evidence)));

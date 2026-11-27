@@ -52,6 +52,91 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
                 thread.setDaemon(true);
                 return thread;
             });
+    private static final ExecutorService PREFETCH_WORKERS = Executors.newVirtualThreadPerTaskExecutor();
+    private static final long PROGRESS_THROTTLE_NANOS = TimeUnit.MILLISECONDS.toNanos(250L);
+    private static final int MAX_STAGE2_PREVIEW_GRAPHS = 16;
+    private static final Object MODULE_CACHE_CONFIG_LOCK = new Object();
+    private static int activeIncrementalModuleCacheRuns = 0;
+
+    /**
+     * Long-lived cross-job incremental caches shared across runs targeting the same intake store.
+     * Operational cache state never changes canonical output digests when inputs match.
+     */
+    public static final class SharedCaches {
+        private record LastPublication(String snapshotId, ContentDigest graphId, String jobId) {
+        }
+
+        private final BuildDeltaCache buildDelta;
+        private final IncrementalSpringCache springCache;
+        private final IncrementalGraphProjector graphProjector;
+        private final Map<RepositoryIdentity, LastPublication> lastPublishedByRepo = Collections
+                .synchronizedMap(new LinkedHashMap<>(16, 0.75f, true) {
+                    @Override
+                    protected boolean removeEldestEntry(Map.Entry<RepositoryIdentity, LastPublication> eldest) {
+                        return size() > 64;
+                    }
+                });
+
+        public SharedCaches(Path intakeDirectory) {
+            Objects.requireNonNull(intakeDirectory);
+            Path cacheRoot = intakeDirectory.toAbsolutePath().normalize().resolve("incremental-cache");
+            this.buildDelta = new BuildDeltaCache(cacheRoot);
+            this.springCache = new IncrementalSpringCache();
+            this.graphProjector = new IncrementalGraphProjector();
+        }
+
+        public BuildDeltaCache buildDelta() {
+            return buildDelta;
+        }
+
+        public IncrementalSpringCache springCache() {
+            return springCache;
+        }
+
+        public IncrementalGraphProjector graphProjector() {
+            return graphProjector;
+        }
+
+        Optional<LastPublication> lastPublished(RepositoryIdentity repository) {
+            return Optional.ofNullable(lastPublishedByRepo.get(repository));
+        }
+
+        void recordPublished(RepositoryIdentity repository, SnapshotIdentity snapshot, ContentDigest graphId,
+                String jobId) {
+            if (repository != null && snapshot != null && graphId != null && jobId != null) {
+                lastPublishedByRepo.put(repository, new LastPublication(snapshot.value(), graphId, jobId));
+            }
+        }
+    }
+
+    private static final int SHARED_CACHES_CAPACITY = 16;
+    private static final Map<Path, SharedCaches> SHARED_CACHES_BY_INTAKE = Collections
+            .synchronizedMap(new LinkedHashMap<>(16, 0.75f, true) {
+                @Override
+                protected boolean removeEldestEntry(Map.Entry<Path, SharedCaches> eldest) {
+                    return size() > SHARED_CACHES_CAPACITY;
+                }
+            });
+
+    public static SharedCaches sharedCaches(Path intakeDirectory) {
+        Path normalized = Objects.requireNonNull(intakeDirectory).toAbsolutePath().normalize();
+        synchronized (SHARED_CACHES_BY_INTAKE) {
+            return SHARED_CACHES_BY_INTAKE.computeIfAbsent(normalized, SharedCaches::new);
+        }
+    }
+
+    private record AcquisitionDeltaContext(
+            Optional<String> baseSnapshotId,
+            Optional<String> baseGraphId,
+            Optional<String> baseJobId,
+            boolean incrementalUsed,
+            String fallbackReason,
+            Optional<StreamingRepositoryAcquirer.FileDelta> fileDelta) {
+        static AcquisitionDeltaContext cold(String reason) {
+            return new AcquisitionDeltaContext(Optional.empty(), Optional.empty(), Optional.empty(),
+                    false, reason == null ? "" : reason, Optional.empty());
+        }
+    }
 
     private interface Progress extends BooleanSupplier {
         String id();
@@ -71,6 +156,29 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
         void withholdReuse();
 
         default void recordCacheMetrics(Map<String, Long> metrics) {
+        }
+
+        default void reportProgress(int done, int total, String message) {
+        }
+
+        default void registerModules(List<String> modulePaths) {
+        }
+
+        default void reportModuleUpdate(String module, String status, int filesDone, int filesTotal,
+                long elapsedMillis, Optional<String> contextId, Optional<String> reason) {
+        }
+
+        default Optional<AnalysisJobs.PreviewPublication> publishPreview(
+                KnowledgeGraph previewGraph, AnalysisJobs.TruthTier truthTier,
+                int completedContexts, int totalContexts, List<String> pendingModules) {
+            return Optional.empty();
+        }
+
+        default void recordIncrementalMetrics(AnalysisJobs.IncrementalMetrics metrics) {
+        }
+
+        default boolean supportsProgressivePreviews() {
+            return false;
         }
     }
 
@@ -229,6 +337,7 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
     private final Optional<DependencyAcquisitionPolicy> artifactPolicy;
     private final NativeExecutionConfig nativeConfig;
     private final Optional<Path> graphStoreDirectory;
+    private final SharedCaches sharedCaches;
 
     public LocalAnalysisRunner(Input input) {
         this(input, input.source().resolve(".evo/acquisition"));
@@ -249,11 +358,22 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
 
     public LocalAnalysisRunner(Input input, Path intakeDirectory, Optional<DependencyAcquisitionPolicy> artifactPolicy,
             NativeExecutionConfig nativeConfig, Optional<Path> graphStoreDirectory) {
+        this(input, intakeDirectory, artifactPolicy, nativeConfig, graphStoreDirectory,
+                sharedCaches(intakeDirectory));
+    }
+
+    public LocalAnalysisRunner(Input input, Path intakeDirectory, Optional<DependencyAcquisitionPolicy> artifactPolicy,
+            NativeExecutionConfig nativeConfig, Optional<Path> graphStoreDirectory, SharedCaches sharedCaches) {
         this.input = Objects.requireNonNull(input);
         this.intakeDirectory = intakeDirectory.toAbsolutePath().normalize();
         this.artifactPolicy = Objects.requireNonNull(artifactPolicy);
         this.nativeConfig = Objects.requireNonNull(nativeConfig);
         this.graphStoreDirectory = Objects.requireNonNull(graphStoreDirectory).map(p -> p.toAbsolutePath().normalize());
+        this.sharedCaches = Objects.requireNonNull(sharedCaches);
+    }
+
+    public SharedCaches sharedCaches() {
+        return sharedCaches;
     }
 
     public AnalysisJobs.Registration registration(String id) {
@@ -265,9 +385,8 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
                 this);
     }
 
-    @Override
-    public AnalysisJobs.RunResult run(AnalysisJobs.Control control) throws Exception {
-        var adapter = new Progress() {
+    private static Progress adaptControl(AnalysisJobs.Control control) {
+        return new Progress() {
             @Override
             public boolean getAsBoolean() {
                 return control.getAsBoolean();
@@ -312,7 +431,46 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
             public void recordCacheMetrics(Map<String, Long> metrics) {
                 control.recordCacheMetrics(metrics);
             }
+
+            @Override
+            public void reportProgress(int done, int total, String message) {
+                control.reportProgress(done, total, message);
+            }
+
+            @Override
+            public void registerModules(List<String> modulePaths) {
+                control.registerModules(modulePaths);
+            }
+
+            @Override
+            public void reportModuleUpdate(String module, String status, int filesDone, int filesTotal,
+                    long elapsedMillis, Optional<String> contextId, Optional<String> reason) {
+                control.reportModuleUpdate(module, status, filesDone, filesTotal, elapsedMillis, contextId, reason);
+            }
+
+            @Override
+            public Optional<AnalysisJobs.PreviewPublication> publishPreview(
+                    KnowledgeGraph previewGraph, AnalysisJobs.TruthTier truthTier,
+                    int completedContexts, int totalContexts, List<String> pendingModules) {
+                return Optional.of(control.publishPreview(previewGraph, truthTier,
+                        completedContexts, totalContexts, pendingModules));
+            }
+
+            @Override
+            public void recordIncrementalMetrics(AnalysisJobs.IncrementalMetrics metrics) {
+                control.recordIncrementalMetrics(metrics);
+            }
+
+            @Override
+            public boolean supportsProgressivePreviews() {
+                return true;
+            }
         };
+    }
+
+    @Override
+    public AnalysisJobs.RunResult run(AnalysisJobs.Control control) throws Exception {
+        var adapter = adaptControl(control);
         adapter.stage(AnalysisJobs.Stage.ACQUISITION);
         return runAcquired(adapter);
     }
@@ -375,6 +533,42 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
     }
 
     AnalysisJobs.RunResult runAcquired(Progress control) throws Exception {
+        try (var artifactSession = VerifiedArtifactSession.open();
+             var ignoredResolutionSession = JavaParserFrontend.openVerificationSession()) {
+            return runAcquiredInSession(control, artifactSession);
+        }
+    }
+
+    private AutoCloseable enterModuleCacheScope(boolean incrementalEnabled) {
+        synchronized (MODULE_CACHE_CONFIG_LOCK) {
+            if (incrementalEnabled) {
+                activeIncrementalModuleCacheRuns++;
+                JavaParserFrontend.configureModuleCacheDirectory(
+                        intakeDirectory.resolve("incremental-cache").resolve("javaparser-modules"));
+            } else if (activeIncrementalModuleCacheRuns == 0) {
+                JavaParserFrontend.configureModuleCacheDirectory(null);
+            }
+        }
+        return () -> {
+            if (incrementalEnabled) {
+                synchronized (MODULE_CACHE_CONFIG_LOCK) {
+                    activeIncrementalModuleCacheRuns = Math.max(0, activeIncrementalModuleCacheRuns - 1);
+                }
+            }
+        };
+    }
+
+    private AnalysisJobs.RunResult runAcquiredInSession(Progress control, VerifiedArtifactSession artifactSession)
+            throws Exception {
+        boolean incrementalEnabled = !Boolean.getBoolean("evo.incremental.disabled");
+        try (var ignoredCacheScope = enterModuleCacheScope(incrementalEnabled)) {
+            return runAcquiredInScopedCache(control, artifactSession, incrementalEnabled);
+        }
+    }
+
+    private AnalysisJobs.RunResult runAcquiredInScopedCache(Progress control, VerifiedArtifactSession artifactSession,
+            boolean incrementalEnabled) throws Exception {
+        control.reportProgress(0, 1, "Scanning repository files");
         var source = safe(input.source());
         var excluded = new TreeSet<>(input.exclusions());
         boolean sourceDirExists = Files.isDirectory(source, LinkOption.NOFOLLOW_LINKS);
@@ -395,6 +589,7 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
         RepositoryAcquisitionResult acquisition;
         ReadinessPlan readiness;
         boolean verifiedInventory = false;
+        AcquisitionDeltaContext deltaCtx = AcquisitionDeltaContext.cold("NO_PRIOR_SNAPSHOT");
         try (var intake = new RepositoryIntake(intakeDirectory)) {
             if (!sourceDirExists && intake.inventory().manifest(control.id()).isEmpty()) {
                 var unavailable = new FilesystemRepositoryAcquirer().acquire(source,
@@ -405,13 +600,44 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
             }
             var request = new StreamingAcquisitionRequest(input.repository(), input.revision(), input.dirty(),
                     List.copyOf(fullExcluded));
-            var receipt = intake.localComplete(source, control.id(), request, control);
+            var priorPublished = sharedCaches.lastPublished(input.repository());
+            Optional<SqliteInventoryStore.SealedHead> priorHead = incrementalEnabled
+                    ? intake.latestSealed(input.repository(), request.identity())
+                    : Optional.empty();
+            Optional<String> baseRevision = priorHead.map(SqliteInventoryStore.SealedHead::revision);
+            Optional<String> baseSnapshotId = priorPublished.map(SharedCaches.LastPublication::snapshotId)
+                    .or(() -> priorHead.flatMap(SqliteInventoryStore.SealedHead::compatibleV1Snapshot)
+                            .map(SnapshotIdentity::value))
+                    .or(() -> priorHead.map(h -> SnapshotIdentity.from(input.repository(), h.inventory()).value()));
+            Optional<String> baseGraphId = priorPublished.map(p -> p.graphId().value());
+            Optional<String> baseJobId = priorPublished.map(SharedCaches.LastPublication::jobId);
+
+            StreamingRepositoryAcquirer.Receipt receipt;
+            if (incrementalEnabled) {
+                boolean verifyAll = !Boolean.getBoolean("evo.incremental.trustStatCache");
+                var inc = intake.localCompleteIncremental(source, control.id(), baseRevision, request, verifyAll, control);
+                receipt = inc.receipt();
+                deltaCtx = new AcquisitionDeltaContext(baseSnapshotId, baseGraphId, baseJobId,
+                        inc.incrementalUsed(), inc.fallbackReason(), inc.delta());
+            } else {
+                receipt = intake.localComplete(source, control.id(), request, control);
+                deltaCtx = new AcquisitionDeltaContext(Optional.empty(), Optional.empty(), Optional.empty(),
+                        false, "INCREMENTAL_DISABLED", Optional.empty());
+            }
             control.checkpoint();
             if (receipt.manifest().isEmpty())
                 throw new IOException(receipt.reason());
+            long capturedFiles = receipt.manifest().orElseThrow().files();
+            int capturedCount = (int) Math.min(Integer.MAX_VALUE, Math.max(1L, capturedFiles));
+            control.reportProgress(capturedCount, capturedCount,
+                    deltaCtx.incrementalUsed() && deltaCtx.fileDelta().isPresent()
+                            ? "Incremental capture complete (" + deltaCtx.fileDelta().orElseThrow().totalChanged()
+                                    + " changed, " + deltaCtx.fileDelta().orElseThrow().unchangedFiles() + " reused)"
+                            : "Captured " + capturedFiles + " repository files");
             control.stage(AnalysisJobs.Stage.PLATFORM);
-            readiness = intake.readiness(control.id(), ReadinessPlanner.Policy.comprehensive(), control,
-                    control.mode().isFastArchitecture());
+            readiness = intake.readinessIncremental(control.id(),
+                    incrementalEnabled ? deltaCtx.fileDelta() : Optional.empty(),
+                    ReadinessPlanner.Policy.comprehensive(), control, control.mode().isFastArchitecture());
             if (nativeConfig.javaCapture().isEmpty() && !"off".equals(nativeConfig.buildMode())) {
                 var nativeBuild = runNativeBuild(nativeConfig.buildProfile(), source, readiness, control.id(), intake,
                         control);
@@ -450,7 +676,7 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
                     captureRoot, expected, intakeDirectory.resolve("captured-java"), control);
             var outcome = nativeResult.outcome();
             if (nativeConfig.semanticStore().isPresent() && outcome.graph().isPresent()) {
-                var languageEvidence = loadSemanticPublication(source, control);
+                var languageEvidence = loadSemanticPublication(Optional.of(source), control);
                 try (var roIntake = new RepositoryIntake(intakeDirectory, true)) {
                     var polyglotBytes = extractPolyglotBytes(acquisition);
                     var polyglot = new PolyglotScan().run(
@@ -471,106 +697,76 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
             }
             return outcome;
         }
-        return runCapturedWithReadiness(acquisition, readiness, verifiedInventory, control);
+        return runCapturedWithReadiness(acquisition, readiness, verifiedInventory, deltaCtx, artifactSession,
+                Optional.of(source), control);
     }
 
     AnalysisJobs.RunResult runCaptured(RepositoryAcquisitionResult acquisition, AnalysisJobs.Control control)
             throws Exception {
-        return runCaptured(acquisition, new Progress() {
-            @Override
-            public boolean getAsBoolean() {
-                return control.getAsBoolean();
-            }
-
-            @Override
-            public String id() {
-                return control.id();
-            }
-
-            @Override
-            public AnalysisMode mode() {
-                return control.mode();
-            }
-
-            @Override
-            public void stage(AnalysisJobs.Stage stage) {
-                control.stage(stage);
-            }
-
-            @Override
-            public void checkpoint() {
-                control.checkpoint();
-            }
-
-            @Override
-            public boolean beginReuseCheck() {
-                return control.beginReuseCheck();
-            }
-
-            @Override
-            public Optional<AnalysisJobs.Reused> reuse(ContentDigest key) {
-                return control.reuse(key);
-            }
-
-            @Override
-            public void withholdReuse() {
-                control.withholdReuse();
-            }
-
-            @Override
-            public void recordCacheMetrics(Map<String, Long> metrics) {
-                control.recordCacheMetrics(metrics);
-            }
-        });
+        return runCaptured(acquisition, adaptControl(control));
     }
 
     AnalysisJobs.RunResult runCaptured(RepositoryAcquisitionResult acquisition, Progress control) throws Exception {
-        ReadinessPlan readiness;
-        boolean verifiedInventory = false;
-        try (var intake = new RepositoryIntake(intakeDirectory)) {
-            control.stage(AnalysisJobs.Stage.PLATFORM);
-            readiness = intake.readiness(control.id(), ReadinessPlanner.Policy.comprehensive(), control,
-                    control.mode().isFastArchitecture());
-            if (control.beginReuseCheck() && (input.dirty() || input.revision().isPresent())) {
-                try {
-                    verifiedInventory = !intake.hasUncapturedEntries(control.id());
-                } catch (IOException unavailable) {
-                    /* Reuse is optional; keep the normal analysis path. */ }
+        boolean incrementalEnabled = !Boolean.getBoolean("evo.incremental.disabled");
+        try (var artifactSession = VerifiedArtifactSession.open();
+             var ignoredResolutionSession = JavaParserFrontend.openVerificationSession();
+             var ignoredCacheScope = enterModuleCacheScope(incrementalEnabled)) {
+            ReadinessPlan readiness;
+            boolean verifiedInventory = false;
+            var priorPublished = incrementalEnabled ? sharedCaches.lastPublished(input.repository())
+                    : Optional.<SharedCaches.LastPublication>empty();
+            var deltaCtx = new AcquisitionDeltaContext(
+                    priorPublished.map(SharedCaches.LastPublication::snapshotId),
+                    priorPublished.map(p -> p.graphId().value()),
+                    priorPublished.map(SharedCaches.LastPublication::jobId),
+                    false,
+                    incrementalEnabled ? "PRECAPTURED_INPUT" : "INCREMENTAL_DISABLED",
+                    Optional.empty());
+            try (var intake = new RepositoryIntake(intakeDirectory)) {
+                control.stage(AnalysisJobs.Stage.PLATFORM);
+                readiness = intake.readinessIncremental(control.id(), Optional.empty(),
+                        ReadinessPlanner.Policy.comprehensive(), control, control.mode().isFastArchitecture());
+                if (control.beginReuseCheck() && (input.dirty() || input.revision().isPresent())) {
+                    try {
+                        verifiedInventory = !intake.hasUncapturedEntries(control.id());
+                    } catch (IOException unavailable) {
+                        /* Reuse is optional; keep the normal analysis path. */ }
+                }
             }
+            return runCapturedWithReadiness(acquisition, readiness, verifiedInventory, deltaCtx, artifactSession,
+                    Optional.empty(), control);
         }
-        return runCapturedWithReadiness(acquisition, readiness, verifiedInventory, control);
     }
 
-    private AnalysisJobs.RunResult runCapturedWithReadiness(
+    private record DependencySetup(
+            List<com.evolution.analysis.maven.MavenBuildModelResolution> models,
+            List<PlatformSymbolResult> additionalPlatforms,
+            Map<Integer, com.evolution.analysis.frontend.PlatformInput> availablePlatforms,
+            List<EvidenceAcquisitionLedger> platformLedgers,
+            MavenScan.Inputs dependencies) {
+    }
+
+    private DependencySetup resolveDependenciesAndPlatforms(
             RepositoryAcquisitionResult acquisition,
-            ReadinessPlan readiness,
-            boolean verifiedInventory,
-            Progress control) throws Exception {
-        var cache = safe(input.mavenCache());
-        boolean fast = control.mode().isFastArchitecture();
-        var platform = acquirePlatform(safe(input.jdk()), input.release());
-        control.checkpoint();
-        boolean preferCacheOnly = Boolean.getBoolean("evo.workbench.offline")
-                || (fast && Boolean.getBoolean("evo.workbench.fastCacheOnly"));
-        var depPolicy = preferCacheOnly ? CACHE_ONLY : artifactPolicy.orElse(CACHE_ONLY);
-        var models = MavenScan.models(acquisition, cache, depPolicy.remoteRepositories());
-        var defaults = UniversalBuildIngestion.Policy.defaults();
-        var buildPolicy = new UniversalBuildIngestion.Policy(Optional.of(input.release()), Optional.of(input.release()),
-                Optional.of("UTF-8"), 32_768, defaults.maxCharacters(), defaults.maxTokens(), 128);
-        var decoded = new RepositoryInputDecoder.Prepared(acquisition,
-                new RepositoryInputDecoder.Policy("UTF-8", 500_000, 100_000_000, fast));
-        var gradleModel = GradleScan.model(decoded, buildPolicy, Map.of());
+            Optional<com.evolution.analysis.buildmodel.UniversalBuildModel> gradleModel,
+            PlatformSymbolResult platform,
+            Path cache,
+            DependencyAcquisitionPolicy depPolicy,
+            Optional<Path> resolvedAndroidSdk,
+            BuildDeltaCache deltaCache) throws IOException {
+        var models = MavenScan.models(acquisition, cache, depPolicy.remoteRepositories(), deltaCache);
         var requiredReleases = new TreeSet<>(MavenScan.platformReleases(models));
         requiredReleases.addAll(GradleScan.platformReleases(gradleModel));
         var platformViews = new TreeMap<Integer, PlatformSymbolResult>();
         platformViews.put(input.release(), platform);
         var additionalPlatforms = new ArrayList<PlatformSymbolResult>();
-        for (int target : requiredReleases)
+        for (int target : requiredReleases) {
             if (!platformViews.containsKey(target)) {
                 var view = acquirePlatform(safe(input.jdk()), target);
                 platformViews.put(target, view);
                 additionalPlatforms.add(view);
             }
+        }
         var availablePlatforms = new TreeMap<Integer, com.evolution.analysis.frontend.PlatformInput>();
         platformViews
                 .forEach((target, view) -> view.platform().ifPresent(value -> availablePlatforms.put(target, value)));
@@ -579,17 +775,198 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
                         EvidenceContext.forSnapshot(acquisition.snapshot().orElseThrow().identity()),
                         EvidenceNormalizationInput.builder().platformResults(additionalPlatforms).build()));
         var mavenBase = MavenScan.inputs(acquisition, models, cache, platform.platform(), depPolicy,
-                availablePlatforms);
+                availablePlatforms, deltaCache);
+        var dependencies = GradleScan.augment(mavenBase, acquisition, gradleModel, cache, platform.platform(),
+                depPolicy, availablePlatforms, resolvedAndroidSdk, deltaCache);
+        return new DependencySetup(models, additionalPlatforms, availablePlatforms, platformLedgers, dependencies);
+    }
+
+    private AnalysisJobs.RunResult runCapturedWithReadiness(
+            RepositoryAcquisitionResult acquisition,
+            ReadinessPlan readiness,
+            boolean verifiedInventory,
+            AcquisitionDeltaContext deltaCtx,
+            VerifiedArtifactSession artifactSession,
+            Optional<Path> localSourceRoot,
+            Progress control) throws Exception {
+        boolean incrementalEnabled = !Boolean.getBoolean("evo.incremental.disabled");
+        boolean progressiveEnabled = control.supportsProgressivePreviews()
+                && !Boolean.getBoolean("evo.progressive.disabled")
+                && acquisition.snapshot().isPresent();
+        var cache = safe(input.mavenCache());
+        boolean fast = control.mode().isFastArchitecture();
+        var platform = acquirePlatform(safe(input.jdk()), input.release());
+        control.checkpoint();
+        boolean preferCacheOnly = Boolean.getBoolean("evo.workbench.offline")
+                || (fast && Boolean.getBoolean("evo.workbench.fastCacheOnly"));
+        var depPolicy = preferCacheOnly ? CACHE_ONLY : artifactPolicy.orElse(CACHE_ONLY);
+        var defaults = UniversalBuildIngestion.Policy.defaults();
+        var buildPolicy = new UniversalBuildIngestion.Policy(Optional.of(input.release()), Optional.of(input.release()),
+                Optional.of("UTF-8"), 32_768, defaults.maxCharacters(), defaults.maxTokens(), 128);
+        var decoded = new RepositoryInputDecoder.Prepared(acquisition,
+                new RepositoryInputDecoder.Policy("UTF-8", 500_000, 100_000_000, fast));
+        var gradleModel = GradleScan.model(decoded, buildPolicy, Map.of());
         Optional<Path> resolvedAndroidSdk = Optional.empty();
         if (nativeConfig.androidSdk().isPresent()) {
             resolvedAndroidSdk = Optional.of(safe(nativeConfig.androidSdk().orElseThrow()));
         }
-        var dependencies = GradleScan.augment(mavenBase, acquisition, gradleModel, cache, platform.platform(),
-                depPolicy, availablePlatforms, resolvedAndroidSdk);
+        var languageEvidence = loadSemanticPublication(localSourceRoot, control);
+        var snapshotId = acquisition.snapshot().orElseThrow().identity();
+
+        var deltaCache = incrementalEnabled ? sharedCaches.buildDelta().forRun() : null;
+        var beforeBuildStats = sharedCaches.buildDelta().stats();
+
+        // Launch PolyglotScan early so static tree-sitter/gRPC/OpenAPI scanning overlaps with
+        // Stage 1 preview building and remote Maven/Gradle artifact downloads.
+        var verifiedPolyglotBytes = extractPolyglotBytes(acquisition);
+        var failedFlag = new AtomicBoolean(false);
+        BooleanSupplier subCancelled = () -> failedFlag.get() || control.getAsBoolean();
+        var incrementalRoot = incrementalEnabled ? Optional.of(intakeDirectory.resolve("incremental-cache"))
+                : Optional.<Path>empty();
+        CompletableFuture<PolyglotScan.Result> polyglotFuture = CompletableFuture.supplyAsync(() -> {
+            try (var attached = artifactSession.attach();
+                 var intake = new RepositoryIntake(intakeDirectory, true)) {
+                return new PolyglotScan().run(
+                        control.id(), intake, readiness, EvidenceContext.forSnapshot(snapshotId),
+                        languageEvidence, intakeDirectory.resolve("semantic-work"), subCancelled,
+                        digest -> {
+                            var file = verifiedPolyglotBytes.get(digest);
+                            return file == null ? null : file.bytes();
+                        },
+                        fast, fast ? intake.installedNodeDependencies(control.id()) : path -> false, incrementalRoot);
+            } catch (Exception failure) {
+                failedFlag.set(true);
+                throw new CompletionException(failure);
+            }
+        }, POLYGLOT_WORKERS);
+
+        // Stage 1 (PRELIMINARY_STRUCTURE): run FastJavaSkeletonScanner + PreliminaryGraphBuilder
+        // concurrently with remote Maven/Gradle artifact prefetch.
+        var preliminaryModules = discoverPreliminaryModules(readiness, gradleModel, acquisition);
+        var registeredModulePaths = preliminaryModules.stream()
+                .map(PreliminaryGraphBuilder.ModuleInfo::path)
+                .distinct()
+                .sorted()
+                .toList();
+        if (!registeredModulePaths.isEmpty()) {
+            control.registerModules(registeredModulePaths);
+        }
+
+        FastJavaSkeletonScanner.ScanResult stage1Skeleton = null;
+        DependencySetup depSetup;
+        if (progressiveEnabled) {
+            final var finalResolvedAndroidSdk = resolvedAndroidSdk;
+            CompletableFuture<DependencySetup> depFuture = CompletableFuture.supplyAsync(() -> {
+                try (var attached = artifactSession.attach()) {
+                    return resolveDependenciesAndPlatforms(acquisition, gradleModel, platform, cache, depPolicy,
+                            finalResolvedAndroidSdk, deltaCache);
+                } catch (Exception failure) {
+                    failedFlag.set(true);
+                    throw new CompletionException(failure);
+                }
+            }, PREFETCH_WORKERS);
+            try {
+                control.reportProgress(0, Math.max(1, registeredModulePaths.size()),
+                        "Scanning syntax skeleton for Stage 1 preview");
+                var skeletonInputs = collectLazySkeletonSources(acquisition, registeredModulePaths);
+                stage1Skeleton = new FastJavaSkeletonScanner().scanLazy(skeletonInputs, subCancelled);
+                control.checkpoint();
+                Map<String, Object> stage1PolyglotSummary = extractStage1PolyglotSummary(polyglotFuture, acquisition);
+                var stage1Graph = new PreliminaryGraphBuilder().build(
+                        new PreliminaryGraphBuilder.Input(
+                                input.repository(),
+                                snapshotId,
+                                AnalysisJobs.TruthTier.PRELIMINARY_STRUCTURE,
+                                preliminaryModules,
+                                stage1Skeleton,
+                                List.of(),
+                                registeredModulePaths,
+                                stage1PolyglotSummary,
+                                List.of()),
+                        control);
+                control.publishPreview(stage1Graph, AnalysisJobs.TruthTier.PRELIMINARY_STRUCTURE,
+                        0, registeredModulePaths.size(), registeredModulePaths);
+                control.reportProgress(Math.max(1, registeredModulePaths.size()),
+                        Math.max(1, registeredModulePaths.size()),
+                        "Stage 1 structural preview published; awaiting dependency resolution");
+            } catch (CancellationException cancelled) {
+                failedFlag.set(true);
+                depFuture.cancel(true);
+                polyglotFuture.cancel(true);
+                throw cancelled;
+            } catch (RuntimeException previewFailure) {
+                LOG.log(System.Logger.Level.WARNING, "Stage 1 preliminary preview skipped ({0}: {1})",
+                        previewFailure.getClass().getSimpleName(), previewFailure.getMessage());
+            }
+            try {
+                depSetup = depFuture.join();
+            } catch (CompletionException asyncFailure) {
+                failedFlag.set(true);
+                polyglotFuture.cancel(true);
+                Throwable cause = asyncFailure.getCause();
+                if (cause instanceof Exception ex)
+                    throw ex;
+                if (cause instanceof Error err)
+                    throw err;
+                throw asyncFailure;
+            } catch (Throwable primaryFailure) {
+                failedFlag.set(true);
+                depFuture.cancel(true);
+                polyglotFuture.cancel(true);
+                throw primaryFailure;
+            }
+        } else {
+            try {
+                depSetup = resolveDependenciesAndPlatforms(acquisition, gradleModel, platform, cache, depPolicy,
+                        resolvedAndroidSdk, deltaCache);
+            } catch (Throwable primaryFailure) {
+                failedFlag.set(true);
+                polyglotFuture.cancel(true);
+                throw primaryFailure;
+            }
+        }
+
+        var models = depSetup.models();
+        var additionalPlatforms = depSetup.additionalPlatforms();
+        var availablePlatforms = depSetup.availablePlatforms();
+        var platformLedgers = depSetup.platformLedgers();
+        var dependencies = depSetup.dependencies();
+        var afterBuildStats = sharedCaches.buildDelta().stats();
+        int deltaReusedBuildRoots = Math.max(0,
+                (afterBuildStats.reusedBuildRoots() - beforeBuildStats.reusedBuildRoots())
+                        + (afterBuildStats.gradleResolverReused() - beforeBuildStats.gradleResolverReused()));
+        int deltaRecomputedBuildRoots = Math.max(0,
+                (afterBuildStats.recomputedBuildRoots() - beforeBuildStats.recomputedBuildRoots())
+                        + (afterBuildStats.gradleResolverRecomputed() - beforeBuildStats.gradleResolverRecomputed()));
+
         var frontend = new JavaParserFrontend();
         var javaIncrementalCache = new IncrementalJavaFrontendCache(intakeDirectory.resolve("incremental-cache"));
         var javaCacheHits = new java.util.concurrent.atomic.AtomicLong();
         var javaCacheMisses = new java.util.concurrent.atomic.AtomicLong();
+        var reusedModulesCount = new java.util.concurrent.atomic.AtomicInteger();
+        var recomputedModulesCount = new java.util.concurrent.atomic.AtomicInteger();
+        var abiEarlyCutoffTotal = new java.util.concurrent.atomic.AtomicInteger();
+        var impactedDependentsTotal = new java.util.concurrent.atomic.AtomicInteger();
+        var reextractedJavaFilesTotal = new java.util.concurrent.atomic.AtomicInteger();
+        var reusedJavaFilesTotal = new java.util.concurrent.atomic.AtomicInteger();
+
+        int totalRepoJavaFiles = Math.max(1, (int) acquisition.files().stream()
+                .filter(f -> isJavaOrKotlinPath(f.path())).count());
+        var completedJavaFiles = new java.util.concurrent.atomic.AtomicInteger();
+        var lastProgressEmitNanos = new java.util.concurrent.atomic.AtomicLong();
+
+        // Stage 2 (PARTIAL_CONTEXTS) coalesced preview accumulator
+        var stage2Lock = new java.util.concurrent.locks.ReentrantLock();
+        var stage2PublishLock = new java.util.concurrent.locks.ReentrantLock();
+        var stage2ModuleGraphSlots = new java.util.concurrent.atomic.AtomicInteger();
+        var stage2CompletedModules = new LinkedHashSet<String>();
+        var stage2PendingModules = new LinkedHashSet<String>(registeredModulePaths);
+        var stage2ModuleGraphs = new ArrayList<KnowledgeGraph>();
+        long[] lastStage2PublishNanos = { 0L };
+        long stage2IntervalNanos = TimeUnit.MILLISECONDS.toNanos(
+                Long.getLong("evo.progressive.partialPreviewIntervalMs", 2_000L));
+        final var finalStage1Skeleton = stage1Skeleton;
+
         var guarded = new com.evolution.analysis.frontend.ConcurrentSemanticFrontend() {
             @Override
             public long estimatedWorkingBytes(com.evolution.analysis.frontend.FrontendRequest request) {
@@ -604,18 +981,180 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
             @Override
             public com.evolution.analysis.frontend.FrontendResult analyze(
                     com.evolution.analysis.frontend.FrontendRequest request) {
-                control.checkpoint();
-                var cached = javaIncrementalCache.get(request, JavaParserFrontend.PROVIDER);
-                if (cached.isPresent()) {
-                    javaCacheHits.incrementAndGet();
+                try (var attached = artifactSession.attach()) {
                     control.checkpoint();
-                    return cached.orElseThrow();
+                    String modulePath = resolveRequestModulePath(request);
+                    String moduleKey = request.sourceSet() == com.evolution.analysis.contract.source.SourceClassification.TEST
+                            ? modulePath + ":test"
+                            : modulePath;
+                    String contextId = request.manifest().identity().value();
+                    int totalFiles = request.sources().size();
+                    long startedNanos = System.nanoTime();
+                    control.reportModuleUpdate(moduleKey, "RUNNING", 0, totalFiles, 0L,
+                            Optional.of(contextId), Optional.empty());
+
+                    var cached = incrementalEnabled
+                            ? javaIncrementalCache.get(request, JavaParserFrontend.PROVIDER)
+                            : Optional.<FrontendResult>empty();
+                    if (cached.isPresent()) {
+                        var hitResult = cached.orElseThrow();
+                        javaCacheHits.incrementAndGet();
+                        reusedModulesCount.incrementAndGet();
+                        reusedJavaFilesTotal.addAndGet(totalFiles);
+                        long elapsedMs = Math.max(0L, TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedNanos));
+                        int globalDone = Math.min(totalRepoJavaFiles, completedJavaFiles.addAndGet(totalFiles));
+                        control.reportModuleUpdate(moduleKey, "REUSED", totalFiles, totalFiles, elapsedMs,
+                                Optional.of(contextId), Optional.of("CACHE_HIT"));
+                        emitThrottledProgress(control, lastProgressEmitNanos, globalDone, totalRepoJavaFiles,
+                                "Reused cached module " + moduleKey, true);
+                        maybePublishStage2Preview(modulePath, request.manifest(), hitResult);
+                        control.checkpoint();
+                        return hitResult;
+                    }
+
+                    javaCacheMisses.incrementAndGet();
+                    var reportedForModule = new java.util.concurrent.atomic.AtomicInteger();
+                    var moduleProgress = new FrontendProgress() {
+                        @Override
+                        public void onFileCompleted(String modPath, String filePath, boolean cacheHit) {
+                            onFilesCompleted(modPath, 1, reportedForModule.get() + 1, totalFiles, cacheHit);
+                        }
+
+                        @Override
+                        public void onFilesCompleted(String modPath, int deltaFiles, int doneInModule,
+                                int totalInModule, boolean cacheHit) {
+                            if (deltaFiles <= 0)
+                                return;
+                            int prev = reportedForModule.getAndUpdate(cur -> Math.min(totalFiles, cur + deltaFiles));
+                            int actualDelta = Math.max(0, Math.min(totalFiles, prev + deltaFiles) - prev);
+                            if (actualDelta <= 0)
+                                return;
+                            int globalDone = Math.min(totalRepoJavaFiles, completedJavaFiles.addAndGet(actualDelta));
+                            long now = System.nanoTime();
+                            long last = lastProgressEmitNanos.get();
+                            if (now - last >= PROGRESS_THROTTLE_NANOS
+                                    && lastProgressEmitNanos.compareAndSet(last, now)) {
+                                long elapsedMs = Math.max(0L, TimeUnit.NANOSECONDS.toMillis(now - startedNanos));
+                                control.reportModuleUpdate(moduleKey, "RUNNING",
+                                        Math.min(totalFiles, prev + actualDelta), totalFiles, elapsedMs,
+                                        Optional.of(contextId), Optional.empty());
+                                control.reportProgress(globalDone, totalRepoJavaFiles,
+                                        "Analyzing " + moduleKey + " (" + Math.min(totalFiles, prev + actualDelta)
+                                                + "/" + totalFiles + " files)");
+                            }
+                        }
+                    };
+
+                    var result = frontend.analyze(request, moduleProgress);
+                    control.checkpoint();
+                    var incStats = JavaParserFrontend.lastIncrementalStats();
+                    if (incStats != null) {
+                        abiEarlyCutoffTotal.addAndGet(Math.max(0, incStats.abiEarlyCutoffCount()));
+                        impactedDependentsTotal.addAndGet(Math.max(0, incStats.impactedDependentsCount()));
+                        reextractedJavaFilesTotal.addAndGet(Math.max(0, incStats.reextractedUnits()));
+                        reusedJavaFilesTotal.addAndGet(Math.max(0, incStats.reusedUnits()));
+                        if (incStats.incrementalHit() && incStats.reextractedUnits() == 0 && incStats.reusedUnits() > 0) {
+                            reusedModulesCount.incrementAndGet();
+                        } else {
+                            recomputedModulesCount.incrementAndGet();
+                        }
+                    } else {
+                        reextractedJavaFilesTotal.addAndGet(totalFiles);
+                        recomputedModulesCount.incrementAndGet();
+                    }
+                    if (incrementalEnabled) {
+                        javaIncrementalCache.put(request, result);
+                    }
+                    int remaining = Math.max(0, totalFiles - reportedForModule.get());
+                    int globalDone = Math.min(totalRepoJavaFiles, completedJavaFiles.addAndGet(remaining));
+                    long elapsedMs = Math.max(0L, TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedNanos));
+                    boolean fullAbiReuse = incStats != null && incStats.incrementalHit()
+                            && incStats.reextractedUnits() == 0 && incStats.reusedUnits() > 0;
+                    control.reportModuleUpdate(moduleKey, fullAbiReuse ? "REUSED" : "COMPLETED",
+                            totalFiles, totalFiles, elapsedMs, Optional.of(contextId),
+                            fullAbiReuse ? Optional.of("ABI_EARLY_CUTOFF") : Optional.empty());
+                    emitThrottledProgress(control, lastProgressEmitNanos, globalDone, totalRepoJavaFiles,
+                            "Completed " + moduleKey, true);
+                    maybePublishStage2Preview(modulePath, request.manifest(), result);
+                    return result;
                 }
-                javaCacheMisses.incrementAndGet();
-                var result = frontend.analyze(request);
-                control.checkpoint();
-                javaIncrementalCache.put(request, result);
-                return result;
+            }
+
+            private void maybePublishStage2Preview(String modulePath,
+                    com.evolution.analysis.contract.analysis.AnalysisManifest manifest,
+                    FrontendResult result) {
+                if (!progressiveEnabled || finalStage1Skeleton == null) {
+                    return;
+                }
+                // Build partial module graph OUTSIDE stage2Lock so parallel JavaParser workers never stall each other.
+                KnowledgeGraph builtModuleGraph = null;
+                if (stage2ModuleGraphSlots.getAndIncrement() < MAX_STAGE2_PREVIEW_GRAPHS) {
+                    try {
+                        builtModuleGraph = new CanonicalGraphBuilder().build(
+                                manifest, result, List.of(), List.of(), fast);
+                    } catch (RuntimeException ignored) {
+                        /* Best-effort partial context projection; authoritative Stage 3 remains unaffected. */
+                    }
+                }
+                boolean firstCompletion;
+                List<String> completedList;
+                List<String> pendingList;
+                List<KnowledgeGraph> graphsSnapshot;
+                int totalCtx;
+                long now = System.nanoTime();
+                stage2Lock.lock();
+                try {
+                    stage2CompletedModules.add(modulePath);
+                    stage2PendingModules.remove(modulePath);
+                    if (builtModuleGraph != null && stage2ModuleGraphs.size() < MAX_STAGE2_PREVIEW_GRAPHS) {
+                        stage2ModuleGraphs.add(builtModuleGraph);
+                    }
+                    firstCompletion = stage2CompletedModules.size() == 1;
+                    boolean shouldPublish = firstCompletion
+                            || (now - lastStage2PublishNanos[0] >= stage2IntervalNanos);
+                    if (!shouldPublish) {
+                        return;
+                    }
+                    lastStage2PublishNanos[0] = now;
+                    completedList = List.copyOf(stage2CompletedModules);
+                    pendingList = List.copyOf(stage2PendingModules);
+                    graphsSnapshot = List.copyOf(stage2ModuleGraphs);
+                    totalCtx = Math.max(registeredModulePaths.size(), completedList.size() + pendingList.size());
+                } finally {
+                    stage2Lock.unlock();
+                }
+                boolean mustPublish = firstCompletion || stage2IntervalNanos == 0L;
+                boolean publishAcquired = false;
+                if (mustPublish) {
+                    stage2PublishLock.lock();
+                    publishAcquired = true;
+                } else {
+                    publishAcquired = stage2PublishLock.tryLock();
+                }
+                if (!publishAcquired) {
+                    return;
+                }
+                try {
+                    var stage2Graph = new PreliminaryGraphBuilder().build(
+                            PreliminaryGraphBuilder.Input.stage2(
+                                    input.repository(),
+                                    snapshotId,
+                                    preliminaryModules,
+                                    finalStage1Skeleton,
+                                    completedList,
+                                    pendingList,
+                                    graphsSnapshot),
+                            control);
+                    control.publishPreview(stage2Graph, AnalysisJobs.TruthTier.PARTIAL_CONTEXTS,
+                            completedList.size(), totalCtx, pendingList);
+                } catch (CancellationException cancelled) {
+                    throw cancelled;
+                } catch (RuntimeException previewFailure) {
+                    LOG.log(System.Logger.Level.WARNING, "Stage 2 partial preview skipped ({0}: {1})",
+                            previewFailure.getClass().getSimpleName(), previewFailure.getMessage());
+                } finally {
+                    stage2PublishLock.unlock();
+                }
             }
         };
         var policy = new UniversalArchitecturePipeline.Policy(
@@ -633,7 +1172,6 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
         if (input.spring().autoMultiConfigEnabled()) {
             policy = policy.withSpringSatMode(UniversalArchitecturePipeline.SpringSatMode.AUTO_MULTI_CONFIG_SAT);
         }
-        var languageEvidence = loadSemanticPublication(safe(input.source()), control);
         var allPlatforms = new ArrayList<PlatformSymbolResult>();
         allPlatforms.add(platform);
         allPlatforms.addAll(additionalPlatforms);
@@ -643,45 +1181,39 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
                 dependencies, policy, input.policy(), control) : Optional.<ContentDigest>empty();
         if (reuseKey.isPresent()) {
             var reusable = control.reuse(reuseKey.orElseThrow());
-            if (reusable.isPresent())
+            if (reusable.isPresent()) {
+                failedFlag.set(true);
+                polyglotFuture.cancel(true);
                 return reusable.orElseThrow();
+            }
         }
         control.stage(AnalysisJobs.Stage.ANALYSIS);
-        var verifiedPolyglotBytes = extractPolyglotBytes(acquisition);
-        var failedFlag = new AtomicBoolean(false);
-        BooleanSupplier subCancelled = () -> failedFlag.get() || control.getAsBoolean();
-        var snapshotId = acquisition.snapshot().orElseThrow().identity();
         var finalPolicy = policy;
-        var incrementalRoot = Optional.of(intakeDirectory.resolve("incremental-cache"));
-        CompletableFuture<PolyglotScan.Result> polyglotFuture = CompletableFuture.supplyAsync(() -> {
-            try (var intake = new RepositoryIntake(intakeDirectory, true)) {
-                return new PolyglotScan().run(
-                        control.id(), intake, readiness, EvidenceContext.forSnapshot(snapshotId),
-                        languageEvidence, intakeDirectory.resolve("semantic-work"), subCancelled,
-                        digest -> {
-                            var file = verifiedPolyglotBytes.get(digest);
-                            return file == null ? null : file.bytes();
-                        },
-                        fast, fast ? intake.installedNodeDependencies(control.id()) : path -> false, incrementalRoot);
-            } catch (Exception failure) {
-                failedFlag.set(true);
-                throw new CompletionException(failure);
-            }
-        }, POLYGLOT_WORKERS);
 
         long acquiredBytesTotal = acquisition.files().stream()
                 .mapToLong(com.evolution.analysis.acquisition.AcquiredFile::size).sum();
-        long spilledThreshold = Long.getLong("evo.workbench.spilledGraphThresholdBytes", 32L * 1024 * 1024);
-        boolean useDiskSpill = acquiredBytesTotal >= spilledThreshold;
+        String customSpill = System.getProperty("evo.workbench.spilledGraphThresholdBytes");
+        boolean useDiskSpill = customSpill != null && !customSpill.isBlank()
+                ? acquiredBytesTotal >= Long.parseLong(customSpill.strip())
+                : UniversalArchitecturePipeline.shouldUseDiskSpill(
+                        acquiredBytesTotal, acquisition.files().size(), dependencies.resolutions().size());
 
         UniversalArchitecturePipeline.DetailedResult detailed;
         PolyglotScan.Result polyglot;
+        var beforeSpringStats = sharedCaches.springCache().stats();
         try (FileAnalysisWorkspace diskWorkspace = useDiskSpill
                 ? new FileAnalysisWorkspace(intakeDirectory.resolve("analysis-work-" + control.id()))
                 : null) {
             AnalysisWorkspace analysisWorkspace = diskWorkspace != null ? diskWorkspace : AnalysisWorkspace.MEMORY;
+            int aggregationWorkers = analysisWorkspace.concurrentTables()
+                    ? com.evolution.analysis.concurrent.BoundedTasks.automaticWorkers()
+                    : 1;
             try {
-                detailed = new UniversalArchitecturePipeline(analysisWorkspace).runWithEvidence(decoded, finalPolicy);
+                detailed = new UniversalArchitecturePipeline(
+                        analysisWorkspace,
+                        aggregationWorkers,
+                        incrementalEnabled ? sharedCaches.springCache() : null)
+                        .runWithEvidence(decoded, finalPolicy);
                 control.checkpoint();
                 polyglot = polyglotFuture.join();
             } catch (CompletionException asyncFailure) {
@@ -698,6 +1230,11 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
                 throw primaryFailure;
             }
             control.checkpoint();
+            var afterSpringStats = sharedCaches.springCache().stats();
+            int deltaReusedSpring = Math.max(0, afterSpringStats.reusedContexts() - beforeSpringStats.reusedContexts());
+            int deltaRecomputedSpring = Math.max(0,
+                    afterSpringStats.recomputedContexts() - beforeSpringStats.recomputedContexts());
+
             long jHits = javaCacheHits.get();
             long jMisses = javaCacheMisses.get();
             long pHits = polyglot.syntax().cacheHits();
@@ -708,7 +1245,9 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
                     "polyglotCacheHits", pHits,
                     "polyglotCacheMisses", pMisses,
                     "totalCacheHits", jHits + pHits,
-                    "totalCacheMisses", jMisses + pMisses));
+                    "totalCacheMisses", jMisses + pMisses,
+                    "buildDeltaReused", (long) deltaReusedBuildRoots,
+                    "springCacheReused", (long) deltaReusedSpring));
             var gaps = new TreeSet<>(detailed.report().gaps());
             gaps.addAll(dependencies.gaps());
             gaps.addAll(filterSatisfiedReadinessGaps(
@@ -735,6 +1274,10 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
                     captured.repository(), captured.build(), captured.ingestion(), captured.spring(),
                     captured.issues(), List.copyOf(gaps), captured.acquisition(), captured.javaEvidence());
 
+            Map<Path, ContentDigest> preverifiedMemo = deltaCache != null
+                    ? deltaCache.runVerifiedDigestMemo()
+                    : null;
+
             if (useDiskSpill && graphStoreDirectory.isPresent()) {
                 var storeDir = graphStoreDirectory.orElseThrow();
                 var pagesStore = new PartitionedGraphStore(storeDir.resolve("graph-pages"));
@@ -749,7 +1292,6 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
                         var compiled = new PolicyCompiler().compile(selected.bytes(),
                                 EvidenceContext.forSnapshot(publication.snapshot()), PolicyCompiler.Limits.defaults());
                         gaps.addAll(compiled.gaps());
-                        var guard = ArchitectureQueryService.operationalGuard(control, 0, 8_000_000);
                         for (var context : publication.contexts()) {
                             if (context.analysis().isEmpty())
                                 continue;
@@ -798,6 +1340,18 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
                     }
                 }
                 control.checkpoint();
+                var summary = buildIncrementalSummary(incrementalEnabled, deltaCtx,
+                        deltaReusedBuildRoots, deltaRecomputedBuildRoots,
+                        abiEarlyCutoffTotal.get(), impactedDependentsTotal.get(),
+                        reextractedJavaFilesTotal.get(), reusedJavaFilesTotal.get(),
+                        reusedModulesCount.get(), recomputedModulesCount.get(),
+                        deltaReusedSpring, deltaRecomputedSpring,
+                        pHits, pMisses, 0, publication.contexts().size());
+                control.recordIncrementalMetrics(toIncrementalMetrics(summary));
+                if (incrementalEnabled) {
+                    sharedCaches.recordPublished(input.repository(), publication.snapshot(), publication.graph(),
+                            control.id());
+                }
                 var completion = switch (detailed.report().status()) {
                     case COMPLETE ->
                         gaps.isEmpty() ? AnalysisJobs.Completion.COMPLETE : AnalysisJobs.Completion.PARTIAL;
@@ -806,7 +1360,7 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
                     case PARTIAL -> AnalysisJobs.Completion.PARTIAL;
                 };
                 if (reuseKey.isPresent() && (!WorkbenchReuseInputs.stableGaps(publication, gaps, polyglot.syntax())
-                        || !WorkbenchReuseInputs.stillCurrent(allPlatforms, dependencies, control))) {
+                        || !WorkbenchReuseInputs.stillCurrent(allPlatforms, dependencies, control, preverifiedMemo))) {
                     control.withholdReuse();
                 }
                 return new AnalysisJobs.Outcome(completion, Optional.empty(), reports, List.copyOf(gaps),
@@ -815,11 +1369,21 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
                         (int) Math.min(Integer.MAX_VALUE, publication.gapNodes()));
             }
 
+            var beforeGraphStats = sharedCaches.graphProjector().stats();
             var graph = new CanonicalGraphBuilder().build(
                     canonicalInput,
                     graphLedgers,
                     store -> new PolyglotScan().project(finalPolyglot, store, control),
-                    fast);
+                    fast,
+                    incrementalEnabled ? sharedCaches.graphProjector() : null);
+            var afterGraphStats = sharedCaches.graphProjector().stats();
+            int deltaReusedGraphContexts = Math.max(0,
+                    afterGraphStats.reusedContexts() - beforeGraphStats.reusedContexts());
+            int deltaRebuiltGraphContexts = Math.max(0,
+                    afterGraphStats.rebuiltContexts() - beforeGraphStats.rebuiltContexts());
+            if (deltaReusedGraphContexts > 0) {
+                control.recordCacheMetrics(Map.of("graphProjectorReused", (long) deltaReusedGraphContexts));
+            }
             control.checkpoint();
             var reports = new ArrayList<PublishedReports.Report>();
             if (input.policy().isPresent()) {
@@ -875,6 +1439,17 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
                 }
             }
             control.checkpoint();
+            var summary = buildIncrementalSummary(incrementalEnabled, deltaCtx,
+                    deltaReusedBuildRoots, deltaRecomputedBuildRoots,
+                    abiEarlyCutoffTotal.get(), impactedDependentsTotal.get(),
+                    reextractedJavaFilesTotal.get(), reusedJavaFilesTotal.get(),
+                    reusedModulesCount.get(), recomputedModulesCount.get(),
+                    deltaReusedSpring, deltaRecomputedSpring,
+                    pHits, pMisses, deltaReusedGraphContexts, deltaRebuiltGraphContexts);
+            control.recordIncrementalMetrics(toIncrementalMetrics(summary));
+            if (incrementalEnabled) {
+                sharedCaches.recordPublished(input.repository(), graph.snapshot(), graph.identity(), control.id());
+            }
             var completion = switch (detailed.report().status()) {
                 case COMPLETE -> gaps.isEmpty() ? AnalysisJobs.Completion.COMPLETE : AnalysisJobs.Completion.PARTIAL;
                 case EMPTY_OR_NON_JAVA -> AnalysisJobs.Completion.EMPTY;
@@ -882,12 +1457,280 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
                 case PARTIAL -> AnalysisJobs.Completion.PARTIAL;
             };
             if (reuseKey.isPresent() && (!WorkbenchReuseInputs.stableGaps(graph, gaps, polyglot.syntax())
-                    || !WorkbenchReuseInputs.stillCurrent(allPlatforms, dependencies, control)))
+                    || !WorkbenchReuseInputs.stillCurrent(allPlatforms, dependencies, control, preverifiedMemo)))
                 control.withholdReuse();
             return new AnalysisJobs.Outcome(completion, Optional.of(graph), reports, List.copyOf(gaps),
                     Optional.of(acquisition.identity()), Optional.of(detailed.report().identity()),
                     inputProblems(acquisition));
         }
+    }
+
+    private static void emitThrottledProgress(
+            Progress control,
+            java.util.concurrent.atomic.AtomicLong lastEmitNanos,
+            int done,
+            int total,
+            String message,
+            boolean force) {
+        long now = System.nanoTime();
+        long prev = lastEmitNanos.get();
+        if (force || now - prev >= PROGRESS_THROTTLE_NANOS) {
+            lastEmitNanos.set(now);
+            control.reportProgress(done, total, message);
+        }
+    }
+
+    private static boolean isJavaOrKotlinPath(String path) {
+        if (path == null)
+            return false;
+        String lower = path.toLowerCase(Locale.ROOT);
+        return lower.endsWith(".java") || lower.endsWith(".kt");
+    }
+
+    private static String resolveRequestModulePath(com.evolution.analysis.frontend.FrontendRequest request) {
+        for (var mod : request.manifest().modules()) {
+            if (mod.identity().equals(request.module())) {
+                return normalizeModuleDir(mod.path());
+            }
+        }
+        return normalizeModuleDir(request.module().value());
+    }
+
+    private static List<PreliminaryGraphBuilder.ModuleInfo> discoverPreliminaryModules(
+            ReadinessPlan readiness,
+            Optional<com.evolution.analysis.buildmodel.UniversalBuildModel> gradleModel,
+            RepositoryAcquisitionResult acquisition) {
+        var rootFamilyById = new HashMap<String, ReadinessPlan.Family>();
+        for (var root : readiness.roots()) {
+            rootFamilyById.put(root.id(), root.family());
+        }
+        var modulesByPath = new TreeMap<String, PreliminaryGraphBuilder.ModuleInfo>();
+        for (var m : readiness.modules()) {
+            String path = normalizeModuleDir(m.directory());
+            var family = rootFamilyById.get(m.root());
+            String tool = family != null ? family.name() : "UNKNOWN";
+            String name = path.equals(".") ? m.target() : path;
+            modulesByPath.putIfAbsent(path, new PreliminaryGraphBuilder.ModuleInfo(path, name, tool, 0));
+        }
+        gradleModel.ifPresent(model -> {
+            for (var m : model.modules()) {
+                String path = normalizeModuleDir(m.descriptor().path());
+                modulesByPath.putIfAbsent(path, new PreliminaryGraphBuilder.ModuleInfo(
+                        path, m.descriptor().displayName(), m.tool().name(), 0));
+            }
+        });
+        for (String pomPath : acquisition.workspacePoms().keySet()) {
+            int slash = pomPath.lastIndexOf('/');
+            String dir = slash > 0 ? normalizeModuleDir(pomPath.substring(0, slash)) : ".";
+            modulesByPath.putIfAbsent(dir, new PreliminaryGraphBuilder.ModuleInfo(dir, dir, "MAVEN", 0));
+        }
+        if (modulesByPath.isEmpty()) {
+            modulesByPath.put(".", new PreliminaryGraphBuilder.ModuleInfo(".", ".", "UNKNOWN", 0));
+        }
+        // Count Java/Kotlin source files per module for accurate ModuleInfo metadata
+        var sortedDirs = new ArrayList<>(modulesByPath.keySet());
+        sortedDirs.sort(Comparator.comparingInt(String::length).reversed());
+        var counts = new HashMap<String, Integer>();
+        for (var file : acquisition.files()) {
+            if (!isJavaOrKotlinPath(file.path()))
+                continue;
+            String owner = matchModuleDir(file.path(), sortedDirs);
+            counts.merge(owner, 1, Integer::sum);
+        }
+        var result = new ArrayList<PreliminaryGraphBuilder.ModuleInfo>(modulesByPath.size());
+        for (var info : modulesByPath.values()) {
+            result.add(new PreliminaryGraphBuilder.ModuleInfo(
+                    info.path(), info.displayName(), info.buildSystem(), counts.getOrDefault(info.path(), 0)));
+        }
+        return List.copyOf(result);
+    }
+
+    private static List<FastJavaSkeletonScanner.LazySource> collectLazySkeletonSources(
+            RepositoryAcquisitionResult acquisition,
+            List<String> modulePaths) {
+        var sortedDirs = new ArrayList<>(modulePaths);
+        sortedDirs.sort(Comparator.comparingInt(String::length).reversed());
+        var out = new ArrayList<FastJavaSkeletonScanner.LazySource>();
+        for (var file : acquisition.files()) {
+            if (!isJavaOrKotlinPath(file.path()))
+                continue;
+            if (file.size() > 4L * 1024 * 1024)
+                continue;
+            String owner = matchModuleDir(file.path(), sortedDirs);
+            out.add(new FastJavaSkeletonScanner.LazySource(
+                    file.path(), owner, file.contentDigest(), file::bytes));
+        }
+        return out;
+    }
+
+    private static String matchModuleDir(String relativePath, List<String> dirsLongestFirst) {
+        String norm = relativePath.replace('\\', '/');
+        while (norm.startsWith("./"))
+            norm = norm.substring(2);
+        for (String dir : dirsLongestFirst) {
+            if (".".equals(dir))
+                continue;
+            if (norm.equals(dir) || norm.startsWith(dir + "/")) {
+                return dir;
+            }
+        }
+        int srcIdx = norm.indexOf("/src/");
+        if (srcIdx > 0) {
+            return normalizeModuleDir(norm.substring(0, srcIdx));
+        }
+        return ".";
+    }
+
+    private static Map<String, Object> extractStage1PolyglotSummary(
+            CompletableFuture<PolyglotScan.Result> polyglotFuture,
+            RepositoryAcquisitionResult acquisition) {
+        try {
+            long waitMs = Long.getLong("evo.progressive.stage1PolyglotWaitMs", 1_500L);
+            PolyglotScan.Result result = waitMs > 0L
+                    ? polyglotFuture.get(waitMs, TimeUnit.MILLISECONDS)
+                    : (polyglotFuture.isDone() ? polyglotFuture.getNow(null) : null);
+            if (result != null) {
+                var summary = new TreeMap<String, Object>();
+                summary.put("status", "STATIC_SYNTAX_READY");
+                summary.put("filesByLanguage", result.languages());
+                summary.put("documents", result.syntax().documents());
+                summary.put("parsedDocuments", result.syntax().parsed());
+                summary.put("categories", result.syntax().categories());
+                return Map.copyOf(summary);
+            }
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            throw new CancellationException("Interrupted awaiting Stage 1 polyglot summary");
+        } catch (TimeoutException | ExecutionException | CancellationException fallback) {
+            // Fall through to lightweight file-extension summary so Stage 1 preview never blocks.
+        }
+        var extCounts = new TreeMap<String, Long>();
+        for (var f : acquisition.files()) {
+            String p = f.path().toLowerCase(Locale.ROOT);
+            if (p.endsWith(".java"))
+                extCounts.merge("java", 1L, Long::sum);
+            else if (p.endsWith(".kt") || p.endsWith(".kts"))
+                extCounts.merge("kotlin", 1L, Long::sum);
+            else if (p.endsWith(".ts") || p.endsWith(".tsx"))
+                extCounts.merge("typescript", 1L, Long::sum);
+            else if (p.endsWith(".js") || p.endsWith(".jsx"))
+                extCounts.merge("javascript", 1L, Long::sum);
+            else if (p.endsWith(".py"))
+                extCounts.merge("python", 1L, Long::sum);
+            else if (p.endsWith(".go"))
+                extCounts.merge("go", 1L, Long::sum);
+            else if (p.endsWith(".proto"))
+                extCounts.merge("protobuf", 1L, Long::sum);
+        }
+        return extCounts.isEmpty()
+                ? Map.of()
+                : Map.of("status", "SCANNING_IN_BACKGROUND", "filesByLanguage", extCounts);
+    }
+
+    static IncrementalSummary buildIncrementalSummary(
+            boolean incrementalEnabled,
+            AcquisitionDeltaContext deltaCtx,
+            int reusedBuildRoots,
+            int recomputedBuildRoots,
+            int abiEarlyCutoffCount,
+            int impactedDependentsCount,
+            int reextractedJavaFiles,
+            int reusedJavaFiles,
+            int reusedModules,
+            int recomputedModules,
+            int reusedSpringContexts,
+            int recomputedSpringContexts,
+            long polyglotCacheHits,
+            long polyglotCacheMisses,
+            int reusedGraphContexts,
+            int rebuiltGraphContexts) {
+        if (!incrementalEnabled) {
+            return IncrementalSummary.fallbackFull("INCREMENTAL_DISABLED",
+                    deltaCtx.baseSnapshotId(), deltaCtx.baseGraphId(), deltaCtx.baseJobId());
+        }
+        long addedFiles = deltaCtx.fileDelta().map(StreamingRepositoryAcquirer.FileDelta::addedFiles).orElse(0L);
+        long modifiedFiles = deltaCtx.fileDelta().map(StreamingRepositoryAcquirer.FileDelta::modifiedFiles).orElse(0L);
+        long deletedFiles = deltaCtx.fileDelta().map(StreamingRepositoryAcquirer.FileDelta::deletedFiles).orElse(0L);
+        long unchangedFiles = deltaCtx.fileDelta().map(StreamingRepositoryAcquirer.FileDelta::unchangedFiles).orElse(0L);
+        long reusedFiles = deltaCtx.fileDelta().isPresent()
+                ? unchangedFiles
+                : (long) reusedJavaFiles + polyglotCacheHits;
+
+        boolean anyReuse = deltaCtx.incrementalUsed()
+                || reusedBuildRoots > 0
+                || abiEarlyCutoffCount > 0
+                || reusedJavaFiles > 0
+                || reusedModules > 0
+                || reusedSpringContexts > 0
+                || polyglotCacheHits > 0
+                || reusedGraphContexts > 0;
+        String mode;
+        String fallbackReason = "";
+        if (deltaCtx.incrementalUsed() && deltaCtx.fileDelta().isPresent() && deltaCtx.fileDelta().orElseThrow().isEmpty()) {
+            mode = IncrementalSummary.MODE_NO_CHANGE;
+        } else if (anyReuse) {
+            mode = IncrementalSummary.MODE_INCREMENTAL;
+        } else {
+            mode = IncrementalSummary.MODE_COLD;
+            fallbackReason = deltaCtx.fallbackReason().isEmpty() ? "NO_PRIOR_SNAPSHOT" : deltaCtx.fallbackReason();
+        }
+        long timeSavedEstimateMs = anyReuse
+                ? Math.max(0L,
+                        (long) reusedModules * 150L
+                                + (long) reusedJavaFiles * 8L
+                                + (long) abiEarlyCutoffCount * 15L
+                                + (long) reusedBuildRoots * 120L
+                                + (long) reusedSpringContexts * 80L
+                                + (long) reusedGraphContexts * 60L
+                                + polyglotCacheHits * 5L
+                                + unchangedFiles)
+                : 0L;
+        return new IncrementalSummary(
+                mode,
+                fallbackReason,
+                deltaCtx.baseSnapshotId(),
+                deltaCtx.baseGraphId(),
+                deltaCtx.baseJobId(),
+                addedFiles,
+                modifiedFiles,
+                deletedFiles,
+                unchangedFiles,
+                reusedFiles,
+                reusedBuildRoots,
+                recomputedBuildRoots,
+                abiEarlyCutoffCount,
+                impactedDependentsCount,
+                reextractedJavaFiles,
+                reusedJavaFiles,
+                reusedModules,
+                recomputedModules,
+                reusedSpringContexts,
+                recomputedSpringContexts,
+                polyglotCacheHits,
+                polyglotCacheMisses,
+                reusedGraphContexts,
+                rebuiltGraphContexts,
+                timeSavedEstimateMs,
+                timeSavedEstimateMs > 0L);
+    }
+
+    static AnalysisJobs.IncrementalMetrics toIncrementalMetrics(IncrementalSummary summary) {
+        return new AnalysisJobs.IncrementalMetrics(
+                summary.baseSnapshotId(),
+                clampInt(summary.addedFiles()),
+                clampInt(summary.modifiedFiles()),
+                clampInt(summary.deletedFiles()),
+                clampInt(summary.reusedFiles()),
+                Math.max(0, summary.abiEarlyCutoffCount()),
+                Math.max(0, summary.impactedDependentsCount()),
+                Math.max(0, summary.reusedModules()),
+                Math.max(0L, summary.timeSavedEstimateMs()));
+    }
+
+    private static int clampInt(long value) {
+        if (value <= 0L)
+            return 0;
+        return (int) Math.min(Integer.MAX_VALUE, value);
     }
 
     private static CapabilityGapRecord policyDegradedGap(ContentDigest graphId, SnapshotIdentity snapshot,
@@ -958,16 +1801,19 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
         }
     }
 
-    private Optional<PolyglotScan.Published> loadSemanticPublication(Path source, BooleanSupplier cancelled)
-            throws IOException {
+    private Optional<PolyglotScan.Published> loadSemanticPublication(Optional<Path> localSourceRoot,
+            BooleanSupplier cancelled) throws IOException {
         if (nativeConfig.semanticStore().isEmpty())
             return Optional.empty();
         var store = safe(nativeConfig.semanticStore().orElseThrow());
         Optional<Path> authority = nativeConfig.semanticAuthority().isPresent()
                 ? Optional.of(safe(nativeConfig.semanticAuthority().orElseThrow()))
                 : Optional.empty();
-        if (store.startsWith(source) || authority.filter(p -> p.startsWith(source)).isPresent()) {
-            throw new IOException("CAPTURE_REGISTRATION_INSIDE_TARGET");
+        if (localSourceRoot.isPresent()) {
+            var source = localSourceRoot.orElseThrow();
+            if (store.startsWith(source) || authority.filter(p -> p.startsWith(source)).isPresent()) {
+                throw new IOException("CAPTURE_REGISTRATION_INSIDE_TARGET");
+            }
         }
         var trust = nativeConfig.semanticPolicy().isPresent()
                 ? nativeConfig.semanticPolicy().orElseThrow()
@@ -1014,20 +1860,21 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
         var raw = readiness.gaps(snapshot);
         if (raw.isEmpty())
             return raw;
+        boolean anyAndroidSdkGap = dependencies != null && dependencies.gaps().stream()
+                .anyMatch(g -> g.subject().identity().contains("android-sdk:"));
         boolean androidSdkVerified = dependencies != null
+                && !anyAndroidSdkGap
                 && dependencies.resolutions().values().stream()
                         .flatMap(r -> r.binaries().stream())
                         .anyMatch(b -> b.entry().logicalName().startsWith("android-sdk:platforms/android-")
-                                && b.entry().logicalName().endsWith("/android.jar"))
-                && dependencies.gaps().stream()
-                        .noneMatch(g -> g.subject().identity().contains("android-sdk:"));
+                                && b.entry().logicalName().endsWith("/android.jar"));
         boolean allAcquiredPlatformsComplete = availablePlatforms != null && !availablePlatforms.isEmpty()
                 && allPlatforms != null && !allPlatforms.isEmpty()
                 && allPlatforms.stream().allMatch(p -> p.status() == PlatformSymbolResult.Status.COMPLETE);
         var analyzedModuleSourceSets = new HashSet<String>();
+        var moduleDirById = new HashMap<ModuleIdentity, String>();
         if (detailed != null && detailed.graphInput().isPresent()) {
             var graphInput = detailed.graphInput().orElseThrow();
-            var moduleDirById = new HashMap<ModuleIdentity, String>();
             graphInput.build().ifPresent(build -> {
                 for (var m : build.modules()) {
                     if (m.tool() == com.evolution.analysis.buildmodel.UniversalBuildModel.Tool.MAVEN
@@ -1044,6 +1891,20 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
                         if (dir != null) {
                             analyzedModuleSourceSets.add(dir + "|" + unit.sourceSet().kind().name().toLowerCase(Locale.ROOT));
                         }
+                    }
+                }
+            });
+        }
+        var androidVerifiedModuleDirs = new HashSet<String>();
+        if (dependencies != null && !moduleDirById.isEmpty()) {
+            dependencies.resolutions().forEach((sourceSet, resolution) -> {
+                boolean hasAndroidJar = resolution.binaries().stream()
+                        .anyMatch(b -> b.entry().logicalName().startsWith("android-sdk:platforms/android-")
+                                && b.entry().logicalName().endsWith("/android.jar"));
+                if (hasAndroidJar) {
+                    String dir = moduleDirById.get(sourceSet.module());
+                    if (dir != null) {
+                        androidVerifiedModuleDirs.add(dir);
                     }
                 }
             });
@@ -1069,7 +1930,20 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
         for (var gap : raw) {
             String reason = gap.reasonCode();
             if ("ANDROID_SDK_REQUIRED".equals(reason) && androidSdkVerified) {
-                continue;
+                if (moduleDirById.isEmpty()) {
+                    continue;
+                }
+                String subjectId = gap.subject().identity();
+                ReadinessPlan.Module mod = moduleById.get(subjectId);
+                if (mod == null) {
+                    var ctx = contextById.get(subjectId);
+                    if (ctx != null) {
+                        mod = moduleById.get(ctx.module());
+                    }
+                }
+                if (mod != null && androidVerifiedModuleDirs.contains(normalizeModuleDir(mod.directory()))) {
+                    continue;
+                }
             }
             if ("NATIVE_SEMANTIC_VALIDATION_REQUIRED".equals(reason) && strongerNativePolyglotComplete) {
                 continue;

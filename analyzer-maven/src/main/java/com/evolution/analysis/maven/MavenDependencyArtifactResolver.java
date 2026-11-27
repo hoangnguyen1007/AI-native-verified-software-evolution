@@ -41,6 +41,9 @@ public final class MavenDependencyArtifactResolver {
             ClasspathResolutionRequest request, DependencyAcquisitionPolicy policy) {
         Objects.requireNonNull(request);
         Objects.requireNonNull(policy);
+        var ownedSession = com.evolution.analysis.input.VerifiedArtifactSession.current().isEmpty()
+                ? com.evolution.analysis.input.VerifiedArtifactSession.open() : null;
+        try {
         MavenLocalClasspathProvider classpathProvider = new MavenLocalClasspathProvider(selectedCacheRoot, includeTests);
         ExactClasspathResult classpath = classpathProvider.resolve(request);
         int classpathPasses = 1;
@@ -100,6 +103,9 @@ public final class MavenDependencyArtifactResolver {
         }
         return MavenDependencyArtifactResolution.create(request.identity(), policy, VERSION,
                 classpath, acquisitions, problems, classpathPasses);
+        } finally {
+            if (ownedSession != null) ownedSession.close();
+        }
     }
 
     /** Runtime cache locators for the final digest-bound entries; paths never enter stable identity. */

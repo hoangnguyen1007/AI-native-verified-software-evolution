@@ -223,12 +223,40 @@ public final class StreamingContentStore implements RepositoryContentStore {
         }, cancelled);
     }
 
-    /** Fast local-file capture: when the CAS already holds objects from an earlier scan, hash first to skip
-     * writing multi-MB staging files on hits while preserving full SHA-256 verification and disk budgets. */
+    /** Fast local-file capture: single-read in-memory hash for files up to 2 MB (zero double read on miss,
+     * zero temp file / fsync on warm hit), and hash-first skip for larger warm-CAS files. */
     ContentHandle putLocalFile(Path sourceFile, Set<ContentHandle> verifiedInRun, BooleanSupplier cancelled) throws IOException {
         Objects.requireNonNull(sourceFile);
         Objects.requireNonNull(cancelled);
         if (cancelled.getAsBoolean() || Thread.currentThread().isInterrupted()) throw new CancellationException();
+        long fileSize = Files.size(sourceFile);
+        if (fileSize <= 2L * 1024 * 1024) {
+            if (reserveBytes > 0 && space.usable() < reserveBytes) throw new IOException("WAITING_FOR_DISK");
+            byte[] raw;
+            try (var input = Files.newInputStream(sourceFile, LinkOption.NOFOLLOW_LINKS)) {
+                raw = input.readNBytes((int) Math.min(fileSize + 1, 2 * 1024 * 1024 + 1));
+            }
+            if (cancelled.getAsBoolean() || Thread.currentThread().isInterrupted()) throw new CancellationException();
+            if (raw.length <= 2 * 1024 * 1024) {
+                MessageDigest hash = borrowSha256();
+                ContentHandle candidate;
+                try {
+                    candidate = new ContentHandle(new ContentDigest("sha256:" + HexFormat.of().formatHex(hash.digest(raw))), raw.length);
+                } finally {
+                    releaseSha256(hash);
+                }
+                if (hasLoose(candidate) || packs.contains(candidate)) {
+                    if (verifiedInRun == null || !verifiedInRun.contains(candidate)) {
+                        if (!verify(candidate, cancelled)) throw new IOException("CAS_CORRUPT");
+                        if (verifiedInRun != null) verifiedInRun.add(candidate);
+                    }
+                    return candidate;
+                }
+                ContentHandle stored = writeInternal(out -> out.write(raw), cancelled);
+                if (verifiedInRun != null) verifiedInRun.add(stored);
+                return stored;
+            }
+        }
         if (mayHaveLooseObjects()) {
             if (reserveBytes > 0 && space.usable() < reserveBytes) throw new IOException("WAITING_FOR_DISK");
             byte[] buffer = borrowBuffer();
@@ -352,7 +380,66 @@ public final class StreamingContentStore implements RepositoryContentStore {
         return path;
     }
 
+    /** Windows NTFS-safe atomic move with bounded exponential backoff for transient AV/indexer locks. */
+    public static void moveAtomicWithRetry(Path source, Path target) throws IOException {
+        IOException last = null;
+        for (int attempt = 0; attempt < 5; attempt++) {
+            try {
+                try {
+                    Files.move(source, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+                } catch (AtomicMoveNotSupportedException unsupported) {
+                    Files.move(source, target, StandardCopyOption.REPLACE_EXISTING);
+                }
+                return;
+            } catch (AccessDeniedException | FileAlreadyExistsException transientLock) {
+                last = transientLock;
+                if (attempt == 4) break;
+                try {
+                    Thread.sleep(10L << attempt);
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw new IOException("MOVE_INTERRUPTED", interrupted);
+                }
+            }
+        }
+        throw Objects.requireNonNull(last);
+    }
+
     boolean hasLoose(ContentHandle handle) { return Files.exists(loosePath(handle), LinkOption.NOFOLLOW_LINKS); }
+
+    /** O(1) presence + size check across loose CAS and SmallBlobPacks footer index without re-hashing payload bytes. */
+    public boolean hasObjectFast(ContentHandle handle) throws IOException {
+        Objects.requireNonNull(handle);
+        if (hasLoose(handle)) {
+            Path file = path(handle);
+            return Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS) && Files.size(file) == handle.size();
+        }
+        return packs.contains(handle);
+    }
+
+    /** Reads and SHA-256-authenticates all bytes of an object in a single pass. */
+    public byte[] readVerifiedBytes(ContentHandle handle) throws IOException {
+        Objects.requireNonNull(handle);
+        if (handle.size() > Integer.MAX_VALUE - 8) throw new IOException("CONTENT_SIZE_OVERFLOW");
+        if (hasLoose(handle)) {
+            Path file = path(handle);
+            if (!Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS) || Files.size(file) != handle.size())
+                throw new IOException("CAS_UNAVAILABLE");
+            byte[] bytes = Files.readAllBytes(file);
+            if (bytes.length != handle.size()) throw new IOException("CAS_CORRUPT");
+            MessageDigest md = borrowSha256();
+            try {
+                if (!handle.digest().value().equals("sha256:" + HexFormat.of().formatHex(md.digest(bytes))))
+                    throw new IOException("CAS_CORRUPT");
+            } finally {
+                releaseSha256(md);
+            }
+            return bytes;
+        }
+        byte[] packed = packs.readVerified(handle);
+        if (packed == null) throw new IOException("CAS_UNAVAILABLE");
+        return packed;
+    }
 
     @Override public InputStream open(ContentHandle handle) throws IOException {
         if (hasLoose(handle)) {
@@ -397,6 +484,22 @@ public final class StreamingContentStore implements RepositoryContentStore {
     }
 
     public boolean verify(ContentHandle handle, BooleanSupplier cancelled) throws IOException {
+        if (cancelled.getAsBoolean()) throw new CancellationException();
+        if (hasLoose(handle)) {
+            Path file = path(handle);
+            if (!Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS) || Files.size(file) != handle.size()) {
+                return false;
+            }
+        } else if (handle.size() <= SmallBlobPacks.MAX_BLOB) {
+            try {
+                return packs.readVerified(handle) != null;
+            } catch (IOException corrupt) {
+                if (corrupt.getMessage() != null && corrupt.getMessage().startsWith("CAS_")) {
+                    return false;
+                }
+                throw corrupt;
+            }
+        }
         byte[] buffer = borrowBuffer();
         MessageDigest digest = borrowSha256();
         try (var input = open(handle)) {
@@ -408,6 +511,11 @@ public final class StreamingContentStore implements RepositoryContentStore {
             return bytes == handle.size() && handle.digest().value().equals("sha256:" + HexFormat.of().formatHex(digest.digest()));
         } catch (NoSuchFileException missing) {
             return false;
+        } catch (IOException unavailable) {
+            if (unavailable.getMessage() != null && unavailable.getMessage().startsWith("CAS_")) {
+                return false;
+            }
+            throw unavailable;
         } finally {
             releaseSha256(digest);
             releaseBuffer(buffer);

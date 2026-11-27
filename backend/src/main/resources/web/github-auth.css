@@ -1,0 +1,736 @@
+/* Modern Minimal Auth Canvas (Linear / Vercel / Clerk Craft), Official GitHub Invertocat Buttons,
+ * Topbar Account Menu (#408), Workspace Settings & 1-Click GitHub Setup · Dark & Light WCAG AA >= 4.5:1 */
+
+.topbar-auth-brand {
+  display: none;
+  align-items: center;
+  gap: 9px;
+}
+.topbar-auth-brand .brand-logo {
+  width: 22px;
+  height: 22px;
+}
+.topbar-auth-brand .brand-name {
+  font-weight: 700;
+  font-size: 0.92rem;
+  letter-spacing: -0.015em;
+  color: var(--text);
+}
+
+.topbar-auth-slot {
+  display: inline-flex;
+  align-items: center;
+}
+.topbar-auth-slot[hidden] { display: none; }
+
+/* Official crisp GitHub Topbar Sign-In button (single-user mode) */
+.gh-signin-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 12px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  border-radius: var(--r);
+  border: 1px solid var(--line-strong);
+  background: var(--surface-2);
+  color: var(--text);
+  transition: border-color .18s, background .18s, transform .18s;
+}
+.gh-signin-btn:hover {
+  border-color: var(--accent-line);
+  background: var(--surface-3);
+}
+.gh-invertocat {
+  flex: none;
+  display: block;
+}
+.u408-it svg.gh-invertocat {
+  fill: var(--ux-ink-2);
+  stroke: none;
+}
+.u408-it:hover svg.gh-invertocat,
+.u408-it:focus-visible svg.gh-invertocat {
+  fill: var(--ux-ink);
+}
+
+/* Topbar signed-in user pill (#408) */
+.gh-user-menu > summary.gh-user-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 10px 4px 5px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--line-mid);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  list-style: none;
+}
+.gh-user-menu > summary.gh-user-trigger::-webkit-details-marker { display: none; }
+.gh-user-menu > summary.gh-user-trigger:hover { border-color: var(--accent-line); }
+
+.gh-avatar-wrap {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--accent-s);
+  border: 1px solid var(--accent-line);
+  color: var(--accent);
+  font-size: 0.7rem;
+  font-weight: 700;
+  flex: none;
+}
+.gh-avatar-img {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  object-fit: cover;
+  display: block;
+}
+.gh-avatar-fallback[hidden] { display: none; }
+
+.gh-user-login {
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gh-auth-method-pill,
+.gh-role-pill {
+  padding: 1px 7px;
+  border-radius: var(--r-pill);
+  font-size: 0.69rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  background: var(--surface);
+  border: 1px solid var(--line-mid);
+  color: var(--text-2);
+  white-space: nowrap;
+}
+.gh-role-pill.is-admin {
+  border-color: var(--accent-line);
+  color: var(--accent);
+  background: var(--surface);
+}
+.gh-role-pill.is-gh {
+  border-color: var(--ai-line);
+  color: var(--ai);
+  background: var(--surface);
+}
+
+.gh-user-dropdown {
+  min-width: 300px;
+  max-width: min(350px, 92vw);
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.gh-user-drop-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+.gh-user-drop-head .gh-avatar-wrap {
+  width: 36px;
+  height: 36px;
+  font-size: 0.86rem;
+}
+.gh-user-drop-id {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+.gh-user-drop-id strong {
+  color: var(--text);
+  font-size: 0.9rem;
+}
+
+.gh-rate-meter {
+  display: grid;
+  gap: 4px;
+  padding: 8px 10px;
+  border-radius: var(--r);
+  background: var(--surface-2);
+  border: 1px solid var(--line-mid);
+}
+.gh-rate-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+.gh-rate-track {
+  height: 6px;
+  border-radius: var(--r-pill);
+  background: var(--surface-3);
+  overflow: hidden;
+}
+.gh-rate-fill {
+  display: block;
+  height: 100%;
+  border-radius: var(--r-pill);
+  background: var(--accent);
+}
+.gh-rate-fill.is-warn { background: var(--warn); }
+.gh-rate-fill.is-bad { background: var(--danger); }
+
+.gh-drop-section {
+  display: grid;
+  gap: 5px;
+}
+.gh-drop-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-3);
+}
+.gh-drop-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.gh-org-chip {
+  font-size: 0.76rem;
+  padding: 2px 8px;
+}
+.gh-scope-chip {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  padding: 2px 6px;
+  border-radius: var(--r-xs);
+  background: var(--surface-2);
+  border: 1px solid var(--line-mid);
+  color: var(--text-2);
+}
+.gh-drop-actions {
+  display: grid;
+  gap: 3px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
+/* ── FULL-BLEED DISTRACTION-FREE AUTH CANVAS (body.auth-gate-active) ── */
+body.workbench-page.auth-gate-active .app-shell,
+body.workbench-page.auth-gate-active .app-shell:not(.sidebar-collapsed),
+body.workbench-page.auth-gate-active .app-shell.sidebar-rail:not(.sidebar-collapsed) {
+  grid-template-columns: minmax(0, 1fr) !important;
+}
+body.auth-gate-active #sidebar,
+body.auth-gate-active #sidebar-toggle,
+body.auth-gate-active .workbench-title,
+body.auth-gate-active #command-k-wrap,
+body.auth-gate-active #workspace-tools,
+body.auth-gate-active #shortcuts-trigger,
+body.auth-gate-active #topbar-auth-slot,
+body.auth-gate-active .page-heading,
+body.auth-gate-active #back-to-top {
+  display: none !important;
+}
+body.auth-gate-active .topbar-auth-brand {
+  display: inline-flex;
+}
+body.auth-gate-active .workspace {
+  min-height: 100vh;
+  width: 100%;
+  background-color: var(--bg);
+  background-image:
+    radial-gradient(640px 360px at 50% 0%, color-mix(in srgb, var(--accent) 11%, transparent), transparent 72%),
+    radial-gradient(color-mix(in srgb, var(--text) 9%, transparent) 1px, transparent 1px);
+  background-size: 100% 100%, 24px 24px;
+}
+body.auth-gate-active .topbar {
+  height: 64px;
+  background: transparent;
+  border-bottom: 0;
+  padding: 0 28px;
+  justify-content: space-between;
+}
+:root[data-theme="light"] body.auth-gate-active .workspace {
+  background-image:
+    radial-gradient(640px 340px at 50% 0%, rgba(20, 108, 78, 0.065), transparent 72%),
+    radial-gradient(rgba(17, 30, 25, 0.075) 1px, transparent 1px);
+  background-size: 100% 100%, 24px 24px;
+}
+body.workbench-page.auth-gate-active #main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  place-items: center;
+  min-height: calc(100vh - 64px);
+  padding: 8px 16px 40px;
+}
+body.auth-gate-active #repository-workspace {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  place-items: center;
+}
+body.auth-gate-active .welcome.is-auth-gate {
+  width: 100%;
+  max-width: 420px;
+  margin: 0 auto;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  text-align: left;
+  display: block;
+}
+body.auth-gate-active .welcome.is-auth-gate::before,
+body.auth-gate-active .welcome.is-auth-gate::after {
+  display: none;
+}
+
+/* ── Streamlined Single-Focus Auth Card (Linear / Vercel / Clerk Craft) ── */
+.gh-auth-gate {
+  width: 100%;
+}
+.gh-auth-card-shell {
+  display: grid;
+  gap: 16px;
+  padding: 32px 28px 24px;
+  border-radius: 16px;
+  background: var(--surface);
+  border: 1px solid var(--line-mid);
+  box-shadow: var(--shadow), inset 0 1px 0 color-mix(in srgb, var(--text) 6%, transparent);
+}
+:root[data-theme="light"] .gh-auth-card-shell {
+  box-shadow: 0 20px 44px -20px rgba(17, 30, 25, 0.14), 0 1px 3px rgba(17, 30, 25, 0.06);
+}
+.gh-auth-card-shell.is-dialog-embedded {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.gh-card-head {
+  display: grid;
+  justify-items: center;
+  text-align: center;
+  gap: 8px;
+}
+.gh-card-emblem {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  background: var(--surface-2);
+  border: 1px solid var(--line-mid);
+  box-shadow: var(--shadow-xs);
+}
+.gh-card-emblem img {
+  width: 24px;
+  height: 24px;
+  display: block;
+}
+.gh-card-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 1.55rem;
+  font-weight: 600;
+  letter-spacing: -0.025em;
+  line-height: 1.2;
+  color: var(--text);
+}
+.gh-card-sub {
+  margin: 0;
+  font-size: 0.85rem;
+  line-height: 1.45;
+  color: var(--text-2);
+}
+.gh-admin-bootstrap-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+  border: 1px solid var(--accent-line);
+  color: var(--accent);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+/* Prominent Official GitHub Invertocat Button (High-Contrast Vercel/Linear Aesthetic) */
+.gh-btn-github {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  height: 44px;
+  padding: 0 16px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: #f3f6f4;
+  color: #0b1210;
+  font-family: var(--font-sans);
+  font-size: 0.92rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  text-decoration: none;
+  cursor: pointer;
+  box-shadow: 0 8px 20px -12px rgba(0, 0, 0, 0.65);
+  transition: transform .22s var(--ease-spring), background .18s, box-shadow .22s, opacity .18s;
+}
+.gh-btn-github:hover:not(:disabled) {
+  background: #ffffff;
+  transform: translateY(-1px);
+  box-shadow: 0 12px 26px -12px rgba(0, 0, 0, 0.72);
+}
+.gh-btn-github:active:not(:disabled) {
+  transform: scale(0.985);
+}
+.gh-btn-github:disabled {
+  opacity: 0.65;
+  cursor: wait;
+}
+.gh-gh-link-card .gh-btn-github {
+  width: auto;
+  height: 36px;
+  padding: 0 14px;
+  border-radius: 10px;
+  font-size: 0.84rem;
+}
+:root[data-theme="light"] .gh-btn-github {
+  background: #141c1a;
+  color: #ffffff;
+  border-color: #141c1a;
+  box-shadow: 0 10px 22px -14px rgba(17, 30, 25, 0.55);
+}
+:root[data-theme="light"] .gh-btn-github:hover:not(:disabled) {
+  background: #212e2a;
+}
+
+.gh-auth-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--text-3);
+  font-size: 0.78rem;
+  font-weight: 500;
+}
+.gh-auth-divider::before,
+.gh-auth-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--line-mid);
+}
+
+.gh-local-auth-form {
+  display: grid;
+  gap: 10px;
+}
+.gh-local-auth-form .u403-f + .u403-f { margin-top: 0; }
+.gh-local-auth-form .u403-go { height: 44px; margin-top: 2px; }
+
+.gh-auth-footer-switch {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: 0.84rem;
+  color: var(--text-2);
+  padding-top: 2px;
+}
+.gh-link-btn {
+  border: 0;
+  padding: 2px 4px;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--accent);
+  font-family: var(--font-sans);
+  font-size: 0.84rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: opacity .15s;
+}
+.gh-link-btn:hover { text-decoration: underline; }
+
+.gh-alt-panel,
+.gh-device-area {
+  display: grid;
+  gap: 10px;
+}
+.gh-alt-note {
+  margin: 0;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  color: var(--text-2);
+}
+.gh-full-btn {
+  width: 100%;
+  justify-content: center;
+  gap: 8px;
+}
+
+/* Sign-In Dialog */
+#github-auth-dialog {
+  width: min(440px, 94vw);
+}
+.gh-auth-dialog-head {
+  align-items: center;
+  margin-bottom: 16px;
+}
+.gh-dialog-brand-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.gh-card-logo-sm {
+  width: 24px;
+  height: 24px;
+  flex: none;
+  display: block;
+}
+#github-auth-dialog-body,
+#workspace-account-body {
+  display: grid;
+  gap: 16px;
+}
+
+.gh-device-code-box {
+  display: grid;
+  gap: 10px;
+  justify-items: center;
+  padding: 14px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--accent-line);
+  background: var(--surface-2);
+  text-align: center;
+}
+.gh-device-code {
+  font-family: var(--font-mono);
+  font-size: 1.55rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  padding: 6px 16px;
+  border-radius: var(--r);
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  color: var(--accent);
+  user-select: all;
+}
+.gh-device-poll-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-2);
+}
+.gh-spinner {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid var(--line-strong);
+  border-top-color: var(--accent);
+  animation: ghSpin 0.85s linear infinite;
+}
+@keyframes ghSpin {
+  to { transform: rotate(360deg); }
+}
+
+.gh-pat-form {
+  display: grid;
+  gap: 10px;
+}
+
+/* ── Account & Team Workspace Settings Dialog (#workspace-account-dialog) ── */
+#workspace-account-dialog {
+  width: min(640px, 95vw);
+}
+.gh-ws-panel {
+  display: grid;
+  gap: 14px;
+}
+.gh-profile-head-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  border-radius: var(--r-lg);
+  background: var(--surface-2);
+  border: 1px solid var(--line-mid);
+}
+.gh-profile-head-card .gh-avatar-wrap {
+  width: 44px;
+  height: 44px;
+  font-size: 1rem;
+}
+.gh-profile-id-meta {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.gh-profile-name-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.gh-setup-wrap,
+.gh-team-wrap {
+  display: grid;
+  gap: 12px;
+}
+.gh-setup-status-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+  border: 1px solid var(--line-mid);
+}
+.gh-setup-title-copy {
+  display: grid;
+  gap: 1px;
+}
+.gh-localhost-hint {
+  margin: 0;
+  padding: 9px 12px;
+  border-radius: var(--r);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  font-size: 0.8rem;
+  line-height: 1.45;
+  color: var(--text-2);
+}
+.gh-setup-hero-card {
+  display: grid;
+  gap: 10px;
+  padding: 20px 18px;
+  border-radius: var(--r-lg);
+  background: var(--surface-2);
+  border: 1px solid var(--line-mid);
+  text-align: center;
+}
+.gh-setup-hero-card p {
+  margin: 0;
+  line-height: 1.45;
+}
+.gh-setup-card {
+  display: grid;
+  gap: 11px;
+  padding: 15px 16px;
+  border-radius: var(--r-lg);
+  background: var(--surface-2);
+  border: 1px solid var(--line-mid);
+}
+.gh-setup-card p { margin: 0; }
+.gh-setup-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.gh-setup-card-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text);
+}
+.gh-callback-row {
+  display: grid;
+  gap: 6px;
+}
+.gh-callback-box {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: var(--r);
+  background: var(--surface-2);
+  border: 1px solid var(--line-mid);
+}
+.gh-callback-code {
+  flex: 1 1 200px;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 0.77rem;
+  color: var(--text);
+  word-break: break-all;
+}
+.gh-two-col {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.gh-two-col > .u403-f + .u403-f { margin-top: 0; }
+
+.gh-team-list {
+  display: grid;
+  gap: 9px;
+}
+.gh-team-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+  border: 1px solid var(--line-mid);
+}
+.gh-team-id {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-width: 0;
+  flex: 1 1 220px;
+}
+.gh-team-id .gh-avatar-wrap {
+  width: 34px;
+  height: 34px;
+  font-size: 0.82rem;
+}
+.gh-team-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.gh-team-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+.gh-team-role-select {
+  min-height: 34px;
+  padding: 4px 10px;
+  border-radius: var(--r);
+  border: 1px solid var(--line-mid);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+@media (max-width: 560px) {
+  body.auth-gate-active .topbar { height: 56px; padding: 0 16px; }
+  body.auth-gate-active #main { min-height: calc(100vh - 56px); padding: 8px 12px 32px; }
+  .gh-auth-card-shell { padding: 24px 20px 20px; border-radius: 14px; }
+  .gh-signin-label { display: none; }
+  .gh-user-login,
+  .gh-user-trigger .gh-auth-method-pill,
+  .gh-user-trigger .gh-role-pill { display: none; }
+  .gh-two-col { grid-template-columns: minmax(0, 1fr); }
+  .gh-team-controls { width: 100%; justify-content: space-between; }
+}

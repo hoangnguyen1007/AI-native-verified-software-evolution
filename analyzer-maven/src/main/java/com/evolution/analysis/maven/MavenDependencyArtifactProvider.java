@@ -37,15 +37,155 @@ public final class MavenDependencyArtifactProvider implements DependencyArtifact
     private static final int MAX_ARCHIVE_ENTRIES = 1_000_000;
     private static final long MAX_EXPANDED_ARCHIVE_BYTES = 1_000_000_000L;
     private static final int VALIDATED_CONTENT_CACHE_MAX = 8192;
+    private static final long NEGATIVE_404_TTL_MILLIS = 24L * 60 * 60 * 1000;
+    private static final int NEGATIVE_404_CACHE_MAX = 8192;
     private static final Map<ValidatedContentKey, Boolean> VALIDATED_CONTENT_CACHE =
             Collections.synchronizedMap(new LinkedHashMap<>(512, 0.75f, true) {
                 @Override protected boolean removeEldestEntry(Map.Entry<ValidatedContentKey, Boolean> eldest) {
                     return size() > VALIDATED_CONTENT_CACHE_MAX;
                 }
             });
+    private static final Set<Path> LOADED_VALIDATION_ROOTS = ConcurrentHashMap.newKeySet();
+    private static final Map<String, Long> NEGATIVE_404_CACHE =
+            Collections.synchronizedMap(new LinkedHashMap<>(256, 0.75f, true) {
+                @Override protected boolean removeEldestEntry(Map.Entry<String, Long> eldest) {
+                    return size() > NEGATIVE_404_CACHE_MAX;
+                }
+            });
+    private static final Set<Path> LOADED_NEGATIVE_ROOTS = ConcurrentHashMap.newKeySet();
+    private static final Object INDEX_FILE_LOCK = new Object();
     static final java.util.concurrent.atomic.AtomicLong VALIDATED_CONTENT_CACHE_HITS = new java.util.concurrent.atomic.AtomicLong();
+    static final java.util.concurrent.atomic.AtomicLong NEGATIVE_404_CACHE_HITS = new java.util.concurrent.atomic.AtomicLong();
 
     private record ValidatedContentKey(ContentDigest digest, String extension) {}
+
+    private static boolean fastDepsEnabled() {
+        return Boolean.parseBoolean(System.getProperty("evo.perf.fastDeps", "true"));
+    }
+
+    private static boolean persistedValidationEnabled() {
+        return fastDepsEnabled()
+                && Boolean.parseBoolean(System.getProperty("evo.perf.persistedArtifactValidation", "true"));
+    }
+
+    private static boolean negative404CacheEnabled() {
+        return fastDepsEnabled()
+                && Boolean.parseBoolean(System.getProperty("evo.perf.negative404Cache", "true"));
+    }
+
+    static boolean isValidatedArtifact(Path cacheRoot, ContentDigest digest, String extension) {
+        var session = com.evolution.analysis.input.VerifiedArtifactSession.current();
+        if (session.isPresent() && session.orElseThrow().isArchiveValidated(digest)) {
+            VALIDATED_CONTENT_CACHE_HITS.incrementAndGet();
+            return true;
+        }
+        if (cacheRoot != null && persistedValidationEnabled()) {
+            ensureValidationIndexLoaded(cacheRoot);
+        }
+        if (Boolean.TRUE.equals(VALIDATED_CONTENT_CACHE.get(new ValidatedContentKey(digest, extension)))) {
+            VALIDATED_CONTENT_CACHE_HITS.incrementAndGet();
+            session.ifPresent(s -> s.markArchiveValidated(digest));
+            return true;
+        }
+        return false;
+    }
+
+    static void markValidatedArtifact(Path cacheRoot, ContentDigest digest, String extension) {
+        VALIDATED_CONTENT_CACHE.put(new ValidatedContentKey(digest, extension), Boolean.TRUE);
+        com.evolution.analysis.input.VerifiedArtifactSession.current().ifPresent(s -> s.markArchiveValidated(digest));
+        if (cacheRoot != null && persistedValidationEnabled()) {
+            appendValidationReceipt(cacheRoot, digest, extension);
+        }
+    }
+
+    private static void ensureValidationIndexLoaded(Path cacheRoot) {
+        Path normalized = cacheRoot.toAbsolutePath().normalize();
+        if (!LOADED_VALIDATION_ROOTS.add(normalized)) return;
+        Path file = normalized.resolve(".evo-cache-index").resolve("validated-artifacts.v1");
+        if (!Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS)) return;
+        try {
+            List<String> lines = Files.readAllLines(file, java.nio.charset.StandardCharsets.UTF_8);
+            for (String line : lines) {
+                int space = line.indexOf(' ');
+                if (space <= 0 || space + 1 >= line.length()) continue;
+                String digestStr = line.substring(0, space);
+                String ext = line.substring(space + 1);
+                if (digestStr.startsWith("sha256:") && digestStr.length() == 71) {
+                    VALIDATED_CONTENT_CACHE.put(new ValidatedContentKey(new ContentDigest(digestStr), ext), Boolean.TRUE);
+                }
+            }
+        } catch (IOException | IllegalArgumentException ignored) {
+            // Disposable acceleration index; fall back cleanly to full archive validation.
+        }
+    }
+
+    private static void appendValidationReceipt(Path cacheRoot, ContentDigest digest, String extension) {
+        Path normalized = cacheRoot.toAbsolutePath().normalize();
+        Path dir = normalized.resolve(".evo-cache-index");
+        Path file = dir.resolve("validated-artifacts.v1");
+        synchronized (INDEX_FILE_LOCK) {
+            try {
+                if (Files.isSymbolicLink(dir) || Files.isSymbolicLink(file)) return;
+                Files.createDirectories(dir);
+                String entry = digest.value() + " " + extension + "\n";
+                Files.writeString(file, entry, java.nio.charset.StandardCharsets.UTF_8,
+                        StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.APPEND);
+            } catch (IOException | SecurityException ignored) {
+                // Read-only caches or concurrent writers remain valid without persisted receipt.
+            }
+        }
+    }
+
+    private static boolean isNegative404Cached(Path cacheRoot, URI uri) {
+        ensureNegative404Loaded(cacheRoot);
+        Long ts = NEGATIVE_404_CACHE.get(uri.toASCIIString());
+        if (ts == null) return false;
+        if (System.currentTimeMillis() - ts > NEGATIVE_404_TTL_MILLIS) {
+            NEGATIVE_404_CACHE.remove(uri.toASCIIString());
+            return false;
+        }
+        NEGATIVE_404_CACHE_HITS.incrementAndGet();
+        return true;
+    }
+
+    private static void recordNegative404(Path cacheRoot, URI uri) {
+        long now = System.currentTimeMillis();
+        String key = uri.toASCIIString();
+        NEGATIVE_404_CACHE.put(key, now);
+        Path normalized = cacheRoot.toAbsolutePath().normalize();
+        Path dir = normalized.resolve(".evo-cache-index");
+        Path file = dir.resolve("negative-404.v1");
+        synchronized (INDEX_FILE_LOCK) {
+            try {
+                if (Files.isSymbolicLink(dir) || Files.isSymbolicLink(file)) return;
+                Files.createDirectories(dir);
+                Files.writeString(file, now + " " + key + "\n", java.nio.charset.StandardCharsets.UTF_8,
+                        StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.APPEND);
+            } catch (IOException | SecurityException ignored) {
+                // Best-effort acceleration cache only.
+            }
+        }
+    }
+
+    private static void ensureNegative404Loaded(Path cacheRoot) {
+        Path normalized = cacheRoot.toAbsolutePath().normalize();
+        if (!LOADED_NEGATIVE_ROOTS.add(normalized)) return;
+        Path file = normalized.resolve(".evo-cache-index").resolve("negative-404.v1");
+        if (!Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS)) return;
+        long cutoff = System.currentTimeMillis() - NEGATIVE_404_TTL_MILLIS;
+        try {
+            for (String line : Files.readAllLines(file, java.nio.charset.StandardCharsets.UTF_8)) {
+                int space = line.indexOf(' ');
+                if (space <= 0 || space + 1 >= line.length()) continue;
+                long ts = Long.parseLong(line.substring(0, space));
+                if (ts >= cutoff) {
+                    NEGATIVE_404_CACHE.put(line.substring(space + 1), ts);
+                }
+            }
+        } catch (IOException | IllegalArgumentException ignored) {
+            // Disposable acceleration index.
+        }
+    }
 
     public static DependencyAcquisitionPolicy defaultPolicy(List<URI> remoteRepositories) {
         return new DependencyAcquisitionPolicy(4096, 64_000_000L, DEFAULT_MAX_TOTAL_BYTES, 64,
@@ -102,33 +242,64 @@ public final class MavenDependencyArtifactProvider implements DependencyArtifact
         // Avoid serializing concurrent downloads when maxArtifactBytes * (retries+1) * repos >= maxTotalBytes
         // while keeping explicit small-budget limits strictly bounded.
         long perTask = taskAllowance(request.policy());
-        long consumed=0,reserved=0;int next=0;boolean interrupted=Thread.interrupted();
-        var pending=new ArrayDeque<Pending>();var activeCoordinates=new HashSet<ArtifactCoordinate>();
-        var executor=Executors.newFixedThreadPool(request.policy().maxConcurrentDownloads());
+        long consumed = 0, reserved = 0;
+        int next = 0, nextCommit = 0, inFlight = 0;
+        boolean interrupted = Thread.interrupted();
+        var completedByIndex = new TreeMap<Integer, CompletedTask>();
+        var activeCoordinates = new HashSet<ArtifactCoordinate>();
+        var activeSession = com.evolution.analysis.input.VerifiedArtifactSession.current().orElse(null);
+        var executor = fastDepsEnabled()
+                ? Executors.newVirtualThreadPerTaskExecutor()
+                : Executors.newFixedThreadPool(request.policy().maxConcurrentDownloads());
+        var completion = new ExecutorCompletionService<CompletedTask>(executor);
         try {
-            while(next<request.requirements().size()||!pending.isEmpty()) {
-                while(!interrupted&&next<request.requirements().size()&&pending.size()<request.policy().maxConcurrentDownloads()) {
-                    var requirement=request.requirements().get(next);
-                    long available=request.policy().maxTotalBytes()-consumed-reserved;
-                    if(!pending.isEmpty()&&(available<perTask||activeCoordinates.contains(requirement.coordinate())))break;
-                    long allowance=Math.min(available,perTask);
-                    pending.addLast(new Pending(requirement,allowance,executor.submit(()->acquireOne(root,requirement,request.policy(),allowance))));
-                    activeCoordinates.add(requirement.coordinate());reserved+=allowance;next++;
+            while (next < request.requirements().size() || inFlight > 0) {
+                while (!interrupted && next < request.requirements().size() && inFlight < request.policy().maxConcurrentDownloads()) {
+                    var requirement = request.requirements().get(next);
+                    long available = request.policy().maxTotalBytes() - consumed - reserved;
+                    if (inFlight > 0 && (available < perTask || activeCoordinates.contains(requirement.coordinate()))) break;
+                    long allowance = Math.min(available, perTask);
+                    int taskIndex = next;
+                    Callable<CompletedTask> work = () -> new CompletedTask(
+                            taskIndex, requirement, allowance, acquireOne(root, requirement, request.policy(), allowance));
+                    if (activeSession != null) work = activeSession.wrap(work);
+                    completion.submit(work);
+                    activeCoordinates.add(requirement.coordinate());
+                    reserved += allowance;
+                    inFlight++;
+                    next++;
                 }
-                if(pending.isEmpty()) {
-                    while(next<request.requirements().size())outcomes.add(failed(request.requirements().get(next++),FailureReason.FETCH_TIMEOUT));
+                if (inFlight == 0) {
+                    while (next < request.requirements().size()) {
+                        outcomes.add(failed(request.requirements().get(next++), FailureReason.FETCH_TIMEOUT));
+                    }
                     break;
                 }
-                var task=pending.removeFirst();TaskResult result;
-                for(;;)try {result=task.future().get();break;}
-                catch(InterruptedException e){interrupted=true;/* Drain accepted work before returning a closed ledger. */}
-                catch(ExecutionException e){throw new IllegalStateException("Artifact acquisition task failed unexpectedly",e.getCause());}
-                consumed+=result.consumed();reserved-=task.allowance();activeCoordinates.remove(task.requirement().coordinate());
-                outcomes.add(result.outcome());
-                appendAttempts(attempts,counter,result.attempts());
+                CompletedTask done;
+                for (;;) {
+                    try {
+                        done = completion.take().get();
+                        break;
+                    } catch (InterruptedException e) {
+                        interrupted = true; /* Drain accepted work before returning a closed ledger. */
+                    } catch (ExecutionException e) {
+                        throw new IllegalStateException("Artifact acquisition task failed unexpectedly", e.getCause());
+                    }
+                }
+                inFlight--;
+                consumed += done.result().consumed();
+                reserved -= done.allowance();
+                completedByIndex.put(done.index(), done);
+                while (completedByIndex.containsKey(nextCommit)) {
+                    var ready = completedByIndex.remove(nextCommit++);
+                    activeCoordinates.remove(ready.requirement().coordinate());
+                    outcomes.add(ready.result().outcome());
+                    appendAttempts(attempts, counter, ready.result().attempts());
+                }
             }
         } finally {
-            executor.shutdownNow();if(interrupted)Thread.currentThread().interrupt();
+            executor.shutdownNow();
+            if (interrupted) Thread.currentThread().interrupt();
         }
         return DependencyAcquisitionResult.create(request, VERSION, outcomes, attempts, consumed);
     }
@@ -154,16 +325,32 @@ public final class MavenDependencyArtifactProvider implements DependencyArtifact
         for(var attempt:source)destination.add(new Attempt(counter.next(),attempt.coordinate(),attempt.origin(),attempt.subject(),attempt.outcome(),attempt.contentDigest()));
     }
 
-    private record Pending(DependencyAcquisitionRequest.Requirement requirement,long allowance,Future<TaskResult> future) {}
+    private record CompletedTask(int index, DependencyAcquisitionRequest.Requirement requirement, long allowance, TaskResult result) {}
     private record TaskResult(Outcome outcome,List<Attempt> attempts,long consumed) {}
     private TaskResult acquireOne(Path root,DependencyAcquisitionRequest.Requirement requirement,DependencyAcquisitionPolicy policy,long allowance) {
         var attempts=new ArrayList<Attempt>();var counter=new AttemptCounter();
-        if(requirement.coordinate().gav().version().endsWith("-SNAPSHOT"))return new TaskResult(failed(requirement,FailureReason.SNAPSHOT_UNSUPPORTED),attempts,0);
+        boolean isSnapshot = requirement.coordinate().gav().version().endsWith("-SNAPSHOT");
+        if (isSnapshot) {
+            try {
+                Path candidate = resolve(root, requirement.coordinate().repositoryPath());
+                if (!Files.exists(candidate, LinkOption.NOFOLLOW_LINKS)) {
+                    return new TaskResult(failed(requirement, FailureReason.SNAPSHOT_UNSUPPORTED), attempts, 0);
+                }
+            } catch (AcquisitionFailure failure) {
+                return new TaskResult(failed(requirement, failure.reason), attempts, 0);
+            }
+        }
         if(allowance==0)return new TaskResult(failed(requirement,FailureReason.SIZE_EXCEEDED),attempts,0);
         var budget=new Budget(policy.withLimits(1,allowance));Outcome outcome;
         try {
             var cached=readCached(root,requirement,budget,attempts,counter);
-            outcome=cached.isPresent()?success(requirement,cached.orElseThrow()):acquireRemote(root,requirement,policy,budget,attempts,counter);
+            if (cached.isPresent()) {
+                outcome = success(requirement, cached.orElseThrow());
+            } else if (isSnapshot) {
+                outcome = failed(requirement, FailureReason.SNAPSHOT_UNSUPPORTED);
+            } else {
+                outcome = acquireRemote(root, requirement, policy, budget, attempts, counter);
+            }
         }catch(AcquisitionFailure failure){outcome=failed(requirement,failure.reason);}
         return new TaskResult(outcome,attempts,budget.consumed());
     }
@@ -210,7 +397,9 @@ public final class MavenDependencyArtifactProvider implements DependencyArtifact
                     && !requirement.expectedDigest().orElseThrow().equals(digest)) {
                 throw failure(FailureReason.DIGEST_MISMATCH);
             }
-            validateCachedOrFull(coordinate, digest, bytes, FailureReason.CORRUPTED_CACHE);
+            validateCachedOrFull(root, coordinate, digest, bytes, FailureReason.CORRUPTED_CACHE);
+            com.evolution.analysis.input.VerifiedArtifactSession.current()
+                    .ifPresent(s -> s.recordVerified(path, digest, bytes.length));
             Artifact artifact = new Artifact(coordinate, Origin.LOCAL_CACHE, relative, digest, bytes.length);
             attempts.add(attempt(counter, coordinate, Origin.LOCAL_CACHE, relative,
                     AttemptOutcome.SUCCEEDED, Optional.of(digest)));
@@ -241,6 +430,12 @@ public final class MavenDependencyArtifactProvider implements DependencyArtifact
         FailureReason lastFailure = FailureReason.ARTIFACT_NOT_FOUND;
         for (URI repository : policy.remoteRepositories()) {
             URI uri = repository.resolve(coordinate.repositoryPath());
+            if (remoteTransport == SHARED_TRANSPORT && negative404CacheEnabled() && isNegative404Cached(root, uri)) {
+                attempts.add(attempt(counter, coordinate, Origin.REMOTE_REPOSITORY,
+                        uri.toASCIIString(), AttemptOutcome.UNAVAILABLE, Optional.empty()));
+                lastFailure = FailureReason.ARTIFACT_NOT_FOUND;
+                continue;
+            }
             for (int retry = 0; retry <= policy.maxRetries(); retry++) {
                 boolean mayRetry = retry < policy.maxRetries();
                 try {
@@ -248,11 +443,14 @@ public final class MavenDependencyArtifactProvider implements DependencyArtifact
                     if (allowed < 1) throw new RemoteLimitExceeded();
                     RemoteResponse response = remoteTransport.fetch(
                             uri, allowed, policy.connectTimeoutMillis(), policy.readTimeoutMillis());
-                    byte[] bytes = response.bytes();
+                    byte[] bytes = response.rawBytes();
                     if (bytes.length > allowed) throw new RemoteLimitExceeded();
                     budget.consume(bytes.length);
 
                     if (response.statusCode() == 404 || response.statusCode() == 410) {
+                        if (remoteTransport == SHARED_TRANSPORT && negative404CacheEnabled()) {
+                            recordNegative404(root, uri);
+                        }
                         attempts.add(attempt(counter, coordinate, Origin.REMOTE_REPOSITORY,
                                 uri.toASCIIString(), AttemptOutcome.UNAVAILABLE, Optional.empty()));
                         lastFailure = FailureReason.ARTIFACT_NOT_FOUND;
@@ -290,7 +488,7 @@ public final class MavenDependencyArtifactProvider implements DependencyArtifact
                         break;
                     }
                     try {
-                        validateCachedOrFull(coordinate, digest, bytes, FailureReason.CORRUPTED_DOWNLOAD);
+                        validateCachedOrFull(root, coordinate, digest, bytes, FailureReason.CORRUPTED_DOWNLOAD);
                     } catch (AcquisitionFailure failure) {
                         attempts.add(attempt(counter, coordinate, Origin.REMOTE_REPOSITORY,
                                 uri.toASCIIString(), AttemptOutcome.FAILED, Optional.empty()));
@@ -374,15 +572,25 @@ public final class MavenDependencyArtifactProvider implements DependencyArtifact
             Path root = validateRoot(selectedRoot);
             Path target = root.resolve(".evo-aar-views").resolve(digest.value().substring(7) + ".jar");
             ensureParent(root, target.getParent());
+            var session = com.evolution.analysis.input.VerifiedArtifactSession.current();
+            if (Files.isRegularFile(target, LinkOption.NOFOLLOW_LINKS)
+                    && session.isPresent()
+                    && session.orElseThrow().verifyDigest(target, digest)) {
+                return target;
+            }
             if (!Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
-                try { writeVerifiedCacheFile(root, target, bytes, digest); }
-                catch (AcquisitionFailure unavailable) {
+                try {
+                    writeVerifiedCacheFile(root, target, bytes, digest);
+                    session.ifPresent(s -> s.recordVerified(target, digest, bytes.length));
+                    return target;
+                } catch (AcquisitionFailure unavailable) {
                     if (!Files.isRegularFile(target, LinkOption.NOFOLLOW_LINKS)) throw unavailable;
                 }
             }
             if (!Files.isRegularFile(target, LinkOption.NOFOLLOW_LINKS)
                     || !digest.equals(ContentDigest.sha256(readBounded(target, bytes.length))))
                 throw new IOException("Invalid embedded JAR cache entry");
+            session.ifPresent(s -> s.recordVerified(target, digest, bytes.length));
             return target;
         } catch (AcquisitionFailure | ReadLimitExceeded unavailable) {
             throw new IOException("Embedded JAR cache unavailable", unavailable);
@@ -402,16 +610,17 @@ public final class MavenDependencyArtifactProvider implements DependencyArtifact
                 ByteBuffer buffer = ByteBuffer.wrap(bytes);
                 while (buffer.hasRemaining()) channel.write(buffer);
                 channel.force(true);
+                if (channel.size() != bytes.length) throw failure(FailureReason.CACHE_WRITE_FAILED);
             }
-            byte[] written = readBounded(temporary, bytes.length);
-            if (!digest.equals(ContentDigest.sha256(written))) throw failure(FailureReason.CACHE_WRITE_FAILED);
+            if (!fastDepsEnabled()) {
+                byte[] written = readBounded(temporary, bytes.length);
+                if (!digest.equals(ContentDigest.sha256(written))) throw failure(FailureReason.CACHE_WRITE_FAILED);
+            }
             ensureParent(root, target.getParent());
-            Files.move(temporary, target, StandardCopyOption.ATOMIC_MOVE);
+            moveCacheFileWithRetry(root, temporary, target, bytes.length, digest);
             temporary = null;
-        } catch (FileAlreadyExistsException exception) {
-            throw failure(FailureReason.CACHE_CHANGED_DURING_READ);
-        } catch (AtomicMoveNotSupportedException exception) {
-            throw failure(FailureReason.CACHE_WRITE_FAILED);
+        } catch (AcquisitionFailure failure) {
+            throw failure;
         } catch (ReadLimitExceeded | IOException | SecurityException exception) {
             throw failure(FailureReason.CACHE_WRITE_FAILED);
         } finally {
@@ -425,6 +634,60 @@ public final class MavenDependencyArtifactProvider implements DependencyArtifact
                     // The exact provider-owned temp file may remain visible after a failed cleanup.
                 }
             }
+        }
+    }
+
+    private static void moveCacheFileWithRetry(
+            Path root, Path temporary, Path target, int expectedLength, ContentDigest digest)
+            throws AcquisitionFailure, IOException {
+        long backoffMs = 10L;
+        for (int attempt = 0; attempt < 5; attempt++) {
+            try {
+                Files.move(temporary, target, StandardCopyOption.ATOMIC_MOVE);
+                return;
+            } catch (FileAlreadyExistsException alreadyExists) {
+                if (verifyConcurrentWinner(root, target, expectedLength, digest)) {
+                    return;
+                }
+                throw failure(FailureReason.CACHE_CHANGED_DURING_READ);
+            } catch (AtomicMoveNotSupportedException unsupported) {
+                throw failure(FailureReason.CACHE_WRITE_FAILED);
+            } catch (FileSystemException transientLock) {
+                if (Files.exists(target, LinkOption.NOFOLLOW_LINKS)
+                        && verifyConcurrentWinner(root, target, expectedLength, digest)) {
+                    return;
+                }
+                if (attempt == 4) {
+                    throw transientLock;
+                }
+                try {
+                    Thread.sleep(backoffMs);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    throw failure(FailureReason.CACHE_WRITE_FAILED);
+                }
+                backoffMs *= 2L;
+            }
+        }
+    }
+
+    private static boolean verifyConcurrentWinner(
+            Path root, Path target, int expectedLength, ContentDigest digest) {
+        try {
+            if (Files.isSymbolicLink(target) || !Files.isRegularFile(target, LinkOption.NOFOLLOW_LINKS)) {
+                return false;
+            }
+            Path real = target.toRealPath();
+            if (!real.startsWith(root) || !real.equals(target.toAbsolutePath().normalize())) {
+                return false;
+            }
+            if (Files.size(target) != expectedLength) {
+                return false;
+            }
+            byte[] existing = readBounded(target, expectedLength);
+            return existing.length == expectedLength && digest.equals(ContentDigest.sha256(existing));
+        } catch (IOException | ReadLimitExceeded | SecurityException e) {
+            return false;
         }
     }
 
@@ -460,15 +723,13 @@ public final class MavenDependencyArtifactProvider implements DependencyArtifact
     }
 
     private static void validateCachedOrFull(
-            ArtifactCoordinate coordinate, ContentDigest digest, byte[] bytes, FailureReason corruptReason)
+            Path root, ArtifactCoordinate coordinate, ContentDigest digest, byte[] bytes, FailureReason corruptReason)
             throws AcquisitionFailure {
-        var key = new ValidatedContentKey(digest, coordinate.extension());
-        if (Boolean.TRUE.equals(VALIDATED_CONTENT_CACHE.get(key))) {
-            VALIDATED_CONTENT_CACHE_HITS.incrementAndGet();
+        if (isValidatedArtifact(root, digest, coordinate.extension())) {
             return;
         }
         validate(coordinate, bytes, corruptReason);
-        VALIDATED_CONTENT_CACHE.put(key, Boolean.TRUE);
+        markValidatedArtifact(root, digest, coordinate.extension());
     }
 
     private static void validate(
@@ -613,6 +874,9 @@ public final class MavenDependencyArtifactProvider implements DependencyArtifact
         }
 
         @Override public byte[] bytes() { return bytes.clone(); }
+
+        /** Internal read-only view avoiding a second multi-MB array copy during download validation. */
+        byte[] rawBytes() { return bytes; }
     }
 
     static final class RemoteLimitExceeded extends Exception {}
@@ -622,7 +886,12 @@ public final class MavenDependencyArtifactProvider implements DependencyArtifact
         synchronized ClientLease lease(int timeout) {
             HttpClient existing=clients.get(timeout);
             if(existing!=null)return new ClientLease(existing,true);
-            var client=HttpClient.newBuilder().connectTimeout(Duration.ofMillis(timeout)).followRedirects(HttpClient.Redirect.NEVER).build();
+            var client=HttpClient.newBuilder()
+                    .version(HttpClient.Version.HTTP_2)
+                    .executor(Executors.newVirtualThreadPerTaskExecutor())
+                    .connectTimeout(Duration.ofMillis(timeout))
+                    .followRedirects(HttpClient.Redirect.NEVER)
+                    .build();
             boolean pooled=clients.size()<16;if(pooled)clients.put(timeout,client);
             return new ClientLease(client,pooled);
         }

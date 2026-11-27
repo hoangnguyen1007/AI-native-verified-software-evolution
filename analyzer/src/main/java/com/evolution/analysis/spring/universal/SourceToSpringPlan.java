@@ -91,8 +91,9 @@ public final class SourceToSpringPlan {
                 }
 
                 public ContentDigest identity() {
-                        return IngestionEvidence.digest(List.of(inputIdentity, inventory.identity(),
-                                        conditions.identity(), binding.identity(), gaps, methodSelections));
+                        return memoizedIdentity(this, () -> IngestionEvidence.digest(List.of(inputIdentity,
+                                        inventory.identity(), conditions.identity(), binding.identity(), gaps,
+                                        methodSelections)));
                 }
 
                 public Evaluation evaluate(ConfigurationSpace space, ConfigurationAssignment baseline,
@@ -145,8 +146,8 @@ public final class SourceToSpringPlan {
                 }
 
                 public ContentDigest identity() {
-                        return IngestionEvidence
-                                        .digest(List.of(acquisition.identity(), truth.identity(), capabilityGaps()));
+                        return memoizedIdentity(this, () -> IngestionEvidence
+                                        .digest(List.of(acquisition.identity(), truth.identity(), capabilityGaps())));
                 }
         }
 
@@ -161,9 +162,30 @@ public final class SourceToSpringPlan {
                 }
 
                 public ContentDigest identity() {
-                        return IngestionEvidence
-                                        .digest(List.of(acquisition.identity(), truth.identity(), capabilityGaps()));
+                        return memoizedIdentity(this, () -> IngestionEvidence
+                                        .digest(List.of(acquisition.identity(), truth.identity(), capabilityGaps())));
                 }
+        }
+
+        private static final int IDENTITY_CACHE_SLOTS = 64;
+        private static final java.lang.ref.WeakReference<?>[] IDENTITY_KEYS = new java.lang.ref.WeakReference<?>[IDENTITY_CACHE_SLOTS];
+        private static final ContentDigest[] IDENTITY_VALUES = new ContentDigest[IDENTITY_CACHE_SLOTS];
+        private static final Object IDENTITY_LOCK = new Object();
+
+        private static ContentDigest memoizedIdentity(Object key, java.util.function.Supplier<ContentDigest> compute) {
+                int slot = (System.identityHashCode(key) & 0x7fffffff) % IDENTITY_CACHE_SLOTS;
+                synchronized (IDENTITY_LOCK) {
+                        var ref = IDENTITY_KEYS[slot];
+                        if (ref != null && ref.get() == key) {
+                                return IDENTITY_VALUES[slot];
+                        }
+                }
+                ContentDigest digest = compute.get();
+                synchronized (IDENTITY_LOCK) {
+                        IDENTITY_KEYS[slot] = new java.lang.ref.WeakReference<>(key);
+                        IDENTITY_VALUES[slot] = digest;
+                }
+                return digest;
         }
 
         private static List<CapabilityGapRecord> combined(List<CapabilityGapRecord> acquired,
@@ -268,7 +290,8 @@ public final class SourceToSpringPlan {
                         });
                 var inventory = SpringMechanismScanner.scan(new SpringMechanismScanRequest(source.frontend(),
                                 source.framework(), List.of(), List.of()));
-                var lowering = ConditionEvidenceLowering.lower(build, inventory, List.of(),
+                var buildObservations = deriveBuildObservations(build, source, inventory, validationMode);
+                var lowering = ConditionEvidenceLowering.lower(build, inventory, buildObservations,
                                 ConditionEvidenceLowering.Limits.conservative(), validationMode);
                 var generation = FrameworkGeneration.from(source.framework(), Optional.empty(), validationMode,
                                 source.observedNamespaceHint());
@@ -291,20 +314,20 @@ public final class SourceToSpringPlan {
                                 membersByType.computeIfAbsent(declaring, k -> new ArrayList<>()).add(entry.getValue());
                         // A composed/impostor member annotation can conceal an injection site which
                         // the direct-site provider cannot normalize. Keep the member footprint open.
-                        for (var declaring : hierarchy.types().stream().skip(1).toList())
-                                for (var declaration : source.declarations().values()) {
-                                        var member = declaration.entity().identity();
-                                        if (source.owner(member).filter(declaring::equals).isPresent()
-                                                        && source.annotations(member).stream().anyMatch(a -> a.name()
-                                                                        .filter(n -> SITE_METADATA.contains(n) || n
-                                                                                        .equals("jakarta.annotation.Resource"))
-                                                                        .isEmpty() && !source.javaOverride(a)))
+                        for (int hIdx = 1; hIdx < hierarchy.types().size(); hIdx++) {
+                                var declaring = hierarchy.types().get(hIdx);
+                                for (var member : source.declaredMembers(declaring)) {
+                                        if (source.annotations(member).stream().anyMatch(a -> a.name()
+                                                        .filter(n -> SITE_METADATA.contains(n) || n
+                                                                        .equals("jakarta.annotation.Resource"))
+                                                        .isEmpty() && !source.javaOverride(a)))
                                                 acquisitionIssues.add(new UniversalSpringEvidence.Issue(
                                                                 UniversalSpringEvidence.Reason.ANNOTATION_UNSUPPORTED,
                                                                 "inherited-member-metadata:" + member.value(),
                                                                 List.of(source.evidence(member),
                                                                                 source.evidence(entry.getKey()))));
                                 }
+                        }
                         if (!hierarchy.complete())
                                 acquisitionIssues.add(new UniversalSpringEvidence.Issue(
                                                 switch (hierarchy.problem()) {
@@ -402,6 +425,16 @@ public final class SourceToSpringPlan {
                 // schedule, not this construction order, drives discovery and registration.
                 var entries = new ArrayList<>(byDeclaration.entrySet());
                 entries.sort(Comparator.comparing(e -> methods.containsKey(e.getKey())));
+                var nonConditionObligationsByOwner = new HashMap<EntityIdentity, List<ContentDigest>>();
+                for (var obligation : inventory.obligations()) {
+                        if (obligation.primaryMechanism().startsWith("spring.condition.")) continue;
+                        var rawObs = raw.get(obligation.rawObservationIdentity());
+                        if (rawObs != null) {
+                                rawObs.owner().ifPresent(ownerId -> nonConditionObligationsByOwner
+                                                .computeIfAbsent(ownerId, k -> new ArrayList<>())
+                                                .add(obligation.identity()));
+                        }
+                }
                 for (var entry : entries) {
                         var type = entry.getKey();
                         var candidate = entry.getValue();
@@ -414,11 +447,8 @@ public final class SourceToSpringPlan {
                                 acquisitionIssues.add(new UniversalSpringEvidence.Issue(
                                                 UniversalSpringEvidence.Reason.ANNOTATION_UNSUPPORTED, type.value(),
                                                 List.of(evidence)));
-                        var obligations = new ArrayList<>(inventory.obligations().stream()
-                                        .filter(o -> raw.get(o.rawObservationIdentity()).owner().filter(type::equals)
-                                                        .isPresent())
-                                        .filter(o -> !o.primaryMechanism().startsWith("spring.condition."))
-                                        .map(SpringMechanismInventory.SemanticObligation::identity).toList());
+                        var obligations = new ArrayList<ContentDigest>(
+                                        nonConditionObligationsByOwner.getOrDefault(type, List.of()));
                         obligations.addAll(scans);
                         var event = new RegistrationEvent(build.identity(), lowering.semantics(),
                                         IngestionEvidence.digest(type),
@@ -467,9 +497,12 @@ public final class SourceToSpringPlan {
                                 scope.overrides(), registrationLimits);
                 var steps = new ArrayList<BeanRegistrationPlan.Step>();
                 var stepOrder = new HashMap<String, List<String>>();
+                var eventByIdentity = new HashMap<RegistrationEvent.Identity, RegistrationEvent>(events.size() * 2);
+                for (var evItem : events) {
+                        eventByIdentity.put(evItem.identity(), evItem);
+                }
                 for (var e : events) {
-                        var gate = e.parent().map(p -> events.stream().filter(parent -> parent.identity().equals(p))
-                                        .findFirst().orElseThrow().eventSlot());
+                        var gate = e.parent().map(p -> Objects.requireNonNull(eventByIdentity.get(p)).eventSlot());
                         var ordered = new ArrayList<String>();
                         var names = e.candidate().orElseThrow().declaredNameKey();
                         if (!names.aliases().isEmpty()) {
@@ -832,6 +865,240 @@ public final class SourceToSpringPlan {
                                 List.of(),
                                 List.of(),
                                 List.of("Registration order and container closure were derived from static source declarations (@Order + canonical identity)."));
+        }
+
+        private static List<ConditionEvidenceLowering.BuildObservation> deriveBuildObservations(
+                        SpringBuildContext build,
+                        SpringSourceEvidence source,
+                        SpringMechanismInventory inventory,
+                        SpringFrameworkEvidence.ValidationMode validationMode) {
+                var rawById = new HashMap<ContentDigest, SpringMechanismInventory.RawObservation>(
+                                inventory.rawObservations().size() * 2);
+                for (var r : inventory.rawObservations()) rawById.put(r.identity(), r);
+
+                Set<String> knownPresentTypes = null;
+                Set<String> snapshotResourceSuffixes = null;
+                var derived = new ArrayList<ConditionEvidenceLowering.BuildObservation>();
+                var seenRaw = new HashSet<ContentDigest>();
+
+                for (var obligation : inventory.obligations()) {
+                        if (obligation.secondaryTags().contains("spring.annotation.composed")) continue;
+                        var raw = rawById.get(obligation.rawObservationIdentity());
+                        if (raw == null || raw.kind() != SpringMechanismInventory.RawKind.ANNOTATION_USE
+                                        || raw.span().isEmpty() || !seenRaw.add(raw.identity())) {
+                                continue;
+                        }
+                        String annType = resolveBuildConditionType(raw, source, validationMode);
+                        if (annType == null) continue;
+                        if (!source.framework().allows(true, validationMode)) continue;
+
+                        Map<String, LiteralConditionAnnotation.Value> attrs;
+                        try {
+                                attrs = LiteralConditionAnnotation.parse(raw.spelling());
+                        } catch (IllegalArgumentException unsupported) {
+                                continue;
+                        }
+
+                        switch (annType) {
+                                case "org.springframework.boot.autoconfigure.condition.ConditionalOnJava" -> {
+                                        if (!Set.of("value", "range").containsAll(attrs.keySet())) continue;
+                                        Integer targetJava = parseJavaVersion(attrs.get("value"));
+                                        String range = parseEnumSimpleName(attrs.get("range"), "EQUAL_OR_NEWER");
+                                        if (targetJava == null || range == null) continue;
+                                        int release = build.platformRelease();
+                                        LogicalValue verdict = switch (range) {
+                                                case "EQUAL_OR_NEWER" -> release >= targetJava ? TRUE : FALSE;
+                                                case "OLDER_THAN" -> release < targetJava ? TRUE : FALSE;
+                                                default -> null;
+                                        };
+                                        if (verdict != null) {
+                                                var ev = new ConditionEvidence.Derived(
+                                                                List.of(IngestionEvidence.digest(build.identity()), source.identity()),
+                                                                PROVIDER, "platform-release-java-" + release);
+                                                derived.add(new ConditionEvidenceLowering.BuildObservation(
+                                                                raw.identity(),
+                                                                ConditionExpression.BuildPredicate.JAVA_VERSION,
+                                                                build.identity(), verdict, ev));
+                                        }
+                                }
+                                case "org.springframework.boot.autoconfigure.condition.ConditionalOnResource" -> {
+                                        if (!Set.of("resources").containsAll(attrs.keySet())) continue;
+                                        List<String> resources;
+                                        try {
+                                                resources = LiteralConditionAnnotation.strings(attrs, "resources", List.of());
+                                        } catch (IllegalArgumentException unsupported) {
+                                                continue;
+                                        }
+                                        if (resources.isEmpty()) continue;
+                                        if (snapshotResourceSuffixes == null) {
+                                                snapshotResourceSuffixes = indexSnapshotClasspathResources(source);
+                                        }
+                                        boolean allClasspathAndPresent = true;
+                                        for (String res : resources) {
+                                                if (!res.startsWith("classpath:")) {
+                                                        allClasspathAndPresent = false;
+                                                        break;
+                                                }
+                                                String rel = res.substring("classpath:".length());
+                                                while (rel.startsWith("/")) rel = rel.substring(1);
+                                                if (rel.isEmpty() || !snapshotResourceSuffixes.contains(rel)) {
+                                                        allClasspathAndPresent = false;
+                                                        break;
+                                                }
+                                        }
+                                        // Only emit positive TRUE proof when all classpath resources exist in captured snapshot files.
+                                        // Absence from snapshot files cannot disprove a resource bundled inside a dependency JAR.
+                                        if (allClasspathAndPresent) {
+                                                var ev = new ConditionEvidence.Derived(
+                                                                List.of(IngestionEvidence.digest(build.identity()), source.identity()),
+                                                                PROVIDER, "snapshot-classpath-resource-present");
+                                                derived.add(new ConditionEvidenceLowering.BuildObservation(
+                                                                raw.identity(),
+                                                                ConditionExpression.BuildPredicate.RESOURCE_PRESENT,
+                                                                build.identity(), TRUE, ev));
+                                        }
+                                }
+                                case "org.springframework.boot.autoconfigure.condition.ConditionalOnClass",
+                                     "org.springframework.boot.autoconfigure.condition.ConditionalOnMissingClass" -> {
+                                        if (!Set.of("value", "name").containsAll(attrs.keySet())) continue;
+                                        List<String> classTokens;
+                                        List<String> nameTokens;
+                                        try {
+                                                classTokens = LiteralConditionAnnotation.classes(attrs, "value");
+                                                nameTokens = LiteralConditionAnnotation.strings(attrs, "name", List.of());
+                                        } catch (IllegalArgumentException unsupported) {
+                                                continue;
+                                        }
+                                        if (classTokens.isEmpty() && nameTokens.isEmpty()) continue;
+                                        if (knownPresentTypes == null) {
+                                                knownPresentTypes = indexKnownPresentTypes(source);
+                                        }
+                                        var resolvedNames = new ArrayList<String>(classTokens.size() + nameTokens.size());
+                                        boolean allTokensResolved = true;
+                                        for (String token : classTokens) {
+                                                var resolved = source.resolveImportedTypeName(raw.document(), token, knownPresentTypes);
+                                                if (resolved.isPresent()) {
+                                                        resolvedNames.add(resolved.orElseThrow());
+                                                } else {
+                                                        allTokensResolved = false;
+                                                }
+                                        }
+                                        resolvedNames.addAll(nameTokens);
+                                        boolean isOnClass = annType.endsWith(".ConditionalOnClass");
+                                        if (isOnClass) {
+                                                if (allTokensResolved && !resolvedNames.isEmpty()
+                                                                && knownPresentTypes.containsAll(resolvedNames)) {
+                                                        var ev = new ConditionEvidence.Derived(
+                                                                        List.of(IngestionEvidence.digest(build.identity()), source.identity()),
+                                                                        PROVIDER, "frontend-resolved-class-present");
+                                                        derived.add(new ConditionEvidenceLowering.BuildObservation(
+                                                                        raw.identity(),
+                                                                        ConditionExpression.BuildPredicate.CLASS_PRESENT,
+                                                                        build.identity(), TRUE, ev));
+                                                }
+                                        } else {
+                                                // @ConditionalOnMissingClass is definitely FALSE if any referenced class is positively present.
+                                                boolean anyPresent = resolvedNames.stream().anyMatch(knownPresentTypes::contains);
+                                                if (anyPresent) {
+                                                        var ev = new ConditionEvidence.Derived(
+                                                                        List.of(IngestionEvidence.digest(build.identity()), source.identity()),
+                                                                        PROVIDER, "frontend-resolved-class-present");
+                                                        derived.add(new ConditionEvidenceLowering.BuildObservation(
+                                                                        raw.identity(),
+                                                                        ConditionExpression.BuildPredicate.CLASS_PRESENT,
+                                                                        build.identity(), FALSE, ev));
+                                                }
+                                        }
+                                }
+                                default -> {}
+                        }
+                }
+                return derived;
+        }
+
+        private static String resolveBuildConditionType(
+                        SpringMechanismInventory.RawObservation raw,
+                        SpringSourceEvidence source,
+                        SpringFrameworkEvidence.ValidationMode validationMode) {
+                if (raw.owner().isPresent()) {
+                        for (var ann : source.annotations(raw.owner().orElseThrow())) {
+                                if (raw.span().equals(Optional.of(ann.use().span())) && ann.name().isPresent()) {
+                                        String n = ann.name().orElseThrow();
+                                        if (n.startsWith("org.springframework.boot.autoconfigure.condition.ConditionalOn")) {
+                                                return n;
+                                        }
+                                }
+                        }
+                }
+                if (validationMode == SpringFrameworkEvidence.ValidationMode.COMPATIBLE_FAMILY_OR_SOURCE_SCOPED
+                                && source.framework().artifacts().isEmpty()) {
+                        String sp = raw.spelling().stripLeading();
+                        if (sp.startsWith("@ConditionalOnJava")) return "org.springframework.boot.autoconfigure.condition.ConditionalOnJava";
+                        if (sp.startsWith("@ConditionalOnResource")) return "org.springframework.boot.autoconfigure.condition.ConditionalOnResource";
+                        if (sp.startsWith("@ConditionalOnClass")) return "org.springframework.boot.autoconfigure.condition.ConditionalOnClass";
+                        if (sp.startsWith("@ConditionalOnMissingClass")) return "org.springframework.boot.autoconfigure.condition.ConditionalOnMissingClass";
+                }
+                return null;
+        }
+
+        private static Set<String> indexKnownPresentTypes(SpringSourceEvidence source) {
+                var set = new HashSet<String>(source.declarations().size() * 2);
+                for (var decl : source.declarations().values()) {
+                        if (decl.status() != SemanticStatus.RESOLVED || decl.entity().kind() != EntityKind.TYPE) continue;
+                        String qn = source.typeName(decl.entity().identity());
+                        if (qn != null && !qn.isEmpty()) set.add(qn);
+                }
+                return set;
+        }
+
+        private static Set<String> indexSnapshotClasspathResources(SpringSourceEvidence source) {
+                var set = new HashSet<String>();
+                for (var file : source.manifest().snapshot().files()) {
+                        String path = file.path().replace('\\', '/');
+                        int idx = path.indexOf("/resources/");
+                        if (idx >= 0 && idx + "/resources/".length() < path.length()) {
+                                set.add(path.substring(idx + "/resources/".length()));
+                        } else if (path.startsWith("resources/") && path.length() > "resources/".length()) {
+                                set.add(path.substring("resources/".length()));
+                        }
+                }
+                return set;
+        }
+
+        private static String parseEnumSimpleName(LiteralConditionAnnotation.Value value, String defaultValue) {
+                if (value == null) return defaultValue;
+                if (value instanceof LiteralConditionAnnotation.Enums enums && enums.names().size() == 1) {
+                        String raw = enums.names().getFirst();
+                        int dot = raw.lastIndexOf('.');
+                        return dot >= 0 ? raw.substring(dot + 1) : raw;
+                }
+                return null;
+        }
+
+        private static Integer parseJavaVersion(LiteralConditionAnnotation.Value value) {
+                String name = parseEnumSimpleName(value, null);
+                if (name == null) return null;
+                return switch (name) {
+                        case "EIGHT" -> 8;
+                        case "NINE" -> 9;
+                        case "TEN" -> 10;
+                        case "ELEVEN" -> 11;
+                        case "TWELVE" -> 12;
+                        case "THIRTEEN" -> 13;
+                        case "FOURTEEN" -> 14;
+                        case "FIFTEEN" -> 15;
+                        case "SIXTEEN" -> 16;
+                        case "SEVENTEEN" -> 17;
+                        case "EIGHTEEN" -> 18;
+                        case "NINETEEN" -> 19;
+                        case "TWENTY" -> 20;
+                        case "TWENTY_ONE" -> 21;
+                        case "TWENTY_TWO" -> 22;
+                        case "TWENTY_THREE" -> 23;
+                        case "TWENTY_FOUR" -> 24;
+                        case "TWENTY_FIVE" -> 25;
+                        default -> null;
+                };
         }
 
         private static boolean metadataComplete(SpringSourceEvidence source, EntityIdentity type,

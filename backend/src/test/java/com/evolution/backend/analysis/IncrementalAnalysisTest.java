@@ -52,8 +52,11 @@ class IncrementalAnalysisTest {
             var v1 = finished(jobs, jobs.submit("inc", "run1").job().id());
             ContentDigest g1 = v1.result().orElseThrow().graph().orElseThrow();
             assertNotNull(g1);
-            // Verify incremental caches were populated on disk
-            assertTrue(Files.isRegularFile(intake.resolve("incremental-cache/polyglot-syntax.bin.gz")));
+            // Verify incremental caches were populated on disk (sharded v3 polyglot + Java source-set cache)
+            assertTrue(Files.isDirectory(intake.resolve("incremental-cache/polyglot-v3")));
+            try (var shards = Files.walk(intake.resolve("incremental-cache/polyglot-v3"))) {
+                assertTrue(shards.anyMatch(p -> p.getFileName().toString().endsWith(".pg3")));
+            }
             assertTrue(Files.isDirectory(intake.resolve("incremental-cache/java-sets")));
         }
 

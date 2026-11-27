@@ -12,8 +12,19 @@ import javax.net.ssl.*;
 public final class PinnedHttps {
     private final GitHostPolicy policy;
     public PinnedHttps(GitHostPolicy policy){this.policy=Objects.requireNonNull(policy);}
+    private static final Set<String> ALLOWED_REQUEST_HEADERS = Set.of(
+            "accept", "content-type", "authorization",
+            "user-agent", "x-github-api-version", "if-none-match");
+    private static final Set<String> SINGLE_VALUE_RESPONSE_HEADERS = Set.of(
+            "content-length", "transfer-encoding", "content-encoding", "host", "location");
+
     public record Response(int status,Map<String,String> headers,InputStream body) implements AutoCloseable {
-        public Response {headers=Collections.unmodifiableMap(new TreeMap<>(headers));Objects.requireNonNull(body);}
+        public Response {
+            var copy=new TreeMap<String,String>(String.CASE_INSENSITIVE_ORDER);
+            copy.putAll(headers);
+            headers=Collections.unmodifiableMap(copy);
+            Objects.requireNonNull(body);
+        }
         @Override public void close()throws IOException{body.close();}
     }
     public InputStream request(URI uri,String method,Map<String,String> headers,byte[] body,BooleanSupplier cancelled)throws IOException{
@@ -39,15 +50,30 @@ public final class PinnedHttps {
             var text=new StringBuilder(method+" "+path+" HTTP/1.1\r\nHost: "+uri.getHost()+(port==443?"":":"+port)+"\r\nConnection: close\r\nAccept-Encoding: identity\r\nContent-Length: "+body.length+"\r\n");
             var auth=policy.authorization(uri);if(auth.isPresent())text.append("Authorization: ").append(auth.orElseThrow()).append("\r\n");
             for(var h:headers.entrySet()){
-                if(!h.getKey().matches("[A-Za-z-]+")||!Set.of("accept","content-type","authorization").contains(h.getKey().toLowerCase(Locale.ROOT))||h.getValue().contains("\r")||h.getValue().contains("\n"))throw new IOException("HTTP_HEADER_DENIED");
-                if(h.getKey().equalsIgnoreCase("authorization")&&auth.isPresent())throw new IOException("AUTHORIZATION_CONFLICT");text.append(h.getKey()).append(": ").append(h.getValue()).append("\r\n");
+                String lowerKey=h.getKey().toLowerCase(Locale.ROOT);
+                if(!h.getKey().matches("[A-Za-z-]+")||!ALLOWED_REQUEST_HEADERS.contains(lowerKey)||h.getValue().contains("\r")||h.getValue().contains("\n"))throw new IOException("HTTP_HEADER_DENIED");
+                if(lowerKey.equals("authorization")&&auth.isPresent())throw new IOException("AUTHORIZATION_CONFLICT");text.append(h.getKey()).append(": ").append(h.getValue()).append("\r\n");
             }
             text.append("\r\n");var output=socket.getOutputStream();output.write(text.toString().getBytes(StandardCharsets.US_ASCII));output.write(body);output.flush();
             var input=new BufferedInputStream(socket.getInputStream(),65536);String status=line(input,8192);if(!status.matches("HTTP/1\\.[01] [1-5][0-9][0-9](?: .*)?"))throw new IOException("HTTP_STATUS_INVALID");
             int code=Integer.parseInt(status.substring(9,12));
             var response=new TreeMap<String,String>(String.CASE_INSENSITIVE_ORDER);int length=0;String line;
             while(!(line=line(input,8192)).isEmpty()){
-                length+=line.length();if(length>65536)throw new IOException("HTTP_HEADERS_OVERSIZE");int colon=line.indexOf(':');if(colon<1||response.put(line.substring(0,colon),line.substring(colon+1).strip())!=null)throw new IOException("HTTP_HEADERS_INVALID");
+                length+=line.length();if(length>65536)throw new IOException("HTTP_HEADERS_OVERSIZE");
+                int colon=line.indexOf(':');
+                if(colon<1)throw new IOException("HTTP_HEADERS_INVALID");
+                String name=line.substring(0,colon).trim();
+                String lowerName=name.toLowerCase(Locale.ROOT);
+                if(name.isEmpty()||!name.matches("[!#$%&'*+\\-.^_`|~0-9A-Za-z]+"))throw new IOException("HTTP_HEADERS_INVALID");
+                String value=line.substring(colon+1).strip();
+                String prior=response.get(name);
+                if(prior!=null){
+                    if(SINGLE_VALUE_RESPONSE_HEADERS.contains(lowerName))throw new IOException("HTTP_HEADERS_INVALID");
+                    String sep="set-cookie".equals(lowerName)?"\n":", ";
+                    response.put(name,prior+sep+value);
+                }else{
+                    response.put(name,value);
+                }
             }
             InputStream framed=input;
             if(response.containsKey("Content-Encoding")&&!response.get("Content-Encoding").equalsIgnoreCase("identity"))throw new IOException("HTTP_ENCODING_DENIED");

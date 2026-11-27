@@ -1,7 +1,8 @@
 ARG BASE
 FROM ${BASE}
+USER root
 
-# Prepare miniature Alpine/Linux QEMU guest with JDK 21, Maven/Gradle, and ClassDependencyCensus.
+# Layer 1 (cached across runs): Miniature Alpine/Linux QEMU guest with JDK, Maven/Gradle, and ClassDependencyCensus.
 RUN set -eu; mkdir -p /guest/bin /guest/usr/lib /guest/etc /guest/proc /guest/sys /guest/dev /guest/tmp /guest/work /guest/census /guest/maven /guest/gradle; \
     cp -a /lib /guest/lib; cp -a /usr/lib/. /guest/usr/lib/; cp /bin/busybox /guest/bin/; \
     for tool in $(/bin/busybox --list); do [ "$tool" = busybox ] || ln -sf busybox "/guest/bin/$tool"; done; \
@@ -25,12 +26,13 @@ RUN set -eu; \
     fi; \
     rm -rf /tmp/tool-dist /tmp/maven-dist /tmp/gradle-dist
 
-COPY inputs/ClassDependencyCensus.java /tmp/ClassDependencyCensus.java
+COPY ClassDependencyCensus.java /tmp/ClassDependencyCensus.java
 RUN "$JAVA_HOME/bin/javac" -d /guest/census /tmp/ClassDependencyCensus.java && rm -f /tmp/ClassDependencyCensus.java
 
 COPY guest-init.sh /guest/init
+# Layer 2 (per-run): Copy candidate repo & staged offline cache, pack initramfs without network.
 COPY inputs/ /guest/inputs/
 RUN --network=none sed -i 's/\r$//' /guest/init && chmod 0555 /guest/init && \
     cd /guest && find . | LC_ALL=C sort | cpio -o -H newc | gzip -1 > /guest.cpio.gz
 
-ENTRYPOINT ["/bin/busybox", "timeout", "-s", "KILL", "900", "qemu-system-x86_64", "-no-user-config", "-nodefaults", "-nic", "none", "-display", "none", "-monitor", "none", "-serial", "stdio", "-machine", "q35,accel=tcg", "-cpu", "max", "-smp", "2", "-m", "2560", "-no-reboot", "-kernel", "/boot/vmlinuz-virt", "-initrd", "/guest.cpio.gz", "-append", "console=ttyS0 quiet loglevel=3 rdinit=/init panic=-1"]
+ENTRYPOINT ["/bin/busybox", "timeout", "-s", "KILL", "900", "qemu-system-x86_64", "-no-user-config", "-nodefaults", "-nic", "none", "-display", "none", "-monitor", "none", "-serial", "stdio", "-machine", "q35,accel=tcg", "-cpu", "max", "-smp", "2", "-m", "4096", "-no-reboot", "-kernel", "/boot/vmlinuz-virt", "-initrd", "/guest.cpio.gz", "-append", "console=ttyS0 quiet loglevel=3 rdinit=/init panic=-1"]

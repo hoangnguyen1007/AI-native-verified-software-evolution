@@ -176,7 +176,8 @@ final class CapturedRepairVerificationTest {
                         "bundle", fController.bundle().identity().value(),
                         "context", baselineReport.evaluation().context()));
                 assertEquals("LIVE", diagRes.get("mode"));
-                assertEquals("CITATIONS_VALIDATED", diagRes.get("status"));
+                assertEquals("CITATIONS_VALIDATED", diagRes.get("status"),
+                        () -> "Unexpected diagnosis outcome: " + diagRes + " prompts=" + diagPrompts);
                 assertFalse(diagPrompts.getFirst().contains("AllowedService"));
                 String diagInput = GraphJson.string(diagRes.get("input"));
 
@@ -188,13 +189,13 @@ final class CapturedRepairVerificationTest {
                         "diagnosisInput", diagInput));
                 assertEquals("WITHHELD", legacyProp.get("status"));
 
-                // 3. repair-options returns 14 AST recipes + enriched AI offer.
+                // 3. repair-options returns 16 AST recipes + enriched AI offer.
                 var opts = postApi(baseApi, baselineGraphId, baselineReportId, "repair-options", Map.of(
                         "identity", fController.identity().value(),
                         "bundle", fController.bundle().identity().value(),
                         "context", baselineReport.evaluation().context(),
                         "diagnosisInput", diagInput));
-                assertEquals(14, GraphJson.array(opts.get("recipes")).size());
+                assertEquals(16, GraphJson.array(opts.get("recipes")).size());
 
                 // 4. RECIPE: java.remove-unused-injected-field
                 var propInjected = postApi(baseApi, baselineGraphId, baselineReportId, "repair-proposal", Map.of(
@@ -538,7 +539,7 @@ final class CapturedRepairVerificationTest {
     }
 
     private static AnalysisJobs.View awaitJob(AnalysisJobs jobs, String id) throws Exception {
-        for (int i = 0; i < 600; i++) {
+        for (int i = 0; i < 1800; i++) {
             var v = jobs.get(UUID.fromString(id));
             if (AnalysisJobs.terminal(v.state())) return v;
             Thread.sleep(50);

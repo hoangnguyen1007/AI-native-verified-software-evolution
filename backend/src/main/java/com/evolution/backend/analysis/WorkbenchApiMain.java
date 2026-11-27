@@ -23,17 +23,154 @@ import java.io.IOException;
  * connections.
  */
 public final class WorkbenchApiMain {
-    public static void main(String[] args) {
-        if (args.length < 6 || args.length > 8) {
-            System.err.println(
-                    "Usage: WorkbenchApiMain <source> <repository-coordinate> <jdk> <release> <maven-cache> <existing-graph-directory> [port] [policy.yaml]");
-            System.exit(2);
+    static final int MAX_CAS_READ_BYTES = 16 * 1024 * 1024;
+
+    static Optional<byte[]> readBoundedCasContent(
+            Path contentRoot,
+            java.util.concurrent.atomic.AtomicReference<com.evolution.analysis.filesystem.StreamingContentStore> contentStoreRef,
+            ContentDigest digest,
+            OptionalLong expectedSize) {
+        if (expectedSize.isEmpty() || expectedSize.getAsLong() < 0
+                || expectedSize.getAsLong() > MAX_CAS_READ_BYTES
+                || !Files.isDirectory(contentRoot, LinkOption.NOFOLLOW_LINKS)) {
+            return Optional.empty();
         }
         try {
-            var source = LocalAnalysisRunner.safe(Path.of(args[0]));
-            var jdk = LocalAnalysisRunner.safe(Path.of(args[2]));
-            var cache = LocalAnalysisRunner.safe(Path.of(args[4]));
-            var directory = LocalAnalysisRunner.safe(Path.of(args[5]));
+            var cas = contentStoreRef.get();
+            if (cas == null) {
+                var created = new com.evolution.analysis.filesystem.StreamingContentStore(contentRoot);
+                if (!contentStoreRef.compareAndSet(null, created)) {
+                    cas = contentStoreRef.get();
+                } else {
+                    cas = created;
+                }
+            }
+            try (var in = cas.open(new com.evolution.analysis.acquisition.streaming.ContentHandle(
+                    digest, expectedSize.getAsLong()))) {
+                byte[] data = in.readNBytes(MAX_CAS_READ_BYTES + 1);
+                if (data.length > MAX_CAS_READ_BYTES) {
+                    return Optional.empty();
+                }
+                return Optional.of(data);
+            }
+        } catch (IOException | IllegalArgumentException unavailable) {
+            return Optional.empty();
+        }
+    }
+
+    public record LaunchOptions(
+            String source,
+            String coordinate,
+            String jdk,
+            int release,
+            String mavenCache,
+            String graphDirectory,
+            String bindHost,
+            int port,
+            Optional<String> policyPath) {
+    }
+
+    public static LaunchOptions parseLaunchOptions(
+            String[] args,
+            java.util.function.Function<String, String> env,
+            java.util.function.Function<String, String> props) {
+        String hostFlag = null;
+        String portFlag = null;
+        String policyFlag = null;
+        var positional = new ArrayList<String>();
+        for (int i = 0; i < args.length; i++) {
+            String arg = args[i];
+            if ("--host".equals(arg)) {
+                if (i + 1 >= args.length) throw new IllegalArgumentException("Missing value for --host");
+                hostFlag = args[++i];
+            } else if (arg.startsWith("--host=")) {
+                hostFlag = arg.substring("--host=".length());
+            } else if ("--port".equals(arg)) {
+                if (i + 1 >= args.length) throw new IllegalArgumentException("Missing value for --port");
+                portFlag = args[++i];
+            } else if (arg.startsWith("--port=")) {
+                portFlag = arg.substring("--port=".length());
+            } else if ("--policy".equals(arg)) {
+                if (i + 1 >= args.length) throw new IllegalArgumentException("Missing value for --policy");
+                policyFlag = args[++i];
+            } else if (arg.startsWith("--policy=")) {
+                policyFlag = arg.substring("--policy=".length());
+            } else if (arg.startsWith("--")) {
+                throw new IllegalArgumentException("Unknown option: " + arg);
+            } else {
+                positional.add(arg);
+            }
+        }
+        if (positional.size() < 6 || positional.size() > 8) {
+            throw new IllegalArgumentException("Expected 6..8 positional arguments");
+        }
+        int release = Integer.parseInt(positional.get(3));
+        String resolvedHost = (hostFlag != null && !hostFlag.isBlank())
+                ? hostFlag.strip()
+                : ArchitectureHttpServer.bindHostFromEnvironment(env, props);
+
+        String portSource = null;
+        if (portFlag != null && !portFlag.isBlank()) {
+            if (positional.size() >= 7) {
+                throw new IllegalArgumentException("Specify port via --port or positional argument, not both");
+            }
+            portSource = portFlag.strip();
+        } else if (positional.size() >= 7) {
+            portSource = positional.get(6).strip();
+        } else {
+            portSource = firstNonBlank(
+                    props.apply("evo.http.port"),
+                    env.apply("EVO_PORT"),
+                    env.apply("PORT"));
+        }
+        int resolvedPort = portSource == null ? 8080 : Integer.parseInt(portSource);
+        if (resolvedPort < 0 || resolvedPort > 65535) {
+            throw new IllegalArgumentException("Invalid port: " + resolvedPort);
+        }
+
+        Optional<String> policyPath = Optional.empty();
+        if (policyFlag != null && !policyFlag.isBlank()) {
+            policyPath = Optional.of(policyFlag.strip());
+        } else if (positional.size() == 8) {
+            policyPath = Optional.of(positional.get(7));
+        }
+
+        return new LaunchOptions(
+                positional.get(0),
+                positional.get(1),
+                positional.get(2),
+                release,
+                positional.get(4),
+                positional.get(5),
+                resolvedHost,
+                resolvedPort,
+                policyPath);
+    }
+
+    private static String firstNonBlank(String... values) {
+        for (String v : values) {
+            if (v != null && !v.isBlank()) {
+                return v.strip();
+            }
+        }
+        return null;
+    }
+
+    public static void main(String[] args) {
+        LaunchOptions launch;
+        try {
+            launch = parseLaunchOptions(args, System::getenv, System::getProperty);
+        } catch (IllegalArgumentException invalid) {
+            System.err.println(
+                    "Usage: WorkbenchApiMain [--host <bind-host>] [--port <port>] <source> <repository-coordinate> <jdk> <release> <maven-cache> <existing-graph-directory> [port] [policy.yaml]");
+            System.exit(2);
+            return;
+        }
+        try {
+            var source = LocalAnalysisRunner.safe(Path.of(launch.source()));
+            var jdk = LocalAnalysisRunner.safe(Path.of(launch.jdk()));
+            var cache = LocalAnalysisRunner.safe(Path.of(launch.mavenCache()));
+            var directory = LocalAnalysisRunner.safe(Path.of(launch.graphDirectory()));
             if (!Files.isDirectory(source, LinkOption.NOFOLLOW_LINKS)
                     || !Files.isDirectory(jdk, LinkOption.NOFOLLOW_LINKS))
                 throw new IllegalArgumentException("Inputs unavailable");
@@ -45,8 +182,8 @@ public final class WorkbenchApiMain {
                     ? List.of(source.relativize(directory).toString().replace('\\', '/'))
                     : List.<String>of();
             Optional<LocalAnalysisRunner.PolicyInput> policy = Optional.empty();
-            if (args.length == 8) {
-                var path = LocalAnalysisRunner.safe(Path.of(args[7]));
+            if (launch.policyPath().isPresent()) {
+                var path = LocalAnalysisRunner.safe(Path.of(launch.policyPath().orElseThrow()));
                 if (!Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS))
                     throw new IllegalArgumentException("Policy unavailable");
                 try (var stream = Files.newInputStream(path, LinkOption.NOFOLLOW_LINKS)) {
@@ -56,56 +193,43 @@ public final class WorkbenchApiMain {
             var artifactPolicy = artifactPolicy(System.getProperty("evo.workbench.artifactRepositories", ""));
             var contentRoot = directory.resolve("acquisition/content");
             var contentStoreRef = new java.util.concurrent.atomic.AtomicReference<com.evolution.analysis.filesystem.StreamingContentStore>();
-            RepairSource.registerContentFallback((digest, expectedSize) -> {
-                if (expectedSize.isEmpty() || expectedSize.getAsLong() < 0
-                        || !Files.isDirectory(contentRoot, LinkOption.NOFOLLOW_LINKS)) {
-                    return Optional.empty();
-                }
-                try {
-                    var cas = contentStoreRef.get();
-                    if (cas == null) {
-                        var created = new com.evolution.analysis.filesystem.StreamingContentStore(contentRoot);
-                        if (!contentStoreRef.compareAndSet(null, created)) {
-                            cas = contentStoreRef.get();
-                        } else {
-                            cas = created;
-                        }
-                    }
-                    try (var in = cas.open(new com.evolution.analysis.acquisition.streaming.ContentHandle(digest,
-                            expectedSize.getAsLong()))) {
-                        return Optional.of(in.readAllBytes());
-                    }
-                } catch (IOException | IllegalArgumentException unavailable) {
-                    return Optional.empty();
-                }
-            });
+            RepairSource.registerContentFallback((digest, expectedSize) ->
+                    readBoundedCasContent(contentRoot, contentStoreRef, digest, expectedSize));
+            var acquisitionDir = directory.resolve("acquisition");
+            var sharedCaches = LocalAnalysisRunner.sharedCaches(acquisitionDir);
             var runner = new LocalAnalysisRunner(new LocalAnalysisRunner.Input(source,
-                    RepositoryIdentity.fromCanonicalCoordinate(args[1]), jdk, Integer.parseInt(args[3]), cache,
+                    RepositoryIdentity.fromCanonicalCoordinate(launch.coordinate()), jdk, launch.release(), cache,
                     Optional.empty(), true, false, exclusions, policy, LocalAnalysisRunner.SpringInput.autoMultiConfig()),
-                    directory.resolve("acquisition"), artifactPolicy,
+                    acquisitionDir, artifactPolicy,
                     LocalAnalysisRunner.NativeExecutionConfig.fromEnvironment(),
-                    Optional.of(directory));
+                    Optional.of(directory),
+                    sharedCaches);
             // The streamed reader is bounded by the actual file and its token limits.
             // Current free space is checked separately for new writes.
             long bytes = Long.MAX_VALUE - 1;
             var graphLimits = new GraphJson.StreamLimits(bytes, 128, bytes, Integer.MAX_VALUE - 8);
             var legacy = new FileGraphStore(directory, bytes, graphLimits);
             var pages = new PartitionedGraphStore(directory.resolve("graph-pages"));
-            final class WorkbenchGraphs implements GraphStore, AutoCloseable {
-                // Large graphs already carry both adjacency indexes. Keep only the most
-                // recently used
-                // graph; a cold query may read the durable snapshot again.
+            final class WorkbenchGraphs implements GraphStore, ArchitectureQueryApi.GraphStorageLocation, AutoCloseable {
+                // Keep 2 hot graphs (enabling fast before/after snapshot & PR comparisons) and 32 manifests.
                 private record FailedLoad(long size, long modifiedMillis, GraphStoreException.Reason reason) {
                 }
 
                 private final Map<ContentDigest, KnowledgeGraph> cache = Collections
-                        .synchronizedMap(new LinkedHashMap<>(2, 0.75f, true) {
+                        .synchronizedMap(new LinkedHashMap<>(4, 0.75f, true) {
                             @Override
                             protected boolean removeEldestEntry(Map.Entry<ContentDigest, KnowledgeGraph> eldest) {
-                                return size() > 1;
+                                return size() > 2;
                             }
                         });
-                private final ExecutorService loader = Executors.newSingleThreadExecutor(task -> {
+                private final Map<ContentDigest, GraphManifest> manifestCache = Collections
+                        .synchronizedMap(new LinkedHashMap<>(32, 0.75f, true) {
+                            @Override
+                            protected boolean removeEldestEntry(Map.Entry<ContentDigest, GraphManifest> eldest) {
+                                return size() > 32;
+                            }
+                        });
+                private final ExecutorService loader = Executors.newFixedThreadPool(2, task -> {
                     var thread = new Thread(task, "workbench-graph-loader");
                     thread.setDaemon(true);
                     return thread;
@@ -125,6 +249,11 @@ public final class WorkbenchApiMain {
 
                 private Path snapshotFile(ContentDigest id) {
                     return directory.resolve(id.value().substring(7) + ".graph.json");
+                }
+
+                @Override
+                public Path jsonPath(ContentDigest id) {
+                    return snapshotFile(id);
                 }
 
                 private FailedLoad fileSignature(ContentDigest id, GraphStoreException.Reason reason) {
@@ -198,6 +327,7 @@ public final class WorkbenchApiMain {
                     }
                     failedLoads.remove(graph.identity());
                     cache.put(graph.identity(), graph);
+                    manifestCache.put(graph.identity(), graph.manifest());
                 }
 
                 public Optional<KnowledgeGraph> load(ContentDigest id) {
@@ -235,20 +365,31 @@ public final class WorkbenchApiMain {
                 public Optional<GraphManifest> manifest(ContentDigest id) {
                     if (!Files.isRegularFile(snapshotFile(id), LinkOption.NOFOLLOW_LINKS))
                         return Optional.empty();
+                    var cachedM = manifestCache.get(id);
+                    if (cachedM != null)
+                        return Optional.of(cachedM);
                     var g = cache.get(id);
-                    if (g != null)
+                    if (g != null) {
+                        manifestCache.put(id, g.manifest());
                         return Optional.of(g.manifest());
+                    }
                     try {
                         var pagedManifest = pages.manifest(id);
-                        if (pagedManifest.isPresent())
+                        if (pagedManifest.isPresent()) {
+                            manifestCache.put(id, pagedManifest.orElseThrow());
                             return pagedManifest;
+                        }
                     } catch (IOException | RuntimeException ignored) {
                         /* Fall back to binary cache header or canonical JSON snapshot. */
                     }
                     var cachedManifest = legacy.readManifest(id);
-                    if (cachedManifest.isPresent())
+                    if (cachedManifest.isPresent()) {
+                        manifestCache.put(id, cachedManifest.orElseThrow());
                         return cachedManifest;
-                    return load(id).map(KnowledgeGraph::manifest);
+                    }
+                    var loaded = load(id).map(KnowledgeGraph::manifest);
+                    loaded.ifPresent(m -> manifestCache.put(id, m));
+                    return loaded;
                 }
 
                 @Override
@@ -260,44 +401,110 @@ public final class WorkbenchApiMain {
                     var reportDisk = new PersistentReports(directory.resolve("reports"));
                     var disk = new AnalysisJobDiskStore(directory.resolve("jobs"))) {
                 var reports = new PublishedReports(reportDisk);
+                var previewStore = new WorkbenchPreviewStore();
                 try (var jobs = new AnalysisJobs(List.of(runner.registration("local")), store, reports,
-                        AnalysisJobs.Limits.defaults(), disk)) {
+                        AnalysisJobs.Limits.defaults(), disk, previewStore)) {
                     var history = jobs.history(1, Optional.empty()).items();
                     if (!history.isEmpty()) {
                         history.getFirst().result().flatMap(AnalysisJobs.Result::graph).ifPresent(store::warm);
                     }
-                    var repositoryId = RepositoryIdentity.fromCanonicalCoordinate(args[1]);
-                    var connections = new RepositoryConnections(jobs, jdk, Integer.parseInt(args[3]), cache, directory,
-                            policy, "git", new GitHostPolicy(), artifactPolicy);
+                    var repositoryId = RepositoryIdentity.fromCanonicalCoordinate(launch.coordinate());
+                    var oauthConfig = com.evolution.backend.auth.GitHubOAuthService.Config.fromEnvironment();
+                    var authDir = directory.resolve("auth");
+                    var oauthConfigStore = new com.evolution.backend.auth.GitHubOAuthConfigStore(authDir, System::getenv);
+                    var accountStore = new com.evolution.backend.auth.UserAccountStore(authDir.resolve("accounts.db"));
+                    var githubTokens = new com.evolution.backend.github.GitHubTokenBroker();
+                    githubTokens.setMultiUserMode(oauthConfig.multiUserMode());
+                    var gitHostPolicy = new GitHostPolicy(Set.of(), Map.of(), java.net.InetAddress::getAllByName,
+                            githubTokens.readOnlyGitCredentials());
+                    var sessionStore = new com.evolution.backend.auth.UserSessionStore(
+                            Optional.of(directory.resolve("auth-sessions.enc")),
+                            Optional.of(oauthConfigStore.masterKeyBytes()));
+                    var connections = new RepositoryConnections(jobs, jdk, launch.release(), cache, directory,
+                            policy, "git", gitHostPolicy, artifactPolicy);
                     connections.describeLocal("local", source.getFileName().toString(), repositoryId, source, policy);
-                    try (var pageIndex = new LazyGraphPages(directory, pages, store::cached);
+                    try (githubTokens;
+                            sessionStore;
+                            accountStore;
+                            var searchIndex = com.evolution.backend.query.search.CapturedSearchIndex.openReadWrite(
+                                    directory.resolve("search").resolve("fts5.db"));
+                            var repairJobStore = new com.evolution.backend.query.repair.RepairJobStore(
+                                    directory.resolve("repairs").resolve("jobs.db"));
+                            var repairJobs = new com.evolution.backend.query.repair.RepairVerificationJobs(2, repairJobStore);
+                            var pageIndex = new LazyGraphPages(directory, pages, store::cached);
                             var evolution = new EvolutionJobs(directory.resolve("evolution"), pages, reports,
                                     pageIndex::evolution)) {
                         var repairStore = new com.evolution.backend.query.RepairProposalStore(
                                 directory.resolve("repairs"));
-                        var repairReanalysis = new CandidateRepairReanalysis(jdk, Integer.parseInt(args[3]), cache,
+                        var safePatchApplier = new com.evolution.backend.query.repair.SafePatchApplier(
+                                directory.resolve("repair-applies"));
+                        var repairReanalysis = new CandidateRepairReanalysis(jdk, launch.release(), cache,
                                 directory, store, reports, connections);
-                        var api = ArchitectureQueryApi.withPartitionedGraphs(
-                                new ArchitectureQueryApi(store, reports,
-                                        new ApiLimits(65_536, 16_777_216, 32, 100_000, 8, 300_000), jobs, connections),
-                                pageIndex::reader);
-                        var evolvedApi = ArchitectureQueryApi.withEvolution(api, evolution,
-                                new EvolutionQueries(evolution.results(), pages));
-                        var capturedApi = ArchitectureQueryApi.withConfiguredCapturedRepairRunner(
-                                ArchitectureQueryApi.withConfiguredCapturedRepairCapture(
-                                        ArchitectureQueryApi.withConfiguredDemoRepairCapture(
-                                                ArchitectureQueryApi.withRepairReanalysis(
-                                                        ArchitectureQueryApi.withRepairStore(evolvedApi, repairStore),
-                                                        repairReanalysis))));
-                        var configuredApi = ArchitectureQueryApi.withConfiguredLiveDiagnosis(
-                                ArchitectureQueryApi.withConfiguredRepairModel(
-                                        ArchitectureQueryApi.withConfiguredDemoDiagnosis(capturedApi)));
-                        try (var server = new ArchitectureHttpServer(
-                                ArchitectureQueryApi.withConfiguredArchitectureChat(configuredApi),
-                                args.length >= 7 ? Integer.parseInt(args[6]) : 8080)) {
+                        var api = createWorkbenchQueryApi(store, reports, jobs, connections, pageIndex::reader,
+                                previewStore);
+                        var githubRest = new com.evolution.backend.github.GitHubRestClient(githubTokens, gitHostPolicy);
+                        var githubWebhooks = com.evolution.backend.github.GitHubWebhookHandler.fromEnvironment();
+                        var oauthService = new com.evolution.backend.auth.GitHubOAuthService(
+                                oauthConfig, sessionStore,
+                                com.evolution.backend.github.GitHubRestClient.createPinnedTransport(gitHostPolicy),
+                                oauthConfigStore, accountStore)
+                                .withWebhookSecretListener(githubWebhooks::updateSecret);
+                        var authApi = new com.evolution.backend.auth.AuthHttpApi(
+                                oauthService, githubRest, api.limits(), githubWebhooks::isConfigured);
+                        var githubDiffs = new com.evolution.backend.github.GitHubPrDiffService(
+                                githubRest, jobs, connections, store, reports, directory.resolve("github-diffs"));
+                        var githubPublisher = new com.evolution.backend.github.GitHubRepairPublisher(
+                                githubRest, githubTokens, repairStore, connections, gitHostPolicy,
+                                directory.resolve("github-publish"), "git");
+                        var githubPrReview = new com.evolution.backend.github.GitHubPrReviewService(
+                                githubRest, githubDiffs, connections, store, reports, repairStore);
+                        var githubIssues = new com.evolution.backend.github.GitHubIssueService(
+                                githubRest, store, reports);
+                        var githubApi = new com.evolution.backend.github.GitHubHttpApi(
+                                githubTokens, githubRest, connections, githubDiffs, githubPublisher,
+                                repairJobs, api.limits())
+                                .withEnterpriseServices(authApi, githubPrReview, githubIssues, githubWebhooks, store, reports);
+                        var initialRunner = CapturedRepairRunner.fromSystemProperties()
+                                .map(CapturedRepairRunner::new)
+                                .orElse(null);
+                        var sandboxSetup = new com.evolution.backend.query.repair.SandboxSetupService(
+                                directory.resolve("repairs").resolve("sandbox-work"), repairJobStore, initialRunner,
+                                directory, authApi.isMultiUserMode());
+                        var evolvedApi = ArchitectureQueryApi.withSearchIndex(
+                                ArchitectureQueryApi.withSandboxSetup(
+                                        ArchitectureQueryApi.withStoreDirectory(
+                                                ArchitectureQueryApi.withAuth(
+                                                        ArchitectureQueryApi.withAcquisitionContentDir(
+                                                                ArchitectureQueryApi.withSafePatchApplier(
+                                                                        ArchitectureQueryApi.withRepairVerificationJobs(
+                                                                                ArchitectureQueryApi.withGitHub(
+                                                                                        ArchitectureQueryApi.withEvolution(api, evolution,
+                                                                                                new EvolutionQueries(evolution.results(), pages)),
+                                                                                        githubApi),
+                                                                                repairJobs),
+                                                                        safePatchApplier),
+                                                                acquisitionDir.resolve("content")),
+                                                        authApi),
+                                                directory),
+                                        sandboxSetup),
+                                searchIndex);
+                        var capturedApi = ArchitectureQueryApi.withConfiguredCapturedRepairCapture(
+                                ArchitectureQueryApi.withConfiguredDemoRepairCapture(
+                                        ArchitectureQueryApi.withRepairReanalysis(
+                                                ArchitectureQueryApi.withRepairStore(evolvedApi, repairStore),
+                                                repairReanalysis)));
+                        var configuredApi = ArchitectureQueryApi.withConfiguredLlmRegistry(
+                                ArchitectureQueryApi.withConfiguredLiveDiagnosis(
+                                        ArchitectureQueryApi.withConfiguredRepairModel(
+                                                ArchitectureQueryApi.withConfiguredDemoDiagnosis(capturedApi))));
+                        try (var server = new ArchitectureHttpServer(configuredApi,
+                                launch.bindHost(), launch.port())) {
                             var stopped = new CountDownLatch(1);
                             var shutdown = new Thread(() -> {
                                 server.close();
+                                repairJobs.close();
+                                repairJobStore.close();
+                                searchIndex.close();
                                 store.close();
                                 try {
                                     evolution.close();
@@ -469,6 +676,21 @@ public final class WorkbenchApiMain {
                 }
             };
         }
+    }
+
+    static ArchitectureQueryApi createWorkbenchQueryApi(
+            GraphStore store,
+            PublishedReports reports,
+            AnalysisJobs jobs,
+            RepositoryConnections connections,
+            java.util.function.Function<BooleanSupplier, PartitionedGraphReader> partitionReaders,
+            WorkbenchPreviewStore previewStore) {
+        var base = new ArchitectureQueryApi(store, reports,
+                new ApiLimits(65_536, 16_777_216, 32, 100_000, 8, 300_000), jobs, connections);
+        var withPartitions = partitionReaders != null
+                ? ArchitectureQueryApi.withPartitionedGraphs(base, partitionReaders)
+                : base;
+        return ArchitectureQueryApi.withPreviewStore(withPartitions, previewStore);
     }
 
     static final URI GOOGLE_MAVEN = URI.create("https://dl.google.com/dl/android/maven2/");

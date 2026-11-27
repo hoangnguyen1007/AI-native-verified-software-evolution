@@ -23,6 +23,12 @@ public final class RepairReanalysis {
         Result reanalyze(CapturedRepair.Proposal proposal, KnowledgeGraph baseline,
                          PublishedReports.Report baselineReport, boolean includeControl,
                          BooleanSupplier cancelled);
+
+        /** Passive reanalysis for ad-hoc proposals without a baseline policy report (computes candidate KnowledgeGraph for Score v2 delta). */
+        default Result reanalyzeAdHoc(CapturedRepair.Proposal proposal, KnowledgeGraph baseline,
+                                      BooleanSupplier cancelled) {
+            return reanalyze(proposal, baseline, null, false, cancelled);
+        }
     }
 
     private RepairReanalysis() {}

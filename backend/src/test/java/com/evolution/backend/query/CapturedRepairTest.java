@@ -110,7 +110,9 @@ class CapturedRepairTest {
         var args=new ArrayList<>(List.of("git","-c","core.autocrlf=false","apply","--whitespace=nowarn"));
         args.addAll(List.of(options));
         args.add(diff.toString());
-        var process=new ProcessBuilder(args).directory(temp.toFile()).redirectErrorStream(true).start();
+        var pb=new ProcessBuilder(args).directory(temp.toFile()).redirectErrorStream(true);
+        if (temp.getParent()!=null) pb.environment().put("GIT_CEILING_DIRECTORIES",temp.getParent().toAbsolutePath().toString());
+        var process=pb.start();
         assertTrue(process.waitFor(10,TimeUnit.SECONDS));
         return process.exitValue();
     }
@@ -243,7 +245,7 @@ class CapturedRepairTest {
     }
 
     @Test void supportsSevenExtendedAstRecipesAndDryRunApplicableCatalog() {
-        assertEquals(14, JavaRepairRecipes.catalog().size());
+        assertEquals(16, JavaRepairRecipes.catalog().size());
         var docId = new com.evolution.analysis.contract.identity.SourceDocumentIdentity("source:sha256:" + "d".repeat(64));
 
         // 8. REMOVE_UNUSED_PRIVATE_METHOD

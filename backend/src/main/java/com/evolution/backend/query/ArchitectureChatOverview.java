@@ -30,6 +30,15 @@ final class ArchitectureChatOverview {
         return VI.matcher(normalized).matches() || EN.matcher(normalized).matches();
     }
 
+    /**
+     * Local overview rendering should only short-circuit when no consented LLM provider can answer
+     * (or the caller explicitly requested evidenceOnly mode). When a consented LLM is configured,
+     * allow the model to synthesize a richer grounded overview instead of forcing a canned template.
+     */
+    public static boolean shouldShortCircuitLocal(String question, boolean hasConsentedModel, boolean evidenceOnly) {
+        return matches(question) && (!hasConsentedModel || evidenceOnly);
+    }
+
     record Answer(String text, String title, List<String> citations) {}
 
     static Answer render(String question, ArchitectureChat.Context context) {

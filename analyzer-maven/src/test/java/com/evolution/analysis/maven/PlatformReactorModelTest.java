@@ -23,9 +23,15 @@ class PlatformReactorModelTest {
         var snapshot = RepositorySnapshot.create(
                 RepositoryIdentity.fromCanonicalCoordinate("https://example.test/platform-pom-smoke.git"), Optional.empty(), false,
                 poms.entrySet().stream().map(e -> new SnapshotFile(e.getKey(), e.getValue().digest())).toList(), List.of());
-        var request = new BuildModelRequest(snapshot, "pom.xml", poms, Map.of(),
+        Path m2Repo = Path.of(System.getProperty("maven.repo.local",
+                Path.of(System.getProperty("user.home"), ".m2", "repository").toString()));
+        var initialRequest = new BuildModelRequest(snapshot, "pom.xml", poms, Map.of(),
                 new BuildModelPolicy(List.of(), List.of(), Map.of(), 100_000, 100, 32));
-        var result = new MavenBuildModelProvider().build(request);
+        // Resolve declared external BOM/parent POMs passively from the local Maven cache without weakening BOM checks.
+        var resolution = new MavenBuildModelResolver(m2Repo).resolve(
+                initialRequest,
+                new MavenPomResolutionPolicy(32, 2_000_000L, 20_000_000L, 8));
+        var result = resolution.model();
         assertTrue(result.problems().isEmpty(), () -> result.problems().toString());
         assertTrue(result.hasGaps()); // Candidate plans explicitly withhold generated-file acquisition/plugin effects.
         assertEquals(9, result.modules().size());

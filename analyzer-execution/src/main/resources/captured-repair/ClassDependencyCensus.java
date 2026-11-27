@@ -8,24 +8,37 @@ import java.security.MessageDigest;
 import java.util.*;
 
 /**
- * Pure-JDK bytecode class & dependency census plus Surefire XML aggregator for isolated repair builds.
+ * Pure-JDK bytecode class & dependency census plus Surefire/Gradle XML aggregator and failing test
+ * detail extractor for isolated repair builds.
  * Emits CanonicalJson-compatible classCensus JSON: {"classCount":...,"classes":{...},"dependencies":{...}}.
  */
 public final class ClassDependencyCensus {
     private static final HexFormat HEX = HexFormat.of();
+    private static final int MAX_FAILURES = 30;
+    private static final int MAX_MSG_CHARS = 400;
+
+    private record TestFailure(String className, String methodName, String kind, String message) {}
 
     public static void main(String[] args) throws Exception {
+        if (args.length >= 1 && "--behavioral".equals(args[0])) {
+            emitBehavioralJson(args);
+            return;
+        }
         if (args.length < 2) {
-            System.err.println("Usage: ClassDependencyCensus <repo-root> <census-out.json> [<summary-out.env>]");
+            System.err.println("Usage: ClassDependencyCensus <repo-root> <census-out.json> [<summary-out.env>] [<failures-out.json>] [<fail-ids-out.txt>]");
             System.exit(2);
         }
         Path repoRoot = Path.of(args[0]).toAbsolutePath().normalize();
         Path jsonOut = Path.of(args[1]).toAbsolutePath().normalize();
         Path envOut = args.length >= 3 ? Path.of(args[2]).toAbsolutePath().normalize() : null;
+        Path failuresOut = args.length >= 4 ? Path.of(args[3]).toAbsolutePath().normalize() : null;
+        Path failIdsOut = args.length >= 5 ? Path.of(args[4]).toAbsolutePath().normalize() : null;
 
         var classes = new TreeMap<String, String>();
         var dependencies = new TreeMap<String, Set<String>>();
         int[] testCounts = new int[3]; // run, failed, errors
+        var failures = new ArrayList<TestFailure>();
+        var failingIds = new TreeSet<String>();
 
         var classDirs = new ArrayList<Path>();
         var surefireDirs = new ArrayList<Path>();
@@ -77,7 +90,7 @@ public final class ClassDependencyCensus {
                 for (Path file : stream.sorted().toList()) {
                     String fname = file.getFileName().toString();
                     if (fname.startsWith("TEST-") && fname.endsWith(".xml") && Files.isRegularFile(file)) {
-                        accumulateSurefire(file, testCounts);
+                        accumulateSurefire(file, testCounts, failures, failingIds);
                     }
                 }
             }
@@ -98,9 +111,77 @@ public final class ClassDependencyCensus {
                     + "CLASS_CENSUS_SHA256=" + censusSha256 + "\n";
             Files.writeString(envOut, env, StandardCharsets.UTF_8);
         }
+
+        if (failuresOut != null) {
+            if (failuresOut.getParent() != null) Files.createDirectories(failuresOut.getParent());
+            Files.writeString(failuresOut, toFailuresJson(failures), StandardCharsets.UTF_8);
+        }
+
+        if (failIdsOut != null) {
+            if (failIdsOut.getParent() != null) Files.createDirectories(failIdsOut.getParent());
+            String joined = failingIds.isEmpty() ? "" : (String.join("\n", failingIds) + "\n");
+            Files.writeString(failIdsOut, joined, StandardCharsets.UTF_8);
+        }
     }
 
-    private static void accumulateSurefire(Path xml, int[] counts) {
+    private static void emitBehavioralJson(String[] args) throws IOException {
+        if (args.length < 11) {
+            System.err.println("Usage: ClassDependencyCensus --behavioral <baseExit> <candExit> <baseRun> <baseFail> <candRun> <candFail> <outShaHex> <baseFailIds> <candFailIds> <outJson>");
+            System.exit(2);
+        }
+        int baseExit = Integer.parseInt(args[1]);
+        int candExit = Integer.parseInt(args[2]);
+        int baseRun = Integer.parseInt(args[3]);
+        int baseFail = Integer.parseInt(args[4]);
+        int candRun = Integer.parseInt(args[5]);
+        int candFail = Integer.parseInt(args[6]);
+        String outShaHex = args[7].trim();
+        var baseIds = readFailIds(Path.of(args[8]));
+        var candIds = readFailIds(Path.of(args[9]));
+        Path outJson = Path.of(args[10]).toAbsolutePath().normalize();
+
+        var sb = new StringBuilder();
+        sb.append("{\"baseExit\":").append(baseExit)
+                .append(",\"baselineFailingTests\":");
+        appendJsonStringArray(baseIds, sb);
+        sb.append(",\"baselineTestsFailed\":").append(baseFail)
+                .append(",\"baselineTestsRun\":").append(baseRun)
+                .append(",\"candExit\":").append(candExit)
+                .append(",\"candidateFailingTests\":");
+        appendJsonStringArray(candIds, sb);
+        sb.append(",\"candidateTestsFailed\":").append(candFail)
+                .append(",\"candidateTestsRun\":").append(candRun)
+                .append(",\"executed\":true,\"language\":\"java\",\"outputExcerpt\":\"\",\"outputSha256\":");
+        appendJsonString("sha256:" + outShaHex, sb);
+        sb.append('}');
+        if (outJson.getParent() != null) Files.createDirectories(outJson.getParent());
+        Files.writeString(outJson, sb.toString(), StandardCharsets.UTF_8);
+    }
+
+    private static List<String> readFailIds(Path file) {
+        if (file == null || !Files.isRegularFile(file)) return List.of();
+        try {
+            var set = new TreeSet<String>();
+            for (String line : Files.readAllLines(file, StandardCharsets.UTF_8)) {
+                String trimmed = line.strip();
+                if (!trimmed.isEmpty()) set.add(trimmed);
+            }
+            return List.copyOf(set);
+        } catch (IOException ignored) {
+            return List.of();
+        }
+    }
+
+    private static void appendJsonStringArray(List<String> values, StringBuilder out) {
+        out.append('[');
+        for (int i = 0; i < values.size(); i++) {
+            if (i > 0) out.append(',');
+            appendJsonString(values.get(i), out);
+        }
+        out.append(']');
+    }
+
+    private static void accumulateSurefire(Path xml, int[] counts, List<TestFailure> failures, Set<String> failingIds) {
         try {
             var dbf = DocumentBuilderFactory.newInstance();
             dbf.setFeature(XMLConstants.FEATURE_SECURE_PROCESSING, true);
@@ -111,10 +192,58 @@ public final class ClassDependencyCensus {
                 counts[0] += parseAttrInt(root.getAttribute("tests"));
                 counts[1] += parseAttrInt(root.getAttribute("failures"));
                 counts[2] += parseAttrInt(root.getAttribute("errors"));
+                var cases = root.getElementsByTagName("testcase");
+                for (int i = 0; i < cases.getLength(); i++) {
+                    var tc = cases.item(i);
+                    if (!(tc instanceof org.w3c.dom.Element el)) continue;
+                    String cls = el.getAttribute("classname");
+                    String method = el.getAttribute("name");
+                    var children = el.getChildNodes();
+                    for (int j = 0; j < children.getLength(); j++) {
+                        var child = children.item(j);
+                        if (!(child instanceof org.w3c.dom.Element cel)) continue;
+                        String tag = cel.getTagName();
+                        if ("failure".equals(tag) || "error".equals(tag)) {
+                            String safeCls = cls == null ? "" : cls.strip();
+                            String safeMethod = method == null ? "" : method.strip();
+                            String id = safeCls.isEmpty() ? safeMethod : (safeMethod.isEmpty() ? safeCls : (safeCls + "#" + safeMethod));
+                            if (!id.isEmpty() && failingIds.size() < 500) {
+                                failingIds.add(id);
+                            }
+                            if (failures.size() < MAX_FAILURES) {
+                                String msg = cel.getAttribute("message");
+                                if (msg == null || msg.isBlank()) msg = cel.getTextContent();
+                                if (msg == null) msg = "";
+                                msg = msg.replaceAll("\\s+", " ").strip();
+                                if (msg.length() > MAX_MSG_CHARS) msg = msg.substring(0, MAX_MSG_CHARS) + "...";
+                                failures.add(new TestFailure(safeCls, safeMethod,
+                                        "error".equals(tag) ? "ERROR" : "FAILURE", msg));
+                            }
+                        }
+                    }
+                }
             }
         } catch (Exception ignored) {
             // Unreadable or non-standard XML report leaves counts at zero unless valid suites exist.
         }
+    }
+
+    private static String toFailuresJson(List<TestFailure> failures) {
+        var sb = new StringBuilder("[");
+        for (int i = 0; i < failures.size(); i++) {
+            if (i > 0) sb.append(',');
+            var f = failures.get(i);
+            sb.append("{\"className\":");
+            appendJsonString(f.className(), sb);
+            sb.append(",\"kind\":");
+            appendJsonString(f.kind(), sb);
+            sb.append(",\"message\":");
+            appendJsonString(f.message(), sb);
+            sb.append(",\"methodName\":");
+            appendJsonString(f.methodName(), sb);
+            sb.append('}');
+        }
+        return sb.append(']').toString();
     }
 
     private static int parseAttrInt(String raw) {

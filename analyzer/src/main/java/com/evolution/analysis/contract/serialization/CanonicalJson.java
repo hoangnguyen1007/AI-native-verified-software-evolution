@@ -36,24 +36,91 @@ public final class CanonicalJson {
         Object canonicalValue();
     }
 
-    private record RecordField(String name,Method accessor) {}
-    /** Cache class metadata only. Retaining accessors avoids repeated reflection inflation in sort comparisons. */
+    private record RecordField(String name, String encodedKeyPrefix, Method accessor, java.lang.invoke.MethodHandle handle) {
+        Object read(Object record) throws IllegalAccessException, InvocationTargetException {
+            if (handle != null) {
+                try {
+                    return handle.invokeExact(record);
+                } catch (RuntimeException | Error runtime) {
+                    throw runtime;
+                } catch (Throwable failure) {
+                    throw new InvocationTargetException(failure);
+                }
+            }
+            return accessor.invoke(record);
+        }
+    }
+    /** Cache class metadata, pre-encoded JSON key prefixes, and MethodHandles per record class. */
     private static final ClassValue<List<RecordField>> RECORD_FIELDS=new ClassValue<>() {
         @Override protected List<RecordField> computeValue(Class<?> type){
-            return java.util.Arrays.stream(type.getRecordComponents()).sorted(Comparator.comparing(RecordComponent::getName)).map(component->{
-                Method accessor=component.getAccessor();
-                if(!accessor.trySetAccessible())throw new IllegalArgumentException("Cannot access canonical record component "+component.getName());
-                return new RecordField(component.getName(),accessor);
-            }).toList();
+            var lookup = java.lang.invoke.MethodHandles.lookup();
+            var sorted = java.util.Arrays.stream(type.getRecordComponents())
+                    .sorted(Comparator.comparing(RecordComponent::getName)).toList();
+            var fields = new ArrayList<RecordField>(sorted.size());
+            for (int i = 0; i < sorted.size(); i++) {
+                var component = sorted.get(i);
+                Method accessor = component.getAccessor();
+                if (!accessor.trySetAccessible()) {
+                    throw new IllegalArgumentException("Cannot access canonical record component " + component.getName());
+                }
+                java.lang.invoke.MethodHandle handle = null;
+                try {
+                    handle = lookup.unreflect(accessor)
+                            .asType(java.lang.invoke.MethodType.methodType(Object.class, Object.class));
+                } catch (IllegalAccessException ignored) {
+                    // Package-private or private nested records fall back cleanly to accessible Method.invoke.
+                }
+                var keyBuf = new StringBuilder(component.getName().length() + 4);
+                if (i > 0) keyBuf.append(',');
+                try {
+                    appendString(component.getName(), keyBuf);
+                } catch (IOException impossible) {
+                    throw new IllegalStateException(impossible);
+                }
+                keyBuf.append(':');
+                fields.add(new RecordField(component.getName(), keyBuf.toString(), accessor, handle));
+            }
+            return List.copyOf(fields);
         }
     };
-    private static final ThreadLocal<MessageDigest> SHA256_DIGEST = ThreadLocal.withInitial(() -> {
+    private static final ThreadLocal<MessageDigest> SHA256_DIGEST = new ThreadLocal<>();
+    private static final ThreadLocal<byte[]> DIGEST_BUFFER = new ThreadLocal<>();
+
+    private static MessageDigest newSha256() {
         try {
             return MessageDigest.getInstance("SHA-256");
         } catch (NoSuchAlgorithmException impossible) {
             throw new IllegalStateException("Canonical digest unavailable", impossible);
         }
-    });
+    }
+
+    /**
+     * Borrows a reset SHA-256 instance for streaming canonical hashing.
+     * Re-entrancy safe: nested calls on the same thread receive a fresh independent instance
+     * instead of resetting an in-flight outer digest. Callers should return it via {@link #releaseSha256}.
+     */
+    public static MessageDigest borrowSha256() {
+        MessageDigest digest = SHA256_DIGEST.get();
+        if (digest != null) {
+            SHA256_DIGEST.set(null);
+            digest.reset();
+            return digest;
+        }
+        return newSha256();
+    }
+
+    /** Returns a borrowed SHA-256 instance to the thread-local slot when available. */
+    public static void releaseSha256(MessageDigest digest) {
+        if (digest != null && SHA256_DIGEST.get() == null) {
+            digest.reset();
+            SHA256_DIGEST.set(digest);
+        }
+    }
+
+    /** Creates an unsynchronized UTF-8 writer that streams directly into {@code digest}. */
+    public static Writer newUtf8DigestWriter(MessageDigest digest) {
+        return new Utf8DigestWriter(digest);
+    }
 
     private CanonicalJson() {}
 
@@ -79,7 +146,7 @@ public final class CanonicalJson {
         if(value instanceof Map<?,?> map){for(Object member:map.values())if(!fits(member,depth+1,maxDepth,remaining))return false;return true;}
         if(value instanceof Collection<?> collection){for(Object member:collection)if(!fits(member,depth+1,maxDepth,remaining))return false;return true;}
         if(value.getClass().isArray()){for(int i=0;i<Array.getLength(value);i++)if(!fits(Array.get(value,i),depth+1,maxDepth,remaining))return false;return true;}
-        if(value.getClass().isRecord())try{for(var field:RECORD_FIELDS.get(value.getClass()))if(!fits(field.accessor().invoke(value),depth+1,maxDepth,remaining))return false;return true;}
+        if(value.getClass().isRecord())try{for(var field:RECORD_FIELDS.get(value.getClass()))if(!fits(field.read(value),depth+1,maxDepth,remaining))return false;return true;}
         catch(IllegalAccessException|InvocationTargetException invalid){throw new IllegalArgumentException("Cannot inspect canonical structure",invalid);}
         throw new IllegalArgumentException("Unsupported canonical JSON type");
     }
@@ -93,25 +160,36 @@ public final class CanonicalJson {
     }
 
     public static ContentDigest computeSha256(Object value){
-        var digest = SHA256_DIGEST.get();
-        digest.reset();
-        try (var writer = new Utf8DigestWriter(digest)) {
-            append(value, writer);
-        } catch (IOException impossible) {
-            throw new IllegalStateException("Canonical digest unavailable", impossible);
+        var digest = borrowSha256();
+        try {
+            try (var writer = new Utf8DigestWriter(digest)) {
+                append(value, writer);
+            } catch (IOException impossible) {
+                throw new IllegalStateException("Canonical digest unavailable", impossible);
+            }
+            return new ContentDigest("sha256:" + HexFormat.of().formatHex(digest.digest()));
+        } finally {
+            releaseSha256(digest);
         }
-        return new ContentDigest("sha256:" + HexFormat.of().formatHex(digest.digest()));
     }
 
     /** Unsynchronized UTF-8 streaming writer feeding MessageDigest without per-char monitor locks. */
     private static final class Utf8DigestWriter extends Writer {
         private final MessageDigest digest;
-        private final byte[] buf = new byte[4096];
+        private final byte[] buf;
         private int pos;
         private char highSurrogate;
+        private boolean closed;
 
         Utf8DigestWriter(MessageDigest digest) {
             this.digest = digest;
+            byte[] borrowed = DIGEST_BUFFER.get();
+            if (borrowed != null) {
+                DIGEST_BUFFER.set(null);
+                this.buf = borrowed;
+            } else {
+                this.buf = new byte[8192];
+            }
         }
 
         private void flushBuf() {
@@ -167,27 +245,73 @@ public final class CanonicalJson {
 
         @Override
         public void write(char[] cbuf, int off, int len) {
+            int i = off;
             int end = off + len;
-            for (int i = off; i < end; i++) putChar(cbuf[i]);
+            if (highSurrogate == 0) {
+                byte[] b = this.buf;
+                int p = this.pos;
+                int limit = b.length;
+                while (i < end) {
+                    char c = cbuf[i];
+                    if (c >= 0x80) break;
+                    if (p == limit) {
+                        digest.update(b, 0, p);
+                        p = 0;
+                    }
+                    b[p++] = (byte) c;
+                    i++;
+                }
+                this.pos = p;
+            }
+            for (; i < end; i++) putChar(cbuf[i]);
         }
 
         @Override
         public void write(String str, int off, int len) {
+            int i = off;
             int end = off + len;
-            for (int i = off; i < end; i++) putChar(str.charAt(i));
+            if (highSurrogate == 0) {
+                byte[] b = this.buf;
+                int p = this.pos;
+                int limit = b.length;
+                while (i < end) {
+                    char c = str.charAt(i);
+                    if (c >= 0x80) break;
+                    if (p == limit) {
+                        digest.update(b, 0, p);
+                        p = 0;
+                    }
+                    b[p++] = (byte) c;
+                    i++;
+                }
+                this.pos = p;
+            }
+            for (; i < end; i++) putChar(str.charAt(i));
         }
 
         @Override
         public Writer append(CharSequence csq) {
-            String s = csq == null ? "null" : csq.toString();
-            write(s, 0, s.length());
+            if (csq == null) {
+                write("null", 0, 4);
+            } else if (csq instanceof String s) {
+                write(s, 0, s.length());
+            } else {
+                append(csq, 0, csq.length());
+            }
             return this;
         }
 
         @Override
         public Writer append(CharSequence csq, int start, int end) {
-            CharSequence cs = csq == null ? "null" : csq;
-            for (int i = start; i < end; i++) putChar(cs.charAt(i));
+            if (csq == null) {
+                write("null", 0, 4);
+                return this;
+            }
+            if (csq instanceof String s) {
+                write(s, start, end - start);
+                return this;
+            }
+            for (int i = start; i < end; i++) putChar(csq.charAt(i));
             return this;
         }
 
@@ -204,11 +328,16 @@ public final class CanonicalJson {
 
         @Override
         public void close() {
+            if (closed) return;
+            closed = true;
             if (highSurrogate != 0) {
                 highSurrogate = 0;
                 putByte('?');
             }
             flushBuf();
+            if (DIGEST_BUFFER.get() == null) {
+                DIGEST_BUFFER.set(buf);
+            }
         }
     }
 
@@ -254,6 +383,16 @@ public final class CanonicalJson {
             appendCollection(collection, output);
         } else if (value.getClass().isArray()) {
             appendArray(value, output);
+        } else if (value instanceof com.evolution.analysis.graph.KnowledgeGraph.Node node) {
+            com.evolution.analysis.graph.GraphCanonicalWriter.writeNode(node, output);
+        } else if (value instanceof com.evolution.analysis.graph.KnowledgeGraph.Edge edge) {
+            com.evolution.analysis.graph.GraphCanonicalWriter.writeEdge(edge, output);
+        } else if (value instanceof com.evolution.analysis.graph.GraphEvidence evidence) {
+            com.evolution.analysis.graph.GraphCanonicalWriter.writeEvidence(evidence, output);
+        } else if (value instanceof com.evolution.analysis.graph.KnowledgeGraph.Context context) {
+            com.evolution.analysis.graph.GraphCanonicalWriter.writeContext(context, output);
+        } else if (value instanceof com.evolution.analysis.graph.KnowledgeGraph.Target target) {
+            com.evolution.analysis.graph.GraphCanonicalWriter.writeTarget(target, output);
         } else if (value.getClass().isRecord()) {
             appendRecord(value, output);
         } else {
@@ -336,15 +475,11 @@ public final class CanonicalJson {
     private static void appendRecord(Object record, Appendable output) throws IOException {
         List<RecordField> sorted = RECORD_FIELDS.get(record.getClass());
         output.append('{');
-        for (int index = 0; index < sorted.size(); index++) {
-            if (index > 0) {
-                output.append(',');
-            }
+        for (int index = 0, size = sorted.size(); index < size; index++) {
             RecordField component = sorted.get(index);
-            appendString(component.name(), output);
-            output.append(':');
+            output.append(component.encodedKeyPrefix());
             try {
-                append(component.accessor().invoke(record), output);
+                append(component.read(record), output);
             } catch (IllegalAccessException | InvocationTargetException exception) {
                 throw new IllegalArgumentException(
                         "Cannot read canonical record component " + component.name(), exception);

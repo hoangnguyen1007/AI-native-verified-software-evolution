@@ -49,7 +49,32 @@ public final class CapturedRepairVerification {
                              Set<String> reasons, boolean truncated, boolean regressionDetected) {}
     public record IsolatedProof(ContentDigest capture, ContentDigest image, ContentDigest inputs, String buildTool,
                                 List<String> modules, int compileExit, int testExit, int testsRun, int testsFailed,
-                                int testsErrors, ContentDigest classCensusDigest, int classCount, List<String> checks) {}
+                                int testsErrors, ContentDigest classCensusDigest, int classCount, List<String> checks,
+                                String isolationMode, List<CapturedRepairExecution.TestFailure> failingTests, String logTail,
+                                Optional<CapturedRepairExecution.BehavioralDiffCapture> behavioralDiff,
+                                boolean testsSkipped) {
+        public IsolatedProof(ContentDigest capture, ContentDigest image, ContentDigest inputs, String buildTool,
+                             List<String> modules, int compileExit, int testExit, int testsRun, int testsFailed,
+                             int testsErrors, ContentDigest classCensusDigest, int classCount, List<String> checks) {
+            this(capture, image, inputs, buildTool, modules, compileExit, testExit, testsRun, testsFailed,
+                    testsErrors, classCensusDigest, classCount, checks, "QEMU_IN_DOCKER", List.of(), "", Optional.empty(), false);
+        }
+        public IsolatedProof(ContentDigest capture, ContentDigest image, ContentDigest inputs, String buildTool,
+                             List<String> modules, int compileExit, int testExit, int testsRun, int testsFailed,
+                             int testsErrors, ContentDigest classCensusDigest, int classCount, List<String> checks,
+                             String isolationMode, List<CapturedRepairExecution.TestFailure> failingTests, String logTail) {
+            this(capture, image, inputs, buildTool, modules, compileExit, testExit, testsRun, testsFailed,
+                    testsErrors, classCensusDigest, classCount, checks, isolationMode, failingTests, logTail, Optional.empty(), false);
+        }
+        public IsolatedProof(ContentDigest capture, ContentDigest image, ContentDigest inputs, String buildTool,
+                             List<String> modules, int compileExit, int testExit, int testsRun, int testsFailed,
+                             int testsErrors, ContentDigest classCensusDigest, int classCount, List<String> checks,
+                             String isolationMode, List<CapturedRepairExecution.TestFailure> failingTests, String logTail,
+                             Optional<CapturedRepairExecution.BehavioralDiffCapture> behavioralDiff) {
+            this(capture, image, inputs, buildTool, modules, compileExit, testExit, testsRun, testsFailed,
+                    testsErrors, classCensusDigest, classCount, checks, isolationMode, failingTests, logTail, behavioralDiff, false);
+        }
+    }
     public record Result(String version, Verdict verdict, ContentDigest proposal, ContentDigest planIdentity, Plan plan,
                          List<Check> checks, Optional<Comparison> candidateComparison, Optional<Comparison> controlComparison,
                          Optional<IsolatedProof> isolatedProof, String patch) {}
@@ -137,9 +162,98 @@ public final class CapturedRepairVerification {
         }
         var isolatedView = vmProof.map(p -> new IsolatedProof(p.capture(), p.image(), p.inputs(), p.buildTool(),
                 p.modules(), p.compileExit(), p.testExit(), p.testsRun(), p.testsFailed(), p.testsErrors(),
-                p.classCensusDigest(), p.classCensus().classCount(), p.checks()));
+                p.classCensusDigest(), p.classCensus().classCount(), p.checks(),
+                p.isolationMode(), p.failingTests(), p.logTail(), p.behavioralDiff(), p.testsSkipped()));
         return new Result(VERSION, verdict, proposal.identity(), plan.identity(), plan, checks,
                 candidateAssessment.comparison(), controlAssessment.comparison(), isolatedView, value.patch());
+    }
+
+    /**
+     * Verifies an ad-hoc repair proposal (no baseline policy finding/report) against the real baseline
+     * tree, optional passive candidate reanalysis graph, and optional isolated sandbox execution proof.
+     */
+    Result verifyAdHoc(CapturedRepair.Proposal proposal, KnowledgeGraph baseline,
+                       Optional<ContentDigest> candidateGraphId, GraphStore graphs, BooleanSupplier cancelled) {
+        var value = proposal.candidate();
+        var baselineTree = readBaselineTree(baseline).orElse(null);
+        var edits = value.edits().stream().map(e -> new EditPin(e.path(), e.before(), e.after())).toList();
+        boolean proposalAuthentic = ContentDigest.sha256Utf8(value.patch()).equals(value.patchDigest())
+                && CapturedRepair.authentic(proposal)
+                && baseline.snapshot().equals(value.baseline().snapshot());
+        boolean intact = proposalAuthentic
+                && baselineTree != null
+                && baselineTree.snapshot().equals(value.baseline().snapshot())
+                && matchesBeforeFiles(baselineTree.files(), edits);
+
+        var candidateFiles = intact ? applyFiles(baselineTree.files(), edits) : List.<SnapshotFile>of();
+        var candidateSnapshot = intact
+                ? RepositorySnapshotOf(baselineTree.repository(), baselineTree.revision(), candidateFiles)
+                : value.baseline().snapshot();
+        var controlSnapshot = (intact && !edits.isEmpty() && !CapturedRepair.ABSENT_DIGEST.equals(edits.getFirst().before()))
+                ? RepositorySnapshotOf(baselineTree.repository(), baselineTree.revision(), applyControl(baselineTree.files(), edits.getFirst(), baseline))
+                : value.baseline().snapshot();
+        var modules = affectedModules(value.edits(), baseline);
+        var requiredChecks = List.of("baseline-and-patch", "candidate-compile", "candidate-test");
+        var plan = new Plan(proposal.identity(), value.patchDigest(), ContentDigest.sha256Utf8("ad-hoc"),
+                value.affectedScope().region(),
+                new TreeSummary(value.baseline().snapshot(), baselineTree == null ? 0 : baselineTree.files().size()),
+                new TreeSummary(candidateSnapshot, candidateFiles.size()),
+                new TreeSummary(controlSnapshot, baselineTree == null ? 0 : baselineTree.files().size()),
+                edits, modules, requiredChecks);
+
+        Check pinned;
+        if (intact) {
+            pinned = check("baseline-and-patch", Status.PASSED, "EXACT_TREE_AND_PATCH_PINS", plan.identity());
+        } else if (proposalAuthentic && baselineTree == null) {
+            pinned = check("baseline-and-patch", Status.NOT_RUN, "BASELINE_TREE_UNAVAILABLE", plan.identity());
+        } else {
+            pinned = check("baseline-and-patch", Status.FAILED, "BASELINE_OR_PATCH_MISMATCH", plan.identity());
+        }
+
+        Optional<CapturedRepairExecution.Proof> vmProof = Optional.empty();
+        IOException vmTampered = null;
+        if (intact && !cancelled.getAsBoolean() && capturedExecution != null) {
+            try { vmProof = capturedExecution.prove(plan, candidateFiles); }
+            catch (IOException invalid) { vmTampered = invalid; }
+        }
+
+        Check reanalysisCheck;
+        Optional<ContentDigest> resolvedCandGraph = candidateGraphId.or(() -> intact
+                ? Optional.ofNullable(knownGraphs.get(candidateSnapshot))
+                : Optional.empty());
+        if (!intact || cancelled.getAsBoolean()) {
+            reanalysisCheck = check("candidate-reanalysis", Status.NOT_RUN, "INPUTS_NOT_ADMITTED", null);
+        } else if (resolvedCandGraph.isEmpty()) {
+            reanalysisCheck = check("candidate-reanalysis", Status.NOT_RUN, "REANALYSIS_NOT_RUN", null);
+        } else {
+            var cgId = resolvedCandGraph.orElseThrow();
+            var observedOpt = graphs.load(cgId);
+            if (observedOpt.isEmpty()) {
+                reanalysisCheck = check("candidate-reanalysis", Status.NOT_RUN, "REANALYSIS_GRAPH_UNAVAILABLE", cgId);
+            } else if (!observedOpt.orElseThrow().snapshot().equals(candidateSnapshot)) {
+                reanalysisCheck = check("candidate-reanalysis", Status.FAILED, "REANALYSIS_SNAPSHOT_MISMATCH", cgId);
+            } else {
+                reanalysisCheck = check("candidate-reanalysis", Status.PASSED, "PASSIVE_REANALYSIS_MATCHED", cgId);
+            }
+        }
+
+        var isolatedCheck = evaluateIsolated(plan, intact, vmProof, vmTampered, cancelled);
+        var checks = List.of(pinned, reanalysisCheck, isolatedCheck);
+
+        Verdict verdict;
+        if (checks.stream().anyMatch(c -> c.status() == Status.FAILED)) {
+            verdict = Verdict.REJECTED;
+        } else if (pinned.status() == Status.PASSED && isolatedCheck.status() == Status.PASSED) {
+            verdict = Verdict.VERIFIED;
+        } else {
+            verdict = Verdict.UNVERIFIED;
+        }
+        var isolatedView = vmProof.map(p -> new IsolatedProof(p.capture(), p.image(), p.inputs(), p.buildTool(),
+                p.modules(), p.compileExit(), p.testExit(), p.testsRun(), p.testsFailed(), p.testsErrors(),
+                p.classCensusDigest(), p.classCensus().classCount(), p.checks(),
+                p.isolationMode(), p.failingTests(), p.logTail(), p.behavioralDiff(), p.testsSkipped()));
+        return new Result(VERSION, verdict, proposal.identity(), plan.identity(), plan, checks,
+                Optional.empty(), Optional.empty(), isolatedView, value.patch());
     }
 
     private Check evaluateIsolated(Plan plan, boolean intact, Optional<CapturedRepairExecution.Proof> vmProof,
@@ -682,14 +796,23 @@ public final class CapturedRepairVerification {
     private static boolean matchesBeforeFiles(List<SnapshotFile> files, List<EditPin> edits) {
         var map = new HashMap<String, ContentDigest>();
         files.forEach(f -> map.put(f.path(), f.contentDigest()));
-        return edits.stream().allMatch(e -> e.before().equals(map.get(e.path())));
+        return edits.stream().allMatch(e -> CapturedRepair.ABSENT_DIGEST.equals(e.before())
+                ? !map.containsKey(e.path())
+                : e.before().equals(map.get(e.path())));
     }
 
     private static List<SnapshotFile> applyFiles(List<SnapshotFile> baseline, List<EditPin> edits) {
-        var replacements = new HashMap<String, ContentDigest>();
-        edits.forEach(e -> replacements.put(e.path(), e.after()));
-        return baseline.stream()
-                .map(f -> replacements.containsKey(f.path()) ? new SnapshotFile(f.path(), replacements.get(f.path())) : f)
+        var byPath = new TreeMap<String, ContentDigest>();
+        baseline.forEach(f -> byPath.put(f.path(), f.contentDigest()));
+        for (var e : edits) {
+            if (CapturedRepair.ABSENT_DIGEST.equals(e.after())) {
+                byPath.remove(e.path());
+            } else {
+                byPath.put(e.path(), e.after());
+            }
+        }
+        return byPath.entrySet().stream()
+                .map(entry -> new SnapshotFile(entry.getKey(), entry.getValue()))
                 .toList();
     }
 

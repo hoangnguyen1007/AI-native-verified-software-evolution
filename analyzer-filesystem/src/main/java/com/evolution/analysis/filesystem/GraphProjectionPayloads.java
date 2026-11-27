@@ -14,17 +14,35 @@ import java.util.zip.*;
 /** Disposable content-addressed payload segments. The SQLite B-tree contains only
  * keys and byte locators; large JSON never participates in key rebalancing. */
 final class GraphProjectionPayloads implements AutoCloseable {
-    private static final int MIN_COMPRESS_BYTES = 128;
+    private static final int MIN_COMPRESS_BYTES = 512;
+    private static final int WRITE_BUFFER_BYTES = 256 * 1024;
+    private static final int CACHE_MAX_ENTRIES = 2048;
+    private static final int CACHE_MAX_CHARS = 16 * 1024 * 1024;
+    private static final int LOCATOR_CACHE_CAP = 262_144;
+    private static final int MAX_OPEN_READERS = 16;
+    private static final int INSERT_BATCH_SIZE = 1024;
+
+    private record Locator(int segment, long start, int length, int rawLength, boolean compressed) {}
+
     private final PreparedStatement find, insert;
     private final Path directory;
     private final int rowBytes;
     private final long segmentBytes;
+    private final int cacheMaxEntries;
+    private final int cacheMaxChars;
+    private final boolean batchWrites;
     private final BooleanSupplier cancelled;
     private final List<Path> segments = new ArrayList<>();
-    private final Map<Integer, FileChannel> readers = new LinkedHashMap<>(8, .75f, true);
-    private final Map<String, String> cache = new LinkedHashMap<>(16, .75f, true);
-    private final Deflater deflater = new Deflater(Deflater.BEST_SPEED);
-    private ByteArrayOutputStream compressBuffer = new ByteArrayOutputStream(4096);
+    private final List<Long> segmentLengths = new ArrayList<>();
+    private final Map<Integer, FileChannel> readers = new LinkedHashMap<>(16, .75f, true);
+    private final Map<String, String> cache = new LinkedHashMap<>(256, .75f, true);
+    private final Map<String, Locator> locators = new HashMap<>(4096);
+    private final Deflater deflater = new Deflater(Deflater.BEST_SPEED, true);
+    private final Inflater inflater = new Inflater(true);
+    private byte[] compressBuf = new byte[8192];
+    private final byte[] writeBuf = new byte[WRITE_BUFFER_BYTES];
+    private int writeBufPos;
+    private int insertBatchCount;
     private int cachedCharacters;
     private FileChannel writer;
     private long position, allowance;
@@ -37,6 +55,10 @@ final class GraphProjectionPayloads implements AutoCloseable {
 
     GraphProjectionPayloads(Connection database, int rowBytes, BooleanSupplier cancelled, long segmentBytes) throws SQLException, IOException {
         this.rowBytes = rowBytes; this.cancelled = cancelled; this.segmentBytes = segmentBytes;
+        boolean smallTestSegment = segmentBytes < 1_048_576L;
+        this.cacheMaxEntries = smallTestSegment ? 64 : CACHE_MAX_ENTRIES;
+        this.cacheMaxChars = smallTestSegment ? 524_288 : CACHE_MAX_CHARS;
+        this.batchWrites = !database.getAutoCommit() && !smallTestSegment;
         try (var sql = database.createStatement(); var rows = sql.executeQuery("PRAGMA database_list")) {
             Path found = null; while (rows.next()) if (rows.getString(2).equals("main")) found = Path.of(rows.getString(3));
             if (found == null || found.toString().isEmpty()) throw new IOException("GRAPH_PROJECTION_DISK_INDEX_REQUIRED");
@@ -59,6 +81,29 @@ final class GraphProjectionPayloads implements AutoCloseable {
         }
     }
 
+    void flush() throws SQLException, IOException {
+        flushWriteBuffer();
+        flushInsertBatch();
+    }
+
+    private void flushInsertBatch() throws SQLException {
+        if (insertBatchCount > 0) {
+            insert.executeBatch();
+            insertBatchCount = 0;
+        }
+    }
+
+    private void flushWriteBuffer() throws IOException {
+        if (writeBufPos == 0 || writer == null) return;
+        var buffer = ByteBuffer.wrap(writeBuf, 0, writeBufPos);
+        long writeStart = position - writeBufPos;
+        while (buffer.hasRemaining()) {
+            check();
+            writeStart += writer.write(buffer, writeStart);
+        }
+        writeBufPos = 0;
+    }
+
     String put(String value) throws SQLException, IOException {
         check();
         byte[] raw = value.getBytes(StandardCharsets.UTF_8);
@@ -68,71 +113,149 @@ final class GraphProjectionPayloads implements AutoCloseable {
     String putUtf8(String value, byte[] raw, String digest) throws SQLException, IOException {
         check();
         if (raw.length > rowBytes) throw new IOException("GRAPH_PARTITION_ROW_WORKER_REQUIRED");
-        if (cache.containsKey(digest)) return digest;
-        find.setString(1, digest);
-        try (var rows = find.executeQuery()) {
-            if (rows.next()) { remember(digest, value); return digest; }
+        if (cache.containsKey(digest) || locators.containsKey(digest)) return digest;
+        if (locators.size() >= LOCATOR_CACHE_CAP) {
+            flushInsertBatch();
+            find.setString(1, digest);
+            try (var rows = find.executeQuery()) {
+                if (rows.next()) { remember(digest, value); return digest; }
+            }
         }
         boolean compressed = false;
         byte[] bytes = raw;
+        int bytesLen = raw.length;
         if (raw.length >= MIN_COMPRESS_BYTES) {
             deflater.reset();
-            compressBuffer.reset();
-            try (var zip = new DeflaterOutputStream(compressBuffer, deflater, 4096)) {
-                zip.write(raw);
-                zip.finish();
+            deflater.setInput(raw);
+            deflater.finish();
+            int needed = Math.min(raw.length, Math.max(compressBuf.length, raw.length));
+            if (compressBuf.length < needed && needed <= 1_048_576) {
+                compressBuf = new byte[needed];
             }
-            if (compressBuffer.size() < raw.length) {
+            int total = 0;
+            boolean fits = true;
+            while (!deflater.finished()) {
+                if (total >= raw.length) {
+                    fits = false;
+                    break;
+                }
+                int space = Math.min(compressBuf.length, raw.length) - total;
+                if (space <= 0) {
+                    if (compressBuf.length < raw.length) {
+                        compressBuf = Arrays.copyOf(compressBuf, Math.min(raw.length, compressBuf.length * 2));
+                        space = Math.min(compressBuf.length, raw.length) - total;
+                    } else {
+                        fits = false;
+                        break;
+                    }
+                }
+                int n = deflater.deflate(compressBuf, total, space);
+                if (n == 0 && deflater.needsInput()) break;
+                total += n;
+            }
+            if (fits && total < raw.length) {
                 compressed = true;
-                bytes = compressBuffer.toByteArray();
+                bytes = compressBuf;
+                bytesLen = total;
             }
-            if (compressBuffer.size() > 1_048_576) {
-                compressBuffer = new ByteArrayOutputStream(4096);
+            if (compressBuf.length > 1_048_576) {
+                compressBuf = new byte[8192];
             }
         }
-        if (writer == null || position > 0 && position + bytes.length > segmentBytes) {
-            if (writer != null) { writer.close(); writer = null; }
-            Path file = Files.createTempFile(directory, "graph-payload-", ".pack"); segments.add(file);
-            writer = FileChannel.open(file, StandardOpenOption.READ, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS); position = 0;
+        if (writer == null || position > 0 && position + bytesLen > segmentBytes) {
+            if (writer != null) {
+                flushWriteBuffer();
+                writer.close();
+                writer = null;
+            }
+            Path file = Files.createTempFile(directory, "graph-payload-", ".pack");
+            segments.add(file);
+            segmentLengths.add(0L);
+            writer = FileChannel.open(file, StandardOpenOption.READ, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS);
+            position = 0;
         }
-        if (allowance < bytes.length) {
+        if (allowance < bytesLen) {
             long free = fileStore.getUsableSpace(); long reserve = 64L * 1024 * 1024;
-            if (free < bytes.length + reserve) throw new IOException("GRAPH_PROJECTION_DISK_PRESSURE");
+            if (free < bytesLen + reserve) throw new IOException("GRAPH_PROJECTION_DISK_PRESSURE");
             allowance = Math.min(8L * 1024 * 1024, free - reserve);
         }
         long start = position;
-        var buffer = ByteBuffer.wrap(bytes);
-        while (buffer.hasRemaining()) { check(); position += writer.write(buffer, position); }
-        allowance -= bytes.length;
-        insert.setString(1, digest); insert.setInt(2, segments.size() - 1); insert.setLong(3, start);
-        insert.setInt(4, bytes.length); insert.setInt(5, raw.length); insert.setBoolean(6, compressed);
-        insert.executeUpdate();
+        appendToSegment(bytes, bytesLen);
+        int segIndex = segments.size() - 1;
+        segmentLengths.set(segIndex, position);
+        allowance -= bytesLen;
+        insert.setString(1, digest); insert.setInt(2, segIndex); insert.setLong(3, start);
+        insert.setInt(4, bytesLen); insert.setInt(5, raw.length); insert.setBoolean(6, compressed);
+        if (batchWrites) {
+            insert.addBatch();
+            if (++insertBatchCount >= INSERT_BATCH_SIZE) {
+                flushInsertBatch();
+            }
+        } else {
+            flushWriteBuffer();
+            insert.executeUpdate();
+        }
+        if (locators.size() < LOCATOR_CACHE_CAP) {
+            locators.put(digest, new Locator(segIndex, start, bytesLen, raw.length, compressed));
+        }
         remember(digest, value);
         return digest;
+    }
+
+    private void appendToSegment(byte[] bytes, int len) throws IOException {
+        if (len >= writeBuf.length) {
+            flushWriteBuffer();
+            var buffer = ByteBuffer.wrap(bytes, 0, len);
+            while (buffer.hasRemaining()) {
+                check();
+                position += writer.write(buffer, position);
+            }
+            return;
+        }
+        if (writeBufPos + len > writeBuf.length) {
+            flushWriteBuffer();
+        }
+        System.arraycopy(bytes, 0, writeBuf, writeBufPos, len);
+        writeBufPos += len;
+        position += len;
     }
 
     String get(String digest) throws SQLException, IOException {
         check();
         String existing = cache.get(digest); if (existing != null) return existing;
-        int segment, length, rawLength; long start; boolean compressed;
-        find.setString(1, digest);
-        try (var rows = find.executeQuery()) {
-            if (!rows.next()) throw new IOException("GRAPH_PROJECTION_PAYLOAD_MISSING");
-            segment = rows.getInt(1); start = rows.getLong(2); length = rows.getInt(3); rawLength = rows.getInt(4); compressed = rows.getBoolean(5);
+        Locator loc = locators.get(digest);
+        if (loc == null) {
+            flushInsertBatch();
+            find.setString(1, digest);
+            try (var rows = find.executeQuery()) {
+                if (!rows.next()) throw new IOException("GRAPH_PROJECTION_PAYLOAD_MISSING");
+                loc = new Locator(rows.getInt(1), rows.getLong(2), rows.getInt(3), rows.getInt(4), rows.getBoolean(5));
+            }
         }
+        int segment = loc.segment(), length = loc.length(), rawLength = loc.rawLength();
+        long start = loc.start();
+        boolean compressed = loc.compressed();
         if (segment < 0 || segment >= segments.size() || start < 0 || length < 0 || length > rowBytes || rawLength < 0 || rawLength > rowBytes)
             throw new IOException("GRAPH_PROJECTION_PAYLOAD_LOCATOR_INVALID");
         FileChannel channel;
-        if (segment == segments.size() - 1) channel = writer;
-        else {
+        if (segment == segments.size() - 1) {
+            flushWriteBuffer();
+            channel = writer;
+        } else {
             channel = readers.get(segment);
             if (channel == null) {
-                if (readers.size() >= 4) { var first = readers.entrySet().iterator(); var old = first.next(); old.getValue().close(); first.remove(); }
+                if (readers.size() >= MAX_OPEN_READERS) {
+                    var first = readers.entrySet().iterator();
+                    var old = first.next();
+                    old.getValue().close();
+                    first.remove();
+                }
                 channel = FileChannel.open(segments.get(segment), StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS);
                 readers.put(segment, channel);
             }
         }
-        if (start > channel.size() - length) throw new IOException("GRAPH_PROJECTION_PAYLOAD_TRUNCATED");
+        long segSize = segmentLengths.get(segment);
+        if (start > segSize - length) throw new IOException("GRAPH_PROJECTION_PAYLOAD_TRUNCATED");
         byte[] bytes = new byte[length];
         var buffer = ByteBuffer.wrap(bytes);
         long offset = start;
@@ -144,8 +267,23 @@ final class GraphProjectionPayloads implements AutoCloseable {
         }
         byte[] raw;
         if (compressed) {
-            try (var zip = new InflaterInputStream(new ByteArrayInputStream(bytes))) {
-                raw = zip.readNBytes(rawLength + 1);
+            raw = new byte[rawLength];
+            inflater.reset();
+            inflater.setInput(bytes);
+            int total = 0;
+            try {
+                while (total < rawLength) {
+                    int n = inflater.inflate(raw, total, rawLength - total);
+                    if (n == 0) {
+                        if (inflater.finished() || inflater.needsInput() || inflater.needsDictionary()) break;
+                    }
+                    total += n;
+                }
+            } catch (DataFormatException corrupt) {
+                throw new IOException("GRAPH_PROJECTION_PAYLOAD_CORRUPT", corrupt);
+            }
+            if (total != rawLength || !inflater.finished()) {
+                throw new IOException("GRAPH_PROJECTION_PAYLOAD_TRUNCATED");
             }
         } else {
             raw = bytes;
@@ -170,7 +308,7 @@ final class GraphProjectionPayloads implements AutoCloseable {
         if (old != null) cachedCharacters -= old.length();
         cachedCharacters += value.length();
         var rows = cache.entrySet().iterator();
-        while (cache.size() > 64 || cachedCharacters > 524_288) {
+        while ((cache.size() > cacheMaxEntries || cachedCharacters > cacheMaxChars) && rows.hasNext()) {
             cachedCharacters -= rows.next().getValue().length();
             rows.remove();
         }
@@ -185,7 +323,9 @@ final class GraphProjectionPayloads implements AutoCloseable {
     public void close() throws IOException {
         if (closed) return;
         closed = true;
+        writeBufPos = 0; // Segments are disposable scratch deleted below; no need to flush tail bytes.
         deflater.end();
+        inflater.end();
         IOException failure = null;
         var resources = new ArrayList<AutoCloseable>();
         resources.add(find); resources.add(insert);
@@ -206,6 +346,7 @@ final class GraphProjectionPayloads implements AutoCloseable {
             }
         }
         cache.clear();
+        locators.clear();
         if (failure != null) throw failure;
     }
 }

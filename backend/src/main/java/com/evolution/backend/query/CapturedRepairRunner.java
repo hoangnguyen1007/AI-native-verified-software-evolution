@@ -19,8 +19,32 @@ import java.util.function.BooleanSupplier;
  */
 public final class CapturedRepairRunner {
     public static final String NOT_CONFIGURED = "ISOLATED_RUNNER_NOT_CONFIGURED";
+    public static final String OFFLINE_TOOLCHAIN_MISSING = "OFFLINE_TOOLCHAIN_MISSING";
+    public static final Set<String> SUPPORTED_BUILD_TOOLS = Set.of("auto", "maven", "gradle", "node", "python", "go");
+    public static final java.util.regex.Pattern PINNED_BASE_IMAGE_PATTERN =
+            java.util.regex.Pattern.compile("^(?:docker\\.io/library/)?(?:eclipse-temurin|node|python|golang)@sha256:[0-9a-f]{64}$");
+    public static final String DEFAULT_JAVA_BASE_IMAGE =
+            "eclipse-temurin@sha256:82801f9dcdcbad5a05082aba8c86d1da5b72ccb498e71318b1f91b5a477887b3";
     static final List<String> CONTROL_RESOURCES = List.of(
             "Dockerfile", "guest-init.sh", "run.py", "ClassDependencyCensus.java");
+
+    public enum IsolationMode {
+        QEMU_IN_DOCKER("qemu-docker"),
+        DOCKER_HARDENED_CONTAINER("docker-container");
+
+        final String cliFlag;
+        IsolationMode(String cliFlag) { this.cliFlag = cliFlag; }
+        public String cliFlag() { return cliFlag; }
+
+        public static IsolationMode parse(String raw) {
+            if (raw == null || raw.isBlank()) return QEMU_IN_DOCKER;
+            return switch (raw.strip().toLowerCase(Locale.ROOT).replace('_', '-')) {
+                case "qemu", "qemu-docker", "qemu-in-docker" -> QEMU_IN_DOCKER;
+                case "docker", "container", "docker-container", "docker-hardened-container" -> DOCKER_HARDENED_CONTAINER;
+                default -> throw new IllegalArgumentException("Unsupported isolation mode: " + raw);
+            };
+        }
+    }
 
     public record Config(
             String pythonExecutable,
@@ -33,7 +57,46 @@ public final class CapturedRepairRunner {
             Optional<String> dockerContext,
             boolean skipTests,
             Path workRoot,
-            Duration timeout) {
+            Duration timeout,
+            IsolationMode isolationMode,
+            Optional<String> baseCacheTag,
+            Optional<Path> npmCache,
+            Optional<Path> pipWheelhouse,
+            Optional<Path> goModCache) {
+        public Config(
+                String pythonExecutable,
+                Optional<String> baseImage,
+                String buildTool,
+                Optional<Path> mavenZip,
+                Optional<Path> m2Repository,
+                Optional<Path> gradleZip,
+                Optional<Path> gradleHome,
+                Optional<String> dockerContext,
+                boolean skipTests,
+                Path workRoot,
+                Duration timeout) {
+            this(pythonExecutable, baseImage, buildTool, mavenZip, m2Repository, gradleZip, gradleHome,
+                    dockerContext, skipTests, workRoot, timeout, IsolationMode.QEMU_IN_DOCKER, Optional.empty(),
+                    Optional.empty(), Optional.empty(), Optional.empty());
+        }
+        public Config(
+                String pythonExecutable,
+                Optional<String> baseImage,
+                String buildTool,
+                Optional<Path> mavenZip,
+                Optional<Path> m2Repository,
+                Optional<Path> gradleZip,
+                Optional<Path> gradleHome,
+                Optional<String> dockerContext,
+                boolean skipTests,
+                Path workRoot,
+                Duration timeout,
+                IsolationMode isolationMode,
+                Optional<String> baseCacheTag) {
+            this(pythonExecutable, baseImage, buildTool, mavenZip, m2Repository, gradleZip, gradleHome,
+                    dockerContext, skipTests, workRoot, timeout, isolationMode, baseCacheTag,
+                    Optional.empty(), Optional.empty(), Optional.empty());
+        }
         public Config {
             if (pythonExecutable == null || pythonExecutable.isBlank()) {
                 pythonExecutable = defaultPython();
@@ -41,10 +104,14 @@ public final class CapturedRepairRunner {
             if (buildTool == null || buildTool.isBlank()) {
                 buildTool = "auto";
             }
-            if (!Set.of("auto", "maven", "gradle").contains(buildTool)) {
+            buildTool = buildTool.strip().toLowerCase(Locale.ROOT);
+            if (!SUPPORTED_BUILD_TOOLS.contains(buildTool)) {
                 throw new IllegalArgumentException("Unsupported buildTool: " + buildTool);
             }
             baseImage = Objects.requireNonNull(baseImage);
+            if (baseImage.isPresent() && !PINNED_BASE_IMAGE_PATTERN.matcher(baseImage.orElseThrow().strip()).matches()) {
+                throw new IllegalArgumentException("Base image must be a pinned official digest (eclipse-temurin|node|python|golang@sha256:...)");
+            }
             mavenZip = Objects.requireNonNull(mavenZip);
             m2Repository = Objects.requireNonNull(m2Repository);
             gradleZip = Objects.requireNonNull(gradleZip);
@@ -54,15 +121,47 @@ public final class CapturedRepairRunner {
             if (timeout == null || timeout.isNegative() || timeout.isZero()) {
                 timeout = Duration.ofMinutes(15);
             }
+            isolationMode = isolationMode == null ? IsolationMode.QEMU_IN_DOCKER : isolationMode;
+            if (Set.of("node", "python", "go").contains(buildTool)
+                    && isolationMode != IsolationMode.DOCKER_HARDENED_CONTAINER) {
+                throw new IllegalArgumentException(
+                        "Polyglot build tool '" + buildTool + "' requires DOCKER_HARDENED_CONTAINER isolation mode");
+            }
+            baseCacheTag = baseCacheTag == null ? Optional.empty() : baseCacheTag;
+            npmCache = npmCache == null ? Optional.empty() : npmCache;
+            pipWheelhouse = pipWheelhouse == null ? Optional.empty() : pipWheelhouse;
+            goModCache = goModCache == null ? Optional.empty() : goModCache;
         }
 
-        private static String defaultPython() {
+        public static String defaultPython() {
             String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
             return os.contains("win") ? "python" : "python3";
         }
     }
 
     public record InvocationResult(Path captureFile, ContentDigest captureDigest, CapturedRepairExecution execution) {}
+
+    public record ToolchainReadiness(String buildTool, String status, Optional<String> cachePath, String detail) {}
+
+    public record EnvironmentProbe(
+            boolean pythonAvailable,
+            String pythonExecutable,
+            String pythonVersion,
+            boolean dockerCliAvailable,
+            boolean dockerDaemonReachable,
+            String dockerContext,
+            String dockerServerVersion,
+            List<String> pinnedLocalImages,
+            Map<String, String> detectedCaches,
+            List<ToolchainReadiness> toolchains,
+            boolean readyForHardenedContainers,
+            String summary) {
+        public EnvironmentProbe {
+            pinnedLocalImages = List.copyOf(pinnedLocalImages);
+            detectedCaches = Collections.unmodifiableMap(new LinkedHashMap<>(detectedCaches));
+            toolchains = List.copyOf(toolchains);
+        }
+    }
 
     private final Config config;
 
@@ -91,8 +190,14 @@ public final class CapturedRepairRunner {
         String skipTests = System.getProperty("evo.captured.repair.runner.skipTests", "false");
         String workRoot = System.getProperty("evo.captured.repair.runner.workRoot");
         String timeoutSeconds = System.getProperty("evo.captured.repair.runner.timeoutSeconds");
+        String mode = System.getProperty("evo.captured.repair.runner.mode", "qemu-docker");
+        String cacheTag = System.getProperty("evo.captured.repair.runner.baseCacheTag");
+        String npmCache = System.getProperty("evo.captured.repair.runner.npmCache");
+        String pipWheelhouse = System.getProperty("evo.captured.repair.runner.pipWheelhouse");
+        String goModCache = System.getProperty("evo.captured.repair.runner.goModCache");
 
-        boolean anyConfigured = mavenZip != null || m2 != null || gradleZip != null || gradleHome != null;
+        boolean anyConfigured = mavenZip != null || m2 != null || gradleZip != null || gradleHome != null
+                || npmCache != null || pipWheelhouse != null || goModCache != null;
         if ("false".equalsIgnoreCase(enabled != null ? enabled.strip() : null)) {
             return Optional.empty();
         }
@@ -116,7 +221,12 @@ public final class CapturedRepairRunner {
                 Optional.ofNullable(dockerContext),
                 Boolean.parseBoolean(skipTests),
                 Path.of(workRoot).toAbsolutePath().normalize(),
-                timeout));
+                timeout,
+                IsolationMode.parse(mode),
+                Optional.ofNullable(cacheTag).filter(s -> !s.isBlank()),
+                Optional.ofNullable(npmCache).filter(s -> !s.isBlank()).map(Path::of),
+                Optional.ofNullable(pipWheelhouse).filter(s -> !s.isBlank()).map(Path::of),
+                Optional.ofNullable(goModCache).filter(s -> !s.isBlank()).map(Path::of)));
     }
 
     /** Extracts the bundled control scripts from {@code /captured-repair/*} into {@code targetDir}. */
@@ -142,6 +252,16 @@ public final class CapturedRepairRunner {
             CapturedRepair.Outcome proposalOutcome,
             CapturedRepairVerification.Result initialVerification,
             BooleanSupplier cancelled) throws IOException {
+        return run(repoRoot, proposalOutcome, initialVerification, false, Optional.empty(), cancelled);
+    }
+
+    public InvocationResult run(
+            Path repoRoot,
+            CapturedRepair.Outcome proposalOutcome,
+            CapturedRepairVerification.Result initialVerification,
+            boolean behavioralDiff,
+            Optional<String> behavioralProbesJson,
+            BooleanSupplier cancelled) throws IOException {
         Objects.requireNonNull(repoRoot);
         Objects.requireNonNull(proposalOutcome);
         Objects.requireNonNull(initialVerification);
@@ -159,9 +279,15 @@ public final class CapturedRepairRunner {
         Path planFile = runDir.resolve("verification.json");
         Files.writeString(proposalFile, CanonicalJson.write(proposalOutcome), StandardCharsets.UTF_8);
         Files.writeString(planFile, CanonicalJson.write(initialVerification), StandardCharsets.UTF_8);
+        Optional<Path> probesFile = Optional.empty();
+        if (!config.skipTests() && behavioralProbesJson != null && behavioralProbesJson.isPresent() && !behavioralProbesJson.orElseThrow().isBlank()) {
+            Path pf = runDir.resolve("behavioral-probes.json");
+            Files.writeString(pf, behavioralProbesJson.orElseThrow(), StandardCharsets.UTF_8);
+            probesFile = Optional.of(pf);
+        }
 
         var command = buildCommand(controlsDir.resolve("run.py"), repoRoot.toAbsolutePath().normalize(),
-                proposalFile, planFile, outDir, config);
+                proposalFile, planFile, outDir, config, behavioralDiff, probesFile);
         var process = new ProcessBuilder(command)
                 .directory(runDir.toFile())
                 .redirectErrorStream(true)
@@ -194,11 +320,13 @@ public final class CapturedRepairRunner {
             while (true) {
                 if (cancelled != null && cancelled.getAsBoolean()) {
                     destroyProcessTree(process);
+                    deleteContextDirQuietly(outDir.resolve("context"));
                     throw new IOException("ISOLATED_RUNNER_CANCELLED");
                 }
                 long remainingMs = TimeUnit.NANOSECONDS.toMillis(deadlineNanos - System.nanoTime());
                 if (remainingMs <= 0L) {
                     destroyProcessTree(process);
+                    deleteContextDirQuietly(outDir.resolve("context"));
                     throw new IOException("ISOLATED_RUNNER_TIMEOUT");
                 }
                 if (process.waitFor(Math.min(200L, remainingMs), TimeUnit.MILLISECONDS)) {
@@ -208,16 +336,29 @@ public final class CapturedRepairRunner {
             drainer.join(2000L);
         } catch (InterruptedException interrupted) {
             destroyProcessTree(process);
+            deleteContextDirQuietly(outDir.resolve("context"));
             Thread.currentThread().interrupt();
             throw new IOException("ISOLATED_RUNNER_INTERRUPTED", interrupted);
+        } finally {
+            // Preserve manifest.sha256 at capture root if a mock/legacy script wrote it only under context/inputs/
+            Path rootManifest = outDir.resolve("manifest.sha256");
+            Path nestedManifest = outDir.resolve("context").resolve("inputs").resolve("manifest.sha256");
+            if (!Files.exists(rootManifest, LinkOption.NOFOLLOW_LINKS)
+                    && Files.isRegularFile(nestedManifest, LinkOption.NOFOLLOW_LINKS)) {
+                try {
+                    Files.copy(nestedManifest, rootManifest, StandardCopyOption.REPLACE_EXISTING);
+                } catch (IOException ignored) {
+                    /* Best-effort preservation before context cleanup. */
+                }
+            }
+            deleteContextDirQuietly(outDir.resolve("context"));
         }
         String output;
         synchronized (tailBuffer) {
             output = tailBuffer.toString(StandardCharsets.UTF_8);
         }
         if (process.exitValue() != 0) {
-            throw new IOException("ISOLATED_RUNNER_FAILED: exit=" + process.exitValue()
-                    + " tail=" + output.substring(Math.max(0, output.length() - 800)));
+            throw new IOException(formatFailureMessage(process.exitValue(), output));
         }
         Path captureFile = outDir.resolve("capture.json");
         if (!Files.isRegularFile(captureFile, LinkOption.NOFOLLOW_LINKS)) {
@@ -228,6 +369,12 @@ public final class CapturedRepairRunner {
         return new InvocationResult(captureFile, captureDigest, execution);
     }
 
+    static String formatFailureMessage(int exitCode, String output) {
+        String safeOutput = output == null ? "" : com.evolution.backend.query.llm.LlmTransport.redactSecrets(output).text();
+        return "ISOLATED_RUNNER_FAILED: exit=" + exitCode
+                + " tail=" + safeOutput.substring(Math.max(0, safeOutput.length() - 800));
+    }
+
     static List<String> buildCommand(
             Path runPy,
             Path repoRoot,
@@ -235,6 +382,18 @@ public final class CapturedRepairRunner {
             Path verificationFile,
             Path outDir,
             Config config) {
+        return buildCommand(runPy, repoRoot, proposalFile, verificationFile, outDir, config, false, Optional.empty());
+    }
+
+    static List<String> buildCommand(
+            Path runPy,
+            Path repoRoot,
+            Path proposalFile,
+            Path verificationFile,
+            Path outDir,
+            Config config,
+            boolean behavioralDiff,
+            Optional<Path> behavioralProbesFile) {
         var cmd = new ArrayList<String>();
         cmd.add(config.pythonExecutable());
         cmd.add(runPy.toString());
@@ -246,8 +405,14 @@ public final class CapturedRepairRunner {
         cmd.add(verificationFile.toString());
         cmd.add("--build-tool");
         cmd.add(config.buildTool());
+        cmd.add("--mode");
+        cmd.add(config.isolationMode().cliFlag());
         cmd.add("--out");
         cmd.add(outDir.toString());
+        config.baseCacheTag().ifPresent(tag -> {
+            cmd.add("--base-cache-tag");
+            cmd.add(tag);
+        });
         config.baseImage().ifPresent(b -> {
             cmd.add("--base");
             cmd.add(b);
@@ -268,6 +433,18 @@ public final class CapturedRepairRunner {
             cmd.add("--gradle-home");
             cmd.add(p.toAbsolutePath().normalize().toString());
         });
+        config.npmCache().ifPresent(p -> {
+            cmd.add("--npm-cache");
+            cmd.add(p.toAbsolutePath().normalize().toString());
+        });
+        config.pipWheelhouse().ifPresent(p -> {
+            cmd.add("--pip-wheelhouse");
+            cmd.add(p.toAbsolutePath().normalize().toString());
+        });
+        config.goModCache().ifPresent(p -> {
+            cmd.add("--go-mod-cache");
+            cmd.add(p.toAbsolutePath().normalize().toString());
+        });
         config.dockerContext().ifPresent(ctx -> {
             cmd.add("--docker-context");
             cmd.add(ctx);
@@ -275,7 +452,237 @@ public final class CapturedRepairRunner {
         if (config.skipTests()) {
             cmd.add("--skip-tests");
         }
+        if (behavioralDiff && !config.skipTests()) {
+            cmd.add("--behavioral-diff");
+        }
+        if (!config.skipTests() && behavioralProbesFile != null && behavioralProbesFile.isPresent()) {
+            cmd.add("--behavioral-probes");
+            cmd.add(behavioralProbesFile.orElseThrow().toAbsolutePath().normalize().toString());
+        }
         return List.copyOf(cmd);
+    }
+
+    /**
+     * Strictly read-only environment probe detecting Python 3, Docker CLI/daemon availability,
+     * pinned local base images, and local offline dependency caches. NEVER executes target builds.
+     */
+    public static EnvironmentProbe probeEnvironment(Optional<String> preferredPython, Optional<String> preferredDockerContext) {
+        String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
+        boolean windows = os.contains("win");
+        String pyExec = preferredPython != null && preferredPython.isPresent() && !preferredPython.orElseThrow().isBlank()
+                ? preferredPython.orElseThrow().strip()
+                : Config.defaultPython();
+        String dockerCtx = preferredDockerContext != null && preferredDockerContext.isPresent()
+                ? preferredDockerContext.orElseThrow().strip()
+                : (windows ? "desktop-linux" : "");
+
+        var pyProbe = runShortProbe(List.of(pyExec, "--version"), Duration.ofSeconds(4));
+        if (!pyProbe.ok() && preferredPython.isEmpty()) {
+            String alt = "python".equals(pyExec) ? "python3" : "python";
+            var altProbe = runShortProbe(List.of(alt, "--version"), Duration.ofSeconds(4));
+            if (altProbe.ok()) {
+                pyExec = alt;
+                pyProbe = altProbe;
+            }
+        }
+        boolean pyAvailable = pyProbe.ok() && pyProbe.stdout().toLowerCase(Locale.ROOT).contains("python 3");
+        String pyVersion = pyAvailable ? pyProbe.stdout().strip() : "";
+
+        var dockerVer = runShortProbe(List.of("docker", "--version"), Duration.ofSeconds(4));
+        boolean dockerCli = dockerVer.ok();
+        boolean dockerDaemon = false;
+        String dockerServerVer = "";
+        var pinnedImages = new ArrayList<String>();
+        if (dockerCli) {
+            var infoCmd = new ArrayList<String>();
+            infoCmd.add("docker");
+            if (!dockerCtx.isBlank()) {
+                infoCmd.add("--context");
+                infoCmd.add(dockerCtx);
+            }
+            infoCmd.addAll(List.of("info", "--format", "{{.ServerVersion}}"));
+            var infoRes = runShortProbe(infoCmd, Duration.ofSeconds(5));
+            if (!infoRes.ok() && !dockerCtx.isBlank()) {
+                var defaultInfo = runShortProbe(List.of("docker", "info", "--format", "{{.ServerVersion}}"), Duration.ofSeconds(5));
+                if (defaultInfo.ok()) {
+                    dockerCtx = "";
+                    infoRes = defaultInfo;
+                }
+            }
+            if (infoRes.ok() && !infoRes.stdout().isBlank()) {
+                dockerDaemon = true;
+                dockerServerVer = infoRes.stdout().lines().findFirst().orElse("").strip();
+                var imgCmd = new ArrayList<String>();
+                imgCmd.add("docker");
+                if (!dockerCtx.isBlank()) {
+                    imgCmd.add("--context");
+                    imgCmd.add(dockerCtx);
+                }
+                imgCmd.addAll(List.of("images", "--digests", "--format", "{{.Repository}}@{{.Digest}}"));
+                var imgRes = runShortProbe(imgCmd, Duration.ofSeconds(5));
+                if (imgRes.ok()) {
+                    for (String line : imgRes.stdout().lines().toList()) {
+                        String trimmed = line.strip();
+                        if (PINNED_BASE_IMAGE_PATTERN.matcher(trimmed).matches() && !pinnedImages.contains(trimmed)) {
+                            pinnedImages.add(trimmed);
+                            if (pinnedImages.size() >= 16) break;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Read-only local offline cache detection (zero mutations, zero execution)
+        var caches = new LinkedHashMap<String, String>();
+        String home = System.getProperty("user.home", "");
+        Path userHome = home.isBlank() ? null : Path.of(home);
+        if (userHome != null) {
+            Path m2 = userHome.resolve(".m2").resolve("repository");
+            if (Files.isDirectory(m2)) caches.put("m2Repository", m2.toAbsolutePath().normalize().toString());
+            Path gradleHome = userHome.resolve(".gradle");
+            if (Files.isDirectory(gradleHome)) caches.put("gradleHome", gradleHome.toAbsolutePath().normalize().toString());
+            findDistributionZip(userHome.resolve(".m2").resolve("wrapper").resolve("dists"), "apache-maven-", ".zip")
+                    .ifPresent(p -> caches.put("mavenZip", p.toString()));
+            findDistributionZip(userHome.resolve(".gradle").resolve("wrapper").resolve("dists"), "gradle-", ".zip")
+                    .ifPresent(p -> caches.put("gradleZip", p.toString()));
+            Path npmUnix = userHome.resolve(".npm");
+            String localAppData = System.getenv("LOCALAPPDATA");
+            Path npmWin = (localAppData != null && !localAppData.isBlank()) ? Path.of(localAppData, "npm-cache") : null;
+            if (npmWin != null && Files.isDirectory(npmWin)) caches.put("npmCache", npmWin.toAbsolutePath().normalize().toString());
+            else if (Files.isDirectory(npmUnix)) caches.put("npmCache", npmUnix.toAbsolutePath().normalize().toString());
+            Path pipCache = windows && localAppData != null && !localAppData.isBlank()
+                    ? Path.of(localAppData, "pip", "cache")
+                    : userHome.resolve(".cache").resolve("pip");
+            if (Files.isDirectory(pipCache)) caches.put("pipWheelhouse", pipCache.toAbsolutePath().normalize().toString());
+            String gopath = System.getenv("GOPATH");
+            Path goMod = (gopath != null && !gopath.isBlank())
+                    ? Path.of(gopath, "pkg", "mod")
+                    : userHome.resolve("go").resolve("pkg").resolve("mod");
+            if (Files.isDirectory(goMod)) caches.put("goModCache", goMod.toAbsolutePath().normalize().toString());
+        }
+
+        var toolchains = new ArrayList<ToolchainReadiness>();
+        toolchains.add(buildReadiness("maven", dockerDaemon && pyAvailable,
+                caches.containsKey("m2Repository") && caches.containsKey("mavenZip"),
+                caches.get("m2Repository"),
+                "Requires Docker daemon, Python 3, ~/.m2/repository, and pinned apache-maven-*-bin.zip"));
+        toolchains.add(buildReadiness("gradle", dockerDaemon && pyAvailable,
+                caches.containsKey("gradleHome") && caches.containsKey("gradleZip"),
+                caches.get("gradleHome"),
+                "Requires Docker daemon, Python 3, ~/.gradle cache, and pinned gradle-*-bin.zip"));
+        toolchains.add(buildReadiness("node", dockerDaemon && pyAvailable,
+                caches.containsKey("npmCache"),
+                caches.get("npmCache"),
+                "Requires Docker daemon, pinned node@sha256 image, and offline npm cache / node_modules"));
+        toolchains.add(buildReadiness("python", dockerDaemon && pyAvailable,
+                caches.containsKey("pipWheelhouse"),
+                caches.get("pipWheelhouse"),
+                "Requires Docker daemon, pinned python@sha256 image, and optional offline wheelhouse"));
+        toolchains.add(buildReadiness("go", dockerDaemon && pyAvailable,
+                caches.containsKey("goModCache"),
+                caches.get("goModCache"),
+                "Requires Docker daemon, pinned golang@sha256 image, and offline GOMODCACHE"));
+
+        boolean ready = pyAvailable && dockerDaemon;
+        String summary = ready
+                ? ("Hardened Docker sandbox ready (Docker " + dockerServerVer + ", " + pyVersion
+                        + ", " + caches.size() + " offline cache(s) detected). Zero host build execution.")
+                : (!dockerCli ? "Docker CLI not found; repair verification stays fail-closed (PASSIVE_REANALYSIS_ONLY)."
+                        : (!dockerDaemon ? "Docker daemon unreachable; start Docker Desktop/Engine to enable isolated sandbox runs."
+                                : "Python 3 not found; required to orchestrate isolated container runs."));
+        return new EnvironmentProbe(pyAvailable, pyExec, pyVersion, dockerCli, dockerDaemon, dockerCtx,
+                dockerServerVer, pinnedImages, caches, toolchains, ready, summary);
+    }
+
+    private static ToolchainReadiness buildReadiness(String tool, boolean runtimeReady, boolean cacheReady,
+                                                     String cachePath, String detail) {
+        String status = !runtimeReady ? "DOCKER_UNAVAILABLE"
+                : (cacheReady ? "READY" : OFFLINE_TOOLCHAIN_MISSING);
+        return new ToolchainReadiness(tool, status, Optional.ofNullable(cachePath), detail);
+    }
+
+    private static Optional<Path> findDistributionZip(Path root, String prefix, String suffix) {
+        if (root == null || !Files.isDirectory(root)) return Optional.empty();
+        try (var stream = Files.walk(root, 4)) {
+            return stream.filter(p -> Files.isRegularFile(p, LinkOption.NOFOLLOW_LINKS))
+                    .filter(p -> {
+                        String name = p.getFileName().toString().toLowerCase(Locale.ROOT);
+                        return name.startsWith(prefix) && name.endsWith(suffix);
+                    })
+                    .sorted()
+                    .findFirst()
+                    .map(p -> p.toAbsolutePath().normalize());
+        } catch (IOException ignored) {
+            return Optional.empty();
+        }
+    }
+
+    private record ShortProbe(boolean ok, String stdout) {}
+
+    private static ShortProbe runShortProbe(List<String> command, Duration timeout) {
+        try {
+            var pb = new ProcessBuilder(command).redirectErrorStream(true);
+            var proc = pb.start();
+            var buf = new java.io.ByteArrayOutputStream(1024);
+            Thread drainer = new Thread(() -> {
+                try (var in = proc.getInputStream()) {
+                    byte[] chunk = new byte[1024];
+                    int n;
+                    while ((n = in.read(chunk)) != -1) {
+                        if (buf.size() < 32_768) {
+                            buf.write(chunk, 0, Math.min(n, 32_768 - buf.size()));
+                        }
+                    }
+                } catch (IOException ignored) {}
+            }, "evo-sandbox-probe");
+            drainer.setDaemon(true);
+            drainer.start();
+            boolean finished = proc.waitFor(timeout.toMillis(), TimeUnit.MILLISECONDS);
+            if (!finished) {
+                destroyProcessTree(proc);
+                return new ShortProbe(false, "");
+            }
+            drainer.join(500L);
+            return new ShortProbe(proc.exitValue() == 0, buf.toString(StandardCharsets.UTF_8));
+        } catch (Exception unavailable) {
+            return new ShortProbe(false, "");
+        }
+    }
+
+    private static void deleteContextDirQuietly(Path contextDir) {
+        if (contextDir == null) return;
+        Path normalized = contextDir.toAbsolutePath().normalize();
+        String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
+        Path target = normalized;
+        if (os.contains("win")) {
+            String raw = normalized.toString();
+            if (!raw.startsWith("\\\\?\\")) {
+                target = Path.of(raw.startsWith("\\\\") ? "\\\\?\\UNC\\" + raw.substring(2) : "\\\\?\\" + raw);
+            }
+        }
+        if (!Files.exists(target, LinkOption.NOFOLLOW_LINKS)) return;
+        try {
+            Files.walkFileTree(target, new SimpleFileVisitor<>() {
+                @Override
+                public FileVisitResult visitFile(Path file, java.nio.file.attribute.BasicFileAttributes attrs) {
+                    try {
+                        file.toFile().setWritable(true);
+                        Files.deleteIfExists(file);
+                    } catch (IOException ignored) {}
+                    return FileVisitResult.CONTINUE;
+                }
+                @Override
+                public FileVisitResult postVisitDirectory(Path dir, IOException exc) {
+                    try {
+                        dir.toFile().setWritable(true);
+                        Files.deleteIfExists(dir);
+                    } catch (IOException ignored) {}
+                    return FileVisitResult.CONTINUE;
+                }
+            });
+        } catch (IOException ignored) {
+            /* Best-effort cleanup of staging context directory. */
+        }
     }
 
     private static void destroyProcessTree(Process process) {

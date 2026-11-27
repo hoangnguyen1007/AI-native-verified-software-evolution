@@ -28,8 +28,16 @@ import java.util.zip.ZipInputStream;
 /** Passive JVM view of a repository-captured local JAR, AAR, or Android SDK platform dependency. */
 public final class GradleLocalJarInputs {
     private static final Pattern ANDROID_PLATFORM_DIR = Pattern.compile("android-([0-9]{1,4})");
+    private static final int LOCAL_JAR_CACHE_MAX = 512;
     private record CachedAndroidPlatform(Path realPath, long size, long mtimeMillis, BinaryInput input) {}
+    private record LocalJarCacheKey(Path cacheRoot, ContentDigest digest, long maxExpandedBytes) {}
     private static final Map<String, CachedAndroidPlatform> ANDROID_SDK_CACHE = new ConcurrentHashMap<>();
+    private static final Map<LocalJarCacheKey, Path> LOCAL_JAR_CACHE =
+            java.util.Collections.synchronizedMap(new java.util.LinkedHashMap<>(64, 0.75f, true) {
+                @Override protected boolean removeEldestEntry(Map.Entry<LocalJarCacheKey, Path> eldest) {
+                    return size() > LOCAL_JAR_CACHE_MAX;
+                }
+            });
 
     public static Optional<BinaryInput> recoverAndroidPlatformJar(
             Path cache,
@@ -84,7 +92,7 @@ public final class GradleLocalJarInputs {
         long size = Files.size(realJar);
         if (size < 4 || size > maxArtifactBytes) return Optional.empty();
         long mtime = Files.getLastModifiedTime(realJar, LinkOption.NOFOLLOW_LINKS).toMillis();
-        String cacheKey = realJar + "|" + selectedApi;
+        String cacheKey = cache.toAbsolutePath().normalize() + "|" + realJar + "|" + selectedApi;
         var cached = ANDROID_SDK_CACHE.get(cacheKey);
         if (cached != null && cached.size() == size && cached.mtimeMillis() == mtime
                 && Files.isRegularFile(cached.input().path(), LinkOption.NOFOLLOW_LINKS)) {
@@ -96,7 +104,10 @@ public final class GradleLocalJarInputs {
             throw new IOException("Invalid Android platform JAR header");
         }
         Path materialized = MavenDependencyArtifactProvider.materializeEmbeddedJar(cache, bytes, digest);
-        validateJarEntries(materialized, maxExpandedBytes);
+        if (!MavenDependencyArtifactProvider.isValidatedArtifact(cache, digest, "jar")) {
+            validateJarEntries(materialized, maxExpandedBytes);
+            MavenDependencyArtifactProvider.markValidatedArtifact(cache, digest, "jar");
+        }
         String logical = "android-sdk:platforms/android-" + selectedApi + "/android.jar";
         var binary = new BinaryInput(new ClasspathEntry(ClasspathEntryKind.DEPENDENCY, logical, digest), materialized);
         ANDROID_SDK_CACHE.put(cacheKey, new CachedAndroidPlatform(realJar, size, mtime, binary));
@@ -188,38 +199,26 @@ public final class GradleLocalJarInputs {
         if (bytes[0] != 'P' || bytes[1] != 'K' || bytes[2] != 3 || bytes[3] != 4) {
             throw new IOException("Invalid local JAR header");
         }
-        Path path = MavenDependencyArtifactProvider.materializeEmbeddedJar(cache, bytes, expectedDigest);
-        var names = new HashSet<String>();
-        var buffer = new byte[8192];
-        long remaining = maxExpandedBytes;
-        try (var jar = new JarFile(path.toFile(), false)) {
-            var entries = jar.entries();
-            while (entries.hasMoreElements()) {
-                checkCancelled();
-                var entry = entries.nextElement();
-                if (!names.add(entry.getName()))
-                    throw new IOException("Duplicate JAR entry");
-                if (entry.isDirectory())
-                    continue;
-                var crc = new CRC32();
-                long size = 0;
-                try (var stream = jar.getInputStream(entry)) {
-                    for (int read; (read = stream.read(buffer)) != -1;) {
-                        checkCancelled();
-                        remaining -= read;
-                        if (remaining < 0)
-                            throw new IOException("Expanded local JAR byte budget exceeded");
-                        crc.update(buffer, 0, read);
-                        size += read;
-                    }
-                }
-                if (size != entry.getSize() || crc.getValue() != entry.getCrc()) {
-                    throw new IOException("Invalid local JAR entry");
-                }
+        Path cacheRoot = cache.toAbsolutePath().normalize();
+        var cacheKey = new LocalJarCacheKey(cacheRoot, expectedDigest, maxExpandedBytes);
+        Path cachedPath = LOCAL_JAR_CACHE.get(cacheKey);
+        if (cachedPath != null && Files.isRegularFile(cachedPath, LinkOption.NOFOLLOW_LINKS)) {
+            var session = com.evolution.analysis.input.VerifiedArtifactSession.current();
+            boolean verified = session.isPresent()
+                    ? session.orElseThrow().verifyDigest(cachedPath, expectedDigest)
+                    : expectedDigest.equals(ContentDigest.sha256(Files.readAllBytes(cachedPath)));
+            if (verified) {
+                return new BinaryInput(
+                        new ClasspathEntry(ClasspathEntryKind.DEPENDENCY, "local-jar:" + logicalPath, expectedDigest),
+                        cachedPath);
             }
         }
-        if (names.isEmpty())
-            throw new IOException("Empty local JAR");
+        Path path = MavenDependencyArtifactProvider.materializeEmbeddedJar(cache, bytes, expectedDigest);
+        if (!MavenDependencyArtifactProvider.isValidatedArtifact(cache, expectedDigest, "jar")) {
+            validateJarEntries(path, maxExpandedBytes);
+            MavenDependencyArtifactProvider.markValidatedArtifact(cache, expectedDigest, "jar");
+        }
+        LOCAL_JAR_CACHE.put(cacheKey, path);
         return new BinaryInput(
                 new ClasspathEntry(ClasspathEntryKind.DEPENDENCY, "local-jar:" + logicalPath, expectedDigest),
                 path);

@@ -66,7 +66,7 @@ final class WorkbenchReuseInputs {
                     dependencies.ledgers().stream().map(EvidenceAcquisitionLedger::identity).toList(),
                     policy.buildPolicy(), policy.decodePolicy(), policy.frontendProvider(), policy.mavenPolicy(),
                     policy.maxTypes(), policy.maxParameters(), policy.truthEvaluationMode(), policy.truthLimits(),
-                    policy.analysisOptions(),
+                    policy.analysisOptions(), policy.springSatMode(),
                     springScopes, policy.configurationSpace().map(s -> s.identity()),
                     policy.baselineConfiguration().map(a -> a.identity()),
                     rules.map(r -> List.of(ContentDigest.sha256(r.bytes()), r.scoreScope())), implementation,
@@ -151,33 +151,79 @@ final class WorkbenchReuseInputs {
 
     /**
      * Hash again before indexing a miss, since solver artifacts are still backed by
-     * mutable paths.
+     * mutable paths. Verifies each unique artifact path at most once, parallelizing across
+     * cores when many distinct JARs/JMODs are present.
      */
     static boolean stillCurrent(List<PlatformSymbolResult> platforms, MavenScan.Inputs dependencies,
             BooleanSupplier cancelled) {
-        var digests = new HashMap<Path, ContentDigest>();
-        try {
-            for (var result : platforms)
-                for (var artifact : result.platform().orElseThrow().artifacts()) {
-                    if (!sameBytes(digests, artifact.path(), artifact.contentDigest(), cancelled))
-                        return false;
-                }
-            for (var resolution : dependencies.resolutions().values())
-                for (BinaryInput binary : resolution.binaries()) {
-                    if (!sameBytes(digests, binary.path(), binary.entry().contentDigest(), cancelled))
-                        return false;
-                }
-            return true;
-        } catch (IOException | SecurityException unavailable) {
-            return false;
-        }
+        return stillCurrent(platforms, dependencies, cancelled, null);
     }
 
-    private static boolean sameBytes(Map<Path, ContentDigest> checked, Path path, ContentDigest expected,
-            BooleanSupplier cancelled) throws IOException {
-        if (!checked.containsKey(path))
-            checked.put(path, hashFile(path, cancelled));
-        return expected.equals(checked.get(path));
+    static boolean stillCurrent(List<PlatformSymbolResult> platforms, MavenScan.Inputs dependencies,
+            BooleanSupplier cancelled, Map<Path, ContentDigest> preverifiedMemo) {
+        var expectedByPath = new LinkedHashMap<Path, ContentDigest>();
+        for (var result : platforms) {
+            for (var artifact : result.platform().orElseThrow().artifacts()) {
+                Path p = artifact.path().toAbsolutePath().normalize();
+                ContentDigest prior = expectedByPath.putIfAbsent(p, artifact.contentDigest());
+                if (prior != null && !prior.equals(artifact.contentDigest())) return false;
+            }
+        }
+        for (var resolution : dependencies.resolutions().values()) {
+            for (BinaryInput binary : resolution.binaries()) {
+                Path p = binary.path().toAbsolutePath().normalize();
+                ContentDigest prior = expectedByPath.putIfAbsent(p, binary.entry().contentDigest());
+                if (prior != null && !prior.equals(binary.entry().contentDigest())) return false;
+            }
+        }
+        var toHash = new ArrayList<Map.Entry<Path, ContentDigest>>(expectedByPath.size());
+        for (var entry : expectedByPath.entrySet()) {
+            if (preverifiedMemo != null) {
+                ContentDigest memo = preverifiedMemo.get(entry.getKey());
+                if (memo != null) {
+                    if (!entry.getValue().equals(memo)) return false;
+                    continue;
+                }
+            }
+            toHash.add(entry);
+        }
+        if (toHash.isEmpty()) return true;
+        int workers = com.evolution.analysis.concurrent.BoundedTasks.automaticWorkers();
+        if (toHash.size() < 8 || workers <= 1) {
+            try {
+                for (var entry : toHash) {
+                    ContentDigest actual = hashFile(entry.getKey(), cancelled);
+                    if (preverifiedMemo != null) preverifiedMemo.put(entry.getKey(), actual);
+                    if (!entry.getValue().equals(actual)) return false;
+                }
+                return true;
+            } catch (IOException | SecurityException unavailable) {
+                return false;
+            }
+        }
+        try (var tasks = new com.evolution.analysis.concurrent.BoundedTasks(
+                workers, workers * 4, "evo-reuse-verify", cancelled)) {
+            var futures = new ArrayList<com.evolution.analysis.concurrent.BoundedTasks.Task<Boolean>>(toHash.size());
+            for (var entry : toHash) {
+                futures.add(tasks.submit(() -> {
+                    try {
+                        ContentDigest actual = hashFile(entry.getKey(), cancelled);
+                        if (preverifiedMemo != null) preverifiedMemo.put(entry.getKey(), actual);
+                        return entry.getValue().equals(actual);
+                    } catch (IOException | SecurityException unavailable) {
+                        return false;
+                    }
+                }));
+            }
+            for (var f : futures) {
+                if (!Boolean.TRUE.equals(f.await())) return false;
+            }
+            return true;
+        } catch (CancellationException stopped) {
+            throw stopped;
+        } catch (RuntimeException unavailable) {
+            return false;
+        }
     }
 
     // Partial outcomes are eligible only for named, input-derived limits of this

@@ -1,0 +1,1162 @@
+/* Lucian UX/UI Prompt #472, #098 · MIT License (c) 2026 Seokwoooo · https://lucianlabs.dev/uxui-prompt/#472 */
+/* Precision Editorial Score Instrument — Obsidian-Forest Dark & Warm Alabaster Light */
+
+.evo-score-wrap {
+  container-type: inline-size;
+  width: 100%;
+  min-width: 0;
+}
+
+.evo-score-stage {
+  --evo-tone-base: var(--text-3);
+  --evo-step-0: var(--evo-tone-base);
+  --evo-step-1: color-mix(in srgb, var(--evo-tone-base) 76%, var(--surface-3));
+  --evo-step-2: color-mix(in srgb, var(--evo-tone-base) 56%, var(--surface-3));
+  --evo-step-3: color-mix(in srgb, var(--evo-tone-base) 44%, var(--surface-4));
+  --evo-hatch: repeating-linear-gradient(
+    -45deg,
+    transparent 0 3px,
+    var(--line-mid) 3px 4px
+  );
+
+  display: grid;
+  grid-template-columns: 136px minmax(0, 1fr);
+  gap: 20px 28px;
+  align-items: start;
+  padding: 6px 0 4px;
+  min-width: 0;
+}
+
+.evo-score-stage[data-tone="good"] {
+  --evo-tone-base: var(--accent);
+}
+
+.evo-score-stage[data-tone="warn"] {
+  --evo-tone-base: var(--warn);
+}
+
+.evo-score-stage[data-tone="danger"] {
+  --evo-tone-base: var(--danger);
+}
+
+.evo-score-stage[data-tone="muted"] {
+  --evo-tone-base: var(--text-3);
+}
+
+.evo-score-stage.is-compact {
+  align-items: center;
+}
+
+/* Light theme monotonic tonal ladder: calibrated for >= 3.1:1 graphical contrast on #ffffff */
+:root[data-theme="light"] .evo-score-stage {
+  --evo-step-0: var(--evo-tone-base);
+  --evo-step-1: color-mix(in srgb, var(--evo-tone-base) 84%, var(--surface-4));
+  --evo-step-2: color-mix(in srgb, var(--evo-tone-base) 71%, var(--surface-4));
+  --evo-step-3: color-mix(in srgb, var(--evo-tone-base) 60%, var(--surface-4));
+}
+
+.evo-score-stage [data-step="0"] { --evo-seg-color: var(--evo-step-0); }
+.evo-score-stage [data-step="1"] { --evo-seg-color: var(--evo-step-1); }
+.evo-score-stage [data-step="2"] { --evo-seg-color: var(--evo-step-2); }
+.evo-score-stage [data-step="3"] { --evo-seg-color: var(--evo-step-3); }
+
+/* ─── 1. Left: Single-Accent Precision Dial (136px) ────────────────────────── */
+.evo-dial {
+  position: relative;
+  width: 136px;
+  height: 136px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  margin-top: 2px;
+}
+
+.evo-dial-svg {
+  width: 136px;
+  height: 136px;
+  display: block;
+  overflow: visible;
+}
+
+.evo-dial-bezel line {
+  stroke: var(--ux-line-2);
+  stroke-width: 1;
+  opacity: 0.48;
+}
+
+.evo-dial-bezel line.major {
+  stroke: var(--ux-ink-3);
+  stroke-width: 1.35;
+  opacity: 0.78;
+}
+
+.evo-dial-track {
+  fill: none;
+  stroke: var(--line-mid);
+  stroke-width: 8;
+  stroke-opacity: 0.55;
+}
+
+.evo-dial-track.is-withheld {
+  stroke: var(--text-3);
+  stroke-opacity: 0.48;
+  stroke-dasharray: 4 5;
+}
+
+.evo-dial-single-arc {
+  fill: none;
+  stroke: var(--evo-tone-base);
+  stroke-width: 8;
+  stroke-linecap: round;
+  transition: stroke-opacity 0.22s var(--ux-ease);
+}
+
+.evo-dial-seg {
+  cursor: pointer;
+  transition: opacity 0.22s var(--ux-ease);
+}
+
+.evo-score-stage.has .evo-dial-seg:not(.is-on) {
+  opacity: 0.25;
+}
+
+.evo-dial-seg .evo-dial-slot {
+  fill: none;
+  stroke: var(--line-mid);
+  stroke-width: 8;
+  stroke-linecap: butt;
+  stroke-opacity: 0.35;
+  transition: stroke-width 0.25s var(--ux-ease), stroke-opacity 0.22s var(--ux-ease);
+}
+
+.evo-dial-seg[data-state="gap"] .evo-dial-slot {
+  stroke: var(--text-3);
+  stroke-opacity: 0.44;
+  stroke-dasharray: 3 3.5;
+}
+
+.evo-dial-seg .evo-dial-arc {
+  fill: none;
+  stroke: var(--evo-seg-color, var(--evo-tone-base));
+  stroke-width: 8;
+  stroke-linecap: butt;
+  transition: stroke-width 0.26s cubic-bezier(0.34, 1.5, 0.5, 1);
+}
+
+.evo-dial-seg.is-on .evo-dial-arc,
+.evo-dial-seg.is-on .evo-dial-slot {
+  stroke-width: 10;
+}
+
+.evo-dial-seg.is-on[data-state="gap"] .evo-dial-slot {
+  stroke-opacity: 0.78;
+}
+
+.evo-dial-seg .evo-dial-hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 20;
+  stroke-linecap: butt;
+}
+
+.evo-dial-center {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  text-align: center;
+}
+
+.evo-dial-val {
+  font-family: var(--font-mono);
+  font-size: 1.12rem;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  color: var(--ux-ink);
+}
+
+.evo-dial-sub {
+  margin-top: 3px;
+  font: 600 9.5px/1 var(--font-mono);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ux-ink-3);
+}
+
+/* ─── 2. Right Top: Rolling Odometer (#098) & Editorial Qualification Pill ─── */
+.evo-score-summary {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.workbench-page .evo-score-stage .score-heading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.workbench-page .evo-score-stage .score-heading strong.score:not(.sr-only),
+#panel-overview .evo-score-stage .score-heading strong.score:not(.sr-only),
+#panel-metrics .evo-score-stage .score-heading strong.score:not(.sr-only) {
+  font-family: var(--font-display);
+  font-size: clamp(1.85rem, 2.8vw, 2.5rem) !important;
+  font-weight: 500 !important;
+  line-height: 1.05;
+  letter-spacing: -0.03em;
+  margin: 0 !important;
+  color: var(--ux-ink);
+}
+
+.workbench-page .evo-score-stage .score-heading strong.score.sr-only,
+#panel-overview .evo-score-stage .score-heading strong.score.sr-only,
+#panel-metrics .evo-score-stage .score-heading strong.score.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px !important;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Lucian #098 Odometer Readout (locked align-items: flex-start prevents digit-clip offset) */
+.evo-score-stage .u098-num {
+  display: inline-flex;
+  align-items: flex-start;
+  height: 48px;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(transparent, #000 14%, #000 86%, transparent);
+  mask-image: linear-gradient(transparent, #000 14%, #000 86%, transparent);
+  font-family: var(--font-display);
+  font-size: 44px;
+  font-weight: 600;
+  letter-spacing: -0.035em;
+  line-height: 48px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ux-ink);
+}
+
+.evo-score-stage .u098-col {
+  display: inline-flex;
+  flex-direction: column;
+  transform: translateY(calc(var(--d, 0) * -48px));
+  transition: transform 0.92s cubic-bezier(0.3, 1.25, 0.5, 1);
+  transition-delay: calc(var(--i, 0) * 50ms);
+}
+
+.evo-score-stage .u098-col span {
+  height: 48px;
+  line-height: 48px;
+  flex: none;
+}
+
+.evo-score-stage .u098-dot {
+  display: inline-block;
+  height: 48px;
+  line-height: 48px;
+  margin: 0 1px;
+}
+
+.evo-score-stage .u098-unit {
+  align-self: flex-end;
+  font-family: var(--font-mono);
+  font-size: 0.92rem;
+  font-weight: 600;
+  line-height: 1.5;
+  margin-left: 8px;
+  padding-bottom: 6px;
+  color: var(--ux-ink-3);
+}
+
+.evo-score-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font: 700 10.5px/1.2 var(--font-mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  border: 1px solid var(--ux-line-2);
+  color: var(--ux-ink-2);
+  background: var(--ux-surface-2);
+}
+
+.evo-score-pill[data-tone="good"] {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 36%, transparent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.evo-score-pill[data-tone="warn"] {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 38%, transparent);
+  background: color-mix(in srgb, var(--warn) 10%, transparent);
+}
+
+.evo-score-pill[data-tone="danger"] {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 38%, transparent);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+}
+
+:root[data-theme="light"] .evo-score-pill[data-tone="danger"] {
+  color: color-mix(in srgb, var(--danger) 86%, var(--text));
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+}
+
+.evo-score-pill[data-tone="muted"] {
+  color: var(--text-2);
+  border-color: var(--line-mid);
+  background: var(--surface-2);
+}
+
+.evo-score-sub {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text-2);
+}
+
+/* ─── 3. Right Middle: Lucian #472 Proportional Composition Ribbon ─────────── */
+/* Additive Repository Score ONLY (never rendered for Architecture Assessment) */
+.evo-u472 {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  max-width: 440px;
+  margin: 2px 0;
+}
+
+.evo-u472 .u472-hd {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px 12px;
+  min-height: 20px;
+  flex-wrap: wrap;
+}
+
+.evo-u472 .u472-lbl {
+  font: 600 10.5px/1.2 var(--font-mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  flex: none;
+}
+
+.evo-u472 .u472-sw {
+  display: grid;
+  justify-items: end;
+  align-items: center;
+  min-height: 18px;
+  max-width: 100%;
+  overflow: hidden;
+  margin-left: auto;
+}
+
+.evo-u472 .u472-sw > p {
+  grid-area: 1 / 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  margin: 0;
+  font: 500 11.5px/1.3 var(--font-mono);
+  color: var(--ux-ink-2);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  transition: opacity 0.22s var(--ux-ease), transform 0.45s cubic-bezier(0.34, 1.5, 0.5, 1), filter 0.22s;
+}
+
+.evo-u472 .u472-sw b {
+  font-weight: 700;
+  color: var(--ux-ink);
+}
+
+.evo-u472 .u472-si {
+  opacity: 0;
+  transform: translateY(12px);
+  filter: blur(2px);
+  pointer-events: none;
+}
+
+.evo-u472 .u472-si i {
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  flex: none;
+  background: var(--evo-tone-base);
+  transition: background-color 0.2s var(--ux-ease);
+}
+
+.evo-u472 .u472-si i.is-gap {
+  background: var(--evo-hatch);
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+}
+
+.evo-u472 .u472-si .u472-tl {
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ux-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.evo-u472 .u472-si em {
+  font-style: normal;
+  color: var(--ux-ink-3);
+}
+
+.evo-u472.is-hl .u472-us {
+  opacity: 0;
+  transform: translateY(-12px);
+  filter: blur(2px);
+}
+
+.evo-u472.is-hl .u472-si {
+  opacity: 1;
+  transform: none;
+  filter: none;
+}
+
+.evo-u472 .u472-si.is-tick {
+  animation: u472-tick 0.4s cubic-bezier(0.34, 1.6, 0.5, 1);
+}
+
+@keyframes u472-tick {
+  from {
+    transform: translateY(5px);
+  }
+}
+
+.evo-u472 .u472-bar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  max-width: 440px;
+  height: 22px;
+  margin: 0;
+}
+
+/* Exact proportional widths (sum = 100%); 1px inner gutter on ::before creates crisp 2px separation without overflow */
+.evo-u472 .u472-s {
+  position: relative;
+  flex: none;
+  width: 0;
+  height: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  appearance: none;
+  transition: width 0.95s cubic-bezier(0.22, 0.9, 0.24, 1), opacity 0.3s var(--ux-ease);
+  transition-delay: calc(var(--u472-i, 0) * 90ms + 120ms), 0s;
+}
+
+.evo-u472.is-in .u472-s {
+  width: var(--u472-w);
+}
+
+.evo-u472 .u472-s:focus-visible {
+  outline: none;
+}
+
+.evo-u472 .u472-s:focus-visible::after {
+  content: "";
+  position: absolute;
+  inset: 2px 0;
+  border-radius: 5px;
+  box-shadow: 0 0 0 2px var(--accent);
+  pointer-events: none;
+}
+
+.evo-u472 .u472-s::before {
+  content: "";
+  position: absolute;
+  left: 1px;
+  right: 1px;
+  top: 50%;
+  height: 8px;
+  margin-top: -4px;
+  border-radius: 2px;
+  background: var(--evo-seg-color, var(--evo-tone-base));
+  transition:
+    height 0.5s cubic-bezier(0.34, 1.8, 0.5, 1),
+    margin-top 0.5s cubic-bezier(0.34, 1.8, 0.5, 1),
+    border-radius 0.3s var(--ux-ease);
+}
+
+.evo-u472 .u472-s:first-child::before {
+  left: 0;
+  border-radius: 4px 2px 2px 4px;
+}
+
+.evo-u472 .u472-s:last-child::before {
+  right: 0;
+  border-radius: 2px 4px 4px 2px;
+}
+
+.evo-u472 .u472-s:only-child::before {
+  left: 0;
+  right: 0;
+  border-radius: 4px;
+}
+
+.evo-u472 .u472-s[data-state="gap"]::before {
+  background: var(--evo-hatch);
+  box-shadow: inset 0 0 0 1px var(--line-mid);
+}
+
+.evo-u472.is-hl .u472-s {
+  opacity: 0.38;
+}
+
+.evo-u472.is-hl .u472-s.is-on {
+  opacity: 1;
+}
+
+.evo-u472 .u472-s.is-on::before {
+  height: 15px;
+  margin-top: -7.5px;
+  border-radius: 4px;
+}
+
+.evo-u472 .u472-s.is-on[data-state="gap"]::before {
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+}
+
+/* ─── 4. Right Bottom: Clean Editorial Audit Ledger (Zero full-width bars) ─── */
+.evo-score-ledger {
+  display: flex;
+  flex-direction: column;
+  margin-top: 2px;
+  border-top: 1px solid var(--line);
+  min-width: 0;
+}
+
+.evo-ledger-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 3px 14px;
+  padding: 7px 6px;
+  border-bottom: 1px solid var(--line);
+  border-radius: var(--r-xs);
+  transition: background-color 0.16s var(--ux-ease), opacity 0.2s var(--ux-ease);
+  min-width: 0;
+}
+
+.evo-ledger-row.is-dim-row {
+  align-items: center;
+}
+
+.evo-score-stage.has .evo-ledger-row:not(.is-on) {
+  opacity: 0.46;
+}
+
+.evo-ledger-row:hover,
+.evo-ledger-row.is-on {
+  background: var(--surface-2);
+  opacity: 1;
+}
+
+.evo-ledger-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.evo-ledger-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.evo-ledger-swatch {
+  width: 8px;
+  height: 4px;
+  border-radius: 2px;
+  flex: none;
+  background: var(--evo-seg-color, var(--evo-tone-base));
+  transition: transform 0.25s cubic-bezier(0.34, 1.6, 0.5, 1);
+}
+
+.evo-ledger-row[data-state="gap"] .evo-ledger-swatch {
+  background: var(--evo-hatch);
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+}
+
+.evo-ledger-row.is-on .evo-ledger-swatch {
+  transform: scaleX(1.35);
+}
+
+.evo-ledger-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  font: 700 12px/1 var(--font-mono);
+  flex: none;
+  color: var(--text-3);
+}
+
+.evo-ledger-status[data-state="observed"] {
+  color: var(--evo-tone-base);
+}
+
+.evo-ledger-status[data-state="absent"] {
+  color: var(--text-3);
+}
+
+.evo-ledger-name {
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.evo-ledger-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  margin: 0;
+  padding-left: 29px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-3);
+  min-width: 0;
+}
+
+.evo-ledger-note {
+  overflow-wrap: anywhere;
+}
+
+.evo-score-ledger .evo-file-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  max-width: 100%;
+  padding: 1px 7px;
+  border-radius: var(--r-xs);
+  border: 1px solid var(--line-mid);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.35;
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: border-color 0.14s var(--ux-ease), color 0.14s var(--ux-ease), background-color 0.14s var(--ux-ease);
+}
+
+.evo-score-ledger .evo-file-pill:hover,
+.evo-score-ledger .evo-file-pill:focus-visible {
+  border-color: var(--accent-line);
+  background: var(--accent-s);
+  color: var(--accent-hover);
+  text-decoration: none;
+}
+
+.evo-score-ledger .evo-file-pill:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.evo-ledger-val {
+  font: 600 12.5px/1.3 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  white-space: nowrap;
+  text-align: right;
+  flex: none;
+}
+
+.evo-ledger-val.is-muted {
+  font-weight: 500;
+  color: var(--text-3);
+}
+
+/* ─── 5. Architecture Assessment Dimension Rows (Independent 0–100 Scores) ─── */
+.evo-dim-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--text-3);
+}
+
+.evo-dim-dot[data-tone="good"] { background: var(--accent); }
+.evo-dim-dot[data-tone="warn"] { background: var(--warn); }
+.evo-dim-dot[data-tone="danger"] { background: var(--danger); }
+.evo-dim-dot[data-tone="muted"] {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.25px var(--text-3);
+}
+
+.evo-score-ledger .evo-dim-btn {
+  padding: 2px 0;
+  min-height: 24px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  text-decoration: none;
+  text-transform: capitalize;
+  border-bottom: 1px solid transparent;
+  transition: color 0.14s var(--ux-ease), border-color 0.14s var(--ux-ease);
+}
+
+.evo-score-ledger .evo-dim-btn:hover,
+.evo-score-ledger .evo-dim-btn:focus-visible {
+  color: var(--accent);
+  border-bottom-color: var(--accent-line);
+  text-decoration: none;
+}
+
+.evo-dim-end {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex: none;
+}
+
+.evo-micro-meter {
+  position: relative;
+  width: 44px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--surface-3);
+  overflow: hidden;
+  flex: none;
+}
+
+.evo-micro-meter.is-empty {
+  background: transparent;
+  border: 1px dashed var(--line-strong);
+}
+
+.evo-micro-meter i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 0.55s var(--ux-ease);
+}
+
+.evo-micro-meter[data-tone="warn"] i { background: var(--warn); }
+.evo-micro-meter[data-tone="danger"] i { background: var(--danger); }
+.evo-micro-meter[data-tone="muted"] i { background: var(--text-3); }
+
+.evo-dim-end .evo-ledger-val {
+  min-width: 34px;
+}
+
+/* ─── 6. Responsive Reflow (Narrow Cards & 375px Mobile) ───────────────────── */
+@container (max-width: 470px) {
+  .evo-score-stage {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+  }
+  .evo-dial {
+    margin: 0 auto;
+  }
+  .evo-u472,
+  .evo-u472 .u472-bar {
+    max-width: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .evo-score-stage {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+  }
+  .evo-dial {
+    margin: 0 auto;
+  }
+  .evo-u472,
+  .evo-u472 .u472-bar {
+    max-width: none;
+  }
+  .evo-ledger-meta {
+    padding-left: 0;
+  }
+  .evo-u472 .u472-sw {
+    justify-items: start;
+    margin-left: 0;
+  }
+}
+
+/* ─── 7. Reduced Motion ────────────────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  .evo-score-stage .u098-col,
+  .evo-u472 .u472-s,
+  .evo-u472 .u472-s::before,
+  .evo-u472 .u472-sw > p,
+  .evo-u472 .u472-si.is-tick,
+  .evo-dial-seg,
+  .evo-dial-seg .evo-dial-arc,
+  .evo-dial-seg .evo-dial-slot,
+  .evo-ledger-row,
+  .evo-ledger-swatch,
+  .evo-micro-meter i {
+    transition-duration: 0.001ms !important;
+    transition-delay: 0ms !important;
+    animation-duration: 0.001ms !important;
+  }
+}
+
+
+/* ─── 8. Architecture Health v2 Hero, Confidence Companion & Calibration Tracks ─── */
+.evo-v2-card {
+  grid-column: 1 / -1;
+}
+
+.evo-v2-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(260px, 0.95fr);
+  gap: 20px 26px;
+  align-items: start;
+}
+
+.evo-v2-range-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font: 600 11px/1.3 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--warn);
+  border: 1px solid color-mix(in srgb, var(--warn) 36%, transparent);
+  background: color-mix(in srgb, var(--warn) 10%, transparent);
+}
+
+.evo-confidence-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  border-radius: var(--r-md, 10px);
+  border: 1px solid var(--line-mid);
+  background: var(--surface-2);
+}
+
+.evo-confidence-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.evo-confidence-title {
+  font: 600 11px/1.2 var(--font-mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.evo-confidence-score-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.evo-confidence-num {
+  font-family: var(--font-display);
+  font-size: 1.75rem;
+  font-weight: 600;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+  color: var(--ux-ink, var(--text));
+}
+
+.evo-confidence-signals {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 7px;
+  margin: 2px 0 0;
+}
+
+.evo-signal-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 54px 38px;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+.evo-signal-track {
+  height: 5px;
+  border-radius: 999px;
+  background: var(--surface-3);
+  overflow: hidden;
+}
+
+.evo-signal-track i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+}
+
+.evo-signal-row[data-tone="warn"] .evo-signal-track i { background: var(--warn); }
+.evo-signal-row[data-tone="danger"] .evo-signal-track i { background: var(--danger); }
+
+.evo-signal-val {
+  text-align: right;
+  font: 600 11.5px/1.2 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+/* Expandable 7-Dimension & Sub-Metric Inspector */
+.evo-v2-dims-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.evo-v2-dim-details {
+  border: 1px solid var(--line);
+  border-radius: var(--r-md, 10px);
+  background: var(--surface-1, var(--surface));
+  overflow: hidden;
+}
+
+.evo-v2-dim-details[open] {
+  border-color: var(--line-strong);
+}
+
+.evo-v2-dim-summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px 14px;
+  padding: 10px 14px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.evo-v2-dim-summary::-webkit-details-marker { display: none; }
+
+.evo-v2-dim-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.evo-v2-dim-name {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.evo-v2-dim-meta {
+  font: 500 11px/1.2 var(--font-mono);
+  color: var(--text-3);
+}
+
+.evo-submetric-drawer {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 10px;
+  padding: 0 14px 14px;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+  background: var(--surface-2);
+}
+
+.evo-submetric-card {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 11px 12px;
+  border-radius: var(--r, 8px);
+  border: 1px solid var(--line);
+  background: var(--surface-1, var(--surface));
+}
+
+.evo-submetric-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.evo-submetric-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.evo-submetric-val {
+  font: 600 12px/1.2 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.evo-calibration-track {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 2px;
+  height: 7px;
+  border-radius: 999px;
+  margin: 2px 0;
+}
+
+.evo-calibration-zone {
+  height: 100%;
+  border-radius: 999px;
+  opacity: 0.42;
+}
+
+.evo-calibration-zone.is-ideal { background: var(--accent); }
+.evo-calibration-zone.is-acceptable { background: var(--warn); }
+.evo-calibration-zone.is-critical { background: var(--danger); }
+
+.evo-calibration-pin {
+  position: absolute;
+  top: 50%;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  background: var(--text);
+  border: 2px solid var(--surface-1, var(--surface));
+  box-shadow: 0 0 0 1px var(--line-strong);
+}
+
+.evo-calibration-legend {
+  display: flex;
+  justify-content: space-between;
+  font: 500 10px/1.1 var(--font-mono);
+  color: var(--text-3);
+}
+
+.evo-witness-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.evo-witness-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 3px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--line-mid);
+  background: var(--surface-2);
+  color: var(--text);
+  font: 500 11.5px/1.25 var(--font-mono);
+  cursor: pointer;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.evo-witness-chip:hover,
+.evo-witness-chip:focus-visible {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.evo-context-score-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.evo-context-score-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 12px;
+  border-radius: var(--r, 8px);
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+
+.evo-context-score-row:hover,
+.evo-context-score-row:focus-visible {
+  border-color: var(--accent);
+}
+
+.evo-layer-map-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: var(--r, 8px);
+  border: 1px dashed var(--line-strong);
+  background: var(--surface-2);
+}
+
+.evo-hygiene-card {
+  border-style: dashed;
+  opacity: 0.96;
+}
+
+.evo-hygiene-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font: 600 10px/1.2 var(--font-mono);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  border: 1px solid var(--line-mid);
+  background: var(--surface-2);
+}
+
+@media (max-width: 900px) {
+  .evo-v2-hero {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

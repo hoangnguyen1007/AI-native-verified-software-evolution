@@ -83,14 +83,19 @@ public final class PolyglotScan {
         var languages=new TreeMap<String,Long>();var uncovered=new TreeMap<String,Long>();long[] counts={0,0,0};
         var profiles=LanguageProfile.baseline().stream().map(LanguageProfile::language).collect(java.util.stream.Collectors.toSet());
         profiles.add("protobuf");
+        List<SemanticTables.Row> inMemoryRows = null;
         if(published.isEmpty()) {
+            var buffered = new ArrayList<SemanticTables.Row>(Math.min(1024, (int) Math.min(65_536L, Math.max(16L, inventory.entries().rows()))));
+            boolean keepInMemory = inventory.entries().rows() <= 65_536L;
             try(var rows=tables.open(inventory.entries(),cancelled)){SemanticTables.Row row;while((row=rows.next())!=null) {
+                if(keepInMemory) buffered.add(row);
                 if(!"FILE".equals(row.fields().get("kind")))continue;
                 for(String language:languages(row))if(profiles.contains(language)) {
                     languages.merge(language,1L,Long::sum);
                     if(!language.equals("java"))uncovered.merge(language,1L,Long::sum);
                 }
             }}
+            if(keepInMemory) inMemoryRows = buffered;
         } else {
             try(var index=SqliteSemanticCensusIndex.temporary(scratch,65536)) {
                 try(var rows=tables.open(inventory.entries(),cancelled)){SemanticTables.Row row;while((row=rows.next())!=null) {
@@ -123,7 +128,7 @@ public final class PolyglotScan {
         var gaps=new ArrayList<CapabilityGapRecord>();
         for(var language:uncovered.entrySet())gaps.add(gap(context,inventory,language.getKey(),language.getValue(),language.getKey().equals("protobuf")?"PROTOBUF_GENERATOR_REQUIRED":"NATIVE_CONTEXT_REQUIRED"));
         if(published.isPresent()&&!Boolean.TRUE.equals(published.orElseThrow().report().get("complete")))gaps.add(gap(context,inventory,"polyglot",counts[0],"NATIVE_PUBLICATION_PARTIAL"));
-        var syntax=new StaticPolyglotScan().run(inventory,tables,intake.content(),scratch,cancelled,verifiedBytes,fastArchitecture,incrementalCacheRoot);
+        var syntax=new StaticPolyglotScan().run(inventory,tables,intake.content(),scratch,cancelled,verifiedBytes,fastArchitecture,incrementalCacheRoot,inMemoryRows);
         boolean strongerNativeComplete=published.filter(p->p.trust().equals("VALIDATED_OBSERVATION")&&Boolean.TRUE.equals(p.report().get("complete"))).isPresent();
         syntax.failures().forEach((failure,count)->{int separator=failure.indexOf(':');String reason=failure.substring(separator+1);
             // A missing optional grammar is already covered by native-context/root

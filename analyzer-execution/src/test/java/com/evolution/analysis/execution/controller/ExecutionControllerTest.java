@@ -304,7 +304,7 @@ class ExecutionControllerTest {
             // Deliberate bitrot in an authored disposable test CAS, never in native evidence.
             Files.writeString(root.resolve("cas/sha256").resolve(hex.substring(0,2)).resolve(hex.substring(2)),"corrupt");
             var recovered=assertDoesNotThrow(()->open.controller.recoverPage(0,100,0));
-            assertEquals(2,recovered.outcomes().size());assertTrue(recovered.outcomes().getFirst().result().isEmpty());assertEquals("CAS_UNAVAILABLE",recovered.outcomes().getFirst().reason());
+            assertEquals(2,recovered.outcomes().size());assertTrue(recovered.outcomes().getFirst().result().isEmpty());assertEquals("ATTEMPT_RECORD_CORRUPT",recovered.outcomes().getFirst().reason());
             assertEquals(ExecutionAttempt.Phase.RELEASED,open.attempts.get("intact").phase());
             assertEquals(1,open.queue.get().pending().size());
         }

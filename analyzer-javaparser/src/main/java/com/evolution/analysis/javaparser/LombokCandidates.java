@@ -51,7 +51,7 @@ final class LombokCandidates {
                 for(var field:type.getFields())for(var variable:field.getVariables()) {
                     if(field.isStatic()||variable.getNameAsString().startsWith("$"))continue;
                     boolean required=generator.equals("RequiredArgsConstructor")||generator.equals("Data");
-                    boolean nonNull=field.getAnnotations().stream().anyMatch(a->isLombok(a,"lombok.NonNull",sourceTypes));
+                    boolean nonNull=field.getAnnotations().stream().anyMatch(a->isVerifiedNullnessRecovery(a,sourceTypes));
                     boolean nonFinal=field.getAnnotations().stream().anyMatch(a->isLombok(a,"lombok.experimental.NonFinal",sourceTypes));
                     if(required?variable.getInitializer().isPresent()||!(field.isFinal()||nonNull)
                             :variable.getInitializer().isPresent()&&(field.isFinal()||value&&!nonFinal))continue;
@@ -68,11 +68,39 @@ final class LombokCandidates {
         }
         return result;
     }
+    private static final Set<String> STANDARD_NULLNESS_FQNS = Set.of(
+            "lombok.NonNull",
+            "jakarta.annotation.Nonnull",
+            "javax.annotation.Nonnull",
+            "org.jetbrains.annotations.NotNull",
+            "org.springframework.lang.NonNull");
+
+    static boolean isVerifiedNullnessRecovery(AnnotationExpr annotation, Set<String> sourceTypes) {
+        for (String fqn : STANDARD_NULLNESS_FQNS) {
+            if (isLombok(annotation, fqn, sourceTypes)) return true;
+        }
+        return false;
+    }
+
     static boolean isLombok(AnnotationExpr annotation,String name,Set<String> sourceTypes) {
         if(sourceTypes.contains(name))return false;
         String spelling=annotation.getNameAsString();if(spelling.equals(name))return true;
-        if(spelling.contains(".")||!name.endsWith("."+spelling))return false;
         var unit=annotation.findCompilationUnit().orElseThrow();
+        // Support qualified nested annotations like @Builder.Default when lombok.Builder or lombok.* is imported.
+        int firstDot = spelling.indexOf('.');
+        if (firstDot > 0) {
+            if (!name.endsWith("." + spelling)) return false;
+            String ownerPrefix = spelling.substring(0, firstDot);
+            String expectedOwnerFqn = name.substring(0, name.length() - spelling.length() + ownerPrefix.length());
+            String localOwner = unit.getPackageDeclaration().map(p -> p.getNameAsString() + ".").orElse("") + ownerPrefix;
+            if (sourceTypes.contains(localOwner) || unit.findAll(TypeDeclaration.class).stream().anyMatch(t -> t.getNameAsString().equals(ownerPrefix))) return false;
+            var ownerImports = unit.getImports().stream().filter(i -> !i.isStatic() && !i.isAsterisk() && i.getName().getIdentifier().equals(ownerPrefix)).toList();
+            if (!ownerImports.isEmpty()) return ownerImports.size() == 1 && ownerImports.getFirst().getNameAsString().equals(expectedOwnerFqn);
+            String pkg = expectedOwnerFqn.substring(0, expectedOwnerFqn.lastIndexOf('.'));
+            var stars = unit.getImports().stream().filter(i -> !i.isStatic() && i.isAsterisk()).toList();
+            return stars.size() == 1 && stars.getFirst().getNameAsString().equals(pkg);
+        }
+        if(!name.endsWith("."+spelling))return false;
         String local=unit.getPackageDeclaration().map(p->p.getNameAsString()+".").orElse("")+spelling;
         if(sourceTypes.contains(local)||unit.findAll(TypeDeclaration.class).stream().anyMatch(t->t.getNameAsString().equals(spelling)))return false;
         var imports=unit.getImports().stream().filter(i->!i.isStatic()&&!i.isAsterisk()&&i.getName().getIdentifier().equals(spelling)).toList();

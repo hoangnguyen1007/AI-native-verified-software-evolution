@@ -13,12 +13,63 @@ import java.util.*;
 public record GraphEvidence(ContentDigest identity, String family, String canonicalJson) {
     private static final Set<String> SEMANTIC_PROVENANCE = Set.of("repository.snapshot", "analysis.manifest",
             "source.request", "repository.acquisition", "evidence.attempt", "evidence.ledger", "evidence.ledger-index");
-    private record Accessor(String name,Method method) {}
-    // RecordComponent.getAccessor() creates fresh Method objects. Repeating that per value also
-    // rebuilds JDK method-handle accessors across large observation/gap ledgers.
-    private static final ClassValue<List<Accessor>> RECORD_ACCESSORS=new ClassValue<>() {
+    private record Accessor(String name, String encodedKeyPrefix, Method method, java.lang.invoke.MethodHandle handle) {
+        Object read(Object record) throws IllegalAccessException, InvocationTargetException {
+            if (handle != null) {
+                try {
+                    return handle.invokeExact(record);
+                } catch (RuntimeException | Error runtime) {
+                    throw runtime;
+                } catch (Throwable failure) {
+                    throw new InvocationTargetException(failure);
+                }
+            }
+            return method.invoke(record);
+        }
+    }
+    // Cache sorted record accessors, pre-encoded JSON key prefixes, and MethodHandles per class.
+    private static final ClassValue<List<Accessor>> RECORD_ACCESSORS = new ClassValue<>() {
         @Override protected List<Accessor> computeValue(Class<?> type) {
-            return Arrays.stream(type.getRecordComponents()).map(c->new Accessor(c.getName(),c.getAccessor())).toList();
+            var lookup = java.lang.invoke.MethodHandles.lookup();
+            var sorted = Arrays.stream(type.getRecordComponents())
+                    .sorted(Comparator.comparing(java.lang.reflect.RecordComponent::getName)).toList();
+            var list = new ArrayList<Accessor>(sorted.size());
+            for (int i = 0; i < sorted.size(); i++) {
+                var c = sorted.get(i);
+                Method m = c.getAccessor();
+                m.trySetAccessible();
+                java.lang.invoke.MethodHandle mh = null;
+                try {
+                    mh = lookup.unreflect(m)
+                            .asType(java.lang.invoke.MethodType.methodType(Object.class, Object.class));
+                } catch (IllegalAccessException ignored) {
+                    // Non-public records fall back cleanly to accessible Method.invoke.
+                }
+                var prefix = new StringBuilder(c.getName().length() + 4);
+                if (i > 0) prefix.append(',');
+                try {
+                    GraphCanonicalWriter.appendJsonString(c.getName(), prefix);
+                } catch (java.io.IOException impossible) {
+                    throw new IllegalStateException(impossible);
+                }
+                prefix.append(':');
+                list.add(new Accessor(c.getName(), prefix.toString(), m, mh));
+            }
+            return List.copyOf(list);
+        }
+    };
+    private static final ClassValue<Optional<Method>> CANONICAL_FORM_METHOD = new ClassValue<>() {
+        @Override protected Optional<Method> computeValue(Class<?> type) {
+            try {
+                Method m = type.getMethod("canonicalForm");
+                if (m.getParameterCount() == 0) {
+                    m.trySetAccessible();
+                    return Optional.of(m);
+                }
+            } catch (NoSuchMethodException absent) {
+                // Supported only when explicitly provided.
+            }
+            return Optional.empty();
         }
     };
     private static final ThreadLocal<ContentDigest> TRUSTED_CAPTURE = new ThreadLocal<>();
@@ -35,15 +86,48 @@ public record GraphEvidence(ContentDigest identity, String family, String canoni
             if (!identity.equals(digest(family, canonicalJson))) throw new IllegalArgumentException("Graph evidence hash mismatch");
         }
     }
+
+    /**
+     * Reconstitutes a {@link GraphEvidence} record from a storage stream whose full-file
+     * cryptographic SHA-256 checksum and canonical JSON binding were already authenticated.
+     * Never call on unauthenticated or user-supplied inputs.
+     */
+    public static GraphEvidence fromAuthenticatedCache(ContentDigest identity, String family, String canonicalJson) {
+        Objects.requireNonNull(identity);
+        String checkedFamily = ContractChecks.token(family, "graph evidence family");
+        Objects.requireNonNull(canonicalJson);
+        ContentDigest previous = TRUSTED_CAPTURE.get();
+        TRUSTED_CAPTURE.set(identity);
+        try {
+            return new GraphEvidence(identity, checkedFamily, canonicalJson);
+        } finally {
+            if (previous == null) TRUSTED_CAPTURE.remove();
+            else TRUSTED_CAPTURE.set(previous);
+        }
+    }
+
     public static GraphEvidence capture(String family, Object payload) {
         String checkedFamily = ContractChecks.token(family, "graph evidence family");
-        String json = CanonicalJson.write(form(payload, 0));
+        String json;
+        if (GraphCanonicalWriter.isEnabled()) {
+            var out = new StringBuilder(256);
+            try {
+                writeFormTo(payload, out, 0);
+            } catch (java.io.IOException impossible) {
+                throw new IllegalStateException(impossible);
+            }
+            json = out.toString();
+        } else {
+            json = CanonicalJson.write(form(payload, 0));
+        }
         ContentDigest id = digest(checkedFamily, json);
+        ContentDigest previous = TRUSTED_CAPTURE.get();
         TRUSTED_CAPTURE.set(id);
         try {
             return new GraphEvidence(id, checkedFamily, json);
         } finally {
-            TRUSTED_CAPTURE.remove();
+            if (previous == null) TRUSTED_CAPTURE.remove();
+            else TRUSTED_CAPTURE.set(previous);
         }
     }
     /** Semantic replay excludes only known provenance timestamps/revision labels, never configuration values. */
@@ -72,11 +156,255 @@ public record GraphEvidence(ContentDigest identity, String family, String canoni
     private static void snapshotMember(Map<String,Object> value) {
         if(value.get("snapshot")!=null) {var snapshot=new TreeMap<>(GraphJson.object(value.get("snapshot")));removeSnapshotLabels(snapshot);value.put("snapshot",snapshot);}
     }
-    private static ContentDigest digest(String family,String json) {
-        var preimage=List.of("graph.evidence:m5.1-v1",family,json);
-        // Small records avoid a per-record encoder buffer; large payloads avoid a second full string.
-        return json.length()<8192?ContentDigest.sha256Utf8(CanonicalJson.write(preimage)):CanonicalJson.sha256(preimage);
+    private static ContentDigest digest(String family, String json) {
+        if (GraphCanonicalWriter.isEnabled()) {
+            var md = CanonicalJson.borrowSha256();
+            try {
+                try (var writer = CanonicalJson.newUtf8DigestWriter(md)) {
+                    writer.write("[\"graph.evidence:m5.1-v1\",");
+                    GraphCanonicalWriter.appendJsonString(family, writer);
+                    writer.write(',');
+                    GraphCanonicalWriter.appendJsonString(json, writer);
+                    writer.write(']');
+                } catch (java.io.IOException impossible) {
+                    throw new IllegalStateException("Canonical digest unavailable", impossible);
+                }
+                return new ContentDigest("sha256:" + HexFormat.of().formatHex(md.digest()));
+            } finally {
+                CanonicalJson.releaseSha256(md);
+            }
+        }
+        var preimage = List.of("graph.evidence:m5.1-v1", family, json);
+        return json.length() < 8192 ? ContentDigest.sha256Utf8(CanonicalJson.write(preimage)) : CanonicalJson.sha256(preimage);
     }
+
+    /** Single-pass streaming canonical evidence encoder — zero intermediate TreeMaps or Lists. */
+    private static void writeFormTo(Object value, Appendable out, int depth) throws java.io.IOException {
+        if (depth > 128) throw new IllegalArgumentException("Provider evidence depth limit");
+        if (value == null) {
+            out.append("null");
+            return;
+        }
+        if (value instanceof String s) {
+            GraphCanonicalWriter.appendJsonString(s, out);
+            return;
+        }
+        if (value instanceof CanonicalIdentifier id) {
+            GraphCanonicalWriter.appendJsonString(id.value(), out);
+            return;
+        }
+        if (value instanceof Boolean b) {
+            out.append(b.toString());
+            return;
+        }
+        if (value instanceof Enum<?> e) {
+            GraphCanonicalWriter.appendJsonString(e.name(), out);
+            return;
+        }
+        if (value instanceof Byte || value instanceof Short || value instanceof Integer
+                || value instanceof Long || value instanceof java.math.BigInteger) {
+            out.append(value.toString());
+            return;
+        }
+        if (value instanceof java.math.BigDecimal decimal) {
+            var normalized = decimal.signum() == 0 ? java.math.BigDecimal.ZERO : decimal.stripTrailingZeros();
+            out.append(normalized.toPlainString());
+            return;
+        }
+        if (value instanceof Float || value instanceof Double) {
+            throw new IllegalArgumentException("Binary floating-point values are not canonical contract values");
+        }
+        if (value instanceof Instant instant) {
+            GraphCanonicalWriter.appendJsonString(instant.toString(), out);
+            return;
+        }
+        if (value instanceof URI uri) {
+            GraphCanonicalWriter.appendJsonString(uri.toASCIIString(), out);
+            return;
+        }
+        if (value instanceof Optional<?> optional) {
+            if (optional.isPresent()) writeFormTo(optional.orElseThrow(), out, depth + 1);
+            else out.append("null");
+            return;
+        }
+        if (value instanceof byte[] bytes) {
+            out.append("{\"bytes\":");
+            GraphCanonicalWriter.appendJsonString(Base64.getEncoder().encodeToString(bytes), out);
+            out.append(",\"contentDigest\":");
+            GraphCanonicalWriter.appendJsonString(ContentDigest.sha256(bytes).value(), out);
+            out.append(",\"encoding\":\"base64\"}");
+            return;
+        }
+        if (value instanceof com.evolution.analysis.acquisition.AcquiredFile file) {
+            out.append("{\"bytesBase64\":");
+            GraphCanonicalWriter.appendJsonString(Base64.getEncoder().encodeToString(file.bytes()), out);
+            out.append(",\"contentDigest\":");
+            GraphCanonicalWriter.appendJsonString(file.contentDigest().value(), out);
+            out.append(",\"path\":");
+            GraphCanonicalWriter.appendJsonString(file.path(), out);
+            out.append('}');
+            return;
+        }
+        if (value instanceof SourceInput source) {
+            out.append("{\"bytesBase64\":");
+            GraphCanonicalWriter.appendJsonString(Base64.getEncoder().encodeToString(source.bytes()), out);
+            out.append(",\"decoding\":");
+            writeFormTo(source.decoding(), out, depth + 1);
+            out.append(",\"document\":");
+            writeFormTo(source.document(), out, depth + 1);
+            out.append('}');
+            return;
+        }
+        if (value instanceof com.evolution.analysis.spring.condition.ConditionExpression expression) {
+            var nodes = new TreeMap<String, Object>();
+            var pending = new ArrayDeque<com.evolution.analysis.spring.condition.ConditionExpression>();
+            pending.add(expression);
+            while (!pending.isEmpty()) {
+                var node = pending.removeFirst();
+                if (nodes.putIfAbsent(node.identity().value(), node.view()) == null) pending.addAll(node.children());
+            }
+            out.append("{\"expressions\":");
+            writeFormTo(List.copyOf(nodes.values()), out, depth + 2);
+            out.append(",\"rootIdentity\":");
+            GraphCanonicalWriter.appendJsonString(expression.identity().value(), out);
+            out.append('}');
+            return;
+        }
+        if (value instanceof com.evolution.analysis.spring.truth.SymbolicConfiguration.Formula formula) {
+            var nodes = new TreeMap<String, Object>();
+            var pending = new ArrayDeque<com.evolution.analysis.spring.truth.SymbolicConfiguration.Formula>();
+            pending.add(formula);
+            while (!pending.isEmpty()) {
+                var node = pending.removeFirst();
+                if (nodes.putIfAbsent(node.identity().value(), node.view()) == null) pending.addAll(node.children());
+            }
+            out.append("{\"formulas\":");
+            writeFormTo(List.copyOf(nodes.values()), out, depth + 2);
+            out.append(",\"rootIdentity\":");
+            GraphCanonicalWriter.appendJsonString(formula.identity().value(), out);
+            out.append('}');
+            return;
+        }
+        if (value instanceof Map<?, ?> map) {
+            if (map.isEmpty()) {
+                out.append("{}");
+                return;
+            }
+            boolean stringKeys = true;
+            for (Object k : map.keySet()) {
+                if (!(k instanceof String)) {
+                    stringKeys = false;
+                    break;
+                }
+            }
+            if (stringKeys) {
+                out.append('{');
+                if (map instanceof SortedMap<?, ?> sorted && sorted.comparator() == null) {
+                    boolean first = true;
+                    for (var e : sorted.entrySet()) {
+                        if (!first) out.append(',');
+                        first = false;
+                        GraphCanonicalWriter.appendJsonString((String) e.getKey(), out);
+                        out.append(':');
+                        writeFormTo(e.getValue(), out, depth + 1);
+                    }
+                } else if (map.size() == 1) {
+                    var e = map.entrySet().iterator().next();
+                    GraphCanonicalWriter.appendJsonString((String) e.getKey(), out);
+                    out.append(':');
+                    writeFormTo(e.getValue(), out, depth + 1);
+                } else {
+                    @SuppressWarnings("unchecked")
+                    Map.Entry<String, Object>[] entries = map.entrySet().toArray(new Map.Entry[0]);
+                    Arrays.sort(entries, Comparator.comparing(Map.Entry::getKey));
+                    for (int i = 0; i < entries.length; i++) {
+                        if (i > 0) out.append(',');
+                        GraphCanonicalWriter.appendJsonString(entries[i].getKey(), out);
+                        out.append(':');
+                        writeFormTo(entries[i].getValue(), out, depth + 1);
+                    }
+                }
+                out.append('}');
+                return;
+            }
+            var encodedEntries = new ArrayList<String>(map.size());
+            for (var e : map.entrySet()) {
+                var pair = new StringBuilder(64);
+                pair.append('[');
+                writeFormTo(e.getKey(), pair, depth + 1);
+                pair.append(',');
+                writeFormTo(e.getValue(), pair, depth + 1);
+                pair.append(']');
+                encodedEntries.add(pair.toString());
+            }
+            encodedEntries.sort(String::compareTo);
+            out.append('[');
+            for (int i = 0, len = encodedEntries.size(); i < len; i++) {
+                if (i > 0) out.append(',');
+                out.append(encodedEntries.get(i));
+            }
+            out.append(']');
+            return;
+        }
+        if (value instanceof Set<?> set) {
+            if (set.isEmpty()) {
+                out.append("[]");
+                return;
+            }
+            var encoded = new ArrayList<String>(set.size());
+            for (Object item : set) {
+                var itemBuf = new StringBuilder(64);
+                writeFormTo(item, itemBuf, depth + 1);
+                encoded.add(itemBuf.toString());
+            }
+            encoded.sort(String::compareTo);
+            out.append('[');
+            for (int i = 0, len = encoded.size(); i < len; i++) {
+                if (i > 0) out.append(',');
+                out.append(encoded.get(i));
+            }
+            out.append(']');
+            return;
+        }
+        if (value instanceof Collection<?> collection) {
+            out.append('[');
+            boolean first = true;
+            for (Object item : collection) {
+                if (!first) out.append(',');
+                first = false;
+                writeFormTo(item, out, depth + 1);
+            }
+            out.append(']');
+            return;
+        }
+        Class<?> cls = value.getClass();
+        if (cls.isRecord()) {
+            List<Accessor> accessors = RECORD_ACCESSORS.get(cls);
+            out.append('{');
+            for (int i = 0, len = accessors.size(); i < len; i++) {
+                Accessor component = accessors.get(i);
+                out.append(component.encodedKeyPrefix());
+                try {
+                    writeFormTo(component.read(value), out, depth + 1);
+                } catch (IllegalAccessException | InvocationTargetException failure) {
+                    throw new IllegalArgumentException("Cannot encode provider record", failure);
+                }
+            }
+            out.append('}');
+            return;
+        }
+        var canonicalMethod = CANONICAL_FORM_METHOD.get(cls);
+        if (canonicalMethod.isPresent()) {
+            try {
+                writeFormTo(canonicalMethod.orElseThrow().invoke(value), out, depth + 1);
+                return;
+            } catch (ReflectiveOperationException failed) {
+                throw new IllegalArgumentException("Cannot encode provider canonical form", failed);
+            }
+        }
+        throw new IllegalArgumentException("Provider has no supported neutral evidence form: " + cls.getSimpleName());
+    }
+
     /** Records/canonical forms only; no arbitrary fields or polymorphic deserialization. */
     static Object form(Object value,int depth) {
         if(depth>128) throw new IllegalArgumentException("Provider evidence depth limit");
@@ -119,17 +447,17 @@ public record GraphEvidence(ContentDigest identity, String family, String canoni
         if(value.getClass().isRecord()) {
             var result=new TreeMap<String,Object>();
             try {for(var component:RECORD_ACCESSORS.get(value.getClass()))
-                result.put(component.name(),form(component.method().invoke(value),depth+1));}
+                result.put(component.name(),form(component.read(value),depth+1));}
             catch(IllegalAccessException|InvocationTargetException failure) {throw new IllegalArgumentException("Cannot encode provider record",failure);}
             return result;
         }
-        try {
-            var method=value.getClass().getMethod("canonicalForm");
-            if(method.getParameterCount()==0) return form(method.invoke(value),depth+1);
-        } catch(NoSuchMethodException absent) {
-            // Public records below are the other supported provider shape.
-        } catch(ReflectiveOperationException failed) {
-            throw new IllegalArgumentException("Cannot encode provider canonical form",failed);
+        var canonicalMethod = CANONICAL_FORM_METHOD.get(value.getClass());
+        if (canonicalMethod.isPresent()) {
+            try {
+                return form(canonicalMethod.orElseThrow().invoke(value), depth + 1);
+            } catch (ReflectiveOperationException failed) {
+                throw new IllegalArgumentException("Cannot encode provider canonical form", failed);
+            }
         }
         throw new IllegalArgumentException("Provider has no supported neutral evidence form: "+value.getClass().getSimpleName());
     }

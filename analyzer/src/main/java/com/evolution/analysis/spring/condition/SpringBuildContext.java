@@ -17,6 +17,7 @@ public final class SpringBuildContext {
     private final ContentDigest classpathManifest;
     private final List<com.evolution.analysis.contract.analysis.ClasspathEntry> binaries;
     private final Set<ContentDigest> artifactDigests;
+    private final int platformRelease;
 
     private SpringBuildContext(FrontendAssemblyResult assembly, FrontendAssemblyResult.Outcome outcome) {
         this(outcome.request().orElseThrow(), assembly.identity(), outcome.sourceSet());
@@ -34,6 +35,7 @@ public final class SpringBuildContext {
         snapshot = request.manifest().snapshot().identity();
         analysis = request.manifest().identity();
         classpathManifest = request.plan().classpathManifest();
+        platformRelease = request.platform().release();
         // Revalidate protected native origins before matching framework/artifact evidence.
         // The canonical request below still binds the exact ordered solver entries; its
         // native-origin option binds the distinct original artifacts without changing M3 preimages.
@@ -91,6 +93,8 @@ public final class SpringBuildContext {
     public Identity identity() { return identity; }
     public SnapshotIdentity snapshotIdentity() { return snapshot; }
     public AnalysisIdentity analysisIdentity() { return analysis; }
+    /** Exact target JDK release feature version bound into this build context. */
+    public int platformRelease() { return platformRelease; }
     public Optional<ContentDigest> sourceDigest(SourceDocumentIdentity document) { return Optional.ofNullable(snapshotSources.get(document)); }
     /** Exact dependency/platform payload membership; the existing build identity already binds these digests. */
     public boolean containsArtifact(ContentDigest digest) { return artifactDigests.contains(Objects.requireNonNull(digest)); }

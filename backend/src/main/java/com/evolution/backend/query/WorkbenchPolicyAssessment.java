@@ -3,6 +3,7 @@ package com.evolution.backend.query;
 import com.evolution.analysis.assessment.ArchitectureAssessment;
 import com.evolution.analysis.assessment.ArchitectureAssessmentService;
 import com.evolution.analysis.assessment.ArchitectureScoreModel;
+import com.evolution.analysis.assessment.v2.InferredLayerClassifier;
 import com.evolution.analysis.contract.assessment.AssessmentStatus;
 import com.evolution.analysis.contract.common.ContentDigest;
 import com.evolution.analysis.evidence.CapabilityGapRecord;
@@ -27,11 +28,9 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Locale;
 import java.util.Optional;
 import java.util.Set;
 import java.util.TreeSet;
-import java.util.regex.Pattern;
 
 /** Evaluates built-in or owner-authored policy against one already-published context. */
 final class WorkbenchPolicyAssessment {
@@ -45,12 +44,6 @@ final class WorkbenchPolicyAssessment {
     record SuggestedPolicy(String yaml, String summary, List<String> detectedLayers, Scope scope) {}
 
     private static final int MAX_PACKAGE_PAGES = 20; // 20 * 50 = 1,000 packages
-    private static final Pattern WEB_PKG = Pattern.compile("^(?:web|controller|controllers|rest|api|endpoint|endpoints|resource|resources|http|graphql|grpc|presenter|presenters|inbound|driving)$");
-    private static final Pattern APP_PKG = Pattern.compile("^(?:application|usecase|usecases|interactor|interactors|service|services|business)$");
-    private static final Pattern DOMAIN_PKG = Pattern.compile("^(?:domain|core|model|models|entity|entities|aggregate|aggregates)$");
-    private static final Pattern PORT_PKG = Pattern.compile("^(?:port|ports|spi)$");
-    private static final Pattern ADAPTER_PKG = Pattern.compile("^(?:adapter|adapters|outbound|driven|client|clients)$");
-    private static final Pattern DATA_PKG = Pattern.compile("^(?:repository|repositories|repo|dao|persistence|data|db|store|storage|infra|infrastructure|framework|frameworks)$");
 
     static Scope scope(KnowledgeGraph graph, KnowledgeGraph.Context context) {
         return graph.evidence(context.evidence()).filter(evidence -> evidence.family().equals("spring.context"))
@@ -170,31 +163,30 @@ final class WorkbenchPolicyAssessment {
 
     private static void classifyPackage(String pkg, Set<String> webPkgs, Set<String> appPkgs, Set<String> domainPkgs,
                                         Set<String> portPkgs, Set<String> adapterPkgs, Set<String> dataPkgs) {
-        String[] segments = pkg.toLowerCase(Locale.ROOT).split("\\.");
-        // First recognize explicit Hexagonal port/adapter boundaries before sub-layer names (e.g. adapter.persistence).
-        for (int i = segments.length - 1; i >= 0; i--) {
-            String seg = segments[i];
-            if (PORT_PKG.matcher(seg).matches()) { portPkgs.add(pkg + ".**"); return; }
-            if (ADAPTER_PKG.matcher(seg).matches()) { adapterPkgs.add(pkg + ".**"); return; }
-        }
-        // Walk from most specific (leaf) back toward root for Clean/Layered packages.
-        for (int i = segments.length - 1; i >= 0; i--) {
-            String seg = segments[i];
-            if (WEB_PKG.matcher(seg).matches()) { webPkgs.add(pkg + ".**"); return; }
-            if (DATA_PKG.matcher(seg).matches()) { dataPkgs.add(pkg + ".**"); return; }
-            if (APP_PKG.matcher(seg).matches()) { appPkgs.add(pkg + ".**"); return; }
-            if (DOMAIN_PKG.matcher(seg).matches()) { domainPkgs.add(pkg + ".**"); return; }
-        }
+        InferredLayerClassifier.classifyPackageName(pkg).ifPresent(layer -> {
+            String pattern = pkg + ".**";
+            switch (layer) {
+                case InferredLayerClassifier.LAYER_PORT -> portPkgs.add(pattern);
+                case InferredLayerClassifier.LAYER_ADAPTER -> adapterPkgs.add(pattern);
+                case InferredLayerClassifier.LAYER_WEB -> webPkgs.add(pattern);
+                case InferredLayerClassifier.LAYER_DATA -> dataPkgs.add(pattern);
+                case InferredLayerClassifier.LAYER_APPLICATION -> appPkgs.add(pattern);
+                case InferredLayerClassifier.LAYER_DOMAIN -> domainPkgs.add(pattern);
+                default -> {}
+            }
+        });
     }
 
     private static String detectArchitectureStyle(Set<String> webPkgs, Set<String> appPkgs, Set<String> domainPkgs,
                                                   Set<String> portPkgs, Set<String> adapterPkgs, Set<String> dataPkgs) {
-        if (!portPkgs.isEmpty() && !adapterPkgs.isEmpty()) return "Hexagonal Architecture";
-        if (!domainPkgs.isEmpty() && !appPkgs.isEmpty() && (!webPkgs.isEmpty() || !dataPkgs.isEmpty() || !adapterPkgs.isEmpty()))
-            return "Clean Architecture";
-        if ((!webPkgs.isEmpty() && !dataPkgs.isEmpty()) || (!domainPkgs.isEmpty() && (!webPkgs.isEmpty() || !dataPkgs.isEmpty())))
-            return "Layered Architecture";
-        return "Modular Architecture";
+        var present = new LinkedHashSet<String>();
+        if (!webPkgs.isEmpty()) present.add(InferredLayerClassifier.LAYER_WEB);
+        if (!appPkgs.isEmpty()) present.add(InferredLayerClassifier.LAYER_APPLICATION);
+        if (!domainPkgs.isEmpty()) present.add(InferredLayerClassifier.LAYER_DOMAIN);
+        if (!portPkgs.isEmpty()) present.add(InferredLayerClassifier.LAYER_PORT);
+        if (!adapterPkgs.isEmpty()) present.add(InferredLayerClassifier.LAYER_ADAPTER);
+        if (!dataPkgs.isEmpty()) present.add(InferredLayerClassifier.LAYER_DATA);
+        return InferredLayerClassifier.detectStyle(present);
     }
 
     private static void appendForbidden(StringBuilder yaml, String id, String severity, Set<String> from, Set<String> to) {

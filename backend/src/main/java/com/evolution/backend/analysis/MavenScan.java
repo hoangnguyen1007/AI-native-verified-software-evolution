@@ -32,8 +32,15 @@ public final class MavenScan {
         return models(acquisition,cache,DEFAULT_REPOSITORIES);
     }
     public static List<MavenBuildModelResolution> models(RepositoryAcquisitionResult acquisition,Path cache,List<java.net.URI> repositories){
-        var policy=pomPolicy(repositories);
+        return models(acquisition, cache, repositories, null);
+    }
+    public static List<MavenBuildModelResolution> models(RepositoryAcquisitionResult acquisition,Path cache,List<java.net.URI> repositories,BuildDeltaCache deltaCache){
         if(acquisition.snapshot().isEmpty())return List.of();
+        if(deltaCache!=null){
+            var cached=deltaCache.getMavenModels(acquisition,cache,repositories);
+            if(cached.isPresent())return cached.orElseThrow();
+        }
+        var policy=pomPolicy(repositories);
         if(!acquisition.workspacePoms().isEmpty())prepareCache(cache,repositories);
         var poms=acquisition.workspacePoms();var modeled=new HashSet<String>();var results=new ArrayList<MavenBuildModelResolution>();
         // Model aggregators before descendants. Otherwise app/pom.xml is first modeled
@@ -45,7 +52,9 @@ public final class MavenScan {
             var result=new MavenBuildModelResolver(cache).resolve(request,policy);
             results.add(result);result.model().modules().stream().map(BuildModelResult.ModuleModel::pomPath).forEach(modeled::add);
         }
-        return List.copyOf(results);
+        var immutable=List.copyOf(results);
+        if(deltaCache!=null)deltaCache.putMavenModels(acquisition,cache,repositories,immutable);
+        return immutable;
     }
     public record Inputs(Map<UniversalSourceIngestion.SourceSet,UniversalSourceIngestion.Resolution> resolutions,
                   Map<MavenCoordinate,PomInput> externalPoms,List<CapabilityGapRecord> gaps,Map<String,Object> summary,List<EvidenceAcquisitionLedger> ledgers){
@@ -71,8 +80,15 @@ public final class MavenScan {
         catch(NumberFormatException unknown){return Optional.empty();}
     }
     public static Inputs inputs(RepositoryAcquisitionResult acquisition,List<MavenBuildModelResolution> builds,Path cache,Optional<PlatformInput> platform,DependencyAcquisitionPolicy acquisitionPolicy,Map<Integer,PlatformInput> platforms){
+        return inputs(acquisition, builds, cache, platform, acquisitionPolicy, platforms, null);
+    }
+    public static Inputs inputs(RepositoryAcquisitionResult acquisition,List<MavenBuildModelResolution> builds,Path cache,Optional<PlatformInput> platform,DependencyAcquisitionPolicy acquisitionPolicy,Map<Integer,PlatformInput> platforms,BuildDeltaCache deltaCache){
         var views=Map.copyOf(platforms);views.forEach((release,view)->{if(release!=view.release())throw new IllegalArgumentException("PLATFORM_VIEW_RELEASE_MISMATCH");});
         if(builds.isEmpty())return new Inputs(Map.of(),Map.of(),List.of(),Map.of("mode","NOT_APPLICABLE"));
+        if(deltaCache!=null){
+            var cached=deltaCache.getMavenInputs(acquisition,builds,cache,platform,acquisitionPolicy,views);
+            if(cached.isPresent())return cached.orElseThrow();
+        }
         var resolutions=new HashMap<UniversalSourceIngestion.SourceSet,UniversalSourceIngestion.Resolution>();
         var ledgers=new ArrayList<EvidenceAcquisitionLedger>();
         var external=new HashMap<MavenCoordinate,PomInput>();var gaps=new TreeSet<CapabilityGapRecord>();var summaries=new ArrayList<Object>();
@@ -109,7 +125,9 @@ public final class MavenScan {
                 "classpath",classpath.identity(),"acquisition",acquired.identity(),"artifacts",classpath.artifacts().size(),"problems",classpath.manifests().stream().flatMap(m->m.problems().stream()).distinct().toList()));
         }
         gaps.addAll(com.evolution.analysis.ingestion.IngestionEvidence.gaps(acquisition.snapshot().orElseThrow().identity(),new VersionedIdentifier("build.product-readiness","m8.4-v1"),acquisition.identity(),conflicts));
-        return new Inputs(Map.copyOf(resolutions),Map.copyOf(external),List.copyOf(gaps),Map.of("mode",acquisitionPolicy.remoteRepositories().isEmpty()?"PASSIVE_CACHE_THEN_ISOLATED_REQUIREMENT":"EXPLICIT_ARTIFACT_ACQUISITION","policy",acquisitionPolicy.identity(),"roots",summaries),ledgers);
+        var out=new Inputs(Map.copyOf(resolutions),Map.copyOf(external),List.copyOf(gaps),Map.of("mode",acquisitionPolicy.remoteRepositories().isEmpty()?"PASSIVE_CACHE_THEN_ISOLATED_REQUIREMENT":"EXPLICIT_ARTIFACT_ACQUISITION","policy",acquisitionPolicy.identity(),"roots",summaries),ledgers);
+        if(deltaCache!=null)deltaCache.putMavenInputs(acquisition,builds,cache,platform,acquisitionPolicy,views,out);
+        return out;
     }
     /** Create only the caller-selected cache, without traversing existing aliases/links.
      * Unavailable storage remains a typed acquisition result rather than aborting source analysis. */

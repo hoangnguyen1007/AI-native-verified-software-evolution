@@ -115,8 +115,15 @@ public class UniversalArchitectureM4EAdjudicationTest {
         var report = pipeline.run(input, policy);
 
         assertNotNull(report);
-        assertEquals(UniversalArchitectureReport.Status.COMPLETE, report.status());
-        assertEquals(UniversalArchitectureReport.ConfidenceLevel.FULL, report.metrics().confidence());
+        // Under the M5+ closed gap denominator, JavaParserFrontend retains bounded CATEGORY_PARTIAL
+        // coverage gaps (and non-Spring ANNOTATION_EVIDENCE_MISSING without framework JARs), while
+        // reporting zero ingestion issues and zero semantic/parse/unresolved errors.
+        assertTrue(report.issues().isEmpty(), () -> "issues=" + report.issues());
+        assertTrue(report.gaps().stream().allMatch(g ->
+                        g.reasonCode().equals("CATEGORY_PARTIAL") || g.reasonCode().equals("ANNOTATION_EVIDENCE_MISSING")),
+                () -> "Unexpected gaps=" + report.gaps());
+        assertEquals(UniversalArchitectureReport.Status.PARTIAL, report.status());
+        assertEquals(UniversalArchitectureReport.ConfidenceLevel.PARTIAL, report.metrics().confidence());
         assertTrue(report.types().stream().anyMatch(t -> t.qualifiedName().contains("UserRecord")));
         assertTrue(report.types().stream().anyMatch(t -> t.qualifiedName().contains("UserService")));
         assertTrue(report.metrics().declaredTypes() >= 2);
@@ -215,7 +222,15 @@ public class UniversalArchitectureM4EAdjudicationTest {
         ));
         var c1Report = pipeline.run(c1Input, basePolicy);
         assertNotNull(c1Report);
-        assertEquals(UniversalArchitectureReport.Status.COMPLETE, c1Report.status());
+        assertTrue(c1Report.issues().isEmpty(), () -> "issues=" + c1Report.issues());
+        // Synthetic array `.length` access yields one honest SEMANTIC_UNSUPPORTED gap alongside
+        // bounded CATEGORY_PARTIAL / non-Spring ANNOTATION_EVIDENCE_MISSING; zero errors/unresolved.
+        assertTrue(c1Report.gaps().stream().noneMatch(g ->
+                        g.reasonCode().equals("SEMANTIC_ERROR")
+                                || g.reasonCode().equals("UNRESOLVED")
+                                || g.reasonCode().equals("PARSE_ERROR")),
+                () -> "Unexpected error/unresolved gaps=" + c1Report.gaps());
+        assertEquals(UniversalArchitectureReport.Status.PARTIAL, c1Report.status());
         assertEquals(1, c1Report.entryPoints().size());
         totalObligationsEvaluated += 5; // 2 types + 1 method call + 1 entry point + 1 module
         correctEvidencedCount += 5;
@@ -256,7 +271,11 @@ public class UniversalArchitectureM4EAdjudicationTest {
         ));
         var c2Report = pipeline.run(c2Input, basePolicy);
         assertNotNull(c2Report);
-        assertEquals(UniversalArchitectureReport.Status.COMPLETE, c2Report.status());
+        assertTrue(c2Report.issues().isEmpty(), () -> "issues=" + c2Report.issues());
+        assertTrue(c2Report.gaps().stream().allMatch(g ->
+                        g.reasonCode().equals("CATEGORY_PARTIAL") || g.reasonCode().equals("ANNOTATION_EVIDENCE_MISSING")),
+                () -> "Unexpected gaps=" + c2Report.gaps());
+        assertEquals(UniversalArchitectureReport.Status.PARTIAL, c2Report.status());
         assertEquals(2, c2Report.components().size());
         assertEquals(1, c2Report.injectionSites().size());
         totalObligationsEvaluated += 6; // 2 types + 2 XML beans + 1 property injection + 1 servlet entrypoint

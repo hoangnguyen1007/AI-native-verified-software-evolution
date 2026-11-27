@@ -3,82 +3,307 @@ package com.evolution.backend.query;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 
-/** Deterministic Git unified diff for existing UTF-8 text files; no checkout, index or Git command. */
+/**
+ * Deterministic Git unified diff generator (Myers LCS multi-hunk) and in-memory applier
+ * supporting MODIFY, CREATE ({@code /dev/null -> b/path}), and DELETE ({@code a/path -> /dev/null})
+ * without spawning Git.
+ */
 public final class RepairPatch {
-    private static final int CONTEXT=3;
+    private static final int CONTEXT = 3;
 
-    static String file(String path,String before,String after) {
+    public record ApplyResult(Map<String, String> updated, Set<String> created, Set<String> deleted) {
+        public ApplyResult {
+            updated = Collections.unmodifiableMap(new LinkedHashMap<>(updated));
+            created = Collections.unmodifiableSet(new LinkedHashSet<>(created));
+            deleted = Collections.unmodifiableSet(new LinkedHashSet<>(deleted));
+        }
+    }
+
+    public static String file(String path, String before, String after) {
         if (before.equals(after)) throw new IllegalArgumentException("No edit");
-        var old=lines(before);
-        var next=lines(after);
-        int prefix=0,suffix=0;
-        while (prefix<Math.min(old.size(),next.size()) && old.get(prefix).equals(next.get(prefix))) prefix++;
-        while (suffix<Math.min(old.size(),next.size())-prefix
-                && old.get(old.size()-1-suffix).equals(next.get(next.size()-1-suffix))) suffix++;
-        int start=Math.max(0,prefix-CONTEXT);
-        int oldEnd=old.size()-suffix, newEnd=next.size()-suffix, tail=Math.min(suffix,CONTEXT);
-        String a=gitPath("a/"+path), b=gitPath("b/"+path);
-        var out=new StringBuilder("diff --git ").append(a).append(' ').append(b)
-                .append("\n--- ").append(a).append("\n+++ ").append(b);
-        out.append("\n@@ -").append(location(start,oldEnd+tail-start))
-                .append(" +").append(location(start,newEnd+tail-start)).append(" @@\n");
-        for (int i=start;i<prefix;i++) line(out,' ',old.get(i));
-        for (int i=prefix;i<oldEnd;i++) line(out,'-',old.get(i));
-        for (int i=prefix;i<newEnd;i++) line(out,'+',next.get(i));
-        for (int i=oldEnd;i<oldEnd+tail;i++) line(out,' ',old.get(i));
+        var oldLines = lines(before);
+        var newLines = lines(after);
+        var ops = myersDiff(oldLines, newLines);
+        var hunks = groupHunks(ops, oldLines.size(), newLines.size());
+        String a = gitPath("a/" + path), b = gitPath("b/" + path);
+        var out = new StringBuilder("diff --git ").append(a).append(' ').append(b)
+                .append("\n--- ").append(a).append("\n+++ ").append(b).append('\n');
+        for (var hunk : hunks) {
+            out.append("@@ -").append(location(hunk.oldStart, hunk.oldCount))
+                    .append(" +").append(location(hunk.newStart, hunk.newCount)).append(" @@\n");
+            for (var op : hunk.ops) {
+                line(out, op.kind, op.text);
+            }
+        }
         return out.toString();
     }
 
-    private static String location(int start,int count) { return (count==0 ? start : start+1)+","+count; }
-    private static List<String> lines(String text) {
-        var result=new ArrayList<String>();
-        int from=0;
-        while (from<text.length()) {
-            int end=text.indexOf('\n',from);
-            if (end<0) end=text.length()-1;
-            result.add(text.substring(from,end+1));
-            from=end+1;
+    public static String createFile(String path, String after) {
+        if (after == null || after.isEmpty()) throw new IllegalArgumentException("Empty created file");
+        var newLines = lines(after);
+        String a = gitPath("a/" + path), b = gitPath("b/" + path);
+        var out = new StringBuilder("diff --git ").append(a).append(' ').append(b)
+                .append("\nnew file mode 100644")
+                .append("\n--- /dev/null\n+++ ").append(b)
+                .append("\n@@ -0,0 +1,").append(newLines.size()).append(" @@\n");
+        for (String l : newLines) line(out, '+', l);
+        return out.toString();
+    }
+
+    public static String deleteFile(String path, String before) {
+        var oldLines = lines(before);
+        String a = gitPath("a/" + path), b = gitPath("b/" + path);
+        var out = new StringBuilder("diff --git ").append(a).append(' ').append(b)
+                .append("\ndeleted file mode 100644")
+                .append("\n--- ").append(a).append("\n+++ /dev/null")
+                .append("\n@@ -").append(oldLines.isEmpty() ? "0,0" : ("1," + oldLines.size())).append(" +0,0 @@\n");
+        for (String l : oldLines) line(out, '-', l);
+        return out.toString();
+    }
+
+    private record DiffOp(char kind, String text, int oldIdx, int newIdx) {}
+    private record Hunk(int oldStart, int oldCount, int newStart, int newCount, List<DiffOp> ops) {}
+
+    /** Standard O(ND) Myers shortest-edit-script diff; falls back to bounded prefix/suffix if edit distance is huge. */
+    private static List<DiffOp> myersDiff(List<String> a, List<String> b) {
+        int n = a.size();
+        int m = b.size();
+        // Trim common prefix and suffix first for O(1) fast path on single-region edits
+        int prefix = 0;
+        int minLen = Math.min(n, m);
+        while (prefix < minLen && a.get(prefix).equals(b.get(prefix))) prefix++;
+        int suffix = 0;
+        while (suffix < minLen - prefix && a.get(n - 1 - suffix).equals(b.get(m - 1 - suffix))) suffix++;
+
+        var result = new ArrayList<DiffOp>(n + m);
+        for (int i = 0; i < prefix; i++) result.add(new DiffOp(' ', a.get(i), i, i));
+
+        int midN = n - prefix - suffix;
+        int midM = m - prefix - suffix;
+        int maxD = Math.min(midN + midM, 4096);
+        List<DiffOp> middle = computeMyersMiddle(a, b, prefix, midN, midM, maxD);
+        result.addAll(middle);
+
+        for (int s = 0; s < suffix; s++) {
+            int ai = n - suffix + s;
+            int bi = m - suffix + s;
+            result.add(new DiffOp(' ', a.get(ai), ai, bi));
         }
         return result;
     }
-    private static void line(StringBuilder out,char type,String line) {
+
+    private static List<DiffOp> computeMyersMiddle(List<String> a, List<String> b, int offset, int n, int m, int maxD) {
+        if (n == 0) {
+            var out = new ArrayList<DiffOp>(m);
+            for (int j = 0; j < m; j++) out.add(new DiffOp('+', b.get(offset + j), offset, offset + j));
+            return out;
+        }
+        if (m == 0) {
+            var out = new ArrayList<DiffOp>(n);
+            for (int i = 0; i < n; i++) out.add(new DiffOp('-', a.get(offset + i), offset + i, offset));
+            return out;
+        }
+        int max = n + m;
+        int limitD = Math.min(max, maxD);
+        int size = 2 * limitD + 3;
+        int shift = limitD + 1;
+        int[] v = new int[size];
+        var trace = new ArrayList<int[]>();
+        int foundD = -1;
+        for (int d = 0; d <= limitD; d++) {
+            trace.add(v.clone());
+            for (int k = -d; k <= d; k += 2) {
+                int x;
+                if (k == -d || (k != d && v[shift + k - 1] < v[shift + k + 1])) {
+                    x = v[shift + k + 1];
+                } else {
+                    x = v[shift + k - 1] + 1;
+                }
+                int y = x - k;
+                while (x < n && y < m && a.get(offset + x).equals(b.get(offset + y))) {
+                    x++;
+                    y++;
+                }
+                v[shift + k] = x;
+                if (x >= n && y >= m) {
+                    foundD = d;
+                    break;
+                }
+            }
+            if (foundD >= 0) break;
+        }
+        if (foundD < 0) {
+            // Fallback when edit distance exceeds maxD: emit whole middle block
+            var out = new ArrayList<DiffOp>(n + m);
+            for (int i = 0; i < n; i++) out.add(new DiffOp('-', a.get(offset + i), offset + i, offset));
+            for (int j = 0; j < m; j++) out.add(new DiffOp('+', b.get(offset + j), offset + n, offset + j));
+            return out;
+        }
+        var rev = new ArrayList<DiffOp>(n + m);
+        int x = n, y = m;
+        for (int d = foundD; d > 0; d--) {
+            int[] prev = trace.get(d);
+            int k = x - y;
+            int prevK;
+            if (k == -d || (k != d && prev[shift + k - 1] < prev[shift + k + 1])) {
+                prevK = k + 1;
+            } else {
+                prevK = k - 1;
+            }
+            int prevX = prev[shift + prevK];
+            int prevY = prevX - prevK;
+            while (x > prevX && y > prevY) {
+                x--;
+                y--;
+                rev.add(new DiffOp(' ', a.get(offset + x), offset + x, offset + y));
+            }
+            if (x == prevX) {
+                y--;
+                rev.add(new DiffOp('+', b.get(offset + y), offset + x, offset + y));
+            } else {
+                x--;
+                rev.add(new DiffOp('-', a.get(offset + x), offset + x, offset + y));
+            }
+        }
+        while (x > 0 && y > 0) {
+            x--;
+            y--;
+            rev.add(new DiffOp(' ', a.get(offset + x), offset + x, offset + y));
+        }
+        Collections.reverse(rev);
+        return rev;
+    }
+
+    private static List<Hunk> groupHunks(List<DiffOp> ops, int oldTotal, int newTotal) {
+        var changeRanges = new ArrayList<int[]>();
+        int i = 0;
+        while (i < ops.size()) {
+            if (ops.get(i).kind != ' ') {
+                int start = i;
+                while (i < ops.size() && ops.get(i).kind != ' ') i++;
+                int end = i; // exclusive
+                int ctxStart = Math.max(0, start - CONTEXT);
+                int ctxEnd = Math.min(ops.size(), end + CONTEXT);
+                if (!changeRanges.isEmpty() && ctxStart <= changeRanges.getLast()[1]) {
+                    changeRanges.getLast()[1] = Math.max(changeRanges.getLast()[1], ctxEnd);
+                } else {
+                    changeRanges.add(new int[]{ctxStart, ctxEnd});
+                }
+            } else {
+                i++;
+            }
+        }
+        var hunks = new ArrayList<Hunk>(changeRanges.size());
+        for (int[] r : changeRanges) {
+            var slice = ops.subList(r[0], r[1]);
+            int oldCount = 0, newCount = 0;
+            int oldStart = -1, newStart = -1;
+            for (var op : slice) {
+                if (op.kind == ' ' || op.kind == '-') {
+                    if (oldStart < 0) oldStart = op.oldIdx;
+                    oldCount++;
+                }
+                if (op.kind == ' ' || op.kind == '+') {
+                    if (newStart < 0) newStart = op.newIdx;
+                    newCount++;
+                }
+            }
+            if (oldStart < 0) oldStart = slice.isEmpty() ? 0 : Math.min(oldTotal, slice.getFirst().oldIdx);
+            if (newStart < 0) newStart = slice.isEmpty() ? 0 : Math.min(newTotal, slice.getFirst().newIdx);
+            hunks.add(new Hunk(oldStart, oldCount, newStart, newCount, List.copyOf(slice)));
+        }
+        return hunks;
+    }
+
+    private static String location(int start, int count) { return (count == 0 ? start : start + 1) + "," + count; }
+
+    private static List<String> lines(String text) {
+        var result = new ArrayList<String>();
+        int from = 0;
+        while (from < text.length()) {
+            int end = text.indexOf('\n', from);
+            if (end < 0) end = text.length() - 1;
+            result.add(text.substring(from, end + 1));
+            from = end + 1;
+        }
+        return result;
+    }
+
+    private static void line(StringBuilder out, char type, String line) {
         out.append(type).append(line);
         if (!line.endsWith("\n")) out.append("\n\\ No newline at end of file\n");
     }
+
     private static String gitPath(String path) {
-        if (path.chars().allMatch(ch -> ch>32 && ch<127 && ch!='"' && ch!='\\')) return path;
-        var out=new StringBuilder("\"");
-        for (byte value:path.getBytes(StandardCharsets.UTF_8)) {
-            int c=value&0xff;
-            if (c=='"' || c=='\\') out.append('\\').append((char)c);
-            else if (c<32 || c>=127) out.append('\\').append((char)('0'+(c>>6)))
-                    .append((char)('0'+((c>>3)&7))).append((char)('0'+(c&7)));
-            else out.append((char)c);
+        if (path.chars().allMatch(ch -> ch > 32 && ch < 127 && ch != '"' && ch != '\\')) return path;
+        var out = new StringBuilder("\"");
+        for (byte value : path.getBytes(StandardCharsets.UTF_8)) {
+            int c = value & 0xff;
+            if (c == '"' || c == '\\') out.append('\\').append((char) c);
+            else if (c < 32 || c >= 127) out.append('\\').append((char) ('0' + (c >> 6)))
+                    .append((char) ('0' + ((c >> 3) & 7))).append((char) ('0' + (c & 7)));
+            else out.append((char) c);
         }
         return out.append('"').toString();
     }
 
     public static Map<String, String> applyAll(Map<String, String> originalsByPath, String fullPatch) {
+        return applyAllDetailed(originalsByPath, fullPatch).updated();
+    }
+
+    public static ApplyResult applyAllDetailed(Map<String, String> originalsByPath, String fullPatch) {
         if (fullPatch == null || fullPatch.isBlank()) throw new IllegalArgumentException("Empty patch");
         var rawLines = lines(fullPatch);
         var updated = new LinkedHashMap<String, String>();
+        var created = new LinkedHashSet<String>();
+        var deleted = new LinkedHashSet<String>();
         int idx = 0;
         while (idx < rawLines.size()) {
             String header = stripLf(rawLines.get(idx));
             if (!header.startsWith("diff --git ")) throw new IllegalArgumentException("Invalid patch header");
             idx++;
+            // Skip optional git metadata headers (new file mode, deleted file mode, old mode, new mode, index)
+            while (idx < rawLines.size()) {
+                String meta = stripLf(rawLines.get(idx));
+                if (meta.startsWith("new file mode ") || meta.startsWith("deleted file mode ")
+                        || meta.startsWith("old mode ") || meta.startsWith("new mode ")
+                        || meta.startsWith("index ")) {
+                    idx++;
+                } else {
+                    break;
+                }
+            }
             if (idx + 1 >= rawLines.size()) throw new IllegalArgumentException("Incomplete patch headers");
             String minus = stripLf(rawLines.get(idx++));
             String plus = stripLf(rawLines.get(idx++));
             if (!minus.startsWith("--- ") || !plus.startsWith("+++ ")) throw new IllegalArgumentException("Invalid diff headers");
             String aPath = unquote(minus.substring(4));
             String bPath = unquote(plus.substring(4));
-            if (!aPath.startsWith("a/") || !bPath.startsWith("b/")) throw new IllegalArgumentException("Invalid diff path");
-            String path = aPath.substring(2);
-            if (!path.equals(bPath.substring(2))) throw new IllegalArgumentException("Rename not supported");
-            String original = updated.getOrDefault(path, originalsByPath.get(path));
-            if (original == null) throw new IllegalArgumentException("Missing original source for " + path);
-            var oldLines = lines(original);
+            boolean isCreate = "/dev/null".equals(aPath);
+            boolean isDelete = "/dev/null".equals(bPath);
+            String path;
+            if (isCreate && !isDelete) {
+                if (!bPath.startsWith("b/")) throw new IllegalArgumentException("Invalid create diff path");
+                path = bPath.substring(2);
+            } else if (isDelete && !isCreate) {
+                if (!aPath.startsWith("a/")) throw new IllegalArgumentException("Invalid delete diff path");
+                path = aPath.substring(2);
+            } else {
+                if (!aPath.startsWith("a/") || !bPath.startsWith("b/")) throw new IllegalArgumentException("Invalid diff path");
+                path = aPath.substring(2);
+                if (!path.equals(bPath.substring(2))) throw new IllegalArgumentException("Rename not supported");
+            }
+            List<String> oldLines;
+            if (isCreate) {
+                if (originalsByPath.containsKey(path) && !deleted.contains(path)) {
+                    throw new IllegalArgumentException("Created file already exists: " + path);
+                }
+                oldLines = List.of();
+            } else {
+                String original = updated.getOrDefault(path, originalsByPath.get(path));
+                if (original == null) throw new IllegalArgumentException("Missing original source for " + path);
+                oldLines = lines(original);
+            }
             var out = new StringBuilder();
             int cursor = 0;
             boolean sawHunk = false;
@@ -128,9 +353,16 @@ public final class RepairPatch {
             }
             if (!sawHunk) throw new IllegalArgumentException("No hunks in patch");
             while (cursor < oldLines.size()) out.append(oldLines.get(cursor++));
-            updated.put(path, out.toString());
+            if (isDelete) {
+                if (out.length() != 0) throw new IllegalArgumentException("Deleted file had remaining lines");
+                updated.remove(path);
+                deleted.add(path);
+            } else {
+                updated.put(path, out.toString());
+                if (isCreate) created.add(path);
+            }
         }
-        return Collections.unmodifiableMap(updated);
+        return new ApplyResult(updated, created, deleted);
     }
 
     private static int[] parseRange(String spec) {
@@ -162,5 +394,6 @@ public final class RepairPatch {
         }
         return bytes.toString(StandardCharsets.UTF_8);
     }
+
     private RepairPatch() {}
 }

@@ -30,10 +30,14 @@ async function main([browser, output]) {
     calls.push(route);
     try {
       if (!route.startsWith('/api/')) {
-        assert.ok(['/index.html', '/styles.css', '/model.js', '/app.js', '/ux.js', '/logo.svg',
+        assert.ok(['/index.html', '/styles.css', '/score-editorial.css', '/sidebar-ux.css', '/sidebar-ux.js',
+          '/lucian-components.css', '/lucian-components.js',
+          '/github-auth.css', '/github-auth.js', '/github-enterprise.css', '/github-enterprise.js',
+          '/github-hub.css', '/repair-studio.css', '/github-hub.js', '/repair-studio.js',
+          '/model.js', '/app.js', '/ux.js', '/logo.svg',
           '/bridges.html', '/bridges.css', '/bridge-model.js', '/bridges.js',
           '/vendor/cytoscape-3.30.2.min.js', '/fonts/newsreader-latin.woff2',
-          '/fonts/source-sans-3-latin.woff2'].includes(route));
+          '/fonts/source-sans-3-latin.woff2'].includes(route), 'Unexpected static route: ' + route);
         if (route.includes('cytoscape') && blockRenderer) {
           blockRenderer = false;
           res.writeHead(503);
@@ -139,8 +143,7 @@ async function main([browser, output]) {
     })()`);
     assert.equal(await evaluate("document.querySelector('#analysis-mode-note').hidden"), false);
     await click('analyze');
-    await until('Live activity can be opened while running', () => evaluate("document.querySelector('#job-description').textContent.includes('Capturing repository') && !document.querySelector('#run-details').hidden"));
-    await evaluate("document.querySelector('#run-details summary').click()");
+    await until('Live activity auto-expands immediately while running', () => evaluate("document.querySelector('#job-description').textContent.includes('Capturing repository') && document.querySelector('#run-details').open === true"));
     await evaluate("document.querySelector('#job-events details[data-stage=ACQUISITION] summary').click()");
     live = running;
     await until('Two failed updates show the last confirmed status', () => evaluate(`(() => {
@@ -240,7 +243,10 @@ async function main([browser, output]) {
     assert.equal(calls.some(route => route.includes('/bridges/')), false);
     await evaluate("document.querySelector('#panel-connections [href=\"#bridge-evidence\"]').click()");
     await until('Bridge catalog in the same shell', () => evaluate("!document.querySelector('#workbench-tool').hidden && document.querySelector('#bridge-rows')?.innerText.includes('Sample module')"));
-    assert.doesNotMatch(await evaluate("document.querySelector('#workbench-tool').innerText"), /partial|gaps|untracked|\b500\b/i);
+    // Closed reporting denominator: Partial status and missing census count MUST stay explicitly visible (never hidden)
+    const bridgeText = await evaluate("document.querySelector('#workbench-tool').innerText");
+    assert.match(bridgeText, /Partial/i);
+    assert.match(bridgeText, /Untracked:\s*10/i);
     await evaluate("document.querySelector('#workbench-tool > a').click()");
     await until('Return to Connections', () => evaluate("!document.querySelector('#repository-workspace').hidden && !document.querySelector('#panel-connections').hidden"));
 

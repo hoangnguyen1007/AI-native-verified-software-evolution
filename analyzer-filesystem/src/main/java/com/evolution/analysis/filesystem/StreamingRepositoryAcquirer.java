@@ -23,6 +23,46 @@ public final class StreamingRepositoryAcquirer {
     private static final long PARALLEL_VERIFY_MIN_BYTES = 262_144L;
 
     public record Receipt(String revision, JobJournal.State state, Optional<InventoryManifest> manifest, String reason) {}
+
+    public record FileDelta(
+            String baseRevision,
+            long addedFiles,
+            long modifiedFiles,
+            long deletedFiles,
+            long unchangedFiles,
+            long racyRehashedFiles,
+            Set<String> addedPaths,
+            Set<String> modifiedPaths,
+            Set<String> deletedPaths) {
+        public FileDelta {
+            Objects.requireNonNull(baseRevision);
+            addedPaths = Set.copyOf(addedPaths);
+            modifiedPaths = Set.copyOf(modifiedPaths);
+            deletedPaths = Set.copyOf(deletedPaths);
+        }
+
+        public boolean isEmpty() {
+            return addedFiles == 0 && modifiedFiles == 0 && deletedFiles == 0;
+        }
+
+        public long totalChanged() {
+            return addedFiles + modifiedFiles + deletedFiles;
+        }
+    }
+
+    public record IncrementalReceipt(
+            Receipt receipt,
+            boolean incrementalUsed,
+            String fallbackReason,
+            Optional<FileDelta> delta) {
+        public IncrementalReceipt {
+            Objects.requireNonNull(receipt);
+            fallbackReason = fallbackReason == null ? "" : fallbackReason;
+            delta = delta == null ? Optional.empty() : delta;
+        }
+    }
+
+    private static final long RACY_GIT_GUARD_MS = 2_000L;
     private final StreamingContentStore content;
     private final SqliteInventoryStore inventory;
 
@@ -280,6 +320,397 @@ public final class StreamingRepositoryAcquirer {
         }
     }
 
+    /**
+     * True L1 incremental local acquisition:
+     * Auto-discovers the latest compatible sealed base revision (or uses {@code requestedBaseRevision}),
+     * bulk-clones base inventory rows via one journaled {@code clone_base} op, walks the local tree
+     * with a stat-cache + 2-second Racy-Git guard, hashes/stores ONLY added, modified, or racy files,
+     * removes deleted entries in batches, runs scoped Pass-2 verification, and seals a bit-for-bit
+     * identical {@link InventoryManifest}.
+     */
+    public IncrementalReceipt acquireIncremental(
+            Path selectedRoot,
+            String revision,
+            Optional<String> requestedBaseRevision,
+            StreamingAcquisitionRequest request,
+            boolean verifyAll,
+            BooleanSupplier cancelled) throws IOException {
+        Objects.requireNonNull(selectedRoot);
+        Objects.requireNonNull(revision);
+        Objects.requireNonNull(requestedBaseRevision);
+        Objects.requireNonNull(request);
+        Objects.requireNonNull(cancelled);
+
+        var job = inventory.create(revision, request.identity(), Optional.empty());
+        if (job.state() == JobJournal.State.COMPLETE) {
+            var receipt = inventory.verifySeal(revision, cancelled)
+                    ? new Receipt(revision, job.state(), inventory.manifest(revision), "")
+                    : new Receipt(revision, JobJournal.State.WAITING_FOR_INPUT, Optional.empty(), "SEALED_CONTENT_UNAVAILABLE");
+            return new IncrementalReceipt(receipt, false, "ALREADY_COMPLETE", Optional.empty());
+        }
+        if (job.state() == JobJournal.State.CANCELLED || job.state() == JobJournal.State.FAILED) {
+            return new IncrementalReceipt(new Receipt(revision, job.state(), Optional.empty(), job.reason()),
+                    false, "TERMINAL_STATE", Optional.empty());
+        }
+        if (job.revision() > 0) {
+            var receipt = acquire(selectedRoot, revision, request, cancelled);
+            return new IncrementalReceipt(receipt, false, "RESUMING_EXISTING_REVISION", Optional.empty());
+        }
+
+        SqliteInventoryStore.SealedHead baseHead = resolveCompatibleBase(revision, requestedBaseRevision, request);
+        if (baseHead == null) {
+            var receipt = acquire(selectedRoot, revision, request, cancelled);
+            return new IncrementalReceipt(receipt, false, "NO_COMPATIBLE_BASE_SNAPSHOT", Optional.empty());
+        }
+        if (inventory.hasUncapturedEntries(baseHead.revision())) {
+            var receipt = acquire(selectedRoot, revision, request, cancelled);
+            return new IncrementalReceipt(receipt, false, "BASE_HAS_UNCAPTURED_ENTRIES", Optional.empty());
+        }
+
+        job = inventory.transition(revision, job.revision(), JobJournal.State.RUNNING, "INCREMENTAL_CLONE_BASE", Optional.empty());
+        try {
+            var sealed = inventory.manifest(revision);
+            if (sealed.isPresent()) {
+                var payload = content.put(new ByteArrayInputStream(CanonicalJson.write(sealed.orElseThrow()).getBytes(java.nio.charset.StandardCharsets.UTF_8)), cancelled);
+                inventory.transition(revision, job.revision(), JobJournal.State.COMPLETE, "", Optional.of(payload));
+                return new IncrementalReceipt(new Receipt(revision, JobJournal.State.COMPLETE, sealed, ""), false, "ALREADY_SEALED", Optional.empty());
+            }
+
+            Path root = selectedRoot.toAbsolutePath().normalize();
+            StreamingContentStore.safe(root);
+            if (!Files.isDirectory(root, LinkOption.NOFOLLOW_LINKS) || !root.equals(root.toRealPath())) {
+                throw new IOException("ROOT_UNAVAILABLE");
+            }
+
+            long scanStartMs = System.currentTimeMillis();
+            long racyCutoffMs = baseHead.sealedAtMillis() > 0 ? (baseHead.sealedAtMillis() - RACY_GIT_GUARD_MS) : Long.MIN_VALUE;
+
+            inventory.cloneBase(revision, baseHead.revision(), baseHead.inventory());
+            // Stream base observations via indexed primary-key lookups rather than loading 100% of rows into RAM.
+            var visitedRawKeys = new HashSet<String>();
+            var touchedKeys = new HashSet<String>();
+            var addedPaths = new LinkedHashSet<String>();
+            var modifiedPaths = new LinkedHashSet<String>();
+            var deletedPaths = new LinkedHashSet<String>();
+            long addedFiles = 0, modifiedFiles = 0, deletedFiles = 0, unchangedFiles = 0, racyRehashedFiles = 0;
+
+            var batch = new ArrayList<SqliteInventoryStore.Observation>(BATCH_LIMIT);
+            var small = new LinkedHashMap<ContentHandle, byte[]>(SmallBlobPacks.MAX_ROWS * 2);
+            var verifiedInRun = new HashSet<ContentHandle>(1024);
+
+            class Frame implements AutoCloseable {
+                final Path path; final String logical; final BasicFileAttributes before; final DirectoryStream<Path> stream; final Iterator<Path> iterator;
+                Frame(Path path, String logical, BasicFileAttributes knownBefore) throws IOException {
+                    this.path = path;
+                    this.logical = logical;
+                    this.before = knownBefore != null ? knownBefore : childAttributes(path);
+                    if (this.before.isSymbolicLink() || this.before.isOther()) throw new IOException("UNSAFE_PATH");
+                    this.stream = Files.newDirectoryStream(path);
+                    this.iterator = stream.iterator();
+                }
+                public void close() throws IOException { stream.close(); }
+            }
+
+            var stack = new ArrayDeque<Frame>();
+            stack.push(new Frame(root, "", null));
+            try {
+                while (!stack.isEmpty()) {
+                    check(cancelled);
+                    var frame = stack.peek();
+                    if (!frame.iterator.hasNext()) {
+                        if (!stamp(frame.before).equals(stamp(childAttributes(frame.path)))) {
+                            if (frame.logical.isEmpty()) throw new IOException("SOURCE_DIRECTORY_CHANGED");
+                            batch.add(new SqliteInventoryStore.Observation(gap(logicalPath(root, frame.path, false), Kind.DIRECTORY, "DIRECTORY_CHANGED"), ""));
+                        }
+                        frame.close();
+                        stack.pop();
+                        flushIfFull(revision, batch, small, verifiedInRun);
+                        continue;
+                    }
+                    Path file = frame.iterator.next();
+                    BasicFileAttributes attrs;
+                    try {
+                        attrs = childAttributes(file);
+                    } catch (IOException unavailable) {
+                        LogicalPath fallbackPath = logicalPath(root, file, Files.isSymbolicLink(file));
+                        if (fallbackPath.utf8().isEmpty()) visitedRawKeys.add(fallbackPath.key());
+                        batch.add(new SqliteInventoryStore.Observation(gap(fallbackPath, Kind.SPECIAL, "ENTRY_UNAVAILABLE"), ""));
+                        flushIfFull(revision, batch, small, verifiedInRun);
+                        continue;
+                    }
+                    boolean isSymlink = attrs.isSymbolicLink();
+                    LogicalPath path = logicalPath(root, file, isSymlink);
+                    String key = path.key();
+                    if (path.utf8().isEmpty()) visitedRawKeys.add(key);
+                    String logical = path.utf8().orElse("raw-name-" + key);
+                    Kind kind = isSymlink ? Kind.SYMBOLIC_LINK
+                            : (attrs.isDirectory() && !attrs.isOther()) ? Kind.DIRECTORY
+                            : (attrs.isRegularFile() && !attrs.isOther()) ? Kind.FILE
+                            : Kind.SPECIAL;
+                    String currentStamp = stamp(attrs);
+                    SqliteInventoryStore.Observation base = inventory.observation(revision, path).orElse(null);
+                    boolean baseWasAcquiredFile = base != null && base.entry().kind() == Kind.FILE
+                            && base.entry().disposition() == Disposition.ACQUIRED;
+                    long mtimeMs = attrs.lastModifiedTime().toMillis();
+                    boolean nonRacy = !verifyAll && racyCutoffMs != Long.MIN_VALUE
+                            && mtimeMs < racyCutoffMs && mtimeMs <= scanStartMs;
+
+                    if (request.excludes(logical)) {
+                        if (baseWasAcquiredFile) {
+                            deletedFiles++;
+                            path.utf8().ifPresent(deletedPaths::add);
+                            touchedKeys.add(key);
+                        }
+                        if (base != null && base.entry().disposition() == Disposition.EXCLUDED
+                                && base.entry().kind() == kind && base.stamp().equals(currentStamp)) {
+                            continue;
+                        }
+                        var entry = new InventoryEntry(path, kind, "", classify(logical), Disposition.EXCLUDED,
+                                Optional.empty(), Optional.empty(), Optional.empty(), List.of(), Optional.empty());
+                        batch.add(new SqliteInventoryStore.Observation(entry, currentStamp));
+                        flushIfFull(revision, batch, small, verifiedInRun);
+                        continue;
+                    }
+                    if (kind == Kind.DIRECTORY) {
+                        if (baseWasAcquiredFile) {
+                            deletedFiles++;
+                            path.utf8().ifPresent(deletedPaths::add);
+                            touchedKeys.add(key);
+                        }
+                        boolean unchangedDir = base != null && base.entry().kind() == Kind.DIRECTORY
+                                && base.entry().disposition() == Disposition.ACQUIRED && base.stamp().equals(currentStamp);
+                        if (!unchangedDir) {
+                            var entry = new InventoryEntry(path, kind, "040000", classify(logical), Disposition.ACQUIRED,
+                                    Optional.empty(), Optional.empty(), Optional.empty(), List.of(), Optional.empty());
+                            batch.add(new SqliteInventoryStore.Observation(entry, currentStamp));
+                            flushIfFull(revision, batch, small, verifiedInRun);
+                        }
+                        try {
+                            stack.push(new Frame(file, logical, attrs));
+                        } catch (IOException unavailable) {
+                            batch.add(new SqliteInventoryStore.Observation(gap(path, kind, "DIRECTORY_UNAVAILABLE"), ""));
+                            flushIfFull(revision, batch, small, verifiedInRun);
+                        }
+                        continue;
+                    }
+                    if (kind == Kind.FILE) {
+                        if (nonRacy && baseWasAcquiredFile
+                                && base.entry().content().isPresent()
+                                && base.stamp().equals(currentStamp)) {
+                            ContentHandle baseHandle = base.entry().content().orElseThrow();
+                            if (verifiedInRun.contains(baseHandle) || content.verify(baseHandle, cancelled)) {
+                                verifiedInRun.add(baseHandle);
+                                unchangedFiles++;
+                                continue;
+                            }
+                        }
+                        InventoryEntry entry;
+                        try {
+                            ContentHandle handle = captureFile(file, attrs.size(), small, verifiedInRun, cancelled);
+                            if (!currentStamp.equals(stamp(childAttributes(file))) || handle.size() != attrs.size()) {
+                                throw new IOException("SOURCE_CHANGED_DURING_READ");
+                            }
+                            entry = new InventoryEntry(path, kind, "100644", classify(logical), Disposition.ACQUIRED,
+                                    Optional.of(handle), Optional.empty(), Optional.empty(), List.of(), Optional.empty());
+                            if (isLfsPointer(handle, small)) {
+                                entry = new InventoryEntry(path, kind, "100644", classify(logical), Disposition.GAP,
+                                        Optional.of(handle), Optional.empty(), Optional.empty(), List.of(), Optional.of("LFS_OBJECT_REQUIRED"));
+                            }
+                            if (base != null && base.entry().kind() == Kind.FILE
+                                    && base.entry().disposition() == entry.disposition()
+                                    && base.entry().content().equals(entry.content())
+                                    && base.entry().problem().equals(entry.problem())) {
+                                unchangedFiles++;
+                                racyRehashedFiles++;
+                                if (base.stamp().equals(currentStamp)) {
+                                    continue;
+                                }
+                            } else if (!baseWasAcquiredFile) {
+                                addedFiles++;
+                                if (path.utf8().isPresent()) addedPaths.add(path.utf8().orElseThrow());
+                                touchedKeys.add(key);
+                            } else {
+                                modifiedFiles++;
+                                if (path.utf8().isPresent()) modifiedPaths.add(path.utf8().orElseThrow());
+                                touchedKeys.add(key);
+                            }
+                        } catch (IOException failure) {
+                            if (isStorageFailure(failure)) throw failure;
+                            entry = gap(path, kind, "FILE_UNAVAILABLE_OR_CHANGED");
+                            if (baseWasAcquiredFile) {
+                                deletedFiles++;
+                                path.utf8().ifPresent(deletedPaths::add);
+                            }
+                            touchedKeys.add(key);
+                        }
+                        batch.add(new SqliteInventoryStore.Observation(entry, currentStamp));
+                        flushIfFull(revision, batch, small, verifiedInRun);
+                        continue;
+                    }
+                    if (kind == Kind.SYMBOLIC_LINK) {
+                        if (baseWasAcquiredFile) {
+                            deletedFiles++;
+                            path.utf8().ifPresent(deletedPaths::add);
+                        }
+                        if (nonRacy && base != null && base.entry().kind() == Kind.SYMBOLIC_LINK
+                                && base.entry().disposition() == Disposition.ACQUIRED
+                                && base.stamp().equals(currentStamp)
+                                && base.entry().content().isPresent()
+                                && (verifiedInRun.contains(base.entry().content().orElseThrow())
+                                        || content.verify(base.entry().content().orElseThrow(), cancelled))) {
+                            verifiedInRun.add(base.entry().content().orElseThrow());
+                            continue;
+                        }
+                        String target = Files.readSymbolicLink(file).toString();
+                        byte[] linkBytes = target.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                        var handle = captureBytes(linkBytes, small, verifiedInRun, cancelled);
+                        Path destination = file.getParent().resolve(target).normalize();
+                        boolean contained = !Path.of(target).isAbsolute() && destination.startsWith(root);
+                        var entry = new InventoryEntry(path, kind, "120000", classify(logical),
+                                contained ? Disposition.ACQUIRED : Disposition.GAP, Optional.of(handle),
+                                Optional.of(target), Optional.empty(), List.of(),
+                                contained ? Optional.empty() : Optional.of("LINK_OUTSIDE_SELECTION"));
+                        if (base == null) {
+                            addedFiles++;
+                            path.utf8().ifPresent(addedPaths::add);
+                        } else if (!baseWasAcquiredFile && (base.entry().kind() != Kind.SYMBOLIC_LINK
+                                || !base.entry().content().equals(entry.content())
+                                || base.entry().disposition() != entry.disposition())) {
+                            modifiedFiles++;
+                            path.utf8().ifPresent(modifiedPaths::add);
+                        }
+                        touchedKeys.add(key);
+                        batch.add(new SqliteInventoryStore.Observation(entry, currentStamp));
+                        flushIfFull(revision, batch, small, verifiedInRun);
+                        continue;
+                    }
+                    if (attrs.isOther() && attrs.isDirectory()) throw new IOException("UNSAFE_PATH");
+                    if (baseWasAcquiredFile) {
+                        deletedFiles++;
+                        path.utf8().ifPresent(deletedPaths::add);
+                        touchedKeys.add(key);
+                    }
+                    var specialEntry = gap(path, kind, "NON_REGULAR_ENTRY");
+                    batch.add(new SqliteInventoryStore.Observation(specialEntry, currentStamp));
+                    flushIfFull(revision, batch, small, verifiedInRun);
+                }
+            } finally {
+                for (var frame : stack) frame.close();
+                flush(revision, batch, small, verifiedInRun);
+            }
+
+            // Stream-detect deleted entries present in cloned base but absent from current filesystem (O(1) RAM).
+            var deletions = new ArrayList<LogicalPath>();
+            Optional<String> delCursor = Optional.empty();
+            do {
+                check(cancelled);
+                var page = inventory.observationPage(revision, 512, delCursor);
+                for (var obs : page.entries()) {
+                    var lp = obs.entry().path();
+                    boolean stillExists;
+                    if (lp.utf8().isPresent()) {
+                        Path candidate = root.resolve(lp.utf8().orElseThrow()).normalize();
+                        stillExists = candidate.startsWith(root) && Files.exists(candidate, LinkOption.NOFOLLOW_LINKS);
+                    } else {
+                        stillExists = visitedRawKeys.contains(lp.key());
+                    }
+                    if (!stillExists) {
+                        deletions.add(lp);
+                        if (obs.entry().kind() == Kind.FILE && obs.entry().disposition() == Disposition.ACQUIRED) {
+                            deletedFiles++;
+                            lp.utf8().ifPresent(deletedPaths::add);
+                        }
+                        if (deletions.size() >= SqliteInventoryStore.MAX_ENTRY_BATCH) {
+                            inventory.deleteEntries(revision, deletions);
+                            deletions.clear();
+                        }
+                    }
+                }
+                delCursor = page.continuation();
+            } while (delCursor.isPresent());
+            if (!deletions.isEmpty()) {
+                inventory.deleteEntries(revision, deletions);
+                deletions.clear();
+            }
+
+            // Scoped Pass-2 verification: full SHA-256 on added/modified/verifyAll files; fast lstat check on unchanged entries.
+            Optional<String> cursor = Optional.empty();
+            do {
+                var page = inventory.observationPage(revision, 512, cursor);
+                for (var observed : page.entries()) {
+                    check(cancelled);
+                    var entry = observed.entry();
+                    if (entry.disposition() != Disposition.ACQUIRED) continue;
+                    Path file = physicalPath(root, entry.path());
+                    boolean valid;
+                    try {
+                        var currentAttrs = childAttributes(file);
+                        if (currentAttrs.isOther() && currentAttrs.isDirectory()) {
+                            valid = false;
+                        } else {
+                            valid = observed.stamp().equals(stamp(currentAttrs));
+                            if (valid && entry.kind() == Kind.FILE && (verifyAll || touchedKeys.contains(entry.path().key()))) {
+                                valid = matches(file, entry.content().orElseThrow(), cancelled);
+                            }
+                            if (valid && entry.kind() == Kind.SYMBOLIC_LINK) {
+                                valid = validLink(root, file, entry.target().orElseThrow(), revision);
+                            }
+                        }
+                    } catch (IOException failure) {
+                        valid = false;
+                    }
+                    if (!valid) {
+                        batch.add(new SqliteInventoryStore.Observation(gap(entry.path(), entry.kind(), "SOURCE_CHANGED_OR_LINK_UNCLOSED"), ""));
+                        flushIfFull(revision, batch, small, verifiedInRun);
+                    }
+                }
+                cursor = page.continuation();
+            } while (cursor.isPresent());
+
+            flush(revision, batch, small, verifiedInRun);
+            check(cancelled);
+            job = inventory.transition(revision, job.revision(), JobJournal.State.RUNNING, "FRONTIER_CLOSED", Optional.empty());
+            var manifest = inventory.seal(revision, request.repository(), request.identity(), verifiedInRun);
+            var payload = content.put(new ByteArrayInputStream(CanonicalJson.write(manifest).getBytes(java.nio.charset.StandardCharsets.UTF_8)), cancelled);
+            job = inventory.transition(revision, job.revision(), JobJournal.State.COMPLETE, "", Optional.of(payload));
+            var delta = new FileDelta(baseHead.revision(), addedFiles, modifiedFiles, deletedFiles, unchangedFiles,
+                    racyRehashedFiles, addedPaths, modifiedPaths, deletedPaths);
+            return new IncrementalReceipt(new Receipt(revision, job.state(), Optional.of(manifest), ""), true, "", Optional.of(delta));
+        } catch (CancellationException cancelledWork) {
+            job = inventory.transition(revision, job.revision(), JobJournal.State.WAITING_FOR_INPUT, "CANCELLED_CHECKPOINT", Optional.empty());
+            return new IncrementalReceipt(new Receipt(revision, job.state(), Optional.empty(), job.reason()), false, job.reason(), Optional.empty());
+        } catch (DirectoryIteratorException interruptedDirectory) {
+            job = inventory.transition(revision, job.revision(), JobJournal.State.WAITING_FOR_INPUT, "DIRECTORY_READ_FAILED", Optional.empty());
+            return new IncrementalReceipt(new Receipt(revision, job.state(), Optional.empty(), job.reason()), false, job.reason(), Optional.empty());
+        } catch (IOException failure) {
+            String reason = stableReason(failure);
+            JobJournal.State state = isStorageFailure(failure) ? JobJournal.State.WAITING_FOR_RESOURCES : JobJournal.State.WAITING_FOR_INPUT;
+            try { job = inventory.transition(revision, job.revision(), state, reason, Optional.empty()); }
+            catch (IOException cannotWrite) { }
+            return new IncrementalReceipt(new Receipt(revision, state, Optional.empty(), reason), false, reason, Optional.empty());
+        }
+    }
+
+    private SqliteInventoryStore.SealedHead resolveCompatibleBase(
+            String currentRevision,
+            Optional<String> requestedBase,
+            StreamingAcquisitionRequest request) throws IOException {
+        if (requestedBase.isPresent()) {
+            String baseRev = requestedBase.orElseThrow();
+            if (baseRev.equals(currentRevision)) return null;
+            var head = inventory.sealedHead(baseRev);
+            if (head.isPresent()
+                    && head.orElseThrow().repository().equals(request.repository())
+                    && head.orElseThrow().selection().equals(request.identity())) {
+                return head.orElseThrow();
+            }
+            return null;
+        }
+        var latest = inventory.latestSealed(request.repository(), request.identity());
+        if (latest.isEmpty() || latest.orElseThrow().revision().equals(currentRevision)) return null;
+        return latest.orElseThrow();
+    }
+
     private record VerifyItem(InventoryEntry entry, BoundedTasks.Task<Boolean> task) {}
 
     private boolean validLink(Path root, Path file, String target, String revision) throws IOException {
@@ -534,12 +965,8 @@ public final class StreamingRepositoryAcquirer {
                 }
                 if (files.size() >= request.policy().maxFiles() || handle.size() > request.policy().maxFileBytes() || bytes > request.policy().maxTotalBytes())
                     throw new IOException("COMPATIBILITY_WORKER_REQUIRED");
-                try (var input = content.open(handle)) {
-                    byte[] value = input.readNBytes(Math.toIntExact(handle.size()));
-                    if (value.length != handle.size() || !ContentDigest.sha256(value).equals(handle.digest()))
-                        throw new IOException("CAS_CORRUPT");
-                    files.add(new AcquiredFile(path, value));
-                }
+                byte[] value = content.readVerifiedBytes(handle);
+                files.add(new AcquiredFile(path, value));
             }
             cursor = page.continuation();
         } while (cursor.isPresent());

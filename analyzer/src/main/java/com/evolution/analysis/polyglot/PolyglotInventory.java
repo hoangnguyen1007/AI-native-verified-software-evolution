@@ -6,6 +6,7 @@ import com.evolution.analysis.contract.common.VersionedIdentifier;
 import com.evolution.analysis.contract.serialization.CanonicalJson;
 import java.io.*;
 import java.util.*;
+import java.util.concurrent.*;
 import java.util.function.BooleanSupplier;
 import java.util.function.Predicate;
 
@@ -15,6 +16,7 @@ import java.util.function.Predicate;
  */
 public final class PolyglotInventory {
     public static final String INSTALLED_DEPENDENCY_DEFERRED = "INSTALLED_DEPENDENCY_SEMANTICS_DEFERRED";
+    private static final int PARALLEL_PAGE_MIN = 16;
 
     public record Report(ContentDigest inventory, SemanticTables.Table entries, long files,
             long unresolvedClassification, VersionedIdentifier classifier) {
@@ -48,41 +50,54 @@ public final class PolyglotInventory {
             SemanticTables tables,
             BooleanSupplier cancelled, Predicate<String> installedDependency) throws IOException {
         var manifest = inventory.manifest(revision).orElseThrow(() -> new IOException("SEALED_INVENTORY_REQUIRED"));
-        var iterator = new ClassifiedRows(revision, inventory, content, manifest.inventory(), cancelled,
-                installedDependency);
-        SemanticTables.Table table;
-        try {
-            table = tables.write(SemanticTables.Kind.DOCUMENT, iterator, cancelled);
-        } catch (UncheckedIOException failure) {
-            throw failure.getCause();
+        boolean parallel = Boolean.parseBoolean(System.getProperty("evo.perf.fastPolyglot", "true"));
+        try (var iterator = new ClassifiedRows(revision, inventory, content, manifest.inventory(), cancelled,
+                installedDependency, parallel)) {
+            SemanticTables.Table table;
+            try {
+                table = tables.write(SemanticTables.Kind.DOCUMENT, iterator, cancelled);
+            } catch (UncheckedIOException failure) {
+                throw failure.getCause();
+            }
+            if (table.rows() != manifest.entries() || !inventory.manifest(revision).filter(manifest::equals).isPresent())
+                throw new IOException("POLYGLOT_INVENTORY_DENOMINATOR_CHANGED");
+            return new Report(manifest.inventory(), table, iterator.files, iterator.unknown);
         }
-        if (table.rows() != manifest.entries() || !inventory.manifest(revision).filter(manifest::equals).isPresent())
-            throw new IOException("POLYGLOT_INVENTORY_DENOMINATOR_CHANGED");
-        return new Report(manifest.inventory(), table, iterator.files, iterator.unknown);
     }
 
-    private static final class ClassifiedRows implements Iterator<SemanticTables.Row> {
+    private record ClassifiedItem(SemanticTables.Row row, boolean isFile, boolean isUnknown) {}
+
+    private static final class ClassifiedRows implements Iterator<SemanticTables.Row>, AutoCloseable {
         final String revision;
         final InventoryReader inventory;
         final RepositoryContentStore content;
         final ContentDigest scope;
         final BooleanSupplier cancelled;
         final Predicate<String> installedDependency;
-        final byte[] readBuffer = new byte[16_384];
-        final java.security.MessageDigest sha256 = newSha256();
-        Iterator<InventoryEntry> page = Collections.emptyIterator();
+        final boolean parallel;
+        final ExecutorService pool;
+        final ThreadLocal<byte[]> readBuffers = ThreadLocal.withInitial(() -> new byte[16_384]);
+        final ThreadLocal<java.security.MessageDigest> digests = ThreadLocal.withInitial(ClassifiedRows::newSha256);
+        Iterator<ClassifiedItem> page = Collections.emptyIterator();
         Optional<String> cursor = Optional.empty();
         boolean ended;
         long files, unknown;
 
         ClassifiedRows(String revision, InventoryReader inventory, RepositoryContentStore content, ContentDigest scope,
-                BooleanSupplier cancelled, Predicate<String> installedDependency) {
+                BooleanSupplier cancelled, Predicate<String> installedDependency, boolean parallel) {
             this.revision = revision;
             this.inventory = inventory;
             this.content = content;
             this.scope = scope;
             this.cancelled = cancelled;
             this.installedDependency = installedDependency;
+            int workers = parallel ? Math.min(4, Math.max(1, Runtime.getRuntime().availableProcessors() / 2)) : 1;
+            this.parallel = workers > 1;
+            this.pool = this.parallel ? Executors.newFixedThreadPool(workers, r -> {
+                Thread t = new Thread(r, "evo-polyglot-inv");
+                t.setDaemon(true);
+                return t;
+            }) : null;
         }
 
         private static java.security.MessageDigest newSha256() {
@@ -94,6 +109,8 @@ public final class PolyglotInventory {
         }
 
         private byte[] verifyAndReadPrefix(ContentHandle handle, int prefixLen) throws IOException {
+            var sha256 = digests.get();
+            var readBuffer = readBuffers.get();
             sha256.reset();
             byte[] head = new byte[prefixLen];
             int headFilled = 0;
@@ -128,32 +145,7 @@ public final class PolyglotInventory {
             return head;
         }
 
-        @Override
-        public boolean hasNext() {
-            try {
-                while (!page.hasNext() && !ended) {
-                    if (cancelled.getAsBoolean() || Thread.currentThread().isInterrupted())
-                        throw new IOException("POLYGLOT_INVENTORY_CANCELLED");
-                    var result = inventory.page(revision, 256, cursor);
-                    if (result.entries().size() > 256)
-                        throw new IOException("INVENTORY_PAGE_CONTRACT");
-                    if (result.continuation().isPresent() && result.continuation().equals(cursor))
-                        throw new IOException("INVENTORY_CURSOR_DID_NOT_ADVANCE");
-                    page = result.entries().iterator();
-                    cursor = result.continuation();
-                    ended = cursor.isEmpty();
-                }
-                return page.hasNext();
-            } catch (IOException failure) {
-                throw new UncheckedIOException(failure);
-            }
-        }
-
-        @Override
-        public SemanticTables.Row next() {
-            if (!hasNext())
-                throw new NoSuchElementException();
-            var entry = page.next();
+        private ClassifiedItem classify(InventoryEntry entry) {
             var fields = new TreeMap<String, Object>();
             fields.put("rawPath", entry.path().rawBase64());
             fields.put("kind", entry.kind().name());
@@ -163,8 +155,10 @@ public final class PolyglotInventory {
             var detection = LanguageDiscovery.detect(entry.path().utf8().orElse("raw-path"), new byte[0],
                     Optional.empty());
             String reason = "INVENTORIED_NON_FILE";
+            boolean isFile = false;
+            boolean isUnknown = false;
             if (entry.kind() == InventoryEntry.Kind.FILE) {
-                files = Math.addExact(files, 1);
+                isFile = true;
                 reason = "CLASSIFICATION_HINT_ONLY";
                 if (entry.path().utf8().isEmpty())
                     reason = "RAW_PATH_CLASSIFIER_REQUIRED";
@@ -200,13 +194,79 @@ public final class PolyglotInventory {
                         || detection.state() == LanguageDiscovery.State.AMBIGUOUS
                         || detection.state() == LanguageDiscovery.State.CONFLICTED
                         || !reason.equals("CLASSIFICATION_HINT_ONLY"))
-                    unknown = Math.addExact(unknown, 1);
+                    isUnknown = true;
             }
             fields.put("classification", detection.state().name());
             fields.put("languageCandidates", detection.candidates());
             fields.put("classificationEvidence", detection.evidence());
             fields.put("reason", reason);
-            return new SemanticTables.Row(SemanticTables.Kind.DOCUMENT, entry.path().key(), scope, fields);
+            return new ClassifiedItem(
+                    new SemanticTables.Row(SemanticTables.Kind.DOCUMENT, entry.path().key(), scope, fields),
+                    isFile, isUnknown);
+        }
+
+        private List<ClassifiedItem> classifyPage(List<InventoryEntry> entries) throws IOException {
+            int size = entries.size();
+            if (!parallel || size < PARALLEL_PAGE_MIN) {
+                var list = new ArrayList<ClassifiedItem>(size);
+                for (var entry : entries) list.add(classify(entry));
+                return list;
+            }
+            var futures = new ArrayList<Future<ClassifiedItem>>(size);
+            for (var entry : entries) {
+                futures.add(pool.submit(() -> classify(entry)));
+            }
+            var results = new ArrayList<ClassifiedItem>(size);
+            for (var future : futures) {
+                try {
+                    results.add(future.get());
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw new IOException("POLYGLOT_INVENTORY_CANCELLED", interrupted);
+                } catch (ExecutionException failed) {
+                    Throwable cause = failed.getCause();
+                    if (cause instanceof UncheckedIOException uio) throw uio.getCause();
+                    if (cause instanceof RuntimeException re) throw re;
+                    throw new IOException("POLYGLOT_INVENTORY_FAILED", cause);
+                }
+            }
+            return results;
+        }
+
+        @Override
+        public boolean hasNext() {
+            try {
+                while (!page.hasNext() && !ended) {
+                    if (cancelled.getAsBoolean() || Thread.currentThread().isInterrupted())
+                        throw new IOException("POLYGLOT_INVENTORY_CANCELLED");
+                    var result = inventory.page(revision, 256, cursor);
+                    if (result.entries().size() > 256)
+                        throw new IOException("INVENTORY_PAGE_CONTRACT");
+                    if (result.continuation().isPresent() && result.continuation().equals(cursor))
+                        throw new IOException("INVENTORY_CURSOR_DID_NOT_ADVANCE");
+                    page = classifyPage(result.entries()).iterator();
+                    cursor = result.continuation();
+                    ended = cursor.isEmpty();
+                }
+                return page.hasNext();
+            } catch (IOException failure) {
+                throw new UncheckedIOException(failure);
+            }
+        }
+
+        @Override
+        public SemanticTables.Row next() {
+            if (!hasNext())
+                throw new NoSuchElementException();
+            ClassifiedItem item = page.next();
+            if (item.isFile()) files = Math.addExact(files, 1);
+            if (item.isUnknown()) unknown = Math.addExact(unknown, 1);
+            return item.row();
+        }
+
+        @Override
+        public void close() {
+            if (pool != null) pool.shutdownNow();
         }
     }
 }

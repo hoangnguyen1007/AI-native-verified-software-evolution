@@ -26,20 +26,69 @@
   };
 
   const toolMeta = {
-    get_repo_map: { label: 'RepoMap (PPR)', tone: 'is-map' },
-    list_captured_files: { label: 'Captured Files', tone: 'is-source' },
-    read_captured_source: { label: 'Read Source', tone: 'is-source' },
-    search_captured_source: { label: 'Search Source', tone: 'is-source' },
-    inspect_spring_conditions: { label: 'Spring Conditions', tone: 'is-spring' },
+    search_symbols: { label: 'Search Symbols', tone: 'is-graph' },
+    inspect_symbol: { label: 'Inspect Symbol', tone: 'is-graph' },
     inspect_symbol_details: { label: 'Symbol Details', tone: 'is-graph' },
+    trace_path: { label: 'Trace Path', tone: 'is-graph' },
+    analyze_impact: { label: 'Blast Radius', tone: 'is-graph' },
+    impact_analysis: { label: 'Blast Radius', tone: 'is-graph' },
+    get_architecture_insights: { label: 'Architecture Insights', tone: 'is-graph' },
+    get_architecture_score: { label: 'Architecture Score v2', tone: 'is-graph' },
+    architecture_brief: { label: 'Architecture Brief', tone: 'is-graph' },
+    get_repo_map: { label: 'RepoMap (PPR)', tone: 'is-map' },
+    inspect_advisory_links: { label: 'Advisory Links', tone: 'is-map' },
+    list_findings: { label: 'Policy Findings', tone: 'is-spring' },
+    inspect_spring_wiring: { label: 'Spring Wiring', tone: 'is-spring' },
+    inspect_spring_conditions: { label: 'Spring Conditions', tone: 'is-spring' },
     inspect_connections: { label: 'Connections', tone: 'is-graph' },
-    impact_analysis: { label: 'Blast Radius', tone: 'is-graph' }
+    inspect_codeowners: { label: 'CODEOWNERS', tone: 'is-spring' },
+    inspect_gaps: { label: 'Capability Gaps', tone: 'is-spring' },
+    list_captured_files: { label: 'Captured Files', tone: 'is-source' },
+    search_captured_source: { label: 'Search Source', tone: 'is-source' },
+    read_captured_source: { label: 'Read Source', tone: 'is-source' },
+    read_markdown_section: { label: 'Read Markdown Section', tone: 'is-source' }
   };
+  let mermaidMarkerSeq = 0;
   function formatToolName(raw) {
     return toolMeta[raw]?.label || String(raw || 'tool').replaceAll('_', ' ');
   }
   function toolTone(raw) {
     return toolMeta[raw]?.tone || 'is-graph';
+  }
+  function formatCompactTokens(value) {
+    const n = Math.max(0, Math.round(Number(value) || 0));
+    if (n >= 1_000_000) return (n / 1_000_000).toFixed(1).replace(/\.0$/, '') + 'M';
+    if (n >= 1_000) return (n / 1_000).toFixed(1).replace(/\.0$/, '') + 'k';
+    return String(n);
+  }
+  function renderUsageBadge(result) {
+    const usage = result?.model?.usage || result?.promptCacheMetrics || result?.model?.promptCacheMetrics;
+    if (!usage || typeof usage !== 'object') return null;
+    const input = Math.max(0, Number(usage.inputTokens) || 0);
+    const output = Math.max(0, Number(usage.outputTokens) || 0);
+    const cacheRead = Math.max(0, Number(usage.cacheReadTokens) || 0);
+    const cacheCreate = Math.max(0, Number(usage.cacheCreationTokens) || 0);
+    if (input === 0 && output === 0 && cacheRead === 0 && cacheCreate === 0) return null;
+    const totalIn = Math.max(input, cacheRead);
+    const rawPct = usage.estimatedCacheSavingsPct != null && Number.isFinite(Number(usage.estimatedCacheSavingsPct))
+      ? Number(usage.estimatedCacheSavingsPct)
+      : (totalIn > 0 && cacheRead > 0 ? Math.min(100, (cacheRead / totalIn) * 100) : 0);
+    const pct = Math.round(rawPct);
+    const outPart = output > 0 ? ' · ' + formatCompactTokens(output) + ' out' : '';
+    let labelText;
+    let tone = '';
+    if (cacheRead > 0) {
+      labelText = `Cache ${pct}% · ${formatCompactTokens(cacheRead)} read / ${formatCompactTokens(totalIn)} in${outPart}`;
+      tone = ' is-cache-hit';
+    } else if (cacheCreate > 0) {
+      labelText = `Cache warm · ${formatCompactTokens(cacheCreate)} cached / ${formatCompactTokens(totalIn)} in${outPart}`;
+      tone = ' is-cache-warm';
+    } else {
+      labelText = `Tokens · ${formatCompactTokens(totalIn)} in / ${formatCompactTokens(output)} out`;
+    }
+    const badge = make('span', 'architecture-chat-usage-badge' + tone, labelText);
+    badge.title = `Prompt token economy — Input: ${input.toLocaleString()}, Output: ${output.toLocaleString()}, Cache read: ${cacheRead.toLocaleString()}, Cache write: ${cacheCreate.toLocaleString()}, Estimated cache savings: ${rawPct.toFixed(1)}%`;
+    return badge;
   }
 
   function appendCitationIds(parent, raw, onCite) {
@@ -191,8 +240,9 @@
 
     const wrap = make('div', 'architecture-chat-mermaid-shell');
     const svg = svgEl('svg', { viewBox: `0 0 ${maxW} ${maxH}`, class: 'architecture-chat-mermaid-svg', role: 'img', 'aria-label': 'Architecture flow diagram' });
+    const markerId = 'evo-mermaid-arrow-' + (++mermaidMarkerSeq);
     const defs = svgEl('defs');
-    const marker = svgEl('marker', { id: 'evo-mermaid-arrow', markerWidth: 8, markerHeight: 8, refX: 7, refY: 4, orient: 'auto' });
+    const marker = svgEl('marker', { id: markerId, markerWidth: 8, markerHeight: 8, refX: 7, refY: 4, orient: 'auto' });
     marker.append(svgEl('path', { d: 'M0,0 L8,4 L0,8 Z', class: 'mermaid-arrow-head' }));
     defs.append(marker);
     svg.append(defs);
@@ -206,7 +256,7 @@
       const y2 = horizontal ? b.y + nodeH / 2 : b.y;
       const cx = (x1 + x2) / 2, cy = (y1 + y2) / 2;
       const d = horizontal ? `M${x1},${y1} C${cx},${y1} ${cx},${y2} ${x2},${y2}` : `M${x1},${y1} C${x1},${cy} ${x2},${cy} ${x2},${y2}`;
-      svg.append(svgEl('path', { d, class: 'mermaid-edge-path', 'marker-end': 'url(#evo-mermaid-arrow)' }));
+      svg.append(svgEl('path', { d, class: 'mermaid-edge-path', 'marker-end': `url(#${markerId})` }));
       if (e.label) {
         const txt = svgEl('text', { x: cx, y: cy - 4, 'text-anchor': 'middle', class: 'mermaid-edge-label' });
         txt.textContent = e.label.slice(0, 22);
@@ -244,8 +294,11 @@
     const copyBtn = button('Copy', async () => {
       try {
         await navigator.clipboard?.writeText(rawCode);
-        copyBtn.textContent = 'Copied';
-        setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1400);
+        if (window.EvoCopyFx?.flash) window.EvoCopyFx.flash(copyBtn, 'Copied', 'Copy');
+        else {
+          copyBtn.textContent = 'Copied';
+          setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1400);
+        }
       } catch (_) {
         copyBtn.textContent = 'Select manually';
       }
@@ -377,7 +430,8 @@
   }
 
   window.mountEvoArchitectureChat = function mount(scope) {
-    const key = JSON.stringify([scope.graph,scope.context,scope.finding]);
+    const userScope = window.EvoGitHubAuth?.getUserId?.() || 'local';
+    const key = JSON.stringify([userScope, scope.snapshot || scope.graph,scope.context,scope.finding]);
     const prefix = 'evo.chat.v1.' + encodeURIComponent(key) + '.';
     const activeKey = prefix + 'active';
     const defaults = () => ({
@@ -401,7 +455,7 @@
       return defaults();
     }
     session = loadSession(active);
-    if (scope.seedPrompt && !session.draft) session.draft = String(scope.seedPrompt).slice(0, 2400);
+    if (scope.seedPrompt) session.draft = String(scope.seedPrompt).slice(0, 2400);
 
     const node = make('section','architecture-chat');
     const head = make('header','architecture-chat-header');
@@ -423,6 +477,14 @@
     if (scope.finding) {
       pins.append(button(scope.findingLabel || 'Attached finding',scope.openFinding),
         button('Detach finding',scope.clearFinding,'button subtle'));
+    }
+    let preNotice = null;
+    if (scope.preliminary) {
+      preNotice = make('div','chat-preliminary-notice');
+      preNotice.setAttribute('role','status');
+      const tierLabel = scope.truthTier === 'PARTIAL_CONTEXTS' ? 'Partial module analysis' : 'Preliminary structure';
+      preNotice.append(make('strong','',tierLabel + ' · '),
+        document.createTextNode('Chat is currently grounded in the early structural preview while deep Java semantic resolution, Spring SAT, and Architecture Health v2 finish in the background.'));
     }
 
     const layout = make('div','architecture-chat-layout');
@@ -456,10 +518,34 @@
     input.placeholder = 'Ask about dependencies, design trade-offs, or a repair…';
     input.value = session.draft;
     input.addEventListener('input',() => { session.draft = input.value; save(); });
+    const providerModelName = scope.provider?.model ? ' · ' + scope.provider.model : '';
     const modelState = make('span','architecture-chat-model-state',
-      scope.provider ? (scope.provider.remote ? 'Remote AI' : 'Local AI') : 'Local evidence');
+      scope.provider ? ((scope.provider.remote ? 'Remote AI' : 'Local AI') + providerModelName) : 'Local evidence');
+    modelState.dataset.probe = scope.provider ? 'idle' : 'offline';
     modelState.title = scope.provider?.model || 'Connect an AI provider to generate conversational answers.';
     pins.append(modelState);
+    if (scope.provider && typeof scope.probeProvider === 'function') {
+      const probeBtn = button('Check provider', async () => {
+        probeBtn.disabled = true;
+        probeBtn.textContent = 'Checking…';
+        try {
+          const probe = await scope.probeProvider(scope.signal);
+          const reachable = Boolean(probe?.ok ?? probe?.reachable ?? probe?.healthy);
+          modelState.dataset.probe = reachable ? 'ok' : 'fail';
+          const latency = probe?.latencyMs != null ? ` (${probe.latencyMs} ms)` : '';
+          modelState.textContent = (scope.provider.remote ? 'Remote AI' : 'Local AI') +
+            (probe?.model ? ' · ' + probe.model : providerModelName) +
+            (reachable ? ' · Ready' + latency : ' · Unreachable');
+          probeBtn.textContent = reachable ? 'Provider ready' : 'Retry probe';
+        } catch (_) {
+          modelState.dataset.probe = 'fail';
+          probeBtn.textContent = 'Retry probe';
+        } finally {
+          probeBtn.disabled = false;
+        }
+      }, 'text-button architecture-chat-probe-btn');
+      pins.append(probeBtn);
+    }
     const repairAction = button(scope.finding ? 'Repair this finding' : 'Choose a finding to repair', async () => {
       repairAction.disabled = true;
       try { await (scope.finding ? scope.openRepair() : scope.chooseFinding()); }
@@ -511,8 +597,27 @@
     evidence.setAttribute('aria-label','Captured architecture evidence');
     conversation.append(log,status,form);
     layout.append(conversation,evidence);
-    node.append(head,pins,layout);
+    node.append(head,pins);
+    if (preNotice) node.append(preNotice);
+    node.append(layout);
     let pending = null;
+    const reviewSlots = new WeakMap();
+    const activeReviewControllers = new Set();
+    scope.signal?.addEventListener('abort', () => {
+      for (const c of activeReviewControllers) c.abort();
+      activeReviewControllers.clear();
+    }, { once: true });
+
+    function syncSessionControls() {
+      mode.value = session.mode;
+      focus.value = session.focus;
+      input.value = session.draft;
+      source.checked = session.includeSource !== undefined
+        ? Boolean(session.includeSource)
+        : Boolean(scope.provider && (scope.finding || !scope.provider.remote));
+      agentToggleInput.checked = session.agentic !== false && Boolean(scope.agentEnabled);
+      reviewerAgenticInput.checked = Boolean(session.reviewerAgentic && scope.agentEnabled);
+    }
 
     function save() {
       sessions.set(prefix + active,session);
@@ -556,23 +661,21 @@
       if (pending) return;
       active=history.value;
       session=loadSession(active);
-      mode.value=session.mode;
-      focus.value=session.focus;
-      input.value=session.draft;
+      syncSessionControls();
       save();
       renderConversation();
       status.textContent='Conversation restored.';
     });
 
-    function startQuestion(task) {
+    function startQuestion(task, customText = null) {
       mode.value = session.mode = task;
-      input.value = session.draft = prompts[task];
+      input.value = session.draft = customText || prompts[task];
       save();
       input.focus();
     }
 
     function renderRecord(details,row) {
-      const data = row.data;
+      const data = row.data || {};
       const summary = row.kind === 'SUMMARY' && data.counts?.[0];
       if (summary) {
         const counts = make('dl','architecture-chat-counts');
@@ -580,20 +683,48 @@
           if (summary.nodeCounts?.[kind] !== undefined)
             counts.append(make('dt','',label),make('dd','',summary.nodeCounts[kind].toLocaleString()));
         }
-        details.append(make('p','',data.status + ' · ' + data.gapCount.toLocaleString() + ' reported gaps'));
+        details.append(make('p','',(data.status || '') + ' · ' + Number(data.gapCount || 0).toLocaleString() + ' reported gaps'));
         if (counts.childElementCount) details.append(counts);
       }
       const rows = data.matches || data.modules || data.edges;
       if (rows) {
         const list = make('ul','architecture-chat-evidence-list');
-        for (const item of rows) list.append(make('li','',item.name || item.label || item.target));
+        for (const item of rows) {
+          const li = make('li');
+          if (item?.path && typeof scope.openSource === 'function') {
+            const loc = item.path + (item.line ? ':' + item.line : '');
+            li.append(button(loc + (item.text ? ' — ' + String(item.text).slice(0, 72) : ''), () => scope.openSource({
+              path: item.path,
+              startLine: Math.max(1, Number(item.line || 1) - 10),
+              endLine: Number(item.line || 1) + 40,
+              highlightLine: item.line || 1
+            }), 'text-button'));
+          } else {
+            li.textContent = item.name || item.label || item.target || item.path || '';
+          }
+          list.append(li);
+        }
         details.append(list.childElementCount ? list : make('p','muted','No matching records in this sample.'));
       }
       if (row.kind === 'FINDING') {
-        details.append(make('p','',data.classification + ' · ' + data.status));
+        details.append(make('p','',(data.classification || '') + ' · ' + (data.status || '')));
         if (scope.openFinding) details.append(button('Open finding',scope.openFinding));
       }
-      if (row.kind === 'SOURCE') details.append(button('Open source evidence',() => scope.openSource(data)));
+      if (row.kind === 'SOURCE' && typeof scope.openSource === 'function') {
+        const actionRow = make('div', 'architecture-chat-links');
+        const labelText = data.path ? 'Open source (' + data.path + ')' : 'Open source evidence';
+        actionRow.append(button(labelText, () => scope.openSource(data)));
+        const ghEnt = window.EvoGitHubEnterprise;
+        const permUrl = ghEnt?.permalinkFor?.(data.path, data.startLine || data.line, data.endLine, data.permalink);
+        const permLink = ghEnt?.makePermalinkAnchor?.(permUrl, 'View on GitHub ↗', 'gh-permalink-link');
+        if (permLink) actionRow.append(permLink);
+        const owners = Array.isArray(data.owners) && data.owners.length
+          ? data.owners
+          : (data.path ? ghEnt?.ownersForPath?.(scope.graph, data.path) : []);
+        const ownerPills = ghEnt?.makeOwnerPills?.(owners);
+        if (ownerPills) actionRow.append(ownerPills);
+        details.append(actionRow);
+      }
       const raw = make('details','architecture-chat-raw');
       raw.append(make('summary','','Evidence data'),make('pre','',JSON.stringify(data,null,2)));
       details.append(raw);
@@ -607,13 +738,14 @@
         evidence.append(make('p','muted','Open cited records here after a reply, or read the evidence directly.'));
         return;
       }
-      const result = turn.result;
+      const result = turn.result || {};
+      const evidenceRows = Array.isArray(result.evidence) ? result.evidence : [];
       const digest = make('code','architecture-chat-digest',window.EvoModel.shortDigest(result.evidenceIdentity));
-      digest.title = result.evidenceIdentity;
-      if (result.evidence.length) heading.append(digest);
-      for (const row of result.evidence) {
+      digest.title = result.evidenceIdentity || '';
+      if (evidenceRows.length) heading.append(digest);
+      for (const row of evidenceRows) {
         const details = make('details','architecture-chat-record');
-        details.open = row.id === selected || (!selected && row === result.evidence[0]);
+        details.open = row.id === selected || (!selected && row === evidenceRows[0]);
         const recordTitle = make('summary');
         recordTitle.append(make('span','architecture-chat-ref',row.id),make('span','',row.label));
         details.append(recordTitle);
@@ -624,7 +756,7 @@
           details.scrollIntoView({block:'nearest'});
         }
       }
-      if (!result.evidence.length) evidence.append(make('p','muted','Ask an architecture question to see snapshot evidence here.'));
+      if (!evidenceRows.length) evidence.append(make('p','muted','Ask an architecture question to see snapshot evidence here.'));
       if (result.model) {
         const receipt = make('details','architecture-chat-record');
         receipt.append(make('summary','','Model receipt'),make('pre','',JSON.stringify(result.model,null,2)));
@@ -632,10 +764,65 @@
       }
     }
 
+    function buildReviewDetails(reviewResult) {
+      const review = make('details','architecture-chat-review');
+      const reviewOnCite = id => {
+        const row = (reviewResult.evidence || []).find(item => item.id === id);
+        if (!row) return;
+        renderEvidence({result:reviewResult}, id);
+        if (row.kind === 'SOURCE' && row.data?.path && typeof scope.openSource === 'function') scope.openSource(row.data);
+      };
+      review.append(make('summary','',reviewResult.agentTrace?.length
+        ? 'Architecture reviewer · agentic second pass (' + reviewResult.agentTrace.length + ' tools)'
+        : 'Architecture reviewer · second model call'),
+        renderMarkdown(reviewResult.answer || 'The reviewer returned no answer.', reviewOnCite));
+      if (Array.isArray(reviewResult.agentTrace) && reviewResult.agentTrace.length) {
+        const rTrace = make('details','architecture-chat-trace');
+        rTrace.append(make('summary','','Reviewer tool steps (' + reviewResult.agentTrace.length + ')'));
+        const rList = make('ol','architecture-chat-trace-list');
+        for (const step of reviewResult.agentTrace) {
+          const item = make('li','architecture-chat-trace-item');
+          const toolPill = make('span','architecture-chat-trace-tool ' + toolTone(step.tool), formatToolName(step.tool));
+          toolPill.title = step.tool || '';
+          item.append(toolPill, make('span','',step.summary || ''));
+          if (typeof step.durationMs === 'number') item.append(make('span','architecture-chat-trace-ms',step.durationMs + ' ms'));
+          rList.append(item);
+        }
+        rTrace.append(rList);
+        review.append(rTrace);
+      }
+      const links = make('div','architecture-chat-links');
+      for (const id of reviewResult.citations || []) {
+        const row = (reviewResult.evidence || []).find(item => item.id === id);
+        if (row) links.append(button(id + ' · ' + row.label,() => renderEvidence({result:reviewResult},id),'button subtle'));
+      }
+      if (links.childElementCount) review.append(links);
+      if (reviewResult.model) {
+        const reviewUsage = renderUsageBadge(reviewResult);
+        if (reviewUsage) {
+          const rFooter = make('div', 'architecture-chat-turn-footer');
+          rFooter.append(reviewUsage);
+          review.append(rFooter);
+        }
+        const receipt = make('details','architecture-chat-raw');
+        receipt.append(make('summary','','Reviewer model receipt'),make('pre','',JSON.stringify(reviewResult.model,null,2)));
+        review.append(receipt);
+      }
+      if (reviewResult.limitations?.length) {
+        const reviewLimits = make('ul','architecture-chat-limitations');
+        reviewResult.limitations.forEach(value => reviewLimits.append(make('li','',value)));
+        review.append(reviewLimits);
+      }
+      return review;
+    }
+
     function appendTurn(turn) {
       const question = make('article','architecture-chat-message architecture-chat-user');
       question.append(make('h3','','You'),make('p','architecture-chat-copy',turn.question));
-      const result = turn.result;
+      const result = turn.result || {};
+      const evidenceRows = Array.isArray(result.evidence) ? result.evidence : [];
+      const citations = Array.isArray(result.citations) ? result.citations : [];
+      const limitations = Array.isArray(result.limitations) ? result.limitations : [];
       const reply = make('article','architecture-chat-message architecture-chat-assistant');
       const labels = {ADVICE:'Architecture advice', NEEDS_EVIDENCE:'More evidence needed',
         UNVERIFIED_ADVICE:'Unverified model suggestion',EVIDENCE_ONLY:'Captured evidence',OUT_OF_SCOPE:'Outside architecture scope'};
@@ -646,14 +833,22 @@
         const copyReply = button('Copy', async () => {
           try {
             await navigator.clipboard?.writeText(result.answer);
-            copyReply.textContent = 'Copied';
-            setTimeout(() => { copyReply.textContent = 'Copy'; }, 1400);
+            if (window.EvoCopyFx?.flash) window.EvoCopyFx.flash(copyReply, 'Copied', 'Copy');
+            else {
+              copyReply.textContent = 'Copied';
+              setTimeout(() => { copyReply.textContent = 'Copy'; }, 1400);
+            }
           } catch (_) { copyReply.textContent = 'Failed'; }
         }, 'architecture-chat-copy-msg');
         msgHead.append(copyReply);
       }
       const onCite = id => {
-        if ((result.evidence || []).some(item => item.id === id)) renderEvidence(turn, id);
+        const row = evidenceRows.find(item => item.id === id);
+        if (!row) return;
+        renderEvidence(turn, id);
+        if (row.kind === 'SOURCE' && row.data?.path && typeof scope.openSource === 'function') {
+          scope.openSource(row.data);
+        }
       };
       reply.append(msgHead,
         renderMarkdown(result.answer || 'The evidence panel shows the records retrieved from this snapshot.', onCite));
@@ -683,60 +878,33 @@
         reply.append(traceDetails);
       }
       const references = make('div','architecture-chat-links');
-      for (const id of result.citations) {
-        const row = result.evidence.find(item => item.id === id);
+      for (const id of citations) {
+        const row = evidenceRows.find(item => item.id === id);
         if (row) references.append(button(id + ' · ' + row.label,() => renderEvidence(turn,id),'button subtle'));
       }
       if (scope.openRepair && result.status !== 'OUT_OF_SCOPE' && !(result.status === 'EVIDENCE_ONLY' && result.answer))
         references.append(button('Open repair workflow',() => repairAction.click()));
       if (references.childElementCount) reply.append(references);
+      const reviewSlot = make('div','architecture-chat-review-slot');
       if (turn.review) {
-        const review=make('details','architecture-chat-review');
-        const reviewOnCite = id => {
-          if ((turn.review.evidence || []).some(item => item.id === id)) renderEvidence({result:turn.review}, id);
-        };
-        review.append(make('summary','',turn.review.agentTrace?.length
-          ? 'Architecture reviewer · agentic second pass (' + turn.review.agentTrace.length + ' tools)'
-          : 'Architecture reviewer · second model call'),
-          renderMarkdown(turn.review.answer || 'The reviewer returned no answer.', reviewOnCite));
-        if (Array.isArray(turn.review.agentTrace) && turn.review.agentTrace.length) {
-          const rTrace = make('details','architecture-chat-trace');
-          rTrace.append(make('summary','','Reviewer tool steps (' + turn.review.agentTrace.length + ')'));
-          const rList = make('ol','architecture-chat-trace-list');
-          for (const step of turn.review.agentTrace) {
-            const item = make('li','architecture-chat-trace-item');
-            const toolPill = make('span','architecture-chat-trace-tool ' + toolTone(step.tool), formatToolName(step.tool));
-            toolPill.title = step.tool || '';
-            item.append(toolPill, make('span','',step.summary || ''));
-            if (typeof step.durationMs === 'number') item.append(make('span','architecture-chat-trace-ms',step.durationMs + ' ms'));
-            rList.append(item);
-          }
-          rTrace.append(rList);
-          review.append(rTrace);
-        }
-        const links=make('div','architecture-chat-links');
-        for (const id of turn.review.citations || []) {
-          const row=(turn.review.evidence || []).find(item => item.id === id);
-          if (row) links.append(button(id + ' · ' + row.label,() => renderEvidence({result:turn.review},id),'button subtle'));
-        }
-        if (links.childElementCount) review.append(links);
-        if (turn.review.model) {
-          const receipt=make('details','architecture-chat-raw');
-          receipt.append(make('summary','','Reviewer model receipt'),make('pre','',JSON.stringify(turn.review.model,null,2)));
-          review.append(receipt);
-        }
-        if (turn.review.limitations?.length) {
-          const reviewLimits=make('ul','architecture-chat-limitations');
-          turn.review.limitations.forEach(value => reviewLimits.append(make('li','',value)));
-          review.append(reviewLimits);
-        }
-        reply.append(review);
+        reviewSlot.append(buildReviewDetails(turn.review));
+      } else if (turn.reviewError) {
+        reviewSlot.append(make('p','architecture-chat-limitations',turn.reviewError));
+      } else if (turn._reviewPending) {
+        reviewSlot.append(make('span','architecture-chat-review-pending','Reviewer checking in background…'));
       }
-      if (turn.reviewError) reply.append(make('p','architecture-chat-limitations',turn.reviewError));
-      if (result.limitations.length) {
+      reply.append(reviewSlot);
+      reviewSlots.set(turn, reviewSlot);
+      if (limitations.length) {
         const list = make('ul','architecture-chat-limitations');
-        result.limitations.forEach(text => list.append(make('li','',text)));
+        limitations.forEach(text => list.append(make('li','',text)));
         reply.append(list);
+      }
+      const usageBadge = renderUsageBadge(result);
+      if (usageBadge) {
+        const footer = make('div', 'architecture-chat-turn-footer');
+        footer.append(usageBadge);
+        reply.append(footer);
       }
       log.append(question,reply);
     }
@@ -750,7 +918,21 @@
             'Explore dependencies, test a design idea, or plan a repair from this snapshot.'));
         const choices = make('div','architecture-chat-starters');
         for (const [task,title] of Object.entries(taskTitles)) choices.append(button(title,() => startQuestion(task),'button'));
-        empty.append(choices);
+        const quickPrompts = scope.finding
+          ? [
+              ['Explain root cause & blast radius', 'REPAIR', 'Trace the root cause of this finding in captured source and estimate the blast radius of removing the offending dependency.'],
+              ['Minimal safe fix + test plan', 'REPAIR', 'Outline the minimal code patch to resolve this finding without breaking callers, and list the tests to run in sandbox verification.']
+            ]
+          : [
+              ['Top risks & hotspots', 'EXPLORE', 'What are the highest-risk architectural hotspots, dependency cycles, and SDP violations in this snapshot?'],
+              ['How to reduce coverage gaps', 'EXPLORE', 'Explain the recorded capability gaps in this snapshot and give prioritized steps to raise analysis completeness.'],
+              ['Key entrypoints (RepoMap)', 'EXPLORE', 'Summarize the main modules and highest-centrality entrypoints in this repository with source citations.']
+            ];
+        const quickChips = make('div','architecture-chat-quick-chips');
+        for (const [chipTitle, chipTask, chipPrompt] of quickPrompts) {
+          quickChips.append(button(chipTitle, () => startQuestion(chipTask, chipPrompt), 'chip'));
+        }
+        empty.append(choices, quickChips);
         log.append(empty);
       }
       session.turns.forEach(appendTurn);
@@ -794,9 +976,7 @@
       if (remaining.length) {
         active = remaining[0];
         session = loadSession(active);
-        mode.value = session.mode;
-        focus.value = session.focus;
-        input.value = session.draft;
+        syncSessionControls();
         save();
         renderConversation();
         status.textContent = 'Conversation deleted.';
@@ -807,14 +987,12 @@
 
     function reset() {
       save();
+      for (const c of activeReviewControllers) c.abort();
+      activeReviewControllers.clear();
       active = newId();
       session = defaults();
       session.updated = Date.now();
-      mode.value = session.mode;
-      input.value = focus.value = '';
-      source.checked = Boolean(scope.provider && (scope.finding || !scope.provider.remote));
-      agentToggleInput.checked = Boolean(scope.agentEnabled);
-      reviewerAgenticInput.checked = false;
+      syncSessionControls();
       save();
       status.textContent = 'New conversation started.';
       renderConversation();
@@ -857,7 +1035,7 @@
       input.readOnly = true;
       stop.hidden = false;
       status.textContent = evidenceOnly ? 'Reading snapshot evidence…' : 'Reading snapshot evidence and waiting for the model…';
-      let liveBox = null, liveTimeline = null, liveBody = null, liveStage = null;
+      let liveBox = null, liveTimeline = null, liveBody = null, liveStage = null, liveStageLabel = null;
       let streamedText = '', rafScheduled = false;
       const ensureLiveBox = () => {
         if (liveBox) return;
@@ -865,8 +1043,14 @@
         if (emptyWelcome) emptyWelcome.remove();
         const qEl = make('article','architecture-chat-message architecture-chat-user');
         qEl.append(make('h3','','You'),make('p','architecture-chat-copy',question));
-        liveBox = make('article','architecture-chat-message architecture-chat-assistant');
-        liveStage = make('h3','','Investigating snapshot…');
+        liveBox = make('article','architecture-chat-message architecture-chat-assistant u453-live-box');
+        /* Lucian UX/UI Prompt #453 · MIT License (c) 2026 Seokwoooo · https://lucianlabs.dev/uxui-prompt/#453 */
+        liveStage = make('h3','u453-live-head');
+        const star = make('span','u453-ic');
+        star.setAttribute('aria-hidden','true');
+        star.innerHTML = '<svg viewBox="0 0 24 24"><path d="M12 1.6c.8 5.3 5.1 9.6 10.4 10.4-5.3.8-9.6 5.1-10.4 10.4C11.2 17.1 6.9 12.8 1.6 12 6.9 11.2 11.2 6.9 12 1.6Z"/></svg>';
+        liveStageLabel = make('span','u453-a','Investigating snapshot…');
+        liveStage.append(star, liveStageLabel);
         liveTimeline = make('div','architecture-chat-stream-timeline');
         liveTimeline.hidden = true;
         liveBody = make('div','architecture-chat-markdown');
@@ -881,14 +1065,15 @@
             result = await scope.stream(query, signal, {
               onStage(msg) {
                 ensureLiveBox();
-                liveStage.textContent = msg || 'Working…';
+                if (liveStageLabel) liveStageLabel.textContent = msg || 'Working…';
+                else liveStage.textContent = msg || 'Working…';
                 status.textContent = msg || 'Working…';
               },
               onToolStart(info) {
                 ensureLiveBox();
                 liveTimeline.hidden = false;
                 const row = make('div','architecture-chat-trace-item');
-                row.dataset.step = String(info.step || '');
+                row.dataset.step = String(info.step ?? '');
                 const pill = make('span','architecture-chat-trace-tool is-running ' + toolTone(info.tool), formatToolName(info.tool));
                 pill.title = info.tool || '';
                 row.append(pill, make('span','muted','Running…'));
@@ -898,7 +1083,8 @@
               onToolComplete(step) {
                 ensureLiveBox();
                 liveTimeline.hidden = false;
-                const row = liveTimeline.querySelector(`[data-step="${step.step}"]`) || make('div','architecture-chat-trace-item');
+                const stepKey = String(step.step ?? '');
+                const row = Array.from(liveTimeline.children).find(r => r.dataset.step === stepKey) || make('div','architecture-chat-trace-item');
                 if (!row.parentNode) liveTimeline.append(row);
                 const pill = make('span','architecture-chat-trace-tool ' + toolTone(step.tool), formatToolName(step.tool));
                 pill.title = step.tool || '';
@@ -931,10 +1117,12 @@
           result = await scope.send(query,signal);
         }
         if (signal.aborted) return;
-        if (result.pin.graph !== scope.graph || result.pin.context !== scope.context || result.pin.snapshot !== scope.snapshot ||
-            ['identity','bundle','report'].some(field => result.pin.finding?.[field] !== scope.finding?.[field]))
+        const pin = result?.pin;
+        if (!pin || pin.graph !== scope.graph || pin.context !== scope.context || pin.snapshot !== scope.snapshot ||
+            ['identity','bundle','report'].some(field => pin.finding?.[field] !== scope.finding?.[field]))
           throw new Error('The reply belongs to a different snapshot, context, or finding.');
-        const turn = {question,result};
+        const shouldReview = Boolean(!evidenceOnly && result.status !== 'EVIDENCE_ONLY' && result.status !== 'OUT_OF_SCOPE');
+        const turn = {question,result,_reviewPending:shouldReview};
         session.turns.push(turn);
         if (!session.title && typeof result.conversationTitle === 'string' && result.conversationTitle.trim())
           session.title = result.conversationTitle.trim().slice(0,100);
@@ -942,22 +1130,50 @@
         input.value = session.draft = '';
         const stored = save();
         renderConversation();
-        if (stored) status.textContent = result.status === 'OUT_OF_SCOPE' ? 'Try a software architecture question.'
-          : evidenceOnly ? 'Captured evidence loaded.' : 'Reply received.';
-        if (!evidenceOnly && result.status !== 'EVIDENCE_ONLY' && result.status !== 'OUT_OF_SCOPE') {
+
+        // Fire automatic second-pass reviewer non-blocking so the user can immediately type the next message!
+        if (shouldReview) {
           const reviewQuery = {...query,reviewer:true};
           if (useReviewerAgent) reviewQuery.agentic = true;
           else delete reviewQuery.agentic;
-          const review = await scope.send(reviewQuery,signal).then(value => ({value}),error => ({error}));
-          if (signal.aborted) return;
-          const candidate = review.value;
-          if (candidate && candidate.pin.graph === scope.graph && candidate.pin.context === scope.context && candidate.pin.snapshot === scope.snapshot
-              && ['identity','bundle','report'].every(field => candidate.pin.finding?.[field] === scope.finding?.[field])) turn.review = candidate;
-          else turn.reviewError = candidate ? 'Reviewer response did not match this snapshot and was withheld.'
-            : 'The reviewer could not respond. The primary answer is shown.';
-          save();
-          renderConversation();
+          const reviewController = new AbortController();
+          activeReviewControllers.add(reviewController);
+          const reviewSignal = AbortSignal.any([scope.signal, reviewController.signal]);
+          const sessionAtDispatch = session;
+          const reviewPromise = scope.send(reviewQuery, reviewSignal).then(value => ({value}), error => ({error}));
+          reviewPromise.then(review => {
+            activeReviewControllers.delete(reviewController);
+            turn._reviewPending = false;
+            if (reviewSignal.aborted) return;
+            const candidate = review.value;
+            if (candidate && candidate.pin?.graph === scope.graph && candidate.pin?.context === scope.context && candidate.pin?.snapshot === scope.snapshot
+                && ['identity','bundle','report'].every(field => candidate.pin?.finding?.[field] === scope.finding?.[field])) {
+              turn.review = candidate;
+            } else {
+              turn.reviewError = candidate ? 'Reviewer response did not match this snapshot and was withheld.'
+                : 'The reviewer could not respond. The primary answer is shown.';
+            }
+            const slot = reviewSlots.get(turn);
+            if (slot && slot.isConnected) {
+              if (turn.review) slot.replaceChildren(buildReviewDetails(turn.review));
+              else if (turn.reviewError) slot.replaceChildren(make('p','architecture-chat-limitations',turn.reviewError));
+            }
+            if (session === sessionAtDispatch) save();
+          });
         }
+
+        // Unlock controls immediately BEFORE setting status so input.readOnly is false the instant 'Reply received.' appears
+        pending = null;
+        if (!scope.signal.aborted) {
+          submit.disabled = fresh.disabled = mode.disabled = focus.disabled = input.readOnly = false;
+          source.disabled = false;
+          agentToggleInput.disabled = false;
+          reviewerAgenticInput.disabled = false;
+          history.disabled = false;
+          stop.hidden = true;
+        }
+        if (stored) status.textContent = result.status === 'OUT_OF_SCOPE' ? 'Try a software architecture question.'
+          : evidenceOnly ? 'Captured evidence loaded.' : 'Reply received.';
       } catch (error) {
         request.abort();
         if (!scope.signal.aborted) {

@@ -594,4 +594,54 @@ class TreeSitterSourceFrontendTest {
         assertDoesNotThrow(() -> frontend.parse("javascript", "fetch(`/broken".getBytes(StandardCharsets.UTF_8),
                 brokenFacts::add, () -> false));
     }
+
+    @Test
+    void composesGoGroupExpressUseAndKotlinRequestMappingPrefixesAndGuardsConsumerRegex() throws Exception {
+        var frontend = new TreeSitterSourceFrontend();
+
+        // Go nested router.Group prefixes
+        String goSrc = """
+                package api
+                func register(r *gin.Engine) {
+                    v1 := r.Group("/api/v1")
+                    users := v1.Group("/users")
+                    users.GET("/:id", getUser)
+                    users.POST("", createUser)
+                }
+                """;
+        var goFacts = new ArrayList<TreeSitterSourceFrontend.Fact>();
+        frontend.parse("go", goSrc.getBytes(StandardCharsets.UTF_8), goFacts::add, () -> false);
+        assertTrue(goFacts.stream().anyMatch(f -> f.category().equals("ROUTE_CANDIDATE")
+                && f.name().equals("\"/api/v1/users/:id\"") && "GET".equals(f.attributes().get("method"))),
+                () -> "Go nested Group GET missing: " + goFacts);
+        assertTrue(goFacts.stream().anyMatch(f -> f.category().equals("ROUTE_CANDIDATE")
+                && f.name().equals("\"/api/v1/users\"") && "POST".equals(f.attributes().get("method"))),
+                () -> "Go nested Group empty-path POST missing: " + goFacts);
+
+        // Express app.use('/v1', router) prefix composition + non-Kafka Consumer guard
+        String expressSrc = """
+                const router = express.Router();
+                app.use('/v1', router);
+                router.get('/orders', listOrders);
+                const c: Consumer<string> = createConsumer();
+                c.on('click', handler);
+                """;
+        var expressFacts = new ArrayList<TreeSitterSourceFrontend.Fact>();
+        frontend.parse("typescript", expressSrc.getBytes(StandardCharsets.UTF_8), expressFacts::add, () -> false);
+        assertTrue(expressFacts.stream().anyMatch(f -> f.category().equals("ROUTE_CANDIDATE")
+                && f.name().equals("\"/v1/orders\"") && "GET".equals(f.attributes().get("method"))),
+                () -> "Express app.use prefix missing: " + expressFacts);
+        assertTrue(expressFacts.stream().noneMatch(f -> "KAFKA".equals(f.attributes().get("protocol"))),
+                () -> "Generic Consumer<string> must not be misclassified as KAFKA: " + expressFacts);
+
+        // Bounded parser pool close + clean reuse + cancellation check inside file scope
+        TreeSitterSourceFrontend.closePooledParsers();
+        assertThrows(java.io.IOException.class, () ->
+                frontend.parse("typescript", expressSrc.getBytes(StandardCharsets.UTF_8), f -> {}, () -> true));
+        var afterCancelFacts = new ArrayList<TreeSitterSourceFrontend.Fact>();
+        var summary = frontend.parse("typescript", "app.get('/ok', h);".getBytes(StandardCharsets.UTF_8),
+                afterCancelFacts::add, () -> false);
+        assertEquals(0, summary.errors());
+        assertTrue(afterCancelFacts.stream().anyMatch(f -> f.category().equals("ROUTE_CANDIDATE")));
+    }
 }

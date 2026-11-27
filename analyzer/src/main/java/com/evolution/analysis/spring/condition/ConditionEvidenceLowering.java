@@ -18,6 +18,46 @@ public final class ConditionEvidenceLowering {
             .flatMap(e->e.annotationTypes().stream()).distinct().sorted().toList();
     private static final List<String> NON_CONDITION_SPRING_TYPES=SpringMechanismCatalog.entries().stream().filter(e->!e.id().startsWith("spring.condition."))
             .flatMap(e->e.annotationTypes().stream()).distinct().sorted().toList();
+    private static final Set<String> CONDITION_TYPE_SET = Set.copyOf(CONDITION_TYPES);
+    private static final Map<String, List<String>> CONDITION_TYPES_BY_SIMPLE = indexBySimpleName(CONDITION_TYPES);
+    private static final Set<String> NON_CONDITION_TYPE_SET = Set.copyOf(NON_CONDITION_SPRING_TYPES);
+    private static final Set<String> NON_CONDITION_SIMPLE_NAMES = indexSimpleNames(NON_CONDITION_SPRING_TYPES);
+    private static final Map<String, String> CONDITION_CANONICAL_TO_TYPE = indexConditionCanonicalTypes();
+
+    private static Map<String, List<String>> indexBySimpleName(List<String> types) {
+        var map = new HashMap<String, List<String>>();
+        for (String type : types) {
+            int dot = type.lastIndexOf('.');
+            if (dot >= 0 && dot + 1 < type.length()) {
+                map.computeIfAbsent(type.substring(dot + 1), ignored -> new ArrayList<>()).add(type);
+            }
+        }
+        var frozen = new HashMap<String, List<String>>(map.size() * 2);
+        map.forEach((k, v) -> frozen.put(k, List.copyOf(v)));
+        return Map.copyOf(frozen);
+    }
+
+    private static Set<String> indexSimpleNames(List<String> types) {
+        var set = new HashSet<String>();
+        for (String type : types) {
+            int dot = type.lastIndexOf('.');
+            if (dot >= 0 && dot + 1 < type.length()) set.add(type.substring(dot + 1));
+        }
+        return Set.copyOf(set);
+    }
+
+    private static Map<String, String> indexConditionCanonicalTypes() {
+        var map = new HashMap<String, String>();
+        for (var entry : SpringMechanismCatalog.entries()) {
+            if (!entry.id().startsWith("spring.condition.")) continue;
+            for (String type : entry.annotationTypes()) {
+                int dot = type.lastIndexOf('.');
+                String key = JavaSymbolName.topLevelType(type.substring(0, dot), type.substring(dot + 1)).canonicalName();
+                map.putIfAbsent(key, type);
+            }
+        }
+        return Map.copyOf(map);
+    }
     public record Limits(int maxLoweredRows, int maxMetadataCharacters, int maxProfileDepth) {
         public Limits { if (maxLoweredRows < 1 || maxMetadataCharacters < 1 || maxProfileDepth < 1) throw new IllegalArgumentException("Positive lowering limits required"); }
         public static Limits conservative() { return new Limits(10000, 16384, 256); }
@@ -176,12 +216,14 @@ public final class ConditionEvidenceLowering {
                     && build.sourceDigest(observation.document()).isPresent()
                     && (observation.evidenceState() == EvidenceState.VERIFIED
                         || (compatSourceScoped && observation.evidenceState() == EvidenceState.UNRESOLVED));
+            List<String> cachedCandidates = null;
             if (compatSourceScoped
                     && !condition && unclassified
-                    && sourceSpanValid
-                    && sourceCandidateTypes(observation).isEmpty()
-                    && isKnownNonConditionSpringAnnotation(observation)) {
-                rows.add(new Row(obligation.identity(), observation.identity(), Outcome.NOT_A_CONDITION, Optional.empty())); continue;
+                    && sourceSpanValid) {
+                cachedCandidates = sourceCandidateTypes(observation);
+                if (cachedCandidates.isEmpty() && isKnownNonConditionSpringAnnotation(observation)) {
+                    rows.add(new Row(obligation.identity(), observation.identity(), Outcome.NOT_A_CONDITION, Optional.empty())); continue;
+                }
             }
             ConditionEvidence evidence = build.sourceDigest(observation.document())
                     .<ConditionEvidence>map(digest -> new ConditionEvidence.Source(observation.document(), digest, observation.span(), observation.ordinal()))
@@ -193,9 +235,9 @@ public final class ConditionEvidenceLowering {
             if (compatSourceScoped
                     && sourceSpanValid
                     && (rawType == null || unclassified)) {
-                var candidates = sourceCandidateTypes(observation);
-                if (candidates.size() == 1) {
-                    rawType = candidates.getFirst();
+                if (cachedCandidates == null) cachedCandidates = sourceCandidateTypes(observation);
+                if (cachedCandidates.size() == 1) {
+                    rawType = cachedCandidates.getFirst();
                     sourceScoped = true;
                 }
             }
@@ -204,8 +246,11 @@ public final class ConditionEvidenceLowering {
             if (!matchingBuild) reason = BUILD_CONTEXT_MISMATCH;
             else if (build.sourceDigest(observation.document()).isEmpty()) reason = SOURCE_EVIDENCE_MISMATCH;
             else if (observation.span().isEmpty()) reason = MISSING_SOURCE_SPAN;
-            else if (effectiveUnclassified) reason = !sourceCandidateTypes(observation).isEmpty()&&observation.resolvedTarget().isEmpty()
-                    ? ANNOTATION_TYPE_EVIDENCE_MISSING : POTENTIAL_CONDITION_UNCLASSIFIED;
+            else if (effectiveUnclassified) {
+                if (cachedCandidates == null) cachedCandidates = sourceCandidateTypes(observation);
+                reason = !cachedCandidates.isEmpty() && observation.resolvedTarget().isEmpty()
+                        ? ANNOTATION_TYPE_EVIDENCE_MISSING : POTENTIAL_CONDITION_UNCLASSIFIED;
+            }
             else if (++attempted > limits.maxLoweredRows() || observation.spelling().length() > limits.maxMetadataCharacters()) reason = LOWERING_LIMIT;
             else if (obligation.secondaryTags().contains("spring.annotation.composed")) reason = ANNOTATION_COMPOSITION_UNSUPPORTED;
             else if (type == null || observation.kind() != RawKind.ANNOTATION_USE || (!sourceScoped && observation.evidenceState() != EvidenceState.VERIFIED)) reason = ANNOTATION_METADATA_UNSUPPORTED;
@@ -234,6 +279,22 @@ public final class ConditionEvidenceLowering {
                         var attributes=LiteralConditionAnnotation.parse(observation.spelling());
                         if(!Set.of("value").containsAll(attributes.keySet()))throw LiteralConditionAnnotation.unsupported();
                         expression=ConditionExpression.atom(semantics,new ConditionExpression.BasicSpel(LiteralConditionAnnotation.string(attributes,"value","true")));
+                    } else if (type.equals("org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication")) {
+                        var attributes = LiteralConditionAnnotation.parse(observation.spelling());
+                        if (!Set.of("type").containsAll(attributes.keySet())) throw LiteralConditionAnnotation.unsupported();
+                        String webType = enumSimpleName(attributes.get("type"), "ANY");
+                        expression = switch (webType) {
+                            case "SERVLET" -> ConditionExpression.atom(semantics, new ConditionExpression.Web(FiniteDomain.WebMode.SERVLET));
+                            case "REACTIVE" -> ConditionExpression.atom(semantics, new ConditionExpression.Web(FiniteDomain.WebMode.REACTIVE));
+                            case "ANY" -> ConditionExpression.any(semantics, List.of(
+                                    ConditionExpression.atom(semantics, new ConditionExpression.Web(FiniteDomain.WebMode.SERVLET)),
+                                    ConditionExpression.atom(semantics, new ConditionExpression.Web(FiniteDomain.WebMode.REACTIVE))));
+                            default -> throw LiteralConditionAnnotation.unsupported();
+                        };
+                    } else if (type.equals("org.springframework.boot.autoconfigure.condition.ConditionalOnNotWebApplication")) {
+                        var attributes = LiteralConditionAnnotation.parse(observation.spelling());
+                        if (!attributes.isEmpty()) throw LiteralConditionAnnotation.unsupported();
+                        expression = ConditionExpression.atom(semantics, new ConditionExpression.Web(FiniteDomain.WebMode.NONE));
                     } else if (buildPredicate(type).isPresent()) {
                         var supplied = builds.getOrDefault(observation.identity(), List.of());
                         if (supplied.isEmpty()) reason = BUILD_EVIDENCE_UNAVAILABLE;
@@ -295,14 +356,21 @@ public final class ConditionEvidenceLowering {
                 List.of("Compatible Spring version family or source-scoped analysis is not a substitute for pinned R0 artifact hashes."));
     }
     static List<String> sourceCandidateTypes(RawObservation observation) {
-        var name=WRITTEN_ANNOTATION.matcher(observation.spelling());
-        if(!name.find())return List.of();String written=name.group(1);
-        return CONDITION_TYPES.stream().filter(type->written.equals(type)||written.indexOf('.')<0&&type.endsWith("."+written)).toList();
+        var name = WRITTEN_ANNOTATION.matcher(observation.spelling());
+        if (!name.find()) return List.of();
+        String written = name.group(1);
+        if (written.indexOf('.') >= 0) {
+            return CONDITION_TYPE_SET.contains(written) ? List.of(written) : List.of();
+        }
+        return CONDITION_TYPES_BY_SIMPLE.getOrDefault(written, List.of());
     }
     private static boolean isKnownNonConditionSpringAnnotation(RawObservation observation) {
-        var name=WRITTEN_ANNOTATION.matcher(observation.spelling());
-        if(!name.find())return false;String written=name.group(1);
-        return NON_CONDITION_SPRING_TYPES.stream().anyMatch(type->written.equals(type)||written.indexOf('.')<0&&type.endsWith("."+written));
+        var name = WRITTEN_ANNOTATION.matcher(observation.spelling());
+        if (!name.find()) return false;
+        String written = name.group(1);
+        return written.indexOf('.') >= 0
+                ? NON_CONDITION_TYPE_SET.contains(written)
+                : NON_CONDITION_SIMPLE_NAMES.contains(written);
     }
     private static Optional<ConditionExpression.BuildPredicate> buildPredicate(String type) {
         return switch (type) {
@@ -312,14 +380,28 @@ public final class ConditionEvidenceLowering {
             default -> Optional.empty();
         };
     }
+    private static String enumSimpleName(LiteralConditionAnnotation.Value value, String defaultValue) {
+        if (value == null) return defaultValue;
+        if (value instanceof LiteralConditionAnnotation.Enums enums && enums.names().size() == 1) {
+            String raw = enums.names().getFirst();
+            int dot = raw.lastIndexOf('.');
+            return dot >= 0 ? raw.substring(dot + 1) : raw;
+        }
+        throw LiteralConditionAnnotation.unsupported();
+    }
     static String exactAnnotationType(RawObservation observation, SpringFrameworkEvidence framework) {
-        for (var entry : SpringMechanismCatalog.entries()) if (entry.id().startsWith("spring.condition.")) {
-            for (String type : entry.annotationTypes()) {
-                int dot = type.lastIndexOf('.'); String key = JavaSymbolName.topLevelType(type.substring(0, dot), type.substring(dot + 1)).canonicalName();
-                if (!key.equals(observation.stableReference())) continue;
-                String coordinate = type.startsWith("org.springframework.boot.") ? "org.springframework.boot:spring-boot-autoconfigure:" : "org.springframework:spring-context:";
-                for (var artifact : framework.artifacts()) if (artifact.coordinate().startsWith(coordinate)
-                        && observation.resolvedTarget().filter(EntityIdentity.from(EntityOrigin.DEPENDENCY, artifact.entityScope(), EntityKind.TYPE, key)::equals).isPresent()) return type;
+        String key = observation.stableReference();
+        String type = CONDITION_CANONICAL_TO_TYPE.get(key);
+        if (type == null || observation.resolvedTarget().isEmpty()) return null;
+        boolean isBoot = type.startsWith("org.springframework.boot.");
+        String expectedGroup = isBoot ? "org.springframework.boot" : "org.springframework";
+        String expectedArtifact = isBoot ? "spring-boot-autoconfigure" : "spring-context";
+        EntityIdentity resolved = observation.resolvedTarget().orElseThrow();
+        for (var artifact : framework.artifacts()) {
+            if (artifact.groupId().equals(expectedGroup)
+                    && artifact.artifactId().equals(expectedArtifact)
+                    && EntityIdentity.from(EntityOrigin.DEPENDENCY, artifact.entityScope(), EntityKind.TYPE, key).equals(resolved)) {
+                return type;
             }
         }
         return null;

@@ -1963,14 +1963,16 @@ public final class UniversalBuildIngestion {
                 String v = interpolate(s.strings().getFirst()).replaceFirst("^android-", "").trim();
                 if (v.matches("[0-9]{1,3}")) {
                     int n = Integer.parseInt(v);
-                    if (n >= 1 && n <= 999) return Optional.of(n);
+                    if (n >= 1 && n <= 999)
+                        return Optional.of(n);
                 }
             }
             for (int i = 1; i < s.head().size(); i++) {
                 var tok = s.head().get(i);
                 if (!tok.literal() && tok.value().matches("[0-9]{1,3}")) {
                     int n = Integer.parseInt(tok.value());
-                    if (n >= 1 && n <= 999) return Optional.of(n);
+                    if (n >= 1 && n <= 999)
+                        return Optional.of(n);
                 }
             }
             if (s.head().size() >= 3) {
@@ -1982,7 +1984,8 @@ public final class UniversalBuildIngestion {
                     String v = resolved.replaceFirst("^android-", "").trim();
                     if (v.matches("[0-9]{1,3}")) {
                         int n = Integer.parseInt(v);
-                        if (n >= 1 && n <= 999) return Optional.of(n);
+                        if (n >= 1 && n <= 999)
+                            return Optional.of(n);
                     }
                 }
             }

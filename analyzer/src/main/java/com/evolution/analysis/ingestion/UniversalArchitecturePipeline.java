@@ -36,8 +36,13 @@ import javax.xml.stream.*;
  * UniversalArchitectureReport.
  */
 public final class UniversalArchitecturePipeline {
+    public static final long DISK_SPILL_MIN_BYTES = 16_000_000L;
+    public static final int DISK_SPILL_MIN_FILES = 400;
+    public static final int DISK_SPILL_MIN_CONTEXTS = 8;
+
     private final AnalysisWorkspace workspace;
     private final int aggregationWorkers;
+    private final IncrementalSpringCache springCache;
 
     public UniversalArchitecturePipeline() {
         this(AnalysisWorkspace.MEMORY);
@@ -45,14 +50,32 @@ public final class UniversalArchitecturePipeline {
 
     public UniversalArchitecturePipeline(AnalysisWorkspace workspace) {
         this(workspace,
-                workspace.concurrentTables() ? com.evolution.analysis.concurrent.BoundedTasks.automaticWorkers() : 1);
+                workspace.concurrentTables() ? com.evolution.analysis.concurrent.BoundedTasks.automaticWorkers() : 1,
+                null);
     }
 
     public UniversalArchitecturePipeline(AnalysisWorkspace workspace, int aggregationWorkers) {
+        this(workspace, aggregationWorkers, null);
+    }
+
+    public UniversalArchitecturePipeline(AnalysisWorkspace workspace, int aggregationWorkers,
+            IncrementalSpringCache springCache) {
         this.workspace = Objects.requireNonNull(workspace);
         if (aggregationWorkers < 1 || aggregationWorkers > 8 || aggregationWorkers > 1 && !workspace.concurrentTables())
             throw new IllegalArgumentException("Aggregation workers require a compatible workspace and 1..8 admission");
         this.aggregationWorkers = aggregationWorkers;
+        this.springCache = springCache;
+    }
+
+    /** Centralized bounded-memory disk-spill admission heuristic (prevents heap OOM on dense multi-module repos). */
+    public static boolean shouldUseDiskSpill(long acquiredBytesTotal, int acquiredFileCount, int buildContextCount) {
+        return acquiredBytesTotal >= DISK_SPILL_MIN_BYTES
+                || acquiredFileCount >= DISK_SPILL_MIN_FILES
+                || buildContextCount >= DISK_SPILL_MIN_CONTEXTS;
+    }
+
+    public Optional<IncrementalSpringCache> springCache() {
+        return Optional.ofNullable(springCache);
     }
 
     public static final VersionedIdentifier PROVIDER = new VersionedIdentifier("architecture.pipeline",
@@ -543,15 +566,20 @@ public final class UniversalArchitecturePipeline {
                         .orElse(policy.resolutions()));
         if (prepared.isEmpty() && policy.defaultPlatform().isPresent()) {
             var platform = policy.defaultPlatform().get();
+            var modulesWithMavenDeps = new HashSet<ModuleIdentity>();
+            for (var mavenModel : buildModel.mavenModels()) {
+                for (var mm : mavenModel.modules()) {
+                    if (mm.effectivePom().isPresent() && !mm.effectivePom().orElseThrow().dependencies().isEmpty()) {
+                        modulesWithMavenDeps.add(mm.module().identity());
+                    }
+                }
+            }
             for (var module : buildModel.modules()) {
                 for (var plan : module.sourcePlan().sourceSets()) {
                     var key = new UniversalSourceIngestion.SourceSet(plan.module(), plan.kind(), plan.name());
                     if (!resolutions.containsKey(key)) {
-                        boolean declaredDependencies = !module.dependencies().isEmpty() || buildModel.mavenModels()
-                                .stream()
-                                .flatMap(m -> m.modules().stream())
-                                .filter(m -> m.module().identity().equals(plan.module()))
-                                .flatMap(m -> m.effectivePom().stream()).anyMatch(p -> !p.dependencies().isEmpty());
+                        boolean declaredDependencies = !module.dependencies().isEmpty()
+                                || modulesWithMavenDeps.contains(plan.module());
                         resolutions.put(key, new UniversalSourceIngestion.Resolution(platform, List.of(),
                                 ContentDigest.sha256Utf8("declared-platform-policy-" + key), Optional.empty(),
                                 !declaredDependencies));
@@ -631,12 +659,18 @@ public final class UniversalArchitecturePipeline {
                                 continue;
                             }
                             String notation = dep.groupId() + ":" + dep.artifactId() + ":" + dep.version();
+                            String groupArtifactKey = dep.groupId() + ":" + dep.artifactId();
                             String artifactId = dep.artifactId();
-                            boolean hasBinary = resolvedGroupArtifacts.contains(dep.groupId() + ":" + artifactId)
-                                    || resolvedArtifactIds.contains(artifactId);
+                            String jarFilename = artifactId + "-" + dep.version() + ".jar";
+                            boolean hasBinary = resolvedGroupArtifacts.contains(groupArtifactKey);
                             if (!hasBinary) {
+                                String gaPrefix = groupArtifactKey + ":";
+                                String slashJar = "/" + jarFilename;
                                 for (String logicalName : resolvedBinaryLogicalNames) {
-                                    if (logicalName.contains(artifactId)) {
+                                    if (logicalName.equals(notation)
+                                            || logicalName.startsWith(gaPrefix)
+                                            || logicalName.equals(jarFilename)
+                                            || logicalName.endsWith(slashJar)) {
                                         hasBinary = true;
                                         break;
                                     }
@@ -815,6 +849,12 @@ public final class UniversalArchitecturePipeline {
         }
 
         // Process units
+        var outcomesBySet = new HashMap<UniversalSourceIngestion.SourceSet, UniversalSourceIngestion.Outcome>(
+                Math.max(16, assembledSources.outcomes().size() * 2));
+        for (var outcome : assembledSources.outcomes()) {
+            outcomesBySet.putIfAbsent(outcome.sourceSet(), outcome);
+        }
+        var frameworkCache = new HashMap<AnalysisIdentity, SpringFrameworkEvidence>();
         var firstTypeFqnByPath = new HashMap<String, String>();
         var firstPathByFqn = new HashMap<String, IndexedPath>();
         var firstPathByDotSuffix = new HashMap<String, IndexedPath>();
@@ -1238,34 +1278,105 @@ public final class UniversalArchitecturePipeline {
                         || hasObservedSpring) {
                     try {
                         boolean autoSat = policy.springSatMode() == SpringSatMode.AUTO_MULTI_CONFIG_SAT;
+                        var unitOutcome = outcomesBySet.get(unit.sourceSet());
+                        var unitRequestOpt = unitOutcome == null ? Optional.<FrontendRequest>empty() : unitOutcome.request();
+                        ContentDigest springExactKey = null;
+                        ContentDigest springSemanticKey = null;
+                        ContentDigest springFrontendDigest = null;
+                        ContentDigest configDataDigest = null;
+                        List<CapabilityGapRecord> unitRelatedGaps = null;
+                        Optional<IncrementalSpringCache.CachedOutcome> cachedSpring = Optional.empty();
+                        if (springCache != null && unitRequestOpt.isPresent() && !unitRequestOpt.orElseThrow().sources().isEmpty()) {
+                            var req = unitRequestOpt.orElseThrow();
+                            var fw = frameworkCache.computeIfAbsent(req.manifest().identity(),
+                                    ignored -> extractSpringFramework(req));
+                            springFrontendDigest = IncrementalSpringCache.springFrontendDigest(frontend, fw);
+                            configDataDigest = unitOutcome.configuration().identity();
+                            var related = workspace.gaps(contextGaps.getOrDefault(Optional.empty(), List.of()));
+                            related.addAll(contextGaps.getOrDefault(Optional.of(frontend.analysis()), List.of()));
+                            var relatedRows = workspace.<CapabilityGapRecord>list();
+                            relatedRows.addAll(related);
+                            unitRelatedGaps = workspace.freeze(relatedRows);
+                            springExactKey = IncrementalSpringCache.exactKey(
+                                    req, frontend, springFrontendDigest, configDataDigest, unitRelatedGaps,
+                                    Optional.ofNullable(policy.springScopes().get(unit.sourceSet())),
+                                    policy.configurationSpace(), policy.baselineConfiguration(),
+                                    policy.springSatMode(), policy.truthEvaluationMode(), policy.truthLimits(),
+                                    policy.maxTypes(), validationMode);
+                            springSemanticKey = IncrementalSpringCache.semanticKey(
+                                    unit.sourceSet(), springFrontendDigest, configDataDigest,
+                                    policy.springSatMode(), policy.truthEvaluationMode(), policy.truthLimits(),
+                                    validationMode);
+                            cachedSpring = springCache.getExact(springExactKey);
+                        }
+                        if (cachedSpring.isPresent()) {
+                            var hit = cachedSpring.orElseThrow();
+                            var slice = hit.slice();
+                            var plan = slice.plan();
+                            allGaps.addAll(plan.gaps());
+                            allGaps.addAll(hit.builtGaps());
+                            slice.symbolicTruth().ifPresent(t -> allGaps.addAll(t.gaps()));
+                            slice.explicitTruth().ifPresent(t -> allGaps.addAll(t.capabilityGaps()));
+                            springArtifacts.add(slice);
+                            collectSpringPlanReportRows(plan, typeIdentityToFqn, components, producers, injectionSites);
+                            slice.symbolicTruth().ifPresent(truth -> {
+                                boolean hasWitness = !truth.traces().isEmpty();
+                                int traceCount = truth.traces().size();
+                                for (var region : truth.regions()) {
+                                    truthRegions.add(new UniversalArchitectureReport.TruthRegionSummary(
+                                            region.fact().identity().value(),
+                                            region.fact().kind().name(),
+                                            region.classification(),
+                                            traceCount,
+                                            hasWitness));
+                                }
+                            });
+                            slice.explicitTruth().ifPresent(truth -> {
+                                boolean hasWitness = !truth.witnesses().isEmpty();
+                                for (var region : truth.regions()) {
+                                    truthRegions.add(new UniversalArchitectureReport.TruthRegionSummary(
+                                            region.fact().identity().value(),
+                                            region.fact().kind().name(),
+                                            region.classification(),
+                                            region.feasibility().feasibleWorlds(),
+                                            hasWitness));
+                                }
+                            });
+                        } else {
                         Optional<SourceToSpringPlan.Result> planOpt = Optional.empty();
                         if (hasExplicitSpringScope || !autoSat) {
-                            var scope = resolveScope(policy, unit, assembledSources, frontend);
+                            var scope = resolveScope(policy, unit, outcomesBySet, frameworkCache, frontend);
                             if (scope.isPresent()) {
-                                var related = workspace.gaps(contextGaps.getOrDefault(Optional.empty(), List.of()));
-                                related.addAll(contextGaps.getOrDefault(Optional.of(frontend.analysis()), List.of()));
-                                var relatedRows = workspace.<CapabilityGapRecord>list();
-                                relatedRows.addAll(related);
+                                if (unitRelatedGaps == null) {
+                                    var related = workspace.gaps(contextGaps.getOrDefault(Optional.empty(), List.of()));
+                                    related.addAll(contextGaps.getOrDefault(Optional.of(frontend.analysis()), List.of()));
+                                    var relatedRows = workspace.<CapabilityGapRecord>list();
+                                    relatedRows.addAll(related);
+                                    unitRelatedGaps = workspace.freeze(relatedRows);
+                                }
                                 var scopedPipeline = new UniversalIngestionPipeline.Result(
                                         pipelineResult.inputIdentity(),
                                         pipelineResult.sourceIngestion(), List.of(unit), List.of(),
-                                        workspace.freeze(relatedRows));
+                                        unitRelatedGaps);
                                 int springLimit = Math.min(MAX_SPRING_PLAN_LIMIT, Math.max(1, policy.maxTypes()));
                                 planOpt = Optional
                                         .of(pipeline.prepareSpring(scopedPipeline, unit.sourceSet(), scope.get(),
                                                 springLimit, validationMode));
                             }
                         } else {
-                            var evidenceOpt = autoScopeEvidence(assembledSources, unit.sourceSet(), frontend);
+                            var evidenceOpt = autoScopeEvidence(outcomesBySet, unit.sourceSet(), frontend);
                             if (evidenceOpt.isPresent()) {
-                                var related = workspace.gaps(contextGaps.getOrDefault(Optional.empty(), List.of()));
-                                related.addAll(contextGaps.getOrDefault(Optional.of(frontend.analysis()), List.of()));
-                                var relatedRows = workspace.<CapabilityGapRecord>list();
-                                relatedRows.addAll(related);
+                                if (unitRelatedGaps == null) {
+                                    var related = workspace.gaps(contextGaps.getOrDefault(Optional.empty(), List.of()));
+                                    related.addAll(contextGaps.getOrDefault(Optional.of(frontend.analysis()), List.of()));
+                                    var relatedRows = workspace.<CapabilityGapRecord>list();
+                                    relatedRows.addAll(related);
+                                    unitRelatedGaps = workspace.freeze(relatedRows);
+                                }
                                 var scopedPipeline = new UniversalIngestionPipeline.Result(
                                         pipelineResult.inputIdentity(),
                                         pipelineResult.sourceIngestion(), List.of(unit), List.of(),
-                                        workspace.freeze(relatedRows));
+                                        unitRelatedGaps);
                                 int springLimit = Math.min(MAX_SPRING_PLAN_LIMIT, Math.max(1, policy.maxTypes()));
                                 planOpt = Optional.of(pipeline.prepareSpringAutoScoped(scopedPipeline, unit.sourceSet(),
                                         "architecture-scope", evidenceOpt.get(), springLimit, validationMode));
@@ -1274,62 +1385,12 @@ public final class UniversalArchitecturePipeline {
                         if (planOpt.isPresent()) {
                             var plan = planOpt.get();
                             allGaps.addAll(plan.gaps());
+                            var unitBuiltGaps = new ArrayList<CapabilityGapRecord>();
                             int artifactIndex = springArtifacts.size();
                             springArtifacts.add(new com.evolution.analysis.graph.CanonicalGraphInput.SpringSlice(
                                     unit.sourceSet(), plan,
                                     Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty()));
-
-                            for (var cand : plan.binding().registrationPlan().discoveryPlan().initialDefinitions()) {
-                                String beanName = cand.declaredNameKey().primary().orElse(cand.definitionSlot())
-                                        .strip();
-                                String type = (cand.exposedTypes().isEmpty() ? ""
-                                        : typeIdentityToFqn.getOrDefault(cand.exposedTypes().getFirst(),
-                                                cand.exposedTypes().getFirst().value()))
-                                        .strip();
-                                String fqn = (type.isEmpty() ? cand.identity().value() : type).strip();
-                                if (fqn.isEmpty())
-                                    fqn = "Component";
-                                if (beanName.isEmpty())
-                                    beanName = fqn;
-                                String containerKey = cand.producer().containerKey().strip();
-                                if (containerKey.isEmpty())
-                                    containerKey = "default";
-                                components.add(new UniversalArchitectureReport.ComponentRecord(
-                                        "component:" + fqn, beanName, fqn,
-                                        cand.producer().producerKind().name(), containerKey,
-                                        List.of(), false));
-                                if (cand.producer().producerKind() == BeanProducer.Kind.BEAN_METHOD) {
-                                    String factoryType = containerKey;
-                                    String methodName = cand.producer().declarationSlot().strip();
-                                    if (methodName.isEmpty())
-                                        methodName = "bean";
-                                    String productType = type.isEmpty() ? "Object" : type;
-                                    producers.add(new UniversalArchitectureReport.ProducerRecord(
-                                            factoryType, methodName, productType, beanName, List.of()));
-                                }
-                            }
-
-                            for (var dep : plan.binding().dependencies()) {
-                                String owner = dep.owner().map(BeanDefinitionCandidate.Identity::value)
-                                        .orElse("external").strip();
-                                if (owner.isEmpty())
-                                    owner = "external";
-                                String memberName = (dep.point().ownerDeclarationKey() + "#" + dep.point().siteSlot())
-                                        .strip();
-                                if (memberName.isEmpty())
-                                    memberName = "<init>";
-                                String reqType = dep.requestedType().spelling().strip();
-                                if (reqType.isEmpty())
-                                    reqType = "Object";
-                                injectionSites.add(new UniversalArchitectureReport.InjectionSiteRecord(
-                                        owner,
-                                        memberName,
-                                        reqType,
-                                        dep.point().siteKind().name(),
-                                        dep.dependencyName().value().map(String::strip).filter(s -> !s.isEmpty())
-                                                .map(List::of).orElse(List.of()),
-                                        dep.required() == InjectionBindingPlan.Required.REQUIRED));
-                            }
+                            collectSpringPlanReportRows(plan, typeIdentityToFqn, components, producers, injectionSites);
 
                             // Truth evaluation
                             if (policy.truthEvaluationMode() != TruthEvaluationMode.NONE) {
@@ -1337,9 +1398,7 @@ public final class UniversalArchitecturePipeline {
                                 var baselineOpt = policy.baselineConfiguration();
                                 if (spaceOpt.isEmpty() && (policy.truthEvaluationMode() == TruthEvaluationMode.AUTO
                                         || policy.truthEvaluationMode() == TruthEvaluationMode.SYMBOLIC && autoSat)) {
-                                    var configuration = assembledSources.outcomes().stream()
-                                            .filter(o -> o.sourceSet().equals(unit.sourceSet())).findFirst()
-                                            .orElseThrow().configuration();
+                                    var configuration = Objects.requireNonNull(outcomesBySet.get(unit.sourceSet())).configuration();
                                     if (autoSat) {
                                         var built = RepositoryConfigurationSpaceBuilder.build(
                                                 plan.binding().registrationPlan().discoveryPlan().buildContext(),
@@ -1347,6 +1406,7 @@ public final class UniversalArchitecturePipeline {
                                         spaceOpt = Optional.of(built.space());
                                         baselineOpt = Optional.of(built.baseline());
                                         allGaps.addAll(built.gaps());
+                                        unitBuiltGaps.addAll(built.gaps());
                                     } else {
                                         var selected = RepositoryBaselineConfiguration.select(
                                                 plan.binding().registrationPlan().discoveryPlan().buildContext(),
@@ -1430,6 +1490,15 @@ public final class UniversalArchitecturePipeline {
                                     }
                                 }
                             }
+                            if (springCache != null && springExactKey != null && springSemanticKey != null) {
+                                springCache.recordComputed(unit.sourceSet(), springExactKey, springSemanticKey,
+                                        new IncrementalSpringCache.CachedOutcome(
+                                                springArtifacts.get(artifactIndex),
+                                                unitBuiltGaps,
+                                                springFrontendDigest,
+                                                configDataDigest));
+                            }
+                        }
                         }
                     } catch (RuntimeException failure) {
                         System.getLogger(UniversalArchitecturePipeline.class.getName()).log(
@@ -1568,19 +1637,64 @@ public final class UniversalArchitecturePipeline {
                 metrics);
     }
 
+    private static void collectSpringPlanReportRows(
+            SourceToSpringPlan.Result plan,
+            Map<EntityIdentity, String> typeIdentityToFqn,
+            List<UniversalArchitectureReport.ComponentRecord> components,
+            List<UniversalArchitectureReport.ProducerRecord> producers,
+            List<UniversalArchitectureReport.InjectionSiteRecord> injectionSites) {
+        for (var cand : plan.binding().registrationPlan().discoveryPlan().initialDefinitions()) {
+            String beanName = cand.declaredNameKey().primary().orElse(cand.definitionSlot()).strip();
+            String type = (cand.exposedTypes().isEmpty() ? ""
+                    : typeIdentityToFqn.getOrDefault(cand.exposedTypes().getFirst(),
+                            cand.exposedTypes().getFirst().value()))
+                    .strip();
+            String fqn = (type.isEmpty() ? cand.identity().value() : type).strip();
+            if (fqn.isEmpty()) fqn = "Component";
+            if (beanName.isEmpty()) beanName = fqn;
+            String containerKey = cand.producer().containerKey().strip();
+            if (containerKey.isEmpty()) containerKey = "default";
+            components.add(new UniversalArchitectureReport.ComponentRecord(
+                    "component:" + fqn, beanName, fqn,
+                    cand.producer().producerKind().name(), containerKey,
+                    List.of(), false));
+            if (cand.producer().producerKind() == BeanProducer.Kind.BEAN_METHOD) {
+                String factoryType = containerKey;
+                String methodName = cand.producer().declarationSlot().strip();
+                if (methodName.isEmpty()) methodName = "bean";
+                String productType = type.isEmpty() ? "Object" : type;
+                producers.add(new UniversalArchitectureReport.ProducerRecord(
+                        factoryType, methodName, productType, beanName, List.of()));
+            }
+        }
+        for (var dep : plan.binding().dependencies()) {
+            String owner = dep.owner().map(BeanDefinitionCandidate.Identity::value).orElse("external").strip();
+            if (owner.isEmpty()) owner = "external";
+            String memberName = (dep.point().ownerDeclarationKey() + "#" + dep.point().siteSlot()).strip();
+            if (memberName.isEmpty()) memberName = "<init>";
+            String reqType = dep.requestedType().spelling().strip();
+            if (reqType.isEmpty()) reqType = "Object";
+            injectionSites.add(new UniversalArchitectureReport.InjectionSiteRecord(
+                    owner, memberName, reqType, dep.point().siteKind().name(),
+                    dep.dependencyName().value().map(String::strip).filter(s -> !s.isEmpty())
+                            .map(List::of).orElse(List.of()),
+                    dep.required() == InjectionBindingPlan.Required.REQUIRED));
+        }
+    }
+
     private Optional<SourceToSpringPlan.Scope> resolveScope(
             Policy policy,
             UniversalIngestionPipeline.Unit unit,
-            UniversalSourceIngestion.Result assembledSources,
+            Map<UniversalSourceIngestion.SourceSet, UniversalSourceIngestion.Outcome> outcomesBySet,
+            Map<AnalysisIdentity, SpringFrameworkEvidence> frameworkCache,
             FrontendResult frontend) {
         if (policy.springScopes().containsKey(unit.sourceSet())) {
             return Optional.of(policy.springScopes().get(unit.sourceSet()));
         }
-        var outcomeOpt = assembledSources.outcomes().stream()
-                .filter(o -> o.sourceSet().equals(unit.sourceSet())).findFirst();
-        if (outcomeOpt.isEmpty() || outcomeOpt.get().request().isEmpty())
+        var outcome = outcomesBySet.get(unit.sourceSet());
+        if (outcome == null || outcome.request().isEmpty())
             return Optional.empty();
-        var req = outcomeOpt.get().request().get();
+        var req = outcome.request().get();
         if (req.sources().isEmpty())
             return Optional.empty();
 
@@ -1588,7 +1702,8 @@ public final class UniversalArchitecturePipeline {
                 List.of(IngestionEvidence.digest(req.manifest().identity()), IngestionEvidence.digest(frontend)),
                 PROVIDER, "source-context-with-unproved-runtime-closure");
 
-        var framework = extractSpringFramework(req);
+        var framework = frameworkCache.computeIfAbsent(req.manifest().identity(),
+                ignored -> extractSpringFramework(req));
         var sourceEvidence = new SpringSourceEvidence(req, frontend, framework);
 
         var scope = new SourceToSpringPlan.Scope(
@@ -1607,14 +1722,13 @@ public final class UniversalArchitecturePipeline {
     }
 
     private Optional<ConditionEvidence> autoScopeEvidence(
-            UniversalSourceIngestion.Result assembledSources,
+            Map<UniversalSourceIngestion.SourceSet, UniversalSourceIngestion.Outcome> outcomesBySet,
             UniversalSourceIngestion.SourceSet sourceSet,
             FrontendResult frontend) {
-        var outcomeOpt = assembledSources.outcomes().stream()
-                .filter(o -> o.sourceSet().equals(sourceSet)).findFirst();
-        if (outcomeOpt.isEmpty() || outcomeOpt.get().request().isEmpty())
+        var outcome = outcomesBySet.get(sourceSet);
+        if (outcome == null || outcome.request().isEmpty())
             return Optional.empty();
-        var req = outcomeOpt.get().request().get();
+        var req = outcome.request().get();
         if (req.sources().isEmpty())
             return Optional.empty();
         return Optional.of(new ConditionEvidence.Derived(
@@ -2078,15 +2192,20 @@ public final class UniversalArchitecturePipeline {
                 .map(c -> c.groupId() + ":" + c.artifactId() + ":" + c.version());
         Optional<String> groupArtifact = dep.coordinate()
                 .map(c -> c.groupId() + ":" + c.artifactId() + ":");
-        Optional<String> artifactVersion = dep.coordinate()
-                .map(c -> c.artifactId() + "-" + c.version());
+        Optional<String> artifactVersionJar = dep.coordinate()
+                .map(c -> c.artifactId() + "-" + c.version() + ".jar");
         for (String logicalName : resolvedBinaryLogicalNames) {
-            if (logicalName.contains(notation))
+            if (logicalName.equals(notation)
+                    || logicalName.startsWith(notation + ":")
+                    || logicalName.endsWith("/" + notation))
                 return true;
             if (coordPrefix.isPresent()) {
-                if (logicalName.contains(coordPrefix.get())
+                if (logicalName.equals(coordPrefix.get())
+                        || logicalName.startsWith(coordPrefix.get() + "@")
+                        || logicalName.startsWith(coordPrefix.get() + ":")
                         || logicalName.startsWith(groupArtifact.get())
-                        || logicalName.contains(artifactVersion.get())) {
+                        || logicalName.equals(artifactVersionJar.get())
+                        || logicalName.endsWith("/" + artifactVersionJar.get())) {
                     return true;
                 }
             }

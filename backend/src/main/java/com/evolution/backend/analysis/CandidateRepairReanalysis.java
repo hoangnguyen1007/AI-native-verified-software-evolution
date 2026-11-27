@@ -1,6 +1,7 @@
 package com.evolution.backend.analysis;
 
 import com.evolution.analysis.acquisition.*;
+import com.evolution.analysis.acquisition.streaming.ContentHandle;
 import com.evolution.analysis.assessment.*;
 import com.evolution.analysis.buildmodel.UniversalBuildIngestion;
 import com.evolution.analysis.contract.common.ContentDigest;
@@ -112,11 +113,14 @@ public final class CandidateRepairReanalysis implements RepairReanalysis.Port {
             registeredSources.put(repository, sourceDirectory.toAbsolutePath().normalize());
     }
 
+    private static final ContentDigest AD_HOC_NO_POLICY_REPORT = ContentDigest.sha256Utf8("ad-hoc-no-policy-report");
+
     @Override
     public RepairReanalysis.Result reanalyze(CapturedRepair.Proposal proposal, KnowledgeGraph baseline,
                                             PublishedReports.Report baselineReport, boolean includeControl,
                                             BooleanSupplier cancelled) {
-        var cacheKey = new CacheKey(proposal.identity(), baseline.identity(), baselineReport.identity(), includeControl);
+        ContentDigest reportKey = baselineReport == null ? AD_HOC_NO_POLICY_REPORT : baselineReport.identity();
+        var cacheKey = new CacheKey(proposal.identity(), baseline.identity(), reportKey, includeControl);
         RepairReanalysis.Result cached;
         synchronized (this) { cached = reanalysisCache.get(cacheKey); }
         if (cached != null && isCacheReusable(cached, includeControl)) {
@@ -128,25 +132,31 @@ public final class CandidateRepairReanalysis implements RepairReanalysis.Port {
         if (tree == null || !tree.identity().equals(baselineSnapshot)) {
             return withheld("BASELINE_SNAPSHOT_UNAVAILABLE", proposal.identity(), baselineSnapshot);
         }
-        ContentDigest policyDigest = policySource(baselineReport, candidate.baseline().finding());
-        var policy = lookupPolicy(policyDigest);
-        if (policy == null) {
-            return withheld("POLICY_SOURCE_UNAVAILABLE", proposal.identity(), baselineSnapshot);
+        LocalAnalysisRunner.PolicyInput policy = null;
+        if (baselineReport != null) {
+            ContentDigest policyDigest = policySource(baselineReport, candidate.baseline().finding());
+            policy = lookupPolicy(policyDigest);
+            if (policy == null) {
+                return withheld("POLICY_SOURCE_UNAVAILABLE", proposal.identity(), baselineSnapshot);
+            }
         }
 
         // Decode ONLY edited baseline file digests first so invalid patches fail in <1ms
         Set<ContentDigest> editDigests = new HashSet<>();
-        for (var edit : candidate.edits()) editDigests.add(edit.before());
+        for (var edit : candidate.edits()) {
+            if (!edit.isCreate()) editDigests.add(edit.before());
+        }
         Path acquisitionContent = storeDirectory.resolve("acquisition/content");
         StreamingContentStore cas = null;
         if (Files.isDirectory(acquisitionContent, LinkOption.NOFOLLOW_LINKS)) {
             try { cas = new StreamingContentStore(acquisitionContent); } catch (IOException ignored) {}
         }
         Path localCheckout = lookupCheckout(tree.repository());
+        var sizesByDigest = indexGraphFileSizes(baseline);
         var editedBaseBytes = readSelectedGraphSources(baseline, editDigests);
         for (var edit : candidate.edits()) {
-            if (!editedBaseBytes.containsKey(edit.before())) {
-                byte[] fallback = resolveBaselineFile(edit.path(), edit.before(), editedBaseBytes, cas, localCheckout);
+            if (!edit.isCreate() && !editedBaseBytes.containsKey(edit.before())) {
+                byte[] fallback = resolveBaselineFile(edit.path(), edit.before(), sizesByDigest, editedBaseBytes, cas, localCheckout);
                 if (fallback != null) editedBaseBytes.put(edit.before(), fallback);
             }
         }
@@ -157,16 +167,17 @@ public final class CandidateRepairReanalysis implements RepairReanalysis.Port {
         }
 
         boolean includeTests = hasTestContext(baseline);
-        var candKey = new CandidateKey(proposal.identity(), baseline.identity(), baselineReport.identity());
+        var candKey = new CandidateKey(proposal.identity(), baseline.identity(), reportKey);
         CandidateEntry candEntry;
         synchronized (this) { candEntry = candidateCache.get(candKey); }
         if (candEntry != null && !isCandidateReusable(candEntry)) {
             candEntry = null;
         }
 
-        boolean needControl = includeControl && !candidate.edits().isEmpty();
+        boolean needControl = includeControl && baselineReport != null && !candidate.edits().isEmpty();
         boolean inMemoryFastPath = isInMemoryEligible(tree, baseline);
 
+        final LocalAnalysisRunner.PolicyInput effectivePolicy = policy;
         Path workRoot = null;
         try {
             Map<String, AcquiredFile> baseFiles = null;
@@ -179,7 +190,7 @@ public final class CandidateRepairReanalysis implements RepairReanalysis.Port {
 
             if (inMemoryFastPath) {
                 return executeInMemoryReanalysis(
-                        proposal, baseline, baselineReport, tree, includeTests, policy,
+                        proposal, baseline, baselineReport, tree, includeTests, effectivePolicy,
                         cacheKey, candKey, candEntry, needControl, patchedTexts, baseFiles, cancelled);
             }
 
@@ -211,7 +222,7 @@ public final class CandidateRepairReanalysis implements RepairReanalysis.Port {
                     }
                     ctrlFuture = CompletableFuture.supplyAsync(() -> {
                         try {
-                            return runPassive(ctrlDir, tree.repository(), tree.revision(), includeTests, policy,
+                            return runPassive(ctrlDir, tree.repository(), tree.revision(), includeTests, effectivePolicy,
                                     finalWorkRoot.resolve("control-intake"), cancelled);
                         } catch (Exception e) {
                             throw new CompletionException(e);
@@ -223,19 +234,34 @@ public final class CandidateRepairReanalysis implements RepairReanalysis.Port {
             if (candEntry == null) {
                 Path candDir = finalWorkRoot.resolve("candidate");
                 Files.createDirectories(candDir);
+                var writtenPaths = new HashSet<String>();
                 for (var file : tree.files()) {
-                    byte[] bytes = patchedTexts.containsKey(file.path())
-                            ? patchedTexts.get(file.path())
-                            : finalBaseFiles.get(file.path()).bytes();
-                    writeRelative(candDir, file.path(), bytes);
+                    writtenPaths.add(file.path());
+                    if (patchedTexts.containsKey(file.path())) {
+                        byte[] bytes = patchedTexts.get(file.path());
+                        if (bytes != null) writeRelative(candDir, file.path(), bytes);
+                    } else {
+                        writeRelative(candDir, file.path(), finalBaseFiles.get(file.path()).bytes());
+                    }
+                }
+                for (var entry : patchedTexts.entrySet()) {
+                    if (entry.getValue() != null && !writtenPaths.contains(entry.getKey())) {
+                        writeRelative(candDir, entry.getKey(), entry.getValue());
+                    }
                 }
                 for (var edit : candidate.edits()) {
-                    if (!ContentDigest.sha256(patchedTexts.get(edit.path())).equals(edit.after())) {
+                    byte[] next = patchedTexts.get(edit.path());
+                    if (edit.isDelete()) {
+                        if (next != null) {
+                            if (ctrlFuture != null) ctrlFuture.cancel(true);
+                            return withheld("CANDIDATE_DIGEST_MISMATCH", proposal.identity(), baselineSnapshot);
+                        }
+                    } else if (next == null || !ContentDigest.sha256(next).equals(edit.after())) {
                         if (ctrlFuture != null) ctrlFuture.cancel(true);
                         return withheld("CANDIDATE_DIGEST_MISMATCH", proposal.identity(), baselineSnapshot);
                     }
                 }
-                var candOutcome = runPassive(candDir, tree.repository(), tree.revision(), includeTests, policy,
+                var candOutcome = runPassive(candDir, tree.repository(), tree.revision(), includeTests, effectivePolicy,
                         finalWorkRoot.resolve("candidate-intake"), cancelled);
                 if (candOutcome.graph().isEmpty()) {
                     if (ctrlFuture != null) ctrlFuture.cancel(true);
@@ -292,7 +318,11 @@ public final class CandidateRepairReanalysis implements RepairReanalysis.Port {
         var baselineSnapshot = baseline.snapshot();
         for (var edit : candidate.edits()) {
             byte[] next = patchedTexts.get(edit.path());
-            if (next == null || !ContentDigest.sha256(next).equals(edit.after())) {
+            if (edit.isDelete()) {
+                if (next != null) {
+                    return withheld("CANDIDATE_DIGEST_MISMATCH", proposal.identity(), baselineSnapshot);
+                }
+            } else if (next == null || !ContentDigest.sha256(next).equals(edit.after())) {
                 return withheld("CANDIDATE_DIGEST_MISMATCH", proposal.identity(), baselineSnapshot);
             }
         }
@@ -467,26 +497,28 @@ public final class CandidateRepairReanalysis implements RepairReanalysis.Port {
                 graphLedgers);
 
         var evalReports = new ArrayList<PublishedReports.Report>();
-        var compiled = new PolicyCompiler().compile(
-                policyInput.bytes(), EvidenceContext.forSnapshot(graph.snapshot()), PolicyCompiler.Limits.defaults());
-        gaps.addAll(compiled.gaps());
-        var guard = ArchitectureQueryService.operationalGuard(cancelled, 0, 8_000_000);
-        var queries = new ArchitectureMetricsService(
-                graph, ArchitectureMetric.Limits.defaults(), guard, Optional.empty(), List.of()).queries();
-        for (var context : graph.contexts()) {
-            if (context.analysis().isEmpty()) continue;
-            if (cancelled.getAsBoolean() || Thread.currentThread().isInterrupted()) throw new CancellationException();
-            var plan = new PolicyGraphMapper().bind(compiled, queries, context.identity(), PolicyGraphMapper.Limits.defaults());
-            var evaluation = new PolicyEvaluator().evaluate(compiled, plan, queries, PolicyEvaluation.Limits.defaults());
-            var metrics = new PolicyMetricsService().compute(compiled, plan, evaluation, queries, PolicyMetrics.Limits.defaults());
-            var score = new ArchitectureAssessmentService().assess(metrics, evaluation, queries,
-                    Optional.of(ArchitectureScoreModel.candidate(policyInput.scoreScope())), plan.limits().query(),
-                    ArchitectureMetric.Limits.defaults(), ArchitectureAssessment.Limits.defaults());
-            evalReports.add(new PublishedReports.Report(evaluation, Optional.of(metrics), Optional.of(score)));
-            gaps.addAll(plan.gaps());
-            gaps.addAll(evaluation.gaps());
-            gaps.addAll(metrics.gaps());
-            gaps.addAll(score.gaps());
+        if (policyInput != null) {
+            var compiled = new PolicyCompiler().compile(
+                    policyInput.bytes(), EvidenceContext.forSnapshot(graph.snapshot()), PolicyCompiler.Limits.defaults());
+            gaps.addAll(compiled.gaps());
+            var guard = ArchitectureQueryService.operationalGuard(cancelled, 0, 8_000_000);
+            var queries = new ArchitectureMetricsService(
+                    graph, ArchitectureMetric.Limits.defaults(), guard, Optional.empty(), List.of()).queries();
+            for (var context : graph.contexts()) {
+                if (context.analysis().isEmpty()) continue;
+                if (cancelled.getAsBoolean() || Thread.currentThread().isInterrupted()) throw new CancellationException();
+                var plan = new PolicyGraphMapper().bind(compiled, queries, context.identity(), PolicyGraphMapper.Limits.defaults());
+                var evaluation = new PolicyEvaluator().evaluate(compiled, plan, queries, PolicyEvaluation.Limits.defaults());
+                var metrics = new PolicyMetricsService().compute(compiled, plan, evaluation, queries, PolicyMetrics.Limits.defaults());
+                var score = new ArchitectureAssessmentService().assess(metrics, evaluation, queries,
+                        Optional.of(ArchitectureScoreModel.candidate(policyInput.scoreScope())), plan.limits().query(),
+                        ArchitectureMetric.Limits.defaults(), ArchitectureAssessment.Limits.defaults());
+                evalReports.add(new PublishedReports.Report(evaluation, Optional.of(metrics), Optional.of(score)));
+                gaps.addAll(plan.gaps());
+                gaps.addAll(evaluation.gaps());
+                gaps.addAll(metrics.gaps());
+                gaps.addAll(score.gaps());
+            }
         }
         var completion = switch (detailed.report().status()) {
             case COMPLETE -> gaps.isEmpty() ? AnalysisJobs.Completion.COMPLETE : AnalysisJobs.Completion.PARTIAL;
@@ -502,25 +534,42 @@ public final class CandidateRepairReanalysis implements RepairReanalysis.Port {
             RepositorySnapshot baseTree,
             Map<String, AcquiredFile> baseFiles,
             Map<String, byte[]> overrides) {
-        var acqFiles = new ArrayList<AcquiredFile>(baseTree.files().size());
-        var snapFiles = new ArrayList<SnapshotFile>(baseTree.files().size());
+        var acqFiles = new ArrayList<AcquiredFile>(baseTree.files().size() + overrides.size());
+        var snapFiles = new ArrayList<SnapshotFile>(baseTree.files().size() + overrides.size());
         var dirs = new TreeSet<String>();
         dirs.add(".");
         boolean hasRootPom = false;
+        var seen = new HashSet<String>();
         for (var file : baseTree.files()) {
             String p = file.path();
-            if ("pom.xml".equals(p)) hasRootPom = true;
-            int slash = p.indexOf('/');
-            while (slash > 0) {
-                dirs.add(p.substring(0, slash));
-                slash = p.indexOf('/', slash + 1);
+            seen.add(p);
+            if (overrides.containsKey(p) && overrides.get(p) == null) {
+                continue; // Deleted file in candidate patch
             }
+            if ("pom.xml".equals(p)) hasRootPom = true;
+            addParentDirs(dirs, p);
             AcquiredFile af = overrides.containsKey(p)
                     ? new AcquiredFile(p, overrides.get(p))
                     : baseFiles.get(p);
             acqFiles.add(af);
             snapFiles.add(new SnapshotFile(p, af.contentDigest()));
         }
+        // Include newly created files (CREATE edits) in deterministic sorted order
+        var createdPaths = new TreeSet<String>();
+        for (var entry : overrides.entrySet()) {
+            if (entry.getValue() != null && !seen.contains(entry.getKey())) {
+                createdPaths.add(entry.getKey());
+            }
+        }
+        for (String p : createdPaths) {
+            if ("pom.xml".equals(p)) hasRootPom = true;
+            addParentDirs(dirs, p);
+            var af = new AcquiredFile(p, overrides.get(p));
+            acqFiles.add(af);
+            snapFiles.add(new SnapshotFile(p, af.contentDigest()));
+        }
+        acqFiles.sort(Comparator.comparing(AcquiredFile::path));
+        snapFiles.sort(Comparator.comparing(SnapshotFile::path));
         var snapshot = RepositorySnapshot.create(baseTree.repository(), baseTree.revision(), true, snapFiles, List.of());
         var request = new RepositoryAcquisitionRequest(
                 baseTree.repository(), baseTree.revision(), true, "pom.xml",
@@ -573,9 +622,10 @@ public final class CandidateRepairReanalysis implements RepairReanalysis.Port {
             if (hit != null) return hit;
         }
         Map<ContentDigest, byte[]> allGraphBytes = null;
+        var sizesByDigest = indexGraphFileSizes(baseline);
         var resolved = new LinkedHashMap<String, AcquiredFile>(tree.files().size() * 2);
         for (var file : tree.files()) {
-            byte[] bytes = resolveFromCasOrCheckout(file.path(), file.contentDigest(), cas, localCheckout);
+            byte[] bytes = resolveFromCasOrCheckout(file.path(), file.contentDigest(), sizesByDigest, cas, localCheckout);
             if (bytes == null) {
                 if (allGraphBytes == null) allGraphBytes = readAllGraphSources(baseline);
                 bytes = allGraphBytes.get(file.contentDigest());
@@ -615,8 +665,16 @@ public final class CandidateRepairReanalysis implements RepairReanalysis.Port {
                                             boolean includeTests, LocalAnalysisRunner.PolicyInput policy,
                                             Path intakeDir, BooleanSupplier cancelled) throws Exception {
         var input = new LocalAnalysisRunner.Input(dir, repo, jdk, release, mavenCache, revision, true, includeTests,
-                List.of(), Optional.of(policy), LocalAnalysisRunner.SpringInput.absent());
+                List.of(), Optional.ofNullable(policy), LocalAnalysisRunner.SpringInput.autoMultiConfig());
         return new LocalAnalysisRunner(input, intakeDir).analyzeDirect(UUID.randomUUID().toString(), cancelled);
+    }
+
+    private static void addParentDirs(Set<String> dirs, String p) {
+        int slash = p.indexOf('/');
+        while (slash > 0) {
+            dirs.add(p.substring(0, slash));
+            slash = p.indexOf('/', slash + 1);
+        }
     }
 
     private synchronized LocalAnalysisRunner.PolicyInput lookupPolicy(ContentDigest digest) {
@@ -638,6 +696,11 @@ public final class CandidateRepairReanalysis implements RepairReanalysis.Port {
         var originals = new LinkedHashMap<String, String>();
         var encodings = new LinkedHashMap<String, java.nio.charset.Charset>();
         for (var edit : candidate.edits()) {
+            if (edit.isCreate()) {
+                encodings.put(edit.path(), StandardCharsets.UTF_8);
+                originals.put(edit.path(), "");
+                continue;
+            }
             byte[] raw = bytesByDigest.get(edit.before());
             if (raw == null) return null;
             var charset = isAsciiSource(baseline, edit.path()) ? StandardCharsets.US_ASCII : StandardCharsets.UTF_8;
@@ -650,6 +713,11 @@ public final class CandidateRepairReanalysis implements RepairReanalysis.Port {
             var out = new LinkedHashMap<String, byte[]>();
             for (var edit : candidate.edits()) {
                 String next = applied.get(edit.path());
+                if (edit.isDelete()) {
+                    if (next != null && !next.isEmpty()) return null;
+                    out.put(edit.path(), null); // sentinel for deletion
+                    continue;
+                }
                 if (next == null) return null;
                 byte[] nextBytes = next.getBytes(encodings.get(edit.path()));
                 if (!ContentDigest.sha256(nextBytes).equals(edit.after())) return null;
@@ -677,23 +745,27 @@ public final class CandidateRepairReanalysis implements RepairReanalysis.Port {
         return false;
     }
 
-    private static byte[] resolveBaselineFile(String path, ContentDigest expected, Map<ContentDigest, byte[]> graphBytes,
+    private static byte[] resolveBaselineFile(String path, ContentDigest expected, Map<ContentDigest, Long> sizesByDigest,
+                                              Map<ContentDigest, byte[]> graphBytes,
                                               StreamingContentStore cas, Path localCheckout) {
         byte[] direct = graphBytes.get(expected);
         if (direct != null && ContentDigest.sha256(direct).equals(expected)) return direct;
-        return resolveFromCasOrCheckout(path, expected, cas, localCheckout);
+        return resolveFromCasOrCheckout(path, expected, sizesByDigest, cas, localCheckout);
     }
 
     private static byte[] resolveFromCasOrCheckout(String path, ContentDigest expected,
+                                                   Map<ContentDigest, Long> sizesByDigest,
                                                    StreamingContentStore cas, Path localCheckout) {
-        if (cas != null) {
-            try {
-                Path obj = storePath(cas, expected);
-                if (obj != null && Files.isRegularFile(obj, LinkOption.NOFOLLOW_LINKS)) {
-                    byte[] raw = Files.readAllBytes(obj);
+        if (cas != null && sizesByDigest != null) {
+            Long knownSize = sizesByDigest.get(expected);
+            if (knownSize != null && knownSize >= 0L) {
+                try (var in = cas.open(new ContentHandle(expected, knownSize))) {
+                    byte[] raw = in.readAllBytes();
                     if (ContentDigest.sha256(raw).equals(expected)) return raw;
+                } catch (IOException | IllegalArgumentException ignored) {
+                    // Fall through to local checkout
                 }
-            } catch (IOException ignored) {}
+            }
         }
         if (localCheckout != null) {
             try {
@@ -707,16 +779,31 @@ public final class CandidateRepairReanalysis implements RepairReanalysis.Port {
         return null;
     }
 
-    private static Path storePath(StreamingContentStore cas, ContentDigest digest) {
-        String hex = digest.value().substring(7);
-        try {
-            var field = StreamingContentStore.class.getDeclaredField("root");
-            field.setAccessible(true);
-            Path root = (Path) field.get(cas);
-            return root.resolve("sha256").resolve(hex.substring(0, 2)).resolve(hex.substring(2));
-        } catch (ReflectiveOperationException ignored) {
-            return null;
+    private static Map<ContentDigest, Long> indexGraphFileSizes(KnowledgeGraph graph) {
+        var sizes = new HashMap<ContentDigest, Long>();
+        var limits = new GraphJson.Limits(2_000_000, 16, 256);
+        for (var ev : graph.evidence()) {
+            String fam = ev.family();
+            if (!"source.bytes".equals(fam) && !"polyglot.inventory-entry".equals(fam)) continue;
+            try {
+                var row = GraphJson.object(GraphJson.read(ev.canonicalJson(), limits));
+                if ("source.bytes".equals(fam)) {
+                    var doc = GraphJson.object(row.get("document"));
+                    Object rawDigest = doc.get("contentDigest");
+                    Object rawSize = row.get("sizeBytes");
+                    if (rawDigest instanceof String ds && rawSize instanceof Number n) {
+                        sizes.putIfAbsent(new ContentDigest(ds), n.longValue());
+                    }
+                } else {
+                    Object rawDigest = row.get("contentDigest");
+                    Object rawSize = row.get("sizeBytes");
+                    if (rawDigest instanceof String ds && rawSize instanceof Number n) {
+                        sizes.putIfAbsent(new ContentDigest(ds), n.longValue());
+                    }
+                }
+            } catch (RuntimeException ignored) {}
         }
+        return sizes;
     }
 
     private static Map<ContentDigest, byte[]> readSelectedGraphSources(KnowledgeGraph graph, Set<ContentDigest> needed) {
@@ -797,6 +884,7 @@ public final class CandidateRepairReanalysis implements RepairReanalysis.Port {
     private static Optional<ContentDigest> matchReport(KnowledgeGraph baseGraph, PublishedReports.Report baseReport,
                                                        KnowledgeGraph candGraph, List<PublishedReports.Report> candReports,
                                                        List<ContentDigest> candIds) {
+        if (baseReport == null) return Optional.empty();
         String baseScope = contextScope(baseGraph, baseReport.evaluation().context());
         for (int i = 0; i < candReports.size(); i++) {
             var r = candReports.get(i);

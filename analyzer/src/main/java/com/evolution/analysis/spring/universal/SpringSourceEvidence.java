@@ -59,12 +59,22 @@ public final class SpringSourceEvidence {
         }
     }
 
-    private static final Pattern ORDINARY_CLASS=Pattern.compile("^\\s*(?:(?:public|protected|private|static|abstract|final|strictfp)\\s+)*"
-            +"class\\s+[\\p{javaJavaIdentifierStart}][\\p{javaJavaIdentifierPart}]*"
-            +"(?:\\s+extends\\s+([\\p{javaJavaIdentifierStart}][\\p{javaJavaIdentifierPart}.$]*))?"
-            +"(?:\\s+implements\\s+([\\p{javaJavaIdentifierStart}][\\p{javaJavaIdentifierPart}.$]*(?:\\s*,\\s*[\\p{javaJavaIdentifierStart}][\\p{javaJavaIdentifierPart}.$]*)*))?\\s*\\{");
-    private static final Pattern EMPTY_MARKER=Pattern.compile("^\\s*(?:(?:public|protected|private|static|strictfp)\\s+)*interface\\s+[\\p{javaJavaIdentifierStart}][\\p{javaJavaIdentifierPart}]*\\s*\\{\\s*}\\s*$");
-    private record DocumentImports(Map<String, String> explicitBySimpleName, Set<String> wildcards, Set<String> allImports) {}
+    private static final Pattern ORDINARY_CLASS = Pattern
+            .compile("^\\s*(?:(?:public|protected|private|static|abstract|final|strictfp)\\s+)*"
+                    + "class\\s+[\\p{javaJavaIdentifierStart}][\\p{javaJavaIdentifierPart}]*"
+                    + "(?:\\s+extends\\s+([\\p{javaJavaIdentifierStart}][\\p{javaJavaIdentifierPart}.$]*))?"
+                    + "(?:\\s+implements\\s+([\\p{javaJavaIdentifierStart}][\\p{javaJavaIdentifierPart}.$]*(?:\\s*,\\s*[\\p{javaJavaIdentifierStart}][\\p{javaJavaIdentifierPart}.$]*)*))?\\s*\\{");
+    private static final Pattern EMPTY_MARKER = Pattern.compile(
+            "^\\s*(?:(?:public|protected|private|static|strictfp)\\s+)*interface\\s+[\\p{javaJavaIdentifierStart}][\\p{javaJavaIdentifierPart}]*\\s*\\{\\s*}\\s*$");
+    private static final Pattern PLAIN_INTERFACE = Pattern.compile(
+            "^\\s*(?:(?:public|protected|private|abstract|static|strictfp)\\s+)*"
+                    + "interface\\s+[\\p{javaJavaIdentifierStart}][\\p{javaJavaIdentifierPart}]*"
+                    + "(?:\\s+extends\\s+([\\p{javaJavaIdentifierStart}][\\p{javaJavaIdentifierPart}.$]*(?:\\s*,\\s*[\\p{javaJavaIdentifierStart}][\\p{javaJavaIdentifierPart}.$]*)*))?\\s*\\{");
+
+    record DocumentImports(Map<String, String> explicitBySimpleName, Set<String> wildcards,
+            Set<String> allImports) {
+    }
+
     private static final Map<String, String> SIMPLE_SPRING_ANNOTATIONS = Map.ofEntries(
             Map.entry("Component", "org.springframework.stereotype.Component"),
             Map.entry("Service", "org.springframework.stereotype.Service"),
@@ -86,16 +96,24 @@ public final class SpringSourceEvidence {
             Map.entry("Value", "org.springframework.beans.factory.annotation.Value"),
             Map.entry("Resource", "jakarta.annotation.Resource"),
             Map.entry("Bean", "org.springframework.context.annotation.Bean"),
-            Map.entry("ConditionalOnProperty", "org.springframework.boot.autoconfigure.condition.ConditionalOnProperty"),
-            Map.entry("ConditionalOnExpression", "org.springframework.boot.autoconfigure.condition.ConditionalOnExpression"),
+            Map.entry("ConditionalOnProperty",
+                    "org.springframework.boot.autoconfigure.condition.ConditionalOnProperty"),
+            Map.entry("ConditionalOnExpression",
+                    "org.springframework.boot.autoconfigure.condition.ConditionalOnExpression"),
             Map.entry("ConditionalOnBean", "org.springframework.boot.autoconfigure.condition.ConditionalOnBean"),
-            Map.entry("ConditionalOnMissingBean", "org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean"),
-            Map.entry("ConditionalOnSingleCandidate", "org.springframework.boot.autoconfigure.condition.ConditionalOnSingleCandidate"),
+            Map.entry("ConditionalOnMissingBean",
+                    "org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean"),
+            Map.entry("ConditionalOnSingleCandidate",
+                    "org.springframework.boot.autoconfigure.condition.ConditionalOnSingleCandidate"),
             Map.entry("ConditionalOnClass", "org.springframework.boot.autoconfigure.condition.ConditionalOnClass"),
-            Map.entry("ConditionalOnMissingClass", "org.springframework.boot.autoconfigure.condition.ConditionalOnMissingClass"),
-            Map.entry("ConditionalOnWebApplication", "org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication"),
-            Map.entry("ConditionalOnNotWebApplication", "org.springframework.boot.autoconfigure.condition.ConditionalOnNotWebApplication"),
-            Map.entry("ConditionalOnResource", "org.springframework.boot.autoconfigure.condition.ConditionalOnResource"),
+            Map.entry("ConditionalOnMissingClass",
+                    "org.springframework.boot.autoconfigure.condition.ConditionalOnMissingClass"),
+            Map.entry("ConditionalOnWebApplication",
+                    "org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication"),
+            Map.entry("ConditionalOnNotWebApplication",
+                    "org.springframework.boot.autoconfigure.condition.ConditionalOnNotWebApplication"),
+            Map.entry("ConditionalOnResource",
+                    "org.springframework.boot.autoconfigure.condition.ConditionalOnResource"),
             Map.entry("ConditionalOnJava", "org.springframework.boot.autoconfigure.condition.ConditionalOnJava"),
             Map.entry("EnableAutoConfiguration", "org.springframework.boot.autoconfigure.EnableAutoConfiguration"),
             Map.entry("Scope", "org.springframework.context.annotation.Scope"),
@@ -103,9 +121,10 @@ public final class SpringSourceEvidence {
             Map.entry("Import", "org.springframework.context.annotation.Import"),
             Map.entry("ImportResource", "org.springframework.context.annotation.ImportResource"),
             Map.entry("ConfigurationProperties", "org.springframework.boot.context.properties.ConfigurationProperties"),
-            Map.entry("EnableConfigurationProperties", "org.springframework.boot.context.properties.EnableConfigurationProperties")
-    );
+            Map.entry("EnableConfigurationProperties",
+                    "org.springframework.boot.context.properties.EnableConfigurationProperties"));
     private static final Set<String> QUALIFIED_SPRING_ANNOTATIONS = buildQualifiedSpringAnnotations();
+
     private static Set<String> buildQualifiedSpringAnnotations() {
         var set = new HashSet<String>(SIMPLE_SPRING_ANNOTATIONS.values());
         set.add("javax.inject.Inject");
@@ -113,6 +132,7 @@ public final class SpringSourceEvidence {
         set.add("javax.annotation.Resource");
         return Set.copyOf(set);
     }
+
     private static final List<String> NON_SPRING_WILDCARD_PREFIXES = List.of(
             "lombok.", "org.junit.jupiter.", "org.apache.dubbo.", "com.alibaba.dubbo.",
             "javax.inject.", "jakarta.inject.", "com.google.inject.",
@@ -131,54 +151,74 @@ public final class SpringSourceEvidence {
             "javax.annotation.ParametersAreNullableByDefault", "javax.annotation.CheckReturnValue",
             "javax.annotation.OverridingMethodsMustInvokeSuper");
     private static final Pattern IMPORT_STMT = Pattern.compile(
-            "^\\s*import\\s+(?:static\\s+)?([\\p{javaJavaIdentifierStart}][\\p{javaJavaIdentifierPart}.*]*)\\s*;");
-    private final FrontendResult frontend;private final AnalysisManifest manifest;
+            "^\\s*import\\s+(?:static\\s+)?([\\p{javaJavaIdentifierStart}][\\p{javaJavaIdentifierPart}.*]*)(?:\\s+as\\s+([\\p{javaJavaIdentifierStart}][\\p{javaJavaIdentifierPart}]*))?\\s*;?\\s*$");
+    private final FrontendResult frontend;
+    private final AnalysisManifest manifest;
     private final SpringFrameworkEvidence framework;
     private final SpringFrameworkEvidence.ValidationMode validationMode;
-    private final Map<EntityIdentity,DeclarationRecord> declarations=new TreeMap<>();
-    private final Map<EntityIdentity,List<Annotation>> annotations=new TreeMap<>();
-    private final Map<EntityIdentity,List<EntityIdentity>> parents=new TreeMap<>();
-    private final Map<EntityIdentity,EntityIdentity> owners=new TreeMap<>();
-    private final Map<EntityIdentity,SpringFrameworkEvidence.Artifact> artifacts=new TreeMap<>();
-    private final Set<SourceDocumentIdentity> parsedDocuments=new HashSet<>();
-    private final Map<SourceDocumentIdentity,com.evolution.analysis.contract.source.SourceDocument> snapshotDocsById=new HashMap<>();
-    private final Map<SourceDocumentIdentity,DocumentImports> documentImports=new HashMap<>();
-    private final Map<Object,List<EntityIdentity>> annotationTargets=new HashMap<>();
-    private final Map<EntityIdentity,TypeDeclarationRecord> typeShapesById=new HashMap<>();
-    private final Map<SourceDocumentIdentity,List<Diagnostic>> diagnosticsByDoc=new HashMap<>();
-    private final Map<EntityIdentity,List<TypeUseRecord>> typesByOwner=new HashMap<>();
-    private final Map<EntityIdentity,List<SemanticRelationship>> relationsBySource=new HashMap<>();
+    private final Map<EntityIdentity, DeclarationRecord> declarations = new TreeMap<>();
+    private final Map<EntityIdentity, List<Annotation>> annotations = new TreeMap<>();
+    private final Map<EntityIdentity, List<EntityIdentity>> parents = new TreeMap<>();
+    private final Map<EntityIdentity, EntityIdentity> owners = new TreeMap<>();
+    private final Map<EntityIdentity, List<EntityIdentity>> declaredMembersByOwner = new HashMap<>();
+    private final Map<EntityIdentity, SpringFrameworkEvidence.Artifact> artifacts = new TreeMap<>();
+    private final Set<SourceDocumentIdentity> parsedDocuments = new HashSet<>();
+    private final Map<SourceDocumentIdentity, com.evolution.analysis.contract.source.SourceDocument> snapshotDocsById = new HashMap<>();
+    private final Map<SourceDocumentIdentity, DocumentImports> documentImports = new HashMap<>();
+    private final Map<SourceDocumentIdentity, String> packageByDoc = new HashMap<>();
+    private final Map<Object, List<EntityIdentity>> annotationTargets = new HashMap<>();
+    private final Map<EntityIdentity, TypeDeclarationRecord> typeShapesById = new HashMap<>();
+    private final Map<SourceDocumentIdentity, List<Diagnostic>> diagnosticsByDoc = new HashMap<>();
+    private final Map<EntityIdentity, List<TypeUseRecord>> typesByOwner = new HashMap<>();
+    private final Map<EntityIdentity, List<SemanticRelationship>> relationsBySource = new HashMap<>();
     private final List<SemanticRelationship> relations;
     private final ContentDigest identity;
-    public SpringSourceEvidence(AnalysisManifest manifest,FrontendResult frontend,SpringFrameworkEvidence framework) {
-        this(manifest,frontend,framework,manifest.classpath(),List.of(),SpringFrameworkEvidence.ValidationMode.STRICT_R0_PINNED);
+
+    public SpringSourceEvidence(AnalysisManifest manifest, FrontendResult frontend, SpringFrameworkEvidence framework) {
+        this(manifest, frontend, framework, manifest.classpath(), List.of(),
+                SpringFrameworkEvidence.ValidationMode.STRICT_R0_PINNED);
     }
-    public SpringSourceEvidence(FrontendRequest request,FrontendResult frontend,SpringFrameworkEvidence framework){
-        this(request.manifest(),frontend,framework,request.originClasspath(),allSourceInputs(request),SpringFrameworkEvidence.ValidationMode.STRICT_R0_PINNED);
+
+    public SpringSourceEvidence(FrontendRequest request, FrontendResult frontend, SpringFrameworkEvidence framework) {
+        this(request.manifest(), frontend, framework, request.originClasspath(), allSourceInputs(request),
+                SpringFrameworkEvidence.ValidationMode.STRICT_R0_PINNED);
     }
-    public SpringSourceEvidence(FrontendRequest request,FrontendResult frontend,SpringFrameworkEvidence framework,SpringFrameworkEvidence.ValidationMode validationMode){
-        this(request.manifest(),frontend,framework,request.originClasspath(),allSourceInputs(request),validationMode);
+
+    public SpringSourceEvidence(FrontendRequest request, FrontendResult frontend, SpringFrameworkEvidence framework,
+            SpringFrameworkEvidence.ValidationMode validationMode) {
+        this(request.manifest(), frontend, framework, request.originClasspath(), allSourceInputs(request),
+                validationMode);
     }
+
     private static List<SourceInput> allSourceInputs(FrontendRequest request) {
         var all = new ArrayList<SourceInput>(request.sources());
-        for (var reactor : request.reactorSources()) all.addAll(reactor.sources());
+        for (var reactor : request.reactorSources())
+            all.addAll(reactor.sources());
         return all;
     }
-    private SpringSourceEvidence(AnalysisManifest manifest,FrontendResult frontend,SpringFrameworkEvidence framework,List<com.evolution.analysis.contract.analysis.ClasspathEntry> origins,List<SourceInput> sourceInputs,SpringFrameworkEvidence.ValidationMode validationMode){
-        this.manifest=Objects.requireNonNull(manifest);this.frontend=Objects.requireNonNull(frontend);this.framework=Objects.requireNonNull(framework);
-        this.validationMode=Objects.requireNonNull(validationMode);
+
+    private SpringSourceEvidence(AnalysisManifest manifest, FrontendResult frontend, SpringFrameworkEvidence framework,
+            List<com.evolution.analysis.contract.analysis.ClasspathEntry> origins, List<SourceInput> sourceInputs,
+            SpringFrameworkEvidence.ValidationMode validationMode) {
+        this.manifest = Objects.requireNonNull(manifest);
+        this.frontend = Objects.requireNonNull(frontend);
+        this.framework = Objects.requireNonNull(framework);
+        this.validationMode = Objects.requireNonNull(validationMode);
         for (var s : frontend.sources()) {
             if (s.state() == SourceOutcome.State.PROCESSED || s.state() == SourceOutcome.State.PARTIAL) {
                 parsedDocuments.add(s.document());
             }
         }
-        for (var d : manifest.snapshot().documents()) snapshotDocsById.put(d.identity(), d);
+        for (var d : manifest.snapshot().documents())
+            snapshotDocsById.put(d.identity(), d);
         for (var input : sourceInputs) {
             documentImports.putIfAbsent(input.document().identity(), parseImports(input.text()));
         }
-        for (var shape : frontend.typeDeclarations()) typeShapesById.putIfAbsent(shape.type(), shape);
+        for (var shape : frontend.typeDeclarations())
+            typeShapesById.putIfAbsent(shape.type(), shape);
         for (var diag : frontend.diagnostics()) {
-            diag.span().ifPresent(sp -> diagnosticsByDoc.computeIfAbsent(sp.document(), k -> new ArrayList<>()).add(diag));
+            diag.span()
+                    .ifPresent(sp -> diagnosticsByDoc.computeIfAbsent(sp.document(), k -> new ArrayList<>()).add(diag));
         }
         for (var t : frontend.types()) {
             t.owner().ifPresent(ownerId -> typesByOwner.computeIfAbsent(ownerId, k -> new ArrayList<>()).add(t));
@@ -204,6 +244,17 @@ public final class SpringSourceEvidence {
             artifactsByScope.putIfAbsent(a.entityScope(), a);
         for (var declaration : frontend.declarations()) {
             declarations.put(declaration.entity().identity(), declaration);
+            if (declaration.entity().origin() == EntityOrigin.PROJECT
+                    && declaration.entity().kind() == EntityKind.TYPE
+                    && declaration.entity().declaration().isPresent()) {
+                var parsedName = JavaTypeName.fromCanonical(declaration.entity().canonicalName());
+                if (parsedName.isPresent()) {
+                    String qn = parsedName.orElseThrow().qualifiedName();
+                    int dot = qn.lastIndexOf('.');
+                    packageByDoc.putIfAbsent(declaration.entity().declaration().orElseThrow().document(),
+                            dot > 0 ? qn.substring(0, dot) : "");
+                }
+            }
             if (declaration.entity().origin() == EntityOrigin.DEPENDENCY) {
                 var matchedArtifact = artifactsByScope.get(declaration.entity().stableScope());
                 if (matchedArtifact != null)
@@ -214,8 +265,10 @@ public final class SpringSourceEvidence {
             if (relation.target() instanceof RelationshipTarget.Resolved target) {
                 if (Set.of("java.extends", "java.implements").contains(relation.kind().value()))
                     parents.computeIfAbsent(relation.source(), k -> new ArrayList<>()).add(target.target());
-                if (relation.kind().value().equals("java.declares"))
+                if (relation.kind().value().equals("java.declares")) {
                     owners.put(target.target(), relation.source());
+                    declaredMembersByOwner.computeIfAbsent(relation.source(), k -> new ArrayList<>()).add(target.target());
+                }
             }
         frontend.occurrences().stream()
                 .filter(o -> o.status() == SemanticStatus.RESOLVED
@@ -271,17 +324,28 @@ public final class SpringSourceEvidence {
         }
     }
 
-    private static DocumentImports parseImports(String source) {
+    static DocumentImports parseImportsForTest(String source) {
+        return parseImports(source);
+    }
+
+    static DocumentImports parseImportsLegacyForTest(String source) {
+        return parseImportsLegacy(source);
+    }
+
+    private static DocumentImports parseImportsLegacy(String source) {
         var explicit = new HashMap<String, String>();
         var wildcards = new HashSet<String>();
         var all = new LinkedHashSet<String>();
-        if (source == null || source.isEmpty()) return new DocumentImports(Map.of(), Set.of(), Set.of());
+        if (source == null || source.isEmpty())
+            return new DocumentImports(Map.of(), Set.of(), Set.of());
         String stripped = source.replaceAll("(?s)/\\*.*?\\*/|//[^\\r\\n]*", "");
         for (String line : stripped.split("\\R")) {
             var matcher = IMPORT_STMT.matcher(line);
-            if (!matcher.find()) continue;
+            if (!matcher.find())
+                continue;
             String imported = matcher.group(1).trim();
-            if (imported.isEmpty()) continue;
+            if (imported.isEmpty())
+                continue;
             all.add(imported);
             if (imported.endsWith(".*")) {
                 wildcards.add(imported.substring(0, imported.length() - 1));
@@ -290,10 +354,211 @@ public final class SpringSourceEvidence {
                 if (dot > 0 && dot + 1 < imported.length()) {
                     explicit.put(imported.substring(dot + 1), imported);
                 }
+                String alias = matcher.group(2);
+                if (alias != null && !alias.isBlank()) {
+                    explicit.put(alias.trim(), imported);
+                }
             }
         }
         return new DocumentImports(Map.copyOf(explicit), Set.copyOf(wildcards), Set.copyOf(all));
     }
+
+    private static DocumentImports parseImports(String source) {
+        if (source == null || source.isEmpty())
+            return new DocumentImports(Map.of(), Set.of(), Set.of());
+        var explicit = new HashMap<String, String>();
+        var wildcards = new HashSet<String>();
+        var all = new LinkedHashSet<String>();
+        int len = source.length();
+        int i = 0;
+        while (i < len) {
+            i = skipWhitespaceAndComments(source, i, len);
+            if (i >= len)
+                break;
+            char ch = source.charAt(i);
+            if (ch == ';') {
+                i++;
+                continue;
+            }
+            if (ch == '"' || ch == '\'') {
+                i = skipStringLiteral(source, i, len);
+                continue;
+            }
+            if (ch == '@' || ch == '{' || ch == '}') {
+                // Annotations or body braces mark the end of the file's package/import header.
+                break;
+            }
+            int wordStart = i;
+            while (i < len && Character.isJavaIdentifierPart(source.charAt(i)))
+                i++;
+            String kw = source.substring(wordStart, i);
+            if (kw.equals("package")) {
+                i = skipToEndOfHeaderStmt(source, i, len);
+                continue;
+            }
+            if (!kw.equals("import")) {
+                // Any non-package, non-import top-level declaration terminates the import header.
+                break;
+            }
+            i = skipHorizontalWsAndBlockComments(source, i, len);
+            if (i < len && startsWithWord(source, i, len, "static")) {
+                i += 6;
+                i = skipHorizontalWsAndBlockComments(source, i, len);
+            }
+            int pathStart = i;
+            while (i < len) {
+                char c = source.charAt(i);
+                if (Character.isJavaIdentifierPart(c) || c == '.' || c == '*') {
+                    i++;
+                } else {
+                    break;
+                }
+            }
+            String imported = source.substring(pathStart, i);
+            String alias = null;
+            i = skipHorizontalWsAndBlockComments(source, i, len);
+            if (i < len && startsWithWord(source, i, len, "as")) {
+                i += 2;
+                i = skipHorizontalWsAndBlockComments(source, i, len);
+                int aliasStart = i;
+                while (i < len && Character.isJavaIdentifierPart(source.charAt(i)))
+                    i++;
+                if (i > aliasStart)
+                    alias = source.substring(aliasStart, i);
+                i = skipHorizontalWsAndBlockComments(source, i, len);
+            }
+            if (i < len && source.charAt(i) == ';')
+                i++;
+            if (!imported.isEmpty() && Character.isJavaIdentifierStart(imported.charAt(0))) {
+                all.add(imported);
+                if (imported.endsWith(".*")) {
+                    wildcards.add(imported.substring(0, imported.length() - 1));
+                } else {
+                    int dot = imported.lastIndexOf('.');
+                    if (dot > 0 && dot + 1 < imported.length()) {
+                        explicit.put(imported.substring(dot + 1), imported);
+                    }
+                    if (alias != null && !alias.isBlank()) {
+                        explicit.put(alias, imported);
+                    }
+                }
+            }
+            // Skip any remaining tokens/comments on the same line.
+            while (i < len && source.charAt(i) != '\n' && source.charAt(i) != '\r' && source.charAt(i) != ';') {
+                if (source.charAt(i) == '/' && i + 1 < len && source.charAt(i + 1) == '*') {
+                    i = skipBlockComment(source, i, len);
+                } else if (source.charAt(i) == '/' && i + 1 < len && source.charAt(i + 1) == '/') {
+                    while (i < len && source.charAt(i) != '\n' && source.charAt(i) != '\r')
+                        i++;
+                } else {
+                    i++;
+                }
+            }
+        }
+        return new DocumentImports(Map.copyOf(explicit), Set.copyOf(wildcards), Set.copyOf(all));
+    }
+
+    private static boolean startsWithWord(String s, int i, int len, String word) {
+        int wlen = word.length();
+        if (i + wlen > len || !s.regionMatches(i, word, 0, wlen))
+            return false;
+        return i + wlen == len || !Character.isJavaIdentifierPart(s.charAt(i + wlen));
+    }
+
+    private static int skipWhitespaceAndComments(String s, int i, int len) {
+        while (i < len) {
+            char c = s.charAt(i);
+            if (Character.isWhitespace(c) || c == '\ufeff') {
+                i++;
+            } else if (c == '/' && i + 1 < len && s.charAt(i + 1) == '/') {
+                i += 2;
+                while (i < len && s.charAt(i) != '\n' && s.charAt(i) != '\r')
+                    i++;
+            } else if (c == '/' && i + 1 < len && s.charAt(i + 1) == '*') {
+                i = skipBlockComment(s, i, len);
+            } else {
+                break;
+            }
+        }
+        return i;
+    }
+
+    private static int skipHorizontalWsAndBlockComments(String s, int i, int len) {
+        while (i < len) {
+            char c = s.charAt(i);
+            if (c == ' ' || c == '\t') {
+                i++;
+            } else if (c == '/' && i + 1 < len && s.charAt(i + 1) == '*') {
+                i = skipBlockComment(s, i, len);
+            } else {
+                break;
+            }
+        }
+        return i;
+    }
+
+    private static int skipBlockComment(String s, int i, int len) {
+        i += 2;
+        int depth = 1;
+        while (i < len && depth > 0) {
+            if (s.charAt(i) == '/' && i + 1 < len && s.charAt(i + 1) == '*') {
+                depth++;
+                i += 2;
+            } else if (s.charAt(i) == '*' && i + 1 < len && s.charAt(i + 1) == '/') {
+                depth--;
+                i += 2;
+            } else {
+                i++;
+            }
+        }
+        return i;
+    }
+
+    private static int skipStringLiteral(String s, int i, int len) {
+        char q = s.charAt(i);
+        if (q == '"' && i + 2 < len && s.charAt(i + 1) == '"' && s.charAt(i + 2) == '"') {
+            i += 3;
+            while (i < len) {
+                if (s.charAt(i) == '\\') {
+                    i += 2;
+                } else if (s.charAt(i) == '"' && i + 2 < len && s.charAt(i + 1) == '"' && s.charAt(i + 2) == '"') {
+                    return i + 3;
+                } else {
+                    i++;
+                }
+            }
+            return len;
+        }
+        i++;
+        while (i < len) {
+            char c = s.charAt(i++);
+            if (c == '\\' && i < len)
+                i++;
+            else if (c == q || c == '\n' || c == '\r')
+                break;
+        }
+        return i;
+    }
+
+    private static int skipToEndOfHeaderStmt(String s, int i, int len) {
+        while (i < len) {
+            char c = s.charAt(i);
+            if (c == ';')
+                return i + 1;
+            if (c == '\n' || c == '\r')
+                return i + 1;
+            if (c == '/' && i + 1 < len && s.charAt(i + 1) == '*')
+                i = skipBlockComment(s, i, len);
+            else if (c == '/' && i + 1 < len && s.charAt(i + 1) == '/') {
+                while (i < len && s.charAt(i) != '\n' && s.charAt(i) != '\r')
+                    i++;
+                return i;
+            } else
+                i++;
+        }
+        return i;
+    }
+
     private static Optional<String> sourceScopedSpringAnnotation(AnnotationUseRecord use, DocumentImports imports) {
         String sp = use.spelling().stripLeading();
         if (!sp.startsWith("@"))
@@ -338,60 +603,81 @@ public final class SpringSourceEvidence {
                 }
             }
         }
-        return Optional.ofNullable(SIMPLE_SPRING_ANNOTATIONS.get(raw));
+        return Optional.empty();
     }
-    /** Observed EE/Spring namespace signal (javax.* vs jakarta.*) across source imports, annotations and declarations. */
+
+    /**
+     * Observed EE/Spring namespace signal (javax.* vs jakarta.*) across source
+     * imports, annotations and declarations.
+     */
     public Optional<FrameworkGeneration.Namespace> observedNamespaceHint() {
         boolean hasJavax = false;
         boolean hasJakarta = false;
         for (var docImports : documentImports.values()) {
             for (String imp : docImports.allImports()) {
-                if (isJakartaNamespace(imp)) hasJakarta = true;
-                else if (isJavaxEeNamespace(imp)) hasJavax = true;
+                if (isJakartaNamespace(imp))
+                    hasJakarta = true;
+                else if (isJavaxEeNamespace(imp))
+                    hasJavax = true;
             }
         }
         for (var use : frontend.annotations()) {
             String sp = use.spelling().stripLeading();
             if (sp.startsWith("@")) {
                 String raw = sp.substring(1).stripLeading();
-                if (isJakartaNamespace(raw)) hasJakarta = true;
-                else if (isJavaxEeNamespace(raw)) hasJavax = true;
+                if (isJakartaNamespace(raw))
+                    hasJakarta = true;
+                else if (isJavaxEeNamespace(raw))
+                    hasJavax = true;
             }
         }
         for (var list : annotations.values()) {
             for (var ann : list) {
                 if (ann.name().isPresent()) {
                     String n = ann.name().get();
-                    if (isJakartaNamespace(n)) hasJakarta = true;
-                    else if (isJavaxEeNamespace(n)) hasJavax = true;
+                    if (isJakartaNamespace(n))
+                        hasJakarta = true;
+                    else if (isJavaxEeNamespace(n))
+                        hasJavax = true;
                 }
             }
         }
         for (var decl : declarations.values()) {
-            String fqn = JavaTypeName.fromCanonical(decl.entity().canonicalName()).map(JavaTypeName::qualifiedName).orElse(null);
+            String fqn = JavaTypeName.fromCanonical(decl.entity().canonicalName()).map(JavaTypeName::qualifiedName)
+                    .orElse(null);
             if (fqn != null) {
-                if (isJakartaNamespace(fqn)) hasJakarta = true;
-                else if (isJavaxEeNamespace(fqn)) hasJavax = true;
+                if (isJakartaNamespace(fqn))
+                    hasJakarta = true;
+                else if (isJavaxEeNamespace(fqn))
+                    hasJavax = true;
             }
         }
-        if (hasJavax && !hasJakarta) return Optional.of(FrameworkGeneration.Namespace.JAVAX);
-        if (hasJakarta && !hasJavax) return Optional.of(FrameworkGeneration.Namespace.JAKARTA);
+        if (hasJavax && !hasJakarta)
+            return Optional.of(FrameworkGeneration.Namespace.JAVAX);
+        if (hasJakarta && !hasJavax)
+            return Optional.of(FrameworkGeneration.Namespace.JAKARTA);
         return Optional.empty();
     }
+
     private static boolean isJakartaNamespace(String name) {
         return name.startsWith("jakarta.");
     }
+
     private static boolean isJavaxEeNamespace(String name) {
-        if (!name.startsWith("javax.") || JSR305_JAVAX_ANNOTATIONS.contains(name) || name.startsWith("javax.annotation.concurrent.")) {
+        if (!name.startsWith("javax.") || JSR305_JAVAX_ANNOTATIONS.contains(name)
+                || name.startsWith("javax.annotation.concurrent.")) {
             return false;
         }
         for (String prefix : JAVAX_EE_PREFIXES) {
-            if (name.startsWith(prefix)) return true;
+            if (name.startsWith(prefix))
+                return true;
         }
         return false;
     }
+
     private static boolean isSuppressibleUnresolvedDiagnostic(Diagnostic diag) {
-        if (diag.severity() == DiagnosticSeverity.ERROR) return false;
+        if (diag.severity() == DiagnosticSeverity.ERROR)
+            return false;
         String code = diag.code();
         return code.equals("java.unresolved")
                 || code.equals("frontend.unresolved")
@@ -458,6 +744,47 @@ public final class SpringSourceEvidence {
         return Optional.ofNullable(owners.get(member));
     }
 
+    public List<EntityIdentity> declaredMembers(EntityIdentity owner) {
+        return declaredMembersByOwner.getOrDefault(owner, List.of());
+    }
+
+    /**
+     * Resolves an unqualified type reference within a parsed document using its explicit imports.
+     * Wildcard imports are only resolved when unambiguous against {@code knownFqns}.
+     */
+    public Optional<String> resolveImportedTypeName(
+            SourceDocumentIdentity doc, String writtenName, Set<String> knownFqns) {
+        if (writtenName == null || writtenName.isBlank()) return Optional.empty();
+        String trimmed = writtenName.trim();
+        if (trimmed.indexOf('.') >= 0) return Optional.of(trimmed);
+        var imports = documentImports.get(doc);
+        if (imports != null) {
+            String explicit = imports.explicitBySimpleName().get(trimmed);
+            if (explicit != null) return Optional.of(explicit);
+        }
+        if (knownFqns != null && !knownFqns.isEmpty()) {
+            String pkg = packageByDoc.get(doc);
+            if (pkg != null) {
+                String samePkg = pkg.isEmpty() ? trimmed : pkg + "." + trimmed;
+                if (knownFqns.contains(samePkg)) return Optional.of(samePkg);
+            }
+            String javaLang = "java.lang." + trimmed;
+            if (knownFqns.contains(javaLang)) return Optional.of(javaLang);
+            if (imports != null && !imports.wildcards().isEmpty()) {
+                String unique = null;
+                for (String prefix : imports.wildcards()) {
+                    String candidate = prefix + trimmed;
+                    if (knownFqns.contains(candidate)) {
+                        if (unique != null && !unique.equals(candidate)) return Optional.empty();
+                        unique = candidate;
+                    }
+                }
+                if (unique != null) return Optional.of(unique);
+            }
+        }
+        return Optional.empty();
+    }
+
     public String typeName(EntityIdentity type) {
         var d = declarations.get(type);
         return d == null ? null
@@ -518,15 +845,16 @@ public final class SpringSourceEvidence {
                 else if (!ordinary || !syntax)
                     problem = HierarchyProblem.SOURCE_SHAPE_UNSUPPORTED;
             }
-            var span=declaration.entity().declaration().orElseThrow();
+            var span = declaration.entity().declaration().orElseThrow();
             boolean suppressUnresolved = validationMode == SpringFrameworkEvidence.ValidationMode.COMPATIBLE_FAMILY_OR_SOURCE_SCOPED
                     && framework.artifacts().isEmpty();
-            boolean blockingDiagnostics=diagnosticsByDoc.getOrDefault(span.document(), List.of()).stream()
+            boolean blockingDiagnostics = diagnosticsByDoc.getOrDefault(span.document(), List.of()).stream()
                     .filter(d -> !suppressUnresolved || !isSuppressibleUnresolvedDiagnostic(d))
                     .map(d -> d.span().orElseThrow())
-                    .anyMatch(s -> before(s.startLine(),s.startColumn(),span.endLine(),span.endColumn())
-                            &&before(span.startLine(),span.startColumn(),s.endLine(),s.endColumn()));
-            if(problem==HierarchyProblem.NONE&&blockingDiagnostics)problem=HierarchyProblem.SOURCE_TYPES_INCOMPLETE;
+                    .anyMatch(s -> before(s.startLine(), s.startColumn(), span.endLine(), span.endColumn())
+                            && before(span.startLine(), span.startColumn(), s.endLine(), s.endColumn()));
+            if (problem == HierarchyProblem.NONE && blockingDiagnostics)
+                problem = HierarchyProblem.SOURCE_TYPES_INCOMPLETE;
             var ownerTypes = typesByOwner.getOrDefault(id, List.of());
             var ownerRels = relationsBySource.getOrDefault(id, List.of());
             if (problem == HierarchyProblem.NONE) {
@@ -549,8 +877,9 @@ public final class SpringSourceEvidence {
                             problem = HierarchyProblem.SOURCE_TYPES_INCOMPLETE;
                             break;
                         }
-                        if (value.kind() != JavaType.Kind.DECLARED || !value.components().isEmpty()
-                                || !emptySourceMarker(value.target().orElseThrow())) {
+                        if (value.kind() != JavaType.Kind.DECLARED
+                                || !safeImplementedInterface(value.target().orElseThrow(),
+                                        value.components().isEmpty(), new HashSet<>(), 0)) {
                             problem = HierarchyProblem.SOURCE_SHAPE_UNSUPPORTED;
                             break;
                         }
@@ -590,6 +919,121 @@ public final class SpringSourceEvidence {
                     && "java.lang.Object".equals(typeName(current)))
                 return new SourceHierarchy(chain, problem);
         }
+    }
+
+    private static final Set<String> SAFE_JDK_INTERFACES = Set.of(
+            "java.io.Serializable", "java.lang.Cloneable", "java.lang.Comparable",
+            "java.lang.AutoCloseable", "java.io.Closeable", "java.lang.Runnable",
+            "java.util.concurrent.Callable", "java.util.EventListener");
+    private static final Set<String> SAFE_SPRING_LIFECYCLE_INTERFACES = Set.of(
+            "org.springframework.beans.factory.InitializingBean",
+            "org.springframework.beans.factory.DisposableBean",
+            "org.springframework.core.Ordered",
+            "org.springframework.core.PriorityOrdered",
+            "org.springframework.beans.factory.BeanNameAware",
+            "org.springframework.context.ApplicationContextAware",
+            "org.springframework.context.EnvironmentAware",
+            "org.springframework.context.ResourceLoaderAware",
+            "org.springframework.context.ApplicationEventPublisherAware",
+            "org.springframework.beans.factory.BeanFactoryAware",
+            "org.springframework.boot.CommandLineRunner",
+            "org.springframework.boot.ApplicationRunner");
+    private static final Set<String> BENIGN_JDK_ANNOTATIONS = Set.of(
+            "java.lang.Deprecated", "java.lang.FunctionalInterface",
+            "java.lang.Override", "java.lang.SafeVarargs", "java.lang.SuppressWarnings");
+    private static final Pattern DEFAULT_MODIFIER_PATTERN = Pattern.compile("\\bdefault\\s+");
+
+    private boolean safeImplementedInterface(
+            EntityIdentity type, boolean nonParameterized, Set<EntityIdentity> visited, int depth) {
+        if (depth >= 16 || !visited.add(type)) return false;
+        var declaration = declarations.get(type);
+        if (declaration == null || declaration.status() != SemanticStatus.RESOLVED) return false;
+        EntityOrigin origin = declaration.entity().origin();
+        String qualifiedName = typeName(type);
+        if (origin == EntityOrigin.JDK && qualifiedName != null && SAFE_JDK_INTERFACES.contains(qualifiedName)) {
+            return true;
+        }
+        if (origin == EntityOrigin.DEPENDENCY && nonParameterized && qualifiedName != null
+                && SAFE_SPRING_LIFECYCLE_INTERFACES.contains(qualifiedName)) {
+            if (artifacts.containsKey(type)
+                    || (validationMode == SpringFrameworkEvidence.ValidationMode.COMPATIBLE_FAMILY_OR_SOURCE_SCOPED
+                            && framework.artifacts().isEmpty())) {
+                return true;
+            }
+            return false;
+        }
+        if (!nonParameterized) return false;
+        if (emptySourceMarker(type)) return true;
+        var shape = typeShapesById.get(type);
+        if (origin != EntityOrigin.PROJECT || declaration.entity().declaration().isEmpty()
+                || !declaration.uncertainties().isEmpty() || !declaration.diagnostics().isEmpty()
+                || shape == null || shape.kind() != TypeDeclarationRecord.Kind.INTERFACE || !shape.independent()) {
+            return false;
+        }
+        if (hasNonBenignAnnotations(type)) return false;
+        String ifaceHeader = declaration.spelling();
+        if (ifaceHeader.contains("\\u")) return false;
+        for (var annotation : annotations(type)) {
+            ifaceHeader = ifaceHeader.replace(annotation.use().spelling(), " ");
+        }
+        var ifaceMatcher = PLAIN_INTERFACE.matcher(ifaceHeader.replaceAll("(?s)/\\*.*?\\*/|//[^\\r\\n]*", " "));
+        if (!ifaceMatcher.find()) return false;
+        var span = declaration.entity().declaration().orElseThrow();
+        boolean suppressUnresolved = validationMode == SpringFrameworkEvidence.ValidationMode.COMPATIBLE_FAMILY_OR_SOURCE_SCOPED
+                && framework.artifacts().isEmpty();
+        boolean hasBlockingDiag = diagnosticsByDoc.getOrDefault(span.document(), List.of()).stream()
+                .filter(d -> !suppressUnresolved || !isSuppressibleUnresolvedDiagnostic(d))
+                .map(d -> d.span().orElseThrow())
+                .anyMatch(s -> before(s.startLine(), s.startColumn(), span.endLine(), span.endColumn())
+                        && before(span.startLine(), span.startColumn(), s.endLine(), s.endColumn()));
+        if (hasBlockingDiag) return false;
+
+        // Every declared member must be an abstract contract member without Spring/unknown metadata or default body.
+        for (EntityIdentity member : declaredMembersByOwner.getOrDefault(type, List.of())) {
+            var memberDecl = declarations.get(member);
+            if (memberDecl == null || memberDecl.status() != SemanticStatus.RESOLVED) return false;
+            if (hasNonBenignAnnotations(member)) return false;
+            if (memberDecl.entity().kind() == EntityKind.METHOD) {
+                if (memberDecl.spelling().contains("\\u")) return false;
+                String stripped = memberDecl.spelling().replaceAll("(?s)/\\*.*?\\*/|//[^\\r\\n]*", " ");
+                if (DEFAULT_MODIFIER_PATTERN.matcher(stripped).find()) return false;
+            }
+        }
+
+        // All declared super-interfaces must match resolved edges and also be verified safe.
+        int declaredExtends = ifaceMatcher.group(1) == null ? 0 : ifaceMatcher.group(1).split(",").length;
+        var resolvedExtends = new HashSet<EntityIdentity>();
+        for (var rel : relationsBySource.getOrDefault(type, List.of())) {
+            if (!rel.kind().value().equals("java.extends")) continue;
+            if (!(rel.target() instanceof RelationshipTarget.Resolved resolvedTarget)) return false;
+            if (resolvedExtends.add(resolvedTarget.target())
+                    && !safeImplementedInterface(resolvedTarget.target(), true, visited, depth + 1)) {
+                return false;
+            }
+        }
+        if (resolvedExtends.size() != declaredExtends) return false;
+        // Reject parameterized super-interfaces on the project interface itself.
+        for (var written : typesByOwner.getOrDefault(type, List.of())) {
+            if (written.role().value().equals("java.extends")) {
+                var wt = written.type();
+                if (wt.status() != SemanticStatus.RESOLVED || wt.target().isEmpty()) return false;
+                String superName = typeName(wt.target().orElseThrow());
+                if (!wt.components().isEmpty() && (superName == null || !SAFE_JDK_INTERFACES.contains(superName))) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    private boolean hasNonBenignAnnotations(EntityIdentity owner) {
+        for (var ann : annotations(owner)) {
+            if (javaOverride(ann)) continue;
+            var targets = annotationTargets.getOrDefault(List.of(ann.use().owner(), ann.use().span()), List.of());
+            boolean benign = targets.size() == 1 && BENIGN_JDK_ANNOTATIONS.contains(typeName(targets.getFirst()));
+            if (!benign) return true;
+        }
+        return false;
     }
 
     private boolean emptySourceMarker(EntityIdentity type) {

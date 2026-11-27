@@ -25,7 +25,7 @@ import java.util.regex.Pattern;
 public final class StaticPolyglotScan {
     private static final int MEMORY_ROW_CAP = 65_536;
     private static final int PARSE_WORKERS = Math.max(1, Math.min(Runtime.getRuntime().availableProcessors(), 8));
-    private static final int PARSE_BATCH_LIMIT = 64;
+    private static final int PARSE_BATCH_LIMIT = 512;
     static final String DECLARATIVE_PROVIDER = "source.declarative-infra:m8.4-v1";
     private static final String DECLARATIVE_TOOL_IDENTITY = ContentDigest.sha256Utf8(DECLARATIVE_PROVIDER).value();
     private static final Pattern DOCKERFILE_FROM = Pattern.compile(
@@ -57,15 +57,24 @@ public final class StaticPolyglotScan {
     }
 
     public record Result(SemanticTables.Table records, Map<String, Long> categories, Map<String, Long> failures,
-            long documents, long parsed, long workerFileBytes, long cacheHits, long cacheMisses) {
+            long documents, long parsed, long workerFileBytes, long cacheHits, long cacheMisses,
+            JsWorkspaceAliasResolver.WorkspaceModel jsWorkspace) {
         public Result(SemanticTables.Table records, Map<String, Long> categories, Map<String, Long> failures,
                 long documents, long parsed, long workerFileBytes) {
-            this(records, categories, failures, documents, parsed, workerFileBytes, 0L, 0L);
+            this(records, categories, failures, documents, parsed, workerFileBytes, 0L, 0L,
+                    JsWorkspaceAliasResolver.WorkspaceModel.EMPTY);
+        }
+
+        public Result(SemanticTables.Table records, Map<String, Long> categories, Map<String, Long> failures,
+                long documents, long parsed, long workerFileBytes, long cacheHits, long cacheMisses) {
+            this(records, categories, failures, documents, parsed, workerFileBytes, cacheHits, cacheMisses,
+                    JsWorkspaceAliasResolver.WorkspaceModel.EMPTY);
         }
 
         public Result {
             categories = Map.copyOf(categories);
             failures = Map.copyOf(failures);
+            jsWorkspace = jsWorkspace == null ? JsWorkspaceAliasResolver.WorkspaceModel.EMPTY : jsWorkspace;
         }
 
         public Map<String, Object> summary() {
@@ -79,42 +88,60 @@ public final class StaticPolyglotScan {
         }
     }
 
+    private enum TaskMode {
+        TREE_SITTER,
+        JAVA_GRPC,
+        DECLARATIVE_INFRA,
+        OPENAPI_JSON_PROBE,
+        SFC_SCRIPT
+    }
+
     private record ParseTask(String document, Object rawPathField, String path, String hinted, String language,
-            String provider, ContentHandle source, boolean declarativeInfra, byte[] preloadedBytes,
-            IOException preloadedFailure) {
+            String provider, ContentHandle source, TaskMode mode) {
     }
 
     private record ParseOutput(ParseTask task, TreeSitterSourceFrontend.Summary summary,
-            List<TreeSitterSourceFrontend.Fact> facts, String failureReason, boolean cancelledError) {
+            List<TreeSitterSourceFrontend.Fact> facts, String failureReason, boolean cancelledError, boolean skipped) {
+        static ParseOutput skip(ParseTask task) {
+            return new ParseOutput(task, null, List.of(), null, false, true);
+        }
     }
 
     public Result run(PolyglotInventory.Report inventory, SemanticTables tables, RepositoryContentStore content,
             Path scratch, BooleanSupplier cancelled) throws IOException {
-        return run(inventory, tables, content, scratch, cancelled, digest -> null, false, Optional.empty());
+        return run(inventory, tables, content, scratch, cancelled, digest -> null, false, Optional.empty(), null);
     }
 
     public Result run(PolyglotInventory.Report inventory, SemanticTables tables, RepositoryContentStore content,
             Path scratch, BooleanSupplier cancelled,
             Map<ContentDigest, byte[]> verifiedBytes, boolean fastArchitecture) throws IOException {
         return run(inventory, tables, content, scratch, cancelled, verifiedBytes::get, fastArchitecture,
-                Optional.empty());
+                Optional.empty(), null);
     }
 
     Result run(PolyglotInventory.Report inventory, SemanticTables tables, RepositoryContentStore content, Path scratch,
             BooleanSupplier cancelled,
             Function<ContentDigest, byte[]> verifiedBytes, boolean fastArchitecture) throws IOException {
-        return run(inventory, tables, content, scratch, cancelled, verifiedBytes, fastArchitecture, Optional.empty());
+        return run(inventory, tables, content, scratch, cancelled, verifiedBytes, fastArchitecture, Optional.empty(), null);
     }
 
     Result run(PolyglotInventory.Report inventory, SemanticTables tables, RepositoryContentStore content, Path scratch,
             BooleanSupplier cancelled,
             Function<ContentDigest, byte[]> verifiedBytes, boolean fastArchitecture,
             Optional<Path> incrementalCacheRoot) throws IOException {
+        return run(inventory, tables, content, scratch, cancelled, verifiedBytes, fastArchitecture,
+                incrementalCacheRoot, null);
+    }
+
+    Result run(PolyglotInventory.Report inventory, SemanticTables tables, RepositoryContentStore content, Path scratch,
+            BooleanSupplier cancelled,
+            Function<ContentDigest, byte[]> verifiedBytes, boolean fastArchitecture,
+            Optional<Path> incrementalCacheRoot, List<SemanticTables.Row> preloadedRows) throws IOException {
         var categories = new TreeMap<String, Long>();
         var failures = new TreeMap<String, Long>();
         long[] counts = { 0L, 0L }; // [documents, parsed]
         int fileBudget = (int) Math.min(64_000_000L, Math.max(1_000_000L, Runtime.getRuntime().maxMemory() / 16));
-        long maxBatchBytes = Math.min(64_000_000L, Math.max(4_000_000L, Runtime.getRuntime().maxMemory() / 16));
+        long maxBatchBytes = Math.min(64_000_000L, Math.max(8_000_000L, Runtime.getRuntime().maxMemory() / 16));
         var supportedGrammars = TreeSitterSourceFrontend.languages();
         var treeSitter = new TreeSitterSourceFrontend();
         var javaGrpc = new JavaGrpcSourceFrontend();
@@ -123,10 +150,13 @@ public final class StaticPolyglotScan {
         var toolIdentities = new ConcurrentHashMap<String, String>();
         IncrementalPolyglotCache polyglotCache = incrementalCacheRoot.map(IncrementalPolyglotCache::open).orElse(null);
         var batch = new ArrayList<ParseTask>(PARSE_BATCH_LIMIT);
+        var jsWorkspaceConfigs = new TreeMap<String, String>();
         long batchBytes = 0L;
-        try (var input = tables.open(inventory.entries(), cancelled)) {
+        SemanticTables.Reader inputReader = preloadedRows == null ? tables.open(inventory.entries(), cancelled) : null;
+        Iterator<SemanticTables.Row> preloadedIt = preloadedRows != null ? preloadedRows.iterator() : null;
+        try {
             SemanticTables.Row row;
-            while ((row = input.next()) != null) {
+            while ((row = (preloadedIt != null ? (preloadedIt.hasNext() ? preloadedIt.next() : null) : inputReader.next())) != null) {
                 if (cancelled.getAsBoolean() || Thread.currentThread().isInterrupted())
                     throw new IOException("SYNTAX_CANCELLED");
                 if (!"FILE".equals(row.fields().get("kind")) || !"ACQUIRED".equals(row.fields().get("disposition")))
@@ -138,6 +168,15 @@ public final class StaticPolyglotScan {
                 var languages = GraphJson.array(row.fields().get("languageCandidates")).stream().map(GraphJson::string)
                         .toList();
                 var source = PolyglotScan.handle(row.fields().get("content"));
+                // Passively collect JS/TS workspace alias config files (tsconfig, jsconfig, package.json, pnpm-workspace)
+                if (isJsWorkspaceConfig(path) && jsWorkspaceConfigs.size() < 128 && source.size() > 0 && source.size() <= 512_000) {
+                    try {
+                        byte[] cfgBytes = source(content, source, fileBudget, verifiedBytes);
+                        jsWorkspaceConfigs.putIfAbsent(path.replace('\\', '/'), new String(cfgBytes, StandardCharsets.UTF_8));
+                    } catch (IOException | RuntimeException ignored) {
+                        // Passive config read stays non-fatal.
+                    }
+                }
                 boolean matchedAnyLanguage = false;
                 for (String hinted : languages) {
                     String language = hinted.equals("typescript") && path.endsWith(".tsx") ? "tsx" : hinted;
@@ -145,22 +184,12 @@ public final class StaticPolyglotScan {
                     if (!hinted.equals("protobuf") && !BASELINE_LANGUAGES.contains(hinted))
                         continue;
                     matchedAnyLanguage = true;
-                    byte[] javaBytes = null;
-                    IOException javaFailure = null;
-                    if (hinted.equals("java"))
-                        try {
-                            javaBytes = source(content, source, fileBudget, verifiedBytes);
-                            if (!JavaGrpcSourceFrontend.candidate(javaBytes))
-                                continue;
-                        } catch (IOException failure) {
-                            javaFailure = failure;
-                        }
                     String document = KnowledgeGraph.derivedIdentity("syntax-document",
                             List.of(inventory.inventory(), row.key(), hinted));
                     String provider = hinted.equals("java") ? JavaGrpcSourceFrontend.PROVIDER
                             : TreeSitterSourceFrontend.provider();
-                    batch.add(new ParseTask(document, rawPathField, path, hinted, language, provider, source, false,
-                            javaBytes, javaFailure));
+                    TaskMode mode = hinted.equals("java") ? TaskMode.JAVA_GRPC : TaskMode.TREE_SITTER;
+                    batch.add(new ParseTask(document, rawPathField, path, hinted, language, provider, source, mode));
                     batchBytes += Math.max(0L, source.size());
                     if (batch.size() >= PARSE_BATCH_LIMIT || batchBytes >= maxBatchBytes) {
                         flushBatch(batch, inventory, content, fileBudget, verifiedBytes, fastArchitecture,
@@ -172,32 +201,33 @@ public final class StaticPolyglotScan {
                 }
                 if (!matchedAnyLanguage) {
                     Optional<String> infraLang = declarativeInfraLanguage(path);
-                    byte[] openApiJsonBytes = null;
-                    if (infraLang.isEmpty() && isOpenApiJsonCandidate(path, source, fileBudget)) {
-                        try {
-                            byte[] probe = source(content, source, fileBudget, verifiedBytes);
-                            if (containsAscii(probe, "\"openapi\"")) {
-                                infraLang = Optional.of("openapi");
-                                openApiJsonBytes = probe;
-                            }
-                        } catch (IOException ignored) {
-                            /* Non-OpenAPI or unreadable JSON stays in inventory without failing syntax scan. */
-                        }
-                    }
                     if (infraLang.isPresent()) {
                         String infra = infraLang.orElseThrow();
                         String document = KnowledgeGraph.derivedIdentity("syntax-document",
                                 List.of(inventory.inventory(), row.key(), infra));
                         batch.add(new ParseTask(document, rawPathField, path, infra, infra, DECLARATIVE_PROVIDER,
-                                source, true, openApiJsonBytes, null));
+                                source, TaskMode.DECLARATIVE_INFRA));
                         batchBytes += Math.max(0L, source.size());
-                        if (batch.size() >= PARSE_BATCH_LIMIT || batchBytes >= maxBatchBytes) {
-                            flushBatch(batch, inventory, content, fileBudget, verifiedBytes, fastArchitecture,
-                                    supportedGrammars, treeSitter, javaGrpc, polyglotCache, toolIdentities,
-                                    memoryRows, spillRef, scratch, categories, failures, counts, cancelled);
-                            batch.clear();
-                            batchBytes = 0L;
-                        }
+                    } else if (isSfcFile(path)) {
+                        String sfcLang = path.toLowerCase(Locale.ROOT).endsWith(".vue") ? "vue" : "svelte";
+                        String document = KnowledgeGraph.derivedIdentity("syntax-document",
+                                List.of(inventory.inventory(), row.key(), sfcLang));
+                        batch.add(new ParseTask(document, rawPathField, path, sfcLang, sfcLang,
+                                TreeSitterSourceFrontend.provider(), source, TaskMode.SFC_SCRIPT));
+                        batchBytes += Math.max(0L, source.size());
+                    } else if (isOpenApiJsonCandidate(path, source, fileBudget)) {
+                        String document = KnowledgeGraph.derivedIdentity("syntax-document",
+                                List.of(inventory.inventory(), row.key(), "openapi"));
+                        batch.add(new ParseTask(document, rawPathField, path, "openapi", "openapi", DECLARATIVE_PROVIDER,
+                                source, TaskMode.OPENAPI_JSON_PROBE));
+                        batchBytes += Math.max(0L, source.size());
+                    }
+                    if (batch.size() >= PARSE_BATCH_LIMIT || batchBytes >= maxBatchBytes) {
+                        flushBatch(batch, inventory, content, fileBudget, verifiedBytes, fastArchitecture,
+                                supportedGrammars, treeSitter, javaGrpc, polyglotCache, toolIdentities,
+                                memoryRows, spillRef, scratch, categories, failures, counts, cancelled);
+                        batch.clear();
+                        batchBytes = 0L;
                     }
                 }
             }
@@ -209,10 +239,13 @@ public final class StaticPolyglotScan {
             }
             long hits = polyglotCache == null ? 0L : polyglotCache.hits();
             long misses = polyglotCache == null ? 0L : polyglotCache.misses();
+            var jsWorkspace = jsWorkspaceConfigs.isEmpty()
+                    ? JsWorkspaceAliasResolver.WorkspaceModel.EMPTY
+                    : JsWorkspaceAliasResolver.build(jsWorkspaceConfigs);
             if (spillRef[0] == null) {
                 return new Result(
                         tables.write(SemanticTables.Kind.OBSERVATION, memoryRows.values().iterator(), cancelled),
-                        categories, failures, counts[0], counts[1], fileBudget, hits, misses);
+                        categories, failures, counts[0], counts[1], fileBudget, hits, misses, jsWorkspace);
             }
             try (var rows = spillRef[0].rows("syntax", false)) {
                 var iterator = new Iterator<SemanticTables.Row>() {
@@ -242,11 +275,16 @@ public final class StaticPolyglotScan {
                     }
                 };
                 return new Result(tables.write(SemanticTables.Kind.OBSERVATION, iterator, cancelled), categories,
-                        failures, counts[0], counts[1], fileBudget, hits, misses);
+                        failures, counts[0], counts[1], fileBudget, hits, misses, jsWorkspace);
             } catch (UncheckedIOException failure) {
                 throw failure.getCause();
             }
         } finally {
+            if (inputReader != null)
+                try {
+                    inputReader.close();
+                } catch (IOException ignored) {
+                }
             if (spillRef[0] != null)
                 try {
                     spillRef[0].close();
@@ -276,42 +314,68 @@ public final class StaticPolyglotScan {
             TreeMap<String, Long> failures,
             long[] counts,
             BooleanSupplier cancelled) throws IOException {
-        List<ParseOutput> outputs = new ArrayList<>(batch.size());
-        if (batch.size() == 1 || PARSE_WORKERS <= 1) {
-            for (var task : batch) {
-                var out = parseOne(task, content, fileBudget, verifiedBytes, fastArchitecture,
+        int n = batch.size();
+        ParseOutput[] results = new ParseOutput[n];
+        if (n == 1 || PARSE_WORKERS <= 1) {
+            for (int i = 0; i < n; i++) {
+                var out = parseOne(batch.get(i), content, fileBudget, verifiedBytes, fastArchitecture,
                         supportedGrammars, treeSitter, javaGrpc, polyglotCache, toolIdentities, cancelled);
                 if (out.cancelledError())
                     throw new IOException("SYNTAX_CANCELLED");
-                outputs.add(out);
+                results[i] = out;
             }
         } else {
-            List<Future<ParseOutput>> futures = new ArrayList<>(batch.size());
+            // Dynamic work-stealing across PARSE_WORKERS with LPT (largest files first) scheduling
+            // eliminates straggler stalls on large polyglot files while outputs are still sorted deterministically.
+            var orderedBatch = new ArrayList<>(batch);
+            orderedBatch.sort(Comparator.comparingLong((ParseTask t) -> t.source().size()).reversed()
+                    .thenComparing(ParseTask::document));
+            int workers = Math.min(PARSE_WORKERS, n);
+            var nextIndex = new java.util.concurrent.atomic.AtomicInteger(0);
+            var cancelFlag = new java.util.concurrent.atomic.AtomicBoolean(false);
+            List<Future<Void>> futures = new ArrayList<>(workers);
             boolean failed = false;
             try {
-                for (var task : batch) {
-                    futures.add(PARSE_POOL.submit(() -> parseOne(task, content, fileBudget, verifiedBytes,
-                            fastArchitecture, supportedGrammars, treeSitter, javaGrpc, polyglotCache, toolIdentities,
-                            cancelled)));
+                for (int w = 0; w < workers; w++) {
+                    futures.add(PARSE_POOL.submit(() -> {
+                        int idx;
+                        while (!cancelFlag.get() && (idx = nextIndex.getAndIncrement()) < n) {
+                            if (cancelled.getAsBoolean() || Thread.currentThread().isInterrupted()) {
+                                cancelFlag.set(true);
+                                results[idx] = new ParseOutput(orderedBatch.get(idx), null, List.of(), "SYNTAX_CANCELLED", true, false);
+                                return null;
+                            }
+                            ParseOutput out = parseOne(orderedBatch.get(idx), content, fileBudget, verifiedBytes,
+                                    fastArchitecture, supportedGrammars, treeSitter, javaGrpc, polyglotCache,
+                                    toolIdentities, cancelled);
+                            results[idx] = out;
+                            if (out.cancelledError()) {
+                                cancelFlag.set(true);
+                                return null;
+                            }
+                        }
+                        return null;
+                    }));
                 }
                 for (var future : futures) {
                     if (cancelled.getAsBoolean() || Thread.currentThread().isInterrupted()) {
                         failed = true;
+                        cancelFlag.set(true);
                         throw new IOException("SYNTAX_CANCELLED");
                     }
-                    ParseOutput out = future.get();
-                    if (out.cancelledError()) {
-                        failed = true;
-                        throw new IOException("SYNTAX_CANCELLED");
-                    }
-                    outputs.add(out);
+                    future.get();
+                }
+                if (cancelFlag.get()) {
+                    throw new IOException("SYNTAX_CANCELLED");
                 }
             } catch (InterruptedException interrupted) {
                 failed = true;
+                cancelFlag.set(true);
                 Thread.currentThread().interrupt();
                 throw new IOException("SYNTAX_CANCELLED");
             } catch (ExecutionException exec) {
                 failed = true;
+                cancelFlag.set(true);
                 if (exec.getCause() instanceof IOException io)
                     throw io;
                 if (exec.getCause() instanceof RuntimeException re)
@@ -325,6 +389,13 @@ public final class StaticPolyglotScan {
                         f.cancel(true);
                 }
             }
+        }
+        var outputs = new ArrayList<ParseOutput>(n);
+        for (int i = 0; i < n; i++) {
+            ParseOutput out = results[i];
+            if (out == null) continue;
+            if (out.cancelledError()) throw new IOException("SYNTAX_CANCELLED");
+            if (!out.skipped()) outputs.add(out);
         }
         // Merge rows in strictly deterministic sorted document/key order so canonical digests remain identical.
         outputs.sort(Comparator.comparing(o -> o.task().document()));
@@ -391,45 +462,153 @@ public final class StaticPolyglotScan {
             ConcurrentHashMap<String, String> toolIdentities,
             BooleanSupplier cancelled) {
         if (cancelled.getAsBoolean() || Thread.currentThread().isInterrupted()) {
-            return new ParseOutput(task, null, List.of(), "SYNTAX_CANCELLED", true);
+            return new ParseOutput(task, null, List.of(), "SYNTAX_CANCELLED", true, false);
         }
         try {
-            if (!task.hinted().equals("java") && !task.declarativeInfra()
-                    && !supportedGrammars.contains(task.language())) {
-                throw new IOException("SYNTAX_GRAMMAR_UNAVAILABLE");
-            }
-            if (task.preloadedFailure() != null)
-                throw task.preloadedFailure();
-            String toolId = task.declarativeInfra()
-                    ? DECLARATIVE_TOOL_IDENTITY
-                    : toolIdentities.computeIfAbsent(task.language(),
-                            lang -> TreeSitterSourceFrontend.toolIdentity(lang).orElse(""));
-            ContentDigest cacheKey = (!task.hinted().equals("java") && polyglotCache != null
-                    && task.source().size() <= fileBudget)
-                            ? IncrementalPolyglotCache.key(task.provider(), toolId, task.language(),
-                                    task.source().digest(), task.source().size(), fastArchitecture)
-                            : null;
-            var cachedEntry = cacheKey == null ? Optional.<IncrementalPolyglotCache.Entry>empty()
-                    : polyglotCache.get(cacheKey);
-            if (cachedEntry.isPresent()) {
-                var entry = cachedEntry.orElseThrow();
-                return new ParseOutput(task, entry.summary(), entry.facts(), null, false);
-            }
-            byte[] bytes = task.preloadedBytes() == null
-                    ? source(content, task.source(), fileBudget, verifiedBytes)
-                    : task.preloadedBytes();
-            var recordedFacts = new ArrayList<TreeSitterSourceFrontend.Fact>();
-            TreeSitterSourceFrontend.Summary summary;
-            if (task.declarativeInfra()) {
-                summary = parseDeclarativeInfra(task.language(), bytes, recordedFacts, cancelled);
-            } else if (task.hinted().equals("java")) {
+            if (task.mode() == TaskMode.JAVA_GRPC) {
+                ContentDigest probeKey = (polyglotCache != null && task.source().size() <= fileBudget)
+                        ? IncrementalPolyglotCache.probeKey("java-grpc", JavaGrpcSourceFrontend.PROVIDER,
+                                task.source().digest(), task.source().size())
+                        : null;
+                if (probeKey != null) {
+                    var sentinel = polyglotCache.getProbe(probeKey);
+                    if (sentinel.isPresent() && sentinel.orElseThrow() == IncrementalPolyglotCache.ProbeStatus.NOT_CANDIDATE) {
+                        return ParseOutput.skip(task);
+                    }
+                }
+                ContentDigest cacheKey = (polyglotCache != null && task.source().size() <= fileBudget)
+                        ? IncrementalPolyglotCache.key(JavaGrpcSourceFrontend.PROVIDER, JavaGrpcSourceFrontend.PROVIDER,
+                                "java", task.source().digest(), task.source().size(), fastArchitecture)
+                        : null;
+                if (cacheKey != null) {
+                    var cachedEntry = polyglotCache.get(cacheKey);
+                    if (cachedEntry.isPresent()) {
+                        var entry = cachedEntry.orElseThrow();
+                        return new ParseOutput(task, entry.summary(), entry.facts(), null, false, false);
+                    }
+                }
+                byte[] bytes = source(content, task.source(), fileBudget, verifiedBytes);
+                if (!JavaGrpcSourceFrontend.candidate(bytes)) {
+                    if (probeKey != null) {
+                        polyglotCache.putProbe(probeKey, IncrementalPolyglotCache.ProbeStatus.NOT_CANDIDATE);
+                    }
+                    return ParseOutput.skip(task);
+                }
+                var recordedFacts = new ArrayList<TreeSitterSourceFrontend.Fact>();
                 var parsedJava = javaGrpc.parse(bytes,
                         fact -> recordedFacts.add(new TreeSitterSourceFrontend.Fact(fact.category(),
                                 fact.nodeKind(), fact.name(), fact.written(), fact.span(), fact.owner(),
                                 fact.recovered(), fact.attributes())),
                         cancelled);
-                summary = new TreeSitterSourceFrontend.Summary(parsedJava.nodes(), parsedJava.facts(),
+                var summary = new TreeSitterSourceFrontend.Summary(parsedJava.nodes(), parsedJava.facts(),
                         parsedJava.errors(), parsedJava.grammar(), parsedJava.toolIdentity());
+                var immutableFacts = List.copyOf(recordedFacts);
+                if (cacheKey != null) {
+                    polyglotCache.put(cacheKey, new IncrementalPolyglotCache.Entry(summary, immutableFacts));
+                }
+                return new ParseOutput(task, summary, immutableFacts, null, false, false);
+            }
+
+            if (task.mode() == TaskMode.OPENAPI_JSON_PROBE) {
+                ContentDigest probeKey = (polyglotCache != null && task.source().size() <= fileBudget)
+                        ? IncrementalPolyglotCache.probeKey("openapi-json", DECLARATIVE_PROVIDER,
+                                task.source().digest(), task.source().size())
+                        : null;
+                if (probeKey != null) {
+                    var sentinel = polyglotCache.getProbe(probeKey);
+                    if (sentinel.isPresent() && sentinel.orElseThrow() == IncrementalPolyglotCache.ProbeStatus.NOT_OPENAPI) {
+                        return ParseOutput.skip(task);
+                    }
+                }
+                ContentDigest cacheKey = (polyglotCache != null && task.source().size() <= fileBudget)
+                        ? IncrementalPolyglotCache.key(DECLARATIVE_PROVIDER, DECLARATIVE_TOOL_IDENTITY,
+                                "openapi", task.source().digest(), task.source().size(), fastArchitecture)
+                        : null;
+                if (cacheKey != null) {
+                    var cachedEntry = polyglotCache.get(cacheKey);
+                    if (cachedEntry.isPresent()) {
+                        var entry = cachedEntry.orElseThrow();
+                        return new ParseOutput(task, entry.summary(), entry.facts(), null, false, false);
+                    }
+                }
+                byte[] probe;
+                try {
+                    probe = source(content, task.source(), fileBudget, verifiedBytes);
+                } catch (IOException ignored) {
+                    /* Non-OpenAPI or unreadable JSON stays in inventory without failing syntax scan. */
+                    return ParseOutput.skip(task);
+                }
+                if (!containsAscii(probe, "\"openapi\"") && !containsAscii(probe, "\"swagger\"")) {
+                    if (probeKey != null) {
+                        polyglotCache.putProbe(probeKey, IncrementalPolyglotCache.ProbeStatus.NOT_OPENAPI);
+                    }
+                    return ParseOutput.skip(task);
+                }
+                var recordedFacts = new ArrayList<TreeSitterSourceFrontend.Fact>();
+                var summary = parseDeclarativeInfra("openapi", probe, recordedFacts, cancelled);
+                var immutableFacts = List.copyOf(recordedFacts);
+                if (cacheKey != null) {
+                    polyglotCache.put(cacheKey, new IncrementalPolyglotCache.Entry(summary, immutableFacts));
+                }
+                return new ParseOutput(task, summary, immutableFacts, null, false, false);
+            }
+
+            if (task.mode() == TaskMode.SFC_SCRIPT) {
+                byte[] bytes = source(content, task.source(), fileBudget, verifiedBytes);
+                String text = new String(bytes, StandardCharsets.UTF_8);
+                var scripts = JsWorkspaceAliasResolver.extractSfcScripts(text);
+                if (scripts.isEmpty()) {
+                    return ParseOutput.skip(task);
+                }
+                var recordedFacts = new ArrayList<TreeSitterSourceFrontend.Fact>();
+                long totalNodes = 0, totalFacts = 0, totalErrors = 0;
+                String lastGrammar = task.language();
+                String lastToolId = "";
+                for (var script : scripts) {
+                    String grammarLang = supportedGrammars.contains(script.language()) ? script.language() : "javascript";
+                    if (!supportedGrammars.contains(grammarLang)) continue;
+                    // Preserve exact 1-based line numbers from the enclosing .vue/.svelte file and avoid
+                    // span collisions across multiple <script> blocks in the same SFC.
+                    String paddedCode = script.startLine() > 1
+                            ? "\n".repeat(script.startLine() - 1) + script.code()
+                            : script.code();
+                    var sSum = treeSitter.parse(grammarLang, paddedCode.getBytes(StandardCharsets.UTF_8),
+                            recordedFacts::add, cancelled, fastArchitecture);
+                    totalNodes += sSum.nodes();
+                    totalFacts += sSum.facts();
+                    totalErrors += sSum.errors();
+                    lastGrammar = sSum.grammar();
+                    lastToolId = sSum.toolIdentity();
+                }
+                var summary = new TreeSitterSourceFrontend.Summary(totalNodes, totalFacts, totalErrors, lastGrammar, lastToolId);
+                return new ParseOutput(task, summary, List.copyOf(recordedFacts), null, false, false);
+            }
+
+            if (task.mode() == TaskMode.TREE_SITTER && !supportedGrammars.contains(task.language())) {
+                throw new IOException("SYNTAX_GRAMMAR_UNAVAILABLE");
+            }
+            String toolId = task.mode() == TaskMode.DECLARATIVE_INFRA
+                    ? DECLARATIVE_TOOL_IDENTITY
+                    : toolIdentities.computeIfAbsent(task.language(),
+                            lang -> TreeSitterSourceFrontend.toolIdentity(lang).orElse(""));
+            ContentDigest cacheKey = (polyglotCache != null && task.source().size() <= fileBudget)
+                    ? IncrementalPolyglotCache.key(task.provider(), toolId, task.language(),
+                            task.source().digest(), task.source().size(), fastArchitecture)
+                    : null;
+            ContentDigest legacyKey = cacheKey == null ? null
+                    : IncrementalPolyglotCache.legacyV2Key(task.provider(), toolId, task.language(),
+                            task.source().digest(), task.source().size(), fastArchitecture);
+            var cachedEntry = cacheKey == null ? Optional.<IncrementalPolyglotCache.Entry>empty()
+                    : polyglotCache.get(cacheKey, legacyKey);
+            if (cachedEntry.isPresent()) {
+                var entry = cachedEntry.orElseThrow();
+                return new ParseOutput(task, entry.summary(), entry.facts(), null, false, false);
+            }
+            byte[] bytes = source(content, task.source(), fileBudget, verifiedBytes);
+            var recordedFacts = new ArrayList<TreeSitterSourceFrontend.Fact>();
+            TreeSitterSourceFrontend.Summary summary;
+            if (task.mode() == TaskMode.DECLARATIVE_INFRA) {
+                summary = parseDeclarativeInfra(task.language(), bytes, recordedFacts, cancelled);
             } else {
                 summary = treeSitter.parse(task.language(), bytes, recordedFacts::add, cancelled, fastArchitecture);
             }
@@ -437,15 +616,15 @@ public final class StaticPolyglotScan {
             if (cacheKey != null) {
                 polyglotCache.put(cacheKey, new IncrementalPolyglotCache.Entry(summary, immutableFacts));
             }
-            return new ParseOutput(task, summary, immutableFacts, null, false);
+            return new ParseOutput(task, summary, immutableFacts, null, false, false);
         } catch (IOException | IllegalArgumentException failure) {
             if (cancelled.getAsBoolean() || Thread.currentThread().isInterrupted()) {
-                return new ParseOutput(task, null, List.of(), "SYNTAX_CANCELLED", true);
+                return new ParseOutput(task, null, List.of(), "SYNTAX_CANCELLED", true, false);
             }
             String reason = failure.getMessage();
             if (reason == null || !reason.matches("[A-Z][A-Z0-9_]{0,100}"))
                 reason = "SYNTAX_SOURCE_OR_PROVIDER_FAILED";
-            return new ParseOutput(task, null, List.of(), reason, false);
+            return new ParseOutput(task, null, List.of(), reason, false, false);
         }
     }
 
@@ -465,6 +644,12 @@ public final class StaticPolyglotScan {
         if (lower.endsWith(".graphql") || lower.endsWith(".gql"))
             return Optional.of("graphql");
         return Optional.empty();
+    }
+
+    private static boolean isSfcFile(String path) {
+        if (path == null) return false;
+        String lower = path.toLowerCase(Locale.ROOT);
+        return lower.endsWith(".vue") || lower.endsWith(".svelte");
     }
 
     private static boolean isOpenApiJsonCandidate(String path, ContentHandle source, int fileBudget) {
@@ -952,6 +1137,13 @@ public final class StaticPolyglotScan {
         byte[] cached = verifiedBytes.apply(source.digest());
         if (cached != null && cached.length == source.size())
             return cached;
+        if (content instanceof StreamingContentStore scs) {
+            try {
+                return scs.readVerifiedBytes(source);
+            } catch (IOException failure) {
+                throw new IOException("SYNTAX_SOURCE_UNAVAILABLE", failure);
+            }
+        }
         try (var captured = content.open(source)) {
             byte[] bytes = captured.readNBytes(Math.toIntExact(source.size()) + 1);
             if (bytes.length != source.size())
@@ -976,7 +1168,7 @@ public final class StaticPolyglotScan {
 
     private record CallSite(String siteId, String document, String langGroup, String language, String normPath,
             String rawPathField, Object contentHandle,
-            String dirPath, String nodeKind, String spanSlot, String ownerSlot, String name, String written,
+            String dirPath, String nodeKind, String spanSlot, Map<String, Object> spanMap, String ownerSlot, String name, String written,
             Map<Integer, String> litArgs, Map<Integer, Integer> forwardParams, ContentDigest proof) {
     }
 
@@ -1128,9 +1320,12 @@ public final class StaticPolyglotScan {
                                 }
                             }
                             if (!litArgs.isEmpty() || !forwardParams.isEmpty()) {
+                                Map<String, Object> copiedSpan = fact.get("span") instanceof Map<?, ?> sm
+                                        ? Map.copyOf(GraphJson.object(sm))
+                                        : Map.of();
                                 wrapperCalls.add(new CallSite(id, document, group, language, rawPath,
                                         rawField, fields.get("content"), dir,
-                                        GraphJson.string(fact.get("nodeKind")), slot, ownerKey, name, written,
+                                        GraphJson.string(fact.get("nodeKind")), slot, copiedSpan, ownerKey, name, written,
                                         Map.copyOf(litArgs), Map.copyOf(forwardParams), artifact.identity()));
                             }
                         }
@@ -1159,8 +1354,8 @@ public final class StaticPolyglotScan {
                 }
             }
         }
-        linkPolyglotSymbols(sites, byLangAndSymbol, byDocAndSymbol, byDirAndSymbol, byStemAndSymbol, docImports, edges,
-                evidence, context, cancelled);
+        linkPolyglotSymbols(sites, byLangAndSymbol, byDocAndSymbol, byDirAndSymbol, byStemAndSymbol, docImports,
+                result.jsWorkspace(), edges, evidence, context, cancelled);
         propagateCrossFileWrappers(rawWrappers, wrapperCalls, directCandidateSpans, declByDocSlot,
                 byLangAndSymbol, byDocAndSymbol, byDirAndSymbol, byStemAndSymbol, docImports,
                 nodes, edges, evidence, context, cancelled);
@@ -1481,12 +1676,12 @@ public final class StaticPolyglotScan {
             } catch (NumberFormatException ignored) {
             }
         }
-        spanMap.put("start", java.math.BigDecimal.valueOf(spanStart));
-        spanMap.put("end", java.math.BigDecimal.valueOf(spanEnd));
-        spanMap.put("startLine", java.math.BigDecimal.ZERO);
-        spanMap.put("startColumn", java.math.BigDecimal.ZERO);
-        spanMap.put("endLine", java.math.BigDecimal.ZERO);
-        spanMap.put("endColumn", java.math.BigDecimal.ZERO);
+        spanMap.put("start", site.spanMap().getOrDefault("start", java.math.BigDecimal.valueOf(spanStart)));
+        spanMap.put("end", site.spanMap().getOrDefault("end", java.math.BigDecimal.valueOf(spanEnd)));
+        spanMap.put("startLine", site.spanMap().getOrDefault("startLine", java.math.BigDecimal.ZERO));
+        spanMap.put("startColumn", site.spanMap().getOrDefault("startColumn", java.math.BigDecimal.ZERO));
+        spanMap.put("endLine", site.spanMap().getOrDefault("endLine", java.math.BigDecimal.ZERO));
+        spanMap.put("endColumn", site.spanMap().getOrDefault("endColumn", java.math.BigDecimal.ZERO));
         var factMap = new TreeMap<String, Object>();
         factMap.put("category", category);
         factMap.put("nodeKind", site.nodeKind());
@@ -1527,14 +1722,23 @@ public final class StaticPolyglotScan {
             Map<String, List<DeclEntry>> byDocAndSymbol,
             Map<String, List<DeclEntry>> byDirAndSymbol, Map<String, List<DeclEntry>> byStemAndSymbol,
             Map<String, Set<String>> docImports,
+            JsWorkspaceAliasResolver.WorkspaceModel jsWorkspace,
             Map<String, KnowledgeGraph.Edge> edges, Map<String, GraphEvidence> evidence, String context,
             BooleanSupplier cancelled) throws IOException {
+        Set<String> knownPaths = new LinkedHashSet<>();
+        for (var list : byLangAndSymbol.values()) {
+            for (var d : list) {
+                if (d.normPath() != null && !d.normPath().isEmpty()) {
+                    knownPaths.add(d.normPath());
+                }
+            }
+        }
         for (var site : sites) {
             if (cancelled.getAsBoolean() || Thread.currentThread().isInterrupted())
                 throw new IOException("SYNTAX_CANCELLED");
             var matchedIds = new TreeSet<String>();
             if (site.category().equals("IMPORT")) {
-                String modulePrefix = resolveImportModulePrefix(site);
+                String modulePrefix = resolveImportModulePrefix(site, jsWorkspace, knownPaths);
                 var siteTokens = tokens(site.name() + " " + site.written());
                 for (String tok : siteTokens) {
                     if (KEYWORDS.contains(tok))
@@ -1644,7 +1848,31 @@ public final class StaticPolyglotScan {
         }
     }
 
-    private static String resolveImportModulePrefix(SiteEntry site) {
+    private static boolean isJsWorkspaceConfig(String path) {
+        if (path == null || path.isEmpty()) return false;
+        String norm = path.replace('\\', '/');
+        int slash = norm.lastIndexOf('/');
+        String base = (slash < 0 ? norm : norm.substring(slash + 1)).toLowerCase(Locale.ROOT);
+        return ((base.startsWith("tsconfig") || base.startsWith("jsconfig")) && base.endsWith(".json"))
+                || base.equals("package.json")
+                || base.equals("pnpm-workspace.yaml")
+                || base.equals("pnpm-workspace.yml");
+    }
+
+    private static String stripJsExtension(String path) {
+        if (path == null) return "";
+        for (String ext : List.of(".tsx", ".ts", ".jsx", ".js", ".mjs", ".cjs", ".vue", ".svelte")) {
+            if (path.endsWith(ext) && path.length() > ext.length()) {
+                return path.substring(0, path.length() - ext.length());
+            }
+        }
+        return path;
+    }
+
+    private static String resolveImportModulePrefix(
+            SiteEntry site,
+            JsWorkspaceAliasResolver.WorkspaceModel jsWorkspace,
+            Set<String> knownPaths) {
         String written = site.written();
         if (written == null || written.isEmpty())
             return "";
@@ -1656,6 +1884,15 @@ public final class StaticPolyglotScan {
                 String spec = written.substring(q1 + 1, q2).trim();
                 if (spec.startsWith("./") || spec.startsWith("../")) {
                     return normalizeRelativePath(site.dirPath(), spec);
+                }
+                if (jsWorkspace != null
+                        && (!jsWorkspace.aliases().isEmpty()
+                                || !jsWorkspace.packageImports().isEmpty()
+                                || !jsWorkspace.packageExports().isEmpty())) {
+                    var resolved = jsWorkspace.resolveImport(site.normPath(), spec, knownPaths);
+                    if (resolved.isPresent()) {
+                        return stripJsExtension(resolved.orElseThrow());
+                    }
                 }
                 if (spec.startsWith("@/") || spec.startsWith("~/")) {
                     return spec.substring(2);
@@ -1711,7 +1948,7 @@ public final class StaticPolyglotScan {
     }
 
     private static String langGroup(String language) {
-        return Set.of("javascript", "typescript", "tsx").contains(language) ? "js-ts" : language;
+        return Set.of("javascript", "typescript", "tsx", "vue", "svelte").contains(language) ? "js-ts" : language;
     }
 
     private static String declSymbol(String name, String written) {

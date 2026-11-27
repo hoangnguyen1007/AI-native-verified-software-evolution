@@ -85,12 +85,45 @@ class StreamingStorageTest {
         }
     }
     @Test void aCorruptSealedBlobCannotBeReportedAsCurrentlyAcquired()throws Exception{
+        // 1. Corrupt packed small blob (<= 64 KiB, stored in cas/packs/*.pack)
         Path source=Files.createDirectory(temp.resolve("source"));Files.writeString(source.resolve("file"),"original");var cas=new StreamingContentStore(temp.resolve("cas"));
         var request=new StreamingAcquisitionRequest(com.evolution.analysis.contract.identity.RepositoryIdentity.fromCanonicalCoordinate("urn:test:corrupt"),Optional.empty(),true,List.of());
         try(var store=new SqliteInventoryStore(temp.resolve("metadata"),cas)){
             assertEquals(JobJournal.State.COMPLETE,new StreamingRepositoryAcquirer(cas,store).acquire(source,"sealed",request,()->false).state());
-            String digest=store.page("sealed",10,Optional.empty()).entries().getFirst().content().orElseThrow().digest().value().substring(7);Files.writeString(temp.resolve("cas/sha256/"+digest.substring(0,2)+"/"+digest.substring(2)),"corrupted");
-            var replay=new StreamingRepositoryAcquirer(cas,store).acquire(source,"sealed",request,()->false);assertEquals(JobJournal.State.WAITING_FOR_INPUT,replay.state());assertTrue(replay.manifest().isEmpty());assertEquals("SEALED_CONTENT_UNAVAILABLE",replay.reason());
+            var handle=store.page("sealed",10,Optional.empty()).entries().getFirst().content().orElseThrow();
+            try(var packs=Files.list(temp.resolve("cas/packs"))){
+                List<Path> packFiles=packs.filter(p->p.getFileName().toString().endsWith(".pack")).toList();
+                assertFalse(packFiles.isEmpty(),"Small blob should reside in a pack file");
+                for(Path packFile:packFiles){
+                    byte[] bytes=Files.readAllBytes(packFile);
+                    // Flip payload byte ("original" starts after 8-byte header + 36-byte entry header = offset 44).
+                    bytes[44]^=0x55;
+                    Files.write(packFile,bytes);
+                }
+            }
+            assertFalse(cas.verify(handle));
+            var replay=new StreamingRepositoryAcquirer(cas,store).acquire(source,"sealed",request,()->false);
+            assertEquals(JobJournal.State.WAITING_FOR_INPUT,replay.state());
+            assertTrue(replay.manifest().isEmpty());
+            assertEquals("SEALED_CONTENT_UNAVAILABLE",replay.reason());
+        }
+        // 2. Corrupt loose large blob (> 64 KiB, stored in cas/sha256/<ab>/<rest>) with mismatched length
+        Path largeSource=Files.createDirectory(temp.resolve("source-large"));
+        byte[] largePayload=new byte[SmallBlobPacks.MAX_BLOB+1024];
+        Arrays.fill(largePayload,(byte)'A');
+        Files.write(largeSource.resolve("large.bin"),largePayload);
+        var largeCas=new StreamingContentStore(temp.resolve("cas-large"));
+        var largeReq=new StreamingAcquisitionRequest(com.evolution.analysis.contract.identity.RepositoryIdentity.fromCanonicalCoordinate("urn:test:corrupt-large"),Optional.empty(),true,List.of());
+        try(var store=new SqliteInventoryStore(temp.resolve("metadata-large"),largeCas)){
+            assertEquals(JobJournal.State.COMPLETE,new StreamingRepositoryAcquirer(largeCas,store).acquire(largeSource,"sealed-large",largeReq,()->false).state());
+            var handle=store.page("sealed-large",10,Optional.empty()).entries().getFirst().content().orElseThrow();
+            String digest=handle.digest().value().substring(7);
+            Files.writeString(temp.resolve("cas-large/sha256/"+digest.substring(0,2)+"/"+digest.substring(2)),"corrupted");
+            assertFalse(largeCas.verify(handle),"Loose blob with mismatched size must return false rather than throwing");
+            var replay=new StreamingRepositoryAcquirer(largeCas,store).acquire(largeSource,"sealed-large",largeReq,()->false);
+            assertEquals(JobJournal.State.WAITING_FOR_INPUT,replay.state());
+            assertTrue(replay.manifest().isEmpty());
+            assertEquals("SEALED_CONTENT_UNAVAILABLE",replay.reason());
         }
     }
     @Test void cleanReopenAndWarmCasAvoidRedundantStagingForcesAndPreserveDeleteEntry()throws Exception{

@@ -28,11 +28,19 @@ function mountEvolution(root) {
     RESPONSE_TOO_LARGE: 'The response is oversized. Narrow the selected page or use the local export.'
   };
   async function envelope(path, body, signal) {
+    const csrf = body === undefined ? '' : (window.EvoGitHubAuth?.getCsrfToken?.() || '');
     const response = await fetch(path, {method: body === undefined ? 'GET' : 'POST',
-      ...(body === undefined ? {} : {headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)}),
+      credentials: 'same-origin',
+      ...(body === undefined ? {} : {headers:{'Content-Type':'application/json', ...(csrf ? {'X-Evo-CSRF': csrf} : {})}, body:JSON.stringify(body)}),
       signal: signal ? AbortSignal.any([signal,AbortSignal.timeout(180000)]) : AbortSignal.timeout(180000)});
-    const payload = await response.json();
-    if (!response.ok || payload.error) throw new Error(errors[payload.error?.code] || 'The local API could not complete this request.');
+    let payload = null;
+    try {
+      const text = await response.text();
+      payload = text ? JSON.parse(text) : {};
+    } catch (_) {
+      payload = {};
+    }
+    if (!response.ok || payload.error) throw new Error(errors[payload.error?.code] || payload.error?.message || 'The local API could not complete this request.');
     return payload;
   }
   async function api(path, body, signal) { return (await envelope(apiRoot + path,body,signal)).data; }
@@ -43,7 +51,9 @@ function mountEvolution(root) {
     state.result = state.job = state.page = null;
     state.cursor = null;
     state.previous = [];
-    for (const id of ['comparison-result','cancel-comparison','resume-comparison']) control(id,false);
+    for (const id of ['comparison-result','cancel-comparison','resume-comparison','comparison-community-evolution']) {
+      if ($(id)) control(id,false);
+    }
     if ($('evolution-detail').open) $('evolution-detail').close();
     $('comparison-job-id').textContent = '';
     status(message);
@@ -63,10 +73,11 @@ function mountEvolution(root) {
         envelope('/api/v1/analysis/setups'),
         envelope('/api/v1/analysis/jobs/history',{size:30,...(state.historyCursor ? {cursor:state.historyCursor} : {})})
       ]);
-      const repositories = new Map(setups.data.items.map(item => [item.id,item.repository]));
-      for (const entry of page.data.items) {
-        if (!entry.result?.graph || !repositories.has(entry.setup) || state.history.has(entry.id)) continue;
-        state.history.set(entry.id,{...entry,repo:repositories.get(entry.setup)});
+      const repositories = new Map((setups.data?.items || []).map(item => [item.id,item.repository]));
+      for (const entry of page.data?.items || []) {
+        if (!entry.result?.graph || state.history.has(entry.id)) continue;
+        const repoId = repositories.get(entry.setup) || entry.repository || entry.setup;
+        state.history.set(entry.id,{...entry,repo:repoId});
         const title = [entry.setup,new Date(entry.submittedAt).toLocaleString(),short(entry.result.graph)].join(' · ');
         for (const select of [$('baseline'),$('target')]) select.append(new Option(title,entry.id));
       }
@@ -150,7 +161,38 @@ function mountEvolution(root) {
     control('comparison-result', true);
     status('');
     $('result-title').focus();
+    void loadCommunityEvolution(result, token);
     await synchronizePage();
+  }
+  async function loadCommunityEvolution(result, token) {
+    const section = $('comparison-community-evolution');
+    const body = $('comm-evo-body');
+    const note = $('comm-evo-status');
+    if (!section || !body) return;
+    section.hidden = true;
+    const left = (result.inputs || []).find(i => i.side === 'LEFT' && i.status === 'AVAILABLE' && i.graph);
+    const right = (result.inputs || []).find(i => i.side === 'RIGHT' && i.status === 'AVAILABLE' && i.graph);
+    if (!left || !right) return;
+    try {
+      const resp = await envelope('/api/v1/graphs/' + left.graph + '/community-evolution',
+        { otherGraph: right.graph }, token.signal);
+      if (token.signal.aborted) return;
+      const report = resp.data;
+      if (!report) return;
+      const card = window.EvoCommunityAdvisory?.renderCommunityEvolutionCard?.(report);
+      if (card) {
+        body.replaceChildren(card);
+      } else {
+        const pct = Math.round(Number(report.stabilityIndex ?? 0) * 100);
+        body.replaceChildren(strong('p', `Stability ${pct}% · Survived ${report.survivedCount ?? 0} · Split ${report.splitCount ?? 0} · Merged ${report.mergedCount ?? 0} · Born ${report.bornCount ?? 0} · Dissolved ${report.dissolvedCount ?? 0}`));
+      }
+      if (note) {
+        note.textContent = `Pairwise Leiden community matching (${report.beforeCommunityCount ?? 0} baseline → ${report.afterCommunityCount ?? 0} target) · schema ${report.schema || 'evolution.community-matcher:v1'}.`;
+      }
+      section.hidden = false;
+    } catch (_) {
+      if (!token.signal.aborted) section.hidden = true;
+    }
   }
   async function monitor(job,token) {
     for (;;) {
@@ -428,7 +470,7 @@ function mountEvolution(root) {
       if (token.signal.aborted || page !== state.pageController) return;
       const url = URL.createObjectURL(new Blob([JSON.stringify(payload)],{type:'application/json'}));
       const link = strong('a'); link.href = url; link.download = selected.result.slice(7,19) + '-comparison.json'; link.click();
-      setTimeout(() => URL.revokeObjectURL(url),0);
+      setTimeout(() => URL.revokeObjectURL(url),1000);
     } catch (error) { if (!token.signal.aborted) status(error.message); }
   });
   function syncTheme(theme) {
@@ -443,7 +485,70 @@ function mountEvolution(root) {
   $('compare-theme')?.addEventListener('click',() => {
     syncTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
   });
-  catalog();
+  let appliedDeepLink = null;
+  let lastAutoSubmittedKey = '';
+  function parseHashParams() {
+    const hash = String(window.location.hash || '');
+    const q = hash.indexOf('?');
+    if (q < 0) return null;
+    const sp = new URLSearchParams(hash.slice(q + 1));
+    const left = sp.get('left')?.trim() || '';
+    const right = sp.get('right')?.trim() || '';
+    const repo = sp.get('repo')?.trim() || '';
+    const autorun = sp.get('autorun') === '1' || sp.get('autorun') === 'true';
+    if (!left && !right && !repo) return null;
+    return { left, right, repo, autorun };
+  }
+  function applyDeepLink(params, options = {}) {
+    if (!params) return;
+    appliedDeepLink = params;
+    let changed = false;
+    if (params.left && idPattern.test(params.left) && $('baseline-id').value !== params.left) {
+      $('baseline-id').value = params.left;
+      changed = true;
+    }
+    if (params.right && idPattern.test(params.right) && $('target-id').value !== params.right) {
+      $('target-id').value = params.right;
+      changed = true;
+    }
+    if (params.repo && $('repository-id').value !== params.repo) {
+      $('repository-id').value = params.repo;
+      changed = true;
+    }
+    for (const [id, entry] of state.history.entries()) {
+      if (params.left && entry.result?.graph === params.left) {
+        $('baseline').value = id;
+        if (!$('repository-id').value.trim() && entry.repo) { $('repository-id').value = entry.repo; changed = true; }
+      }
+      if (params.right && entry.result?.graph === params.right) {
+        $('target').value = id;
+        if (!$('repository-id').value.trim() && entry.repo) { $('repository-id').value = entry.repo; changed = true; }
+      }
+    }
+    const leftVal = $('baseline-id').value.trim();
+    const rightVal = $('target-id').value.trim();
+    const repoVal = $('repository-id').value.trim();
+    const autoKey = [leftVal, rightVal, repoVal].join('|');
+    const ready = idPattern.test(leftVal) && idPattern.test(rightVal) && Boolean(repoVal);
+    if (changed && (!params.autorun || !ready)) {
+      state.request = null;
+      status('Loaded snapshot pair from workspace. Ready to compare.');
+    }
+    if (params.autorun && ready && (options.forceAutorun || autoKey !== lastAutoSubmittedKey)) {
+      state.request = null;
+      lastAutoSubmittedKey = autoKey;
+      $('compare-form').requestSubmit();
+    }
+  }
+  root.EvoApplyCompareParams = params => applyDeepLink(params, { forceAutorun: true });
+  const initialHashParams = parseHashParams();
+  if (initialHashParams) {
+    applyDeepLink({ ...initialHashParams, autorun: false }, { forceAutorun: false });
+    appliedDeepLink = initialHashParams;
+  }
+  catalog().then(() => {
+    if (appliedDeepLink) applyDeepLink(appliedDeepLink, { forceAutorun: false });
+  });
   const saved = new URLSearchParams(window.location.search).get('result');
   if (saved && idPattern.test(saved)) guarded('Opening saved comparison…', token => openResult(saved,token));
 }

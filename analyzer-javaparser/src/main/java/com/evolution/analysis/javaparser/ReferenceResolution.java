@@ -1,6 +1,7 @@
 package com.evolution.analysis.javaparser;
 
-import com.github.javaparser.StaticJavaParser;
+import com.github.javaparser.JavaParser;
+import com.github.javaparser.ParserConfiguration;
 import com.github.javaparser.ast.*;
 import com.github.javaparser.ast.body.*;
 import com.github.javaparser.ast.expr.*;
@@ -68,19 +69,95 @@ final class ReferenceResolution {
         for (int i=0; i<arity; i++) {
             var parameter = receiverMap.replaceAll(selected.getParam(Math.min(i,selected.getNumberOfParams()-1)).getType());
             if (variadic && i >= selected.getNumberOfParams()-1 && !parameter.isAssignableBy(args.get(i+offset))) parameter = parameter.asArrayType().getComponentType();
+            var supplied = args.get(i+offset);
             if (parameter.isTypeVariable()) {
-                var variable=parameter.asTypeVariable().asTypeParameter(); var actual=args.get(i+offset);
-                var previous=inferredValues.putIfAbsent(variable.getQualifiedName(),actual);
-                if (previous!=null && !previous.describe().equals(actual.describe())) throw new UnsupportedOperationException("Joint generic reference inference");
-                for (var bound:variable.getBounds()) if (bound.isExtends() && !bound.getType().isAssignableBy(actual)) throw new UnsolvedSymbolException("generic bound");
-                inferred.setValue(variable,actual);
-            } else if (!parameter.isAssignableBy(args.get(i+offset))) throw new UnsolvedSymbolException("incompatible functional argument");
+                bindMethodTypeVar(parameter.asTypeVariable().asTypeParameter(), supplied, inferred, inferredValues);
+            } else if (containsMethodTypeVar(parameter)) {
+                unifyMethodTypeVars(parameter, supplied, inferred, inferredValues);
+            } else if (!parameter.isAssignableBy(supplied)) {
+                throw new UnsolvedSymbolException("incompatible functional argument");
+            }
         }
         var selectedReturn=inferred.build().replaceAll(receiverMap.replaceAll(selected.getReturnType()));
+        if (!returnType.isVoid() && containsMethodTypeVar(selectedReturn)) {
+            var retInferred = new com.github.javaparser.resolution.types.parametrization.ResolvedTypeParametersMap.Builder();
+            var retValues = new HashMap<>(inferredValues);
+            if (unifyMethodTypeVars(selectedReturn, returnType, retInferred, retValues)) {
+                selectedReturn = retInferred.build().replaceAll(selectedReturn);
+            }
+        }
         if (!returnType.isVoid() && selectedReturn.isTypeVariable()) throw new UnsupportedOperationException("Uninferred generic reference return");
         if (!returnType.isVoid() && !returnType.isAssignableBy(selectedReturn)) throw new UnsolvedSymbolException("incompatible functional return");
         checkThrows(selected,sam);
         return selected;
+    }
+    private static void bindMethodTypeVar(
+            ResolvedTypeParameterDeclaration variable,
+            ResolvedType actual,
+            com.github.javaparser.resolution.types.parametrization.ResolvedTypeParametersMap.Builder inferred,
+            Map<String, ResolvedType> inferredValues) {
+        var previous=inferredValues.putIfAbsent(variable.getQualifiedName(),actual);
+        if (previous!=null && !previous.describe().equals(actual.describe())) throw new UnsupportedOperationException("Joint generic reference inference");
+        for (var bound:variable.getBounds()) if (bound.isExtends() && !bound.getType().isTypeVariable() && !bound.getType().isAssignableBy(actual)) throw new UnsolvedSymbolException("generic bound");
+        inferred.setValue(variable,actual);
+    }
+    private static boolean containsMethodTypeVar(ResolvedType type) {
+        if (type.isTypeVariable()) return type.asTypeVariable().asTypeParameter().declaredOnMethod();
+        if (type.isArray()) return containsMethodTypeVar(type.asArrayType().getComponentType());
+        if (type.isWildcard()) return type.asWildcard().isBounded() && containsMethodTypeVar(type.asWildcard().getBoundedType());
+        if (type.isReferenceType()) {
+            for (var arg : type.asReferenceType().typeParametersValues()) {
+                if (containsMethodTypeVar(arg)) return true;
+            }
+        }
+        return false;
+    }
+    private static boolean unifyMethodTypeVars(
+            ResolvedType formal,
+            ResolvedType actual,
+            com.github.javaparser.resolution.types.parametrization.ResolvedTypeParametersMap.Builder inferred,
+            Map<String, ResolvedType> inferredValues) {
+        if (formal.isWildcard()) {
+            if (!formal.asWildcard().isBounded()) return true;
+            return unifyMethodTypeVars(formal.asWildcard().getBoundedType(), actual, inferred, inferredValues);
+        }
+        if (formal.isTypeVariable()) {
+            var variable = formal.asTypeVariable().asTypeParameter();
+            if (!variable.declaredOnMethod() || actual.isPrimitive() || actual.isWildcard() || actual.isTypeVariable()) {
+                return false;
+            }
+            bindMethodTypeVar(variable, actual, inferred, inferredValues);
+            return true;
+        }
+        if (formal.isArray() && actual.isArray()) {
+            return unifyMethodTypeVars(formal.asArrayType().getComponentType(), actual.asArrayType().getComponentType(), inferred, inferredValues);
+        }
+        if (formal.isReferenceType() && actual.isReferenceType()) {
+            var fRef = formal.asReferenceType();
+            var aRef = actual.asReferenceType();
+            final String fQName = fRef.getQualifiedName();
+            final String aQName = aRef.getQualifiedName();
+            var matched = aQName.equals(fQName) ? aRef :
+                    aRef.getAllAncestors().stream().filter(t -> t.getQualifiedName().equals(fQName)).findFirst().orElse(null);
+            if (matched == null) {
+                matched = fRef.getAllAncestors().stream().filter(t -> t.getQualifiedName().equals(aQName)).findFirst().orElse(null);
+                if (matched == null) return false;
+                fRef = matched;
+                matched = aRef;
+            }
+            var fArgs = fRef.typeParametersValues();
+            var aArgs = matched.typeParametersValues();
+            if (fArgs.size() != aArgs.size()) return false;
+            boolean ok = true;
+            for (int i = 0; i < fArgs.size(); i++) {
+                ResolvedType fa = fArgs.get(i);
+                ResolvedType aa = aArgs.get(i);
+                if (aa.isWildcard() && aa.asWildcard().isBounded()) aa = aa.asWildcard().getBoundedType();
+                if (!unifyMethodTypeVars(fa, aa, inferred, inferredValues)) ok = false;
+            }
+            return ok;
+        }
+        return formal.isAssignableBy(actual);
     }
     /** JLS 15.13.2/9.9: references use the non-wildcard ground target.
      * Do not erase a wildcard nested inside a SAM parameter (e.g. List<? super T>). */
@@ -104,15 +181,33 @@ final class ReferenceResolution {
     }
     private ResolvedMethodDeclaration select(MethodReferenceExpr reference,List<ResolvedType> args) {
         try { return reference.resolve(); }
-        catch (UnsolvedSymbolException failure) {
-            if (!(reference.getScope() instanceof TypeExpr type) || value(reference,type.toString()).isPresent() || args.isEmpty()) throw failure;
-            var scope=type.getType().resolve();
-            if (!scope.isReferenceType() || !scope.isAssignableBy(args.getFirst())) throw failure;
-            var methods=scope.asReferenceType().getTypeDeclaration().orElseThrow().getAllMethods().stream().map(MethodUsage::getDeclaration).toList();
-            var instance=MethodResolutionLogic.findMostApplicable(methods.stream().filter(m -> !m.isStatic()).toList(),reference.getIdentifier(),args.subList(1,args.size()),solver);
-            var staticMatch=MethodResolutionLogic.findMostApplicable(methods.stream().filter(ResolvedMethodDeclaration::isStatic).toList(),reference.getIdentifier(),args,solver);
-            if (!instance.isSolved() || staticMatch.isSolved()) throw failure;
-            return instance.getCorrespondingDeclaration();
+        catch (UnsolvedSymbolException | UnsupportedOperationException failure) {
+            boolean typeScope = reference.getScope() instanceof TypeExpr && value(reference, reference.getScope().toString()).isEmpty();
+            if (typeScope) {
+                var scope = reference.getScope().asTypeExpr().getType().resolve();
+                if (!scope.isReferenceType()) throw failure;
+                var methods = scope.asReferenceType().getTypeDeclaration().orElseThrow().getAllMethods().stream().map(MethodUsage::getDeclaration).toList();
+                var staticMatch = MethodResolutionLogic.findMostApplicable(methods.stream().filter(ResolvedMethodDeclaration::isStatic).toList(), reference.getIdentifier(), args, solver);
+                var instance = !args.isEmpty() && scope.isAssignableBy(args.getFirst())
+                        ? MethodResolutionLogic.findMostApplicable(methods.stream().filter(m -> !m.isStatic()).toList(), reference.getIdentifier(), args.subList(1, args.size()), solver)
+                        : com.github.javaparser.resolution.model.SymbolReference.<ResolvedMethodDeclaration>unsolved();
+                if (staticMatch.isSolved() && !instance.isSolved()) return staticMatch.getCorrespondingDeclaration();
+                if (instance.isSolved() && !staticMatch.isSolved()) return instance.getCorrespondingDeclaration();
+                throw failure;
+            }
+            if (failure instanceof UnsupportedOperationException) {
+                var receiverValue = value(reference, reference.getScope().toString());
+                ResolvedType scope = receiverValue.isPresent()
+                        ? receiverValue.orElseThrow().getType()
+                        : reference.getScope().calculateResolvedType();
+                if (scope.isReferenceType()) {
+                    var methods = scope.asReferenceType().getTypeDeclaration().orElseThrow().getAllMethods().stream()
+                            .map(MethodUsage::getDeclaration).filter(m -> !m.isStatic()).toList();
+                    var bound = MethodResolutionLogic.findMostApplicable(methods, reference.getIdentifier(), args, solver);
+                    if (bound.isSolved()) return bound.getCorrespondingDeclaration();
+                }
+            }
+            throw failure;
         }
     }
     private void checkThrows(ResolvedMethodLikeDeclaration selected, MethodUsage sam) {
@@ -126,7 +221,10 @@ final class ReferenceResolution {
     ResolvedType targetType(Expression expression) {
         Node parent = expression.getParentNode().orElseThrow();
         if (parent instanceof EnclosedExpr enclosed) return targetType(enclosed);
-        if (parent instanceof ConditionalExpr conditional) return targetType(conditional);
+        if (parent instanceof ConditionalExpr conditional
+                && (expression == conditional.getThenExpr() || expression == conditional.getElseExpr())) {
+            return targetType(conditional);
+        }
         if (parent instanceof VariableDeclarator variable) return variable.getType().resolve();
         if (parent instanceof AssignExpr assignment) return assignment.getTarget().calculateResolvedType();
         if (parent instanceof CastExpr cast) return cast.getType().resolve();
@@ -136,7 +234,39 @@ final class ReferenceResolution {
                 if (scope instanceof MethodDeclaration method) return method.getType().resolve();
             }
         }
+        if (parent instanceof com.github.javaparser.ast.stmt.YieldStmt) {
+            for (Node scope=parent.getParentNode().orElse(null); scope!=null; scope=scope.getParentNode().orElse(null)) {
+                if (scope instanceof SwitchExpr switchExpr) return targetType(switchExpr);
+                if (scope instanceof LambdaExpr || scope instanceof MethodDeclaration || scope instanceof TypeDeclaration<?>) break;
+            }
+        }
+        if (parent instanceof com.github.javaparser.ast.stmt.ExpressionStmt
+                && parent.getParentNode().orElse(null) instanceof com.github.javaparser.ast.stmt.SwitchEntry entry
+                && entry.getParentNode().orElse(null) instanceof SwitchExpr switchExpr) {
+            return targetType(switchExpr);
+        }
+        if (parent instanceof ArrayInitializerExpr arrayInit) {
+            return arrayElementTarget(arrayInit);
+        }
         if (parent instanceof LambdaExpr lambda) return functionalReturn(targetType(lambda));
+        if (parent instanceof ObjectCreationExpr creation) {
+            int index = creation.getArguments().indexOf(expression);
+            if (index >= 0) {
+                var constructed = creation.getType().resolve();
+                if (constructed.isReferenceType()) {
+                    var ref = constructed.asReferenceType();
+                    var decl = ref.getTypeDeclaration().orElseThrow();
+                    ResolvedConstructorDeclaration ctor = selectConstructorForReference(creation, decl, index);
+                    if (ctor != null) {
+                        var paramType = ref.typeParametersMap().replaceAll(
+                                ctor.getParam(Math.min(index, ctor.getNumberOfParams() - 1)).getType());
+                        return ctor.getParam(ctor.getNumberOfParams() - 1).isVariadic()
+                                && index >= ctor.getNumberOfParams() - 1
+                                ? paramType.asArrayType().getComponentType() : paramType;
+                    }
+                }
+            }
+        }
         if (parent instanceof MethodCallExpr call) {
             var method = JavaParserFacade.get(solver).solveMethodAsUsage(call);
             int index = call.getArguments().indexOf(expression);
@@ -145,11 +275,79 @@ final class ReferenceResolution {
         }
         throw new UnsupportedOperationException("Functional target context");
     }
+    private ResolvedType arrayElementTarget(ArrayInitializerExpr arrayInit) {
+        Node owner = arrayInit.getParentNode().orElseThrow();
+        ResolvedType arrayType = null;
+        if (owner instanceof ArrayCreationExpr creation) {
+            // Prefer enclosing target type when the array creation uses a raw generic element type
+            // (e.g. Function<Pet, String>[] a = new Function[] { Pet::name }).
+            try {
+                ResolvedType contextual = targetType(creation);
+                if (contextual.isArray()) arrayType = contextual;
+            } catch (RuntimeException ignored) {}
+            if (arrayType == null) {
+                try {
+                    arrayType = creation.calculateResolvedType();
+                } catch (RuntimeException ignored) {
+                    ResolvedType elem = creation.getElementType().resolve();
+                    for (int d = 0; d < creation.getLevels().size(); d++) {
+                        elem = new com.github.javaparser.resolution.types.ResolvedArrayType(elem);
+                    }
+                    arrayType = elem;
+                }
+            }
+        } else if (owner instanceof VariableDeclarator varDecl) {
+            arrayType = varDecl.getType().resolve();
+        } else if (owner instanceof ArrayInitializerExpr outerInit) {
+            arrayType = arrayElementTarget(outerInit);
+        } else {
+            throw new UnsupportedOperationException("Functional target context");
+        }
+        if (!arrayType.isArray()) throw new UnsupportedOperationException("Functional target context");
+        return arrayType.asArrayType().getComponentType();
+    }
+    private ResolvedConstructorDeclaration selectConstructorForReference(
+            ObjectCreationExpr creation, ResolvedReferenceTypeDeclaration decl, int refIndex) {
+        try {
+            return creation.resolve();
+        } catch (RuntimeException ignored) {}
+        int argCount = creation.getArguments().size();
+        var matching = new ArrayList<ResolvedConstructorDeclaration>();
+        for (var c : decl.getConstructors()) {
+            boolean variadic = c.getNumberOfParams() > 0 && c.getParam(c.getNumberOfParams() - 1).isVariadic();
+            if (variadic ? argCount < c.getNumberOfParams() - 1 : argCount != c.getNumberOfParams()) continue;
+            boolean ok = true;
+            for (int j = 0; j < argCount; j++) {
+                if (j == refIndex) continue;
+                var arg = creation.getArgument(j);
+                if (arg instanceof MethodReferenceExpr || arg instanceof LambdaExpr) continue;
+                try {
+                    var argType = arg.calculateResolvedType();
+                    var paramType = c.getParam(Math.min(j, c.getNumberOfParams() - 1)).getType();
+                    if (variadic && j >= c.getNumberOfParams() - 1 && !paramType.isAssignableBy(argType)) {
+                        paramType = paramType.asArrayType().getComponentType();
+                    }
+                    if (!paramType.isTypeVariable() && !paramType.isAssignableBy(argType)) {
+                        ok = false;
+                        break;
+                    }
+                } catch (RuntimeException e) {
+                    ok = false;
+                    break;
+                }
+            }
+            if (ok) matching.add(c);
+        }
+        return matching.size() == 1 ? matching.getFirst() : null;
+    }
     private ResolvedType functionalReturn(ResolvedType target) {
         target=groundTarget(target);
         return target.asReferenceType().typeParametersMap().replaceAll(FunctionalInterfaceLogic.getFunctionalMethod(target).orElseThrow().returnType());
     }
     private static final DataKey<Map<String, Optional<ResolvedValueDeclaration>>> VALUE_CACHE = new DataKey<>() {};
+    private static final ThreadLocal<JavaParser> EXPR_PARSER = ThreadLocal.withInitial(() ->
+            new JavaParser(new ParserConfiguration().setLanguageLevel(ParserConfiguration.LanguageLevel.BLEEDING_EDGE)
+                    .setStoreTokens(false).setAttributeComments(false)));
 
     static Optional<ResolvedValueDeclaration> value(MethodReferenceExpr reference, String name) {
         Map<String, Optional<ResolvedValueDeclaration>> cache = reference.containsData(VALUE_CACHE)
@@ -165,11 +363,16 @@ final class ReferenceResolution {
         try {
             receiver = buildSimpleOrDottedReceiver(name);
             if (receiver == null) {
-                receiver = StaticJavaParser.parseExpression(name);
+                var parsed = EXPR_PARSER.get().parseExpression(name);
+                if (parsed.isSuccessful() && parsed.getResult().isPresent()) {
+                    receiver = parsed.getResult().orElseThrow();
+                }
             }
-            receiver.setParentNode(reference);
-            if (receiver instanceof NameExpr simple) resolved = Optional.of(simple.resolve());
-            else if (receiver instanceof FieldAccessExpr field) resolved = Optional.of(field.resolve());
+            if (receiver != null) {
+                receiver.setParentNode(reference);
+                if (receiver instanceof NameExpr simple) resolved = Optional.of(simple.resolve());
+                else if (receiver instanceof FieldAccessExpr field) resolved = Optional.of(field.resolve());
+            }
         } catch (RuntimeException failure) { /* A type qualifier has no value binding. */ }
         finally { if (receiver != null) receiver.setParentNode(null); }
         if (cache == null) {

@@ -41,12 +41,28 @@ final class GradleAarInputs {
 
     static List<BinaryInput> recover(Path cache, Artifact artifact, long memberBudget, long expandedBudget) throws IOException {
         Path root = cache.toAbsolutePath().normalize().toRealPath();
-        // Always cryptographically verify the AAR bytes on disk before trusting any cached extraction.
-        var bytes = MavenDependencyArtifactProvider.readVerifiedArtifact(cache, artifact, memberBudget);
         var cacheKey = new AarCacheKey(
                 root, artifact.contentDigest(), artifact.coordinate().notation(), memberBudget, expandedBudget);
         List<BinaryInput> cached = AAR_CACHE.get(cacheKey);
-        if (cached != null && allMaterializedVerified(cached)) {
+        var session = com.evolution.analysis.input.VerifiedArtifactSession.current();
+        if (cached != null && session.isPresent()) {
+            Path aarPath = root.resolve(artifact.repositoryPath().replace('/', java.io.File.separatorChar)).normalize();
+            if (aarPath.startsWith(root)
+                    && session.orElseThrow().verifyDigest(aarPath, artifact.contentDigest())
+                    && allMaterializedVerified(cached, session.orElseThrow())) {
+                AAR_CACHE_HITS.incrementAndGet();
+                return cached;
+            }
+        }
+        // Standalone calls or session misses cryptographically verify AAR bytes on disk before trusting cached extraction.
+        var bytes = MavenDependencyArtifactProvider.readVerifiedArtifact(cache, artifact, memberBudget);
+        if (session.isPresent()) {
+            Path aarPath = root.resolve(artifact.repositoryPath().replace('/', java.io.File.separatorChar)).normalize();
+            if (aarPath.startsWith(root)) {
+                session.orElseThrow().recordVerified(aarPath, artifact.contentDigest(), bytes.length);
+            }
+        }
+        if (cached != null && allMaterializedVerified(cached, session.orElse(null))) {
             AAR_CACHE_HITS.incrementAndGet();
             return cached;
         }
@@ -55,12 +71,17 @@ final class GradleAarInputs {
         return recovered;
     }
 
-    private static boolean allMaterializedVerified(List<BinaryInput> inputs) {
+    private static boolean allMaterializedVerified(List<BinaryInput> inputs,
+            com.evolution.analysis.input.VerifiedArtifactSession session) {
         for (var input : inputs) {
             try {
                 Path path = input.path();
                 if (!Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) return false;
-                if (!input.entry().contentDigest().equals(ContentDigest.sha256(Files.readAllBytes(path)))) return false;
+                if (session != null) {
+                    if (!session.verifyDigest(path, input.entry().contentDigest())) return false;
+                } else {
+                    if (!input.entry().contentDigest().equals(ContentDigest.sha256(Files.readAllBytes(path)))) return false;
+                }
             } catch (IOException | SecurityException unavailable) {
                 return false;
             }

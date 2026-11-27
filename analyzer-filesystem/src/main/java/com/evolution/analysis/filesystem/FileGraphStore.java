@@ -14,7 +14,7 @@ import static com.evolution.analysis.graph.GraphStoreException.Reason.*;
 
 /** Bounded canonical snapshot I/O in an explicitly supplied existing directory. No database needed. */
 public final class FileGraphStore implements GraphStore {
-    private static final int IO_BUFFER_SIZE = 64 * 1024;
+    private static final int IO_BUFFER_SIZE = 128 * 1024;
     private final Path directory;
     private final long maxBytes;
     private final GraphJson.StreamLimits jsonLimits;
@@ -60,8 +60,11 @@ public final class FileGraphStore implements GraphStore {
             if (Files.exists(destination, NOFOLLOW_LINKS)) {
                 // Preserve the admission checks for an existing snapshot without encoding
                 // another full copy or reconstructing the graph just to compare it.
-                if (!CanonicalJson.fitsStructure(Map.of("format", GraphSnapshotCodec.FORMAT,
-                        "identity", graph.identity(), "graph", graph.canonicalForm()), jsonLimits.maxDepth(), jsonLimits.maxValues()))
+                boolean fits = GraphCanonicalWriter.isEnabled()
+                        ? GraphCanonicalWriter.fitsEnvelopeStructure(graph, jsonLimits.maxDepth(), jsonLimits.maxValues())
+                        : CanonicalJson.fitsStructure(Map.of("format", GraphSnapshotCodec.FORMAT,
+                                "identity", graph.identity(), "graph", graph.canonicalForm()), jsonLimits.maxDepth(), jsonLimits.maxValues());
+                if (!fits)
                     throw new GraphJson.LimitExceededException("Graph JSON structural limit");
                 verifyExisting(graph.identity(), cancelled);
                 return;

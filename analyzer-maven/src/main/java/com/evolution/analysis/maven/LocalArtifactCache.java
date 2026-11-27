@@ -50,10 +50,190 @@ final class LocalArtifactCache {
     }
 
     Material jar(ArtifactCoordinate coordinate) throws Failure {
-        if (!coordinate.extension().equals("jar")) {
-            throw new IllegalArgumentException("Only JAR coordinates can be acquired as binaries");
+        return binary(coordinate);
+    }
+
+    Material binary(ArtifactCoordinate coordinate) throws Failure {
+        String ext = coordinate.extension();
+        if (!ext.equals("jar") && !ext.equals("aar") && !ext.equals("war")) {
+            throw new IllegalArgumentException("Only JAR, AAR or WAR coordinates can be acquired as binaries");
         }
         return local(coordinate, ArtifactKind.JAR, policy.maxArtifactBytes());
+    }
+
+    boolean hasLocalFile(ArtifactCoordinate coordinate) {
+        String relative = coordinate.repositoryPath();
+        Path path = root.resolve(relative.replace('/', java.io.File.separatorChar)).normalize();
+        return path.startsWith(root)
+                && !Files.isSymbolicLink(path)
+                && Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS);
+    }
+
+    void clearMissingPomFailure(MavenCoordinate gav) {
+        ArtifactCoordinate coordinate = new ArtifactCoordinate(gav, "pom", "");
+        Failure existing = failures.get(coordinate);
+        if (existing != null && existing.reason == Reason.MISSING_POM) {
+            failures.remove(coordinate);
+        }
+    }
+
+    /**
+     * Passively resolves a Maven version range (e.g. {@code [1.0,2.0)}) against exact,
+     * non-SNAPSHOT versions already present inside this validated local cache root.
+     */
+    Optional<String> resolveLocalVersionRange(String groupId, String artifactId, String rangeSpec, String extension, String classifier) {
+        if (groupId == null || artifactId == null || rangeSpec == null || rangeSpec.length() < 3) {
+            return Optional.empty();
+        }
+        List<VersionInterval> intervals = parseVersionRange(rangeSpec.trim());
+        if (intervals.isEmpty()) return Optional.empty();
+        String groupRel = groupId.replace('.', java.io.File.separatorChar);
+        Path artifactDir = root.resolve(groupRel).resolve(artifactId).normalize();
+        if (!artifactDir.startsWith(root) || Files.isSymbolicLink(artifactDir)
+                || !Files.isDirectory(artifactDir, LinkOption.NOFOLLOW_LINKS)) {
+            return Optional.empty();
+        }
+        try {
+            Path realDir = artifactDir.toRealPath();
+            if (!realDir.startsWith(root) || !realDir.equals(artifactDir.toAbsolutePath().normalize())) {
+                return Optional.empty();
+            }
+            var candidates = new ArrayList<String>();
+            try (var stream = Files.list(artifactDir)) {
+                var it = stream.iterator();
+                int scanned = 0;
+                while (it.hasNext() && scanned < 4096) {
+                    Path entry = it.next();
+                    scanned++;
+                    if (Files.isSymbolicLink(entry) || !Files.isDirectory(entry, LinkOption.NOFOLLOW_LINKS)) continue;
+                    String version = entry.getFileName().toString();
+                    if (version.isEmpty() || version.endsWith("-SNAPSHOT")) continue;
+                    if (!matchesAnyInterval(version, intervals)) continue;
+                    try {
+                        var gav = new MavenCoordinate(groupId, artifactId, version);
+                        String ext = (extension == null || extension.isEmpty()) ? "jar" : extension;
+                        var binCoord = new ArtifactCoordinate(gav, ext, classifier == null ? "" : classifier);
+                        var pomCoord = new ArtifactCoordinate(gav, "pom", "");
+                        if (hasLocalFile(binCoord) || hasLocalFile(pomCoord)) {
+                            candidates.add(version);
+                        }
+                    } catch (IllegalArgumentException ignored) {
+                        // Skip non-coordinate directory names deterministically.
+                    }
+                }
+            }
+            if (candidates.isEmpty()) return Optional.empty();
+            candidates.sort(LocalArtifactCache::compareMavenVersions);
+            return Optional.of(candidates.getLast());
+        } catch (IOException | SecurityException ignored) {
+            return Optional.empty();
+        }
+    }
+
+    private record VersionInterval(String lower, boolean lowerInclusive, String upper, boolean upperInclusive) {}
+
+    private static List<VersionInterval> parseVersionRange(String spec) {
+        if (!(spec.startsWith("[") || spec.startsWith("(")) || !(spec.endsWith("]") || spec.endsWith(")"))) {
+            return List.of();
+        }
+        var result = new ArrayList<VersionInterval>();
+        int i = 0, len = spec.length();
+        while (i < len) {
+            while (i < len && Character.isWhitespace(spec.charAt(i))) i++;
+            if (i >= len) break;
+            char open = spec.charAt(i);
+            if (open != '[' && open != '(') return List.of();
+            int closeIdx = -1;
+            for (int j = i + 1; j < len; j++) {
+                char c = spec.charAt(j);
+                if (c == ']' || c == ')') {
+                    closeIdx = j;
+                    break;
+                }
+            }
+            if (closeIdx < 0) return List.of();
+            char close = spec.charAt(closeIdx);
+            String body = spec.substring(i + 1, closeIdx);
+            int comma = body.indexOf(',');
+            if (comma < 0) {
+                String exact = body.trim();
+                if (exact.isEmpty() || open != '[' || close != ']') return List.of();
+                result.add(new VersionInterval(exact, true, exact, true));
+            } else {
+                if (body.indexOf(',', comma + 1) >= 0) return List.of();
+                String low = body.substring(0, comma).trim();
+                String high = body.substring(comma + 1).trim();
+                if (low.isEmpty() && high.isEmpty()) return List.of();
+                result.add(new VersionInterval(low.isEmpty() ? null : low, open == '[',
+                        high.isEmpty() ? null : high, close == ']'));
+            }
+            i = closeIdx + 1;
+            while (i < len && Character.isWhitespace(spec.charAt(i))) i++;
+            if (i < len) {
+                if (spec.charAt(i) != ',') return List.of();
+                i++;
+            }
+        }
+        return result;
+    }
+
+    private static boolean matchesAnyInterval(String version, List<VersionInterval> intervals) {
+        for (var interval : intervals) {
+            if (interval.lower != null) {
+                int cmp = compareMavenVersions(version, interval.lower);
+                if (interval.lowerInclusive ? cmp < 0 : cmp <= 0) continue;
+            }
+            if (interval.upper != null) {
+                int cmp = compareMavenVersions(version, interval.upper);
+                if (interval.upperInclusive ? cmp > 0 : cmp >= 0) continue;
+            }
+            return true;
+        }
+        return false;
+    }
+
+    static int compareMavenVersions(String a, String b) {
+        if (a.equals(b)) return 0;
+        String[] pa = a.split("[.\\-+]");
+        String[] pb = b.split("[.\\-+]");
+        int max = Math.max(pa.length, pb.length);
+        for (int i = 0; i < max; i++) {
+            String sa = i < pa.length ? pa[i] : "";
+            String sb = i < pb.length ? pb[i] : "";
+            if (sa.equals(sb)) continue;
+            boolean na = !sa.isEmpty() && sa.chars().allMatch(Character::isDigit);
+            boolean nb = !sb.isEmpty() && sb.chars().allMatch(Character::isDigit);
+            if (na && nb) {
+                int cmp = new java.math.BigInteger(sa).compareTo(new java.math.BigInteger(sb));
+                if (cmp != 0) return cmp;
+            } else if (sa.isEmpty()) {
+                return nb ? (new java.math.BigInteger(sb).signum() == 0 ? 0 : -1) : qualifierRank(sb) < 0 ? 1 : -1;
+            } else if (sb.isEmpty()) {
+                return na ? (new java.math.BigInteger(sa).signum() == 0 ? 0 : 1) : qualifierRank(sa) < 0 ? -1 : 1;
+            } else if (na) {
+                return 1;
+            } else if (nb) {
+                return -1;
+            } else {
+                int ra = qualifierRank(sa), rb = qualifierRank(sb);
+                if (ra != rb) return Integer.compare(ra, rb);
+                int cmp = sa.compareToIgnoreCase(sb);
+                if (cmp != 0) return cmp;
+            }
+        }
+        return a.compareTo(b);
+    }
+
+    private static int qualifierRank(String token) {
+        String lower = token.toLowerCase(Locale.ROOT);
+        if (lower.startsWith("alpha") || lower.equals("a")) return -5;
+        if (lower.startsWith("beta") || lower.equals("b")) return -4;
+        if (lower.startsWith("milestone") || lower.equals("m")) return -3;
+        if (lower.startsWith("rc") || lower.startsWith("cr")) return -2;
+        if (lower.equals("snapshot")) return -1;
+        if (lower.equals("final") || lower.equals("ga") || lower.equals("release")) return 0;
+        if (lower.startsWith("sp")) return 1;
+        return 0;
     }
 
     List<ArtifactRecord> artifacts() {

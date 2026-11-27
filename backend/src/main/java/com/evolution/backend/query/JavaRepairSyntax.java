@@ -22,11 +22,11 @@ import java.util.*;
 public final class JavaRepairSyntax {
     public enum Status { PASSED, REJECTED, UNAVAILABLE }
     public record Profile(int sourceLevel, boolean preview, String origin, Optional<ContentDigest> evidence) {}
-    record ContextProfile(String module,String sourceSet,Profile profile,Map<String,Profile> contexts) {
-        ContextProfile { contexts = Map.copyOf(contexts); }
+    public record ContextProfile(String module,String sourceSet,Profile profile,Map<String,Profile> contexts) {
+        public ContextProfile { contexts = Map.copyOf(contexts); }
         ContextProfile(String module,String sourceSet,Profile profile) { this(module,sourceSet,profile,Map.of()); }
 
-        Profile forFile(RepairSource.File file) {
+        public Profile forFile(RepairSource.File file) {
             if (module.equals(file.module()) && (sourceSet.equals(file.role().name())
                     || file.role()==SourceClassification.OTHER)) return profile;
             var exact=contexts.get(file.module()+"|"+file.role().name());
@@ -41,11 +41,13 @@ public final class JavaRepairSyntax {
     }
     public record Error(String code,long line,long column) {}
     public record Check(Status status,String engine,String runtime,Profile profile,List<Error> diagnostics) {}
+    public record DetailedError(String code, String message, long line, long column) {}
+    public record DetailedCheck(Check check, List<DetailedError> details) {}
     record Parsed(Check check, CompilationUnitTree tree, SourcePositions positions) {}
     private static final int RUNTIME_LEVEL=Runtime.version().feature();
     private static final String ENGINE="jdk.javac.parse";
 
-    static ContextProfile profile(KnowledgeGraph graph,FindingDiagnosis.Pin pin) {
+    public static ContextProfile profile(KnowledgeGraph graph,FindingDiagnosis.Pin pin) {
         var contexts=new LinkedHashMap<String,Profile>();
         ContextProfile primary=null;
         String pinnedAnalysis=pin.analysis().map(a -> a.value()).orElse(null);
@@ -92,7 +94,51 @@ public final class JavaRepairSyntax {
         return new ContextProfile(module,sourceSet,new Profile(RUNTIME_LEVEL,preview,"VALIDATOR_DEFAULT",Optional.of(artifact.identity())));
     }
 
-    static Profile defaultProfile() { return new Profile(RUNTIME_LEVEL,false,"VALIDATOR_DEFAULT",Optional.empty()); }
+    public static Profile defaultProfile() { return new Profile(RUNTIME_LEVEL,false,"VALIDATOR_DEFAULT",Optional.empty()); }
+
+    public static DetailedCheck parseDetailed(String source, Profile profile) {
+        var compiler = ToolProvider.getSystemJavaCompiler();
+        if (compiler == null || profile.sourceLevel() < 7 || profile.sourceLevel() > RUNTIME_LEVEL
+                || profile.preview() && profile.sourceLevel() != RUNTIME_LEVEL) {
+            return new DetailedCheck(failed(profile, "compiler.source-level-or-toolchain-unavailable").check(),
+                    List.of(new DetailedError("compiler.source-level-or-toolchain-unavailable",
+                            "System Java compiler or requested source level is unavailable", -1, -1)));
+        }
+        var errors = new ArrayList<Error>();
+        var details = new ArrayList<DetailedError>();
+        DiagnosticListener<JavaFileObject> listener = d -> {
+            if (d.getKind() == Diagnostic.Kind.ERROR && errors.size() < 16) {
+                errors.add(new Error(d.getCode(), d.getLineNumber(), d.getColumnNumber()));
+                String msg = d.getMessage(Locale.ROOT);
+                details.add(new DetailedError(d.getCode(), msg == null ? d.getCode() : msg, d.getLineNumber(), d.getColumnNumber()));
+            }
+        };
+        var input = new SimpleJavaFileObject(URI.create("mem:///Repair.java"), JavaFileObject.Kind.SOURCE) {
+            @Override public CharSequence getCharContent(boolean ignoreEncodingErrors) { return source; }
+        };
+        var options = new ArrayList<>(List.of("-proc:none", "--source", Integer.toString(profile.sourceLevel()), "-Xlint:-options"));
+        if (profile.preview()) options.add("--enable-preview");
+        try (var files = compiler.getStandardFileManager(listener, Locale.ROOT, StandardCharsets.UTF_8)) {
+            var task = (JavacTask) compiler.getTask(new StringWriter(), files, listener, options, null, List.of(input));
+            var iterator = task.parse().iterator();
+            if (!iterator.hasNext()) {
+                return errors.isEmpty()
+                        ? new DetailedCheck(failed(profile, "compiler.no-compilation-unit").check(),
+                            List.of(new DetailedError("compiler.no-compilation-unit", "No compilation unit parsed", -1, -1)))
+                        : new DetailedCheck(check(Status.UNAVAILABLE, profile, errors), List.copyOf(details));
+            }
+            iterator.next();
+            if (iterator.hasNext()) {
+                return new DetailedCheck(failed(profile, "compiler.unexpected-compilation-units").check(),
+                        List.of(new DetailedError("compiler.unexpected-compilation-units", "Multiple compilation units", -1, -1)));
+            }
+            if (!errors.isEmpty()) return new DetailedCheck(check(Status.REJECTED, profile, errors), List.copyOf(details));
+            return new DetailedCheck(check(Status.PASSED, profile, List.of()), List.of());
+        } catch (IOException | RuntimeException | StackOverflowError unavailable) {
+            return new DetailedCheck(failed(profile, "compiler.parse-unavailable").check(),
+                    List.of(new DetailedError("compiler.parse-unavailable", "Java syntax parser unavailable", -1, -1)));
+        }
+    }
 
     static Parsed parse(String source,Profile profile) {
         var compiler=ToolProvider.getSystemJavaCompiler();

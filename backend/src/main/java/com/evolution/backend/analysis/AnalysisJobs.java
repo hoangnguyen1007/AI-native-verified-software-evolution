@@ -1,22 +1,24 @@
 package com.evolution.backend.analysis;
 
+import com.evolution.analysis.acquisition.RepositoryAcquisitionResult;
 import com.evolution.analysis.contract.common.ContentDigest;
 import com.evolution.analysis.contract.common.VersionedIdentifier;
-import com.evolution.analysis.contract.serialization.CanonicalJson;
-import com.evolution.analysis.acquisition.RepositoryAcquisitionResult;
 import com.evolution.analysis.contract.identity.*;
+import com.evolution.analysis.contract.serialization.CanonicalJson;
 import com.evolution.analysis.evidence.CapabilityGapRecord;
 import com.evolution.analysis.graph.*;
 import com.evolution.backend.query.PublishedReports;
+import java.io.IOException;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.function.BooleanSupplier;
-import java.io.IOException;
 
 /**
- * Bounded local job orchestration. Operational IDs/times never enter canonical
- * analysis identities.
+ * Bounded local job orchestration with progressive 3-stage preview telemetry, live SSE events,
+ * and durable m8.4-v5 receipts. Operational IDs/times never enter canonical analysis identities.
  */
 public final class AnalysisJobs implements AutoCloseable {
     public static final String VERSION = "architecture.jobs:m8.1-v1";
@@ -40,6 +42,10 @@ public final class AnalysisJobs implements AutoCloseable {
 
     public enum ReuseDecision {
         INPUTS_UNVERIFIED, NO_MATCH, RESULT_UNAVAILABLE, BYPASSED, REUSED
+    }
+
+    public enum TruthTier {
+        NONE, PRELIMINARY_STRUCTURE, PARTIAL_CONTEXTS, DEEP_SEMANTIC_COMPLETE
     }
 
     public record Limits(int workers, int queued, int history, long timeoutMillis, long shutdownMillis) {
@@ -78,6 +84,98 @@ public final class AnalysisJobs implements AutoCloseable {
                 if (v.length() > 256 || v.isBlank())
                     throw new IllegalArgumentException("Invalid space");
             });
+        }
+    }
+
+    public record IncrementalMetrics(
+            Optional<String> baseSnapshotId,
+            int addedFiles,
+            int modifiedFiles,
+            int deletedFiles,
+            int reusedFiles,
+            int abiEarlyCutoffCount,
+            int impactedDependentsCount,
+            int reusedModules,
+            long timeSavedEstimateMs) {
+        public IncrementalMetrics {
+            Objects.requireNonNull(baseSnapshotId, "baseSnapshotId");
+            if (addedFiles < 0 || modifiedFiles < 0 || deletedFiles < 0 || reusedFiles < 0
+                    || abiEarlyCutoffCount < 0 || impactedDependentsCount < 0 || reusedModules < 0
+                    || timeSavedEstimateMs < 0L) {
+                throw new IllegalArgumentException("Negative incremental metric");
+            }
+        }
+    }
+
+    public record PreviewPublication(
+            ContentDigest graphId,
+            TruthTier truthTier,
+            int completedContexts,
+            int totalContexts,
+            List<String> pendingModules,
+            Instant publishedAt) {
+        public PreviewPublication {
+            Objects.requireNonNull(graphId, "graphId");
+            Objects.requireNonNull(truthTier, "truthTier");
+            pendingModules = List.copyOf(pendingModules == null ? List.of() : pendingModules);
+            Objects.requireNonNull(publishedAt, "publishedAt");
+        }
+    }
+
+    public record ModuleProgress(
+            String module,
+            String status,
+            int filesDone,
+            int filesTotal,
+            long elapsedMillis,
+            Optional<String> contextId,
+            Optional<String> reason) {
+        public ModuleProgress {
+            Objects.requireNonNull(module, "module");
+            Objects.requireNonNull(status, "status");
+            Objects.requireNonNull(contextId, "contextId");
+            Objects.requireNonNull(reason, "reason");
+        }
+    }
+
+    public record LiveProgress(
+            String jobId,
+            String setup,
+            State state,
+            Stage stage,
+            long revision,
+            TruthTier truthTier,
+            Optional<ContentDigest> previewGraphId,
+            Optional<PreviewPublication> preview,
+            BigDecimal overallRatio,
+            int stageDone,
+            int stageTotal,
+            Optional<BigDecimal> filesPerSecond,
+            Optional<Long> etaSeconds,
+            String etaStatus,
+            long elapsedMillis,
+            String message,
+            List<ModuleProgress> modules,
+            Map<String, Long> stageMillis,
+            Map<String, Long> cacheMetrics,
+            Optional<IncrementalMetrics> incremental) {
+        public LiveProgress {
+            Objects.requireNonNull(jobId, "jobId");
+            Objects.requireNonNull(setup, "setup");
+            Objects.requireNonNull(state, "state");
+            Objects.requireNonNull(stage, "stage");
+            Objects.requireNonNull(truthTier, "truthTier");
+            Objects.requireNonNull(previewGraphId, "previewGraphId");
+            Objects.requireNonNull(preview, "preview");
+            Objects.requireNonNull(overallRatio, "overallRatio");
+            Objects.requireNonNull(filesPerSecond, "filesPerSecond");
+            Objects.requireNonNull(etaSeconds, "etaSeconds");
+            Objects.requireNonNull(etaStatus, "etaStatus");
+            message = message == null ? "" : message;
+            modules = List.copyOf(modules == null ? List.of() : modules);
+            stageMillis = Collections.unmodifiableMap(new LinkedHashMap<>(stageMillis == null ? Map.of() : stageMillis));
+            cacheMetrics = Collections.unmodifiableMap(new TreeMap<>(cacheMetrics == null ? Map.of() : cacheMetrics));
+            Objects.requireNonNull(incremental, "incremental");
         }
     }
 
@@ -263,18 +361,27 @@ public final class AnalysisJobs implements AutoCloseable {
 
     public record Telemetry(String jobId, String setup, Optional<AnalysisMode> mode, State state, Stage currentStage,
             boolean reused, Optional<ReuseDecision> reuseDecision, long totalElapsedMillis,
-            Map<String, Long> stageMillis, List<StageTiming> stages, Map<String, Long> cacheMetrics) {
+            Map<String, Long> stageMillis, List<StageTiming> stages, Map<String, Long> cacheMetrics,
+            Optional<IncrementalMetrics> incremental) {
         public Telemetry(String jobId, String setup, Optional<AnalysisMode> mode, State state, Stage currentStage,
                 boolean reused, Optional<ReuseDecision> reuseDecision, long totalElapsedMillis,
                 Map<String, Long> stageMillis, List<StageTiming> stages) {
             this(jobId, setup, mode, state, currentStage, reused, reuseDecision, totalElapsedMillis, stageMillis,
-                    stages, Map.of());
+                    stages, Map.of(), Optional.empty());
+        }
+
+        public Telemetry(String jobId, String setup, Optional<AnalysisMode> mode, State state, Stage currentStage,
+                boolean reused, Optional<ReuseDecision> reuseDecision, long totalElapsedMillis,
+                Map<String, Long> stageMillis, List<StageTiming> stages, Map<String, Long> cacheMetrics) {
+            this(jobId, setup, mode, state, currentStage, reused, reuseDecision, totalElapsedMillis, stageMillis,
+                    stages, cacheMetrics, Optional.empty());
         }
 
         public Telemetry {
             stageMillis = Collections.unmodifiableMap(new LinkedHashMap<>(stageMillis));
             stages = List.copyOf(stages);
             cacheMetrics = Collections.unmodifiableMap(new TreeMap<>(cacheMetrics));
+            Objects.requireNonNull(incremental, "incremental");
         }
     }
 
@@ -316,6 +423,10 @@ public final class AnalysisJobs implements AutoCloseable {
             return job.mode;
         }
 
+        public Optional<String> requestedRef() {
+            return job.requestedRef;
+        }
+
         boolean beginReuseCheck() {
             if (disk == null)
                 return false;
@@ -329,11 +440,16 @@ public final class AnalysisJobs implements AutoCloseable {
                 return Optional.empty();
             if (job.inputKey != null || job.stage.ordinal() >= Stage.ANALYSIS.ordinal())
                 throw new IllegalStateException("Reuse requires a single lookup before analysis");
-            job.inputKey = job.mode == AnalysisMode.FULL
-                    ? CanonicalJson
-                            .sha256(List.of("workbench-result-lookup:v1", job.registration.setup(), verifiedInputs))
-                    : CanonicalJson.sha256(List.of("workbench-result-lookup:v1", job.registration.setup(),
-                            verifiedInputs, job.mode.name()));
+            if (job.requestedRef.isPresent()) {
+                job.inputKey = CanonicalJson.sha256(List.of("workbench-result-lookup:v1", job.registration.setup(),
+                        verifiedInputs, job.mode.name(), "ref:" + job.requestedRef.orElseThrow()));
+            } else {
+                job.inputKey = job.mode == AnalysisMode.FULL
+                        ? CanonicalJson
+                                .sha256(List.of("workbench-result-lookup:v1", job.registration.setup(), verifiedInputs))
+                        : CanonicalJson.sha256(List.of("workbench-result-lookup:v1", job.registration.setup(),
+                                verifiedInputs, job.mode.name()));
+            }
             if (job.force)
                 return Optional.empty();
             job.reuseDecision = ReuseDecision.NO_MATCH;
@@ -376,7 +492,119 @@ public final class AnalysisJobs implements AutoCloseable {
             }
         }
 
+        public void reportProgress(int done, int total, String message) {
+            Map<String, Object> payload;
+            synchronized (AnalysisJobs.this) {
+                checkpoint();
+                var snap = job.estimator.recordProgress(job.stage, done, total);
+                job.progressMessage = sanitizeProgressMessage(message);
+                payload = progressEventPayload(job, snap);
+            }
+            eventBroker.publish(job.id.toString(), "progress_update", payload);
+        }
+
+        public void registerModules(List<String> modules) {
+            if (modules == null || modules.isEmpty())
+                return;
+            synchronized (AnalysisJobs.this) {
+                for (String module : modules) {
+                    if (module != null && !module.isBlank()) {
+                        job.modules.putIfAbsent(module,
+                                new ModuleProgress(module, "PENDING", 0, 0, 0L, Optional.empty(), Optional.empty()));
+                    }
+                }
+            }
+        }
+
+        public void reportModuleUpdate(String module, String status, int filesDone, int filesTotal,
+                long elapsedMillis, Optional<String> contextId, Optional<String> reason) {
+            Objects.requireNonNull(module, "module");
+            Objects.requireNonNull(status, "status");
+            Objects.requireNonNull(contextId, "contextId");
+            Objects.requireNonNull(reason, "reason");
+            String eventType;
+            Map<String, Object> payload;
+            synchronized (AnalysisJobs.this) {
+                checkpoint();
+                var update = new ModuleProgress(module, status, Math.max(0, filesDone), Math.max(0, filesTotal),
+                        Math.max(0L, elapsedMillis), contextId, reason);
+                job.modules.put(module, update);
+                boolean doneStatus = "COMPLETED".equals(status) || "REUSED".equals(status)
+                        || "FAILED".equals(status) || "SKIPPED".equals(status);
+                eventType = doneStatus ? "module_completed" : "module_progress";
+                payload = new LinkedHashMap<>();
+                payload.put("jobId", job.id.toString());
+                payload.put("module", update.module());
+                payload.put("status", update.status());
+                payload.put("filesDone", update.filesDone());
+                payload.put("filesTotal", update.filesTotal());
+                payload.put("elapsedMillis", update.elapsedMillis());
+                payload.put("contextId", update.contextId().orElse(null));
+                payload.put("reason", update.reason().orElse(null));
+            }
+            eventBroker.publish(job.id.toString(), eventType, payload);
+        }
+
+        public PreviewPublication publishPreview(KnowledgeGraph graph, TruthTier truthTier, int completedContexts,
+                int totalContexts, List<String> pendingModules) {
+            Objects.requireNonNull(graph, "graph");
+            Objects.requireNonNull(truthTier, "truthTier");
+            checkpoint();
+            PreviewPublication publication;
+            Map<String, Object> payload;
+            synchronized (AnalysisJobs.this) {
+                checkpoint();
+                List<String> safePending = pendingModules == null ? List.of() : List.copyOf(pendingModules);
+                Instant publishedAt;
+                if (previewStore != null) {
+                    var meta = previewStore.putPreview(job.id.toString(), graph, truthTier,
+                            completedContexts, totalContexts, safePending);
+                    publishedAt = meta.publishedAt();
+                } else {
+                    publishedAt = Instant.now();
+                }
+                publication = new PreviewPublication(graph.identity(), truthTier,
+                        Math.max(0, completedContexts), Math.max(0, totalContexts), safePending, publishedAt);
+                job.preview = publication;
+                job.truthTier = truthTier;
+                job.revision++;
+                payload = new LinkedHashMap<>();
+                payload.put("jobId", job.id.toString());
+                payload.put("graphId", publication.graphId().value());
+                payload.put("truthTier", publication.truthTier().name());
+                payload.put("completedContexts", publication.completedContexts());
+                payload.put("totalContexts", publication.totalContexts());
+                payload.put("pendingModules", publication.pendingModules());
+                payload.put("publishedAt", publication.publishedAt());
+                payload.put("authoritative", false);
+                payload.put("revision", job.revision);
+            }
+            eventBroker.publish(job.id.toString(), "preview_ready", payload);
+            return publication;
+        }
+
+        public void recordIncrementalMetrics(IncrementalMetrics metrics) {
+            Objects.requireNonNull(metrics, "metrics");
+            Map<String, Object> payload;
+            synchronized (AnalysisJobs.this) {
+                job.incrementalMetrics = metrics;
+                payload = new LinkedHashMap<>();
+                payload.put("jobId", job.id.toString());
+                payload.put("baseSnapshotId", metrics.baseSnapshotId().orElse(null));
+                payload.put("addedFiles", metrics.addedFiles());
+                payload.put("modifiedFiles", metrics.modifiedFiles());
+                payload.put("deletedFiles", metrics.deletedFiles());
+                payload.put("reusedFiles", metrics.reusedFiles());
+                payload.put("abiEarlyCutoffCount", metrics.abiEarlyCutoffCount());
+                payload.put("impactedDependentsCount", metrics.impactedDependentsCount());
+                payload.put("reusedModules", metrics.reusedModules());
+                payload.put("timeSavedEstimateMs", metrics.timeSavedEstimateMs());
+            }
+            eventBroker.publish(job.id.toString(), "incremental_summary", payload);
+        }
+
         public void stage(Stage stage) {
+            Map<String, Object> payload;
             synchronized (AnalysisJobs.this) {
                 checkpoint();
                 if (stage == Stage.FINISHED || stage == Stage.REUSED || stage.ordinal() <= job.stage.ordinal())
@@ -387,6 +615,7 @@ public final class AnalysisJobs implements AutoCloseable {
                 job.stageStartNanos.put(stage, nowNanos);
                 job.events.add(new Event(stage, Instant.now()));
                 job.revision++;
+                var snap = job.estimator.onStageEnter(stage);
                 if (stage == Stage.PUBLICATION) {
                     persist(job);
                 } else {
@@ -398,7 +627,14 @@ public final class AnalysisJobs implements AutoCloseable {
                                 job.id, stage);
                     }
                 }
+                payload = new LinkedHashMap<>();
+                payload.put("jobId", job.id.toString());
+                payload.put("stage", stage.name());
+                payload.put("revision", job.revision);
+                payload.put("overallRatio", snap.overallRatio());
+                payload.put("elapsedMillis", snap.elapsedMillis());
             }
+            eventBroker.publish(job.id.toString(), "stage_started", payload);
         }
     }
 
@@ -414,6 +650,8 @@ public final class AnalysisJobs implements AutoCloseable {
         final EnumMap<Stage, Long> stageStartNanos = new EnumMap<>(Stage.class);
         final EnumMap<Stage, Long> stageElapsedNanos = new EnumMap<>(Stage.class);
         final Map<String, Long> cacheMetrics = new TreeMap<>();
+        final ThroughputEstimator estimator = new ThroughputEstimator();
+        final Map<String, ModuleProgress> modules = new LinkedHashMap<>();
         State state = State.QUEUED;
         Stage stage = Stage.QUEUED;
         long revision = 1;
@@ -429,10 +667,17 @@ public final class AnalysisJobs implements AutoCloseable {
         AnalysisJobDiskStore.PreparedLedgers preparedLedgers;
         boolean force;
         AnalysisMode mode = AnalysisMode.FULL;
+        Optional<String> requestedRef = Optional.empty();
         ContentDigest inputKey;
         Reuse reuse;
         volatile ReuseDecision reuseDecision;
         AnalysisJobDiskStore.Envelope reusedPublication;
+        TruthTier truthTier = TruthTier.NONE;
+        PreviewPublication preview;
+        IncrementalMetrics incrementalMetrics;
+        String progressMessage = "";
+        String ownerUserId = com.evolution.backend.auth.AuthenticatedUser.LOCAL_USER_ID;
+        com.evolution.backend.auth.RequestContext.ActiveRequest requestContext;
 
         Job(Registration registration, int sequence) {
             this(registration, sequence, null);
@@ -462,9 +707,16 @@ public final class AnalysisJobs implements AutoCloseable {
 
     private final SortedMap<String, Registration> setups = new TreeMap<>();
     private final LinkedHashMap<UUID, Job> jobs = new LinkedHashMap<>();
+    private final Map<UUID, String> jobOwners = new LinkedHashMap<>();
     private final LinkedHashMap<UUID, Telemetry> completedTelemetry = new LinkedHashMap<>(32, 0.75f, true) {
         @Override
         protected boolean removeEldestEntry(Map.Entry<UUID, Telemetry> eldest) {
+            return size() > 128;
+        }
+    };
+    private final LinkedHashMap<UUID, LiveProgress> completedProgress = new LinkedHashMap<>(32, 0.75f, true) {
+        @Override
+        protected boolean removeEldestEntry(Map.Entry<UUID, LiveProgress> eldest) {
             return size() > 128;
         }
     };
@@ -474,20 +726,28 @@ public final class AnalysisJobs implements AutoCloseable {
     private final PublishedReports reports;
     private final Limits limits;
     private final AnalysisJobDiskStore disk;
+    private final WorkbenchPreviewStore previewStore;
+    private final AnalysisJobEventBroker eventBroker = new AnalysisJobEventBroker();
     private final ThreadPoolExecutor executor;
     private final ScheduledThreadPoolExecutor deadlines;
     private boolean closed;
 
     public AnalysisJobs(List<Registration> registrations, GraphStore graphs, PublishedReports reports, Limits limits) {
-        this(registrations, graphs, reports, limits, null);
+        this(registrations, graphs, reports, limits, null, null);
     }
 
     public AnalysisJobs(List<Registration> registrations, GraphStore graphs, PublishedReports reports, Limits limits,
             AnalysisJobDiskStore disk) {
+        this(registrations, graphs, reports, limits, disk, null);
+    }
+
+    public AnalysisJobs(List<Registration> registrations, GraphStore graphs, PublishedReports reports, Limits limits,
+            AnalysisJobDiskStore disk, WorkbenchPreviewStore previewStore) {
         this.graphs = Objects.requireNonNull(graphs);
         this.reports = Objects.requireNonNull(reports);
         this.limits = Objects.requireNonNull(limits);
         this.disk = disk;
+        this.previewStore = previewStore;
         if (registrations.size() > 32)
             throw new IllegalArgumentException("Setup capacity exceeded");
         for (var registration : registrations)
@@ -529,6 +789,121 @@ public final class AnalysisJobs implements AutoCloseable {
         return this.graphs == graphs && this.reports == reports;
     }
 
+    public WorkbenchPreviewStore previewStore() {
+        return previewStore;
+    }
+
+    public AnalysisJobEventBroker eventBroker() {
+        return eventBroker;
+    }
+
+    private boolean isJobVisibleToCaller(UUID id) {
+        String owner = jobOwners.getOrDefault(id, com.evolution.backend.auth.AuthenticatedUser.LOCAL_USER_ID);
+        String caller = com.evolution.backend.auth.RequestContext.currentUserId();
+        if (owner.equals(caller)) {
+            return true;
+        }
+        return com.evolution.backend.auth.AuthenticatedUser.LOCAL_USER_ID.equals(owner)
+                && !com.evolution.backend.auth.RequestContext.isMultiUserMode();
+    }
+
+    private void requireJobAccess(UUID id) {
+        if (!isJobVisibleToCaller(id)) {
+            throw new Rejected("ACCESS_DENIED");
+        }
+    }
+
+    public synchronized LiveProgress progress(UUID id) {
+        Objects.requireNonNull(id);
+        requireJobAccess(id);
+        var active = jobs.get(id);
+        if (active != null)
+            return buildLiveProgress(active);
+        var recent = completedProgress.get(id);
+        if (recent != null)
+            return recent;
+        return buildHistoricalProgress(saved(id));
+    }
+
+    private static String scopedRetryKey(String ownerUserId, String idempotencyKey) {
+        String owner = (ownerUserId == null || ownerUserId.isBlank())
+                ? com.evolution.backend.auth.AuthenticatedUser.LOCAL_USER_ID
+                : ownerUserId;
+        return owner + "\0" + idempotencyKey;
+    }
+
+    private static String diskRetryKey(String ownerUserId, String idempotencyKey) {
+        if (ownerUserId == null || ownerUserId.isBlank()
+                || com.evolution.backend.auth.AuthenticatedUser.LOCAL_USER_ID.equals(ownerUserId)) {
+            return idempotencyKey;
+        }
+        if (idempotencyKey != null && idempotencyKey.startsWith("u-") && idempotencyKey.length() == 34
+                && idempotencyKey.substring(2).matches("[0-9a-f]{32}")) {
+            return idempotencyKey;
+        }
+        return "u-" + ContentDigest.sha256Utf8(ownerUserId + "\0" + idempotencyKey).value().substring(7, 39);
+    }
+
+    public synchronized Optional<PreviewPublication> preview(UUID id) {
+        Objects.requireNonNull(id);
+        requireJobAccess(id);
+        var active = jobs.get(id);
+        if (active != null)
+            return Optional.ofNullable(active.preview);
+        var recent = completedProgress.get(id);
+        if (recent != null)
+            return recent.preview();
+        return buildHistoricalProgress(saved(id)).preview();
+    }
+
+    public synchronized TruthTier truthTier(UUID id) {
+        return progress(id).truthTier();
+    }
+
+    public synchronized Optional<IncrementalMetrics> incrementalMetrics(UUID id) {
+        Objects.requireNonNull(id);
+        var active = jobs.get(id);
+        if (active != null)
+            return Optional.ofNullable(active.incrementalMetrics);
+        var recent = completedTelemetry.get(id);
+        if (recent != null)
+            return recent.incremental();
+        return saved(id).telemetry().flatMap(AnalysisJobDiskStore.PersistedTelemetry::incremental);
+    }
+
+    public AnalysisJobEventBroker.Subscription subscribe(UUID id, long lastEventId) {
+        Objects.requireNonNull(id);
+        LiveProgress snapshot;
+        AnalysisJobDiskStore.Saved historical = null;
+        boolean hasLiveChannel;
+        synchronized (this) {
+            requireJobAccess(id);
+            var active = jobs.get(id);
+            if (active != null) {
+                snapshot = buildLiveProgress(active);
+                hasLiveChannel = true;
+            } else {
+                var recent = completedProgress.get(id);
+                if (recent != null) {
+                    snapshot = recent;
+                    hasLiveChannel = eventBroker.hasChannel(id.toString());
+                } else {
+                    historical = saved(id);
+                    snapshot = buildHistoricalProgress(historical);
+                    hasLiveChannel = eventBroker.hasChannel(id.toString());
+                }
+            }
+        }
+        if (hasLiveChannel) {
+            return eventBroker.subscribe(id.toString(), lastEventId, Optional.of(snapshot));
+        }
+        var view = historical != null ? historical.view() : get(id);
+        var terminalPayload = terminalEventPayload(view.id(), view.state(), snapshot.truthTier(), view.result(),
+                view.error(), view.stop(), view.elapsedMillis(), snapshot.incremental());
+        return eventBroker.historicalTerminalSubscription(id.toString(), snapshot,
+                terminalEventName(view.state()), terminalPayload);
+    }
+
     public synchronized List<Setup> setups() {
         return setups.values().stream().map(Registration::setup).toList();
     }
@@ -561,44 +936,67 @@ public final class AnalysisJobs implements AutoCloseable {
                 .anyMatch(j -> j.registration.setup().id().equals(setupId) && !terminal(j.state));
         if (hasRunning)
             throw new Rejected("JOB_RUNNING");
+        if (disk != null) {
+            try {
+                if (!disk.queued(setupId).isEmpty())
+                    throw new Rejected("JOB_RUNNING");
+            } catch (IOException failure) {
+                throw new Rejected("JOB_STORAGE_UNAVAILABLE");
+            }
+        }
         setups.remove(setupId);
         retries.entrySet().removeIf(e -> e.getValue().registration.setup().id().equals(setupId));
     }
 
     public Submission submit(String setup, String idempotencyKey) {
-        return submit(setup, idempotencyKey, false, AnalysisMode.FULL);
+        return submit(setup, idempotencyKey, false, AnalysisMode.FULL, Optional.empty());
     }
 
     public Submission submit(String setup, String idempotencyKey, boolean force) {
-        return submit(setup, idempotencyKey, force, AnalysisMode.FULL);
+        return submit(setup, idempotencyKey, force, AnalysisMode.FULL, Optional.empty());
     }
 
-    public synchronized Submission submit(String setup, String idempotencyKey, boolean force, AnalysisMode mode) {
+    public Submission submit(String setup, String idempotencyKey, boolean force, AnalysisMode mode) {
+        return submit(setup, idempotencyKey, force, mode, Optional.empty());
+    }
+
+    public synchronized Submission submit(String setup, String idempotencyKey, boolean force, AnalysisMode mode,
+            Optional<String> ref) {
         Objects.requireNonNull(mode);
+        var normalizedRef = normalizeRef(ref);
         identifier(setup);
         identifier(idempotencyKey);
         if (closed)
             throw new Rejected("JOBS_CLOSED");
-        var existing = retries.get(idempotencyKey);
+        String callerUserId = com.evolution.backend.auth.RequestContext.currentUserId();
+        String retryKey = scopedRetryKey(callerUserId, idempotencyKey);
+        var existing = retries.get(retryKey);
         if (existing != null) {
-            if (!existing.registration.setup().id().equals(setup) || existing.force != force || existing.mode != mode)
+            if (!existing.registration.setup().id().equals(setup) || existing.force != force || existing.mode != mode
+                    || !existing.requestedRef.equals(normalizedRef))
                 throw new Rejected("IDEMPOTENCY_CONFLICT");
             return new Submission(view(existing), false);
         }
         var registration = setups.get(setup);
         if (registration == null)
             throw new Rejected("SETUP_NOT_FOUND");
+        String persistedRetryKey = diskRetryKey(callerUserId, idempotencyKey);
         AnalysisJobDiskStore.Saved previous = null;
         if (disk != null)
             try {
-                previous = disk.retry(idempotencyKey).orElse(null);
-                if (previous != null) {
+                previous = disk.retry(persistedRetryKey).orElse(null);
+                if (previous != null && isJobVisibleToCaller(UUID.fromString(previous.view().id()))) {
                     if (!previous.view().setup().equals(setup) || previous.view().force() != force
                             || previous.view().mode().orElse(AnalysisMode.FULL) != mode
                             || !disk.intent(UUID.fromString(previous.view().id())).equals(registration.setup()))
                         throw new Rejected("IDEMPOTENCY_CONFLICT");
-                    if (terminal(previous.view().state()))
+                    if (terminal(previous.view().state())
+                            || previous.view().state() == State.QUEUED
+                            || previous.view().state() == State.RUNNING
+                            || previous.view().state() == State.CANCELLING)
                         return new Submission(previous.view(), false);
+                } else {
+                    previous = null;
                 }
             } catch (IOException failure) {
                 throw new Rejected("JOB_STORAGE_UNAVAILABLE");
@@ -608,7 +1006,11 @@ public final class AnalysisJobs implements AutoCloseable {
         var job = new Job(registration, jobs.size() + 1, previous);
         job.force = force;
         job.mode = mode;
+        job.requestedRef = normalizedRef;
         job.retry = idempotencyKey;
+        job.ownerUserId = callerUserId;
+        job.requestContext = com.evolution.backend.auth.RequestContext.current().orElse(null);
+        jobOwners.put(job.id, job.ownerUserId);
         job.task = () -> execute(job);
         persist(job);
         // The monitor prevents the worker from observing a job before admission is
@@ -616,7 +1018,7 @@ public final class AnalysisJobs implements AutoCloseable {
         try {
             executor.execute(job.task);
             jobs.put(job.id, job);
-            retries.put(idempotencyKey, job);
+            retries.put(retryKey, job);
         } catch (RejectedExecutionException full) {
             if (disk == null)
                 throw new Rejected("JOB_QUEUE_FULL");
@@ -626,32 +1028,20 @@ public final class AnalysisJobs implements AutoCloseable {
 
     public synchronized Telemetry telemetry(UUID id) {
         Objects.requireNonNull(id);
+        requireJobAccess(id);
         var active = jobs.get(id);
         if (active != null)
             return buildLiveTelemetry(active);
         var recent = completedTelemetry.get(id);
         if (recent != null)
             return recent;
-        var historical = saved(id).view();
-        return buildHistoricalTelemetry(historical);
+        return buildHistoricalTelemetry(saved(id));
     }
 
     private Telemetry buildLiveTelemetry(Job job) {
         long nowNanos = job.finished == null ? System.nanoTime() : job.finishedNanos;
         long totalMs = Math.max(0L, TimeUnit.NANOSECONDS.toMillis(nowNanos - job.submittedNanos));
-        var stageMs = new LinkedHashMap<String, Long>();
-        for (Stage s : Stage.values()) {
-            if (s == Stage.FINISHED)
-                continue;
-            long nanos = job.stageElapsedNanos.getOrDefault(s, 0L);
-            Long inFlight = job.stageStartNanos.get(s);
-            if (inFlight != null && job.finished == null) {
-                nanos += Math.max(0L, nowNanos - inFlight);
-            }
-            if (nanos > 0L || job.events.stream().anyMatch(e -> e.stage() == s)) {
-                stageMs.put(s.name(), Math.max(0L, TimeUnit.NANOSECONDS.toMillis(nanos)));
-            }
-        }
+        var stageMs = computeStageMillis(job, nowNanos);
         var stages = new ArrayList<StageTiming>();
         var evs = job.events;
         for (int i = 0; i < evs.size(); i++) {
@@ -665,13 +1055,95 @@ public final class AnalysisJobs implements AutoCloseable {
             stages.add(new StageTiming(ev.stage(), dur, ev.at(), ended));
         }
         return new Telemetry(job.id.toString(), job.registration.setup().id(), Optional.of(job.mode), job.state,
-                job.stage,
-                job.reuse != null, Optional.ofNullable(job.reuseDecision), totalMs, stageMs, stages,
-                job.cacheMetrics);
+                job.stage, job.reuse != null, Optional.ofNullable(job.reuseDecision), totalMs, stageMs, stages,
+                job.cacheMetrics, Optional.ofNullable(job.incrementalMetrics));
     }
 
-    private static Telemetry buildHistoricalTelemetry(View view) {
+    private static LinkedHashMap<String, Long> computeStageMillis(Job job, long nowNanos) {
         var stageMs = new LinkedHashMap<String, Long>();
+        for (Stage s : Stage.values()) {
+            if (s == Stage.FINISHED)
+                continue;
+            long nanos = job.stageElapsedNanos.getOrDefault(s, 0L);
+            Long inFlight = job.stageStartNanos.get(s);
+            if (inFlight != null && job.finished == null) {
+                nanos += Math.max(0L, nowNanos - inFlight);
+            }
+            if (nanos > 0L || job.events.stream().anyMatch(e -> e.stage() == s)) {
+                stageMs.put(s.name(), Math.max(0L, TimeUnit.NANOSECONDS.toMillis(nanos)));
+            }
+        }
+        return stageMs;
+    }
+
+    private LiveProgress buildLiveProgress(Job job) {
+        long nowNanos = job.finished == null ? System.nanoTime() : job.finishedNanos;
+        var snap = job.estimator.snapshot();
+        long elapsedMs = Math.max(0L, TimeUnit.NANOSECONDS.toMillis(nowNanos - job.submittedNanos));
+        return new LiveProgress(
+                job.id.toString(),
+                job.registration.setup().id(),
+                job.state,
+                job.stage,
+                job.revision,
+                job.truthTier,
+                Optional.ofNullable(job.preview).map(PreviewPublication::graphId),
+                Optional.ofNullable(job.preview),
+                snap.overallRatio(),
+                snap.stageDone(),
+                snap.stageTotal(),
+                snap.filesPerSecond(),
+                snap.etaSeconds(),
+                snap.etaStatus(),
+                elapsedMs,
+                job.progressMessage,
+                List.copyOf(job.modules.values()),
+                computeStageMillis(job, nowNanos),
+                job.cacheMetrics,
+                Optional.ofNullable(job.incrementalMetrics));
+    }
+
+    private static LiveProgress buildHistoricalProgress(AnalysisJobDiskStore.Saved saved) {
+        var view = saved.view();
+        var telemetry = buildHistoricalTelemetry(saved);
+        boolean isTerm = terminal(view.state());
+        TruthTier tier = (view.state() == State.SUCCEEDED || view.state() == State.PARTIAL)
+                && view.result().flatMap(Result::graph).isPresent()
+                        ? TruthTier.DEEP_SEMANTIC_COMPLETE
+                        : TruthTier.NONE;
+        BigDecimal ratio = isTerm
+                ? BigDecimal.ONE.setScale(4, RoundingMode.HALF_UP)
+                : BigDecimal.ZERO.setScale(4, RoundingMode.HALF_UP);
+        String etaStatus = isTerm ? ThroughputEstimator.ETA_COMPLETE : ThroughputEstimator.ETA_ESTIMATING;
+        Optional<Long> etaSec = isTerm ? Optional.of(0L) : Optional.empty();
+        return new LiveProgress(
+                view.id(),
+                view.setup(),
+                view.state(),
+                view.stage(),
+                view.revision(),
+                tier,
+                Optional.empty(),
+                Optional.empty(),
+                ratio,
+                0,
+                0,
+                Optional.empty(),
+                etaSec,
+                etaStatus,
+                view.elapsedMillis(),
+                "",
+                List.of(),
+                telemetry.stageMillis(),
+                telemetry.cacheMetrics(),
+                telemetry.incremental());
+    }
+
+    private static Telemetry buildHistoricalTelemetry(AnalysisJobDiskStore.Saved saved) {
+        var view = saved.view();
+        var persisted = saved.telemetry();
+        var stageMs = new LinkedHashMap<String, Long>();
+        persisted.ifPresent(p -> stageMs.putAll(p.stageMillis()));
         var stages = new ArrayList<StageTiming>();
         var evs = view.events();
         for (int i = 0; i < evs.size(); i++) {
@@ -679,15 +1151,22 @@ public final class AnalysisJobs implements AutoCloseable {
             if (ev.stage() == Stage.FINISHED)
                 continue;
             Optional<Instant> ended = (i + 1 < evs.size()) ? Optional.of(evs.get(i + 1).at()) : view.finishedAt();
-            long dur = ended.map(end -> Math.max(0L, end.toEpochMilli() - ev.at().toEpochMilli())).orElse(0L);
-            stageMs.merge(ev.stage().name(), dur, Long::sum);
+            long fallbackDur = ended.map(end -> Math.max(0L, end.toEpochMilli() - ev.at().toEpochMilli())).orElse(0L);
+            long dur = stageMs.containsKey(ev.stage().name()) ? stageMs.get(ev.stage().name()) : fallbackDur;
+            stageMs.putIfAbsent(ev.stage().name(), fallbackDur);
             stages.add(new StageTiming(ev.stage(), dur, ev.at(), ended));
         }
+        Map<String, Long> cacheMetrics = persisted.map(AnalysisJobDiskStore.PersistedTelemetry::cacheMetrics)
+                .orElse(Map.of());
+        Optional<IncrementalMetrics> incremental = persisted
+                .flatMap(AnalysisJobDiskStore.PersistedTelemetry::incremental);
         return new Telemetry(view.id(), view.setup(), view.mode(), view.state(), view.stage(),
-                view.reuse().isPresent(), view.reuseDecision(), view.elapsedMillis(), stageMs, stages);
+                view.reuse().isPresent(), view.reuseDecision(), view.elapsedMillis(), stageMs, stages,
+                cacheMetrics, incremental);
     }
 
     public synchronized View get(UUID id) {
+        requireJobAccess(id);
         var active = jobs.get(id);
         return active != null ? view(active) : saved(id).view();
     }
@@ -699,6 +1178,7 @@ public final class AnalysisJobs implements AutoCloseable {
     public synchronized View resume(UUID id) {
         if (closed)
             throw new Rejected("JOBS_CLOSED");
+        requireJobAccess(id);
         var active = jobs.get(id);
         AnalysisJobDiskStore.Saved previous;
         if (active != null) {
@@ -723,6 +1203,11 @@ public final class AnalysisJobs implements AutoCloseable {
             throw new Rejected("JOB_ALREADY_PUBLISHED");
         var job = new Job(registration, jobs.size() + 1, previous);
         job.retry = previous.retry();
+        job.ownerUserId = active != null
+                ? active.ownerUserId
+                : jobOwners.getOrDefault(id, com.evolution.backend.auth.RequestContext.currentUserId());
+        job.requestContext = com.evolution.backend.auth.RequestContext.current().orElse(null);
+        jobOwners.put(id, job.ownerUserId);
         job.task = () -> execute(job);
         persist(job);
         try {
@@ -733,11 +1218,12 @@ public final class AnalysisJobs implements AutoCloseable {
             return view(job);
         }
         jobs.put(id, job);
-        retries.put(job.retry, job);
+        retries.put(scopedRetryKey(job.ownerUserId, job.retry), job);
         return view(job);
     }
 
     public synchronized View cancel(UUID id) {
+        requireJobAccess(id);
         var job = jobs.get(id);
         if (job == null) {
             var previous = saved(id);
@@ -775,8 +1261,20 @@ public final class AnalysisJobs implements AutoCloseable {
                 var reusableKey = job.state == State.SUCCEEDED || job.state == State.PARTIAL
                         ? Optional.ofNullable(job.inputKey)
                         : Optional.<ContentDigest>empty();
-                disk.save(job.retry, job.registration.setup(), view(job), job.gaps, job.inputProblems,
-                        job.reusedPublication, reusableKey, job.preparedLedgers);
+                Optional<AnalysisJobDiskStore.PersistedTelemetry> persistedTelemetry = Optional.empty();
+                if (terminal(job.state) && job.reusedPublication == null) {
+                    long refNanos = job.finishedNanos > 0L ? job.finishedNanos : System.nanoTime();
+                    var pt = new AnalysisJobDiskStore.PersistedTelemetry(
+                            computeStageMillis(job, refNanos),
+                            job.cacheMetrics,
+                            Optional.ofNullable(job.incrementalMetrics));
+                    if (!pt.isEmpty()) {
+                        persistedTelemetry = Optional.of(pt);
+                    }
+                }
+                String persistedRetry = diskRetryKey(job.ownerUserId, job.retry);
+                disk.save(persistedRetry, job.registration.setup(), view(job), job.gaps, job.inputProblems,
+                        job.reusedPublication, reusableKey, job.preparedLedgers, persistedTelemetry);
             } catch (IOException failure) {
                 LOG.log(System.Logger.Level.WARNING, "Analysis job persistence failed for {0} ({1}: {2})",
                         job.id, failure.getClass().getSimpleName(), failure.getMessage());
@@ -818,6 +1316,7 @@ public final class AnalysisJobs implements AutoCloseable {
                 }
                 var job = new Job(registration, jobs.size() + 1, selected);
                 job.retry = selected.retry();
+                job.ownerUserId = jobOwners.getOrDefault(job.id, com.evolution.backend.auth.AuthenticatedUser.LOCAL_USER_ID);
                 job.task = () -> execute(job);
                 try {
                     executor.execute(job.task);
@@ -825,7 +1324,7 @@ public final class AnalysisJobs implements AutoCloseable {
                     return;
                 }
                 jobs.put(job.id, job);
-                retries.put(job.retry, job);
+                retries.put(scopedRetryKey(job.ownerUserId, job.retry), job);
             }
         } catch (IOException unavailable) {
             throw new Rejected("JOB_STORAGE_UNAVAILABLE");
@@ -851,8 +1350,8 @@ public final class AnalysisJobs implements AutoCloseable {
             job.state = State.CANCELLING;
             if (job.thread != null)
                 job.thread.interrupt();
+            persist(job);
         }
-        persist(job);
     }
 
     private void execute(Job job) {
@@ -873,7 +1372,19 @@ public final class AnalysisJobs implements AutoCloseable {
                         }
                     }, limits.timeoutMillis(), TimeUnit.MILLISECONDS);
             }
-            var execution = job.registration.runner().run(control);
+            final Object[] holder = new Object[1];
+            final Exception[] checkedErr = new Exception[1];
+            com.evolution.backend.auth.RequestContext.runWithVoid(job.requestContext, () -> {
+                try {
+                    holder[0] = job.registration.runner().run(control);
+                } catch (Exception ex) {
+                    checkedErr[0] = ex;
+                }
+            });
+            if (checkedErr[0] != null) {
+                throw checkedErr[0];
+            }
+            var execution = holder[0];
             control.checkpoint();
             if (execution instanceof Reused reused) {
                 synchronized (this) {
@@ -923,25 +1434,36 @@ public final class AnalysisJobs implements AutoCloseable {
                 allGaps.add(g.gapIdentity().value());
             });
             int effectiveGraphGapCount = graph.isPresent() ? graphGaps.size() : outcome.publishedGraphGapCount();
-            int effectiveTotalGapCount = graph.isPresent() ? allGaps.size() : Math.max(allGaps.size(), effectiveGraphGapCount);
-            Optional<ContentDigest> resultGraph = graph.map(KnowledgeGraph::identity).or(() -> outcome.publishedGraph());
-            Optional<SnapshotIdentity> resultSnapshot = graph.map(KnowledgeGraph::snapshot).or(() -> finalPublishedManifest.map(GraphManifest::snapshot));
+            int effectiveTotalGapCount = graph.isPresent() ? allGaps.size()
+                    : Math.max(allGaps.size(), effectiveGraphGapCount);
+            Optional<ContentDigest> resultGraph = graph.map(KnowledgeGraph::identity)
+                    .or(() -> outcome.publishedGraph());
+            Optional<SnapshotIdentity> resultSnapshot = graph.map(KnowledgeGraph::snapshot)
+                    .or(() -> finalPublishedManifest.map(GraphManifest::snapshot));
             List<KnowledgeGraph.Context> resultContexts = graph.map(KnowledgeGraph::contexts)
                     .or(() -> finalPublishedManifest.map(GraphManifest::contexts)).orElse(List.of());
             synchronized (this) {
                 control.checkpoint();
                 var ids = reports.publishAll(outcome.reports());
                 var completion = outcome.completion();
-                if (completion == Completion.COMPLETE && effectiveTotalGapCount > 0) completion = Completion.PARTIAL;
-                job.preparedLedgers=ledgers;
+                if (completion == Completion.COMPLETE && effectiveTotalGapCount > 0)
+                    completion = Completion.PARTIAL;
+                job.preparedLedgers = ledgers;
                 job.gaps = disk == null ? outcome.gaps() : List.of();
                 job.inputProblems = disk == null ? outcome.inputProblems() : List.of();
                 job.result = new Result(completion, resultGraph, resultSnapshot,
                         resultContexts.stream().flatMap(c -> c.analysis().stream()).distinct().sorted().toList(),
                         resultContexts.stream().map(KnowledgeGraph.Context::identity).sorted().toList(), ids,
-                        effectiveTotalGapCount, effectiveGraphGapCount, outcome.gaps().size(), outcome.inputProblems().size(), outcome.acquisition(), outcome.sourceReport());
-                if (completion == Completion.FAILED) job.error = "ANALYSIS_FAILED";
-                finish(job, switch (completion) { case COMPLETE -> State.SUCCEEDED; case PARTIAL -> State.PARTIAL; case EMPTY -> State.EMPTY; case FAILED -> State.FAILED; });
+                        effectiveTotalGapCount, effectiveGraphGapCount, outcome.gaps().size(),
+                        outcome.inputProblems().size(), outcome.acquisition(), outcome.sourceReport());
+                if (completion == Completion.FAILED)
+                    job.error = "ANALYSIS_FAILED";
+                finish(job, switch (completion) {
+                    case COMPLETE -> State.SUCCEEDED;
+                    case PARTIAL -> State.PARTIAL;
+                    case EMPTY -> State.EMPTY;
+                    case FAILED -> State.FAILED;
+                });
             }
         } catch (Exception | LinkageError | AssertionError | OutOfMemoryError failure) {
             LOG.log(System.Logger.Level.WARNING, "Analysis execution failed for {0} at stage {1} ({2}: {3})",
@@ -975,12 +1497,21 @@ public final class AnalysisJobs implements AutoCloseable {
     private void finish(Job job, State state) {
         long endNanos = System.nanoTime();
         job.closeActiveStage(endNanos);
+        job.estimator.markCompleted();
         job.state = state;
         job.stage = Stage.FINISHED;
         job.finished = Instant.now();
         job.finishedNanos = endNanos;
         job.events.add(new Event(Stage.FINISHED, job.finished));
         job.revision++;
+        if ((state == State.SUCCEEDED || state == State.PARTIAL)
+                && job.result != null && job.result.graph().isPresent()) {
+            job.truthTier = TruthTier.DEEP_SEMANTIC_COMPLETE;
+        }
+        if (previewStore != null) {
+            previewStore.markJobFinished(job.id.toString(),
+                    job.result == null ? Optional.empty() : job.result.graph());
+        }
         try {
             persist(job);
         } catch (Rejected unavailable) {
@@ -989,21 +1520,108 @@ public final class AnalysisJobs implements AutoCloseable {
             if (job.error == null)
                 job.error = "JOB_STORAGE_UNAVAILABLE";
             job.result = null;
+            job.truthTier = TruthTier.NONE;
             if (job.reuse != null)
                 job.reuseDecision = ReuseDecision.RESULT_UNAVAILABLE;
             job.reuse = null;
             completedTelemetry.put(job.id, buildLiveTelemetry(job));
+            completedProgress.put(job.id, buildLiveProgress(job));
+            publishTerminalEvent(job);
             return;
         }
         completedTelemetry.put(job.id, buildLiveTelemetry(job));
+        completedProgress.put(job.id, buildLiveProgress(job));
+        publishTerminalEvent(job);
         if (disk != null) {
             jobs.remove(job.id);
-            retries.remove(job.retry);
+            retries.remove(scopedRetryKey(job.ownerUserId, job.retry));
             try {
                 dispatchPending();
             } catch (Rejected unavailable) {
-                /* Accepted queued receipts remain durable until storage recovers. */}
+                /* Accepted queued receipts remain durable until storage recovers. */ }
         }
+    }
+
+    private void publishTerminalEvent(Job job) {
+        long elapsedMs = Math.max(0L, TimeUnit.NANOSECONDS.toMillis(job.finishedNanos - job.submittedNanos));
+        var payload = terminalEventPayload(job.id.toString(), job.state, job.truthTier,
+                Optional.ofNullable(job.result), Optional.ofNullable(job.error),
+                Optional.ofNullable(job.stop), elapsedMs, Optional.ofNullable(job.incrementalMetrics));
+        eventBroker.publish(job.id.toString(), terminalEventName(job.state), payload);
+    }
+
+    private static String terminalEventName(State state) {
+        return switch (state) {
+            case SUCCEEDED, PARTIAL, EMPTY -> "job_completed";
+            case CANCELLED -> "job_cancelled";
+            case FAILED, TIMED_OUT -> "job_failed";
+            default -> "job_failed";
+        };
+    }
+
+    private static Map<String, Object> terminalEventPayload(
+            String jobId,
+            State state,
+            TruthTier truthTier,
+            Optional<Result> result,
+            Optional<String> error,
+            Optional<Stop> stop,
+            long elapsedMillis,
+            Optional<IncrementalMetrics> incremental) {
+        var map = new LinkedHashMap<String, Object>();
+        map.put("jobId", jobId);
+        map.put("state", state.name());
+        map.put("truthTier", truthTier.name());
+        map.put("graphId", result.flatMap(Result::graph).map(ContentDigest::value).orElse(null));
+        map.put("snapshotId", result.flatMap(Result::snapshot).map(SnapshotIdentity::value).orElse(null));
+        map.put("result", result.orElse(null));
+        map.put("error", error.orElse(null));
+        map.put("stop", stop.map(Enum::name).orElse(null));
+        map.put("elapsedMillis", elapsedMillis);
+        map.put("incremental", incremental.orElse(null));
+        return map;
+    }
+
+    private static Map<String, Object> progressEventPayload(Job job, ThroughputEstimator.Snapshot snap) {
+        var map = new LinkedHashMap<String, Object>();
+        map.put("jobId", job.id.toString());
+        map.put("stage", job.stage.name());
+        map.put("revision", job.revision);
+        map.put("truthTier", job.truthTier.name());
+        map.put("overallRatio", snap.overallRatio());
+        map.put("stageDone", snap.stageDone());
+        map.put("stageTotal", snap.stageTotal());
+        map.put("filesPerSecond", snap.filesPerSecond().orElse(null));
+        map.put("etaSeconds", snap.etaSeconds().orElse(null));
+        map.put("etaStatus", snap.etaStatus());
+        map.put("elapsedMillis", snap.elapsedMillis());
+        map.put("message", job.progressMessage);
+        return map;
+    }
+
+    private static String sanitizeProgressMessage(String message) {
+        if (message == null || message.isBlank())
+            return "";
+        String cleaned = message.replace('\r', ' ').replace('\n', ' ').strip();
+        return cleaned.length() > 240 ? cleaned.substring(0, 240) : cleaned;
+    }
+
+    public static Optional<String> normalizeRef(Optional<String> ref) {
+        if (ref == null || ref.isEmpty())
+            return Optional.empty();
+        String trimmed = ref.orElseThrow().strip();
+        if (trimmed.isEmpty())
+            return Optional.empty();
+        if (trimmed.length() > 256
+                || trimmed.startsWith("-")
+                || trimmed.contains("..")
+                || trimmed.contains("@{")
+                || trimmed.endsWith(".lock")
+                || trimmed.endsWith("/")
+                || !trimmed.matches("[A-Za-z0-9._/@+-]{1,256}")) {
+            throw new IllegalArgumentException("Invalid Git ref");
+        }
+        return Optional.of(trimmed);
     }
 
     public static boolean terminal(State state) {
@@ -1044,14 +1662,51 @@ public final class AnalysisJobs implements AutoCloseable {
                     throw new IllegalArgumentException("Invalid durable history cursor");
             }
             try {
-                var page = disk.history(after, size, high);
-                if (page.total() > Integer.MAX_VALUE)
-                    throw new Rejected("V2_HISTORY_REQUIRED");
-                return new Page<>(page.items().stream().map(saved -> {
-                    var active = jobs.get(UUID.fromString(saved.view().id()));
-                    return active == null ? saved.view() : view(active);
-                }).toList(), (int) page.total(),
-                        page.continuation().map(next -> durableCursor(size, page.highWaterSequence(), next)));
+                boolean unfilteredLocal = !com.evolution.backend.auth.RequestContext.isMultiUserMode()
+                        && com.evolution.backend.auth.AuthenticatedUser.LOCAL_USER_ID
+                                .equals(com.evolution.backend.auth.RequestContext.currentUserId())
+                        && jobOwners.values().stream()
+                                .allMatch(com.evolution.backend.auth.AuthenticatedUser.LOCAL_USER_ID::equals);
+                if (unfilteredLocal) {
+                    var page = disk.history(after, size, high);
+                    if (page.total() > Integer.MAX_VALUE)
+                        throw new Rejected("V2_HISTORY_REQUIRED");
+                    var items = page.items().stream()
+                            .map(saved -> {
+                                var active = jobs.get(UUID.fromString(saved.view().id()));
+                                return active == null ? saved.view() : view(active);
+                            }).toList();
+                    return new Page<>(items, (int) page.total(),
+                            page.continuation().map(next -> durableCursor(size, page.highWaterSequence(), next)));
+                }
+                var probe = disk.history(0, 50, high);
+                long effectiveHigh = high > 0 ? high : probe.highWaterSequence();
+                var visible = new ArrayList<View>();
+                var currentPage = probe;
+                while (true) {
+                    for (var saved : currentPage.items()) {
+                        UUID jid = UUID.fromString(saved.view().id());
+                        if (isJobVisibleToCaller(jid)) {
+                            var active = jobs.get(jid);
+                            visible.add(active == null ? saved.view() : view(active));
+                        }
+                    }
+                    if (currentPage.continuation().isEmpty()) {
+                        break;
+                    }
+                    currentPage = disk.history(currentPage.continuation().orElseThrow(), 50, effectiveHigh);
+                }
+                int visibleTotal = visible.size();
+                int offset = cursor.isPresent() ? (int) after : 0;
+                if (offset > visibleTotal || (offset == visibleTotal && offset != 0)) {
+                    throw new IllegalArgumentException("Invalid durable history cursor");
+                }
+                var pageItems = visible.stream().skip(offset).limit(size).toList();
+                int nextOffset = offset + pageItems.size();
+                Optional<String> nextCursor = nextOffset < visibleTotal && effectiveHigh >= nextOffset
+                        ? Optional.of(durableCursor(size, effectiveHigh, nextOffset))
+                        : Optional.empty();
+                return new Page<>(pageItems, visibleTotal, nextCursor);
             } catch (IOException failure) {
                 throw new Rejected("JOB_STORAGE_UNAVAILABLE");
             }
@@ -1064,17 +1719,21 @@ public final class AnalysisJobs implements AutoCloseable {
             offset = decoded[1];
         }
         final int bound = high;
-        var members = jobs.values().stream().filter(j -> j.sequence <= bound).toList();
+        var members = jobs.values().stream()
+                .filter(j -> j.sequence <= bound && isJobVisibleToCaller(j.id))
+                .toList();
         if (high > jobs.size() || offset >= members.size() && offset != 0)
             throw new IllegalArgumentException("Invalid history cursor");
         var items = members.stream().skip(offset).limit(size).map(this::view).toList();
         int next = offset + items.size();
-        return new Page<>(items, high,
-                next < high ? Optional.of(cursor("history", size, high, next)) : Optional.empty());
+        int visibleTotal = members.size();
+        return new Page<>(items, visibleTotal,
+                next < visibleTotal ? Optional.of(cursor("history", size, high, next)) : Optional.empty());
     }
 
     public Page<CapabilityGapRecord> gaps(UUID id, int size, Optional<String> cursor) {
         synchronized (this) {
+            requireJobAccess(id);
             var active = jobs.get(id);
             if (active != null || disk == null) {
                 var job = find(id);
@@ -1124,6 +1783,7 @@ public final class AnalysisJobs implements AutoCloseable {
 
     public Page<InputProblem> inputProblems(UUID id, int size, Optional<String> cursor) {
         synchronized (this) {
+            requireJobAccess(id);
             var active = jobs.get(id);
             if (active != null || disk == null) {
                 var job = find(id);
@@ -1203,6 +1863,7 @@ public final class AnalysisJobs implements AutoCloseable {
             for (var job : List.copyOf(jobs.values()))
                 stop(job, Stop.SERVICE_CLOSED);
         }
+        eventBroker.closeAll();
         executor.shutdownNow();
         deadlines.shutdownNow();
         try {
