@@ -441,11 +441,13 @@ public final class DeclarativeTopologyProjection {
             }
         }
 
-        // Pass 1: collect all BUILD_COMPONENT nodes first so every syntax path resolves via longest-prefix matching.
+        // Pass 1: collect all build-backed component nodes (including re-projected SERVICE_COMPONENT / SHARED_LIBRARY_MODULE)
+        // so every syntax path resolves via longest-prefix matching and re-projection remains strictly idempotent (I2).
         var buildComps = new ArrayList<BuildCompInfo>();
         var buildCompsByDir = new TreeMap<String, BuildCompInfo>();
         var buildCompsByNodeId = new HashMap<String, BuildCompInfo>();
-        for (var node : store.valuesByKind("nodes", Set.of("BUILD_COMPONENT"), GraphSnapshotCodec::node, KnowledgeGraph.Node::kind)) {
+        for (var node : store.valuesByKind("nodes", Set.of("BUILD_COMPONENT", "SERVICE_COMPONENT", "SHARED_LIBRARY_MODULE"),
+                GraphSnapshotCodec::node, KnowledgeGraph.Node::kind)) {
             check(cancelled);
             for (var id : node.evidence()) {
                 var proof = evidence.get(id.value());

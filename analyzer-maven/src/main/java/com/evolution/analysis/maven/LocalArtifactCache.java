@@ -293,11 +293,12 @@ final class LocalArtifactCache {
             }
             var activeSession = com.evolution.analysis.input.VerifiedArtifactSession.current().orElse(null);
             if (activeSession != null) {
+                Path normalizedPath = path.toAbsolutePath().normalize();
                 if (kind == ArtifactKind.JAR) {
                     var fastJar = activeSession.lookupVerifiedJarByPath(path);
                     if (fastJar.isPresent()) {
                         var hit = fastJar.orElseThrow();
-                        if (hit.realPath().startsWith(root)) {
+                        if (hit.realPath().startsWith(root) && hit.realPath().equals(normalizedPath)) {
                             reserve(coordinate, kind, ArtifactOrigin.LOCAL_CACHE, relative, hit.size(), perFileLimit);
                             var record = new ArtifactRecord(coordinate, kind, ArtifactOrigin.LOCAL_CACHE,
                                     Optional.of(relative), hit.digest(), hit.size());
@@ -314,7 +315,7 @@ final class LocalArtifactCache {
                     var fastPom = activeSession.lookupVerifiedSmallFileByPath(path);
                     if (fastPom.isPresent()) {
                         var hit = fastPom.orElseThrow();
-                        if (hit.realPath().startsWith(root)) {
+                        if (hit.realPath().startsWith(root) && hit.realPath().equals(normalizedPath)) {
                             byte[] pomBytes = hit.bytes();
                             reserve(coordinate, kind, ArtifactOrigin.LOCAL_CACHE, relative, pomBytes.length, perFileLimit);
                             var record = new ArtifactRecord(coordinate, kind, ArtifactOrigin.LOCAL_CACHE,

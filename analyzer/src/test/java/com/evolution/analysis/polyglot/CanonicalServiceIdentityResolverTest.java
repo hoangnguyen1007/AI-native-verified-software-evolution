@@ -151,6 +151,14 @@ class CanonicalServiceIdentityResolverTest {
         assertTrue(hasTestOnlyClassification(nodes.get(root + "|" + id("mod-csproj-test")), evidence));
         assertNotEquals("SERVICE_COMPONENT", nodes.get(root + "|" + id("mod-test-dir")).kind());
         assertNotEquals("SERVICE_COMPONENT", nodes.get(root + "|" + id("mod-csproj-test")).kind());
+
+        // Re-projection idempotency (I2): running a second pass must not spawn duplicate SERVICE_COMPONENT/INFRA_COMPONENT nodes
+        var beforeNodes = new TreeMap<>(nodes);
+        var beforeEdges = new TreeMap<>(store.records("edges", GraphSnapshotCodec::edge));
+        DeclarativeTopologyProjection.project(store, root, ServiceArchitectureProjection.ProjectionProfile.STRICT, () -> false);
+        assertEquals(beforeNodes, store.records("nodes", GraphSnapshotCodec::node),
+                "Re-projecting elevated SERVICE_COMPONENT nodes must be strictly idempotent");
+        assertEquals(beforeEdges, store.records("edges", GraphSnapshotCodec::edge));
     }
 
     @Test
