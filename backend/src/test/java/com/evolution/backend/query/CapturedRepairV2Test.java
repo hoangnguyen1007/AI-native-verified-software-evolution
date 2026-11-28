@@ -265,6 +265,135 @@ final class CapturedRepairV2Test {
         }
     }
 
+    @Test
+    void capturedRepairOptionsAndProposeRouteBreakPackageSccCycleEndToEnd() {
+        String callerPath = "src/main/java/com/acme/domain/OrderService.java";
+        String targetPath = "src/main/java/com/acme/adapter/PaymentGateway.java";
+        String callerSrc = """
+                package com.acme.domain;
+                import com.acme.adapter.PaymentGateway;
+                public class OrderService {
+                    private final PaymentGateway gateway;
+                    public OrderService(PaymentGateway gateway) {
+                        this.gateway = gateway;
+                    }
+                    public boolean checkout(String id) {
+                        return gateway.charge(id);
+                    }
+                }
+                """;
+        String targetSrc = """
+                package com.acme.adapter;
+                public class PaymentGateway {
+                    public boolean charge(String id) {
+                        return id != null;
+                    }
+                }
+                """;
+
+        var repo = RepositoryIdentity.fromCanonicalCoordinate("https://example.test/scc-repair.git");
+        var callerDoc = SourceDocumentIdentity.from(repo, callerPath);
+        var targetDoc = SourceDocumentIdentity.from(repo, targetPath);
+        byte[] callerBytes = callerSrc.getBytes(StandardCharsets.UTF_8);
+        byte[] targetBytes = targetSrc.getBytes(StandardCharsets.UTF_8);
+        var callerDigest = ContentDigest.sha256(callerBytes);
+        var targetDigest = ContentDigest.sha256(targetBytes);
+
+        var fixture = new QueryFixture();
+        var callerBytesEv = GraphEvidence.capture("source.bytes", Map.of(
+                "document", Map.of("identity", callerDoc.value(), "path", callerPath,
+                        "contentDigest", callerDigest.value(), "module", "demo", "classification", "MAIN"),
+                "decoding", Map.of("charset", "UTF-8", "bom", "NONE"),
+                "bytesBase64", Base64.getEncoder().encodeToString(callerBytes)));
+        var targetBytesEv = GraphEvidence.capture("source.bytes", Map.of(
+                "document", Map.of("identity", targetDoc.value(), "path", targetPath,
+                        "contentDigest", targetDigest.value(), "module", "demo", "classification", "MAIN"),
+                "decoding", Map.of("charset", "UTF-8", "bom", "NONE"),
+                "bytesBase64", Base64.getEncoder().encodeToString(targetBytes)));
+        var callerTypeEv = GraphEvidence.capture("java.type", Map.of(
+                "qualifiedName", "com.acme.domain.OrderService",
+                "document", callerDoc.value(),
+                "path", callerPath));
+        var targetTypeEv = GraphEvidence.capture("java.type", Map.of(
+                "qualifiedName", "com.acme.adapter.PaymentGateway",
+                "document", targetDoc.value(),
+                "path", targetPath));
+
+        String callerTypeId = QueryFixture.id("com.acme.domain.OrderService");
+        String targetTypeId = QueryFixture.id("com.acme.adapter.PaymentGateway");
+        var nodes = List.of(
+                new KnowledgeGraph.Node(callerDoc.value(), fixture.context, "SOURCE_DOCUMENT", List.of(callerBytesEv.identity())),
+                new KnowledgeGraph.Node(targetDoc.value(), fixture.context, "SOURCE_DOCUMENT", List.of(targetBytesEv.identity())),
+                new KnowledgeGraph.Node(callerTypeId, fixture.context, "TYPE", List.of(callerTypeEv.identity())),
+                new KnowledgeGraph.Node(targetTypeId, fixture.context, "TYPE", List.of(targetTypeEv.identity())));
+        var edges = List.of(new KnowledgeGraph.Edge(
+                QueryFixture.id("dep-scc-1"), fixture.context, "graph.depends-on", callerTypeId,
+                new KnowledgeGraph.Target(KnowledgeGraph.TargetState.RESOLVED, List.of(targetTypeId), Optional.empty()),
+                List.of(fixture.base.identity()), Optional.empty()));
+        var graph = new KnowledgeGraph(
+                fixture.snapshot,
+                List.of(new KnowledgeGraph.Context(fixture.context, fixture.snapshot, Optional.empty(), fixture.base.identity())),
+                nodes, edges, List.of(fixture.base, callerBytesEv, targetBytesEv, callerTypeEv, targetTypeEv));
+
+        var citeCaller = new FindingDiagnosis.Citation(
+                ContentDigest.sha256Utf8("cite-caller"), fixture.context, callerBytesEv.identity(),
+                "java.occurrence", callerPath, new SourceSpan(callerDoc, 4, 5, 4, 41), callerDigest);
+        var citeTarget = new FindingDiagnosis.Citation(
+                ContentDigest.sha256Utf8("cite-target"), fixture.context, targetBytesEv.identity(),
+                "java.occurrence", targetPath, new SourceSpan(targetDoc, 2, 1, 2, 30), targetDigest);
+        var dummyDigest = ContentDigest.sha256Utf8("scc-finding");
+        var pin = new FindingDiagnosis.Pin(
+                fixture.snapshot, Optional.empty(), graph.identity(), fixture.context,
+                dummyDigest, dummyDigest, dummyDigest);
+        var proof = new FindingDiagnosis.Proof(
+                new VersionedIdentifier("policy.acyclic-packages", "1"),
+                ArchitectureQuery.Scope.TYPE, callerTypeId, targetTypeId, "dep-scc-1",
+                List.of("graph.depends-on"), ArchitectureQuery.Classification.MUST, dummyDigest);
+        var diagnosis = new FindingDiagnosis.Outcome(
+                FindingDiagnosis.VERSION, FindingDiagnosis.Status.CITATIONS_VALIDATED, Optional.empty(),
+                FindingDiagnosis.Mode.LOCAL_REPLAY, new VersionedIdentifier("diagnosis.test", "1"),
+                pin, Optional.of(dummyDigest), Optional.of(proof), Optional.of("Break package SCC cycle"),
+                List.of(citeCaller, citeTarget), AssessmentStatus.COMPLETE, List.of());
+
+        var repair = new CapturedRepair(null);
+        var opts = repair.options(diagnosis, graph, () -> StopReason.NONE);
+        assertTrue(opts.applicableRecipes().contains(JavaRepairRecipes.Recipe.BREAK_PACKAGE_SCC_CYCLE.id),
+                () -> "Expected BREAK_PACKAGE_SCC_CYCLE in applicableRecipes, got " + opts.applicableRecipes());
+        assertTrue(opts.applicableRecipes().contains(JavaRepairRecipes.Recipe.EXTRACT_INTERFACE_DECOUPLE.id));
+
+        var outcome = repair.propose(
+                diagnosis, graph, CapturedRepair.Strategy.RECIPE,
+                Optional.of(JavaRepairRecipes.Recipe.BREAK_PACKAGE_SCC_CYCLE),
+                Optional.empty(), () -> StopReason.NONE);
+        assertEquals("PROPOSED", outcome.status(), () -> "Expected PROPOSED, got " + outcome);
+        assertTrue(outcome.proposal().isPresent());
+        var proposal = outcome.proposal().orElseThrow();
+        assertTrue(CapturedRepair.authentic(proposal));
+        assertEquals(JavaRepairRecipes.Recipe.BREAK_PACKAGE_SCC_CYCLE.id,
+                proposal.candidate().recipe().orElseThrow().id());
+        assertEquals(3, proposal.candidate().edits().size());
+        assertTrue(proposal.candidate().edits().stream()
+                .anyMatch(e -> e.isCreate() && e.path().equals("src/main/java/com/acme/domain/PaymentGatewayPort.java")));
+        assertTrue(proposal.candidate().patch().contains("public interface PaymentGatewayPort"));
+        assertTrue(proposal.candidate().patch().contains("implements PaymentGatewayPort"));
+
+        // Also verify proposeAdHoc with Strategy.RECIPE for BREAK_PACKAGE_SCC_CYCLE
+        var queries = new ArchitectureMetricsService(graph).queries();
+        var adHocOutcome = repair.proposeAdHoc(
+                new CapturedRepair.AdHocRequest(
+                        fixture.context,
+                        "Break package SCC",
+                        "Decouple OrderService from PaymentGateway",
+                        List.of(callerPath, targetPath),
+                        List.of("com.acme.domain.OrderService", "com.acme.adapter.PaymentGateway"),
+                        CapturedRepair.Strategy.RECIPE,
+                        Optional.of(JavaRepairRecipes.Recipe.BREAK_PACKAGE_SCC_CYCLE.id),
+                        1),
+                graph, queries, () -> StopReason.NONE);
+        assertEquals("PROPOSED", adHocOutcome.status(), () -> "Expected ad-hoc PROPOSED, got " + adHocOutcome);
+        assertTrue(CapturedRepair.authentic(adHocOutcome.proposal().orElseThrow()));
+    }
+
     private static RepairSource.File citedFile(String path, String text, SourceDocumentIdentity docId,
                                                int startLine, int startCol, int endLine, int endCol) {
         var digest = ContentDigest.sha256Utf8(text);

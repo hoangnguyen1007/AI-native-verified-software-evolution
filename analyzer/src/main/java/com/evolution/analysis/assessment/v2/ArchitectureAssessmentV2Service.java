@@ -1800,4 +1800,81 @@ public final class ArchitectureAssessmentV2Service {
         }
         return ctx.identity().length() > 28 ? ctx.identity().substring(0, 28) + "..." : ctx.identity();
     }
+
+    /**
+     * WP4.2: Computes the deterministic Bansiya & Davis QMOOD snapshot (11 OO properties + 6 attributes
+     * including {@code Understandability}, {@code Flexibility}, {@code Reusability}) for a graph context,
+     * paired with exact Tarjan SCC cycle count from {@link StructuralTopologyAnalyzer}.
+     */
+    public QmoodQualityModel.QmoodSnapshot assessQmood(ArchitectureQueryService queries, String contextId) {
+        Objects.requireNonNull(queries, "queries");
+        Objects.requireNonNull(contextId, "contextId");
+        var res = assess(queries, contextId);
+        var topo = computeStructuralMetrics(queries, contextId);
+        int sccCount = topo.cyclicPackageSccCount() + topo.cyclicTypeSccCount();
+        double score = res.score().map(BigDecimal::doubleValue).orElse(0.0);
+        String qmoodCtx = resolveStructuralContextId(queries.graph(), contextId);
+        return QmoodQualityModel.fromGraphContext(queries.graph(), qmoodCtx, sccCount, score);
+    }
+
+    /**
+     * WP4.2: Builds a strictly numeric {@link QmoodQualityModel.MetricsOnlyBrief} for the RefAgent-style
+     * Context-Aware Planner (containing ZERO external smell-tool labels) using exact Tarjan SCC,
+     * coupling, and TurboMQ modularity metrics from {@link StructuralTopologyAnalyzer}.
+     */
+    public QmoodQualityModel.MetricsOnlyBrief buildMetricsOnlyBrief(ArchitectureQueryService queries, String contextId) {
+        Objects.requireNonNull(queries, "queries");
+        Objects.requireNonNull(contextId, "contextId");
+        var res = assess(queries, contextId);
+        var topo = computeStructuralMetrics(queries, contextId);
+        int sccCount = topo.cyclicPackageSccCount() + topo.cyclicTypeSccCount();
+        int cyclicTypes = topo.typeRelativeCyclicity()
+                .map(rc -> (int) Math.round(rc.doubleValue() * topo.typeCount()))
+                .orElse(topo.typeCycleWitnesses().size());
+        double meanCoupling = topo.typeCount() > 0
+                ? (double) topo.internalTypeEdgeCount() / topo.typeCount()
+                : 0.0;
+        double modularity = topo.packageTurboMq().map(BigDecimal::doubleValue).orElse(0.0);
+        String qmoodCtx = resolveStructuralContextId(queries.graph(), contextId);
+        return QmoodQualityModel.buildMetricsOnlyBrief(queries, qmoodCtx, res, sccCount, cyclicTypes, meanCoupling, modularity);
+    }
+
+    private StructuralTopologyAnalyzer.Metrics computeStructuralMetrics(ArchitectureQueryService queries, String contextId) {
+        var graph = queries.graph();
+        var evIndex = new GraphEvidenceIndex(graph);
+        var ctx = evIndex.contextById.get(contextId);
+        Runnable checkpoint = () -> {
+            var stop = queries.assessmentStopReason();
+            if (stop != StopReason.NONE) throw new Interrupted(stop);
+        };
+        if (ctx == null) {
+            return StructuralTopologyAnalyzer.analyze(
+                    new StructuralTopologyAnalyzer.StructuralGraph(List.of(), List.of()), DEFAULT_MAX_WITNESSES, checkpoint);
+        }
+        String family = graph.evidence(ctx.evidence()).map(GraphEvidence::family).orElse("");
+        StructuralTopologyAnalyzer.StructuralGraph structGraph;
+        if ("polyglot.context".equals(family)) {
+            structGraph = PolyglotArchitectureAnalyzer.extractPolyglotStructuralGraph(graph, contextId, checkpoint);
+        } else {
+            String targetCtx = "spring.context".equals(family)
+                    ? resolveLinkedJavaContext(graph, ctx).orElse("")
+                    : contextId;
+            structGraph = targetCtx.isEmpty()
+                    ? new StructuralTopologyAnalyzer.StructuralGraph(List.of(), List.of())
+                    : extractJavaStructuralGraph(queries, targetCtx, evIndex, checkpoint);
+        }
+        return StructuralTopologyAnalyzer.analyze(structGraph, DEFAULT_MAX_WITNESSES, checkpoint);
+    }
+
+    private String resolveStructuralContextId(KnowledgeGraph graph, String contextId) {
+        for (var ctx : graph.contexts()) {
+            if (!ctx.identity().equals(contextId)) continue;
+            String family = graph.evidence(ctx.evidence()).map(GraphEvidence::family).orElse("");
+            if ("spring.context".equals(family)) {
+                return resolveLinkedJavaContext(graph, ctx).orElse(contextId);
+            }
+            return contextId;
+        }
+        return contextId;
+    }
 }

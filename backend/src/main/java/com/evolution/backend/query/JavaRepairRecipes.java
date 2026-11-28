@@ -9,7 +9,7 @@ import java.util.regex.Pattern;
 
 /** Built-in recipes only. No repository-supplied plugins or arbitrary search/replace. */
 public final class JavaRepairRecipes {
-    enum Recipe {
+    public enum Recipe {
         PRIVATE_FIELD("java.remove-unused-private-field","Remove an unannotated private field that has no initializer or source references."),
         CONSTRUCTOR_PARAMETER("java.remove-empty-constructor-parameter","Remove an unannotated sole parameter from an empty constructor; review callers and reflection."),
         IMPORT("java.remove-unused-import","Remove a single named import with no other mention in this compilation unit."),
@@ -25,7 +25,13 @@ public final class JavaRepairRecipes {
         REPLACE_NEW_WITH_CONSTRUCTOR_INJECTION("java.replace-new-with-constructor-injection","Replace a cited direct no-arg instantiation of a collaborator with constructor injection."),
         REMOVE_UNUSED_STATIC_IMPORT("java.remove-unused-static-import","Remove a single static import with no other mention in this compilation unit."),
         CONVERT_LOMBOK_FIELD_INJECTION("java.convert-lombok-field-injection","Convert cited @Autowired/@Inject fields in a Lombok @RequiredArgsConstructor class into private final fields."),
-        EXTRACT_INTERFACE_DECOUPLE("java.extract-interface-decouple","Extract a <Target>Port interface into the caller's package (multi-file DIP decoupling) to break cycles or forbidden layer dependencies.");
+        EXTRACT_INTERFACE_DECOUPLE("java.extract-interface-decouple","Extract a <Target>Port interface into the caller's package (multi-file DIP decoupling) to break cycles or forbidden layer dependencies."),
+        EXTRACT_METHOD_SAFE("java.extract-method-safe","Safely extract a contiguous block into a private helper method (checking escape variables and preserving OpenRewrite LST formatting)."),
+        MOVE_INSTANCE_METHOD("java.move-instance-method","Move an instance method to a collaborator class preserving OO receiver semantics (no forced public static)."),
+        EXTRACT_AND_MOVE_METHOD("java.extract-and-move-method","Atomic 2-step compound recipe extracting a cohesive block directly into a collaborator target class method."),
+        MOVE_AND_RENAME_METHOD("java.move-and-rename-method","Move and rename a method across classes while deterministically updating every caller in context."),
+        EXTRACT_CLASS_GOD_DECOMPOSE("java.extract-class-god-decompose","Extract a cohesive Leiden/DSM field+method cluster from a God Class into a dedicated collaborator delegate."),
+        BREAK_PACKAGE_SCC_CYCLE("java.break-package-scc-cycle","Extract a package contract interface and rewire cyclic concrete dependencies to break a Tarjan package SCC.");
         final String id, summary;
         Recipe(String id,String summary) { this.id=id; this.summary=summary; }
         Spec spec() { return new Spec(id,"1",summary); }
@@ -94,17 +100,39 @@ public final class JavaRepairRecipes {
         return List.copyOf(results);
     }
 
+    static boolean isMultiFileRecipe(Recipe recipe) {
+        return recipe == Recipe.EXTRACT_INTERFACE_DECOUPLE || recipe == Recipe.BREAK_PACKAGE_SCC_CYCLE;
+    }
+
     static List<MultiFileCandidate> multiFileCandidates(
             Recipe recipe,
             RepairSource.File primarySource,
             JavaRepairSyntax.Parsed primaryParsed,
             Map<String, RepairSource.File> contextFiles,
             JavaRepairSyntax.ContextProfile profile) {
-        if (recipe != Recipe.EXTRACT_INTERFACE_DECOUPLE || primaryParsed.tree() == null
+        if (!isMultiFileRecipe(recipe)
+                || primaryParsed.tree() == null
                 || primarySource.text().contains("\\u") || contextFiles == null || contextFiles.isEmpty()) {
             return List.of();
         }
         return collectExtractInterfaceDecouple(primarySource, primaryParsed, contextFiles, profile);
+    }
+
+    /** Executes one of the 6 WP4.3 deterministic OO & compound architectural OpenRewrite recipes. */
+    public static OpenRewriteCompoundRecipes.CompoundOutcome applyCompound(
+            OpenRewriteCompoundRecipes.CompoundRequest request,
+            Map<String, String> filesByPath) {
+        return OpenRewriteCompoundRecipes.apply(request, filesByPath);
+    }
+
+    /** Returns true when {@code recipe} is one of the 6 WP4.3 OO / compound architectural recipes. */
+    public static boolean isCompoundArchitectureRecipe(Recipe recipe) {
+        return recipe == Recipe.EXTRACT_METHOD_SAFE
+                || recipe == Recipe.MOVE_INSTANCE_METHOD
+                || recipe == Recipe.EXTRACT_AND_MOVE_METHOD
+                || recipe == Recipe.MOVE_AND_RENAME_METHOD
+                || recipe == Recipe.EXTRACT_CLASS_GOD_DECOMPOSE
+                || recipe == Recipe.BREAK_PACKAGE_SCC_CYCLE;
     }
 
     private static void collectConvertLombokFieldInjection(ClassTree owner, CompilationUnitTree unit,

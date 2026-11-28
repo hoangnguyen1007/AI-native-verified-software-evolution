@@ -245,7 +245,7 @@ class CapturedRepairTest {
     }
 
     @Test void supportsSevenExtendedAstRecipesAndDryRunApplicableCatalog() {
-        assertEquals(16, JavaRepairRecipes.catalog().size());
+        assertEquals(22, JavaRepairRecipes.catalog().size());
         var docId = new com.evolution.analysis.contract.identity.SourceDocumentIdentity("source:sha256:" + "d".repeat(64));
 
         // 8. REMOVE_UNUSED_PRIVATE_METHOD

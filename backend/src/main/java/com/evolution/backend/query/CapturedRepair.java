@@ -306,7 +306,7 @@ public final class CapturedRepair {
         for (var recipe : JavaRepairRecipes.Recipe.values()) {
             if (stop.get() != StopReason.NONE) break;
             boolean matches;
-            if (recipe == JavaRepairRecipes.Recipe.EXTRACT_INTERFACE_DECOUPLE) {
+            if (JavaRepairRecipes.isMultiFileRecipe(recipe)) {
                 matches = inputs.files().stream().anyMatch(file -> parsedByPath.containsKey(file.path())
                         && !JavaRepairRecipes.multiFileCandidates(recipe, file, parsedByPath.get(file.path()),
                         inputs.contextFiles(), profile).isEmpty());
@@ -830,16 +830,24 @@ public final class CapturedRepair {
 
         if (strategy == Strategy.RECIPE) {
             var chosen = recipe.orElseThrow();
-            if (chosen == JavaRepairRecipes.Recipe.EXTRACT_INTERFACE_DECOUPLE) {
+            if (JavaRepairRecipes.isMultiFileRecipe(chosen)) {
                 var multiCandidates = new ArrayList<JavaRepairRecipes.MultiFileCandidate>();
                 for (var file : inputs.files()) {
+                    if (stop.get() != StopReason.NONE) return withheld(Reason.QUERY_LIMIT, inputs, checks, 1);
                     if (!file.path().endsWith(".java")) continue;
                     var parsed = JavaRepairSyntax.parse(file.text(), profile.forFile(file));
                     checks.add(new Syntax(file.path(), file.digest(), "BASELINE", parsed.check()));
                     multiCandidates.addAll(JavaRepairRecipes.multiFileCandidates(chosen, file, parsed, inputs.contextFiles(), profile));
                 }
                 if (multiCandidates.size() > 1) return withheld(Reason.AMBIGUOUS_RECIPE_TARGET, inputs, checks, 1);
-                if (multiCandidates.isEmpty()) return withheld(Reason.RECIPE_NOT_APPLICABLE, inputs, checks, 1);
+                if (multiCandidates.isEmpty()) {
+                    var reason = checks.stream().anyMatch(c -> c.result().status() == JavaRepairSyntax.Status.UNAVAILABLE)
+                            ? Reason.COMPILER_UNAVAILABLE
+                            : checks.stream().anyMatch(c -> c.result().status() == JavaRepairSyntax.Status.REJECTED)
+                                    ? Reason.BASELINE_SYNTAX_REJECTED
+                                    : Reason.RECIPE_NOT_APPLICABLE;
+                    return withheld(reason, inputs, checks, 1);
+                }
                 for (var fc : multiCandidates.getFirst().changes()) {
                     if (fc.created()) {
                         changes.add(new Changed(RepairEditV2.Op.CREATE, fc.path(), null, fc.afterText()));
@@ -2185,5 +2193,65 @@ public final class CapturedRepair {
                     "autoResolvedCount", autoResolvedCount,
                     "queue", rows));
         }
+    }
+
+    // ─── WP4.2 & WP4.3: Verified Recipe Tool Actions, Compound Refactoring & Closed-Loop Orchestration ───
+
+    /**
+     * Exposes all 22 built-in deterministic {@link JavaRepairRecipes} (16 DI + 6 OpenRewrite OO/compound
+     * architectural recipes) as verified tool actions prioritized before free-form LLM diffs.
+     */
+    public static List<JavaRepairRecipes.Spec> verifiedRecipeToolActions() {
+        return JavaRepairRecipes.catalog();
+    }
+
+    /**
+     * Executes a deterministic WP4.3 compound OpenRewrite recipe and immediately verifies the result
+     * through {@link com.evolution.backend.query.repair.AstRefactoringPurityVerifier} Dual-Gate.
+     */
+    public record VerifiedCompoundRecipeOutcome(
+            OpenRewriteCompoundRecipes.CompoundOutcome recipeOutcome,
+            Optional<com.evolution.backend.query.repair.AstRefactoringPurityVerifier.VerificationResult> purityResult) {
+        public boolean certified() {
+            return recipeOutcome.applied()
+                    && recipeOutcome.openRewriteLstVerified()
+                    && purityResult.map(com.evolution.backend.query.repair.AstRefactoringPurityVerifier.VerificationResult::passed).orElse(false);
+        }
+    }
+
+    public static VerifiedCompoundRecipeOutcome applyVerifiedCompoundRecipe(
+            OpenRewriteCompoundRecipes.CompoundRequest request,
+            com.evolution.backend.query.repair.AstRefactoringPurityVerifier.RefactoringSpec puritySpec,
+            Map<String, String> beforeFiles) {
+        var outcome = JavaRepairRecipes.applyCompound(request, beforeFiles);
+        if (!outcome.applied()) {
+            return new VerifiedCompoundRecipeOutcome(outcome, Optional.empty());
+        }
+        var afterFiles = new TreeMap<String, String>(beforeFiles == null ? Map.of() : beforeFiles);
+        for (var ch : outcome.changes()) {
+            afterFiles.put(ch.path(), ch.afterText());
+        }
+        var purity = com.evolution.backend.query.repair.AstRefactoringPurityVerifier.verify(
+                puritySpec, beforeFiles, afterFiles);
+        return new VerifiedCompoundRecipeOutcome(outcome, Optional.of(purity));
+    }
+
+    /**
+     * Runs the WP4.2 closed-loop APR ({@code m<=5 x n<=3}) or Architectural Refactoring ({@code <=12})
+     * campaign with Oscillation Guard, Patch Augmentation ({@code <=25}), 4-Gate deterministic ranking,
+     * and automatic rollback on budget exhaustion.
+     */
+    public static com.evolution.backend.query.repair.ClosedLoopRepairOrchestrator.CampaignResult executeClosedLoopCampaign(
+            com.evolution.analysis.contract.identity.SnapshotIdentity snapshot,
+            com.evolution.backend.query.repair.ClosedLoopRepairOrchestrator.LoopConfig config,
+            Optional<com.evolution.analysis.assessment.v2.QmoodQualityModel.QmoodSnapshot> qmoodBefore,
+            boolean preEditProbesLocked,
+            com.evolution.backend.query.repair.ClosedLoopRepairOrchestrator.CandidateGenerator generator,
+            com.evolution.backend.query.repair.ClosedLoopRepairOrchestrator.PatchAugmentor augmentor,
+            com.evolution.backend.query.repair.ClosedLoopRepairOrchestrator.Tier1SandboxEvaluator sandboxEvaluator,
+            Runnable rollbackHandler) {
+        return com.evolution.backend.query.repair.ClosedLoopRepairOrchestrator.execute(
+                snapshot, config, qmoodBefore, preEditProbesLocked,
+                generator, augmentor, sandboxEvaluator, rollbackHandler);
     }
 }
