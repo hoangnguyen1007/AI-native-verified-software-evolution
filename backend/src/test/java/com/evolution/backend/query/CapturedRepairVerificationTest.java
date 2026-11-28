@@ -346,6 +346,53 @@ final class CapturedRepairVerificationTest {
                 assertEquals("REJECTED", tampered.get("verdict"));
                 assertTrue(Files.exists(captureFile));
                 assertTrue(Files.exists(tamperedCapture));
+
+                // 13. End-to-end WP3.3 beta=0.8 TacitMemoryStore hook wired into CapturedRepairVerification.verify(...)
+                var persistedProposal = new RepairProposalStore(repairStoreDir).get(new ContentDigest(propInjectedId)).orElseThrow();
+                var candRepDigest = Optional.of(new ContentDigest(candReport));
+                var ctrlRepDigest = Optional.of(new ContentDigest(ctrlReport));
+                try (var tacitStore = com.evolution.backend.query.advisory.TacitMemoryStore.inMemory()) {
+                    var unit = tacitStore.ingest(
+                            "entity:sha256:" + "d".repeat(64),
+                            "Avoid forbidden legacy dependency",
+                            "Remove unused injected legacy field from controller",
+                            List.of(new com.evolution.backend.query.advisory.TacitMemoryStore.EvidenceSpan(
+                                    "app/src/main/java/example/app/AppController.java", 1, 14,
+                                    ContentDigest.sha256Utf8("controller-v1").value())),
+                            0.65,
+                            com.evolution.backend.query.advisory.TacitMemoryStore.SourceKind.PASSIVE_GIT_ADR,
+                            "rev-0");
+                    List<String> consulted = List.of(unit.unitId());
+
+                    // 13a. UNVERIFIED -> NO-OP (confidence remains 0.65)
+                    var unverifiedRes = new CapturedRepairVerification(null, null)
+                            .withTacitMemoryEvolution(tacitStore, consulted)
+                            .verify(persistedProposal, baselineGraph, baselineReport, candRepDigest, ctrlRepDigest, graphs, reports, () -> false);
+                    assertEquals(CapturedRepairVerification.Verdict.UNVERIFIED, unverifiedRes.verdict());
+                    assertEquals(0.65, tacitStore.get(unit.unitId()).orElseThrow().confidence(), 1e-12);
+                    assertEquals(0, tacitStore.get(unit.unitId()).orElseThrow().verifiedPassCount());
+
+                    // 13b. VERIFIED -> RESOLVED -> c' = 1 - 0.8 * (1 - 0.65) = 0.72, verifiedPassCount = 1, lastVerifiedCommit = rev-1
+                    var verifiedRes = new CapturedRepairVerification(null, new CapturedRepairExecution(validCaptureDir))
+                            .withTacitMemoryEvolution(tacitStore, consulted)
+                            .verify(persistedProposal, baselineGraph, baselineReport, candRepDigest, ctrlRepDigest, graphs, reports, () -> false);
+                    assertEquals(CapturedRepairVerification.Verdict.VERIFIED, verifiedRes.verdict());
+                    var afterVerified = tacitStore.get(unit.unitId()).orElseThrow();
+                    assertEquals(0.72, afterVerified.confidence(), 1e-12);
+                    assertEquals(1, afterVerified.verifiedPassCount());
+                    assertFalse(afterVerified.staleEvidence());
+                    assertEquals("rev-1", afterVerified.lastVerifiedCommit());
+
+                    // 13c. REJECTED -> PERSISTED/fail -> c' = 0.8 * 0.72 = 0.576, verifiedFailCount = 1
+                    var rejectedRes = new CapturedRepairVerification(null, new CapturedRepairExecution(failingTestDir))
+                            .withTacitMemoryEvolution(tacitStore, consulted)
+                            .verify(persistedProposal, baselineGraph, baselineReport, candRepDigest, ctrlRepDigest, graphs, reports, () -> false);
+                    assertEquals(CapturedRepairVerification.Verdict.REJECTED, rejectedRes.verdict());
+                    var afterRejected = tacitStore.get(unit.unitId()).orElseThrow();
+                    assertEquals(0.576, afterRejected.confidence(), 1e-12);
+                    assertEquals(1, afterRejected.verifiedPassCount());
+                    assertEquals(1, afterRejected.verifiedFailCount());
+                }
             } finally {
                 diagModelServer.stop(0);
                 aiRepairServer.stop(0);

@@ -67,6 +67,50 @@ public final class AdvisoryOverlayService {
                 SemanticClusterRefinementService.Config.defaults());
     }
 
+    /**
+     * Strictly read-only quarantined overlay for {@link TacitMemoryStore} ({@code TrustTier.ADVISORY_TACIT}).
+     * Reads only immutable {@link KnowledgeGraph} nodes/edges and the separate SQLite tacit-memory store;
+     * NEVER mutates {@link KnowledgeGraph}, Leiden partitions, policy findings, or Architecture Score v2.
+     */
+    public static TacitMemoryStore.OverlaySnapshot tacitMemoryOverlay(
+            KnowledgeGraph graph,
+            TacitMemoryStore store) {
+        return tacitMemoryOverlay(graph, store, null);
+    }
+
+    /**
+     * Strictly read-only quarantined tacit-memory overlay with optional Task-Init (PRAXIS Eq. 8)
+     * proactive retrieval for {@code targetEntityId}.
+     */
+    public static TacitMemoryStore.OverlaySnapshot tacitMemoryOverlay(
+            KnowledgeGraph graph,
+            TacitMemoryStore store,
+            String targetEntityId) {
+        Objects.requireNonNull(graph, "graph");
+        Objects.requireNonNull(store, "store");
+        return store.buildReadOnlyOverlay(graph, targetEntityId);
+    }
+
+    /** Read-only quarantined Task-Init (PRAXIS Eq. 8) tacit-memory projection for {@code RepairContextPlanner}. */
+    public static TacitMemoryStore.TaskInitResult tacitMemoryTaskInit(
+            KnowledgeGraph graph,
+            TacitMemoryStore store,
+            String targetEntityId) {
+        Objects.requireNonNull(graph, "graph");
+        Objects.requireNonNull(store, "store");
+        return store.retrieveTaskInit(graph, targetEntityId);
+    }
+
+    /** Read-only quarantined Interaction-Triggered (PRAXIS Eq. 9) tacit-memory projection for MCP tools. */
+    public static TacitMemoryStore.InteractionTriggeredResult tacitMemoryInteraction(
+            KnowledgeGraph graph,
+            TacitMemoryStore store,
+            Collection<String> accessedEntityIds) {
+        Objects.requireNonNull(graph, "graph");
+        Objects.requireNonNull(store, "store");
+        return store.retrieveInteractionTriggered(graph, accessedEntityIds);
+    }
+
     /** Filters an overlay snapshot by optional entity identity/name, kind, or source path substring. */
     public static AdvisoryOverlay.Snapshot filter(
             AdvisoryOverlay.Snapshot full,

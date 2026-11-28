@@ -79,22 +79,121 @@ public final class CapturedRepairVerification {
                          List<Check> checks, Optional<Comparison> candidateComparison, Optional<Comparison> controlComparison,
                          Optional<IsolatedProof> isolatedProof, String patch) {}
 
+    /**
+     * Optional post-verification hook locked exclusively to verified sandbox outcomes (e.g. PRAXIS
+     * {@code beta = 0.8} online confidence evolution in {@link com.evolution.backend.query.advisory.TacitMemoryStore}).
+     * Invoked strictly AFTER the immutable {@link Result} is finalized and NEVER mutates verification verdicts.
+     */
+    @FunctionalInterface
+    public interface VerificationOutcomeListener {
+        void onVerificationOutcome(Result result, boolean resolved, String commitSha, List<String> consultedTacitUnitIds);
+    }
+
     private record BaselineTree(RepositoryIdentity repository, Optional<String> revision, SnapshotIdentity snapshot, List<SnapshotFile> files) {}
     private record Assessment(Check check, Optional<Comparison> comparison) {}
 
     private final RepairVerification.WorkerEvidence worker;
     private final CapturedRepairExecution capturedExecution;
     private final Map<SnapshotIdentity, ContentDigest> knownGraphs;
+    private final VerificationOutcomeListener outcomeListener;
+    private final List<String> consultedTacitUnitIds;
 
     CapturedRepairVerification(RepairVerification.WorkerEvidence worker, CapturedRepairExecution capturedExecution) {
-        this(worker, capturedExecution, Map.of());
+        this(worker, capturedExecution, Map.of(), null, List.of());
     }
 
     CapturedRepairVerification(RepairVerification.WorkerEvidence worker, CapturedRepairExecution capturedExecution,
                                Map<SnapshotIdentity, ContentDigest> knownGraphs) {
+        this(worker, capturedExecution, knownGraphs, null, List.of());
+    }
+
+    CapturedRepairVerification(RepairVerification.WorkerEvidence worker, CapturedRepairExecution capturedExecution,
+                               Map<SnapshotIdentity, ContentDigest> knownGraphs,
+                               VerificationOutcomeListener outcomeListener,
+                               List<String> consultedTacitUnitIds) {
         this.worker = worker;
         this.capturedExecution = capturedExecution;
         this.knownGraphs = Map.copyOf(knownGraphs);
+        this.outcomeListener = outcomeListener;
+        this.consultedTacitUnitIds = consultedTacitUnitIds == null ? List.of() : List.copyOf(consultedTacitUnitIds);
+    }
+
+    /** Returns a copy of this verifier wired to evolve quarantined tacit memory confidence ({@code beta = 0.8}). */
+    public CapturedRepairVerification withTacitMemoryEvolution(
+            com.evolution.backend.query.advisory.TacitMemoryStore store,
+            Collection<String> consultedUnitIds) {
+        Objects.requireNonNull(store, "store");
+        List<String> ids = consultedUnitIds == null ? List.of() : List.copyOf(consultedUnitIds);
+        return new CapturedRepairVerification(
+                worker, capturedExecution, knownGraphs, tacitMemoryUpdater(store, ids), ids);
+    }
+
+    /** Returns a copy of this verifier with a custom post-verification outcome callback. */
+    public CapturedRepairVerification withOutcomeListener(
+            VerificationOutcomeListener listener,
+            Collection<String> consultedUnitIds) {
+        List<String> ids = consultedUnitIds == null ? List.of() : List.copyOf(consultedUnitIds);
+        return new CapturedRepairVerification(worker, capturedExecution, knownGraphs, listener, ids);
+    }
+
+    /**
+     * Derives the strict sandbox resolution outcome for tacit memory confidence evolution:
+     * {@code VERIFIED -> Optional.of(true)}, {@code REJECTED -> Optional.of(false)},
+     * {@code UNVERIFIED -> Optional.empty()} (inconclusive/not-run outcomes NEVER alter confidence).
+     */
+    public static Optional<Boolean> deriveTacitResolutionOutcome(Result result) {
+        Objects.requireNonNull(result, "result");
+        return switch (result.verdict()) {
+            case VERIFIED -> Optional.of(true);
+            case REJECTED -> Optional.of(false);
+            case UNVERIFIED -> Optional.empty();
+        };
+    }
+
+    /** Builds a quarantined post-verification listener that updates {@link com.evolution.backend.query.advisory.TacitMemoryStore}. */
+    public static VerificationOutcomeListener tacitMemoryUpdater(
+            com.evolution.backend.query.advisory.TacitMemoryStore store,
+            Collection<String> defaultUnitIds) {
+        Objects.requireNonNull(store, "store");
+        List<String> pinned = defaultUnitIds == null ? List.of() : List.copyOf(defaultUnitIds);
+        return (result, resolved, commitSha, extraUnitIds) -> {
+            var all = new LinkedHashSet<String>(pinned);
+            if (extraUnitIds != null) all.addAll(extraUnitIds);
+            if (!all.isEmpty()) {
+                store.recordVerificationOutcomes(all, resolved, commitSha);
+            }
+        };
+    }
+
+    /**
+     * Applies a finalized {@link Result} to {@link com.evolution.backend.query.advisory.TacitMemoryStore}
+     * ({@code beta = 0.8}) iff the sandbox produced a decisive {@code VERIFIED} or {@code REJECTED} verdict.
+     */
+    public static List<com.evolution.backend.query.advisory.TacitMemoryStore.TacitMemoryUnit> applyVerificationOutcome(
+            Result result,
+            com.evolution.backend.query.advisory.TacitMemoryStore store,
+            Collection<String> consultedUnitIds,
+            String commitSha) {
+        Objects.requireNonNull(result, "result");
+        Objects.requireNonNull(store, "store");
+        var resolvedOpt = deriveTacitResolutionOutcome(result);
+        if (resolvedOpt.isEmpty() || consultedUnitIds == null || consultedUnitIds.isEmpty()) {
+            return List.of();
+        }
+        String effectiveCommit = (commitSha == null || commitSha.isBlank())
+                ? result.plan().candidate().snapshot().value()
+                : commitSha.strip();
+        return store.recordVerificationOutcomes(consultedUnitIds, resolvedOpt.orElseThrow(), effectiveCommit);
+    }
+
+    private void notifyOutcomeListener(Result result, BaselineTree baselineTree) {
+        if (outcomeListener == null) return;
+        var resolvedOpt = deriveTacitResolutionOutcome(result);
+        if (resolvedOpt.isEmpty()) return;
+        String commitSha = (baselineTree != null && baselineTree.revision().isPresent())
+                ? baselineTree.revision().orElseThrow()
+                : result.plan().candidate().snapshot().value();
+        outcomeListener.onVerificationOutcome(result, resolvedOpt.orElseThrow(), commitSha, consultedTacitUnitIds);
     }
 
     static Optional<RepositoryIdentity> repository(KnowledgeGraph baseline) {
@@ -164,8 +263,10 @@ public final class CapturedRepairVerification {
                 p.modules(), p.compileExit(), p.testExit(), p.testsRun(), p.testsFailed(), p.testsErrors(),
                 p.classCensusDigest(), p.classCensus().classCount(), p.checks(),
                 p.isolationMode(), p.failingTests(), p.logTail(), p.behavioralDiff(), p.testsSkipped()));
-        return new Result(VERSION, verdict, proposal.identity(), plan.identity(), plan, checks,
+        var result = new Result(VERSION, verdict, proposal.identity(), plan.identity(), plan, checks,
                 candidateAssessment.comparison(), controlAssessment.comparison(), isolatedView, value.patch());
+        notifyOutcomeListener(result, baselineTree);
+        return result;
     }
 
     /**
@@ -252,8 +353,10 @@ public final class CapturedRepairVerification {
                 p.modules(), p.compileExit(), p.testExit(), p.testsRun(), p.testsFailed(), p.testsErrors(),
                 p.classCensusDigest(), p.classCensus().classCount(), p.checks(),
                 p.isolationMode(), p.failingTests(), p.logTail(), p.behavioralDiff(), p.testsSkipped()));
-        return new Result(VERSION, verdict, proposal.identity(), plan.identity(), plan, checks,
+        var result = new Result(VERSION, verdict, proposal.identity(), plan.identity(), plan, checks,
                 Optional.empty(), Optional.empty(), isolatedView, value.patch());
+        notifyOutcomeListener(result, baselineTree);
+        return result;
     }
 
     private Check evaluateIsolated(Plan plan, boolean intact, Optional<CapturedRepairExecution.Proof> vmProof,

@@ -621,6 +621,49 @@ class AdvisoryOverlayQuarantineTest {
         assertEquals(scoreBefore.healthBand(), scoreAfter.healthBand());
     }
 
+    @Test
+    void tacitMemoryOverlayIsStrictlyQuarantinedInAdvisoryTacitTierWithZeroCanonicalLeakage(@TempDir Path tempDir) {
+        var graph = buildCanonicalGraph(Map.of(
+                "docs/ADR-001.md", "# ADR 001\nUses `OrderService`.\n"));
+        var digestBefore = graph.identity();
+        var queriesBefore = new ArchitectureMetricsService(graph, ArchitectureMetric.Limits.defaults(),
+                () -> StopReason.NONE, Optional.empty(), List.of()).queries();
+        String ctx = graph.contexts().stream().filter(c -> c.analysis().isPresent()).findFirst().orElseThrow().identity();
+        var scorer = new ArchitectureAssessmentV2Service();
+        var scoreBefore = scorer.assess(queriesBefore, ctx, Optional.empty(), Optional.empty(), ArchitectureScoreModelV2.standard());
+
+        String typeNodeId = graph.nodes(ctx).stream()
+                .filter(n -> "TYPE".equals(n.kind()))
+                .findFirst().orElseThrow().identity();
+        Path dbFile = tempDir.resolve("tacit-quarantine.sqlite");
+        try (var tacitStore = new TacitMemoryStore(dbFile)) {
+            tacitStore.ingest(
+                    typeNodeId,
+                    "Order entity boundary",
+                    "Keep persistence mapping isolated from service orchestration",
+                    List.of(new TacitMemoryStore.EvidenceSpan(
+                            "docs/ADR-001.md", 1, 2, ContentDigest.sha256Utf8("adr-1").value())),
+                    0.82,
+                    TacitMemoryStore.SourceKind.SANDBOX_DIFF_VERIFIED,
+                    "rev-quarantine");
+            var overlay = AdvisoryOverlayService.tacitMemoryOverlay(graph, tacitStore, typeNodeId);
+            assertEquals(TacitMemoryStore.TRUST_TIER, overlay.trustTier());
+            assertEquals(com.evolution.analysis.contract.semantic.TrustTier.ADVISORY_UNVERIFIED, overlay.canonicalTrustTier());
+            assertTrue(overlay.quarantined());
+            assertEquals(1, overlay.graphAnchoredUnits());
+            assertTrue(overlay.taskInit().isPresent());
+            assertTrue(overlay.taskInit().orElseThrow().formattedPromptBlock().startsWith(TacitMemoryStore.HEADER_BANNER));
+        }
+
+        // Zero mutation to canonical KnowledgeGraph digest or Architecture Score v2 (canonicalLeakage = 0)
+        assertEquals(digestBefore, graph.identity());
+        var queriesAfter = new ArchitectureMetricsService(graph, ArchitectureMetric.Limits.defaults(),
+                () -> StopReason.NONE, Optional.empty(), List.of()).queries();
+        var scoreAfter = scorer.assess(queriesAfter, ctx, Optional.empty(), Optional.empty(), ArchitectureScoreModelV2.standard());
+        assertEquals(scoreBefore.score(), scoreAfter.score());
+        assertEquals(scoreBefore.healthBand(), scoreAfter.healthBand());
+    }
+
     private static KnowledgeGraph buildCanonicalGraph(Map<String, String> extraNonCodeFiles) {
         var repo = RepositoryIdentity.fromCanonicalCoordinate("https://example.test/quarantine.git");
         var snap = SnapshotIdentity.from(repo, ContentDigest.sha256Utf8("quarantine-snap-" + extraNonCodeFiles.size()));
