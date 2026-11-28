@@ -778,8 +778,8 @@ public final class SlicedDdnnfCompiler {
         private final int[] trail;
         private int trailSize;
 
-        // PB-BCP queue
-        private final int[] bcpQueue;
+        // PB-BCP queue (dynamically resizable for multi-wave PB cascades where constraints re-enter)
+        private int[] bcpQueue;
         private final boolean[] inBcpQueue;
         private int bcpTail;
 
@@ -955,10 +955,7 @@ public final class SlicedDdnnfCompiler {
                             return 0; // FALSE
                         }
                         if (maxRemainingWeight[c] - conWeights[c][0] < remainingRhs[c]) {
-                            if (!inBcpQueue[c]) {
-                                inBcpQueue[c] = true;
-                                bcpQueue[bcpTail++] = c;
-                            }
+                            enqueueBcp(c);
                         }
                     }
                 }
@@ -1186,14 +1183,21 @@ public final class SlicedDdnnfCompiler {
                     if (remainingRhs[c] > maxRemainingWeight[c]) {
                         ok = false;
                     } else if (maxRemainingWeight[c] - conWeights[c][0] < remainingRhs[c]) {
-                        if (!inBcpQueue[c]) {
-                            inBcpQueue[c] = true;
-                            bcpQueue[bcpTail++] = c;
-                        }
+                        enqueueBcp(c);
                     }
                 }
             }
             return ok;
+        }
+
+        private void enqueueBcp(int c) {
+            if (!inBcpQueue[c]) {
+                inBcpQueue[c] = true;
+                if (bcpTail == bcpQueue.length) {
+                    bcpQueue = Arrays.copyOf(bcpQueue, bcpQueue.length * 2);
+                }
+                bcpQueue[bcpTail++] = c;
+            }
         }
 
         private void undoTo(int targetTrail) {

@@ -944,6 +944,80 @@ class SlicedDdnnfCompilerTest {
         assertEquals(BigInteger.valueOf(672), exact.ddnnf().orElseThrow().countModels());
     }
 
+    @Test
+    void multiWavePbBcpCascadeReEnqueuingSameConstraintsBeyondInitialQueueLengthRemainsExact() {
+        // Construct a 2-constraint alternating PB cascade over 22 variables so that only 3 constraints exist
+        // (initial bcpQueue capacity = 16), yet a single root PB-BCP wave bounces between c0 and c1
+        // 22 times (> 16!) by re-enqueueing c0 and c1 after each pop as exponentially weighted terms force
+        // alternating variables x0 -> y0 -> x1 -> y1 -> ... -> x10 -> y10!
+        int k = 11; // 22 variables total + 2 free tail variables = 24 vars, exact model count = 2^2 = 4!
+        var builder = new SliceBuilder();
+        int[] x = new int[k];
+        int[] y = new int[k];
+        for (int i = 0; i < k; i++) {
+            x[i] = builder.variable("mx_" + i);
+            y[i] = builder.variable("my_" + i);
+        }
+        int freeA = builder.variable("mfree_a");
+        int freeB = builder.variable("mfree_b");
+
+        // Trigger x[0] = true (1 constraint)
+        builder.addClause(x[0]);
+
+        // c_even (forces y[i] = true whenever x[i] = true and prior y[0..i-1] are true):
+        // Use super-increasing weights on (-x[i], y[i]) pairs:
+        // For i = 0..k-1: weight 2^(k-1-i) on (-x[i]) and 2^(k-1-i) on (y[i]), with rhs = sum(2^j) = 2^k - 1!
+        // Trace:
+        //  - Initially maxRem = 2*(2^k - 1), rhs = 2^k - 1, margin = 2^k - 1.
+        //  - x[0]=T falsifies -x[0] (weight 2^(k-1)) -> margin drops to 2^(k-1) - 1 < 2^(k-1) -> forces y[0]=T!
+        //    (y[0]=T reduces both remRhs & maxRem by 2^(k-1), leaving margin = 2^(k-1)-1, which does NOT force y[1]!)
+        //  - Next constraint c_odd has weights 2^(k-2-i) on (-y[i]) and (x[i+1]) for i = 0..k-2, rhs = 2^(k-1) - 1!
+        //    y[0]=T falsifies -y[0] (weight 2^(k-2)) -> margin drops to 2^(k-2) - 1 -> forces x[1]=T!
+        //  - x[1]=T re-enqueues c_even (now falsifying -x[1] of weight 2^(k-2)) -> forces y[1]=T!
+        //  - Alternates c_even -> c_odd -> c_even -> c_odd ... 21 times (> initial bcpQueue length 16) in ONE wave!
+        int[] evenLits = new int[2 * k];
+        int[] evenW = new int[2 * k];
+        int evenRhs = (1 << k) - 1;
+        for (int i = 0; i < k; i++) {
+            int w = 1 << (k - 1 - i);
+            evenLits[2 * i] = -x[i];
+            evenW[2 * i] = w;
+            evenLits[2 * i + 1] = y[i];
+            evenW[2 * i + 1] = w;
+        }
+        builder.addPbConstraint(new PbConstraint(evenLits, evenW, evenRhs));
+
+        int m = k - 1;
+        int[] oddLits = new int[2 * m];
+        int[] oddW = new int[2 * m];
+        int oddRhs = (1 << m) - 1;
+        for (int i = 0; i < m; i++) {
+            int w = 1 << (m - 1 - i);
+            oddLits[2 * i] = -y[i];
+            oddW[2 * i] = w;
+            oddLits[2 * i + 1] = x[i + 1];
+            oddW[2 * i + 1] = w;
+        }
+        builder.addPbConstraint(new PbConstraint(oddLits, oddW, oddRhs));
+
+        // Ensure freeA and freeB remain unconstrained (exact #SAT = 4)
+        SliceProblem problem = builder.build();
+        assertEquals(3, problem.constraints().size(), "Only 3 constraints so initial bcpQueue length is 16");
+
+        var res = SlicedDdnnfCompiler.compile(problem);
+        assertTrue(res.isComplete(), "Multi-wave PB-BCP cascade must resize bcpQueue cleanly without AIOOBE");
+        CompiledDdnnf ddnnf = res.ddnnf().orElseThrow();
+        assertEquals(BigInteger.valueOf(4), ddnnf.countModels());
+        for (int i = 0; i < k; i++) {
+            assertEquals(TruthRegionEvaluation.Classification.MUST, ddnnf.classify(x[i]),
+                    "Cascade must force x[" + i + "]=true");
+            assertEquals(TruthRegionEvaluation.Classification.MUST, ddnnf.classify(y[i]),
+                    "Cascade must force y[" + i + "]=true");
+        }
+        assertEquals(TruthRegionEvaluation.Classification.MAY, ddnnf.classify(freeA));
+        assertEquals(TruthRegionEvaluation.Classification.MAY, ddnnf.classify(freeB));
+    }
+
     private static void addIff(SliceBuilder b, int lhs, int rhs) {
         b.addClause(-lhs, rhs);
         b.addClause(lhs, -rhs);
