@@ -1,54 +1,43 @@
 # Current State
 
-**Reconciled:** `2026-11-28` | **Baseline:** `HEAD a661db3f4d3756a5ca18fef8897e93912ee9b7e6` (`update UI`) + live uncommitted working tree (Batches 3–11, partial `B5` live-disk patches, governance/build-hygiene updates).  
+**Reconciled:** `2026-11-28` | **Baseline:** `main` Phase 0 integrated (`WP0.1–WP0.6` on top of `6331202`; clean per-WP commits `2b5e013`, `24dad45`, `59f3ac3`, `e0845c5`, `1d26982` + WP0.6 freeze).  
 **Archive (Zero Loss):** Verbatim M-1 through Batch 11 log (`516 KB`, `1,708` lines) preserved in [current-state-history-2026-11.md](archive/current-state-history-2026-11.md).
 
 ## Active Dual-Track Snapshot (2026-11-28)
 
-- **Track A — Product (Online Web App + CLI + MCP):** **CONFIRMED override (2026-11-27):** primary product is the **Online Web App Workbench** (`backend/target/evo-workbench.jar`, Docker `evo-workbench-online:latest` `5cdb07ad0f6c`, Vanilla JS + Cytoscape + Lucian UI in `backend/src/main/resources/web/`, Streamable HTTP MCP `2025-11-25` `21` tools / `6` `evo://` resources, `403 FORBIDDEN_ORIGIN`, `0` JS/5xx errors in Headless Edge E2E, `strict`/`dfd-export` selector, SKG-RTS Repair Studio). Completed [full-pipeline demo](roadmap.md#full-pipeline-demo) stays preserved; `cli` is frozen for new features (rebuilt only for `E0` parity in `WP0.6`).
+- **Track A — Product (Online Web App + CLI + MCP):** **CONFIRMED override (2026-11-27):** primary product is the **Online Web App Workbench** (`backend/target/evo-workbench.jar` `72,452,549 B`, Vanilla JS + Cytoscape + Lucian UI in `backend/src/main/resources/web/`, Streamable HTTP MCP `2025-11-25` `21` tools / `6` `evo://` resources, `403 FORBIDDEN_ORIGIN`, SKG-RTS Repair Studio). Completed [full-pipeline demo](roadmap.md#full-pipeline-demo) stays preserved; `cli/target/evo.jar` (`73,599,075 B`) is synchronized with `evo-workbench.jar` for `E0` parity (frozen for new features).
 - **Track B — CORE A*/Q1 Research:** Completed 19-paper curated SOTA library ([docs/paper/README.md](paper/README.md), [catalog.json](paper/catalog.json); raw PDFs `.gitignore`d locally), [19-Paper SOTA Deep Synthesis](research/sota-19-paper-deep-synthesis.md), [Comparative Evaluation Report v7](evo-comparative-evaluation-report.md), [Batch 11 E8/E5v2/E9 Report](research/E8-Batch11-Flagship-Polyglot-3Way-E5v2-E9-Report.md), and [SuperPlan v2](evo-sota-superplan-v2.md).
 
-## Verified Live Metrics (v7 / Batch 11, `CONFIRMED`)
+## Phase 0 (`WP0.1–WP0.6`) Verified Metrics (`CONFIRMED`, `2026-11-28`)
 
-| Area | Verified Metric (`a661db3` + working tree) | Honest Scope & Limits |
+| Area | Verified Integrated Metric (`main` WP0.6) | Honest Scope & Remaining Boundary |
 |---|---|---|
-| `microSecEnD` (`17/17`, Docker `--build=off`) | `Evo[dfd-export]`: COMP `uF1=0.9632` / CONN `uF1=0.9266`; `Evo[strict]`: COMP `uF1=0.9204` / CONN `uF1=0.4733`; `17/17` `cold==warm1==steady` SHA-256 | `dfd-export` tuned in-sample on all 17 apps (`B4`, no blind holdout yet); Cold regressed `2.50x` (`19.51->48.83 s`, `B6`) |
-| Flagship Polyglot (`strict`, Win CLI & Docker) | *TeaStore*: `48` endpoints (`28` JAX-RS + `20` Servlet), Cold `19.86 s` / Warm NC `2.02 s` (`9.85x`) / 1-Edit `14.67 s` (`1.35x`, SHA-256 PASS); *Online Boutique*: `14/16` RPC (`F1=0.9333`), combined `F1=0.9091`; *ewolff* (`n=3` Docker): Cold `29.20 s` / Warm NC `10.16 s` (`2.88x`) / 1-Edit `21.10 s` (`1.38x`, `3/3` SHA-256 PASS) | *Online Boutique* duplicates `cartservice` `3x`; *TeaStore* emits `28` comps for `7` services (`B6`); Ubuntu LTS `n >= 5` pending |
-| Spring DI (`ASM` + `COI` + `CDCL`) | Passive ASM `spring-boot-autoconfigure-3.5.14.jar` (`452` configs / `574` beans / `1,140` conds) in `143 ms`; CDCL `28.0x` vs DPLL on `PHP(5,4)`; Kleene `65,536->2` traces (`32,768x`); `2` real `False-MUST` fixed; `E5-v2` `345` worlds `0` False-MUST/NEVER | Live-disk `ConeOfInfluenceSlicer` (`920` LOC) & `E5-v3` (`3,687` LOC) awaiting acceptance; `IncrementalCdclReasoner` bugs open (`B5`) |
-| SKG, SCIP, Quarantine & Sandbox | `ScipProtobufReader` `81,011 occ/s`; `AdvisoryOverlayService` `canonicalLeakage=0`; `llm-redact:v2` `15/15` secrets redacted; `QEMU` `9/9` negative control (`RESOLVED` vs `PERSISTED`) | `E9` (`SKG-RTS`, RRF, Quarantine) synthetic-only (`B6`); real-repo `E9` planned in Phases 3–4 |
+| Spring DI / COI / CDCL (`WP0.1`) | `IncrementalCdclReasoner` (`cdcl-2wl-1uip-v2`, indexed VSIDS max-heap, Luby `base=100`, LBD `<=2` glue retention, `0` `dpll-m4u.2-v1` in `src/`); `ConeOfInfluenceSlicer` (`935` LOC) on Boot `3.5.14`: `targets=542`, `globalVars=655`, `undirectedMax=415`, **`directedMax=251`**, **`directedMedian=17.5`**, **`exceeding64=145`**; `E5-v3` Real `ApplicationContextRunner` (`3.4.0`): `16` real `@AutoConfiguration`, `59` worlds, `57` beans -> `nonOpaqueExact=50/50 (100%)`, **`falseMust=0`**, **`falseNever=0`**, `nonTautology=PROVED` (`6/6` PASS) | Multi-repo `15–20` real OSS Boot oracle expansion planned in `WP2.5` |
+| Storage & Incremental (`WP0.2`) | Chunked manifest + B-tree `rollUpPages` across `6` evidence families; *Shopizer* (`--build=off --offline -Xmx4g`): **`0` `STORAGE_IO_FAILED`**, max row `1.07 MB < 4 MB`, max manifest `44.9 KB < 64 KB`, honest `I3` `rc=3` `PARTIAL`; fresh `cli/target/evo.jar` *PetClinic* (`--build=off --spring-sat --offline`): `rc=0` `COMPLETE`, **`100%` SHA-256** `Cold==Warm NC` (`sha256:f007675f...`) & `Warm 1-File Edit==Cold Edited` (`sha256:4df2e232...`) across all `3` contexts incl. `spring-context` | *ThingsBoard* `1.95M` LOC `-Xmx6g` scaling remains in `WP3.1` (`EVOGBIN2` / syntax-fast) |
+| Polyglot Dedup & Perf (`WP0.3+0.4`) | `"redis-cart"` removed; `I5` audit **`0` leaks** (`768` files, `82+9` rules, `56` GT terms); *Online Boutique*: `cartservice` `3->1`, core-12 Service Recall `1.0000`, core+opt-14 F1 `1.0000`, strict Edge F1 `0.9697`; *TeaStore*: `28->7` (`6` WAR + `1` DB, `48/48` endpoints); `apssouza22` Cold `40.5->24.6 s` (`1.65x`, Maven cache-only `3.63x`), `cold==warm1` SHA-256 `100%` | Blind `10`-repo `Micans` holdout (`B4`) deferred to `WP1.1`; full `17/17` Docker Cold median waits on Docker/Linux host |
+| Harness & Baselines (`WP0.5`) | `parse_emse_baselines()` matches `complete_results.xlsx`: `attack-graph-generator` `123/41/21` (`uF1=0.7987`) / `279/432/45` (`uF1=0.5391`), `code2DFD` `178/5/4` / `320/18/65` / `86/13/74`; Raw (`182/385/160`) + Collapsed (`179/383/160`) GT + `17`-app endpoint + `SERVICE_COMPONENT` E6 wiring; CausalRepair DOI `10.1145/3832225` | Fresh `17/17` online `E6` run pending Docker image rebuild + Ubuntu LTS host |
+| Integrated Gate-0 Checks (`WP0.6`) | `9/9` reactor modules built (`install -DskipTests -Dmaven.compiler.useIncrementalCompilation=false`); **`217/217`** 6-module Maven tests (`analyzer:96`, `analyzer-maven:39`, `analyzer-filesystem:21`, `analyzer-javaparser:9`, `backend:42`, `cli:10`) + **`6/6`** `SpringDifferentialOracleTest` + **`49/49`** Web UI Node + **`25/25`** Python E0 + **`0`** broken links | `mvn clean` blocked on Windows by pre-existing Sept `2026` elevated-Admin ACLs on `*/target/classes` (`0` deleted/renamed Java files in Phase 0); Docker daemon stopped (`docker info rc=1`) |
 
-## Active Blockers (`B1–B6`, Live-Disk `2026-11-28`)
+## Phase 0 Blockers (`B1–B6`) Closure & External Boundaries
 
-| ID | Sev | Live Disk State (`CONFIRMED`) | WP |
+| ID | Sev | Status (`2026-11-28`) | Verified Evidence / Open Boundary |
 |---|---|---|---|
-| **`B1`** | **P0** | **Unpatched:** `cli/target/evo.jar` lags `evo-workbench.jar` by `42` Java files; Batches 3–11 uncommitted. | `WP0.6` |
-| **`B2`** | **P0 (`I2`)** | **Unpatched:** *PetClinic* (`500158f`) Warm `1-File Edit` (`OwnerController.java`) drifts `spring-context` SHA-256 (`+6` nodes / `+4` edges). | `WP0.2` |
-| **`B3`** | **P0** | **Unpatched:** *Shopizer* (`115k` LOC) crashes CLI (`SqliteGraphProjection.java:510` `64 MB` row) & OOMs `3.5 GB` Docker; *ThingsBoard* (`1.95M` LOC) hits `MEMORY_LIMIT` at `-Xmx8g`. | `WP0.2`, `WP3.1` |
-| **`B4`** | **CRIT (`I5`)** | **Unpatched:** Hardcoded `"redis-cart"` in `DeclarativeTopologyProjection.java:30,46,64` + in-sample `DFD_EXPORT` rules without blind holdout. | `WP0.3`, `WP1.1` |
-| **`B5`** | **CRIT** | **Partially patched on live disk (uncommitted/unaccepted):** `ConeOfInfluenceSlicer.java` (`920` LOC) & `SpringDifferentialOracleTest.java` (`3,687` LOC `E5-v3`, real `ApplicationContextRunner`, `backend/pom.xml` adds `spring-boot-autoconfigure:3.4.0` / `spring-boot-test:3.4.1`). **Still unpatched:** `IncrementalCdclReasoner.java:334–348,571–585` & `SatConfigurationReasoner.java:14` (`"dpll-m4u.2-v1"`). | `WP0.1` |
-| **`B6`** | **HIGH** | **Unpatched:** `parse_emse_baselines()` drops `FP:`/`TP(k)`; Cold regressed `2.50x`; *Online Boutique* `cartservice` `3x` & *TeaStore* `28->7` dedup; synthetic `E9`; `n >= 5` Ubuntu LTS pending; DOI typo `10.1145/3832252 -> 10.1145/3832225` in report `[31]`. | `WP0.3`–`WP0.6` |
+| **`B1`** | **P0** | **CLOSED (local jars + git); Docker rebuild pending daemon** | `evo-workbench.jar` (`72.45 MB`) & `cli/target/evo.jar` (`73.60 MB`) synchronized on clean `main` (`evo --help rc=0`). Docker Desktop daemon stopped on Windows host (`docker build` pending). |
+| **`B2`** | **P0 (`I2`)** | **CLOSED** | *PetClinic* `Warm 1-File Edit == Cold Edited` `100%` SHA-256 on all `3` contexts (`PetClinicIncrementalSpringDeterminismTest` 4/4 + live fresh `evo.jar` `rc=0`). |
+| **`B3`** | **P0** | **CLOSED (Shopizer CLI); ThingsBoard in `WP3.1`** | Chunked manifest+pages persistence (`<=1.07 MB` row, `<=44.9 KB` manifest); `0` `STORAGE_IO_FAILED` on *Shopizer* (`-Xmx4g`). *ThingsBoard* `1.95M` LOC tracked in `WP3.1`. |
+| **`B4`** | **CRIT (`I5`)** | **CLOSED (I5 code hygiene); blind holdout in `WP1.1`** | `"redis-cart"` purged; hardened `I5` audit `0` leaks (`768` files + `56` GT terms). Blind `10`-repo `Micans` holdout scheduled in `WP1.1`. |
+| **`B5`** | **CRIT** | **CLOSED** | `IncrementalCdclReasoner` (`cdcl-2wl-1uip-v2`), `ConeOfInfluenceSlicer` (`935` LOC), and `E5-v3` (`6/6`, `falseMust=0`, `falseNever=0`, `nonTautology=PROVED`) integrated & verified. |
+| **`B6`** | **HIGH** | **CLOSED (harness/DOI/dedup/perf); env & real `E9` open** | EMSE parser, Raw+Collapsed GT, DOI `10.1145/3832225`, Online Boutique/TeaStore dedup, Cold perf optimizations landed. **External env open:** Docker rebuild + native **Ubuntu 24.04 LTS `n >= 5`** `E0` v8 campaign; real `E9` in `WP3.4`/`WP4.1`. |
 
-## REPOSITORY REALITY
+## REPOSITORY REALITY & QUALITY GATES
 
-- **Reactor (`8` modules, JDK `21`, Maven Wrapper `3.9.16`):** `analyzer`, `analyzer-maven`, `analyzer-filesystem`, `analyzer-execution`, `analyzer-javaparser`, `analyzer-treesitter` (`16` grammars), `backend` (OpenRewrite `8.87.7`, JDK HTTP `WorkbenchApiMain`, MCP `2025-11-25`, `evo-workbench.jar`), `cli` (frozen for new features).
-- **Web UI (`backend/src/main/resources/web/`):** `47` Vanilla HTML/CSS/JS files + Cytoscape + Lucian (`0` React/Astryx; no `frontend/`). Validated via `node --check` + `node --test` (`~1.5 s`).
-- **Tests:** `423` JUnit classes (`2,610` `@Test`s), `3` Web UI CJS suites (`49` tests), `6` polyglot CJS suites, `53` Python suites. Fast `T0–T4` protocol: [docs/testing.md](testing.md).
-
-## QUALITY GATES
-
-| Gate | State | Evidence / Remaining Boundary |
-|---|---|---|
-| G-1 / G0 / G1 | PASSED (historical) | Governance baseline, JDK 21 / Maven 3.9.16 wrapper, M1 contracts |
-| G2 / M4-R0 / G3 | PASSED | [G2 (2026-09-10)](reproducibility/g2-semantic-adjudication-record-2026-09-10.md) · [G3 (2026-10-14)](reproducibility/g3-spring-adjudication-record-2026-10-14.md) (`37/37` obligations, `0` false certainty) |
-| G4 / G5 | PASSED | [G4](reproducibility/g4-adjudication-record-2026-10-15.md) (`165` tests) · [G5](reproducibility/g5-adjudication-record-2026-10-15.md) (`250` tests, ADR-002 score frozen) |
-| G6 / M8.4 / M9 / M10 | PASSED / HUMAN ACCEPTED | M8.4 closed (`2026-11-10`); M9 ([M9.5](tasks/m9/05-execution.md)); M10 ([M10 Sign-Off](tasks/m10/01-release-sign-off.md)) |
-| G7 Track B / M11 | CLOSED BY HUMAN DECISION / NOT CERTIFIED PASSED | [ADR-011](decisions/ADR-011-full-pipeline-demo.md); [M11.6](tasks/m11/06-execution.md) retains open assertions |
-| SuperPlan v2 `Gate-0` | IN PROGRESS (`B1–B6` open) | Requires closing `WP0.1–WP0.6` before FSE Tool Demo & Phases 1–4 |
+- **Reactor (`8` modules, JDK `21`, Maven `3.9.16`):** `analyzer`, `analyzer-maven`, `analyzer-filesystem`, `analyzer-execution`, `analyzer-javaparser`, `analyzer-treesitter` (`16` grammars), `backend` (OpenRewrite `8.87.7`, MCP `2025-11-25`, `evo-workbench.jar`), `cli` (`evo.jar`, frozen for new features).
+- **Web UI (`backend/src/main/resources/web/`):** Vanilla HTML/CSS/JS + Cytoscape + Lucian (`49/49` Node tests PASS; `0` React/Astryx). Fast `T0–T4` protocol: [docs/testing.md](testing.md).
+- **Historical Gates:** `G-1/G0/G1` PASSED · [G2](reproducibility/g2-semantic-adjudication-record-2026-09-10.md) / [G3](reproducibility/g3-spring-adjudication-record-2026-10-14.md) / [G4](reproducibility/g4-adjudication-record-2026-10-15.md) / [G5](reproducibility/g5-adjudication-record-2026-10-15.md) PASSED · `G6/M8.4/M9/M10` PASSED/ACCEPTED · `G7/M11` CLOSED BY HUMAN DECISION ([ADR-011](decisions/ADR-011-full-pipeline-demo.md)).
+- **SuperPlan v2 `Gate-0`:** **CODE & LOCAL VERIFICATION PASSED (`WP0.1–WP0.6` landed on `main`); EXTERNAL HOST ENV PENDING** (Docker `evo-workbench-online:latest` rebuild when daemon starts + physical Ubuntu 24.04 LTS `n >= 5` `E0` v8 baseline).
 
 ## EXACT NEXT TASK
 
-Execute **Phase 0 (`WP0.1–WP0.6`)** of [docs/evo-sota-superplan-v2.md](evo-sota-superplan-v2.md) after live `git diff` reconciliation:
-1. **`WP0.1` (`B5`):** Verify live-disk `ConeOfInfluenceSlicer` (`920` LOC) + `SpringDifferentialOracleTest` (`E5-v3`, `'-DargLine=-Xmx2048m'`); patch `IncrementalCdclReasoner.java:334–348,571–585` & `SatConfigurationReasoner.java:14`.
-2. **`WP0.2` (`B2`, `B3`):** Chunk `spring.symbolic-result` storage (unblocking *Shopizer* CLI) and fix *PetClinic* `spring-context` `Warm 1-File Edit` SHA-256 drift.
-3. **`WP0.3–WP0.5` (`B4`, `B6`):** Remove `"redis-cart"` (`I5`), deduplicate *Online Boutique* (`3->1`) & *TeaStore* (`28->7`), recover Cold `2.50x` latency, fix `parse_emse_baselines()` & DOI `[31]`.
-4. **`WP0.6` (`B1`):** Freeze clean Git SHA, sync `evo-workbench.jar` + `cli/target/evo.jar` + Docker image, and record Ubuntu LTS `E0` (`n >= 5`) baseline to unlock FSE Tool Demo & Phases 1–4.
+1. Start Docker Desktop on host (or Linux CI) and run `docker build -t evo-workbench-online:latest .` from the frozen `WP0.6` `main` SHA.
+2. Execute the physical **Ubuntu 24.04 LTS `n >= 5`** `E0` v8 campaign (`microSecEnD` `17/17` + flagship polyglot 3-way timing) to close the `B6-env` hardware boundary.
+3. Proceed to **FSE 2027 Tool Demo** packaging and **Phase 1 (`WP1.1`)** of [docs/evo-sota-superplan-v2.md](evo-sota-superplan-v2.md).

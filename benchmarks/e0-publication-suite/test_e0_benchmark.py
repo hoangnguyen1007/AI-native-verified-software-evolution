@@ -783,6 +783,75 @@ class TestOnlineMicroSecEnDHarnessWP05(unittest.TestCase):
         self.assertIn("Raw GT (collision-safe)", md)
         self.assertIn("`86/13/74` (0.6641)", md)
 
+    def test_extract_topology_includes_service_component_nodes(self) -> None:
+        from unittest import mock
+
+        captured_node_kinds: list[list[str]] = []
+
+        def fake_fetch_paged(base_url: str, graph_id: str, endpoint: str, body: dict) -> list[dict]:
+            if endpoint == "entities":
+                kinds = list(body.get("population", {}).get("nodeKinds", []))
+                captured_node_kinds.append(kinds)
+                if kinds == ["MODULE"]:
+                    return [{"identity": "mod:py", "canonicalName": "services/mailer"}]
+                if "SERVICE_COMPONENT" in kinds:
+                    return [
+                        {"identity": "comp:root", "kind": "BUILD_COMPONENT", "canonicalName": "root-parent", "module": "."},
+                        {"identity": "comp:api", "kind": "BUILD_COMPONENT", "canonicalName": "demo-api", "module": "services/api"},
+                        {"identity": "comp:mailer", "kind": "SERVICE_COMPONENT", "canonicalName": "demo-mailer", "module": "services/mailer"},
+                        {"identity": "comp:billing", "kind": "SERVICE_COMPONENT", "canonicalName": "demo-billing", "module": "services/billing"},
+                        {"identity": "comp:cache", "kind": "INFRA_COMPONENT", "canonicalName": "redis", "module": ""},
+                    ]
+                if "ROUTE_CANDIDATE" in kinds:
+                    return [
+                        {
+                            "identity": "ep:mailer-send",
+                            "kind": "ROUTE_CANDIDATE",
+                            "canonicalName": "/send",
+                            "module": "mod:py",
+                            "evidence": ["ev:route-1"],
+                        }
+                    ]
+                return []
+            if endpoint == "edges":
+                return [
+                    {"source": "comp:api", "target": "comp:mailer", "kinds": ["INVOKES_RPC"], "evidence": []},
+                    {"source": "comp:mailer", "target": "comp:extra-svc", "kinds": ["CALLS_SERVICE"], "evidence": []},
+                ]
+            return []
+
+        def fake_http_json(base_url: str, method: str, path: str, payload=None, timeout_s: int = 30) -> dict:
+            if method == "GET" and path.endswith("/graphs/g1"):
+                return {"data": {"contexts": []}}
+            if path.endswith("/queries/entity") and payload["arguments"]["identity"] == "comp:extra-svc":
+                return {
+                    "data": {
+                        "items": [
+                            {"identity": "comp:extra-svc", "kind": "SERVICE_COMPONENT", "canonicalName": "demo-worker", "module": "services/worker"}
+                        ]
+                    }
+                }
+            if path.endswith("/queries/evidence"):
+                return {"data": {"items": [{"family": "polyglot.route-candidate", "metadata": {"path": "/send", "filePath": "services/mailer/app.py"}}]}}
+            return {"data": {"items": []}}
+
+        with mock.patch.object(micro, "fetch_paged", side_effect=fake_fetch_paged), \
+                mock.patch.object(micro, "http_json", side_effect=fake_http_json):
+            topo = micro.extract_topology_from_graph("http://127.0.0.1:0", "g1", "snap:1")
+
+        self.assertTrue(any("SERVICE_COMPONENT" in kinds for kinds in captured_node_kinds))
+        leaf_names = [c["name"] for c in topo["leaf_components"]]
+        self.assertIn("demo-api", leaf_names)
+        self.assertIn("demo-mailer", leaf_names)
+        self.assertIn("redis", leaf_names)
+        self.assertNotIn("root-parent", leaf_names)
+        self.assertEqual("demo-", topo["shared_prefix"])
+        edges = [(e["source"], e["target"]) for e in topo["raw_edges"]]
+        self.assertIn(("demo-api", "demo-mailer"), edges)
+        self.assertIn(("demo-mailer", "demo-worker"), edges)
+        endpoints = [(ep["service"], ep["path"]) for ep in topo["raw_endpoints"]]
+        self.assertEqual([("demo-mailer", "/send")], endpoints)
+
     def test_causalrepair_doi_fixed_in_reports(self) -> None:
         report = (REPO_ROOT / "docs" / "evo-comparative-evaluation-report.md").read_text(encoding="utf-8")
         masterplan = (REPO_ROOT / "docs" / "evo-improvement-and-publication-masterplan.md").read_text(encoding="utf-8")

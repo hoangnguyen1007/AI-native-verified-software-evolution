@@ -828,13 +828,14 @@ test('Moonshot #5 EvoMcpScipHub normalizes MCP setup, builds client tabs, encode
   assert.equal(legacySetup.streamableHttpUrl, 'http://127.0.0.1:9090/mcp');
   assert.ok(legacySetup.clients.offlineStore);
 
-  // 2. Client config tabs (5 tabs: Antigravity, Cursor, Claude Code, VS Code, CLI Offline)
+  // 2. Client config tabs (6 tabs: Claude Code, Cursor, Antigravity, Streamable HTTP, VS Code, CLI Offline)
   const tabs = Hub.buildMcpClientTabs(setup);
-  assert.deepEqual(tabs.map(t => t.id), ['antigravity', 'cursor', 'claude', 'vscode', 'stdio']);
+  assert.deepEqual(tabs.map(t => t.id), ['claude', 'cursor', 'antigravity', 'streamable-http', 'vscode', 'stdio']);
   assert.match(tabs[0].snippet, /http:\/\/127\.0\.0\.1:8080\/mcp/);
   assert.match(tabs[0].snippet, /Bearer/);
-  assert.match(tabs[3].snippet, /"servers"/);
-  assert.match(tabs[4].snippet, /evo\.jar/);
+  assert.match(tabs[3].snippet, /"streamable-http"/);
+  assert.match(tabs[4].snippet, /"servers"/);
+  assert.match(tabs[5].snippet, /evo\.jar/);
 
   // 3. Base64 SCIP helper & upload validation
   const bytes = new Uint8Array([0x0a, 0x10, 0x53, 0x43, 0x49, 0x50]);

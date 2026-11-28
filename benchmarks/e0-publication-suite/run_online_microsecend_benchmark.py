@@ -1090,7 +1090,7 @@ def extract_topology_from_graph(base_url: str, graph_id: str, snapshot_id: str) 
 
     comp_items = fetch_paged(base_url, graph_id, "entities", {
         **base_req,
-        "population": {"nodeKinds": ["BUILD_COMPONENT", "INFRA_COMPONENT", "EXTERNAL_ACTOR"]},
+        "population": {"nodeKinds": ["BUILD_COMPONENT", "SERVICE_COMPONENT", "INFRA_COMPONENT", "EXTERNAL_ACTOR"]},
     })
 
     raw_components: list[dict[str, str]] = []
@@ -1105,10 +1105,10 @@ def extract_topology_from_graph(base_url: str, graph_id: str, snapshot_id: str) 
         cmod = (c.get("module") or "").replace("\\", "/").strip("/")
         if is_aggregator_descriptor(cname) or (cmod and is_aggregator_descriptor(cmod)):
             continue
-        bdir = cmod if (kind == "BUILD_COMPONENT" and cmod) else cname.replace("\\", "/").strip("/")
+        bdir = cmod if (kind in ("BUILD_COMPONENT", "SERVICE_COMPONENT") and cmod) else cname.replace("\\", "/").strip("/")
         raw_components.append({"id": cid, "kind": kind, "name": cname, "dir": bdir})
         entity_label_by_id[cid] = cname
-        if kind == "BUILD_COMPONENT":
+        if kind in ("BUILD_COMPONENT", "SERVICE_COMPONENT"):
             build_dirs.append(bdir)
             if bdir and bdir != ".":
                 build_dir_to_name.setdefault(bdir, cname)
@@ -1130,7 +1130,9 @@ def extract_topology_from_graph(base_url: str, graph_id: str, snapshot_id: str) 
         or c["dir"] not in aggregator_dirs
         or len(build_dirs) <= 1
     ]
-    leaf_build_names = [c["name"] for c in leaf_components if c["kind"] == "BUILD_COMPONENT"]
+    leaf_build_names = [
+        c["name"] for c in leaf_components if c["kind"] in ("BUILD_COMPONENT", "SERVICE_COMPONENT")
+    ]
     single_component_fallback = leaf_build_names[0] if len(leaf_build_names) == 1 else ""
 
     def resolve_path_to_component(rel_path: str) -> str:
@@ -1160,7 +1162,7 @@ def extract_topology_from_graph(base_url: str, graph_id: str, snapshot_id: str) 
         kind = ent.get("kind", "")
         cname = ent.get("canonicalName") or ent.get("spelling") or ""
         mod = ent.get("module") or ""
-        if kind in ("BUILD_COMPONENT", "INFRA_COMPONENT", "EXTERNAL_ACTOR") and not is_aggregator_descriptor(cname):
+        if kind in ("BUILD_COMPONENT", "SERVICE_COMPONENT", "INFRA_COMPONENT", "EXTERNAL_ACTOR") and not is_aggregator_descriptor(cname):
             entity_label_by_id[eid] = cname
             return cname
         if mod and mod in module_id_to_path:
@@ -1280,7 +1282,7 @@ def extract_topology_from_graph(base_url: str, graph_id: str, snapshot_id: str) 
     )
 
     shared_prefix = compute_shared_module_prefix([
-        norm_strict(c["name"]) for c in leaf_components if c["kind"] == "BUILD_COMPONENT"
+        norm_strict(c["name"]) for c in leaf_components if c["kind"] in ("BUILD_COMPONENT", "SERVICE_COMPONENT")
     ])
     return {
         "raw_components": raw_components,
