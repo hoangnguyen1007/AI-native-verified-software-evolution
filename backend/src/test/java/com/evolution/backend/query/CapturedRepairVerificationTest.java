@@ -189,13 +189,13 @@ final class CapturedRepairVerificationTest {
                         "diagnosisInput", diagInput));
                 assertEquals("WITHHELD", legacyProp.get("status"));
 
-                // 3. repair-options returns 16 AST recipes + enriched AI offer.
+                // 3. repair-options returns 22 AST/OpenRewrite recipes (16 DI + 6 WP4.3 compound) + enriched AI offer.
                 var opts = postApi(baseApi, baselineGraphId, baselineReportId, "repair-options", Map.of(
                         "identity", fController.identity().value(),
                         "bundle", fController.bundle().identity().value(),
                         "context", baselineReport.evaluation().context(),
                         "diagnosisInput", diagInput));
-                assertEquals(16, GraphJson.array(opts.get("recipes")).size());
+                assertEquals(22, GraphJson.array(opts.get("recipes")).size());
 
                 // 4. RECIPE: java.remove-unused-injected-field
                 var propInjected = postApi(baseApi, baselineGraphId, baselineReportId, "repair-proposal", Map.of(
@@ -398,6 +398,195 @@ final class CapturedRepairVerificationTest {
                 aiRepairServer.stop(0);
             }
         }
+    }
+
+    @Test
+    void jacocoCaptureWithWp44FieldsRoundTripsCanonicalJsonAndCapturedRepairExecution() throws Exception {
+        Path capDir = Files.createDirectory(temp.resolve("wp44-canonical-parity"));
+        Path controlsDir = Files.createDirectory(temp.resolve("wp44-controls"));
+        CapturedRepairRunner.extractControls(controlsDir);
+
+        String censusSource = readResource("ClassDependencyCensus.java");
+        String censusHex = ContentDigest.sha256Utf8(censusSource).value().substring(7);
+        String manifest = censusHex + "  ClassDependencyCensus.java\n";
+        byte[] manifestBytes = manifest.getBytes(StandardCharsets.UTF_8);
+        Files.write(capDir.resolve("manifest.sha256"), manifestBytes);
+        ContentDigest inputsDigest = ContentDigest.sha256(manifestBytes);
+
+        var rawCensus = new TreeMap<String, Object>();
+        rawCensus.put("classCount", 1);
+        rawCensus.put("classes", Map.of("example/App.class", "sha256:" + "1".repeat(64)));
+        rawCensus.put("dependencies", Map.of("example/App", List.of()));
+        ContentDigest censusDigest = CanonicalJson.sha256(rawCensus);
+
+        var observed = List.of(
+                "EVO_VM_INPUTS " + inputsDigest.value().substring(7),
+                "EVO_VM_ISOLATION network=loopback-only disks=none",
+                "EVO_BUILD_TOOL maven",
+                "EVO_COMPILE_EXIT 0",
+                "EVO_CHECK candidate.compile",
+                "EVO_TEST_EXIT 0",
+                "EVO_TESTS run=5 failed=0 errors=0",
+                "EVO_CLASS_CENSUS " + censusDigest.value(),
+                "EVO_CHECK candidate.test",
+                "EVO_VM_COMPLETE");
+        String serialContent = String.join("\n", observed) + "\n";
+        Files.writeString(capDir.resolve("serial.txt"), serialContent, StandardCharsets.UTF_8);
+        ContentDigest serialDigest = ContentDigest.sha256Utf8(serialContent);
+
+        var controls = new TreeMap<String, String>();
+        for (String name : List.of("Dockerfile", "guest-init.sh", "run.py", "ClassDependencyCensus.java")) {
+            controls.put(name, ContentDigest.sha256Utf8(readResource(name)).value());
+        }
+
+        // JaCoCo XML with benign DOCTYPE, whole/fractional percentages, and BMP (>=U+E000) vs supplementary-plane Unicode keys.
+        String jacocoXml = """
+                <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+                <!DOCTYPE report PUBLIC "-//JACOCO//DTD Report 1.1//EN" "report.dtd">
+                <report name="wp44-parity">
+                  <package name="com/acme">
+                    <sourcefile name="Full.java">
+                      <counter type="LINE" missed="0" covered="10"/>
+                      <counter type="BRANCH" missed="2" covered="6"/>
+                    </sourcefile>
+                    <sourcefile name="Eighty.java">
+                      <counter type="LINE" missed="4" covered="16"/>
+                    </sourcefile>
+                    <sourcefile name="Zero.java">
+                      <counter type="LINE" missed="10" covered="0"/>
+                    </sourcefile>
+                    <sourcefile name="Eighth.java">
+                      <counter type="LINE" missed="7" covered="1"/>
+                    </sourcefile>
+                    <sourcefile name="Third.java">
+                      <counter type="LINE" missed="2" covered="1"/>
+                    </sourcefile>
+                    <sourcefile name="Caf\u00e9.java">
+                      <counter type="LINE" missed="1" covered="3"/>
+                    </sourcefile>
+                    <sourcefile name="\uFF01HighBmp.java">
+                      <counter type="LINE" missed="0" covered="1"/>
+                    </sourcefile>
+                    <sourcefile name="\uD83D\uDE00SuppPlane.java">
+                      <counter type="LINE" missed="0" covered="1"/>
+                    </sourcefile>
+                  </package>
+                </report>
+                """;
+        Path jacocoXmlPath = capDir.resolve("jacoco.xml");
+        Files.writeString(jacocoXmlPath, jacocoXml, StandardCharsets.UTF_8);
+
+        var baseDoc = new TreeMap<String, Object>();
+        baseDoc.put("version", CapturedRepairExecution.VERSION);
+        baseDoc.put("proposal", "sha256:" + "d".repeat(64));
+        baseDoc.put("plan", "sha256:" + "e".repeat(64));
+        baseDoc.put("inputs", inputsDigest.value());
+        baseDoc.put("controls", controls);
+        baseDoc.put("base", "eclipse-temurin@sha256:" + "a".repeat(64));
+        baseDoc.put("image", "sha256:" + "b".repeat(64));
+        baseDoc.put("container", "c".repeat(64));
+        baseDoc.put("buildTool", "maven");
+        baseDoc.put("isolationMode", "DOCKER_HARDENED_CONTAINER");
+        baseDoc.put("modules", List.of("app"));
+        baseDoc.put("compileExit", 0);
+        baseDoc.put("testExit", 0);
+        baseDoc.put("testsRun", 5);
+        baseDoc.put("testsFailed", 0);
+        baseDoc.put("testsErrors", 0);
+        baseDoc.put("classCensusDigest", censusDigest.value());
+        baseDoc.put("classCensus", rawCensus);
+        baseDoc.put("observed", observed);
+        baseDoc.put("checks", List.of("candidate.compile", "candidate.test"));
+        baseDoc.put("serial", serialDigest.value());
+        baseDoc.put("jdkVersion", 17);
+        baseDoc.put("tier", "TIER_1_FAST_LOOP");
+        baseDoc.put("capabilityGaps", List.of("SANDBOX_DEPENDENCY_MISSING"));
+
+        Path seedPath = temp.resolve("capture-seed.json");
+        Files.writeString(seedPath, CanonicalJson.write(baseDoc), StandardCharsets.UTF_8);
+        Path capturePath = capDir.resolve("capture.json");
+
+        // Invoke actual run.py (parse_jacoco_xml_summary + canonical_json) to produce capture.json bytes across Python -> Java.
+        Path driver = temp.resolve("emit_capture.py");
+        Files.writeString(driver, """
+                import importlib.util, json, sys
+                from pathlib import Path
+                run_py, xml_path, seed_path, out_path = map(Path, sys.argv[1:5])
+                spec = importlib.util.spec_from_file_location("run_mod", run_py)
+                mod = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(mod)
+                doc = json.loads(seed_path.read_text(encoding="utf-8"))
+                doc["jacocoCoverage"] = mod.parse_jacoco_xml_summary(xml_path)
+                out_path.write_bytes(mod.canonical_json(doc).encode("utf-8"))
+                """, StandardCharsets.UTF_8);
+
+        String pythonExe = CapturedRepairRunner.Config.defaultPython();
+        var pb = new ProcessBuilder(pythonExe, driver.toString(),
+                controlsDir.resolve("run.py").toString(),
+                jacocoXmlPath.toString(),
+                seedPath.toString(),
+                capturePath.toString())
+                .redirectErrorStream(true);
+        var proc = pb.start();
+        String procOut = new String(proc.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        assertEquals(0, proc.waitFor(), "Python run.py canonical emission failed: " + procOut);
+
+        byte[] captureBytes = Files.readAllBytes(capturePath);
+        String captureText = new String(captureBytes, StandardCharsets.UTF_8);
+        assertTrue(captureText.contains("\"lineCoveragePercent\":100"), captureText);
+        assertTrue(captureText.contains("\"lineCoveragePercent\":80"), captureText);
+        assertTrue(captureText.contains("\"lineCoveragePercent\":0"), captureText);
+        assertTrue(captureText.contains("\"lineCoveragePercent\":12.5"), captureText);
+        assertTrue(captureText.contains("\"lineCoveragePercent\":33.33"), captureText);
+        assertTrue(captureText.contains("\"branchCoveragePercent\":75"), captureText);
+        assertTrue(captureText.contains("\"jdkVersion\":17"), captureText);
+        assertTrue(captureText.contains("\"tier\":\"TIER_1_FAST_LOOP\""), captureText);
+        assertTrue(captureText.contains("\"capabilityGaps\":[\"SANDBOX_DEPENDENCY_MISSING\"]"), captureText);
+
+        // Exact byte-for-byte CanonicalJson.write(GraphJson.read(...)) round-trip parity
+        Object reparsed = GraphJson.read(captureText, GraphJson.Limits.defaults());
+        byte[] canonicalBytes = CanonicalJson.write(reparsed).getBytes(StandardCharsets.UTF_8);
+        assertArrayEquals(captureBytes, canonicalBytes, "run.py capture.json must match Java CanonicalJson byte-for-byte");
+
+        // CapturedRepairExecution.loadAndVerify must accept the Python-produced capture.json without CAPTURED_REPAIR_FORMAT
+        assertDoesNotThrow(() -> new CapturedRepairExecution(capturePath, ContentDigest.sha256(captureBytes)));
+
+        // Negative control: legacy whole-number float representation (80.0) must fail closed with CAPTURED_REPAIR_FORMAT
+        String legacyFloatText = captureText.replace("\"lineCoveragePercent\":80,", "\"lineCoveragePercent\":80.0,");
+        assertNotEquals(captureText, legacyFloatText);
+        Path badCapturePath = capDir.resolve("capture-legacy-float.json");
+        byte[] badBytes = legacyFloatText.getBytes(StandardCharsets.UTF_8);
+        Files.write(badCapturePath, badBytes);
+        IOException ex = assertThrows(IOException.class,
+                () -> new CapturedRepairExecution(badCapturePath, ContentDigest.sha256(badBytes)));
+        assertEquals("CAPTURED_REPAIR_FORMAT", ex.getMessage());
+
+        // Exhaustive cross-boundary check: all 10,001 2-decimal percentages (0.00..100.00) emitted by run.py match Java CanonicalJson byte-for-byte
+        Path sweepDriver = temp.resolve("emit_all_percents.py");
+        Path sweepOut = temp.resolve("all_percents.json");
+        Files.writeString(sweepDriver, """
+                import importlib.util, sys
+                from pathlib import Path
+                run_py, out_path = map(Path, sys.argv[1:3])
+                spec = importlib.util.spec_from_file_location("run_mod", run_py)
+                mod = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(mod)
+                vals = [mod._canonical_percent(i, 10000) for i in range(10001)]
+                out_path.write_bytes(mod.canonical_json({"percents": vals}).encode("utf-8"))
+                """, StandardCharsets.UTF_8);
+        var sweepProc = new ProcessBuilder(pythonExe, sweepDriver.toString(),
+                controlsDir.resolve("run.py").toString(),
+                sweepOut.toString())
+                .redirectErrorStream(true)
+                .start();
+        String sweepProcOut = new String(sweepProc.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        assertEquals(0, sweepProc.waitFor(), "Python percent sweep failed: " + sweepProcOut);
+        byte[] sweepBytes = Files.readAllBytes(sweepOut);
+        String sweepText = new String(sweepBytes, StandardCharsets.UTF_8);
+        byte[] sweepCanonical = CanonicalJson.write(GraphJson.read(sweepText, GraphJson.Limits.defaults()))
+                .getBytes(StandardCharsets.UTF_8);
+        assertArrayEquals(sweepBytes, sweepCanonical,
+                "All 10,001 run.py percentages (0.00..100.00) must match Java CanonicalJson byte-for-byte");
     }
 
     private Path writeAuthenticVmCapture(Path outDir, Path baselineRepo, Map<String, Object> propOutcome,

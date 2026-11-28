@@ -22,10 +22,22 @@ import shutil
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
+import xml.parsers.expat as expat
+from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 
 VERSION = "captured-repair.vm-capture:v1"
 DEFAULT_BASE_IMAGE = "eclipse-temurin@sha256:82801f9dcdcbad5a05082aba8c86d1da5b72ccb498e71318b1f91b5a477887b3"
+# WP4.4: Pinned official multi-JDK image matrix (8 / 11 / 17 / 21) — live-verified eclipse-temurin digests (I2)
+JDK_IMAGE_MATRIX = {
+    8: "eclipse-temurin@sha256:238468a6b1e411e775bf264e639189a938eb0e887f16a2dea027c854c616b4f1",
+    11: "eclipse-temurin@sha256:9d369f804a33762f34b24cd9d1b9722fd810c16001da58bd63d0919f19a712c3",
+    17: "eclipse-temurin@sha256:7a0b2bc7e1372bb05ee361fb79e8a9e822df47343b8716253b3bbaa75060653e",
+    21: DEFAULT_BASE_IMAGE,
+}
+DEFAULT_DYNAMIC_SLICE_TIMEOUT_SECONDS = 300
+MAX_JACOCO_XML_BYTES = 16 * 1024 * 1024  # 16 MiB
+XML_ENTITY_DECL_RE = re.compile(rb"<!\s*ENTITY\b", re.IGNORECASE)
 PINNED_BASE_RE = re.compile(r"^(docker\.io/library/)?(eclipse-temurin|node|python|golang)@sha256:[a-f0-9]{64}$")
 MAVEN_COORD_SEGMENT_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 CONTROL_NONCE_RE = re.compile(r"^[a-f0-9]{32}$")
@@ -48,8 +60,28 @@ GRADLE_SKIP_PREFIXES = ("journal-",)
 GRADLE_SKIP_SUFFIXES = (".lock", ".lck")
 
 
+def _canonicalize_for_json(obj):
+    """Recursively orders mapping keys by UTF-16BE code units to match Java TreeMap<String, Object> / CanonicalJson."""
+    if isinstance(obj, dict):
+        return {
+            k: _canonicalize_for_json(obj[k])
+            for k in sorted(obj.keys(), key=lambda s: str(s).encode("utf-16-be"))
+        }
+    if isinstance(obj, list):
+        return [_canonicalize_for_json(item) for item in obj]
+    if isinstance(obj, tuple):
+        return [_canonicalize_for_json(item) for item in obj]
+    return obj
+
+
 def canonical_json(obj) -> str:
-    return json.dumps(obj, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return json.dumps(
+        _canonicalize_for_json(obj),
+        ensure_ascii=False,
+        sort_keys=False,
+        separators=(",", ":"),
+        allow_nan=False,
+    )
 
 
 def sha256_bytes(data: bytes) -> str:
@@ -367,8 +399,10 @@ def parse_pom_once(pom_path: Path):
     if pom_path.is_symlink() or not pom_path.is_file():
         return {}, None, None, [], []
     try:
-        root = ET.fromstring(pom_path.read_text(encoding="utf-8", errors="replace"))
-    except (ET.ParseError, OSError):
+        with pom_path.open("rb") as f:
+            raw = f.read(MAX_JACOCO_XML_BYTES + 1)
+        root = _safe_parse_xml_bytes(raw, max_bytes=MAX_JACOCO_XML_BYTES)
+    except (ET.ParseError, OSError, ValueError, expat.ExpatError):
         return {}, None, None, [], []
     props: dict[str, str] = {}
     g = a = v = None
@@ -730,7 +764,228 @@ def docker_cmd(docker_bin: list[str], *args, timeout=60) -> str:
     return subprocess.check_output([*docker_bin, *args], text=True, encoding="utf-8", errors="replace", timeout=timeout).strip()
 
 
-def run_isolated_container(docker_bin: list[str], image: str, mode: str) -> tuple[str, str]:
+def detect_required_jdk_version(repo_dir: Path) -> int:
+    """Passively infers target JDK major version (8|11|17|21) from pom.xml / build.gradle without host execution (I1)."""
+    def _snap_supported_jdk(major: int) -> int:
+        if major <= 8:
+            return 8
+        if major <= 11:
+            return 11
+        if major <= 17:
+            return 17
+        return 21
+
+    def _normalize_major(raw: str) -> int | None:
+        if not raw:
+            return None
+        s = raw.strip().strip('"').strip("'")
+        m_v = re.search(r"VERSION_1_(\d+)|VERSION_(\d+)", s)
+        if m_v:
+            val = int(m_v.group(1) or m_v.group(2))
+            return _snap_supported_jdk(val)
+        m_1x = re.fullmatch(r"1\.(\d+)(?:\.\d+)?", s)
+        if m_1x:
+            return _snap_supported_jdk(int(m_1x.group(1)))
+        m_num = re.fullmatch(r"(\d+)(?:\.\d+)?", s)
+        if m_num:
+            return _snap_supported_jdk(int(m_num.group(1)))
+        return None
+
+    pom = repo_dir / "pom.xml"
+    if pom.is_file() and not pom.is_symlink():
+        try:
+            text = pom.read_text(encoding="utf-8", errors="replace")[:262144]
+            text = re.sub(r"<!--.*?-->", "", text, flags=re.DOTALL)
+            for tag in ("maven.compiler.release", "java.version", "maven.compiler.source", "maven.compiler.target", "release", "source"):
+                m = re.search(rf"<{re.escape(tag)}>\s*([^<$]+?)\s*</{re.escape(tag)}>", text)
+                if m:
+                    parsed = _normalize_major(m.group(1))
+                    if parsed is not None:
+                        return parsed
+        except OSError:
+            pass
+
+    for gname in ("build.gradle", "build.gradle.kts"):
+        gf = repo_dir / gname
+        if gf.is_file() and not gf.is_symlink():
+            try:
+                text = gf.read_text(encoding="utf-8", errors="replace")[:262144]
+                text = re.sub(r"/\*.*?\*/", "", text, flags=re.DOTALL)
+                text = re.sub(r"//[^\n]*", "", text)
+                for pat in (
+                    r"jvmToolchain\(\s*(\d+)\s*\)",
+                    r"JavaLanguageVersion\.of\(\s*(\d+)\s*\)",
+                    r"sourceCompatibility\s*=?\s*([^\s;\n]+)",
+                    r"targetCompatibility\s*=?\s*([^\s;\n]+)",
+                ):
+                    m = re.search(pat, text)
+                    if m:
+                        parsed = _normalize_major(m.group(1))
+                        if parsed is not None:
+                            return parsed
+            except OSError:
+                pass
+    return 21
+
+
+def resolve_jdk_base_image(jdk_version_arg: str, explicit_base: str, repo_dir: Path) -> tuple[int, str]:
+    """Resolves (jdk_major, pinned_image_digest) from --jdk-version, --base, and passive build metadata."""
+    if jdk_version_arg and jdk_version_arg != "auto":
+        jdk_major = int(jdk_version_arg)
+    else:
+        jdk_major = detect_required_jdk_version(repo_dir)
+    if jdk_major not in JDK_IMAGE_MATRIX:
+        raise ValueError(f"UNSUPPORTED_JDK_VERSION: {jdk_major}")
+    if explicit_base and explicit_base != DEFAULT_BASE_IMAGE:
+        if not PINNED_BASE_RE.fullmatch(explicit_base):
+            raise ValueError("UNPINNED_BASE_IMAGE")
+        return jdk_major, explicit_base
+    return jdk_major, JDK_IMAGE_MATRIX[jdk_major]
+
+
+def _canonical_percent(covered: int, total: int) -> int | float:
+    """Computes a 2-decimal percentage matching Java CanonicalJson BigDecimal.stripTrailingZeros().toPlainString()."""
+    if total <= 0:
+        return 0
+    pct = (Decimal(covered) * Decimal(100) / Decimal(total)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    if pct == pct.to_integral_value():
+        return int(pct)
+    return float(pct)
+
+
+def _validate_jacoco_xml_bytes(raw: bytes, max_bytes: int = MAX_JACOCO_XML_BYTES) -> bytes:
+    """Enforces decoded byte-size and XXE/entity-expansion guards on untrusted XML while permitting benign DOCTYPE."""
+    if max_bytes <= 0:
+        raise ValueError("JACOCO_XML_INVALID_LIMIT")
+    if len(raw) > max_bytes:
+        raise ValueError(f"JACOCO_XML_SIZE_LIMIT_EXCEEDED: {len(raw)} > {max_bytes}")
+    if b"\x00" in raw or raw.startswith((b"\xff\xfe", b"\xfe\xff")):
+        raise ValueError("JACOCO_XML_UNSAFE_ENCODING: NUL or UTF-16/32 BOM disallowed")
+    if XML_ENTITY_DECL_RE.search(raw):
+        raise ValueError("JACOCO_XML_UNSAFE_ENTITY: XML ENTITY declarations are disallowed")
+    return raw
+
+
+def _safe_parse_xml_bytes(raw: bytes, max_bytes: int = MAX_JACOCO_XML_BYTES) -> ET.Element:
+    """Validates byte size, encoding, and Expat-level entity prohibitions before parsing untrusted XML."""
+    _validate_jacoco_xml_bytes(raw, max_bytes=max_bytes)
+    checker = expat.ParserCreate()
+
+    def _forbid_entity(*_args, **_kwargs):
+        raise ValueError("JACOCO_XML_UNSAFE_ENTITY: XML ENTITY declarations are disallowed")
+
+    checker.EntityDeclHandler = _forbid_entity
+    checker.UnparsedEntityDeclHandler = _forbid_entity
+    checker.ExternalEntityRefHandler = _forbid_entity
+    checker.Parse(raw, True)
+    return ET.fromstring(raw)
+
+
+def decode_jacoco_b64(b64_lines: list[str], max_bytes: int = MAX_JACOCO_XML_BYTES) -> bytes:
+    """Decodes authenticated JACOCO_B64 lines with strict <= max_bytes size and <!ENTITY guards before disk write."""
+    if max_bytes <= 0:
+        raise ValueError("JACOCO_XML_INVALID_LIMIT")
+    max_b64_chars = ((max_bytes + 2) // 3) * 4
+    chunks: list[str] = []
+    total_chars = 0
+    for line in b64_lines:
+        stripped = "".join(line.split())
+        if not stripped:
+            continue
+        total_chars += len(stripped)
+        if total_chars > max_b64_chars:
+            raise ValueError(f"JACOCO_XML_SIZE_LIMIT_EXCEEDED: base64 payload exceeds {max_bytes} decoded bytes")
+        chunks.append(stripped)
+    raw = base64.b64decode("".join(chunks), validate=True)
+    return _validate_jacoco_xml_bytes(raw, max_bytes=max_bytes)
+
+
+def parse_jacoco_xml_bytes(raw: bytes, max_bytes: int = MAX_JACOCO_XML_BYTES) -> dict:
+    """Parses untrusted JaCoCo XML bytes into canonical-JSON-safe per-file and aggregate coverage ratios (WP4.4)."""
+    root = _safe_parse_xml_bytes(raw, max_bytes=max_bytes)
+    total_lines_missed = 0
+    total_lines_covered = 0
+    total_branches_missed = 0
+    total_branches_covered = 0
+    files: dict[str, dict] = {}
+
+    for pkg in root.findall("package"):
+        pkg_name = pkg.attrib.get("name", "")
+        for sf in pkg.findall("sourcefile"):
+            sf_name = sf.attrib.get("name", "")
+            rel = f"{pkg_name}/{sf_name}" if pkg_name else sf_name
+            lm = lc = bm = bc = 0
+            for counter in sf.findall("counter"):
+                ctype = counter.attrib.get("type", "")
+                if ctype == "LINE":
+                    lm = int(counter.attrib.get("missed", "0"))
+                    lc = int(counter.attrib.get("covered", "0"))
+                elif ctype == "BRANCH":
+                    bm = int(counter.attrib.get("missed", "0"))
+                    bc = int(counter.attrib.get("covered", "0"))
+            if lm < 0 or lc < 0 or bm < 0 or bc < 0:
+                raise ValueError("JACOCO_XML_INVALID_COUNTER")
+            total_lines_missed += lm
+            total_lines_covered += lc
+            total_branches_missed += bm
+            total_branches_covered += bc
+            prev = files.get(rel)
+            if prev is not None:
+                agg_lm = prev["linesMissed"] + lm
+                agg_lc = prev["linesCovered"] + lc
+                agg_bm = prev["branchesMissed"] + bm
+                agg_bc = prev["branchesCovered"] + bc
+            else:
+                agg_lm, agg_lc, agg_bm, agg_bc = lm, lc, bm, bc
+            files[rel] = {
+                "linesMissed": agg_lm,
+                "linesCovered": agg_lc,
+                "branchesMissed": agg_bm,
+                "branchesCovered": agg_bc,
+                "lineCoveragePercent": _canonical_percent(agg_lc, agg_lm + agg_lc),
+            }
+
+    overall_lines = total_lines_missed + total_lines_covered
+    overall_branches = total_branches_missed + total_branches_covered
+    zero_coverage_files = sorted(rel for rel, entry in files.items() if entry["linesCovered"] == 0)
+    return {
+        "linesMissed": total_lines_missed,
+        "linesCovered": total_lines_covered,
+        "lineCoveragePercent": _canonical_percent(total_lines_covered, overall_lines),
+        "branchesMissed": total_branches_missed,
+        "branchesCovered": total_branches_covered,
+        "branchCoveragePercent": _canonical_percent(total_branches_covered, overall_branches),
+        "files": files,
+        "zeroCoverageFiles": zero_coverage_files,
+    }
+
+
+def parse_jacoco_xml_summary(xml_path: Path, max_bytes: int = MAX_JACOCO_XML_BYTES) -> dict:
+    """Parses a JaCoCo XML report file into canonical-JSON-safe per-file and aggregate line/branch coverage ratios (WP4.4)."""
+    if xml_path.is_symlink() or not xml_path.is_file():
+        raise ValueError("JACOCO_XML_UNAVAILABLE")
+    with xml_path.open("rb") as f:
+        raw = f.read(max_bytes + 1)
+    return parse_jacoco_xml_bytes(raw, max_bytes=max_bytes)
+
+
+def detect_offline_dependency_missing(log_text: str) -> bool:
+    """Detects offline build failures caused by missing cached artifacts (emits SANDBOX_DEPENDENCY_MISSING, I3)."""
+    if not log_text:
+        return False
+    low = log_text.lower()
+    markers = (
+        "cannot access central",
+        "offline mode and the artifact",
+        "could not resolve dependencies",
+        "has not been downloaded from it before",
+        "no cached version of",
+        "could not find artifact",
+    )
+    return any(m in low for m in markers)
+
+
+def run_isolated_container(docker_bin: list[str], image: str, mode: str, m2_ro_mount: Path | None = None) -> tuple[str, str]:
     create_args = [
         "create",
         "--pull=never",
@@ -753,6 +1008,14 @@ def run_isolated_container(docker_bin: list[str], image: str, mode: str) -> tupl
             "--tmpfs", "/work:rw,nosuid,nodev,mode=1777,size=2048m",
             "--tmpfs", "/tmp:rw,nosuid,nodev,mode=1777,size=512m",
         ])
+        if m2_ro_mount is not None:
+            resolved_m2 = m2_ro_mount.resolve()
+            if resolved_m2.is_symlink() or not resolved_m2.is_dir():
+                raise ValueError("INVALID_M2_READONLY_MOUNT")
+            create_args.extend([
+                "--mount",
+                f"type=bind,src={resolved_m2},dst=/inputs/m2-ro,readonly",
+            ])
     create_args.append(image)
     container = docker_cmd(docker_bin, *create_args)
     if not re.fullmatch(r"[a-f0-9]{64}", container):
@@ -763,9 +1026,18 @@ def run_isolated_container(docker_bin: list[str], image: str, mode: str) -> tupl
         sec_opt = host.get("SecurityOpt") or []
         sec_opt_ok = sec_opt in (["no-new-privileges:true"], ["no-new-privileges"])
         user_ok = (mode != "docker-container") or (config.get("Config", {}).get("User") == NON_ROOT_USER)
+        mounts = config.get("Mounts") or []
+        if m2_ro_mount is not None and mode == "docker-container":
+            mounts_ok = (
+                len(mounts) == 1
+                and mounts[0].get("Destination") == "/inputs/m2-ro"
+                and mounts[0].get("RW") is False
+            )
+        else:
+            mounts_ok = not mounts
         if (
             config["Image"] != image
-            or config["Mounts"]
+            or not mounts_ok
             or host["NetworkMode"] != "none"
             or not host["ReadonlyRootfs"]
             or host["Privileged"]
@@ -877,7 +1149,9 @@ if [ "${{EVO_BUILD_TOOL}}" = "gradle" ]; then
     fi
   fi
 else
-  MVN_ARGS="-o -B -ntp -Dmaven.repo.local=/inputs/m2 -Duser.home=/work"
+  M2_LOCAL="${{EVO_M2_REPO_LOCAL:-/inputs/m2}}"
+  if [ "${{M2_LOCAL}}" = "/inputs/m2-ro" ] && [ ! -d /inputs/m2-ro ]; then M2_LOCAL="/inputs/m2"; fi
+  MVN_ARGS="-o -B -ntp -Dmaven.repo.local=${{M2_LOCAL}} -Duser.home=/work"
   if [ -n "${{EVO_MVN_PL:-}}" ]; then MVN_ARGS="${{MVN_ARGS}} -pl ${{EVO_MVN_PL}} -am"; fi
   set +e; mvn ${{MVN_ARGS}} test-compile > /tmp/compile.log 2>&1; COMPILE_EXIT=$?; set -e
   emit "EVO_COMPILE_EXIT ${{COMPILE_EXIT}}"
@@ -892,6 +1166,21 @@ else
   fi
 fi
 emit "EVO_TEST_EXIT ${{TEST_EXIT}}"
+if [ "${{EVO_COLLECT_JACOCO:-false}}" = "true" ] && [ "${{EVO_SKIP_TESTS:-false}}" != "true" ] && [ "${{COMPILE_EXIT}}" -eq 0 ]; then
+  if [ "${{EVO_BUILD_TOOL}}" = "gradle" ]; then
+    set +e; gradle --offline --no-daemon -Dgradle.user.home=/work/gradle-home -Duser.home=/work jacocoTestReport >/dev/null 2>&1; set -e
+  else
+    M2_LOCAL="${{EVO_M2_REPO_LOCAL:-/inputs/m2}}"
+    if [ "${{M2_LOCAL}}" = "/inputs/m2-ro" ] && [ ! -d /inputs/m2-ro ]; then M2_LOCAL="/inputs/m2"; fi
+    if find /work/repo -name 'jacoco.exec' -print -quit 2>/dev/null | grep -q .; then
+      set +e; mvn -o -B -ntp -Dmaven.repo.local="${{M2_LOCAL}}" -Duser.home=/work jacoco:report >/dev/null 2>&1; set -e
+    fi
+  fi
+  JACOCO_XML=$(find /work/repo -path '*/jacoco*/*.xml' -type f 2>/dev/null | sort | head -n 1 || true)
+  if [ -n "${{JACOCO_XML}}" ] && [ -s "${{JACOCO_XML}}" ]; then
+    emit_b64 "JACOCO_B64" "${{JACOCO_XML}}"
+  fi
+fi
 java -cp /opt/census ClassDependencyCensus /work/repo /tmp/census.json /tmp/census.env /tmp/failures.json /tmp/fail-ids.txt
 . /tmp/census.env
 emit "EVO_TESTS run=${{TESTS_RUN}} failed=${{TESTS_FAILED}} errors=${{TESTS_ERRORS}}"
@@ -911,7 +1200,9 @@ if [ "${{EVO_SKIP_TESTS:-false}}" != "true" ] && [ "${{EVO_BEHAVIORAL_DIFF:-fals
   if [ "${{EVO_BUILD_TOOL}}" = "gradle" ]; then
     set +e; gradle --offline --no-daemon -Dgradle.user.home=/work/gradle-home -Duser.home=/work test > /tmp/base-test.log 2>&1; BASE_TEST_EXIT=$?; set -e
   else
-    BASE_MVN_ARGS="-o -B -ntp -Dmaven.repo.local=/inputs/m2 -Duser.home=/work"
+    BASE_M2_LOCAL="${{EVO_M2_REPO_LOCAL:-/inputs/m2}}"
+    if [ "${{BASE_M2_LOCAL}}" = "/inputs/m2-ro" ] && [ ! -d /inputs/m2-ro ]; then BASE_M2_LOCAL="/inputs/m2"; fi
+    BASE_MVN_ARGS="-o -B -ntp -Dmaven.repo.local=${{BASE_M2_LOCAL}} -Duser.home=/work"
     if [ -n "${{EVO_MVN_PL:-}}" ]; then BASE_MVN_ARGS="${{BASE_MVN_ARGS}} -pl ${{EVO_MVN_PL}} -am"; fi
     set +e; mvn ${{BASE_MVN_ARGS}} -DfailIfNoTests=false test > /tmp/base-test.log 2>&1; BASE_TEST_EXIT=$?; set -e
   fi
@@ -1839,6 +2130,7 @@ B64_SECTIONS = {
     "LOG_TAIL_B64": "logtail",
     "BEHAVIORAL_B64": "behavioral",
     "BEHAVIORAL_EXCERPT_B64": "behavioral_excerpt",
+    "JACOCO_B64": "jacoco",
 }
 
 
@@ -1950,6 +2242,7 @@ def parse_authenticated_serial(raw_serial: str, ctrl_nonce: str) -> dict:
         "logtail_b64_lines": sections_data["logtail"],
         "behavioral_b64_lines": sections_data["behavioral"],
         "behavioral_excerpt_b64_lines": sections_data["behavioral_excerpt"],
+        "jacoco_b64_lines": sections_data["jacoco"],
     }
 
 
@@ -1998,14 +2291,19 @@ def build_spec_env(
     skip_tests: bool,
     behavioral_diff: bool,
     selected_tests: str = "",
+    m2_readonly_mount: bool = False,
+    collect_jacoco: bool = False,
 ) -> str:
     effective_diff = effective_behavioral_diff_enabled(behavioral_diff, skip_tests)
+    m2_local = "/inputs/m2-ro" if m2_readonly_mount else "/inputs/m2"
     return (
         f"EVO_BUILD_TOOL={shlex.quote(build_tool)}\n"
         f"EVO_MVN_PL={shlex.quote(','.join(mvn_pl_list))}\n"
         f"EVO_SKIP_TESTS={shlex.quote('true' if skip_tests else 'false')}\n"
         f"EVO_BEHAVIORAL_DIFF={shlex.quote('true' if effective_diff else 'false')}\n"
         f"EVO_SELECTED_TESTS={shlex.quote(selected_tests)}\n"
+        f"EVO_M2_REPO_LOCAL={shlex.quote(m2_local)}\n"
+        f"EVO_COLLECT_JACOCO={shlex.quote('true' if collect_jacoco else 'false')}\n"
     )
 
 
@@ -2030,15 +2328,22 @@ def main():
     parser.add_argument("--selected-tests", default="", help="Optional SKG-RTS comma-separated test class filter")
     parser.add_argument("--out", required=True, type=Path, help="Output capture directory")
     parser.add_argument("--base", default=DEFAULT_BASE_IMAGE, help="Pinned official image digest (eclipse-temurin|node|python|golang@sha256:...)")
+    parser.add_argument("--jdk-version", default="auto", choices=["auto", "8", "11", "17", "21"], help="Target JDK major version for multi-JDK matrix (WP4.4)")
+    parser.add_argument("--m2-readonly-mount", action="store_true", help="Bind-mount host .m2 read-only into Tier-1 hardened container (avoids stage_m2_subset rebuild overhead)")
+    parser.add_argument("--collect-jacoco", action="store_true", help="Collect JaCoCo XML coverage summary inside isolated sandbox")
+    parser.add_argument("--dynamic-slice-timeout", type=int, default=DEFAULT_DYNAMIC_SLICE_TIMEOUT_SECONDS, help="Hard timeout in seconds for isolated dynamic slice trace (default 300s)")
     parser.add_argument("--base-cache-tag", default="", help="Optional Docker cache tag for fast layer reuse")
     parser.add_argument("--docker-context", default=None, help="Docker CLI context (empty for default)")
     args = parser.parse_args()
 
-    if not PINNED_BASE_RE.fullmatch(args.base):
-        raise ValueError("UNPINNED_BASE_IMAGE")
-
     repo_src = args.repo.resolve()
     build_tool = detect_build_tool(repo_src, args.build_tool)
+    effective_jdk_major = 21
+    effective_base = args.base
+    if build_tool in ("maven", "gradle"):
+        effective_jdk_major, effective_base = resolve_jdk_base_image(args.jdk_version, args.base, repo_src)
+    if not PINNED_BASE_RE.fullmatch(effective_base):
+        raise ValueError("UNPINNED_BASE_IMAGE")
     if build_tool == "maven" and (args.m2 is None or args.maven_zip is None):
         raise ValueError("OFFLINE_TOOLCHAIN_MISSING: --m2 and --maven-zip are required for Maven builds")
     if build_tool == "gradle" and (args.gradle_zip is None or args.gradle_home is None):
@@ -2062,7 +2367,7 @@ def main():
 
     pinned_base_id: str | None = None
     try:
-        pinned_base_id = docker_cmd(docker_bin, "image", "inspect", "--format", "{{.Id}}", args.base, timeout=15).strip()
+        pinned_base_id = docker_cmd(docker_bin, "image", "inspect", "--format", "{{.Id}}", effective_base, timeout=15).strip()
     except Exception:
         pinned_base_id = None
 
@@ -2150,8 +2455,10 @@ def main():
                 target_file.write_bytes(updated_bytes)
 
         mvn_pl_list = []
+        use_m2_ro = bool(args.m2_readonly_mount and args.mode == "docker-container" and build_tool == "maven" and args.m2 is not None)
         if build_tool == "maven":
-            stage_m2_subset(cand_dir, args.m2, m2_stage)
+            if not use_m2_ro:
+                stage_m2_subset(cand_dir, args.m2, m2_stage)
             cand_dir_res = cand_dir.resolve()
             for m in affected_modules:
                 if not m or m == "." or m.startswith("module:"):
@@ -2197,7 +2504,10 @@ def main():
         raw_selected = (args.selected_tests or "").strip()
         if raw_selected and not re.fullmatch(r"[A-Za-z0-9_.$#,*?/-]{1,2048}", raw_selected):
             raise ValueError("UNSAFE_SELECTED_TESTS_FILTER")
-        build_spec = build_spec_env(build_tool, mvn_pl_list, args.skip_tests, args.behavioral_diff, raw_selected)
+        build_spec = build_spec_env(
+            build_tool, mvn_pl_list, args.skip_tests, args.behavioral_diff, raw_selected,
+            m2_readonly_mount=use_m2_ro, collect_jacoco=bool(args.collect_jacoco),
+        )
         (inputs_dir / "build-spec.env").write_text(build_spec, encoding="utf-8", newline="\n")
 
         manifest_entries = []
@@ -2234,7 +2544,7 @@ def main():
         build_cmd = [*docker_bin, "build", "--platform=linux/amd64"]
         if args.mode == "docker-container":
             build_cmd.append("--network=none")
-        build_cmd.extend(["--build-arg", f"BASE={args.base}"])
+        build_cmd.extend(["--build-arg", f"BASE={effective_base}"])
         if args.base_cache_tag:
             build_cmd.extend(["-t", args.base_cache_tag])
         build_cmd.extend(["--iidfile", str(iid_file), str(ctx_dir)])
@@ -2245,7 +2555,10 @@ def main():
             raise RuntimeError(f"IMAGE_ID_UNAVAILABLE: {image_id}")
         ephemeral_image_id = image_id
 
-        container_id, raw_serial = run_isolated_container(docker_bin, image_id, args.mode)
+        if use_m2_ro:
+            container_id, raw_serial = run_isolated_container(docker_bin, image_id, args.mode, m2_ro_mount=args.m2)
+        else:
+            container_id, raw_serial = run_isolated_container(docker_bin, image_id, args.mode)
     finally:
         try:
             if ephemeral_image_id is None and iid_file.is_file():
@@ -2274,6 +2587,7 @@ def main():
     logtail_b64_lines = parsed_serial["logtail_b64_lines"]
     behavioral_b64_lines = parsed_serial["behavioral_b64_lines"]
     behavioral_excerpt_b64_lines = parsed_serial["behavioral_excerpt_b64_lines"]
+    jacoco_b64_lines = parsed_serial["jacoco_b64_lines"]
     checks = parsed_serial["checks"]
 
     if compile_exit is None or test_exit is None or census_digest_line is None or not b64_lines:
@@ -2313,8 +2627,20 @@ def main():
         except Exception:
             pass
 
+    jacoco_coverage_obj = None
+    jacoco_rejected = False
+    if jacoco_b64_lines:
+        try:
+            jacoco_raw = decode_jacoco_b64(jacoco_b64_lines)
+            jacoco_coverage_obj = parse_jacoco_xml_bytes(jacoco_raw)
+            jacoco_xml_path = out_dir / "jacoco.xml"
+            jacoco_xml_path.write_bytes(jacoco_raw)
+        except Exception:
+            jacoco_coverage_obj = None
+            jacoco_rejected = True
+
     (out_dir / "class-census.json").write_bytes(census_raw)
-    normalized_base = args.base[len("docker.io/library/"):] if args.base.startswith("docker.io/library/") else args.base
+    normalized_base = effective_base[len("docker.io/library/"):] if effective_base.startswith("docker.io/library/") else effective_base
     capture_doc = {
         "version": VERSION,
         "proposal": proposal_id,
@@ -2338,6 +2664,16 @@ def main():
         "checks": checks,
         "serial": sha256_bytes(serial_text.encode("utf-8")),
     }
+    if build_tool in ("maven", "gradle"):
+        capture_doc["jdkVersion"] = effective_jdk_major
+    capture_doc["tier"] = "TIER_1_FAST_LOOP" if args.mode == "docker-container" else "TIER_2_HYPERVISOR_CERT"
+    capability_gaps: list[str] = []
+    if (compile_exit != 0 or test_exit != 0) and detect_offline_dependency_missing(log_tail):
+        capability_gaps.append("SANDBOX_DEPENDENCY_MISSING")
+    if jacoco_rejected:
+        capability_gaps.append("JACOCO_XML_REJECTED")
+    if capability_gaps:
+        capture_doc["capabilityGaps"] = sorted(set(capability_gaps))
     if args.skip_tests:
         capture_doc["testsSkipped"] = True
     if failing_tests:
@@ -2346,6 +2682,8 @@ def main():
         capture_doc["logTail"] = log_tail
     if behavioral_diff_obj is not None:
         capture_doc["behavioralDiff"] = behavioral_diff_obj
+    if jacoco_coverage_obj is not None:
+        capture_doc["jacocoCoverage"] = jacoco_coverage_obj
 
     capture_bytes = canonical_json(capture_doc).encode("utf-8")
     (out_dir / "capture.json").write_bytes(capture_bytes)

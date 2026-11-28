@@ -731,4 +731,265 @@ public final class CapturedRepairRunner {
         }
         process.destroyForcibly();
     }
+
+    // ─── WP4.4: Multi-JDK (8/11/17/21) Pinned Matrix & Two-Tier Isolated Certification ───
+
+    public static final Map<Integer, String> JDK_IMAGE_MATRIX = Collections.unmodifiableMap(new TreeMap<>(Map.of(
+            8, "eclipse-temurin@sha256:238468a6b1e411e775bf264e639189a938eb0e887f16a2dea027c854c616b4f1",
+            11, "eclipse-temurin@sha256:9d369f804a33762f34b24cd9d1b9722fd810c16001da58bd63d0919f19a712c3",
+            17, "eclipse-temurin@sha256:7a0b2bc7e1372bb05ee361fb79e8a9e822df47343b8716253b3bbaa75060653e",
+            21, DEFAULT_JAVA_BASE_IMAGE)));
+
+    public static final Set<Integer> SUPPORTED_JDK_VERSIONS = Set.of(8, 11, 17, 21);
+
+    public enum CertificationTier {
+        TIER_1_FAST_CONTAINER,
+        TIER_2_HYPERVISOR_CERT
+    }
+
+    public record TwoTierCertificationResult(
+            boolean certified,
+            int detectedJdkVersion,
+            String pinnedBaseImage,
+            int tier1RoundsExecuted,
+            boolean tier2HypervisorExecuted,
+            Optional<CapturedRepairVerification.ThreeLayerCertification> threeLayerCertification,
+            ContentDigest certificateDigest,
+            String summary) {
+        public TwoTierCertificationResult {
+            certificateDigest = certificateDigest == null
+                    ? CanonicalJson.sha256(List.of("two-tier-cert:v1", certified, detectedJdkVersion,
+                    pinnedBaseImage, tier1RoundsExecuted, tier2HypervisorExecuted, summary))
+                    : certificateDigest;
+        }
+    }
+
+    /**
+     * Passively detects the required JDK major version ({@code 8 | 11 | 17 | 21}) from
+     * {@code pom.xml} or {@code build.gradle(.kts)} without executing any target build ({@code I1}).
+     */
+    public static int detectRequiredJdkVersion(Path repoRoot) {
+        if (repoRoot == null || !Files.isDirectory(repoRoot, LinkOption.NOFOLLOW_LINKS)) {
+            return 21;
+        }
+        Path pom = repoRoot.resolve("pom.xml");
+        if (Files.isRegularFile(pom, LinkOption.NOFOLLOW_LINKS)) {
+            try {
+                String text = Files.readString(pom, StandardCharsets.UTF_8);
+                if (text.length() > 262_144) text = text.substring(0, 262_144);
+                text = java.util.regex.Pattern.compile("<!--.*?-->", java.util.regex.Pattern.DOTALL)
+                        .matcher(text).replaceAll("");
+                for (String tag : List.of("maven.compiler.release", "java.version",
+                        "maven.compiler.source", "maven.compiler.target", "release", "source")) {
+                    var m = java.util.regex.Pattern.compile(
+                            "<" + java.util.regex.Pattern.quote(tag) + ">\\s*([^<$]+?)\\s*</"
+                                    + java.util.regex.Pattern.quote(tag) + ">")
+                            .matcher(text);
+                    if (m.find()) {
+                        OptionalInt parsed = normalizeJdkMajor(m.group(1));
+                        if (parsed.isPresent()) return parsed.getAsInt();
+                    }
+                }
+            } catch (IOException ignored) {}
+        }
+        for (String gName : List.of("build.gradle", "build.gradle.kts")) {
+            Path gf = repoRoot.resolve(gName);
+            if (Files.isRegularFile(gf, LinkOption.NOFOLLOW_LINKS)) {
+                try {
+                    String text = Files.readString(gf, StandardCharsets.UTF_8);
+                    if (text.length() > 262_144) text = text.substring(0, 262_144);
+                    text = java.util.regex.Pattern.compile("/\\*.*?\\*/", java.util.regex.Pattern.DOTALL)
+                            .matcher(text).replaceAll("");
+                    text = java.util.regex.Pattern.compile("//[^\\n]*").matcher(text).replaceAll("");
+                    for (String regex : List.of(
+                            "jvmToolchain\\(\\s*(\\d+)\\s*\\)",
+                            "JavaLanguageVersion\\.of\\(\\s*(\\d+)\\s*\\)",
+                            "sourceCompatibility\\s*=?\\s*([^\\s;\\n]+)",
+                            "targetCompatibility\\s*=?\\s*([^\\s;\\n]+)")) {
+                        var m = java.util.regex.Pattern.compile(regex).matcher(text);
+                        if (m.find()) {
+                            OptionalInt parsed = normalizeJdkMajor(m.group(1));
+                            if (parsed.isPresent()) return parsed.getAsInt();
+                        }
+                    }
+                } catch (IOException ignored) {}
+            }
+        }
+        return 21;
+    }
+
+    /** Resolves the pinned official SHA-256 base image digest for {@code jdkVersion} ({@code 8/11/17/21}). */
+    public static String resolveBaseImageForJdk(int jdkVersion, Optional<String> explicitBaseImage) {
+        if (explicitBaseImage != null && explicitBaseImage.isPresent() && !explicitBaseImage.orElseThrow().isBlank()) {
+            String raw = explicitBaseImage.orElseThrow().strip();
+            if (!PINNED_BASE_IMAGE_PATTERN.matcher(raw).matches()) {
+                throw new IllegalArgumentException("Base image must be a pinned official digest: " + raw);
+            }
+            return raw;
+        }
+        String pinned = JDK_IMAGE_MATRIX.get(jdkVersion);
+        if (pinned == null) {
+            throw new IllegalArgumentException("Unsupported JDK version: " + jdkVersion + " (supported: 8, 11, 17, 21)");
+        }
+        return pinned;
+    }
+
+    /** Builds a Tier-1 fast-loop {@link Config} pinned to the detected JDK and {@code DOCKER_HARDENED_CONTAINER}. */
+    public static Config tier1FastLoopConfig(Config base, Path repoRoot) {
+        Objects.requireNonNull(base, "base");
+        int jdk = detectRequiredJdkVersion(repoRoot);
+        String pinned = resolveBaseImageForJdk(jdk, base.baseImage());
+        return new Config(
+                base.pythonExecutable(),
+                Optional.of(pinned),
+                base.buildTool(),
+                base.mavenZip(),
+                base.m2Repository(),
+                base.gradleZip(),
+                base.gradleHome(),
+                base.dockerContext(),
+                base.skipTests(),
+                base.workRoot(),
+                base.timeout(),
+                IsolationMode.DOCKER_HARDENED_CONTAINER,
+                base.baseCacheTag(),
+                base.npmCache(),
+                base.pipWheelhouse(),
+                base.goModCache());
+    }
+
+    /** Builds a Tier-2 final-certification {@link Config} pinned to {@code QEMU_IN_DOCKER} for Negative Control. */
+    public static Config tier2HypervisorConfig(Config base, Path repoRoot) {
+        Objects.requireNonNull(base, "base");
+        int jdk = detectRequiredJdkVersion(repoRoot);
+        String pinned = resolveBaseImageForJdk(jdk, base.baseImage());
+        return new Config(
+                base.pythonExecutable(),
+                Optional.of(pinned),
+                base.buildTool(),
+                base.mavenZip(),
+                base.m2Repository(),
+                base.gradleZip(),
+                base.gradleHome(),
+                base.dockerContext(),
+                false,
+                base.workRoot(),
+                base.timeout(),
+                IsolationMode.QEMU_IN_DOCKER,
+                base.baseCacheTag(),
+                base.npmCache(),
+                base.pipWheelhouse(),
+                base.goModCache());
+    }
+
+    /**
+     * Builds the CLI invocation for {@code run.py} augmented with WP4.4 Tier-1/Tier-2 flags:
+     * {@code --jdk-version}, {@code --m2-readonly-mount}, {@code --collect-jacoco}, and
+     * {@code --dynamic-slice-timeout}.
+     */
+    public static List<String> buildTwoTierCommand(
+            Path script,
+            Path repoRoot,
+            Path proposalFile,
+            Path verificationFile,
+            Path outDir,
+            Config config,
+            CertificationTier tier,
+            int jdkVersion,
+            boolean m2ReadonlyMount,
+            boolean collectJacoco,
+            int dynamicSliceTimeoutSeconds,
+            boolean behavioralDiff,
+            Optional<Path> behavioralProbesFile,
+            Optional<String> selectedTests) {
+        if (!SUPPORTED_JDK_VERSIONS.contains(jdkVersion)) {
+            throw new IllegalArgumentException("Unsupported JDK version: " + jdkVersion);
+        }
+        Config effectiveConfig = tier == CertificationTier.TIER_1_FAST_CONTAINER
+                ? new Config(config.pythonExecutable(), Optional.of(resolveBaseImageForJdk(jdkVersion, config.baseImage())),
+                config.buildTool(), config.mavenZip(), config.m2Repository(), config.gradleZip(), config.gradleHome(),
+                config.dockerContext(), config.skipTests(), config.workRoot(), config.timeout(),
+                IsolationMode.DOCKER_HARDENED_CONTAINER, config.baseCacheTag(),
+                config.npmCache(), config.pipWheelhouse(), config.goModCache())
+                : new Config(config.pythonExecutable(), Optional.of(resolveBaseImageForJdk(jdkVersion, config.baseImage())),
+                config.buildTool(), config.mavenZip(), config.m2Repository(), config.gradleZip(), config.gradleHome(),
+                config.dockerContext(), false, config.workRoot(), config.timeout(),
+                IsolationMode.QEMU_IN_DOCKER, config.baseCacheTag(),
+                config.npmCache(), config.pipWheelhouse(), config.goModCache());
+
+        var cmd = new ArrayList<>(buildCommand(
+                script, repoRoot, proposalFile, verificationFile, outDir,
+                effectiveConfig, behavioralDiff, behavioralProbesFile,
+                tier == CertificationTier.TIER_1_FAST_CONTAINER ? selectedTests : Optional.empty()));
+        cmd.add("--jdk-version");
+        cmd.add(Integer.toString(jdkVersion));
+        if (tier == CertificationTier.TIER_1_FAST_CONTAINER && m2ReadonlyMount) {
+            cmd.add("--m2-readonly-mount");
+        }
+        if (collectJacoco) {
+            cmd.add("--collect-jacoco");
+        }
+        if (dynamicSliceTimeoutSeconds > 0) {
+            cmd.add("--dynamic-slice-timeout");
+            cmd.add(Integer.toString(dynamicSliceTimeoutSeconds));
+        }
+        return List.copyOf(cmd);
+    }
+
+    /**
+     * Orchestrates Two-Tier Certification: Tier-2 Hypervisor ({@code QEMU_IN_DOCKER} / Hyper-V)
+     * is invoked AT MOST ONCE and ONLY when Tier-1 produced a 4-gate winning candidate.
+     */
+    public static TwoTierCertificationResult orchestrateTwoTier(
+            Path repoRoot,
+            com.evolution.backend.query.repair.ClosedLoopRepairOrchestrator.CampaignResult tier1Campaign,
+            java.util.function.Function<
+                    com.evolution.backend.query.repair.ClosedLoopRepairOrchestrator.FourGateEvaluation,
+                    CapturedRepairVerification.ThreeLayerCertification> tier2HypervisorCertifier) {
+        Objects.requireNonNull(tier1Campaign, "tier1Campaign");
+        Objects.requireNonNull(tier2HypervisorCertifier, "tier2HypervisorCertifier");
+        int jdk = detectRequiredJdkVersion(repoRoot);
+        String pinned = resolveBaseImageForJdk(jdk, Optional.empty());
+        if (!tier1Campaign.succeeded() || tier1Campaign.winningCandidate().isEmpty()) {
+            return new TwoTierCertificationResult(
+                    false, jdk, pinned, tier1Campaign.totalAttempts(), false, Optional.empty(), null,
+                    "TIER_1_NO_4GATE_WINNER: Tier-2 hypervisor skipped (0 wasted VM boots)");
+        }
+        var winner = tier1Campaign.winningCandidate().orElseThrow();
+        var cert = tier2HypervisorCertifier.apply(winner);
+        boolean certified = cert != null && cert.allowsConfirmApply();
+        return new TwoTierCertificationResult(
+                certified, jdk, pinned, tier1Campaign.totalAttempts(), true,
+                Optional.ofNullable(cert),
+                cert == null ? null : cert.certificateDigest(),
+                certified
+                        ? "TWO_TIER_CERTIFIED(JDK=" + jdk + ", tier1Rounds=" + tier1Campaign.totalAttempts() + ", tier2Boots=1)"
+                        : "TIER_2_CERTIFICATION_REJECTED: " + (cert == null ? "NULL_CERT" : String.join("; ", cert.failureReasons())));
+    }
+
+    private static OptionalInt normalizeJdkMajor(String raw) {
+        if (raw == null || raw.isBlank()) return OptionalInt.empty();
+        String s = raw.strip().replace("\"", "").replace("'", "");
+        var mv = java.util.regex.Pattern.compile("VERSION_1_(\\d+)|VERSION_(\\d+)").matcher(s);
+        if (mv.find()) {
+            int val = Integer.parseInt(mv.group(1) != null ? mv.group(1) : mv.group(2));
+            return OptionalInt.of(snapSupportedJdk(val));
+        }
+        var m1 = java.util.regex.Pattern.compile("^1\\.(\\d+)(?:\\.\\d+)?$").matcher(s);
+        if (m1.matches()) {
+            return OptionalInt.of(snapSupportedJdk(Integer.parseInt(m1.group(1))));
+        }
+        var mn = java.util.regex.Pattern.compile("^(\\d+)(?:\\.\\d+)?$").matcher(s);
+        if (mn.matches()) {
+            return OptionalInt.of(snapSupportedJdk(Integer.parseInt(mn.group(1))));
+        }
+        return OptionalInt.empty();
+    }
+
+    private static int snapSupportedJdk(int major) {
+        if (major <= 8) return 8;
+        if (major <= 11) return 11;
+        if (major <= 17) return 17;
+        return 21;
+    }
 }

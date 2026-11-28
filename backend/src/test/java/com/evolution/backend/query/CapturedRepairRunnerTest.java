@@ -81,7 +81,7 @@ final class CapturedRepairRunnerTest {
         assertEquals(200, caps.status());
         String json = new String(caps.body());
         assertTrue(json.contains("\"isolatedRepairRunnerEnabled\":false"));
-        assertTrue(json.contains("\"repairRecipeCount\":16"));
+        assertTrue(json.contains("\"repairRecipeCount\":22"));
     }
 
     private static void restore(String key, String value) {

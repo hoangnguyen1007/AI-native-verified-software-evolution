@@ -234,6 +234,10 @@ public final class CapturedRepairExecution {
         allowedKeys.add("failingTests");
         allowedKeys.add("logTail");
         allowedKeys.add("behavioralDiff");
+        allowedKeys.add("jdkVersion");
+        allowedKeys.add("tier");
+        allowedKeys.add("capabilityGaps");
+        allowedKeys.add("jacocoCoverage");
         if (!Arrays.equals(bytes, CanonicalJson.write(json).getBytes(StandardCharsets.UTF_8))
                 || !json.keySet().containsAll(requiredKeys)
                 || !allowedKeys.containsAll(json.keySet())

@@ -1033,4 +1033,328 @@ public final class CapturedRepairVerification {
     private static Check check(String id, Status status, String reason, ContentDigest evidence) {
         return new Check(id, status, reason, Optional.ofNullable(evidence));
     }
+
+    // ─── WP4.3 & WP4.4: JaCoCo Coverage Gate, Offline Dependency Gap & 3-Layer Certification ───
+
+    public static final String GAP_SANDBOX_DEPENDENCY_MISSING = "SANDBOX_DEPENDENCY_MISSING";
+    private static final VersionedIdentifier VERIFICATION_GAP_CATALOG =
+            new VersionedIdentifier("verification.sandbox-gaps", "1");
+
+    public record FileCoverage(
+            String packageAndFile,
+            int linesMissed,
+            int linesCovered,
+            int branchesMissed,
+            int branchesCovered,
+            double lineCoveragePercent) {}
+
+    public record JaCoCoCoverageReport(
+            int totalLinesMissed,
+            int totalLinesCovered,
+            int totalBranchesMissed,
+            int totalBranchesCovered,
+            double overallLineCoveragePercent,
+            Map<String, FileCoverage> files,
+            List<String> zeroCoverageFiles,
+            ContentDigest digest) {
+        public JaCoCoCoverageReport {
+            files = Collections.unmodifiableMap(new TreeMap<>(files == null ? Map.of() : files));
+            zeroCoverageFiles = List.copyOf(zeroCoverageFiles == null ? List.of() : zeroCoverageFiles);
+            digest = digest == null
+                    ? CanonicalJson.sha256(List.of("jacoco-coverage:v1", totalLinesMissed, totalLinesCovered,
+                    totalBranchesMissed, totalBranchesCovered, zeroCoverageFiles))
+                    : digest;
+        }
+    }
+
+    public enum CoverageGateStatus {
+        COVERED,
+        UNKNOWN_UNTESTED
+    }
+
+    public record CoverageGateOutcome(
+            CoverageGateStatus status,
+            List<String> uncoveredModifiedPaths,
+            String rationale) {
+        public CoverageGateOutcome {
+            uncoveredModifiedPaths = List.copyOf(uncoveredModifiedPaths == null ? List.of() : uncoveredModifiedPaths);
+        }
+    }
+
+    /**
+     * Mandatory 3-Layer Certification (WP4.3 + WP4.4):
+     * {@code Compile&Test PASS (with non-zero coverage or characterization probes)}
+     * {@code AND AST Refactoring Purity PASS}
+     * {@code AND Negative Control (baseline PERSISTED vs candidate RESOLVED)}.
+     */
+    public record ThreeLayerCertification(
+            Verdict verdict,
+            boolean compileAndTestPassed,
+            boolean coverageSufficient,
+            CoverageGateStatus coverageStatus,
+            boolean astPurityPassed,
+            boolean negativeControlPassed,
+            Optional<com.evolution.backend.query.repair.AstRefactoringPurityVerifier.VerificationResult> astPurityResult,
+            Optional<CoverageGateOutcome> coverageOutcome,
+            List<String> failureReasons,
+            ContentDigest certificateDigest) {
+        public ThreeLayerCertification {
+            failureReasons = List.copyOf(failureReasons == null ? List.of() : failureReasons);
+            certificateDigest = certificateDigest == null
+                    ? CanonicalJson.sha256(List.of("three-layer-cert:v1", verdict.name(),
+                    compileAndTestPassed, coverageSufficient, coverageStatus.name(),
+                    astPurityPassed, negativeControlPassed, failureReasons))
+                    : certificateDigest;
+        }
+
+        public boolean allowsConfirmApply() {
+            return verdict == Verdict.VERIFIED
+                    && compileAndTestPassed
+                    && coverageSufficient
+                    && astPurityPassed
+                    && negativeControlPassed;
+        }
+    }
+
+    /**
+     * Parses a JaCoCo XML coverage report strictly with XXE/external entity expansion disabled
+     * ({@code I1}, {@code I2}), while permitting JaCoCo's standard
+     * {@code <!DOCTYPE report PUBLIC "-//JACOCO//DTD Report ...">} header without network/file DTD lookup.
+     */
+    public static JaCoCoCoverageReport parseJaCoCoXml(String jacocoXml) throws IOException {
+        Objects.requireNonNull(jacocoXml, "jacocoXml");
+        if (java.util.regex.Pattern.compile("<!\\s*ENTITY\\b", java.util.regex.Pattern.CASE_INSENSITIVE)
+                .matcher(jacocoXml).find()) {
+            throw new IOException("JACOCO_XML_PARSE_FAILED: XML ENTITY declarations are disallowed (XXE guard)");
+        }
+        try {
+            var dbf = javax.xml.parsers.DocumentBuilderFactory.newInstance();
+            dbf.setFeature(javax.xml.XMLConstants.FEATURE_SECURE_PROCESSING, true);
+            dbf.setFeature("http://xml.org/sax/features/external-general-entities", false);
+            dbf.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+            dbf.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
+            dbf.setAttribute(javax.xml.XMLConstants.ACCESS_EXTERNAL_DTD, "");
+            dbf.setAttribute(javax.xml.XMLConstants.ACCESS_EXTERNAL_SCHEMA, "");
+            dbf.setXIncludeAware(false);
+            dbf.setExpandEntityReferences(false);
+            var builder = dbf.newDocumentBuilder();
+            builder.setEntityResolver((publicId, systemId) ->
+                    new org.xml.sax.InputSource(new java.io.StringReader("")));
+            var doc = builder.parse(
+                    new java.io.ByteArrayInputStream(jacocoXml.getBytes(StandardCharsets.UTF_8)));
+
+            int totLm = 0, totLc = 0, totBm = 0, totBc = 0;
+            var fileMap = new TreeMap<String, FileCoverage>();
+            var zeroFiles = new TreeSet<String>();
+            var pkgs = doc.getElementsByTagName("package");
+            for (int i = 0; i < pkgs.getLength(); i++) {
+                var pkgEl = (org.w3c.dom.Element) pkgs.item(i);
+                String pkgName = pkgEl.getAttribute("name");
+                var children = pkgEl.getChildNodes();
+                for (int j = 0; j < children.getLength(); j++) {
+                    var node = children.item(j);
+                    if (!(node instanceof org.w3c.dom.Element sfEl) || !"sourcefile".equals(sfEl.getTagName())) continue;
+                    String sfName = sfEl.getAttribute("name");
+                    String key = (pkgName == null || pkgName.isBlank()) ? sfName : (pkgName + "/" + sfName);
+                    int lm = 0, lc = 0, bm = 0, bc = 0;
+                    var sfChildren = sfEl.getChildNodes();
+                    for (int k = 0; k < sfChildren.getLength(); k++) {
+                        var cn = sfChildren.item(k);
+                        if (!(cn instanceof org.w3c.dom.Element cEl) || !"counter".equals(cEl.getTagName())) continue;
+                        String type = cEl.getAttribute("type");
+                        int missed = Integer.parseInt(cEl.getAttribute("missed"));
+                        int covered = Integer.parseInt(cEl.getAttribute("covered"));
+                        if ("LINE".equals(type)) {
+                            lm = missed;
+                            lc = covered;
+                        } else if ("BRANCH".equals(type)) {
+                            bm = missed;
+                            bc = covered;
+                        }
+                    }
+                    totLm += lm;
+                    totLc += lc;
+                    totBm += bm;
+                    totBc += bc;
+                    int sum = lm + lc;
+                    double pct = sum == 0 ? 0.0 : Math.round(10000.0 * lc / sum) / 100.0;
+                    fileMap.put(key, new FileCoverage(key, lm, lc, bm, bc, pct));
+                    if (lc == 0) zeroFiles.add(key);
+                }
+            }
+            int totSum = totLm + totLc;
+            double overallPct = totSum == 0 ? 0.0 : Math.round(10000.0 * totLc / totSum) / 100.0;
+            return new JaCoCoCoverageReport(
+                    totLm, totLc, totBm, totBc, overallPct, fileMap, List.copyOf(zeroFiles), null);
+        } catch (Exception ex) {
+            throw new IOException("JACOCO_XML_PARSE_FAILED: " + ex.getMessage(), ex);
+        }
+    }
+
+    /**
+     * Enforces WP4.4 JaCoCo Coverage Gate: if ANY modified Java production file has 0% covered lines
+     * AND no characterization test probes passed, returns {@link CoverageGateStatus#UNKNOWN_UNTESTED}
+     * so Evo NEVER falsely labels an untested patch as {@link Verdict#VERIFIED}.
+     */
+    public static CoverageGateOutcome evaluateCoverageGate(
+            Optional<JaCoCoCoverageReport> coverageOpt,
+            Collection<String> modifiedPaths,
+            boolean hasPassingCharacterizationProbes) {
+        if (hasPassingCharacterizationProbes) {
+            return new CoverageGateOutcome(CoverageGateStatus.COVERED, List.of(),
+                    "Passing characterization probes cover modified target");
+        }
+        if (coverageOpt == null || coverageOpt.isEmpty()) {
+            return new CoverageGateOutcome(CoverageGateStatus.UNKNOWN_UNTESTED, List.of(),
+                    "NO_JACOCO_REPORT_AND_NO_CHARACTERIZATION_PROBES");
+        }
+        JaCoCoCoverageReport cov = coverageOpt.orElseThrow();
+        var uncovered = new ArrayList<String>();
+        if (modifiedPaths != null) {
+            for (String raw : modifiedPaths) {
+                if (raw == null || !raw.endsWith(".java")) continue;
+                String norm = raw.replace('\\', '/');
+                if (norm.contains("/src/test/") || norm.startsWith("src/test/")) continue;
+                Optional<FileCoverage> matched = matchCoverageEntry(cov, norm);
+                if (matched.isEmpty() || matched.orElseThrow().linesCovered() == 0) {
+                    uncovered.add(norm);
+                }
+            }
+        }
+        if (!uncovered.isEmpty()) {
+            Collections.sort(uncovered);
+            return new CoverageGateOutcome(CoverageGateStatus.UNKNOWN_UNTESTED, uncovered,
+                    "ZERO_JACOCO_COVERAGE_ON_MODIFIED_TARGET:" + String.join(",", uncovered));
+        }
+        return new CoverageGateOutcome(CoverageGateStatus.COVERED, List.of(),
+                "ALL_MODIFIED_TARGETS_COVERED(" + cov.overallLineCoveragePercent() + "%)");
+    }
+
+    /**
+     * Evaluates the mandatory 3-Layer Certification (WP4.3 + WP4.4) combining:
+     * (1) Isolated Compile&Test + JaCoCo Coverage Gate,
+     * (2) {@link com.evolution.backend.query.repair.AstRefactoringPurityVerifier} Dual-Gate,
+     * (3) Negative Control (baseline {@code PERSISTED} vs candidate {@code RESOLVED}).
+     */
+    public static ThreeLayerCertification certifyThreeLayer(
+            Result verificationResult,
+            Optional<JaCoCoCoverageReport> jacocoCoverage,
+            Collection<String> modifiedPaths,
+            boolean hasPassingCharacterizationProbes,
+            Optional<com.evolution.backend.query.repair.AstRefactoringPurityVerifier.VerificationResult> astPurityOpt) {
+        Objects.requireNonNull(verificationResult, "verificationResult");
+        var reasons = new ArrayList<String>();
+
+        boolean compileAndTestOk = verificationResult.isolatedProof()
+                .map(p -> p.compileExit() == 0 && p.testExit() == 0 && p.testsFailed() == 0 && p.testsErrors() == 0 && !p.testsSkipped())
+                .orElse(false);
+        if (!compileAndTestOk) {
+            reasons.add("LAYER1_COMPILE_AND_TEST_NOT_PASSED");
+        }
+
+        CoverageGateOutcome covOutcome = evaluateCoverageGate(jacocoCoverage, modifiedPaths, hasPassingCharacterizationProbes);
+        boolean covOk = covOutcome.status() == CoverageGateStatus.COVERED;
+        if (!covOk) {
+            reasons.add("LAYER1_COVERAGE_UNKNOWN_UNTESTED:" + covOutcome.rationale());
+        }
+
+        boolean purityOk = astPurityOpt == null || astPurityOpt.isEmpty() || astPurityOpt.orElseThrow().passed();
+        if (!purityOk) {
+            reasons.addAll(astPurityOpt.orElseThrow().violations().stream()
+                    .map(v -> "LAYER2_AST_PURITY_FAILED:" + v).toList());
+        }
+
+        // Layer 3: Negative control — baseline control mutation must keep finding PERSISTED while candidate RESOLVED
+        boolean negControlOk = verificationResult.controlComparison()
+                .map(c -> c.transitions().contains("PERSISTED") && !c.regressionDetected())
+                .orElse(false)
+                && verificationResult.candidateComparison()
+                .map(c -> c.transitions().contains("RESOLVED") && !c.regressionDetected())
+                .orElse(false);
+        if (!negControlOk) {
+            reasons.add("LAYER3_NEGATIVE_CONTROL_NOT_PROVED");
+        }
+
+        Verdict finalVerdict;
+        if (!purityOk || verificationResult.verdict() == Verdict.REJECTED) {
+            finalVerdict = Verdict.REJECTED;
+        } else if (compileAndTestOk && covOk && purityOk && negControlOk) {
+            finalVerdict = Verdict.VERIFIED;
+        } else {
+            finalVerdict = Verdict.UNVERIFIED;
+        }
+        return new ThreeLayerCertification(
+                finalVerdict,
+                compileAndTestOk,
+                covOk,
+                covOutcome.status(),
+                purityOk,
+                negControlOk,
+                astPurityOpt == null ? Optional.empty() : astPurityOpt,
+                Optional.of(covOutcome),
+                reasons,
+                null);
+    }
+
+    /**
+     * Emits an explicit {@code SANDBOX_DEPENDENCY_MISSING} capability gap when an offline container
+     * fails due to missing Maven/Gradle cached artifacts ({@code I3}).
+     */
+    public static Optional<com.evolution.analysis.evidence.CapabilityGapRecord> detectSandboxDependencyGap(
+            SnapshotIdentity snapshot,
+            String logTail) {
+        if (logTail == null || logTail.isBlank()) return Optional.empty();
+        String low = logTail.toLowerCase(Locale.ROOT);
+        boolean missing = low.contains("cannot access central")
+                || low.contains("offline mode and the artifact")
+                || low.contains("could not resolve dependencies")
+                || low.contains("has not been downloaded from it before")
+                || low.contains("no cached version of")
+                || low.contains("could not find artifact");
+        if (!missing) return Optional.empty();
+        String msg = "Offline sandbox build could not resolve one or more cached artifacts (I1/I3).";
+        var subject = new com.evolution.analysis.evidence.EvidenceSubject(
+                com.evolution.analysis.evidence.EvidenceSubject.Kind.REPOSITORY, snapshot.value());
+        var obs = com.evolution.analysis.evidence.ProviderObservationReference.create(
+                METHOD, "verification.offline-deps",
+                ContentDigest.sha256Utf8(msg),
+                ContentDigest.sha256Utf8(GAP_SANDBOX_DEPENDENCY_MISSING + "|" + msg));
+        var req = new com.evolution.analysis.evidence.EvidenceRequirement(
+                com.evolution.analysis.evidence.EvidenceRequirement.Kind.DEPENDENCY_ARTIFACT,
+                "verification.offline-cache",
+                List.of(subject),
+                com.evolution.analysis.evidence.EvidenceRequirement.AuthorizationClass.ISOLATED_EXECUTION,
+                List.of(msg));
+        return Optional.of(com.evolution.analysis.evidence.CapabilityGapRecord.create(
+                VERIFICATION_GAP_CATALOG,
+                new com.evolution.analysis.evidence.EvidenceContext(snapshot, Optional.empty()),
+                METHOD,
+                "verification.sandbox",
+                GAP_SANDBOX_DEPENDENCY_MISSING,
+                subject,
+                List.of(),
+                List.of(obs),
+                List.of(req),
+                List.of(),
+                List.of(new com.evolution.analysis.evidence.AffectedOutput(
+                        com.evolution.analysis.evidence.AffectedOutput.Kind.POLICY, "repair.verification")),
+                List.of(),
+                List.of(),
+                List.of(msg)));
+    }
+
+    private static Optional<FileCoverage> matchCoverageEntry(JaCoCoCoverageReport cov, String normModifiedPath) {
+        for (var e : cov.files().entrySet()) {
+            if (normModifiedPath.endsWith("/" + e.getKey()) || normModifiedPath.equals(e.getKey())) {
+                return Optional.of(e.getValue());
+            }
+        }
+        String fileName = normModifiedPath.substring(normModifiedPath.lastIndexOf('/') + 1);
+        for (var e : cov.files().entrySet()) {
+            if (e.getKey().endsWith("/" + fileName) || e.getKey().equals(fileName)) {
+                return Optional.of(e.getValue());
+            }
+        }
+        return Optional.empty();
+    }
 }
