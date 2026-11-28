@@ -634,4 +634,126 @@ class MetadataConsistencyRulePackTest {
             pool.shutdownNow();
         }
     }
+
+    @Test
+    void rslMethodExistsConfigKeyBoundEmitLibraryJarAbsentNotFpAndSpringBeansDeduplicates() {
+        var f = new GraphFixture();
+
+        // 1. Subclass with external supertype whose JAR is absent -> RSL METHOD_EXISTS must emit UNKNOWN + LIBRARY_JAR_ABSENT!
+        f.addJavaClass("com.acme.CustomPool", "CLASS", false, Set.of("org.vendor.pool.BasePool"), List.of());
+        f.addEvidenceOnly(FAMILY_XML_BEAN, Map.of(
+                "beanId", "customPool",
+                "className", "com.acme.CustomPool",
+                "initMethod", "superInit",
+                "sourceFile", "src/main/resources/beans.xml",
+                "line", 10));
+
+        // 2. @ConfigurationProperties bean with (a) nested field whose type JAR is absent and (b) bean class from absent JAR
+        String nestedHolder = f.addJavaClass("com.acme.HolderProps", "CLASS", false, Set.of(),
+                List.of("@ConfigurationProperties(prefix = \"app.holder\")"));
+        f.addJavaField(nestedHolder, "com.acme.HolderProps", "nested", "org.vendor.cfg.NestedVendorOpts", List.of());
+        f.addJavaMethod(nestedHolder, "com.acme.HolderProps", "getNested", List.of(), "org.vendor.cfg.NestedVendorOpts", List.of());
+        // Add a @ConfigurationProperties bean via @Bean returning an absent-JAR class
+        String cfgCls = f.addJavaClass("com.acme.VendorCfg", "CLASS", false, Set.of(), List.of("@Configuration"));
+        f.addJavaMethod(cfgCls, "com.acme.VendorCfg", "vendorProps", List.of(), "org.vendor.cfg.ExternalProps",
+                List.of("@Bean", "@ConfigurationProperties(prefix = \"app.vendor\")"));
+
+        // 3. Two distinct SPRING_BEANS with beanId, beanName, AND beanType (indexed under 3 lookup keys internally!)
+        f.addEvidenceOnly(FAMILY_SYMBOLIC_REGION, Map.of(
+                "beanId", "bean:alpha", "beanName", "alphaBean", "beanType", "com.acme.Alpha", "classification", "MUST"));
+        f.addEvidenceOnly(FAMILY_SYMBOLIC_REGION, Map.of(
+                "beanId", "bean:beta", "beanName", "betaBean", "beanType", "com.acme.Beta", "classification", "MAY"));
+
+        String rslYaml = """
+                schema: architecture-policy:v1
+                id: regression.rsl-i3-and-dedup
+                version: "1"
+                metadataRules:
+                  - id: rsl.method-supertype-gap
+                    version: "1"
+                    severity: ERROR
+                    forEach: { var: l, in: LIFECYCLE_METHODS }
+                    assert:
+                      op: METHOD_EXISTS
+                      targetField: l.methodName
+                      message: "Lifecycle method must exist"
+                  - id: rsl.config-nested-gap
+                    version: "1"
+                    severity: ERROR
+                    forEach: { var: cp, in: CONFIG_PROPERTIES_BEANS }
+                    assert:
+                      op: CONFIG_KEY_BOUND
+                      targetField: cp.prefix
+                      message: "Config property key must bind"
+                  - id: rsl.spring-beans-dedup
+                    version: "1"
+                    severity: INFO
+                    forEach: { var: sb, in: SPRING_BEANS }
+                    assert:
+                      field: sb.classification
+                      op: NOT_EQUALS
+                      value: NEVER
+                      message: "Spring bean must not be NEVER"
+                """;
+
+        // Add synthetic nested key check via custom RSL rule targeting a nested property on HolderProps
+        var graph = f.build();
+        var service = new ArchitectureQueryService(graph);
+        var evaluator = new PolicyEvaluator();
+        var report = evaluator.evaluateMetadataPolicy(
+                rslYaml.getBytes(StandardCharsets.UTF_8), service, f.context,
+                ClasspathTypeLookup.emptyOffline(), EvaluationOptions.offlineIncomplete());
+
+        // Check 1: METHOD_EXISTS on absent supertype JAR emits UNKNOWN + LIBRARY_JAR_ABSENT (not silent skip, not FP MUST)
+        var methodFindings = report.findingsForRule("rsl.method-supertype-gap");
+        assertEquals(1, methodFindings.size());
+        assertEquals(Classification.UNKNOWN, methodFindings.getFirst().classification());
+        assertEquals(Optional.of(GAP_LIBRARY_JAR_ABSENT), methodFindings.getFirst().gapReason());
+
+        // Check 2: CONFIG_KEY_BOUND on absent class JAR emits UNKNOWN + LIBRARY_JAR_ABSENT (not dropped)
+        var cpFindings = report.findingsForRule("rsl.config-nested-gap");
+        assertTrue(cpFindings.stream().anyMatch(x -> x.subject().equals("org.vendor.cfg.ExternalProps")
+                && x.classification() == Classification.UNKNOWN
+                && x.gapReason().equals(Optional.of(GAP_LIBRARY_JAR_ABSENT))));
+
+        // Check 2b: CONFIG_KEY_BOUND on FOUND HolderProps with absent nested type JAR emits UNKNOWN + LIBRARY_JAR_ABSENT (NEVER FP MUST!)
+        var f2 = new GraphFixture();
+        String holder2 = f2.addJavaClass("com.acme.HolderProps", "CLASS", false, Set.of(), List.of());
+        f2.addJavaField(holder2, "com.acme.HolderProps", "nested", "org.vendor.cfg.NestedVendorOpts", List.of());
+        f2.addJavaMethod(holder2, "com.acme.HolderProps", "getNested", List.of(), "org.vendor.cfg.NestedVendorOpts", List.of());
+        f2.addEvidenceOnly(FAMILY_XML_BEAN, Map.of(
+                "beanId", "holder", "className", "com.acme.HolderProps",
+                "properties", List.of(Map.of("name", "nested.timeout", "value", "5")),
+                "sourceFile", "src/main/resources/beans.xml", "line", 5));
+        String nestedBindYaml = """
+                schema: architecture-policy:v1
+                id: regression.rsl-nested-bind
+                version: "1"
+                metadataRules:
+                  - id: rsl.nested-prop-bound
+                    version: "1"
+                    severity: ERROR
+                    forEach: { var: p, in: XML_PROPERTIES }
+                    assert:
+                      op: CONFIG_KEY_BOUND
+                      targetField: p.name
+                      message: "Nested property must bind"
+                """;
+        var nestedReport = evaluator.evaluateMetadataPolicy(
+                nestedBindYaml.getBytes(StandardCharsets.UTF_8),
+                new ArchitectureQueryService(f2.build()), f2.context,
+                ClasspathTypeLookup.emptyOffline(), EvaluationOptions.offlineIncomplete());
+        var nestedFindings = nestedReport.findingsForRule("rsl.nested-prop-bound");
+        assertEquals(1, nestedFindings.size());
+        assertEquals(Classification.UNKNOWN, nestedFindings.getFirst().classification());
+        assertEquals(Optional.of(GAP_LIBRARY_JAR_ABSENT), nestedFindings.getFirst().gapReason());
+        assertTrue(nestedFindings.stream().noneMatch(x -> x.subCode().equals("RSL_CONFIG_KEY_UNBOUND")));
+
+        // Check 3: SPRING_BEANS domain deduplicates canonical beans (2 symbolic + 1 XML = 3 distinct beans, NOT 9!)
+        var dedupOutcome = report.rules().stream()
+                .filter(r -> r.ruleId().equals("rsl.spring-beans-dedup"))
+                .findFirst().orElseThrow();
+        assertEquals(3, dedupOutcome.checkedCount(),
+                () -> "Expected exactly 3 deduplicated SPRING_BEANS (alpha, beta, customPool), got: " + dedupOutcome.checkedCount());
+    }
 }

@@ -1445,17 +1445,36 @@ public final class MetadataConsistencyRulePack {
                             findings.add(new Finding(
                                     rule.id(), "LIBRARY_JAR_ABSENT",
                                     ArchitecturePolicy.Severity.INFO, Classification.UNKNOWN, TrustTier.COMPILER,
-                                    subject, assertClause.message(),
+                                    subject, assertClause.message() + " (classpath JAR absent for " + ownerClass + ")",
                                     sourceFile.isBlank() ? Optional.empty() : Optional.of(sourceFile), line,
                                     Optional.empty(), Map.of(), Optional.of(GAP_LIBRARY_JAR_ABSENT)));
-                        } else if (outcome.status() == LookupStatus.NOT_FOUND
-                                || findZeroArgMethodInHierarchy(ctx, outcome.descriptor().orElseThrow(), methodName) == HierarchySearchResult.NOT_FOUND) {
+                        } else if (outcome.status() == LookupStatus.NOT_FOUND) {
                             findings.add(new Finding(
                                     rule.id(), "RSL_METHOD_NOT_FOUND",
                                     rule.severity(), Classification.MUST, TrustTier.COMPILER,
                                     subject, assertClause.message() + " (" + ownerClass + "#" + methodName + ")",
                                     sourceFile.isBlank() ? Optional.empty() : Optional.of(sourceFile), line,
                                     Optional.empty(), Map.of(), Optional.empty()));
+                        } else {
+                            HierarchySearchResult search = findZeroArgMethodInHierarchy(
+                                    ctx, outcome.descriptor().orElseThrow(), methodName);
+                            if (search == HierarchySearchResult.LIBRARY_JAR_ABSENT) {
+                                gaps.add(ctx.createGap(GAP_LIBRARY_JAR_ABSENT, ownerClass + "#" + methodName,
+                                        "Supertype JAR absent while verifying 0-arg method '" + methodName + "' on " + ownerClass));
+                                findings.add(new Finding(
+                                        rule.id(), "LIBRARY_JAR_ABSENT",
+                                        ArchitecturePolicy.Severity.INFO, Classification.UNKNOWN, TrustTier.COMPILER,
+                                        subject, assertClause.message() + " (supertype JAR absent for " + ownerClass + "#" + methodName + ")",
+                                        sourceFile.isBlank() ? Optional.empty() : Optional.of(sourceFile), line,
+                                        Optional.empty(), Map.of(), Optional.of(GAP_LIBRARY_JAR_ABSENT)));
+                            } else if (search == HierarchySearchResult.NOT_FOUND) {
+                                findings.add(new Finding(
+                                        rule.id(), "RSL_METHOD_NOT_FOUND",
+                                        rule.severity(), Classification.MUST, TrustTier.COMPILER,
+                                        subject, assertClause.message() + " (" + ownerClass + "#" + methodName + ")",
+                                        sourceFile.isBlank() ? Optional.empty() : Optional.of(sourceFile), line,
+                                        Optional.empty(), Map.of(), Optional.empty()));
+                            }
                         }
                     }
                 }
@@ -1489,9 +1508,28 @@ public final class MetadataConsistencyRulePack {
                     String key = resolveFieldValue(assertClause.targetField().orElse(outerVar + ".key"), env);
                     if (!fqcn.isBlank() && key != null && !key.isBlank()) {
                         var outcome = ctx.resolveExactType(fqcn);
-                        if (outcome.status() == LookupStatus.FOUND) {
+                        if (outcome.status() == LookupStatus.LIBRARY_JAR_ABSENT) {
+                            gaps.add(ctx.createGap(GAP_LIBRARY_JAR_ABSENT, fqcn + ":" + key,
+                                    "Absent JAR for @ConfigurationProperties class " + fqcn));
+                            findings.add(new Finding(
+                                    rule.id(), "LIBRARY_JAR_ABSENT",
+                                    ArchitecturePolicy.Severity.INFO, Classification.UNKNOWN, TrustTier.COMPILER,
+                                    subject, assertClause.message() + " (classpath JAR absent for " + fqcn + ")",
+                                    sourceFile.isBlank() ? Optional.empty() : Optional.of(sourceFile), line,
+                                    Optional.empty(), Map.of(), Optional.of(GAP_LIBRARY_JAR_ABSENT)));
+                        } else if (outcome.status() == LookupStatus.FOUND) {
                             String rem = prefix.isBlank() ? key : stripRelaxedPrefix(key, normalizeRelaxedKey(prefix)).orElse(key);
-                            if (checkConfigPropertyBinding(ctx, outcome.descriptor().orElseThrow(), rem, 0).status() != BindingStatus.BOUND) {
+                            ConfigBindingCheckResult check = checkConfigPropertyBinding(
+                                    ctx, outcome.descriptor().orElseThrow(), rem, 0);
+                            if (check.status() == BindingStatus.LIBRARY_JAR_ABSENT) {
+                                gaps.add(ctx.createGap(GAP_LIBRARY_JAR_ABSENT, fqcn + ":" + key, check.detail()));
+                                findings.add(new Finding(
+                                        rule.id(), "LIBRARY_JAR_ABSENT",
+                                        ArchitecturePolicy.Severity.INFO, Classification.UNKNOWN, TrustTier.COMPILER,
+                                        subject, assertClause.message() + " (" + check.detail() + ")",
+                                        sourceFile.isBlank() ? Optional.empty() : Optional.of(sourceFile), line,
+                                        Optional.empty(), Map.of(), Optional.of(GAP_LIBRARY_JAR_ABSENT)));
+                            } else if (check.status() != BindingStatus.BOUND) {
                                 findings.add(new Finding(
                                         rule.id(), "RSL_CONFIG_KEY_UNBOUND",
                                         rule.severity(), Classification.MUST, TrustTier.COMPILER,
@@ -1653,7 +1691,11 @@ public final class MetadataConsistencyRulePack {
                     }
                 }
                 case SPRING_BEANS -> {
+                    var distinctById = new TreeMap<String, BeanTruthInfo>();
                     for (var entry : extractBeanTruthCatalog(ctx).values()) {
+                        distinctById.putIfAbsent(entry.beanId(), entry);
+                    }
+                    for (var entry : distinctById.values()) {
                         var m = new TreeMap<String, String>();
                         m.put("subject", entry.beanId());
                         m.put("beanId", entry.beanId());
