@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Unit tests for WP5.3 Phase 5 real-artifact statistical pairing & ledger builder."""
+"""Unit tests for SuperPlan v2 Section 4-5 real-artifact statistical pairing & ledger builder."""
 
 from __future__ import annotations
 

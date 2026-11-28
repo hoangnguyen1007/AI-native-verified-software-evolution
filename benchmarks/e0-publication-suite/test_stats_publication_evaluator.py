@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Unit tests for WP5.2 CORE A* / Q1 Statistical Evaluation Engine."""
+"""Unit tests for SuperPlan v2 Section 4.1 CORE A* / Q1 Statistical Evaluation Engine."""
 
 from __future__ import annotations
 

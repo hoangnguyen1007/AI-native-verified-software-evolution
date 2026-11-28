@@ -1,6 +1,6 @@
-# Phase 5 Statistical Evaluation & Campaign Ledger (`WP5.3`)
+# SuperPlan v2 Phần 4–5 — Statistical Evaluation & Campaign Ledger (`EXP-1..7`, `AB-01..10`, `M1..M4`)
 
-**Generated:** `2026-11-28` | **Protocol:** Paired Wilcoxon Signed-Rank ($\alpha = 0.05$), Holm–Bonferroni step-down, Cliff's $\delta$ (SSAR bands), SemRef `RDP`.
+**Generated:** `2026-11-28` | **Engineering Baseline:** `Phases 0–4` (`WP0.1–WP4.4`, `25/25` WPs) `CLOSED / COMPLETE` | **Protocol:** Paired Wilcoxon Signed-Rank ($\alpha = 0.05$), Holm–Bonferroni step-down, Cliff's $\delta$ (SSAR bands), SemRef `RDP`.
 
 ## 1. Real Artifact Paired Statistical Analysis — `17/17` `microSecEnD` (`dfd-export` vs `strict`)
 
@@ -25,7 +25,7 @@
 
 | ID | Scope | Status | Evidence & Open Gate |
 |---|---|---|---|
-| `EXP-1` | 17/17 microSecEnD (strict vs dfd-export + baseline correction) | `LOCAL_DOCKER_ARTIFACT_VERIFIED` | 17/17 paired stats computed in Phase 5; bare-metal Ubuntu 24.04 n>=5 pending |
+| `EXP-1` | 17/17 microSecEnD (strict vs dfd-export + baseline correction) | `LOCAL_DOCKER_ARTIFACT_VERIFIED` | 17/17 paired stats computed on real e6_per_app.csv; bare-metal Ubuntu 24.04 n>=5 pending |
 | `EXP-2` | 10 blind Micans + Online Boutique + TeaStore + DeathStarBench | `PENDING_EXTERNAL_CORPUS` | Code WP1.1/WP1.3 complete; Zenodo 15050505 download + Linux run pending |
 | `EXP-3` | Passive Fail-Close RPC Resilience (RPCShield + Micans) | `PENDING_EXTERNAL_CORPUS` | Code WP1.2 complete; manual 2-rater audit & fault injection pending |
 | `EXP-4` | Modularization (ArchStudio 4, Hadoop 0.19.0, OODT 0.2) | `PENDING_EXTERNAL_CORPUS` | Code WP1.4 complete; SemRef/SSAR corpus download & run pending |
@@ -47,7 +47,7 @@
 | `AB-08` | Quarantined TacitMemoryStore & Anti-Edit-Bias Gate | `CODE_AND_UNIT_VERIFIED` | Pending live LLM RepoProbe discussion campaign |
 | `AB-09` | SALT Signature(n) Compression & Impact x Richness | `CODE_AND_UNIT_VERIFIED` | Pending live LLM multi-file SWE-Refactor/GitBug-Java token campaign |
 | `AB-10` | Dual-Slicing, OpenRewrite Compound, AST Purity & QMOOD Guard | `PARTIAL_SANDBOX_VERIFIED` | Live 4-JDK 8/11/17/21 Docker matrix + AST Purity + QMOOD unit gates PASS; SWE-Refactor 1,099 pending |
-| `M1` | FSE 2027 Tool Demo (26/01/2027, CORE A*) | `READY_FOR_SUBMISSION_ARTIFACT` | docs/fse-2027-tool-demo/{README.md,verify-demo.py,walkthrough-script.md,paper/main.tex} + live Docker PASS |
+| `M1` | FSE 2027 Tool Demo (26/01/2027, CORE A*) | `READY_FOR_SUBMISSION_ARTIFACT` | docs/fse-2027-tool-demo/{README.md,verify-demo.py,paper/main.tex} + live Docker PASS |
 | `M2` | Companion Paper #1 — EMSE/TOSEM/ASE (03–04/2027) | `BLOCKED_ON_EXTERNAL_CORPORA` | Needs EXP-1..EXP-4 + AB-01..AB-04 on Ubuntu 24.04 LTS n>=5 |
 | `M3` | Primary Flagship — OOPSLA '27 R2 / ICSE '28 (04–07/2027) | `BLOCKED_ON_EXTERNAL_CORPORA` | Needs EXP-5 18-OSS + MeCheck 70 repos + AB-05/AB-06 on Ubuntu 24.04 LTS n>=5 |
 | `M4` | Flagship/Journal Paper #2 — ICSE '28 / IEEE TSE (Q4/2027) | `BLOCKED_ON_EXTERNAL_CORPORA_AND_LLM_KEYS` | Needs EXP-6 + EXP-7 (SWE-Refactor/RefAgent/GitBug-Java) + AB-07..AB-10 |

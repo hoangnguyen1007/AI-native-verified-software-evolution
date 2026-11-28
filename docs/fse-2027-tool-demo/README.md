@@ -53,10 +53,9 @@ The script boots an ephemeral container (`evo-fse2027-demo-verify`) on `127.0.0.
 
 ---
 
-## 4. Paper Draft & Video Script (`WP5.1`)
+## 4. Paper Draft (`M1` — FSE 2027 Tool Demo)
 
 - ACM `sigconf` `4+1`-page draft: [main.tex](paper/main.tex) + [references.bib](paper/references.bib)
-- 4-minute video/live walkthrough cue sheet: [walkthrough-script.md](walkthrough-script.md)
 
 ## 5. Related Documentation
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""CORE A* / Q1 Statistical Evaluation Engine for Evo Publication Campaigns (WP5.2).
+"""CORE A* / Q1 Statistical Evaluation Engine for Evo Publication Campaigns (SuperPlan v2 Section 4.1).
 
 Implements pure-Python, zero-dependency, deterministic statistical checks required by
 SuperPlan v2 Section 4.1:

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""WP5.3 Real-Artifact Paired Statistical Audit & Closed-Denominator Campaign Ledger.
+"""SuperPlan v2 Section 4 Real-Artifact Paired Statistical Audit & Closed-Denominator Campaign Ledger.
 
 Computes exact paired Wilcoxon, Holm-Bonferroni, Cliff's delta, and SemRef RDP metrics
 over the real 17/17 microSecEnD artifact (e6_per_app.csv: dfd-export vs strict), combines
@@ -90,9 +90,9 @@ def analyze_e6_paired(csv_path: Path, alpha: float = 0.05) -> dict[str, Any]:
 
 
 def build_closed_denominator_ledger() -> dict[str, Any]:
-    """Builds the authoritative Phase 5 EXP-1..7, AB-01..10 & Milestone M1..M4 ledger."""
+    """Builds the authoritative SuperPlan v2 Section 4-5 EXP-1..7, AB-01..10 & Milestone M1..M4 ledger."""
     experiments = [
-        ("EXP-1", "17/17 microSecEnD (strict vs dfd-export + baseline correction)", "LOCAL_DOCKER_ARTIFACT_VERIFIED", "17/17 paired stats computed in Phase 5; bare-metal Ubuntu 24.04 n>=5 pending"),
+        ("EXP-1", "17/17 microSecEnD (strict vs dfd-export + baseline correction)", "LOCAL_DOCKER_ARTIFACT_VERIFIED", "17/17 paired stats computed on real e6_per_app.csv; bare-metal Ubuntu 24.04 n>=5 pending"),
         ("EXP-2", "10 blind Micans + Online Boutique + TeaStore + DeathStarBench", "PENDING_EXTERNAL_CORPUS", "Code WP1.1/WP1.3 complete; Zenodo 15050505 download + Linux run pending"),
         ("EXP-3", "Passive Fail-Close RPC Resilience (RPCShield + Micans)", "PENDING_EXTERNAL_CORPUS", "Code WP1.2 complete; manual 2-rater audit & fault injection pending"),
         ("EXP-4", "Modularization (ArchStudio 4, Hadoop 0.19.0, OODT 0.2)", "PENDING_EXTERNAL_CORPUS", "Code WP1.4 complete; SemRef/SSAR corpus download & run pending"),
@@ -113,7 +113,7 @@ def build_closed_denominator_ledger() -> dict[str, Any]:
         ("AB-10", "Dual-Slicing, OpenRewrite Compound, AST Purity & QMOOD Guard", "PARTIAL_SANDBOX_VERIFIED", "Live 4-JDK 8/11/17/21 Docker matrix + AST Purity + QMOOD unit gates PASS; SWE-Refactor 1,099 pending"),
     ]
     milestones = [
-        ("M1", "FSE 2027 Tool Demo (26/01/2027, CORE A*)", "READY_FOR_SUBMISSION_ARTIFACT", "docs/fse-2027-tool-demo/{README.md,verify-demo.py,walkthrough-script.md,paper/main.tex} + live Docker PASS"),
+        ("M1", "FSE 2027 Tool Demo (26/01/2027, CORE A*)", "READY_FOR_SUBMISSION_ARTIFACT", "docs/fse-2027-tool-demo/{README.md,verify-demo.py,paper/main.tex} + live Docker PASS"),
         ("M2", "Companion Paper #1 — EMSE/TOSEM/ASE (03–04/2027)", "BLOCKED_ON_EXTERNAL_CORPORA", "Needs EXP-1..EXP-4 + AB-01..AB-04 on Ubuntu 24.04 LTS n>=5"),
         ("M3", "Primary Flagship — OOPSLA '27 R2 / ICSE '28 (04–07/2027)", "BLOCKED_ON_EXTERNAL_CORPORA", "Needs EXP-5 18-OSS + MeCheck 70 repos + AB-05/AB-06 on Ubuntu 24.04 LTS n>=5"),
         ("M4", "Flagship/Journal Paper #2 — ICSE '28 / IEEE TSE (Q4/2027)", "BLOCKED_ON_EXTERNAL_CORPORA_AND_LLM_KEYS", "Needs EXP-6 + EXP-7 (SWE-Refactor/RefAgent/GitBug-Java) + AB-07..AB-10"),
@@ -124,9 +124,9 @@ def build_closed_denominator_ledger() -> dict[str, Any]:
 def render_markdown_report(e6_stats: dict[str, Any], ledger: dict[str, Any]) -> str:
     """Renders deterministic CORE A* Markdown statistical report and campaign ledger."""
     lines = [
-        "# Phase 5 Statistical Evaluation & Campaign Ledger (`WP5.3`)",
+        "# SuperPlan v2 Phần 4–5 — Statistical Evaluation & Campaign Ledger (`EXP-1..7`, `AB-01..10`, `M1..M4`)",
         "",
-        f"**Generated:** `{dt.date(2026, 11, 28).isoformat()}` | **Protocol:** Paired Wilcoxon Signed-Rank ($\\alpha = {e6_stats['alpha']}$), Holm–Bonferroni step-down, Cliff's $\\delta$ (SSAR bands), SemRef `RDP`.",
+        f"**Generated:** `{dt.date(2026, 11, 28).isoformat()}` | **Engineering Baseline:** `Phases 0–4` (`WP0.1–WP4.4`, `25/25` WPs) `CLOSED / COMPLETE` | **Protocol:** Paired Wilcoxon Signed-Rank ($\\alpha = {e6_stats['alpha']}$), Holm–Bonferroni step-down, Cliff's $\\delta$ (SSAR bands), SemRef `RDP`.",
         "",
         "## 1. Real Artifact Paired Statistical Analysis — `17/17` `microSecEnD` (`dfd-export` vs `strict`)",
         "",
@@ -182,7 +182,7 @@ def render_markdown_report(e6_stats: dict[str, Any], ledger: dict[str, Any]) -> 
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Generate Phase 5 paired statistical report & campaign ledger.")
+    parser = argparse.ArgumentParser(description="Generate SuperPlan v2 Section 4-5 paired statistical report & campaign ledger.")
     parser.add_argument("--e6-csv", type=Path, default=DEFAULT_E6_CSV, help="Path to real e6_per_app.csv")
     parser.add_argument("--out-md", type=Path, default=DEFAULT_OUT_MD, help="Output Markdown ledger path")
     parser.add_argument("--out-json", type=Path, default=None, help="Optional JSON summary output path")
