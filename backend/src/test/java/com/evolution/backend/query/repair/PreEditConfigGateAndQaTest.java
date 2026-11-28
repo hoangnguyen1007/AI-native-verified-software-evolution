@@ -16,9 +16,13 @@ import com.evolution.analysis.graph.GraphJson;
 import com.evolution.analysis.graph.KnowledgeGraph;
 import com.evolution.analysis.query.ArchitectureQuery.StopReason;
 import com.evolution.analysis.query.ArchitectureQueryService;
+import com.evolution.analysis.query.GraphComposeQuery;
 import com.evolution.backend.query.ArchitectureAgent;
 import com.evolution.backend.query.ArchitectureChatModel;
+import com.evolution.backend.query.CapturedRepair;
 import com.evolution.backend.query.PublishedReports;
+import com.evolution.backend.query.RepairChatModel;
+import com.evolution.backend.query.advisory.TacitMemoryStore;
 import com.evolution.backend.query.llm.LlmTransport;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.Test;
@@ -304,8 +308,13 @@ class PreEditConfigGateAndQaTest {
         assertTrue(offlineConfig.citationVerification().allVerified(), () -> "report=" + offlineConfig.toView());
         assertEquals(1.0, offlineConfig.citationVerification().citationValidityRate(), 1e-6);
         assertFalse(offlineConfig.singleQueryPlan().isEmpty());
-        assertEquals(ArchitectureAgent.GRAPH_COMPOSE_AST_SCHEMA,
-                offlineConfig.singleQueryPlan().getFirst().graphComposeAst().get("schema"));
+        var firstAst = offlineConfig.singleQueryPlan().getFirst().graphComposeAst();
+        assertFalse(firstAst.containsKey("schema"), "AST must not carry unknown top-level key 'schema'");
+        assertFalse(firstAst.containsKey("operation"), "AST must not carry unknown top-level key 'operation'");
+        assertFalse(firstAst.containsKey("seed"), "AST must not carry unknown top-level key 'seed'");
+        var parsedFirstQuery = assertDoesNotThrow(() -> GraphComposeQuery.fromMap(firstAst),
+                "GraphComposeQuery.fromMap must strictly validate ArchitectureAgent's emitted AST");
+        assertEquals(parsedFirstQuery, offlineConfig.singleQueryPlan().getFirst().toGraphComposeQuery());
 
         // 2. Offline deterministic BENCHMARK_QA for symbol comprehension task -> verified symbol & vertical trace
         var offlineSymbol = ArchitectureAgent.runBenchmarkQa(
@@ -417,6 +426,170 @@ class PreEditConfigGateAndQaTest {
         assertEquals(PreEditConfigGate.GateDecision.ALLOW_CODE_EDIT, res.decision());
         assertTrue(res.verticalTraceHopsChecked() >= 1,
                 "Expected VerticalTraceEngine to inspect >= 1 hop, got " + res.toView());
+    }
+
+    @Test
+    void architectureAgentGraphComposeAstRoundTripsCleanlyThroughGraphComposeQueryAndService() {
+        String appYml = "app:\n  cache:\n    enabled: false\n";
+        String svcJava = "package com.acme.orders;\npublic class OrderService {\n  public void run() {}\n}\n";
+        var graph = buildRichGraph(
+                Map.of(
+                        "src/main/resources/application.yml", appYml,
+                        "src/main/java/com/acme/orders/OrderService.java", svcJava),
+                List.of(),
+                true);
+        var service = new ArchitectureQueryService(graph);
+
+        var variants = List.of(
+                ArchitectureAgent.buildGraphComposeAst("FIND_SYMBOLS", "OrderService", List.of("graph.depends-on"), 1, 20),
+                ArchitectureAgent.buildGraphComposeAst("INSPECT_CONFIG_SPAN", "application.yml", List.of(), 1, 10),
+                ArchitectureAgent.buildGraphComposeAst("GRAPH_COMPOSE_VERTICAL_TRAVERSE", "OrderService",
+                        List.of("graph.depends-on", "java.calls", "spring.selected-binding"), 4, 24),
+                ArchitectureAgent.buildGraphComposeAst("GRAPH_COMPOSE_EGO_EXPAND", "OrderService",
+                        List.of("graph.depends-on", "java.calls", "java.implements", "java.extends"), 1, 25),
+                ArchitectureAgent.buildGraphComposeAst("GRAPH_COMPOSE_SUMMARY", "", List.of("graph.depends-on"), 1, 60),
+                ArchitectureAgent.buildGraphComposeAst("VERIFY_SOURCE_SPAN", "OrderService.java", List.of(), 2, 10));
+
+        for (var ast : variants) {
+            assertFalse(ast.containsKey("schema"));
+            assertFalse(ast.containsKey("operation"));
+            assertFalse(ast.containsKey("seed"));
+            GraphComposeQuery parsed = assertDoesNotThrow(() -> GraphComposeQuery.fromMap(ast),
+                    "AST must parse with zero validation errors: " + ast);
+            assertEquals(parsed, ArchitectureAgent.toGraphComposeQuery(ast));
+            assertTrue(parsed.limit() >= GraphComposeQuery.MIN_LIMIT && parsed.limit() <= GraphComposeQuery.MAX_LIMIT);
+            assertFalse(parsed.matchNodes().isEmpty());
+            for (var np : parsed.matchNodes()) {
+                assertTrue(np.kind().isPresent(), "NodePattern must carry singular kind string: " + np);
+            }
+            var composeResult = service.composeQuery(parsed);
+            assertNotNull(composeResult);
+        }
+
+        // Verify execution against real graph finds OrderService -> PaymentService via graph.depends-on
+        var depAst = ArchitectureAgent.buildGraphComposeAst(
+                "FIND_SYMBOLS", "OrderService", List.of("graph.depends-on"), 1, 10);
+        var depRes = service.composeQuery(GraphComposeQuery.fromMap(depAst));
+        assertTrue(depRes.totalMatched() >= 1, "Expected composeQuery to match OrderService -> PaymentService");
+    }
+
+    @Test
+    void capturedRepairProposeAdHocActivatesPreEditConfigGateAndPraxisEq8TacitMemory() throws Exception {
+        String appYml = "app:\n  cache:\n    enabled: false\n";
+        String svcJava = String.join("\n",
+                "package com.acme.orders;",
+                "public class OrderService {",
+                "    public int total(int qty) {",
+                "        return qty * 10;",
+                "    }",
+                "}");
+        var graph = buildRichGraph(
+                Map.of(
+                        "src/main/resources/application.yml", appYml,
+                        "src/main/java/com/acme/orders/OrderService.java", svcJava),
+                List.of(),
+                true);
+        String ctx = analysisContext(graph);
+        String orderEntityId = graph.nodes(ctx).stream()
+                .filter(n -> "TYPE".equals(n.kind()))
+                .filter(n -> CapturedRepair.nodeLabel(graph, n).contains("OrderService"))
+                .findFirst().orElseThrow().identity();
+
+        // 1. Anti-Edit-Bias: config-only ad-hoc request short-circuits with CONFIG_ONLY_RESOLUTION before touching LLM!
+        var configRepair = new CapturedRepair(null);
+        var configOutcome = configRepair.proposeAdHoc(
+                new CapturedRepair.AdHocRequest(
+                        ctx,
+                        "Enable app.cache.enabled",
+                        "Turn on app.cache.enabled in application.yml",
+                        List.of("src/main/java/com/acme/orders/OrderService.java"),
+                        List.of(orderEntityId),
+                        CapturedRepair.Strategy.AI,
+                        Optional.empty(),
+                        1),
+                graph, new ArchitectureQueryService(graph), () -> StopReason.NONE);
+        assertEquals("CONFIG_ONLY_RESOLUTION", configOutcome.status(), () -> "outcome=" + configOutcome);
+        assertTrue(configOutcome.proposal().isEmpty());
+        assertEquals("CONFIG_ONLY_RESOLUTION", configOutcome.preEditConfigGate().get("decision"));
+        assertEquals(true, configOutcome.preEditConfigGate().get("blocksCodePatch"));
+
+        // 2. PRAXIS Eq. 8: code-edit ad-hoc request injects quarantined ADVISORY_TACIT notes into prompt & records consultedTacitUnitIds
+        try (var tacitStore = TacitMemoryStore.inMemory()) {
+            var unit = tacitStore.ingest(
+                    orderEntityId,
+                    "When modifying OrderService.total pricing arithmetic",
+                    "Guard negative qty inputs and keep integer overflow checks",
+                    List.of(new TacitMemoryStore.EvidenceSpan(
+                            "src/main/java/com/acme/orders/OrderService.java", 3, 5,
+                            ContentDigest.sha256Utf8(svcJava).value())),
+                    0.85,
+                    TacitMemoryStore.SourceKind.SANDBOX_DIFF_VERIFIED,
+                    "abc1234");
+
+            var seenPrompt = new AtomicReference<String>("");
+            var mockLlm = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+            try {
+                mockLlm.createContext("/v1/chat/completions", exchange -> {
+                    String reqBody = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+                    var reqObj = GraphJson.object(GraphJson.read(reqBody, new GraphJson.Limits(4_194_304, 64, 100_000)));
+                    for (Object m : GraphJson.array(reqObj.get("messages"))) {
+                        var mo = GraphJson.object(m);
+                        if ("user".equals(mo.get("role"))) {
+                            seenPrompt.set(GraphJson.string(mo.get("content")));
+                        }
+                    }
+                    String editReply = "FILE: src/main/java/com/acme/orders/OrderService.java\n"
+                            + "<<<<<<< SEARCH\n"
+                            + "        return qty * 10;\n"
+                            + "=======\n"
+                            + "        return Math.max(0, qty) * 10;\n"
+                            + ">>>>>>> REPLACE\n";
+                    byte[] bytes = CanonicalJson.write(Map.of(
+                            "model", "tacit-repair-test",
+                            "choices", List.of(Map.of("finish_reason", "stop", "message", Map.of(
+                                    "role", "assistant", "content", editReply))))).getBytes(StandardCharsets.UTF_8);
+                    exchange.getResponseHeaders().set("Content-Type", "application/json");
+                    exchange.sendResponseHeaders(200, bytes.length);
+                    exchange.getResponseBody().write(bytes);
+                    exchange.close();
+                });
+                mockLlm.start();
+
+                URI mockUri = URI.create("http://127.0.0.1:" + mockLlm.getAddress().getPort() + "/v1/chat/completions");
+                var adapter = com.evolution.backend.query.llm.LlmConfigRegistry.createAdapter(
+                        com.evolution.backend.query.llm.LlmProviderAdapter.ProviderKind.infer(mockUri),
+                        mockUri,
+                        "tacit-repair-test", null, false,
+                        131_072, 2_048, "max_tokens", false, java.time.Duration.ofSeconds(30));
+                var model = RepairChatModel.fromAdapter(adapter);
+                var repair = new CapturedRepair(model, null, tacitStore);
+                var codeOutcome = repair.proposeAdHoc(
+                        new CapturedRepair.AdHocRequest(
+                                ctx,
+                                "Fix negative quantity bug in OrderService.total",
+                                "Reject negative qty values in OrderService.total calculation",
+                                List.of("src/main/java/com/acme/orders/OrderService.java"),
+                                List.of(orderEntityId),
+                                CapturedRepair.Strategy.AI,
+                                Optional.empty(),
+                                1),
+                        graph, new ArchitectureQueryService(graph), () -> StopReason.NONE);
+
+                assertEquals("PROPOSED", codeOutcome.status(), () -> "outcome=" + codeOutcome);
+                assertTrue(codeOutcome.consultedTacitUnitIds().contains(unit.unitId()),
+                        "Expected consultedTacitUnitIds to record PRAXIS Eq. 8 unit: " + codeOutcome.consultedTacitUnitIds());
+                var promptObj = GraphJson.object(GraphJson.read(seenPrompt.get(), GraphJson.Limits.defaults()));
+                assertTrue(promptObj.containsKey("advisoryTacitMemory"),
+                        "Prompt must inject quarantined advisoryTacitMemory: " + promptObj.keySet());
+                var tacitObj = GraphJson.object(promptObj.get("advisoryTacitMemory"));
+                assertEquals(TacitMemoryStore.TRUST_TIER, tacitObj.get("trustTier"));
+                assertEquals(true, tacitObj.get("quarantined"));
+                assertTrue(GraphJson.string(tacitObj.get("formattedBlock")).contains(RepairContextPlanner.ADVISORY_TACIT_PREFIX));
+                assertTrue(GraphJson.string(tacitObj.get("formattedBlock")).contains("Guard negative qty inputs"));
+            } finally {
+                mockLlm.stop(0);
+            }
+        }
     }
 
     private static String analysisContext(KnowledgeGraph graph) {

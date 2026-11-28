@@ -810,14 +810,14 @@ test('Moonshot #5 EvoMcpScipHub normalizes MCP setup, builds client tabs, encode
     defaultGraph: 'sha256:abc123',
     streamableHttpUrl: 'http://127.0.0.1:8080/mcp',
     protocolVersion: '2025-11-25',
-    toolCount: 21,
-    resourceCount: 6,
+    toolCount: 23,
+    resourceCount: 7,
     patRequired: true,
     resources: [{ uri: 'evo://snapshot/current', description: 'Current snapshot' }]
   });
   assert.equal(setup.streamableHttpUrl, 'http://127.0.0.1:8080/mcp');
-  assert.equal(setup.toolCount, 21);
-  assert.equal(setup.resourceCount, 6);
+  assert.equal(setup.toolCount, 23);
+  assert.equal(setup.resourceCount, 7);
   assert.equal(setup.patRequired, true);
 
   const legacySetup = Hub.normalizeMcpSetup({

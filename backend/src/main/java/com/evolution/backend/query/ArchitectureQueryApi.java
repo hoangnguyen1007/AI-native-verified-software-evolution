@@ -153,6 +153,14 @@ public final class ArchitectureQueryApi {
     private java.nio.file.Path storeDirectory;
     private CapturedSearchIndex searchIndex;
     private ChatConversationStore chatStore;
+    private com.evolution.backend.query.advisory.TacitMemoryStore tacitMemoryStore;
+    private java.util.Map<ContentDigest, List<String>> consultedTacitUnitsByProposal = java.util.Collections
+            .synchronizedMap(new java.util.LinkedHashMap<>(32, 0.75f, true) {
+                @Override
+                protected boolean removeEldestEntry(java.util.Map.Entry<ContentDigest, List<String>> eldest) {
+                    return size() > 128;
+                }
+            });
     private java.util.concurrent.ConcurrentHashMap<String, McpToolDispatcher.McpSession> mcpSessions;
     private java.util.Map<com.evolution.analysis.contract.identity.SnapshotIdentity, ContentDigest> reanalyzedGraphs = java.util.Collections
             .synchronizedMap(new java.util.LinkedHashMap<>(32, 0.75f, true) {
@@ -324,6 +332,8 @@ public final class ArchitectureQueryApi {
         storeDirectory = existing.storeDirectory;
         searchIndex = existing.searchIndex;
         chatStore = existing.chatStore;
+        tacitMemoryStore = existing.tacitMemoryStore;
+        consultedTacitUnitsByProposal = existing.consultedTacitUnitsByProposal;
         mcpSessions = existing.mcpSessions;
         reanalyzedGraphs = existing.reanalyzedGraphs;
         discoveryContextCache = existing.discoveryContextCache;
@@ -655,6 +665,15 @@ public final class ArchitectureQueryApi {
         Objects.requireNonNull(existing);
         var api = new ArchitectureQueryApi(existing);
         api.chatStore = Objects.requireNonNull(chatStore);
+        return api;
+    }
+
+    /** Attach an isolated, strictly quarantined SQLite {@link com.evolution.backend.query.advisory.TacitMemoryStore} ({@code ADVISORY_TACIT}). */
+    public static ArchitectureQueryApi withTacitMemoryStore(ArchitectureQueryApi existing,
+            com.evolution.backend.query.advisory.TacitMemoryStore tacitMemoryStore) {
+        Objects.requireNonNull(existing);
+        var api = new ArchitectureQueryApi(existing);
+        api.tacitMemoryStore = Objects.requireNonNull(tacitMemoryStore);
         return api;
     }
 
@@ -2544,6 +2563,86 @@ public final class ArchitectureQueryApi {
             var result = service.composeQuery(graph, composeQuery, timeoutMs, GraphComposeQuery.DEFAULT_MAX_VISITED_STATES);
             return com.evolution.backend.query.llm.LlmTransport.neutralizeMapForLlm(result.toView());
         }
+        if (parts.length == 7 && parts[5].equals("queries") && parts[6].equals("symbol-ego-graph")) {
+            requireMethod(method, "POST");
+            var input = QueryJson.object(decode(body, contentType),
+                    "context", "symbolId", "searchTerm", "hops", "maxTokens", "includeStdlib");
+            Optional<String> contextOpt = QueryJson.optionalText(input, "context");
+            Optional<String> symbolIdOpt = QueryJson.optionalText(input, "symbolId");
+            Optional<String> searchTermOpt = QueryJson.optionalText(input, "searchTerm");
+            if (symbolIdOpt.isEmpty() && searchTermOpt.isEmpty()) {
+                throw new IllegalArgumentException("symbolId or searchTerm is required");
+            }
+            int hops = optionalInt(input, "hops", SymbolEgoGraphExtractor.DEFAULT_HOPS, 1, 8);
+            int maxTokens = optionalInt(input, "maxTokens",
+                    SymbolEgoGraphExtractor.DEFAULT_MAX_TOKENS, 100, 100_000);
+            boolean includeStdlib = false;
+            if (input.containsKey("includeStdlib") && input.get("includeStdlib") != null) {
+                if (!(input.get("includeStdlib") instanceof Boolean b)) {
+                    throw new IllegalArgumentException("includeStdlib must be a boolean");
+                }
+                includeStdlib = b;
+            }
+            long deadline = System.nanoTime() + limits.queryTimeoutMillis() * 1_000_000L;
+            var guard = ArchitectureQueryService.operationalGuard(cancelled, deadline, 8_000_000);
+            var graph = load(graphId);
+            var service = factory.apply(graph, guard);
+            var egoReq = new SymbolEgoGraphExtractor.Request(
+                    contextOpt, symbolIdOpt, searchTermOpt, hops, maxTokens, includeStdlib);
+            var egoResult = service.symbolEgoGraph(graph, egoReq);
+            return com.evolution.backend.query.llm.LlmTransport.neutralizeMapForLlm(egoResult.toMap());
+        }
+        if (parts.length == 7 && parts[5].equals("queries") && parts[6].equals("tacit-memory-interaction")) {
+            requireMethod(method, "POST");
+            var input = QueryJson.object(decode(body, contentType), "entityIds", "paths", "maxHops", "threshold");
+            var entityIds = new LinkedHashSet<String>();
+            if (input.containsKey("entityIds") && input.get("entityIds") != null) {
+                for (var item : GraphJson.array(input.get("entityIds"))) {
+                    String s = GraphJson.string(item).strip();
+                    if (!s.isEmpty() && entityIds.size() < 128) entityIds.add(s);
+                }
+            }
+            var paths = new LinkedHashSet<String>();
+            if (input.containsKey("paths") && input.get("paths") != null) {
+                for (var item : GraphJson.array(input.get("paths"))) {
+                    String s = CapturedFileIndex.normalizePath(GraphJson.string(item));
+                    if (!s.isEmpty() && paths.size() < 64) paths.add(s);
+                }
+            }
+            int maxHops = optionalInt(input, "maxHops",
+                    com.evolution.backend.query.advisory.TacitMemoryStore.MAX_PROPAGATION_HOPS,
+                    0, com.evolution.backend.query.advisory.TacitMemoryStore.MAX_PROPAGATION_HOPS);
+            double threshold = com.evolution.backend.query.advisory.TacitMemoryStore.INJECTION_THRESHOLD;
+            if (input.containsKey("threshold") && input.get("threshold") != null) {
+                if (!(input.get("threshold") instanceof Number n)) {
+                    throw new IllegalArgumentException("threshold must be numeric");
+                }
+                threshold = Math.max(0.0, Math.min(1.0, n.doubleValue()));
+            }
+            var graph = load(graphId);
+            if (tacitMemoryStore == null) {
+                var empty = new com.evolution.backend.query.advisory.TacitMemoryStore.InteractionTriggeredResult(
+                        com.evolution.backend.query.advisory.TacitMemoryStore.SCHEMA,
+                        com.evolution.backend.query.advisory.TacitMemoryStore.TRUST_TIER,
+                        true,
+                        com.evolution.backend.query.advisory.TacitMemoryStore.HEADER_BANNER,
+                        List.copyOf(entityIds),
+                        threshold,
+                        maxHops,
+                        List.of(),
+                        "");
+                return com.evolution.backend.query.llm.LlmTransport.neutralizeMapForLlm(empty.toView());
+            }
+            if (!paths.isEmpty()) {
+                collectGraphEntityIdsForPaths(graph, paths, entityIds);
+            }
+            var result = (maxHops == com.evolution.backend.query.advisory.TacitMemoryStore.MAX_PROPAGATION_HOPS
+                    && Math.abs(threshold - com.evolution.backend.query.advisory.TacitMemoryStore.INJECTION_THRESHOLD) < 1e-9)
+                    ? com.evolution.backend.query.advisory.AdvisoryOverlayService.tacitMemoryInteraction(
+                            graph, tacitMemoryStore, entityIds)
+                    : tacitMemoryStore.retrieveInteractionTriggered(graph, entityIds, maxHops, threshold);
+            return com.evolution.backend.query.llm.LlmTransport.neutralizeMapForLlm(result.toView());
+        }
         if (parts.length == 7 && parts[5].equals("queries") && OPERATIONS.contains(parts[6])) {
             requireMethod(method, "POST");
             var input = decode(body, contentType);
@@ -3600,7 +3699,7 @@ public final class ArchitectureQueryApi {
                 var replay = REPLAY_DIAGNOSIS.diagnose(id, finding, service);
                 if (replay.input().isPresent() && !replay.input().equals(input))
                     throw new Failure(409, "DIAGNOSIS_INPUT_MISMATCH");
-                var captured = new CapturedRepair(repairModel, searchIndex);
+                var captured = new CapturedRepair(repairModel, searchIndex, tacitMemoryStore);
                 if (op.equals("repair-options"))
                     yield captured.options(replay, service.graph(), service::assessmentStopReason,
                             activeRepairRunner() != null, finding.bundle().path());
@@ -3633,7 +3732,11 @@ public final class ArchitectureQueryApi {
                     var outcome = captured.propose(replay, service.graph(), strategy, recipe, modelInput,
                             maxRepairAttempts, finding.bundle().path(), service::assessmentStopReason);
                     if ("PROPOSED".equals(outcome.status()) && outcome.proposal().isPresent()) {
-                        repairStore.put(outcome.proposal().orElseThrow());
+                        var prop = outcome.proposal().orElseThrow();
+                        repairStore.put(prop);
+                        if (!outcome.consultedTacitUnitIds().isEmpty()) {
+                            consultedTacitUnitsByProposal.put(prop.identity(), outcome.consultedTacitUnitIds());
+                        }
                     }
                     yield outcome;
                 }
@@ -3697,7 +3800,7 @@ public final class ArchitectureQueryApi {
                 if (runIsolated && activeRunnerSync == null) {
                     throw new Failure(422, CapturedRepairRunner.NOT_CONFIGURED);
                 }
-                var verifier = new CapturedRepairVerification(repairWorker, capturedRepairExecution, snapshotGraphs);
+                var verifier = buildRepairVerifier(capturedRepairExecution, snapshotGraphs, service.graph(), capturedPinned);
                 var result = verifier.verify(
                         capturedPinned, service.graph(), report, candidate, control, store, reports,
                         () -> service.assessmentStopReason() != StopReason.NONE);
@@ -3720,7 +3823,7 @@ public final class ArchitectureQueryApi {
                         var inv = activeRunnerSync.run(repoRoot.orElseThrow(), syntheticOutcome, result,
                                 false, Optional.empty(), rts.mavenTestFilter(),
                                 () -> Thread.currentThread().isInterrupted());
-                        result = new CapturedRepairVerification(repairWorker, inv.execution(), snapshotGraphs)
+                        result = buildRepairVerifier(inv.execution(), snapshotGraphs, service.graph(), capturedPinned)
                                 .verify(capturedPinned, service.graph(), report, candidate, control, store, reports,
                                         () -> Thread.currentThread().isInterrupted());
                     } catch (java.io.IOException isolatedFailure) {
@@ -3993,9 +4096,13 @@ public final class ArchitectureQueryApi {
         var service = factory.apply(graph, guard);
         var req = new CapturedRepair.AdHocRequest(contextId, title, description,
                 List.copyOf(targetPaths), List.copyOf(targetSymbols), strategy, recipeId, maxAttempts);
-        var outcome = new CapturedRepair(repairModel, searchIndex).proposeAdHoc(req, graph, service, service::assessmentStopReason);
+        var outcome = new CapturedRepair(repairModel, searchIndex, tacitMemoryStore).proposeAdHoc(req, graph, service, service::assessmentStopReason);
         if ("PROPOSED".equals(outcome.status()) && outcome.proposal().isPresent()) {
-            repairStore.put(outcome.proposal().orElseThrow());
+            var prop = outcome.proposal().orElseThrow();
+            repairStore.put(prop);
+            if (!outcome.consultedTacitUnitIds().isEmpty()) {
+                consultedTacitUnitsByProposal.put(prop.identity(), outcome.consultedTacitUnitIds());
+            }
         }
         return outcome;
     }
@@ -4259,7 +4366,7 @@ public final class ArchitectureQueryApi {
                     synchronized (reanalyzedGraphs) {
                         snapshotGraphs = Map.copyOf(reanalyzedGraphs);
                     }
-                    var verifier = new CapturedRepairVerification(repairWorker, capturedRepairExecution, snapshotGraphs);
+                    var verifier = buildRepairVerifier(capturedRepairExecution, snapshotGraphs, baselineGraph, currentProposal);
                     CapturedRepairVerification.Result verification = baselineReportOpt.isPresent()
                             ? verifier.verify(currentProposal, baselineGraph, baselineReportOpt.orElseThrow(),
                                     candidateReportId, controlReportId, store, reports, jobCancelled)
@@ -4336,7 +4443,7 @@ public final class ArchitectureQueryApi {
                                 effectiveDiffTestGen ? BehavioralDiffService.encodeStagedProbesJson(probes) : Optional.empty(),
                                 rts.mavenTestFilter(),
                                 jobCancelled);
-                        var postVerifier = new CapturedRepairVerification(repairWorker, inv.execution(), snapshotGraphs);
+                        var postVerifier = buildRepairVerifier(inv.execution(), snapshotGraphs, baselineGraph, currentProposal);
                         verification = baselineReportOpt.isPresent()
                                 ? postVerifier.verify(currentProposal, baselineGraph, baselineReportOpt.orElseThrow(),
                                         candidateReportId, controlReportId, store, reports, jobCancelled)
@@ -4424,7 +4531,7 @@ public final class ArchitectureQueryApi {
                     var refineGuard = ArchitectureQueryService.operationalGuard(jobCancelled,
                             System.nanoTime() + limits.queryTimeoutMillis() * 1_000_000, 8_000_000);
                     var refineQueries = factory.apply(baselineGraph, refineGuard);
-                    var refined = new CapturedRepair(repairModel, searchIndex).refineFromFeedback(
+                    var refined = new CapturedRepair(repairModel, searchIndex, tacitMemoryStore).refineFromFeedback(
                             currentProposal, baselineGraph, Optional.of(refineQueries), feedback, 2,
                             refineQueries::assessmentStopReason);
                     if (!"PROPOSED".equals(refined.status()) || refined.proposal().isEmpty()) {
@@ -4818,6 +4925,131 @@ public final class ArchitectureQueryApi {
         } catch (IllegalArgumentException invalid) {
             throw new IllegalArgumentException("Invalid job UUID");
         }
+    }
+
+    private CapturedRepairVerification buildRepairVerifier(
+            CapturedRepairExecution exec,
+            Map<com.evolution.analysis.contract.identity.SnapshotIdentity, ContentDigest> snapshotGraphs,
+            KnowledgeGraph baselineGraph,
+            CapturedRepair.Proposal proposal) {
+        var verifier = new CapturedRepairVerification(repairWorker, exec, snapshotGraphs);
+        if (tacitMemoryStore != null && proposal != null) {
+            var consulted = resolveConsultedTacitUnitIds(baselineGraph, proposal);
+            if (!consulted.isEmpty()) {
+                verifier = verifier.withTacitMemoryEvolution(tacitMemoryStore, consulted);
+            }
+        }
+        return verifier;
+    }
+
+    private List<String> resolveConsultedTacitUnitIds(KnowledgeGraph baselineGraph, CapturedRepair.Proposal proposal) {
+        var ids = new LinkedHashSet<String>();
+        var cached = consultedTacitUnitsByProposal.get(proposal.identity());
+        if (cached != null) {
+            ids.addAll(cached);
+        }
+        if (ids.isEmpty() && tacitMemoryStore != null && baselineGraph != null && proposal.candidate() != null) {
+            var seeds = new LinkedHashSet<String>();
+            var scope = proposal.candidate().affectedScope();
+            if (scope != null) {
+                if (scope.source() != null && !scope.source().isBlank()) seeds.add(scope.source().strip());
+                if (scope.target() != null && !scope.target().isBlank()) seeds.add(scope.target().strip());
+            }
+            var editedPaths = new LinkedHashSet<String>();
+            for (var edit : proposal.candidate().edits()) {
+                if (edit.path() != null && !edit.path().isBlank()) {
+                    editedPaths.add(CapturedFileIndex.normalizePath(edit.path()));
+                }
+            }
+            if (!editedPaths.isEmpty()) {
+                collectGraphEntityIdsForPaths(baselineGraph, editedPaths, seeds);
+            }
+            if (!seeds.isEmpty()) {
+                var interaction = com.evolution.backend.query.advisory.AdvisoryOverlayService
+                        .tacitMemoryInteraction(baselineGraph, tacitMemoryStore, seeds);
+                for (var ann : interaction.annotations()) {
+                    ids.addAll(ann.sourceUnitIds());
+                }
+            }
+        }
+        return List.copyOf(ids);
+    }
+
+    private static void collectGraphEntityIdsForPaths(
+            KnowledgeGraph graph, Set<String> targetPaths, Set<String> entityIds) {
+        if (graph == null || targetPaths == null || targetPaths.isEmpty() || entityIds.size() >= 128) return;
+        var matchingDocIds = new HashSet<String>();
+        var smallLimits = new GraphJson.Limits(131_072, 32, 8_192);
+        for (var node : graph.nodes(graph.snapshot().value())) {
+            if (!"SOURCE_DOCUMENT".equals(node.kind())) continue;
+            for (var ref : node.evidence()) {
+                var ev = graph.evidence(ref).orElse(null);
+                if (ev == null || ev.canonicalJson().length() > 131_072) continue;
+                try {
+                    var obj = GraphJson.object(GraphJson.read(ev.canonicalJson(), smallLimits));
+                    String docPath = null;
+                    if ("source.document".equals(ev.family()) && obj.get("path") instanceof String p) {
+                        docPath = CapturedFileIndex.normalizePath(p);
+                    } else if ("source.bytes".equals(ev.family()) && obj.get("document") instanceof Map<?, ?> dm
+                            && dm.get("path") instanceof String p) {
+                        docPath = CapturedFileIndex.normalizePath(p);
+                    }
+                    if (docPath != null && matchesAnyTargetPath(docPath, targetPaths)) {
+                        matchingDocIds.add(node.identity());
+                        break;
+                    }
+                } catch (RuntimeException ignored) {}
+            }
+        }
+        for (var ctx : graph.contexts()) {
+            for (var node : graph.nodes(ctx.identity())) {
+                if (entityIds.size() >= 128) return;
+                if ("SOURCE_DOCUMENT".equals(node.kind())) continue;
+                for (var ref : node.evidence()) {
+                    var ev = graph.evidence(ref).orElse(null);
+                    if (ev == null || ev.canonicalJson().length() > 131_072) continue;
+                    if (!"java.declaration".equals(ev.family()) && !"polyglot.source-syntax".equals(ev.family())
+                            && !"spring.endpoint-declaration".equals(ev.family())) {
+                        continue;
+                    }
+                    try {
+                        var obj = GraphJson.object(GraphJson.read(ev.canonicalJson(), smallLimits));
+                        String docId = null;
+                        String directPath = null;
+                        if (obj.get("entity") instanceof Map<?, ?> ent
+                                && ent.get("declaration") instanceof Map<?, ?> sp
+                                && sp.get("document") instanceof String d) {
+                            docId = d;
+                        } else if (obj.get("declaration") instanceof Map<?, ?> sp
+                                && sp.get("document") instanceof String d) {
+                            docId = d;
+                        } else if (obj.get("span") instanceof Map<?, ?> sp
+                                && sp.get("document") instanceof String d) {
+                            docId = d;
+                        } else if ("polyglot.source-syntax".equals(ev.family())) {
+                            Map<?, ?> fields = obj.get("fields") instanceof Map<?, ?> f ? f : obj;
+                            if (fields.get("path") instanceof String p) {
+                                directPath = CapturedFileIndex.normalizePath(p);
+                            }
+                        }
+                        if ((docId != null && matchingDocIds.contains(docId))
+                                || (directPath != null && matchesAnyTargetPath(directPath, targetPaths))) {
+                            entityIds.add(node.identity());
+                            break;
+                        }
+                    } catch (RuntimeException ignored) {}
+                }
+            }
+        }
+    }
+
+    private static boolean matchesAnyTargetPath(String candidatePath, Set<String> targetPaths) {
+        for (String tp : targetPaths) {
+            if (candidatePath.equals(tp) || candidatePath.endsWith("/" + tp) || tp.endsWith("/" + candidatePath)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static void deleteRecursivelyQuietly(java.nio.file.Path dir) {

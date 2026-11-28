@@ -52,7 +52,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * Moonshot #5 Integration Tests:
  * <ul>
  *   <li>Streamable HTTP {@code POST|GET|DELETE /mcp} (MCP {@code 2025-11-25}) + Anti-DNS-Rebinding Origin guard + {@code Mcp-Session-Id} + Multi-user PAT &amp; CSRF</li>
- *   <li>Enhanced {@code GET /api/v1/mcp/setup} ({@code streamableHttpUrl}, {@code clients}, {@code toolCount=21}, {@code resourceCount=6})</li>
+ *   <li>Enhanced {@code GET /api/v1/mcp/setup} ({@code streamableHttpUrl}, {@code clients}, {@code toolCount=23}, {@code resourceCount=7})</li>
  *   <li>{@code POST /api/v1/graphs/{graph}/scip/ingest} (binary {@code index.scip} -> {@code COMPILER} upgrades, 0 canonical digest drift, SHA-256 verification, {@code api:write} PAT guard)</li>
  * </ul>
  */
@@ -120,12 +120,14 @@ class Moonshot5StreamableMcpAndScipTest {
             assertEquals(200, pingResp.statusCode());
             assertTrue(GraphJson.object(parseJson(pingResp.body()).get("result")).isEmpty());
 
-            // 4. tools/list -> read-only tools including WP3.2 graph_compose_query
+            // 4. tools/list -> read-only tools including WP3.1 symbol_ego_graph & WP3.2 graph_compose_query
             var toolsResp = postMcp(http, root, sessionId, null, Map.of(
                     "jsonrpc", "2.0", "id", 3, "method", "tools/list", "params", Map.of()));
             assertEquals(200, toolsResp.statusCode());
             var toolsList = GraphJson.array(GraphJson.object(parseJson(toolsResp.body()).get("result")).get("tools"));
             assertEquals(com.evolution.backend.query.mcp.McpToolDispatcher.TOOL_COUNT, toolsList.size());
+            assertTrue(toolsList.stream().map(t -> GraphJson.string(GraphJson.object(t).get("name")))
+                    .anyMatch("symbol_ego_graph"::equals), "tools/list must expose symbol_ego_graph");
             assertTrue(toolsList.stream().map(t -> GraphJson.string(GraphJson.object(t).get("name")))
                     .anyMatch("graph_compose_query"::equals), "tools/list must expose graph_compose_query");
 
@@ -148,6 +150,32 @@ class Moonshot5StreamableMcpAndScipTest {
             String vtBody = GraphJson.string(GraphJson.object(GraphJson.array(vtRes.get("content")).getFirst()).get("text"));
             assertTrue(vtBody.contains("\"callPathFlamegraph\""), () -> "vertical_trace must expose callPathFlamegraph: " + vtBody);
             assertTrue(vtBody.contains("\"resilienceVerdict\""), () -> "vertical_trace must expose resilienceVerdict: " + vtBody);
+
+            // 5b. tools/call symbol_ego_graph (k=1 FLATTENED_1HOP <=2500 tok + k=2 Table 4 SIGNATURE_COMPRESSED_2HOP guardrail)
+            var callEgo1 = postMcp(http, root, sessionId, null, Map.of(
+                    "jsonrpc", "2.0", "id", 42, "method", "tools/call",
+                    "params", Map.of("name", "symbol_ego_graph",
+                            "arguments", Map.of("graph", fx.graphId(), "searchTerm", "OrderService", "hops", 1))));
+            assertEquals(200, callEgo1.statusCode());
+            var ego1Res = GraphJson.object(parseJson(callEgo1.body()).get("result"));
+            assertEquals(false, ego1Res.get("isError"), () -> "symbol_ego_graph k=1 failed: " + ego1Res);
+            var ego1Data = GraphJson.object(parseJson(GraphJson.string(GraphJson.object(
+                    GraphJson.array(ego1Res.get("content")).getFirst()).get("text"))).get("data"));
+            assertEquals("FLATTENED_1HOP", ego1Data.get("mode"));
+            assertEquals(false, ego1Data.get("guardrailApplied"));
+            assertTrue(((Number) ego1Data.get("estimatedTokens")).intValue() <= 2_500);
+
+            var callEgo2 = postMcp(http, root, sessionId, null, Map.of(
+                    "jsonrpc", "2.0", "id", 43, "method", "tools/call",
+                    "params", Map.of("name", "symbol_ego_graph",
+                            "arguments", Map.of("graph", fx.graphId(), "searchTerm", "OrderService", "hops", 2))));
+            assertEquals(200, callEgo2.statusCode());
+            var ego2Res = GraphJson.object(parseJson(callEgo2.body()).get("result"));
+            assertEquals(false, ego2Res.get("isError"), () -> "symbol_ego_graph k=2 failed: " + ego2Res);
+            var ego2Data = GraphJson.object(parseJson(GraphJson.string(GraphJson.object(
+                    GraphJson.array(ego2Res.get("content")).getFirst()).get("text"))).get("data"));
+            assertEquals("SIGNATURE_COMPRESSED_2HOP", ego2Data.get("mode"));
+            assertEquals(true, ego2Data.get("guardrailApplied"));
 
             var callRejected = postMcp(http, root, sessionId, null, Map.of(
                     "jsonrpc", "2.0", "id", 5, "method", "tools/call",
@@ -713,5 +741,82 @@ class Moonshot5StreamableMcpAndScipTest {
         assertEquals(201, resp.statusCode(), resp.body());
         var data = GraphJson.object(parseJson(resp.body()).get("data"));
         return GraphJson.string(data.get("token"));
+    }
+
+    @Test
+    void mcpIncludeTacitMemoryAttachesQuarantinedPraxisEq9AnnotationsWithoutMutatingGraph(@TempDir Path tempDir)
+            throws Exception {
+        var fx = buildSingleGraphWithJob(tempDir);
+        var graphBefore = fx.store().load(new ContentDigest(fx.graphId())).orElseThrow();
+        String targetEntityId = graphBefore.nodes(fx.contextId()).stream()
+                .filter(n -> "TYPE".equals(n.kind()))
+                .findFirst().orElseThrow().identity();
+
+        try (var jobs = fx.jobs();
+             var tacitStore = com.evolution.backend.query.advisory.TacitMemoryStore.inMemory()) {
+            tacitStore.ingest(
+                    targetEntityId,
+                    "When modifying service entry points",
+                    "Preserve idempotency headers and verify retry backoff bounds",
+                    List.of(new com.evolution.backend.query.advisory.TacitMemoryStore.EvidenceSpan(
+                            "src/main/java/com/acme/OrderService.java", 1, 5,
+                            ContentDigest.sha256Utf8("order-service-v1").value())),
+                    0.88,
+                    com.evolution.backend.query.advisory.TacitMemoryStore.SourceKind.SANDBOX_DIFF_VERIFIED,
+                    "rev-tacit-1");
+
+            var api = ArchitectureQueryApi.withTacitMemoryStore(
+                    new ArchitectureQueryApi(fx.store(), fx.reports(), ApiLimits.defaults(), jobs),
+                    tacitStore);
+            try (var server = new ArchitectureHttpServer(api, 0)) {
+                server.start();
+                String root = server.uri().toString();
+                var http = HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NEVER).build();
+
+                // 1. symbol_ego_graph with include_tacit_memory=true attaches quarantined ADVISORY_TACIT annotations
+                var egoResp = postMcp(http, root, null, null, Map.of(
+                        "jsonrpc", "2.0", "id", 81, "method", "tools/call",
+                        "params", Map.of("name", "symbol_ego_graph",
+                                "arguments", Map.of(
+                                        "graph", fx.graphId(),
+                                        "symbolId", targetEntityId,
+                                        "hops", 1,
+                                        "include_tacit_memory", true))));
+                assertEquals(200, egoResp.statusCode());
+                var egoRes = GraphJson.object(parseJson(egoResp.body()).get("result"));
+                assertEquals(false, egoRes.get("isError"), () -> "ego tacit failed: " + egoRes);
+                var egoData = GraphJson.object(parseJson(GraphJson.string(GraphJson.object(
+                        GraphJson.array(egoRes.get("content")).getFirst()).get("text"))).get("data"));
+                assertTrue(egoData.containsKey("advisoryTacitMemory"), () -> "Missing advisoryTacitMemory: " + egoData);
+                var egoTacit = GraphJson.object(egoData.get("advisoryTacitMemory"));
+                assertEquals("ADVISORY_TACIT", egoTacit.get("trustTier"));
+                assertEquals(true, egoTacit.get("quarantined"));
+                assertTrue(((Number) egoTacit.get("annotationCount")).intValue() >= 1);
+
+                // 2. graph_compose_query with include_tacit_memory=true strips transport toggle before strict AST validation & attaches Eq. 9 annotations
+                var composeResp = postMcp(http, root, null, null, Map.of(
+                        "jsonrpc", "2.0", "id", 82, "method", "tools/call",
+                        "params", Map.of("name", "graph_compose_query",
+                                "arguments", Map.of(
+                                        "graph", fx.graphId(),
+                                        "matchNodes", List.of(Map.of("alias", "n0", "kind", "TYPE")),
+                                        "limit", 10,
+                                        "include_tacit_memory", true))));
+                assertEquals(200, composeResp.statusCode());
+                var composeRes = GraphJson.object(parseJson(composeResp.body()).get("result"));
+                assertEquals(false, composeRes.get("isError"), () -> "compose tacit failed: " + composeRes);
+                var composeData = GraphJson.object(parseJson(GraphJson.string(GraphJson.object(
+                        GraphJson.array(composeRes.get("content")).getFirst()).get("text"))).get("data"));
+                assertTrue(composeData.containsKey("advisoryTacitMemory"), () -> "Missing advisoryTacitMemory: " + composeData);
+                var composeTacit = GraphJson.object(composeData.get("advisoryTacitMemory"));
+                assertEquals("ADVISORY_TACIT", composeTacit.get("trustTier"));
+                assertEquals(true, composeTacit.get("quarantined"));
+                assertTrue(((Number) composeTacit.get("annotationCount")).intValue() >= 1);
+
+                // Canonical graph digest must remain bit-identical (canonicalLeakage = 0)
+                var graphAfter = fx.store().load(new ContentDigest(fx.graphId())).orElseThrow();
+                assertEquals(graphBefore.identity(), graphAfter.identity());
+            }
+        }
     }
 }

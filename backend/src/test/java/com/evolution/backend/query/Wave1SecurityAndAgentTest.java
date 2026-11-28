@@ -213,7 +213,8 @@ class Wave1SecurityAndAgentTest {
         var directResponses = runMcp(directMcp, directCalls);
         assertEquals(11, directResponses.size());
         var resourceList = GraphJson.array(GraphJson.object(directResponses.get(1).get("result")).get("resources"));
-        assertEquals(6, resourceList.size(), "Expected 6 MCP Resources");
+        assertEquals(com.evolution.backend.query.mcp.McpToolDispatcher.RESOURCE_COUNT, resourceList.size(),
+                "Expected canonical MCP Resource count");
         for (int r = 2; r <= 7; r++) {
             var contents = GraphJson.array(GraphJson.object(directResponses.get(r).get("result")).get("contents"));
             assertFalse(contents.isEmpty());

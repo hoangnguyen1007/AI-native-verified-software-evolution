@@ -2229,7 +2229,7 @@ public final class EvoApp {
                 var verifiedPolyglotBytes = new HashMap<ContentDigest, byte[]>();
                 for (var file : acquisition.files()) {
                     String p = file.path();
-                    if (!p.endsWith(".java") || p.endsWith("Grpc.java") || p.contains("grpc"))
+                    if (syntaxFast || !p.endsWith(".java") || p.endsWith("Grpc.java") || p.contains("grpc"))
                         verifiedPolyglotBytes.putIfAbsent(file.contentDigest(), file.bytes());
                 }
                 var asyncFailed = new java.util.concurrent.atomic.AtomicBoolean(false);
@@ -2241,14 +2241,14 @@ public final class EvoApp {
                 var polyglotFuture = java.util.concurrent.CompletableFuture.supplyAsync(() -> {
                     try (var attached = artifactSession.attach();
                             var roIntake = new RepositoryIntake(r.storage().root.resolve("acquisition"), true)) {
-                        // WP3.1 hook: pass `effectiveSyntaxFast` into PolyglotScan/StaticPolyglotScan once merged
                         final boolean effectiveSyntaxFast = syntaxFast;
                         return new PolyglotScan().run(intakeRevision, roIntake, readiness, polyglotContext,
                                 finalLanguageEvidence, r.storage().root.resolve("semantic-work"), polyglotCancel,
                                 verifiedPolyglotBytes::get, fast || effectiveSyntaxFast,
                                 (fast || effectiveSyntaxFast) ? roIntake.installedNodeDependencies(intakeRevision) : path -> false,
                                 incrementalDisabled ? Optional.empty()
-                                        : Optional.of(r.storage().root.resolve("incremental-cache")));
+                                        : Optional.of(r.storage().root.resolve("incremental-cache")),
+                                effectiveSyntaxFast);
                     } catch (Exception failure) {
                         asyncFailed.set(true);
                         throw new java.util.concurrent.CompletionException(failure);

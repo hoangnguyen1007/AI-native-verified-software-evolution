@@ -243,7 +243,7 @@ public final class TacitMemoryStore implements AutoCloseable {
             m.put("trigger", trigger);
             m.put("content", content);
             m.put("evidenceFileSha256Spans", evidenceFileSha256Spans.stream().map(EvidenceSpan::toView).toList());
-            m.put("confidence", confidence);
+            m.put("confidence", canonicalDecimal(confidence));
             m.put("sourceKind", sourceKind.name());
             m.put("verifiedPassCount", verifiedPassCount);
             m.put("verifiedFailCount", verifiedFailCount);
@@ -308,7 +308,7 @@ public final class TacitMemoryStore implements AutoCloseable {
             m.put("mergeKey", mergeKey);
             m.put("trigger", trigger);
             m.put("content", content);
-            m.put("confidence", confidence);
+            m.put("confidence", canonicalDecimal(confidence));
             m.put("corroboratingCount", corroboratingCount);
             m.put("sourceUnitIds", sourceUnitIds);
             m.put("anchorEntityIds", anchorEntityIds);
@@ -354,7 +354,7 @@ public final class TacitMemoryStore implements AutoCloseable {
             m.put("quarantined", quarantined);
             m.put("header", header);
             m.put("targetEntityId", targetEntityId);
-            m.put("threshold", threshold);
+            m.put("threshold", canonicalDecimal(threshold));
             m.put("maxHops", maxHops);
             m.put("visitedEntityCount", visitedEntityCount);
             m.put("unitCount", units.size());
@@ -393,7 +393,7 @@ public final class TacitMemoryStore implements AutoCloseable {
             m.put("quarantined", quarantined);
             m.put("header", header);
             m.put("accessedEntityIds", accessedEntityIds);
-            m.put("threshold", threshold);
+            m.put("threshold", canonicalDecimal(threshold));
             m.put("maxHops", maxHops);
             m.put("annotationCount", annotations.size());
             m.put("annotations", annotations.stream().map(MergedTacitUnit::toView).toList());
@@ -1450,6 +1450,12 @@ public final class TacitMemoryStore implements AutoCloseable {
     private static double clampConfidence(double value) {
         if (!Double.isFinite(value)) return 0.0;
         return Math.max(0.0, Math.min(1.0, value));
+    }
+
+    private static java.math.BigDecimal canonicalDecimal(double value) {
+        return java.math.BigDecimal.valueOf(clampConfidence(value))
+                .setScale(6, java.math.RoundingMode.HALF_UP)
+                .stripTrailingZeros();
     }
 
     private static String encodeSpansJson(List<EvidenceSpan> spans) {

@@ -771,6 +771,40 @@ public final class ArchitectureQueryService {
         return buildSchemaView(targetGraph);
     }
 
+    /**
+     * Extracts a deterministic {@code k=1} flattened (or {@code k >= 2} auto signature-compressed)
+     * symbol ego-graph ({@code symbol_ego_graph}, {@code <= 2,500} tokens) from this service's graph.
+     */
+    public SymbolEgoGraphExtractor.Result symbolEgoGraph(SymbolEgoGraphExtractor.Request request) {
+        return symbolEgoGraph(this.graph, request);
+    }
+
+    /**
+     * Extracts a deterministic {@code k=1} flattened (or {@code k >= 2} auto signature-compressed)
+     * symbol ego-graph ({@code symbol_ego_graph}, {@code <= 2,500} tokens) from {@code targetGraph},
+     * guarded by this service's {@code operationalGuard}.
+     */
+    public SymbolEgoGraphExtractor.Result symbolEgoGraph(
+            KnowledgeGraph targetGraph, SymbolEgoGraphExtractor.Request request) {
+        Objects.requireNonNull(targetGraph, "graph");
+        Objects.requireNonNull(request, "request");
+        boolean canMemoize = memoizationEnabled && targetGraph == this.graph && guard.get() == StopReason.NONE;
+        if (canMemoize) {
+            String keyStr = ContentDigest.sha256Utf8(CanonicalJson.write(List.of(
+                    SymbolEgoGraphExtractor.VERSION,
+                    targetGraph.identity().value(),
+                    request.context().orElse(""),
+                    request.symbolId().orElse(""),
+                    request.searchTerm().orElse(""),
+                    request.hops(),
+                    request.maxTokens(),
+                    request.includeStdlib()))).value();
+            return memoizedQuery("symbolEgoGraph", keyStr,
+                    () -> new SymbolEgoGraphExtractor().extract(targetGraph, request, guard));
+        }
+        return new SymbolEgoGraphExtractor().extract(targetGraph, request, guard);
+    }
+
     private record ComposeDocMeta(String path, String sha256) {}
 
     private record ComposeNodeMeta(

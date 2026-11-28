@@ -8,6 +8,7 @@ import com.evolution.analysis.javaparser.slice.JavaMethodSlicer;
 import com.evolution.analysis.policy.PolicyEvaluator;
 import com.evolution.analysis.polyglot.FailCloseResilienceAnalyzer;
 import com.evolution.analysis.query.GraphComposeQuery;
+import com.evolution.analysis.query.SymbolEgoGraphExtractor;
 import com.evolution.analysis.treesitter.GoErrorPropagationSummarizer;
 import com.evolution.backend.auth.AuthenticatedUser;
 import com.evolution.backend.auth.RequestContext;
@@ -34,18 +35,16 @@ import java.util.function.BooleanSupplier;
  * both stdio {@link com.evolution.backend.query.WorkbenchMcpMain} ({@code --port} &amp; {@code --store})
  * and Streamable HTTP {@code /mcp} ({@code POST|GET|DELETE /mcp}).
  *
- * <p>Owns the canonical schema catalog of all read-only architecture tools (21 baseline +
- * WP3.2 {@code graph_compose_query}; hook reserved for WP3.1 {@code symbol_ego_graph}) and 7
- * {@code evo://} MCP resources (6 baseline + WP3.2 {@code evo://schema}) with zero duplicated
- * schemas or handlers.
+ * <p>Owns the canonical schema catalog of all 23 read-only architecture tools (21 baseline +
+ * WP3.1 {@code symbol_ego_graph} + WP3.2 {@code graph_compose_query}) and 7 {@code evo://}
+ * MCP resources (6 baseline + WP3.2 {@code evo://schema}) with zero duplicated schemas or handlers.
  */
 public final class McpToolDispatcher {
 
     public static final String PROTOCOL_VERSION = "2025-11-25";
     public static final String SERVER_NAME = "evo-workbench";
     public static final String SERVER_VERSION = "2.0.0";
-    // [p3-integrator HOOK — WP3.1]: Increment TOOL_COUNT from 22 -> 23 when registering Tool #22 "symbol_ego_graph".
-    public static final int TOOL_COUNT = 22;
+    public static final int TOOL_COUNT = 23;
     public static final int RESOURCE_COUNT = 7;
     public static final int MAX_RESPONSE_BYTES = 16_777_216;
     public static final int MAX_SESSIONS = 256;
@@ -180,7 +179,7 @@ public final class McpToolDispatcher {
     }
 
     // -------------------------------------------------------------------------
-    // Canonical 21 Tools & 6 Resources Views
+    // Canonical 23 Tools & 7 Resources Views
     // -------------------------------------------------------------------------
 
     public static List<Map<String, Object>> listToolsView() {
@@ -196,6 +195,9 @@ public final class McpToolDispatcher {
                 "description", "Published policy report SHA-256 digest.");
         var job = Map.<String, Object>of("type", "string",
                 "description", "Analysis job UUID from jobs_list.");
+        var includeTacitMemory = Map.<String, Object>of("type", "boolean",
+                "default", false,
+                "description", "Opt-in PRAXIS Eq. 9 quarantined ADVISORY_TACIT annotations (confidence >= 0.70, <= 4 SKG hops). Never mutates canonical results.");
 
         List<String> reqGraph = hasDefaultGraph ? List.of() : List.of("graph");
         List<String> reqGraphCtx = hasDefaultGraph ? List.of() : List.of("graph", "context");
@@ -227,6 +229,7 @@ public final class McpToolDispatcher {
         queryProperties.put("otherContext", context);
         queryProperties.put("cursor", Map.of("type", "string"));
         queryProperties.put("size", Map.of("type", "integer", "minimum", 1, "maximum", 50));
+        queryProperties.put("include_tacit_memory", includeTacitMemory);
 
         var insightsProps = new LinkedHashMap<String, Object>();
         insightsProps.put("graph", graph);
@@ -259,6 +262,7 @@ public final class McpToolDispatcher {
         sourceProps.put("path", Map.of("type", "string", "description", "Repository-relative path or unique suffix."));
         sourceProps.put("startLine", Map.of("type", "integer", "minimum", 1));
         sourceProps.put("endLine", Map.of("type", "integer", "minimum", 1));
+        sourceProps.put("include_tacit_memory", includeTacitMemory);
 
         var searchSourceProps = new LinkedHashMap<String, Object>();
         searchSourceProps.put("graph", graph);
@@ -267,6 +271,7 @@ public final class McpToolDispatcher {
         searchSourceProps.put("pathFilter", Map.of("type", "string", "description", "Optional path substring/glob filter."));
         searchSourceProps.put("language", Map.of("type", "string", "description", "Optional language filter (e.g. java, sql, typescript)."));
         searchSourceProps.put("maxMatches", Map.of("type", "integer", "minimum", 1, "maximum", 100));
+        searchSourceProps.put("include_tacit_memory", includeTacitMemory);
 
         var codeownersProps = new LinkedHashMap<String, Object>();
         codeownersProps.put("graph", graph);
@@ -339,6 +344,7 @@ public final class McpToolDispatcher {
                 "description", "Include quarantined ADVISORY_UNVERIFIED SQL and Terraform hops (default true)."));
         verticalTraceProps.put("includeResilience", Map.of("type", "boolean",
                 "description", "Attach call-path flamegraph (file:line chain + passive Fail-Close/Fail-Open RPC resilience verdict, default true)."));
+        verticalTraceProps.put("include_tacit_memory", includeTacitMemory);
 
         var traceSliceProps = new LinkedHashMap<String, Object>();
         traceSliceProps.put("graph", graph);
@@ -350,6 +356,24 @@ public final class McpToolDispatcher {
                 "description", "1-based seed line number inside the target method."));
         traceSliceProps.put("direction", Map.of("type", "string", "enum", List.of("BACKWARD", "FORWARD", "BOTH")));
         traceSliceProps.put("maxStatements", Map.of("type", "integer", "minimum", 1, "maximum", 500));
+
+        var symbolEgoGraphProps = new LinkedHashMap<String, Object>();
+        symbolEgoGraphProps.put("graph", graph);
+        symbolEgoGraphProps.put("context", context);
+        symbolEgoGraphProps.put("symbolId", Map.of("type", "string",
+                "description", "Canonical SKG symbol node identity or FQN (supply symbolId or searchTerm)."));
+        symbolEgoGraphProps.put("searchTerm", Map.of("type", "string",
+                "description", "Symbol name or FQN search term when canonical symbolId is unknown."));
+        symbolEgoGraphProps.put("hops", Map.of("type", "integer", "minimum", 1, "maximum", 4,
+                "default", SymbolEgoGraphExtractor.DEFAULT_HOPS,
+                "description", "Hop radius (default 1: FLATTENED_1HOP <=2,500 tok; hops>=2 auto switches to SIGNATURE_COMPRESSED_2HOP guardrail)."));
+        symbolEgoGraphProps.put("maxTokens", Map.of("type", "integer", "minimum", 100,
+                "maximum", SymbolEgoGraphExtractor.HARD_MAX_TOKENS,
+                "default", SymbolEgoGraphExtractor.DEFAULT_MAX_TOKENS,
+                "description", "Hard-capped token budget (<= 2,500 tokens)."));
+        symbolEgoGraphProps.put("includeStdlib", Map.of("type", "boolean", "default", false,
+                "description", "Include generic language stdlib/external nodes (default false; Spring/framework wiring always preserved)."));
+        symbolEgoGraphProps.put("include_tacit_memory", includeTacitMemory);
 
         var composeNodeItemProps = new LinkedHashMap<String, Object>();
         composeNodeItemProps.put("alias", Map.of("type", "string",
@@ -420,6 +444,7 @@ public final class McpToolDispatcher {
                 "maximum", GraphComposeQuery.MAX_LIMIT,
                 "default", GraphComposeQuery.DEFAULT_LIMIT,
                 "description", "Hard-capped result limit (1..50, default 25)."));
+        composeQueryProps.put("include_tacit_memory", includeTacitMemory);
 
         return List.of(
                 tool("jobs_list", "List recent analysis jobs and their graph, snapshot and status.", Map.of(), List.of()),
@@ -462,7 +487,8 @@ public final class McpToolDispatcher {
                         verticalTraceProps, hasDefaultGraph ? List.of("seed") : List.of("graph", "seed")),
                 tool("trace_slice", "Compute a lazy, pre-redacted intra-method CFG/DFG/CDG program slice for a captured Java file at a 1-based line number (SOURCE_SYNTAX, zero secret leakage).",
                         traceSliceProps, hasDefaultGraph ? List.of("path", "line") : List.of("graph", "path", "line")),
-                // [p3-integrator HOOK — WP3.1]: Register Tool #22 "symbol_ego_graph" (k=1 flattened <= 2,500 tokens, k>=2 auto Signature(n)) here.
+                tool("symbol_ego_graph", "Extract a deterministic k=1 flattened Symbol Ego-Graph (<= 2,500 tokens, 2-tier generic stdlib filter preserving Spring wiring; k>=2 automatically switches to SIGNATURE_COMPRESSED_2HOP guardrail).",
+                        symbolEgoGraphProps, reqGraph),
                 tool("graph_compose_query", "Execute a strict typed JSON-AST compositional multi-hop graph query (1..4 hops, limit <= 50, zero Cypher syntax errors, llm-redact:v2) returning pointer-indexed nodes (path:startLine-endLine@sha256Prefix) for lazy read_captured_source lookups.",
                         composeQueryProps, hasDefaultGraph ? List.of("matchNodes") : List.of("graph", "matchNodes")));
     }
@@ -635,6 +661,8 @@ public final class McpToolDispatcher {
             String method = "GET";
             String path;
             Map<String, Object> payload = null;
+            boolean includeTacitMemory = Boolean.TRUE.equals(arguments.get("include_tacit_memory"));
+            String tacitGraphId = null;
 
             switch (name) {
                 case "jobs_list" -> {
@@ -648,8 +676,10 @@ public final class McpToolDispatcher {
                 case "graph_query" -> {
                     var row = QueryJson.object(arguments, "graph", "context", "operation", "scope", "projection", "direction",
                             "includeMust", "population", "realization", "search", "identity", "source", "target", "metric",
-                            "kinds", "families", "view", "seed", "depth", "groupBy", "otherGraph", "otherContext", "cursor", "size");
+                            "kinds", "families", "view", "seed", "depth", "groupBy", "otherGraph", "otherContext", "cursor", "size",
+                            "include_tacit_memory");
                     var graph = requireGraph(row, backend, defaultGraphRef, defaultContextRef);
+                    tacitGraphId = graph.value();
                     String context = requireContext(row, graph.value(), backend, defaultGraphRef, defaultContextRef);
                     String operation = QueryJson.text(row, "operation");
                     String scope = QueryJson.optionalText(row, "scope").orElse("TYPE");
@@ -841,8 +871,9 @@ public final class McpToolDispatcher {
                     path = "/api/v1/graphs/" + graph.value() + "/captured-files";
                 }
                 case "read_captured_source" -> {
-                    var row = QueryJson.object(arguments, "graph", "path", "startLine", "endLine");
+                    var row = QueryJson.object(arguments, "graph", "path", "startLine", "endLine", "include_tacit_memory");
                     var graph = requireGraph(row, backend, defaultGraphRef, defaultContextRef);
+                    tacitGraphId = graph.value();
                     payload = new LinkedHashMap<>();
                     payload.put("path", QueryJson.text(row, "path"));
                     if (row.containsKey("startLine")) payload.put("startLine", row.get("startLine"));
@@ -851,8 +882,10 @@ public final class McpToolDispatcher {
                     path = "/api/v1/graphs/" + graph.value() + "/captured-source";
                 }
                 case "search_captured_source" -> {
-                    var row = QueryJson.object(arguments, "graph", "query", "regex", "pathFilter", "language", "maxMatches");
+                    var row = QueryJson.object(arguments, "graph", "query", "regex", "pathFilter", "language", "maxMatches",
+                            "include_tacit_memory");
                     var graph = requireGraph(row, backend, defaultGraphRef, defaultContextRef);
+                    tacitGraphId = graph.value();
                     payload = new LinkedHashMap<>();
                     payload.put("query", QueryJson.text(row, "query"));
                     if (row.containsKey("regex")) payload.put("regex", row.get("regex"));
@@ -940,7 +973,7 @@ public final class McpToolDispatcher {
                 }
                 case "vertical_trace" -> {
                     var row = QueryJson.object(arguments, "graph", "context", "seed", "seedKind", "world",
-                            "maxDepth", "maxHops", "includeAdvisory", "includeResilience");
+                            "maxDepth", "maxHops", "includeAdvisory", "includeResilience", "include_tacit_memory");
                     var graph = requireGraph(row, backend, defaultGraphRef, defaultContextRef);
                     boolean includeResilience = !row.containsKey("includeResilience")
                             || !Boolean.FALSE.equals(row.get("includeResilience"));
@@ -968,10 +1001,13 @@ public final class McpToolDispatcher {
                     method = "POST";
                     path = "/api/v1/graphs/" + graph.value() + "/queries/vertical-trace";
                     var resp = backend.dispatch(method, path, payload);
-                    if (resp.status() == 200 && includeResilience) {
-                        return toolResult(enrichVerticalTraceResponse(graph.value(), resp.body(), backend), false);
+                    String outBody = (resp.status() == 200 && includeResilience)
+                            ? enrichVerticalTraceResponse(graph.value(), resp.body(), backend)
+                            : resp.body();
+                    if (resp.status() == 200 && includeTacitMemory) {
+                        outBody = attachTacitMemoryInteraction(graph.value(), outBody, row, backend);
                     }
-                    return toolResult(resp.body(), resp.status() != 200);
+                    return toolResult(outBody, resp.status() != 200);
                 }
                 case "trace_slice" -> {
                     var row = QueryJson.object(arguments, "graph", "path", "methodSignature", "line",
@@ -992,27 +1028,71 @@ public final class McpToolDispatcher {
                     method = "POST";
                     path = "/api/v1/graphs/" + graph.value() + "/queries/code-slice";
                 }
-                // [p3-integrator HOOK — WP3.1]: Add case "symbol_ego_graph" -> POST /api/v1/graphs/{graph}/queries/symbol-ego-graph here.
+                case "symbol_ego_graph" -> {
+                    var row = QueryJson.object(arguments, "graph", "context", "symbolId", "searchTerm",
+                            "hops", "maxTokens", "includeStdlib", "include_tacit_memory");
+                    var graph = requireGraph(row, backend, defaultGraphRef, defaultContextRef);
+                    var symbolIdOpt = optionalNonBlankText(row, "symbolId");
+                    var searchTermOpt = optionalNonBlankText(row, "searchTerm");
+                    if (symbolIdOpt.isEmpty() && searchTermOpt.isEmpty()) {
+                        throw new IllegalArgumentException("symbolId or searchTerm is required");
+                    }
+                    var bodyMap = new LinkedHashMap<String, Object>();
+                    var ctxOpt = optionalNonBlankText(row, "context");
+                    if (ctxOpt.isPresent()) {
+                        bodyMap.put("context", ctxOpt.orElseThrow());
+                    } else if (defaultContextRef != null && defaultContextRef.get() != null
+                            && !defaultContextRef.get().isBlank()) {
+                        bodyMap.put("context", defaultContextRef.get());
+                    }
+                    symbolIdOpt.ifPresent(v -> bodyMap.put("symbolId", v));
+                    searchTermOpt.ifPresent(v -> bodyMap.put("searchTerm", v));
+                    if (row.containsKey("hops") && row.get("hops") != null) {
+                        bodyMap.put("hops", row.get("hops"));
+                    }
+                    if (row.containsKey("maxTokens") && row.get("maxTokens") != null) {
+                        bodyMap.put("maxTokens", row.get("maxTokens"));
+                    }
+                    if (row.containsKey("includeStdlib") && row.get("includeStdlib") != null) {
+                        bodyMap.put("includeStdlib", row.get("includeStdlib"));
+                    }
+                    var resp = backend.dispatch("POST",
+                            "/api/v1/graphs/" + graph.value() + "/queries/symbol-ego-graph",
+                            bodyMap);
+                    String redacted = redactMcpJsonPayload("mcp/symbol_ego_graph.json", resp.body());
+                    if (resp.status() == 200 && includeTacitMemory) {
+                        redacted = attachTacitMemoryInteraction(graph.value(), redacted, row, backend);
+                    }
+                    return toolResult(redacted, resp.status() != 200);
+                }
                 case "graph_compose_query" -> {
+                    var composeArgs = new LinkedHashMap<>(arguments);
+                    composeArgs.remove("include_tacit_memory");
                     GraphComposeQuery validated;
                     try {
-                        validated = GraphComposeQuery.fromMap(arguments);
+                        validated = GraphComposeQuery.fromMap(composeArgs);
                     } catch (GraphComposeQuery.ValidationException invalidQuery) {
                         return toolResult(CanonicalJson.write(invalidQuery.toErrorView()), true);
                     }
-                    var graph = requireGraph(arguments, backend, defaultGraphRef, defaultContextRef);
+                    var graph = requireGraph(composeArgs, backend, defaultGraphRef, defaultContextRef);
                     var resp = backend.dispatch("POST",
                             "/api/v1/graphs/" + graph.value() + "/queries/compose",
                             validated.toMap());
                     String redacted = redactMcpJsonPayload("mcp/graph_compose_query.json", resp.body());
-                    // [p3-integrator HOOK — WP3.3]: Optionally attach advisory tacit memory annotations (include_tacit_memory, theta >= 0.70) to read_captured_source, search_captured_source, graph_query, vertical_trace, symbol_ego_graph, and graph_compose_query.
+                    if (resp.status() == 200 && includeTacitMemory) {
+                        redacted = attachTacitMemoryInteraction(graph.value(), redacted, arguments, backend);
+                    }
                     return toolResult(redacted, resp.status() != 200);
                 }
                 default -> throw new IllegalArgumentException();
             }
 
             var resp = backend.dispatch(method, path, payload);
-            return toolResult(resp.body(), resp.status() != 200);
+            String outBody = resp.body();
+            if (resp.status() == 200 && includeTacitMemory && tacitGraphId != null) {
+                outBody = attachTacitMemoryInteraction(tacitGraphId, outBody, arguments, backend);
+            }
+            return toolResult(outBody, resp.status() != 200);
         } catch (IOException failure) {
             return toolResult("Workbench is unavailable or returned unreadable data.", true);
         } catch (InterruptedException interrupted) {
@@ -1726,6 +1806,88 @@ public final class McpToolDispatcher {
             return FailCloseResilienceAnalyzer.ResilienceVerdict.FAIL_OPEN.name();
         }
         return FailCloseResilienceAnalyzer.ResilienceVerdict.UNKNOWN.name();
+    }
+
+    // -------------------------------------------------------------------------
+    // WP3.3: Opt-in PRAXIS Eq. 9 Quarantined Advisory Tacit Memory Attachment
+    // -------------------------------------------------------------------------
+
+    private static final Set<String> TACIT_ENTITY_ID_KEYS = Set.of(
+            "id", "entityId", "identity", "nodeId", "fromId", "toId", "sourceId", "targetId", "symbolId");
+    private static final Set<String> TACIT_PATH_KEYS = Set.of("path", "sourcePath", "filePath", "pathFilter");
+
+    private static String attachTacitMemoryInteraction(
+            String graphDigest,
+            String rawJson,
+            Map<String, Object> arguments,
+            ApiBackend backend) {
+        if (backend == null || rawJson == null || rawJson.isBlank()) {
+            return rawJson;
+        }
+        try {
+            Object parsed = GraphJson.read(rawJson, RESP_JSON);
+            if (!(parsed instanceof Map<?, ?> rawRoot)) {
+                return rawJson;
+            }
+            var root = new LinkedHashMap<>(GraphJson.object(rawRoot));
+            var entityIds = new LinkedHashSet<String>();
+            var paths = new LinkedHashSet<String>();
+            if (arguments != null) {
+                collectAccessedEntitiesAndPaths(arguments, entityIds, paths, 0);
+            }
+            collectAccessedEntitiesAndPaths(root, entityIds, paths, 0);
+            var reqBody = new LinkedHashMap<String, Object>();
+            reqBody.put("entityIds", List.copyOf(entityIds));
+            reqBody.put("paths", List.copyOf(paths));
+            var tacitResp = backend.dispatch("POST",
+                    "/api/v1/graphs/" + graphDigest + "/queries/tacit-memory-interaction", reqBody);
+            if (tacitResp.status() != 200) {
+                return rawJson;
+            }
+            Object tacitPayload = parseData(tacitResp.body());
+            if (root.get("data") instanceof Map<?, ?> dataObj) {
+                var data = new LinkedHashMap<>(GraphJson.object(dataObj));
+                data.put("advisoryTacitMemory", tacitPayload);
+                root.put("data", data);
+            } else {
+                root.put("advisoryTacitMemory", tacitPayload);
+            }
+            return CanonicalJson.write(root);
+        } catch (Exception ignored) {
+            // Strictly quarantined advisory enrichment: NEVER break canonical MCP responses.
+            return rawJson;
+        }
+    }
+
+    private static void collectAccessedEntitiesAndPaths(
+            Object node,
+            Set<String> entityIds,
+            Set<String> paths,
+            int depth) {
+        if (node == null || depth > 8 || (entityIds.size() >= 64 && paths.size() >= 32)) {
+            return;
+        }
+        if (node instanceof Map<?, ?> map) {
+            for (var e : map.entrySet()) {
+                String key = e.getKey() == null ? "" : String.valueOf(e.getKey());
+                Object val = e.getValue();
+                if (val instanceof String s && !s.isBlank()) {
+                    String trimmed = s.strip();
+                    if (TACIT_ENTITY_ID_KEYS.contains(key) && entityIds.size() < 64 && trimmed.length() <= 512) {
+                        entityIds.add(trimmed);
+                    } else if (TACIT_PATH_KEYS.contains(key) && paths.size() < 32 && trimmed.length() <= 1024) {
+                        paths.add(trimmed);
+                    }
+                } else if (val instanceof Map<?, ?> || val instanceof List<?>) {
+                    collectAccessedEntitiesAndPaths(val, entityIds, paths, depth + 1);
+                }
+            }
+        } else if (node instanceof List<?> list) {
+            int limit = Math.min(list.size(), 64);
+            for (int i = 0; i < limit; i++) {
+                collectAccessedEntitiesAndPaths(list.get(i), entityIds, paths, depth + 1);
+            }
+        }
     }
 
     public static Map<String, Object> errorMap(Object id, int code, String message) {

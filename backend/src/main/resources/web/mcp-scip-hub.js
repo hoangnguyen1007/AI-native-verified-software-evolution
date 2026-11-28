@@ -32,7 +32,9 @@
     { name: 'repair_options', description: 'Inspect deterministic repair recipes, captured source eligibility, and isolated runner readiness.' },
     { name: 'connections', description: 'Inspect cross-service HTTP, gRPC, and async event bridge relationships.' },
     { name: 'vertical_trace', description: 'Trace full-stack execution across 8 architectural layers from frontend to persistence.' },
-    { name: 'trace_slice', description: 'Compute pre-redacted intra-method CFG/DFG/CDG program slice for a captured Java file.' }
+    { name: 'trace_slice', description: 'Compute pre-redacted intra-method CFG/DFG/CDG program slice for a captured Java file.' },
+    { name: 'symbol_ego_graph', description: 'Extract deterministic k=1 flattened (<=2,500 tok) or k>=2 signature-compressed symbol ego-graph.' },
+    { name: 'graph_compose_query', description: 'Execute typed JSON-AST compositional multi-hop graph query (1..4 hops, limit <=50, pointer-indexed).' }
   ];
 
   const DEFAULT_MCP_RESOURCES = [
@@ -41,7 +43,8 @@
     { uri: 'evo://gaps', name: 'Capability Gaps', description: 'Active capability gaps and evidence obligations for the default graph.' },
     { uri: 'evo://hotspots', name: 'Architecture Hotspots', description: 'Top blast-radius and complexity hotspots plus misplaced types.' },
     { uri: 'evo://cycles', name: 'Dependency Cycles & Tangles', description: 'Tarjan SCC dependency cycles and minimal cycle-breaking edge candidates.' },
-    { uri: 'evo://spring-summary', name: 'Spring Wiring Summary', description: 'Spring bean candidates, producers, endpoints, and conditional realizations.' }
+    { uri: 'evo://spring-summary', name: 'Spring Wiring Summary', description: 'Spring bean candidates, producers, endpoints, and conditional realizations.' },
+    { uri: 'evo://schema', name: 'Live Graph Schema View', description: 'Pointer-indexed live node kinds, edge kinds, trust tiers, and bounds for graph_compose_query.' }
   ];
 
   function copyTextSafely(text) {

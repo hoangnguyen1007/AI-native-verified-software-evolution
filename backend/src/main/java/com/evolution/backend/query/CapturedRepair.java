@@ -9,6 +9,9 @@ import com.evolution.analysis.graph.KnowledgeGraph;
 import com.evolution.analysis.query.ArchitectureQuery.StopReason;
 import com.evolution.analysis.query.ArchitectureQueryService;
 import com.evolution.analysis.query.SymbolEgoGraphExtractor;
+import com.evolution.backend.query.advisory.AdvisoryOverlayService;
+import com.evolution.backend.query.advisory.TacitMemoryStore;
+import com.evolution.backend.query.repair.PreEditConfigGate;
 import com.evolution.backend.query.repair.RepairAgentTools;
 import com.evolution.backend.query.repair.RepairContextPlanner;
 import com.evolution.backend.query.repair.RepairEditV2;
@@ -37,6 +40,7 @@ public final class CapturedRepair {
 
     private final RepairChatModel model;
     private final CapturedSearchIndex searchIndex;
+    private final TacitMemoryStore tacitMemoryStore;
 
     public enum Strategy {
         RECIPE, AI
@@ -109,28 +113,40 @@ public final class CapturedRepair {
                           List<Syntax> syntax, Optional<Proposal> proposal, int attempts,
                           List<RepairContextPlanner.AdvisoryContextBadge> advisoryContext,
                           List<RepairContextPlanner.LeidenContextBadge> leidenContext,
-                          List<RepairAgentTools.ToolTraceEntry> toolTrace) {
+                          List<RepairAgentTools.ToolTraceEntry> toolTrace,
+                          Map<String, Object> preEditConfigGate,
+                          List<String> consultedTacitUnitIds) {
         public Outcome(String version, String status, Optional<Reason> reason, List<Source> sources,
                        List<CapabilityGapRecord> gaps, List<Syntax> syntax, Optional<Proposal> proposal) {
-            this(version, status, reason, sources, gaps, syntax, proposal, 1, List.of(), List.of(), List.of());
+            this(version, status, reason, sources, gaps, syntax, proposal, 1, List.of(), List.of(), List.of(), Map.of(), List.of());
         }
 
         public Outcome(String version, String status, Optional<Reason> reason, List<Source> sources,
                        List<CapabilityGapRecord> gaps, List<Syntax> syntax, Optional<Proposal> proposal, int attempts) {
-            this(version, status, reason, sources, gaps, syntax, proposal, attempts, List.of(), List.of(), List.of());
+            this(version, status, reason, sources, gaps, syntax, proposal, attempts, List.of(), List.of(), List.of(), Map.of(), List.of());
         }
 
         public Outcome(String version, String status, Optional<Reason> reason, List<Source> sources,
                        List<CapabilityGapRecord> gaps, List<Syntax> syntax, Optional<Proposal> proposal, int attempts,
                        List<RepairContextPlanner.AdvisoryContextBadge> advisoryContext,
                        List<RepairContextPlanner.LeidenContextBadge> leidenContext) {
-            this(version, status, reason, sources, gaps, syntax, proposal, attempts, advisoryContext, leidenContext, List.of());
+            this(version, status, reason, sources, gaps, syntax, proposal, attempts, advisoryContext, leidenContext, List.of(), Map.of(), List.of());
+        }
+
+        public Outcome(String version, String status, Optional<Reason> reason, List<Source> sources,
+                       List<CapabilityGapRecord> gaps, List<Syntax> syntax, Optional<Proposal> proposal, int attempts,
+                       List<RepairContextPlanner.AdvisoryContextBadge> advisoryContext,
+                       List<RepairContextPlanner.LeidenContextBadge> leidenContext,
+                       List<RepairAgentTools.ToolTraceEntry> toolTrace) {
+            this(version, status, reason, sources, gaps, syntax, proposal, attempts, advisoryContext, leidenContext, toolTrace, Map.of(), List.of());
         }
 
         public Outcome {
             advisoryContext = List.copyOf(advisoryContext == null ? List.of() : advisoryContext);
             leidenContext = List.copyOf(leidenContext == null ? List.of() : leidenContext);
             toolTrace = List.copyOf(toolTrace == null ? List.of() : toolTrace);
+            preEditConfigGate = preEditConfigGate == null ? Map.of() : Collections.unmodifiableMap(new LinkedHashMap<>(preEditConfigGate));
+            consultedTacitUnitIds = List.copyOf(consultedTacitUnitIds == null ? List.of() : consultedTacitUnitIds);
         }
     }
 
@@ -203,7 +219,10 @@ public final class CapturedRepair {
                           List<RepairContextPlanner.AdvisoryContextBadge> advisoryBadges,
                           List<RepairContextPlanner.LeidenContextBadge> leidenBadges,
                           RepairContextPlanner.CompressedContext compressedContext,
-                          List<SymbolEgoGraphExtractor.Result> symbolEgoGraphs) {
+                          List<SymbolEgoGraphExtractor.Result> symbolEgoGraphs,
+                          PreEditConfigGate.GateResult preEditConfigGate,
+                          List<String> advisoryTacitNotes,
+                          List<String> consultedTacitUnitIds) {
         Inputs(List<RepairSource.File> files, List<Source> sources, List<CapabilityGapRecord> gaps,
                List<String> allowedCreateDirs, Map<String, RepairSource.File> contextFiles,
                List<RepairContextPlanner.LinkedDocSection> linkedDocs,
@@ -211,11 +230,15 @@ public final class CapturedRepair {
                List<RepairContextPlanner.LeidenContextBadge> leidenBadges,
                RepairContextPlanner.CompressedContext compressedContext) {
             this(files, sources, gaps, allowedCreateDirs, contextFiles, linkedDocs,
-                    advisoryBadges, leidenBadges, compressedContext, List.of());
+                    advisoryBadges, leidenBadges, compressedContext, List.of(),
+                    PreEditConfigGate.GateResult.ALLOW, List.of(), List.of());
         }
 
         Inputs {
             symbolEgoGraphs = List.copyOf(symbolEgoGraphs == null ? List.of() : symbolEgoGraphs);
+            preEditConfigGate = preEditConfigGate == null ? PreEditConfigGate.GateResult.ALLOW : preEditConfigGate;
+            advisoryTacitNotes = List.copyOf(advisoryTacitNotes == null ? List.of() : advisoryTacitNotes);
+            consultedTacitUnitIds = List.copyOf(consultedTacitUnitIds == null ? List.of() : consultedTacitUnitIds);
         }
     }
 
@@ -233,12 +256,17 @@ public final class CapturedRepair {
     }
 
     public CapturedRepair(RepairChatModel model) {
-        this(model, null);
+        this(model, null, null);
     }
 
     public CapturedRepair(RepairChatModel model, CapturedSearchIndex searchIndex) {
+        this(model, searchIndex, null);
+    }
+
+    public CapturedRepair(RepairChatModel model, CapturedSearchIndex searchIndex, TacitMemoryStore tacitMemoryStore) {
         this.model = model;
         this.searchIndex = searchIndex;
+        this.tacitMemoryStore = tacitMemoryStore;
     }
 
     Options options(FindingDiagnosis.Outcome diagnosis, KnowledgeGraph graph, Supplier<StopReason> stop) {
@@ -450,14 +478,42 @@ public final class CapturedRepair {
         }
         var targetPathsList = List.copyOf(effectivePaths);
         var targetSymbolsList = List.copyOf(effectiveSymbols);
+        String taskPrompt = ((req.title() == null ? "" : req.title()) + " "
+                + (req.description() == null ? "" : req.description())).strip();
         // Phase 2 (Patch Generation, RepoGraph Fig. 2b): refresh/finalize k=1 (<=2,500 tok) ego-graphs
         // anchored on the localized target paths & symbols for direct injection into patch generation.
         var patchGenEgoGraphs = !localizationEgoGraphs.isEmpty()
                 ? localizationEgoGraphs
                 : extractAdHocEgoGraphs(graph, req.context(), targetPathsList, targetSymbolsList, promptSeeds, stop);
+        // PRAXIS Eq. 8 Task-Initialization quarantined tacit memory retrieval (optional when TacitMemoryStore is wired)
+        var rawTacitNotes = new ArrayList<String>();
+        var consultedTacitIds = new LinkedHashSet<String>();
+        if (tacitMemoryStore != null && (stop == null || stop.get() == StopReason.NONE)) {
+            var tacitSeeds = new LinkedHashSet<String>();
+            for (var ego : patchGenEgoGraphs) {
+                ego.center().ifPresent(c -> tacitSeeds.add(c.id()));
+            }
+            for (String s : targetSymbolsList) {
+                if (s != null && !s.isBlank()) tacitSeeds.add(s.strip());
+            }
+            var seenAnnotations = new LinkedHashSet<String>();
+            int queried = 0;
+            for (String entitySeed : tacitSeeds) {
+                if (queried++ >= 4) break;
+                var taskInit = AdvisoryOverlayService.tacitMemoryTaskInit(graph, tacitMemoryStore, entitySeed);
+                for (var unit : taskInit.units()) {
+                    String ann = unit.toCompactAnnotation();
+                    if (seenAnnotations.add(ann)) {
+                        rawTacitNotes.add(ann);
+                    }
+                    consultedTacitIds.addAll(unit.sourceUnitIds());
+                }
+            }
+        }
         var plan = RepairContextPlanner.plan(graph, req.context(), graph.snapshot().value(),
                 targetPathsList, targetSymbolsList,
-                targetSymbolsList.isEmpty() ? "" : targetSymbolsList.getFirst(), stop, searchIndex);
+                targetSymbolsList.isEmpty() ? "" : targetSymbolsList.getFirst(),
+                stop, searchIndex, taskPrompt, List.copyOf(rawTacitNotes));
         var files = new ArrayList<RepairSource.File>();
         var sources = new ArrayList<Source>();
         var contextMap = new LinkedHashMap<String, RepairSource.File>();
@@ -501,9 +557,16 @@ public final class CapturedRepair {
         }
         var inputs = new Inputs(List.copyOf(files), List.copyOf(sources), List.of(),
                 plan.allowedCreateDirectories(), Collections.unmodifiableMap(contextMap), plan.linkedDocs(),
-                plan.advisoryBadges(), plan.leidenBadges(), plan.compressedContext(), patchGenEgoGraphs);
+                plan.advisoryBadges(), plan.leidenBadges(), plan.compressedContext(), patchGenEgoGraphs,
+                plan.preEditConfigGate(), plan.advisoryTacitNotes(), List.copyOf(consultedTacitIds));
         var checks = new ArrayList<Syntax>();
         if (stop.get() != StopReason.NONE) return withheld(Reason.QUERY_LIMIT, inputs, checks, 1);
+        if (plan.isConfigOnlyResolution()) {
+            return new Outcome(VERSION, PreEditConfigGate.GateDecision.CONFIG_ONLY_RESOLUTION.name(),
+                    Optional.empty(), inputs.sources(), inputs.gaps(), List.of(), Optional.empty(), 1,
+                    inputs.advisoryBadges(), inputs.leidenBadges(), List.of(),
+                    plan.preEditConfigGate().toView(), inputs.consultedTacitUnitIds());
+        }
         if (files.isEmpty()) return withheld(Reason.SOURCE_UNAVAILABLE, inputs, checks, 1);
 
         ContentDigest syntheticId = CanonicalJson.sha256(List.of("ad-hoc-repair", graph.identity(),
@@ -1001,7 +1064,10 @@ public final class CapturedRepair {
         try { BoundedJson.encode(proposal, RepairProposalStore.MAX_FILE_BYTES); }
         catch (BoundedJson.TooLarge limit) { return withheld(Reason.CANDIDATE_LIMIT, inputs, checks, usedAttempts); }
         return new Outcome(VERSION, "PROPOSED", Optional.empty(), inputs.sources(), inputs.gaps(), List.of(),
-                Optional.of(proposal), usedAttempts, inputs.advisoryBadges(), inputs.leidenBadges(), toolTrace);
+                Optional.of(proposal), usedAttempts, inputs.advisoryBadges(), inputs.leidenBadges(), toolTrace,
+                inputs.preEditConfigGate().decision() == PreEditConfigGate.GateDecision.CONFIG_ONLY_RESOLUTION
+                        ? inputs.preEditConfigGate().toView() : Map.of(),
+                inputs.consultedTacitUnitIds());
     }
 
     private RepairChatModel.Completion runAuthoringTurnWithBoundedReadOnlyTools(
@@ -1129,15 +1195,27 @@ public final class CapturedRepair {
         var linkedDocs = new ArrayList<RepairContextPlanner.LinkedDocSection>();
         var advisoryBadges = new ArrayList<RepairContextPlanner.AdvisoryContextBadge>();
         var leidenBadges = new ArrayList<RepairContextPlanner.LeidenContextBadge>();
+        var advisoryTacitNotes = new ArrayList<String>();
+        var consultedTacitIds = new LinkedHashSet<String>();
         RepairContextPlanner.CompressedContext compressedContext = RepairContextPlanner.CompressedContext.EMPTY;
         if (diagnosis.proof().isPresent() && stop.get() == StopReason.NONE) {
             String ctx = diagnosis.pin().analysis().map(a -> a.value()).orElse(diagnosis.pin().context());
+            String targetId = diagnosis.proof().orElseThrow().target();
+            var rawTacitNotes = new ArrayList<String>();
+            if (tacitMemoryStore != null && targetId != null && !targetId.isBlank()) {
+                var taskInit = AdvisoryOverlayService.tacitMemoryTaskInit(graph, tacitMemoryStore, targetId);
+                for (var u : taskInit.units()) {
+                    rawTacitNotes.add(u.toCompactAnnotation());
+                    consultedTacitIds.addAll(u.sourceUnitIds());
+                }
+            }
             var plan = RepairContextPlanner.plan(graph, ctx, diagnosis.pin().context(),
-                    List.copyOf(groups.keySet()), bundlePath, diagnosis.proof().orElseThrow().target(), stop, searchIndex);
+                    List.copyOf(groups.keySet()), bundlePath, targetId, stop, searchIndex, null, rawTacitNotes);
             allowedDirs.addAll(plan.allowedCreateDirectories());
             linkedDocs.addAll(plan.linkedDocs());
             advisoryBadges.addAll(plan.advisoryBadges());
             leidenBadges.addAll(plan.leidenBadges());
+            advisoryTacitNotes.addAll(plan.advisoryTacitNotes());
             compressedContext = plan.compressedContext();
             for (var pf : plan.files()) {
                 if ((pf.role() == RepairContextPlanner.FileRole.CONTEXT_EXPANDED
@@ -1150,7 +1228,8 @@ public final class CapturedRepair {
         }
         return new Inputs(List.copyOf(files), List.copyOf(sources), List.copyOf(gaps),
                 List.copyOf(allowedDirs), Collections.unmodifiableMap(contextMap), List.copyOf(linkedDocs),
-                List.copyOf(advisoryBadges), List.copyOf(leidenBadges), compressedContext);
+                List.copyOf(advisoryBadges), List.copyOf(leidenBadges), compressedContext, List.of(),
+                PreEditConfigGate.GateResult.ALLOW, List.copyOf(advisoryTacitNotes), List.copyOf(consultedTacitIds));
     }
 
     private Request offer(FindingDiagnosis.Outcome diagnosis, KnowledgeGraph graph, Inputs inputs,
@@ -1275,6 +1354,14 @@ public final class CapturedRepair {
                                 "signature", c.signature()))
                         .toList();
                 if (!sigOnly.isEmpty()) metadata.put("calleeSignatures", sigOnly);
+            }
+            if (!inputs.advisoryTacitNotes().isEmpty()) {
+                metadata.put("advisoryTacitMemory", Map.of(
+                        "header", RepairContextPlanner.ADVISORY_TACIT_PREFIX,
+                        "trustTier", TacitMemoryStore.TRUST_TIER,
+                        "quarantined", true,
+                        "notes", inputs.advisoryTacitNotes(),
+                        "formattedBlock", RepairContextPlanner.formatAdvisoryTacitBlock(inputs.advisoryTacitNotes())));
             }
             if (!inputs.linkedDocs().isEmpty()) {
                 var docsPayload = new ArrayList<Map<String, Object>>();
@@ -1645,7 +1732,10 @@ public final class CapturedRepair {
     private static Outcome withheld(Reason reason, Inputs inputs, List<Syntax> checks, int attempts,
                                     List<RepairAgentTools.ToolTraceEntry> toolTrace) {
         return new Outcome(VERSION, "WITHHELD", Optional.of(reason), inputs.sources(), inputs.gaps(),
-                List.copyOf(checks), Optional.empty(), attempts, inputs.advisoryBadges(), inputs.leidenBadges(), toolTrace);
+                List.copyOf(checks), Optional.empty(), attempts, inputs.advisoryBadges(), inputs.leidenBadges(), toolTrace,
+                inputs.preEditConfigGate().decision() == PreEditConfigGate.GateDecision.CONFIG_ONLY_RESOLUTION
+                        ? inputs.preEditConfigGate().toView() : Map.of(),
+                inputs.consultedTacitUnitIds());
     }
 
     // -------------------------------------------------------------------------

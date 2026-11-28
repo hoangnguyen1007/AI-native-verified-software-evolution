@@ -492,6 +492,18 @@ public final class StaticPolyglotScan {
     Result run(PolyglotInventory.Report inventory, SemanticTables tables, RepositoryContentStore content, Path scratch,
             BooleanSupplier cancelled,
             Function<ContentDigest, byte[]> verifiedBytes, boolean fastArchitecture,
+            Optional<Path> incrementalCacheRoot, List<SemanticTables.Row> preloadedRows,
+            boolean syntaxFast) throws IOException {
+        if (syntaxFast) {
+            return runSyntaxFast(inventory, tables, content, scratch, cancelled, verifiedBytes, preloadedRows);
+        }
+        return run(inventory, tables, content, scratch, cancelled, verifiedBytes, fastArchitecture,
+                incrementalCacheRoot, preloadedRows);
+    }
+
+    Result run(PolyglotInventory.Report inventory, SemanticTables tables, RepositoryContentStore content, Path scratch,
+            BooleanSupplier cancelled,
+            Function<ContentDigest, byte[]> verifiedBytes, boolean fastArchitecture,
             Optional<Path> incrementalCacheRoot, List<SemanticTables.Row> preloadedRows) throws IOException {
         var categories = new TreeMap<String, Long>();
         var failures = new TreeMap<String, Long>();

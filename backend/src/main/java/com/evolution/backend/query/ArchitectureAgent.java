@@ -35,7 +35,7 @@ import java.util.function.Supplier;
  * PublishedReports, recording every observation as a citable evidence item (E#) with deterministic provenance.
  */
 public final class ArchitectureAgent {
-    public static final String GRAPH_COMPOSE_AST_SCHEMA = "evo.graph-compose-query:v1";
+    public static final String GRAPH_COMPOSE_AST_SCHEMA = com.evolution.analysis.query.GraphComposeQuery.SCHEMA_VERSION;
     public static final String MODE_BENCHMARK_QA = "BENCHMARK_QA";
     static final int MAX_ROUNDS = 18;
     static final int MAX_TOOL_JSON_BYTES = 48_000;
@@ -2399,6 +2399,11 @@ public final class ArchitectureAgent {
             map.put("rationale", rationale);
             return Collections.unmodifiableMap(map);
         }
+
+        /** Parses and strictly validates {@link #graphComposeAst()} into a typed {@link com.evolution.analysis.query.GraphComposeQuery}. */
+        public com.evolution.analysis.query.GraphComposeQuery toGraphComposeQuery() {
+            return com.evolution.analysis.query.GraphComposeQuery.fromMap(graphComposeAst);
+        }
     }
 
     public record BenchmarkQaRequest(
@@ -2474,9 +2479,9 @@ public final class ArchitectureAgent {
     }
 
     /**
-     * Builds a typed {@code GraphComposeQuery}-compatible JSON-AST descriptor ({@code matchNodes},
-     * {@code matchEdges}, {@code filters}, {@code returnFields}, {@code limit}) ready to dispatch
-     * directly to {@code GraphComposeQuery.fromMap(...)} once merged with WP3.2.
+     * Builds a strictly validated {@link com.evolution.analysis.query.GraphComposeQuery}-conformant
+     * JSON-AST map ({@code matchNodes}, {@code matchEdges}, {@code filters}, {@code returnFields},
+     * {@code limit}) directly accepted by {@link com.evolution.analysis.query.GraphComposeQuery#fromMap(Map)}.
      */
     public static Map<String, Object> buildGraphComposeAst(
             String operation,
@@ -2484,35 +2489,73 @@ public final class ArchitectureAgent {
             List<String> edgeKinds,
             int maxDepth,
             int limit) {
-        String safeSeed = seed == null ? "" : seed.strip();
-        int hops = Math.max(1, Math.min(4, maxDepth));
-        int cap = Math.max(1, Math.min(50, limit));
+        String op = (operation == null || operation.isBlank()) ? "FIND_SYMBOLS" : operation.strip();
+        String safeSeed = sanitizeComposeFilterValue(seed);
+        int hops = Math.max(com.evolution.analysis.query.GraphComposeQuery.MIN_HOPS,
+                Math.min(com.evolution.analysis.query.GraphComposeQuery.MAX_HOPS, maxDepth));
+        int cap = Math.max(com.evolution.analysis.query.GraphComposeQuery.MIN_LIMIT,
+                Math.min(com.evolution.analysis.query.GraphComposeQuery.MAX_LIMIT, limit));
+
+        String sourceNodeKind = ("INSPECT_CONFIG_SPAN".equals(op) || "VERIFY_SOURCE_SPAN".equals(op))
+                ? "SOURCE_DOCUMENT"
+                : "TYPE";
         var matchNodes = new ArrayList<Map<String, Object>>();
-        matchNodes.add(Map.of("alias", "n0", "kinds", List.of("TYPE", "BEAN_DEFINITION_CANDIDATE", "ENDPOINT")));
+        matchNodes.add(Map.of("alias", "n0", "kind", sourceNodeKind));
+
+        var sanitizedEdgeKinds = new ArrayList<String>();
+        if (edgeKinds != null) {
+            for (String ek : edgeKinds) {
+                if (ek != null) {
+                    String trimmed = ek.strip();
+                    if (trimmed.matches("^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$")
+                            && sanitizedEdgeKinds.size() < com.evolution.analysis.query.GraphComposeQuery.MAX_EDGE_KINDS_PER_PATTERN) {
+                        sanitizedEdgeKinds.add(trimmed);
+                    }
+                }
+            }
+        }
+
         var matchEdges = new ArrayList<Map<String, Object>>();
-        if (edgeKinds != null && !edgeKinds.isEmpty()) {
-            matchNodes.add(Map.of("alias", "n1", "kinds", List.of("TYPE", "METHOD", "BEAN_DEFINITION_CANDIDATE")));
+        if (!sanitizedEdgeKinds.isEmpty()) {
+            matchNodes.add(Map.of("alias", "n1", "kind", "TYPE"));
             matchEdges.add(Map.of(
                     "from", "n0",
                     "to", "n1",
-                    "kinds", List.copyOf(edgeKinds),
-                    "minHops", 1,
+                    "edgeKinds", List.copyOf(sanitizedEdgeKinds),
+                    "minHops", com.evolution.analysis.query.GraphComposeQuery.MIN_HOPS,
                     "maxHops", hops));
         }
+
         var filters = new ArrayList<Map<String, Object>>();
         if (!safeSeed.isEmpty()) {
-            filters.add(Map.of("alias", "n0", "field", "fqn", "op", "CONTAINS", "value", safeSeed));
+            String filterField = "SOURCE_DOCUMENT".equals(sourceNodeKind) ? "path" : "fqn";
+            filters.add(Map.of("alias", "n0", "field", filterField, "op", "CONTAINS", "value", safeSeed));
         }
+
         var ast = new LinkedHashMap<String, Object>();
-        ast.put("schema", GRAPH_COMPOSE_AST_SCHEMA);
-        ast.put("operation", operation == null ? "FIND_SYMBOLS" : operation);
-        ast.put("seed", safeSeed);
         ast.put("matchNodes", List.copyOf(matchNodes));
         ast.put("matchEdges", List.copyOf(matchEdges));
         ast.put("filters", List.copyOf(filters));
-        ast.put("returnFields", List.of("id", "fqn", "kind", "trustTier", "span", "pointerRef"));
+        ast.put("returnFields", com.evolution.analysis.query.GraphComposeQuery.ALLOWED_RETURN_FIELDS);
         ast.put("limit", cap);
-        return Collections.unmodifiableMap(ast);
+        // Self-validate against GraphComposeQuery.fromMap(...) so drift is impossible.
+        return com.evolution.analysis.query.GraphComposeQuery.fromMap(ast).toMap();
+    }
+
+    /** Convenience adapter converting a planned AST map into a typed {@link com.evolution.analysis.query.GraphComposeQuery}. */
+    public static com.evolution.analysis.query.GraphComposeQuery toGraphComposeQuery(Map<String, Object> ast) {
+        return com.evolution.analysis.query.GraphComposeQuery.fromMap(ast);
+    }
+
+    private static String sanitizeComposeFilterValue(String raw) {
+        if (raw == null || raw.isBlank()) return "";
+        var sb = new StringBuilder(Math.min(raw.length(), com.evolution.analysis.query.GraphComposeQuery.MAX_FILTER_VALUE_LENGTH));
+        for (int i = 0; i < raw.length()
+                && sb.length() < com.evolution.analysis.query.GraphComposeQuery.MAX_FILTER_VALUE_LENGTH; i++) {
+            char c = raw.charAt(i);
+            sb.append(Character.isISOControl(c) ? ' ' : c);
+        }
+        return sb.toString().strip();
     }
 
     /**

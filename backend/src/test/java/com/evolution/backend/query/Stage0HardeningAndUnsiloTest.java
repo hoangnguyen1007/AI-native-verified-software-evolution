@@ -536,7 +536,7 @@ final class Stage0HardeningAndUnsiloTest {
                 assertFalse(mcpSetupResp.body().contains("\"evo.jar\""), "MCP setup must NOT contain literal evo.jar placeholder");
                 assertFalse(mcpSetupResp.body().contains("<path-to-evo-store>"), "MCP setup must NOT contain literal <path-to-evo-store>");
                 assertTrue(mcpSetupResp.body().contains("real-evo-store"), "MCP setup must resolve actual storeDirectory: " + mcpSetupResp.body());
-                assertTrue(mcpSetupResp.body().contains("\"toolCount\":21"), mcpSetupResp.body());
+                assertTrue(mcpSetupResp.body().contains("\"toolCount\":" + com.evolution.backend.query.mcp.McpToolDispatcher.TOOL_COUNT), mcpSetupResp.body());
                 assertTrue(mcpSetupResp.body().contains("\"patMintSupported\":true"), mcpSetupResp.body());
 
                 // 5. Read-only mcp:read PAT is REJECTED (403 INSUFFICIENT_TOKEN_SCOPE) on write routes (both Auth & Query APIs)
@@ -677,9 +677,9 @@ final class Stage0HardeningAndUnsiloTest {
             var responses = out.toString().lines().map(Stage0HardeningAndUnsiloTest::parseJsonObj).toList();
             assertEquals(7, responses.size());
 
-            // 21 tools including search_captured_source, inspect_codeowners, vertical_trace & trace_slice
+            // Canonical MCP tool catalog (including symbol_ego_graph & graph_compose_query)
             var tools = GraphJson.array(GraphJson.object(responses.get(1).get("result")).get("tools"));
-            assertEquals(21, tools.size());
+            assertEquals(com.evolution.backend.query.mcp.McpToolDispatcher.TOOL_COUNT, tools.size());
 
             // jobs_list returns our persisted job (NOT 503 JOBS_UNAVAILABLE!)
             var jobsRes = GraphJson.object(responses.get(2).get("result"));
@@ -1837,7 +1837,8 @@ final class Stage0HardeningAndUnsiloTest {
                         new PrintWriter(out, true));
                 var responses = out.toString().lines().map(Stage0HardeningAndUnsiloTest::parseJsonObj).toList();
                 assertEquals(7, responses.size());
-                assertEquals(21, GraphJson.array(GraphJson.object(responses.get(1).get("result")).get("tools")).size());
+                assertEquals(com.evolution.backend.query.mcp.McpToolDispatcher.TOOL_COUNT,
+                        GraphJson.array(GraphJson.object(responses.get(1).get("result")).get("tools")).size());
                 for (int idx : List.of(2, 3, 4, 5)) {
                     assertEquals(false, GraphJson.object(responses.get(idx).get("result")).get("isError"),
                             "Live PAT MCP tool idx " + idx + " failed: " + responses.get(idx));

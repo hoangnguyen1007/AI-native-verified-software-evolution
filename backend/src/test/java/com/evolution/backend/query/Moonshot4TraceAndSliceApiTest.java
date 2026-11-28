@@ -452,7 +452,7 @@ class Moonshot4TraceAndSliceApiTest {
             mockLlm.stop(0);
         }
 
-        // 3. WorkbenchMcpMain: offline --store direct mode (21 MCP tools total!)
+        // 3. WorkbenchMcpMain: offline --store direct mode (canonical MCP tool catalog)
         var directMcp = WorkbenchMcpMain.openDirectStore(tempDir, null, null);
         var directResponses = runMcp(directMcp, List.of(
                 mcpMsg(1, "initialize", Map.of("protocolVersion", "2025-11-25", "capabilities", Map.of(), "clientInfo", Map.of("name", "t", "version", "1"))),
@@ -461,7 +461,8 @@ class Moonshot4TraceAndSliceApiTest {
                 mcpMsg(4, "tools/call", Map.of("name", "trace_slice", "arguments", Map.of("path", fx.orderServicePath(), "line", fx.totalReturnLine(), "direction", "BACKWARD")))
         ));
         var toolList = GraphJson.array(GraphJson.object(directResponses.get(1).get("result")).get("tools"));
-        assertEquals(21, toolList.size(), "WorkbenchMcpMain must expose 21 MCP tools total");
+        assertEquals(com.evolution.backend.query.mcp.McpToolDispatcher.TOOL_COUNT, toolList.size(),
+                "WorkbenchMcpMain must expose canonical MCP tool count");
         var mcpNames = toolList.stream().map(t -> GraphJson.string(GraphJson.object(t).get("name")))
                 .collect(java.util.stream.Collectors.toSet());
         assertTrue(mcpNames.contains("vertical_trace"));
