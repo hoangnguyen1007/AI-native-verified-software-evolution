@@ -8,6 +8,7 @@ import com.evolution.analysis.graph.GraphJson;
 import com.evolution.analysis.graph.KnowledgeGraph;
 import com.evolution.analysis.query.ArchitectureQuery.StopReason;
 import com.evolution.analysis.query.ArchitectureQueryService;
+import com.evolution.analysis.query.SymbolEgoGraphExtractor;
 import com.evolution.backend.query.repair.RepairAgentTools;
 import com.evolution.backend.query.repair.RepairContextPlanner;
 import com.evolution.backend.query.repair.RepairEditV2;
@@ -201,7 +202,21 @@ public final class CapturedRepair {
                           List<RepairContextPlanner.LinkedDocSection> linkedDocs,
                           List<RepairContextPlanner.AdvisoryContextBadge> advisoryBadges,
                           List<RepairContextPlanner.LeidenContextBadge> leidenBadges,
-                          RepairContextPlanner.CompressedContext compressedContext) {
+                          RepairContextPlanner.CompressedContext compressedContext,
+                          List<SymbolEgoGraphExtractor.Result> symbolEgoGraphs) {
+        Inputs(List<RepairSource.File> files, List<Source> sources, List<CapabilityGapRecord> gaps,
+               List<String> allowedCreateDirs, Map<String, RepairSource.File> contextFiles,
+               List<RepairContextPlanner.LinkedDocSection> linkedDocs,
+               List<RepairContextPlanner.AdvisoryContextBadge> advisoryBadges,
+               List<RepairContextPlanner.LeidenContextBadge> leidenBadges,
+               RepairContextPlanner.CompressedContext compressedContext) {
+            this(files, sources, gaps, allowedCreateDirs, contextFiles, linkedDocs,
+                    advisoryBadges, leidenBadges, compressedContext, List.of());
+        }
+
+        Inputs {
+            symbolEgoGraphs = List.copyOf(symbolEgoGraphs == null ? List.of() : symbolEgoGraphs);
+        }
     }
 
     private record Request(Optional<Offer> offer, byte[] bytes, String userPrompt, List<ContentDigest> offered,
@@ -320,13 +335,45 @@ public final class CapturedRepair {
                 .orElseThrow(() -> new IllegalArgumentException("Context not found: " + req.context()));
         var effectivePaths = new LinkedHashSet<String>(req.targetPaths());
         var effectiveSymbols = new LinkedHashSet<String>(req.targetSymbols());
+        var promptSeeds = extractAdHocPromptSeeds(req.title(), req.description(), req.targetSymbols());
+        String promptLower = ((req.title() == null ? "" : req.title()) + " "
+                + (req.description() == null ? "" : req.description())).toLowerCase(Locale.ROOT);
+
+        // Phase 1 (Localization, RepoGraph Fig. 2b): extract k=1 (<=2,500 tok) Symbol Ego-Graph(s)
+        // to pinpoint the target symbol and its immediate 1-hop def/ref/inject/call/implements neighborhood.
+        var localizationEgoGraphs = extractAdHocEgoGraphs(
+                graph, req.context(), List.copyOf(effectivePaths), List.copyOf(effectiveSymbols), promptSeeds, stop);
+        for (var ego : localizationEgoGraphs) {
+            ego.center().ifPresent(c -> effectiveSymbols.add(c.id()));
+        }
+
         if (effectivePaths.isEmpty()) {
-            // Auto-seed candidate files from user prompt via RepoMapBuilder (Trigram+IDF+PPR).
+            // 1a. Promote safe editable target files discovered directly from the k=1 ego-graph localization
+            for (var ego : localizationEgoGraphs) {
+                if (effectivePaths.size() >= 3) break;
+                for (var node : ego.nodes()) {
+                    if (effectivePaths.size() >= 3) break;
+                    String p = node.path();
+                    if (p.isEmpty() || !RepairSyntaxGate.supportsPath(p)) continue;
+                    String fileName = p.substring(p.lastIndexOf('/') + 1).toLowerCase(Locale.ROOT);
+                    if (com.evolution.backend.query.llm.LlmTransport.isConfigOrEnvPath(p)
+                            && !promptLower.contains(fileName)) {
+                        continue;
+                    }
+                    var openedOpt = RepairSource.openEditableByPath(graph, p, List.of());
+                    if (openedOpt.isEmpty()) continue;
+                    var opened = openedOpt.orElseThrow();
+                    if (com.evolution.backend.query.llm.LlmTransport.containsSecretForPath(opened.path(), opened.text())) {
+                        continue;
+                    }
+                    effectivePaths.add(p);
+                }
+            }
+        }
+        if (effectivePaths.isEmpty()) {
+            // Auto-seed candidate files from user prompt via RepoMapBuilder (Trigram+IDF+PPR+InterfaceConsumerExpand).
             // Never speculatively promote config/env or secret-bearing files into editable targets
             // unless explicitly named by the user (config files stay read-only context via RepairContextPlanner).
-            var promptSeeds = extractAdHocPromptSeeds(req.title(), req.description(), req.targetSymbols());
-            String promptLower = ((req.title() == null ? "" : req.title()) + " "
-                    + (req.description() == null ? "" : req.description())).toLowerCase(Locale.ROOT);
             try {
                 var repoMap = RepoMapBuilder.build(graph, Optional.of(req.context()), promptSeeds, 10, 2_400, stop, searchIndex);
                 var safeCandidates = new ArrayList<RepoMapBuilder.FileRank>();
@@ -403,6 +450,11 @@ public final class CapturedRepair {
         }
         var targetPathsList = List.copyOf(effectivePaths);
         var targetSymbolsList = List.copyOf(effectiveSymbols);
+        // Phase 2 (Patch Generation, RepoGraph Fig. 2b): refresh/finalize k=1 (<=2,500 tok) ego-graphs
+        // anchored on the localized target paths & symbols for direct injection into patch generation.
+        var patchGenEgoGraphs = !localizationEgoGraphs.isEmpty()
+                ? localizationEgoGraphs
+                : extractAdHocEgoGraphs(graph, req.context(), targetPathsList, targetSymbolsList, promptSeeds, stop);
         var plan = RepairContextPlanner.plan(graph, req.context(), graph.snapshot().value(),
                 targetPathsList, targetSymbolsList,
                 targetSymbolsList.isEmpty() ? "" : targetSymbolsList.getFirst(), stop, searchIndex);
@@ -422,6 +474,19 @@ public final class CapturedRepair {
                 }
             }
         }
+        // Include 1-hop ego-graph neighbor files into bounded read/expanded context for Patch Generation
+        for (var ego : patchGenEgoGraphs) {
+            if (stop.get() != StopReason.NONE) break;
+            for (var node : ego.nodes()) {
+                if (node.path().isEmpty() || contextMap.containsKey(node.path())
+                        || !RepairSyntaxGate.supportsPath(node.path())) {
+                    continue;
+                }
+                if (contextMap.size() >= 12) break;
+                RepairSource.openEditableByPath(graph, node.path(), List.of())
+                        .ifPresent(f -> contextMap.putIfAbsent(f.path(), f));
+            }
+        }
         // If user only supplied targetSymbols (no targetPaths), promote symbol-declaring editable files into editable targets
         if (files.isEmpty() && !contextMap.isEmpty()) {
             for (var pf : plan.files()) {
@@ -436,7 +501,7 @@ public final class CapturedRepair {
         }
         var inputs = new Inputs(List.copyOf(files), List.copyOf(sources), List.of(),
                 plan.allowedCreateDirectories(), Collections.unmodifiableMap(contextMap), plan.linkedDocs(),
-                plan.advisoryBadges(), plan.leidenBadges(), plan.compressedContext());
+                plan.advisoryBadges(), plan.leidenBadges(), plan.compressedContext(), patchGenEgoGraphs);
         var checks = new ArrayList<Syntax>();
         if (stop.get() != StopReason.NONE) return withheld(Reason.QUERY_LIMIT, inputs, checks, 1);
         if (files.isEmpty()) return withheld(Reason.SOURCE_UNAVAILABLE, inputs, checks, 1);
@@ -598,6 +663,59 @@ public final class CapturedRepair {
                 + wrapped + "\n"
                 + "You may call the read-only inspection tools (read_captured_source, inspect_symbol_details, analyze_impact, inspect_advisory_links, read_markdown_section) if needed, "
                 + "then return corrected JSON {\"edits\":[...]} anchored against the ORIGINAL baseline offered files and SHA-256 digests.";
+    }
+
+    /**
+     * Extracts deterministic {@code k=1} ({@code <= 2,500} tokens total) symbol ego-graphs for both
+     * Localization and Patch Generation phases of {@link #proposeAdHoc} (RepoGraph Fig. 2b).
+     */
+    public static List<SymbolEgoGraphExtractor.Result> extractAdHocEgoGraphs(
+            KnowledgeGraph graph,
+            String context,
+            List<String> targetPaths,
+            List<String> targetSymbols,
+            List<String> promptSeeds,
+            Supplier<StopReason> stop) {
+        if (graph == null || (stop != null && stop.get() != StopReason.NONE)) return List.of();
+        var extractor = new SymbolEgoGraphExtractor();
+        var queries = new LinkedHashSet<String>();
+        if (targetSymbols != null) {
+            for (String s : targetSymbols) {
+                if (s != null && !s.isBlank()) queries.add(s.strip());
+            }
+        }
+        if (targetPaths != null) {
+            for (String p : targetPaths) {
+                if (p == null || p.isBlank()) continue;
+                String base = p.replace('\\', '/');
+                int sl = base.lastIndexOf('/');
+                if (sl >= 0) base = base.substring(sl + 1);
+                int dot = base.lastIndexOf('.');
+                if (dot > 0) base = base.substring(0, dot);
+                if (base.length() >= 2) queries.add(base);
+            }
+        }
+        if (promptSeeds != null) {
+            for (String s : promptSeeds) {
+                if (s != null && s.strip().length() >= 3) queries.add(s.strip());
+            }
+        }
+        var results = new ArrayList<SymbolEgoGraphExtractor.Result>();
+        var seenCenters = new HashSet<String>();
+        int remainingTokens = SymbolEgoGraphExtractor.HARD_MAX_TOKENS;
+        for (String q : queries) {
+            if (results.size() >= 2 || remainingTokens < 250) break;
+            if (stop != null && stop.get() != StopReason.NONE) break;
+            var req = SymbolEgoGraphExtractor.Request.of(
+                    Optional.ofNullable(context), Optional.empty(), Optional.of(q),
+                    SymbolEgoGraphExtractor.DEFAULT_HOPS, remainingTokens);
+            var res = extractor.extract(graph, req, stop);
+            if (res.found() && res.center().isPresent() && seenCenters.add(res.center().orElseThrow().id())) {
+                results.add(res);
+                remainingTokens = Math.max(0, remainingTokens - res.estimatedTokens());
+            }
+        }
+        return List.copyOf(results);
     }
 
     private static List<String> extractAdHocPromptSeeds(String title, String description, List<String> targetSymbols) {
@@ -1111,6 +1229,33 @@ public final class CapturedRepair {
             if (!inputs.allowedCreateDirs().isEmpty()) metadata.put("allowedCreateDirectories", inputs.allowedCreateDirs());
             if (!redactedReadOnlyContext.isEmpty()) metadata.put("readOnlyRedactedContext", redactedReadOnlyContext);
             if (!inputs.leidenBadges().isEmpty()) metadata.put("leidenCommunities", inputs.leidenBadges());
+            if (!inputs.symbolEgoGraphs().isEmpty()) {
+                var egoPayload = new ArrayList<Map<String, Object>>();
+                for (var ego : inputs.symbolEgoGraphs()) {
+                    var row = new LinkedHashMap<String, Object>();
+                    row.put("mode", ego.mode().name());
+                    row.put("effectiveHops", ego.effectiveHops());
+                    row.put("guardrailApplied", ego.guardrailApplied());
+                    row.put("estimatedTokens", ego.estimatedTokens());
+                    row.put("tokenBudget", ego.tokenBudget());
+                    ego.center().ifPresent(c -> row.put("center", Map.of(
+                            "id", c.id(),
+                            "fqn", com.evolution.backend.query.llm.LlmTransport.neutralizeInjectionSentinels(c.fqn()),
+                            "path", com.evolution.backend.query.llm.LlmTransport.neutralizeInjectionSentinels(c.path()),
+                            "startLine", c.startLine(),
+                            "trustTier", c.trustTier().name())));
+                    row.put("edges", ego.edges().stream().limit(24).map(e -> Map.<String, Object>of(
+                            "source", com.evolution.backend.query.llm.LlmTransport.neutralizeInjectionSentinels(e.sourceFqn()),
+                            "kind", e.normalizedKind(),
+                            "target", com.evolution.backend.query.llm.LlmTransport.neutralizeInjectionSentinels(e.targetFqn()),
+                            "trustTier", e.trustTier().name())).toList());
+                    String safeRendered = com.evolution.backend.query.llm.LlmTransport.neutralizeInjectionSentinels(
+                            com.evolution.backend.query.llm.LlmTransport.redactSecrets(ego.renderedText()).text());
+                    row.put("renderedContext", safeRendered);
+                    egoPayload.add(row);
+                }
+                metadata.put("symbolEgoGraph", egoPayload);
+            }
             if (inputs.compressedContext() != null && !inputs.compressedContext().hints().isEmpty()) {
                 var compactHints = inputs.compressedContext().hints().stream()
                         .flatMap(h -> h.lines().stream())

@@ -2,6 +2,9 @@ package com.evolution.backend.analysis;
 
 import com.evolution.analysis.acquisition.streaming.*;
 import com.evolution.analysis.contract.common.*;
+import com.evolution.analysis.contract.identity.RepositoryIdentity;
+import com.evolution.analysis.contract.identity.SnapshotIdentity;
+import com.evolution.analysis.contract.semantic.TrustTier;
 import com.evolution.analysis.contract.serialization.CanonicalJson;
 import com.evolution.analysis.filesystem.*;
 import com.evolution.analysis.graph.*;
@@ -61,24 +64,34 @@ public final class StaticPolyglotScan {
     public record Result(SemanticTables.Table records, Map<String, Long> categories, Map<String, Long> failures,
             long documents, long parsed, long workerFileBytes, long cacheHits, long cacheMisses,
             JsWorkspaceAliasResolver.WorkspaceModel jsWorkspace,
-            Map<String, ContentDigest> fileSyntaxDigests) {
+            Map<String, ContentDigest> fileSyntaxDigests,
+            boolean syntaxFast,
+            Optional<TreeSitterSourceFrontend.SyntaxFastResult> syntaxFastResult) {
         public Result(SemanticTables.Table records, Map<String, Long> categories, Map<String, Long> failures,
                 long documents, long parsed, long workerFileBytes) {
             this(records, categories, failures, documents, parsed, workerFileBytes, 0L, 0L,
-                    JsWorkspaceAliasResolver.WorkspaceModel.EMPTY, Map.of());
+                    JsWorkspaceAliasResolver.WorkspaceModel.EMPTY, Map.of(), false, Optional.empty());
         }
 
         public Result(SemanticTables.Table records, Map<String, Long> categories, Map<String, Long> failures,
                 long documents, long parsed, long workerFileBytes, long cacheHits, long cacheMisses) {
             this(records, categories, failures, documents, parsed, workerFileBytes, cacheHits, cacheMisses,
-                    JsWorkspaceAliasResolver.WorkspaceModel.EMPTY, Map.of());
+                    JsWorkspaceAliasResolver.WorkspaceModel.EMPTY, Map.of(), false, Optional.empty());
         }
 
         public Result(SemanticTables.Table records, Map<String, Long> categories, Map<String, Long> failures,
                 long documents, long parsed, long workerFileBytes, long cacheHits, long cacheMisses,
                 JsWorkspaceAliasResolver.WorkspaceModel jsWorkspace) {
             this(records, categories, failures, documents, parsed, workerFileBytes, cacheHits, cacheMisses,
-                    jsWorkspace, Map.of());
+                    jsWorkspace, Map.of(), false, Optional.empty());
+        }
+
+        public Result(SemanticTables.Table records, Map<String, Long> categories, Map<String, Long> failures,
+                long documents, long parsed, long workerFileBytes, long cacheHits, long cacheMisses,
+                JsWorkspaceAliasResolver.WorkspaceModel jsWorkspace,
+                Map<String, ContentDigest> fileSyntaxDigests) {
+            this(records, categories, failures, documents, parsed, workerFileBytes, cacheHits, cacheMisses,
+                    jsWorkspace, fileSyntaxDigests, false, Optional.empty());
         }
 
         public Result {
@@ -86,15 +99,28 @@ public final class StaticPolyglotScan {
             failures = Map.copyOf(failures);
             jsWorkspace = jsWorkspace == null ? JsWorkspaceAliasResolver.WorkspaceModel.EMPTY : jsWorkspace;
             fileSyntaxDigests = fileSyntaxDigests == null ? Map.of() : Collections.unmodifiableMap(new TreeMap<>(fileSyntaxDigests));
+            syntaxFastResult = syntaxFastResult == null ? Optional.empty() : syntaxFastResult;
         }
 
         public Map<String, Object> summary() {
-            var values = new TreeMap<String, Object>(Map.of("provider", TreeSitterSourceFrontend.provider(), "records",
-                    records.identity(), "documents", documents, "parsedDocuments", parsed, "categories", categories,
-                    "failures", failures, "trust", "SOURCE_SYNTAX", "boundCallTargets", false, "workerFileBytes",
-                    workerFileBytes, "population", "LANGUAGE_DOCUMENT_ATTEMPTS"));
+            var values = new TreeMap<String, Object>(Map.of("provider",
+                    syntaxFast ? TreeSitterSourceFrontend.SYNTAX_FAST_PROVIDER : TreeSitterSourceFrontend.provider(),
+                    "records", records.identity(), "documents", documents, "parsedDocuments", parsed,
+                    "categories", categories, "failures", failures, "trust", TrustTier.SOURCE_SYNTAX.name(),
+                    "boundCallTargets", false, "workerFileBytes", workerFileBytes,
+                    "population", "LANGUAGE_DOCUMENT_ATTEMPTS"));
             values.put("javaRpcProvider", JavaGrpcSourceFrontend.PROVIDER);
-            values.put("javaRpcAcquisition", "SELECTIVE_SOURCE_SYNTAX");
+            values.put("javaRpcAcquisition", syntaxFast ? "SYNTAX_FAST_2PASS" : "SELECTIVE_SOURCE_SYNTAX");
+            if (syntaxFast) {
+                values.put("mode", TreeSitterSourceFrontend.SYNTAX_FAST_MODE);
+                syntaxFastResult.ifPresent(sfr -> {
+                    values.put("syntaxFastSymbols", sfr.symbols().size());
+                    values.put("syntaxFastEdges", sfr.edges().size());
+                    values.put("syntaxFastFilesScanned", sfr.filesScanned());
+                    values.put("syntaxFastFilesFailed", sfr.filesFailed());
+                    values.put("syntaxFastDigest", sfr.canonicalDigest().value());
+                });
+            }
             return Map.copyOf(values);
         }
     }
@@ -134,6 +160,318 @@ public final class StaticPolyglotScan {
             Map<ContentDigest, byte[]> verifiedBytes, boolean fastArchitecture) throws IOException {
         return run(inventory, tables, content, scratch, cancelled, verifiedBytes::get, fastArchitecture,
                 Optional.empty(), null);
+    }
+
+    /**
+     * Runs static scan with explicit {@code syntaxFast} toggle ({@code --mode=syntax-fast}, {@code --build=off}, I1).
+     * When {@code syntaxFast=true}, invokes 2-pass parallel structural indexing across Java and all polyglot
+     * grammars, tagging all symbols and edges with {@link TrustTier#SOURCE_SYNTAX} (I4).
+     */
+    public Result run(PolyglotInventory.Report inventory, SemanticTables tables, RepositoryContentStore content,
+            Path scratch, BooleanSupplier cancelled,
+            Map<ContentDigest, byte[]> verifiedBytes, boolean fastArchitecture, boolean syntaxFast) throws IOException {
+        if (syntaxFast) {
+            return runSyntaxFast(inventory, tables, content, scratch, cancelled,
+                    verifiedBytes == null ? digest -> null : verifiedBytes::get, null);
+        }
+        return run(inventory, tables, content, scratch, cancelled,
+                verifiedBytes == null ? digest -> null : verifiedBytes::get, fastArchitecture,
+                Optional.empty(), null);
+    }
+
+    /** Convenience entry point for CLI ({@code --mode=syntax-fast}) and backend fast-index workflows. */
+    public Result runSyntaxFast(PolyglotInventory.Report inventory, SemanticTables tables,
+            RepositoryContentStore content, Path scratch, BooleanSupplier cancelled) throws IOException {
+        return runSyntaxFast(inventory, tables, content, scratch, cancelled, digest -> null, null);
+    }
+
+    public Result runSyntaxFast(PolyglotInventory.Report inventory, SemanticTables tables,
+            RepositoryContentStore content, Path scratch, BooleanSupplier cancelled,
+            Map<ContentDigest, byte[]> verifiedBytes) throws IOException {
+        return runSyntaxFast(inventory, tables, content, scratch, cancelled,
+                verifiedBytes == null ? digest -> null : verifiedBytes::get, null);
+    }
+
+    /** Direct file-map 2-pass {@code --mode=syntax-fast} entry point (zero build/host execution, I1). */
+    public TreeSitterSourceFrontend.SyntaxFastResult scanSyntaxFastFiles(
+            Map<String, byte[]> filesByPath, BooleanSupplier cancelled) throws IOException {
+        return new TreeSitterSourceFrontend().indexSyntaxFast(filesByPath, true, cancelled);
+    }
+
+    /**
+     * Runs 2-pass parallel {@code --mode=syntax-fast} structural indexing over captured repository files and
+     * constructs an immutable, canonical {@link KnowledgeGraph} with 100% captured {@code source.bytes}
+     * (ready for FTS5), FQN-safe symbol nodes, and {@code IMPLEMENTS}/{@code EXTENDS}/{@code INJECTS}/{@code CALLS}
+     * edges all tagged {@link TrustTier#SOURCE_SYNTAX} (I1/I2/I4).
+     */
+    public KnowledgeGraph buildSyntaxFastGraph(
+            RepositoryIdentity repository,
+            SnapshotIdentity snapshot,
+            Map<String, byte[]> filesByPath,
+            BooleanSupplier cancelled) throws IOException {
+        Objects.requireNonNull(repository, "repository");
+        Objects.requireNonNull(snapshot, "snapshot");
+        Objects.requireNonNull(filesByPath, "filesByPath");
+        BooleanSupplier cancelCheck = cancelled == null ? () -> false : cancelled;
+        var sortedFiles = new TreeMap<String, byte[]>();
+        for (var e : filesByPath.entrySet()) {
+            if (e.getKey() != null && e.getValue() != null) {
+                String p = e.getKey().replace('\\', '/').strip();
+                while (p.startsWith("./")) p = p.substring(2);
+                if (!p.isEmpty()) sortedFiles.put(p, e.getValue());
+            }
+        }
+        var syntaxFast = new TreeSitterSourceFrontend().indexSyntaxFast(sortedFiles, true, cancelCheck);
+        String ctx = snapshot.value();
+        var evidenceById = new LinkedHashMap<ContentDigest, GraphEvidence>();
+        var nodesByKey = new LinkedHashMap<String, KnowledgeGraph.Node>();
+        var edgesByKey = new LinkedHashMap<String, KnowledgeGraph.Edge>();
+
+        var ctxEv = GraphEvidence.capture("syntax.fast-context", Map.of(
+                "mode", TreeSitterSourceFrontend.SYNTAX_FAST_MODE,
+                "provider", TreeSitterSourceFrontend.SYNTAX_FAST_PROVIDER,
+                "repository", repository.value(),
+                "snapshot", snapshot.value(),
+                "trustTier", TrustTier.SOURCE_SYNTAX.name(),
+                "canonicalDigest", syntaxFast.canonicalDigest().value()));
+        evidenceById.put(ctxEv.identity(), ctxEv);
+
+        // 1. Capture 100% of files as SOURCE_DOCUMENT + source.bytes (enabling 100% FTS5 & source reads)
+        var docIdByPath = new HashMap<String, String>();
+        for (var entry : sortedFiles.entrySet()) {
+            String path = entry.getKey();
+            byte[] bytes = entry.getValue();
+            ContentDigest digest = ContentDigest.sha256(bytes);
+            String docId = KnowledgeGraph.derivedIdentity("syntax-fast-doc", List.of(path));
+            docIdByPath.put(path, docId);
+            var bytesEv = GraphEvidence.capture("source.bytes", Map.of(
+                    "document", Map.of("identity", docId, "path", path, "contentDigest", digest.value()),
+                    "size", bytes.length,
+                    "bytesBase64", Base64.getEncoder().encodeToString(bytes)));
+            evidenceById.putIfAbsent(bytesEv.identity(), bytesEv);
+            nodesByKey.put(ctx + "|" + docId,
+                    new KnowledgeGraph.Node(docId, ctx, "SOURCE_DOCUMENT", List.of(bytesEv.identity())));
+        }
+
+        // 2. Project FQN-keyed structural symbols and edges tagged TrustTier.SOURCE_SYNTAX
+        var rawEvidenceByKey = new LinkedHashMap<String, GraphEvidence>();
+        evidenceById.forEach((d, ev) -> rawEvidenceByKey.put(d.value(), ev));
+        projectSyntaxFastResult(syntaxFast, docIdByPath, nodesByKey, edgesByKey, rawEvidenceByKey, ctx);
+        rawEvidenceByKey.values().forEach(ev -> evidenceById.putIfAbsent(ev.identity(), ev));
+
+        return new KnowledgeGraph(
+                snapshot,
+                List.of(new KnowledgeGraph.Context(ctx, snapshot, Optional.empty(), ctxEv.identity())),
+                List.copyOf(nodesByKey.values()),
+                List.copyOf(edgesByKey.values()),
+                List.copyOf(evidenceById.values()));
+    }
+
+    private Result runSyntaxFast(
+            PolyglotInventory.Report inventory,
+            SemanticTables tables,
+            RepositoryContentStore content,
+            Path scratch,
+            BooleanSupplier cancelled,
+            Function<ContentDigest, byte[]> verifiedBytes,
+            List<SemanticTables.Row> preloadedRows) throws IOException {
+        BooleanSupplier cancelCheck = cancelled == null ? () -> false : cancelled;
+        int fileBudget = (int) Math.min(64_000_000L, Math.max(1_000_000L, Runtime.getRuntime().maxMemory() / 16));
+        var filesByPath = new TreeMap<String, byte[]>();
+        var rawPathByNorm = new HashMap<String, Object>();
+        var handleByNorm = new HashMap<String, ContentHandle>();
+        var rowKeyByNorm = new HashMap<String, String>();
+        var categories = new TreeMap<String, Long>();
+        var failures = new TreeMap<String, Long>();
+        var fileSyntaxDigests = new TreeMap<String, ContentDigest>();
+
+        SemanticTables.Reader inputReader = preloadedRows == null ? tables.open(inventory.entries(), cancelCheck) : null;
+        Iterator<SemanticTables.Row> preloadedIt = preloadedRows != null ? preloadedRows.iterator() : null;
+        try {
+            SemanticTables.Row row;
+            while ((row = (preloadedIt != null ? (preloadedIt.hasNext() ? preloadedIt.next() : null)
+                    : inputReader.next())) != null) {
+                if (cancelCheck.getAsBoolean() || Thread.currentThread().isInterrupted())
+                    throw new IOException("SYNTAX_CANCELLED");
+                if (!"FILE".equals(row.fields().get("kind")) || !"ACQUIRED".equals(row.fields().get("disposition")))
+                    continue;
+                if (PolyglotInventory.INSTALLED_DEPENDENCY_DEFERRED.equals(row.fields().get("reason")))
+                    continue;
+                Object rawPathField = row.fields().get("rawPath");
+                String path = new LogicalPath(GraphJson.string(rawPathField)).utf8().orElse("");
+                if (path.isBlank()) continue;
+                String norm = path.replace('\\', '/');
+                while (norm.startsWith("./")) norm = norm.substring(2);
+                var handle = PolyglotScan.handle(row.fields().get("content"));
+                if (handle.size() <= 0 || handle.size() > fileBudget) continue;
+                try {
+                    byte[] bytes = source(content, handle, fileBudget, verifiedBytes);
+                    filesByPath.put(norm, bytes);
+                    rawPathByNorm.put(norm, rawPathField);
+                    handleByNorm.put(norm, handle);
+                    rowKeyByNorm.put(norm, row.key());
+                } catch (IOException readFailure) {
+                    failures.merge("syntax-fast:READ_FAILED", 1L, Long::sum);
+                }
+            }
+        } finally {
+            if (inputReader != null) {
+                try { inputReader.close(); } catch (IOException ignored) {}
+            }
+        }
+
+        var sfResult = new TreeSitterSourceFrontend().indexSyntaxFast(filesByPath, true, cancelCheck);
+        var memoryRows = new TreeMap<String, SemanticTables.Row>();
+        var spillRef = new SemanticRootCensus.Index[] { null };
+        long documents = 0L;
+        long parsed = 0L;
+        var symbolsByPath = new HashMap<String, List<TreeSitterSourceFrontend.StructuralSymbol>>();
+        for (var sym : sfResult.symbols()) {
+            symbolsByPath.computeIfAbsent(sym.path(), k -> new ArrayList<>()).add(sym);
+            categories.merge(sym.language() + ":SYNTAX_FAST_" + sym.kind(), 1L, Long::sum);
+        }
+        for (var edge : sfResult.edges()) {
+            categories.merge(edge.language() + ":SYNTAX_FAST_" + edge.kind().name(), 1L, Long::sum);
+        }
+        try {
+            for (var entry : filesByPath.entrySet()) {
+                String path = entry.getKey();
+                documents++;
+                parsed++;
+                String docId = KnowledgeGraph.derivedIdentity("syntax-document",
+                        List.of(inventory.inventory(), rowKeyByNorm.getOrDefault(path, path), "syntax-fast"));
+                var docMeta = new TreeMap<String, Object>();
+                docMeta.put("rowType", "DOCUMENT");
+                docMeta.put("document", docId);
+                docMeta.put("path", rawPathByNorm.getOrDefault(path, path));
+                docMeta.put("language", "syntax-fast");
+                docMeta.put("content", handleByNorm.get(path));
+                docMeta.put("workerFileBytes", fileBudget);
+                docMeta.put("provider", TreeSitterSourceFrontend.SYNTAX_FAST_PROVIDER);
+                docMeta.put("trustTier", TrustTier.SOURCE_SYNTAX.name());
+                docMeta.put("mode", TreeSitterSourceFrontend.SYNTAX_FAST_MODE);
+                docMeta.put("status", "PARSED");
+                putSyntaxRow(memoryRows, spillRef, scratch, "document:" + docId,
+                        new SemanticTables.Row(SemanticTables.Kind.OBSERVATION, "document:" + docId,
+                                inventory.inventory(), docMeta));
+                var syms = symbolsByPath.getOrDefault(path, List.of());
+                fileSyntaxDigests.put(path, CanonicalJson.sha256(List.of(
+                        path, TreeSitterSourceFrontend.SYNTAX_FAST_PROVIDER,
+                        handleByNorm.get(path).digest(), syms.stream().map(TreeSitterSourceFrontend.StructuralSymbol::toMap).toList())));
+            }
+            if (spillRef[0] == null) {
+                return new Result(
+                        tables.write(SemanticTables.Kind.OBSERVATION, memoryRows.values().iterator(), cancelCheck),
+                        categories, failures, documents, parsed, fileBudget, 0L, 0L,
+                        JsWorkspaceAliasResolver.WorkspaceModel.EMPTY, fileSyntaxDigests,
+                        true, Optional.of(sfResult));
+            }
+            try (var rows = spillRef[0].rows("syntax", false)) {
+                var iterator = new Iterator<SemanticTables.Row>() {
+                    SemanticTables.Row next;
+                    boolean end;
+                    public boolean hasNext() {
+                        if (next != null) return true;
+                        if (end) return false;
+                        try { next = rows.next(); end = next == null; return !end; }
+                        catch (IOException f) { throw new UncheckedIOException(f); }
+                    }
+                    public SemanticTables.Row next() {
+                        if (!hasNext()) throw new NoSuchElementException();
+                        var v = next; next = null; return v;
+                    }
+                };
+                return new Result(tables.write(SemanticTables.Kind.OBSERVATION, iterator, cancelCheck),
+                        categories, failures, documents, parsed, fileBudget, 0L, 0L,
+                        JsWorkspaceAliasResolver.WorkspaceModel.EMPTY, fileSyntaxDigests,
+                        true, Optional.of(sfResult));
+            } catch (UncheckedIOException failure) {
+                throw failure.getCause();
+            }
+        } finally {
+            if (spillRef[0] != null) {
+                try { spillRef[0].close(); } catch (IOException ignored) {}
+            }
+        }
+    }
+
+    private static void projectSyntaxFastResult(
+            TreeSitterSourceFrontend.SyntaxFastResult sfResult,
+            Map<String, String> docIdByPath,
+            Map<String, KnowledgeGraph.Node> nodes,
+            Map<String, KnowledgeGraph.Edge> edges,
+            Map<String, GraphEvidence> evidence,
+            String context) {
+        var nodeIdByFqn = new TreeMap<String, String>();
+        for (var sym : sfResult.symbols()) {
+            String symId = KnowledgeGraph.derivedIdentity("syntax-fast-symbol", List.of(sym.fqn(), sym.kind()));
+            nodeIdByFqn.putIfAbsent(sym.fqn(), symId);
+            var fields = new TreeMap<String, Object>();
+            fields.put("fqn", sym.fqn());
+            fields.put("qualifiedName", sym.fqn());
+            fields.put("name", sym.fqn());
+            fields.put("simpleName", sym.simpleName());
+            fields.put("packageOrModule", sym.packageOrModule());
+            fields.put("kind", sym.kind());
+            fields.put("language", sym.language());
+            fields.put("path", sym.path());
+            fields.put("startLine", sym.span().startLine());
+            fields.put("endLine", sym.span().endLine());
+            fields.put("annotations", sym.annotations());
+            fields.put("mode", TreeSitterSourceFrontend.SYNTAX_FAST_MODE);
+            fields.put("provider", TreeSitterSourceFrontend.SYNTAX_FAST_PROVIDER);
+            fields.put("trustTier", TrustTier.SOURCE_SYNTAX.name());
+            fields.put("origin", "PROJECT");
+            var proof = GraphEvidence.capture("polyglot.source-syntax", Map.of("fields", fields));
+            evidence.putIfAbsent(proof.identity().value(), proof);
+            String nodeKind = switch (sym.kind()) {
+                case "CLASS", "INTERFACE", "ENUM", "RECORD", "METHOD", "FUNCTION" -> sym.kind();
+                default -> "POLYGLOT_TYPE";
+            };
+            node(nodes, context, symId, nodeKind, proof.identity());
+
+            String parentId = !sym.enclosingFqn().isEmpty()
+                    ? nodeIdByFqn.get(sym.enclosingFqn())
+                    : docIdByPath.get(sym.path());
+            if (parentId != null && !parentId.equals(symId)) {
+                String cEdgeId = KnowledgeGraph.derivedIdentity("syntax-fast-contains", List.of(parentId, symId));
+                edges.putIfAbsent(context + "|" + cEdgeId, new KnowledgeGraph.Edge(
+                        cEdgeId, context, "graph.contains", parentId,
+                        new KnowledgeGraph.Target(KnowledgeGraph.TargetState.RESOLVED, List.of(symId), Optional.empty()),
+                        List.of(proof.identity()), Optional.empty()));
+            }
+        }
+        for (var e : sfResult.edges()) {
+            String srcId = nodeIdByFqn.get(e.sourceFqn());
+            String dstId = nodeIdByFqn.get(e.targetFqn());
+            if (srcId == null || dstId == null || srcId.equals(dstId)) continue;
+            boolean isJava = "java".equals(e.language());
+            String edgeKind = switch (e.kind()) {
+                case IMPLEMENTS -> isJava ? "java.implements" : "syntax.implements";
+                case EXTENDS -> isJava ? "java.extends" : "syntax.extends";
+                case INJECTS -> isJava ? "spring.injects" : "syntax.injects";
+                case CALLS -> isJava ? "java.calls" : "syntax.calls";
+            };
+            var evPayload = new TreeMap<String, Object>();
+            evPayload.put("kind", e.kind().name());
+            evPayload.put("language", e.language());
+            evPayload.put("mode", TreeSitterSourceFrontend.SYNTAX_FAST_MODE);
+            evPayload.put("provider", TreeSitterSourceFrontend.SYNTAX_FAST_PROVIDER);
+            evPayload.put("resolutionBasis", e.resolutionBasis());
+            evPayload.put("sourceFqn", e.sourceFqn());
+            evPayload.put("sourcePath", e.sourcePath());
+            evPayload.put("sourceLine", e.sourceSpan().startLine());
+            evPayload.put("targetFqn", e.targetFqn());
+            evPayload.put("targetPath", e.targetPath());
+            evPayload.put("trustTier", TrustTier.SOURCE_SYNTAX.name());
+            var proof = GraphEvidence.capture("polyglot.syntax-fast-edge", evPayload);
+            evidence.putIfAbsent(proof.identity().value(), proof);
+            String edgeId = KnowledgeGraph.derivedIdentity("syntax-fast-edge", List.of(srcId, edgeKind, dstId));
+            edges.putIfAbsent(context + "|" + edgeId, new KnowledgeGraph.Edge(
+                    edgeId, context, edgeKind, srcId,
+                    new KnowledgeGraph.Target(KnowledgeGraph.TargetState.RESOLVED, List.of(dstId), Optional.empty()),
+                    List.of(proof.identity()), Optional.empty()));
+        }
     }
 
     Result run(PolyglotInventory.Report inventory, SemanticTables tables, RepositoryContentStore content, Path scratch,
@@ -1916,6 +2254,7 @@ public final class StaticPolyglotScan {
         var rawWrappers = new ArrayList<Map.Entry<String, WrapperSpec>>();
         var wrapperCalls = new ArrayList<CallSite>();
         var directCandidateSpans = new HashSet<String>();
+        var docIdByNormPath = new HashMap<String, String>();
         try (var rows = tables.open(result.records(), cancelled)) {
             SemanticTables.Row row;
             while ((row = rows.next()) != null) {
@@ -1925,6 +2264,10 @@ public final class StaticPolyglotScan {
                 evidence.putIfAbsent(artifact.identity().value(), artifact);
                 if (fields.get("rowType").equals("DOCUMENT")) {
                     node(nodes, context, document, "SOURCE_DOCUMENT", artifact.identity());
+                    String rawField = fields.get("path") == null ? "" : GraphJson.string(fields.get("path"));
+                    String decoded = decodePath(rawField).replace('\\', '/');
+                    while (decoded.startsWith("./")) decoded = decoded.substring(2);
+                    if (!decoded.isEmpty()) docIdByNormPath.putIfAbsent(decoded, document);
                     continue;
                 }
                 var fact = GraphJson.object(fields.get("fact"));
@@ -2077,6 +2420,10 @@ public final class StaticPolyglotScan {
         propagateCrossFileWrappers(rawWrappers, wrapperCalls, directCandidateSpans, declByDocSlot,
                 byLangAndSymbol, byDocAndSymbol, byDirAndSymbol, byStemAndSymbol, docImports,
                 nodes, edges, evidence, context, cancelled);
+        if (result.syntaxFast() && result.syntaxFastResult().isPresent()) {
+            projectSyntaxFastResult(result.syntaxFastResult().orElseThrow(), docIdByNormPath,
+                    nodes, edges, evidence, context);
+        }
         for (var rpc : protoMethods.entrySet())
             for (String role : List.of("request", "response")) {
                 if (cancelled.getAsBoolean() || Thread.currentThread().isInterrupted())

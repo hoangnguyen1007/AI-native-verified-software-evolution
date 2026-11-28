@@ -510,6 +510,115 @@ class Moonshot2SearchAndRrfTest {
         }
     }
 
+    @Test
+    void repoMapInterfaceConsumerExpandRecoversUpstreamControllerWithSkgTopologyHeaderAndFqnProvenance(
+            @TempDir Path tempDir) throws Exception {
+        assertEquals(5_000, RepoMapBuilder.MAX_FILE_SEED_CAP);
+        assertEquals(5_000, CapturedSearchIndex.MAX_RANK_FILES_CAP);
+
+        var repo = RepositoryIdentity.fromCanonicalCoordinate("https://example.test/m2-ice.git");
+        var snap = SnapshotIdentity.from(repo, ContentDigest.sha256Utf8("m2-ice-snap"));
+        var analysis = AnalysisIdentity.fromCanonicalManifestInputs("m2-ice-mod");
+        String ctx = analysis.value();
+        var mod = ModuleIdentity.from(repo, ".");
+
+        var snapEv = GraphEvidence.capture("repository.snapshot", Map.of("snapshot", snap));
+        var manEv = GraphEvidence.capture("analysis.manifest", Map.of("modules", List.of()));
+        var evidence = new ArrayList<GraphEvidence>(List.of(snapEv, manEv));
+        var nodes = new ArrayList<KnowledgeGraph.Node>();
+        var edges = new ArrayList<KnowledgeGraph.Edge>();
+
+        var files = new LinkedHashMap<String, String>();
+        files.put("src/main/java/com/acme/cart/CartPort.java",
+                "package com.acme.cart;\npublic interface CartPort {\n    void checkout();\n}\n");
+        files.put("src/main/java/com/acme/cart/DefaultCartPortImpl.java",
+                "package com.acme.cart;\npublic class DefaultCartPortImpl implements CartPort {\n    public void checkout() { String k = \"uniqueConcreteCartMarker\"; }\n}\n");
+        files.put("src/main/java/com/acme/api/CartHttpController.java",
+                "package com.acme.api;\nimport com.acme.cart.CartPort;\npublic class CartHttpController {\n    private final CartPort port;\n    public CartHttpController(CartPort port) { this.port = port; }\n}\n");
+        // Distractor unrelated files to push controller out of unexpanded top-2
+        for (int i = 0; i < 6; i++) {
+            files.put("src/main/java/com/acme/misc/MiscHelper" + i + ".java",
+                    "package com.acme.misc;\npublic class MiscHelper" + i + " {}\n");
+        }
+
+        var docIds = new HashMap<String, String>();
+        for (var e : files.entrySet()) {
+            byte[] bytes = e.getValue().getBytes(StandardCharsets.UTF_8);
+            var digest = ContentDigest.sha256(bytes);
+            var ev = GraphEvidence.capture("source.bytes", Map.of(
+                    "document", Map.of("path", e.getKey(), "contentDigest", digest.value()),
+                    "size", bytes.length,
+                    "bytesBase64", Base64.getEncoder().encodeToString(bytes)));
+            evidence.add(ev);
+            String docId = KnowledgeGraph.derivedIdentity("source-doc", List.of(e.getKey()));
+            docIds.put(e.getKey(), docId);
+            nodes.add(new KnowledgeGraph.Node(docId, snap.value(), "SOURCE_DOCUMENT", List.of(ev.identity())));
+        }
+
+        var typeIds = new LinkedHashMap<String, String>();
+        record Spec(String pkg, String cls, String path, String kind, int line) {}
+        for (var sp : List.of(
+                new Spec("com.acme.cart", "CartPort", "src/main/java/com/acme/cart/CartPort.java", "INTERFACE", 2),
+                new Spec("com.acme.cart", "DefaultCartPortImpl", "src/main/java/com/acme/cart/DefaultCartPortImpl.java", "CLASS", 2),
+                new Spec("com.acme.api", "CartHttpController", "src/main/java/com/acme/api/CartHttpController.java", "CLASS", 3))) {
+            var ent = Entity.create(EntityOrigin.PROJECT, EntityScope.project(mod), EntityKind.TYPE,
+                    JavaSymbolName.topLevelType(sp.pkg(), sp.cls()).canonicalName(), Optional.empty());
+            var decl = GraphEvidence.capture("java.declaration", Map.of(
+                    "entity", Map.of(
+                            "identity", ent.identity().value(),
+                            "origin", "PROJECT",
+                            "kind", sp.kind(),
+                            "canonicalName", ent.canonicalName(),
+                            "qualifiedName", sp.pkg() + "." + sp.cls(),
+                            "declaration", Map.of("document", docIds.get(sp.path()), "startLine", sp.line())),
+                    "spelling", sp.cls(),
+                    "status", "RESOLVED"));
+            evidence.add(decl);
+            nodes.add(new KnowledgeGraph.Node(ent.identity().value(), ctx, sp.kind(), List.of(decl.identity())));
+            typeIds.put(sp.cls(), ent.identity().value());
+        }
+
+        // DefaultCartPortImpl --java.implements--> CartPort <--spring.selected-binding-- CartHttpController
+        var implEv = GraphEvidence.capture("java.reference", Map.of("kind", "java.implements", "trustTier", "COMPILER"));
+        var injEv = GraphEvidence.capture("spring.binding", Map.of("kind", "spring.selected-binding", "trustTier", "SPRING_SAT"));
+        evidence.add(implEv);
+        evidence.add(injEv);
+        edges.add(new KnowledgeGraph.Edge(
+                KnowledgeGraph.derivedIdentity("impl", List.of("DefaultCartPortImpl", "CartPort")),
+                ctx, "java.implements", typeIds.get("DefaultCartPortImpl"),
+                new KnowledgeGraph.Target(KnowledgeGraph.TargetState.RESOLVED, List.of(typeIds.get("CartPort")), Optional.empty()),
+                List.of(implEv.identity()), Optional.empty()));
+        edges.add(new KnowledgeGraph.Edge(
+                KnowledgeGraph.derivedIdentity("inj", List.of("CartHttpController", "CartPort")),
+                ctx, "spring.selected-binding", typeIds.get("CartHttpController"),
+                new KnowledgeGraph.Target(KnowledgeGraph.TargetState.RESOLVED, List.of(typeIds.get("CartPort")), Optional.empty()),
+                List.of(injEv.identity()), Optional.empty()));
+
+        var graph = new KnowledgeGraph(snap, List.of(
+                new KnowledgeGraph.Context(snap.value(), snap, Optional.empty(), snapEv.identity()),
+                new KnowledgeGraph.Context(ctx, snap, Optional.of(analysis), manEv.identity())),
+                nodes, edges, evidence);
+
+        Path ftsDb = tempDir.resolve("search").resolve("ice-fts5.db");
+        try (var index = CapturedSearchIndex.openReadWrite(ftsDb)) {
+            // Seed strictly on concrete implementation token "uniqueConcreteCartMarker" with tight maxFiles=2
+            var map = RepoMapBuilder.build(graph, Optional.of(ctx), List.of("uniqueConcreteCartMarker"),
+                    2, 4_000, () -> StopReason.NONE, index);
+            assertEquals(1, map.topologyExpansions().size());
+            var exp = map.topologyExpansions().getFirst();
+            assertEquals("com.acme.cart.DefaultCartPortImpl", exp.concreteFqn());
+            assertEquals("IMPLEMENTS", exp.hierarchyKind());
+            assertEquals("com.acme.cart.CartPort", exp.interfaceFqn());
+            assertEquals("com.acme.api.CartHttpController", exp.consumerFqn());
+            assertEquals("INJECTS", exp.consumerRelation());
+            assertEquals(3, exp.consumerLine());
+            assertTrue(map.files().stream().anyMatch(f -> f.path().equals("src/main/java/com/acme/api/CartHttpController.java")),
+                    "Upstream controller must be promoted into prioritized files: " + map.files());
+            assertTrue(map.renderedMap().startsWith(RepoMapBuilder.SKG_TOPOLOGY_HEADER), map.renderedMap());
+            assertTrue(map.renderedMap().contains("com.acme.api.CartHttpController (src/main/java/com/acme/api/CartHttpController.java:3)"));
+        }
+    }
+
     private static String mintPat(HttpClient http, String root, String cookie, String csrf,
                                   String label, List<String> scopes) throws Exception {
         var resp = http.send(HttpRequest.newBuilder(URI.create(root + "/api/v1/auth/tokens"))

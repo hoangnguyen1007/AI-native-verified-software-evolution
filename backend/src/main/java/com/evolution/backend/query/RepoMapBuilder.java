@@ -21,6 +21,8 @@ import java.util.function.Supplier;
 public final class RepoMapBuilder {
     static final String ALGORITHM = "personalized-pagerank-v1";
     public static final String RRF_ALGORITHM = "ppr-bm25-trigram-rrf-v2";
+    public static final int MAX_FILE_SEED_CAP = 5_000;
+    public static final String SKG_TOPOLOGY_HEADER = "[SKG TOPOLOGY]";
     static final double DAMPING = 0.85;
     static final int ITERATIONS = 20;
     static final double RRF_K = 60.0;
@@ -28,8 +30,8 @@ public final class RepoMapBuilder {
     static final double RRF_WEIGHT_BM25 = 1.2;
     static final double RRF_WEIGHT_TRIGRAM = 0.6;
     private static final Set<String> CONTAINMENT_EDGES = Set.of(
-            "graph.contains", "graph.declares", "graph.owns-source", "graph.inventory-under-component",
-            "spring.declares-injection");
+            "graph.contains", "graph.declares", "java.declares", "graph.owns-source",
+            "graph.inventory-under-component", "spring.declares-injection");
     private static final Set<String> SYMBOL_NODE_KINDS = Set.of(
             "TYPE", "CLASS", "INTERFACE", "RECORD", "ENUM",
             "METHOD", "FIELD", "CONSTRUCTOR",
@@ -42,14 +44,88 @@ public final class RepoMapBuilder {
             "POLYGLOT_SYMBOL", "POLYGLOT_TYPE", "POLYGLOT_FUNCTION", "POLYGLOT_CLASS",
             "SERVICE_ENDPOINT", "FUNCTION");
     private static final Set<String> HIGH_WEIGHT_EDGES = Set.of(
-            "spring.selected-binding", "spring.injection-candidate",
+            "spring.selected-binding", "spring.injection-candidate", "spring.injects",
+            "INJECTS", "syntax.injects",
             "CALLS_SERVICE", "INVOKES_RPC", "PUBLISHES_EVENT",
             "polyglot.service-call.candidate", "polyglot.grpc-service-call.candidate",
             "polyglot.event-flow.candidate", "polyglot.grpc-contract.candidate");
     private static final Set<String> CALL_INHERIT_EDGES = Set.of(
-            "java.calls", "java.extends", "java.implements");
+            "java.calls", "java.extends", "java.implements",
+            "CALLS", "EXTENDS", "IMPLEMENTS",
+            "syntax.calls", "syntax.extends", "syntax.implements");
+    private static final Set<String> IMPLEMENTS_EDGE_KINDS = Set.of(
+            "java.implements", "IMPLEMENTS", "syntax.implements");
+    private static final Set<String> EXTENDS_EDGE_KINDS = Set.of(
+            "java.extends", "EXTENDS", "syntax.extends", "syntax.inherits-declaration", "INHERITS");
+    private static final Set<String> CONSUMER_INJECT_EDGE_KINDS = Set.of(
+            "spring.selected-binding", "spring.injection-candidate", "spring.injects",
+            "INJECTS", "syntax.injects", "java.field-type", "java.parameter-type");
+    private static final Set<String> CONSUMER_CALL_EDGE_KINDS = Set.of(
+            "java.calls", "CALLS", "CALLS_SYMBOL", "syntax.calls", "syntax.calls-declaration");
 
     public record Declaration(String identity, String name, String kind) {}
+
+    /**
+     * FQN-safe {@code InterfaceConsumerExpand(G, v)} topology recovery record (Chinthareddy-DKB Alg. 1):
+     * records concrete type {@code c --IMPLEMENTS|EXTENDS--> I <--INJECTS|CALLS-- consumer} with
+     * verified FQN + {@code file:line} provenance (I2/I4).
+     */
+    public record TopologyExpansion(
+            String concreteId,
+            String concreteFqn,
+            String concretePath,
+            int concreteLine,
+            String hierarchyKind,
+            String interfaceId,
+            String interfaceFqn,
+            String interfacePath,
+            int interfaceLine,
+            String consumerId,
+            String consumerFqn,
+            String consumerPath,
+            int consumerLine,
+            String consumerRelation,
+            String trustTier) implements Comparable<TopologyExpansion> {
+        public TopologyExpansion {
+            concreteId = Objects.requireNonNull(concreteId, "concreteId");
+            concreteFqn = Objects.requireNonNull(concreteFqn, "concreteFqn");
+            concretePath = concretePath == null ? "" : concretePath;
+            hierarchyKind = Objects.requireNonNull(hierarchyKind, "hierarchyKind");
+            interfaceId = Objects.requireNonNull(interfaceId, "interfaceId");
+            interfaceFqn = Objects.requireNonNull(interfaceFqn, "interfaceFqn");
+            interfacePath = interfacePath == null ? "" : interfacePath;
+            consumerId = Objects.requireNonNull(consumerId, "consumerId");
+            consumerFqn = Objects.requireNonNull(consumerFqn, "consumerFqn");
+            consumerPath = consumerPath == null ? "" : consumerPath;
+            consumerRelation = Objects.requireNonNull(consumerRelation, "consumerRelation");
+            trustTier = trustTier == null || trustTier.isBlank() ? "SOURCE_SYNTAX" : trustTier;
+        }
+
+        @Override
+        public int compareTo(TopologyExpansion other) {
+            int cmp = this.concreteFqn.compareTo(other.concreteFqn);
+            if (cmp != 0) return cmp;
+            cmp = this.interfaceFqn.compareTo(other.interfaceFqn);
+            if (cmp != 0) return cmp;
+            cmp = this.consumerFqn.compareTo(other.consumerFqn);
+            if (cmp != 0) return cmp;
+            cmp = this.consumerRelation.compareTo(other.consumerRelation);
+            if (cmp != 0) return cmp;
+            return this.consumerId.compareTo(other.consumerId);
+        }
+
+        public String formatLine() {
+            return "- InterfaceConsumerExpand: " + concreteFqn + formatLoc(concretePath, concreteLine)
+                    + " --" + hierarchyKind + "--> " + interfaceFqn + formatLoc(interfacePath, interfaceLine)
+                    + " <--" + consumerRelation + "-- " + consumerFqn + formatLoc(consumerPath, consumerLine)
+                    + " [trust=" + trustTier + "]";
+        }
+
+        private static String formatLoc(String path, int line) {
+            if (path == null || path.isBlank()) return "";
+            return line > 0 ? " (" + path + ":" + line + ")" : " (" + path + ")";
+        }
+    }
 
     public record FileRank(int rank, String path, BigDecimal score, String language,
                     int inDegree, int outDegree, List<Declaration> declarations,
@@ -70,9 +146,18 @@ public final class RepoMapBuilder {
 
     public record Result(ContentDigest graph, String context, String algorithm, BigDecimal damping, int iterations,
                   int totalNodes, int totalEdges, int totalFiles, int seedCount, int estimatedTokens,
-                  boolean truncated, List<FileRank> files, String renderedMap) {
+                  boolean truncated, List<FileRank> files, String renderedMap,
+                  List<TopologyExpansion> topologyExpansions) {
+        public Result(ContentDigest graph, String context, String algorithm, BigDecimal damping, int iterations,
+                      int totalNodes, int totalEdges, int totalFiles, int seedCount, int estimatedTokens,
+                      boolean truncated, List<FileRank> files, String renderedMap) {
+            this(graph, context, algorithm, damping, iterations, totalNodes, totalEdges, totalFiles,
+                    seedCount, estimatedTokens, truncated, files, renderedMap, List.of());
+        }
+
         public Result {
             files = List.copyOf(files);
+            topologyExpansions = List.copyOf(topologyExpansions == null ? List.of() : topologyExpansions);
         }
     }
 
@@ -140,6 +225,11 @@ public final class RepoMapBuilder {
         var keptFiles = new ArrayList<FileRank>(base.files().size());
         int usedTokens = 0;
         boolean truncated = base.truncated();
+        if (!base.topologyExpansions().isEmpty()) {
+            String topoBlock = renderTopologyHeader(base.topologyExpansions());
+            rendered.append(topoBlock);
+            usedTokens += RepairContextPlanner.estimateTokens(topoBlock);
+        }
 
         for (var fr : base.files()) {
             var block = new StringBuilder();
@@ -192,7 +282,8 @@ public final class RepoMapBuilder {
         return new Result(
                 base.graph(), base.context(), base.algorithm() + "+salt-sig-v1",
                 base.damping(), base.iterations(), base.totalNodes(), base.totalEdges(),
-                base.totalFiles(), base.seedCount(), usedTokens, truncated, keptFiles, rendered.toString());
+                base.totalFiles(), base.seedCount(), usedTokens, truncated, keptFiles, rendered.toString(),
+                base.topologyExpansions());
     }
 
     public static String renderCompactHintsBlock(List<RepairContextPlanner.StaticEvidenceHint> hints) {
@@ -209,7 +300,7 @@ public final class RepoMapBuilder {
     public static Result build(KnowledgeGraph graph, Optional<String> preferredContext, List<String> rawSeeds,
                         int requestedMaxFiles, int requestedMaxTokens, Supplier<StopReason> stop,
                         CapturedSearchIndex searchIndex) {
-        int maxFiles = Math.max(1, Math.min(100, requestedMaxFiles));
+        int maxFiles = Math.max(1, Math.min(MAX_FILE_SEED_CAP, requestedMaxFiles));
         int maxTokens = Math.max(500, Math.min(24_000, requestedMaxTokens));
         var seeds = rawSeeds == null ? List.<String>of()
                 : rawSeeds.stream().filter(Objects::nonNull).map(String::strip).filter(s -> !s.isEmpty()).distinct().toList();
@@ -285,8 +376,10 @@ public final class RepoMapBuilder {
             }
         }
 
-        // 2. Map symbol nodes -> real captured file paths, declarations, endpoints, gaps
+        // 2. Map symbol nodes -> real captured file paths, declarations, endpoints, gaps, and FQN provenance
         var nodeToFile = new HashMap<String, String>();
+        var symbolProvById = new HashMap<String, SymbolProv>();
+        var fileToSymbolIds = new HashMap<String, TreeSet<String>>();
         var pendingNodes = new ArrayList<PendingNode>();
         var declsByFile = new TreeMap<String, LinkedHashMap<String, Declaration>>();
         var endpointsByFile = new TreeMap<String, TreeSet<String>>();
@@ -337,6 +430,7 @@ public final class RepoMapBuilder {
                     continue;
                 }
                 registerSymbolOnFile(node, info, fileKey, nodeToFile, allFiles, langByPath, endpointsByFile, declsByFile);
+                recordSymbolProvenance(node, info, fileKey, symbolProvById, fileToSymbolIds);
             }
         }
 
@@ -351,17 +445,18 @@ public final class RepoMapBuilder {
             if (resolved != null && !isOpaqueIdentity(resolved)) {
                 registerSymbolOnFile(pending.node(), pending.info(), resolved,
                         nodeToFile, allFiles, langByPath, endpointsByFile, declsByFile);
+                recordSymbolProvenance(pending.node(), pending.info(), resolved, symbolProvById, fileToSymbolIds);
             }
         }
 
-        // Seed ALL readable captured files (no 500-file non-code cliff; I5 comprehensive coverage)
+        // Seed readable captured files (lifted cap: MAX_FILE_SEED_CAP = 5,000; full coverage preserved for I6)
         for (var entry : fileIndex.entries()) {
             if (entry.readable() && !isOpaqueIdentity(entry.path())) {
                 allFiles.add(entry.path());
             }
         }
 
-        // 3. Build weighted file-level graph from canonical edges
+        // 3. Build weighted file-level graph + FQN-safe type hierarchy & consumer index for InterfaceConsumerExpand
         List<String> fileList = List.copyOf(allFiles);
         int n = fileList.size();
         var fileIndexMap = new HashMap<String, Integer>(n * 2);
@@ -371,6 +466,13 @@ public final class RepoMapBuilder {
         for (int i = 0; i < n; i++) outEdges.add(new TreeMap<>());
         var edgeDetails = new ArrayList<Map<String, EdgeLabelCount>>(n);
         for (int i = 0; i < n; i++) edgeDetails.add(new LinkedHashMap<>());
+        var hierarchyByConcrete = new HashMap<String, List<HierarchyLink>>();
+        var consumersByInterface = new HashMap<String, List<ConsumerLink>>();
+        var dependsOnToCandidates = new HashMap<String, List<ConsumerLink>>();
+        var knownInterfaces = new HashSet<String>();
+        for (var sp : symbolProvById.values()) {
+            if ("INTERFACE".equals(sp.kind())) knownInterfaces.add(sp.id());
+        }
         int[] inDegree = new int[n];
         int[] outDegree = new int[n];
         int totalEdges = 0;
@@ -383,13 +485,47 @@ public final class RepoMapBuilder {
                 totalEdges++;
                 if ((totalEdges & 2047) == 0 && stopped(stop)) break;
                 if (CONTAINMENT_EDGES.contains(edge.kind())) continue;
+                String edgeKind = edge.kind();
+                String edgeTrust = inferEdgeTrustTier(graph, edge);
+                // Record FQN-safe hierarchy and consumer relations (lifting member calls to enclosing type)
+                if (IMPLEMENTS_EDGE_KINDS.contains(edgeKind) || EXTENDS_EDGE_KINDS.contains(edgeKind)) {
+                    String hKind = IMPLEMENTS_EDGE_KINDS.contains(edgeKind) ? "IMPLEMENTS" : "EXTENDS";
+                    String concreteId = liftToDeclaringType(edge.source(), parentByChild, symbolProvById);
+                    for (String targetId : edge.target().identities()) {
+                        String ifaceId = liftToDeclaringType(targetId, parentByChild, symbolProvById);
+                        if (!concreteId.equals(ifaceId)) {
+                            hierarchyByConcrete.computeIfAbsent(concreteId, k -> new ArrayList<>())
+                                    .add(new HierarchyLink(ifaceId, hKind, edgeTrust));
+                            knownInterfaces.add(ifaceId);
+                        }
+                    }
+                } else if (CONSUMER_INJECT_EDGE_KINDS.contains(edgeKind) || CONSUMER_CALL_EDGE_KINDS.contains(edgeKind)) {
+                    String rel = CONSUMER_INJECT_EDGE_KINDS.contains(edgeKind) ? "INJECTS" : "CALLS";
+                    String consumerId = liftToDeclaringType(edge.source(), parentByChild, symbolProvById);
+                    for (String targetId : edge.target().identities()) {
+                        String targetTypeId = liftToDeclaringType(targetId, parentByChild, symbolProvById);
+                        if (!consumerId.equals(targetTypeId)) {
+                            consumersByInterface.computeIfAbsent(targetTypeId, k -> new ArrayList<>())
+                                    .add(new ConsumerLink(consumerId, rel, edgeTrust));
+                        }
+                    }
+                } else if ("graph.depends-on".equals(edgeKind)) {
+                    String consumerId = liftToDeclaringType(edge.source(), parentByChild, symbolProvById);
+                    for (String targetId : edge.target().identities()) {
+                        String targetTypeId = liftToDeclaringType(targetId, parentByChild, symbolProvById);
+                        if (!consumerId.equals(targetTypeId)) {
+                            dependsOnToCandidates.computeIfAbsent(targetTypeId, k -> new ArrayList<>())
+                                    .add(new ConsumerLink(consumerId, "INJECTS", edgeTrust));
+                        }
+                    }
+                }
                 String srcFile = nodeToFile.get(edge.source());
                 if (srcFile == null) continue;
                 Integer u = fileIndexMap.get(srcFile);
                 if (u == null) continue;
-                double w = edgeWeight(edge.kind());
+                double w = edgeWeight(edgeKind);
                 String edgeQual = edgeQualifier(graph, edge);
-                boolean notableKind = HIGH_WEIGHT_EDGES.contains(edge.kind()) || CALL_INHERIT_EDGES.contains(edge.kind());
+                boolean notableKind = HIGH_WEIGHT_EDGES.contains(edgeKind) || CALL_INHERIT_EDGES.contains(edgeKind);
                 for (String targetId : edge.target().identities()) {
                     String dstFile = nodeToFile.get(targetId);
                     if (dstFile == null || dstFile.equals(srcFile)) continue;
@@ -397,8 +533,8 @@ public final class RepoMapBuilder {
                     if (v == null) continue;
                     outEdges.get(u).merge(v, w, Double::sum);
                     if (notableKind) {
-                        String detailKey = edge.kind() + "|" + edgeQual + "|" + dstFile;
-                        edgeDetails.get(u).merge(detailKey, new EdgeLabelCount(edge.kind(), edgeQual, dstFile, 1),
+                        String detailKey = edgeKind + "|" + edgeQual + "|" + dstFile;
+                        edgeDetails.get(u).merge(detailKey, new EdgeLabelCount(edgeKind, edgeQual, dstFile, 1),
                                 (a, b) -> new EdgeLabelCount(a.kind(), a.qualifier(), a.targetFile(), a.count() + b.count()));
                     }
                     long pairKey = (((long) u) << 32) | (v & 0xffffffffL);
@@ -407,6 +543,13 @@ public final class RepoMapBuilder {
                         inDegree[v]++;
                     }
                 }
+            }
+        }
+        // Admit graph.depends-on predecessors ONLY for verified supertype/interface targets (never unrelated edges)
+        for (String ifaceId : knownInterfaces) {
+            var deps = dependsOnToCandidates.get(ifaceId);
+            if (deps != null && !deps.isEmpty()) {
+                consumersByInterface.computeIfAbsent(ifaceId, k -> new ArrayList<>()).addAll(deps);
             }
         }
 
@@ -436,7 +579,7 @@ public final class RepoMapBuilder {
                 }
 
                 if (searchIndex != null && !stopped(stop)) {
-                    int bm25Cap = Math.min(300, Math.max(60, maxFiles * 5));
+                    int bm25Cap = Math.min(MAX_FILE_SEED_CAP, Math.max(300, maxFiles * 10));
                     for (var hit : searchIndex.rankFiles(graph, seeds, bm25Cap, stop)) {
                         Integer idx = fileIndexMap.get(hit.path());
                         if (idx != null) {
@@ -541,21 +684,64 @@ public final class RepoMapBuilder {
                 order = pprOrder;
             }
 
+            int baseTopK = Math.min(n, maxFiles);
+            var topKPaths = new LinkedHashSet<String>();
+            for (int pos = 0; pos < baseTopK; pos++) {
+                topKPaths.add(fileList.get(order[pos]));
+            }
+
+            // 4b. FQN-Safe InterfaceConsumerExpand(G, v) (Chinthareddy-DKB Alg. 1):
+            // For every concrete class c in top-K with (c --IMPLEMENTS|EXTENDS--> I),
+            // automatically expand Pred_{INJECTS|CALLS}(I) into prioritized context!
+            List<TopologyExpansion> topologyExpansions = computeInterfaceConsumerExpansions(
+                    topKPaths, fileToSymbolIds, symbolProvById, hierarchyByConcrete, consumersByInterface);
+
+            var selectedIndices = new ArrayList<Integer>(baseTopK);
+            var selectedSet = new LinkedHashSet<Integer>();
+            if (topologyExpansions.isEmpty()) {
+                for (int pos = 0; pos < baseTopK; pos++) {
+                    selectedIndices.add(order[pos]);
+                    selectedSet.add(order[pos]);
+                }
+            } else {
+                var expandedConsumerIndices = new ArrayList<Integer>();
+                for (var exp : topologyExpansions) {
+                    Integer cIdx = fileIndexMap.get(exp.consumerPath());
+                    if (cIdx != null && !topKPaths.contains(exp.consumerPath())
+                            && !expandedConsumerIndices.contains(cIdx)) {
+                        expandedConsumerIndices.add(cIdx);
+                    }
+                }
+                int reserve = Math.min(expandedConsumerIndices.size(), Math.max(0, maxFiles - 1));
+                int baseKeep = Math.min(baseTopK, Math.max(1, maxFiles - reserve));
+                for (int pos = 0; pos < baseKeep; pos++) {
+                    if (selectedSet.add(order[pos])) selectedIndices.add(order[pos]);
+                }
+                for (int eIdx : expandedConsumerIndices) {
+                    if (selectedIndices.size() >= maxFiles) break;
+                    if (selectedSet.add(eIdx)) selectedIndices.add(eIdx);
+                }
+                for (int pos = baseKeep; pos < baseTopK && selectedIndices.size() < maxFiles; pos++) {
+                    if (selectedSet.add(order[pos])) selectedIndices.add(order[pos]);
+                }
+            }
+
             var topFileSet = new HashSet<String>();
-            for (int pos = 0; pos < Math.min(n, maxFiles); pos++) {
-                topFileSet.add(fileList.get(order[pos]));
+            for (int idx : selectedIndices) {
+                topFileSet.add(fileList.get(idx));
             }
 
             var rankedFiles = new ArrayList<FileRank>();
             var mapOut = new StringBuilder();
             int usedTokens = 0;
-            boolean truncated = false;
-            for (int pos = 0; pos < n; pos++) {
-                if (rankedFiles.size() >= maxFiles) {
-                    truncated = true;
-                    break;
-                }
-                int idx = order[pos];
+            boolean truncated = n > selectedIndices.size();
+            if (!topologyExpansions.isEmpty()) {
+                String topoHeader = renderTopologyHeader(topologyExpansions);
+                mapOut.append(topoHeader);
+                usedTokens += Math.max(1, (topoHeader.length() + 3) / 4);
+            }
+            for (int pos = 0; pos < selectedIndices.size(); pos++) {
+                int idx = selectedIndices.get(pos);
                 String path = fileList.get(idx);
                 BigDecimal rrfScore = useRrf
                         ? BigDecimal.valueOf(rrfValues[idx]).setScale(6, RoundingMode.HALF_UP) : null;
@@ -595,12 +781,12 @@ public final class RepoMapBuilder {
             return new Result(graph.identity(), chosenContext, effectiveAlgorithm,
                     BigDecimal.valueOf(DAMPING).setScale(2, RoundingMode.HALF_UP), ITERATIONS,
                     totalNodes, totalEdges, n, matchedSeedFiles, usedTokens, truncated,
-                    rankedFiles, mapOut.toString());
+                    rankedFiles, mapOut.toString(), topologyExpansions);
         }
 
         return new Result(graph.identity(), chosenContext, ALGORITHM,
                 BigDecimal.valueOf(DAMPING).setScale(2, RoundingMode.HALF_UP), ITERATIONS,
-                totalNodes, totalEdges, 0, 0, 0, false, List.of(), "");
+                totalNodes, totalEdges, 0, 0, 0, false, List.of(), "", List.of());
     }
 
     private record PendingNode(KnowledgeGraph.Node node, NodeInfo info) {}
@@ -648,11 +834,167 @@ public final class RepoMapBuilder {
         return value.contains("sha256:") || value.startsWith("type-use:") || value.startsWith("java:v1:");
     }
 
-    private record NodeInfo(String name, String path, String language, String origin, String endpoint, boolean isDeclaration) {}
+    private record NodeInfo(String name, String path, String language, String origin, String endpoint,
+                            boolean isDeclaration, int startLine) {}
+
+    private record SymbolProv(String id, String fqn, String path, int line, String kind) {}
+
+    private record HierarchyLink(String interfaceId, String kind, String trustTier) {}
+
+    private record ConsumerLink(String consumerId, String relation, String trustTier) {}
+
+    private static void recordSymbolProvenance(
+            KnowledgeGraph.Node node,
+            NodeInfo info,
+            String fileKey,
+            Map<String, SymbolProv> symbolProvById,
+            Map<String, TreeSet<String>> fileToSymbolIds) {
+        String fqn = (info.name() != null && !info.name().isBlank() && !isOpaqueIdentity(info.name()))
+                ? info.name() : node.identity();
+        int line = info.startLine() > 0 ? info.startLine() : 1;
+        symbolProvById.putIfAbsent(node.identity(), new SymbolProv(node.identity(), fqn, fileKey, line, node.kind()));
+        if (DECLARATION_KINDS.contains(node.kind())) {
+            fileToSymbolIds.computeIfAbsent(fileKey, k -> new TreeSet<>()).add(node.identity());
+        }
+    }
+
+    private static String liftToDeclaringType(
+            String nodeId, Map<String, String> parentByChild, Map<String, SymbolProv> symbolProvById) {
+        SymbolProv direct = symbolProvById.get(nodeId);
+        if (direct != null && DECLARATION_KINDS.contains(direct.kind())) {
+            return nodeId;
+        }
+        String cursor = parentByChild.get(nodeId);
+        var visited = new HashSet<String>();
+        visited.add(nodeId);
+        for (int depth = 0; depth < 6 && cursor != null && visited.add(cursor); depth++) {
+            SymbolProv parent = symbolProvById.get(cursor);
+            if (parent != null && DECLARATION_KINDS.contains(parent.kind())) {
+                return cursor;
+            }
+            cursor = parentByChild.get(cursor);
+        }
+        return nodeId;
+    }
+
+    private static List<TopologyExpansion> computeInterfaceConsumerExpansions(
+            Set<String> topKPaths,
+            Map<String, TreeSet<String>> fileToSymbolIds,
+            Map<String, SymbolProv> symbolProvById,
+            Map<String, List<HierarchyLink>> hierarchyByConcrete,
+            Map<String, List<ConsumerLink>> consumersByInterface) {
+        if (topKPaths.isEmpty() || hierarchyByConcrete.isEmpty() || consumersByInterface.isEmpty()) {
+            return List.of();
+        }
+        // Index all implementors per interface so a sibling implementor isn't confused with an external consumer
+        var implementorsByIface = new HashMap<String, Set<String>>();
+        for (var entry : hierarchyByConcrete.entrySet()) {
+            for (var link : entry.getValue()) {
+                implementorsByIface.computeIfAbsent(link.interfaceId(), k -> new HashSet<>()).add(entry.getKey());
+            }
+        }
+        var expansions = new TreeSet<TopologyExpansion>();
+        for (String topPath : topKPaths) {
+            for (String concreteId : fileToSymbolIds.getOrDefault(topPath, new TreeSet<>())) {
+                SymbolProv concrete = symbolProvById.get(concreteId);
+                if (concrete == null) continue;
+                var visitedIfaces = new HashSet<String>();
+                visitedIfaces.add(concreteId);
+                var frontier = new ArrayDeque<HierarchyLink>();
+                for (var link : hierarchyByConcrete.getOrDefault(concreteId, List.of())) {
+                    if (visitedIfaces.add(link.interfaceId())) {
+                        frontier.add(link);
+                    }
+                }
+                int maxSuperHops = 2;
+                int hop = 0;
+                while (!frontier.isEmpty() && hop < maxSuperHops) {
+                    int levelSize = frontier.size();
+                    for (int s = 0; s < levelSize; s++) {
+                        HierarchyLink hLink = frontier.poll();
+                        if (hLink == null) continue;
+                        String ifaceId = hLink.interfaceId();
+                        SymbolProv iface = symbolProvById.get(ifaceId);
+                        if (iface == null) continue;
+                        var impls = implementorsByIface.getOrDefault(ifaceId, Set.of());
+                        for (var cLink : consumersByInterface.getOrDefault(ifaceId, List.of())) {
+                            String consumerId = cLink.consumerId();
+                            if (consumerId.equals(concreteId) || consumerId.equals(ifaceId)
+                                    || impls.contains(consumerId)) {
+                                continue;
+                            }
+                            SymbolProv consumer = symbolProvById.get(consumerId);
+                            if (consumer == null || consumer.path().isEmpty()) continue;
+                            String trust = combineTrustTier(hLink.trustTier(), cLink.trustTier());
+                            expansions.add(new TopologyExpansion(
+                                    concrete.id(), concrete.fqn(), concrete.path(), concrete.line(),
+                                    hLink.kind(),
+                                    iface.id(), iface.fqn(), iface.path(), iface.line(),
+                                    consumer.id(), consumer.fqn(), consumer.path(), consumer.line(),
+                                    cLink.relation(), trust));
+                        }
+                        // Walk super-interfaces (up to 2 hops)
+                        for (var superLink : hierarchyByConcrete.getOrDefault(ifaceId, List.of())) {
+                            if (visitedIfaces.add(superLink.interfaceId())) {
+                                frontier.add(superLink);
+                            }
+                        }
+                    }
+                    hop++;
+                }
+            }
+        }
+        return List.copyOf(expansions);
+    }
+
+    private static String renderTopologyHeader(List<TopologyExpansion> expansions) {
+        var sb = new StringBuilder();
+        sb.append(SKG_TOPOLOGY_HEADER).append('\n');
+        int limit = Math.min(20, expansions.size());
+        for (int i = 0; i < limit; i++) {
+            sb.append(expansions.get(i).formatLine()).append('\n');
+        }
+        if (expansions.size() > limit) {
+            sb.append("- ... (").append(expansions.size() - limit).append(" more interface consumer links)\n");
+        }
+        sb.append('\n');
+        return sb.toString();
+    }
+
+    private static String inferEdgeTrustTier(KnowledgeGraph graph, KnowledgeGraph.Edge edge) {
+        for (var ref : edge.evidence()) {
+            var ev = graph.evidence(ref).orElse(null);
+            if (ev == null) continue;
+            var obj = readSmall(ev);
+            if (obj.get("trustTier") instanceof String tt && !tt.isBlank()) return tt;
+            if (obj.get("trust") instanceof String tt && !tt.isBlank()) return tt;
+            if (ev.family().startsWith("java.")) return "COMPILER";
+            if (ev.family().startsWith("spring.")) return "SPRING_SAT";
+            if (ev.family().startsWith("polyglot.") || ev.family().startsWith("syntax.")) return "SOURCE_SYNTAX";
+        }
+        if (edge.kind().startsWith("spring.")) return "SPRING_SAT";
+        if (edge.kind().startsWith("java.")) return "COMPILER";
+        return "SOURCE_SYNTAX";
+    }
+
+    private static String combineTrustTier(String a, String b) {
+        if ("SOURCE_SYNTAX".equals(a) || "SOURCE_SYNTAX".equals(b)) return "SOURCE_SYNTAX";
+        if ("SPRING_SAT".equals(a) || "SPRING_SAT".equals(b)) return "SPRING_SAT";
+        return "COMPILER";
+    }
+
+    private static int intField(Object raw, int fallback) {
+        if (raw instanceof Number num) return num.intValue();
+        if (raw instanceof String s) {
+            try { return Integer.parseInt(s.strip()); } catch (NumberFormatException ignored) {}
+        }
+        return fallback;
+    }
 
     private static NodeInfo inspectNode(KnowledgeGraph graph, KnowledgeGraph.Node node, Map<String, String> docIdToPath) {
         String name = null, path = null, language = null, origin = null, endpoint = null;
         boolean isDecl = false;
+        int startLine = 0;
         for (var ref : node.evidence()) {
             var ev = graph.evidence(ref).orElse(null);
             if (ev == null) continue;
@@ -660,10 +1002,12 @@ public final class RepoMapBuilder {
                 case "java.declaration" -> {
                     var payload = readSmall(ev);
                     if (payload.get("entity") instanceof Map<?, ?> ent) {
-                        if (ent.get("canonicalName") instanceof String c) name = readableCanonicalName(c);
+                        if (ent.get("qualifiedName") instanceof String q && !q.isBlank()) name = q;
+                        else if (ent.get("canonicalName") instanceof String c) name = readableCanonicalName(c);
                         if (ent.get("origin") instanceof String o) origin = o;
-                        if (ent.get("declaration") instanceof Map<?, ?> span && span.get("document") instanceof String docId) {
-                            path = docIdToPath.get(docId);
+                        if (ent.get("declaration") instanceof Map<?, ?> span) {
+                            if (span.get("document") instanceof String docId) path = docIdToPath.get(docId);
+                            startLine = intField(span.get("startLine"), startLine);
                         }
                         language = "java";
                         isDecl = true;
@@ -674,8 +1018,9 @@ public final class RepoMapBuilder {
                     if (payload.get("declaredNameKey") instanceof Map<?, ?> key && key.get("primary") instanceof String p) {
                         name = p;
                     }
-                    if (payload.get("span") instanceof Map<?, ?> span && span.get("document") instanceof String docId) {
-                        path = docIdToPath.get(docId);
+                    if (payload.get("span") instanceof Map<?, ?> span) {
+                        if (span.get("document") instanceof String docId) path = docIdToPath.get(docId);
+                        startLine = intField(span.get("startLine"), startLine);
                     }
                     language = "java";
                     isDecl = true;
@@ -689,8 +1034,9 @@ public final class RepoMapBuilder {
                         endpoint = (methods + " " + routePath).trim();
                         if (name == null) name = endpoint;
                     }
-                    if (payload.get("span") instanceof Map<?, ?> span && span.get("document") instanceof String docId) {
-                        path = docIdToPath.get(docId);
+                    if (payload.get("span") instanceof Map<?, ?> span) {
+                        if (span.get("document") instanceof String docId) path = docIdToPath.get(docId);
+                        startLine = intField(span.get("startLine"), startLine);
                     }
                     origin = "PROJECT";
                     language = "java";
@@ -706,11 +1052,17 @@ public final class RepoMapBuilder {
                         if (utf8.isPresent()) path = CapturedFileIndex.normalizePath(utf8.orElseThrow());
                     }
                     if (fields.get("language") instanceof String l && !l.isBlank()) language = l.toLowerCase(Locale.ROOT);
-                    if (fields.get("name") instanceof String n && !n.isBlank()) name = n;
+                    if (fields.get("fqn") instanceof String q && !q.isBlank()) name = q;
+                    else if (fields.get("qualifiedName") instanceof String q && !q.isBlank()) name = q;
+                    else if (fields.get("name") instanceof String n && !n.isBlank()) name = n;
                     else if (fields.get("symbol") instanceof String s && !s.isBlank()) name = s;
                     if (fields.get("route") instanceof String r && !r.isBlank()) {
                         String method = fields.get("httpMethod") instanceof String m ? m : "";
                         endpoint = (method + " " + r).trim();
+                    }
+                    startLine = intField(fields.get("startLine"), startLine);
+                    if (fields.get("fact") instanceof Map<?, ?> fact && fact.get("span") instanceof Map<?, ?> sp) {
+                        startLine = intField(sp.get("startLine"), startLine);
                     }
                     origin = "PROJECT";
                     isDecl = true;
@@ -721,7 +1073,7 @@ public final class RepoMapBuilder {
         if (language == null && path != null) {
             language = CapturedFileIndex.inferLanguage(path, List.of());
         }
-        return new NodeInfo(name, path, language, origin, endpoint, isDecl);
+        return new NodeInfo(name, path, language, origin, endpoint, isDecl, startLine);
     }
 
     public static String readableCanonicalName(String canonical) {

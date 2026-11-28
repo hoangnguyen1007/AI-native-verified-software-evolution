@@ -720,4 +720,134 @@ class TreeSitterSourceFrontendTest {
         assertTrue(tsHint.strongBackwardTypes().contains("string"));
         assertTrue(tsHint.overNarrowingGuarded());
     }
+
+    @Test
+    void syntaxFastTwoPassIndexesJavaAndPolyglotFqnSafelyWithDeterminismAndSourceSyntaxTrust() throws Exception {
+        var frontend = new TreeSitterSourceFrontend();
+        var files = new LinkedHashMap<String, byte[]>();
+        // Colliding simple class names across two packages (must NEVER overwrite each other!)
+        files.put("src/main/java/com/acme/alpha/CartService.java", """
+                package com.acme.alpha;
+                public interface CartService {
+                    void addItem(String sku);
+                }
+                """.getBytes(StandardCharsets.UTF_8));
+        files.put("src/main/java/com/acme/beta/CartService.java", """
+                package com.acme.beta;
+                public interface CartService {
+                    void legacyAdd();
+                }
+                """.getBytes(StandardCharsets.UTF_8));
+        files.put("src/main/java/com/acme/alpha/BaseService.java", """
+                package com.acme.alpha;
+                public abstract class BaseService {
+                    protected void logAudit() {}
+                }
+                """.getBytes(StandardCharsets.UTF_8));
+        files.put("src/main/java/com/acme/alpha/CartServiceImpl.java", """
+                package com.acme.alpha;
+                import org.springframework.stereotype.Service;
+                @Service
+                public class CartServiceImpl extends BaseService implements CartService {
+                    @Override
+                    public void addItem(String sku) {
+                        this.logAudit();
+                        helper();
+                    }
+                    private void helper() {}
+                }
+                """.getBytes(StandardCharsets.UTF_8));
+        files.put("src/main/java/com/acme/web/CartController.java", """
+                package com.acme.web;
+                import com.acme.alpha.CartService;
+                import org.springframework.beans.factory.annotation.Autowired;
+                public class CartController {
+                    @Autowired
+                    private CartService cartService;
+                    public void postItem(String sku) {
+                        cartService.addItem(sku);
+                    }
+                }
+                """.getBytes(StandardCharsets.UTF_8));
+        files.put("src/main/java/com/acme/web/CartRecordHandler.java", """
+                package com.acme.web;
+                import com.acme.beta.CartService;
+                public record CartRecordHandler(CartService betaCart) {
+                    public void invoke() { betaCart.legacyAdd(); }
+                }
+                """.getBytes(StandardCharsets.UTF_8));
+        // Polyglot TypeScript & Python files indexed in the same 2-pass sweep
+        files.put("web/src/cart.ts", """
+                export interface CartPort { load(): void; }
+                export class WebCart implements CartPort {
+                    load(): void { this.refresh(); }
+                    refresh(): void {}
+                }
+                """.getBytes(StandardCharsets.UTF_8));
+        files.put("workers/sync.py", """
+                class BaseSync:
+                    pass
+                class CartSync(BaseSync):
+                    def run(self):
+                        self.flush()
+                    def flush(self):
+                        pass
+                """.getBytes(StandardCharsets.UTF_8));
+
+        var parallelRes = frontend.indexSyntaxFast(files, true, () -> false);
+        var serialRes = frontend.indexSyntaxFast(files, false, () -> false);
+
+        // I2: Parallel and serial 2-pass produce bit-identical canonical digest
+        assertEquals(serialRes.canonicalDigest(), parallelRes.canonicalDigest());
+        assertEquals(com.evolution.analysis.contract.semantic.TrustTier.SOURCE_SYNTAX, parallelRes.trustTier());
+        assertEquals(files.size(), parallelRes.filesScanned());
+        assertEquals(0, parallelRes.filesFailed());
+
+        // Every symbol & edge tagged explicitly with TrustTier.SOURCE_SYNTAX (I4)
+        assertTrue(parallelRes.symbols().stream()
+                .allMatch(s -> s.trustTier() == com.evolution.analysis.contract.semantic.TrustTier.SOURCE_SYNTAX));
+        assertTrue(parallelRes.edges().stream()
+                .allMatch(e -> e.trustTier() == com.evolution.analysis.contract.semantic.TrustTier.SOURCE_SYNTAX));
+
+        // FQN-safe collision preservation: BOTH com.acme.alpha.CartService and com.acme.beta.CartService exist!
+        assertEquals(List.of("com.acme.alpha.CartService", "com.acme.beta.CartService"),
+                parallelRes.fqnIndexBySimpleName().get("CartService"));
+
+        // Verify IMPLEMENTS, EXTENDS, INJECTS, CALLS resolved to exact FQNs without cross-package collision
+        assertTrue(parallelRes.edgesOfKind(TreeSitterSourceFrontend.StructuralEdgeKind.IMPLEMENTS).stream()
+                .anyMatch(e -> e.sourceFqn().equals("com.acme.alpha.CartServiceImpl")
+                        && e.targetFqn().equals("com.acme.alpha.CartService")));
+        assertTrue(parallelRes.edgesOfKind(TreeSitterSourceFrontend.StructuralEdgeKind.EXTENDS).stream()
+                .anyMatch(e -> e.sourceFqn().equals("com.acme.alpha.CartServiceImpl")
+                        && e.targetFqn().equals("com.acme.alpha.BaseService")));
+        assertTrue(parallelRes.edgesOfKind(TreeSitterSourceFrontend.StructuralEdgeKind.INJECTS).stream()
+                .anyMatch(e -> e.sourceFqn().equals("com.acme.web.CartController")
+                        && e.targetFqn().equals("com.acme.alpha.CartService")));
+        assertTrue(parallelRes.edgesOfKind(TreeSitterSourceFrontend.StructuralEdgeKind.INJECTS).stream()
+                .anyMatch(e -> e.sourceFqn().equals("com.acme.web.CartRecordHandler")
+                        && e.targetFqn().equals("com.acme.beta.CartService")));
+        assertTrue(parallelRes.edgesOfKind(TreeSitterSourceFrontend.StructuralEdgeKind.CALLS).stream()
+                .anyMatch(e -> e.sourceFqn().equals("com.acme.web.CartController#postItem")
+                        && e.targetFqn().equals("com.acme.alpha.CartService#addItem")));
+        assertTrue(parallelRes.edgesOfKind(TreeSitterSourceFrontend.StructuralEdgeKind.CALLS).stream()
+                .anyMatch(e -> e.sourceFqn().equals("com.acme.alpha.CartServiceImpl#addItem")
+                        && e.targetFqn().equals("com.acme.alpha.CartServiceImpl#helper")));
+        // Polyglot TypeScript IMPLEMENTS & Python EXTENDS captured in same sweep
+        assertTrue(parallelRes.edgesOfKind(TreeSitterSourceFrontend.StructuralEdgeKind.IMPLEMENTS).stream()
+                .anyMatch(e -> e.language().equals("typescript") && e.targetFqn().endsWith("CartPort")));
+        assertTrue(parallelRes.edgesOfKind(TreeSitterSourceFrontend.StructuralEdgeKind.EXTENDS).stream()
+                .anyMatch(e -> e.language().equals("python") && e.targetFqn().endsWith("BaseSync")));
+
+        // Sub-15s scalability sanity check: 250 synthetic Java files finish well under 5 seconds
+        var scaleFiles = new LinkedHashMap<String, byte[]>();
+        for (int i = 0; i < 250; i++) {
+            scaleFiles.put("src/main/java/com/acme/scale/Svc" + i + ".java",
+                    ("package com.acme.scale;\npublic class Svc" + i + " {\n    public void run() { work(); }\n    private void work() {}\n}\n")
+                            .getBytes(StandardCharsets.UTF_8));
+        }
+        var scaleRes = frontend.indexSyntaxFast(scaleFiles, true, () -> false);
+        assertEquals(250, scaleRes.filesScanned());
+        assertEquals(0, scaleRes.filesFailed());
+        assertTrue(scaleRes.elapsedMillis() < 5_000L, "Expected <5s for 250 Java files, took " + scaleRes.elapsedMillis() + "ms");
+    }
 }
